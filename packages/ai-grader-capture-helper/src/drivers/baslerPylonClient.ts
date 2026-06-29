@@ -2,10 +2,17 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-export type BaslerPylonAction = "readiness" | "list-cameras" | "capture-still" | "line2-exposure-active";
+export type BaslerPylonAction =
+  | "readiness"
+  | "list-cameras"
+  | "capture-still"
+  | "line2-exposure-active"
+  | "line2-user-output-pulse"
+  | "line2-status";
 export type BaslerSavedImageFormat = "png" | "tiff" | "jpg";
 
 export const BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION = "APPLY BASLER LINE2 EXPOSURE ACTIVE";
+export const BASLER_LINE2_USER_OUTPUT_PULSE_CONFIRMATION = "RUN BASLER LINE2 USER OUTPUT PULSE";
 
 export interface BaslerPylonClientConfig {
   pylonRoot?: string;
@@ -72,7 +79,7 @@ export interface BaslerLine2ExposureActiveResult {
   lineSelector: "Line2";
   lineMode: "Output";
   lineSource: "ExposureActive";
-  lineInverter: false;
+  lineInverter: boolean;
   persistentSaved: false;
   hardwareAccess: "dry_run_no_camera_opened" | "explicit_pylon_line2_configuration";
   readback?: {
@@ -80,6 +87,8 @@ export interface BaslerLine2ExposureActiveResult {
     lineMode?: string | null;
     lineSource?: string | null;
     lineInverter?: boolean | null;
+    lineStatus?: BaslerLineStatusReadback;
+    lineStatusAll?: BaslerLineStatusReadback;
   };
   safety: {
     dryRun: boolean;
@@ -90,6 +99,81 @@ export interface BaslerLine2ExposureActiveResult {
     controlsLighting: false;
   };
   note: string;
+}
+
+export interface BaslerLine2StatusResult {
+  applied: false;
+  baslerSettingsChanged: false;
+  cameraIndex: number;
+  lineSelector: "Line2";
+  persistentSaved: false;
+  hardwareAccess: "explicit_pylon_line2_status_read";
+  readback: {
+    lineSelector?: string | null;
+    lineMode?: string | null;
+    lineSource?: string | null;
+    lineInverter?: boolean | null;
+    lineStatus: BaslerLineStatusReadback;
+    lineStatusAll: BaslerLineStatusReadback;
+  };
+  safety: {
+    dryRun: false;
+    writesApplied: false;
+    baslerSettingsChanged: false;
+    persistentSaved: false;
+    capturesImages: false;
+    controlsLighting: false;
+  };
+  note: string;
+}
+
+export interface BaslerLineStatusReadback {
+  supported: boolean;
+  value?: boolean | number | string | null;
+  raw?: string | null;
+  error?: string;
+}
+
+export interface BaslerLine2UserOutputPulseResult {
+  applied: boolean;
+  baslerSettingsChanged: boolean;
+  cameraIndex: number;
+  lineSelector: "Line2";
+  lineMode: "Output";
+  lineSource: "UserOutput1";
+  lineInverter: boolean;
+  userOutputSelector: "UserOutput1";
+  idleUserOutputValue: boolean;
+  pulseUserOutputValue: boolean;
+  pulseMs: number;
+  persistentSaved: false;
+  hardwareAccess: "dry_run_no_camera_opened" | "explicit_pylon_line2_user_output_pulse";
+  readback?: {
+    beforePulse: BaslerLine2UserOutputPulseReadback;
+    duringPulse: BaslerLine2UserOutputPulseReadback;
+    afterPulse: BaslerLine2UserOutputPulseReadback;
+  };
+  safety: {
+    dryRun: boolean;
+    writesApplied: boolean;
+    baslerSettingsChanged: boolean;
+    persistentSaved: false;
+    capturesImages: false;
+    controlsLighting: false;
+    restoresIdle: true;
+  };
+  note: string;
+}
+
+export interface BaslerLine2UserOutputPulseReadback {
+  lineSelector?: string | null;
+  lineMode?: string | null;
+  lineSource?: string | null;
+  lineInverter?: boolean | null;
+  userOutputSelector?: string | null;
+  userOutputValue?: boolean | null;
+  lineStatus: BaslerLineStatusReadback;
+  lineStatusAll: BaslerLineStatusReadback;
 }
 
 export interface BaslerCalibrationMetadata {
@@ -147,12 +231,23 @@ export interface BaslerCaptureStillOptions {
   cameraIndex?: number;
   savedFormat?: BaslerSavedImageFormat;
   lensModel?: string;
+  exposureUs?: number;
 }
 
 export interface BaslerLine2ExposureActiveOptions {
   apply?: boolean;
   confirmation?: string;
   cameraIndex?: number;
+  lineInverter?: boolean;
+}
+
+export interface BaslerLine2UserOutputPulseOptions {
+  apply?: boolean;
+  confirmation?: string;
+  cameraIndex?: number;
+  lineInverter?: boolean;
+  pulseMs?: number;
+  idleUserOutputValue?: boolean;
 }
 
 export class BaslerPylonClientError extends Error {
@@ -188,9 +283,12 @@ export function assertBaslerCaptureOutputDirAllowed(outputDir: string, repoRoot 
   return resolvedOutputDir;
 }
 
-export function buildBaslerLine2ExposureActivePlan(cameraIndex = 0): BaslerLine2ExposureActiveResult {
+export function buildBaslerLine2ExposureActivePlan(cameraIndex = 0, lineInverter = false): BaslerLine2ExposureActiveResult {
   if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
     throw new BaslerPylonClientError("BASLER_CAMERA_INDEX_INVALID", "--camera-index must be a non-negative integer.");
+  }
+  if (typeof lineInverter !== "boolean") {
+    throw new BaslerPylonClientError("BASLER_LINE_INVERTER_INVALID", "--line-inverter must be true or false.");
   }
   return {
     applied: false,
@@ -199,7 +297,7 @@ export function buildBaslerLine2ExposureActivePlan(cameraIndex = 0): BaslerLine2
     lineSelector: "Line2",
     lineMode: "Output",
     lineSource: "ExposureActive",
-    lineInverter: false,
+    lineInverter,
     persistentSaved: false,
     hardwareAccess: "dry_run_no_camera_opened",
     safety: {
@@ -212,6 +310,58 @@ export function buildBaslerLine2ExposureActivePlan(cameraIndex = 0): BaslerLine2
     },
     note:
       "Dry-run Basler Line 2 plan only; does not open the camera, does not save a User Set, and does not capture images.",
+  };
+}
+
+export function normalizeBaslerLine2PulseMs(value: number | string | undefined): number {
+  const numeric = value == null || value === "" ? 500 : Number(value);
+  if (!Number.isInteger(numeric) || numeric < 250 || numeric > 500) {
+    throw new BaslerPylonClientError("BASLER_LINE2_PULSE_MS_INVALID", "--pulse-ms must be an integer from 250 to 500.");
+  }
+  return numeric;
+}
+
+export function buildBaslerLine2UserOutputPulsePlan(
+  cameraIndex = 0,
+  lineInverter = true,
+  pulseMs: number | string | undefined = 500,
+  idleUserOutputValue = false
+): BaslerLine2UserOutputPulseResult {
+  if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
+    throw new BaslerPylonClientError("BASLER_CAMERA_INDEX_INVALID", "--camera-index must be a non-negative integer.");
+  }
+  if (typeof lineInverter !== "boolean") {
+    throw new BaslerPylonClientError("BASLER_LINE_INVERTER_INVALID", "--line-inverter must be true or false.");
+  }
+  if (typeof idleUserOutputValue !== "boolean") {
+    throw new BaslerPylonClientError("BASLER_LINE2_IDLE_VALUE_INVALID", "--idle-user-output-value must be true or false.");
+  }
+  const normalizedPulseMs = normalizeBaslerLine2PulseMs(pulseMs);
+  return {
+    applied: false,
+    baslerSettingsChanged: false,
+    cameraIndex,
+    lineSelector: "Line2",
+    lineMode: "Output",
+    lineSource: "UserOutput1",
+    lineInverter,
+    userOutputSelector: "UserOutput1",
+    idleUserOutputValue,
+    pulseUserOutputValue: !idleUserOutputValue,
+    pulseMs: normalizedPulseMs,
+    persistentSaved: false,
+    hardwareAccess: "dry_run_no_camera_opened",
+    safety: {
+      dryRun: true,
+      writesApplied: false,
+      baslerSettingsChanged: false,
+      persistentSaved: false,
+      capturesImages: false,
+      controlsLighting: false,
+      restoresIdle: true,
+    },
+    note:
+      "Dry-run Basler Line 2 UserOutput1 pulse plan only; does not open the camera, does not save a User Set, and does not capture images.",
   };
 }
 
@@ -251,7 +401,8 @@ export class BaslerPylonClient {
 
   async configureLine2ExposureActive(options: BaslerLine2ExposureActiveOptions = {}): Promise<BaslerLine2ExposureActiveResult> {
     const cameraIndex = options.cameraIndex ?? 0;
-    if (!options.apply) return buildBaslerLine2ExposureActivePlan(cameraIndex);
+    const lineInverter = options.lineInverter ?? false;
+    if (!options.apply) return buildBaslerLine2ExposureActivePlan(cameraIndex, lineInverter);
     if (options.confirmation !== BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION) {
       throw new BaslerPylonClientError(
         "BASLER_LINE2_CONFIRMATION_REQUIRED",
@@ -261,9 +412,58 @@ export class BaslerPylonClient {
     if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
       throw new BaslerPylonClientError("BASLER_CAMERA_INDEX_INVALID", "--camera-index must be a non-negative integer.");
     }
+    if (typeof lineInverter !== "boolean") {
+      throw new BaslerPylonClientError("BASLER_LINE_INVERTER_INVALID", "--line-inverter must be true or false.");
+    }
     return this.runBridge<BaslerLine2ExposureActiveResult>("line2-exposure-active", [
       "-CameraIndex",
       String(cameraIndex),
+      "-LineInverter",
+      lineInverter ? "true" : "false",
+      "-Apply",
+    ]);
+  }
+
+  async readLine2Status(cameraIndex = 0): Promise<BaslerLine2StatusResult> {
+    if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
+      throw new BaslerPylonClientError("BASLER_CAMERA_INDEX_INVALID", "--camera-index must be a non-negative integer.");
+    }
+    return this.runBridge<BaslerLine2StatusResult>("line2-status", [
+      "-CameraIndex",
+      String(cameraIndex),
+    ]);
+  }
+
+  async pulseLine2UserOutput(options: BaslerLine2UserOutputPulseOptions = {}): Promise<BaslerLine2UserOutputPulseResult> {
+    const cameraIndex = options.cameraIndex ?? 0;
+    const lineInverter = options.lineInverter ?? true;
+    const pulseMs = normalizeBaslerLine2PulseMs(options.pulseMs);
+    const idleUserOutputValue = options.idleUserOutputValue ?? false;
+    if (!options.apply) return buildBaslerLine2UserOutputPulsePlan(cameraIndex, lineInverter, pulseMs, idleUserOutputValue);
+    if (options.confirmation !== BASLER_LINE2_USER_OUTPUT_PULSE_CONFIRMATION) {
+      throw new BaslerPylonClientError(
+        "BASLER_LINE2_PULSE_CONFIRMATION_REQUIRED",
+        `Basler Line 2 UserOutput pulse requires --confirm "${BASLER_LINE2_USER_OUTPUT_PULSE_CONFIRMATION}".`
+      );
+    }
+    if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
+      throw new BaslerPylonClientError("BASLER_CAMERA_INDEX_INVALID", "--camera-index must be a non-negative integer.");
+    }
+    if (typeof lineInverter !== "boolean") {
+      throw new BaslerPylonClientError("BASLER_LINE_INVERTER_INVALID", "--line-inverter must be true or false.");
+    }
+    if (typeof idleUserOutputValue !== "boolean") {
+      throw new BaslerPylonClientError("BASLER_LINE2_IDLE_VALUE_INVALID", "--idle-user-output-value must be true or false.");
+    }
+    return this.runBridge<BaslerLine2UserOutputPulseResult>("line2-user-output-pulse", [
+      "-CameraIndex",
+      String(cameraIndex),
+      "-LineInverter",
+      lineInverter ? "true" : "false",
+      "-PulseMs",
+      String(pulseMs),
+      "-IdleUserOutputValue",
+      idleUserOutputValue ? "true" : "false",
       "-Apply",
     ]);
   }
@@ -288,6 +488,7 @@ export class BaslerPylonClient {
       String(cameraIndex),
       "-Format",
       normalizeBaslerSavedImageFormat(options.savedFormat),
+      ...(options.exposureUs ? ["-ExposureUs", String(options.exposureUs)] : []),
       ...(options.lensModel ? ["-LensModel", options.lensModel] : []),
     ]);
   }

@@ -4,9 +4,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+  BASLER_LINE2_USER_OUTPUT_PULSE_CONFIRMATION,
   BaslerPylonClient,
   assertBaslerCaptureOutputDirAllowed,
   buildBaslerLine2ExposureActivePlan,
+  buildBaslerLine2UserOutputPulsePlan,
   normalizeBaslerSavedImageFormat,
 } = require("../dist/drivers/baslerPylonClient");
 const { runCaptureHelperCli } = require("../dist/cli");
@@ -93,7 +95,7 @@ function fakeCapture() {
   };
 }
 
-function fakeLine2ExposureActive() {
+function fakeLine2ExposureActive(lineInverter = false) {
   return {
     applied: true,
     baslerSettingsChanged: true,
@@ -101,14 +103,16 @@ function fakeLine2ExposureActive() {
     lineSelector: "Line2",
     lineMode: "Output",
     lineSource: "ExposureActive",
-    lineInverter: false,
+    lineInverter,
     persistentSaved: false,
     hardwareAccess: "explicit_pylon_line2_configuration",
     readback: {
       lineSelector: "Line2",
       lineMode: "Output",
       lineSource: "ExposureActive",
-      lineInverter: false,
+      lineInverter,
+      lineStatus: { supported: true, value: false, raw: "False" },
+      lineStatusAll: { supported: true, value: 3, raw: "3" },
     },
     safety: {
       dryRun: false,
@@ -119,6 +123,79 @@ function fakeLine2ExposureActive() {
       controlsLighting: false,
     },
     note: "Transient Basler Line 2 ExposureActive configuration only; no User Set was saved and no image was captured.",
+  };
+}
+
+function fakeLine2Status() {
+  return {
+    applied: false,
+    baslerSettingsChanged: false,
+    cameraIndex: 0,
+    lineSelector: "Line2",
+    persistentSaved: false,
+    hardwareAccess: "explicit_pylon_line2_status_read",
+    readback: {
+      lineSelector: "Line2",
+      lineMode: "Output",
+      lineSource: "ExposureActive",
+      lineInverter: true,
+      lineStatus: { supported: true, value: true, raw: "True" },
+      lineStatusAll: { supported: false, error: "LineStatusAll is not readable." },
+    },
+    safety: {
+      dryRun: false,
+      writesApplied: false,
+      baslerSettingsChanged: false,
+      persistentSaved: false,
+      capturesImages: false,
+      controlsLighting: false,
+    },
+    note: "Read-only Basler Line 2 status query; no User Set was saved and no image was captured.",
+  };
+}
+
+function fakeLine2UserOutputPulse() {
+  return {
+    applied: true,
+    baslerSettingsChanged: true,
+    cameraIndex: 0,
+    lineSelector: "Line2",
+    lineMode: "Output",
+    lineSource: "UserOutput1",
+    lineInverter: true,
+    userOutputSelector: "UserOutput1",
+    idleUserOutputValue: false,
+    pulseUserOutputValue: true,
+    pulseMs: 500,
+    persistentSaved: false,
+    hardwareAccess: "explicit_pylon_line2_user_output_pulse",
+    readback: {
+      beforePulse: {
+        userOutputValue: false,
+        lineStatus: { supported: true, value: false, raw: "False" },
+        lineStatusAll: { supported: true, value: 4, raw: "4" },
+      },
+      duringPulse: {
+        userOutputValue: true,
+        lineStatus: { supported: true, value: true, raw: "True" },
+        lineStatusAll: { supported: true, value: 6, raw: "6" },
+      },
+      afterPulse: {
+        userOutputValue: false,
+        lineStatus: { supported: true, value: false, raw: "False" },
+        lineStatusAll: { supported: true, value: 4, raw: "4" },
+      },
+    },
+    safety: {
+      dryRun: false,
+      writesApplied: true,
+      baslerSettingsChanged: true,
+      persistentSaved: false,
+      capturesImages: false,
+      controlsLighting: false,
+      restoresIdle: true,
+    },
+    note: "Transient Basler Line 2 UserOutput1 manual pulse only; UserOutputValue was restored to idle, no User Set was saved, and no image was captured.",
   };
 }
 
@@ -177,6 +254,7 @@ test("mocked Basler capture returns checksum, mono pixel format, and calibration
     label: "macro-smoke",
     savedFormat: "png",
     lensModel: "Computar macro lens",
+    exposureUs: 50000,
   });
 
   assert.match(capture.outputFilePath, /basler-macro-smoke-.*\.png$/);
@@ -200,10 +278,13 @@ test("mocked Basler capture returns checksum, mono pixel format, and calibration
   assert.equal(calls[0].args.includes("-Label"), true);
   assert.equal(calls[0].args.includes("-Format"), true);
   assert.equal(calls[0].args.includes("png"), true);
+  assert.equal(calls[0].args.includes("-ExposureUs"), true);
+  assert.equal(calls[0].args.includes("50000"), true);
 });
 
 test("Basler Line2 ExposureActive dry-run does not require bridge execution", async () => {
   const plan = buildBaslerLine2ExposureActivePlan(0);
+  const invertedPlan = buildBaslerLine2ExposureActivePlan(0, true);
   assert.equal(plan.applied, false);
   assert.equal(plan.baslerSettingsChanged, false);
   assert.equal(plan.lineSelector, "Line2");
@@ -215,9 +296,11 @@ test("Basler Line2 ExposureActive dry-run does not require bridge execution", as
   assert.equal(plan.safety.dryRun, true);
   assert.equal(plan.safety.capturesImages, false);
   assert.equal(plan.safety.controlsLighting, false);
+  assert.equal(invertedPlan.lineInverter, true);
+  assert.equal(invertedPlan.safety.writesApplied, false);
 
   let stdout = "";
-  const code = await runCaptureHelperCli(["basler-line2-exposure-active"], {
+  const code = await runCaptureHelperCli(["basler-line2-exposure-active", "--line-inverter", "true"], {
     env: {},
     stdout: (chunk) => {
       stdout += chunk;
@@ -226,6 +309,7 @@ test("Basler Line2 ExposureActive dry-run does not require bridge execution", as
   const cli = JSON.parse(stdout);
   assert.equal(code, 0);
   assert.equal(cli.line2.hardwareAccess, "dry_run_no_camera_opened");
+  assert.equal(cli.line2.lineInverter, true);
   assert.equal(cli.line2.safety.writesApplied, false);
 });
 
@@ -233,7 +317,7 @@ test("Basler Line2 apply requires explicit confirmation and calls bridge action 
   const calls = [];
   const client = new BaslerPylonClient(
     { bridgeScriptPath: BRIDGE_SCRIPT },
-    fakeRunnerFor(fakeLine2ExposureActive(), calls)
+    fakeRunnerFor(fakeLine2ExposureActive(true), calls)
   );
 
   await assert.rejects(
@@ -244,13 +328,75 @@ test("Basler Line2 apply requires explicit confirmation and calls bridge action 
   const result = await client.configureLine2ExposureActive({
     apply: true,
     confirmation: BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+    lineInverter: true,
   });
 
   assert.equal(result.applied, true);
   assert.equal(result.baslerSettingsChanged, true);
+  assert.equal(result.lineInverter, true);
   assert.equal(result.persistentSaved, false);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].args.includes("line2-exposure-active"), true);
+  assert.equal(calls[0].args.includes("-Apply"), true);
+  assert.deepEqual(calls[0].args.slice(-3), ["-LineInverter", "true", "-Apply"]);
+});
+
+test("Basler Line2 status readback reports supported and unsupported line status fields", async () => {
+  const calls = [];
+  const client = new BaslerPylonClient(
+    { bridgeScriptPath: BRIDGE_SCRIPT },
+    fakeRunnerFor(fakeLine2Status(), calls)
+  );
+
+  const result = await client.readLine2Status(0);
+
+  assert.equal(result.hardwareAccess, "explicit_pylon_line2_status_read");
+  assert.equal(result.safety.writesApplied, false);
+  assert.equal(result.safety.capturesImages, false);
+  assert.equal(result.readback.lineStatus.supported, true);
+  assert.equal(result.readback.lineStatus.value, true);
+  assert.equal(result.readback.lineStatusAll.supported, false);
+  assert.match(result.readback.lineStatusAll.error, /not readable/);
+  assert.equal(calls[0].args.includes("line2-status"), true);
+});
+
+test("Basler Line2 UserOutput pulse dry-run and apply restore idle without persistent save", async () => {
+  const plan = buildBaslerLine2UserOutputPulsePlan(0, true, 500, false);
+  assert.equal(plan.applied, false);
+  assert.equal(plan.lineSource, "UserOutput1");
+  assert.equal(plan.idleUserOutputValue, false);
+  assert.equal(plan.pulseUserOutputValue, true);
+  assert.equal(plan.safety.restoresIdle, true);
+  assert.equal(plan.safety.persistentSaved, false);
+  assert.throws(() => buildBaslerLine2UserOutputPulsePlan(0, true, 100), /250 to 500/);
+
+  const calls = [];
+  const client = new BaslerPylonClient(
+    { bridgeScriptPath: BRIDGE_SCRIPT },
+    fakeRunnerFor(fakeLine2UserOutputPulse(), calls)
+  );
+
+  await assert.rejects(
+    () => client.pulseLine2UserOutput({ apply: true, pulseMs: 500 }),
+    /requires --confirm/
+  );
+
+  const result = await client.pulseLine2UserOutput({
+    apply: true,
+    confirmation: BASLER_LINE2_USER_OUTPUT_PULSE_CONFIRMATION,
+    lineInverter: true,
+    pulseMs: 500,
+    idleUserOutputValue: false,
+  });
+
+  assert.equal(result.applied, true);
+  assert.equal(result.readback.afterPulse.userOutputValue, false);
+  assert.equal(result.safety.restoresIdle, true);
+  assert.equal(result.persistentSaved, false);
+  assert.equal(calls[0].args.includes("line2-user-output-pulse"), true);
+  assert.equal(calls[0].args.includes("-PulseMs"), true);
+  assert.equal(calls[0].args.includes("500"), true);
+  assert.equal(calls[0].args.includes("-IdleUserOutputValue"), true);
   assert.equal(calls[0].args.includes("-Apply"), true);
 });
 

@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   LEIMAC_IDMU_SAFE_OFF_CONFIRMATION,
+  LEIMAC_IDMU_TRIGGER_PROFILE_READBACK_FRAMES,
   LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION,
   LeimacIdmuClient,
   buildLeimacIdmuSafeOffFrames,
@@ -319,6 +320,24 @@ test("Leimac safe-off and trigger-profile frames use command-before-unit channel
     plan.frames.map((frame) => `${frame.name} ${frame.description}`).join(" ").toLowerCase(),
     /user set|userset|system reset|factory default/
   );
+
+  const levelHigh = buildLeimacIdmuTriggerProfilePlan({
+    dutyPercent: 1,
+    unit: 1,
+    triggerActivation: "LevelHigh",
+  });
+  assert.equal(levelHigh.triggerActivation, "LevelHigh");
+  assert.equal(levelHigh.dutyPercent, 1);
+  assert.equal(levelHigh.dutySteps, 10);
+  assert.equal(
+    levelHigh.frames.find((frame) => frame.name === "triggerActivation").requestFrame,
+    "W0901010000020000030000040000050000060000070000080000"
+  );
+  assert.equal(
+    levelHigh.frames.find((frame) => frame.name === "lightingOutputValue" && frame.channelValues[0].value === "0010")
+      .requestFrame,
+    "W1101010010020010030010040010050010060010070010080010"
+  );
 });
 
 test("Leimac trigger profile rejects high duty and arbitrary writes", async () => {
@@ -331,6 +350,31 @@ test("Leimac trigger profile rejects high duty and arbitrary writes", async () =
   const cli = await runCli(["leimac-idmu-trigger-profile", "--duty", "6"]);
   assert.equal(cli.code, 1);
   assert.match(cli.stderr.error, /capped at 5%/);
+});
+
+test("Leimac trigger profile readbacks use only manual-derived read frames", async () => {
+  assert.deepEqual(Array.from(LEIMAC_IDMU_TRIGGER_PROFILE_READBACK_FRAMES), [
+    "R09010000",
+    "R11010000",
+    "R13010000",
+    "R18010000",
+    "R65010000",
+    "R84010000",
+    "R85010000",
+    "R86010000",
+  ]);
+
+  const fake = fakeTransport((request) => `${request.ascii}NAK0\r\n`);
+  const client = new LeimacIdmuClient({
+    host: "169.254.191.156",
+    transport: fake.transport,
+  });
+  const readbacks = await client.readTriggerProfileSettings();
+
+  assert.deepEqual(fake.calls.map((call) => call.ascii), Array.from(LEIMAC_IDMU_TRIGGER_PROFILE_READBACK_FRAMES));
+  assert.equal(readbacks.length, 8);
+  assert.equal(readbacks.every((entry) => entry.result.requestFrame === entry.frame), true);
+  assert.equal(readbacks.every((entry) => entry.result.safety.readOnly), true);
 });
 
 test("Leimac trigger profile apply requires confirmation and sends only allowlisted frames", async () => {
@@ -358,6 +402,7 @@ test("Leimac trigger profile apply requires confirmation and sends only allowlis
   const result = await client.applyTriggerProfile({
     apply: true,
     dutyPercent: 5,
+    triggerActivation: "LevelHigh",
     confirmation: LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION,
   });
 
@@ -371,7 +416,7 @@ test("Leimac trigger profile apply requires confirmation and sends only allowlis
     "W8601010000020000030000040000050000060000070000080000",
     "W8501010000020000030000040000050000060000070000080000",
     "W1101010000020000030000040000050000060000070000080000",
-    "W0901010002020002030002040002050002060002070002080002",
+    "W0901010000020000030000040000050000060000070000080000",
     "W6501010000020000030000040000050000060000070000080000",
     "W8401010000020000030000040000050000060000070000080000",
     "W1301010000020000030000040000050000060000070000080000",

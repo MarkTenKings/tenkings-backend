@@ -60,6 +60,7 @@ type ParsedCommand =
       leimacUnit: number | undefined;
       profile: string | undefined;
       duty: number | undefined;
+      triggerActivation: string | undefined;
       apply: boolean;
       confirmation: string | undefined;
     }
@@ -72,8 +73,29 @@ type ParsedCommand =
       pylonTimeoutMs: number | undefined;
       baslerBridgeScript: string | undefined;
       cameraIndex: number | undefined;
+      lineInverter: boolean | undefined;
       apply: boolean;
       confirmation: string | undefined;
+    }
+  | {
+      command: "basler-line2-user-output-pulse";
+      config: CaptureHelperConfigInput;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      baslerBridgeScript: string | undefined;
+      cameraIndex: number | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacTimeoutMs: number | undefined;
+      leimacUnit: number | undefined;
+      lineInverter: boolean | undefined;
+      pulseMs: number | undefined;
+      idleUserOutputValue: boolean | undefined;
+      apply: boolean;
+      confirmation: string | undefined;
+      markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
     }
   | {
       command: "basler-capture-still";
@@ -85,6 +107,7 @@ type ParsedCommand =
       label: string | undefined;
       savedFormat: string | undefined;
       lensModel: string | undefined;
+      exposureUs: number | undefined;
     }
   | {
       command: "basler-leimac-sync-smoke";
@@ -107,6 +130,52 @@ type ParsedCommand =
       unusedBaslerWiresInsulated: boolean;
       leimacStatusGreen: boolean;
       operatorConfirmedLightNotContinuous: boolean;
+    }
+  | {
+      command: "basler-leimac-polarity-smoke";
+      config: CaptureHelperConfigInput;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      baslerBridgeScript: string | undefined;
+      cameraIndex: number | undefined;
+      outputDir: string | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacTimeoutMs: number | undefined;
+      leimacUnit: number | undefined;
+      polarityCandidate: string | undefined;
+      duty: number | undefined;
+      exposureUs: number | undefined;
+      apply: boolean;
+      confirmation: string | undefined;
+      markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
+      operatorConfirmedLightIdleOff: boolean;
+      operatorReportedIdleOn: boolean;
+      captureConfirmed: boolean;
+    }
+  | {
+      command: "basler-leimac-image-stat-sync-smoke";
+      config: CaptureHelperConfigInput;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      baslerBridgeScript: string | undefined;
+      cameraIndex: number | undefined;
+      outputDir: string | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacTimeoutMs: number | undefined;
+      leimacUnit: number | undefined;
+      polarityCandidate: string | undefined;
+      duty: number | undefined;
+      exposureUs: number | undefined;
+      apply: boolean;
+      confirmation: string | undefined;
+      markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
+      operatorConfirmedLightIdleOff: boolean;
     }
   | { command: "dinolite-enumerate"; config: CaptureHelperConfigInput }
   | { command: "dinolite-status"; config: CaptureHelperConfigInput; deviceIndex: number | undefined }
@@ -178,12 +247,21 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let profile: string | undefined;
   let duty: number | undefined;
   let exposureUs: number | undefined;
+  let lineInverter: boolean | undefined;
+  let pulseMs: number | undefined;
+  let idleUserOutputValue: boolean | undefined;
+  let triggerActivation: string | undefined;
+  let polarityCandidate: string | undefined;
   let apply = false;
   let confirmation: string | undefined;
   let markPresent = false;
   let unusedBaslerWiresInsulated = false;
+  let wiringConfirmed = false;
   let leimacStatusGreen = false;
   let operatorConfirmedLightNotContinuous = false;
+  let operatorConfirmedLightIdleOff = false;
+  let operatorReportedIdleOn = false;
+  let captureConfirmed = false;
   let includeLightingSweep = false;
   let includeFlcSweep = false;
   let includeEdr = false;
@@ -344,6 +422,30 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         }
         index += 1;
         break;
+      case "--line-inverter":
+        lineInverter = readBooleanOption(rest, index, "--line-inverter");
+        index += 1;
+        break;
+      case "--pulse-ms":
+        pulseMs = Number(readOption(rest, index, "--pulse-ms"));
+        if (!Number.isInteger(pulseMs) || pulseMs <= 0) {
+          throw new CaptureHelperCommandError("--pulse-ms must be a positive integer.");
+        }
+        index += 1;
+        break;
+      case "--idle-user-output-value":
+        idleUserOutputValue = readBooleanOption(rest, index, "--idle-user-output-value");
+        index += 1;
+        break;
+      case "--trigger-activation":
+        triggerActivation = readOption(rest, index, "--trigger-activation");
+        index += 1;
+        break;
+      case "--polarity-candidate":
+      case "--candidate":
+        polarityCandidate = readOption(rest, index, arg);
+        index += 1;
+        break;
       case "--apply":
         apply = true;
         break;
@@ -357,11 +459,23 @@ function parseCliArgs(argv: string[]): ParsedCommand {
       case "--unused-basler-wires-insulated":
         unusedBaslerWiresInsulated = true;
         break;
+      case "--wiring-confirmed":
+        wiringConfirmed = true;
+        break;
       case "--leimac-status-green":
         leimacStatusGreen = true;
         break;
       case "--operator-confirmed-light-not-continuous":
         operatorConfirmedLightNotContinuous = true;
+        break;
+      case "--operator-confirmed-light-idle-off":
+        operatorConfirmedLightIdleOff = true;
+        break;
+      case "--operator-reported-idle-on":
+        operatorReportedIdleOn = true;
+        break;
+      case "--capture-confirmed":
+        captureConfirmed = true;
         break;
       case "--camera-index":
         cameraIndex = Number(readOption(rest, index, "--camera-index"));
@@ -634,8 +748,11 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "basler-readiness" ||
     command === "basler-list-cameras" ||
     command === "basler-line2-exposure-active" ||
+    command === "basler-line2-user-output-pulse" ||
     command === "basler-capture-still" ||
     command === "basler-leimac-sync-smoke" ||
+    command === "basler-leimac-polarity-smoke" ||
+    command === "basler-leimac-image-stat-sync-smoke" ||
     command === "dinolite-enumerate" ||
     command === "dinolite-status" ||
     command === "dinolite-capture-still" ||
@@ -676,6 +793,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
           leimacUnit,
           profile,
           duty,
+          triggerActivation,
           apply,
           confirmation,
         };
@@ -684,10 +802,38 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     }
     if (command === "basler-readiness" || command === "basler-list-cameras") return { command, config, pylonRoot, pylonTimeoutMs };
     if (command === "basler-line2-exposure-active") {
-      return { command, config, pylonRoot, pylonTimeoutMs, baslerBridgeScript, cameraIndex, apply, confirmation };
+      return { command, config, pylonRoot, pylonTimeoutMs, baslerBridgeScript, cameraIndex, lineInverter, apply, confirmation };
+    }
+    if (command === "basler-line2-user-output-pulse") {
+      const leimacHostValue = leimacHost ?? host;
+      const leimacPortValue = leimacPort ?? port;
+      const parsedLeimacPort = leimacPortValue === undefined ? undefined : Number(leimacPortValue);
+      if (parsedLeimacPort !== undefined && (!Number.isInteger(parsedLeimacPort) || parsedLeimacPort <= 0)) {
+        throw new CaptureHelperCommandError("--leimac-port must be a positive integer.");
+      }
+      return {
+        command,
+        config,
+        pylonRoot,
+        pylonTimeoutMs,
+        baslerBridgeScript,
+        cameraIndex,
+        leimacHost: leimacHostValue,
+        leimacPort: parsedLeimacPort,
+        leimacTimeoutMs,
+        leimacUnit,
+        lineInverter,
+        pulseMs,
+        idleUserOutputValue,
+        apply,
+        confirmation,
+        markPresent,
+        wiringConfirmed,
+        leimacStatusGreen,
+      };
     }
     if (command === "basler-capture-still") {
-      return { command, config, pylonRoot, pylonTimeoutMs, cameraIndex, outputDir, label, savedFormat, lensModel };
+      return { command, config, pylonRoot, pylonTimeoutMs, cameraIndex, outputDir, label, savedFormat, lensModel, exposureUs };
     }
     if (command === "basler-leimac-sync-smoke") {
       const leimacHostValue = leimacHost ?? host;
@@ -719,6 +865,68 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         operatorConfirmedLightNotContinuous,
       };
     }
+    if (command === "basler-leimac-polarity-smoke") {
+      const leimacHostValue = leimacHost ?? host;
+      const leimacPortValue = leimacPort ?? port;
+      const parsedLeimacPort = leimacPortValue === undefined ? undefined : Number(leimacPortValue);
+      if (parsedLeimacPort !== undefined && (!Number.isInteger(parsedLeimacPort) || parsedLeimacPort <= 0)) {
+        throw new CaptureHelperCommandError("--leimac-port must be a positive integer.");
+      }
+      return {
+        command,
+        config,
+        pylonRoot,
+        pylonTimeoutMs,
+        baslerBridgeScript,
+        cameraIndex,
+        outputDir,
+        leimacHost: leimacHostValue,
+        leimacPort: parsedLeimacPort,
+        leimacTimeoutMs,
+        leimacUnit,
+        polarityCandidate,
+        duty,
+        exposureUs,
+        apply,
+        confirmation,
+        markPresent,
+        wiringConfirmed,
+        leimacStatusGreen,
+        operatorConfirmedLightIdleOff,
+        operatorReportedIdleOn,
+        captureConfirmed,
+      };
+    }
+    if (command === "basler-leimac-image-stat-sync-smoke") {
+      const leimacHostValue = leimacHost ?? host;
+      const leimacPortValue = leimacPort ?? port;
+      const parsedLeimacPort = leimacPortValue === undefined ? undefined : Number(leimacPortValue);
+      if (parsedLeimacPort !== undefined && (!Number.isInteger(parsedLeimacPort) || parsedLeimacPort <= 0)) {
+        throw new CaptureHelperCommandError("--leimac-port must be a positive integer.");
+      }
+      return {
+        command,
+        config,
+        pylonRoot,
+        pylonTimeoutMs,
+        baslerBridgeScript,
+        cameraIndex,
+        outputDir,
+        leimacHost: leimacHostValue,
+        leimacPort: parsedLeimacPort,
+        leimacTimeoutMs,
+        leimacUnit,
+        polarityCandidate,
+        duty,
+        exposureUs,
+        apply,
+        confirmation,
+        markPresent,
+        wiringConfirmed,
+        leimacStatusGreen,
+        operatorConfirmedLightIdleOff,
+      };
+    }
     if (command === "dinolite-status") return { command, config, deviceIndex };
     if (command === "dinolite-capture-still") return { command, config, deviceIndex, outputDir };
     if (command === "dinolite-capture-package" || command === "dinolite-capture-demo-package") {
@@ -744,8 +952,8 @@ function helpPayload() {
       "leimac-idmu-status --host <ip-address> --port 1000 --timeout-ms 1500",
       "leimac-idmu-read-frame --host <ip-address> --port 1000 --frame R0801 --timeout-ms 2000",
       "leimac-idmu-trigger-sync-plan --mode basler-exposure-active-to-trg-in1",
-      "leimac-idmu-trigger-profile --host 169.254.191.156 --port 1000 --profile basler-line2-trg-in1-low-duty --duty 5",
-      "leimac-idmu-trigger-profile --host 169.254.191.156 --port 1000 --profile basler-line2-trg-in1-low-duty --duty 5 --apply --confirm \"APPLY LEIMAC LOW DUTY TRIGGER PROFILE\"",
+      "leimac-idmu-trigger-profile --host 169.254.191.156 --port 1000 --profile basler-line2-trg-in1-low-duty --duty 5 --trigger-activation LevelLow",
+      "leimac-idmu-trigger-profile --host 169.254.191.156 --port 1000 --profile basler-line2-trg-in1-low-duty --duty 5 --trigger-activation LevelHigh --apply --confirm \"APPLY LEIMAC LOW DUTY TRIGGER PROFILE\"",
       "leimac-idmu-safe-off --host 169.254.191.156 --port 1000 --apply --confirm \"APPLY LEIMAC SAFE OFF\"",
       "dinolite-bridge-health --bridge-path <exe> --bridge-adapter fake",
       "dinolite-enumerate --bridge-exe <exe> --adapter dnvideox",
@@ -757,10 +965,15 @@ function helpPayload() {
       "dinolite-experimental-grading-run --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-grading-runs --label <label> --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk --corner-profile sharp_90 --capture-guides true",
       "basler-readiness --pylon-root C:\\Program Files\\Basler\\pylon",
       "basler-list-cameras --pylon-root C:\\Program Files\\Basler\\pylon",
-      "basler-line2-exposure-active --bridge-script packages\\ai-grader-capture-helper\\scripts\\basler-pylon-bridge.ps1",
-      "basler-line2-exposure-active --apply --confirm \"APPLY BASLER LINE2 EXPOSURE ACTIVE\"",
+      "basler-line2-exposure-active --bridge-script packages\\ai-grader-capture-helper\\scripts\\basler-pylon-bridge.ps1 --line-inverter false",
+      "basler-line2-exposure-active --line-inverter false --apply --confirm \"APPLY BASLER LINE2 EXPOSURE ACTIVE\"",
+      "basler-line2-user-output-pulse --leimac-host 169.254.191.156 --pulse-ms 500 --line-inverter true --apply --confirm \"RUN BASLER LINE2 USER OUTPUT PULSE\" --mark-present --wiring-confirmed --leimac-status-green",
       "basler-capture-still --output-dir C:\\TenKings\\capture-data\\basler-smoke --label <label> --format png",
       "basler-leimac-sync-smoke --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\basler-leimac-sync --duty 5 --exposure-us 5000 --apply --confirm \"RUN SUPERVISED BASLER LEIMAC SYNC SMOKE\" --mark-present --unused-basler-wires-insulated --leimac-status-green --operator-confirmed-light-not-continuous",
+      "basler-leimac-polarity-smoke --leimac-host 169.254.191.156 --leimac-port 1000 --duty 1 --exposure-us 5000",
+      "basler-leimac-polarity-smoke --leimac-host 169.254.191.156 --leimac-port 1000 --candidate line2-no-inverter-level-high --duty 1 --apply --confirm \"RUN SUPERVISED BASLER LEIMAC POLARITY SMOKE\" --mark-present --wiring-confirmed --leimac-status-green",
+      "basler-leimac-polarity-smoke --leimac-host 169.254.191.156 --leimac-port 1000 --candidate line2-no-inverter-level-high --output-dir C:\\TenKings\\capture-data\\basler-leimac-sync --duty 1 --exposure-us 5000 --apply --confirm \"RUN SUPERVISED BASLER LEIMAC POLARITY SMOKE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --capture-confirmed",
+      "basler-leimac-image-stat-sync-smoke --leimac-host 169.254.191.156 --leimac-port 1000 --candidate line2-inverter-level-low --output-dir C:\\TenKings\\capture-data\\basler-leimac-sync --duty 3 --exposure-us 50000 --apply --confirm \"RUN SUPERVISED BASLER LEIMAC IMAGE STAT SYNC SMOKE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -796,12 +1009,22 @@ function helpPayload() {
       "--profile",
       "--duty",
       "--exposure-us",
+      "--line-inverter true|false",
+      "--pulse-ms 250..500",
+      "--idle-user-output-value true|false",
+      "--trigger-activation LevelLow|LevelHigh",
+      "--polarity-candidate",
+      "--candidate",
       "--apply",
       "--confirm",
       "--mark-present",
       "--unused-basler-wires-insulated",
+      "--wiring-confirmed",
       "--leimac-status-green",
       "--operator-confirmed-light-not-continuous",
+      "--operator-confirmed-light-idle-off",
+      "--operator-reported-idle-on",
+      "--capture-confirmed",
       "--camera-index",
       "--format png|tiff|jpg",
       "--lens-model",
@@ -840,7 +1063,7 @@ function helpPayload() {
     leimacIdmu:
       "manual Ethernet read-only readiness/status/read-frame plus PR #36 guarded low-duty trigger profile and safe-off only; hardware writes require explicit --host, --apply, and confirmation text; no arbitrary write-frame CLI",
     baslerPylon:
-      "manual pylon readiness/list/still capture plus guarded transient Line2 ExposureActive configuration only; default health/readiness/transport does not load pylon, enumerate cameras, open the Basler camera, or save User Sets",
+      "manual pylon readiness/list/still capture plus guarded transient Line2 ExposureActive configuration with Line2 status readback only; default health/readiness/transport does not load pylon, enumerate cameras, open the Basler camera, or save User Sets",
     dinoliteSdkRuntimeDir:
       "optional for manual capture packages; use --sdk-runtime-dir or TENKINGS_DINOLITE_SDK_RUNTIME_DIR and keep vendor runtime files outside git",
     transport: "disabled until serve is explicitly run",
@@ -1040,6 +1263,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           profile: parsed.profile,
           dutyPercent: parsed.duty,
           unit: parsed.leimacUnit,
+          triggerActivation: parsed.triggerActivation,
         });
         writeJson(stdout, {
           ok: true,
@@ -1067,6 +1291,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       const result = await client.applyTriggerProfile({
         profile: parsed.profile,
         dutyPercent: parsed.duty,
+        triggerActivation: parsed.triggerActivation,
         apply: true,
         confirmation: parsed.confirmation,
       });
@@ -1127,6 +1352,710 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         status,
       });
       return status.ok ? 0 : 1;
+    }
+
+    if (parsed.command === "basler-line2-user-output-pulse") {
+      const env = io.env ?? process.env;
+      const {
+        BASLER_LINE2_USER_OUTPUT_PULSE_CONFIRMATION,
+        BaslerPylonClient,
+      } = await import("./drivers/baslerPylonClient");
+      const {
+        LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION,
+        LeimacIdmuClient,
+        buildLeimacIdmuTriggerProfilePlan,
+      } = await import("./drivers/leimacIdmuClient");
+
+      const leimacProfilePlan = buildLeimacIdmuTriggerProfilePlan({
+        dutyPercent: 3,
+        unit: parsed.leimacUnit,
+        triggerActivation: "LevelLow",
+      });
+      const baslerClient = new BaslerPylonClient({
+        pylonRoot: parsed.pylonRoot ?? env.TENKINGS_BASLER_PYLON_ROOT ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT,
+        bridgeScriptPath: parsed.baslerBridgeScript,
+        timeoutMs: parsed.pylonTimeoutMs,
+        env,
+      });
+
+      if (!parsed.apply) {
+        const pulse = await baslerClient.pulseLine2UserOutput({
+          cameraIndex: parsed.cameraIndex,
+          lineInverter: parsed.lineInverter ?? true,
+          pulseMs: parsed.pulseMs,
+          idleUserOutputValue: parsed.idleUserOutputValue ?? false,
+        });
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "basler-line2-user-output-pulse",
+          dryRun: true,
+          pulse,
+          leimacProfilePlan,
+          safety: {
+            markPresentRequired: true,
+            wiringConfirmedRequired: true,
+            leimacStatusGreenRequired: true,
+            safeOffBefore: true,
+            safeOffAfter: true,
+            persistentSaved: false,
+          },
+        });
+        return 0;
+      }
+
+      if (parsed.confirmation !== BASLER_LINE2_USER_OUTPUT_PULSE_CONFIRMATION) {
+        throw new CaptureHelperCommandError(`basler-line2-user-output-pulse --apply requires --confirm "${BASLER_LINE2_USER_OUTPUT_PULSE_CONFIRMATION}".`);
+      }
+      if (!parsed.leimacHost) {
+        throw new CaptureHelperCommandError("basler-line2-user-output-pulse --apply requires explicit --leimac-host <ip> for safe-off/profile cleanup.");
+      }
+      if (!parsed.markPresent) {
+        throw new CaptureHelperCommandError("basler-line2-user-output-pulse --apply requires --mark-present.");
+      }
+      if (!parsed.wiringConfirmed) {
+        throw new CaptureHelperCommandError("basler-line2-user-output-pulse --apply requires --wiring-confirmed.");
+      }
+      if (!parsed.leimacStatusGreen) {
+        throw new CaptureHelperCommandError("basler-line2-user-output-pulse --apply requires --leimac-status-green.");
+      }
+
+      const leimacClient = new LeimacIdmuClient({
+        host: parsed.leimacHost,
+        port: parsed.leimacPort,
+        timeoutMs: parsed.leimacTimeoutMs,
+        unit: parsed.leimacUnit,
+      });
+      let safeOffEnd: Awaited<ReturnType<typeof leimacClient.safeOff>> | undefined;
+      try {
+        const safeOffStart = await leimacClient.safeOff(true);
+        if (!safeOffStart.ok) {
+          writeJson(stdout, {
+            ok: false,
+            service: "ai-grader-capture-helper",
+            command: "basler-line2-user-output-pulse",
+            safeOffStart,
+            error: "Leimac safe-off failed before manual pulse.",
+          });
+          return 1;
+        }
+        const leimacProfile = await leimacClient.applyTriggerProfile({
+          profile: "basler-line2-trg-in1-low-duty",
+          dutyPercent: 3,
+          triggerActivation: "LevelLow",
+          apply: true,
+          confirmation: LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION,
+        });
+        const settingReadbacks = await leimacClient.readTriggerProfileSettings();
+        if (!leimacProfile.ok) {
+          safeOffEnd = await leimacClient.safeOff(true);
+          writeJson(stdout, {
+            ok: false,
+            service: "ai-grader-capture-helper",
+            command: "basler-line2-user-output-pulse",
+            safeOffStart,
+            leimacProfile,
+            settingReadbacks,
+            safeOffEnd,
+            error: "Leimac low-duty trigger profile failed before manual pulse.",
+          });
+          return 1;
+        }
+        const pulse = await baslerClient.pulseLine2UserOutput({
+          apply: true,
+          confirmation: BASLER_LINE2_USER_OUTPUT_PULSE_CONFIRMATION,
+          cameraIndex: parsed.cameraIndex,
+          lineInverter: parsed.lineInverter ?? true,
+          pulseMs: parsed.pulseMs,
+          idleUserOutputValue: parsed.idleUserOutputValue ?? false,
+        });
+        safeOffEnd = await leimacClient.safeOff(true);
+        writeJson(stdout, {
+          ok: safeOffEnd.ok,
+          service: "ai-grader-capture-helper",
+          command: "basler-line2-user-output-pulse",
+          safeOffStart,
+          leimacProfile,
+          settingReadbacks,
+          pulse,
+          safeOffEnd,
+          operatorPrompt: "Ask Mark whether the ring visibly turned on during the manual pulse and returned off after safe-off.",
+        });
+        return safeOffEnd.ok ? 0 : 1;
+      } catch (error) {
+        if (!safeOffEnd && parsed.leimacHost) {
+          safeOffEnd = await leimacClient.safeOff(true);
+        }
+        const message = error instanceof Error ? error.message : "Unknown Basler Line2 UserOutput pulse error.";
+        writeJson(stderr, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "basler-line2-user-output-pulse",
+          error: message,
+          safeOffEnd,
+        });
+        return 1;
+      }
+    }
+
+    if (parsed.command === "basler-leimac-polarity-smoke") {
+      const env = io.env ?? process.env;
+      const {
+        BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
+        assertBaslerLeimacSyncSmokeOutputDirAllowed,
+        buildBaslerLeimacPolaritySmokeManifest,
+        buildBaslerLeimacPolaritySmokePlan,
+      } = await import("./drivers/baslerLeimacSync");
+      const {
+        BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+        BaslerPylonClient,
+      } = await import("./drivers/baslerPylonClient");
+      const {
+        LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION,
+        LeimacIdmuClient,
+        buildLeimacIdmuTriggerProfilePlan,
+      } = await import("./drivers/leimacIdmuClient");
+
+      const plan = buildBaslerLeimacPolaritySmokePlan({
+        dutyPercent: parsed.duty,
+        exposureUs: parsed.exposureUs,
+        candidateId: parsed.polarityCandidate,
+        dryRun: !parsed.apply,
+      });
+      const candidate = plan.selectedCandidate ?? plan.candidates[0];
+      const profilePlan = buildLeimacIdmuTriggerProfilePlan({
+        dutyPercent: plan.dutyPercent,
+        unit: parsed.leimacUnit,
+        triggerActivation: candidate.leimacTriggerActivation,
+      });
+
+      if (!parsed.apply) {
+        if (parsed.captureConfirmed) {
+          assertBaslerLeimacSyncSmokeOutputDirAllowed(parsed.outputDir ?? "");
+        }
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-polarity-smoke",
+          dryRun: true,
+          plan,
+          selectedCandidate: candidate,
+          manifest: buildBaslerLeimacPolaritySmokeManifest({
+            status: "planned",
+            candidate,
+            leimacHost: parsed.leimacHost ?? "0.0.0.0",
+            leimacPort: parsed.leimacPort ?? 1000,
+            leimacProfilePlan: profilePlan,
+            requestedExposureUs: parsed.exposureUs,
+            supervised: false,
+            safeOffBefore: false,
+            safeOffAfter: false,
+          }),
+        });
+        return 0;
+      }
+
+      if (parsed.confirmation !== BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION) {
+        throw new CaptureHelperCommandError(`basler-leimac-polarity-smoke --apply requires --confirm "${BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION}".`);
+      }
+      if (!parsed.leimacHost) {
+        throw new CaptureHelperCommandError("basler-leimac-polarity-smoke --apply requires explicit --leimac-host <ip>.");
+      }
+      if (!parsed.markPresent) {
+        throw new CaptureHelperCommandError("basler-leimac-polarity-smoke --apply requires --mark-present.");
+      }
+      if (!parsed.wiringConfirmed) {
+        throw new CaptureHelperCommandError("basler-leimac-polarity-smoke --apply requires --wiring-confirmed.");
+      }
+      if (!parsed.leimacStatusGreen) {
+        throw new CaptureHelperCommandError("basler-leimac-polarity-smoke --apply requires --leimac-status-green.");
+      }
+      if (parsed.captureConfirmed && !parsed.operatorConfirmedLightIdleOff) {
+        throw new CaptureHelperCommandError(
+          "basler-leimac-polarity-smoke --capture-confirmed requires --operator-confirmed-light-idle-off."
+        );
+      }
+      const outputDir = parsed.captureConfirmed
+        ? assertBaslerLeimacSyncSmokeOutputDirAllowed(parsed.outputDir ?? "")
+        : undefined;
+
+      const leimacClient = new LeimacIdmuClient({
+        host: parsed.leimacHost,
+        port: parsed.leimacPort,
+        timeoutMs: parsed.leimacTimeoutMs,
+        unit: parsed.leimacUnit,
+      });
+
+      if (parsed.operatorReportedIdleOn) {
+        const safeOffEnd = await leimacClient.safeOff(true);
+        writeJson(stdout, {
+          ok: safeOffEnd.ok,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-polarity-smoke",
+          selectedCandidate: candidate,
+          candidateResult: "idle_on_failed",
+          safeOffEnd,
+          manifest: buildBaslerLeimacPolaritySmokeManifest({
+            status: "aborted",
+            candidate,
+            candidateResult: "idle_on_failed",
+            leimacHost: parsed.leimacHost,
+            leimacPort: parsed.leimacPort ?? 1000,
+            leimacProfilePlan: profilePlan,
+            requestedExposureUs: parsed.exposureUs,
+            supervised: true,
+            safeOffBefore: true,
+            safeOffAfter: safeOffEnd.ok,
+          }),
+          operatorPrompt: "Confirm the Leimac ring light is off before testing another polarity candidate.",
+        });
+        return safeOffEnd.ok ? 0 : 1;
+      }
+
+      const baslerClient = new BaslerPylonClient({
+        pylonRoot: parsed.pylonRoot ?? env.TENKINGS_BASLER_PYLON_ROOT ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT,
+        bridgeScriptPath: parsed.baslerBridgeScript,
+        timeoutMs: parsed.pylonTimeoutMs,
+        env,
+      });
+
+      const unitInfo = await leimacClient.readCommand("unitInfo");
+      if (!unitInfo.ok) {
+        writeJson(stdout, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-polarity-smoke",
+          error: "Leimac unit-info preflight failed.",
+          unitInfo,
+        });
+        return 1;
+      }
+
+      const cameraList = await baslerClient.listCameras();
+      const cameraIndex = parsed.cameraIndex ?? 0;
+      const camera = cameraList.cameras.find((entry) => entry.index === cameraIndex) ?? cameraList.cameras[cameraIndex];
+      if (cameraList.status !== "reachable" || !camera) {
+        writeJson(stdout, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-polarity-smoke",
+          error: "Basler camera preflight failed.",
+          cameraList,
+        });
+        return 1;
+      }
+      if (camera.modelName !== "a2A2448-23gmBAS") {
+        writeJson(stdout, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-polarity-smoke",
+          error: "Unexpected Basler camera model for the PR #36 capture node.",
+          expectedModelName: "a2A2448-23gmBAS",
+          camera,
+        });
+        return 1;
+      }
+
+      if (parsed.captureConfirmed) {
+        let safeOffEnd: Awaited<ReturnType<typeof leimacClient.safeOff>> | undefined;
+        const line2Status = await baslerClient.readLine2Status(cameraIndex);
+        try {
+          const capture = await baslerClient.captureStill({
+            outputDir: outputDir ?? "",
+            label: `leimac-polarity-${candidate.id}`,
+            cameraIndex,
+            savedFormat: "png",
+            lensModel: env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
+          });
+          safeOffEnd = await leimacClient.safeOff(true);
+          const manifest = buildBaslerLeimacPolaritySmokeManifest({
+            status: "captured",
+            candidate,
+            candidateResult: "accepted",
+            leimacHost: parsed.leimacHost,
+            leimacPort: parsed.leimacPort ?? 1000,
+            leimacProfilePlan: profilePlan,
+            unitInfo,
+            baslerLine2Status: line2Status,
+            requestedExposureUs: parsed.exposureUs,
+            capture,
+            supervised: true,
+            safeOffBefore: true,
+            safeOffAfter: safeOffEnd.ok,
+          });
+          writeJson(stdout, {
+            ok: safeOffEnd.ok,
+            service: "ai-grader-capture-helper",
+            command: "basler-leimac-polarity-smoke",
+            selectedCandidate: candidate,
+            unitInfo,
+            camera,
+            line2Status,
+            capture,
+            safeOffEnd,
+            manifest,
+            operatorPrompt: "Confirm final Leimac ring-light state is off after safe-off.",
+          });
+          return safeOffEnd.ok ? 0 : 1;
+        } catch (error) {
+          safeOffEnd = await leimacClient.safeOff(true);
+          const message = error instanceof Error ? error.message : "Unknown Basler/Leimac polarity capture error.";
+          writeJson(stderr, {
+            ok: false,
+            service: "ai-grader-capture-helper",
+            command: "basler-leimac-polarity-smoke",
+            error: message,
+            selectedCandidate: candidate,
+            unitInfo,
+            camera,
+            line2Status,
+            safeOffEnd,
+            manifest: buildBaslerLeimacPolaritySmokeManifest({
+              status: "aborted",
+              candidate,
+              candidateResult: "capture_failed",
+              leimacHost: parsed.leimacHost,
+              leimacPort: parsed.leimacPort ?? 1000,
+              leimacProfilePlan: profilePlan,
+              unitInfo,
+              baslerLine2Status: line2Status,
+              requestedExposureUs: parsed.exposureUs,
+              supervised: true,
+              safeOffBefore: true,
+              safeOffAfter: safeOffEnd.ok,
+            }),
+          });
+          return 1;
+        }
+      }
+
+      const safeOffStart = await leimacClient.safeOff(true);
+      if (!safeOffStart.ok) {
+        writeJson(stdout, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-polarity-smoke",
+          selectedCandidate: candidate,
+          unitInfo,
+          camera,
+          safeOffStart,
+          error: "Safe-off before polarity candidate failed; candidate was not applied.",
+        });
+        return 1;
+      }
+
+      let leimacProfile: Awaited<ReturnType<typeof leimacClient.applyTriggerProfile>> | undefined;
+      let safeOffEnd: Awaited<ReturnType<typeof leimacClient.safeOff>> | undefined;
+      try {
+        const line2 = await baslerClient.configureLine2ExposureActive({
+          apply: true,
+          confirmation: BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+          cameraIndex,
+          lineInverter: candidate.baslerLineInverter,
+        });
+        const line2Status = await baslerClient.readLine2Status(cameraIndex);
+        leimacProfile = await leimacClient.applyTriggerProfile({
+          profile: "basler-line2-trg-in1-low-duty",
+          dutyPercent: plan.dutyPercent,
+          triggerActivation: candidate.leimacTriggerActivation,
+          apply: true,
+          confirmation: LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION,
+        });
+        if (!leimacProfile.ok) {
+          safeOffEnd = await leimacClient.safeOff(true);
+          writeJson(stdout, {
+            ok: false,
+            service: "ai-grader-capture-helper",
+            command: "basler-leimac-polarity-smoke",
+            selectedCandidate: candidate,
+            unitInfo,
+            camera,
+            safeOffStart,
+            line2,
+            line2Status,
+            leimacProfile,
+            safeOffEnd,
+            error: "Leimac trigger profile failed; safe-off was run.",
+          });
+          return 1;
+        }
+        const manifest = buildBaslerLeimacPolaritySmokeManifest({
+          status: "candidate_applied",
+          candidate,
+          candidateResult: "idle_off_pending_capture",
+          leimacHost: parsed.leimacHost,
+          leimacPort: parsed.leimacPort ?? 1000,
+          leimacProfile,
+          unitInfo,
+          baslerLine2: line2,
+          baslerLine2Status: line2Status,
+          requestedExposureUs: parsed.exposureUs,
+          supervised: true,
+          safeOffBefore: safeOffStart.ok,
+          safeOffAfter: false,
+        });
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-polarity-smoke",
+          selectedCandidate: candidate,
+          unitInfo,
+          camera,
+          safeOffStart,
+          line2,
+          line2Status,
+          leimacProfile,
+          manifest,
+          operatorPrompt:
+            "Ask Mark whether the ring light is off at idle. If it is continuously on, run this command with --operator-reported-idle-on for the same candidate before proceeding.",
+        });
+        return 0;
+      } catch (error) {
+        safeOffEnd = await leimacClient.safeOff(true);
+        const message = error instanceof Error ? error.message : "Unknown Basler/Leimac polarity candidate error.";
+        writeJson(stderr, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-polarity-smoke",
+          error: message,
+          selectedCandidate: candidate,
+          unitInfo,
+          camera,
+          safeOffStart,
+          leimacProfile,
+          safeOffEnd,
+        });
+        return 1;
+      }
+    }
+
+    if (parsed.command === "basler-leimac-image-stat-sync-smoke") {
+      const env = io.env ?? process.env;
+      const {
+        BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION,
+        assertBaslerLeimacSyncSmokeOutputDirAllowed,
+        analyzeBaslerLeimacImageStats,
+        buildBaslerLeimacImageStatSyncSmokeManifest,
+        buildBaslerLeimacPolaritySmokePlan,
+      } = await import("./drivers/baslerLeimacSync");
+      const {
+        BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+        BaslerPylonClient,
+      } = await import("./drivers/baslerPylonClient");
+      const {
+        LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION,
+        LeimacIdmuClient,
+        buildLeimacIdmuTriggerProfilePlan,
+      } = await import("./drivers/leimacIdmuClient");
+
+      const exposureUs = parsed.exposureUs ?? 50000;
+      if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
+        throw new CaptureHelperCommandError("basler-leimac-image-stat-sync-smoke --exposure-us must be from 1 to 100000.");
+      }
+      const plan = buildBaslerLeimacPolaritySmokePlan({
+        dutyPercent: parsed.duty ?? 3,
+        exposureUs,
+        candidateId: parsed.polarityCandidate ?? "line2-inverter-level-low",
+        dryRun: !parsed.apply,
+      });
+      const candidate = plan.selectedCandidate ?? plan.candidates[1];
+      const profilePlan = buildLeimacIdmuTriggerProfilePlan({
+        dutyPercent: plan.dutyPercent,
+        unit: parsed.leimacUnit,
+        triggerActivation: candidate.leimacTriggerActivation,
+      });
+
+      if (!parsed.apply) {
+        if (parsed.outputDir) {
+          assertBaslerLeimacSyncSmokeOutputDirAllowed(parsed.outputDir);
+        }
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-image-stat-sync-smoke",
+          dryRun: true,
+          plan,
+          manifest: buildBaslerLeimacImageStatSyncSmokeManifest({
+            status: "planned",
+            candidate,
+            leimacHost: parsed.leimacHost ?? "0.0.0.0",
+            leimacPort: parsed.leimacPort ?? 1000,
+            leimacProfilePlan: profilePlan,
+            requestedExposureUs: exposureUs,
+            dutyPercent: plan.dutyPercent,
+            supervised: false,
+            safeOffBefore: false,
+            safeOffAfter: false,
+          }),
+        });
+        return 0;
+      }
+
+      const outputDir = assertBaslerLeimacSyncSmokeOutputDirAllowed(parsed.outputDir ?? "");
+      if (parsed.confirmation !== BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION) {
+        throw new CaptureHelperCommandError(`basler-leimac-image-stat-sync-smoke --apply requires --confirm "${BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION}".`);
+      }
+      if (!parsed.leimacHost) {
+        throw new CaptureHelperCommandError("basler-leimac-image-stat-sync-smoke --apply requires explicit --leimac-host <ip>.");
+      }
+      if (!parsed.markPresent) {
+        throw new CaptureHelperCommandError("basler-leimac-image-stat-sync-smoke --apply requires --mark-present.");
+      }
+      if (!parsed.wiringConfirmed) {
+        throw new CaptureHelperCommandError("basler-leimac-image-stat-sync-smoke --apply requires --wiring-confirmed.");
+      }
+      if (!parsed.leimacStatusGreen) {
+        throw new CaptureHelperCommandError("basler-leimac-image-stat-sync-smoke --apply requires --leimac-status-green.");
+      }
+      if (!parsed.operatorConfirmedLightIdleOff) {
+        throw new CaptureHelperCommandError("basler-leimac-image-stat-sync-smoke --apply requires --operator-confirmed-light-idle-off after the manual pulse proves idle-off behavior.");
+      }
+
+      const leimacClient = new LeimacIdmuClient({
+        host: parsed.leimacHost,
+        port: parsed.leimacPort,
+        timeoutMs: parsed.leimacTimeoutMs,
+        unit: parsed.leimacUnit,
+      });
+      const baslerClient = new BaslerPylonClient({
+        pylonRoot: parsed.pylonRoot ?? env.TENKINGS_BASLER_PYLON_ROOT ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT,
+        bridgeScriptPath: parsed.baslerBridgeScript,
+        timeoutMs: parsed.pylonTimeoutMs,
+        env,
+      });
+
+      let safeOffEnd: Awaited<ReturnType<typeof leimacClient.safeOff>> | undefined;
+      try {
+        const safeOffStart = await leimacClient.safeOff(true);
+        if (!safeOffStart.ok) {
+          writeJson(stdout, {
+            ok: false,
+            service: "ai-grader-capture-helper",
+            command: "basler-leimac-image-stat-sync-smoke",
+            safeOffStart,
+            error: "Leimac safe-off failed before dark control capture.",
+          });
+          return 1;
+        }
+
+        const cameraList = await baslerClient.listCameras();
+        const cameraIndex = parsed.cameraIndex ?? 0;
+        const camera = cameraList.cameras.find((entry) => entry.index === cameraIndex) ?? cameraList.cameras[cameraIndex];
+        if (cameraList.status !== "reachable" || !camera) {
+          writeJson(stdout, {
+            ok: false,
+            service: "ai-grader-capture-helper",
+            command: "basler-leimac-image-stat-sync-smoke",
+            safeOffStart,
+            cameraList,
+            error: "Basler camera preflight failed.",
+          });
+          return 1;
+        }
+
+        const darkCapture = await baslerClient.captureStill({
+          outputDir,
+          label: `leimac-dark-control-${candidate.id}`,
+          cameraIndex,
+          savedFormat: "png",
+          exposureUs,
+          lensModel: env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
+        });
+        const darkStats = await analyzeBaslerLeimacImageStats(darkCapture.outputFilePath);
+
+        const line2 = await baslerClient.configureLine2ExposureActive({
+          apply: true,
+          confirmation: BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+          cameraIndex,
+          lineInverter: candidate.baslerLineInverter,
+        });
+        const leimacProfile = await leimacClient.applyTriggerProfile({
+          profile: "basler-line2-trg-in1-low-duty",
+          dutyPercent: plan.dutyPercent,
+          triggerActivation: candidate.leimacTriggerActivation,
+          apply: true,
+          confirmation: LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION,
+        });
+        const settingReadbacks = await leimacClient.readTriggerProfileSettings();
+        if (!leimacProfile.ok) {
+          safeOffEnd = await leimacClient.safeOff(true);
+          writeJson(stdout, {
+            ok: false,
+            service: "ai-grader-capture-helper",
+            command: "basler-leimac-image-stat-sync-smoke",
+            safeOffStart,
+            darkControl: { capture: darkCapture, stats: darkStats },
+            line2,
+            leimacProfile,
+            settingReadbacks,
+            safeOffEnd,
+            error: "Leimac trigger profile failed before synced capture.",
+          });
+          return 1;
+        }
+
+        const line2Status = await baslerClient.readLine2Status(cameraIndex);
+        const syncedCapture = await baslerClient.captureStill({
+          outputDir,
+          label: `leimac-image-stat-sync-${candidate.id}`,
+          cameraIndex,
+          savedFormat: "png",
+          exposureUs,
+          lensModel: env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
+        });
+        const syncedStats = await analyzeBaslerLeimacImageStats(syncedCapture.outputFilePath);
+        safeOffEnd = await leimacClient.safeOff(true);
+        const manifest = buildBaslerLeimacImageStatSyncSmokeManifest({
+          status: "captured",
+          candidate,
+          leimacHost: parsed.leimacHost,
+          leimacPort: parsed.leimacPort ?? 1000,
+          leimacProfile,
+          unitInfo: leimacProfile.unitInfo,
+          settingReadbacks,
+          baslerLine2: line2,
+          baslerLine2Status: line2Status,
+          requestedExposureUs: exposureUs,
+          dutyPercent: plan.dutyPercent,
+          darkControl: { capture: darkCapture, stats: darkStats },
+          synced: { capture: syncedCapture, stats: syncedStats },
+          supervised: true,
+          safeOffBefore: safeOffStart.ok,
+          safeOffAfter: safeOffEnd.ok,
+          finalLightOffConfirmedByMark: false,
+        });
+        writeJson(stdout, {
+          ok: safeOffEnd.ok,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-image-stat-sync-smoke",
+          selectedCandidate: candidate,
+          camera,
+          safeOffStart,
+          darkControl: { capture: darkCapture, stats: darkStats },
+          line2,
+          line2Status,
+          leimacProfile,
+          settingReadbacks,
+          synced: { capture: syncedCapture, stats: syncedStats },
+          safeOffEnd,
+          manifest,
+          operatorPrompt: "Confirm final Leimac ring-light state is off after safe-off.",
+        });
+        return safeOffEnd.ok ? 0 : 1;
+      } catch (error) {
+        if (!safeOffEnd && parsed.leimacHost) {
+          safeOffEnd = await leimacClient.safeOff(true);
+        }
+        const message = error instanceof Error ? error.message : "Unknown Basler/Leimac image-stat sync smoke error.";
+        writeJson(stderr, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "basler-leimac-image-stat-sync-smoke",
+          error: message,
+          safeOffEnd,
+        });
+        return 1;
+      }
     }
 
     if (parsed.command === "basler-leimac-sync-smoke") {
@@ -1305,6 +2234,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           apply: parsed.apply,
           confirmation: parsed.confirmation,
           cameraIndex: parsed.cameraIndex,
+          lineInverter: parsed.lineInverter,
         });
         writeJson(stdout, {
           ok: true,
@@ -1324,6 +2254,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           cameraIndex: parsed.cameraIndex,
           savedFormat: normalizeBaslerSavedImageFormat(parsed.savedFormat),
           lensModel,
+          exposureUs: parsed.exposureUs,
         });
         writeJson(stdout, {
           ok: true,

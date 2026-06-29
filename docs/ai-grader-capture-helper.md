@@ -1,6 +1,6 @@
 # AI Grader Capture Helper
 
-The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino auxiliary LED readiness, GRBL/OpenBuilds stage status readiness, manual Leimac IDMU-P Ethernet readiness/status/guarded low-duty trigger-profile commands, manual Dino-Lite DNVideoX commands, and manual Basler pylon GigE readiness/list/Line2/still capture commands; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, Leimac controllers, XY stages, arm interlocks, sockets, uploads, or database connections.
+The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino auxiliary LED readiness, GRBL/OpenBuilds stage status readiness, manual Leimac IDMU-P Ethernet readiness/status/guarded low-duty trigger-profile/polarity commands, manual Dino-Lite DNVideoX commands, and manual Basler pylon GigE readiness/list/Line2/still capture commands; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, Leimac controllers, XY stages, arm interlocks, sockets, uploads, or database connections.
 
 ## Local Usage
 
@@ -295,6 +295,7 @@ PR #36 adds these explicit commands:
 pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-line2-exposure-active
 
 pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-line2-exposure-active `
+  --line-inverter false `
   --apply `
   --confirm "APPLY BASLER LINE2 EXPOSURE ACTIVE"
 
@@ -302,13 +303,15 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-id
   --host 169.254.191.156 `
   --port 1000 `
   --profile basler-line2-trg-in1-low-duty `
-  --duty 5
+  --duty 5 `
+  --trigger-activation LevelLow
 
 pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-trigger-profile `
   --host 169.254.191.156 `
   --port 1000 `
   --profile basler-line2-trg-in1-low-duty `
   --duty 5 `
+  --trigger-activation LevelHigh `
   --apply `
   --confirm "APPLY LEIMAC LOW DUTY TRIGGER PROFILE"
 
@@ -319,17 +322,19 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-id
   --confirm "APPLY LEIMAC SAFE OFF"
 ```
 
-The Basler Line2 command is dry-run by default. The apply path opens the selected Basler GigE camera only after `--apply` plus exact confirmation text, sets only transient `LineSelector=Line2`, `LineMode=Output`, `LineInverter=false`, and `LineSource=ExposureActive`, reads back those settings when possible, and never saves a Basler User Set.
+The Basler Line2 command is dry-run by default. The apply path opens the selected Basler GigE camera only after `--apply` plus exact confirmation text, sets only transient `LineSelector=Line2`, `LineMode=Output`, caller-selected `LineInverter=false|true`, and `LineSource=ExposureActive`, reads back those settings plus `LineStatus` / `LineStatusAll` when supported, and never saves a Basler User Set.
 
-The Leimac trigger-profile command is dry-run by default. The apply path requires explicit host/port, `--apply`, exact confirmation text, a successful `R830000` unit-info read showing one 8-channel unit, and duty `<= 5`. It does not use Leimac SYSTEM RESET, FACTORY DEFAULT, network setting commands, persistent saves, or arbitrary write-frame input.
+The Leimac trigger-profile command is dry-run by default. The apply path requires explicit host/port, `--apply`, exact confirmation text, a successful `R830000` unit-info read showing one 8-channel unit, and duty `<= 5`. It supports only the supervised `LevelLow` and `LevelHigh` trigger-activation candidates. It does not use Leimac SYSTEM RESET, FACTORY DEFAULT, network setting commands, persistent saves, or arbitrary write-frame input.
 
 The PR #36 low-duty profile write frames are command-before-unit and channel/value expanded for the confirmed 8-channel base unit:
 
 - Safe-off before profile: `W8601010000020000030000040000050000060000070000080000`, `W8501010000020000030000040000050000060000070000080000`, `W1101010000020000030000040000050000060000070000080000`.
 - Trigger activation Level Low: `W0901010002020002030002040002050002060002070002080002`.
+- Trigger activation Level High: `W0901010000020000030000040000050000060000070000080000`.
 - Trigger source TRG IN1: `W6501010000020000030000040000050000060000070000080000`.
 - Trigger synchronization synchronous: `W8401010000020000030000040000050000060000070000080000`.
 - Output delay 0 us: `W1301010000020000030000040000050000060000070000080000`.
+- Lighting output value 1% / 10 of 1000 steps: `W1101010010020010030010040010050010060010070010080010`.
 - Lighting output value 5% / 50 of 1000 steps: `W1101010050020050030050040050050050060050070050080050`.
 - Asynchronous output OFF: `W8501010000020000030000040000050000060000070000080000`.
 - Lighting output enable for trigger-controlled smoke: `W8601010001020001030001040001050001060001070001080001`.
@@ -340,7 +345,52 @@ Mark also reported the ring light turns on when main power is turned on. That is
 
 Local Dell supervised PR #36 smoke attempt on 2026-06-26 stopped before capture. Mark was present, wiring was confirmed, Leimac status was green, and the ring light was initially on. The implemented safe-off command returned ACK for `W86...0000`, `W85...0000`, and `W11...0000`; Mark confirmed the light turned off. Basler transient Line2 apply succeeded and read back `LineSelector=Line2`, `LineMode=Output`, `LineSource=ExposureActive`, and `LineInverter=false`, with no User Set save and no image capture. The Leimac low-duty trigger profile then returned ACK for `W09`, `W65`, `W84`, `W13`, `W11`, `W85`, and `W86`, but Mark confirmed the ring light was on continuously after profile application. The run was aborted before synchronized capture, safe-off was run again, and Mark confirmed the final light state was off.
 
-This means safe-off is verified, but the current Leimac trigger-profile sequence is not accepted for capture because the output-enable step appears to leave the ring light continuously on on this wired rig. Do not run `basler-leimac-sync-smoke` until the trigger-only Leimac output/activation behavior is audited and a supervised dry-run/apply sequence keeps the light off between exposures.
+This means safe-off is verified, but the first polarity assumption (`LineInverter=false` plus Leimac `LevelLow`) is not accepted for capture because the Leimac trigger input is active at idle on this wired rig. Do not run `basler-leimac-sync-smoke` until a supervised polarity sequence keeps the light off between exposures.
+
+PR #36 now includes a supervised polarity diagnostic command. It defaults to a dry-run plan and caps diagnostics at `1%` duty by default and `5%` maximum. The supported candidates are tested one at a time, with safe-off before each candidate and safe-off after any idle-on failure:
+
+- `line2-no-inverter-level-high`: Basler `LineInverter=false`, Leimac `TriggerActivation=LevelHigh`.
+- `line2-inverter-level-low`: Basler `LineInverter=true`, Leimac `TriggerActivation=LevelLow`.
+- `line2-no-inverter-level-low`: previously failed baseline, retained for manifest coverage.
+- `line2-inverter-level-high`: final supported polarity combination.
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-leimac-polarity-smoke `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --candidate line2-no-inverter-level-high `
+  --duty 1 `
+  --exposure-us 5000
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-leimac-polarity-smoke `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --candidate line2-no-inverter-level-high `
+  --duty 1 `
+  --exposure-us 5000 `
+  --apply `
+  --confirm "RUN SUPERVISED BASLER LEIMAC POLARITY SMOKE" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-leimac-polarity-smoke `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --candidate line2-no-inverter-level-high `
+  --output-dir C:\TenKings\capture-data\basler-leimac-sync `
+  --duty 1 `
+  --exposure-us 5000 `
+  --apply `
+  --confirm "RUN SUPERVISED BASLER LEIMAC POLARITY SMOKE" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off `
+  --capture-confirmed
+```
+
+The polarity command applies exactly one candidate and then stops for visual confirmation. If Mark reports idle-on, run the same command with `--operator-reported-idle-on` for that candidate so it runs safe-off and records the failed candidate. Capture is allowed only after Mark confirms the light is off at idle. The capture path records the selected polarity, Basler Line2 readback including `LineStatus` / `LineStatusAll` when supported, Leimac frames, `safeOffBefore=true`, `safeOffAfter=true`, `isCalibrated=false`, and `evidenceClass=macro_sync_smoke_uncalibrated`.
 
 The guarded synchronized smoke command requires an output directory outside the repo, `--apply`, exact confirmation text, Mark-present/wiring/status/light-state flags, and then captures one PNG outside git:
 
@@ -359,9 +409,13 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-le
   --operator-confirmed-light-not-continuous
 ```
 
-The sync-smoke manifest records image path, SHA-256, byte size, dimensions, exposure, gain, Basler Line2 settings, Leimac IP/unit-info/profile/duty/frames, `isCalibrated=false`, and `evidenceClass=macro_sync_smoke_uncalibrated`. It is not calibrated production macro evidence and is not a final grade, certificate, or certified grading output. As of the 2026-06-26 supervised attempt, this command should remain blocked until the continuous-light trigger-profile issue above is resolved.
+The sync-smoke manifest records image path, SHA-256, byte size, dimensions, exposure, gain, Basler Line2 settings, Leimac IP/unit-info/profile/duty/frames, `isCalibrated=false`, and `evidenceClass=macro_sync_smoke_uncalibrated`. It is not calibrated production macro evidence and is not a final grade, certificate, or certified grading output.
 
-Next steps after PR #36 are Leimac trigger-only profile correction, polarity/output-enable diagnosis, low-duty synchronized smoke retry, calibration, repeatability testing, lighting profile/channel mapping, UI/report integration, and a later acceptance pass for persistent camera/controller settings only after explicit operator approval.
+Local Dell supervised PR #36 pulse and image-stat smoke on 2026-06-29 accepted the `line2-inverter-level-low` polarity for transient sync foundation. The manual pulse command configured Leimac `LevelLow` at 3% duty, configured Basler Line2 as `UserOutput1` with `LineInverter=true`, pulsed `UserOutputValue=false -> true -> false` for 500 ms, and Mark visually confirmed the ring light turned on during the pulse. Basler readback changed `LineStatus=false`, `LineStatusAll=4` before pulse to `LineStatus=true`, `LineStatusAll=6` during pulse, then back to `LineStatus=false`, `LineStatusAll=4` after pulse. Safe-off ran before and after and ACKed.
+
+The accepted image-stat smoke used Basler Line2 `ExposureActive`, `LineInverter=true`, Leimac `TriggerActivation=LevelLow`, Leimac duty `3%` / `30` of `1000` steps, exposure `50000 us`, gain `0`, and no persistent Basler or Leimac save. Dark control artifact: `C:\TenKings\capture-data\basler-leimac-sync\basler-leimac-dark-control-line2-inverter-level-low-20260629T041905743Z.png`, SHA-256 `19244c85339f15251529730076fa79656048e97a0e9064bb2ef8bfa1e6ff3179`, `151013` bytes, `2448x2048`, stats min `0`, max `8`, mean `0.1983`, brightFraction `0`. Synced artifact: `C:\TenKings\capture-data\basler-leimac-sync\basler-leimac-image-stat-sync-line2-inverter-level-low-20260629T041921325Z.png`, SHA-256 `61459596a5f22484518682d79c10bccbece0f5077159fc8940ddcccd4abd6c71`, `1356565` bytes, `2448x2048`, stats min `0`, max `255`, mean `27.6684`, brightFraction `0.18785`. The diagnostic comparison was materially brighter: mean delta `27.4701`, max delta `247`, `materiallyBrighter=true`.
+
+Next steps after PR #36 are calibration, repeatability testing, lighting profile/channel mapping, UI/report integration, and a later acceptance pass for persistent camera/controller settings only after explicit operator approval.
 
 ### Arduino LED Readiness
 

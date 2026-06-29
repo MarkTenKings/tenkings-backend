@@ -120,6 +120,7 @@ export interface LeimacIdmuSafetyMetadata {
 }
 
 export type LeimacIdmuTriggerProfileName = "basler-line2-trg-in1-low-duty";
+export type LeimacIdmuTriggerActivationMode = "LevelLow" | "LevelHigh";
 export type LeimacIdmuWriteCommandName =
   | "triggerActivation"
   | "lightingOutputValue"
@@ -159,6 +160,7 @@ export interface LeimacIdmuWriteResult {
 export interface LeimacIdmuTriggerProfilePlan {
   profile: LeimacIdmuTriggerProfileName;
   unit: number;
+  triggerActivation: LeimacIdmuTriggerActivationMode;
   dutyPercent: number;
   dutySteps: number;
   maxDutyPercent: 5;
@@ -270,6 +272,11 @@ export interface LeimacIdmuDiagnosticFrameResult {
   error?: string;
 }
 
+export interface LeimacIdmuSettingReadbackResult {
+  frame: string;
+  result: LeimacIdmuDiagnosticFrameResult;
+}
+
 export interface LeimacIdmuReadinessResult {
   ok: boolean;
   status: "PASS" | "FAIL";
@@ -346,7 +353,7 @@ const SAFETY_METADATA: LeimacIdmuSafetyMetadata = {
 };
 
 const WRITE_COMMAND_DESCRIPTIONS: Record<LeimacIdmuWriteCommandName, LeimacIdmuWriteFrame["description"]> = {
-  triggerActivation: "Trigger activation; LevelLow for Basler Line 2 guide wiring",
+  triggerActivation: "Trigger activation; fixed LevelLow/LevelHigh candidate for Basler Line 2 diagnostics",
   lightingOutputValue: "Lighting output value; PWM duty cycle in 1000 steps",
   lightingOutputDelay: "Lighting output delay time; 1 microsecond steps",
   triggerSource: "Trigger source; TRG IN1",
@@ -363,6 +370,22 @@ const WRITE_COMMAND_NUMBERS: Record<LeimacIdmuWriteCommandName, LeimacIdmuWriteF
   triggerSynchronizationMode: "84",
   asynchronousOutput: "85",
   lightingOutput: "86",
+};
+
+export const LEIMAC_IDMU_TRIGGER_PROFILE_READBACK_FRAMES = [
+  "R09010000",
+  "R11010000",
+  "R13010000",
+  "R18010000",
+  "R65010000",
+  "R84010000",
+  "R85010000",
+  "R86010000",
+] as const;
+
+const LEIMAC_IDMU_TRIGGER_ACTIVATION_VALUES: Record<LeimacIdmuTriggerActivationMode, { value: string; meaning: string }> = {
+  LevelHigh: { value: "0000", meaning: "LevelHigh" },
+  LevelLow: { value: "0002", meaning: "LevelLow" },
 };
 
 export function normalizeLeimacIdmuHost(host: string | undefined): string {
@@ -635,6 +658,16 @@ export function leimacIdmuDutyPercentToSteps(dutyPercent: number): number {
   return Math.round((normalized / 100) * 1000);
 }
 
+export function normalizeLeimacIdmuTriggerActivation(value: string | undefined): LeimacIdmuTriggerActivationMode {
+  const normalized = (value ?? "LevelLow").trim().toLowerCase();
+  if (normalized === "levellow" || normalized === "level-low" || normalized === "low") return "LevelLow";
+  if (normalized === "levelhigh" || normalized === "level-high" || normalized === "high") return "LevelHigh";
+  throw new LeimacIdmuClientError(
+    "LEIMAC_IDMU_TRIGGER_ACTIVATION_UNSUPPORTED",
+    "--trigger-activation must be LevelLow or LevelHigh."
+  );
+}
+
 export function composeLeimacIdmuChannelWriteFrame(input: {
   name: LeimacIdmuWriteCommandName;
   unit?: number | string;
@@ -703,6 +736,7 @@ export function buildLeimacIdmuTriggerProfilePlan(input: {
   profile?: string;
   dutyPercent?: number | string;
   unit?: number | string;
+  triggerActivation?: string;
 } = {}): LeimacIdmuTriggerProfilePlan {
   const profile = (input.profile ?? "basler-line2-trg-in1-low-duty").trim();
   if (profile !== "basler-line2-trg-in1-low-duty") {
@@ -712,6 +746,8 @@ export function buildLeimacIdmuTriggerProfilePlan(input: {
     );
   }
   const unit = normalizeLeimacIdmuUnit(input.unit);
+  const triggerActivation = normalizeLeimacIdmuTriggerActivation(input.triggerActivation);
+  const triggerActivationValue = LEIMAC_IDMU_TRIGGER_ACTIVATION_VALUES[triggerActivation];
   const dutyPercent = normalizeLeimacIdmuDutyPercent(input.dutyPercent);
   const dutySteps = leimacIdmuDutyPercentToSteps(dutyPercent);
   const dutyValue = String(dutySteps).padStart(4, "0");
@@ -720,8 +756,8 @@ export function buildLeimacIdmuTriggerProfilePlan(input: {
     composeLeimacIdmuChannelWriteFrame({
       name: "triggerActivation",
       unit,
-      value: "0002",
-      meaning: "LevelLow",
+      value: triggerActivationValue.value,
+      meaning: triggerActivationValue.meaning,
     }),
     composeLeimacIdmuChannelWriteFrame({
       name: "triggerSource",
@@ -763,6 +799,7 @@ export function buildLeimacIdmuTriggerProfilePlan(input: {
   return {
     profile,
     unit,
+    triggerActivation,
     dutyPercent,
     dutySteps,
     maxDutyPercent: LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
@@ -1015,6 +1052,72 @@ export class LeimacIdmuClient {
     }
   }
 
+  async readTriggerProfileSettings(): Promise<LeimacIdmuSettingReadbackResult[]> {
+    const readbacks: LeimacIdmuSettingReadbackResult[] = [];
+    for (const frame of LEIMAC_IDMU_TRIGGER_PROFILE_READBACK_FRAMES) {
+      readbacks.push({ frame, result: await this.readSettingReadbackFrame(frame) });
+    }
+    return readbacks;
+  }
+
+  private async readSettingReadbackFrame(frame: (typeof LEIMAC_IDMU_TRIGGER_PROFILE_READBACK_FRAMES)[number]): Promise<LeimacIdmuDiagnosticFrameResult> {
+    const metadata: LeimacIdmuDiagnosticFrameMetadata = {
+      name: "status",
+      commandNumber: frame.slice(1, 3),
+      header: "R",
+      targetDesignation: frame.slice(3, 5),
+      targetKind: "unit",
+      description: "Manual-derived readback for a PR #36 trigger-profile setting",
+      readOnly: true,
+      diagnosticFrame: true,
+    };
+    const startedAt = Date.now();
+    try {
+      const rawResponse = await this.transport.send({
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        ascii: frame,
+        frame,
+      });
+      const parsed = parseLeimacIdmuResponse(metadata, rawResponse);
+      const ok = parsed.responseKind === "data" && parsed.parseConfidence !== "unknown";
+      return {
+        ok,
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        command: metadata,
+        requestAscii: frame,
+        requestFrame: frame,
+        rawResponse,
+        parsed,
+        durationMs: Date.now() - startedAt,
+        safety: leimacIdmuSafetyMetadata(),
+        ...(parsed.responseKind === "nak"
+          ? { error: parsed.errorMeaning ?? "Leimac IDMU returned NAK." }
+          : !ok
+            ? { error: "Leimac IDMU setting readback returned an unknown or ambiguous response." }
+            : {}),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Leimac IDMU setting readback error.";
+      return {
+        ok: false,
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        command: metadata,
+        requestAscii: frame,
+        requestFrame: frame,
+        parsed: { responseKind: "unknown", parseConfidence: "unknown" },
+        durationMs: Date.now() - startedAt,
+        safety: leimacIdmuSafetyMetadata(),
+        error: message,
+      };
+    }
+  }
+
   async safeOff(apply = false): Promise<LeimacIdmuSafeOffResult> {
     const frames = buildLeimacIdmuSafeOffFrames(this.unit);
     if (!apply) {
@@ -1083,12 +1186,14 @@ export class LeimacIdmuClient {
   async applyTriggerProfile(input: {
     profile?: string;
     dutyPercent?: number | string;
+    triggerActivation?: string;
     apply?: boolean;
     confirmation?: string;
   } = {}): Promise<LeimacIdmuTriggerProfileApplyResult> {
     const plan = buildLeimacIdmuTriggerProfilePlan({
       profile: input.profile,
       dutyPercent: input.dutyPercent,
+      triggerActivation: input.triggerActivation,
       unit: this.unit,
     });
     if (!input.apply) {

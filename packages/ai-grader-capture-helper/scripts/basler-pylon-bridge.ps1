@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("readiness", "list-cameras", "capture-still", "line2-exposure-active")]
+  [ValidateSet("readiness", "list-cameras", "capture-still", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
   [string]$Action,
 
   [string]$PylonRoot,
@@ -11,6 +11,12 @@ param(
   [ValidateSet("png", "tiff", "jpg")]
   [string]$Format = "png",
   [string]$LensModel,
+  [ValidateSet("true", "false")]
+  [string]$LineInverter = "false",
+  [int]$PulseMs = 500,
+  [ValidateSet("true", "false")]
+  [string]$IdleUserOutputValue = "false",
+  [int]$ExposureUs = 0,
   [switch]$Apply
 )
 
@@ -215,6 +221,30 @@ function Get-ParameterValueByName {
   return $null
 }
 
+function Get-ReadableParameterDiagnostic {
+  param([object]$Camera, [object[]]$Names)
+  foreach ($name in $Names) {
+    try {
+      $parameter = $Camera.Parameters[$name]
+      if ($null -ne $parameter -and $parameter.IsReadable) {
+        $value = $parameter.GetValue()
+        return [ordered]@{
+          supported = $true
+          value = $value
+          raw = $(if ($null -ne $value) { "$value" } else { $null })
+        }
+      }
+    } catch {
+    }
+  }
+  return [ordered]@{
+    supported = $false
+    value = $null
+    raw = $null
+    error = "Parameter is not readable or not present."
+  }
+}
+
 function Set-EnumParameterByName {
   param([object]$Camera, [object[]]$Names, [string]$Value)
   foreach ($name in $Names) {
@@ -245,8 +275,38 @@ function Set-BoolParameterByName {
   throw "Writable Basler boolean parameter was not found."
 }
 
+function Set-FloatParameterByName {
+  param([object]$Camera, [object[]]$Names, [double]$Value)
+  foreach ($name in $Names) {
+    try {
+      $parameter = $Camera.Parameters[$name]
+      if ($null -ne $parameter -and $parameter.IsWritable) {
+        $parameter.SetValue($Value)
+        return $true
+      }
+    } catch {
+    }
+  }
+  return $false
+}
+
+function Get-Line2UserOutputReadback {
+  param([object]$Camera)
+  [ordered]@{
+    lineSelector = Get-ParameterValueByName $Camera @([Basler.Pylon.PLCamera]::LineSelector, "LineSelector")
+    lineMode = Get-ParameterValueByName $Camera @([Basler.Pylon.PLCamera]::LineMode, "LineMode")
+    lineSource = Get-ParameterValueByName $Camera @([Basler.Pylon.PLCamera]::LineSource, "LineSource")
+    lineInverter = Get-ParameterValueByName $Camera @([Basler.Pylon.PLCamera]::LineInverter, "LineInverter")
+    userOutputSelector = Get-ParameterValueByName $Camera @("UserOutputSelector")
+    userOutputValue = Get-ParameterValueByName $Camera @("UserOutputValue")
+    lineStatus = Get-ReadableParameterDiagnostic $Camera @("LineStatus")
+    lineStatusAll = Get-ReadableParameterDiagnostic $Camera @("LineStatusAll")
+  }
+}
+
 function Configure-Line2ExposureActive {
   param([System.Collections.IDictionary]$Install)
+  $lineInverterBool = ($LineInverter -eq "true")
 
   if (-not $Apply) {
     return [ordered]@{
@@ -256,7 +316,7 @@ function Configure-Line2ExposureActive {
       lineSelector = "Line2"
       lineMode = "Output"
       lineSource = "ExposureActive"
-      lineInverter = $false
+      lineInverter = $lineInverterBool
       persistentSaved = $false
       hardwareAccess = "dry_run_no_camera_opened"
       safety = [ordered]@{
@@ -284,7 +344,7 @@ function Configure-Line2ExposureActive {
     [void]$camera.Open()
     Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::LineSelector, "LineSelector") "Line2"
     Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::LineMode, "LineMode") "Output"
-    Set-BoolParameterByName $camera @([Basler.Pylon.PLCamera]::LineInverter, "LineInverter") $false
+    Set-BoolParameterByName $camera @([Basler.Pylon.PLCamera]::LineInverter, "LineInverter") $lineInverterBool
     Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::LineSource, "LineSource") "ExposureActive"
 
     $readback = [ordered]@{
@@ -292,6 +352,8 @@ function Configure-Line2ExposureActive {
       lineMode = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineMode, "LineMode")
       lineSource = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineSource, "LineSource")
       lineInverter = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineInverter, "LineInverter")
+      lineStatus = Get-ReadableParameterDiagnostic $camera @("LineStatus")
+      lineStatusAll = Get-ReadableParameterDiagnostic $camera @("LineStatusAll")
     }
 
     return [ordered]@{
@@ -301,7 +363,7 @@ function Configure-Line2ExposureActive {
       lineSelector = "Line2"
       lineMode = "Output"
       lineSource = "ExposureActive"
-      lineInverter = $false
+      lineInverter = $lineInverterBool
       persistentSaved = $false
       hardwareAccess = "explicit_pylon_line2_configuration"
       readback = $readback
@@ -314,6 +376,162 @@ function Configure-Line2ExposureActive {
         controlsLighting = $false
       }
       note = "Transient Basler Line 2 ExposureActive configuration only; no User Set was saved and no image was captured."
+    }
+  } finally {
+    if ($camera.IsOpen) {
+      try { [void]$camera.Close() } catch {}
+    }
+    try { $camera.Dispose() } catch {}
+  }
+}
+
+function Pulse-Line2UserOutput {
+  param([System.Collections.IDictionary]$Install)
+  $lineInverterBool = ($LineInverter -eq "true")
+  $idleBool = ($IdleUserOutputValue -eq "true")
+  $pulseBool = (-not $idleBool)
+
+  if ($PulseMs -lt 250 -or $PulseMs -gt 500) {
+    throw "PulseMs must be from 250 to 500."
+  }
+
+  if (-not $Apply) {
+    return [ordered]@{
+      applied = $false
+      baslerSettingsChanged = $false
+      cameraIndex = $CameraIndex
+      lineSelector = "Line2"
+      lineMode = "Output"
+      lineSource = "UserOutput1"
+      lineInverter = $lineInverterBool
+      userOutputSelector = "UserOutput1"
+      idleUserOutputValue = $idleBool
+      pulseUserOutputValue = $pulseBool
+      pulseMs = $PulseMs
+      persistentSaved = $false
+      hardwareAccess = "dry_run_no_camera_opened"
+      safety = [ordered]@{
+        dryRun = $true
+        writesApplied = $false
+        baslerSettingsChanged = $false
+        persistentSaved = $false
+        capturesImages = $false
+        controlsLighting = $false
+        restoresIdle = $true
+      }
+      note = "Dry-run Basler Line 2 UserOutput1 pulse plan only; does not open the camera, does not save a User Set, and does not capture images."
+    }
+  }
+
+  $devices = [Basler.Pylon.CameraFinder]::Enumerate([Basler.Pylon.DeviceType]::GigE)
+  if ($devices.Count -eq 0) {
+    throw "No Basler GigE cameras were detected."
+  }
+  if ($CameraIndex -lt 0 -or $CameraIndex -ge $devices.Count) {
+    throw "CameraIndex $CameraIndex is out of range for $($devices.Count) detected camera(s)."
+  }
+
+  $camera = [Basler.Pylon.Camera]::new($devices[$CameraIndex])
+  try {
+    [void]$camera.Open()
+    Set-EnumParameterByName $camera @("UserOutputSelector") "UserOutput1"
+    Set-BoolParameterByName $camera @("UserOutputValue") $idleBool
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::LineSelector, "LineSelector") "Line2"
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::LineMode, "LineMode") "Output"
+    Set-BoolParameterByName $camera @([Basler.Pylon.PLCamera]::LineInverter, "LineInverter") $lineInverterBool
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::LineSource, "LineSource") "UserOutput1"
+
+    $beforePulse = Get-Line2UserOutputReadback $camera
+    Set-BoolParameterByName $camera @("UserOutputValue") $pulseBool
+    Start-Sleep -Milliseconds $PulseMs
+    $duringPulse = Get-Line2UserOutputReadback $camera
+    Set-BoolParameterByName $camera @("UserOutputValue") $idleBool
+    $afterPulse = Get-Line2UserOutputReadback $camera
+
+    return [ordered]@{
+      applied = $true
+      baslerSettingsChanged = $true
+      cameraIndex = $CameraIndex
+      lineSelector = "Line2"
+      lineMode = "Output"
+      lineSource = "UserOutput1"
+      lineInverter = $lineInverterBool
+      userOutputSelector = "UserOutput1"
+      idleUserOutputValue = $idleBool
+      pulseUserOutputValue = $pulseBool
+      pulseMs = $PulseMs
+      persistentSaved = $false
+      hardwareAccess = "explicit_pylon_line2_user_output_pulse"
+      readback = [ordered]@{
+        beforePulse = $beforePulse
+        duringPulse = $duringPulse
+        afterPulse = $afterPulse
+      }
+      safety = [ordered]@{
+        dryRun = $false
+        writesApplied = $true
+        baslerSettingsChanged = $true
+        persistentSaved = $false
+        capturesImages = $false
+        controlsLighting = $false
+        restoresIdle = $true
+      }
+      note = "Transient Basler Line 2 UserOutput1 manual pulse only; UserOutputValue was restored to idle, no User Set was saved, and no image was captured."
+    }
+  } finally {
+    if ($camera.IsOpen) {
+      try {
+        Set-EnumParameterByName $camera @("UserOutputSelector") "UserOutput1"
+        Set-BoolParameterByName $camera @("UserOutputValue") $idleBool
+      } catch {}
+      try { [void]$camera.Close() } catch {}
+    }
+    try { $camera.Dispose() } catch {}
+  }
+}
+
+function Read-Line2Status {
+  param([System.Collections.IDictionary]$Install)
+
+  $devices = [Basler.Pylon.CameraFinder]::Enumerate([Basler.Pylon.DeviceType]::GigE)
+  if ($devices.Count -eq 0) {
+    throw "No Basler GigE cameras were detected."
+  }
+  if ($CameraIndex -lt 0 -or $CameraIndex -ge $devices.Count) {
+    throw "CameraIndex $CameraIndex is out of range for $($devices.Count) detected camera(s)."
+  }
+
+  $camera = [Basler.Pylon.Camera]::new($devices[$CameraIndex])
+  try {
+    [void]$camera.Open()
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::LineSelector, "LineSelector") "Line2"
+
+    $readback = [ordered]@{
+      lineSelector = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineSelector, "LineSelector")
+      lineMode = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineMode, "LineMode")
+      lineSource = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineSource, "LineSource")
+      lineInverter = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineInverter, "LineInverter")
+      lineStatus = Get-ReadableParameterDiagnostic $camera @("LineStatus")
+      lineStatusAll = Get-ReadableParameterDiagnostic $camera @("LineStatusAll")
+    }
+
+    return [ordered]@{
+      applied = $false
+      baslerSettingsChanged = $false
+      cameraIndex = $CameraIndex
+      lineSelector = "Line2"
+      persistentSaved = $false
+      hardwareAccess = "explicit_pylon_line2_status_read"
+      readback = $readback
+      safety = [ordered]@{
+        dryRun = $false
+        writesApplied = $false
+        baslerSettingsChanged = $false
+        persistentSaved = $false
+        capturesImages = $false
+        controlsLighting = $false
+      }
+      note = "Read-only Basler Line 2 status readback; no User Set was saved and no image was captured."
     }
   } finally {
     if ($camera.IsOpen) {
@@ -407,6 +625,9 @@ function Capture-Still {
 
   try {
     [void]$camera.Open()
+    if ($ExposureUs -gt 0) {
+      [void](Set-FloatParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs, "ExposureTime") ([double]$ExposureUs))
+    }
     $configuredPixelFormat = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::PixelFormat)
     $exposureTime = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs)
     $gain = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw)
@@ -502,6 +723,18 @@ try {
 
   if ($Action -eq "line2-exposure-active") {
     $result = Configure-Line2ExposureActive $install
+    Write-BridgeJson ([ordered]@{ ok = $true; result = $result })
+    exit 0
+  }
+
+  if ($Action -eq "line2-status") {
+    $result = Read-Line2Status $install
+    Write-BridgeJson ([ordered]@{ ok = $true; result = $result })
+    exit 0
+  }
+
+  if ($Action -eq "line2-user-output-pulse") {
+    $result = Pulse-Line2UserOutput $install
     Write-BridgeJson ([ordered]@{ ok = $true; result = $result })
     exit 0
   }
