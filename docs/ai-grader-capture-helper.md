@@ -417,6 +417,56 @@ The accepted image-stat smoke used Basler Line2 `ExposureActive`, `LineInverter=
 
 Next steps after PR #36 are calibration, repeatability testing, lighting profile/channel mapping, UI/report integration, and a later acceptance pass for persistent camera/controller settings only after explicit operator approval.
 
+PR #37 starts the local/offline full-rig smoke package path. The accepted PR #36 polarity (`line2-inverter-level-low`: Basler Line2 `ExposureActive` with `LineInverter=true`, Leimac `TriggerActivation=LevelLow`, `TRG IN1`) is now the default Basler/Leimac macro package profile:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-leimac-macro-package `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --output-dir C:\TenKings\capture-data\full-rig-smoke `
+  --profile line2-inverter-level-low `
+  --duty 5 `
+  --exposure-us 50000 `
+  --include-dark-control `
+  --apply `
+  --confirm "RUN BASLER LEIMAC MACRO PACKAGE" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off
+```
+
+The macro package command safe-offs before and after, captures a dark-control PNG and a synchronized macro PNG outside the repo, computes image stats plus histogram buckets, and writes a local `manifest.json` and `preview-report.html` contact sheet. It records `lightingProfileId=line2-inverter-level-low-v0`, `cameraRole=macro_overview`, `isCalibrated=false`, and `evidenceClass=macro_sync_smoke_uncalibrated`. It does not save persistent Basler or Leimac settings and does not upload or write to a production database.
+
+PR #37 also adds the combined local smoke command:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-full-rig-local-smoke `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --output-dir C:\TenKings\capture-data\full-rig-smoke `
+  --basler-duty 5 `
+  --basler-exposure-us 50000 `
+  --dinolite-plan experimental-card-grading `
+  --bridge-exe <dnvideox-bridge.exe> `
+  --adapter dnvideox `
+  --device-index 0 `
+  --apply `
+  --confirm "RUN AI GRADER FULL RIG LOCAL SMOKE" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off
+```
+
+That command runs the Basler/Leimac macro package first, then launches the existing Dino-Lite `experimental-card-grading` operator workflow for detail captures. The unified local manifest/report separates Basler macro evidence from Dino-Lite detail evidence. Basler macro is recorded as the preferred macro/centering evidence source, but v0 experimental scoring is not rerouted to the Basler image yet; if the existing scorer cannot safely switch centering input, the manifest records the routing as not yet used rather than fabricating scores. The full-rig workflow remains local/offline and uncalibrated. Production upload, DB integration, calibrated macro evidence, final AI grade, certificate, and certified grading are future work.
+
+Local Dell supervised PR #37 smoke on 2026-06-29 completed the Basler/Leimac macro package and one combined local full-rig workflow. The standalone macro package output was `C:\TenKings\capture-data\full-rig-smoke\basler-leimac-macro-package-2026-06-29T053038955Z`, with preview report `preview-report.html`; dark mean was `0.3807`, synced mean was `73.6150`, synced max was `255`, and `materiallyBrighter=true`. Mark reviewed that preview and noted the Basler macro card image was out of focus. That is recorded as an optical setup limitation for future calibration/readiness work, not as calibrated evidence.
+
+The combined full-rig output was `C:\TenKings\capture-data\full-rig-smoke\ai-grader-full-rig-local-smoke-2026-06-29T053708147Z`, with unified `manifest.json` and `preview-report.html`. The Basler macro stage used the accepted `line2-inverter-level-low-v0` lighting profile at `5%` duty and `50000 us` exposure. Dark control PNG: `basler-basler-leimac-macro-dark-control-20260629T053714495Z.png`, SHA-256 `51098b8e7c2669583258dd9a5d6b541a36af4f1eca41d485f55138e669200450`, `226320` bytes, `2448x2048`, mean `0.3768`, max `8`. Synced macro PNG: `basler-basler-leimac-macro-synced-20260629T053730136Z.png`, SHA-256 `de486fc663ac3e9d5fb21c58c464756577b5de35d45e2dc3bc45db9886dfe83c`, `1624764` bytes, `2448x2048`, mean `73.6089`, max `255`. The comparison had mean delta `73.2321` and `materiallyBrighter=true`.
+
+The same full-rig run captured 12 Dino-Lite detail JPGs through the `experimental-card-grading` operator workflow under `dinolite-detail\dinolite-operator-ai-grader-full-rig-local-smoke-2026-06-29T053708147Z-20260629T053732919Z`, then wrote Dino-Lite `manifest.json`, `analysis.json`, and `preview-report.html`. The unified manifest records Basler macro as `macroOverviewSource=basler_leimac`, Dino-Lite as `detailSource=dinolite`, `centeringInput=basler_preferred_not_routed_to_score_v0`, and `scoringStatus=existing_dinolite_experimental_analysis_preserved`. The package remains local/offline and uncalibrated.
+
 ### Arduino LED Readiness
 
 The Arduino LED readiness adapter assumes the v5 Appendix A ASCII serial protocol at `115200` baud:

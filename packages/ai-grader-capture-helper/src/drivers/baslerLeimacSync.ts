@@ -182,6 +182,11 @@ export interface BaslerLeimacImageStats {
   mean: number;
   nonZeroFraction: number;
   brightFraction: number;
+  histogram?: Array<{
+    range: string;
+    count: number;
+    fraction: number;
+  }>;
 }
 
 export interface BaslerLeimacImageStatSyncSmokeManifest {
@@ -521,12 +526,14 @@ export async function analyzeBaslerLeimacImageStats(filePath: string): Promise<B
   let sum = 0;
   let nonZero = 0;
   let bright = 0;
+  const buckets = new Array<number>(8).fill(0);
   for (const value of data) {
     if (value < min) min = value;
     if (value > max) max = value;
     sum += value;
     if (value > 0) nonZero += 1;
     if (value >= 32) bright += 1;
+    buckets[Math.min(7, Math.floor(value / 32))] += 1;
   }
   const count = data.length || 1;
   return {
@@ -539,6 +546,15 @@ export async function analyzeBaslerLeimacImageStats(filePath: string): Promise<B
     mean: roundMetric(sum / count, 4),
     nonZeroFraction: roundMetric(nonZero / count, 6),
     brightFraction: roundMetric(bright / count, 6),
+    histogram: buckets.map((bucketCount, index) => {
+      const start = index * 32;
+      const end = index === 7 ? 255 : start + 31;
+      return {
+        range: `${start}-${end}`,
+        count: bucketCount,
+        fraction: roundMetric(bucketCount / count, 6),
+      };
+    }),
   };
 }
 
