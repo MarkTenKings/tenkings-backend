@@ -12,6 +12,16 @@ const {
   renderMacroPackageReport,
 } = require("../dist/drivers/baslerLeimacFullRig");
 const {
+  AI_GRADER_FIXED_RIG_V1_CONFIRMATION,
+  BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION,
+  buildFixedRigFocusAssistManifest,
+  buildFixedRigLightingProfilePlan,
+  buildFixedRigSideCapture,
+  buildFixedRigV1LocalManifest,
+  renderFixedRigFocusAssistReport,
+  renderFixedRigV1Report,
+} = require("../dist/drivers/baslerFixedRigV1");
+const {
   BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_SYNC_SMOKE_CONFIRMATION,
@@ -128,6 +138,45 @@ function fakeLine2Status() {
       controlsLighting: false,
     },
     note: "Read-only Basler Line 2 status query; no User Set was saved and no image was captured.",
+  };
+}
+
+function fakeFixedRigQuality(overrides = {}) {
+  return {
+    filePath: path.join(os.tmpdir(), "fixed-rig-v1", "synced.png"),
+    width: 2448,
+    height: 2048,
+    channels: 1,
+    min: 0,
+    max: 255,
+    mean: 73.6,
+    nonZeroFraction: 1,
+    brightFraction: 0.46,
+    histogram: [],
+    clippedPixelFraction: 0.01,
+    darkPixelFraction: 0.03,
+    sharpnessScore: 42,
+    cardBoundary: {
+      status: "detected",
+      x: 200,
+      y: 150,
+      width: 2000,
+      height: 1700,
+      coverage: 0.678,
+      confidence: 0.65,
+    },
+    framing: {
+      status: "acceptable_for_smoke",
+      cardCoverageEstimate: 0.678,
+      warnings: [],
+    },
+    focus: {
+      status: "manual_review",
+      sharpnessScore: 42,
+      recommendation: "Manual focus assist only.",
+    },
+    warnings: [],
+    ...overrides,
   };
 }
 
@@ -672,4 +721,220 @@ test("Basler macro package and full-rig CLIs reject unsafe inputs before hardwar
   ]);
   assert.equal(fullRigMissingConfirmation.code, 1);
   assert.match(fullRigMissingConfirmation.stderr.error, new RegExp(AI_GRADER_FULL_RIG_LOCAL_SMOKE_CONFIRMATION));
+});
+
+test("Fixed-rig lighting profile plan is dry-run and does not invent channel mapping", async () => {
+  const plan = buildFixedRigLightingProfilePlan();
+  assert.equal(plan.dryRun, true);
+  assert.equal(plan.selectedLightingProfile, "line2-inverter-level-low-v0");
+  assert.equal(plan.channelMappingStatus, "not_calibrated");
+  assert.equal(plan.safety.writesApplied, false);
+  assert.equal(plan.safety.lightsCommanded, false);
+  assert.equal(plan.safety.channelPhysicalMappingInvented, false);
+  assert.equal(plan.profiles.some((profile) => profile.id === "surface-scratch-low-angle-candidate-v0"), true);
+
+  const cli = await runCli(["fixed-rig-lighting-profile-plan"]);
+  assert.equal(cli.code, 0);
+  assert.equal(cli.stdout.plan.dryRun, true);
+  assert.equal(cli.stdout.plan.channelMappingStatus, "not_calibrated");
+});
+
+test("Fixed-rig focus assist manifest reports manual focus metrics without autofocus claims", () => {
+  const macroManifest = buildBaslerLeimacMacroPackageManifest({
+    status: "captured",
+    packageId: "macro",
+    packageDir: path.join(os.tmpdir(), "fixed-rig-v1", "macro"),
+    leimacHost: "169.254.191.156",
+    leimacPort: 1000,
+    leimacProfilePlan: buildLeimacIdmuTriggerProfilePlan({ dutyPercent: 5, triggerActivation: "LevelLow" }),
+    requestedExposureUs: 50000,
+    dutyPercent: 5,
+    synced: {
+      capture: fakeCapture(),
+      stats: fakeFixedRigQuality(),
+    },
+    supervised: true,
+    safeOffBefore: true,
+    safeOffAfter: true,
+  });
+  const manifest = buildFixedRigFocusAssistManifest({
+    packageId: "focus",
+    packageDir: path.join(os.tmpdir(), "fixed-rig-v1", "focus"),
+    status: "captured",
+    macroPackage: macroManifest,
+    quality: fakeFixedRigQuality(),
+    safeOffBefore: true,
+    safeOffAfter: true,
+  });
+
+  assert.equal(manifest.operatorGuidance.manualFocusOnly, true);
+  assert.equal(manifest.operatorGuidance.autofocusClaimed, false);
+  assert.equal(manifest.quality.sharpnessScore, 42);
+  assert.equal(manifest.quality.cardBoundary.status, "detected");
+  assert.equal(manifest.safety.persistentBaslerSaved, false);
+  assert.equal(manifest.safety.persistentLeimacSaved, false);
+  assert.match(renderFixedRigFocusAssistReport(manifest), /Manual focus assist only/i);
+  assert.doesNotMatch(JSON.stringify(manifest).toLowerCase(), /autofocusclaimed":true|"iscalibrated":true|certifiedgrading":true/);
+});
+
+test("Fixed-rig V1 manifest routes Basler first and reports not_computed on boundary failure", () => {
+  const macroManifest = buildBaslerLeimacMacroPackageManifest({
+    status: "captured",
+    packageId: "macro",
+    packageDir: path.join(os.tmpdir(), "fixed-rig-v1", "macro"),
+    leimacHost: "169.254.191.156",
+    leimacPort: 1000,
+    leimacProfilePlan: buildLeimacIdmuTriggerProfilePlan({ dutyPercent: 5, triggerActivation: "LevelLow" }),
+    requestedExposureUs: 50000,
+    dutyPercent: 5,
+    darkControl: {
+      capture: fakeCapture(),
+      stats: fakeFixedRigQuality({ mean: 0.3, max: 8 }),
+    },
+    synced: {
+      capture: { ...fakeCapture(), outputFilePath: path.join(os.tmpdir(), "fixed-rig-v1", "front.png") },
+      stats: fakeFixedRigQuality(),
+    },
+    supervised: true,
+    safeOffBefore: true,
+    safeOffAfter: true,
+  });
+  const failedBoundaryQuality = fakeFixedRigQuality({
+    cardBoundary: {
+      status: "not_computed",
+      confidence: 0,
+      reason: "No reliable bright foreground boundary found.",
+    },
+    warnings: ["Card boundary was not computed; ROI screening remains not_computed."],
+  });
+  const side = buildFixedRigSideCapture({
+    side: "front",
+    macroPackage: macroManifest,
+    quality: failedBoundaryQuality,
+  });
+  const manifest = buildFixedRigV1LocalManifest({
+    packageId: "fixed-rig",
+    packageDir: path.join(os.tmpdir(), "fixed-rig-v1", "run"),
+    status: "completed",
+    front: side,
+    back: side,
+  });
+
+  assert.equal(manifest.workflow.mode, "fixed_overhead_basler_v1");
+  assert.equal(manifest.workflow.baslerRole, "primary_macro_overview_measurement_screening");
+  assert.equal(manifest.workflow.dinoliteRole, "optional_manual_detail_confirmation");
+  assert.equal(manifest.workflow.automationNotRequiredForV1.includes("dobot"), true);
+  assert.equal(manifest.front.analysis.status, "not_computed");
+  assert.match(manifest.front.analysis.notComputedReason, /boundary was not computed/);
+  assert.equal(manifest.front.roiDefinitions.every((roi) => roi.status === "not_computed"), true);
+  assert.equal(manifest.followUpPlan.status, "not_computed");
+  assert.equal(manifest.calibration.evidenceClass, "macro_fixed_rig_v1_uncalibrated");
+  assert.equal(manifest.safety.productionUpload, false);
+  assert.equal(manifest.safety.databaseWrites, false);
+  assert.match(renderFixedRigV1Report(manifest), /Basler is primary macro measurement\/screening evidence/i);
+  assert.doesNotMatch(JSON.stringify(manifest).toLowerCase(), /"iscalibrated":true|certificateid|certifiedgrading":true/);
+});
+
+test("Fixed-rig V1 CLIs reject unsafe inputs before hardware", async () => {
+  const outputDir = path.join(os.tmpdir(), "fixed-rig-v1");
+
+  const focusDryRun = await runCli([
+    "basler-fixed-rig-focus-assist",
+    "--output-dir",
+    outputDir,
+    "--duty",
+    "5",
+  ]);
+  assert.equal(focusDryRun.code, 0);
+  assert.equal(focusDryRun.stdout.dryRun, true);
+  assert.equal(focusDryRun.stdout.manifest.operatorGuidance.manualFocusOnly, true);
+
+  const focusRepoOutput = await runCli([
+    "basler-fixed-rig-focus-assist",
+    "--output-dir",
+    process.cwd(),
+  ]);
+  assert.equal(focusRepoOutput.code, 1);
+  assert.match(focusRepoOutput.stderr.error, /outside the git repo/);
+
+  const focusMissingConfirmation = await runCli([
+    "basler-fixed-rig-focus-assist",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--apply",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(focusMissingConfirmation.code, 1);
+  assert.match(focusMissingConfirmation.stderr.error, new RegExp(BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION));
+
+  const focusHighDuty = await runCli(["basler-fixed-rig-focus-assist", "--duty", "6"]);
+  assert.equal(focusHighDuty.code, 1);
+  assert.match(focusHighDuty.stderr.error, /capped at 5%/);
+
+  const fixedRigDryRun = await runCli([
+    "ai-grader-fixed-rig-v1-local",
+    "--output-dir",
+    outputDir,
+  ]);
+  assert.equal(fixedRigDryRun.code, 0);
+  assert.equal(fixedRigDryRun.stdout.dryRun, true);
+  assert.equal(fixedRigDryRun.stdout.manifest.workflow.mode, "fixed_overhead_basler_v1");
+
+  const fixedRigRepoOutput = await runCli([
+    "ai-grader-fixed-rig-v1-local",
+    "--output-dir",
+    process.cwd(),
+  ]);
+  assert.equal(fixedRigRepoOutput.code, 1);
+  assert.match(fixedRigRepoOutput.stderr.error, /outside the git repo/);
+
+  const fixedRigMissingConfirmation = await runCli([
+    "ai-grader-fixed-rig-v1-local",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--apply",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+    "--operator-flip-confirmed",
+  ]);
+  assert.equal(fixedRigMissingConfirmation.code, 1);
+  assert.match(fixedRigMissingConfirmation.stderr.error, new RegExp(AI_GRADER_FIXED_RIG_V1_CONFIRMATION));
+
+  const fixedRigMissingFlip = await runCli([
+    "ai-grader-fixed-rig-v1-local",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--apply",
+    "--confirm",
+    AI_GRADER_FIXED_RIG_V1_CONFIRMATION,
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(fixedRigMissingFlip.code, 1);
+  assert.match(fixedRigMissingFlip.stderr.error, /--operator-flip-confirmed/);
+
+  const fixedRigInvalidFlipDelay = await runCli([
+    "ai-grader-fixed-rig-v1-local",
+    "--operator-flip-delay-ms",
+    "300001",
+  ]);
+  assert.equal(fixedRigInvalidFlipDelay.code, 1);
+  assert.match(fixedRigInvalidFlipDelay.stderr.error, /--operator-flip-delay-ms/);
+
+  const fixedRigHighDuty = await runCli(["ai-grader-fixed-rig-v1-local", "--duty", "6"]);
+  assert.equal(fixedRigHighDuty.code, 1);
+  assert.match(fixedRigHighDuty.stderr.error, /capped at 5%/);
 });

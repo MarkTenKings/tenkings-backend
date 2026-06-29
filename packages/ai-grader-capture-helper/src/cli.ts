@@ -28,6 +28,10 @@ export interface CaptureHelperCliIO {
   env?: CaptureHelperEnv;
 }
 
+const sleep = (ms: number) => new Promise<void>((resolve) => {
+  setTimeout(resolve, ms);
+});
+
 type ParsedCommand =
   | { command: "health"; config: CaptureHelperConfigInput }
   | { command: "capabilities"; config: CaptureHelperConfigInput }
@@ -229,6 +233,51 @@ type ParsedCommand =
       leimacStatusGreen: boolean;
       operatorConfirmedLightIdleOff: boolean;
     }
+  | {
+      command: "basler-fixed-rig-focus-assist";
+      config: CaptureHelperConfigInput;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      baslerBridgeScript: string | undefined;
+      cameraIndex: number | undefined;
+      outputDir: string | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacTimeoutMs: number | undefined;
+      leimacUnit: number | undefined;
+      duty: number | undefined;
+      exposureUs: number | undefined;
+      apply: boolean;
+      confirmation: string | undefined;
+      markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
+      operatorConfirmedLightIdleOff: boolean;
+    }
+  | {
+      command: "ai-grader-fixed-rig-v1-local";
+      config: CaptureHelperConfigInput;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      baslerBridgeScript: string | undefined;
+      cameraIndex: number | undefined;
+      outputDir: string | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacTimeoutMs: number | undefined;
+      leimacUnit: number | undefined;
+      duty: number | undefined;
+      exposureUs: number | undefined;
+      apply: boolean;
+      confirmation: string | undefined;
+      markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
+      operatorConfirmedLightIdleOff: boolean;
+      operatorFlipConfirmed: boolean;
+      operatorFlipDelayMs: number | undefined;
+    }
+  | { command: "fixed-rig-lighting-profile-plan"; config: CaptureHelperConfigInput }
   | { command: "dinolite-enumerate"; config: CaptureHelperConfigInput }
   | { command: "dinolite-status"; config: CaptureHelperConfigInput; deviceIndex: number | undefined }
   | { command: "dinolite-capture-still"; config: CaptureHelperConfigInput; deviceIndex: number | undefined; outputDir: string | undefined }
@@ -313,6 +362,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let operatorConfirmedLightNotContinuous = false;
   let operatorConfirmedLightIdleOff = false;
   let operatorReportedIdleOn = false;
+  let operatorFlipConfirmed = false;
+  let operatorFlipDelayMs: number | undefined;
   let captureConfirmed = false;
   let includeLightingSweep = false;
   let includeFlcSweep = false;
@@ -524,6 +575,16 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--operator-confirmed-light-idle-off":
         operatorConfirmedLightIdleOff = true;
+        break;
+      case "--operator-flip-confirmed":
+        operatorFlipConfirmed = true;
+        break;
+      case "--operator-flip-delay-ms":
+        operatorFlipDelayMs = Number(readOption(rest, index, "--operator-flip-delay-ms"));
+        if (!Number.isInteger(operatorFlipDelayMs) || operatorFlipDelayMs < 0 || operatorFlipDelayMs > 300000) {
+          throw new CaptureHelperCommandError("--operator-flip-delay-ms must be an integer from 0 to 300000.");
+        }
+        index += 1;
         break;
       case "--operator-reported-idle-on":
         operatorReportedIdleOn = true;
@@ -812,6 +873,9 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "basler-leimac-image-stat-sync-smoke" ||
     command === "basler-leimac-macro-package" ||
     command === "ai-grader-full-rig-local-smoke" ||
+    command === "basler-fixed-rig-focus-assist" ||
+    command === "ai-grader-fixed-rig-v1-local" ||
+    command === "fixed-rig-lighting-profile-plan" ||
     command === "dinolite-enumerate" ||
     command === "dinolite-status" ||
     command === "dinolite-capture-still" ||
@@ -1053,6 +1117,61 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         operatorConfirmedLightIdleOff,
       };
     }
+    if (command === "basler-fixed-rig-focus-assist" || command === "ai-grader-fixed-rig-v1-local") {
+      const leimacHostValue = leimacHost ?? host;
+      const leimacPortValue = leimacPort ?? port;
+      const parsedLeimacPort = leimacPortValue === undefined ? undefined : Number(leimacPortValue);
+      if (parsedLeimacPort !== undefined && (!Number.isInteger(parsedLeimacPort) || parsedLeimacPort <= 0)) {
+        throw new CaptureHelperCommandError("--leimac-port must be a positive integer.");
+      }
+      if (command === "basler-fixed-rig-focus-assist") {
+        return {
+          command,
+          config,
+          pylonRoot,
+          pylonTimeoutMs,
+          baslerBridgeScript,
+          cameraIndex,
+          outputDir,
+          leimacHost: leimacHostValue,
+          leimacPort: parsedLeimacPort,
+          leimacTimeoutMs,
+          leimacUnit,
+          duty,
+          exposureUs,
+          apply,
+          confirmation,
+          markPresent,
+          wiringConfirmed,
+          leimacStatusGreen,
+          operatorConfirmedLightIdleOff,
+        };
+      }
+      return {
+        command,
+        config,
+        pylonRoot,
+        pylonTimeoutMs,
+        baslerBridgeScript,
+        cameraIndex,
+        outputDir,
+        leimacHost: leimacHostValue,
+        leimacPort: parsedLeimacPort,
+        leimacTimeoutMs,
+        leimacUnit,
+        duty,
+        exposureUs,
+        apply,
+        confirmation,
+        markPresent,
+        wiringConfirmed,
+        leimacStatusGreen,
+        operatorConfirmedLightIdleOff,
+        operatorFlipConfirmed,
+        operatorFlipDelayMs,
+      };
+    }
+    if (command === "fixed-rig-lighting-profile-plan") return { command, config };
     if (command === "dinolite-status") return { command, config, deviceIndex };
     if (command === "dinolite-capture-still") return { command, config, deviceIndex, outputDir };
     if (command === "dinolite-capture-package" || command === "dinolite-capture-demo-package") {
@@ -1102,6 +1221,9 @@ function helpPayload() {
       "basler-leimac-image-stat-sync-smoke --leimac-host 169.254.191.156 --leimac-port 1000 --candidate line2-inverter-level-low --output-dir C:\\TenKings\\capture-data\\basler-leimac-sync --duty 3 --exposure-us 50000 --apply --confirm \"RUN SUPERVISED BASLER LEIMAC IMAGE STAT SYNC SMOKE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "basler-leimac-macro-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\full-rig-smoke --profile line2-inverter-level-low --duty 5 --exposure-us 50000 --include-dark-control --apply --confirm \"RUN BASLER LEIMAC MACRO PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "ai-grader-full-rig-local-smoke --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\full-rig-smoke --basler-duty 5 --basler-exposure-us 50000 --dinolite-plan experimental-card-grading --bridge-exe <exe> --adapter dnvideox --device-index 0 --apply --confirm \"RUN AI GRADER FULL RIG LOCAL SMOKE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
+      "fixed-rig-lighting-profile-plan",
+      "basler-fixed-rig-focus-assist --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --duty 5 --exposure-us 50000 --apply --confirm \"RUN BASLER FIXED RIG FOCUS ASSIST\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
+      "ai-grader-fixed-rig-v1-local --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --duty 5 --exposure-us 50000 --apply --confirm \"RUN AI GRADER FIXED RIG V1 LOCAL\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed --operator-flip-delay-ms 30000",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -1153,6 +1275,8 @@ function helpPayload() {
       "--operator-confirmed-light-idle-off",
       "--operator-reported-idle-on",
       "--capture-confirmed",
+      "--operator-flip-confirmed",
+      "--operator-flip-delay-ms 0..300000",
       "--camera-index",
       "--format png|tiff|jpg",
       "--lens-model",
@@ -2442,6 +2566,343 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         operatorPrompt: "Confirm final Leimac ring-light state is off after safe-off.",
       });
       return workflow.status === "aborted" ? 1 : 0;
+    }
+
+    if (parsed.command === "fixed-rig-lighting-profile-plan") {
+      const { buildFixedRigLightingProfilePlan } = await import("./drivers/baslerFixedRigV1");
+      writeJson(stdout, {
+        ok: true,
+        service: "ai-grader-capture-helper",
+        command: "fixed-rig-lighting-profile-plan",
+        plan: buildFixedRigLightingProfilePlan(),
+      });
+      return 0;
+    }
+
+    if (parsed.command === "basler-fixed-rig-focus-assist") {
+      const {
+        BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION,
+        analyzeFixedRigMacroQuality,
+        assertFixedRigOutputDirAllowed,
+        buildFixedRigFocusAssistManifest,
+        createFixedRigPackageDir,
+        writeFixedRigFocusAssistArtifacts,
+      } = await import("./drivers/baslerFixedRigV1");
+      const {
+        ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+        BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION,
+      } = await import("./drivers/baslerLeimacFullRig");
+      const { buildBaslerLeimacPolaritySmokePlan } = await import("./drivers/baslerLeimacSync");
+
+      const exposureUs = parsed.exposureUs ?? 50000;
+      if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
+        throw new CaptureHelperCommandError("basler-fixed-rig-focus-assist --exposure-us must be from 1 to 100000.");
+      }
+      const plan = buildBaslerLeimacPolaritySmokePlan({
+        dutyPercent: parsed.duty ?? 5,
+        exposureUs,
+        candidateId: ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+        dryRun: !parsed.apply,
+      });
+
+      if (!parsed.apply) {
+        if (parsed.outputDir) {
+          assertFixedRigOutputDirAllowed(parsed.outputDir);
+        }
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "basler-fixed-rig-focus-assist",
+          dryRun: true,
+          plan,
+          manifest: buildFixedRigFocusAssistManifest({
+            packageId: "planned-basler-fixed-rig-focus-assist",
+            packageDir: parsed.outputDir ?? "",
+            status: "planned",
+            safeOffBefore: false,
+            safeOffAfter: false,
+          }),
+        });
+        return 0;
+      }
+
+      if (parsed.confirmation !== BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION) {
+        throw new CaptureHelperCommandError(`basler-fixed-rig-focus-assist --apply requires --confirm "${BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION}".`);
+      }
+      if (!parsed.leimacHost) {
+        throw new CaptureHelperCommandError("basler-fixed-rig-focus-assist --apply requires explicit --leimac-host <ip>.");
+      }
+      if (!parsed.markPresent) {
+        throw new CaptureHelperCommandError("basler-fixed-rig-focus-assist --apply requires --mark-present.");
+      }
+      if (!parsed.wiringConfirmed) {
+        throw new CaptureHelperCommandError("basler-fixed-rig-focus-assist --apply requires --wiring-confirmed.");
+      }
+      if (!parsed.leimacStatusGreen) {
+        throw new CaptureHelperCommandError("basler-fixed-rig-focus-assist --apply requires --leimac-status-green.");
+      }
+      if (!parsed.operatorConfirmedLightIdleOff) {
+        throw new CaptureHelperCommandError("basler-fixed-rig-focus-assist --apply requires --operator-confirmed-light-idle-off.");
+      }
+
+      const env = io.env ?? process.env;
+      const { packageId, packageDir } = await createFixedRigPackageDir(parsed.outputDir ?? "", "basler-fixed-rig-focus-assist");
+      const macroOutputDir = path.join(packageDir, "basler-macro");
+      let macroStdout = "";
+      let macroStderr = "";
+      const macroCode = await runCaptureHelperCli([
+        "basler-leimac-macro-package",
+        "--leimac-host",
+        parsed.leimacHost,
+        "--leimac-port",
+        String(parsed.leimacPort ?? 1000),
+        "--output-dir",
+        macroOutputDir,
+        "--profile",
+        ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+        "--duty",
+        String(plan.dutyPercent),
+        "--exposure-us",
+        String(exposureUs),
+        "--include-dark-control",
+        "--apply",
+        "--confirm",
+        BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION,
+        "--mark-present",
+        "--wiring-confirmed",
+        "--leimac-status-green",
+        "--operator-confirmed-light-idle-off",
+        ...(parsed.pylonRoot ? ["--pylon-root", parsed.pylonRoot] : []),
+        ...(parsed.pylonTimeoutMs ? ["--pylon-timeout-ms", String(parsed.pylonTimeoutMs)] : []),
+        ...(parsed.baslerBridgeScript ? ["--bridge-script", parsed.baslerBridgeScript] : []),
+        ...(parsed.cameraIndex !== undefined ? ["--camera-index", String(parsed.cameraIndex)] : []),
+        ...(parsed.leimacTimeoutMs ? ["--timeout-ms", String(parsed.leimacTimeoutMs)] : []),
+        ...(parsed.leimacUnit ? ["--unit", String(parsed.leimacUnit)] : []),
+      ], {
+        env,
+        stdout: (chunk) => {
+          macroStdout += chunk;
+        },
+        stderr: (chunk) => {
+          macroStderr += chunk;
+        },
+      });
+      const macroResult = macroStdout ? JSON.parse(macroStdout) : undefined;
+      const macroError = macroStderr ? JSON.parse(macroStderr) : undefined;
+      if (macroCode !== 0 || !macroResult?.manifest?.synced?.capture?.outputFilePath) {
+        writeJson(stdout, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "basler-fixed-rig-focus-assist",
+          packageDir,
+          macroResult,
+          macroError,
+          error: "Basler/Leimac macro package failed; focus assist metrics were not computed.",
+        });
+        return 1;
+      }
+      const quality = await analyzeFixedRigMacroQuality(macroResult.manifest.synced.capture.outputFilePath);
+      const manifest = buildFixedRigFocusAssistManifest({
+        packageId,
+        packageDir,
+        status: "captured",
+        macroPackage: macroResult.manifest,
+        quality,
+        safeOffBefore: macroResult.manifest.safety.safeOffBefore,
+        safeOffAfter: macroResult.manifest.safety.safeOffAfter,
+        finalLightOffConfirmedByMark: false,
+      });
+      const writtenManifest = await writeFixedRigFocusAssistArtifacts(manifest);
+      writeJson(stdout, {
+        ok: true,
+        service: "ai-grader-capture-helper",
+        command: "basler-fixed-rig-focus-assist",
+        packageDir,
+        macroPackage: macroResult,
+        quality,
+        manifestPath: writtenManifest.manifestPath,
+        previewReportPath: writtenManifest.previewReportPath,
+        manifest: writtenManifest,
+        operatorPrompt: "Review sharpness/framing, adjust manual focus/height if needed, and confirm final Leimac ring-light state is off after safe-off.",
+      });
+      return 0;
+    }
+
+    if (parsed.command === "ai-grader-fixed-rig-v1-local") {
+      const {
+        AI_GRADER_FIXED_RIG_V1_CONFIRMATION,
+        analyzeFixedRigMacroQuality,
+        assertFixedRigOutputDirAllowed,
+        buildFixedRigSideCapture,
+        buildFixedRigV1LocalManifest,
+        createFixedRigPackageDir,
+        writeFixedRigV1Artifacts,
+      } = await import("./drivers/baslerFixedRigV1");
+      const {
+        ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+        BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION,
+      } = await import("./drivers/baslerLeimacFullRig");
+      const { buildBaslerLeimacPolaritySmokePlan } = await import("./drivers/baslerLeimacSync");
+
+      const exposureUs = parsed.exposureUs ?? 50000;
+      if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-local --exposure-us must be from 1 to 100000.");
+      }
+      const plan = buildBaslerLeimacPolaritySmokePlan({
+        dutyPercent: parsed.duty ?? 5,
+        exposureUs,
+        candidateId: ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+        dryRun: !parsed.apply,
+      });
+
+      if (!parsed.apply) {
+        if (parsed.outputDir) {
+          assertFixedRigOutputDirAllowed(parsed.outputDir);
+        }
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "ai-grader-fixed-rig-v1-local",
+          dryRun: true,
+          plan,
+          manifest: buildFixedRigV1LocalManifest({
+            packageId: "planned-ai-grader-fixed-rig-v1-local",
+            packageDir: parsed.outputDir ?? "",
+            status: "planned",
+          }),
+        });
+        return 0;
+      }
+
+      if (parsed.confirmation !== AI_GRADER_FIXED_RIG_V1_CONFIRMATION) {
+        throw new CaptureHelperCommandError(`ai-grader-fixed-rig-v1-local --apply requires --confirm "${AI_GRADER_FIXED_RIG_V1_CONFIRMATION}".`);
+      }
+      if (!parsed.leimacHost) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-local --apply requires explicit --leimac-host <ip>.");
+      }
+      if (!parsed.markPresent) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-local --apply requires --mark-present.");
+      }
+      if (!parsed.wiringConfirmed) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-local --apply requires --wiring-confirmed.");
+      }
+      if (!parsed.leimacStatusGreen) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-local --apply requires --leimac-status-green.");
+      }
+      if (!parsed.operatorConfirmedLightIdleOff) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-local --apply requires --operator-confirmed-light-idle-off.");
+      }
+      if (!parsed.operatorFlipConfirmed) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-local --apply requires --operator-flip-confirmed before back-side capture.");
+      }
+
+      const env = io.env ?? process.env;
+      const { packageId, packageDir } = await createFixedRigPackageDir(parsed.outputDir ?? "", "ai-grader-fixed-rig-v1-local");
+      const leimacHost = parsed.leimacHost;
+      const runSide = async (side: "front" | "back") => {
+        stderr(side === "front"
+          ? "Instruction: Place card face-up in the fixed tray/position before front capture.\n"
+          : "Instruction: Flip card to the back side in the same fixed tray/position before back capture.\n");
+        let macroStdout = "";
+        let macroStderr = "";
+        const macroCode = await runCaptureHelperCli([
+          "basler-leimac-macro-package",
+          "--leimac-host",
+          leimacHost,
+          "--leimac-port",
+          String(parsed.leimacPort ?? 1000),
+          "--output-dir",
+          path.join(packageDir, `${side}-basler-macro`),
+          "--profile",
+          ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+          "--duty",
+          String(plan.dutyPercent),
+          "--exposure-us",
+          String(exposureUs),
+          "--include-dark-control",
+          "--apply",
+          "--confirm",
+          BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION,
+          "--mark-present",
+          "--wiring-confirmed",
+          "--leimac-status-green",
+          "--operator-confirmed-light-idle-off",
+          ...(parsed.pylonRoot ? ["--pylon-root", parsed.pylonRoot] : []),
+          ...(parsed.pylonTimeoutMs ? ["--pylon-timeout-ms", String(parsed.pylonTimeoutMs)] : []),
+          ...(parsed.baslerBridgeScript ? ["--bridge-script", parsed.baslerBridgeScript] : []),
+          ...(parsed.cameraIndex !== undefined ? ["--camera-index", String(parsed.cameraIndex)] : []),
+          ...(parsed.leimacTimeoutMs ? ["--timeout-ms", String(parsed.leimacTimeoutMs)] : []),
+          ...(parsed.leimacUnit ? ["--unit", String(parsed.leimacUnit)] : []),
+        ], {
+          env,
+          stdout: (chunk) => {
+            macroStdout += chunk;
+          },
+          stderr: (chunk) => {
+            macroStderr += chunk;
+          },
+        });
+        const macroResult = macroStdout ? JSON.parse(macroStdout) : undefined;
+        const macroError = macroStderr ? JSON.parse(macroStderr) : undefined;
+        if (macroCode !== 0 || !macroResult?.manifest?.synced?.capture?.outputFilePath) {
+          throw new CaptureHelperCommandError(
+            `Fixed-rig ${side} Basler/Leimac macro stage failed: ${macroError?.error ?? macroResult?.error ?? "unknown"}`
+          );
+        }
+        const quality = await analyzeFixedRigMacroQuality(macroResult.manifest.synced.capture.outputFilePath);
+        return {
+          macroResult,
+          sideCapture: buildFixedRigSideCapture({
+            side,
+            macroPackage: macroResult.manifest,
+            quality,
+          }),
+        };
+      };
+
+      try {
+        const front = await runSide("front");
+        const flipDelayMs = parsed.operatorFlipDelayMs ?? 0;
+        if (flipDelayMs > 0) {
+          stderr(`Instruction: Front capture complete. Flip card to the back side now; waiting ${flipDelayMs} ms before back capture.\n`);
+          await sleep(flipDelayMs);
+        }
+        const back = await runSide("back");
+        const manifest = buildFixedRigV1LocalManifest({
+          packageId,
+          packageDir,
+          status: "completed",
+          front: front.sideCapture,
+          back: back.sideCapture,
+          finalLightOffConfirmedByMark: false,
+        });
+        const writtenManifest = await writeFixedRigV1Artifacts(manifest);
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "ai-grader-fixed-rig-v1-local",
+          packageDir,
+          front: front.macroResult,
+          back: back.macroResult,
+          operatorFlipDelayMs: flipDelayMs,
+          manifestPath: writtenManifest.manifestPath,
+          analysisPath: writtenManifest.analysisPath,
+          previewReportPath: writtenManifest.previewReportPath,
+          manifest: writtenManifest,
+          operatorPrompt: "Review front/back macro evidence and confirm final Leimac ring-light state is off after safe-off.",
+        });
+        return 0;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown fixed-rig V1 workflow error.";
+        writeJson(stderr, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "ai-grader-fixed-rig-v1-local",
+          packageDir,
+          error: message,
+        });
+        return 1;
+      }
     }
 
     if (parsed.command === "basler-leimac-image-stat-sync-smoke") {

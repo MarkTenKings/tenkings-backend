@@ -20790,3 +20790,112 @@ By enabling Rip It Live, I confirm:
 - Captured images were written outside the repo and were not committed.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-29 UTC - AI Grader fixed-rig V1 workflow PR #38 implementation start
+
+### Summary
+- Started PR #38 branch `feature/ai-grader-fixed-rig-v1-workflow` from updated `main`.
+- V1 direction is fixed overhead Basler camera plus fixed Leimac synchronized lighting. Dobot/OpenBuilds/robotic-arm automation is V2, not a V1 requirement.
+- V1 human workflow:
+  - place raw card face-up in fixed tray/position
+  - capture front Basler/Leimac macro evidence
+  - flip card to back side
+  - capture back Basler/Leimac macro evidence
+  - use Dino-Lite only for optional manual detail confirmation when suggested or requested
+- Implemented local/offline fixed-rig command foundations:
+  - `basler-fixed-rig-focus-assist`
+  - `ai-grader-fixed-rig-v1-local`
+  - `fixed-rig-lighting-profile-plan`
+
+### Implementation Notes
+- Focus assist is manual focus/framing support, not autofocus.
+- Focus metrics include mean/max brightness, clipped-pixel fraction, dark-pixel fraction, sharpness score, approximate card boundary/coverage, framing warnings, and repeat-until-stable guidance.
+- Fixed-rig V1 workflow captures front/back dark controls and synced Basler macros, then writes `manifest.json`, `analysis.json`, and `preview-report.html`.
+- Approximate front/back ROI definitions are generated only when a boundary is detected; otherwise analysis reports `not_computed` instead of fake scoring or fake defects.
+- Basler macro is recorded as the primary macro/overview and screening evidence path. Dino-Lite is recorded as optional manual detail confirmation.
+- Multi-light profile plan is dry-run only because Leimac channel-to-physical-light mapping is not calibrated.
+
+### Validation So Far
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 126 tests.
+
+### Guardrails So Far
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Arduino command was run.
+- No stage/motor command was run.
+- No Windows network setting was changed.
+- No Leimac SYSTEM RESET or FACTORY DEFAULT was run.
+- No persistent Leimac User Set save was run.
+- No persistent Basler User Set save was run.
+- No high-duty lighting was used.
+- Captured images, if produced later, remain outside the repo and must not be committed.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-29 UTC - AI Grader fixed-rig V1 PR #38 validation and focus-assist smoke
+
+### Summary
+- Added `--operator-flip-delay-ms 0..300000` to `ai-grader-fixed-rig-v1-local` so supervised front/back smoke can pause after front capture before back capture starts.
+- The fixed-rig V1 command still requires `--apply`, typed confirmation, Mark-present/wiring/status/light-off flags, and `--operator-flip-confirmed`.
+- Ran one Basler fixed-rig focus-assist hardware smoke outside the repo.
+- Full front/back fixed-rig V1 hardware smoke is pending current operator confirmation and focus/framing decision.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 126 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` lint warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Dry Runs
+- `fixed-rig-lighting-profile-plan` -> pass, no hardware access.
+- `basler-fixed-rig-focus-assist` -> pass, dry-run only.
+- `ai-grader-fixed-rig-v1-local --operator-flip-delay-ms 30000` -> pass, dry-run only.
+
+### Focus-Assist Hardware Smoke
+- Output folder: `C:\TenKings\capture-data\fixed-rig-v1\basler-fixed-rig-focus-assist-2026-06-29T064827502Z`.
+- Manifest/report: `manifest.json`, `preview-report.html`.
+- Dark control PNG: `C:\TenKings\capture-data\fixed-rig-v1\basler-fixed-rig-focus-assist-2026-06-29T064827502Z\basler-macro\basler-leimac-macro-package-2026-06-29T064827506Z\basler-basler-leimac-macro-dark-control-20260629T064833854Z.png`, SHA-256 `8f79f2e8614d50c3b22cb68435d0b399bbcb07659791fec5c7e3356b93792385`, `193215` bytes, `2448x2048`.
+- Synced PNG: `C:\TenKings\capture-data\fixed-rig-v1\basler-fixed-rig-focus-assist-2026-06-29T064827502Z\basler-macro\basler-leimac-macro-package-2026-06-29T064827506Z\basler-basler-leimac-macro-synced-20260629T064849480Z.png`.
+- Synced PNG SHA-256 `13c19eaca33a1108549b7408d5d9ed860d938e08be6e303e4647c657ae250f40`, `1625082` bytes, `2448x2048`.
+- Quality metrics:
+  - mean `73.6226`
+  - max `255`
+  - clipped-pixel fraction `0.130421`
+  - dark-pixel fraction `0.252769`
+  - sharpness score `60.7158`
+  - approximate card coverage `0.669918`
+  - boundary `detected`
+- Warning: saturated/clipped pixels are present; a later approved profile should reduce exposure, gain, or lighting duty.
+- Calibration metadata remains `isCalibrated=false`, `evidenceClass=macro_fixed_rig_v1_uncalibrated`.
+- Safe-off was issued after focus-assist and ACKed:
+  - `W8601010000020000030000040000050000060000070000080000 -> W86ACK0`
+  - `W8501010000020000030000040000050000060000070000080000 -> W85ACK0`
+  - `W1101010000020000030000040000050000060000070000080000 -> W11ACK0`
+
+### Pending
+- Need Mark visual confirmation that final ring light state is off.
+- Need Mark/operator decision whether current focus/framing is acceptable for a V1 smoke or whether to adjust focus/height and rerun focus assist.
+- Do not run the full front/back fixed-rig V1 hardware smoke until that confirmation is available.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Arduino command was run.
+- No stage/motor command was run.
+- No Windows network setting was changed.
+- No Leimac SYSTEM RESET or FACTORY DEFAULT was run.
+- No persistent Leimac User Set save was run.
+- No persistent Basler User Set save was run.
+- No high-duty lighting was used.
+- Captured images were written outside the repo and must not be committed.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
