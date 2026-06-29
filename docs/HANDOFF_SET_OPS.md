@@ -11207,3 +11207,20 @@ Build Set Ops UI flow with:
   - Trigger profile: `W0901010002020002030002040002050002060002070002080002`, `W6501010000020000030000040000050000060000070000080000`, `W8401010000020000030000040000050000060000070000080000`, `W1301010000020000030000040000050000060000070000080000`, `W1101010030020030030030040030050030060030070030080030`, `W8501010000020000030000040000050000060000070000080000`, `W8601010001020001030001040001050001060001070001080001`; all ACKed.
   - Readbacks returned raw profile data for `R09010000`, `R11010000`, `R13010000`, `R18010000`, `R65010000`, `R84010000`, `R85010000`, and `R86010000`.
 - PR #36 now has an accepted transient software/hardware sync foundation, but it remains uncalibrated. No persistent camera/controller saves were run.
+
+## Session Update (2026-06-29 UTC, AI Grader Basler/Leimac sync PR #36 merged)
+- Merged PR #36 into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/36`.
+- PR #36 merge commit: `5818f1080aa8aa05d44867768a01499d0896f111`.
+- `origin/main` immediately after merge: `5818f1080aa8aa05d44867768a01499d0896f111`.
+- Accepted transient sync polarity for the Dell capture-node rig:
+  - Basler Line2 `LineSource=ExposureActive`.
+  - Basler `LineInverter=true`.
+  - Leimac `TriggerActivation=LevelLow`.
+  - Leimac trigger source `TRG IN1`.
+- PR #36 evidence accepted before merge:
+  - Basler Line2 `UserOutput1` manual pulse visibly turned the Leimac ring light on.
+  - Dark-vs-synced image-stat smoke was materially brighter: dark mean `0.1983`, synced mean `27.6684`, mean delta `27.4701`, synced max `255`, `materiallyBrighter=true`.
+  - Safe-off ACKed after the smoke, and Mark confirmed the final ring-light state was off.
+  - Evidence remains uncalibrated: `isCalibrated=false`, `evidenceClass=macro_sync_smoke_uncalibrated`.
+- CI status before merge: all PR checks passing, including Install & Build, Vercel, Vercel Preview Comments, and Docker image jobs for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
+- Guardrails held during merge and handoff: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no hardware command, no Arduino command, no stage/motor command, no network setting change, no persistent Basler or Leimac User Set save, no high-duty lighting, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.

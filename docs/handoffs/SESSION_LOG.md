@@ -20526,6 +20526,36 @@ By enabling Rip It Live, I confirm:
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
 
+## 2026-06-29 UTC - AI Grader Basler/Leimac sync PR #36 merged
+
+### Summary
+- Merged PR #36 into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/36`.
+- PR #36 merge commit: `5818f1080aa8aa05d44867768a01499d0896f111`.
+- `origin/main` immediately after merge: `5818f1080aa8aa05d44867768a01499d0896f111`.
+- Accepted transient sync polarity: Basler Line2 `ExposureActive`, Basler `LineInverter=true`, Leimac `TriggerActivation=LevelLow`, Leimac `TRG IN1`.
+- Acceptance evidence before merge:
+  - supervised Basler Line2 `UserOutput1` manual pulse visibly turned the Leimac ring light on
+  - image-stat smoke was materially brighter: dark mean `0.1983`, synced mean `27.6684`, mean delta `27.4701`, synced max `255`
+  - safe-off ACKed after the smoke, and Mark confirmed final ring-light state was off
+  - evidence remains uncalibrated with `isCalibrated=false` and `evidenceClass=macro_sync_smoke_uncalibrated`
+- CI status before merge: all PR checks passing, including Install & Build, Vercel, Vercel Preview Comments, and Docker image jobs for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No hardware command was run during the merge/handoff step.
+- No Arduino command was run.
+- No stage/motor command was run.
+- No Windows network setting was changed.
+- No persistent Basler User Set save was run.
+- No persistent Leimac User Set save was run.
+- No high-duty lighting was used.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
 ## 2026-06-29 UTC - AI Grader Basler/Leimac sync PR #36 accepted pulse and image-stat smoke
 
 ### Summary
