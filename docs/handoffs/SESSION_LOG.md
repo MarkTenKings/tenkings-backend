@@ -20763,6 +20763,147 @@ By enabling Rip It Live, I confirm:
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
 
+## 2026-06-29 UTC - AI Grader fixed-rig V1 PR #38 supervised bracket planned
+
+### Planned Action
+- Continue PR #38 on `feature/ai-grader-fixed-rig-v1-workflow` without merging.
+- Mark confirmed he is present, the Leimac ring light is off, and he is ready for a supervised fixed-rig bracket/front-back workflow.
+- Plan is to run a small manual focus/exposure/light bracket using `basler-fixed-rig-focus-assist` outside the repo under `C:\TenKings\capture-data\fixed-rig-v1`, with safe-off before/after each run.
+- Candidate settings: `3% / 50000 us`, `2% / 50000 us`, `1% / 50000 us`, and if clipping remains above target, `1% / 25000 us`.
+- After selecting the least-clipped acceptable smoke setting, run `ai-grader-fixed-rig-v1-local` front/back fixed-rig V1 smoke with a supervised operator flip delay.
+
+### Guardrails Before Hardware
+- No migration will be run.
+- `RUN_DB_MIGRATIONS=true` will not be set.
+- No manual deploy, restart, runtime DB operation, `regsvr32`, Arduino command, stage/motor command, or Windows network setting change will be run.
+- No Leimac SYSTEM RESET, FACTORY DEFAULT, persistent Leimac User Set save, or persistent Basler User Set save will be run.
+- Duty remains low and capped at `<=5%`; safe-off will run after every hardware capture path.
+- Captured images stay outside the repo and will not be committed.
+- Output remains uncalibrated with `isCalibrated=false`; no final grade, certificate, or certified grading claim will be made.
+
+## 2026-06-29 UTC - AI Grader fixed-rig V1 PR #38 bracket and first front/back attempt
+
+### Bracket Result
+- Ran supervised fixed-rig focus-assist bracket outside the repo under `C:\TenKings\capture-data\fixed-rig-v1`.
+- Safe-off ran after each bracket command.
+- Bracket summary:
+  - `3% / 50000 us`: mean `250.6708`, clipped fraction `0.951083`, dark fraction `0`, sharpness `10.7126`, boundary `detected`, coverage `1`.
+  - `2% / 50000 us`: mean `244.5253`, clipped fraction `0.88575`, dark fraction `0`, sharpness `17.759`, boundary `detected`, coverage `1`.
+  - `1% / 50000 us`: mean `103.012`, clipped fraction `0.022833`, dark fraction `0.015642`, sharpness `28.3588`, boundary `detected`, coverage `1`.
+  - `1% / 25000 us`: mean `52.1504`, clipped fraction `0.004053`, dark fraction `0.050559`, sharpness `14.913`, boundary `detected`, coverage `1`.
+- Selected smoke setting: `1% duty / 25000 us`, because it was the only bracket point under the soft clipping target.
+- Limitation: visual review still showed soft focus, and the current uncalibrated boundary heuristic detected full-frame coverage rather than the true card boundary.
+
+### Invalid Front/Back Attempt
+- Ran one `ai-grader-fixed-rig-v1-local` attempt at `1% / 25000 us` with `--operator-flip-delay-ms 30000`.
+- Output folder: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-local-2026-06-29T085309356Z`.
+- The command wrote `manifest.json`, `analysis.json`, `preview-report.html`, and front/back dark/synced PNG artifacts outside the repo.
+- Mark later confirmed the Leimac ring light was off, but he did not see the 30-second flip prompt and did not flip the card.
+- Treat this first front/back package as an invalid front/back smoke attempt; do not use it as valid back-side evidence.
+
+### Planned Rerun
+- Rerun `ai-grader-fixed-rig-v1-local` at selected setting `1% / 25000 us` with a longer flip delay and an out-of-band operator cue in this chat before the back capture.
+
+## 2026-06-29 UTC - AI Grader fixed-rig V1 PR #38 confirmed front/back smoke
+
+### Summary
+- Continued PR #38 on `feature/ai-grader-fixed-rig-v1-workflow`; PR remains open and was not merged.
+- Initial single-command `ai-grader-fixed-rig-v1-local --operator-flip-delay-ms 30000` front/back package was invalid because Mark did not see the prompt and did not flip the card. It remains outside the repo and must not be used as accepted back-side evidence.
+- Additional bracket points found a better selected smoke profile:
+  - `1.2% / 50000 us`: `materiallyBrighter=true`, mean delta `5.5819`, clipped `0.022333`.
+  - `1.1% / 50000 us`: clipped `0.015901`, but `materiallyBrighter=false`.
+  - `1.2% / 45000 us`: `materiallyBrighter=true`, mean delta `2.1671`, clipped `0.012504`.
+- Selected setting: Leimac duty `1.2%` (`12/1000` PWM steps), Basler exposure `45000 us`, gain `0`.
+- Final valid smoke was run as explicit two-step supervised side captures with chat-confirmed flips:
+  - front/face-up capture after Mark confirmation
+  - actual card-back capture after Mark confirmation
+- Visual inspection confirmed the final back image is the card back, not the card front.
+- Mark confirmed final Leimac ring-light state was off after safe-off.
+
+### Output Package
+- Unified fixed-rig V1 package:
+  - `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-local-confirmed-front-back-2026-06-29T092233414Z`
+  - `manifest.json`
+  - `analysis.json`
+  - `preview-report.html`
+- Unified metadata records:
+  - `isCalibrated=false`
+  - `evidenceClass=macro_fixed_rig_v1_uncalibrated`
+  - `selectedLightingProfile=line2-inverter-level-low-v0`
+  - `finalLightOffConfirmedByMark=true`
+  - `productionUpload=false`
+  - `databaseWrites=false`
+
+### Front Evidence
+- Macro package: `C:\TenKings\capture-data\fixed-rig-v1\basler-leimac-macro-package-2026-06-29T091626684Z`.
+- Dark PNG: `basler-basler-leimac-macro-dark-control-20260629T091632458Z.png`
+  - SHA-256 `0324289c788fdf4306151909008236e621553774237503aadd39da51d6058397`
+  - `2057044` bytes
+  - `2448x2048`
+- Synced PNG: `basler-basler-leimac-macro-synced-20260629T091648563Z.png`
+  - SHA-256 `e156c3422e95f88d3772ec3ae347b9ed08157e7f2ab68a6bb73c25d748c8cf79`
+  - `2068897` bytes
+  - `2448x2048`
+- Metrics:
+  - mean `93.9304`
+  - max `255`
+  - clipped fraction `0.015041`
+  - dark fraction `0.018592`
+  - sharpness `25.8881`
+  - card coverage heuristic `1`
+  - mean delta `3.004`
+  - `materiallyBrighter=true`
+
+### Back Evidence
+- Macro package: `C:\TenKings\capture-data\fixed-rig-v1\basler-leimac-macro-package-2026-06-29T092019134Z`.
+- Dark PNG: `basler-basler-leimac-macro-dark-control-20260629T092025011Z.png`
+  - SHA-256 `fec8bb3f35e737dc0c38ba020f0e167e6a3459f3e62c32888c21081a31b4d312`
+  - `2105736` bytes
+  - `2448x2048`
+- Synced PNG: `basler-basler-leimac-macro-synced-20260629T092041143Z.png`
+  - SHA-256 `0416b5e0e494548cb7ab48d2cd389d2459bee89914d64c5432bdd3bd59481675`
+  - `2121355` bytes
+  - `2448x2048`
+- Metrics:
+  - mean `106.6844`
+  - max `255`
+  - clipped fraction `0.01326`
+  - dark fraction `0`
+  - sharpness `27.6626`
+  - card coverage heuristic `1`
+  - mean delta `4.9838`
+  - `materiallyBrighter=true`
+
+### Limitations
+- Images remain uncalibrated fixed-rig V1 smoke evidence only.
+- Images are still visibly soft; manual optical focus/height work remains before calibration/repeatability.
+- Current boundary/framing heuristic still reports full-frame coverage (`1`), so ROI analysis remains warning/not-computed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was made.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 126 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Arduino command was run.
+- No stage/motor command was run.
+- No Windows network setting was changed.
+- No Leimac SYSTEM RESET or FACTORY DEFAULT was run.
+- No persistent Leimac User Set save was run.
+- No persistent Basler User Set save was run.
+- No high-duty lighting was used.
+- Captured images and command logs stayed outside the repo.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+
 ## 2026-06-29 UTC - AI Grader full-rig local smoke PR #37 merged
 
 ### Summary

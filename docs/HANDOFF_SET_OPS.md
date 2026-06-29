@@ -11338,3 +11338,43 @@ Build Set Ops UI flow with:
   - Need visual final light-off confirmation after safe-off.
   - Need operator decision whether to accept current focus/framing for smoke or mechanically adjust focus/height and rerun focus assist first.
 - Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no Arduino command, no stage/motor command, no network setting change, no Leimac reset/default, no persistent Basler or Leimac User Set save, no high-duty lighting, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
+
+## Session Update (2026-06-29 UTC, AI Grader fixed-rig V1 PR #38 bracket and confirmed front/back smoke)
+- Continued PR #38 on `feature/ai-grader-fixed-rig-v1-workflow`; PR remains open and must not be merged yet.
+- Rechecked PR state before hardware:
+  - PR #38 state `OPEN`, not draft, merge state `CLEAN`.
+  - Head `81408ecb0bf0dcc31b37dbd8fc201c203775e5fc`.
+  - GitHub checks were passing before this local docs update.
+- Targeted validation before hardware:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 126 tests.
+- Mark confirmed he was present and the ring light was off before hardware.
+- Ran supervised fixed-rig focus/exposure/light bracket outside the repo under `C:\TenKings\capture-data\fixed-rig-v1`; safe-off ran after each capture path:
+  - `3% / 50000 us`: mean `250.6708`, clipped `0.951083`, dark `0`, sharpness `10.7126`, coverage `1`.
+  - `2% / 50000 us`: mean `244.5253`, clipped `0.88575`, dark `0`, sharpness `17.759`, coverage `1`.
+  - `1% / 50000 us`: mean `103.012`, clipped `0.022833`, dark `0.015642`, sharpness `28.3588`, but synced-light delta was not material.
+  - `1% / 25000 us`: mean `52.1504`, clipped `0.004053`, dark `0.050559`, sharpness `14.913`, but synced-light delta was not material.
+  - `1.2% / 50000 us`: mean `120.488`, clipped `0.022333`, dark `0`, sharpness `31.1828`, `materiallyBrighter=true`.
+  - `1.1% / 50000 us`: mean `99.8712`, clipped `0.015901`, dark `0.01573`, sharpness `26.9411`, but synced-light delta was not material.
+  - `1.2% / 45000 us`: mean `92.8586`, clipped `0.012504`, dark `0.017131`, sharpness `25.17`, `materiallyBrighter=true`.
+- Selected setting: Leimac duty `1.2%` (`12/1000` PWM steps), Basler exposure `45000 us`, gain `0`.
+- First single-command `ai-grader-fixed-rig-v1-local --operator-flip-delay-ms 30000` attempt was invalid because Mark did not see the prompt and did not flip the card; do not use that package as back-side evidence.
+- Final confirmed front/back smoke was run as explicit two-step supervised macro captures with chat-confirmed side flips:
+  - Unified output package: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-local-confirmed-front-back-2026-06-29T092233414Z`.
+  - Unified artifacts: `manifest.json`, `analysis.json`, `preview-report.html`.
+  - Front macro package: `C:\TenKings\capture-data\fixed-rig-v1\basler-leimac-macro-package-2026-06-29T091626684Z`.
+  - Front dark PNG SHA-256 `0324289c788fdf4306151909008236e621553774237503aadd39da51d6058397`, `2057044` bytes, `2448x2048`.
+  - Front synced PNG SHA-256 `e156c3422e95f88d3772ec3ae347b9ed08157e7f2ab68a6bb73c25d748c8cf79`, `2068897` bytes, `2448x2048`.
+  - Front quality: mean `93.9304`, max `255`, clipped `0.015041`, dark `0.018592`, sharpness `25.8881`, coverage heuristic `1`, `materiallyBrighter=true` with mean delta `3.004`.
+  - Back macro package: `C:\TenKings\capture-data\fixed-rig-v1\basler-leimac-macro-package-2026-06-29T092019134Z`.
+  - Back dark PNG SHA-256 `fec8bb3f35e737dc0c38ba020f0e167e6a3459f3e62c32888c21081a31b4d312`, `2105736` bytes, `2448x2048`.
+  - Back synced PNG SHA-256 `0416b5e0e494548cb7ab48d2cd389d2459bee89914d64c5432bdd3bd59481675`, `2121355` bytes, `2448x2048`.
+  - Back quality: mean `106.6844`, max `255`, clipped `0.01326`, dark `0`, sharpness `27.6626`, coverage heuristic `1`, `materiallyBrighter=true` with mean delta `4.9838`.
+- Visual inspection confirmed the final back image is the card back, not the front image.
+- Final Mark confirmation: ring light off after safe-off.
+- Limitations carried forward:
+  - This remains uncalibrated fixed-rig V1 smoke evidence only: `isCalibrated=false`, `evidenceClass=macro_fixed_rig_v1_uncalibrated`.
+  - Images are still visibly soft; manual optical focus/height work remains before calibration/repeatability.
+  - Boundary/framing heuristic reports full-frame coverage (`1`), so ROI analysis remains warning/not-computed until physical framing and calibrated segmentation improve.
+  - No calibrated macro evidence, final grade, certificate, or certified grading claim was made.
+- Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no Arduino command, no stage/motor command, no network setting change, no Leimac SYSTEM RESET or FACTORY DEFAULT, no persistent Leimac User Set save, no persistent Basler User Set save, no high-duty lighting, no SDK/vendor binary commit, and no captured image commit.
