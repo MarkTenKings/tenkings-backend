@@ -23,6 +23,7 @@ import {
 export const BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION = "RUN BASLER FIXED RIG FOCUS ASSIST";
 export const BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION = "RUN BASLER FIXED RIG OPERATOR PREVIEW";
 export const AI_GRADER_FIXED_RIG_V1_CONFIRMATION = "RUN AI GRADER FIXED RIG V1 LOCAL";
+export const AI_GRADER_FIXED_RIG_V1_EVIDENCE_PACKAGE_CONFIRMATION = "RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE";
 export const LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION = "RUN LEIMAC CHANNEL CHARACTERIZATION";
 export const FIXED_RIG_V1_EVIDENCE_CLASS = "macro_fixed_rig_v1_uncalibrated";
 export const FIXED_RIG_CALIBRATION_PROFILE_VERSION = "fixed-rig-v1-calibration-profile-v0.1";
@@ -31,6 +32,11 @@ export const FIXED_RIG_DEFAULT_CARD_HEIGHT_MM = 88.9;
 export const FIXED_RIG_SELECTED_EXPOSURE_US = 45000;
 export const FIXED_RIG_SELECTED_GAIN = 0;
 export const FIXED_RIG_SELECTED_LEIMAC_DUTY = 1.2;
+export const FIXED_RIG_ACTIVE_LIGHTING_PROFILE_FILENAME = "fixed-rig-active-lighting-profile.json";
+export const FIXED_RIG_DEFAULT_CHANNELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+
+export type FixedRigDisplayTransform = "none" | "rotate90cw" | "rotate90ccw" | "rotate180";
+export type FixedRigOrientationUsed = "raw_landscape_rotated_to_portrait" | "raw_portrait";
 
 export type FixedRigCardSide = "front" | "back";
 export type FixedRigCalibrationStatus =
@@ -66,12 +72,34 @@ export interface FixedRigCalibrationProfile {
   pixelToMmEstimateX?: number;
   pixelToMmEstimateY?: number;
   pixelToMmEstimateStatus: "not_computed" | "estimated_uncalibrated";
+  pixelToMmOrientationUsed?: FixedRigOrientationUsed;
+  pixelToMmConsistency?: {
+    status: "not_computed" | "pass" | "warn";
+    relativeDifference?: number;
+    tolerance: number;
+    warning?: string;
+  };
   lensDistortionCalibrated: false;
   lightingCalibrated: false;
   focusLockedByOperator: boolean;
   isCalibrated: false;
   calibrationStatus: FixedRigCalibrationStatus;
   warning: string;
+}
+
+export interface FixedRigActiveLightingProfile {
+  profileId: string;
+  profileVersion: "fixed-rig-active-lighting-profile-v0.1";
+  selectedDutyPercent: number;
+  actualLeimacPwmStep: number;
+  selectedChannels: number[];
+  profileSource: "operator_preview" | "default" | "cli_override";
+  acceptedAt: string;
+  resetToDefault: boolean;
+  selectedLightingProfileId: typeof ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID;
+  selectedPolarity: FixedRigSelectedPolarity;
+  persistentLeimacSaved: false;
+  note: string;
 }
 
 export interface FixedRigCardBoundary {
@@ -103,6 +131,10 @@ export interface FixedRigRoiDefinition {
   type: "corner" | "edge" | "surface";
   status: "computed" | "not_computed";
   rect?: { x: number; y: number; width: number; height: number };
+  rawRect?: { x: number; y: number; width: number; height: number };
+  displayRect?: { x: number; y: number; width: number; height: number };
+  rawCoordinateFrame?: "basler_sensor_pixels";
+  displayCoordinateFrame?: "ai_grader_card_portrait_display";
   source: "approximate_detected_boundary" | "not_computed";
 }
 
@@ -116,6 +148,7 @@ export interface FixedRigQualityMetrics extends BaslerLeimacImageStats {
     cardCoverageEstimate?: number;
     warnings: string[];
   };
+  overlayAlignment?: FixedRigOverlayAlignmentMetrics;
   focus: {
     status: "manual_review" | "warning";
     sharpnessScore: number;
@@ -132,9 +165,48 @@ export interface FixedRigOverlayArtifact {
   mimeType: "image/png";
   imageWidth: number;
   imageHeight: number;
+  rawCoordinateFrame?: "basler_sensor_pixels";
+  displayTransform?: FixedRigDisplayTransform;
+  displayCoordinateFrame?: "ai_grader_card_portrait_display";
   rawEvidenceUnmodified: true;
   overlaysBakedIntoRawEvidence: false;
   note: string;
+}
+
+export interface FixedRigDisplayArtifact {
+  kind: "portrait_display_image" | "roi_crop";
+  outputFilePath: string;
+  sha256: string;
+  byteSize: number;
+  mimeType: "image/png";
+  imageWidth: number;
+  imageHeight: number;
+  rawSourceFilePath: string;
+  rawSourceSha256?: string;
+  rawCoordinateFrame: "basler_sensor_pixels";
+  displayTransform: FixedRigDisplayTransform;
+  displayCoordinateFrame: "ai_grader_card_portrait_display";
+  roiId?: FixedRigRoiDefinition["id"];
+  rawRect?: { x: number; y: number; width: number; height: number };
+  displayRect?: { x: number; y: number; width: number; height: number };
+  rawEvidenceUnmodified: true;
+  note: string;
+}
+
+export interface FixedRigOverlayAlignmentMetrics {
+  templateRect: { x: number; y: number; width: number; height: number };
+  detectedBoundaryRect?: { x: number; y: number; width: number; height: number };
+  centerOffsetPx?: { x: number; y: number };
+  centerOffsetMm?: { x: number; y: number };
+  marginLeft?: number;
+  marginRight?: number;
+  marginTop?: number;
+  marginBottom?: number;
+  detectedAspectRatio?: number;
+  expectedAspectRatio: number;
+  orientationUsed: FixedRigOrientationUsed;
+  overlayAlignmentStatus: "pass" | "warn" | "fail";
+  warnings: string[];
 }
 
 export interface FixedRigSuggestedDinoLiteTargets {
@@ -185,7 +257,9 @@ export interface FixedRigOperatorPreviewManifest {
   quality?: FixedRigQualityMetrics;
   roiDefinitions: FixedRigRoiDefinition[];
   overlayPreview?: FixedRigOverlayArtifact;
+  displayImage?: FixedRigDisplayArtifact;
   calibrationProfile: FixedRigCalibrationProfile;
+  acceptedLightingProfile?: FixedRigActiveLightingProfile;
   readiness: {
     status: "ready_for_operator_review" | "not_ready";
     warnings: string[];
@@ -214,7 +288,9 @@ export interface FixedRigFocusAssistManifest {
   quality?: FixedRigQualityMetrics;
   roiDefinitions: FixedRigRoiDefinition[];
   overlayPreview?: FixedRigOverlayArtifact;
+  displayImage?: FixedRigDisplayArtifact;
   calibrationProfile: FixedRigCalibrationProfile;
+  activeLightingProfile: FixedRigActiveLightingProfile;
   suggestedDinoLiteTargets: FixedRigSuggestedDinoLiteTargets;
   operatorGuidance: {
     manualFocusOnly: true;
@@ -245,6 +321,8 @@ export interface FixedRigSideCapture {
   roiDefinitions: FixedRigRoiDefinition[];
   calibrationProfile: FixedRigCalibrationProfile;
   overlayPreview?: FixedRigOverlayArtifact;
+  displayImage?: FixedRigDisplayArtifact;
+  roiCrops?: FixedRigDisplayArtifact[];
   analysis: {
     status: "computed" | "not_computed";
     materiallyBrighter: boolean;
@@ -262,6 +340,7 @@ export interface FixedRigV1LocalManifest {
   previewReportPath?: string;
   status: "planned" | "completed" | "aborted";
   selectedLightingProfile: typeof ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID;
+  activeLightingProfile: FixedRigActiveLightingProfile;
   workflow: {
     mode: "fixed_overhead_basler_v1";
     humanSteps: string[];
@@ -385,6 +464,91 @@ async function fileMetadata(filePath: string): Promise<{ sha256: string; byteSiz
   };
 }
 
+function normalizeChannelList(channels: readonly number[] | undefined): number[] {
+  const unique = Array.from(new Set((channels ?? FIXED_RIG_DEFAULT_CHANNELS).map((channel) => Number(channel)))).filter(
+    (channel) => Number.isInteger(channel) && channel >= 1 && channel <= 8
+  );
+  return unique.length ? unique.sort((a, b) => a - b) : [...FIXED_RIG_DEFAULT_CHANNELS];
+}
+
+export function buildFixedRigActiveLightingProfile(input: {
+  selectedDutyPercent?: number;
+  selectedChannels?: readonly number[];
+  profileSource?: FixedRigActiveLightingProfile["profileSource"];
+  acceptedAt?: string;
+  resetToDefault?: boolean;
+} = {}): FixedRigActiveLightingProfile {
+  const selectedDutyPercent = normalizeLeimacIdmuDutyPercent(input.selectedDutyPercent ?? FIXED_RIG_SELECTED_LEIMAC_DUTY);
+  return {
+    profileId: "fixed-rig-active-lighting-profile",
+    profileVersion: "fixed-rig-active-lighting-profile-v0.1",
+    selectedDutyPercent,
+    actualLeimacPwmStep: leimacIdmuDutyPercentToSteps(selectedDutyPercent),
+    selectedChannels: normalizeChannelList(input.selectedChannels),
+    profileSource: input.profileSource ?? "default",
+    acceptedAt: input.acceptedAt ?? new Date().toISOString(),
+    resetToDefault: input.resetToDefault ?? false,
+    selectedLightingProfileId: ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID,
+    selectedPolarity: {
+      baslerLineInverter: true,
+      leimacTriggerActivation: "LevelLow",
+    },
+    persistentLeimacSaved: false,
+    note:
+      "Software-side fixed-rig active lighting profile only. Leimac hardware is still safe-offed on exit; no persistent Leimac User Set is saved.",
+  };
+}
+
+function fixedRigProfileStoreDir(outputDir: string): string {
+  const allowed = assertFixedRigOutputDirAllowed(outputDir);
+  const base = path.basename(path.normalize(allowed)).toLowerCase();
+  return base.startsWith("fixed-rig") ? path.dirname(allowed) : allowed;
+}
+
+export function fixedRigActiveLightingProfilePath(outputDir: string): string {
+  return path.join(fixedRigProfileStoreDir(outputDir), FIXED_RIG_ACTIVE_LIGHTING_PROFILE_FILENAME);
+}
+
+export async function readFixedRigActiveLightingProfile(outputDir: string): Promise<FixedRigActiveLightingProfile | null> {
+  try {
+    const parsed = JSON.parse(await readFile(fixedRigActiveLightingProfilePath(outputDir), "utf-8")) as Partial<FixedRigActiveLightingProfile>;
+    if (!Number.isFinite(parsed.selectedDutyPercent) || !Array.isArray(parsed.selectedChannels)) return null;
+    return buildFixedRigActiveLightingProfile({
+      selectedDutyPercent: parsed.selectedDutyPercent,
+      selectedChannels: parsed.selectedChannels,
+      profileSource: parsed.profileSource === "operator_preview" || parsed.profileSource === "cli_override" ? parsed.profileSource : "default",
+      acceptedAt: parsed.acceptedAt,
+      resetToDefault: parsed.resetToDefault,
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function writeFixedRigActiveLightingProfile(outputDir: string, profile: FixedRigActiveLightingProfile): Promise<string> {
+  const filePath = fixedRigActiveLightingProfilePath(outputDir);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeJsonArtifact(filePath, profile);
+  return filePath;
+}
+
+export async function resolveFixedRigActiveLightingProfile(input: {
+  outputDir: string;
+  cliDuty?: number;
+  cliChannels?: readonly number[];
+  resetToDefault?: boolean;
+}): Promise<FixedRigActiveLightingProfile> {
+  if (input.resetToDefault) return buildFixedRigActiveLightingProfile({ profileSource: "default", resetToDefault: true });
+  if (input.cliDuty != null) {
+    return buildFixedRigActiveLightingProfile({
+      selectedDutyPercent: input.cliDuty,
+      selectedChannels: input.cliChannels,
+      profileSource: "cli_override",
+    });
+  }
+  return (await readFixedRigActiveLightingProfile(input.outputDir)) ?? buildFixedRigActiveLightingProfile({ profileSource: "default" });
+}
+
 export function assertFixedRigOutputDirAllowed(outputDir: string, repoRoot = process.cwd()): string {
   return assertBaslerLeimacSyncSmokeOutputDirAllowed(outputDir, repoRoot);
 }
@@ -409,14 +573,39 @@ export function buildFixedRigPixelToMmEstimate(
   pixelToMmEstimateX?: number;
   pixelToMmEstimateY?: number;
   pixelToMmEstimateStatus: FixedRigCalibrationProfile["pixelToMmEstimateStatus"];
+  pixelToMmOrientationUsed?: FixedRigOrientationUsed;
+  pixelToMmConsistency?: FixedRigCalibrationProfile["pixelToMmConsistency"];
 } {
   if (boundary?.status !== "detected" || !boundary.width || !boundary.height) {
-    return { pixelToMmEstimateStatus: "not_computed" };
+    return {
+      pixelToMmEstimateStatus: "not_computed",
+      pixelToMmConsistency: { status: "not_computed", tolerance: 0.1 },
+    };
   }
+  const rawLandscape = boundary.width >= boundary.height;
+  const rawWidthMm = rawLandscape ? cardPhysicalHeightMm : cardPhysicalWidthMm;
+  const rawHeightMm = rawLandscape ? cardPhysicalWidthMm : cardPhysicalHeightMm;
+  const x = roundMetric(rawWidthMm / boundary.width, 6);
+  const y = roundMetric(rawHeightMm / boundary.height, 6);
+  const relativeDifference = roundMetric(Math.abs(x - y) / Math.max((x + y) / 2, 0.000001), 6);
+  const tolerance = 0.1;
+  const pass = relativeDifference <= tolerance;
   return {
-    pixelToMmEstimateX: roundMetric(cardPhysicalWidthMm / boundary.width, 6),
-    pixelToMmEstimateY: roundMetric(cardPhysicalHeightMm / boundary.height, 6),
+    pixelToMmEstimateX: x,
+    pixelToMmEstimateY: y,
     pixelToMmEstimateStatus: "estimated_uncalibrated",
+    pixelToMmOrientationUsed: rawLandscape ? "raw_landscape_rotated_to_portrait" : "raw_portrait",
+    pixelToMmConsistency: {
+      status: pass ? "pass" : "warn",
+      relativeDifference,
+      tolerance,
+      ...(pass
+        ? {}
+        : {
+            warning:
+              "Orientation-corrected X/Y pixel-to-mm estimates diverge; keep profile uncalibrated and review card boundary/display mapping.",
+          }),
+    },
   };
 }
 
@@ -619,6 +808,13 @@ export async function analyzeFixedRigMacroQuality(filePath: string): Promise<Fix
   if (boundary.status === "detected" && (coverage < 0.35 || coverage > 0.95)) {
     warnings.push("Card coverage/framing is outside the preferred smoke range; adjust fixed tray/camera height before calibration.");
   }
+  const overlayAlignment = buildFixedRigOverlayAlignmentMetrics({
+    imageWidth: width,
+    imageHeight: height,
+    boundary,
+    pixelToMm: buildFixedRigPixelToMmEstimate(boundary),
+  });
+  warnings.push(...overlayAlignment.warnings);
   return {
     filePath,
     width,
@@ -643,16 +839,115 @@ export async function analyzeFixedRigMacroQuality(filePath: string): Promise<Fix
     sharpnessScore,
     cardBoundary: boundary,
     framing: {
-      status: boundary.status === "detected" && coverage >= 0.35 && coverage <= 0.95 ? "acceptable_for_smoke" : "warning",
+      status:
+        boundary.status === "detected" && coverage >= 0.35 && coverage <= 0.95 && overlayAlignment.overlayAlignmentStatus !== "fail"
+          ? "acceptable_for_smoke"
+          : "warning",
       ...(boundary.status === "detected" ? { cardCoverageEstimate: roundMetric(coverage, 6) } : {}),
       warnings: warnings.filter((warning) => /boundary|coverage|framing|tray|height/i.test(warning)),
     },
+    overlayAlignment,
     focus: {
       status: sharpnessScore < 20 ? "warning" : "manual_review",
       sharpnessScore,
       recommendation:
         "Manual focus assist only: repeat after mechanical focus/height changes and prefer the setting where sharpness improves then stabilizes.",
     },
+    warnings,
+  };
+}
+
+export function fixedRigDisplayTransformForDimensions(width: number, height: number): FixedRigDisplayTransform {
+  return width > height ? "rotate90cw" : "none";
+}
+
+export function transformRectForDisplay(
+  rect: { x: number; y: number; width: number; height: number },
+  imageWidth: number,
+  imageHeight: number,
+  transform: FixedRigDisplayTransform
+): { x: number; y: number; width: number; height: number } {
+  if (transform === "none") return { ...rect };
+  if (transform === "rotate180") {
+    return { x: imageWidth - rect.x - rect.width, y: imageHeight - rect.y - rect.height, width: rect.width, height: rect.height };
+  }
+  if (transform === "rotate90ccw") {
+    return { x: rect.y, y: imageWidth - rect.x - rect.width, width: rect.height, height: rect.width };
+  }
+  return { x: imageHeight - rect.y - rect.height, y: rect.x, width: rect.height, height: rect.width };
+}
+
+export function buildFixedRigTemplateRect(width: number, height: number): { x: number; y: number; width: number; height: number } {
+  const guideHeight = Math.round(height * 0.82);
+  const guideWidth = Math.round(guideHeight * (2.5 / 3.5));
+  return {
+    x: Math.round((width - guideWidth) / 2),
+    y: Math.round((height - guideHeight) / 2),
+    width: guideWidth,
+    height: guideHeight,
+  };
+}
+
+export function buildFixedRigOverlayAlignmentMetrics(input: {
+  imageWidth: number;
+  imageHeight: number;
+  boundary?: FixedRigCardBoundary;
+  pixelToMm?: ReturnType<typeof buildFixedRigPixelToMmEstimate>;
+}): FixedRigOverlayAlignmentMetrics {
+  const templateRect = buildFixedRigTemplateRect(input.imageWidth, input.imageHeight);
+  const rawLandscape = input.imageWidth > input.imageHeight;
+  const warnings: string[] = [];
+  const boundary = input.boundary;
+  if (boundary?.status !== "detected" || boundary.x == null || boundary.y == null || !boundary.width || !boundary.height) {
+    warnings.push("Card boundary was not detected; overlay alignment cannot be audited.");
+    return {
+      templateRect,
+      expectedAspectRatio: roundMetric(2.5 / 3.5, 6),
+      orientationUsed: rawLandscape ? "raw_landscape_rotated_to_portrait" : "raw_portrait",
+      overlayAlignmentStatus: "fail",
+      warnings,
+    };
+  }
+  const detectedBoundaryRect = { x: boundary.x, y: boundary.y, width: boundary.width, height: boundary.height };
+  const templateCenter = { x: templateRect.x + templateRect.width / 2, y: templateRect.y + templateRect.height / 2 };
+  const detectedCenter = { x: boundary.x + boundary.width / 2, y: boundary.y + boundary.height / 2 };
+  const centerOffsetPx = {
+    x: roundMetric(detectedCenter.x - templateCenter.x, 2),
+    y: roundMetric(detectedCenter.y - templateCenter.y, 2),
+  };
+  const centerOffsetMm =
+    input.pixelToMm?.pixelToMmEstimateX && input.pixelToMm.pixelToMmEstimateY
+      ? {
+          x: roundMetric(centerOffsetPx.x * input.pixelToMm.pixelToMmEstimateX, 3),
+          y: roundMetric(centerOffsetPx.y * input.pixelToMm.pixelToMmEstimateY, 3),
+        }
+      : undefined;
+  const marginLeft = boundary.x;
+  const marginTop = boundary.y;
+  const marginRight = input.imageWidth - (boundary.x + boundary.width);
+  const marginBottom = input.imageHeight - (boundary.y + boundary.height);
+  const detectedAspectRatio = roundMetric(boundary.width / boundary.height, 6);
+  const expectedAspectRatio = roundMetric(rawLandscape ? 3.5 / 2.5 : 2.5 / 3.5, 6);
+  const aspectDelta = Math.abs(detectedAspectRatio - expectedAspectRatio) / expectedAspectRatio;
+  const minMargin = Math.min(marginLeft, marginRight, marginTop, marginBottom);
+  if (minMargin <= 5) warnings.push("Card boundary touches or nearly touches the image frame; add margin before calibration.");
+  if (aspectDelta > 0.2) warnings.push("Detected card aspect ratio does not match the expected card orientation; review boundary/display mapping.");
+  if (Math.abs(centerOffsetPx.x) > input.imageWidth * 0.18 || Math.abs(centerOffsetPx.y) > input.imageHeight * 0.18) {
+    warnings.push("Detected card boundary is substantially off-center from the operator template.");
+  }
+  return {
+    templateRect,
+    detectedBoundaryRect,
+    centerOffsetPx,
+    ...(centerOffsetMm ? { centerOffsetMm } : {}),
+    marginLeft,
+    marginRight,
+    marginTop,
+    marginBottom,
+    detectedAspectRatio,
+    expectedAspectRatio,
+    orientationUsed: rawLandscape ? "raw_landscape_rotated_to_portrait" : "raw_portrait",
+    overlayAlignmentStatus: warnings.length ? "warn" : "pass",
     warnings,
   };
 }
@@ -695,7 +990,27 @@ export function buildFixedRigRoiDefinitions(boundary: FixedRigCardBoundary): Fix
       width: Math.round(boundaryWidth * rectRatio.width),
       height: Math.round(boundaryHeight * rectRatio.height),
     },
+    rawCoordinateFrame: "basler_sensor_pixels",
   }));
+}
+
+export function addFixedRigDisplayRects(
+  rois: FixedRigRoiDefinition[],
+  imageWidth: number,
+  imageHeight: number,
+  transform = fixedRigDisplayTransformForDimensions(imageWidth, imageHeight)
+): FixedRigRoiDefinition[] {
+  return rois.map((roi) => {
+    if (roi.status !== "computed" || !roi.rect) return roi;
+    const rawRect = roi.rect;
+    return {
+      ...roi,
+      rawRect,
+      displayRect: transformRectForDisplay(rawRect, imageWidth, imageHeight, transform),
+      rawCoordinateFrame: "basler_sensor_pixels",
+      displayCoordinateFrame: "ai_grader_card_portrait_display",
+    };
+  });
 }
 
 function rectSvg(rect: { x: number; y: number; width: number; height: number }, stroke: string, width = 4): string {
@@ -735,6 +1050,135 @@ function buildFixedRigOverlaySvg(input: {
   </svg>`;
 }
 
+export function transformQualityForDisplay(
+  quality: FixedRigQualityMetrics | undefined,
+  transform: FixedRigDisplayTransform
+): FixedRigQualityMetrics | undefined {
+  if (!quality || transform === "none") return quality;
+  const displayWidth = transform === "rotate90cw" || transform === "rotate90ccw" ? quality.height : quality.width;
+  const displayHeight = transform === "rotate90cw" || transform === "rotate90ccw" ? quality.width : quality.height;
+  const boundary = quality.cardBoundary;
+  const displayBoundary =
+    boundary.status === "detected" && boundary.x != null && boundary.y != null && boundary.width && boundary.height
+      ? {
+          ...boundary,
+          ...transformRectForDisplay(
+            { x: boundary.x, y: boundary.y, width: boundary.width, height: boundary.height },
+            quality.width,
+            quality.height,
+            transform
+          ),
+        }
+      : boundary;
+  return {
+    ...quality,
+    width: displayWidth,
+    height: displayHeight,
+    cardBoundary: displayBoundary,
+    overlayAlignment: buildFixedRigOverlayAlignmentMetrics({
+      imageWidth: displayWidth,
+      imageHeight: displayHeight,
+      boundary: displayBoundary,
+      pixelToMm: buildFixedRigPixelToMmEstimate(displayBoundary),
+    }),
+  };
+}
+
+function roisForDisplayOverlay(rois: FixedRigRoiDefinition[] | undefined): FixedRigRoiDefinition[] | undefined {
+  return rois?.map((roi) => (roi.displayRect ? { ...roi, rect: roi.displayRect } : roi));
+}
+
+export async function createFixedRigDisplayImage(input: {
+  sourceImagePath: string;
+  outputDir: string;
+  filePrefix: string;
+  transform?: FixedRigDisplayTransform;
+  rawSourceSha256?: string;
+}): Promise<FixedRigDisplayArtifact> {
+  await mkdir(input.outputDir, { recursive: true });
+  const metadata = await sharp(input.sourceImagePath).metadata();
+  const rawWidth = metadata.width ?? 0;
+  const rawHeight = metadata.height ?? 0;
+  const transform = input.transform ?? fixedRigDisplayTransformForDimensions(rawWidth, rawHeight);
+  const outputFilePath = path.join(input.outputDir, `${input.filePrefix}-portrait-display.png`);
+  let pipeline = sharp(input.sourceImagePath);
+  if (transform === "rotate90cw") pipeline = pipeline.rotate(90);
+  if (transform === "rotate90ccw") pipeline = pipeline.rotate(270);
+  if (transform === "rotate180") pipeline = pipeline.rotate(180);
+  await pipeline.png().toFile(outputFilePath);
+  const [meta, displayMeta] = await Promise.all([fileMetadata(outputFilePath), sharp(outputFilePath).metadata()]);
+  return {
+    kind: "portrait_display_image",
+    outputFilePath,
+    sha256: meta.sha256,
+    byteSize: meta.byteSize,
+    mimeType: "image/png",
+    imageWidth: displayMeta.width ?? (transform === "none" || transform === "rotate180" ? rawWidth : rawHeight),
+    imageHeight: displayMeta.height ?? (transform === "none" || transform === "rotate180" ? rawHeight : rawWidth),
+    rawSourceFilePath: input.sourceImagePath,
+    ...(input.rawSourceSha256 ? { rawSourceSha256: input.rawSourceSha256 } : {}),
+    rawCoordinateFrame: "basler_sensor_pixels",
+    displayTransform: transform,
+    displayCoordinateFrame: "ai_grader_card_portrait_display",
+    rawEvidenceUnmodified: true,
+    note: "Derived report/display image only. Raw Basler evidence remains unchanged in sensor coordinates.",
+  };
+}
+
+export async function createFixedRigRoiCrops(input: {
+  sourceDisplayImagePath: string;
+  rawSourceImagePath: string;
+  outputDir: string;
+  rois: FixedRigRoiDefinition[];
+  displayTransform: FixedRigDisplayTransform;
+  rawSourceSha256?: string;
+  filePrefix: string;
+}): Promise<FixedRigDisplayArtifact[]> {
+  await mkdir(input.outputDir, { recursive: true });
+  const crops: FixedRigDisplayArtifact[] = [];
+  const displayMetadata = await sharp(input.sourceDisplayImagePath).metadata();
+  const displayWidth = displayMetadata.width ?? 0;
+  const displayHeight = displayMetadata.height ?? 0;
+  for (const roi of input.rois) {
+    if (roi.status !== "computed" || !roi.displayRect) continue;
+    const left = Math.max(0, Math.min(displayWidth - 1, roi.displayRect.x));
+    const top = Math.max(0, Math.min(displayHeight - 1, roi.displayRect.y));
+    const width = Math.max(1, Math.min(roi.displayRect.width, displayWidth - left));
+    const height = Math.max(1, Math.min(roi.displayRect.height, displayHeight - top));
+    const outputFilePath = path.join(input.outputDir, `${input.filePrefix}-${roi.id}-portrait-crop.png`);
+    await sharp(input.sourceDisplayImagePath)
+      .extract({
+        left,
+        top,
+        width,
+        height,
+      })
+      .png()
+      .toFile(outputFilePath);
+    const [meta, cropMeta] = await Promise.all([fileMetadata(outputFilePath), sharp(outputFilePath).metadata()]);
+    crops.push({
+      kind: "roi_crop",
+      outputFilePath,
+      sha256: meta.sha256,
+      byteSize: meta.byteSize,
+      mimeType: "image/png",
+      imageWidth: cropMeta.width ?? roi.displayRect.width,
+      imageHeight: cropMeta.height ?? roi.displayRect.height,
+      rawSourceFilePath: input.rawSourceImagePath,
+      ...(input.rawSourceSha256 ? { rawSourceSha256: input.rawSourceSha256 } : {}),
+      rawCoordinateFrame: "basler_sensor_pixels",
+      displayTransform: input.displayTransform,
+      displayCoordinateFrame: "ai_grader_card_portrait_display",
+      roiId: roi.id,
+      rawRect: roi.rawRect ?? roi.rect,
+      displayRect: roi.displayRect,
+      rawEvidenceUnmodified: true,
+      note: "Derived portrait ROI crop for report/debug only; raw evidence remains clean.",
+    });
+  }
+  return crops;
+}
+
 export async function createFixedRigOverlayPreview(input: {
   sourceImagePath: string;
   outputDir: string;
@@ -742,6 +1186,7 @@ export async function createFixedRigOverlayPreview(input: {
   quality?: FixedRigQualityMetrics;
   roiDefinitions?: FixedRigRoiDefinition[];
   title?: string;
+  displayTransform?: FixedRigDisplayTransform;
 }): Promise<FixedRigOverlayArtifact> {
   await mkdir(input.outputDir, { recursive: true });
   const metadata = await sharp(input.sourceImagePath).metadata();
@@ -768,6 +1213,9 @@ export async function createFixedRigOverlayPreview(input: {
     mimeType: "image/png",
     imageWidth,
     imageHeight,
+    rawCoordinateFrame: "basler_sensor_pixels",
+    displayTransform: input.displayTransform ?? "none",
+    displayCoordinateFrame: "ai_grader_card_portrait_display",
     rawEvidenceUnmodified: true,
     overlaysBakedIntoRawEvidence: false,
     note: "Overlay/debug image only. Do not use as raw evidence; raw Basler evidence remains clean.",
@@ -784,11 +1232,19 @@ export function buildFixedRigFocusAssistManifest(input: {
   safeOffBefore: boolean;
   safeOffAfter: boolean;
   finalLightOffConfirmedByMark?: boolean;
+  activeLightingProfile?: FixedRigActiveLightingProfile;
   manifestPath?: string;
   previewReportPath?: string;
 }): FixedRigFocusAssistManifest {
-  const roiDefinitions = buildFixedRigRoiDefinitions(input.quality?.cardBoundary ?? { status: "not_computed", confidence: 0, reason: "No focus-assist image captured." });
+  const roiDefinitions = addFixedRigDisplayRects(
+    buildFixedRigRoiDefinitions(input.quality?.cardBoundary ?? { status: "not_computed", confidence: 0, reason: "No focus-assist image captured." }),
+    input.quality?.width ?? 2448,
+    input.quality?.height ?? 2048
+  );
   const syncedCapture = input.macroPackage?.synced?.capture;
+  const activeLightingProfile =
+    input.activeLightingProfile ??
+    buildFixedRigActiveLightingProfile({ selectedDutyPercent: input.macroPackage?.leimac.dutyPercent, profileSource: "default" });
   const calibrationProfile = buildFixedRigCalibrationProfile({
     profileId: `${input.packageId}-profile`,
     cameraModel: syncedCapture?.camera.modelName ?? syncedCapture?.camera.friendlyName ?? null,
@@ -798,7 +1254,7 @@ export function buildFixedRigFocusAssistManifest(input: {
     imageHeight: input.quality?.height ?? syncedCapture?.imageHeight,
     selectedExposureUs: input.macroPackage?.requestedExposureUs ?? syncedCapture?.exposureTime ?? FIXED_RIG_SELECTED_EXPOSURE_US,
     selectedGain: syncedCapture?.gain ?? FIXED_RIG_SELECTED_GAIN,
-    selectedLeimacDuty: input.macroPackage?.leimac.dutyPercent ?? FIXED_RIG_SELECTED_LEIMAC_DUTY,
+    selectedLeimacDuty: activeLightingProfile.selectedDutyPercent,
     cardBoundary: input.quality?.cardBoundary,
     calibrationStatus: input.quality?.cardBoundary.status === "detected" ? "framing_assisted" : "focus_assisted",
   });
@@ -814,6 +1270,7 @@ export function buildFixedRigFocusAssistManifest(input: {
     roiDefinitions,
     ...(input.overlayPreview ? { overlayPreview: input.overlayPreview } : {}),
     calibrationProfile,
+    activeLightingProfile,
     suggestedDinoLiteTargets: {
       status: "not_computed",
       reason: "surface anomaly detector not implemented yet",
@@ -851,10 +1308,14 @@ export function buildFixedRigSideCapture(input: {
   side: FixedRigCardSide;
   macroPackage: BaslerLeimacMacroPackageManifest;
   quality: FixedRigQualityMetrics;
+  activeLightingProfile?: FixedRigActiveLightingProfile;
   overlayPreview?: FixedRigOverlayArtifact;
 }): FixedRigSideCapture {
-  const rois = buildFixedRigRoiDefinitions(input.quality.cardBoundary);
+  const rois = addFixedRigDisplayRects(buildFixedRigRoiDefinitions(input.quality.cardBoundary), input.quality.width, input.quality.height);
   const syncedCapture = input.macroPackage.synced?.capture;
+  const activeLightingProfile =
+    input.activeLightingProfile ??
+    buildFixedRigActiveLightingProfile({ selectedDutyPercent: input.macroPackage.leimac.dutyPercent, profileSource: "default" });
   const calibrationProfile = buildFixedRigCalibrationProfile({
     profileId: `${input.macroPackage.packageId}-${input.side}-profile`,
     cameraModel: syncedCapture?.camera.modelName ?? syncedCapture?.camera.friendlyName ?? null,
@@ -864,7 +1325,7 @@ export function buildFixedRigSideCapture(input: {
     imageHeight: input.quality.height,
     selectedExposureUs: input.macroPackage.requestedExposureUs ?? syncedCapture?.exposureTime ?? FIXED_RIG_SELECTED_EXPOSURE_US,
     selectedGain: syncedCapture?.gain ?? FIXED_RIG_SELECTED_GAIN,
-    selectedLeimacDuty: input.macroPackage.leimac.dutyPercent,
+    selectedLeimacDuty: activeLightingProfile.selectedDutyPercent,
     cardBoundary: input.quality.cardBoundary,
     calibrationStatus: input.quality.cardBoundary.status === "detected" ? "framing_assisted" : "focus_assisted",
   });
@@ -902,6 +1363,7 @@ export function buildFixedRigV1LocalManifest(input: {
   status: FixedRigV1LocalManifest["status"];
   front?: FixedRigSideCapture;
   back?: FixedRigSideCapture;
+  activeLightingProfile?: FixedRigActiveLightingProfile;
   finalLightOffConfirmedByMark?: boolean;
   manifestPath?: string;
   analysisPath?: string;
@@ -911,6 +1373,12 @@ export function buildFixedRigV1LocalManifest(input: {
     ...(input.front?.quality.warnings.map((warning) => `front: ${warning}`) ?? []),
     ...(input.back?.quality.warnings.map((warning) => `back: ${warning}`) ?? []),
   ];
+  const activeLightingProfile =
+    input.activeLightingProfile ??
+    buildFixedRigActiveLightingProfile({
+      selectedDutyPercent: input.front?.calibrationProfile.selectedLeimacDuty ?? input.back?.calibrationProfile.selectedLeimacDuty,
+      profileSource: "default",
+    });
   return {
     packageId: input.packageId,
     packageDir: input.packageDir,
@@ -919,6 +1387,7 @@ export function buildFixedRigV1LocalManifest(input: {
     ...(input.previewReportPath ? { previewReportPath: input.previewReportPath } : {}),
     status: input.status,
     selectedLightingProfile: ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID,
+    activeLightingProfile,
     workflow: {
       mode: "fixed_overhead_basler_v1",
       humanSteps: [
@@ -980,10 +1449,27 @@ export function buildFixedRigOperatorPreviewManifest(input: {
   quality?: FixedRigQualityMetrics;
   overlayPreview?: FixedRigOverlayArtifact;
   focusLockedByOperator?: boolean;
+  acceptedLightingProfile?: FixedRigActiveLightingProfile;
   manifestPath?: string;
   previewReportPath?: string;
 }): FixedRigOperatorPreviewManifest {
-  const roiDefinitions = buildFixedRigRoiDefinitions(input.quality?.cardBoundary ?? { status: "not_computed", confidence: 0 });
+  const roiDefinitions = addFixedRigDisplayRects(
+    buildFixedRigRoiDefinitions(input.quality?.cardBoundary ?? { status: "not_computed", confidence: 0 }),
+    input.quality?.width ?? 2448,
+    input.quality?.height ?? 2048
+  );
+  const previewDuty = input.livePreview?.previewLighting.requestedDutyPercent ?? input.livePreview?.previewLighting.currentDutyPercent;
+  const acceptedLightingProfile =
+    input.acceptedLightingProfile ??
+    buildFixedRigActiveLightingProfile({
+      selectedDutyPercent: previewDuty ?? FIXED_RIG_SELECTED_LEIMAC_DUTY,
+      selectedChannels: input.livePreview?.previewLighting.selectedChannels,
+      profileSource: input.status === "accepted" ? "operator_preview" : "default",
+      resetToDefault:
+        input.status === "accepted" &&
+        previewDuty === FIXED_RIG_SELECTED_LEIMAC_DUTY &&
+        JSON.stringify(normalizeChannelList(input.livePreview?.previewLighting.selectedChannels)) === JSON.stringify([...FIXED_RIG_DEFAULT_CHANNELS]),
+    });
   const calibrationProfile = buildFixedRigCalibrationProfile({
     profileId: `${input.packageId}-profile`,
     cameraModel: input.previewCapture?.camera.modelName ?? input.previewCapture?.camera.friendlyName ?? null,
@@ -993,7 +1479,7 @@ export function buildFixedRigOperatorPreviewManifest(input: {
     imageHeight: input.quality?.height ?? input.previewCapture?.imageHeight,
     selectedExposureUs: input.previewCapture?.exposureTime ?? FIXED_RIG_SELECTED_EXPOSURE_US,
     selectedGain: input.previewCapture?.gain ?? FIXED_RIG_SELECTED_GAIN,
-    selectedLeimacDuty: 0,
+    selectedLeimacDuty: acceptedLightingProfile.selectedDutyPercent,
     cardBoundary: input.quality?.cardBoundary,
     focusLockedByOperator: input.focusLockedByOperator ?? false,
     calibrationStatus: input.status === "preview_captured" || input.status === "accepted" ? "preview_assisted" : "uncalibrated",
@@ -1025,6 +1511,7 @@ export function buildFixedRigOperatorPreviewManifest(input: {
     roiDefinitions,
     ...(input.overlayPreview ? { overlayPreview: input.overlayPreview } : {}),
     calibrationProfile,
+    acceptedLightingProfile,
     readiness: {
       status: input.quality && !input.quality.warnings.length ? "ready_for_operator_review" : "not_ready",
       warnings,
@@ -1044,10 +1531,11 @@ export function buildFixedRigOperatorPreviewManifest(input: {
   };
 }
 
-function channelValuesFor(selectedChannel: number | "all", activeValue: string, inactiveValue = "0000") {
+function channelValuesFor(selectedChannel: number | "all" | readonly number[], activeValue: string, inactiveValue = "0000") {
+  const selectedChannels = Array.isArray(selectedChannel) ? normalizeChannelList(selectedChannel) : null;
   return Array.from({ length: 8 }, (_, index) => {
     const channel = index + 1;
-    const active = selectedChannel === "all" || selectedChannel === channel;
+    const active = selectedChannel === "all" || selectedChannel === channel || selectedChannels?.includes(channel);
     return {
       channel,
       value: active ? activeValue : inactiveValue,
@@ -1057,7 +1545,7 @@ function channelValuesFor(selectedChannel: number | "all", activeValue: string, 
 }
 
 export function buildLeimacCharacterizationFrames(input: {
-  channel: number | "all";
+  channel: number | "all" | readonly number[];
   dutyPercent?: number | string;
   unit?: number | string;
   triggerActivation?: LeimacIdmuTriggerActivationMode;
@@ -1243,20 +1731,30 @@ export async function analyzeFixedRigQuadrants(filePath: string): Promise<FixedR
 export async function writeFixedRigOperatorPreviewArtifacts(
   manifest: FixedRigOperatorPreviewManifest
 ): Promise<FixedRigOperatorPreviewManifest> {
-  const overlayPreview =
-    manifest.previewCapture?.outputFilePath && manifest.quality
-      ? await createFixedRigOverlayPreview({
+  const displayImage =
+    manifest.previewCapture?.outputFilePath
+      ? await createFixedRigDisplayImage({
           sourceImagePath: manifest.previewCapture.outputFilePath,
           outputDir: manifest.packageDir,
           filePrefix: "operator-preview",
-          quality: manifest.quality,
-          roiDefinitions: manifest.roiDefinitions,
+          rawSourceSha256: manifest.previewCapture.sha256,
+        })
+      : manifest.displayImage;
+  const overlayPreview =
+    displayImage?.outputFilePath && manifest.quality
+      ? await createFixedRigOverlayPreview({
+          sourceImagePath: displayImage.outputFilePath,
+          outputDir: manifest.packageDir,
+          filePrefix: "operator-preview",
+          quality: transformQualityForDisplay(manifest.quality, displayImage.displayTransform),
+          roiDefinitions: roisForDisplayOverlay(manifest.roiDefinitions),
           title: "Operator preview",
+          displayTransform: displayImage.displayTransform,
         })
       : manifest.overlayPreview;
   const manifestPath = path.join(manifest.packageDir, "manifest.json");
   const previewReportPath = path.join(manifest.packageDir, "preview-report.html");
-  const withPaths = { ...manifest, ...(overlayPreview ? { overlayPreview } : {}), manifestPath, previewReportPath };
+  const withPaths = { ...manifest, ...(displayImage ? { displayImage } : {}), ...(overlayPreview ? { overlayPreview } : {}), manifestPath, previewReportPath };
   await writeJsonArtifact(manifestPath, withPaths);
   await writeFile(previewReportPath, renderFixedRigOperatorPreviewReport(withPaths), "utf-8");
   return withPaths;
@@ -1303,52 +1801,110 @@ export async function writeFixedRigFocusAssistArtifacts(
   manifest: FixedRigFocusAssistManifest
 ): Promise<FixedRigFocusAssistManifest> {
   const syncedPath = manifest.macroPackage?.synced?.capture.outputFilePath;
-  const overlayPreview =
-    syncedPath && manifest.quality
-      ? await createFixedRigOverlayPreview({
+  const displayImage =
+    syncedPath
+      ? await createFixedRigDisplayImage({
           sourceImagePath: syncedPath,
           outputDir: manifest.packageDir,
           filePrefix: "focus-assist",
-          quality: manifest.quality,
-          roiDefinitions: manifest.roiDefinitions,
+          rawSourceSha256: manifest.macroPackage?.synced?.capture.sha256,
+        })
+      : manifest.displayImage;
+  const overlayPreview =
+    displayImage?.outputFilePath && manifest.quality
+      ? await createFixedRigOverlayPreview({
+          sourceImagePath: displayImage.outputFilePath,
+          outputDir: manifest.packageDir,
+          filePrefix: "focus-assist",
+          quality: transformQualityForDisplay(manifest.quality, displayImage.displayTransform),
+          roiDefinitions: roisForDisplayOverlay(manifest.roiDefinitions),
           title: "Focus/framing assist",
+          displayTransform: displayImage.displayTransform,
         })
       : manifest.overlayPreview;
   const manifestPath = path.join(manifest.packageDir, "manifest.json");
   const previewReportPath = path.join(manifest.packageDir, "preview-report.html");
-  const withPaths = { ...manifest, ...(overlayPreview ? { overlayPreview } : {}), manifestPath, previewReportPath };
+  const withPaths = { ...manifest, ...(displayImage ? { displayImage } : {}), ...(overlayPreview ? { overlayPreview } : {}), manifestPath, previewReportPath };
   await writeJsonArtifact(manifestPath, withPaths);
   await writeFile(previewReportPath, renderFixedRigFocusAssistReport(withPaths), "utf-8");
   return withPaths;
 }
 
 export async function writeFixedRigV1Artifacts(manifest: FixedRigV1LocalManifest): Promise<FixedRigV1LocalManifest> {
-  const frontOverlay =
-    manifest.front?.macroPackage.synced?.capture.outputFilePath && manifest.front.quality
-      ? await createFixedRigOverlayPreview({
+  const frontDisplay =
+    manifest.front?.macroPackage.synced?.capture.outputFilePath
+      ? await createFixedRigDisplayImage({
           sourceImagePath: manifest.front.macroPackage.synced.capture.outputFilePath,
           outputDir: manifest.packageDir,
           filePrefix: "front",
-          quality: manifest.front.quality,
-          roiDefinitions: manifest.front.roiDefinitions,
-          title: "Front ROI overlay",
+          rawSourceSha256: manifest.front.macroPackage.synced.capture.sha256,
         })
-      : manifest.front?.overlayPreview;
-  const backOverlay =
-    manifest.back?.macroPackage.synced?.capture.outputFilePath && manifest.back.quality
-      ? await createFixedRigOverlayPreview({
+      : manifest.front?.displayImage;
+  const backDisplay =
+    manifest.back?.macroPackage.synced?.capture.outputFilePath
+      ? await createFixedRigDisplayImage({
           sourceImagePath: manifest.back.macroPackage.synced.capture.outputFilePath,
           outputDir: manifest.packageDir,
           filePrefix: "back",
-          quality: manifest.back.quality,
-          roiDefinitions: manifest.back.roiDefinitions,
+          rawSourceSha256: manifest.back.macroPackage.synced.capture.sha256,
+        })
+      : manifest.back?.displayImage;
+  const frontOverlay =
+    frontDisplay?.outputFilePath && manifest.front?.quality
+      ? await createFixedRigOverlayPreview({
+          sourceImagePath: frontDisplay.outputFilePath,
+          outputDir: manifest.packageDir,
+          filePrefix: "front",
+          quality: transformQualityForDisplay(manifest.front.quality, frontDisplay.displayTransform),
+          roiDefinitions: roisForDisplayOverlay(manifest.front.roiDefinitions),
+          title: "Front ROI overlay",
+          displayTransform: frontDisplay.displayTransform,
+        })
+      : manifest.front?.overlayPreview;
+  const backOverlay =
+    backDisplay?.outputFilePath && manifest.back?.quality
+      ? await createFixedRigOverlayPreview({
+          sourceImagePath: backDisplay.outputFilePath,
+          outputDir: manifest.packageDir,
+          filePrefix: "back",
+          quality: transformQualityForDisplay(manifest.back.quality, backDisplay.displayTransform),
+          roiDefinitions: roisForDisplayOverlay(manifest.back.roiDefinitions),
           title: "Back ROI overlay",
+          displayTransform: backDisplay.displayTransform,
         })
       : manifest.back?.overlayPreview;
+  const frontRoiCrops =
+    frontDisplay && manifest.front?.macroPackage.synced?.capture
+      ? await createFixedRigRoiCrops({
+          sourceDisplayImagePath: frontDisplay.outputFilePath,
+          rawSourceImagePath: manifest.front.macroPackage.synced.capture.outputFilePath,
+          outputDir: path.join(manifest.packageDir, "front-roi-crops"),
+          rois: manifest.front.roiDefinitions,
+          displayTransform: frontDisplay.displayTransform,
+          rawSourceSha256: manifest.front.macroPackage.synced.capture.sha256,
+          filePrefix: "front",
+        })
+      : manifest.front?.roiCrops;
+  const backRoiCrops =
+    backDisplay && manifest.back?.macroPackage.synced?.capture
+      ? await createFixedRigRoiCrops({
+          sourceDisplayImagePath: backDisplay.outputFilePath,
+          rawSourceImagePath: manifest.back.macroPackage.synced.capture.outputFilePath,
+          outputDir: path.join(manifest.packageDir, "back-roi-crops"),
+          rois: manifest.back.roiDefinitions,
+          displayTransform: backDisplay.displayTransform,
+          rawSourceSha256: manifest.back.macroPackage.synced.capture.sha256,
+          filePrefix: "back",
+        })
+      : manifest.back?.roiCrops;
   const manifestWithOverlays: FixedRigV1LocalManifest = {
     ...manifest,
-    ...(manifest.front ? { front: { ...manifest.front, ...(frontOverlay ? { overlayPreview: frontOverlay } : {}) } } : {}),
-    ...(manifest.back ? { back: { ...manifest.back, ...(backOverlay ? { overlayPreview: backOverlay } : {}) } } : {}),
+    ...(manifest.front
+      ? { front: { ...manifest.front, ...(frontDisplay ? { displayImage: frontDisplay } : {}), ...(frontOverlay ? { overlayPreview: frontOverlay } : {}), ...(frontRoiCrops ? { roiCrops: frontRoiCrops } : {}) } }
+      : {}),
+    ...(manifest.back
+      ? { back: { ...manifest.back, ...(backDisplay ? { displayImage: backDisplay } : {}), ...(backOverlay ? { overlayPreview: backOverlay } : {}), ...(backRoiCrops ? { roiCrops: backRoiCrops } : {}) } }
+      : {}),
   };
   const manifestPath = path.join(manifest.packageDir, "manifest.json");
   const analysisPath = path.join(manifest.packageDir, "analysis.json");
@@ -1358,6 +1914,7 @@ export async function writeFixedRigV1Artifacts(manifest: FixedRigV1LocalManifest
   await writeJsonArtifact(analysisPath, {
     status: manifestWithOverlays.status === "completed" ? "computed" : "not_computed",
     selectedLightingProfile: manifestWithOverlays.selectedLightingProfile,
+    activeLightingProfile: manifestWithOverlays.activeLightingProfile,
     front: manifestWithOverlays.front?.analysis,
     back: manifestWithOverlays.back?.analysis,
     followUpPlan: manifestWithOverlays.followUpPlan,
@@ -1387,12 +1944,14 @@ function imageTag(filePath: string | undefined, alt: string): string {
 
 function qualityTable(quality: FixedRigQualityMetrics | undefined): string {
   if (!quality) return "<p>Quality metrics not available.</p>";
+  const alignment = quality.overlayAlignment;
   return `<table><tbody>
     <tr><th>Mean / max</th><td>${quality.mean} / ${quality.max}</td></tr>
     <tr><th>Sharpness score</th><td>${quality.sharpnessScore}</td></tr>
     <tr><th>Clipped pixels</th><td>${quality.clippedPixelFraction}</td></tr>
     <tr><th>Dark pixels</th><td>${quality.darkPixelFraction}</td></tr>
     <tr><th>Card boundary</th><td>${escapeHtml(quality.cardBoundary.status)} ${escapeHtml(quality.cardBoundary.coverage ?? "")}</td></tr>
+    <tr><th>Overlay alignment</th><td>${escapeHtml(alignment?.overlayAlignmentStatus ?? "not_computed")} center=${escapeHtml(alignment?.centerOffsetPx ? `${alignment.centerOffsetPx.x},${alignment.centerOffsetPx.y}px` : "")}; margins=${escapeHtml(alignment ? `${alignment.marginLeft}/${alignment.marginRight}/${alignment.marginTop}/${alignment.marginBottom}` : "")}; aspect=${escapeHtml(alignment?.detectedAspectRatio ?? "")}/${escapeHtml(alignment?.expectedAspectRatio ?? "")}</td></tr>
     <tr><th>Warnings</th><td>${escapeHtml(quality.warnings.join("; ") || "none")}</td></tr>
   </tbody></table>`;
 }
@@ -1405,8 +1964,21 @@ function calibrationTable(profile: FixedRigCalibrationProfile | undefined): stri
     <tr><th>Exposure / gain / duty</th><td>${escapeHtml(profile.selectedExposureUs)} us / ${escapeHtml(profile.selectedGain)} / ${escapeHtml(profile.selectedLeimacDuty)}%</td></tr>
     <tr><th>Polarity</th><td>Basler LineInverter=${escapeHtml(profile.selectedPolarity.baslerLineInverter)}, Leimac TriggerActivation=${escapeHtml(profile.selectedPolarity.leimacTriggerActivation)}</td></tr>
     <tr><th>Pixel/mm estimate</th><td>${escapeHtml(profile.pixelToMmEstimateStatus)} ${escapeHtml(profile.pixelToMmEstimateX ?? "")} ${escapeHtml(profile.pixelToMmEstimateY ?? "")}</td></tr>
+    <tr><th>Pixel/mm orientation</th><td>${escapeHtml(profile.pixelToMmOrientationUsed ?? "not_computed")} consistency=${escapeHtml(profile.pixelToMmConsistency?.status ?? "not_computed")} diff=${escapeHtml(profile.pixelToMmConsistency?.relativeDifference ?? "")}</td></tr>
     <tr><th>Lens / lighting calibrated</th><td>${escapeHtml(profile.lensDistortionCalibrated)} / ${escapeHtml(profile.lightingCalibrated)}</td></tr>
     <tr><th>Focus locked by operator</th><td>${escapeHtml(profile.focusLockedByOperator)}</td></tr>
+  </tbody></table>`;
+}
+
+function activeLightingProfileTable(profile: FixedRigActiveLightingProfile | undefined): string {
+  if (!profile) return "<p>Active lighting profile unavailable.</p>";
+  return `<table><tbody>
+    <tr><th>Duty</th><td>${escapeHtml(profile.selectedDutyPercent)}% / PWM ${escapeHtml(profile.actualLeimacPwmStep)}</td></tr>
+    <tr><th>Channels</th><td>${escapeHtml(profile.selectedChannels.join(", "))}</td></tr>
+    <tr><th>Source</th><td>${escapeHtml(profile.profileSource)}</td></tr>
+    <tr><th>Accepted at</th><td>${escapeHtml(profile.acceptedAt)}</td></tr>
+    <tr><th>Reset to default</th><td>${escapeHtml(profile.resetToDefault)}</td></tr>
+    <tr><th>Persistent Leimac save</th><td>${escapeHtml(profile.persistentLeimacSaved)}</td></tr>
   </tbody></table>`;
 }
 
@@ -1426,10 +1998,13 @@ function sideSection(side: FixedRigSideCapture | undefined, title: string): stri
     <h2>${escapeHtml(title)}</h2>
     <div class="grid">
       <section><h3>Dark Control</h3>${imageTag(side.macroPackage.darkControl?.capture.outputFilePath, `${title} dark control`)}</section>
-      <section><h3>Synced Macro</h3>${imageTag(side.macroPackage.synced?.capture.outputFilePath, `${title} synced macro`)}</section>
+      <section><h3>Raw Synced Macro</h3>${imageTag(side.macroPackage.synced?.capture.outputFilePath, `${title} raw synced macro`)}</section>
+      <section><h3>Portrait Display Macro</h3>${imageTag(side.displayImage?.outputFilePath, `${title} portrait display macro`)}</section>
     </div>
     <h3>Overlay Preview</h3>
     ${imageTag(side.overlayPreview?.outputFilePath, `${title} ROI overlay preview`)}
+    <h3>Portrait ROI Crops</h3>
+    <div class="grid">${(side.roiCrops ?? []).map((crop) => `<section><h4>${escapeHtml(crop.roiId ?? "crop")}</h4>${imageTag(crop.outputFilePath, `${title} ${crop.roiId ?? "ROI"} portrait crop`)}</section>`).join("") || "<p>ROI crops not generated.</p>"}</div>
     ${qualityTable(side.quality)}
     <h3>Calibration Profile</h3>
     ${calibrationTable(side.calibrationProfile)}
@@ -1457,10 +2032,15 @@ export function renderFixedRigFocusAssistReport(manifest: FixedRigFocusAssistMan
 <body><main>
   <h1>Basler Fixed-Rig Focus Assist</h1>
   <p class="warn">Manual focus assist only. This is not autofocus, not calibrated macro evidence, not a final grade, not a certificate, and not certified grading.</p>
-  ${imageTag(manifest.macroPackage?.synced?.capture.outputFilePath, "Focus assist synced macro")}
+  <h2>Portrait Display Image</h2>
+  ${imageTag(manifest.displayImage?.outputFilePath, "Focus assist portrait display macro")}
+  <h2>Raw Synced Macro</h2>
+  ${imageTag(manifest.macroPackage?.synced?.capture.outputFilePath, "Focus assist raw synced macro")}
   <h2>Overlay Preview</h2>
   ${imageTag(manifest.overlayPreview?.outputFilePath, "Focus assist overlay preview")}
   ${qualityTable(manifest.quality)}
+  <h2>Active Lighting Profile</h2>
+  ${activeLightingProfileTable(manifest.activeLightingProfile)}
   <h2>Calibration Profile</h2>
   ${calibrationTable(manifest.calibrationProfile)}
   <h2>ROIs</h2>
@@ -1515,9 +2095,13 @@ export function renderFixedRigOperatorPreviewReport(manifest: FixedRigOperatorPr
   </tbody></table>
   <h2>Diagnostic Raw Preview Snapshot</h2>
   ${imageTag(manifest.previewCapture?.outputFilePath, "Basler operator preview diagnostic raw snapshot")}
+  <h2>Diagnostic Portrait Display Snapshot</h2>
+  ${imageTag(manifest.displayImage?.outputFilePath, "Basler operator preview diagnostic portrait display snapshot")}
   <h2>Diagnostic Overlay Preview</h2>
   ${imageTag(manifest.overlayPreview?.outputFilePath, "Basler operator preview overlay")}
   ${qualityTable(manifest.quality)}
+  <h2>Accepted Lighting Profile</h2>
+  ${activeLightingProfileTable(manifest.acceptedLightingProfile)}
   <h2>Calibration Profile</h2>
   ${calibrationTable(manifest.calibrationProfile)}
   <h2>ROIs</h2>
@@ -1549,6 +2133,8 @@ export function renderFixedRigV1Report(manifest: FixedRigV1LocalManifest): strin
   <h1>AI Grader Fixed-Rig V1 Local Workflow</h1>
   <p class="warn">Local/offline uncalibrated evidence package only. No final AI grade, certificate, or certified grading claim is made.</p>
   <p><strong>Evidence roles:</strong> Basler is primary macro measurement/screening evidence. Dino-Lite is optional manual detail confirmation for flagged or operator-requested close-ups.</p>
+  <h2>Active Lighting Profile</h2>
+  ${activeLightingProfileTable(manifest.activeLightingProfile)}
   ${sideSection(manifest.front, "Front Basler Macro")}
   ${sideSection(manifest.back, "Back Basler Macro")}
   <h2>Lighting Profile</h2>

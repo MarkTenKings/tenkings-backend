@@ -21312,3 +21312,66 @@ By enabling Rip It Live, I confirm:
   - Circular ring reflection remains an unresolved optical/glare limitation.
   - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was made.
 - Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no Arduino command, no stage/motor command, no network setting change, no Leimac SYSTEM RESET or FACTORY DEFAULT, no persistent Leimac User Set save, no persistent Basler User Set save, no high-duty lighting, no captured image/vendor binary commit, and all captured output remained outside the repo.
+
+## 2026-06-29 - AI Grader PR #39 active preview profile and evidence-package follow-up
+- PR #39 remains open and must not be merged yet.
+- Implemented the post-smoke fixes needed before final hardware acceptance:
+  - Accepted Basler operator preview lighting is now persisted as a local software active fixed-rig lighting profile.
+  - Profile storage is outside the repo as `fixed-rig-active-lighting-profile.json` near the fixed-rig capture-data root.
+  - The profile records accepted duty percent, Leimac PWM step, selected channels, source (`operator_preview`, `default`, or `cli_override`), accepted timestamp, and reset flag.
+  - Focus-assist, fixed-rig V1 local, and fixed-rig V1 evidence-package dry runs now read the accepted profile unless a CLI override/reset is used.
+- Added report/display orientation foundation:
+  - Raw Basler captures remain unchanged in `basler_sensor_pixels`.
+  - Derived portrait display images, overlay debug images, and ROI crops use `ai_grader_card_portrait_display`.
+  - Manifests record `displayTransform`; raw evidence hashes are not changed by report orientation.
+- Corrected pixel/mm estimate orientation:
+  - Raw landscape card width maps to `88.9mm`; raw landscape height maps to `63.5mm`.
+  - Manifests include orientation used and X/Y consistency status.
+  - Divergence warns and keeps the profile uncalibrated.
+- Added auditable overlay alignment metrics:
+  - Template rect, detected boundary rect, center offsets, margins, aspect ratio comparison, orientation used, and pass/warn/fail status.
+  - Reports warn when framing/card detection is not trustworthy.
+- Added supervised `ai-grader-fixed-rig-v1-evidence-package` command:
+  - Front/back captures: dark control, all-on, accepted active lighting profile, and Leimac channels `1-8`.
+  - Generates portrait display images, overlay debug images, and ROI crops for the future full-card/corner/edge/surface analysis package.
+  - Evidence remains `macro_fixed_rig_v1_uncalibrated`; no final grade/certificate/certified claim.
+- Focused validation:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 134 tests.
+- Pending:
+  - Run full validation matrix.
+  - Hardware retest: Mark accepts changed preview duty (for example `1.3%` or `1.4%`), focus/framing proves accepted duty carried through, report portrait/overlay/pixel-mm fixes are verified, then run fixed-rig V1 uncalibrated evidence package front/back.
+  - Safe-off and final physical ring-light-off confirmation required.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no captured image/vendor binary commit, and no calibrated/final/certificate/certified claims.
+
+## 2026-06-29 - AI Grader PR #39 active profile and evidence-package smoke accepted
+- PR #39 remains open and must not be merged yet.
+- Mark accepted live preview with a changed active profile:
+  - Active profile path: `C:\TenKings\capture-data\fixed-rig-active-lighting-profile.json`.
+  - Duty `1.3%`, PWM step `13`, selected channels `1-8`, source `operator_preview`.
+  - No persistent Basler or Leimac User Set save.
+  - A back-positioning preview briefly accepted `1.2%`; profile was restored to `1.3%` before back evidence capture.
+- Preview/focus proof:
+  - Accepted preview: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-29T223557442Z`, FPS `20.5`, frame age `2 ms`, transform `rotate90cw`.
+  - Focus/framing output: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-focus-assist-2026-06-29T224331062Z`.
+  - Focus/framing manifest used active profile duty `1.3%` / PWM `13` / source `operator_preview`, proving it did not silently fall back to default `1.2%`.
+  - Focus metrics: mean `54.3913`, clipped `0.001314`, dark `0.068241`, sharpness `402.9915`, coverage `0.952434`, overlay alignment `warn`, pixel/mm consistency `warn`, transform `rotate90cw`.
+  - Back positioning/restored profile preview: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-29T230738709Z`, overlay alignment `pass`, pixel/mm consistency `pass`.
+- Fixed-rig V1 uncalibrated evidence package:
+  - Front folder: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-29T225500347Z`.
+  - Front report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-29T225500347Z\preview-report.html`.
+  - Front all-on raw: SHA-256 `8284b71aa6a4d4cbf377d953c58efefbf7e2ee28d3dfca812aef2431cede04e4`, `2813838` bytes, `2448x2048`; mean `61.0675`, clipped `0.010289`, dark `0.025929`, sharpness `494.9914`, coverage `0.940953`, overlay `warn`.
+  - Back folder: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-29T230849461Z`.
+  - Back report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-29T230849461Z\preview-report.html`.
+  - Back all-on raw: SHA-256 `cbf692169c4d570ecb601afda2466f8ac2ac2487cebf9c36a37c9434d78546d5`, `2510345` bytes, `2448x2048`; mean `120.8304`, clipped `0.013025`, dark `0.053224`, sharpness `681.029`, coverage `0.690135`, overlay `pass`.
+  - Each side captured dark control, all-on, accepted-profile, channels `1-8`, portrait display, overlay, and 12 ROI crops.
+  - Raw images remain in `basler_sensor_pixels`; derived report/display/ROI assets use `ai_grader_card_portrait_display` with `displayTransform=rotate90cw`.
+  - Evidence class `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`.
+- Mark confirmed final physical Leimac ring light state was off.
+- Limitations:
+  - Still uncalibrated; manual focus only.
+  - Front framing remains near-edge/overlay `warn`.
+  - Channel physical mapping remains unconfirmed.
+  - Ring reflection/glare remains unresolved.
+  - No final grade, certificate, certified grading claim, captured image commit, or vendor binary commit.
+- Next required step: final validation, commit, push, and PR check review. Do not merge.

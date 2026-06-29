@@ -17,6 +17,7 @@ const {
   BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION,
   BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION,
   LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION,
+  buildFixedRigActiveLightingProfile,
   buildFixedRigCalibrationProfile,
   buildFixedRigFocusAssistManifest,
   buildFixedRigLightingProfilePlan,
@@ -25,10 +26,12 @@ const {
   buildFixedRigV1LocalManifest,
   buildLeimacChannelCharacterizationManifest,
   buildLeimacCharacterizationFrames,
+  readFixedRigActiveLightingProfile,
   renderFixedRigFocusAssistReport,
   renderFixedRigOperatorPreviewReport,
   renderFixedRigV1Report,
   renderLeimacChannelCharacterizationReport,
+  writeFixedRigActiveLightingProfile,
 } = require("../dist/drivers/baslerFixedRigV1");
 const {
   BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
@@ -815,8 +818,89 @@ test("Fixed-rig calibration profile defaults are uncalibrated and estimate pixel
   assert.equal(withBoundary.focusLockedByOperator, true);
   assert.equal(withBoundary.calibrationStatus, "focus_assisted");
   assert.equal(withBoundary.pixelToMmEstimateStatus, "estimated_uncalibrated");
-  assert.equal(withBoundary.pixelToMmEstimateX, 0.03175);
-  assert.equal(withBoundary.pixelToMmEstimateY, 0.052294);
+  assert.equal(withBoundary.pixelToMmOrientationUsed, "raw_landscape_rotated_to_portrait");
+  assert.equal(withBoundary.pixelToMmEstimateX, 0.04445);
+  assert.equal(withBoundary.pixelToMmEstimateY, 0.037353);
+  assert.equal(withBoundary.pixelToMmConsistency.status, "warn");
+});
+
+test("Fixed-rig active lighting profile persists accepted preview duty and channels outside repo", async () => {
+  const outputRoot = path.join(os.tmpdir(), "fixed-rig-calibration-active-profile-test");
+  const outputDir = path.join(outputRoot, "fixed-rig-calibration");
+  const profile = buildFixedRigActiveLightingProfile({
+    selectedDutyPercent: 1.4,
+    selectedChannels: [1, 3, 5, 7],
+    profileSource: "operator_preview",
+    acceptedAt: "2026-06-29T22:00:00.000Z",
+  });
+  const profilePath = await writeFixedRigActiveLightingProfile(outputDir, profile);
+  const readBack = await readFixedRigActiveLightingProfile(outputDir);
+
+  assert.equal(profilePath.endsWith("fixed-rig-active-lighting-profile.json"), true);
+  assert.equal(readBack.selectedDutyPercent, 1.4);
+  assert.equal(readBack.actualLeimacPwmStep, 14);
+  assert.deepEqual(readBack.selectedChannels, [1, 3, 5, 7]);
+  assert.equal(readBack.profileSource, "operator_preview");
+  assert.equal(readBack.persistentLeimacSaved, false);
+});
+
+test("Fixed-rig commands carry accepted preview lighting profile unless overridden", async () => {
+  const outputRoot = path.join(os.tmpdir(), "fixed-rig-active-profile-carryover-test");
+  const calibrationDir = path.join(outputRoot, "fixed-rig-calibration");
+  const captureDir = path.join(outputRoot, "fixed-rig-v1");
+  await writeFixedRigActiveLightingProfile(
+    calibrationDir,
+    buildFixedRigActiveLightingProfile({
+      selectedDutyPercent: 1.4,
+      selectedChannels: [2, 4, 6, 8],
+      profileSource: "operator_preview",
+      acceptedAt: "2026-06-29T22:10:00.000Z",
+    })
+  );
+
+  const focusDryRun = await runCli(["basler-fixed-rig-focus-assist", "--output-dir", captureDir, "--exposure-us", "45000"]);
+  assert.equal(focusDryRun.code, 0);
+  assert.equal(focusDryRun.stdout.manifest.activeLightingProfile.selectedDutyPercent, 1.4);
+  assert.deepEqual(focusDryRun.stdout.manifest.activeLightingProfile.selectedChannels, [2, 4, 6, 8]);
+  assert.equal(focusDryRun.stdout.manifest.activeLightingProfile.profileSource, "operator_preview");
+  assert.equal(focusDryRun.stdout.manifest.calibrationProfile.selectedLeimacDuty, 1.4);
+
+  const fixedRigDryRun = await runCli(["ai-grader-fixed-rig-v1-local", "--output-dir", captureDir, "--exposure-us", "45000"]);
+  assert.equal(fixedRigDryRun.code, 0);
+  assert.equal(fixedRigDryRun.stdout.manifest.activeLightingProfile.selectedDutyPercent, 1.4);
+  assert.deepEqual(fixedRigDryRun.stdout.manifest.activeLightingProfile.selectedChannels, [2, 4, 6, 8]);
+
+  const evidenceDryRun = await runCli(["ai-grader-fixed-rig-v1-evidence-package", "--output-dir", captureDir, "--exposure-us", "45000"]);
+  assert.equal(evidenceDryRun.code, 0);
+  assert.equal(evidenceDryRun.stdout.activeLightingProfile.selectedDutyPercent, 1.4);
+  assert.deepEqual(evidenceDryRun.stdout.activeLightingProfile.selectedChannels, [2, 4, 6, 8]);
+  assert.deepEqual(evidenceDryRun.stdout.plan.sides, ["front", "back"]);
+  assert.deepEqual(evidenceDryRun.stdout.plan.capturesPerSide, [
+    "dark-control",
+    "all-on",
+    "accepted-lighting-profile",
+    "channel-1",
+    "channel-2",
+    "channel-3",
+    "channel-4",
+    "channel-5",
+    "channel-6",
+    "channel-7",
+    "channel-8",
+  ]);
+
+  const overrideDryRun = await runCli(["basler-fixed-rig-focus-assist", "--output-dir", captureDir, "--duty", "1.3", "--exposure-us", "45000"]);
+  assert.equal(overrideDryRun.code, 0);
+  assert.equal(overrideDryRun.stdout.manifest.activeLightingProfile.selectedDutyPercent, 1.3);
+  assert.equal(overrideDryRun.stdout.manifest.activeLightingProfile.profileSource, "cli_override");
+
+  const frontOnlyDryRun = await runCli(["ai-grader-fixed-rig-v1-evidence-package", "--output-dir", captureDir, "--evidence-side", "front"]);
+  assert.equal(frontOnlyDryRun.code, 0);
+  assert.deepEqual(frontOnlyDryRun.stdout.plan.sides, ["front"]);
+
+  const backOnlyDryRun = await runCli(["ai-grader-fixed-rig-v1-evidence-package", "--output-dir", captureDir, "--evidence-side", "back"]);
+  assert.equal(backOnlyDryRun.code, 0);
+  assert.deepEqual(backOnlyDryRun.stdout.plan.sides, ["back"]);
 });
 
 test("Fixed-rig operator preview manifest requires a live-stream window and keeps overlays out of raw evidence", async () => {
@@ -1292,6 +1376,47 @@ test("Fixed-rig V1 CLIs reject unsafe inputs before hardware", async () => {
   const fixedRigHighDuty = await runCli(["ai-grader-fixed-rig-v1-local", "--duty", "6"]);
   assert.equal(fixedRigHighDuty.code, 1);
   assert.match(fixedRigHighDuty.stderr.error, /capped at 5%/);
+
+  const evidenceInvalidSide = await runCli(["ai-grader-fixed-rig-v1-evidence-package", "--evidence-side", "left"]);
+  assert.equal(evidenceInvalidSide.code, 1);
+  assert.match(evidenceInvalidSide.stderr.error, /--evidence-side must be front, back, or both/);
+
+  const evidenceFrontMissingConfirmation = await runCli([
+    "ai-grader-fixed-rig-v1-evidence-package",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--evidence-side",
+    "front",
+    "--apply",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(evidenceFrontMissingConfirmation.code, 1);
+  assert.match(evidenceFrontMissingConfirmation.stderr.error, /UNCALIBRATED EVIDENCE PACKAGE/);
+  assert.doesNotMatch(evidenceFrontMissingConfirmation.stderr.error, /--operator-flip-confirmed/);
+
+  const evidenceBackMissingFlip = await runCli([
+    "ai-grader-fixed-rig-v1-evidence-package",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--evidence-side",
+    "back",
+    "--apply",
+    "--confirm",
+    "RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(evidenceBackMissingFlip.code, 1);
+  assert.match(evidenceBackMissingFlip.stderr.error, /--operator-flip-confirmed/);
 
   const channelRepoOutput = await runCli([
     "leimac-channel-characterization",
