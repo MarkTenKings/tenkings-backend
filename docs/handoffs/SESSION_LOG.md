@@ -20762,3 +20762,31 @@ By enabling Rip It Live, I confirm:
 - Captured images were written outside the repo and were not committed.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-29 UTC - AI Grader full-rig local smoke PR #37 merged
+
+### Summary
+- Merged PR #37 into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/37`.
+- PR #37 merge commit: `8b324430fc3468655abe4cfb472f84526584bf46`.
+- `origin/main` immediately after merge: `8b324430fc3468655abe4cfb472f84526584bf46`.
+- PR #37 added the local/offline full-rig workflow: Basler/Leimac synchronized macro package plus Dino-Lite guided detail capture and unified manifest/report output.
+- Full-rig local smoke succeeded before merge and artifacts were created outside git under `C:\TenKings\capture-data\full-rig-smoke`.
+- Important limitation carried forward: Basler macro image/card was visibly out of focus. The fixed rig needs manual focus/height setup before calibration or repeatability acceptance.
+- Evidence remains uncalibrated. No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No hardware command was run during merge/handoff.
+- No Arduino command was run.
+- No stage/motor command was run.
+- No Windows network setting was changed.
+- No persistent Leimac User Set save was run.
+- No persistent Basler User Set save was run.
+- No high-duty lighting was used.
+- Captured images were written outside the repo and were not committed.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

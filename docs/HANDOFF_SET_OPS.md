@@ -11269,3 +11269,17 @@ Build Set Ops UI flow with:
   - Unified routing: Basler macro evidence is preferred for macro/centering context, but v0 scoring remains the existing Dino-Lite experimental analysis path (`basler_preferred_not_routed_to_score_v0`).
 - Known limitation: Basler macro focus needs mechanical/optical adjustment before calibration or repeatability acceptance.
 - Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no Arduino command, no stage/motor command, no network setting change, no persistent Basler or Leimac User Set save, no high-duty lighting, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
+
+## Session Update (2026-06-29 UTC, AI Grader full-rig local smoke PR #37 merged)
+- Merged PR #37 into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/37`.
+- PR #37 merge commit: `8b324430fc3468655abe4cfb472f84526584bf46`.
+- `origin/main` immediately after merge: `8b324430fc3468655abe4cfb472f84526584bf46`.
+- PR #37 established the first local/offline full-rig smoke workflow that combines:
+  - Basler + Leimac synchronized macro evidence.
+  - Dino-Lite guided detail evidence.
+  - Unified local manifest/report output.
+- Accepted smoke evidence remained outside the repo under `C:\TenKings\capture-data\full-rig-smoke`.
+- Known limitation carried forward: the Basler macro image was visibly out of focus and needs manual optical focus/height work before calibration or repeatability acceptance.
+- Evidence remains uncalibrated; no final AI grade, certificate, or certified grading claim was added.
+- No captured image, SDK binary, OCX/DLL, vendor file, secret, or generated hardware output was committed.
+- Guardrails held during merge and handoff: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no hardware command, no Arduino command, no stage/motor command, no network setting change, no persistent Basler or Leimac User Set save, no high-duty lighting, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
