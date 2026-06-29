@@ -20565,6 +20565,7 @@ By enabling Rip It Live, I confirm:
   - Size/dimensions: `1356565` bytes, `2448x2048`
   - Stats: min `0`, max `255`, mean `27.6684`, brightFraction `0.18785`
 - Comparison: mean delta `27.4701`, max delta `247`, `materiallyBrighter=true`.
+- Safe-off ACKed after the image-stat smoke, and Mark later confirmed the final ring-light state was off.
 - Calibration/evidence fields: `isCalibrated=false`, `evidenceClass=macro_sync_smoke_uncalibrated`.
 
 ### Exact Leimac Frames

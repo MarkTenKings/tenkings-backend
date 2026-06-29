@@ -11200,6 +11200,7 @@ Build Set Ops UI flow with:
   - Dark control artifact outside git: `C:\TenKings\capture-data\basler-leimac-sync\basler-leimac-dark-control-line2-inverter-level-low-20260629T041905743Z.png`, SHA-256 `19244c85339f15251529730076fa79656048e97a0e9064bb2ef8bfa1e6ff3179`, `151013` bytes, `2448x2048`, stats min `0`, max `8`, mean `0.1983`, brightFraction `0`.
   - Synced artifact outside git: `C:\TenKings\capture-data\basler-leimac-sync\basler-leimac-image-stat-sync-line2-inverter-level-low-20260629T041921325Z.png`, SHA-256 `61459596a5f22484518682d79c10bccbece0f5077159fc8940ddcccd4abd6c71`, `1356565` bytes, `2448x2048`, stats min `0`, max `255`, mean `27.6684`, brightFraction `0.18785`.
   - Image-stat comparison: mean delta `27.4701`, max delta `247`, `materiallyBrighter=true`.
+  - Safe-off ACKed after the smoke, and Mark later confirmed the final ring-light state was off.
 - Exact key Leimac frames:
   - Read unit info: `R830000` -> `R83000100000008`.
   - Safe-off: `W8601010000020000030000040000050000060000070000080000` -> `W86ACK0`; `W8501010000020000030000040000050000060000070000080000` -> `W85ACK0`; `W1101010000020000030000040000050000060000070000080000` -> `W11ACK0`.
