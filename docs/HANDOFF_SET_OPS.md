@@ -11041,3 +11041,169 @@ Build Set Ops UI flow with:
 - CI status before merge: all PR checks passing, including Install & Build, Vercel, Vercel Preview Comments, and Docker image jobs for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
 - Vercel automatic deployment status reported by GitHub before merge: pass / deployment completed for the PR preview.
 - Guardrails held during merge and handoff: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no hardware command, no Leimac write command, no lights on/off, no PWM/brightness/output/trigger change, no Basler setting write, no image capture, no network setting change, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
+
+## Session Update (2026-06-26 UTC, AI Grader Basler/Leimac sync PR #36 implementation)
+- Started branch `feature/ai-grader-basler-leimac-sync` from fresh `main` after PR #35 merge.
+- Implemented PR #36 foundation in `@tenkings/ai-grader-capture-helper`:
+  - `basler-line2-exposure-active` dry-run/apply command for transient Basler `LineSelector=Line2`, `LineMode=Output`, `LineInverter=false`, `LineSource=ExposureActive`.
+  - `leimac-idmu-trigger-profile` dry-run/apply command for the low-duty `basler-line2-trg-in1-low-duty` profile.
+  - `leimac-idmu-safe-off` dry-run/apply command for verified all-off frames.
+  - `basler-leimac-sync-smoke` supervised command requiring outside-git output, explicit apply/confirmation, Mark-present/wiring/status/light-state flags, and safe-off cleanup.
+  - Sync smoke manifest metadata records image path/checksum/size/dimensions, exposure/gain, Basler Line2 settings, Leimac IP/unit-info/profile/duty/frames, `isCalibrated=false`, and `evidenceClass=macro_sync_smoke_uncalibrated`.
+- Confirmed command-safety boundaries in code/tests:
+  - no default health/readiness/server/admin path opens Basler or Leimac hardware
+  - Basler Line2 apply requires exact confirmation and does not save User Sets
+  - Leimac trigger profile requires explicit host/port, exact confirmation, `R830000` unit-info verification, and duty `<=5`
+  - Leimac profile writes are allowlisted only; no arbitrary write-frame CLI, SYSTEM RESET, FACTORY DEFAULT, network settings, or persistent saves
+  - sync smoke rejects repo output paths and requires explicit `--apply`
+- Hardware facts recorded:
+  - Basler `CCB-M8IO` pin 4 / black / Line2 -> Leimac pin 2 / `TRG IN1`
+  - Basler `CCB-M8IO` pin 6 / pink-powder / GPIO ground -> 0 V WAGO
+  - Mean Well `HLG-150H-24A` +24 V -> Leimac pin 17 and pin 1 / `IN_COM`
+  - Mean Well 0 V -> Leimac pin 19 and Basler GPIO ground
+  - Leimac controller `IDMU-P8B-24`
+  - unused Basler I/O wires must remain individually insulated
+  - ring light reported on at main power, so first smoke must abort if light remains continuously on after configuration
+- Exact PR #36 Leimac write frames tested:
+  - safe-off: `W8601010000020000030000040000050000060000070000080000`, `W8501010000020000030000040000050000060000070000080000`, `W1101010000020000030000040000050000060000070000080000`
+  - trigger activation Level Low: `W0901010002020002030002040002050002060002070002080002`
+  - trigger source TRG IN1: `W6501010000020000030000040000050000060000070000080000`
+  - trigger synchronization synchronous: `W8401010000020000030000040000050000060000070000080000`
+  - output delay 0 us: `W1301010000020000030000040000050000060000070000080000`
+  - 5% PWM / 50 of 1000 steps: `W1101010050020050030050040050050050060050070050080050`
+  - asynchronous output OFF: `W8501010000020000030000040000050000060000070000080000`
+  - lighting output enable for trigger-controlled smoke: `W8601010001020001030001040001050001060001070001080001`
+- Validation:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 111 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Passive inventory only:
+  - `Ethernet 2` / Realtek USB GbE Family Controller #2 is `Up` at `1 Gbps`, MAC `00-05-1B-DF-02-39`, IPv4 `169.254.215.165/16`.
+  - `Wi-Fi` is `Up` at `192.168.2.20/24`.
+  - This pass did not show Basler `169.254.68.71` or Leimac `169.254.191.156` unicast neighbors; only multicast/broadcast neighbors were present on `Ethernet 2`.
+- Safe dry-runs run with no hardware access:
+  - `basler-line2-exposure-active` -> `applied=false`, no camera opened, no User Set save, no capture.
+  - `leimac-idmu-trigger-profile --host 169.254.191.156 --port 1000 --profile basler-line2-trg-in1-low-duty --duty 5` -> dry-run frames only, no TCP connection, no writes.
+  - `leimac-idmu-trigger-sync-plan --mode basler-exposure-active-to-trg-in1` -> dry-run plan only.
+- Hardware smoke has not been attempted yet. Waiting for explicit supervised Mark confirmation before any Basler setting write, Leimac write, image capture, or safe-off command.
+- Guardrails held so far: no migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no Dino-Lite command, no Arduino command, no stage/motor command, no network setting change, no Basler setting write, no Basler capture, no Leimac write command, no lights on/off, no PWM/brightness/output/trigger hardware change, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
+
+## Session Update (2026-06-26 UTC, AI Grader Basler/Leimac sync PR #36 supervised smoke aborted)
+- Continued PR #36 on branch `feature/ai-grader-basler-leimac-sync`, HEAD before this docs update `eda72c5`.
+- Mark confirmed current hardware state before the supervised run:
+  - Mark present.
+  - Basler `CCB-M8IO` / Leimac EXT I/O wiring complete.
+  - Unused Basler I/O wires insulated.
+  - Leimac STATUS light green.
+  - Ring light initially on.
+- Targeted validation before hardware:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 111 tests.
+- Passive inventory before hardware:
+  - `Ethernet 2` / Realtek USB GbE Family Controller #2 is `Up` at `1 Gbps`, IPv4 `169.254.215.165/16`.
+  - `Wi-Fi` is `Up` at `192.168.2.20/24`.
+  - Neighbor/ARP tables did not show current Basler/Leimac unicast entries before traffic; this was not treated as failure.
+- Preflight hardware checks:
+  - Leimac `169.254.191.156:1000`, request `R830000` -> raw `R83000100000008`; parsed `totalUnits=1`, `dimmingMethod=0000` / PWM, `lightingOutputChannels=8`.
+  - Basler readiness/list found pylon `26.05.0.18278`, one camera `a2A2448-23gmBAS`, transport `GEV`, device IP `169.254.185.171`, interface IP `169.254.215.165`, status `reachable`.
+- Safe-off verification:
+  - Because the ring light was initially on, ran `leimac-idmu-safe-off --apply`.
+  - Frames and raw responses: `W8601010000020000030000040000050000060000070000080000` -> `W86ACK0`; `W8501010000020000030000040000050000060000070000080000` -> `W85ACK0`; `W1101010000020000030000040000050000060000070000080000` -> `W11ACK0`.
+  - Mark confirmed the ring light turned off.
+- Dry-run/apply sequence before abort:
+  - Basler dry-run reported `applied=false`, no camera opened.
+  - Leimac trigger-profile dry-run reported low-duty 5% planned frames only, no TCP write, no persistent save.
+  - Basler transient Line2 apply succeeded and read back `LineSelector=Line2`, `LineMode=Output`, `LineSource=ExposureActive`, `LineInverter=false`, `persistentSaved=false`; no image capture and no User Set save.
+  - Mark confirmed the ring light stayed off after Basler Line2 apply.
+- Leimac low-duty profile apply:
+  - Unit-info precheck: `R830000` -> `R83000100000008`.
+  - Safe-off-before-profile frames ACKed: `W86...0000` -> `W86ACK0`; `W85...0000` -> `W85ACK0`; `W11...0000` -> `W11ACK0`.
+  - Trigger/profile frames ACKed:
+    - `W0901010002020002030002040002050002060002070002080002` -> `W09ACK0`.
+    - `W6501010000020000030000040000050000060000070000080000` -> `W65ACK0`.
+    - `W8401010000020000030000040000050000060000070000080000` -> `W84ACK0`.
+    - `W1301010000020000030000040000050000060000070000080000` -> `W13ACK0`.
+    - `W1101010050020050030050040050050050060050070050080050` -> `W11ACK0`.
+    - `W8501010000020000030000040000050000060000070000080000` -> `W85ACK0`.
+    - `W8601010001020001030001040001050001060001070001080001` -> `W86ACK0`.
+  - Mark then confirmed the ring light was on continuously. This is the required abort condition.
+- Smoke outcome:
+  - Synchronized capture was not run.
+  - No PNG was captured and no output artifact was created.
+  - Ran safe-off immediately after the continuous-light confirmation; `W86...0000`, `W85...0000`, and `W11...0000` all ACKed again.
+  - Mark confirmed final ring-light state was off.
+  - Safe-off works, but the current trigger-profile sequence is not accepted because the output-enable step leaves the ring light continuously on on this rig.
+  - PR #36 is not merge-ready for synchronized-lighting hardware acceptance until the trigger-only Leimac output behavior is corrected and a supervised retry keeps the light off between exposures.
+- Final validation after docs update:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 111 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+  - `git diff --check` -> pass with line-ending warning only.
+- Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no Dino-Lite command, no Arduino command, no stage/motor command, no Windows network setting change, no persistent Basler User Set save, no persistent Leimac User Set save, no Basler capture, no synchronized image capture, no Leimac SYSTEM RESET or FACTORY DEFAULT, no high-duty lighting, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
+
+## Session Update (2026-06-26 UTC, AI Grader Basler/Leimac sync PR #36 polarity diagnostics)
+- Continued PR #36 on `feature/ai-grader-basler-leimac-sync`, PR `https://github.com/MarkTenKings/tenkings-backend/pull/36`.
+- Implemented the supervised polarity diagnostic layer after the previous `LineInverter=false` / Leimac `LevelLow` attempt caused continuous idle-on and was safely aborted.
+- Basler Line2 support now accepts explicit `--line-inverter true|false` and reads/reports Line2 status after configuration when supported:
+  - `LineSelector`
+  - `LineMode`
+  - `LineSource`
+  - `LineInverter`
+  - `LineStatus`
+  - `LineStatusAll`
+  Unsupported status fields are reported as unsupported instead of fabricated.
+- Leimac trigger-profile support now accepts only explicit supervised trigger activation values `LevelLow` or `LevelHigh`.
+- Added `basler-leimac-polarity-smoke`:
+  - dry-run by default
+  - requires `--apply`, exact confirmation text, `--mark-present`, `--wiring-confirmed`, and `--leimac-status-green` before hardware
+  - defaults diagnostic duty to `1%` and rejects duty above `5%`
+  - applies exactly one candidate and then stops for Mark visual idle-light confirmation
+  - capture is a separate explicit `--capture-confirmed` path after Mark confirms idle-off
+  - runs safe-off before each candidate and provides an `--operator-reported-idle-on` path to run safe-off after an idle-on failure
+  - rejects output paths inside the repo before any capture
+- Supported polarity candidates are:
+  - `line2-no-inverter-level-high`: Basler `LineInverter=false`, Leimac `TriggerActivation=LevelHigh`
+  - `line2-inverter-level-low`: Basler `LineInverter=true`, Leimac `TriggerActivation=LevelLow`
+  - `line2-no-inverter-level-low`: previously failed baseline, retained for manifest coverage
+  - `line2-inverter-level-high`: final supported combination
+- Exact new tested Leimac frames:
+  - Trigger activation Level High: `W0901010000020000030000040000050000060000070000080000`
+  - 1% PWM / 10 of 1000 steps: `W1101010010020010030010040010050010060010070010080010`
+- Tests added/updated for Basler Line2 status readback, configurable Basler LineInverter bridge arguments, Leimac LevelHigh trigger activation, polarity candidate order/manifest metadata, diagnostic duty default `1%`, duty `>5%` rejection, repo-output rejection before capture, and hardware-closed default paths.
+- Validation so far:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 115 tests.
+- Hardware polarity retry has not run yet in this continuation. Mark last confirmed the ring light was off after the previous safe-off.
+- Guardrails held so far in this continuation: no migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no Dino-Lite command, no Arduino command, no stage/motor command, no Windows network setting change, no persistent Basler User Set save, no persistent Leimac User Set save, no Basler capture, no synchronized image capture, no Leimac SYSTEM RESET or FACTORY DEFAULT, no high-duty lighting, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
+
+## Session Update (2026-06-29 UTC, AI Grader Basler/Leimac sync PR #36 accepted pulse and image-stat smoke)
+- Continued PR #36 on `feature/ai-grader-basler-leimac-sync`, PR `https://github.com/MarkTenKings/tenkings-backend/pull/36`.
+- Added supervised Basler Line2 `UserOutput1` manual pulse support, Leimac trigger-profile setting readbacks, transient Basler capture exposure support, and image-stat dark-vs-sync smoke manifests.
+- Validation before hardware:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 119 tests.
+- Manual pulse result:
+  - Command used `LineInverter=true`, idle `UserOutputValue=false`, pulse `UserOutputValue=true`, pulse `500 ms`.
+  - Leimac profile was `TriggerActivation=LevelLow`, duty `3%`, trigger source `TRG IN1`, synchronous, async output OFF.
+  - Basler readback changed `LineStatus=false`, `LineStatusAll=4` before pulse to `LineStatus=true`, `LineStatusAll=6` during pulse, then back to `LineStatus=false`, `LineStatusAll=4`.
+  - Mark visually confirmed the ring light turned on during the pulse.
+  - Safe-off ran before and after and ACKed.
+- Accepted synchronized image-stat smoke:
+  - Selected polarity: Basler `LineInverter=true` + Leimac `TriggerActivation=LevelLow`.
+  - Exposure `50000 us`, gain `0`, Leimac duty `3%` / `30` steps, `isCalibrated=false`, `evidenceClass=macro_sync_smoke_uncalibrated`.
+  - Basler Line2 readback after ExposureActive apply: `LineSelector=Line2`, `LineMode=Output`, `LineSource=ExposureActive`, `LineInverter=true`, `LineStatus=false`, `LineStatusAll=4`, `persistentSaved=false`.
+  - Dark control artifact outside git: `C:\TenKings\capture-data\basler-leimac-sync\basler-leimac-dark-control-line2-inverter-level-low-20260629T041905743Z.png`, SHA-256 `19244c85339f15251529730076fa79656048e97a0e9064bb2ef8bfa1e6ff3179`, `151013` bytes, `2448x2048`, stats min `0`, max `8`, mean `0.1983`, brightFraction `0`.
+  - Synced artifact outside git: `C:\TenKings\capture-data\basler-leimac-sync\basler-leimac-image-stat-sync-line2-inverter-level-low-20260629T041921325Z.png`, SHA-256 `61459596a5f22484518682d79c10bccbece0f5077159fc8940ddcccd4abd6c71`, `1356565` bytes, `2448x2048`, stats min `0`, max `255`, mean `27.6684`, brightFraction `0.18785`.
+  - Image-stat comparison: mean delta `27.4701`, max delta `247`, `materiallyBrighter=true`.
+  - Safe-off ACKed after the smoke, and Mark later confirmed the final ring-light state was off.
+- Exact key Leimac frames:
+  - Read unit info: `R830000` -> `R83000100000008`.
+  - Safe-off: `W8601010000020000030000040000050000060000070000080000` -> `W86ACK0`; `W8501010000020000030000040000050000060000070000080000` -> `W85ACK0`; `W1101010000020000030000040000050000060000070000080000` -> `W11ACK0`.
+  - Trigger profile: `W0901010002020002030002040002050002060002070002080002`, `W6501010000020000030000040000050000060000070000080000`, `W8401010000020000030000040000050000060000070000080000`, `W1301010000020000030000040000050000060000070000080000`, `W1101010030020030030030040030050030060030070030080030`, `W8501010000020000030000040000050000060000070000080000`, `W8601010001020001030001040001050001060001070001080001`; all ACKed.
+  - Readbacks returned raw profile data for `R09010000`, `R11010000`, `R13010000`, `R18010000`, `R65010000`, `R84010000`, `R85010000`, and `R86010000`.
+- PR #36 now has an accepted transient software/hardware sync foundation, but it remains uncalibrated. No persistent camera/controller saves were run.

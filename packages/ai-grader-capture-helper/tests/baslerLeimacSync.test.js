@@ -1,0 +1,465 @@
+const os = require("node:os");
+const path = require("node:path");
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {
+  BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
+  BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION,
+  BASLER_LEIMAC_SYNC_SMOKE_CONFIRMATION,
+  assertBaslerLeimacSyncSmokeOutputDirAllowed,
+  buildBaslerLeimacImageStatSyncSmokeManifest,
+  buildBaslerLeimacPolaritySmokeManifest,
+  buildBaslerLeimacPolaritySmokePlan,
+  buildBaslerLeimacSyncSmokeManifest,
+} = require("../dist/drivers/baslerLeimacSync");
+const { buildBaslerLine2ExposureActivePlan } = require("../dist/drivers/baslerPylonClient");
+const { buildLeimacIdmuTriggerProfilePlan } = require("../dist/drivers/leimacIdmuClient");
+const { runCaptureHelperCli } = require("../dist/cli");
+
+function fakeLeimacProfile() {
+  return {
+    ok: true,
+    host: "169.254.191.156",
+    port: 1000,
+    timeoutMs: 1500,
+    applied: false,
+    unitInfo: {
+      ok: true,
+      host: "169.254.191.156",
+      port: 1000,
+      timeoutMs: 1500,
+      command: {
+        name: "unitInfo",
+        commandNumber: "83",
+        header: "R",
+        targetKind: "none",
+        description: "Unit information",
+        readOnly: true,
+      },
+      requestAscii: "R830000",
+      requestFrame: "R830000",
+      rawResponse: "R83000100000008",
+      parsed: {
+        responseKind: "data",
+        unitInformation: {
+          totalUnits: 1,
+          units: [{ index: 1, dimmingMethodCode: "0000", lightingOutputChannels: 8 }],
+        },
+        parseConfidence: "partial",
+      },
+      durationMs: 1,
+      safety: {
+        readOnly: true,
+        writesAllowed: false,
+        lightsCommanded: false,
+        outputSettingsChanged: false,
+        triggerSettingsChanged: false,
+      },
+    },
+    plan: buildLeimacIdmuTriggerProfilePlan({ dutyPercent: 5, unit: 1 }),
+    writes: [],
+    safeOffBeforeProfile: [],
+  };
+}
+
+function fakeCapture() {
+  return {
+    outputFilePath: path.join(os.tmpdir(), "basler-leimac-sync", "basler-leimac-sync-smoke.png"),
+    sha256: "575b00ae2fefbbacf7b92d1fd8b839ecfb2979661cc2202b9b08052fb1e48a68",
+    byteSize: 2048,
+    mimeType: "image/png",
+    timestamp: "2026-06-26T12:00:00.0000000Z",
+    camera: { index: 0, modelName: "a2A2448-23gmBAS", transport: "GigE" },
+    imageWidth: 2448,
+    imageHeight: 2048,
+    sourcePixelFormat: "Mono8",
+    savedImageFormat: "PNG",
+    exposureTime: 5000,
+    gain: 0,
+    transport: "GigE",
+    pylon: {
+      installed: true,
+      root: "C:\\Program Files\\Basler\\pylon",
+      version: "26.05.0.18278",
+      status: "installed",
+    },
+    calibration: {
+      isCalibrated: false,
+      calibrationProfileId: null,
+      cameraRole: "macro_overview",
+      evidenceClass: "macro_raw_smoke",
+      coordinateFrame: "basler_sensor_pixels",
+    },
+    note: "Uncalibrated macro smoke capture only; not production macro evidence and not a final AI grade.",
+  };
+}
+
+function fakeLine2Status() {
+  return {
+    applied: false,
+    baslerSettingsChanged: false,
+    cameraIndex: 0,
+    lineSelector: "Line2",
+    persistentSaved: false,
+    hardwareAccess: "explicit_pylon_line2_status_read",
+    readback: {
+      lineSelector: "Line2",
+      lineMode: "Output",
+      lineSource: "ExposureActive",
+      lineInverter: false,
+      lineStatus: { supported: true, value: false, raw: "False" },
+      lineStatusAll: { supported: true, value: 2, raw: "2" },
+    },
+    safety: {
+      dryRun: false,
+      writesApplied: false,
+      baslerSettingsChanged: false,
+      persistentSaved: false,
+      capturesImages: false,
+      controlsLighting: false,
+    },
+    note: "Read-only Basler Line 2 status query; no User Set was saved and no image was captured.",
+  };
+}
+
+async function runCli(argv) {
+  let stdout = "";
+  let stderr = "";
+  const code = await runCaptureHelperCli(argv, {
+    env: {},
+    stdout: (chunk) => {
+      stdout += chunk;
+    },
+    stderr: (chunk) => {
+      stderr += chunk;
+    },
+  });
+  return {
+    code,
+    stdout: stdout ? JSON.parse(stdout) : null,
+    stderr: stderr ? JSON.parse(stderr) : null,
+  };
+}
+
+test("Basler/Leimac sync smoke output guard rejects repo paths", () => {
+  assert.throws(() => assertBaslerLeimacSyncSmokeOutputDirAllowed(""), /requires --output-dir/);
+  assert.throws(
+    () => assertBaslerLeimacSyncSmokeOutputDirAllowed(process.cwd(), process.cwd()),
+    /outside the git repo/
+  );
+  assert.equal(
+    assertBaslerLeimacSyncSmokeOutputDirAllowed(path.join(os.tmpdir(), "basler-leimac-sync"), process.cwd()),
+    path.resolve(os.tmpdir(), "basler-leimac-sync")
+  );
+});
+
+test("Basler/Leimac sync smoke manifest records uncalibrated sync metadata", () => {
+  const manifest = buildBaslerLeimacSyncSmokeManifest({
+    status: "captured",
+    leimacHost: "169.254.191.156",
+    leimacPort: 1000,
+    leimacProfile: fakeLeimacProfile(),
+    baslerLine2: buildBaslerLine2ExposureActivePlan(0),
+    requestedExposureUs: 5000,
+    capture: fakeCapture(),
+    supervised: true,
+  });
+
+  assert.equal(manifest.status, "captured");
+  assert.equal(manifest.imagePath.endsWith("basler-leimac-sync-smoke.png"), true);
+  assert.equal(manifest.sha256, "575b00ae2fefbbacf7b92d1fd8b839ecfb2979661cc2202b9b08052fb1e48a68");
+  assert.equal(manifest.byteSize, 2048);
+  assert.deepEqual(manifest.dimensions, { width: 2448, height: 2048 });
+  assert.equal(manifest.requestedExposureUs, 5000);
+  assert.equal(manifest.exposureUs, 5000);
+  assert.equal(manifest.gain, 0);
+  assert.equal(manifest.basler.line2.lineSelector, "Line2");
+  assert.equal(manifest.basler.line2.lineSource, "ExposureActive");
+  assert.equal(manifest.basler.line2.persistentSaved, false);
+  assert.equal(manifest.leimac.host, "169.254.191.156");
+  assert.equal(manifest.leimac.dutyPercent, 5);
+  assert.equal(manifest.leimac.dutySteps, 50);
+  assert.equal(manifest.leimac.persistentSaved, false);
+  assert.equal(manifest.leimac.frames.includes("W1101010050020050030050040050050050060050070050080050"), true);
+  assert.equal(manifest.calibration.isCalibrated, false);
+  assert.equal(manifest.calibration.evidenceClass, "macro_sync_smoke_uncalibrated");
+  assert.equal(manifest.safety.supervised, true);
+  assert.equal(manifest.safety.persistentSaved, false);
+  assert.equal(manifest.safety.calibratedEvidence, false);
+  assert.doesNotMatch(JSON.stringify(manifest).toLowerCase(), /certified grade|certified macro evidence|calibrated macro evidence/);
+});
+
+test("Basler/Leimac polarity smoke plan defaults to 1 percent and orders candidates safely", async () => {
+  const plan = buildBaslerLeimacPolaritySmokePlan();
+
+  assert.equal(plan.dryRun, true);
+  assert.equal(plan.dutyPercent, 1);
+  assert.deepEqual(plan.candidates.map((candidate) => candidate.id), [
+    "line2-no-inverter-level-high",
+    "line2-inverter-level-low",
+    "line2-no-inverter-level-low",
+    "line2-inverter-level-high",
+  ]);
+  assert.equal(plan.candidates[0].baslerLineInverter, false);
+  assert.equal(plan.candidates[0].leimacTriggerActivation, "LevelHigh");
+  assert.equal(plan.safety.safeOffBeforeEachCandidate, true);
+  assert.equal(plan.safety.safeOffAfterIdleOnCandidate, true);
+  assert.equal(plan.safety.safeOffAfterCapture, true);
+  assert.equal(plan.safety.persistentSaved, false);
+
+  const cli = await runCli([
+    "basler-leimac-polarity-smoke",
+    "--leimac-host",
+    "169.254.191.156",
+    "--candidate",
+    "line2-no-inverter-level-high",
+  ]);
+  assert.equal(cli.code, 0);
+  assert.equal(cli.stdout.dryRun, true);
+  assert.equal(cli.stdout.plan.dutyPercent, 1);
+  assert.equal(cli.stdout.selectedCandidate.id, "line2-no-inverter-level-high");
+  assert.equal(cli.stdout.manifest.safety.writesApplied, false);
+});
+
+test("Basler/Leimac polarity smoke manifest records selected polarity and safety flags", () => {
+  const plan = buildBaslerLeimacPolaritySmokePlan({
+    candidateId: "line2-no-inverter-level-high",
+    dutyPercent: 1,
+    exposureUs: 5000,
+  });
+  const candidate = plan.selectedCandidate;
+  const profilePlan = buildLeimacIdmuTriggerProfilePlan({
+    dutyPercent: 1,
+    triggerActivation: candidate.leimacTriggerActivation,
+  });
+
+  const manifest = buildBaslerLeimacPolaritySmokeManifest({
+    status: "captured",
+    candidate,
+    candidateResult: "accepted",
+    leimacHost: "169.254.191.156",
+    leimacPort: 1000,
+    leimacProfilePlan: profilePlan,
+    baslerLine2Status: fakeLine2Status(),
+    requestedExposureUs: 5000,
+    capture: fakeCapture(),
+    supervised: true,
+    safeOffBefore: true,
+    safeOffAfter: true,
+    finalLightOffConfirmedByMark: true,
+  });
+
+  assert.equal(manifest.selectedCandidate.id, "line2-no-inverter-level-high");
+  assert.equal(manifest.selectedCandidate.baslerLineInverter, false);
+  assert.equal(manifest.selectedCandidate.leimacTriggerActivation, "LevelHigh");
+  assert.equal(manifest.candidateResult, "accepted");
+  assert.equal(manifest.basler.line2.lineInverter, false);
+  assert.equal(manifest.basler.line2.readback.lineStatus.value, false);
+  assert.equal(manifest.leimac.triggerActivation, "LevelHigh");
+  assert.equal(manifest.leimac.dutyPercent, 1);
+  assert.equal(manifest.leimac.dutySteps, 10);
+  assert.equal(manifest.leimac.frames.includes("W0901010000020000030000040000050000060000070000080000"), true);
+  assert.equal(manifest.safety.safeOffBefore, true);
+  assert.equal(manifest.safety.safeOffAfter, true);
+  assert.equal(manifest.safety.finalLightOffConfirmedByMark, true);
+  assert.equal(manifest.calibration.isCalibrated, false);
+  assert.equal(manifest.calibration.evidenceClass, "macro_sync_smoke_uncalibrated");
+  assert.doesNotMatch(JSON.stringify(manifest).toLowerCase(), /certified grade|certified macro evidence|calibrated macro evidence/);
+});
+
+test("Basler/Leimac image-stat sync manifest records dark-vs-sync stats", () => {
+  const plan = buildBaslerLeimacPolaritySmokePlan({
+    candidateId: "line2-inverter-level-low",
+    dutyPercent: 3,
+    exposureUs: 50000,
+  });
+  const candidate = plan.selectedCandidate;
+  const profilePlan = buildLeimacIdmuTriggerProfilePlan({
+    dutyPercent: 3,
+    triggerActivation: candidate.leimacTriggerActivation,
+  });
+  const darkCapture = fakeCapture();
+  const syncedCapture = {
+    ...fakeCapture(),
+    outputFilePath: path.join(os.tmpdir(), "basler-leimac-sync", "synced.png"),
+    byteSize: 4096,
+    exposureTime: 50000,
+  };
+
+  const manifest = buildBaslerLeimacImageStatSyncSmokeManifest({
+    status: "captured",
+    candidate,
+    leimacHost: "169.254.191.156",
+    leimacPort: 1000,
+    leimacProfilePlan: profilePlan,
+    baslerLine2Status: fakeLine2Status(),
+    requestedExposureUs: 50000,
+    dutyPercent: 3,
+    darkControl: {
+      capture: darkCapture,
+      stats: {
+        filePath: darkCapture.outputFilePath,
+        width: 2448,
+        height: 2048,
+        channels: 1,
+        min: 0,
+        max: 10,
+        mean: 2,
+        nonZeroFraction: 0.2,
+        brightFraction: 0,
+      },
+    },
+    synced: {
+      capture: syncedCapture,
+      stats: {
+        filePath: syncedCapture.outputFilePath,
+        width: 2448,
+        height: 2048,
+        channels: 1,
+        min: 0,
+        max: 80,
+        mean: 8,
+        nonZeroFraction: 0.8,
+        brightFraction: 0.08,
+      },
+    },
+    supervised: true,
+    safeOffBefore: true,
+    safeOffAfter: true,
+    finalLightOffConfirmedByMark: true,
+  });
+
+  assert.equal(manifest.selectedCandidate.id, "line2-inverter-level-low");
+  assert.equal(manifest.darkControl.stats.mean, 2);
+  assert.equal(manifest.synced.stats.mean, 8);
+  assert.equal(manifest.comparison.meanDelta, 6);
+  assert.equal(manifest.comparison.materiallyBrighter, true);
+  assert.equal(manifest.leimac.dutyPercent, 3);
+  assert.equal(manifest.requestedExposureUs, 50000);
+  assert.equal(manifest.safety.safeOffBefore, true);
+  assert.equal(manifest.safety.safeOffAfter, true);
+  assert.equal(manifest.safety.finalLightOffConfirmedByMark, true);
+  assert.equal(manifest.calibration.isCalibrated, false);
+  assert.equal(manifest.calibration.evidenceClass, "macro_sync_smoke_uncalibrated");
+  assert.doesNotMatch(JSON.stringify(manifest).toLowerCase(), /certified grade|certified macro evidence|calibrated macro evidence/);
+});
+
+test("Basler/Leimac polarity smoke CLI rejects unsafe diagnostic inputs before hardware", async () => {
+  const tooHighDuty = await runCli(["basler-leimac-polarity-smoke", "--duty", "6"]);
+  assert.equal(tooHighDuty.code, 1);
+  assert.match(tooHighDuty.stderr.error, /capped at 5%/);
+
+  const repoOutput = await runCli([
+    "basler-leimac-polarity-smoke",
+    "--capture-confirmed",
+    "--output-dir",
+    process.cwd(),
+  ]);
+  assert.equal(repoOutput.code, 1);
+  assert.match(repoOutput.stderr.error, /outside the git repo/);
+
+  const missingSupervision = await runCli([
+    "basler-leimac-polarity-smoke",
+    "--leimac-host",
+    "169.254.191.156",
+    "--apply",
+    "--confirm",
+    BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
+  ]);
+  assert.equal(missingSupervision.code, 1);
+  assert.match(missingSupervision.stderr.error, /--mark-present/);
+});
+
+test("Basler/Leimac sync smoke CLI requires apply and supervised safety flags", async () => {
+  const outputDir = path.join(os.tmpdir(), "basler-leimac-sync");
+  const missingApply = await runCli([
+    "basler-leimac-sync-smoke",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+  ]);
+  assert.equal(missingApply.code, 1);
+  assert.match(missingApply.stderr.error, /requires --apply/);
+
+  const repoOutput = await runCli([
+    "basler-leimac-sync-smoke",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    process.cwd(),
+    "--apply",
+    "--confirm",
+    BASLER_LEIMAC_SYNC_SMOKE_CONFIRMATION,
+  ]);
+  assert.equal(repoOutput.code, 1);
+  assert.match(repoOutput.stderr.error, /outside the git repo/);
+
+  const missingSupervision = await runCli([
+    "basler-leimac-sync-smoke",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--apply",
+    "--confirm",
+    BASLER_LEIMAC_SYNC_SMOKE_CONFIRMATION,
+  ]);
+  assert.equal(missingSupervision.code, 1);
+  assert.match(missingSupervision.stderr.error, /--mark-present/);
+});
+
+test("Basler Line2 pulse and image-stat sync CLIs reject unsafe inputs before hardware", async () => {
+  const pulseMissingMark = await runCli([
+    "basler-line2-user-output-pulse",
+    "--leimac-host",
+    "169.254.191.156",
+    "--apply",
+    "--confirm",
+    "RUN BASLER LINE2 USER OUTPUT PULSE",
+  ]);
+  assert.equal(pulseMissingMark.code, 1);
+  assert.match(pulseMissingMark.stderr.error, /--mark-present/);
+
+  const pulseInvalidMs = await runCli([
+    "basler-line2-user-output-pulse",
+    "--pulse-ms",
+    "100",
+  ]);
+  assert.equal(pulseInvalidMs.code, 1);
+  assert.match(pulseInvalidMs.stderr.error, /250 to 500/);
+
+  const repoOutput = await runCli([
+    "basler-leimac-image-stat-sync-smoke",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    process.cwd(),
+    "--apply",
+    "--confirm",
+    BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION,
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(repoOutput.code, 1);
+  assert.match(repoOutput.stderr.error, /outside the git repo/);
+
+  const missingSupervision = await runCli([
+    "basler-leimac-image-stat-sync-smoke",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    path.join(os.tmpdir(), "basler-leimac-sync"),
+    "--apply",
+    "--confirm",
+    BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION,
+  ]);
+  assert.equal(missingSupervision.code, 1);
+  assert.match(missingSupervision.stderr.error, /--mark-present/);
+
+  const highDuty = await runCli(["basler-leimac-image-stat-sync-smoke", "--duty", "6"]);
+  assert.equal(highDuty.code, 1);
+  assert.match(highDuty.stderr.error, /capped at 5%/);
+});
