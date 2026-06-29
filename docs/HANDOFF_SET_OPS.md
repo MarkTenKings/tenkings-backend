@@ -11407,3 +11407,36 @@ Build Set Ops UI flow with:
   - No image capture was run.
   - No Basler or Leimac setting was changed.
   - No captured image, SDK/vendor binary, calibrated evidence, final grade, certificate, or certified grading claim was committed.
+
+## Session Update (2026-06-29 UTC, AI Grader fixed-rig calibration/preview PR #39 implementation)
+- Started branch `feature/ai-grader-fixed-rig-calibration-preview` from `origin/main` after PR #38 merge/handoff.
+- Implemented local/offline fixed-rig calibration foundation in `@tenkings/ai-grader-capture-helper`:
+  - `FixedRigCalibrationProfile` manifest data with `isCalibrated=false`, selected V1 exposure/gain/duty/polarity, default card physical dimensions, optional uncalibrated pixel/mm estimate, and calibration status fields.
+  - Basler operator preview snapshot command `basler-fixed-rig-operator-preview`; manual focus/alignment only, not autofocus.
+  - Separate overlay/debug PNG generation for placement guide, center crosshair, detected boundary, and full-card/corner/edge/surface ROIs. Raw evidence remains clean.
+  - Enhanced focus/V1 reports with calibration profile, ROI rows, overlay preview references, pixel/mm estimate when boundary is detected, and Dino-Lite follow-up placeholder `not_computed`.
+  - `leimac-channel-characterization` command foundation for supervised low-duty 8-channel characterization with dark/all-on/per-channel captures, safe-off before/after each channel, image stats, quadrant brightness summaries, and unknown/inferred mapping status.
+  - Dry-run lighting profile plan now includes future dark-control, all-channel, per-channel, opposite-pair, and directional candidates without inventing physical channel mapping.
+- Current selected V1 smoke setting remains:
+  - Leimac duty `1.2%`.
+  - Basler exposure `45000 us`.
+  - Basler gain `0`.
+  - Basler `LineInverter=true`.
+  - Leimac `TriggerActivation=LevelLow`.
+- Product/claim status:
+  - PR #39 is calibration/preview foundation only.
+  - Fixed rig is not calibrated.
+  - Basler remains fixed overhead full-frame capture; it does not zoom automatically.
+  - Corners/edges/surface are future ROI/crop screening paths from full-resolution Basler images.
+  - Leimac 8-channel physical mapping must be characterized/reviewed before multi-light surface grading.
+  - Dino-Lite remains optional manual close-up confirmation for flagged/operator-requested regions.
+  - No calibrated macro evidence, final grade, certificate, or certified-grading claim was added.
+- Validation:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 129 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass, with existing Next.js `<img>` optimization warnings.
+  - `git diff --check` -> pass.
+- Hardware smoke has not run yet in this PR #39 session. Do not run preview/focus/channel characterization hardware until Mark explicitly confirms presence, wiring/status, initial light-off or safe-off, and supervised apply conditions.
+- Guardrails held so far: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no Arduino command, no stage/motor command, no network setting change, no Leimac reset/default, no persistent Leimac or Basler User Set save, no high-duty lighting, no hardware command, no image capture, no SDK/vendor binary commit, and no captured image commit.

@@ -21077,3 +21077,53 @@ By enabling Rip It Live, I confirm:
 - No captured images were committed.
 - No SDK binaries, OCX files, DLLs, or vendor files were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-29 UTC - AI Grader fixed-rig calibration/preview PR #39 implementation start
+
+### Summary
+- Created branch `feature/ai-grader-fixed-rig-calibration-preview` from current `main`.
+- Implemented PR #39 local capture-helper foundations:
+  - fixed-rig calibration profile metadata saved in local manifests only
+  - Basler fixed-rig operator preview snapshot command
+  - manual focus/framing overlay previews and ROI rows
+  - uncalibrated pixel/mm estimates only when a boundary is detected
+  - Leimac 8-channel characterization command foundation
+  - dry-run multi-light profile planning without invented physical mapping
+- PR #39 remains foundation only: not calibrated, no final grade, no certificate, and no certified-grading claim.
+
+### V1 Fixed-Rig Notes
+- Selected current V1 setting remains Leimac duty `1.2%`, Basler exposure `45000 us`, gain `0`, Basler `LineInverter=true`, Leimac `TriggerActivation=LevelLow`.
+- Basler remains fixed overhead and does not zoom automatically.
+- Corner, edge, and surface work uses full-resolution image ROIs/crops.
+- Dino-Lite remains optional manual detail confirmation for later flagged/operator-requested regions.
+- Leimac physical channel mapping remains unknown until characterization evidence is reviewed.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 129 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass, with existing Next.js `<img>` optimization warnings.
+- `git diff --check` -> pass.
+
+### Pending
+- No PR #39 hardware smoke has run yet.
+- Before hardware, require explicit Mark/operator confirmation for presence, wiring unchanged, Leimac status green, ring light initially off or safe-off works, fixed Basler camera state, and the exact supervised apply command.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation was run.
+- No `regsvr32` was run.
+- No Arduino command was run.
+- No stage/motor command was run.
+- No Windows network setting was changed.
+- No Leimac SYSTEM RESET or FACTORY DEFAULT was run.
+- No persistent Leimac User Set save was run.
+- No persistent Basler User Set save was run.
+- No high-duty lighting was used.
+- No hardware command was run in this PR #39 implementation pass.
+- No image capture was run.
+- No captured images, SDK binaries, OCX files, DLLs, or vendor files were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

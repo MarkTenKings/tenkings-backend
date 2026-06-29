@@ -59,10 +59,17 @@ export type {
 export type {
   FixedRigCardBoundary,
   FixedRigCardSide,
+  FixedRigCalibrationProfile,
+  FixedRigCalibrationStatus,
   FixedRigFocusAssistManifest,
   FixedRigLightingProfilePlan,
+  FixedRigOperatorPreviewManifest,
+  FixedRigOverlayArtifact,
   FixedRigQualityMetrics,
+  FixedRigQuadrantBrightnessSummary,
   FixedRigRoiDefinition,
   FixedRigSideCapture,
   FixedRigV1LocalManifest,
+  LeimacChannelCharacterizationChannel,
+  LeimacChannelCharacterizationManifest,
 } from "./baslerFixedRigV1";

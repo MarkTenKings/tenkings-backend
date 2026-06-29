@@ -885,3 +885,43 @@ Before the first real hardware driver integration:
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
 - keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package/operator workflow/experimental non-certified grading capture, including outside-git SDK runtime diagnostics for EDOF, until a later approved lens/focus/exposure/DPQ/certified-grading slice
 - keep Basler pylon work limited to manual readiness/list/transient Line2 ExposureActive setup and uncalibrated still/sync smoke capture until a later approved calibration, lighting, persistent settings, and production macro evidence slice
+
+### Fixed-Rig Calibration / Preview Foundation
+
+PR #39 adds local/offline fixed-rig calibration foundation commands and report metadata only. It does not make the rig calibrated and does not add final grading, certificate, or certified-grading claims.
+
+New command surfaces:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-fixed-rig-operator-preview `
+  --output-dir C:\TenKings\capture-data\fixed-rig-calibration `
+  --exposure-us 45000 `
+  --gain 0 `
+  --operator-mode `
+  --mark-present `
+  --apply `
+  --confirm "RUN BASLER FIXED RIG OPERATOR PREVIEW"
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-channel-characterization `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --output-dir C:\TenKings\capture-data\fixed-rig-calibration `
+  --duty 1 `
+  --exposure-us 45000 `
+  --apply `
+  --confirm "RUN LEIMAC CHANNEL CHARACTERIZATION" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off
+```
+
+The preview command is snapshot preview mode. It uses Basler pylon only after explicit `--apply`, confirmation, `--operator-mode`, and `--mark-present`. It does not require or engage Leimac lighting. The operator manually turns the lens focus ring or adjusts boom height while reviewing the raw preview snapshot, quality metrics, and generated overlay preview. This is not autofocus.
+
+Fixed-rig reports now carry a local `FixedRigCalibrationProfile` with `isCalibrated=false`, selected V1 setting metadata, card physical size defaults (`63.5mm x 88.9mm`), optional uncalibrated pixel/mm estimates when a boundary is detected, and calibration status such as `preview_assisted`, `focus_assisted`, `framing_assisted`, or `channel_characterized`. Lens distortion and lighting calibration remain false.
+
+Overlay/debug images are generated separately from raw evidence. Raw Basler evidence images remain clean; overlays are not baked into the raw capture. Overlays include a 2.5:3.5 placement guide, center crosshair, boundary guide when detected, and full-card/corner/edge/surface ROI rectangles.
+
+The Basler fixed rig remains fixed overhead full-frame capture. Basler does not zoom automatically. Corner, edge, and surface screening uses full-resolution image ROIs/crops and remains uncalibrated until a real calibration/repeatability workflow is implemented. Dino-Lite remains optional manual close-up confirmation for later flagged or operator-requested regions.
+
+`leimac-channel-characterization` is a supervised low-duty diagnostic for future multi-light work. It labels channels numerically only, safe-offs before and after each channel, captures dark/all-on/per-channel Basler images, computes image and quadrant brightness stats, and records `channelToPhysicalMappingStatus=unknown` unless later reviewed evidence supports an explicit inferred/confirmed mapping. It does not save persistent Leimac settings and rejects duty above 5%. Multi-light surface screening is future work after channel mapping and quality review.
