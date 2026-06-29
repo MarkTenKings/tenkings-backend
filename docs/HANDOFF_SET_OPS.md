@@ -11378,3 +11378,32 @@ Build Set Ops UI flow with:
   - Boundary/framing heuristic reports full-frame coverage (`1`), so ROI analysis remains warning/not-computed until physical framing and calibrated segmentation improve.
   - No calibrated macro evidence, final grade, certificate, or certified grading claim was made.
 - Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no Arduino command, no stage/motor command, no network setting change, no Leimac SYSTEM RESET or FACTORY DEFAULT, no persistent Leimac User Set save, no persistent Basler User Set save, no high-duty lighting, no SDK/vendor binary commit, and no captured image commit.
+
+## Session Update (2026-06-29 UTC, AI Grader fixed-rig V1 PR #38 merged)
+- PR #38 was merged into `main`.
+  - PR: `https://github.com/MarkTenKings/tenkings-backend/pull/38`.
+  - Merge commit: `2a9e1392e729dda6a1905303c6e9a794c5202d52`.
+  - `origin/main` after the PR merge and before this handoff-docs-only follow-up commit: `2a9e1392e729dda6a1905303c6e9a794c5202d52`.
+- Fixed-rig V1 workflow is now on `main`.
+- Selected fixed-rig V1 smoke setting:
+  - Leimac duty `1.2%`.
+  - Basler exposure `45000 us`.
+  - Basler gain `0`.
+  - Basler `LineInverter=true`.
+  - Leimac `TriggerActivation=LevelLow`.
+- Front/back fixed-rig smoke succeeded before merge.
+  - Evidence class: `macro_fixed_rig_v1_uncalibrated`.
+  - `isCalibrated=false`.
+  - Final ring light state was confirmed off.
+- Limitations carried forward:
+  - Macro remains manually focused and visibly soft.
+  - Calibration/focus refinement remains future work.
+  - No calibrated macro evidence, final grade, certificate, or certified grading claim was made.
+- Guardrails held during merge/handoff:
+  - No migration was run and `RUN_DB_MIGRATIONS=true` was not set.
+  - No manual deploy was run.
+  - No runtime DB operation was run.
+  - No additional hardware command was run.
+  - No image capture was run.
+  - No Basler or Leimac setting was changed.
+  - No captured image, SDK/vendor binary, calibrated evidence, final grade, certificate, or certified grading claim was committed.

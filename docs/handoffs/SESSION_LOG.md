@@ -21040,3 +21040,40 @@ By enabling Rip It Live, I confirm:
 - Captured images were written outside the repo and must not be committed.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-29 UTC - AI Grader fixed-rig V1 PR #38 merged
+
+### Summary
+- Merged PR #38 into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/38`.
+- PR merge commit: `2a9e1392e729dda6a1905303c6e9a794c5202d52`.
+- `origin/main` after the PR merge and before this handoff-docs-only follow-up commit: `2a9e1392e729dda6a1905303c6e9a794c5202d52`.
+- Fixed-rig V1 workflow is now merged to `main`.
+
+### Fixed-Rig V1 Smoke Record
+- Selected smoke setting:
+  - Leimac duty `1.2%`.
+  - Basler exposure `45000 us`.
+  - Basler gain `0`.
+  - Basler `LineInverter=true`.
+  - Leimac `TriggerActivation=LevelLow`.
+- Front/back fixed-rig smoke succeeded.
+- Evidence class: `macro_fixed_rig_v1_uncalibrated`.
+- `isCalibrated=false`.
+- Final ring light state was confirmed off.
+
+### Limitations
+- Macro remains manually focused and visibly soft.
+- Calibration and focus refinement remain future work.
+- No calibrated macro evidence, final grade, certificate, or certified grading claim was made.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation was run.
+- No additional hardware command was run.
+- No image capture was run.
+- No Basler or Leimac setting was changed.
+- No captured images were committed.
+- No SDK binaries, OCX files, DLLs, or vendor files were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
