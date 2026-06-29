@@ -3,6 +3,15 @@ const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID,
+  AI_GRADER_FULL_RIG_LOCAL_SMOKE_CONFIRMATION,
+  BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION,
+  buildBaslerLeimacMacroPackageManifest,
+  buildFullRigLocalSmokeManifest,
+  renderFullRigReport,
+  renderMacroPackageReport,
+} = require("../dist/drivers/baslerLeimacFullRig");
+const {
   BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_SYNC_SMOKE_CONFIRMATION,
@@ -344,6 +353,128 @@ test("Basler/Leimac image-stat sync manifest records dark-vs-sync stats", () => 
   assert.doesNotMatch(JSON.stringify(manifest).toLowerCase(), /certified grade|certified macro evidence|calibrated macro evidence/);
 });
 
+test("Basler/Leimac macro package manifest records accepted profile and artifacts", () => {
+  const darkCapture = fakeCapture();
+  const syncedCapture = {
+    ...fakeCapture(),
+    outputFilePath: path.join(os.tmpdir(), "full-rig-smoke", "synced.png"),
+    byteSize: 4096,
+    exposureTime: 50000,
+  };
+  const profilePlan = buildLeimacIdmuTriggerProfilePlan({
+    dutyPercent: 5,
+    triggerActivation: "LevelLow",
+  });
+  const manifest = buildBaslerLeimacMacroPackageManifest({
+    status: "captured",
+    packageId: "basler-leimac-macro-package-test",
+    packageDir: path.join(os.tmpdir(), "full-rig-smoke", "macro"),
+    leimacHost: "169.254.191.156",
+    leimacPort: 1000,
+    leimacProfilePlan: profilePlan,
+    requestedExposureUs: 50000,
+    dutyPercent: 5,
+    darkControl: {
+      capture: darkCapture,
+      stats: {
+        filePath: darkCapture.outputFilePath,
+        width: 2448,
+        height: 2048,
+        channels: 1,
+        min: 0,
+        max: 8,
+        mean: 0.2,
+        nonZeroFraction: 0.08,
+        brightFraction: 0,
+      },
+    },
+    synced: {
+      capture: syncedCapture,
+      stats: {
+        filePath: syncedCapture.outputFilePath,
+        width: 2448,
+        height: 2048,
+        channels: 1,
+        min: 0,
+        max: 255,
+        mean: 27.6,
+        nonZeroFraction: 0.99,
+        brightFraction: 0.18,
+      },
+    },
+    supervised: true,
+    safeOffBefore: true,
+    safeOffAfter: true,
+    finalLightOffConfirmedByMark: true,
+  });
+
+  assert.equal(manifest.lightingProfileId, ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID);
+  assert.equal(manifest.selectedCandidate.id, "line2-inverter-level-low");
+  assert.equal(manifest.basler.line2.lineInverter, true);
+  assert.equal(manifest.leimac.triggerActivation, "LevelLow");
+  assert.equal(manifest.leimac.dutyPercent, 5);
+  assert.equal(manifest.darkControl.capture.outputFilePath, darkCapture.outputFilePath);
+  assert.equal(manifest.synced.capture.outputFilePath, syncedCapture.outputFilePath);
+  assert.equal(manifest.comparison.materiallyBrighter, true);
+  assert.equal(manifest.macroEvidence.role, "macro_overview");
+  assert.equal(manifest.calibration.isCalibrated, false);
+  assert.equal(manifest.calibration.evidenceClass, "macro_sync_smoke_uncalibrated");
+  assert.match(renderMacroPackageReport(manifest), /not calibrated production macro evidence/i);
+  assert.doesNotMatch(JSON.stringify(manifest).toLowerCase(), /"iscalibrated":true|certificateid|certifiedgrading":true/);
+});
+
+test("Full-rig local smoke manifest separates Basler macro and Dino-Lite detail evidence", () => {
+  const macroManifest = buildBaslerLeimacMacroPackageManifest({
+    status: "planned",
+    packageId: "macro",
+    packageDir: path.join(os.tmpdir(), "full-rig-smoke", "macro"),
+    leimacHost: "169.254.191.156",
+    leimacPort: 1000,
+    leimacProfilePlan: buildLeimacIdmuTriggerProfilePlan({ dutyPercent: 5, triggerActivation: "LevelLow" }),
+    requestedExposureUs: 50000,
+    dutyPercent: 5,
+    supervised: false,
+    safeOffBefore: false,
+    safeOffAfter: false,
+  });
+  const fullRig = buildFullRigLocalSmokeManifest({
+    packageId: "full-rig",
+    packageDir: path.join(os.tmpdir(), "full-rig-smoke", "full-rig"),
+    status: "completed",
+    baslerMacro: macroManifest,
+    dinoliteWorkflow: {
+      adapter: "dnvideox",
+      comActiveXInstantiated: true,
+      sessionId: "session-1",
+      label: "full-rig",
+      plan: "experimental-card-grading",
+      sessionDir: path.join(os.tmpdir(), "full-rig-smoke", "dinolite"),
+      manifestPath: path.join(os.tmpdir(), "full-rig-smoke", "dinolite", "manifest.json"),
+      previewReportPath: path.join(os.tmpdir(), "full-rig-smoke", "dinolite", "preview-report.html"),
+      timestamp: "2026-06-29T05:00:00.000Z",
+      status: "completed",
+      device: { index: 0, name: "Dino-Lite" },
+      connectedDuringCommand: true,
+      previewDuringCommand: true,
+      targets: [],
+      forbiddenOperationsInvoked: false,
+    },
+    dinoliteAnalysis: { score: { status: "not_computed" } },
+    finalLightOffConfirmedByMark: true,
+  });
+
+  assert.equal(fullRig.baslerMacro.manifest.lightingProfileId, "line2-inverter-level-low-v0");
+  assert.equal(fullRig.dinoliteDetail.plan, "experimental-card-grading");
+  assert.equal(fullRig.dinoliteDetail.evidenceRole, "detail_corners_edges_surface");
+  assert.equal(fullRig.analysisRouting.macroOverviewSource, "basler_leimac");
+  assert.equal(fullRig.analysisRouting.centeringInput, "basler_preferred_not_routed_to_score_v0");
+  assert.equal(fullRig.safety.productionUpload, false);
+  assert.equal(fullRig.safety.databaseWrites, false);
+  assert.equal(fullRig.calibration.isCalibrated, false);
+  assert.match(renderFullRigReport(fullRig), /Local\/offline uncalibrated evidence package only/i);
+  assert.doesNotMatch(JSON.stringify(fullRig).toLowerCase(), /"iscalibrated":true|certificateid|certifiedgrading":true/);
+});
+
 test("Basler/Leimac polarity smoke CLI rejects unsafe diagnostic inputs before hardware", async () => {
   const tooHighDuty = await runCli(["basler-leimac-polarity-smoke", "--duty", "6"]);
   assert.equal(tooHighDuty.code, 1);
@@ -462,4 +593,83 @@ test("Basler Line2 pulse and image-stat sync CLIs reject unsafe inputs before ha
   const highDuty = await runCli(["basler-leimac-image-stat-sync-smoke", "--duty", "6"]);
   assert.equal(highDuty.code, 1);
   assert.match(highDuty.stderr.error, /capped at 5%/);
+});
+
+test("Basler macro package and full-rig CLIs reject unsafe inputs before hardware", async () => {
+  const macroDryRun = await runCli([
+    "basler-leimac-macro-package",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    path.join(os.tmpdir(), "full-rig-smoke"),
+  ]);
+  assert.equal(macroDryRun.code, 0);
+  assert.equal(macroDryRun.stdout.dryRun, true);
+  assert.equal(macroDryRun.stdout.manifest.lightingProfileId, "line2-inverter-level-low-v0");
+
+  const macroRepoOutput = await runCli([
+    "basler-leimac-macro-package",
+    "--output-dir",
+    process.cwd(),
+  ]);
+  assert.equal(macroRepoOutput.code, 1);
+  assert.match(macroRepoOutput.stderr.error, /outside the git repo/);
+
+  const macroMissingConfirmation = await runCli([
+    "basler-leimac-macro-package",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    path.join(os.tmpdir(), "full-rig-smoke"),
+    "--apply",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(macroMissingConfirmation.code, 1);
+  assert.match(macroMissingConfirmation.stderr.error, new RegExp(BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION));
+
+  const highDuty = await runCli(["basler-leimac-macro-package", "--duty", "6"]);
+  assert.equal(highDuty.code, 1);
+  assert.match(highDuty.stderr.error, /capped at 5%/);
+
+  const fullRigDryRun = await runCli([
+    "ai-grader-full-rig-local-smoke",
+    "--output-dir",
+    path.join(os.tmpdir(), "full-rig-smoke"),
+    "--basler-duty",
+    "5",
+    "--basler-exposure-us",
+    "50000",
+    "--dinolite-plan",
+    "experimental-card-grading",
+  ]);
+  assert.equal(fullRigDryRun.code, 0);
+  assert.equal(fullRigDryRun.stdout.dryRun, true);
+  assert.equal(fullRigDryRun.stdout.manifest.baslerMacro.manifest.lightingProfileId, "line2-inverter-level-low-v0");
+  assert.equal(fullRigDryRun.stdout.manifest.safety.productionUpload, false);
+
+  const fullRigRepoOutput = await runCli([
+    "ai-grader-full-rig-local-smoke",
+    "--output-dir",
+    process.cwd(),
+  ]);
+  assert.equal(fullRigRepoOutput.code, 1);
+  assert.match(fullRigRepoOutput.stderr.error, /outside the git repo/);
+
+  const fullRigMissingConfirmation = await runCli([
+    "ai-grader-full-rig-local-smoke",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    path.join(os.tmpdir(), "full-rig-smoke"),
+    "--apply",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(fullRigMissingConfirmation.code, 1);
+  assert.match(fullRigMissingConfirmation.stderr.error, new RegExp(AI_GRADER_FULL_RIG_LOCAL_SMOKE_CONFIRMATION));
 });

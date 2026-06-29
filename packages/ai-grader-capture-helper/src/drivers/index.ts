@@ -52,3 +52,7 @@ export type {
   BaslerLeimacImageStats,
   BaslerLeimacSyncSmokeManifest,
 } from "./baslerLeimacSync";
+export type {
+  BaslerLeimacMacroPackageManifest,
+  FullRigLocalSmokeManifest,
+} from "./baslerLeimacFullRig";

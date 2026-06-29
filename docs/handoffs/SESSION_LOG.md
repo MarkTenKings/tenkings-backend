@@ -20556,6 +20556,53 @@ By enabling Rip It Live, I confirm:
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
 
+## 2026-06-29 UTC - AI Grader full-rig local smoke PR #37 implementation start
+
+### Summary
+- Started branch `feature/ai-grader-full-rig-local-smoke` from fresh `main` after PR #36 merge and main handoff.
+- Added PR #37 local/offline workflow foundation:
+  - `basler-leimac-macro-package`
+  - `ai-grader-full-rig-local-smoke`
+- The accepted PR #36 polarity is now encoded as the macro package profile: Basler Line2 `ExposureActive`, Basler `LineInverter=true`, Leimac `TriggerActivation=LevelLow`, Leimac `TRG IN1`.
+- Basler macro is recorded as the preferred local macro/overview evidence path.
+- Dino-Lite remains the detail evidence path for corners, edges, and surface through the existing `experimental-card-grading` operator workflow.
+- The combined manifest/report remains local/offline, uncalibrated, and explicitly not a final grade, certificate, or certified grading output.
+
+### Implementation Notes
+- Added a Basler/Leimac full-rig manifest/report helper that writes local `manifest.json` and `preview-report.html` files outside the repo.
+- `basler-leimac-macro-package`:
+  - rejects output paths inside the repo
+  - defaults to dry-run unless `--apply`
+  - requires exact confirmation and supervised flags before hardware
+  - captures dark-control and synced macro PNGs outside git
+  - computes image stats plus histogram buckets
+  - records `lightingProfileId=line2-inverter-level-low-v0`, `cameraRole=macro_overview`, `isCalibrated=false`, `evidenceClass=macro_sync_smoke_uncalibrated`
+- `ai-grader-full-rig-local-smoke`:
+  - rejects output paths inside the repo
+  - defaults to dry-run unless `--apply`
+  - requires Basler/Leimac supervision flags plus explicit Dino-Lite bridge/device input before hardware
+  - runs the macro package first, then Dino-Lite `experimental-card-grading`
+  - writes a unified local manifest/report and records that Basler macro is preferred for future macro/centering routing, while v0 scoring is not rerouted until a tested scorer change proves the contract
+
+### Validation So Far
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 122 tests.
+
+### Guardrails So Far
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Arduino command was run.
+- No stage/motor command was run.
+- No Windows network setting was changed.
+- No persistent Basler User Set save was run.
+- No persistent Leimac User Set save was run.
+- No high-duty lighting was used.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
 ## 2026-06-29 UTC - AI Grader Basler/Leimac sync PR #36 accepted pulse and image-stat smoke
 
 ### Summary
@@ -20671,5 +20718,47 @@ By enabling Rip It Live, I confirm:
 - No synchronized image capture was run.
 - No Leimac SYSTEM RESET or FACTORY DEFAULT was run.
 - No high-duty lighting was used.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-29 UTC - AI Grader full-rig local smoke PR #37 hardware run
+
+### Summary
+- Continued PR #37 on `feature/ai-grader-full-rig-local-smoke`.
+- Ran the supervised Basler/Leimac macro package and the combined local full-rig workflow.
+- The first full-rig attempt reached the Dino-Lite operator window but timed out waiting for Capture/Skip/Abort; it produced only a partial Basler macro output. The retry used `--bridge-timeout-ms 900000` and completed.
+
+### Basler/Leimac Macro Package
+- Standalone package output: `C:\TenKings\capture-data\full-rig-smoke\basler-leimac-macro-package-2026-06-29T053038955Z`.
+- Preview report: `C:\TenKings\capture-data\full-rig-smoke\basler-leimac-macro-package-2026-06-29T053038955Z\preview-report.html`.
+- Profile: `line2-inverter-level-low-v0`, Basler Line2 `ExposureActive`, `LineInverter=true`, Leimac `TriggerActivation=LevelLow`, duty `5%`, exposure `50000 us`, no persistent Basler or Leimac save.
+- Dark mean `0.3807`, max `8`; synced mean `73.6150`, max `255`; `materiallyBrighter=true`.
+- Mark reviewed the preview and noted the Basler macro image/card is out of focus. This is a focus/setup limitation before calibration or repeatability acceptance.
+
+### Combined Full-Rig Smoke
+- Output root: `C:\TenKings\capture-data\full-rig-smoke\ai-grader-full-rig-local-smoke-2026-06-29T053708147Z`.
+- Unified manifest/report: `manifest.json`, `preview-report.html`.
+- Basler dark control: `basler-basler-leimac-macro-dark-control-20260629T053714495Z.png`, SHA-256 `51098b8e7c2669583258dd9a5d6b541a36af4f1eca41d485f55138e669200450`, `226320` bytes, `2448x2048`, mean `0.3768`, max `8`.
+- Basler synced macro: `basler-basler-leimac-macro-synced-20260629T053730136Z.png`, SHA-256 `de486fc663ac3e9d5fb21c58c464756577b5de35d45e2dc3bc45db9886dfe83c`, `1624764` bytes, `2448x2048`, mean `73.6089`, max `255`.
+- Basler comparison: mean delta `73.2321`, `materiallyBrighter=true`.
+- Dino-Lite detail session: `C:\TenKings\capture-data\full-rig-smoke\ai-grader-full-rig-local-smoke-2026-06-29T053708147Z\dinolite-detail\dinolite-operator-ai-grader-full-rig-local-smoke-2026-06-29T053708147Z-20260629T053732919Z`.
+- Dino-Lite captured 12 normal JPG operator-guided targets and wrote `manifest.json`, `analysis.json`, and `preview-report.html`.
+- Unified routing: Basler macro is recorded as preferred macro/centering evidence; v0 scoring remains existing Dino-Lite experimental analysis (`basler_preferred_not_routed_to_score_v0`).
+- Evidence remains local/offline and uncalibrated: `isCalibrated=false`, no production upload, no DB write, no final/certified grading claim.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Arduino command was run.
+- No stage/motor command was run.
+- No Windows network setting was changed.
+- No Leimac SYSTEM RESET or FACTORY DEFAULT was run.
+- No persistent Leimac User Set save was run.
+- No persistent Basler User Set save was run.
+- No high-duty lighting was used.
+- Captured images were written outside the repo and were not committed.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
