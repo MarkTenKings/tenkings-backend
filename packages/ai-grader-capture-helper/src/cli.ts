@@ -241,12 +241,19 @@ type ParsedCommand =
       baslerBridgeScript: string | undefined;
       cameraIndex: number | undefined;
       outputDir: string | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacUnit: number | undefined;
       exposureUs: number | undefined;
       gain: number | undefined;
+      previewRefreshMs: number | undefined;
       apply: boolean;
       confirmation: string | undefined;
       operatorMode: boolean;
       markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
+      operatorConfirmedLightIdleOff: boolean;
       focusLockedByOperator: boolean;
     }
   | {
@@ -389,6 +396,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let duty: number | undefined;
   let exposureUs: number | undefined;
   let gain: number | undefined;
+  let previewRefreshMs: number | undefined;
   let lineInverter: boolean | undefined;
   let pulseMs: number | undefined;
   let idleUserOutputValue: boolean | undefined;
@@ -575,6 +583,13 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         gain = Number(readOption(rest, index, arg));
         if (!Number.isFinite(gain) || gain < 0) {
           throw new CaptureHelperCommandError("--gain must be a non-negative number.");
+        }
+        index += 1;
+        break;
+      case "--preview-refresh-ms":
+        previewRefreshMs = Number(readOption(rest, index, "--preview-refresh-ms"));
+        if (!Number.isInteger(previewRefreshMs) || previewRefreshMs < 250 || previewRefreshMs > 5000) {
+          throw new CaptureHelperCommandError("--preview-refresh-ms must be an integer from 250 to 5000.");
         }
         index += 1;
         break;
@@ -1177,6 +1192,12 @@ function parseCliArgs(argv: string[]): ParsedCommand {
       };
     }
     if (command === "basler-fixed-rig-operator-preview") {
+      const leimacHostValue = leimacHost ?? host;
+      const leimacPortValue = leimacPort ?? port;
+      const parsedLeimacPort = leimacPortValue === undefined ? undefined : Number(leimacPortValue);
+      if (parsedLeimacPort !== undefined && (!Number.isInteger(parsedLeimacPort) || parsedLeimacPort <= 0)) {
+        throw new CaptureHelperCommandError("--leimac-port must be a positive integer.");
+      }
       return {
         command,
         config,
@@ -1185,12 +1206,19 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         baslerBridgeScript,
         cameraIndex,
         outputDir,
+        leimacHost: leimacHostValue,
+        leimacPort: parsedLeimacPort,
+        leimacUnit,
         exposureUs,
         gain,
+        previewRefreshMs,
         apply,
         confirmation,
         operatorMode,
         markPresent,
+        wiringConfirmed,
+        leimacStatusGreen,
+        operatorConfirmedLightIdleOff,
         focusLockedByOperator,
       };
     }
@@ -1325,7 +1353,7 @@ function helpPayload() {
       "basler-leimac-macro-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\full-rig-smoke --profile line2-inverter-level-low --duty 5 --exposure-us 50000 --include-dark-control --apply --confirm \"RUN BASLER LEIMAC MACRO PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "ai-grader-full-rig-local-smoke --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\full-rig-smoke --basler-duty 5 --basler-exposure-us 50000 --dinolite-plan experimental-card-grading --bridge-exe <exe> --adapter dnvideox --device-index 0 --apply --confirm \"RUN AI GRADER FULL RIG LOCAL SMOKE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "fixed-rig-lighting-profile-plan",
-      "basler-fixed-rig-operator-preview --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --exposure-us 45000 --gain 0 --operator-mode --mark-present --apply --confirm \"RUN BASLER FIXED RIG OPERATOR PREVIEW\"",
+      "basler-fixed-rig-operator-preview --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --exposure-us 45000 --gain 0 --preview-refresh-ms 500 --operator-mode --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --apply --confirm \"RUN BASLER FIXED RIG OPERATOR PREVIEW\"",
       "basler-fixed-rig-focus-assist --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --duty 5 --exposure-us 50000 --apply --confirm \"RUN BASLER FIXED RIG FOCUS ASSIST\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "ai-grader-fixed-rig-v1-local --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --duty 5 --exposure-us 50000 --apply --confirm \"RUN AI GRADER FIXED RIG V1 LOCAL\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed --operator-flip-delay-ms 30000",
       "leimac-channel-characterization --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --duty 1 --exposure-us 45000 --apply --confirm \"RUN LEIMAC CHANNEL CHARACTERIZATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
@@ -2726,6 +2754,17 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       if (!parsed.markPresent) {
         throw new CaptureHelperCommandError("basler-fixed-rig-operator-preview --apply requires --mark-present.");
       }
+      if (parsed.leimacHost) {
+        if (!parsed.wiringConfirmed) {
+          throw new CaptureHelperCommandError("basler-fixed-rig-operator-preview Leimac preview lighting requires --wiring-confirmed.");
+        }
+        if (!parsed.leimacStatusGreen) {
+          throw new CaptureHelperCommandError("basler-fixed-rig-operator-preview Leimac preview lighting requires --leimac-status-green.");
+        }
+        if (!parsed.operatorConfirmedLightIdleOff) {
+          throw new CaptureHelperCommandError("basler-fixed-rig-operator-preview Leimac preview lighting requires --operator-confirmed-light-idle-off.");
+        }
+      }
 
       const env = io.env ?? process.env;
       const { BaslerPylonClient } = await import("./drivers/baslerPylonClient");
@@ -2733,9 +2772,41 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       const client = new BaslerPylonClient({
         pylonRoot: parsed.pylonRoot ?? env.TENKINGS_BASLER_PYLON_ROOT ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT,
         bridgeScriptPath: parsed.baslerBridgeScript,
-        timeoutMs: parsed.pylonTimeoutMs,
+        timeoutMs: parsed.pylonTimeoutMs ?? 1800000,
         env,
       });
+      const livePreview = await client.showOperatorPreviewWindow({
+        outputDir: packageDir,
+        cameraIndex: parsed.cameraIndex,
+        exposureUs,
+        refreshIntervalMs: parsed.previewRefreshMs,
+        leimacHost: parsed.leimacHost,
+        leimacPort: parsed.leimacPort,
+        leimacUnit: parsed.leimacUnit,
+        previewDutyPercent: 1.2,
+      });
+      if (livePreview.operatorDecision !== "accepted") {
+        const manifest = buildFixedRigOperatorPreviewManifest({
+          packageId,
+          packageDir,
+          status: livePreview.operatorDecision === "aborted" ? "aborted" : "closed",
+          livePreview,
+          focusLockedByOperator: parsed.focusLockedByOperator,
+        });
+        const writtenManifest = await writeFixedRigOperatorPreviewArtifacts(manifest);
+        writeJson(stdout, {
+          ok: livePreview.operatorDecision === "closed",
+          service: "ai-grader-capture-helper",
+          command: "basler-fixed-rig-operator-preview",
+          packageDir,
+          livePreview,
+          manifestPath: writtenManifest.manifestPath,
+          previewReportPath: writtenManifest.previewReportPath,
+          manifest: writtenManifest,
+          operatorPrompt: "Operator preview window was not accepted; do not proceed to focus/framing smoke until Mark accepts focus/alignment usability.",
+        });
+        return livePreview.operatorDecision === "aborted" ? 1 : 0;
+      }
       const previewCapture = await client.captureStill({
         outputDir: packageDir,
         label: "operator-preview",
@@ -2748,7 +2819,8 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       const manifest = buildFixedRigOperatorPreviewManifest({
         packageId,
         packageDir,
-        status: "preview_captured",
+        status: "accepted",
+        livePreview,
         previewCapture,
         quality,
         focusLockedByOperator: parsed.focusLockedByOperator,
@@ -2759,13 +2831,14 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         service: "ai-grader-capture-helper",
         command: "basler-fixed-rig-operator-preview",
         packageDir,
+        livePreview,
         previewCapture,
         quality,
         manifestPath: writtenManifest.manifestPath,
         previewReportPath: writtenManifest.previewReportPath,
         overlayPreview: writtenManifest.overlayPreview,
         manifest: writtenManifest,
-        operatorPrompt: "Use the preview metrics/overlay to manually focus and align the card, then either start capture or rerun preview.",
+        operatorPrompt: "Proceed only if Mark confirms the visible pylon live-stream preview window was usable for manual focus and card alignment.",
       });
       return 0;
     }

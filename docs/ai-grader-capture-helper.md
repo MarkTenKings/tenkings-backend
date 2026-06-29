@@ -894,11 +894,17 @@ New command surfaces:
 
 ```powershell
 pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-fixed-rig-operator-preview `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
   --output-dir C:\TenKings\capture-data\fixed-rig-calibration `
   --exposure-us 45000 `
   --gain 0 `
+  --preview-refresh-ms 500 `
   --operator-mode `
   --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off `
   --apply `
   --confirm "RUN BASLER FIXED RIG OPERATOR PREVIEW"
 
@@ -916,7 +922,9 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-ch
   --operator-confirmed-light-idle-off
 ```
 
-The preview command is snapshot preview mode. It uses Basler pylon only after explicit `--apply`, confirmation, `--operator-mode`, and `--mark-present`. It does not require or engage Leimac lighting. The operator manually turns the lens focus ring or adjusts boom height while reviewing the raw preview snapshot, quality metrics, and generated overlay preview. This is not autofocus.
+The preview command opens a visible Windows Basler pylon live-stream operator window. It uses Basler pylon only after explicit `--apply`, confirmation, `--operator-mode`, and `--mark-present`. It can run ambient-only without Leimac; when `--leimac-host` is supplied, preview lighting controls are enabled only with `--wiring-confirmed`, `--leimac-status-green`, and `--operator-confirmed-light-idle-off`. The window uses pylon continuous acquisition with `GrabStrategy.LatestImages`, a compiled .NET frame-pump thread that calls `RetrieveResult`, newest-frame display, and stale-frame dropping so the UI does not queue old frames. The preview explicitly disables camera trigger mode for the operator view and leaves the grading capture profile separate. It displays measured FPS, frame age, and skipped stale frames, rotates the operator display into portrait orientation while leaving raw capture orientation unchanged, and shows the guide overlay plus basic frame metrics while the operator manually turns the lens focus ring, adjusts boom height, or moves the card. This is not autofocus. Saved PNG/HTML artifacts are diagnostic only and do not satisfy operator-preview acceptance by themselves.
+
+The live preview sidebar includes frame/FPS/latency status, sharpness, mean, max, clipped/dark fractions, operator framing status, Accept/Start/Continue, Abort/Close, Safe Off, current preview lighting state, and the uncalibrated warning. Preview lighting controls are setup-only and are not promoted to the locked grading capture profile. The Preview Light On/Off control, brightness slider, numeric duty input, default V1 duty marker (`1.2%`), hard cap (`5%`), Reset to Default Preview Duty, all-on/all-off buttons, and 8-channel ring toggle UI send only low-duty allowlisted Leimac frames. Preview lighting uses a compiled .NET coalescing worker and the rig-proven `W11` low PWM plus `W86` lighting-output-enable path for continuous operator setup light; synchronized grading capture still uses the locked ExposureActive trigger profile. The lighting writes are debounced at about 50 ms, run off the UI thread, coalesce rapid slider/channel changes, and report requested duty separately from ACKed applied PWM. If channels are unchanged and the preview light is already on, brightness-only changes send only a `W11` PWM update instead of safe-off plus re-enable, avoiding a bright flash. Status polling updates labels without repainting the 8-segment ring, so the ring UI does not flicker while requested channels are unchanged. The Leimac PWM command value is `0000-0999`; PR #39 rounds preview duty to the nearest supported 0.1% step, so `1.2%` displays/applies as PWM `0012`. Channel mapping remains `UNKNOWN/UNCALIBRATED` until characterization evidence is reviewed. Preview lighting safe-offs on Abort/Close and before the command returns.
 
 Fixed-rig reports now carry a local `FixedRigCalibrationProfile` with `isCalibrated=false`, selected V1 setting metadata, card physical size defaults (`63.5mm x 88.9mm`), optional uncalibrated pixel/mm estimates when a boundary is detected, and calibration status such as `preview_assisted`, `focus_assisted`, `framing_assisted`, or `channel_characterized`. Lens distortion and lighting calibration remain false.
 
@@ -925,3 +933,19 @@ Overlay/debug images are generated separately from raw evidence. Raw Basler evid
 The Basler fixed rig remains fixed overhead full-frame capture. Basler does not zoom automatically. Corner, edge, and surface screening uses full-resolution image ROIs/crops and remains uncalibrated until a real calibration/repeatability workflow is implemented. Dino-Lite remains optional manual close-up confirmation for later flagged or operator-requested regions.
 
 `leimac-channel-characterization` is a supervised low-duty diagnostic for future multi-light work. It labels channels numerically only, safe-offs before and after each channel, captures dark/all-on/per-channel Basler images, computes image and quadrant brightness stats, and records `channelToPhysicalMappingStatus=unknown` unless later reviewed evidence supports an explicit inferred/confirmed mapping. It does not save persistent Leimac settings and rejects duty above 5%. Multi-light surface screening is future work after channel mapping and quality review.
+
+#### Ring Reflection / Glare Limitation
+
+During PR #39 preview review, Mark observed a circular ring reflection on the card. Treat this as an unresolved optical setup issue, not a software-calibrated condition. The likely cause is specular reflection from a glossy card, sleeve, or slab surface reflecting the ring/dome geometry into the fixed overhead Basler view. This can affect focus perception, clipping, surface anomaly screening, and later ROI measurements.
+
+Near-term software-safe mitigations to evaluate without physical modification are lower exposure/duty, selective Leimac channel subsets, multi-light profiles that avoid known glare zones, dark hood/ambient-light control, and flagging glare-affected pixels/regions instead of treating them as surface defects. These do not solve the optical reflection by themselves and must be tested.
+
+Physical mitigation candidates require explicit material/hardware review before use: cross-polarization with polarizing film over the light and an analyzer polarizer on the Basler lens, diffuser film/sheet between Leimac and card, dome/geometry changes, or changing ring height/angle. Tradeoffs include lower intensity, possible unevenness, heat/material compatibility, reduced contrast, and new calibration requirements. Cross-polarization is the strongest candidate for glossy specular glare, but it requires buying/placing polarizers and rotating the lens analyzer under supervision. Diffusion may soften the ring reflection but may also reduce intensity and require exposure/duty retuning. No PR #39 code or smoke may claim the ring reflection is solved until a controlled test proves it.
+
+#### Dell PR #39 Supervised Smoke
+
+On 2026-06-29, Mark accepted the fixed-rig operator preview after the Windows preview was changed to a pylon live stream and preview lighting controls were revised. The accepted preview artifact folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-29T210409349Z`. The preview displayed `4387` frames at about `20.44 FPS` with `2 ms` frame age, and Mark confirmed he could adjust physical Basler focus in real time while watching the PC window. Mark also confirmed the 8-section UI ring stopped flickering, the hardware brightness slider no longer caused a bright flash before settling, and the final Leimac ring light state was off. Preview lighting was used only for setup and was safe-offed on exit; it was not promoted to the locked grading capture profile.
+
+The enhanced focus/framing assistant was run at the selected V1 setting (`1.2%` Leimac duty, `45000 us` Basler exposure, gain `0`). Output folder: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-focus-assist-2026-06-29T210908156Z`. Results: mean `45.3715`, clipped fraction `0.00007`, dark fraction `0.073087`, sharpness `206.7911`, detected card boundary coverage `0.84895`, and uncalibrated pixel/mm estimates `x=0.026392`, `y=0.050254`. ROI definitions were computed from the approximate detected boundary and overlays were saved separately from raw captures.
+
+The Leimac 8-channel characterization was run at `1%` duty and `45000 us` exposure. Output folder: `C:\TenKings\capture-data\fixed-rig-calibration\leimac-channel-characterization-2026-06-29T211116513Z`. It captured dark control, all-on, and channels `1` through `8`, with safe-off before and after each channel. `channelToPhysicalMappingStatus` remains `unknown`; quadrant brightness did not support directional inference, so no physical mapping was invented. Mark confirmed the final physical ring light state was off. PR #39 remains calibration/preview foundation only: `isCalibrated=false`, manual focus, channel mapping unconfirmed, and no final/certified grading claim.

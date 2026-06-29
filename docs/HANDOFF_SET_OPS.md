@@ -11440,3 +11440,121 @@ Build Set Ops UI flow with:
   - `git diff --check` -> pass.
 - Hardware smoke has not run yet in this PR #39 session. Do not run preview/focus/channel characterization hardware until Mark explicitly confirms presence, wiring/status, initial light-off or safe-off, and supervised apply conditions.
 - Guardrails held so far: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no Arduino command, no stage/motor command, no network setting change, no Leimac reset/default, no persistent Leimac or Basler User Set save, no high-duty lighting, no hardware command, no image capture, no SDK/vendor binary commit, and no captured image commit.
+
+## Session Update (2026-06-29 UTC, AI Grader fixed-rig calibration/preview PR #39 live-preview revision)
+- PR #39 remains open and must not be merged yet.
+- Mark reviewed the first visible Basler preview window and rejected hardware acceptance because the feed and Leimac controls were too delayed for production calibration use.
+- Calibration/hardware smoke remains paused. Do not proceed to focus/framing acceptance or Leimac channel characterization until Mark accepts the revised preview responsiveness.
+- Mark confirmed the final ring light state was off after the previous preview was closed/safe-offed.
+- Revised the Basler operator preview bridge:
+  - uses pylon continuous acquisition, `GrabStrategy.LatestImages`, an explicit background `RetrieveResult` loop, newest-frame display, and stale-frame dropping
+  - displays measured FPS, frame age, skipped stale frames, and portrait operator view while raw capture orientation remains unchanged
+  - keeps overlays window-only and raw evidence clean
+- Revised preview Leimac controls:
+  - UI state updates immediately
+  - writes run off the UI thread
+  - rapid slider/channel changes are debounced/coalesced at about `50 ms`
+  - applied/ACK state, ACK latency, and safe-off/error state are displayed separately from requested state
+  - preview light now uses Leimac asynchronous output for continuous low-duty setup light; grading capture still uses the locked ExposureActive trigger profile
+- Brightness control now has both slider and numeric duty input:
+  - PR #39 hard cap remains `5.0%`
+  - default V1 duty marker remains `1.2%`
+  - Leimac PWM uses `0000-0999`; preview duty is rounded to supported `0.1%` steps, so `1.2%` maps to PWM `0012`
+- 8-channel ring UI remains channel-number-only and `UNKNOWN/UNCALIBRATED`; physical mapping is not invented.
+- Preview settings remain operator setup only and are not promoted to the locked grading capture profile.
+- Ring reflection/glare record:
+  - Mark observed a circular ring reflection on the card during preview.
+  - Likely cause is specular reflection from glossy card/sleeve/slab surface reflecting the ring/dome geometry into the fixed overhead Basler view.
+  - Near-term test candidates: lower exposure/duty, selected Leimac channel subsets, future multi-light profiles, dark hood/ambient control, and glare-region flagging.
+  - Physical-material candidates requiring explicit review: cross-polarization, diffuser film/sheet, ring/dome geometry changes, and height/angle changes.
+  - This is not solved in PR #39 and must not be described as calibrated or accepted until tested.
+- Validation:
+  - PowerShell bridge parse check -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 132 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` optimization warnings.
+  - `git diff --check` -> pass with line-ending warnings only.
+- Pending:
+  - Launch the revised preview only after Mark confirms supervised preflight again.
+  - Mark must confirm true live stream/responsive focus view, displayed FPS/frame age, portrait/sidebar layout, responsive slider/numeric duty input, applied PWM/ACK display, quick 8-channel ring response, Preview Light On/Off, Safe Off, and final light-off.
+  - Only after Mark accepts the revised preview may PR #39 continue to focus/framing assistant and Leimac 8-channel characterization.
+- Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no Arduino command, no stage/motor command, no network setting change, no Leimac reset/default, no persistent Leimac or Basler User Set save, no high-duty lighting, no focus/framing acceptance smoke, no channel characterization, no captured image/vendor binary commit, and no calibrated/final/certificate/certified claim.
+
+## Session Update (2026-06-29 UTC, AI Grader PR #39 preview failure root cause/fix)
+- PR #39 remains open and must not be merged yet.
+- Mark aborted the operator preview because the Basler live view did not display frames and the LED preview light did not turn on.
+- Failed preview run:
+  - Output folder: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-29T201748799Z`.
+  - Manifest: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-29T201748799Z\manifest.json`.
+  - `operatorDecision=aborted`, `framesDisplayed=0`, `fps=0`.
+  - Preview lighting remained reported off with no ACK responses recorded.
+- Root cause:
+  - Windows PowerShell `Task.Run([System.Action]{ ...PowerShell... })` faults because the thread-pool thread has no PowerShell runspace.
+  - The prior implementation used that pattern for both the Basler frame loop and the Leimac preview-light apply path.
+- Fix implemented:
+  - Added compiled .NET `PylonWinFormsPreviewPump` inside the bridge for pylon continuous acquisition, `GrabStrategy.LatestImages`, `GrabLoop.ProvidedByUser`, `RetrieveResult`, newest-frame display, and stale-frame dropping.
+  - Preview explicitly disables Basler trigger mode for the operator view; grading capture settings remain separate.
+  - Added compiled .NET `LeimacPreviewLightController` for debounced/coalesced low-duty preview lighting writes.
+  - Preview lighting now uses low-duty `W11` PWM plus `W86` lighting-output enable for continuous setup light, with safe-off on close/abort/start; grading capture still uses the locked ExposureActive trigger profile.
+  - Preview settings are not promoted to the locked grading capture profile.
+- Validation after fix:
+  - PowerShell bridge parse check -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 132 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+  - `git diff --check` -> pass with CRLF warnings only.
+- Pending:
+  - Relaunch revised preview only after Mark confirms ring light is off and supervised preflight is still true.
+  - Mark must verify live Basler frames, FPS/frame age, portrait/sidebar layout, overlays, slider/numeric duty input, low-duty Preview Light On/Off, 8-channel ring response, Safe Off, and final ring-light-off.
+  - Do not continue to focus/framing assistant or Leimac 8-channel characterization until Mark accepts the preview UI.
+- Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no Arduino command, no stage/motor command, no network setting change, no Leimac reset/default, no persistent Leimac or Basler User Set save, no high-duty lighting, no captured image/vendor binary commit, and no calibrated/final/certificate/certified claim.
+
+## Session Update (2026-06-29 UTC, AI Grader PR #39 supervised smoke accepted)
+- PR #39 remains open and must not be merged yet.
+- Basler operator preview was hardware-accepted by Mark:
+  - Visible Windows pylon live stream, about `20.44 FPS`, `4387` frames displayed, `2 ms` frame age.
+  - Mark confirmed real-time manual focus/alignment usability.
+  - Mark confirmed UI ring flicker was fixed.
+  - Mark confirmed brightness-slider hardware flash was fixed.
+  - Mark confirmed final physical ring light state was off.
+- Accepted preview output:
+  - Folder: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-29T210409349Z`.
+  - Manifest: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-29T210409349Z\manifest.json`.
+  - Report: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-29T210409349Z\preview-report.html`.
+  - Diagnostic raw still: `basler-operator-preview-20260629T210753379Z.png`, SHA-256 `9a39e1f7506e4de8da51ca2329dccdd1844c3587e936f765055606e7375d7037`, `2285029` bytes, `2448x2048`.
+  - Overlay/debug image is separate: `operator-preview-overlay.png`.
+- Final preview implementation notes:
+  - Basler preview uses compiled .NET pylon `RetrieveResult` frame pump with latest-frame display.
+  - Leimac preview lighting uses a compiled .NET coalescing worker.
+  - Duty-only changes on unchanged channels send only `W11` PWM; safe-off/re-enable is reserved for on/off or channel-set changes.
+  - Status polling no longer repaints the 8-section ring, avoiding UI flicker.
+  - Preview lighting remains setup-only and is not promoted to the locked grading capture profile.
+- Enhanced focus/framing assistant succeeded:
+  - Folder: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-focus-assist-2026-06-29T210908156Z`.
+  - Manifest: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-focus-assist-2026-06-29T210908156Z\manifest.json`.
+  - Report: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-focus-assist-2026-06-29T210908156Z\preview-report.html`.
+  - Setting: `1.2%` Leimac duty, `45000 us` Basler exposure, gain `0`.
+  - Quality: mean `45.3715`, clipped `0.00007`, dark `0.073087`, sharpness `206.7911`.
+  - Card boundary detected; coverage `0.84895`; ROI definitions computed.
+  - Pixel/mm estimate: `x=0.026392`, `y=0.050254`, estimated/uncalibrated.
+- Leimac 8-channel characterization succeeded:
+  - Folder: `C:\TenKings\capture-data\fixed-rig-calibration\leimac-channel-characterization-2026-06-29T211116513Z`.
+  - Manifest: `C:\TenKings\capture-data\fixed-rig-calibration\leimac-channel-characterization-2026-06-29T211116513Z\manifest.json`.
+  - Analysis: `C:\TenKings\capture-data\fixed-rig-calibration\leimac-channel-characterization-2026-06-29T211116513Z\channel-characterization.json`.
+  - Report: `C:\TenKings\capture-data\fixed-rig-calibration\leimac-channel-characterization-2026-06-29T211116513Z\preview-report.html`.
+  - Setting: `1%` duty, `45000 us` exposure.
+  - Captured dark control, all-on, and channels `1-8`.
+  - Safe-off before and after each channel recorded true.
+  - `channelToPhysicalMappingStatus=unknown`; directional inference `not_computed`; no physical mapping invented.
+  - Mark confirmed final physical ring light state was off.
+- Limitations carried forward:
+  - `isCalibrated=false`.
+  - Manual focus only.
+  - Channel physical mapping is not confirmed.
+  - Circular ring reflection remains unresolved optical glare.
+  - No calibrated macro evidence, final grade, certificate, or certified grading claim.
+- Captured outputs remain outside the repo and must not be committed.

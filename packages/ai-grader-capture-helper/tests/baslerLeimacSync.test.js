@@ -1,5 +1,6 @@
 const os = require("node:os");
 const path = require("node:path");
+const fs = require("node:fs");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
@@ -39,7 +40,7 @@ const {
   buildBaslerLeimacPolaritySmokePlan,
   buildBaslerLeimacSyncSmokeManifest,
 } = require("../dist/drivers/baslerLeimacSync");
-const { buildBaslerLine2ExposureActivePlan } = require("../dist/drivers/baslerPylonClient");
+const { BaslerPylonClient, buildBaslerLine2ExposureActivePlan } = require("../dist/drivers/baslerPylonClient");
 const { buildLeimacIdmuTriggerProfilePlan } = require("../dist/drivers/leimacIdmuClient");
 const { runCaptureHelperCli } = require("../dist/cli");
 
@@ -818,11 +819,72 @@ test("Fixed-rig calibration profile defaults are uncalibrated and estimate pixel
   assert.equal(withBoundary.pixelToMmEstimateY, 0.052294);
 });
 
-test("Fixed-rig operator preview manifest is snapshot/manual and keeps overlays out of raw evidence", async () => {
+test("Fixed-rig operator preview manifest requires a live-stream window and keeps overlays out of raw evidence", async () => {
+  const livePreview = {
+    windowVisible: true,
+    implementationType: "windows_winforms_pylon_live_stream",
+    framesUpdateAutomatically: true,
+    fps: 12.5,
+    frameAgeMs: 38,
+    skippedStaleFrames: 4,
+    frameSource: "pylon_stream_grabber_retrieve_result_latest_images_threaded_csharp",
+    framesDisplayed: 8,
+    overlayVisible: true,
+    metricsVisible: true,
+    displayOrientation: "portrait_rotated_90_for_operator_preview",
+    rawCaptureOrientation: "unchanged_unrotated_sensor_pixels",
+    sidebarLayout: "right_vertical_sidebar",
+    operatorDecision: "accepted",
+    lastFramePath: path.join(os.tmpdir(), "fixed-rig-calibration", "preview", "operator-preview-window-last-frame.png"),
+    lastFrameSha256: "b".repeat(64),
+    lastFrameByteSize: 4321,
+    lastMetrics: {
+      mean: 70,
+      max: 255,
+      clippedFraction: 0.01,
+      darkFraction: 0.001,
+      sharpness: 24,
+    },
+    lastError: null,
+    previewLighting: {
+      controlsVisible: true,
+      controlsEnabled: true,
+      masterLightOn: false,
+      currentDutyPercent: 1.2,
+      requestedDutyPercent: 1.2,
+      actualAppliedDutyPercent: 0,
+      actualAppliedPwmStep: 0,
+      actualAppliedPwmValue: "0000",
+      defaultV1DutyMarkerPercent: 1.2,
+      maxDutyPercent: 5.0,
+      selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+      channelMappingStatus: "unknown_uncalibrated",
+      safeOffOnExit: true,
+      leimacEngagedDuringPreview: true,
+      lastApplyLatencyMs: 42,
+      lastResponses: ["W86ACK0", "W85ACK0", "W11ACK0"],
+    },
+    camera: fakeCapture().camera,
+    exposureTime: 45000,
+    gain: 0,
+    sourcePixelFormat: "Mono8",
+    transport: "GigE",
+    pylon: fakeCapture().pylon,
+    safety: {
+      leimacRequired: false,
+      leimacEngaged: false,
+      persistentBaslerSaved: false,
+      persistentLeimacSaved: false,
+      overlaysBakedIntoRawEvidence: false,
+      rawEvidenceClean: true,
+    },
+    note: "Visible preview.",
+  };
   const preview = buildFixedRigOperatorPreviewManifest({
     packageId: "preview",
     packageDir: path.join(os.tmpdir(), "fixed-rig-calibration", "preview"),
-    status: "preview_captured",
+    status: "accepted",
+    livePreview,
     previewCapture: fakeCapture(),
     quality: fakeFixedRigQuality(),
     focusLockedByOperator: true,
@@ -839,14 +901,35 @@ test("Fixed-rig operator preview manifest is snapshot/manual and keeps overlays 
       note: "Overlay only.",
     },
   });
-  assert.equal(preview.mode, "snapshot_preview");
+  assert.equal(preview.mode, "windows_live_stream_preview");
+  assert.equal(preview.previewImplementationType, "windows_winforms_pylon_live_stream");
+  assert.equal(preview.livePreview.windowVisible, true);
+  assert.equal(preview.livePreview.framesUpdateAutomatically, true);
+  assert.equal(preview.livePreview.overlayVisible, true);
+  assert.equal(preview.livePreview.frameSource, "pylon_stream_grabber_retrieve_result_latest_images_threaded_csharp");
+  assert.equal(preview.livePreview.skippedStaleFrames, 4);
+  assert.equal(preview.livePreview.displayOrientation, "portrait_rotated_90_for_operator_preview");
+  assert.equal(preview.livePreview.sidebarLayout, "right_vertical_sidebar");
+  assert.equal(preview.livePreview.previewLighting.defaultV1DutyMarkerPercent, 1.2);
+  assert.equal(preview.livePreview.previewLighting.maxDutyPercent, 5.0);
+  assert.equal(preview.livePreview.previewLighting.actualAppliedPwmStep, 0);
+  assert.equal(preview.livePreview.previewLighting.actualAppliedPwmValue, "0000");
+  assert.equal(preview.livePreview.previewLighting.lastApplyLatencyMs, 42);
+  assert.equal(preview.livePreview.previewLighting.channelMappingStatus, "unknown_uncalibrated");
+  assert.equal(preview.livePreview.operatorDecision, "accepted");
   assert.equal(preview.startAiGradingAutomatically, false);
   assert.equal(preview.safety.leimacRequired, false);
   assert.equal(preview.safety.leimacEngaged, false);
   assert.equal(preview.safety.overlaysBakedIntoRawEvidence, false);
   assert.equal(preview.calibrationProfile.focusLockedByOperator, true);
   assert.match(preview.readiness.uncalibratedGridWarning, /uncalibrated/i);
-  assert.match(renderFixedRigOperatorPreviewReport(preview), /Start AI-Grading \/ Continue/i);
+  const report = renderFixedRigOperatorPreviewReport(preview);
+  assert.match(report, /visible Windows pylon live-stream preview window/i);
+  assert.match(report, /windows_winforms_pylon_live_stream/i);
+  assert.match(report, /PWM 0000/i);
+  assert.match(report, /1.2/i);
+  assert.match(report, /Accept \/ Start \/ Continue/i);
+  assert.doesNotMatch(report, /snapshot preview mode/i);
 
   const dryRun = await runCli([
     "basler-fixed-rig-operator-preview",
@@ -872,6 +955,148 @@ test("Fixed-rig operator preview manifest is snapshot/manual and keeps overlays 
   ]);
   assert.equal(missingOperatorMode.code, 1);
   assert.match(missingOperatorMode.stderr.error, /--operator-mode/);
+
+  const leimacMissingWiring = await runCli([
+    "basler-fixed-rig-operator-preview",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    path.join(os.tmpdir(), "fixed-rig-calibration"),
+    "--apply",
+    "--confirm",
+    BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION,
+    "--operator-mode",
+    "--mark-present",
+  ]);
+  assert.equal(leimacMissingWiring.code, 1);
+  assert.match(leimacMissingWiring.stderr.error, /--wiring-confirmed/);
+
+  const invalidRefresh = await runCli([
+    "basler-fixed-rig-operator-preview",
+    "--preview-refresh-ms",
+    "100",
+  ]);
+  assert.equal(invalidRefresh.code, 1);
+  assert.match(invalidRefresh.stderr.error, /--preview-refresh-ms/);
+});
+
+test("Basler pylon client launches operator preview window action", async () => {
+  const calls = [];
+  const client = new BaslerPylonClient(
+    {
+      bridgeScriptPath: __filename,
+      pylonRoot: "C:\\Program Files\\Basler\\pylon",
+    },
+    async (command, args) => {
+      calls.push({ command, args });
+      return {
+        ok: true,
+        result: {
+          windowVisible: true,
+          implementationType: "windows_winforms_pylon_live_stream",
+          framesUpdateAutomatically: true,
+          fps: 10,
+          frameAgeMs: 44,
+          skippedStaleFrames: 3,
+          frameSource: "pylon_stream_grabber_retrieve_result_latest_images_threaded_csharp",
+          framesDisplayed: 3,
+          overlayVisible: true,
+          metricsVisible: true,
+          displayOrientation: "portrait_rotated_90_for_operator_preview",
+          rawCaptureOrientation: "unchanged_unrotated_sensor_pixels",
+          sidebarLayout: "right_vertical_sidebar",
+          operatorDecision: "accepted",
+          previewLighting: {
+            controlsVisible: true,
+            controlsEnabled: true,
+            masterLightOn: false,
+            currentDutyPercent: 1.2,
+            requestedDutyPercent: 1.2,
+            actualAppliedDutyPercent: 0,
+            actualAppliedPwmStep: 0,
+            actualAppliedPwmValue: "0000",
+            defaultV1DutyMarkerPercent: 1.2,
+            maxDutyPercent: 5.0,
+            selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+            channelMappingStatus: "unknown_uncalibrated",
+            safeOffOnExit: true,
+            leimacEngagedDuringPreview: false,
+            lastApplyLatencyMs: null,
+            lastResponses: [],
+          },
+          camera: fakeCapture().camera,
+          exposureTime: 45000,
+          gain: 0,
+          sourcePixelFormat: "Mono8",
+          transport: "GigE",
+          pylon: fakeCapture().pylon,
+          safety: {
+            leimacRequired: false,
+            leimacEngaged: false,
+            persistentBaslerSaved: false,
+            persistentLeimacSaved: false,
+            overlaysBakedIntoRawEvidence: false,
+            rawEvidenceClean: true,
+          },
+          note: "Visible preview.",
+        },
+      };
+    }
+  );
+
+  const result = await client.showOperatorPreviewWindow({
+    outputDir: path.join(os.tmpdir(), "fixed-rig-calibration", "preview-window"),
+    exposureUs: 45000,
+    refreshIntervalMs: 500,
+    leimacHost: "169.254.191.156",
+    leimacPort: 1000,
+    leimacUnit: 1,
+    previewDutyPercent: 1.2,
+  });
+  assert.equal(result.windowVisible, true);
+  assert.equal(result.framesUpdateAutomatically, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.toLowerCase().includes("powershell"), true);
+  assert.equal(calls[0].args.includes("operator-preview-window"), true);
+  assert.equal(calls[0].args.includes("-RefreshIntervalMs"), true);
+  assert.equal(calls[0].args.includes("-LeimacHost"), true);
+  assert.equal(calls[0].args.includes("-PreviewDutyTenthsPercent"), true);
+});
+
+test("Basler operator preview bridge requires pylon live stream and async coalesced Leimac controls", () => {
+  const script = fs.readFileSync(path.join(__dirname, "..", "scripts", "basler-pylon-bridge.ps1"), "utf8");
+  assert.match(script, /GrabStrategy\]::LatestImages/);
+  assert.match(script, /GrabLoop\]::ProvidedByUser/);
+  assert.match(script, /RetrieveResult\(100/);
+  assert.match(script, /Configuration\]::AcquireContinuous/);
+  assert.match(script, /PylonWinFormsPreviewPump/);
+  assert.match(script, /LeimacPreviewLightController/);
+  assert.match(script, /operatorPreviewSkippedFrames/);
+  assert.match(script, /lightingDebounceTimer\.Interval = 50/);
+  assert.match(script, /AutoResetEvent/);
+  assert.match(script, /bool signaled = signal\.WaitOne\(100\)/);
+  assert.match(script, /if \(!signaled\) continue/);
+  assert.match(script, /lastAppliedVersion/);
+  assert.match(script, /SameChannels\(appliedChannels, channels\)/);
+  assert.match(script, /if \(lightEnabled && SameChannels\(appliedChannels, channels\)\)/);
+  assert.match(script, /operatorPreviewAppliedDutySteps/);
+  assert.match(script, /actualAppliedPwmValue/);
+  assert.match(script, /NewFrame\("86", ChannelData\(channels, "0001", "0000"\)\)/);
+  assert.match(script, /Update-RequestedLightingText -InvalidateRing \$false/);
+  assert.match(script, /\$dutySteps = \[int\]\$DutyTenthsPercent/);
+  assert.doesNotMatch(script, /Round\(\$DutyTenthsPercent \* 10\)/);
+  assert.doesNotMatch(script, /System\.Threading\.Tasks\.Task\]::Run/);
+  assert.doesNotMatch(script, /UserSetSave|SYSTEM RESET|FACTORY DEFAULT/i);
+});
+
+test("fixed-rig docs record unresolved ring reflection mitigations without solved or certified claims", () => {
+  const docs = fs.readFileSync(path.join(__dirname, "..", "..", "..", "docs", "ai-grader-capture-helper.md"), "utf8");
+  assert.match(docs, /Ring Reflection \/ Glare Limitation/);
+  assert.match(docs, /specular reflection/i);
+  assert.match(docs, /cross-polarization/i);
+  assert.match(docs, /diffuser/i);
+  assert.match(docs, /unresolved optical setup issue/i);
+  assert.match(docs, /No PR #39 code or smoke may claim the ring reflection is solved/i);
 });
 
 test("Leimac channel characterization plan defaults to eight numeric channels and unknown mapping", async () => {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import type { BaslerCaptureStillResult } from "./baslerPylonClient";
+import type { BaslerCaptureStillResult, BaslerOperatorPreviewWindowResult } from "./baslerPylonClient";
 import type { BaslerLeimacMacroPackageManifest } from "./baslerLeimacFullRig";
 import { ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID } from "./baslerLeimacFullRig";
 import { assertBaslerLeimacSyncSmokeOutputDirAllowed, type BaslerLeimacImageStats } from "./baslerLeimacSync";
@@ -168,14 +168,17 @@ export interface FixedRigOperatorPreviewManifest {
   packageDir: string;
   manifestPath?: string;
   previewReportPath?: string;
-  status: "planned" | "preview_captured" | "aborted";
-  mode: "snapshot_preview";
+  status: "planned" | "preview_captured" | "accepted" | "aborted" | "closed";
+  mode: "windows_live_stream_preview";
+  previewImplementationType: "windows_winforms_pylon_live_stream";
+  livePreview?: BaslerOperatorPreviewWindowResult;
   operatorModeRequired: true;
   startAiGradingAutomatically: false;
   controls: {
     startAiGradingContinue: "operator_decision_only";
     abort: "operator_decision_only";
-    refreshRecapturePreview: "rerun_command";
+    pauseResume: "operator_control";
+    refreshRateStatus: "visible_in_window";
     safeOffAvailableIfLeimacEngaged: true;
   };
   previewCapture?: BaslerCaptureStillResult;
@@ -972,6 +975,7 @@ export function buildFixedRigOperatorPreviewManifest(input: {
   packageId: string;
   packageDir: string;
   status: FixedRigOperatorPreviewManifest["status"];
+  livePreview?: BaslerOperatorPreviewWindowResult;
   previewCapture?: BaslerCaptureStillResult;
   quality?: FixedRigQualityMetrics;
   overlayPreview?: FixedRigOverlayArtifact;
@@ -992,7 +996,7 @@ export function buildFixedRigOperatorPreviewManifest(input: {
     selectedLeimacDuty: 0,
     cardBoundary: input.quality?.cardBoundary,
     focusLockedByOperator: input.focusLockedByOperator ?? false,
-    calibrationStatus: input.status === "preview_captured" ? "preview_assisted" : "uncalibrated",
+    calibrationStatus: input.status === "preview_captured" || input.status === "accepted" ? "preview_assisted" : "uncalibrated",
   });
   const warnings = [
     ...(input.quality?.warnings ?? []),
@@ -1004,13 +1008,16 @@ export function buildFixedRigOperatorPreviewManifest(input: {
     ...(input.manifestPath ? { manifestPath: input.manifestPath } : {}),
     ...(input.previewReportPath ? { previewReportPath: input.previewReportPath } : {}),
     status: input.status,
-    mode: "snapshot_preview",
+    mode: "windows_live_stream_preview",
+    previewImplementationType: "windows_winforms_pylon_live_stream",
+    ...(input.livePreview ? { livePreview: input.livePreview } : {}),
     operatorModeRequired: true,
     startAiGradingAutomatically: false,
     controls: {
       startAiGradingContinue: "operator_decision_only",
       abort: "operator_decision_only",
-      refreshRecapturePreview: "rerun_command",
+      pauseResume: "operator_control",
+      refreshRateStatus: "visible_in_window",
       safeOffAvailableIfLeimacEngaged: true,
     },
     ...(input.previewCapture ? { previewCapture: input.previewCapture } : {}),
@@ -1033,7 +1040,7 @@ export function buildFixedRigOperatorPreviewManifest(input: {
       overlaysBakedIntoRawEvidence: false,
     },
     note:
-      "Basler fixed-rig operator preview is manual focus/alignment support only. Snapshot overlays are debug/preview artifacts and are not baked into raw evidence.",
+      "Basler fixed-rig operator preview is manual focus/alignment support only. The operator acceptance path is a visible Windows pylon live-stream preview window; saved PNG/report artifacts are diagnostic only and overlays are not baked into raw evidence.",
   };
 }
 
@@ -1484,11 +1491,31 @@ export function renderFixedRigOperatorPreviewReport(manifest: FixedRigOperatorPr
 </head>
 <body><main>
   <h1>Basler Fixed-Rig Operator Preview</h1>
-  <p class="warn">Manual preview/focus support only. This is snapshot preview mode, not autofocus, not calibrated evidence, and not AI grading.</p>
-  <p class="controls"><span>Start AI-Grading / Continue</span><span>Abort</span><span>Refresh / recapture preview</span><span>Safe Off if Leimac engaged</span></p>
-  <h2>Raw Preview Snapshot</h2>
-  ${imageTag(manifest.previewCapture?.outputFilePath, "Basler operator preview raw snapshot")}
-  <h2>Overlay Preview</h2>
+  <p class="warn">Manual preview/focus support only. Acceptance requires the visible Windows pylon live-stream preview window; saved files below are diagnostics only. This is not autofocus, not calibrated evidence, and not AI grading.</p>
+  <p class="controls"><span>Accept / Start / Continue</span><span>Abort / Close</span><span>Pause / Resume</span><span>Refresh rate status</span><span>Safe Off if Leimac engaged</span></p>
+  <h2>Window Result</h2>
+  <table><tbody>
+    <tr><th>Implementation</th><td>${escapeHtml(manifest.previewImplementationType)}</td></tr>
+    <tr><th>Window visible</th><td>${escapeHtml(String(manifest.livePreview?.windowVisible ?? false))}</td></tr>
+    <tr><th>Frames update automatically</th><td>${escapeHtml(String(manifest.livePreview?.framesUpdateAutomatically ?? false))}</td></tr>
+    <tr><th>FPS</th><td>${escapeHtml(String(manifest.livePreview?.fps ?? "not recorded"))}</td></tr>
+    <tr><th>Frame age</th><td>${escapeHtml(String(manifest.livePreview?.frameAgeMs ?? "not recorded"))} ms</td></tr>
+    <tr><th>Frame source</th><td>${escapeHtml(manifest.livePreview?.frameSource ?? "not recorded")}</td></tr>
+    <tr><th>Skipped stale frames</th><td>${escapeHtml(String(manifest.livePreview?.skippedStaleFrames ?? "not recorded"))}</td></tr>
+    <tr><th>Frames displayed</th><td>${escapeHtml(String(manifest.livePreview?.framesDisplayed ?? "not recorded"))}</td></tr>
+    <tr><th>Overlay visible</th><td>${escapeHtml(String(manifest.livePreview?.overlayVisible ?? false))}</td></tr>
+    <tr><th>Metrics visible</th><td>${escapeHtml(String(manifest.livePreview?.metricsVisible ?? false))}</td></tr>
+    <tr><th>Display orientation</th><td>${escapeHtml(manifest.livePreview?.displayOrientation ?? "not recorded")}</td></tr>
+    <tr><th>Sidebar layout</th><td>${escapeHtml(manifest.livePreview?.sidebarLayout ?? "not recorded")}</td></tr>
+    <tr><th>Preview lighting controls</th><td>${escapeHtml(String(manifest.livePreview?.previewLighting.controlsVisible ?? false))}</td></tr>
+    <tr><th>Preview duty</th><td>requested ${escapeHtml(String(manifest.livePreview?.previewLighting.requestedDutyPercent ?? manifest.livePreview?.previewLighting.currentDutyPercent ?? "not recorded"))}%; applied ${escapeHtml(String(manifest.livePreview?.previewLighting.actualAppliedDutyPercent ?? "not recorded"))}% / PWM ${escapeHtml(String(manifest.livePreview?.previewLighting.actualAppliedPwmValue ?? "not recorded"))}; default V1 marker ${escapeHtml(String(manifest.livePreview?.previewLighting.defaultV1DutyMarkerPercent ?? 1.2))}%</td></tr>
+    <tr><th>Lighting ACK latency</th><td>${escapeHtml(String(manifest.livePreview?.previewLighting.lastApplyLatencyMs ?? "not recorded"))} ms</td></tr>
+    <tr><th>Preview channels</th><td>${escapeHtml((manifest.livePreview?.previewLighting.selectedChannels ?? []).join(", ") || "none")}; mapping ${escapeHtml(manifest.livePreview?.previewLighting.channelMappingStatus ?? "unknown_uncalibrated")}</td></tr>
+    <tr><th>Operator decision</th><td>${escapeHtml(manifest.livePreview?.operatorDecision ?? "not recorded")}</td></tr>
+  </tbody></table>
+  <h2>Diagnostic Raw Preview Snapshot</h2>
+  ${imageTag(manifest.previewCapture?.outputFilePath, "Basler operator preview diagnostic raw snapshot")}
+  <h2>Diagnostic Overlay Preview</h2>
   ${imageTag(manifest.overlayPreview?.outputFilePath, "Basler operator preview overlay")}
   ${qualityTable(manifest.quality)}
   <h2>Calibration Profile</h2>
