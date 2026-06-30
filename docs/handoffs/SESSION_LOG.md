@@ -21578,3 +21578,40 @@ By enabling Rip It Live, I confirm:
 - Mark confirmed the final physical Leimac ring light state was off after the back evidence package safe-off.
 - Remaining limitations: fixed-ruler profile is an unvalidated local reference, per-card lighting/exposure tuning is still required, clipping warnings remain at `1.4%`, channel physical mapping is not confirmed, and ring-glare mitigation remains future work.
 - Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no captured image/vendor binary commit, and no calibrated/final/certificate/certified claims.
+
+## 2026-06-30 - AI Grader PR #39 merged
+
+### Summary
+- PR #39 was merged into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/39`.
+- Merge commit: `e0c368fbe5b84c50d129e107da69ba5c05f2d032`.
+- Merged branch: `feature/ai-grader-fixed-rig-calibration-preview`.
+- Fixed-rig calibration/preview foundation is now on `main`.
+
+### Included State
+- Basler live operator preview and accepted software lighting profile.
+- Portrait report/display transforms while raw Basler evidence remains in sensor coordinates.
+- Fixed-ruler calibration profile fields and strict framing/overlay gates.
+- Repeatability diagnostics and front/back fixed-rig evidence package.
+- 8-channel Leimac evidence, ROI crops, and preliminary diagnostic-only scaffolding.
+- Mark accepted the fixed-ruler fixture positioning/re-seat geometry for production-candidate fixture positioning.
+- Evidence class remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`.
+- Lighting remains per-card tunable; final evidence still recorded clipping warnings at `1.4%`.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino/stage/motor command was run.
+- No Leimac reset/default command was run.
+- No persistent Basler or Leimac User Set save was made.
+- No high-duty lighting or hardware capture was run during merge.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, or certified grading claim was added.
+
+### Next
+- Start PR #40 from latest `main`: fixed-rig provisional diagnostic grading.
+- All PR #40 scores must be labeled `provisional_diagnostic`; no final/certificate/certified claims.

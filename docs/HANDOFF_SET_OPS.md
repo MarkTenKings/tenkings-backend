@@ -11760,3 +11760,18 @@ Build Set Ops UI flow with:
   - Lighting/exposure remains per-card tunable; the final evidence package shows clipping warnings at `1.4%`, especially on the back.
   - Channel physical mapping and ring-glare mitigation remain future work.
   - Captured images remain outside the repo and must not be committed.
+
+## Session Update (2026-06-30 UTC, AI Grader PR #39 merged)
+- PR #39 was merged into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/39`.
+- Merge commit: `e0c368fbe5b84c50d129e107da69ba5c05f2d032`.
+- Merged branch: `feature/ai-grader-fixed-rig-calibration-preview`.
+- Fixed-rig calibration/preview foundation is now on `main`:
+  - Basler live operator preview, accepted preview lighting profile, portrait report/display transforms, fixed-ruler calibration fields, strict framing/overlay gates, repeatability diagnostics, front/back evidence package, ROI crops, and preliminary diagnostic-only scaffolding.
+  - Evidence remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`.
+  - Fixed-ruler geometry/re-seat repeatability was accepted by Mark for production-candidate fixture positioning, but not certified calibration.
+  - Lighting remains per-card tunable; final PR #39 evidence showed clipping warnings at `1.4%`.
+  - No captured images or vendor binaries were committed.
+- Merge guardrails held:
+  - No migrations, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no hardware captures, and no final/certificate/certified grading claims.
+- Next planned work: PR #40 fixed-rig provisional diagnostic grading from latest `main`, with all scores labeled `provisional_diagnostic` and no final/certified claims.
