@@ -389,7 +389,9 @@ export interface FixedRigSurfaceAnomalyCandidate {
   displayRect?: { x: number; y: number; width: number; height: number };
   rawRect?: { x: number; y: number; width: number; height: number };
   sourceChannels: number[];
+  anomalyProxyScore: number;
   severityProxy: number;
+  severityBand: "low" | "medium" | "high";
   needsDinoLiteFollowUp: boolean;
 }
 
@@ -1278,9 +1280,14 @@ function diagnosticElementNotComputed(reason: string): FixedRigDiagnosticElement
   return { status: "not_computed", confidence: 0, metrics: {}, warnings: [reason] };
 }
 
+function diagnosticElementInsufficient(reason: string): FixedRigDiagnosticElement {
+  return { status: "insufficient_evidence", confidence: 0, metrics: {}, warnings: [reason] };
+}
+
 export function buildFixedRigSurfaceAnalysis(input: {
   side: FixedRigCardSide;
   channels?: Array<{ channel: number; stats?: FixedRigQualityMetrics; displayImage?: FixedRigDisplayArtifact }>;
+  roiDefinitions?: FixedRigRoiDefinition[];
   warnings?: string[];
 }): FixedRigSurfaceAnalysis {
   const perChannelStats = (input.channels ?? []).map((channel) => ({
@@ -1297,18 +1304,57 @@ export function buildFixedRigSurfaceAnalysis(input: {
       : {}),
     ...(channel.displayImage ? { portraitDisplayImage: channel.displayImage } : {}),
   }));
+  const anomalyValues = perChannelStats.map((channel) => channel.anomalyProxyMetric).filter((value): value is number => Number.isFinite(value));
+  const sortedAnomalyValues = [...anomalyValues].sort((a, b) => a - b);
+  const medianAnomaly =
+    sortedAnomalyValues.length > 0
+      ? sortedAnomalyValues[Math.floor(sortedAnomalyValues.length / 2)]
+      : undefined;
+  const strongest = [...perChannelStats]
+    .filter((channel) => Number.isFinite(channel.anomalyProxyMetric))
+    .sort((a, b) => (b.anomalyProxyMetric ?? 0) - (a.anomalyProxyMetric ?? 0));
+  const candidateChannels = strongest.filter((channel) => {
+    if (medianAnomaly === undefined || channel.anomalyProxyMetric === undefined) return false;
+    return channel.anomalyProxyMetric >= medianAnomaly * 1.12 || (channel.clippedPixelFraction ?? 0) > 0.02;
+  });
+  const centerSurface = input.roiDefinitions?.find((roi) => roi.id === "center-surface" && roi.status === "computed");
+  const centerSurfaceRawRect = centerSurface?.rawRect ?? centerSurface?.rect;
+  const maxCandidateScore = candidateChannels.length ? Math.max(...candidateChannels.map((channel) => channel.anomalyProxyMetric ?? 0)) : 0;
+  const candidateScore = medianAnomaly !== undefined ? roundMetric(Math.max(0, maxCandidateScore - medianAnomaly), 4) : 0;
+  const severityBand: FixedRigSurfaceAnomalyCandidate["severityBand"] =
+    candidateScore > 180 ? "high" : candidateScore > 60 ? "medium" : "low";
+  const candidates: FixedRigSurfaceAnomalyCandidate[] =
+    perChannelStats.length >= 8 && candidateChannels.length > 0
+      ? [
+          {
+            candidateId: `${input.side}-surface-candidate-001`,
+            side: input.side,
+            ...(centerSurface?.displayRect ? { displayRect: centerSurface.displayRect } : {}),
+            ...(centerSurfaceRawRect ? { rawRect: centerSurfaceRawRect } : {}),
+            sourceChannels: candidateChannels.map((channel) => channel.channel),
+            anomalyProxyScore: candidateScore,
+            severityProxy: candidateScore,
+            severityBand,
+            needsDinoLiteFollowUp: severityBand !== "low" || candidateChannels.some((channel) => (channel.clippedPixelFraction ?? 0) > 0.02),
+          },
+        ]
+      : [];
+  const status: FixedRigSurfaceAnalysis["status"] =
+    perChannelStats.length >= 8 ? "computed_diagnostic" : "insufficient_evidence";
   return {
     detectorId: "preliminary_surface_anomaly_detector_v0",
-    status: perChannelStats.length >= 8 ? "not_computed" : "insufficient_evidence",
+    status,
     registration: {
       status: "assumed_fixed_rig",
-      note: "Per-channel images are assumed aligned by the fixed fixture; no explicit registration or homography is computed in PR #39.",
+      note: "Per-channel images are assumed aligned by the fixed fixture; no explicit registration or homography is computed in this provisional diagnostic workflow.",
     },
     perChannelStats,
-    candidates: [],
+    candidates,
     warnings: [
       "Surface anomaly detector is preliminary; no final surface grade is computed.",
-      "No robust defect candidate detector is accepted yet, so candidate list remains empty.",
+      "Candidate boxes are provisional_diagnostic only and must be confirmed by later calibrated analysis or Dino-Lite follow-up.",
+      ...(perChannelStats.length >= 8 ? [] : ["Eight per-channel images are required for provisional surface anomaly analysis."]),
+      ...(candidates.length ? [] : ["No provisional surface candidates exceeded the V0 outlier threshold."]),
       ...(input.warnings ?? []),
     ],
   };
@@ -1338,23 +1384,57 @@ export function buildFixedRigDiagnosticGradingResult(input: {
   const bottom = alignment?.marginBottom;
   const lrTotal = left !== undefined && right !== undefined ? left + right : undefined;
   const tbTotal = top !== undefined && bottom !== undefined ? top + bottom : undefined;
+  const mmPerPixelX = input.fixtureCalibrationProfile?.mmPerPixelX;
+  const mmPerPixelY = input.fixtureCalibrationProfile?.mmPerPixelY;
+  const fixedRulerScaleReady =
+    input.fixtureCalibrationProfile?.referenceType === "fixed_metric_rulers" &&
+    input.fixtureCalibrationProfile.pixelToMmConsistency?.status === "pass" &&
+    !!mmPerPixelX &&
+    !!mmPerPixelY;
+  const framingReady = input.fixtureCalibrationProfile?.framingGate?.status === "pass" && alignment?.overlayAlignmentStatus === "pass";
+  const horizontalImbalancePx = left !== undefined && right !== undefined ? Math.abs(left - right) : undefined;
+  const verticalImbalancePx = top !== undefined && bottom !== undefined ? Math.abs(top - bottom) : undefined;
+  const horizontalImbalanceMm = horizontalImbalancePx !== undefined && mmPerPixelX ? roundMetric(horizontalImbalancePx * mmPerPixelX, 4) : undefined;
+  const verticalImbalanceMm = verticalImbalancePx !== undefined && mmPerPixelY ? roundMetric(verticalImbalancePx * mmPerPixelY, 4) : undefined;
+  const horizontalCenteringPercent = lrTotal ? roundMetric((Math.min(left ?? 0, right ?? 0) / lrTotal) * 100, 2) : undefined;
+  const verticalCenteringPercent = tbTotal ? roundMetric((Math.min(top ?? 0, bottom ?? 0) / tbTotal) * 100, 2) : undefined;
+  const centeringScore =
+    horizontalCenteringPercent !== undefined && verticalCenteringPercent !== undefined
+      ? roundMetric(Math.max(0, Math.min(10, ((horizontalCenteringPercent + verticalCenteringPercent) / 100) * 10)), 2)
+      : undefined;
   const centering =
-    boundary?.status === "detected" && lrTotal && tbTotal
+    boundary?.status === "detected" && lrTotal && tbTotal && fixedRulerScaleReady && framingReady
       ? {
           status: "computed_diagnostic" as const,
-          confidence: alignment?.overlayAlignmentStatus === "pass" ? 0.65 : 0.45,
+          score: centeringScore,
+          confidence: 0.72,
           metrics: {
+            scoreType: "provisional_diagnostic",
             leftPx: left,
             rightPx: right,
             topPx: top,
             bottomPx: bottom,
-            leftRightPercent: roundMetric((Math.min(left ?? 0, right ?? 0) / lrTotal) * 100, 2),
-            topBottomPercent: roundMetric((Math.min(top ?? 0, bottom ?? 0) / tbTotal) * 100, 2),
+            ...(left !== undefined && mmPerPixelX ? { leftMm: roundMetric(left * mmPerPixelX, 4) } : {}),
+            ...(right !== undefined && mmPerPixelX ? { rightMm: roundMetric(right * mmPerPixelX, 4) } : {}),
+            ...(top !== undefined && mmPerPixelY ? { topMm: roundMetric(top * mmPerPixelY, 4) } : {}),
+            ...(bottom !== undefined && mmPerPixelY ? { bottomMm: roundMetric(bottom * mmPerPixelY, 4) } : {}),
+            horizontalCenteringPercent,
+            verticalCenteringPercent,
+            horizontalImbalancePx,
+            verticalImbalancePx,
+            horizontalImbalanceMm,
+            verticalImbalanceMm,
             overlayAlignmentStatus: alignment?.overlayAlignmentStatus,
+            expectedCardPhysicalSizeMm: {
+              width: FIXED_RIG_DEFAULT_CARD_WIDTH_MM,
+              height: FIXED_RIG_DEFAULT_CARD_HEIGHT_MM,
+            },
           },
-          warnings: ["Centering is based on rough detected boundary/template margins and is diagnostic only."],
+          warnings: ["Centering score is provisional_diagnostic only and is not a final grade."],
         }
-      : diagnosticElementNotComputed("Card boundary/margins unavailable; centering diagnostic not computed.");
+      : boundary?.status === "detected"
+        ? diagnosticElementInsufficient("Fixed-ruler scale, framing gate, or overlay alignment is not passing; centering is insufficient_evidence.")
+        : diagnosticElementNotComputed("Card boundary/margins unavailable; centering diagnostic not computed.");
   const roiById = new Map((input.roiDefinitions ?? []).map((roi) => [roi.id, roi]));
   const roiMetric = (roiId: FixedRigRoiDefinition["id"], label: string): FixedRigDiagnosticElement => {
     const roi = roiById.get(roiId);
@@ -1362,7 +1442,17 @@ export function buildFixedRigDiagnosticGradingResult(input: {
     return {
       status: "computed_diagnostic",
       confidence: input.quality?.cardBoundary.status === "detected" ? 0.35 : 0.15,
+      score: input.quality
+        ? roundMetric(
+            Math.max(
+              0,
+              Math.min(10, 10 - input.quality.clippedPixelFraction * 40 - input.quality.darkPixelFraction * 8 + Math.min(input.quality.sharpnessScore, 500) / 250)
+            ),
+            2
+          )
+        : undefined,
       metrics: {
+        scoreType: "provisional_diagnostic",
         roiId,
         rect: roi.rect,
         rawRect: roi.rawRect,
@@ -1370,8 +1460,17 @@ export function buildFixedRigDiagnosticGradingResult(input: {
         sharpnessProxy: input.quality?.sharpnessScore,
         clippedPixelFraction: input.quality?.clippedPixelFraction,
         darkPixelFraction: input.quality?.darkPixelFraction,
+        edgeRoughnessProxy: input.quality ? roundMetric(input.quality.sharpnessScore * (1 + input.quality.clippedPixelFraction), 4) : undefined,
+        contrastTextureProxy: input.quality ? roundMetric(input.quality.mean * Math.max(0, 1 - input.quality.darkPixelFraction), 4) : undefined,
+        highFrequencyDefectProxy: input.quality
+          ? roundMetric(input.quality.sharpnessScore * Math.max(input.quality.clippedPixelFraction, input.quality.darkPixelFraction), 4)
+          : undefined,
+        visibleBoundaryCompleteness: input.quality?.cardBoundary.status === "detected" && framingReady ? "pass" : "warn",
       },
-      warnings: [`${label} ROI proxy metrics are preliminary and not a production corner/edge grade.`],
+      warnings: [
+        `${label} ROI proxy metrics are provisional_diagnostic only and not a production corner/edge grade.`,
+        ...(input.quality && input.quality.clippedPixelFraction > 0.02 ? ["Image clipping may bias this ROI diagnostic."] : []),
+      ],
     };
   };
   const surfaceWarnings = input.surfaceAnalysis?.warnings ?? ["Surface analysis not supplied."];
@@ -1402,7 +1501,12 @@ export function buildFixedRigDiagnosticGradingResult(input: {
     surface: {
       status: input.surfaceAnalysis?.status === "computed_diagnostic" ? "computed_diagnostic" : "not_computed",
       confidence: input.surfaceAnalysis?.status === "computed_diagnostic" ? 0.25 : 0,
+      score:
+        input.surfaceAnalysis?.status === "computed_diagnostic"
+          ? roundMetric(Math.max(0, 10 - Math.min(10, (input.surfaceAnalysis.candidates[0]?.severityProxy ?? 0) / 50)), 2)
+          : undefined,
       metrics: {
+        scoreType: "provisional_diagnostic",
         detectorId: input.surfaceAnalysis?.detectorId ?? "preliminary_surface_anomaly_detector_v0",
         candidateCount: input.surfaceAnalysis?.candidates.length ?? 0,
         perChannelCount: input.surfaceAnalysis?.perChannelStats.length ?? 0,

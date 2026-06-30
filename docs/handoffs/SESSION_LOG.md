@@ -21615,3 +21615,42 @@ By enabling Rip It Live, I confirm:
 ### Next
 - Start PR #40 from latest `main`: fixed-rig provisional diagnostic grading.
 - All PR #40 scores must be labeled `provisional_diagnostic`; no final/certificate/certified claims.
+
+## 2026-06-30 - AI Grader PR #40 provisional diagnostic grading start
+
+### Summary
+- Created/continued branch `feature/ai-grader-fixed-rig-diagnostic-grading` from latest `main`.
+- Started PR #40 software work for the first fixed-rig provisional diagnostic grading workflow on top of the PR #39 fixed-ruler Basler + Leimac V1 fixture.
+- Centering diagnostics now require passing fixed-ruler scale consistency, framing gate, and overlay alignment before emitting a provisional score.
+- If ruler/framing/overlay gates are missing or failing, centering returns `insufficient_evidence` rather than a placeholder score.
+- Passing centering diagnostics report margins in px/mm, horizontal/vertical centering percentages, imbalance px/mm, confidence, and `scoreType=provisional_diagnostic`.
+- Corner and edge ROI diagnostics now report provisional proxy metrics for sharpness, clipping/dark fraction, edge roughness, contrast/texture, high-frequency defect proxy, and visible boundary completeness.
+- `preliminary_surface_anomaly_detector_v0` now computes 8-channel anomaly proxy metrics, can emit provisional center-surface candidate boxes from channel outliers, and records severity band plus Dino-Lite follow-up recommendation.
+- Evidence-package reports now include the banner `Provisional Diagnostic Only - Not Certified - No Final Grade` and per-side diagnostic/surface-candidate summaries.
+- No PR #40 hardware smoke was run in this continuation.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 141 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass, existing `<img>` warnings only.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Pending
+- Commit, push, and open PR #40.
+- When Mark is present, run the supervised PR #40 smoke: live preview, accepted lighting profile, front/back evidence package, provisional diagnostic report, safe-off, and final physical ring-light-off confirmation.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino/stage/motor command was run.
+- No Leimac reset/default command was run.
+- No persistent Basler or Leimac User Set save was made.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, or certified grading claim was added.

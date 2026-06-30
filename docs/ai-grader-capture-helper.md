@@ -987,6 +987,20 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js fixed-rig
 
 The fixed-rig evidence package analysis now includes preliminary diagnostic-only grading scaffolding and 8-channel surface-analysis evidence. Centering is computed only when boundary/margin evidence exists and is labeled diagnostic. Corner and edge sections report ROI-level proxy metrics only. Surface analysis records per-channel image stats and portrait display images under `preliminary_surface_anomaly_detector_v0`; robust defect candidates remain `not_computed` unless accepted later. Reports and `analysis.json` explicitly record `finalGradeComputed=false`, `certifiedClaim=false`, and no final/certified grade output.
 
+### Fixed-Rig Provisional Diagnostic Grading
+
+PR #40 starts the first fixed-rig provisional diagnostic grading workflow on top of the PR #39 ruler-calibrated fixture outputs. It still does not create a final grade, label, QR report, certificate, or certified grading claim. All element scores are labeled `provisional_diagnostic`.
+
+The fixed-rig evidence package now emits a clearer provisional diagnostic report banner: `Provisional Diagnostic Only - Not Certified - No Final Grade`. The report shows the accepted lighting profile, front/back portrait evidence, overlay images, ROI crops, centering/corner/edge diagnostic status, 8-channel thumbnails, and surface candidate summary while keeping raw Basler evidence in `basler_sensor_pixels`.
+
+Centering diagnostics require fixed-ruler scale consistency plus passing framing and overlay gates. If the fixed-ruler profile, framing gate, or overlay alignment is not passing, centering returns `insufficient_evidence` instead of a placeholder score. When gates pass, centering reports left/right/top/bottom margins in px and mm, horizontal/vertical centering percentages, imbalance in px/mm, expected card size, confidence, and a provisional diagnostic score.
+
+Corner and edge diagnostics use the portrait ROI definitions from the fixed-rig evidence package and report simple proxy metrics: sharpness, clipped/dark fraction, edge roughness proxy, contrast/texture proxy, high-frequency defect proxy, and visible boundary completeness. These are conservative diagnostic proxies only, not production corner/edge grades.
+
+`preliminary_surface_anomaly_detector_v0` now computes per-channel anomaly proxy metrics from Leimac channel images, assumes fixed-rig registration, drops no raw evidence changes into the capture files, and can emit provisional candidate boxes using the center-surface ROI when an 8-channel outlier is present. Candidates include side, candidate id, display/raw rect when available, source channels, anomaly proxy score, severity band, and Dino-Lite follow-up recommendation. The detector remains preliminary and must not be treated as a final surface grade.
+
+PR #40 code work so far is software-only. No PR #40 hardware smoke has been run in this continuation; the next supervised run should use the fixed-rig preview, accepted lighting profile, front/back evidence package, provisional diagnostic analysis, safe-off, and Mark's final physical ring-light-off confirmation.
+
 #### Dell PR #39 Rough Fixture Smoke
 
 On 2026-06-30, Mark ran the rough fixed-fixture flow using the operator-built fixed-position V1 fixture. The accepted live preview folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`. The preview measured about `20.5 FPS` with `0 ms` frame age and accepted a software active profile of `1.4%` Leimac duty, PWM step `14`, channels `1-8`, source `operator_preview`. Preview/report display used `rotate90cw`; raw Basler sensor captures remained unchanged. The preview and later reports warned that the detected card boundary touched the frame edge, so the run remains rough/unvalidated and not calibrated.

@@ -11775,3 +11775,24 @@ Build Set Ops UI flow with:
 - Merge guardrails held:
   - No migrations, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no hardware captures, and no final/certificate/certified grading claims.
 - Next planned work: PR #40 fixed-rig provisional diagnostic grading from latest `main`, with all scores labeled `provisional_diagnostic` and no final/certified claims.
+
+## Session Update (2026-06-30 UTC, AI Grader PR #40 provisional diagnostic grading start)
+- Branch: `feature/ai-grader-fixed-rig-diagnostic-grading`.
+- PR #40 objective: first fixed-rig provisional diagnostic grading workflow using the PR #39 ruler-calibrated fixed Basler + Leimac V1 rig.
+- Implemented software-only diagnostic extensions so far:
+  - Centering diagnostics now require fixed-ruler scale consistency plus passing framing and overlay gates; otherwise centering returns `insufficient_evidence`.
+  - Passing centering diagnostics report px/mm margins, centering percentages, imbalance px/mm, confidence, and scores labeled `provisional_diagnostic`.
+  - Corner and edge ROI diagnostics now expose provisional proxy metrics for sharpness, clipping/dark fraction, edge roughness, contrast/texture, high-frequency defect proxy, and visible boundary completeness.
+  - `preliminary_surface_anomaly_detector_v0` now computes per-channel anomaly proxy metrics, can emit provisional center-surface candidates from 8-channel outliers, and records severity band plus Dino-Lite follow-up recommendation.
+  - Evidence-package reports now show a `Provisional Diagnostic Only - Not Certified - No Final Grade` banner plus per-side diagnostic and surface-candidate summaries.
+- Validation:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 141 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass, existing `<img>` warnings only.
+  - `git diff --check` -> pass with line-ending warnings only.
+- Pending:
+  - Commit/push/open PR #40.
+  - Supervised PR #40 hardware smoke only when Mark is present: live preview, accepted lighting profile, front/back evidence package, provisional diagnostic report, safe-off, and final physical ring-light-off confirmation.
+- Guardrails held so far: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no hardware capture, no captured image/vendor binary commit, and no final/certificate/certified claims.
