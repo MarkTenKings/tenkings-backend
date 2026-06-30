@@ -11698,3 +11698,65 @@ Build Set Ops UI flow with:
   - Channel physical mapping remains unconfirmed.
   - Ring reflection/glare remains unresolved.
   - No final grade, certificate, certified grading claim, captured image/vendor binary commit, migration, deploy, DB op, network setting change, Arduino/stage/motor command, Leimac reset/default, persistent User Set save, or high-duty lighting occurred.
+
+## Session Update (2026-06-30 UTC, AI Grader PR #39 fixed-ruler production-gate update)
+- PR #39 remains open and must not be merged yet.
+- Continued on `feature/ai-grader-fixed-rig-calibration-preview`.
+- Mark updated the physical fixture with fixed metric rulers next to the card. The implementation now treats fixed metric rulers as the primary production-candidate calibration reference:
+  - `fixed-rig-fixture-calibration` accepts `--reference-type fixed_metric_rulers`.
+  - Required ruler inputs are `--horizontal-span-mm`, `--horizontal-start-px x,y`, `--horizontal-end-px x,y`, `--vertical-span-mm`, `--vertical-start-px x,y`, and `--vertical-end-px x,y`.
+  - Missing ruler-span coordinates fail closed instead of silently falling back to card-size calibration.
+  - Fixture profiles record ruler span distances, pixel coordinates, computed pixel distances, calibration image path, `pixelsPerMmX/Y`, `mmPerPixelX/Y`, and X/Y consistency.
+  - Card dimensions remain a cross-check/fallback, not the primary production-candidate scale source.
+- Added strict framing and production-readiness gate metadata:
+  - Framing gate records margins in px/mm, center offset px/mm, aspect-ratio error, overlay alignment status, and pass/warn/fail.
+  - Card touching the image boundary is a framing `fail`.
+  - Production readiness records ruler calibration, framing, overlay, repeatability, lighting-profile, and final-safe-off gates plus blockers.
+  - `production_candidate` is allowed only when those gates pass; this remains diagnostic only and not a final/certificate/certified claim.
+- Updated overlay/report metadata:
+  - Ruler spans can be drawn on the derived overlay/debug image.
+  - Raw Basler evidence remains unchanged in sensor coordinates.
+- Updated repeatability:
+  - Remove/re-place phase defaults to five captures/placements unless overridden.
+  - Repeatability run mm offsets use ruler-derived scale when a fixture profile is supplied.
+- Focused validation after code changes:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 139 tests.
+- Pending before PR #39 acceptance:
+  - Full validation matrix.
+  - Supervised ruler calibration hardware run using real ruler span coordinates/distances.
+  - Guided remove/re-place repeatability, at least five placements.
+  - Only after ruler/framing/repeatability gates pass, or after explicit operator diagnostic override, run the fixed-rig evidence package.
+  - Safe-off and final physical ring-light-off confirmation.
+- Guardrails held so far in this update: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no captured image/vendor binary commit, and no calibrated/final/certificate/certified claims.
+
+## Session Update (2026-06-30 UTC, AI Grader PR #39 fixed-ruler acceptance smoke)
+- PR #39 remains open and must not be merged yet.
+- Mark used the live Basler preview window to align the fixed-position fixture and rulers, then explicitly accepted the fixture positioning/re-seat behavior as passed for production-candidate fixture positioning. This is still diagnostic/uncalibrated evidence; no final grade, certificate, or certified calibration claim is made.
+- Ruler calibration run:
+  - Folder: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-fixture-calibration-2026-06-30T075916276Z`.
+  - Manifest/report: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-fixture-calibration-2026-06-30T075916276Z\manifest.json`, `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-fixture-calibration-2026-06-30T075916276Z\preview-report.html`.
+  - Reference: `fixed_metric_rulers`; known ruler spans were entered as `50.8mm` horizontal from raw px `540,205` to `1620,205`, and `50.8mm` vertical from raw px `2295,145` to `2295,1218`.
+  - Operator card boundary override: raw rect `285,349,1878,1350`; used because rulers/fixture edges can confuse automatic boundary detection.
+  - Computed scale: `pixelsPerMmX=21.2599`, `pixelsPerMmY=21.122`, `mmPerPixelX=0.047037`, `mmPerPixelY=0.047344`; X/Y consistency `pass` with relative difference `0.0065`.
+  - Framing gate `pass`; margins left/right `285px` (`13.406mm`), top/bottom `349px` (`16.523mm`); overlay alignment `pass`; detected card aspect `1.391111` vs expected `1.4`.
+  - Lighting: duty `1.4%`, PWM step `14`, channels `1-8`, exposure `45000us`, gain `0`.
+- Guided remove/re-seat repeatability run:
+  - Folder/report: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-repeatability-test-2026-06-30T080625670Z`, `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-repeatability-test-2026-06-30T080625670Z\preview-report.html`.
+  - Phase `remove_replace`, `5` captures/placements, same ruler spans and card boundary override.
+  - Geometry result accepted by Mark as passed for production fixture positioning: center offset max `0.7071px` (`0.0334mm`), boundary width variation `0px`, boundary height variation `0px`, overlay alignment `pass` for all 5 runs.
+  - Manifest status remains `warn` because clipping reached `0.082032`; this is recorded as a per-card lighting/exposure tuning issue, not a fixed-fixture positioning failure.
+- Fixed-rig V1 uncalibrated evidence package with fixed-ruler metadata:
+  - Front folder/report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T082102851Z`, `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T082102851Z\preview-report.html`.
+  - Back folder/report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T082749115Z`, `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T082749115Z\preview-report.html`.
+  - Each side captured dark control, all-on, accepted-profile, and Leimac channels `1-8`; each generated 8 portrait channel display images and 12 ROI crops.
+  - Front all-on raw: SHA-256 `5879d28284911cdd4e845276f3d37a9c99fee8690a4648e78e672c306be5b571`, raw `2448x2048`, portrait display `2048x2448`, mean `96.037`, clipped `0.038942`, dark `0.005755`, sharpness `426.106`, overlay `pass`.
+  - Back all-on raw: SHA-256 `cf27e1ff636fb67eb911a91091077308282a3293c1970660105b8adc72e36e38`, raw `2448x2048`, portrait display `2048x2448`, mean `134.8357`, clipped `0.096152`, dark `0.005312`, sharpness `560.4625`, overlay `pass`.
+  - Evidence class `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`; raw Basler images remain `basler_sensor_pixels`; derived report/ROI assets use `ai_grader_card_portrait_display` with `displayTransform=rotate90cw`.
+  - Diagnostic sections remain preliminary only: `finalGradeComputed=false`, `certifiedClaim=false`, surface candidates not accepted/robust yet.
+- Final physical Leimac ring light state was confirmed off by Mark after the back evidence package safe-off.
+- Remaining blockers/limitations:
+  - The fixed-ruler profile is an unvalidated local fixture reference, not certified machine-vision calibration; `isCalibrated=false` remains required.
+  - Lighting/exposure remains per-card tunable; the final evidence package shows clipping warnings at `1.4%`, especially on the back.
+  - Channel physical mapping and ring-glare mitigation remain future work.
+  - Captured images remain outside the repo and must not be committed.

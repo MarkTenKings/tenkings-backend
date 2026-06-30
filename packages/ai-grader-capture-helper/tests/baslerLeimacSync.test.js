@@ -19,6 +19,7 @@ const {
   FIXED_RIG_FIXTURE_CALIBRATION_CONFIRMATION,
   FIXED_RIG_REPEATABILITY_TEST_CONFIRMATION,
   LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION,
+  applyFixedRigCardBoundaryOverride,
   buildFixedRigActiveLightingProfile,
   buildFixedRigCalibrationProfile,
   buildFixedRigDiagnosticGradingResult,
@@ -882,6 +883,144 @@ test("Fixed-rig rough fixture calibration profile remains uncalibrated and recor
   );
 });
 
+test("Fixed-rig ruler calibration uses fixed ruler spans as the measurement reference", async () => {
+  const activeLightingProfile = buildFixedRigActiveLightingProfile({
+    selectedDutyPercent: 1.4,
+    selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+    profileSource: "operator_preview",
+    acceptedAt: "2026-06-30T10:30:00.000Z",
+  });
+  const profile = buildFixedRigFixtureCalibrationProfile({
+    profileId: "ruler-fixture",
+    fixtureLabel: "fixed ruler fixture",
+    referenceType: "fixed_metric_rulers",
+    horizontalSpanMm: 50,
+    horizontalStartPx: { x: 100, y: 100 },
+    horizontalEndPx: { x: 1100, y: 100 },
+    verticalSpanMm: 50,
+    verticalStartPx: { x: 120, y: 120 },
+    verticalEndPx: { x: 120, y: 1120 },
+    calibrationImagePath: path.join(os.tmpdir(), "calibration.png"),
+    rawImageWidth: 2448,
+    rawImageHeight: 2048,
+    cardBoundary: fakeFixedRigQuality().cardBoundary,
+    activeLightingProfile,
+    operatorAccepted: true,
+  });
+
+  assert.equal(profile.referenceType, "fixed_metric_rulers");
+  assert.equal(profile.status, "ruler_reference_unvalidated");
+  assert.equal(profile.isCalibrated, false);
+  assert.equal(profile.pixelPerMmX, 20);
+  assert.equal(profile.pixelPerMmY, 20);
+  assert.equal(profile.mmPerPixelX, 0.05);
+  assert.equal(profile.mmPerPixelY, 0.05);
+  assert.equal(profile.overlayScaleSource, "fixed_metric_rulers");
+  assert.equal(profile.productionReadiness.status, "rejected");
+  assert.equal(profile.productionReadiness.gates.repeatability, "not_checked");
+  assert.match(JSON.stringify(profile.productionReadiness.blockers), /Repeatability|Final physical ring-light off/);
+
+  const outputDir = path.join(os.tmpdir(), "fixed-rig-ruler-cli-test");
+  const dryRun = await runCli([
+    "fixed-rig-fixture-calibration",
+    "--output-dir",
+    outputDir,
+    "--reference-type",
+    "fixed_metric_rulers",
+    "--horizontal-span-mm",
+    "50",
+    "--horizontal-start-px",
+    "100,100",
+    "--horizontal-end-px",
+    "1100,100",
+    "--vertical-span-mm",
+    "50",
+    "--vertical-start-px",
+    "120,120",
+    "--vertical-end-px",
+    "120,1120",
+  ]);
+  assert.equal(dryRun.code, 0);
+  assert.equal(dryRun.stdout.fixtureCalibrationProfile.referenceType, "fixed_metric_rulers");
+  assert.equal(dryRun.stdout.fixtureCalibrationProfile.pixelPerMmX, 20);
+
+  const missingPoints = await runCli(["fixed-rig-fixture-calibration", "--reference-type", "fixed_metric_rulers"]);
+  assert.equal(missingPoints.code, 1);
+  assert.match(missingPoints.stderr.error, /horizontal-span-mm/);
+});
+
+test("Fixed-rig framing gate fails when detected card touches image boundary", () => {
+  const profile = buildFixedRigFixtureCalibrationProfile({
+    profileId: "touching-boundary",
+    referenceType: "fixed_metric_rulers",
+    horizontalSpanMm: 50,
+    horizontalStartPx: { x: 0, y: 10 },
+    horizontalEndPx: { x: 1000, y: 10 },
+    verticalSpanMm: 50,
+    verticalStartPx: { x: 10, y: 0 },
+    verticalEndPx: { x: 10, y: 1000 },
+    rawImageWidth: 2448,
+    rawImageHeight: 2048,
+    cardBoundary: {
+      status: "detected",
+      x: 0,
+      y: 5,
+      width: 1800,
+      height: 1900,
+      coverage: 0.68,
+      confidence: 0.65,
+    },
+  });
+
+  assert.equal(profile.framingGate.status, "fail");
+  assert.match(profile.framingGate.warnings.join(" "), /touches the image boundary/);
+  assert.equal(profile.productionReadiness.status, "rejected");
+  assert.match(profile.productionReadiness.blockers.join(" "), /framing/);
+});
+
+test("Fixed-rig operator card boundary override keeps ruler calibration auditable", async () => {
+  const quality = applyFixedRigCardBoundaryOverride(fakeFixedRigQuality({
+    cardBoundary: {
+      status: "detected",
+      x: 0,
+      y: 0,
+      width: 2448,
+      height: 2048,
+      coverage: 1,
+      confidence: 0.35,
+    },
+  }), { x: 285, y: 349, width: 1878, height: 1350 });
+
+  assert.equal(quality.cardBoundary.x, 285);
+  assert.equal(quality.cardBoundary.width, 1878);
+  assert.match(quality.cardBoundary.reason, /Operator-entered/);
+  assert.equal(quality.overlayAlignment.overlayAlignmentStatus, "pass");
+  assert.match(quality.warnings.join(" "), /operator-entered/i);
+
+  const dryRun = await runCli([
+    "fixed-rig-fixture-calibration",
+    "--output-dir",
+    path.join(os.tmpdir(), "fixed-rig-card-boundary-cli-test"),
+    "--reference-type",
+    "fixed_metric_rulers",
+    "--horizontal-span-mm",
+    "50.8",
+    "--horizontal-start-px",
+    "540,205",
+    "--horizontal-end-px",
+    "1620,205",
+    "--vertical-span-mm",
+    "50.8",
+    "--vertical-start-px",
+    "2295,145",
+    "--vertical-end-px",
+    "2295,1218",
+    "--card-boundary-rect",
+    "285,349,1878,1350",
+  ]);
+  assert.equal(dryRun.code, 0);
+});
+
 test("Fixed-rig repeatability summary aggregates diagnostic variation without calibrating", () => {
   const base = fakeFixedRigQuality();
   const run1 = buildFixedRigRepeatabilityRun({ index: 1, phase: "no_touch", capture: fakeCapture(), quality: base });
@@ -1058,6 +1197,43 @@ test("Fixed-rig commands carry accepted preview lighting profile unless overridd
     "channel-7",
     "channel-8",
   ]);
+
+  const rulerEvidenceDryRun = await runCli([
+    "ai-grader-fixed-rig-v1-evidence-package",
+    "--output-dir",
+    captureDir,
+    "--reference-type",
+    "fixed_metric_rulers",
+    "--horizontal-span-mm",
+    "50.8",
+    "--horizontal-start-px",
+    "540,205",
+    "--horizontal-end-px",
+    "1620,205",
+    "--vertical-span-mm",
+    "50.8",
+    "--vertical-start-px",
+    "2295,145",
+    "--vertical-end-px",
+    "2295,1218",
+    "--card-boundary-rect",
+    "285,349,1878,1350",
+  ]);
+  assert.equal(rulerEvidenceDryRun.code, 0);
+  assert.equal(rulerEvidenceDryRun.stdout.plan.referenceType, "fixed_metric_rulers");
+  assert.equal(rulerEvidenceDryRun.stdout.plan.rulerSpans.horizontalSpanMm, 50.8);
+  assert.deepEqual(rulerEvidenceDryRun.stdout.plan.rulerSpans.horizontalStartPx, { x: 540, y: 205 });
+  assert.deepEqual(rulerEvidenceDryRun.stdout.plan.cardBoundaryRect, { x: 285, y: 349, width: 1878, height: 1350 });
+
+  const missingRulerEvidenceDryRun = await runCli([
+    "ai-grader-fixed-rig-v1-evidence-package",
+    "--output-dir",
+    captureDir,
+    "--reference-type",
+    "fixed_metric_rulers",
+  ]);
+  assert.equal(missingRulerEvidenceDryRun.code, 1);
+  assert.match(missingRulerEvidenceDryRun.stderr.error, /fixed_metric_rulers requires/);
 
   const calibrationDryRun = await runCli(["fixed-rig-fixture-calibration", "--output-dir", captureDir, "--reference-type", "card_dimensions"]);
   assert.equal(calibrationDryRun.code, 0);

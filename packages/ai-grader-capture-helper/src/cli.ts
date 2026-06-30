@@ -307,6 +307,13 @@ type ParsedCommand =
       referenceType: string | undefined;
       referenceWidthMm: number | undefined;
       referenceHeightMm: number | undefined;
+      horizontalSpanMm: number | undefined;
+      horizontalStartPx: { x: number; y: number } | undefined;
+      horizontalEndPx: { x: number; y: number } | undefined;
+      verticalSpanMm: number | undefined;
+      verticalStartPx: { x: number; y: number } | undefined;
+      verticalEndPx: { x: number; y: number } | undefined;
+      cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
       operatorNotes: string | undefined;
       operatorAccepted: boolean;
       repeatabilityPhase: "no-touch" | "remove-replace";
@@ -339,6 +346,18 @@ type ParsedCommand =
       operatorFlipDelayMs: number | undefined;
       resetDefaultLightingProfile: boolean;
       evidenceSide: "front" | "back" | "both";
+      fixtureLabel: string | undefined;
+      fixtureId: string | undefined;
+      referenceType: string | undefined;
+      referenceWidthMm: number | undefined;
+      referenceHeightMm: number | undefined;
+      horizontalSpanMm: number | undefined;
+      horizontalStartPx: { x: number; y: number } | undefined;
+      horizontalEndPx: { x: number; y: number } | undefined;
+      verticalSpanMm: number | undefined;
+      verticalStartPx: { x: number; y: number } | undefined;
+      verticalEndPx: { x: number; y: number } | undefined;
+      cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
     }
   | { command: "fixed-rig-lighting-profile-plan"; config: CaptureHelperConfigInput }
   | {
@@ -408,6 +427,36 @@ function readBooleanOption(argv: string[], index: number, name: string) {
   throw new CaptureHelperCommandError(`${name} must be true or false.`);
 }
 
+function readPixelPointOption(argv: string[], index: number, name: string): { x: number; y: number } {
+  const value = readOption(argv, index, name).trim();
+  const match = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(value);
+  if (!match) {
+    throw new CaptureHelperCommandError(`${name} must be formatted as x,y pixel coordinates.`);
+  }
+  const x = Number(match[1]);
+  const y = Number(match[2]);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) {
+    throw new CaptureHelperCommandError(`${name} must use non-negative finite pixel coordinates.`);
+  }
+  return { x, y };
+}
+
+function readRectOption(argv: string[], index: number, name: string): { x: number; y: number; width: number; height: number } {
+  const value = readOption(argv, index, name).trim();
+  const match = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)$/.exec(value);
+  if (!match) {
+    throw new CaptureHelperCommandError(`${name} must be formatted as x,y,width,height in raw sensor pixels.`);
+  }
+  const x = Number(match[1]);
+  const y = Number(match[2]);
+  const width = Number(match[3]);
+  const height = Number(match[4]);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height) || x < 0 || y < 0 || width <= 0 || height <= 0) {
+    throw new CaptureHelperCommandError(`${name} must use non-negative x/y and positive width/height.`);
+  }
+  return { x, y, width, height };
+}
+
 function parseCliArgs(argv: string[]): ParsedCommand {
   const [command = "help", ...rest] = argv;
   const config: CaptureHelperConfigInput = { simulator: {} };
@@ -457,6 +506,13 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let referenceType: string | undefined;
   let referenceWidthMm: number | undefined;
   let referenceHeightMm: number | undefined;
+  let horizontalSpanMm: number | undefined;
+  let horizontalStartPx: { x: number; y: number } | undefined;
+  let horizontalEndPx: { x: number; y: number } | undefined;
+  let verticalSpanMm: number | undefined;
+  let verticalStartPx: { x: number; y: number } | undefined;
+  let verticalEndPx: { x: number; y: number } | undefined;
+  let cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
   let operatorNotes: string | undefined;
   let operatorAccepted = false;
   let repeatabilityPhase: "no-touch" | "remove-replace" = "no-touch";
@@ -722,9 +778,9 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--reference-type": {
         const value = readOption(rest, index, "--reference-type");
-        const allowed = ["card_dimensions", "metric_ruler", "cutting_mat", "measurement_board", "certified_target", "unknown"];
+        const allowed = ["card_dimensions", "fixed_metric_rulers", "metric_ruler", "cutting_mat", "measurement_board", "certified_target", "unknown"];
         if (!allowed.includes(value)) {
-          throw new CaptureHelperCommandError("--reference-type must be card_dimensions, metric_ruler, cutting_mat, measurement_board, certified_target, or unknown.");
+          throw new CaptureHelperCommandError("--reference-type must be card_dimensions, fixed_metric_rulers, metric_ruler, cutting_mat, measurement_board, certified_target, or unknown.");
         }
         referenceType = value;
         index += 1;
@@ -742,6 +798,40 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         if (!Number.isFinite(referenceHeightMm) || referenceHeightMm <= 0 || referenceHeightMm > 500) {
           throw new CaptureHelperCommandError("--reference-height-mm must be from 0 to 500.");
         }
+        index += 1;
+        break;
+      case "--horizontal-span-mm":
+        horizontalSpanMm = Number(readOption(rest, index, "--horizontal-span-mm"));
+        if (!Number.isFinite(horizontalSpanMm) || horizontalSpanMm <= 0 || horizontalSpanMm > 1000) {
+          throw new CaptureHelperCommandError("--horizontal-span-mm must be from 0 to 1000.");
+        }
+        index += 1;
+        break;
+      case "--horizontal-start-px":
+        horizontalStartPx = readPixelPointOption(rest, index, "--horizontal-start-px");
+        index += 1;
+        break;
+      case "--horizontal-end-px":
+        horizontalEndPx = readPixelPointOption(rest, index, "--horizontal-end-px");
+        index += 1;
+        break;
+      case "--vertical-span-mm":
+        verticalSpanMm = Number(readOption(rest, index, "--vertical-span-mm"));
+        if (!Number.isFinite(verticalSpanMm) || verticalSpanMm <= 0 || verticalSpanMm > 1000) {
+          throw new CaptureHelperCommandError("--vertical-span-mm must be from 0 to 1000.");
+        }
+        index += 1;
+        break;
+      case "--vertical-start-px":
+        verticalStartPx = readPixelPointOption(rest, index, "--vertical-start-px");
+        index += 1;
+        break;
+      case "--vertical-end-px":
+        verticalEndPx = readPixelPointOption(rest, index, "--vertical-end-px");
+        index += 1;
+        break;
+      case "--card-boundary-rect":
+        cardBoundaryRect = readRectOption(rest, index, "--card-boundary-rect");
         index += 1;
         break;
       case "--operator-notes":
@@ -1421,6 +1511,13 @@ function parseCliArgs(argv: string[]): ParsedCommand {
           referenceType,
           referenceWidthMm,
           referenceHeightMm,
+          horizontalSpanMm,
+          horizontalStartPx,
+          horizontalEndPx,
+          verticalSpanMm,
+          verticalStartPx,
+          verticalEndPx,
+          cardBoundaryRect,
           operatorNotes,
           operatorAccepted,
           repeatabilityPhase,
@@ -1478,6 +1575,18 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         operatorFlipDelayMs,
         resetDefaultLightingProfile,
         evidenceSide,
+        fixtureLabel,
+        fixtureId,
+        referenceType,
+        referenceWidthMm,
+        referenceHeightMm,
+        horizontalSpanMm,
+        horizontalStartPx,
+        horizontalEndPx,
+        verticalSpanMm,
+        verticalStartPx,
+        verticalEndPx,
+        cardBoundaryRect,
       };
     }
     if (command === "fixed-rig-lighting-profile-plan") return { command, config };
@@ -1533,7 +1642,7 @@ function helpPayload() {
       "fixed-rig-lighting-profile-plan",
       "basler-fixed-rig-operator-preview --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --exposure-us 45000 --gain 0 --preview-refresh-ms 500 --operator-mode --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --apply --confirm \"RUN BASLER FIXED RIG OPERATOR PREVIEW\"",
       "basler-fixed-rig-focus-assist --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --duty 5 --exposure-us 50000 --apply --confirm \"RUN BASLER FIXED RIG FOCUS ASSIST\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
-      "fixed-rig-fixture-calibration --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --exposure-us 45000 --reference-type card_dimensions --fixture-label fixed-v1-l-stop --operator-accepted --apply --confirm \"RUN FIXED RIG ROUGH FIXTURE CALIBRATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
+      "fixed-rig-fixture-calibration --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --exposure-us 45000 --reference-type fixed_metric_rulers --horizontal-span-mm 50 --horizontal-start-px 100,100 --horizontal-end-px 1100,100 --vertical-span-mm 50 --vertical-start-px 100,100 --vertical-end-px 100,1100 --fixture-label fixed-v1-l-stop --operator-accepted --apply --confirm \"RUN FIXED RIG ROUGH FIXTURE CALIBRATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "fixed-rig-repeatability-test --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --repeatability-phase no-touch --capture-count 5 --exposure-us 45000 --apply --confirm \"RUN FIXED RIG REPEATABILITY TEST\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "ai-grader-fixed-rig-v1-local --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --duty 5 --exposure-us 50000 --apply --confirm \"RUN AI GRADER FIXED RIG V1 LOCAL\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed --operator-flip-delay-ms 30000",
       "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side front --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
@@ -1595,9 +1704,16 @@ function helpPayload() {
       "--evidence-side front|back|both",
       "--fixture-label",
       "--fixture-id",
-      "--reference-type card_dimensions|metric_ruler|cutting_mat|measurement_board|certified_target|unknown",
+      "--reference-type card_dimensions|fixed_metric_rulers|metric_ruler|cutting_mat|measurement_board|certified_target|unknown",
       "--reference-width-mm",
       "--reference-height-mm",
+      "--horizontal-span-mm",
+      "--horizontal-start-px x,y",
+      "--horizontal-end-px x,y",
+      "--vertical-span-mm",
+      "--vertical-start-px x,y",
+      "--vertical-end-px x,y",
+      "--card-boundary-rect x,y,width,height",
       "--operator-notes",
       "--operator-accepted",
       "--repeatability-phase no-touch|remove-replace",
@@ -3216,6 +3332,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
     if (parsed.command === "fixed-rig-fixture-calibration") {
       const {
         FIXED_RIG_FIXTURE_CALIBRATION_CONFIRMATION,
+        applyFixedRigCardBoundaryOverride,
         analyzeFixedRigMacroQuality,
         assertFixedRigOutputDirAllowed,
         buildFixedRigActiveLightingProfile,
@@ -3233,6 +3350,20 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       const exposureUs = parsed.exposureUs ?? 45000;
       if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
         throw new CaptureHelperCommandError("fixed-rig-fixture-calibration --exposure-us must be from 1 to 100000.");
+      }
+      const isRulerReference = parsed.referenceType === "fixed_metric_rulers";
+      if (
+        isRulerReference &&
+        (parsed.horizontalSpanMm === undefined ||
+          !parsed.horizontalStartPx ||
+          !parsed.horizontalEndPx ||
+          parsed.verticalSpanMm === undefined ||
+          !parsed.verticalStartPx ||
+          !parsed.verticalEndPx)
+      ) {
+        throw new CaptureHelperCommandError(
+          "fixed-rig-fixture-calibration --reference-type fixed_metric_rulers requires --horizontal-span-mm, --horizontal-start-px, --horizontal-end-px, --vertical-span-mm, --vertical-start-px, and --vertical-end-px."
+        );
       }
       const activeLightingProfile = parsed.outputDir
         ? await resolveFixedRigActiveLightingProfile({
@@ -3254,6 +3385,12 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         referenceType: parsed.referenceType as any,
         referencePhysicalWidthMm: parsed.referenceWidthMm,
         referencePhysicalHeightMm: parsed.referenceHeightMm,
+        horizontalSpanMm: parsed.horizontalSpanMm,
+        horizontalStartPx: parsed.horizontalStartPx,
+        horizontalEndPx: parsed.horizontalEndPx,
+        verticalSpanMm: parsed.verticalSpanMm,
+        verticalStartPx: parsed.verticalStartPx,
+        verticalEndPx: parsed.verticalEndPx,
         activeLightingProfile,
         exposureUs,
         gain: parsed.gain ?? 0,
@@ -3338,7 +3475,8 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         });
         return 1;
       }
-      const quality = await analyzeFixedRigMacroQuality(macroResult.manifest.synced.capture.outputFilePath);
+      const analyzedQuality = await analyzeFixedRigMacroQuality(macroResult.manifest.synced.capture.outputFilePath);
+      const quality = parsed.cardBoundaryRect ? applyFixedRigCardBoundaryOverride(analyzedQuality, parsed.cardBoundaryRect) : analyzedQuality;
       const fixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
         profileId: `${packageId}-rough-fixture-profile`,
         fixtureId: parsed.fixtureId,
@@ -3346,6 +3484,13 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         referenceType: parsed.referenceType as any,
         referencePhysicalWidthMm: parsed.referenceWidthMm,
         referencePhysicalHeightMm: parsed.referenceHeightMm,
+        horizontalSpanMm: parsed.horizontalSpanMm,
+        horizontalStartPx: parsed.horizontalStartPx,
+        horizontalEndPx: parsed.horizontalEndPx,
+        verticalSpanMm: parsed.verticalSpanMm,
+        verticalStartPx: parsed.verticalStartPx,
+        verticalEndPx: parsed.verticalEndPx,
+        calibrationImagePath: macroResult.manifest.synced.capture.outputFilePath,
         rawImageWidth: quality.width,
         rawImageHeight: quality.height,
         cardBoundary: quality.cardBoundary,
@@ -3390,6 +3535,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         buildFixedRigFixtureCalibrationProfile,
         buildFixedRigRepeatabilityRun,
         buildFixedRigRepeatabilitySummary,
+        applyFixedRigCardBoundaryOverride,
         createFixedRigPackageDir,
         resolveFixedRigActiveLightingProfile,
         writeFixedRigRepeatabilityArtifacts,
@@ -3411,7 +3557,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           })
         : buildFixedRigActiveLightingProfile({ selectedDutyPercent: parsed.duty, profileSource: parsed.duty == null ? "default" : "cli_override" });
       const phase = parsed.repeatabilityPhase === "remove-replace" ? "remove_replace" : "no_touch";
-      const requestedCaptureCount = parsed.captureCount ?? (phase === "no_touch" ? 5 : 3);
+      const requestedCaptureCount = parsed.captureCount ?? 5;
       const plan = buildBaslerLeimacPolaritySmokePlan({
         dutyPercent: activeLightingProfile.selectedDutyPercent,
         exposureUs,
@@ -3425,6 +3571,12 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         referenceType: parsed.referenceType as any,
         referencePhysicalWidthMm: parsed.referenceWidthMm,
         referencePhysicalHeightMm: parsed.referenceHeightMm,
+        horizontalSpanMm: parsed.horizontalSpanMm,
+        horizontalStartPx: parsed.horizontalStartPx,
+        horizontalEndPx: parsed.horizontalEndPx,
+        verticalSpanMm: parsed.verticalSpanMm,
+        verticalStartPx: parsed.verticalStartPx,
+        verticalEndPx: parsed.verticalEndPx,
         activeLightingProfile,
         exposureUs,
         gain: parsed.gain ?? 0,
@@ -3514,9 +3666,33 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           writeJson(stderr, { ok: false, command: "fixed-rig-repeatability-test", packageDir, captureIndex: index, macroResult, macroError });
           return 1;
         }
-        const quality = await analyzeFixedRigMacroQuality(macroResult.manifest.synced.capture.outputFilePath);
+        const analyzedQuality = await analyzeFixedRigMacroQuality(macroResult.manifest.synced.capture.outputFilePath);
+        const quality = parsed.cardBoundaryRect ? applyFixedRigCardBoundaryOverride(analyzedQuality, parsed.cardBoundaryRect) : analyzedQuality;
         firstQuality = firstQuality ?? quality;
-        runs.push(buildFixedRigRepeatabilityRun({ index, phase, capture: macroResult.manifest.synced.capture, quality }));
+        const runFixtureProfile = buildFixedRigFixtureCalibrationProfile({
+          profileId: `${packageId}-repeatability-run-${index}-fixture-profile`,
+          fixtureId: parsed.fixtureId,
+          fixtureLabel: parsed.fixtureLabel,
+          referenceType: parsed.referenceType as any,
+          referencePhysicalWidthMm: parsed.referenceWidthMm,
+          referencePhysicalHeightMm: parsed.referenceHeightMm,
+          horizontalSpanMm: parsed.horizontalSpanMm,
+          horizontalStartPx: parsed.horizontalStartPx,
+          horizontalEndPx: parsed.horizontalEndPx,
+          verticalSpanMm: parsed.verticalSpanMm,
+          verticalStartPx: parsed.verticalStartPx,
+          verticalEndPx: parsed.verticalEndPx,
+          rawImageWidth: quality.width,
+          rawImageHeight: quality.height,
+          cardBoundary: quality.cardBoundary,
+          activeLightingProfile,
+          exposureUs,
+          gain: parsed.gain ?? 0,
+          operatorAccepted: parsed.operatorAccepted,
+          operatorNotes: parsed.operatorNotes,
+          status: "repeatability_checked",
+        });
+        runs.push(buildFixedRigRepeatabilityRun({ index, phase, capture: macroResult.manifest.synced.capture, quality, fixtureCalibrationProfile: runFixtureProfile }));
       }
       const completedFixtureProfile = buildFixedRigFixtureCalibrationProfile({
         profileId: `${packageId}-repeatability-fixture-profile`,
@@ -3525,6 +3701,12 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         referenceType: parsed.referenceType as any,
         referencePhysicalWidthMm: parsed.referenceWidthMm,
         referencePhysicalHeightMm: parsed.referenceHeightMm,
+        horizontalSpanMm: parsed.horizontalSpanMm,
+        horizontalStartPx: parsed.horizontalStartPx,
+        horizontalEndPx: parsed.horizontalEndPx,
+        verticalSpanMm: parsed.verticalSpanMm,
+        verticalStartPx: parsed.verticalStartPx,
+        verticalEndPx: parsed.verticalEndPx,
         rawImageWidth: firstQuality?.width,
         rawImageHeight: firstQuality?.height,
         cardBoundary: firstQuality?.cardBoundary,
@@ -3770,6 +3952,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         buildFixedRigDiagnosticGradingResult,
         buildFixedRigFixtureCalibrationProfile,
         buildFixedRigRoiDefinitions,
+        applyFixedRigCardBoundaryOverride,
         addFixedRigDisplayRects,
         buildFixedRigSurfaceAnalysis,
         buildLeimacCharacterizationFrames,
@@ -3789,6 +3972,20 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       const exposureUs = parsed.exposureUs ?? 45000;
       if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
         throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-evidence-package --exposure-us must be from 1 to 100000.");
+      }
+      const isRulerReference = parsed.referenceType === "fixed_metric_rulers";
+      if (
+        isRulerReference &&
+        (parsed.horizontalSpanMm === undefined ||
+          parsed.horizontalStartPx === undefined ||
+          parsed.horizontalEndPx === undefined ||
+          parsed.verticalSpanMm === undefined ||
+          parsed.verticalStartPx === undefined ||
+          parsed.verticalEndPx === undefined)
+      ) {
+        throw new CaptureHelperCommandError(
+          "ai-grader-fixed-rig-v1-evidence-package --reference-type fixed_metric_rulers requires --horizontal-span-mm, --horizontal-start-px, --horizontal-end-px, --vertical-span-mm, --vertical-start-px, and --vertical-end-px."
+        );
       }
       const activeLightingProfile = parsed.outputDir
         ? await resolveFixedRigActiveLightingProfile({
@@ -3822,6 +4019,19 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
             ],
             evidenceClass: "macro_fixed_rig_v1_uncalibrated",
             isCalibrated: false,
+            referenceType: parsed.referenceType ?? "card_dimensions",
+            rulerSpans:
+              parsed.referenceType === "fixed_metric_rulers"
+                ? {
+                    horizontalSpanMm: parsed.horizontalSpanMm,
+                    horizontalStartPx: parsed.horizontalStartPx,
+                    horizontalEndPx: parsed.horizontalEndPx,
+                    verticalSpanMm: parsed.verticalSpanMm,
+                    verticalStartPx: parsed.verticalStartPx,
+                    verticalEndPx: parsed.verticalEndPx,
+                  }
+                : undefined,
+            cardBoundaryRect: parsed.cardBoundaryRect,
           },
         });
         return 0;
@@ -3870,7 +4080,8 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           lensModel: env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
           exposureUs,
         });
-        const darkStats = await analyzeFixedRigMacroQuality(darkControl.outputFilePath);
+        const analyzedDarkStats = await analyzeFixedRigMacroQuality(darkControl.outputFilePath);
+        const darkStats = parsed.cardBoundaryRect ? applyFixedRigCardBoundaryOverride(analyzedDarkStats, parsed.cardBoundaryRect) : analyzedDarkStats;
         const captureProfile = async (label: string, channel: number | "all" | readonly number[]) => {
           const safeOffBefore = await leimacClient.safeOff(true);
           const frames = buildLeimacCharacterizationFrames({
@@ -3891,7 +4102,8 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
             lensModel: env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
             exposureUs,
           });
-          const stats = await analyzeFixedRigMacroQuality(capture.outputFilePath);
+          const analyzedStats = await analyzeFixedRigMacroQuality(capture.outputFilePath);
+          const stats = parsed.cardBoundaryRect ? applyFixedRigCardBoundaryOverride(analyzedStats, parsed.cardBoundaryRect) : analyzedStats;
           const quadrantBrightness = await analyzeFixedRigQuadrants(capture.outputFilePath);
           const safeOffAfter = await leimacClient.safeOff(true);
           return { label, channel, frames, writes, capture, stats, quadrantBrightness, safeOffBefore, safeOffAfter };
@@ -3951,8 +4163,18 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         });
         const fixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
           profileId: `${packageId}-${side}-rough-fixture-profile`,
-          fixtureLabel: "operator-built-fixed-position-v1-fixture",
-          referenceType: "card_dimensions",
+          fixtureLabel: parsed.fixtureLabel ?? "operator-built-fixed-position-v1-fixture",
+          fixtureId: parsed.fixtureId,
+          referenceType: (parsed.referenceType as any) ?? "card_dimensions",
+          referencePhysicalWidthMm: parsed.referenceWidthMm,
+          referencePhysicalHeightMm: parsed.referenceHeightMm,
+          horizontalSpanMm: parsed.horizontalSpanMm,
+          horizontalStartPx: parsed.horizontalStartPx,
+          horizontalEndPx: parsed.horizontalEndPx,
+          verticalSpanMm: parsed.verticalSpanMm,
+          verticalStartPx: parsed.verticalStartPx,
+          verticalEndPx: parsed.verticalEndPx,
+          calibrationImagePath: allOn.capture.outputFilePath,
           rawImageWidth: allOn.stats.width,
           rawImageHeight: allOn.stats.height,
           cardBoundary: allOn.stats.cardBoundary,
@@ -3960,7 +4182,10 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           exposureUs,
           gain: parsed.gain ?? 0,
           operatorAccepted: true,
-          operatorNotes: "Generated from fixed-rig V1 evidence package; rough reference uses standard card dimensions.",
+          operatorNotes:
+            parsed.referenceType === "fixed_metric_rulers"
+              ? "Generated from fixed-rig V1 evidence package using operator-supplied fixed-ruler spans; still uncalibrated and diagnostic only."
+              : "Generated from fixed-rig V1 evidence package; rough reference uses standard card dimensions.",
         });
         const diagnosticGrading = buildFixedRigDiagnosticGradingResult({
           side,

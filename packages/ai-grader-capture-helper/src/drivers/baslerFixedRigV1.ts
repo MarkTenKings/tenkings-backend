@@ -41,7 +41,14 @@ export type FixedRigDisplayTransform = "none" | "rotate90cw" | "rotate90ccw" | "
 export type FixedRigOrientationUsed = "raw_landscape_rotated_to_portrait" | "raw_portrait";
 
 export type FixedRigCardSide = "front" | "back";
-export type FixedRigReferenceType = "card_dimensions" | "metric_ruler" | "cutting_mat" | "measurement_board" | "certified_target" | "unknown";
+export type FixedRigReferenceType =
+  | "card_dimensions"
+  | "fixed_metric_rulers"
+  | "metric_ruler"
+  | "cutting_mat"
+  | "measurement_board"
+  | "certified_target"
+  | "unknown";
 export type FixedRigCalibrationStatus =
   | "uncalibrated"
   | "preview_assisted"
@@ -110,11 +117,20 @@ export interface FixedRigFixtureCalibrationProfile {
   profileVersion: "fixed-rig-fixture-calibration-profile-v0.1";
   fixtureId?: string;
   fixtureLabel: string;
-  status: "draft" | "rough_reference_unvalidated" | "repeatability_checked" | "rejected";
+  status: "draft" | "rough_reference_unvalidated" | "ruler_reference_unvalidated" | "repeatability_checked" | "production_candidate" | "rejected";
   isCalibrated: false;
   referenceType: FixedRigReferenceType;
   referencePhysicalWidthMm: number;
   referencePhysicalHeightMm: number;
+  horizontalSpanMm?: number;
+  horizontalStartPx?: { x: number; y: number };
+  horizontalEndPx?: { x: number; y: number };
+  horizontalPixelDistance?: number;
+  verticalSpanMm?: number;
+  verticalStartPx?: { x: number; y: number };
+  verticalEndPx?: { x: number; y: number };
+  verticalPixelDistance?: number;
+  calibrationImagePath?: string;
   rawCoordinateFrame: "basler_sensor_pixels";
   displayTransform: FixedRigDisplayTransform;
   displayCoordinateFrame: "ai_grader_card_portrait_display";
@@ -132,6 +148,16 @@ export interface FixedRigFixtureCalibrationProfile {
   detectedCardAspectRatio?: number;
   lensDistortionStatus: "not_computed";
   homographyStatus: "not_computed";
+  framingGate?: FixedRigFramingGate;
+  productionReadiness?: FixedRigProductionReadinessSummary;
+  overlayUsesCalibrationProfileId?: string;
+  overlayScaleSource?: "fixed_metric_rulers" | "card_dimensions" | "not_computed";
+  overlayCoordinateFrame?: "ai_grader_card_portrait_display";
+  expectedCardRectMm?: { widthMm: number; heightMm: number };
+  expectedCardRectPx?: { width: number; height: number };
+  detectedCardRectPx?: { x: number; y: number; width: number; height: number };
+  alignmentDeltaPx?: { x: number; y: number };
+  alignmentDeltaMm?: { x: number; y: number };
   lightingProfileUsed: FixedRigActiveLightingProfile;
   exposureUs: number;
   gain: number;
@@ -141,6 +167,38 @@ export interface FixedRigFixtureCalibrationProfile {
   operatorAccepted: boolean;
   operatorNotes?: string;
   warning: string;
+}
+
+export interface FixedRigFramingGate {
+  status: "pass" | "warn" | "fail";
+  marginLeftPx?: number;
+  marginRightPx?: number;
+  marginTopPx?: number;
+  marginBottomPx?: number;
+  marginLeftMm?: number;
+  marginRightMm?: number;
+  marginTopMm?: number;
+  marginBottomMm?: number;
+  centerOffsetPx?: { x: number; y: number };
+  centerOffsetMm?: { x: number; y: number };
+  aspectRatioError?: number;
+  overlayAlignmentStatus?: "pass" | "warn" | "fail";
+  warnings: string[];
+}
+
+export interface FixedRigProductionReadinessSummary {
+  status: "production_candidate" | "warn" | "rejected";
+  gates: {
+    rulerCalibration: "pass" | "warn" | "fail";
+    framing: "pass" | "warn" | "fail";
+    overlayAlignment: "pass" | "warn" | "fail";
+    repeatability: "pass" | "warn" | "fail" | "not_checked";
+    lightingProfile: "pass" | "fail";
+    finalSafeOff: "pass" | "not_confirmed";
+  };
+  blockers: string[];
+  diagnosticOnlyAllowedWithOperatorAcceptance: boolean;
+  note: string;
 }
 
 export interface FixedRigCardBoundary {
@@ -765,6 +823,44 @@ export function buildFixedRigPixelToMmEstimate(
   };
 }
 
+export function applyFixedRigCardBoundaryOverride(
+  quality: FixedRigQualityMetrics,
+  rect: { x: number; y: number; width: number; height: number }
+): FixedRigQualityMetrics {
+  const cardBoundary: FixedRigCardBoundary = {
+    status: "detected",
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+    coverage: roundMetric((rect.width * rect.height) / Math.max(1, quality.width * quality.height), 6),
+    confidence: 0.75,
+    reason: "Operator-entered raw sensor card boundary override for fixed-rig ruler calibration audit.",
+  };
+  const overlayAlignment = buildFixedRigOverlayAlignmentMetrics({
+    imageWidth: quality.width,
+    imageHeight: quality.height,
+    boundary: cardBoundary,
+    pixelToMm: buildFixedRigPixelToMmEstimate(cardBoundary),
+  });
+  const warnings = [
+    ...quality.warnings.filter((warning) => !/boundary|coverage|framing|tray|height|touches/i.test(warning)),
+    ...overlayAlignment.warnings,
+    "Card boundary was operator-entered for fixed-rig ruler calibration; verify overlay alignment visually before production-candidate use.",
+  ];
+  return {
+    ...quality,
+    cardBoundary,
+    framing: {
+      status: overlayAlignment.overlayAlignmentStatus === "fail" ? "warning" : "acceptable_for_smoke",
+      cardCoverageEstimate: cardBoundary.coverage,
+      warnings: overlayAlignment.warnings,
+    },
+    overlayAlignment,
+    warnings,
+  };
+}
+
 export function buildFixedRigCalibrationProfile(input: {
   profileId?: string;
   createdAt?: string;
@@ -824,6 +920,13 @@ export function buildFixedRigFixtureCalibrationProfile(input: {
   referenceType?: FixedRigReferenceType;
   referencePhysicalWidthMm?: number;
   referencePhysicalHeightMm?: number;
+  horizontalSpanMm?: number;
+  horizontalStartPx?: { x: number; y: number };
+  horizontalEndPx?: { x: number; y: number };
+  verticalSpanMm?: number;
+  verticalStartPx?: { x: number; y: number };
+  verticalEndPx?: { x: number; y: number };
+  calibrationImagePath?: string;
   rawImageWidth?: number;
   rawImageHeight?: number;
   displayTransform?: FixedRigDisplayTransform;
@@ -842,11 +945,34 @@ export function buildFixedRigFixtureCalibrationProfile(input: {
   const displayTransform =
     input.displayTransform ??
     fixedRigDisplayTransformForDimensions(input.rawImageWidth ?? 2448, input.rawImageHeight ?? 2048);
+  const referenceType = input.referenceType ?? (input.horizontalSpanMm || input.verticalSpanMm ? "fixed_metric_rulers" : "card_dimensions");
+  const horizontalPixelDistance =
+    input.horizontalStartPx && input.horizontalEndPx ? roundMetric(pointDistance(input.horizontalStartPx, input.horizontalEndPx), 4) : undefined;
+  const verticalPixelDistance =
+    input.verticalStartPx && input.verticalEndPx ? roundMetric(pointDistance(input.verticalStartPx, input.verticalEndPx), 4) : undefined;
+  const hasRulerCalibration =
+    referenceType === "fixed_metric_rulers" &&
+    horizontalPixelDistance !== undefined &&
+    verticalPixelDistance !== undefined &&
+    horizontalPixelDistance > 0 &&
+    verticalPixelDistance > 0 &&
+    input.horizontalSpanMm !== undefined &&
+    input.horizontalSpanMm > 0 &&
+    input.verticalSpanMm !== undefined &&
+    input.verticalSpanMm > 0;
   const isRawLandscape = width !== undefined && height !== undefined && width >= height;
   const physicalX = isRawLandscape ? Math.max(referencePhysicalWidthMm, referencePhysicalHeightMm) : Math.min(referencePhysicalWidthMm, referencePhysicalHeightMm);
   const physicalY = isRawLandscape ? Math.min(referencePhysicalWidthMm, referencePhysicalHeightMm) : Math.max(referencePhysicalWidthMm, referencePhysicalHeightMm);
-  const mmPerPixelX = width && width > 0 ? roundMetric(physicalX / width, 6) : undefined;
-  const mmPerPixelY = height && height > 0 ? roundMetric(physicalY / height, 6) : undefined;
+  const mmPerPixelX = hasRulerCalibration
+    ? roundMetric(input.horizontalSpanMm! / horizontalPixelDistance!, 6)
+    : width && width > 0
+      ? roundMetric(physicalX / width, 6)
+      : undefined;
+  const mmPerPixelY = hasRulerCalibration
+    ? roundMetric(input.verticalSpanMm! / verticalPixelDistance!, 6)
+    : height && height > 0
+      ? roundMetric(physicalY / height, 6)
+      : undefined;
   const pixelPerMmX = mmPerPixelX ? roundMetric(1 / mmPerPixelX, 4) : undefined;
   const pixelPerMmY = mmPerPixelY ? roundMetric(1 / mmPerPixelY, 4) : undefined;
   const tolerance = 0.08;
@@ -854,8 +980,54 @@ export function buildFixedRigFixtureCalibrationProfile(input: {
     mmPerPixelX && mmPerPixelY ? roundMetric(Math.abs(mmPerPixelX - mmPerPixelY) / Math.max(mmPerPixelX, mmPerPixelY), 4) : undefined;
   const consistencyStatus = relativeDifference === undefined ? "not_computed" : relativeDifference <= tolerance ? "pass" : "warn";
   const activeLightingProfile = input.activeLightingProfile ?? buildFixedRigActiveLightingProfile();
-  const referenceType = input.referenceType ?? "card_dimensions";
-  const status = input.status ?? (referenceType === "certified_target" ? "draft" : "rough_reference_unvalidated");
+  const overlayAlignment =
+    input.cardBoundary && input.rawImageWidth && input.rawImageHeight
+      ? buildFixedRigOverlayAlignmentMetrics({
+          imageWidth: input.rawImageWidth,
+          imageHeight: input.rawImageHeight,
+          boundary: input.cardBoundary,
+          pixelToMm:
+            mmPerPixelX && mmPerPixelY
+              ? {
+                  pixelToMmEstimateX: mmPerPixelX,
+                  pixelToMmEstimateY: mmPerPixelY,
+                  pixelToMmEstimateStatus: "estimated_uncalibrated" as const,
+                  pixelToMmOrientationUsed: isRawLandscape ? "raw_landscape_rotated_to_portrait" : "raw_portrait",
+                  pixelToMmConsistency: { status: consistencyStatus, ...(relativeDifference !== undefined ? { relativeDifference } : {}), tolerance },
+                }
+              : undefined,
+        })
+      : undefined;
+  const framingGate = buildFixedRigFramingGate({
+    imageWidth: input.rawImageWidth,
+    imageHeight: input.rawImageHeight,
+    boundary: input.cardBoundary,
+    overlayAlignment,
+    mmPerPixelX,
+    mmPerPixelY,
+  });
+  const productionReadiness = buildFixedRigProductionReadinessSummary({
+    referenceType,
+    rulerCalibrationStatus: hasRulerCalibration ? consistencyStatus : "fail",
+    framingGate,
+    overlayAlignmentStatus: overlayAlignment?.overlayAlignmentStatus,
+    repeatabilityStatus: input.status === "repeatability_checked" ? "warn" : "not_checked",
+    lightingProfile: activeLightingProfile,
+    finalSafeOffConfirmed: false,
+  });
+  const status =
+    input.status ??
+    (productionReadiness.status === "production_candidate"
+      ? "production_candidate"
+      : referenceType === "fixed_metric_rulers"
+        ? "ruler_reference_unvalidated"
+        : referenceType === "certified_target"
+          ? "draft"
+          : "rough_reference_unvalidated");
+  const expectedCardRectPx =
+    mmPerPixelX && mmPerPixelY
+      ? { width: roundMetric(referencePhysicalWidthMm / mmPerPixelX, 2), height: roundMetric(referencePhysicalHeightMm / mmPerPixelY, 2) }
+      : undefined;
   return {
     profileId: input.profileId,
     profileVersion: "fixed-rig-fixture-calibration-profile-v0.1",
@@ -866,6 +1038,15 @@ export function buildFixedRigFixtureCalibrationProfile(input: {
     referenceType,
     referencePhysicalWidthMm,
     referencePhysicalHeightMm,
+    ...(input.horizontalSpanMm !== undefined ? { horizontalSpanMm: input.horizontalSpanMm } : {}),
+    ...(input.horizontalStartPx ? { horizontalStartPx: input.horizontalStartPx } : {}),
+    ...(input.horizontalEndPx ? { horizontalEndPx: input.horizontalEndPx } : {}),
+    ...(horizontalPixelDistance !== undefined ? { horizontalPixelDistance } : {}),
+    ...(input.verticalSpanMm !== undefined ? { verticalSpanMm: input.verticalSpanMm } : {}),
+    ...(input.verticalStartPx ? { verticalStartPx: input.verticalStartPx } : {}),
+    ...(input.verticalEndPx ? { verticalEndPx: input.verticalEndPx } : {}),
+    ...(verticalPixelDistance !== undefined ? { verticalPixelDistance } : {}),
+    ...(input.calibrationImagePath ? { calibrationImagePath: input.calibrationImagePath } : {}),
     rawCoordinateFrame: "basler_sensor_pixels",
     displayTransform,
     displayCoordinateFrame: "ai_grader_card_portrait_display",
@@ -885,6 +1066,20 @@ export function buildFixedRigFixtureCalibrationProfile(input: {
     ...(width && height ? { detectedCardAspectRatio: roundMetric(Math.max(width, height) / Math.min(width, height), 6) } : {}),
     lensDistortionStatus: "not_computed",
     homographyStatus: "not_computed",
+    framingGate,
+    productionReadiness,
+    overlayUsesCalibrationProfileId: input.profileId,
+    overlayScaleSource: hasRulerCalibration ? "fixed_metric_rulers" : referenceType === "card_dimensions" ? "card_dimensions" : "not_computed",
+    overlayCoordinateFrame: "ai_grader_card_portrait_display",
+    expectedCardRectMm: { widthMm: referencePhysicalWidthMm, heightMm: referencePhysicalHeightMm },
+    ...(expectedCardRectPx ? { expectedCardRectPx } : {}),
+    ...(input.cardBoundary?.status === "detected" && input.cardBoundary.x != null && input.cardBoundary.y != null && width && height
+      ? {
+          detectedCardRectPx: { x: input.cardBoundary.x, y: input.cardBoundary.y, width, height },
+          ...(overlayAlignment?.centerOffsetPx ? { alignmentDeltaPx: overlayAlignment.centerOffsetPx } : {}),
+          ...(overlayAlignment?.centerOffsetMm ? { alignmentDeltaMm: overlayAlignment.centerOffsetMm } : {}),
+        }
+      : {}),
     lightingProfileUsed: activeLightingProfile,
     exposureUs: input.exposureUs ?? FIXED_RIG_SELECTED_EXPOSURE_US,
     gain: input.gain ?? FIXED_RIG_SELECTED_GAIN,
@@ -896,7 +1091,93 @@ export function buildFixedRigFixtureCalibrationProfile(input: {
     warning:
       referenceType === "certified_target"
         ? "Certified target metadata is recorded, but this PR still keeps isCalibrated=false until validated calibration math and acceptance tests exist."
-        : "Rough fixture calibration only. Reference is not a certified machine-vision target; isCalibrated remains false.",
+        : referenceType === "fixed_metric_rulers"
+          ? "Fixed metric rulers are the measurement reference, but this is still an unvalidated local fixture calibration; isCalibrated remains false."
+          : "Rough fixture calibration only. Reference is not a certified machine-vision target; isCalibrated remains false.",
+  };
+}
+
+function pointDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2);
+}
+
+export function buildFixedRigFramingGate(input: {
+  imageWidth?: number;
+  imageHeight?: number;
+  boundary?: FixedRigCardBoundary;
+  overlayAlignment?: FixedRigOverlayAlignmentMetrics;
+  mmPerPixelX?: number;
+  mmPerPixelY?: number;
+}): FixedRigFramingGate {
+  const warnings: string[] = [];
+  const boundary = input.boundary;
+  if (boundary?.status !== "detected" || boundary.x == null || boundary.y == null || !boundary.width || !boundary.height) {
+    return { status: "fail", overlayAlignmentStatus: input.overlayAlignment?.overlayAlignmentStatus, warnings: ["Card boundary was not detected."] };
+  }
+  const imageWidth = input.imageWidth ?? 0;
+  const imageHeight = input.imageHeight ?? 0;
+  const marginLeftPx = boundary.x;
+  const marginTopPx = boundary.y;
+  const marginRightPx = imageWidth - (boundary.x + boundary.width);
+  const marginBottomPx = imageHeight - (boundary.y + boundary.height);
+  const minMargin = Math.min(marginLeftPx, marginRightPx, marginTopPx, marginBottomPx);
+  const aspectRatio = boundary.width >= boundary.height ? boundary.width / boundary.height : boundary.height / boundary.width;
+  const expectedAspectRatio = FIXED_RIG_DEFAULT_CARD_HEIGHT_MM / FIXED_RIG_DEFAULT_CARD_WIDTH_MM;
+  const aspectRatioError = roundMetric(Math.abs(aspectRatio - expectedAspectRatio) / expectedAspectRatio, 6);
+  if (minMargin <= 0) warnings.push("Card touches the image boundary; fixed-rig framing gate fails.");
+  else if (minMargin <= 20) warnings.push("Card is within 20 px of the image boundary; add margin before production-candidate use.");
+  if (aspectRatioError > 0.1) warnings.push("Detected card aspect ratio is outside the strict framing tolerance.");
+  else if (aspectRatioError > 0.05) warnings.push("Detected card aspect ratio is near the framing tolerance.");
+  if (input.overlayAlignment?.overlayAlignmentStatus === "fail") warnings.push("Overlay alignment failed.");
+  if (input.overlayAlignment?.overlayAlignmentStatus === "warn") warnings.push("Overlay alignment warning is present.");
+  const status = warnings.some((warning) => /fails|failed|touches|outside/i.test(warning)) ? "fail" : warnings.length ? "warn" : "pass";
+  return {
+    status,
+    marginLeftPx,
+    marginRightPx,
+    marginTopPx,
+    marginBottomPx,
+    ...(input.mmPerPixelX ? { marginLeftMm: roundMetric(marginLeftPx * input.mmPerPixelX, 3), marginRightMm: roundMetric(marginRightPx * input.mmPerPixelX, 3) } : {}),
+    ...(input.mmPerPixelY ? { marginTopMm: roundMetric(marginTopPx * input.mmPerPixelY, 3), marginBottomMm: roundMetric(marginBottomPx * input.mmPerPixelY, 3) } : {}),
+    ...(input.overlayAlignment?.centerOffsetPx ? { centerOffsetPx: input.overlayAlignment.centerOffsetPx } : {}),
+    ...(input.overlayAlignment?.centerOffsetMm ? { centerOffsetMm: input.overlayAlignment.centerOffsetMm } : {}),
+    aspectRatioError,
+    overlayAlignmentStatus: input.overlayAlignment?.overlayAlignmentStatus,
+    warnings,
+  };
+}
+
+export function buildFixedRigProductionReadinessSummary(input: {
+  referenceType: FixedRigReferenceType;
+  rulerCalibrationStatus: "pass" | "warn" | "fail" | "not_computed";
+  framingGate?: FixedRigFramingGate;
+  overlayAlignmentStatus?: "pass" | "warn" | "fail";
+  repeatabilityStatus?: "pass" | "warn" | "fail" | "not_checked";
+  lightingProfile?: FixedRigActiveLightingProfile;
+  finalSafeOffConfirmed?: boolean;
+}): FixedRigProductionReadinessSummary {
+  const gates = {
+    rulerCalibration: input.referenceType === "fixed_metric_rulers" && input.rulerCalibrationStatus === "pass" ? "pass" : input.rulerCalibrationStatus === "warn" ? "warn" : "fail",
+    framing: input.framingGate?.status ?? "fail",
+    overlayAlignment: input.overlayAlignmentStatus ?? "fail",
+    repeatability: input.repeatabilityStatus ?? "not_checked",
+    lightingProfile: input.lightingProfile ? "pass" : "fail",
+    finalSafeOff: input.finalSafeOffConfirmed ? "pass" : "not_confirmed",
+  } as const;
+  const blockers: string[] = [];
+  if (gates.rulerCalibration !== "pass") blockers.push("Ruler calibration is not passing.");
+  if (gates.framing !== "pass") blockers.push("Strict framing/margin gate is not passing.");
+  if (gates.overlayAlignment !== "pass") blockers.push("Overlay alignment gate is not passing.");
+  if (gates.repeatability !== "pass") blockers.push("Remove/re-place repeatability has not passed.");
+  if (gates.lightingProfile !== "pass") blockers.push("Lighting profile is not locked/recorded.");
+  if (gates.finalSafeOff !== "pass") blockers.push("Final physical ring-light off confirmation is not recorded in this artifact.");
+  return {
+    status: blockers.length === 0 ? "production_candidate" : blockers.some((blocker) => /not passing|not passed|not recorded/i.test(blocker)) ? "rejected" : "warn",
+    gates,
+    blockers,
+    diagnosticOnlyAllowedWithOperatorAcceptance: blockers.length > 0,
+    note:
+      "Production-candidate means fixed-rig setup gates passed for diagnostic acquisition only; it is not final grading, a certificate, or certified calibration.",
   };
 }
 
@@ -921,12 +1202,15 @@ export function buildFixedRigRepeatabilityRun(input: {
   phase: FixedRigRepeatabilityRun["phase"];
   capture?: BaslerCaptureStillResult;
   quality: FixedRigQualityMetrics;
+  fixtureCalibrationProfile?: FixedRigFixtureCalibrationProfile;
 }): FixedRigRepeatabilityRun {
   const pixelToMm = buildFixedRigPixelToMmEstimate(input.quality.cardBoundary);
   const centerOffsetPx = input.quality.overlayAlignment?.centerOffsetPx;
+  const mmPerPixelX = input.fixtureCalibrationProfile?.mmPerPixelX ?? pixelToMm.pixelToMmEstimateX;
+  const mmPerPixelY = input.fixtureCalibrationProfile?.mmPerPixelY ?? pixelToMm.pixelToMmEstimateY;
   const centerOffsetMm =
-    centerOffsetPx && pixelToMm.pixelToMmEstimateX && pixelToMm.pixelToMmEstimateY
-      ? { x: roundMetric(centerOffsetPx.x * pixelToMm.pixelToMmEstimateX, 4), y: roundMetric(centerOffsetPx.y * pixelToMm.pixelToMmEstimateY, 4) }
+    centerOffsetPx && mmPerPixelX && mmPerPixelY
+      ? { x: roundMetric(centerOffsetPx.x * mmPerPixelX, 4), y: roundMetric(centerOffsetPx.y * mmPerPixelY, 4) }
       : undefined;
   return {
     index: input.index,
@@ -937,8 +1221,8 @@ export function buildFixedRigRepeatabilityRun(input: {
     ...(centerOffsetMm ? { centerOffsetMm } : {}),
     ...(input.quality.cardBoundary.width !== undefined ? { boundaryWidth: input.quality.cardBoundary.width } : {}),
     ...(input.quality.cardBoundary.height !== undefined ? { boundaryHeight: input.quality.cardBoundary.height } : {}),
-    ...(pixelToMm.pixelToMmEstimateX !== undefined ? { pixelToMmEstimateX: pixelToMm.pixelToMmEstimateX } : {}),
-    ...(pixelToMm.pixelToMmEstimateY !== undefined ? { pixelToMmEstimateY: pixelToMm.pixelToMmEstimateY } : {}),
+    ...(mmPerPixelX !== undefined ? { pixelToMmEstimateX: mmPerPixelX } : {}),
+    ...(mmPerPixelY !== undefined ? { pixelToMmEstimateY: mmPerPixelY } : {}),
     sharpnessScore: input.quality.sharpnessScore,
     mean: input.quality.mean,
     clippedPixelFraction: input.quality.clippedPixelFraction,
@@ -1234,30 +1518,27 @@ export async function analyzeFixedRigMacroQuality(filePath: string): Promise<Fix
   }
   const sharpnessScore = roundMetric(gradientSum / Math.max(1, gradientCount), 4);
   const threshold = Math.max(16, Math.min(96, mean * 0.7));
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const value = data[y * width + x] ?? 0;
-      if (value >= threshold) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  const boundaryWidth = maxX >= minX ? maxX - minX + 1 : 0;
-  const boundaryHeight = maxY >= minY ? maxY - minY + 1 : 0;
+  const firstBoundary = findBrightBoundary(data, width, height, threshold, { left: 0, top: 0, right: width, bottom: height });
+  const firstCoverage =
+    firstBoundary.width > 0 && firstBoundary.height > 0 ? (firstBoundary.width * firstBoundary.height) / Math.max(1, width * height) : 0;
+  const insetBoundary =
+    firstCoverage > 0.95
+      ? findBrightBoundary(data, width, height, threshold, {
+          left: Math.round(width * 0.1),
+          top: Math.round(height * 0.1),
+          right: Math.round(width * 0.9),
+          bottom: Math.round(height * 0.9),
+        })
+      : firstBoundary;
+  const boundaryWidth = insetBoundary.width;
+  const boundaryHeight = insetBoundary.height;
   const coverage = boundaryWidth > 0 && boundaryHeight > 0 ? (boundaryWidth * boundaryHeight) / Math.max(1, width * height) : 0;
   const boundary: FixedRigCardBoundary =
     coverage > 0.05
       ? {
           status: "detected",
-          x: minX,
-          y: minY,
+          x: insetBoundary.x,
+          y: insetBoundary.y,
           width: boundaryWidth,
           height: boundaryHeight,
           coverage: roundMetric(coverage, 6),
@@ -1327,6 +1608,35 @@ export async function analyzeFixedRigMacroQuality(filePath: string): Promise<Fix
   };
 }
 
+function findBrightBoundary(
+  data: Buffer,
+  width: number,
+  height: number,
+  threshold: number,
+  bounds: { left: number; top: number; right: number; bottom: number }
+): { x: number; y: number; width: number; height: number } {
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  const left = Math.max(0, Math.min(width, bounds.left));
+  const top = Math.max(0, Math.min(height, bounds.top));
+  const right = Math.max(left, Math.min(width, bounds.right));
+  const bottom = Math.max(top, Math.min(height, bounds.bottom));
+  for (let y = top; y < bottom; y += 1) {
+    for (let x = left; x < right; x += 1) {
+      const value = data[y * width + x] ?? 0;
+      if (value >= threshold) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return maxX >= minX && maxY >= minY ? { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 } : { x: 0, y: 0, width: 0, height: 0 };
+}
+
 export function fixedRigDisplayTransformForDimensions(width: number, height: number): FixedRigDisplayTransform {
   return width > height ? "rotate90cw" : "none";
 }
@@ -1345,6 +1655,18 @@ export function transformRectForDisplay(
     return { x: rect.y, y: imageWidth - rect.x - rect.width, width: rect.height, height: rect.width };
   }
   return { x: imageHeight - rect.y - rect.height, y: rect.x, width: rect.height, height: rect.width };
+}
+
+export function transformPointForDisplay(
+  point: { x: number; y: number },
+  imageWidth: number,
+  imageHeight: number,
+  transform: FixedRigDisplayTransform
+): { x: number; y: number } {
+  if (transform === "none") return { ...point };
+  if (transform === "rotate180") return { x: imageWidth - point.x, y: imageHeight - point.y };
+  if (transform === "rotate90ccw") return { x: point.y, y: imageWidth - point.x };
+  return { x: imageHeight - point.y, y: point.x };
 }
 
 export function buildFixedRigTemplateRect(width: number, height: number): { x: number; y: number; width: number; height: number } {
@@ -1492,6 +1814,7 @@ function buildFixedRigOverlaySvg(input: {
   height: number;
   quality?: FixedRigQualityMetrics;
   roiDefinitions?: FixedRigRoiDefinition[];
+  rulerSpans?: Array<{ label: string; start: { x: number; y: number }; end: { x: number; y: number }; spanMm: number }>;
   title?: string;
 }): string {
   const { width, height } = input;
@@ -1503,6 +1826,7 @@ function buildFixedRigOverlaySvg(input: {
   const centerY = Math.round(height / 2);
   const boundary = input.quality?.cardBoundary;
   const rois = input.roiDefinitions ?? [];
+  const rulerSpans = input.rulerSpans ?? [];
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <style>
       .label { font-family: Arial, sans-serif; font-size: 28px; fill: #fff; paint-order: stroke; stroke: #000; stroke-width: 4px; }
@@ -1514,9 +1838,16 @@ function buildFixedRigOverlaySvg(input: {
     <line x1="0" y1="${centerY}" x2="${width}" y2="${centerY}" stroke="#00e5ff" stroke-width="3" stroke-dasharray="18 16"/>
     ${boundary?.status === "detected" && boundary.x != null && boundary.y != null && boundary.width && boundary.height ? rectSvg({ x: boundary.x, y: boundary.y, width: boundary.width, height: boundary.height }, "#00ff66", 5) : ""}
     ${rois.filter((roi) => roi.status === "computed" && roi.rect && roi.id !== "full-card").map((roi) => rectSvg(roi.rect!, roi.type === "corner" ? "#ff7a00" : roi.type === "edge" ? "#ff4fd8" : "#8cff00", 3)).join("")}
+    ${rulerSpans
+      .map(
+        (span) => `<line x1="${span.start.x}" y1="${span.start.y}" x2="${span.end.x}" y2="${span.end.y}" stroke="#ffffff" stroke-width="7"/>
+    <line x1="${span.start.x}" y1="${span.start.y}" x2="${span.end.x}" y2="${span.end.y}" stroke="#111111" stroke-width="3"/>
+    <text x="${Math.round((span.start.x + span.end.x) / 2) + 12}" y="${Math.round((span.start.y + span.end.y) / 2) - 12}" class="label small">${escapeHtml(span.label)} ${escapeHtml(span.spanMm)}mm</text>`
+      )
+      .join("")}
     <text x="24" y="44" class="label">${escapeHtml(input.title ?? "Fixed-rig preview overlay")}</text>
     <text x="24" y="${height - 58}" class="label small">Uncalibrated grid / overlay. Raw evidence image is unmodified.</text>
-    <text x="24" y="${height - 24}" class="label small">Yellow: 2.5:3.5 placement guide. Green: detected boundary. Orange/pink/lime: ROIs.</text>
+    <text x="24" y="${height - 24}" class="label small">Yellow: template. Green: detected boundary. White/black: ruler spans. Orange/pink/lime: ROIs.</text>
   </svg>`;
 }
 
@@ -1655,6 +1986,7 @@ export async function createFixedRigOverlayPreview(input: {
   filePrefix: string;
   quality?: FixedRigQualityMetrics;
   roiDefinitions?: FixedRigRoiDefinition[];
+  fixtureCalibrationProfile?: FixedRigFixtureCalibrationProfile;
   title?: string;
   displayTransform?: FixedRigDisplayTransform;
 }): Promise<FixedRigOverlayArtifact> {
@@ -1663,11 +1995,32 @@ export async function createFixedRigOverlayPreview(input: {
   const imageWidth = metadata.width ?? input.quality?.width ?? 0;
   const imageHeight = metadata.height ?? input.quality?.height ?? 0;
   const outputFilePath = path.join(input.outputDir, `${input.filePrefix}-overlay.png`);
+  const rawWidth = input.quality?.width && input.quality?.height && input.displayTransform && input.displayTransform !== "none" ? imageHeight : imageWidth;
+  const rawHeight = input.quality?.width && input.quality?.height && input.displayTransform && input.displayTransform !== "none" ? imageWidth : imageHeight;
+  const transform = input.displayTransform ?? "none";
+  const rulerSpans: Array<{ label: string; start: { x: number; y: number }; end: { x: number; y: number }; spanMm: number }> = [];
+  if (input.fixtureCalibrationProfile?.horizontalStartPx && input.fixtureCalibrationProfile.horizontalEndPx && input.fixtureCalibrationProfile.horizontalSpanMm) {
+    rulerSpans.push({
+      label: "Horizontal ruler",
+      start: transformPointForDisplay(input.fixtureCalibrationProfile.horizontalStartPx, rawWidth, rawHeight, transform),
+      end: transformPointForDisplay(input.fixtureCalibrationProfile.horizontalEndPx, rawWidth, rawHeight, transform),
+      spanMm: input.fixtureCalibrationProfile.horizontalSpanMm,
+    });
+  }
+  if (input.fixtureCalibrationProfile?.verticalStartPx && input.fixtureCalibrationProfile.verticalEndPx && input.fixtureCalibrationProfile.verticalSpanMm) {
+    rulerSpans.push({
+      label: "Vertical ruler",
+      start: transformPointForDisplay(input.fixtureCalibrationProfile.verticalStartPx, rawWidth, rawHeight, transform),
+      end: transformPointForDisplay(input.fixtureCalibrationProfile.verticalEndPx, rawWidth, rawHeight, transform),
+      spanMm: input.fixtureCalibrationProfile.verticalSpanMm,
+    });
+  }
   const svg = buildFixedRigOverlaySvg({
     width: imageWidth,
     height: imageHeight,
     quality: input.quality,
     roiDefinitions: input.roiDefinitions,
+    rulerSpans,
     title: input.title,
   });
   await sharp(input.sourceImagePath)
@@ -2356,6 +2709,7 @@ export async function writeFixedRigFixtureCalibrationArtifacts(input: {
           filePrefix: "fixture-calibration",
           quality: transformQualityForDisplay(input.quality, displayImage.displayTransform),
           roiDefinitions: roisForDisplayOverlay(roiDefinitions),
+          fixtureCalibrationProfile: input.fixtureCalibrationProfile,
           title: "Rough fixture calibration overlay",
           displayTransform: displayImage.displayTransform,
         })
@@ -2582,16 +2936,23 @@ function roiTable(rois: FixedRigRoiDefinition[] | undefined): string {
 
 function fixtureCalibrationTable(profile: FixedRigFixtureCalibrationProfile | undefined): string {
   if (!profile) return "<p>Fixture calibration profile unavailable.</p>";
+  const framing = profile.framingGate;
+  const production = profile.productionReadiness;
   return `<table><tbody>
     <tr><th>Status</th><td>${escapeHtml(profile.status)}</td></tr>
     <tr><th>isCalibrated</th><td>${escapeHtml(profile.isCalibrated)}</td></tr>
     <tr><th>Fixture</th><td>${escapeHtml(profile.fixtureLabel)} ${escapeHtml(profile.fixtureId ?? "")}</td></tr>
     <tr><th>Reference</th><td>${escapeHtml(profile.referenceType)} ${escapeHtml(profile.referencePhysicalWidthMm)}mm x ${escapeHtml(profile.referencePhysicalHeightMm)}mm</td></tr>
+    <tr><th>Ruler spans</th><td>horizontal ${escapeHtml(profile.horizontalSpanMm ?? "not_supplied")}mm ${escapeHtml(profile.horizontalStartPx ? `${profile.horizontalStartPx.x},${profile.horizontalStartPx.y}` : "")} -> ${escapeHtml(profile.horizontalEndPx ? `${profile.horizontalEndPx.x},${profile.horizontalEndPx.y}` : "")}; vertical ${escapeHtml(profile.verticalSpanMm ?? "not_supplied")}mm ${escapeHtml(profile.verticalStartPx ? `${profile.verticalStartPx.x},${profile.verticalStartPx.y}` : "")} -> ${escapeHtml(profile.verticalEndPx ? `${profile.verticalEndPx.x},${profile.verticalEndPx.y}` : "")}</td></tr>
+    <tr><th>Calibration image</th><td>${escapeHtml(profile.calibrationImagePath ?? "not_captured")}</td></tr>
     <tr><th>Coordinate frames</th><td>raw=${escapeHtml(profile.rawCoordinateFrame)}, transform=${escapeHtml(profile.displayTransform)}, display=${escapeHtml(profile.displayCoordinateFrame)}</td></tr>
     <tr><th>Pixel/mm</th><td>${escapeHtml(profile.pixelPerMmX ?? "not_computed")} x ${escapeHtml(profile.pixelPerMmY ?? "not_computed")}</td></tr>
     <tr><th>mm/pixel</th><td>${escapeHtml(profile.mmPerPixelX ?? "not_computed")} x ${escapeHtml(profile.mmPerPixelY ?? "not_computed")}</td></tr>
     <tr><th>X/Y consistency</th><td>${escapeHtml(profile.pixelToMmConsistency.status)} ${escapeHtml(profile.pixelToMmConsistency.relativeDifference ?? "")} ${escapeHtml(profile.pixelToMmConsistency.warning ?? "")}</td></tr>
     <tr><th>Aspect</th><td>expected ${escapeHtml(profile.expectedCardAspectRatio)}; detected ${escapeHtml(profile.detectedCardAspectRatio ?? "not_computed")}</td></tr>
+    <tr><th>Framing gate</th><td>${escapeHtml(framing?.status ?? "not_computed")} margins px=${escapeHtml(framing ? `${framing.marginLeftPx}/${framing.marginRightPx}/${framing.marginTopPx}/${framing.marginBottomPx}` : "")}; margins mm=${escapeHtml(framing ? `${framing.marginLeftMm ?? ""}/${framing.marginRightMm ?? ""}/${framing.marginTopMm ?? ""}/${framing.marginBottomMm ?? ""}` : "")}; aspectError=${escapeHtml(framing?.aspectRatioError ?? "")}; warnings=${escapeHtml(framing?.warnings.join("; ") ?? "")}</td></tr>
+    <tr><th>Overlay scale</th><td>profile=${escapeHtml(profile.overlayUsesCalibrationProfileId ?? "")}; source=${escapeHtml(profile.overlayScaleSource ?? "not_computed")}; expectedCardRectPx=${escapeHtml(profile.expectedCardRectPx ? `${profile.expectedCardRectPx.width} x ${profile.expectedCardRectPx.height}` : "not_computed")}; detectedCardRectPx=${escapeHtml(profile.detectedCardRectPx ? `${profile.detectedCardRectPx.x},${profile.detectedCardRectPx.y},${profile.detectedCardRectPx.width},${profile.detectedCardRectPx.height}` : "not_computed")}; deltaPx=${escapeHtml(profile.alignmentDeltaPx ? `${profile.alignmentDeltaPx.x},${profile.alignmentDeltaPx.y}` : "not_computed")}</td></tr>
+    <tr><th>Production readiness</th><td>${escapeHtml(production?.status ?? "not_computed")} gates=${escapeHtml(production ? JSON.stringify(production.gates) : "")}; blockers=${escapeHtml(production?.blockers.join("; ") ?? "")}</td></tr>
     <tr><th>Lens / homography</th><td>${escapeHtml(profile.lensDistortionStatus)} / ${escapeHtml(profile.homographyStatus)}</td></tr>
     <tr><th>Lighting</th><td>${escapeHtml(profile.dutyPercent)}% PWM ${escapeHtml(profile.lightingProfileUsed.actualLeimacPwmStep)} channels ${escapeHtml(profile.channels.join(", "))}</td></tr>
     <tr><th>Operator accepted</th><td>${escapeHtml(profile.operatorAccepted)}</td></tr>
