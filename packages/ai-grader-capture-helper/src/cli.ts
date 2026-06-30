@@ -234,6 +234,30 @@ type ParsedCommand =
       operatorConfirmedLightIdleOff: boolean;
     }
   | {
+      command: "basler-fixed-rig-operator-preview";
+      config: CaptureHelperConfigInput;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      baslerBridgeScript: string | undefined;
+      cameraIndex: number | undefined;
+      outputDir: string | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacUnit: number | undefined;
+      exposureUs: number | undefined;
+      gain: number | undefined;
+      previewRefreshMs: number | undefined;
+      apply: boolean;
+      confirmation: string | undefined;
+      operatorMode: boolean;
+      markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
+      operatorConfirmedLightIdleOff: boolean;
+      focusLockedByOperator: boolean;
+      resetDefaultLightingProfile: boolean;
+    }
+  | {
       command: "basler-fixed-rig-focus-assist";
       config: CaptureHelperConfigInput;
       pylonRoot: string | undefined;
@@ -247,15 +271,17 @@ type ParsedCommand =
       leimacUnit: number | undefined;
       duty: number | undefined;
       exposureUs: number | undefined;
+      gain: number | undefined;
       apply: boolean;
       confirmation: string | undefined;
       markPresent: boolean;
       wiringConfirmed: boolean;
       leimacStatusGreen: boolean;
       operatorConfirmedLightIdleOff: boolean;
+      resetDefaultLightingProfile: boolean;
     }
   | {
-      command: "ai-grader-fixed-rig-v1-local";
+      command: "fixed-rig-fixture-calibration" | "fixed-rig-repeatability-test";
       config: CaptureHelperConfigInput;
       pylonRoot: string | undefined;
       pylonTimeoutMs: number | undefined;
@@ -268,6 +294,48 @@ type ParsedCommand =
       leimacUnit: number | undefined;
       duty: number | undefined;
       exposureUs: number | undefined;
+      gain: number | undefined;
+      apply: boolean;
+      confirmation: string | undefined;
+      markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
+      operatorConfirmedLightIdleOff: boolean;
+      resetDefaultLightingProfile: boolean;
+      fixtureLabel: string | undefined;
+      fixtureId: string | undefined;
+      referenceType: string | undefined;
+      referenceWidthMm: number | undefined;
+      referenceHeightMm: number | undefined;
+      horizontalSpanMm: number | undefined;
+      horizontalStartPx: { x: number; y: number } | undefined;
+      horizontalEndPx: { x: number; y: number } | undefined;
+      verticalSpanMm: number | undefined;
+      verticalStartPx: { x: number; y: number } | undefined;
+      verticalEndPx: { x: number; y: number } | undefined;
+      cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
+      operatorNotes: string | undefined;
+      operatorAccepted: boolean;
+      repeatabilityPhase: "no-touch" | "remove-replace";
+      captureCount: number | undefined;
+      operatorReplaceConfirmed: boolean;
+      operatorReplaceDelayMs: number | undefined;
+    }
+  | {
+      command: "ai-grader-fixed-rig-v1-local" | "ai-grader-fixed-rig-v1-evidence-package";
+      config: CaptureHelperConfigInput;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      baslerBridgeScript: string | undefined;
+      cameraIndex: number | undefined;
+      outputDir: string | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacTimeoutMs: number | undefined;
+      leimacUnit: number | undefined;
+      duty: number | undefined;
+      exposureUs: number | undefined;
+      gain: number | undefined;
       apply: boolean;
       confirmation: string | undefined;
       markPresent: boolean;
@@ -276,8 +344,44 @@ type ParsedCommand =
       operatorConfirmedLightIdleOff: boolean;
       operatorFlipConfirmed: boolean;
       operatorFlipDelayMs: number | undefined;
+      resetDefaultLightingProfile: boolean;
+      evidenceSide: "front" | "back" | "both";
+      fixtureLabel: string | undefined;
+      fixtureId: string | undefined;
+      referenceType: string | undefined;
+      referenceWidthMm: number | undefined;
+      referenceHeightMm: number | undefined;
+      horizontalSpanMm: number | undefined;
+      horizontalStartPx: { x: number; y: number } | undefined;
+      horizontalEndPx: { x: number; y: number } | undefined;
+      verticalSpanMm: number | undefined;
+      verticalStartPx: { x: number; y: number } | undefined;
+      verticalEndPx: { x: number; y: number } | undefined;
+      cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
     }
   | { command: "fixed-rig-lighting-profile-plan"; config: CaptureHelperConfigInput }
+  | {
+      command: "leimac-channel-characterization";
+      config: CaptureHelperConfigInput;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      baslerBridgeScript: string | undefined;
+      cameraIndex: number | undefined;
+      outputDir: string | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacTimeoutMs: number | undefined;
+      leimacUnit: number | undefined;
+      duty: number | undefined;
+      exposureUs: number | undefined;
+      gain: number | undefined;
+      apply: boolean;
+      confirmation: string | undefined;
+      markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
+      operatorConfirmedLightIdleOff: boolean;
+    }
   | { command: "dinolite-enumerate"; config: CaptureHelperConfigInput }
   | { command: "dinolite-status"; config: CaptureHelperConfigInput; deviceIndex: number | undefined }
   | { command: "dinolite-capture-still"; config: CaptureHelperConfigInput; deviceIndex: number | undefined; outputDir: string | undefined }
@@ -323,6 +427,36 @@ function readBooleanOption(argv: string[], index: number, name: string) {
   throw new CaptureHelperCommandError(`${name} must be true or false.`);
 }
 
+function readPixelPointOption(argv: string[], index: number, name: string): { x: number; y: number } {
+  const value = readOption(argv, index, name).trim();
+  const match = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(value);
+  if (!match) {
+    throw new CaptureHelperCommandError(`${name} must be formatted as x,y pixel coordinates.`);
+  }
+  const x = Number(match[1]);
+  const y = Number(match[2]);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) {
+    throw new CaptureHelperCommandError(`${name} must use non-negative finite pixel coordinates.`);
+  }
+  return { x, y };
+}
+
+function readRectOption(argv: string[], index: number, name: string): { x: number; y: number; width: number; height: number } {
+  const value = readOption(argv, index, name).trim();
+  const match = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)$/.exec(value);
+  if (!match) {
+    throw new CaptureHelperCommandError(`${name} must be formatted as x,y,width,height in raw sensor pixels.`);
+  }
+  const x = Number(match[1]);
+  const y = Number(match[2]);
+  const width = Number(match[3]);
+  const height = Number(match[4]);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height) || x < 0 || y < 0 || width <= 0 || height <= 0) {
+    throw new CaptureHelperCommandError(`${name} must use non-negative x/y and positive width/height.`);
+  }
+  return { x, y, width, height };
+}
+
 function parseCliArgs(argv: string[]): ParsedCommand {
   const [command = "help", ...rest] = argv;
   const config: CaptureHelperConfigInput = { simulator: {} };
@@ -348,6 +482,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let profile: string | undefined;
   let duty: number | undefined;
   let exposureUs: number | undefined;
+  let gain: number | undefined;
+  let previewRefreshMs: number | undefined;
   let lineInverter: boolean | undefined;
   let pulseMs: number | undefined;
   let idleUserOutputValue: boolean | undefined;
@@ -364,7 +500,29 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let operatorReportedIdleOn = false;
   let operatorFlipConfirmed = false;
   let operatorFlipDelayMs: number | undefined;
+  let evidenceSide: "front" | "back" | "both" = "both";
+  let fixtureLabel: string | undefined;
+  let fixtureId: string | undefined;
+  let referenceType: string | undefined;
+  let referenceWidthMm: number | undefined;
+  let referenceHeightMm: number | undefined;
+  let horizontalSpanMm: number | undefined;
+  let horizontalStartPx: { x: number; y: number } | undefined;
+  let horizontalEndPx: { x: number; y: number } | undefined;
+  let verticalSpanMm: number | undefined;
+  let verticalStartPx: { x: number; y: number } | undefined;
+  let verticalEndPx: { x: number; y: number } | undefined;
+  let cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
+  let operatorNotes: string | undefined;
+  let operatorAccepted = false;
+  let repeatabilityPhase: "no-touch" | "remove-replace" = "no-touch";
+  let captureCount: number | undefined;
+  let operatorReplaceConfirmed = false;
+  let operatorReplaceDelayMs: number | undefined;
   let captureConfirmed = false;
+  let operatorMode = false;
+  let focusLockedByOperator = false;
+  let resetDefaultLightingProfile = false;
   let includeLightingSweep = false;
   let includeFlcSweep = false;
   let includeEdr = false;
@@ -527,6 +685,21 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         }
         index += 1;
         break;
+      case "--gain":
+      case "--basler-gain":
+        gain = Number(readOption(rest, index, arg));
+        if (!Number.isFinite(gain) || gain < 0) {
+          throw new CaptureHelperCommandError("--gain must be a non-negative number.");
+        }
+        index += 1;
+        break;
+      case "--preview-refresh-ms":
+        previewRefreshMs = Number(readOption(rest, index, "--preview-refresh-ms"));
+        if (!Number.isInteger(previewRefreshMs) || previewRefreshMs < 250 || previewRefreshMs > 5000) {
+          throw new CaptureHelperCommandError("--preview-refresh-ms must be an integer from 250 to 5000.");
+        }
+        index += 1;
+        break;
       case "--line-inverter":
         lineInverter = readBooleanOption(rest, index, "--line-inverter");
         index += 1;
@@ -586,11 +759,128 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         }
         index += 1;
         break;
+      case "--evidence-side": {
+        const value = readOption(rest, index, "--evidence-side");
+        if (value !== "front" && value !== "back" && value !== "both") {
+          throw new CaptureHelperCommandError("--evidence-side must be front, back, or both.");
+        }
+        evidenceSide = value;
+        index += 1;
+        break;
+      }
+      case "--fixture-label":
+        fixtureLabel = readOption(rest, index, "--fixture-label");
+        index += 1;
+        break;
+      case "--fixture-id":
+        fixtureId = readOption(rest, index, "--fixture-id");
+        index += 1;
+        break;
+      case "--reference-type": {
+        const value = readOption(rest, index, "--reference-type");
+        const allowed = ["card_dimensions", "fixed_metric_rulers", "metric_ruler", "cutting_mat", "measurement_board", "certified_target", "unknown"];
+        if (!allowed.includes(value)) {
+          throw new CaptureHelperCommandError("--reference-type must be card_dimensions, fixed_metric_rulers, metric_ruler, cutting_mat, measurement_board, certified_target, or unknown.");
+        }
+        referenceType = value;
+        index += 1;
+        break;
+      }
+      case "--reference-width-mm":
+        referenceWidthMm = Number(readOption(rest, index, "--reference-width-mm"));
+        if (!Number.isFinite(referenceWidthMm) || referenceWidthMm <= 0 || referenceWidthMm > 500) {
+          throw new CaptureHelperCommandError("--reference-width-mm must be from 0 to 500.");
+        }
+        index += 1;
+        break;
+      case "--reference-height-mm":
+        referenceHeightMm = Number(readOption(rest, index, "--reference-height-mm"));
+        if (!Number.isFinite(referenceHeightMm) || referenceHeightMm <= 0 || referenceHeightMm > 500) {
+          throw new CaptureHelperCommandError("--reference-height-mm must be from 0 to 500.");
+        }
+        index += 1;
+        break;
+      case "--horizontal-span-mm":
+        horizontalSpanMm = Number(readOption(rest, index, "--horizontal-span-mm"));
+        if (!Number.isFinite(horizontalSpanMm) || horizontalSpanMm <= 0 || horizontalSpanMm > 1000) {
+          throw new CaptureHelperCommandError("--horizontal-span-mm must be from 0 to 1000.");
+        }
+        index += 1;
+        break;
+      case "--horizontal-start-px":
+        horizontalStartPx = readPixelPointOption(rest, index, "--horizontal-start-px");
+        index += 1;
+        break;
+      case "--horizontal-end-px":
+        horizontalEndPx = readPixelPointOption(rest, index, "--horizontal-end-px");
+        index += 1;
+        break;
+      case "--vertical-span-mm":
+        verticalSpanMm = Number(readOption(rest, index, "--vertical-span-mm"));
+        if (!Number.isFinite(verticalSpanMm) || verticalSpanMm <= 0 || verticalSpanMm > 1000) {
+          throw new CaptureHelperCommandError("--vertical-span-mm must be from 0 to 1000.");
+        }
+        index += 1;
+        break;
+      case "--vertical-start-px":
+        verticalStartPx = readPixelPointOption(rest, index, "--vertical-start-px");
+        index += 1;
+        break;
+      case "--vertical-end-px":
+        verticalEndPx = readPixelPointOption(rest, index, "--vertical-end-px");
+        index += 1;
+        break;
+      case "--card-boundary-rect":
+        cardBoundaryRect = readRectOption(rest, index, "--card-boundary-rect");
+        index += 1;
+        break;
+      case "--operator-notes":
+        operatorNotes = readOption(rest, index, "--operator-notes");
+        index += 1;
+        break;
+      case "--operator-accepted":
+        operatorAccepted = true;
+        break;
+      case "--repeatability-phase": {
+        const value = readOption(rest, index, "--repeatability-phase");
+        if (value !== "no-touch" && value !== "remove-replace") {
+          throw new CaptureHelperCommandError("--repeatability-phase must be no-touch or remove-replace.");
+        }
+        repeatabilityPhase = value;
+        index += 1;
+        break;
+      }
+      case "--capture-count":
+        captureCount = Number(readOption(rest, index, "--capture-count"));
+        if (!Number.isInteger(captureCount) || captureCount < 1 || captureCount > 20) {
+          throw new CaptureHelperCommandError("--capture-count must be an integer from 1 to 20.");
+        }
+        index += 1;
+        break;
+      case "--operator-replace-confirmed":
+        operatorReplaceConfirmed = true;
+        break;
+      case "--operator-replace-delay-ms":
+        operatorReplaceDelayMs = Number(readOption(rest, index, "--operator-replace-delay-ms"));
+        if (!Number.isInteger(operatorReplaceDelayMs) || operatorReplaceDelayMs < 0 || operatorReplaceDelayMs > 300000) {
+          throw new CaptureHelperCommandError("--operator-replace-delay-ms must be an integer from 0 to 300000.");
+        }
+        index += 1;
+        break;
       case "--operator-reported-idle-on":
         operatorReportedIdleOn = true;
         break;
       case "--capture-confirmed":
         captureConfirmed = true;
+        break;
+      case "--operator-mode":
+        operatorMode = true;
+        break;
+      case "--focus-locked-by-operator":
+        focusLockedByOperator = true;
+        break;
+      case "--reset-default-lighting-profile":
+        resetDefaultLightingProfile = true;
         break;
       case "--camera-index":
         cameraIndex = Number(readOption(rest, index, "--camera-index"));
@@ -873,9 +1163,14 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "basler-leimac-image-stat-sync-smoke" ||
     command === "basler-leimac-macro-package" ||
     command === "ai-grader-full-rig-local-smoke" ||
+    command === "basler-fixed-rig-operator-preview" ||
     command === "basler-fixed-rig-focus-assist" ||
+    command === "fixed-rig-fixture-calibration" ||
+    command === "fixed-rig-repeatability-test" ||
     command === "ai-grader-fixed-rig-v1-local" ||
+    command === "ai-grader-fixed-rig-v1-evidence-package" ||
     command === "fixed-rig-lighting-profile-plan" ||
+    command === "leimac-channel-characterization" ||
     command === "dinolite-enumerate" ||
     command === "dinolite-status" ||
     command === "dinolite-capture-still" ||
@@ -1117,7 +1412,46 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         operatorConfirmedLightIdleOff,
       };
     }
-    if (command === "basler-fixed-rig-focus-assist" || command === "ai-grader-fixed-rig-v1-local") {
+    if (command === "basler-fixed-rig-operator-preview") {
+      const leimacHostValue = leimacHost ?? host;
+      const leimacPortValue = leimacPort ?? port;
+      const parsedLeimacPort = leimacPortValue === undefined ? undefined : Number(leimacPortValue);
+      if (parsedLeimacPort !== undefined && (!Number.isInteger(parsedLeimacPort) || parsedLeimacPort <= 0)) {
+        throw new CaptureHelperCommandError("--leimac-port must be a positive integer.");
+      }
+      return {
+        command,
+        config,
+        pylonRoot,
+        pylonTimeoutMs,
+        baslerBridgeScript,
+        cameraIndex,
+        outputDir,
+        leimacHost: leimacHostValue,
+        leimacPort: parsedLeimacPort,
+        leimacUnit,
+        exposureUs,
+        gain,
+        previewRefreshMs,
+        apply,
+        confirmation,
+        operatorMode,
+        markPresent,
+        wiringConfirmed,
+        leimacStatusGreen,
+        operatorConfirmedLightIdleOff,
+        focusLockedByOperator,
+        resetDefaultLightingProfile,
+      };
+    }
+    if (
+      command === "basler-fixed-rig-focus-assist" ||
+      command === "fixed-rig-fixture-calibration" ||
+      command === "fixed-rig-repeatability-test" ||
+      command === "ai-grader-fixed-rig-v1-local" ||
+      command === "ai-grader-fixed-rig-v1-evidence-package" ||
+      command === "leimac-channel-characterization"
+    ) {
       const leimacHostValue = leimacHost ?? host;
       const leimacPortValue = leimacPort ?? port;
       const parsedLeimacPort = leimacPortValue === undefined ? undefined : Number(leimacPortValue);
@@ -1139,6 +1473,75 @@ function parseCliArgs(argv: string[]): ParsedCommand {
           leimacUnit,
           duty,
           exposureUs,
+          gain,
+          apply,
+          confirmation,
+          markPresent,
+          wiringConfirmed,
+          leimacStatusGreen,
+          operatorConfirmedLightIdleOff,
+          resetDefaultLightingProfile,
+        };
+      }
+      if (command === "fixed-rig-fixture-calibration" || command === "fixed-rig-repeatability-test") {
+        return {
+          command,
+          config,
+          pylonRoot,
+          pylonTimeoutMs,
+          baslerBridgeScript,
+          cameraIndex,
+          outputDir,
+          leimacHost: leimacHostValue,
+          leimacPort: parsedLeimacPort,
+          leimacTimeoutMs,
+          leimacUnit,
+          duty,
+          exposureUs,
+          gain,
+          apply,
+          confirmation,
+          markPresent,
+          wiringConfirmed,
+          leimacStatusGreen,
+          operatorConfirmedLightIdleOff,
+          resetDefaultLightingProfile,
+          fixtureLabel,
+          fixtureId,
+          referenceType,
+          referenceWidthMm,
+          referenceHeightMm,
+          horizontalSpanMm,
+          horizontalStartPx,
+          horizontalEndPx,
+          verticalSpanMm,
+          verticalStartPx,
+          verticalEndPx,
+          cardBoundaryRect,
+          operatorNotes,
+          operatorAccepted,
+          repeatabilityPhase,
+          captureCount,
+          operatorReplaceConfirmed,
+          operatorReplaceDelayMs,
+        };
+      }
+      if (command === "leimac-channel-characterization") {
+        return {
+          command,
+          config,
+          pylonRoot,
+          pylonTimeoutMs,
+          baslerBridgeScript,
+          cameraIndex,
+          outputDir,
+          leimacHost: leimacHostValue,
+          leimacPort: parsedLeimacPort,
+          leimacTimeoutMs,
+          leimacUnit,
+          duty,
+          exposureUs,
+          gain,
           apply,
           confirmation,
           markPresent,
@@ -1161,6 +1564,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         leimacUnit,
         duty,
         exposureUs,
+        gain,
         apply,
         confirmation,
         markPresent,
@@ -1169,6 +1573,20 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         operatorConfirmedLightIdleOff,
         operatorFlipConfirmed,
         operatorFlipDelayMs,
+        resetDefaultLightingProfile,
+        evidenceSide,
+        fixtureLabel,
+        fixtureId,
+        referenceType,
+        referenceWidthMm,
+        referenceHeightMm,
+        horizontalSpanMm,
+        horizontalStartPx,
+        horizontalEndPx,
+        verticalSpanMm,
+        verticalStartPx,
+        verticalEndPx,
+        cardBoundaryRect,
       };
     }
     if (command === "fixed-rig-lighting-profile-plan") return { command, config };
@@ -1222,8 +1640,14 @@ function helpPayload() {
       "basler-leimac-macro-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\full-rig-smoke --profile line2-inverter-level-low --duty 5 --exposure-us 50000 --include-dark-control --apply --confirm \"RUN BASLER LEIMAC MACRO PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "ai-grader-full-rig-local-smoke --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\full-rig-smoke --basler-duty 5 --basler-exposure-us 50000 --dinolite-plan experimental-card-grading --bridge-exe <exe> --adapter dnvideox --device-index 0 --apply --confirm \"RUN AI GRADER FULL RIG LOCAL SMOKE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "fixed-rig-lighting-profile-plan",
+      "basler-fixed-rig-operator-preview --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --exposure-us 45000 --gain 0 --preview-refresh-ms 500 --operator-mode --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --apply --confirm \"RUN BASLER FIXED RIG OPERATOR PREVIEW\"",
       "basler-fixed-rig-focus-assist --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --duty 5 --exposure-us 50000 --apply --confirm \"RUN BASLER FIXED RIG FOCUS ASSIST\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
+      "fixed-rig-fixture-calibration --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --exposure-us 45000 --reference-type fixed_metric_rulers --horizontal-span-mm 50 --horizontal-start-px 100,100 --horizontal-end-px 1100,100 --vertical-span-mm 50 --vertical-start-px 100,100 --vertical-end-px 100,1100 --fixture-label fixed-v1-l-stop --operator-accepted --apply --confirm \"RUN FIXED RIG ROUGH FIXTURE CALIBRATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
+      "fixed-rig-repeatability-test --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --repeatability-phase no-touch --capture-count 5 --exposure-us 45000 --apply --confirm \"RUN FIXED RIG REPEATABILITY TEST\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "ai-grader-fixed-rig-v1-local --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --duty 5 --exposure-us 50000 --apply --confirm \"RUN AI GRADER FIXED RIG V1 LOCAL\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed --operator-flip-delay-ms 30000",
+      "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side front --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
+      "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side back --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed",
+      "leimac-channel-characterization --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --duty 1 --exposure-us 45000 --apply --confirm \"RUN LEIMAC CHANNEL CHARACTERIZATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -1277,6 +1701,25 @@ function helpPayload() {
       "--capture-confirmed",
       "--operator-flip-confirmed",
       "--operator-flip-delay-ms 0..300000",
+      "--evidence-side front|back|both",
+      "--fixture-label",
+      "--fixture-id",
+      "--reference-type card_dimensions|fixed_metric_rulers|metric_ruler|cutting_mat|measurement_board|certified_target|unknown",
+      "--reference-width-mm",
+      "--reference-height-mm",
+      "--horizontal-span-mm",
+      "--horizontal-start-px x,y",
+      "--horizontal-end-px x,y",
+      "--vertical-span-mm",
+      "--vertical-start-px x,y",
+      "--vertical-end-px x,y",
+      "--card-boundary-rect x,y,width,height",
+      "--operator-notes",
+      "--operator-accepted",
+      "--repeatability-phase no-touch|remove-replace",
+      "--capture-count 1..20",
+      "--operator-replace-confirmed",
+      "--operator-replace-delay-ms 0..300000",
       "--camera-index",
       "--format png|tiff|jpg",
       "--lens-model",
@@ -2579,13 +3022,162 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       return 0;
     }
 
+    if (parsed.command === "basler-fixed-rig-operator-preview") {
+      const {
+        BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION,
+        FIXED_RIG_SELECTED_EXPOSURE_US,
+        analyzeFixedRigMacroQuality,
+        assertFixedRigOutputDirAllowed,
+        buildFixedRigActiveLightingProfile,
+        buildFixedRigOperatorPreviewManifest,
+        createFixedRigPackageDir,
+        writeFixedRigActiveLightingProfile,
+        writeFixedRigOperatorPreviewArtifacts,
+      } = await import("./drivers/baslerFixedRigV1");
+
+      const exposureUs = parsed.exposureUs ?? FIXED_RIG_SELECTED_EXPOSURE_US;
+      if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
+        throw new CaptureHelperCommandError("basler-fixed-rig-operator-preview --exposure-us must be from 1 to 100000.");
+      }
+      if (!parsed.apply) {
+        if (parsed.outputDir) {
+          assertFixedRigOutputDirAllowed(parsed.outputDir);
+        }
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "basler-fixed-rig-operator-preview",
+          dryRun: true,
+        manifest: buildFixedRigOperatorPreviewManifest({
+          packageId: "planned-basler-fixed-rig-operator-preview",
+          packageDir: parsed.outputDir ?? "",
+          status: "planned",
+          focusLockedByOperator: parsed.focusLockedByOperator,
+          acceptedLightingProfile: buildFixedRigActiveLightingProfile({
+            profileSource: "default",
+            resetToDefault: parsed.resetDefaultLightingProfile,
+          }),
+        }),
+        });
+        return 0;
+      }
+      if (parsed.confirmation !== BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION) {
+        throw new CaptureHelperCommandError(`basler-fixed-rig-operator-preview --apply requires --confirm "${BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION}".`);
+      }
+      if (!parsed.operatorMode) {
+        throw new CaptureHelperCommandError("basler-fixed-rig-operator-preview --apply requires --operator-mode.");
+      }
+      if (!parsed.markPresent) {
+        throw new CaptureHelperCommandError("basler-fixed-rig-operator-preview --apply requires --mark-present.");
+      }
+      if (parsed.leimacHost) {
+        if (!parsed.wiringConfirmed) {
+          throw new CaptureHelperCommandError("basler-fixed-rig-operator-preview Leimac preview lighting requires --wiring-confirmed.");
+        }
+        if (!parsed.leimacStatusGreen) {
+          throw new CaptureHelperCommandError("basler-fixed-rig-operator-preview Leimac preview lighting requires --leimac-status-green.");
+        }
+        if (!parsed.operatorConfirmedLightIdleOff) {
+          throw new CaptureHelperCommandError("basler-fixed-rig-operator-preview Leimac preview lighting requires --operator-confirmed-light-idle-off.");
+        }
+      }
+
+      const env = io.env ?? process.env;
+      const { BaslerPylonClient } = await import("./drivers/baslerPylonClient");
+      const { packageId, packageDir } = await createFixedRigPackageDir(parsed.outputDir ?? "", "basler-fixed-rig-operator-preview");
+      const client = new BaslerPylonClient({
+        pylonRoot: parsed.pylonRoot ?? env.TENKINGS_BASLER_PYLON_ROOT ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT,
+        bridgeScriptPath: parsed.baslerBridgeScript,
+        timeoutMs: parsed.pylonTimeoutMs ?? 1800000,
+        env,
+      });
+      const livePreview = await client.showOperatorPreviewWindow({
+        outputDir: packageDir,
+        cameraIndex: parsed.cameraIndex,
+        exposureUs,
+        refreshIntervalMs: parsed.previewRefreshMs,
+        leimacHost: parsed.leimacHost,
+        leimacPort: parsed.leimacPort,
+        leimacUnit: parsed.leimacUnit,
+        previewDutyPercent: 1.2,
+      });
+      if (livePreview.operatorDecision !== "accepted") {
+        const manifest = buildFixedRigOperatorPreviewManifest({
+          packageId,
+          packageDir,
+          status: livePreview.operatorDecision === "aborted" ? "aborted" : "closed",
+          livePreview,
+          focusLockedByOperator: parsed.focusLockedByOperator,
+        });
+        const writtenManifest = await writeFixedRigOperatorPreviewArtifacts(manifest);
+        writeJson(stdout, {
+          ok: livePreview.operatorDecision === "closed",
+          service: "ai-grader-capture-helper",
+          command: "basler-fixed-rig-operator-preview",
+          packageDir,
+          livePreview,
+          manifestPath: writtenManifest.manifestPath,
+          previewReportPath: writtenManifest.previewReportPath,
+          manifest: writtenManifest,
+          operatorPrompt: "Operator preview window was not accepted; do not proceed to focus/framing smoke until Mark accepts focus/alignment usability.",
+        });
+        return livePreview.operatorDecision === "aborted" ? 1 : 0;
+      }
+      const previewCapture = await client.captureStill({
+        outputDir: packageDir,
+        label: "operator-preview",
+        cameraIndex: parsed.cameraIndex,
+        savedFormat: "png",
+        lensModel: env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
+        exposureUs,
+      });
+      const quality = await analyzeFixedRigMacroQuality(previewCapture.outputFilePath);
+      const acceptedLightingProfile = buildFixedRigActiveLightingProfile({
+        selectedDutyPercent: livePreview.previewLighting.requestedDutyPercent ?? livePreview.previewLighting.currentDutyPercent,
+        selectedChannels: livePreview.previewLighting.selectedChannels,
+        profileSource: "operator_preview",
+        resetToDefault: parsed.resetDefaultLightingProfile,
+      });
+      const activeLightingProfilePath = await writeFixedRigActiveLightingProfile(parsed.outputDir ?? packageDir, acceptedLightingProfile);
+      const manifest = buildFixedRigOperatorPreviewManifest({
+        packageId,
+        packageDir,
+        status: "accepted",
+        livePreview,
+        previewCapture,
+        quality,
+        focusLockedByOperator: parsed.focusLockedByOperator,
+        acceptedLightingProfile,
+      });
+      const writtenManifest = await writeFixedRigOperatorPreviewArtifacts(manifest);
+      writeJson(stdout, {
+        ok: true,
+        service: "ai-grader-capture-helper",
+        command: "basler-fixed-rig-operator-preview",
+        packageDir,
+        livePreview,
+        previewCapture,
+        quality,
+        manifestPath: writtenManifest.manifestPath,
+        previewReportPath: writtenManifest.previewReportPath,
+        activeLightingProfilePath,
+        acceptedLightingProfile,
+        overlayPreview: writtenManifest.overlayPreview,
+        manifest: writtenManifest,
+        operatorPrompt: "Proceed only if Mark confirms the visible pylon live-stream preview window was usable for manual focus and card alignment.",
+      });
+      return 0;
+    }
+
     if (parsed.command === "basler-fixed-rig-focus-assist") {
       const {
         BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION,
         analyzeFixedRigMacroQuality,
         assertFixedRigOutputDirAllowed,
         buildFixedRigFocusAssistManifest,
+        buildFixedRigActiveLightingProfile,
         createFixedRigPackageDir,
+        resolveFixedRigActiveLightingProfile,
         writeFixedRigFocusAssistArtifacts,
       } = await import("./drivers/baslerFixedRigV1");
       const {
@@ -2598,8 +3190,15 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
         throw new CaptureHelperCommandError("basler-fixed-rig-focus-assist --exposure-us must be from 1 to 100000.");
       }
+      const activeLightingProfile = parsed.outputDir
+        ? await resolveFixedRigActiveLightingProfile({
+            outputDir: parsed.outputDir,
+            cliDuty: parsed.duty,
+            resetToDefault: parsed.resetDefaultLightingProfile,
+          })
+        : buildFixedRigActiveLightingProfile({ selectedDutyPercent: parsed.duty, profileSource: parsed.duty == null ? "default" : "cli_override" });
       const plan = buildBaslerLeimacPolaritySmokePlan({
-        dutyPercent: parsed.duty ?? 5,
+        dutyPercent: activeLightingProfile.selectedDutyPercent,
         exposureUs,
         candidateId: ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
         dryRun: !parsed.apply,
@@ -2621,6 +3220,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
             status: "planned",
             safeOffBefore: false,
             safeOffAfter: false,
+            activeLightingProfile,
           }),
         });
         return 0;
@@ -2711,6 +3311,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         safeOffBefore: macroResult.manifest.safety.safeOffBefore,
         safeOffAfter: macroResult.manifest.safety.safeOffAfter,
         finalLightOffConfirmedByMark: false,
+        activeLightingProfile,
       });
       const writtenManifest = await writeFixedRigFocusAssistArtifacts(manifest);
       writeJson(stdout, {
@@ -2728,14 +3329,440 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       return 0;
     }
 
+    if (parsed.command === "fixed-rig-fixture-calibration") {
+      const {
+        FIXED_RIG_FIXTURE_CALIBRATION_CONFIRMATION,
+        applyFixedRigCardBoundaryOverride,
+        analyzeFixedRigMacroQuality,
+        assertFixedRigOutputDirAllowed,
+        buildFixedRigActiveLightingProfile,
+        buildFixedRigFixtureCalibrationProfile,
+        createFixedRigPackageDir,
+        resolveFixedRigActiveLightingProfile,
+        writeFixedRigFixtureCalibrationArtifacts,
+      } = await import("./drivers/baslerFixedRigV1");
+      const {
+        ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+        BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION,
+      } = await import("./drivers/baslerLeimacFullRig");
+      const { buildBaslerLeimacPolaritySmokePlan } = await import("./drivers/baslerLeimacSync");
+
+      const exposureUs = parsed.exposureUs ?? 45000;
+      if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
+        throw new CaptureHelperCommandError("fixed-rig-fixture-calibration --exposure-us must be from 1 to 100000.");
+      }
+      const isRulerReference = parsed.referenceType === "fixed_metric_rulers";
+      if (
+        isRulerReference &&
+        (parsed.horizontalSpanMm === undefined ||
+          !parsed.horizontalStartPx ||
+          !parsed.horizontalEndPx ||
+          parsed.verticalSpanMm === undefined ||
+          !parsed.verticalStartPx ||
+          !parsed.verticalEndPx)
+      ) {
+        throw new CaptureHelperCommandError(
+          "fixed-rig-fixture-calibration --reference-type fixed_metric_rulers requires --horizontal-span-mm, --horizontal-start-px, --horizontal-end-px, --vertical-span-mm, --vertical-start-px, and --vertical-end-px."
+        );
+      }
+      const activeLightingProfile = parsed.outputDir
+        ? await resolveFixedRigActiveLightingProfile({
+            outputDir: parsed.outputDir,
+            cliDuty: parsed.duty,
+            resetToDefault: parsed.resetDefaultLightingProfile,
+          })
+        : buildFixedRigActiveLightingProfile({ selectedDutyPercent: parsed.duty, profileSource: parsed.duty == null ? "default" : "cli_override" });
+      const plan = buildBaslerLeimacPolaritySmokePlan({
+        dutyPercent: activeLightingProfile.selectedDutyPercent,
+        exposureUs,
+        candidateId: ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+        dryRun: !parsed.apply,
+      });
+      const plannedFixtureProfile = buildFixedRigFixtureCalibrationProfile({
+        profileId: "planned-fixed-rig-fixture-calibration-profile",
+        fixtureId: parsed.fixtureId,
+        fixtureLabel: parsed.fixtureLabel,
+        referenceType: parsed.referenceType as any,
+        referencePhysicalWidthMm: parsed.referenceWidthMm,
+        referencePhysicalHeightMm: parsed.referenceHeightMm,
+        horizontalSpanMm: parsed.horizontalSpanMm,
+        horizontalStartPx: parsed.horizontalStartPx,
+        horizontalEndPx: parsed.horizontalEndPx,
+        verticalSpanMm: parsed.verticalSpanMm,
+        verticalStartPx: parsed.verticalStartPx,
+        verticalEndPx: parsed.verticalEndPx,
+        activeLightingProfile,
+        exposureUs,
+        gain: parsed.gain ?? 0,
+        operatorAccepted: parsed.operatorAccepted,
+        operatorNotes: parsed.operatorNotes,
+      });
+      if (!parsed.apply) {
+        if (parsed.outputDir) assertFixedRigOutputDirAllowed(parsed.outputDir);
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "fixed-rig-fixture-calibration",
+          dryRun: true,
+          plan,
+          activeLightingProfile,
+          fixtureCalibrationProfile: plannedFixtureProfile,
+        });
+        return 0;
+      }
+      if (parsed.confirmation !== FIXED_RIG_FIXTURE_CALIBRATION_CONFIRMATION) {
+        throw new CaptureHelperCommandError(`fixed-rig-fixture-calibration --apply requires --confirm "${FIXED_RIG_FIXTURE_CALIBRATION_CONFIRMATION}".`);
+      }
+      if (!parsed.leimacHost) throw new CaptureHelperCommandError("fixed-rig-fixture-calibration --apply requires explicit --leimac-host <ip>.");
+      if (!parsed.markPresent) throw new CaptureHelperCommandError("fixed-rig-fixture-calibration --apply requires --mark-present.");
+      if (!parsed.wiringConfirmed) throw new CaptureHelperCommandError("fixed-rig-fixture-calibration --apply requires --wiring-confirmed.");
+      if (!parsed.leimacStatusGreen) throw new CaptureHelperCommandError("fixed-rig-fixture-calibration --apply requires --leimac-status-green.");
+      if (!parsed.operatorConfirmedLightIdleOff) throw new CaptureHelperCommandError("fixed-rig-fixture-calibration --apply requires --operator-confirmed-light-idle-off.");
+
+      const env = io.env ?? process.env;
+      const { packageId, packageDir } = await createFixedRigPackageDir(parsed.outputDir ?? "", "fixed-rig-fixture-calibration");
+      const macroOutputDir = path.join(packageDir, "basler-macro");
+      let macroStdout = "";
+      let macroStderr = "";
+      const macroCode = await runCaptureHelperCli([
+        "basler-leimac-macro-package",
+        "--leimac-host",
+        parsed.leimacHost,
+        "--leimac-port",
+        String(parsed.leimacPort ?? 1000),
+        "--output-dir",
+        macroOutputDir,
+        "--profile",
+        ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+        "--duty",
+        String(plan.dutyPercent),
+        "--exposure-us",
+        String(exposureUs),
+        "--include-dark-control",
+        "--apply",
+        "--confirm",
+        BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION,
+        "--mark-present",
+        "--wiring-confirmed",
+        "--leimac-status-green",
+        "--operator-confirmed-light-idle-off",
+        ...(parsed.pylonRoot ? ["--pylon-root", parsed.pylonRoot] : []),
+        ...(parsed.pylonTimeoutMs ? ["--pylon-timeout-ms", String(parsed.pylonTimeoutMs)] : []),
+        ...(parsed.baslerBridgeScript ? ["--bridge-script", parsed.baslerBridgeScript] : []),
+        ...(parsed.cameraIndex !== undefined ? ["--camera-index", String(parsed.cameraIndex)] : []),
+        ...(parsed.leimacTimeoutMs ? ["--timeout-ms", String(parsed.leimacTimeoutMs)] : []),
+        ...(parsed.leimacUnit ? ["--unit", String(parsed.leimacUnit)] : []),
+      ], {
+        env,
+        stdout: (chunk) => {
+          macroStdout += chunk;
+        },
+        stderr: (chunk) => {
+          macroStderr += chunk;
+        },
+      });
+      const macroResult = macroStdout ? JSON.parse(macroStdout) : undefined;
+      const macroError = macroStderr ? JSON.parse(macroStderr) : undefined;
+      if (macroCode !== 0 || !macroResult?.manifest?.synced?.capture?.outputFilePath) {
+        writeJson(stdout, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "fixed-rig-fixture-calibration",
+          packageDir,
+          macroResult,
+          macroError,
+          error: "Basler/Leimac macro package failed; rough fixture calibration was not computed.",
+        });
+        return 1;
+      }
+      const analyzedQuality = await analyzeFixedRigMacroQuality(macroResult.manifest.synced.capture.outputFilePath);
+      const quality = parsed.cardBoundaryRect ? applyFixedRigCardBoundaryOverride(analyzedQuality, parsed.cardBoundaryRect) : analyzedQuality;
+      const fixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
+        profileId: `${packageId}-rough-fixture-profile`,
+        fixtureId: parsed.fixtureId,
+        fixtureLabel: parsed.fixtureLabel,
+        referenceType: parsed.referenceType as any,
+        referencePhysicalWidthMm: parsed.referenceWidthMm,
+        referencePhysicalHeightMm: parsed.referenceHeightMm,
+        horizontalSpanMm: parsed.horizontalSpanMm,
+        horizontalStartPx: parsed.horizontalStartPx,
+        horizontalEndPx: parsed.horizontalEndPx,
+        verticalSpanMm: parsed.verticalSpanMm,
+        verticalStartPx: parsed.verticalStartPx,
+        verticalEndPx: parsed.verticalEndPx,
+        calibrationImagePath: macroResult.manifest.synced.capture.outputFilePath,
+        rawImageWidth: quality.width,
+        rawImageHeight: quality.height,
+        cardBoundary: quality.cardBoundary,
+        activeLightingProfile,
+        exposureUs,
+        gain: parsed.gain ?? 0,
+        operatorAccepted: parsed.operatorAccepted,
+        operatorNotes: parsed.operatorNotes,
+      });
+      const writtenManifest = await writeFixedRigFixtureCalibrationArtifacts({
+        packageId,
+        packageDir,
+        status: "captured",
+        activeLightingProfile,
+        macroPackage: macroResult.manifest,
+        quality,
+        fixtureCalibrationProfile,
+        safeOffBefore: macroResult.manifest.safety.safeOffBefore,
+        safeOffAfter: macroResult.manifest.safety.safeOffAfter,
+      });
+      writeJson(stdout, {
+        ok: true,
+        service: "ai-grader-capture-helper",
+        command: "fixed-rig-fixture-calibration",
+        packageDir,
+        manifestPath: writtenManifest.manifestPath,
+        analysisPath: writtenManifest.analysisPath,
+        previewReportPath: writtenManifest.previewReportPath,
+        fixtureCalibrationProfile,
+        quality,
+        operatorPrompt: "Review rough fixture calibration report and confirm final Leimac ring-light state is off.",
+      });
+      return 0;
+    }
+
+    if (parsed.command === "fixed-rig-repeatability-test") {
+      const {
+        FIXED_RIG_REPEATABILITY_TEST_CONFIRMATION,
+        analyzeFixedRigMacroQuality,
+        assertFixedRigOutputDirAllowed,
+        buildFixedRigActiveLightingProfile,
+        buildFixedRigFixtureCalibrationProfile,
+        buildFixedRigRepeatabilityRun,
+        buildFixedRigRepeatabilitySummary,
+        applyFixedRigCardBoundaryOverride,
+        createFixedRigPackageDir,
+        resolveFixedRigActiveLightingProfile,
+        writeFixedRigRepeatabilityArtifacts,
+      } = await import("./drivers/baslerFixedRigV1");
+      const {
+        ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+        BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION,
+      } = await import("./drivers/baslerLeimacFullRig");
+      const { buildBaslerLeimacPolaritySmokePlan } = await import("./drivers/baslerLeimacSync");
+      const exposureUs = parsed.exposureUs ?? 45000;
+      if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
+        throw new CaptureHelperCommandError("fixed-rig-repeatability-test --exposure-us must be from 1 to 100000.");
+      }
+      const activeLightingProfile = parsed.outputDir
+        ? await resolveFixedRigActiveLightingProfile({
+            outputDir: parsed.outputDir,
+            cliDuty: parsed.duty,
+            resetToDefault: parsed.resetDefaultLightingProfile,
+          })
+        : buildFixedRigActiveLightingProfile({ selectedDutyPercent: parsed.duty, profileSource: parsed.duty == null ? "default" : "cli_override" });
+      const phase = parsed.repeatabilityPhase === "remove-replace" ? "remove_replace" : "no_touch";
+      const requestedCaptureCount = parsed.captureCount ?? 5;
+      const plan = buildBaslerLeimacPolaritySmokePlan({
+        dutyPercent: activeLightingProfile.selectedDutyPercent,
+        exposureUs,
+        candidateId: ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+        dryRun: !parsed.apply,
+      });
+      const fixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
+        profileId: "planned-repeatability-rough-fixture-profile",
+        fixtureId: parsed.fixtureId,
+        fixtureLabel: parsed.fixtureLabel,
+        referenceType: parsed.referenceType as any,
+        referencePhysicalWidthMm: parsed.referenceWidthMm,
+        referencePhysicalHeightMm: parsed.referenceHeightMm,
+        horizontalSpanMm: parsed.horizontalSpanMm,
+        horizontalStartPx: parsed.horizontalStartPx,
+        horizontalEndPx: parsed.horizontalEndPx,
+        verticalSpanMm: parsed.verticalSpanMm,
+        verticalStartPx: parsed.verticalStartPx,
+        verticalEndPx: parsed.verticalEndPx,
+        activeLightingProfile,
+        exposureUs,
+        gain: parsed.gain ?? 0,
+        operatorAccepted: parsed.operatorAccepted,
+        operatorNotes: parsed.operatorNotes,
+        status: "rough_reference_unvalidated",
+      });
+      if (!parsed.apply) {
+        if (parsed.outputDir) assertFixedRigOutputDirAllowed(parsed.outputDir);
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "fixed-rig-repeatability-test",
+          dryRun: true,
+          plan,
+          requestedCaptureCount,
+          phase,
+          activeLightingProfile,
+          fixtureCalibrationProfile,
+        });
+        return 0;
+      }
+      if (parsed.confirmation !== FIXED_RIG_REPEATABILITY_TEST_CONFIRMATION) {
+        throw new CaptureHelperCommandError(`fixed-rig-repeatability-test --apply requires --confirm "${FIXED_RIG_REPEATABILITY_TEST_CONFIRMATION}".`);
+      }
+      if (!parsed.leimacHost) throw new CaptureHelperCommandError("fixed-rig-repeatability-test --apply requires explicit --leimac-host <ip>.");
+      if (!parsed.markPresent) throw new CaptureHelperCommandError("fixed-rig-repeatability-test --apply requires --mark-present.");
+      if (!parsed.wiringConfirmed) throw new CaptureHelperCommandError("fixed-rig-repeatability-test --apply requires --wiring-confirmed.");
+      if (!parsed.leimacStatusGreen) throw new CaptureHelperCommandError("fixed-rig-repeatability-test --apply requires --leimac-status-green.");
+      if (!parsed.operatorConfirmedLightIdleOff) throw new CaptureHelperCommandError("fixed-rig-repeatability-test --apply requires --operator-confirmed-light-idle-off.");
+      if (phase === "remove_replace" && !parsed.operatorReplaceConfirmed) {
+        throw new CaptureHelperCommandError("fixed-rig-repeatability-test remove-replace phase requires --operator-replace-confirmed.");
+      }
+
+      const env = io.env ?? process.env;
+      const { packageId, packageDir } = await createFixedRigPackageDir(parsed.outputDir ?? "", "fixed-rig-repeatability-test");
+      const runs = [];
+      let firstQuality;
+      for (let index = 1; index <= requestedCaptureCount; index += 1) {
+        if (phase === "remove_replace" && index > 1 && (parsed.operatorReplaceDelayMs ?? 0) > 0) {
+          stderr(`Instruction: remove and re-seat the card for repeatability capture ${index}; waiting ${parsed.operatorReplaceDelayMs} ms.\n`);
+          await sleep(parsed.operatorReplaceDelayMs ?? 0);
+        }
+        const macroOutputDir = path.join(packageDir, `capture-${String(index).padStart(2, "0")}`);
+        let macroStdout = "";
+        let macroStderr = "";
+        const macroCode = await runCaptureHelperCli([
+          "basler-leimac-macro-package",
+          "--leimac-host",
+          parsed.leimacHost,
+          "--leimac-port",
+          String(parsed.leimacPort ?? 1000),
+          "--output-dir",
+          macroOutputDir,
+          "--profile",
+          ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
+          "--duty",
+          String(plan.dutyPercent),
+          "--exposure-us",
+          String(exposureUs),
+          "--include-dark-control",
+          "--apply",
+          "--confirm",
+          BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION,
+          "--mark-present",
+          "--wiring-confirmed",
+          "--leimac-status-green",
+          "--operator-confirmed-light-idle-off",
+          ...(parsed.pylonRoot ? ["--pylon-root", parsed.pylonRoot] : []),
+          ...(parsed.pylonTimeoutMs ? ["--pylon-timeout-ms", String(parsed.pylonTimeoutMs)] : []),
+          ...(parsed.baslerBridgeScript ? ["--bridge-script", parsed.baslerBridgeScript] : []),
+          ...(parsed.cameraIndex !== undefined ? ["--camera-index", String(parsed.cameraIndex)] : []),
+          ...(parsed.leimacTimeoutMs ? ["--timeout-ms", String(parsed.leimacTimeoutMs)] : []),
+          ...(parsed.leimacUnit ? ["--unit", String(parsed.leimacUnit)] : []),
+        ], {
+          env,
+          stdout: (chunk) => {
+            macroStdout += chunk;
+          },
+          stderr: (chunk) => {
+            macroStderr += chunk;
+          },
+        });
+        const macroResult = macroStdout ? JSON.parse(macroStdout) : undefined;
+        if (macroCode !== 0 || !macroResult?.manifest?.synced?.capture?.outputFilePath) {
+          const macroError = macroStderr ? JSON.parse(macroStderr) : undefined;
+          writeJson(stderr, { ok: false, command: "fixed-rig-repeatability-test", packageDir, captureIndex: index, macroResult, macroError });
+          return 1;
+        }
+        const analyzedQuality = await analyzeFixedRigMacroQuality(macroResult.manifest.synced.capture.outputFilePath);
+        const quality = parsed.cardBoundaryRect ? applyFixedRigCardBoundaryOverride(analyzedQuality, parsed.cardBoundaryRect) : analyzedQuality;
+        firstQuality = firstQuality ?? quality;
+        const runFixtureProfile = buildFixedRigFixtureCalibrationProfile({
+          profileId: `${packageId}-repeatability-run-${index}-fixture-profile`,
+          fixtureId: parsed.fixtureId,
+          fixtureLabel: parsed.fixtureLabel,
+          referenceType: parsed.referenceType as any,
+          referencePhysicalWidthMm: parsed.referenceWidthMm,
+          referencePhysicalHeightMm: parsed.referenceHeightMm,
+          horizontalSpanMm: parsed.horizontalSpanMm,
+          horizontalStartPx: parsed.horizontalStartPx,
+          horizontalEndPx: parsed.horizontalEndPx,
+          verticalSpanMm: parsed.verticalSpanMm,
+          verticalStartPx: parsed.verticalStartPx,
+          verticalEndPx: parsed.verticalEndPx,
+          rawImageWidth: quality.width,
+          rawImageHeight: quality.height,
+          cardBoundary: quality.cardBoundary,
+          activeLightingProfile,
+          exposureUs,
+          gain: parsed.gain ?? 0,
+          operatorAccepted: parsed.operatorAccepted,
+          operatorNotes: parsed.operatorNotes,
+          status: "repeatability_checked",
+        });
+        runs.push(buildFixedRigRepeatabilityRun({ index, phase, capture: macroResult.manifest.synced.capture, quality, fixtureCalibrationProfile: runFixtureProfile }));
+      }
+      const completedFixtureProfile = buildFixedRigFixtureCalibrationProfile({
+        profileId: `${packageId}-repeatability-fixture-profile`,
+        fixtureId: parsed.fixtureId,
+        fixtureLabel: parsed.fixtureLabel,
+        referenceType: parsed.referenceType as any,
+        referencePhysicalWidthMm: parsed.referenceWidthMm,
+        referencePhysicalHeightMm: parsed.referenceHeightMm,
+        horizontalSpanMm: parsed.horizontalSpanMm,
+        horizontalStartPx: parsed.horizontalStartPx,
+        horizontalEndPx: parsed.horizontalEndPx,
+        verticalSpanMm: parsed.verticalSpanMm,
+        verticalStartPx: parsed.verticalStartPx,
+        verticalEndPx: parsed.verticalEndPx,
+        rawImageWidth: firstQuality?.width,
+        rawImageHeight: firstQuality?.height,
+        cardBoundary: firstQuality?.cardBoundary,
+        activeLightingProfile,
+        exposureUs,
+        gain: parsed.gain ?? 0,
+        operatorAccepted: parsed.operatorAccepted,
+        operatorNotes: parsed.operatorNotes,
+        status: "repeatability_checked",
+      });
+      const summary = buildFixedRigRepeatabilitySummary(runs, phase);
+      const writtenManifest = await writeFixedRigRepeatabilityArtifacts({
+        packageId,
+        packageDir,
+        status: "completed",
+        phase,
+        requestedCaptureCount,
+        activeLightingProfile,
+        fixtureCalibrationProfile: completedFixtureProfile,
+        runs,
+        summary,
+        safety: {
+          localOnly: true,
+          diagnosticOnly: true,
+          safeOffBeforeEachCapture: true,
+          safeOffAfterEachCapture: true,
+          persistentBaslerSaved: false,
+          persistentLeimacSaved: false,
+          finalLightOffConfirmedByMark: false,
+        },
+        warning: "Diagnostic fixed-fixture repeatability only. This does not make the rig calibrated and does not produce a final/certified grade.",
+      });
+      writeJson(stdout, {
+        ok: true,
+        service: "ai-grader-capture-helper",
+        command: "fixed-rig-repeatability-test",
+        packageDir,
+        manifestPath: writtenManifest.manifestPath,
+        analysisPath: writtenManifest.analysisPath,
+        previewReportPath: writtenManifest.previewReportPath,
+        summary,
+        operatorPrompt: "Review repeatability report and confirm final Leimac ring-light state is off.",
+      });
+      return 0;
+    }
+
     if (parsed.command === "ai-grader-fixed-rig-v1-local") {
       const {
         AI_GRADER_FIXED_RIG_V1_CONFIRMATION,
         analyzeFixedRigMacroQuality,
         assertFixedRigOutputDirAllowed,
+        buildFixedRigActiveLightingProfile,
         buildFixedRigSideCapture,
         buildFixedRigV1LocalManifest,
         createFixedRigPackageDir,
+        resolveFixedRigActiveLightingProfile,
         writeFixedRigV1Artifacts,
       } = await import("./drivers/baslerFixedRigV1");
       const {
@@ -2748,8 +3775,15 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
         throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-local --exposure-us must be from 1 to 100000.");
       }
+      const activeLightingProfile = parsed.outputDir
+        ? await resolveFixedRigActiveLightingProfile({
+            outputDir: parsed.outputDir,
+            cliDuty: parsed.duty,
+            resetToDefault: parsed.resetDefaultLightingProfile,
+          })
+        : buildFixedRigActiveLightingProfile({ selectedDutyPercent: parsed.duty, profileSource: parsed.duty == null ? "default" : "cli_override" });
       const plan = buildBaslerLeimacPolaritySmokePlan({
-        dutyPercent: parsed.duty ?? 5,
+        dutyPercent: activeLightingProfile.selectedDutyPercent,
         exposureUs,
         candidateId: ACCEPTED_BASLER_LEIMAC_PROFILE_ID,
         dryRun: !parsed.apply,
@@ -2769,6 +3803,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
             packageId: "planned-ai-grader-fixed-rig-v1-local",
             packageDir: parsed.outputDir ?? "",
             status: "planned",
+            activeLightingProfile,
           }),
         });
         return 0;
@@ -2856,6 +3891,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
             side,
             macroPackage: macroResult.manifest,
             quality,
+            activeLightingProfile,
           }),
         };
       };
@@ -2874,6 +3910,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           status: "completed",
           front: front.sideCapture,
           back: back.sideCapture,
+          activeLightingProfile,
           finalLightOffConfirmedByMark: false,
         });
         const writtenManifest = await writeFixedRigV1Artifacts(manifest);
@@ -2899,6 +3936,579 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           service: "ai-grader-capture-helper",
           command: "ai-grader-fixed-rig-v1-local",
           packageDir,
+          error: message,
+        });
+        return 1;
+      }
+    }
+
+    if (parsed.command === "ai-grader-fixed-rig-v1-evidence-package") {
+      const {
+        AI_GRADER_FIXED_RIG_V1_EVIDENCE_PACKAGE_CONFIRMATION,
+        analyzeFixedRigMacroQuality,
+        analyzeFixedRigQuadrants,
+        assertFixedRigOutputDirAllowed,
+        buildFixedRigActiveLightingProfile,
+        buildFixedRigDiagnosticGradingResult,
+        buildFixedRigFixtureCalibrationProfile,
+        buildFixedRigRoiDefinitions,
+        applyFixedRigCardBoundaryOverride,
+        addFixedRigDisplayRects,
+        buildFixedRigSurfaceAnalysis,
+        buildLeimacCharacterizationFrames,
+        createFixedRigDisplayImage,
+        createFixedRigOverlayPreview,
+        createFixedRigPackageDir,
+        createFixedRigRoiCrops,
+        resolveFixedRigActiveLightingProfile,
+        transformQualityForDisplay,
+      } = await import("./drivers/baslerFixedRigV1");
+      const {
+        BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+        BaslerPylonClient,
+      } = await import("./drivers/baslerPylonClient");
+      const { LeimacIdmuClient } = await import("./drivers/leimacIdmuClient");
+
+      const exposureUs = parsed.exposureUs ?? 45000;
+      if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-evidence-package --exposure-us must be from 1 to 100000.");
+      }
+      const isRulerReference = parsed.referenceType === "fixed_metric_rulers";
+      if (
+        isRulerReference &&
+        (parsed.horizontalSpanMm === undefined ||
+          parsed.horizontalStartPx === undefined ||
+          parsed.horizontalEndPx === undefined ||
+          parsed.verticalSpanMm === undefined ||
+          parsed.verticalStartPx === undefined ||
+          parsed.verticalEndPx === undefined)
+      ) {
+        throw new CaptureHelperCommandError(
+          "ai-grader-fixed-rig-v1-evidence-package --reference-type fixed_metric_rulers requires --horizontal-span-mm, --horizontal-start-px, --horizontal-end-px, --vertical-span-mm, --vertical-start-px, and --vertical-end-px."
+        );
+      }
+      const activeLightingProfile = parsed.outputDir
+        ? await resolveFixedRigActiveLightingProfile({
+            outputDir: parsed.outputDir,
+            cliDuty: parsed.duty,
+            resetToDefault: parsed.resetDefaultLightingProfile,
+          })
+        : buildFixedRigActiveLightingProfile({ selectedDutyPercent: parsed.duty, profileSource: parsed.duty == null ? "default" : "cli_override" });
+      if (!parsed.apply) {
+        if (parsed.outputDir) assertFixedRigOutputDirAllowed(parsed.outputDir);
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "ai-grader-fixed-rig-v1-evidence-package",
+          dryRun: true,
+          activeLightingProfile,
+          plan: {
+            sides: parsed.evidenceSide === "both" ? ["front", "back"] : [parsed.evidenceSide],
+            capturesPerSide: [
+              "dark-control",
+              "all-on",
+              "accepted-lighting-profile",
+              "channel-1",
+              "channel-2",
+              "channel-3",
+              "channel-4",
+              "channel-5",
+              "channel-6",
+              "channel-7",
+              "channel-8",
+            ],
+            evidenceClass: "macro_fixed_rig_v1_uncalibrated",
+            isCalibrated: false,
+            referenceType: parsed.referenceType ?? "card_dimensions",
+            rulerSpans:
+              parsed.referenceType === "fixed_metric_rulers"
+                ? {
+                    horizontalSpanMm: parsed.horizontalSpanMm,
+                    horizontalStartPx: parsed.horizontalStartPx,
+                    horizontalEndPx: parsed.horizontalEndPx,
+                    verticalSpanMm: parsed.verticalSpanMm,
+                    verticalStartPx: parsed.verticalStartPx,
+                    verticalEndPx: parsed.verticalEndPx,
+                  }
+                : undefined,
+            cardBoundaryRect: parsed.cardBoundaryRect,
+          },
+        });
+        return 0;
+      }
+      if (parsed.confirmation !== AI_GRADER_FIXED_RIG_V1_EVIDENCE_PACKAGE_CONFIRMATION) {
+        throw new CaptureHelperCommandError(
+          `ai-grader-fixed-rig-v1-evidence-package --apply requires --confirm "${AI_GRADER_FIXED_RIG_V1_EVIDENCE_PACKAGE_CONFIRMATION}".`
+        );
+      }
+      if (!parsed.leimacHost) throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-evidence-package --apply requires explicit --leimac-host <ip>.");
+      if (!parsed.markPresent) throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-evidence-package --apply requires --mark-present.");
+      if (!parsed.wiringConfirmed) throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-evidence-package --apply requires --wiring-confirmed.");
+      if (!parsed.leimacStatusGreen) throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-evidence-package --apply requires --leimac-status-green.");
+      if (!parsed.operatorConfirmedLightIdleOff) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-evidence-package --apply requires --operator-confirmed-light-idle-off.");
+      }
+      if ((parsed.evidenceSide === "back" || parsed.evidenceSide === "both") && !parsed.operatorFlipConfirmed) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-evidence-package --apply requires --operator-flip-confirmed before back-side capture.");
+      }
+
+      const env = io.env ?? process.env;
+      const { packageId, packageDir } = await createFixedRigPackageDir(parsed.outputDir ?? "", "ai-grader-fixed-rig-v1-evidence-package");
+      const { mkdir, writeFile } = await import("node:fs/promises");
+      const leimacClient = new LeimacIdmuClient({
+        host: parsed.leimacHost,
+        port: parsed.leimacPort,
+        timeoutMs: parsed.leimacTimeoutMs,
+        unit: parsed.leimacUnit,
+      });
+      const baslerClient = new BaslerPylonClient({
+        pylonRoot: parsed.pylonRoot ?? env.TENKINGS_BASLER_PYLON_ROOT ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT,
+        bridgeScriptPath: parsed.baslerBridgeScript,
+        timeoutMs: parsed.pylonTimeoutMs,
+        env,
+      });
+      const runSide = async (side: "front" | "back") => {
+        stderr(side === "front" ? "Instruction: Place card front side up for evidence package.\n" : "Instruction: Confirm card back side is up for evidence package.\n");
+        const sideDir = path.join(packageDir, side);
+        await mkdir(sideDir, { recursive: true });
+        const safeOffBeforeDark = await leimacClient.safeOff(true);
+        const darkControl = await baslerClient.captureStill({
+          outputDir: sideDir,
+          label: `${side}-dark-control`,
+          cameraIndex: parsed.cameraIndex,
+          savedFormat: "png",
+          lensModel: env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
+          exposureUs,
+        });
+        const analyzedDarkStats = await analyzeFixedRigMacroQuality(darkControl.outputFilePath);
+        const darkStats = parsed.cardBoundaryRect ? applyFixedRigCardBoundaryOverride(analyzedDarkStats, parsed.cardBoundaryRect) : analyzedDarkStats;
+        const captureProfile = async (label: string, channel: number | "all" | readonly number[]) => {
+          const safeOffBefore = await leimacClient.safeOff(true);
+          const frames = buildLeimacCharacterizationFrames({
+            channel,
+            dutyPercent: activeLightingProfile.selectedDutyPercent,
+            unit: parsed.leimacUnit,
+          });
+          const writes = await leimacClient.applyAllowlistedFrames(frames);
+          if (!writes.every((write) => write.ok)) {
+            const safeOffAfterFailure = await leimacClient.safeOff(true);
+            throw new CaptureHelperCommandError(writes.find((write) => !write.ok)?.error ?? `Leimac ${label} writes failed.`);
+          }
+          const capture = await baslerClient.captureStill({
+            outputDir: sideDir,
+            label,
+            cameraIndex: parsed.cameraIndex,
+            savedFormat: "png",
+            lensModel: env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
+            exposureUs,
+          });
+          const analyzedStats = await analyzeFixedRigMacroQuality(capture.outputFilePath);
+          const stats = parsed.cardBoundaryRect ? applyFixedRigCardBoundaryOverride(analyzedStats, parsed.cardBoundaryRect) : analyzedStats;
+          const quadrantBrightness = await analyzeFixedRigQuadrants(capture.outputFilePath);
+          const safeOffAfter = await leimacClient.safeOff(true);
+          return { label, channel, frames, writes, capture, stats, quadrantBrightness, safeOffBefore, safeOffAfter };
+        };
+        const allOn = await captureProfile(`${side}-all-on`, "all");
+        const acceptedProfile = await captureProfile(`${side}-accepted-lighting-profile`, activeLightingProfile.selectedChannels);
+        const channels = [];
+        for (let channel = 1; channel <= 8; channel += 1) {
+          const channelCapture = await captureProfile(`${side}-channel-${channel}`, channel);
+          channels.push({ ...channelCapture, channel });
+        }
+        const channelDisplayImages: Array<{ channel: number; displayImage: Awaited<ReturnType<typeof createFixedRigDisplayImage>> }> = [];
+        for (const channelCapture of channels) {
+          channelDisplayImages.push({
+            channel: channelCapture.channel,
+            displayImage: await createFixedRigDisplayImage({
+              sourceImagePath: channelCapture.capture.outputFilePath,
+              outputDir: sideDir,
+              filePrefix: `${side}-channel-${channelCapture.channel}`,
+              rawSourceSha256: channelCapture.capture.sha256,
+            }),
+          });
+        }
+        const rois = addFixedRigDisplayRects(buildFixedRigRoiDefinitions(allOn.stats.cardBoundary), allOn.stats.width, allOn.stats.height);
+        const displayImage = await createFixedRigDisplayImage({
+          sourceImagePath: allOn.capture.outputFilePath,
+          outputDir: sideDir,
+          filePrefix: `${side}-all-on`,
+          rawSourceSha256: allOn.capture.sha256,
+        });
+        const overlayPreview = await createFixedRigOverlayPreview({
+          sourceImagePath: displayImage.outputFilePath,
+          outputDir: sideDir,
+          filePrefix: `${side}-all-on`,
+          quality: transformQualityForDisplay(allOn.stats, displayImage.displayTransform),
+          roiDefinitions: rois.map((roi) => (roi.displayRect ? { ...roi, rect: roi.displayRect } : roi)),
+          title: `${side} evidence overlay`,
+          displayTransform: displayImage.displayTransform,
+        });
+        const roiCrops = await createFixedRigRoiCrops({
+          sourceDisplayImagePath: displayImage.outputFilePath,
+          rawSourceImagePath: allOn.capture.outputFilePath,
+          outputDir: path.join(sideDir, "roi-crops"),
+          rois,
+          displayTransform: displayImage.displayTransform,
+          rawSourceSha256: allOn.capture.sha256,
+          filePrefix: side,
+        });
+        const surfaceAnalysis = buildFixedRigSurfaceAnalysis({
+          side,
+          channels: channels.map((channelCapture) => ({
+            channel: channelCapture.channel,
+            stats: channelCapture.stats,
+            displayImage: channelDisplayImages.find((entry) => entry.channel === channelCapture.channel)?.displayImage,
+          })),
+          warnings: allOn.stats.warnings,
+        });
+        const fixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
+          profileId: `${packageId}-${side}-rough-fixture-profile`,
+          fixtureLabel: parsed.fixtureLabel ?? "operator-built-fixed-position-v1-fixture",
+          fixtureId: parsed.fixtureId,
+          referenceType: (parsed.referenceType as any) ?? "card_dimensions",
+          referencePhysicalWidthMm: parsed.referenceWidthMm,
+          referencePhysicalHeightMm: parsed.referenceHeightMm,
+          horizontalSpanMm: parsed.horizontalSpanMm,
+          horizontalStartPx: parsed.horizontalStartPx,
+          horizontalEndPx: parsed.horizontalEndPx,
+          verticalSpanMm: parsed.verticalSpanMm,
+          verticalStartPx: parsed.verticalStartPx,
+          verticalEndPx: parsed.verticalEndPx,
+          calibrationImagePath: allOn.capture.outputFilePath,
+          rawImageWidth: allOn.stats.width,
+          rawImageHeight: allOn.stats.height,
+          cardBoundary: allOn.stats.cardBoundary,
+          activeLightingProfile,
+          exposureUs,
+          gain: parsed.gain ?? 0,
+          operatorAccepted: true,
+          operatorNotes:
+            parsed.referenceType === "fixed_metric_rulers"
+              ? "Generated from fixed-rig V1 evidence package using operator-supplied fixed-ruler spans; still uncalibrated and diagnostic only."
+              : "Generated from fixed-rig V1 evidence package; rough reference uses standard card dimensions.",
+        });
+        const diagnosticGrading = buildFixedRigDiagnosticGradingResult({
+          side,
+          quality: allOn.stats,
+          roiDefinitions: rois,
+          fixtureCalibrationProfile,
+          surfaceAnalysis,
+        });
+        return {
+          side,
+          safeOffBeforeDark,
+          darkControl: { capture: darkControl, stats: darkStats },
+          allOn,
+          acceptedProfile,
+          channels,
+          channelDisplayImages,
+          roiDefinitions: rois,
+          displayImage,
+          overlayPreview,
+          roiCrops,
+          fixtureCalibrationProfile,
+          surfaceAnalysis,
+          diagnosticGrading,
+        };
+      };
+      let safeOffEnd;
+      try {
+        const unitInfo = await leimacClient.readCommand("unitInfo");
+        if (!unitInfo.ok) throw new CaptureHelperCommandError("Leimac unit information read failed before evidence package.");
+        await baslerClient.configureLine2ExposureActive({
+          apply: true,
+          confirmation: BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+          cameraIndex: parsed.cameraIndex,
+          lineInverter: true,
+        });
+        const safeOffStart = await leimacClient.safeOff(true);
+        const front = parsed.evidenceSide === "front" || parsed.evidenceSide === "both" ? await runSide("front") : null;
+        const flipDelayMs = parsed.operatorFlipDelayMs ?? 0;
+        if (parsed.evidenceSide === "both" && flipDelayMs > 0) {
+          stderr(`Instruction: Front evidence package complete. Flip card to back side now; waiting ${flipDelayMs} ms.\n`);
+          await sleep(flipDelayMs);
+        }
+        const back = parsed.evidenceSide === "back" || parsed.evidenceSide === "both" ? await runSide("back") : null;
+        safeOffEnd = await leimacClient.safeOff(true);
+        const manifest = {
+          packageId,
+          packageDir,
+          status: "completed",
+          evidenceClass: "macro_fixed_rig_v1_uncalibrated",
+          isCalibrated: false,
+          rawCoordinateFrame: "basler_sensor_pixels",
+          displayCoordinateFrame: "ai_grader_card_portrait_display",
+          evidenceSide: parsed.evidenceSide,
+          activeLightingProfile,
+          exposureUs,
+          gain: parsed.gain ?? 0,
+          unitInfo,
+          safeOffStart,
+          safeOffEnd,
+          ...(front ? { front } : {}),
+          ...(back ? { back } : {}),
+          suggestedDinoLiteTargets: { status: "not_computed", reason: "surface anomaly detector not implemented yet" },
+          note: "Uncalibrated fixed-rig V1 evidence package only; no final grade, certificate, or certified grading claim.",
+        };
+        const manifestPath = path.join(packageDir, "manifest.json");
+        const analysisPath = path.join(packageDir, "analysis.json");
+        const previewReportPath = path.join(packageDir, "preview-report.html");
+        await writeFile(manifestPath, `${JSON.stringify({ ...manifest, manifestPath, analysisPath, previewReportPath }, null, 2)}\n`, "utf-8");
+        await writeFile(
+          analysisPath,
+          `${JSON.stringify(
+            {
+              status: "computed_diagnostic",
+              evidenceClass: manifest.evidenceClass,
+              activeLightingProfile,
+              ...(front
+                ? {
+                    front: {
+                      allOn: front.allOn.stats,
+                      acceptedProfile: front.acceptedProfile.stats,
+                      fixtureCalibrationProfile: front.fixtureCalibrationProfile,
+                      surfaceAnalysis: front.surfaceAnalysis,
+                      diagnosticGrading: front.diagnosticGrading,
+                    },
+                  }
+                : {}),
+              ...(back
+                ? {
+                    back: {
+                      allOn: back.allOn.stats,
+                      acceptedProfile: back.acceptedProfile.stats,
+                      fixtureCalibrationProfile: back.fixtureCalibrationProfile,
+                      surfaceAnalysis: back.surfaceAnalysis,
+                      diagnosticGrading: back.diagnosticGrading,
+                    },
+                  }
+                : {}),
+              finalGradeComputed: false,
+              certifiedClaim: false,
+            },
+            null,
+            2
+          )}\n`,
+          "utf-8"
+        );
+        await writeFile(
+          previewReportPath,
+          `<!doctype html><html><head><meta charset="utf-8"><title>Fixed-Rig V1 Evidence Package - Diagnostic</title><style>body{font-family:Arial,sans-serif;margin:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}img{max-width:100%;border:1px solid #aaa;background:#111}.warn{border-left:4px solid #a33;padding:8px 12px;background:#fff}table{border-collapse:collapse;width:100%;margin:8px 0 16px}td,th{border:1px solid #bbb;padding:6px 8px;text-align:left}</style></head><body><h1>Fixed-Rig V1 Evidence Package</h1><p class="warn">Uncalibrated diagnostic macro evidence package only. No final grade, certificate, or certified grading claim. Raw Basler evidence remains in sensor coordinates; display/ROI assets are derived portrait outputs.</p><p>Duty ${activeLightingProfile.selectedDutyPercent}% PWM ${activeLightingProfile.actualLeimacPwmStep}; channels ${activeLightingProfile.selectedChannels.join(", ")}; source ${activeLightingProfile.profileSource}; side ${parsed.evidenceSide}.</p>${front ? `<h2>Front Portrait Evidence</h2><img src="${front.displayImage.outputFilePath}" alt="front portrait all-on"><img src="${front.overlayPreview.outputFilePath}" alt="front portrait overlay"><p>Accepted profile raw capture: ${front.acceptedProfile.capture.outputFilePath}</p><p>Rough profile: ${front.fixtureCalibrationProfile.status}; pixel/mm ${front.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed"} x ${front.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed"}; diagnostic grading ${front.diagnosticGrading.status}; surface ${front.surfaceAnalysis.status}.</p><h3>Front 8-channel portrait displays</h3><div class="grid">${front.channelDisplayImages.map((entry) => `<figure><img src="${entry.displayImage.outputFilePath}" alt="front channel ${entry.channel} portrait"><figcaption>front channel ${entry.channel}</figcaption></figure>`).join("")}</div>` : ""}${back ? `<h2>Back Portrait Evidence</h2><img src="${back.displayImage.outputFilePath}" alt="back portrait all-on"><img src="${back.overlayPreview.outputFilePath}" alt="back portrait overlay"><p>Accepted profile raw capture: ${back.acceptedProfile.capture.outputFilePath}</p><p>Rough profile: ${back.fixtureCalibrationProfile.status}; pixel/mm ${back.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed"} x ${back.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed"}; diagnostic grading ${back.diagnosticGrading.status}; surface ${back.surfaceAnalysis.status}.</p><h3>Back 8-channel portrait displays</h3><div class="grid">${back.channelDisplayImages.map((entry) => `<figure><img src="${entry.displayImage.outputFilePath}" alt="back channel ${entry.channel} portrait"><figcaption>back channel ${entry.channel}</figcaption></figure>`).join("")}</div>` : ""}<h2>ROI Crops</h2><div class="grid">${[...(front?.roiCrops ?? []), ...(back?.roiCrops ?? [])].map((crop) => `<figure><img src="${crop.outputFilePath}" alt="${crop.roiId}"><figcaption>${crop.roiId}</figcaption></figure>`).join("")}</div><h2>Diagnostic JSON</h2><pre>${JSON.stringify({ front: front?.diagnosticGrading, back: back?.diagnosticGrading }, null, 2).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre></body></html>`,
+          "utf-8"
+        );
+        writeJson(stdout, {
+          ok: safeOffStart.ok && safeOffEnd.ok,
+          service: "ai-grader-capture-helper",
+          command: "ai-grader-fixed-rig-v1-evidence-package",
+          packageDir,
+          manifestPath,
+          analysisPath,
+          previewReportPath,
+          manifest: { ...manifest, manifestPath, analysisPath, previewReportPath },
+          operatorPrompt: "Review portrait evidence package and confirm final Leimac ring-light state is off after safe-off.",
+        });
+        return safeOffStart.ok && safeOffEnd.ok ? 0 : 1;
+      } catch (error) {
+        safeOffEnd = await leimacClient.safeOff(true);
+        const message = error instanceof Error ? error.message : "Unknown fixed-rig evidence package error.";
+        writeJson(stderr, { ok: false, service: "ai-grader-capture-helper", command: "ai-grader-fixed-rig-v1-evidence-package", packageDir, safeOffEnd, error: message });
+        return 1;
+      }
+    }
+
+    if (parsed.command === "leimac-channel-characterization") {
+      const {
+        LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION,
+        analyzeFixedRigMacroQuality,
+        analyzeFixedRigQuadrants,
+        assertFixedRigOutputDirAllowed,
+        buildLeimacChannelCharacterizationManifest,
+        buildLeimacCharacterizationFrames,
+        createFixedRigPackageDir,
+        writeLeimacChannelCharacterizationArtifacts,
+      } = await import("./drivers/baslerFixedRigV1");
+      const {
+        BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+        BaslerPylonClient,
+      } = await import("./drivers/baslerPylonClient");
+      const { LeimacIdmuClient } = await import("./drivers/leimacIdmuClient");
+
+      const duty = parsed.duty ?? 1;
+      const exposureUs = parsed.exposureUs ?? 45000;
+      if (!Number.isFinite(duty) || duty < 0 || duty > 5) {
+        throw new CaptureHelperCommandError("leimac-channel-characterization --duty must be from 0 to 5.");
+      }
+      if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
+        throw new CaptureHelperCommandError("leimac-channel-characterization --exposure-us must be from 1 to 100000.");
+      }
+
+      if (!parsed.apply) {
+        if (parsed.outputDir) {
+          assertFixedRigOutputDirAllowed(parsed.outputDir);
+        }
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "leimac-channel-characterization",
+          dryRun: true,
+          manifest: buildLeimacChannelCharacterizationManifest({
+            packageId: "planned-leimac-channel-characterization",
+            packageDir: parsed.outputDir ?? "",
+            status: "planned",
+            dutyPercent: duty,
+            exposureUs,
+            gain: parsed.gain ?? 0,
+          }),
+        });
+        return 0;
+      }
+      if (parsed.confirmation !== LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION) {
+        throw new CaptureHelperCommandError(`leimac-channel-characterization --apply requires --confirm "${LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION}".`);
+      }
+      if (!parsed.leimacHost) {
+        throw new CaptureHelperCommandError("leimac-channel-characterization --apply requires explicit --leimac-host <ip>.");
+      }
+      if (!parsed.markPresent) {
+        throw new CaptureHelperCommandError("leimac-channel-characterization --apply requires --mark-present.");
+      }
+      if (!parsed.wiringConfirmed) {
+        throw new CaptureHelperCommandError("leimac-channel-characterization --apply requires --wiring-confirmed.");
+      }
+      if (!parsed.leimacStatusGreen) {
+        throw new CaptureHelperCommandError("leimac-channel-characterization --apply requires --leimac-status-green.");
+      }
+      if (!parsed.operatorConfirmedLightIdleOff) {
+        throw new CaptureHelperCommandError("leimac-channel-characterization --apply requires --operator-confirmed-light-idle-off.");
+      }
+
+      const env = io.env ?? process.env;
+      const { packageId, packageDir } = await createFixedRigPackageDir(parsed.outputDir ?? "", "leimac-channel-characterization");
+      const leimacClient = new LeimacIdmuClient({
+        host: parsed.leimacHost,
+        port: parsed.leimacPort,
+        timeoutMs: parsed.leimacTimeoutMs,
+        unit: parsed.leimacUnit,
+      });
+      const baslerClient = new BaslerPylonClient({
+        pylonRoot: parsed.pylonRoot ?? env.TENKINGS_BASLER_PYLON_ROOT ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT,
+        bridgeScriptPath: parsed.baslerBridgeScript,
+        timeoutMs: parsed.pylonTimeoutMs,
+        env,
+      });
+      let safeOffEnd: Awaited<ReturnType<typeof leimacClient.safeOff>> | undefined;
+      try {
+        const unitInfo = await leimacClient.readCommand("unitInfo");
+        if (!unitInfo.ok) {
+          throw new CaptureHelperCommandError("Leimac unit information read failed before channel characterization.");
+        }
+        await baslerClient.configureLine2ExposureActive({
+          apply: true,
+          confirmation: BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+          cameraIndex: parsed.cameraIndex,
+          lineInverter: true,
+        });
+
+        const safeOffStart = await leimacClient.safeOff(true);
+        const darkCapture = await baslerClient.captureStill({
+          outputDir: packageDir,
+          label: "leimac-channel-dark-control",
+          cameraIndex: parsed.cameraIndex,
+          savedFormat: "png",
+          lensModel: env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
+          exposureUs,
+        });
+        const darkStats = await analyzeFixedRigMacroQuality(darkCapture.outputFilePath);
+
+        const runProfileCapture = async (label: string, channel: number | "all") => {
+          const safeOffBefore = await leimacClient.safeOff(true);
+          const frames = buildLeimacCharacterizationFrames({ channel, dutyPercent: duty, unit: parsed.leimacUnit });
+          const writes = await leimacClient.applyAllowlistedFrames(frames);
+          if (!writes.every((write) => write.ok)) {
+            const safeOffAfterFailure = await leimacClient.safeOff(true);
+            return {
+              frames,
+              writes,
+              safeOffBefore,
+              safeOffAfter: safeOffAfterFailure,
+              error: writes.find((write) => !write.ok)?.error ?? "Leimac channel characterization write failed.",
+            };
+          }
+          const capture = await baslerClient.captureStill({
+            outputDir: packageDir,
+            label,
+            cameraIndex: parsed.cameraIndex,
+            savedFormat: "png",
+            lensModel: env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
+            exposureUs,
+          });
+          const stats = await analyzeFixedRigMacroQuality(capture.outputFilePath);
+          const quadrantBrightness = await analyzeFixedRigQuadrants(capture.outputFilePath);
+          const safeOffAfter = await leimacClient.safeOff(true);
+          return { frames, writes, safeOffBefore, safeOffAfter, capture, stats, quadrantBrightness };
+        };
+
+        const allOnResult = await runProfileCapture("leimac-channel-all-on", "all");
+        const channels = [];
+        for (let channel = 1; channel <= 8; channel += 1) {
+          const result = await runProfileCapture(`leimac-channel-${channel}`, channel);
+          channels.push({
+            channel,
+            label: `channel ${channel}`,
+            status: result.capture ? "captured" as const : "failed" as const,
+            frames: result.frames,
+            safeOffBefore: result.safeOffBefore,
+            safeOffAfter: result.safeOffAfter,
+            writes: result.writes,
+            ...(result.capture ? { capture: result.capture } : {}),
+            ...(result.stats ? { stats: result.stats } : {}),
+            ...(result.quadrantBrightness ? { quadrantBrightness: result.quadrantBrightness } : {}),
+            ...(result.error ? { error: result.error } : {}),
+          });
+          if (result.error) break;
+        }
+        safeOffEnd = await leimacClient.safeOff(true);
+        const manifest = buildLeimacChannelCharacterizationManifest({
+          packageId,
+          packageDir,
+          status: channels.every((channel) => channel.status === "captured") ? "completed" : "aborted",
+          dutyPercent: duty,
+          exposureUs,
+          gain: parsed.gain ?? 0,
+          unitInfo,
+          darkControl: { capture: darkCapture, stats: darkStats },
+          allOn: {
+            frames: allOnResult.frames,
+            ...(allOnResult.capture ? { capture: allOnResult.capture } : {}),
+            ...(allOnResult.stats ? { stats: allOnResult.stats } : {}),
+            ...(allOnResult.quadrantBrightness ? { quadrantBrightness: allOnResult.quadrantBrightness } : {}),
+          },
+          channels,
+          finalLightOffConfirmedByMark: false,
+        });
+        const writtenManifest = await writeLeimacChannelCharacterizationArtifacts(manifest);
+        writeJson(stdout, {
+          ok: manifest.status === "completed" && safeOffEnd.ok && safeOffStart.ok,
+          service: "ai-grader-capture-helper",
+          command: "leimac-channel-characterization",
+          packageDir,
+          safeOffStart,
+          safeOffEnd,
+          manifestPath: writtenManifest.manifestPath,
+          analysisPath: writtenManifest.analysisPath,
+          previewReportPath: writtenManifest.previewReportPath,
+          manifest: writtenManifest,
+          operatorPrompt: "Review channel report/contact sheet and confirm final Leimac ring-light state is off after safe-off.",
+        });
+        return manifest.status === "completed" && safeOffEnd.ok && safeOffStart.ok ? 0 : 1;
+      } catch (error) {
+        safeOffEnd = await leimacClient.safeOff(true);
+        const message = error instanceof Error ? error.message : "Unknown Leimac channel characterization error.";
+        writeJson(stderr, {
+          ok: false,
+          service: "ai-grader-capture-helper",
+          command: "leimac-channel-characterization",
+          packageDir,
+          safeOffEnd,
           error: message,
         });
         return 1;

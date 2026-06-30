@@ -1,5 +1,6 @@
 const os = require("node:os");
 const path = require("node:path");
+const fs = require("node:fs");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
@@ -14,12 +15,33 @@ const {
 const {
   AI_GRADER_FIXED_RIG_V1_CONFIRMATION,
   BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION,
+  BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION,
+  FIXED_RIG_FIXTURE_CALIBRATION_CONFIRMATION,
+  FIXED_RIG_REPEATABILITY_TEST_CONFIRMATION,
+  LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION,
+  applyFixedRigCardBoundaryOverride,
+  buildFixedRigActiveLightingProfile,
+  buildFixedRigCalibrationProfile,
+  buildFixedRigDiagnosticGradingResult,
+  buildFixedRigFixtureCalibrationProfile,
   buildFixedRigFocusAssistManifest,
   buildFixedRigLightingProfilePlan,
+  buildFixedRigOperatorPreviewManifest,
+  buildFixedRigRepeatabilityRun,
+  buildFixedRigRepeatabilitySummary,
   buildFixedRigSideCapture,
+  buildFixedRigSurfaceAnalysis,
   buildFixedRigV1LocalManifest,
+  buildLeimacChannelCharacterizationManifest,
+  buildLeimacCharacterizationFrames,
+  readFixedRigActiveLightingProfile,
   renderFixedRigFocusAssistReport,
+  renderFixedRigFixtureCalibrationReport,
+  renderFixedRigOperatorPreviewReport,
+  renderFixedRigRepeatabilityReport,
   renderFixedRigV1Report,
+  renderLeimacChannelCharacterizationReport,
+  writeFixedRigActiveLightingProfile,
 } = require("../dist/drivers/baslerFixedRigV1");
 const {
   BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
@@ -31,7 +53,7 @@ const {
   buildBaslerLeimacPolaritySmokePlan,
   buildBaslerLeimacSyncSmokeManifest,
 } = require("../dist/drivers/baslerLeimacSync");
-const { buildBaslerLine2ExposureActivePlan } = require("../dist/drivers/baslerPylonClient");
+const { BaslerPylonClient, buildBaslerLine2ExposureActivePlan } = require("../dist/drivers/baslerPylonClient");
 const { buildLeimacIdmuTriggerProfilePlan } = require("../dist/drivers/leimacIdmuClient");
 const { runCaptureHelperCli } = require("../dist/cli");
 
@@ -727,7 +749,7 @@ test("Fixed-rig lighting profile plan is dry-run and does not invent channel map
   const plan = buildFixedRigLightingProfilePlan();
   assert.equal(plan.dryRun, true);
   assert.equal(plan.selectedLightingProfile, "line2-inverter-level-low-v0");
-  assert.equal(plan.channelMappingStatus, "not_calibrated");
+  assert.equal(plan.channelMappingStatus, "unknown");
   assert.equal(plan.safety.writesApplied, false);
   assert.equal(plan.safety.lightsCommanded, false);
   assert.equal(plan.safety.channelPhysicalMappingInvented, false);
@@ -736,7 +758,7 @@ test("Fixed-rig lighting profile plan is dry-run and does not invent channel map
   const cli = await runCli(["fixed-rig-lighting-profile-plan"]);
   assert.equal(cli.code, 0);
   assert.equal(cli.stdout.plan.dryRun, true);
-  assert.equal(cli.stdout.plan.channelMappingStatus, "not_calibrated");
+  assert.equal(cli.stdout.plan.channelMappingStatus, "unknown");
 });
 
 test("Fixed-rig focus assist manifest reports manual focus metrics without autofocus claims", () => {
@@ -769,12 +791,786 @@ test("Fixed-rig focus assist manifest reports manual focus metrics without autof
 
   assert.equal(manifest.operatorGuidance.manualFocusOnly, true);
   assert.equal(manifest.operatorGuidance.autofocusClaimed, false);
+  assert.equal(manifest.calibrationProfile.isCalibrated, false);
+  assert.equal(manifest.calibrationProfile.calibrationStatus, "framing_assisted");
+  assert.equal(manifest.calibrationProfile.pixelToMmEstimateStatus, "estimated_uncalibrated");
+  assert.equal(manifest.calibrationProfile.focusLockedByOperator, false);
+  assert.equal(manifest.roiDefinitions.some((roi) => roi.id === "full-card" && roi.status === "computed"), true);
+  assert.equal(manifest.suggestedDinoLiteTargets.status, "not_computed");
   assert.equal(manifest.quality.sharpnessScore, 42);
   assert.equal(manifest.quality.cardBoundary.status, "detected");
   assert.equal(manifest.safety.persistentBaslerSaved, false);
   assert.equal(manifest.safety.persistentLeimacSaved, false);
   assert.match(renderFixedRigFocusAssistReport(manifest), /Manual focus assist only/i);
   assert.doesNotMatch(JSON.stringify(manifest).toLowerCase(), /autofocusclaimed":true|"iscalibrated":true|certifiedgrading":true/);
+});
+
+test("Fixed-rig calibration profile defaults are uncalibrated and estimate pixel scale only with boundary", () => {
+  const withoutBoundary = buildFixedRigCalibrationProfile({
+    profileId: "profile-no-boundary",
+    imageWidth: 2448,
+    imageHeight: 2048,
+  });
+  assert.equal(withoutBoundary.isCalibrated, false);
+  assert.equal(withoutBoundary.lensDistortionCalibrated, false);
+  assert.equal(withoutBoundary.lightingCalibrated, false);
+  assert.equal(withoutBoundary.focusLockedByOperator, false);
+  assert.equal(withoutBoundary.pixelToMmEstimateStatus, "not_computed");
+  assert.equal(withoutBoundary.cameraSerialRedacted, true);
+
+  const withBoundary = buildFixedRigCalibrationProfile({
+    profileId: "profile-boundary",
+    cardBoundary: fakeFixedRigQuality().cardBoundary,
+    focusLockedByOperator: true,
+    calibrationStatus: "focus_assisted",
+  });
+  assert.equal(withBoundary.isCalibrated, false);
+  assert.equal(withBoundary.focusLockedByOperator, true);
+  assert.equal(withBoundary.calibrationStatus, "focus_assisted");
+  assert.equal(withBoundary.pixelToMmEstimateStatus, "estimated_uncalibrated");
+  assert.equal(withBoundary.pixelToMmOrientationUsed, "raw_landscape_rotated_to_portrait");
+  assert.equal(withBoundary.pixelToMmEstimateX, 0.04445);
+  assert.equal(withBoundary.pixelToMmEstimateY, 0.037353);
+  assert.equal(withBoundary.pixelToMmConsistency.status, "warn");
+});
+
+test("Fixed-rig rough fixture calibration profile remains uncalibrated and records reference metadata", () => {
+  const activeLightingProfile = buildFixedRigActiveLightingProfile({
+    selectedDutyPercent: 1.3,
+    selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+    profileSource: "operator_preview",
+    acceptedAt: "2026-06-30T10:00:00.000Z",
+  });
+  const profile = buildFixedRigFixtureCalibrationProfile({
+    profileId: "rough-fixture",
+    fixtureId: "fixture-v1",
+    fixtureLabel: "fixed card L-stop",
+    referenceType: "card_dimensions",
+    referencePhysicalWidthMm: 63.5,
+    referencePhysicalHeightMm: 88.9,
+    rawImageWidth: 2448,
+    rawImageHeight: 2048,
+    cardBoundary: fakeFixedRigQuality().cardBoundary,
+    activeLightingProfile,
+    exposureUs: 45000,
+    gain: 0,
+    operatorAccepted: true,
+    operatorNotes: "standard card in fixed fixture",
+  });
+
+  assert.equal(profile.status, "rough_reference_unvalidated");
+  assert.equal(profile.isCalibrated, false);
+  assert.equal(profile.referenceType, "card_dimensions");
+  assert.equal(profile.rawCoordinateFrame, "basler_sensor_pixels");
+  assert.equal(profile.displayCoordinateFrame, "ai_grader_card_portrait_display");
+  assert.equal(profile.displayTransform, "rotate90cw");
+  assert.equal(profile.lensDistortionStatus, "not_computed");
+  assert.equal(profile.homographyStatus, "not_computed");
+  assert.equal(profile.lightingProfileUsed.selectedDutyPercent, 1.3);
+  assert.equal(profile.operatorAccepted, true);
+  assert.match(profile.warning, /Rough fixture calibration/i);
+  assert.doesNotMatch(JSON.stringify(profile).toLowerCase(), /"iscalibrated":true|production calibrated/);
+  assert.match(
+    renderFixedRigFixtureCalibrationReport({
+      status: "captured",
+      activeLightingProfile,
+      quality: fakeFixedRigQuality(),
+      roiDefinitions: [],
+      fixtureCalibrationProfile: profile,
+      warning: "Rough only.",
+    }),
+    /Rough Fixture Calibration/i
+  );
+});
+
+test("Fixed-rig ruler calibration uses fixed ruler spans as the measurement reference", async () => {
+  const activeLightingProfile = buildFixedRigActiveLightingProfile({
+    selectedDutyPercent: 1.4,
+    selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+    profileSource: "operator_preview",
+    acceptedAt: "2026-06-30T10:30:00.000Z",
+  });
+  const profile = buildFixedRigFixtureCalibrationProfile({
+    profileId: "ruler-fixture",
+    fixtureLabel: "fixed ruler fixture",
+    referenceType: "fixed_metric_rulers",
+    horizontalSpanMm: 50,
+    horizontalStartPx: { x: 100, y: 100 },
+    horizontalEndPx: { x: 1100, y: 100 },
+    verticalSpanMm: 50,
+    verticalStartPx: { x: 120, y: 120 },
+    verticalEndPx: { x: 120, y: 1120 },
+    calibrationImagePath: path.join(os.tmpdir(), "calibration.png"),
+    rawImageWidth: 2448,
+    rawImageHeight: 2048,
+    cardBoundary: fakeFixedRigQuality().cardBoundary,
+    activeLightingProfile,
+    operatorAccepted: true,
+  });
+
+  assert.equal(profile.referenceType, "fixed_metric_rulers");
+  assert.equal(profile.status, "ruler_reference_unvalidated");
+  assert.equal(profile.isCalibrated, false);
+  assert.equal(profile.pixelPerMmX, 20);
+  assert.equal(profile.pixelPerMmY, 20);
+  assert.equal(profile.mmPerPixelX, 0.05);
+  assert.equal(profile.mmPerPixelY, 0.05);
+  assert.equal(profile.overlayScaleSource, "fixed_metric_rulers");
+  assert.equal(profile.productionReadiness.status, "rejected");
+  assert.equal(profile.productionReadiness.gates.repeatability, "not_checked");
+  assert.match(JSON.stringify(profile.productionReadiness.blockers), /Repeatability|Final physical ring-light off/);
+
+  const outputDir = path.join(os.tmpdir(), "fixed-rig-ruler-cli-test");
+  const dryRun = await runCli([
+    "fixed-rig-fixture-calibration",
+    "--output-dir",
+    outputDir,
+    "--reference-type",
+    "fixed_metric_rulers",
+    "--horizontal-span-mm",
+    "50",
+    "--horizontal-start-px",
+    "100,100",
+    "--horizontal-end-px",
+    "1100,100",
+    "--vertical-span-mm",
+    "50",
+    "--vertical-start-px",
+    "120,120",
+    "--vertical-end-px",
+    "120,1120",
+  ]);
+  assert.equal(dryRun.code, 0);
+  assert.equal(dryRun.stdout.fixtureCalibrationProfile.referenceType, "fixed_metric_rulers");
+  assert.equal(dryRun.stdout.fixtureCalibrationProfile.pixelPerMmX, 20);
+
+  const missingPoints = await runCli(["fixed-rig-fixture-calibration", "--reference-type", "fixed_metric_rulers"]);
+  assert.equal(missingPoints.code, 1);
+  assert.match(missingPoints.stderr.error, /horizontal-span-mm/);
+});
+
+test("Fixed-rig framing gate fails when detected card touches image boundary", () => {
+  const profile = buildFixedRigFixtureCalibrationProfile({
+    profileId: "touching-boundary",
+    referenceType: "fixed_metric_rulers",
+    horizontalSpanMm: 50,
+    horizontalStartPx: { x: 0, y: 10 },
+    horizontalEndPx: { x: 1000, y: 10 },
+    verticalSpanMm: 50,
+    verticalStartPx: { x: 10, y: 0 },
+    verticalEndPx: { x: 10, y: 1000 },
+    rawImageWidth: 2448,
+    rawImageHeight: 2048,
+    cardBoundary: {
+      status: "detected",
+      x: 0,
+      y: 5,
+      width: 1800,
+      height: 1900,
+      coverage: 0.68,
+      confidence: 0.65,
+    },
+  });
+
+  assert.equal(profile.framingGate.status, "fail");
+  assert.match(profile.framingGate.warnings.join(" "), /touches the image boundary/);
+  assert.equal(profile.productionReadiness.status, "rejected");
+  assert.match(profile.productionReadiness.blockers.join(" "), /framing/);
+});
+
+test("Fixed-rig operator card boundary override keeps ruler calibration auditable", async () => {
+  const quality = applyFixedRigCardBoundaryOverride(fakeFixedRigQuality({
+    cardBoundary: {
+      status: "detected",
+      x: 0,
+      y: 0,
+      width: 2448,
+      height: 2048,
+      coverage: 1,
+      confidence: 0.35,
+    },
+  }), { x: 285, y: 349, width: 1878, height: 1350 });
+
+  assert.equal(quality.cardBoundary.x, 285);
+  assert.equal(quality.cardBoundary.width, 1878);
+  assert.match(quality.cardBoundary.reason, /Operator-entered/);
+  assert.equal(quality.overlayAlignment.overlayAlignmentStatus, "pass");
+  assert.match(quality.warnings.join(" "), /operator-entered/i);
+
+  const dryRun = await runCli([
+    "fixed-rig-fixture-calibration",
+    "--output-dir",
+    path.join(os.tmpdir(), "fixed-rig-card-boundary-cli-test"),
+    "--reference-type",
+    "fixed_metric_rulers",
+    "--horizontal-span-mm",
+    "50.8",
+    "--horizontal-start-px",
+    "540,205",
+    "--horizontal-end-px",
+    "1620,205",
+    "--vertical-span-mm",
+    "50.8",
+    "--vertical-start-px",
+    "2295,145",
+    "--vertical-end-px",
+    "2295,1218",
+    "--card-boundary-rect",
+    "285,349,1878,1350",
+  ]);
+  assert.equal(dryRun.code, 0);
+});
+
+test("Fixed-rig repeatability summary aggregates diagnostic variation without calibrating", () => {
+  const base = fakeFixedRigQuality();
+  const run1 = buildFixedRigRepeatabilityRun({ index: 1, phase: "no_touch", capture: fakeCapture(), quality: base });
+  const run2 = buildFixedRigRepeatabilityRun({
+    index: 2,
+    phase: "no_touch",
+    capture: { ...fakeCapture(), outputFilePath: path.join(os.tmpdir(), "repeatability-2.png") },
+    quality: fakeFixedRigQuality({
+      mean: base.mean + 1,
+      sharpnessScore: base.sharpnessScore + 3,
+      cardBoundary: { ...base.cardBoundary, x: base.cardBoundary.x + 2, y: base.cardBoundary.y + 1 },
+    }),
+  });
+  const summary = buildFixedRigRepeatabilitySummary([run1, run2], "no_touch");
+
+  assert.equal(summary.status, "computed");
+  assert.equal(summary.runCount, 2);
+  assert.equal(["pass", "warn", "fail"].includes(summary.repeatabilityStatus), true);
+  assert.equal(summary.overlayAlignmentCounts.pass + summary.overlayAlignmentCounts.warn + summary.overlayAlignmentCounts.fail + summary.overlayAlignmentCounts.notComputed, 2);
+  assert.equal(summary.sharpnessVariation, 3);
+  assert.doesNotMatch(JSON.stringify(summary).toLowerCase(), /finalgrade|certified/);
+  assert.match(
+    renderFixedRigRepeatabilityReport({
+      packageId: "repeatability",
+      packageDir: path.join(os.tmpdir(), "repeatability"),
+      status: "completed",
+      phase: "no_touch",
+      requestedCaptureCount: 2,
+      activeLightingProfile: buildFixedRigActiveLightingProfile(),
+      runs: [run1, run2],
+      summary,
+      safety: {
+        localOnly: true,
+        diagnosticOnly: true,
+        safeOffBeforeEachCapture: true,
+        safeOffAfterEachCapture: true,
+        persistentBaslerSaved: false,
+        persistentLeimacSaved: false,
+        finalLightOffConfirmedByMark: false,
+      },
+      warning: "Diagnostic only.",
+    }),
+    /Repeatability Summary/i
+  );
+});
+
+test("Fixed-rig diagnostic grading and surface analysis are preliminary and do not output final grades", () => {
+  const quality = fakeFixedRigQuality({
+    overlayAlignment: {
+      templateRect: { x: 180, y: 130, width: 2050, height: 1750 },
+      detectedBoundaryRect: { x: 200, y: 150, width: 2000, height: 1700 },
+      centerOffsetPx: { x: 5, y: 4 },
+      centerOffsetMm: { x: 0.2, y: 0.15 },
+      marginLeft: 200,
+      marginRight: 248,
+      marginTop: 150,
+      marginBottom: 198,
+      detectedAspectRatio: 1.176471,
+      expectedAspectRatio: 1.4,
+      orientationUsed: "raw_landscape_rotated_to_portrait",
+      overlayAlignmentStatus: "warn",
+      warnings: ["test alignment warning"],
+    },
+  });
+  const rois = buildFixedRigSideCapture({
+    side: "front",
+    macroPackage: buildBaslerLeimacMacroPackageManifest({
+      status: "captured",
+      packageId: "macro",
+      packageDir: path.join(os.tmpdir(), "fixed-rig-v1", "macro"),
+      leimacHost: "169.254.191.156",
+      leimacPort: 1000,
+      leimacProfilePlan: buildLeimacIdmuTriggerProfilePlan({ dutyPercent: 1.3, unit: 1 }),
+      requestedExposureUs: 45000,
+      dutyPercent: 1.3,
+      synced: { capture: fakeCapture(), stats: quality },
+      supervised: true,
+      safeOffBefore: true,
+      safeOffAfter: true,
+    }),
+    quality,
+    activeLightingProfile: buildFixedRigActiveLightingProfile({ selectedDutyPercent: 1.3, profileSource: "operator_preview" }),
+  }).roiDefinitions;
+  const surfaceAnalysis = buildFixedRigSurfaceAnalysis({
+    side: "front",
+    channels: Array.from({ length: 8 }, (_, index) => ({ channel: index + 1, stats: fakeFixedRigQuality({ mean: 40 + index }) })),
+  });
+  const diagnostic = buildFixedRigDiagnosticGradingResult({
+    side: "front",
+    quality,
+    roiDefinitions: rois,
+    fixtureCalibrationProfile: buildFixedRigFixtureCalibrationProfile({
+      profileId: "rough",
+      cardBoundary: quality.cardBoundary,
+      activeLightingProfile: buildFixedRigActiveLightingProfile({ selectedDutyPercent: 1.3 }),
+      operatorAccepted: true,
+    }),
+    surfaceAnalysis,
+  });
+
+  assert.equal(surfaceAnalysis.detectorId, "preliminary_surface_anomaly_detector_v0");
+  assert.equal(surfaceAnalysis.perChannelStats.length, 8);
+  assert.equal(surfaceAnalysis.candidates.length, 0);
+  assert.equal(diagnostic.diagnosticOnly, true);
+  assert.equal(diagnostic.finalGradeComputed, false);
+  assert.equal(diagnostic.certifiedClaim, false);
+  assert.equal(diagnostic.centering.status, "computed_diagnostic");
+  assert.equal(diagnostic.corners.topLeft.status, "computed_diagnostic");
+  assert.equal(diagnostic.surface.status, "not_computed");
+  assert.doesNotMatch(JSON.stringify(diagnostic).toLowerCase(), /finalgradecomputed":true|certifiedclaim":true/);
+});
+
+test("Fixed-rig active lighting profile persists accepted preview duty and channels outside repo", async () => {
+  const outputRoot = path.join(os.tmpdir(), "fixed-rig-calibration-active-profile-test");
+  const outputDir = path.join(outputRoot, "fixed-rig-calibration");
+  const profile = buildFixedRigActiveLightingProfile({
+    selectedDutyPercent: 1.4,
+    selectedChannels: [1, 3, 5, 7],
+    profileSource: "operator_preview",
+    acceptedAt: "2026-06-29T22:00:00.000Z",
+  });
+  const profilePath = await writeFixedRigActiveLightingProfile(outputDir, profile);
+  const readBack = await readFixedRigActiveLightingProfile(outputDir);
+
+  assert.equal(profilePath.endsWith("fixed-rig-active-lighting-profile.json"), true);
+  assert.equal(readBack.selectedDutyPercent, 1.4);
+  assert.equal(readBack.actualLeimacPwmStep, 14);
+  assert.deepEqual(readBack.selectedChannels, [1, 3, 5, 7]);
+  assert.equal(readBack.profileSource, "operator_preview");
+  assert.equal(readBack.persistentLeimacSaved, false);
+});
+
+test("Fixed-rig commands carry accepted preview lighting profile unless overridden", async () => {
+  const outputRoot = path.join(os.tmpdir(), "fixed-rig-active-profile-carryover-test");
+  const calibrationDir = path.join(outputRoot, "fixed-rig-calibration");
+  const captureDir = path.join(outputRoot, "fixed-rig-v1");
+  await writeFixedRigActiveLightingProfile(
+    calibrationDir,
+    buildFixedRigActiveLightingProfile({
+      selectedDutyPercent: 1.4,
+      selectedChannels: [2, 4, 6, 8],
+      profileSource: "operator_preview",
+      acceptedAt: "2026-06-29T22:10:00.000Z",
+    })
+  );
+
+  const focusDryRun = await runCli(["basler-fixed-rig-focus-assist", "--output-dir", captureDir, "--exposure-us", "45000"]);
+  assert.equal(focusDryRun.code, 0);
+  assert.equal(focusDryRun.stdout.manifest.activeLightingProfile.selectedDutyPercent, 1.4);
+  assert.deepEqual(focusDryRun.stdout.manifest.activeLightingProfile.selectedChannels, [2, 4, 6, 8]);
+  assert.equal(focusDryRun.stdout.manifest.activeLightingProfile.profileSource, "operator_preview");
+  assert.equal(focusDryRun.stdout.manifest.calibrationProfile.selectedLeimacDuty, 1.4);
+
+  const fixedRigDryRun = await runCli(["ai-grader-fixed-rig-v1-local", "--output-dir", captureDir, "--exposure-us", "45000"]);
+  assert.equal(fixedRigDryRun.code, 0);
+  assert.equal(fixedRigDryRun.stdout.manifest.activeLightingProfile.selectedDutyPercent, 1.4);
+  assert.deepEqual(fixedRigDryRun.stdout.manifest.activeLightingProfile.selectedChannels, [2, 4, 6, 8]);
+
+  const evidenceDryRun = await runCli(["ai-grader-fixed-rig-v1-evidence-package", "--output-dir", captureDir, "--exposure-us", "45000"]);
+  assert.equal(evidenceDryRun.code, 0);
+  assert.equal(evidenceDryRun.stdout.activeLightingProfile.selectedDutyPercent, 1.4);
+  assert.deepEqual(evidenceDryRun.stdout.activeLightingProfile.selectedChannels, [2, 4, 6, 8]);
+  assert.deepEqual(evidenceDryRun.stdout.plan.sides, ["front", "back"]);
+  assert.deepEqual(evidenceDryRun.stdout.plan.capturesPerSide, [
+    "dark-control",
+    "all-on",
+    "accepted-lighting-profile",
+    "channel-1",
+    "channel-2",
+    "channel-3",
+    "channel-4",
+    "channel-5",
+    "channel-6",
+    "channel-7",
+    "channel-8",
+  ]);
+
+  const rulerEvidenceDryRun = await runCli([
+    "ai-grader-fixed-rig-v1-evidence-package",
+    "--output-dir",
+    captureDir,
+    "--reference-type",
+    "fixed_metric_rulers",
+    "--horizontal-span-mm",
+    "50.8",
+    "--horizontal-start-px",
+    "540,205",
+    "--horizontal-end-px",
+    "1620,205",
+    "--vertical-span-mm",
+    "50.8",
+    "--vertical-start-px",
+    "2295,145",
+    "--vertical-end-px",
+    "2295,1218",
+    "--card-boundary-rect",
+    "285,349,1878,1350",
+  ]);
+  assert.equal(rulerEvidenceDryRun.code, 0);
+  assert.equal(rulerEvidenceDryRun.stdout.plan.referenceType, "fixed_metric_rulers");
+  assert.equal(rulerEvidenceDryRun.stdout.plan.rulerSpans.horizontalSpanMm, 50.8);
+  assert.deepEqual(rulerEvidenceDryRun.stdout.plan.rulerSpans.horizontalStartPx, { x: 540, y: 205 });
+  assert.deepEqual(rulerEvidenceDryRun.stdout.plan.cardBoundaryRect, { x: 285, y: 349, width: 1878, height: 1350 });
+
+  const missingRulerEvidenceDryRun = await runCli([
+    "ai-grader-fixed-rig-v1-evidence-package",
+    "--output-dir",
+    captureDir,
+    "--reference-type",
+    "fixed_metric_rulers",
+  ]);
+  assert.equal(missingRulerEvidenceDryRun.code, 1);
+  assert.match(missingRulerEvidenceDryRun.stderr.error, /fixed_metric_rulers requires/);
+
+  const calibrationDryRun = await runCli(["fixed-rig-fixture-calibration", "--output-dir", captureDir, "--reference-type", "card_dimensions"]);
+  assert.equal(calibrationDryRun.code, 0);
+  assert.equal(calibrationDryRun.stdout.activeLightingProfile.selectedDutyPercent, 1.4);
+  assert.equal(calibrationDryRun.stdout.fixtureCalibrationProfile.isCalibrated, false);
+  assert.equal(calibrationDryRun.stdout.fixtureCalibrationProfile.referenceType, "card_dimensions");
+
+  const repeatabilityDryRun = await runCli(["fixed-rig-repeatability-test", "--output-dir", captureDir, "--repeatability-phase", "no-touch"]);
+  assert.equal(repeatabilityDryRun.code, 0);
+  assert.equal(repeatabilityDryRun.stdout.activeLightingProfile.selectedDutyPercent, 1.4);
+  assert.equal(repeatabilityDryRun.stdout.requestedCaptureCount, 5);
+
+  const overrideDryRun = await runCli(["basler-fixed-rig-focus-assist", "--output-dir", captureDir, "--duty", "1.3", "--exposure-us", "45000"]);
+  assert.equal(overrideDryRun.code, 0);
+  assert.equal(overrideDryRun.stdout.manifest.activeLightingProfile.selectedDutyPercent, 1.3);
+  assert.equal(overrideDryRun.stdout.manifest.activeLightingProfile.profileSource, "cli_override");
+
+  const frontOnlyDryRun = await runCli(["ai-grader-fixed-rig-v1-evidence-package", "--output-dir", captureDir, "--evidence-side", "front"]);
+  assert.equal(frontOnlyDryRun.code, 0);
+  assert.deepEqual(frontOnlyDryRun.stdout.plan.sides, ["front"]);
+
+  const backOnlyDryRun = await runCli(["ai-grader-fixed-rig-v1-evidence-package", "--output-dir", captureDir, "--evidence-side", "back"]);
+  assert.equal(backOnlyDryRun.code, 0);
+  assert.deepEqual(backOnlyDryRun.stdout.plan.sides, ["back"]);
+});
+
+test("Fixed-rig operator preview manifest requires a live-stream window and keeps overlays out of raw evidence", async () => {
+  const livePreview = {
+    windowVisible: true,
+    implementationType: "windows_winforms_pylon_live_stream",
+    framesUpdateAutomatically: true,
+    fps: 12.5,
+    frameAgeMs: 38,
+    skippedStaleFrames: 4,
+    frameSource: "pylon_stream_grabber_retrieve_result_latest_images_threaded_csharp",
+    framesDisplayed: 8,
+    overlayVisible: true,
+    metricsVisible: true,
+    displayOrientation: "portrait_rotated_90_for_operator_preview",
+    rawCaptureOrientation: "unchanged_unrotated_sensor_pixels",
+    sidebarLayout: "right_vertical_sidebar",
+    operatorDecision: "accepted",
+    lastFramePath: path.join(os.tmpdir(), "fixed-rig-calibration", "preview", "operator-preview-window-last-frame.png"),
+    lastFrameSha256: "b".repeat(64),
+    lastFrameByteSize: 4321,
+    lastMetrics: {
+      mean: 70,
+      max: 255,
+      clippedFraction: 0.01,
+      darkFraction: 0.001,
+      sharpness: 24,
+    },
+    lastError: null,
+    previewLighting: {
+      controlsVisible: true,
+      controlsEnabled: true,
+      masterLightOn: false,
+      currentDutyPercent: 1.2,
+      requestedDutyPercent: 1.2,
+      actualAppliedDutyPercent: 0,
+      actualAppliedPwmStep: 0,
+      actualAppliedPwmValue: "0000",
+      defaultV1DutyMarkerPercent: 1.2,
+      maxDutyPercent: 5.0,
+      selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+      channelMappingStatus: "unknown_uncalibrated",
+      safeOffOnExit: true,
+      leimacEngagedDuringPreview: true,
+      lastApplyLatencyMs: 42,
+      lastResponses: ["W86ACK0", "W85ACK0", "W11ACK0"],
+    },
+    camera: fakeCapture().camera,
+    exposureTime: 45000,
+    gain: 0,
+    sourcePixelFormat: "Mono8",
+    transport: "GigE",
+    pylon: fakeCapture().pylon,
+    safety: {
+      leimacRequired: false,
+      leimacEngaged: false,
+      persistentBaslerSaved: false,
+      persistentLeimacSaved: false,
+      overlaysBakedIntoRawEvidence: false,
+      rawEvidenceClean: true,
+    },
+    note: "Visible preview.",
+  };
+  const preview = buildFixedRigOperatorPreviewManifest({
+    packageId: "preview",
+    packageDir: path.join(os.tmpdir(), "fixed-rig-calibration", "preview"),
+    status: "accepted",
+    livePreview,
+    previewCapture: fakeCapture(),
+    quality: fakeFixedRigQuality(),
+    focusLockedByOperator: true,
+    overlayPreview: {
+      kind: "preview_overlay",
+      outputFilePath: path.join(os.tmpdir(), "fixed-rig-calibration", "preview", "operator-preview-overlay.png"),
+      sha256: "a".repeat(64),
+      byteSize: 1234,
+      mimeType: "image/png",
+      imageWidth: 2448,
+      imageHeight: 2048,
+      rawEvidenceUnmodified: true,
+      overlaysBakedIntoRawEvidence: false,
+      note: "Overlay only.",
+    },
+  });
+  assert.equal(preview.mode, "windows_live_stream_preview");
+  assert.equal(preview.previewImplementationType, "windows_winforms_pylon_live_stream");
+  assert.equal(preview.livePreview.windowVisible, true);
+  assert.equal(preview.livePreview.framesUpdateAutomatically, true);
+  assert.equal(preview.livePreview.overlayVisible, true);
+  assert.equal(preview.livePreview.frameSource, "pylon_stream_grabber_retrieve_result_latest_images_threaded_csharp");
+  assert.equal(preview.livePreview.skippedStaleFrames, 4);
+  assert.equal(preview.livePreview.displayOrientation, "portrait_rotated_90_for_operator_preview");
+  assert.equal(preview.livePreview.sidebarLayout, "right_vertical_sidebar");
+  assert.equal(preview.livePreview.previewLighting.defaultV1DutyMarkerPercent, 1.2);
+  assert.equal(preview.livePreview.previewLighting.maxDutyPercent, 5.0);
+  assert.equal(preview.livePreview.previewLighting.actualAppliedPwmStep, 0);
+  assert.equal(preview.livePreview.previewLighting.actualAppliedPwmValue, "0000");
+  assert.equal(preview.livePreview.previewLighting.lastApplyLatencyMs, 42);
+  assert.equal(preview.livePreview.previewLighting.channelMappingStatus, "unknown_uncalibrated");
+  assert.equal(preview.livePreview.operatorDecision, "accepted");
+  assert.equal(preview.startAiGradingAutomatically, false);
+  assert.equal(preview.safety.leimacRequired, false);
+  assert.equal(preview.safety.leimacEngaged, false);
+  assert.equal(preview.safety.overlaysBakedIntoRawEvidence, false);
+  assert.equal(preview.calibrationProfile.focusLockedByOperator, true);
+  assert.match(preview.readiness.uncalibratedGridWarning, /uncalibrated/i);
+  const report = renderFixedRigOperatorPreviewReport(preview);
+  assert.match(report, /visible Windows pylon live-stream preview window/i);
+  assert.match(report, /windows_winforms_pylon_live_stream/i);
+  assert.match(report, /PWM 0000/i);
+  assert.match(report, /1.2/i);
+  assert.match(report, /Accept \/ Start \/ Continue/i);
+  assert.doesNotMatch(report, /snapshot preview mode/i);
+
+  const dryRun = await runCli([
+    "basler-fixed-rig-operator-preview",
+    "--output-dir",
+    path.join(os.tmpdir(), "fixed-rig-calibration"),
+    "--exposure-us",
+    "45000",
+    "--gain",
+    "0",
+  ]);
+  assert.equal(dryRun.code, 0);
+  assert.equal(dryRun.stdout.dryRun, true);
+  assert.equal(dryRun.stdout.manifest.safety.leimacRequired, false);
+
+  const missingOperatorMode = await runCli([
+    "basler-fixed-rig-operator-preview",
+    "--output-dir",
+    path.join(os.tmpdir(), "fixed-rig-calibration"),
+    "--apply",
+    "--confirm",
+    BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION,
+    "--mark-present",
+  ]);
+  assert.equal(missingOperatorMode.code, 1);
+  assert.match(missingOperatorMode.stderr.error, /--operator-mode/);
+
+  const leimacMissingWiring = await runCli([
+    "basler-fixed-rig-operator-preview",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    path.join(os.tmpdir(), "fixed-rig-calibration"),
+    "--apply",
+    "--confirm",
+    BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION,
+    "--operator-mode",
+    "--mark-present",
+  ]);
+  assert.equal(leimacMissingWiring.code, 1);
+  assert.match(leimacMissingWiring.stderr.error, /--wiring-confirmed/);
+
+  const invalidRefresh = await runCli([
+    "basler-fixed-rig-operator-preview",
+    "--preview-refresh-ms",
+    "100",
+  ]);
+  assert.equal(invalidRefresh.code, 1);
+  assert.match(invalidRefresh.stderr.error, /--preview-refresh-ms/);
+});
+
+test("Basler pylon client launches operator preview window action", async () => {
+  const calls = [];
+  const client = new BaslerPylonClient(
+    {
+      bridgeScriptPath: __filename,
+      pylonRoot: "C:\\Program Files\\Basler\\pylon",
+    },
+    async (command, args) => {
+      calls.push({ command, args });
+      return {
+        ok: true,
+        result: {
+          windowVisible: true,
+          implementationType: "windows_winforms_pylon_live_stream",
+          framesUpdateAutomatically: true,
+          fps: 10,
+          frameAgeMs: 44,
+          skippedStaleFrames: 3,
+          frameSource: "pylon_stream_grabber_retrieve_result_latest_images_threaded_csharp",
+          framesDisplayed: 3,
+          overlayVisible: true,
+          metricsVisible: true,
+          displayOrientation: "portrait_rotated_90_for_operator_preview",
+          rawCaptureOrientation: "unchanged_unrotated_sensor_pixels",
+          sidebarLayout: "right_vertical_sidebar",
+          operatorDecision: "accepted",
+          previewLighting: {
+            controlsVisible: true,
+            controlsEnabled: true,
+            masterLightOn: false,
+            currentDutyPercent: 1.2,
+            requestedDutyPercent: 1.2,
+            actualAppliedDutyPercent: 0,
+            actualAppliedPwmStep: 0,
+            actualAppliedPwmValue: "0000",
+            defaultV1DutyMarkerPercent: 1.2,
+            maxDutyPercent: 5.0,
+            selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+            channelMappingStatus: "unknown_uncalibrated",
+            safeOffOnExit: true,
+            leimacEngagedDuringPreview: false,
+            lastApplyLatencyMs: null,
+            lastResponses: [],
+          },
+          camera: fakeCapture().camera,
+          exposureTime: 45000,
+          gain: 0,
+          sourcePixelFormat: "Mono8",
+          transport: "GigE",
+          pylon: fakeCapture().pylon,
+          safety: {
+            leimacRequired: false,
+            leimacEngaged: false,
+            persistentBaslerSaved: false,
+            persistentLeimacSaved: false,
+            overlaysBakedIntoRawEvidence: false,
+            rawEvidenceClean: true,
+          },
+          note: "Visible preview.",
+        },
+      };
+    }
+  );
+
+  const result = await client.showOperatorPreviewWindow({
+    outputDir: path.join(os.tmpdir(), "fixed-rig-calibration", "preview-window"),
+    exposureUs: 45000,
+    refreshIntervalMs: 500,
+    leimacHost: "169.254.191.156",
+    leimacPort: 1000,
+    leimacUnit: 1,
+    previewDutyPercent: 1.2,
+  });
+  assert.equal(result.windowVisible, true);
+  assert.equal(result.framesUpdateAutomatically, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.toLowerCase().includes("powershell"), true);
+  assert.equal(calls[0].args.includes("operator-preview-window"), true);
+  assert.equal(calls[0].args.includes("-RefreshIntervalMs"), true);
+  assert.equal(calls[0].args.includes("-LeimacHost"), true);
+  assert.equal(calls[0].args.includes("-PreviewDutyTenthsPercent"), true);
+});
+
+test("Basler operator preview bridge requires pylon live stream and async coalesced Leimac controls", () => {
+  const script = fs.readFileSync(path.join(__dirname, "..", "scripts", "basler-pylon-bridge.ps1"), "utf8");
+  assert.match(script, /GrabStrategy\]::LatestImages/);
+  assert.match(script, /GrabLoop\]::ProvidedByUser/);
+  assert.match(script, /RetrieveResult\(100/);
+  assert.match(script, /Configuration\]::AcquireContinuous/);
+  assert.match(script, /PylonWinFormsPreviewPump/);
+  assert.match(script, /LeimacPreviewLightController/);
+  assert.match(script, /operatorPreviewSkippedFrames/);
+  assert.match(script, /lightingDebounceTimer\.Interval = 50/);
+  assert.match(script, /AutoResetEvent/);
+  assert.match(script, /bool signaled = signal\.WaitOne\(100\)/);
+  assert.match(script, /if \(!signaled\) continue/);
+  assert.match(script, /lastAppliedVersion/);
+  assert.match(script, /SameChannels\(appliedChannels, channels\)/);
+  assert.match(script, /if \(lightEnabled && SameChannels\(appliedChannels, channels\)\)/);
+  assert.match(script, /operatorPreviewAppliedDutySteps/);
+  assert.match(script, /actualAppliedPwmValue/);
+  assert.match(script, /NewFrame\("86", ChannelData\(channels, "0001", "0000"\)\)/);
+  assert.match(script, /Update-RequestedLightingText -InvalidateRing \$false/);
+  assert.match(script, /\$dutySteps = \[int\]\$DutyTenthsPercent/);
+  assert.doesNotMatch(script, /Round\(\$DutyTenthsPercent \* 10\)/);
+  assert.doesNotMatch(script, /System\.Threading\.Tasks\.Task\]::Run/);
+  assert.doesNotMatch(script, /UserSetSave|SYSTEM RESET|FACTORY DEFAULT/i);
+});
+
+test("fixed-rig docs record unresolved ring reflection mitigations without solved or certified claims", () => {
+  const docs = fs.readFileSync(path.join(__dirname, "..", "..", "..", "docs", "ai-grader-capture-helper.md"), "utf8");
+  assert.match(docs, /Ring Reflection \/ Glare Limitation/);
+  assert.match(docs, /specular reflection/i);
+  assert.match(docs, /cross-polarization/i);
+  assert.match(docs, /diffuser/i);
+  assert.match(docs, /unresolved optical setup issue/i);
+  assert.match(docs, /No PR #39 code or smoke may claim the ring reflection is solved/i);
+});
+
+test("Leimac channel characterization plan defaults to eight numeric channels and unknown mapping", async () => {
+  const manifest = buildLeimacChannelCharacterizationManifest({
+    packageId: "channels",
+    packageDir: path.join(os.tmpdir(), "fixed-rig-calibration", "channels"),
+    status: "planned",
+  });
+  assert.equal(manifest.dutyPercent, 1);
+  assert.equal(manifest.dutySteps, 10);
+  assert.equal(manifest.channels.length, 8);
+  assert.equal(manifest.channels[0].label, "channel 1");
+  assert.equal(manifest.channelToPhysicalMappingStatus, "unknown");
+  assert.equal(manifest.safety.safeOffBeforeEachChannel, true);
+  assert.equal(manifest.safety.safeOffAfterEachChannel, true);
+  assert.equal(manifest.safety.channelPhysicalMappingInvented, false);
+  assert.equal(manifest.calibrationProfile.isCalibrated, false);
+  assert.match(renderLeimacChannelCharacterizationReport(manifest), /physical mapping is unknown/i);
+
+  const channelOneFrames = buildLeimacCharacterizationFrames({ channel: 1, dutyPercent: 1 });
+  const outputValue = channelOneFrames.filter((frame) => frame.name === "lightingOutputValue").at(-1);
+  assert.equal(outputValue.channelValues[0].value, "0010");
+  assert.equal(outputValue.channelValues.slice(1).every((entry) => entry.value === "0000"), true);
+
+  const dryRun = await runCli([
+    "leimac-channel-characterization",
+    "--output-dir",
+    path.join(os.tmpdir(), "fixed-rig-calibration"),
+  ]);
+  assert.equal(dryRun.code, 0);
+  assert.equal(dryRun.stdout.dryRun, true);
+  assert.equal(dryRun.stdout.manifest.channels.length, 8);
+  assert.equal(dryRun.stdout.manifest.dutyPercent, 1);
 });
 
 test("Fixed-rig V1 manifest routes Basler first and reports not_computed on boundary failure", () => {
@@ -937,4 +1733,127 @@ test("Fixed-rig V1 CLIs reject unsafe inputs before hardware", async () => {
   const fixedRigHighDuty = await runCli(["ai-grader-fixed-rig-v1-local", "--duty", "6"]);
   assert.equal(fixedRigHighDuty.code, 1);
   assert.match(fixedRigHighDuty.stderr.error, /capped at 5%/);
+
+  const evidenceInvalidSide = await runCli(["ai-grader-fixed-rig-v1-evidence-package", "--evidence-side", "left"]);
+  assert.equal(evidenceInvalidSide.code, 1);
+  assert.match(evidenceInvalidSide.stderr.error, /--evidence-side must be front, back, or both/);
+
+  const evidenceFrontMissingConfirmation = await runCli([
+    "ai-grader-fixed-rig-v1-evidence-package",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--evidence-side",
+    "front",
+    "--apply",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(evidenceFrontMissingConfirmation.code, 1);
+  assert.match(evidenceFrontMissingConfirmation.stderr.error, /UNCALIBRATED EVIDENCE PACKAGE/);
+  assert.doesNotMatch(evidenceFrontMissingConfirmation.stderr.error, /--operator-flip-confirmed/);
+
+  const evidenceBackMissingFlip = await runCli([
+    "ai-grader-fixed-rig-v1-evidence-package",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--evidence-side",
+    "back",
+    "--apply",
+    "--confirm",
+    "RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(evidenceBackMissingFlip.code, 1);
+  assert.match(evidenceBackMissingFlip.stderr.error, /--operator-flip-confirmed/);
+
+  const fixtureInvalidReference = await runCli(["fixed-rig-fixture-calibration", "--reference-type", "magic-target"]);
+  assert.equal(fixtureInvalidReference.code, 1);
+  assert.match(fixtureInvalidReference.stderr.error, /--reference-type/);
+
+  const fixtureMissingConfirmation = await runCli([
+    "fixed-rig-fixture-calibration",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--apply",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(fixtureMissingConfirmation.code, 1);
+  assert.match(fixtureMissingConfirmation.stderr.error, /ROUGH FIXTURE CALIBRATION/);
+
+  const repeatabilityMissingReplace = await runCli([
+    "fixed-rig-repeatability-test",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--repeatability-phase",
+    "remove-replace",
+    "--apply",
+    "--confirm",
+    FIXED_RIG_REPEATABILITY_TEST_CONFIRMATION,
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(repeatabilityMissingReplace.code, 1);
+  assert.match(repeatabilityMissingReplace.stderr.error, /--operator-replace-confirmed/);
+
+  const channelRepoOutput = await runCli([
+    "leimac-channel-characterization",
+    "--output-dir",
+    process.cwd(),
+  ]);
+  assert.equal(channelRepoOutput.code, 1);
+  assert.match(channelRepoOutput.stderr.error, /outside the git repo/);
+
+  const channelHighDuty = await runCli([
+    "leimac-channel-characterization",
+    "--duty",
+    "6",
+  ]);
+  assert.equal(channelHighDuty.code, 1);
+  assert.match(channelHighDuty.stderr.error, /0 to 5|capped at 5%/);
+
+  const channelMissingConfirmation = await runCli([
+    "leimac-channel-characterization",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--apply",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(channelMissingConfirmation.code, 1);
+  assert.match(channelMissingConfirmation.stderr.error, new RegExp(LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION));
+
+  const channelMissingMark = await runCli([
+    "leimac-channel-characterization",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--apply",
+    "--confirm",
+    LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION,
+  ]);
+  assert.equal(channelMissingMark.code, 1);
+  assert.match(channelMissingMark.stderr.error, /--mark-present/);
 });

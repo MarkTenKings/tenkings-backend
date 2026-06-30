@@ -709,6 +709,53 @@ export function composeLeimacIdmuChannelWriteFrame(input: {
   };
 }
 
+export function composeLeimacIdmuExplicitChannelWriteFrame(input: {
+  name: LeimacIdmuWriteCommandName;
+  unit?: number | string;
+  channelValues: Array<{
+    channel: number;
+    value: string;
+    meaning: string;
+  }>;
+}): LeimacIdmuWriteFrame {
+  const unit = normalizeLeimacIdmuUnit(input.unit);
+  const targetDesignation = String(unit).padStart(2, "0");
+  const commandNumber = WRITE_COMMAND_NUMBERS[input.name];
+  if (!commandNumber) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_WRITE_REJECTED", "Leimac IDMU write command is not in the PR #36 trigger-profile allowlist.");
+  }
+  if (input.channelValues.length !== LEIMAC_IDMU_CHANNEL_COUNT_BASE_UNIT) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_CHANNEL_COUNT_INVALID", "Explicit Leimac channel writes require exactly 8 channel values.");
+  }
+  const seen = new Set<number>();
+  for (const entry of input.channelValues) {
+    if (!Number.isInteger(entry.channel) || entry.channel < 1 || entry.channel > LEIMAC_IDMU_CHANNEL_COUNT_BASE_UNIT) {
+      throw new LeimacIdmuClientError("LEIMAC_IDMU_CHANNEL_INVALID", "Leimac channel must be an integer from 1 to 8.");
+    }
+    if (seen.has(entry.channel)) {
+      throw new LeimacIdmuClientError("LEIMAC_IDMU_CHANNEL_DUPLICATE", "Explicit Leimac channel writes cannot repeat channels.");
+    }
+    seen.add(entry.channel);
+    if (!/^\d{4}$/.test(entry.value)) {
+      throw new LeimacIdmuClientError("LEIMAC_IDMU_WRITE_VALUE_INVALID", "Leimac IDMU channel values must be four digits.");
+    }
+  }
+  const channelValues = input.channelValues.slice().sort((a, b) => a.channel - b.channel);
+  const data = channelValues.map((entry) => `${String(entry.channel).padStart(2, "0")}${entry.value}`).join("");
+  const requestAscii = `W${commandNumber}${targetDesignation}${data}`;
+  return {
+    name: input.name,
+    commandNumber,
+    description: WRITE_COMMAND_DESCRIPTIONS[input.name],
+    targetDesignation,
+    channelValues,
+    requestAscii,
+    requestFrame: requestAscii,
+    terminator: "",
+    allowlisted: true,
+  };
+}
+
 export function buildLeimacIdmuSafeOffFrames(unit: number | string = 1): LeimacIdmuWriteFrame[] {
   return [
     composeLeimacIdmuChannelWriteFrame({
@@ -1181,6 +1228,16 @@ export class LeimacIdmuClient {
         arbitraryWritesAllowed: false,
       },
     };
+  }
+
+  async applyAllowlistedFrames(frames: LeimacIdmuWriteFrame[]): Promise<LeimacIdmuWriteResult[]> {
+    const writes: LeimacIdmuWriteResult[] = [];
+    for (const frame of frames) {
+      const result = await this.writeAllowlistedFrame(frame);
+      writes.push(result);
+      if (!result.ok) break;
+    }
+    return writes;
   }
 
   async applyTriggerProfile(input: {

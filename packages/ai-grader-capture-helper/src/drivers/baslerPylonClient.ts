@@ -6,6 +6,7 @@ export type BaslerPylonAction =
   | "readiness"
   | "list-cameras"
   | "capture-still"
+  | "operator-preview-window"
   | "line2-exposure-active"
   | "line2-user-output-pulse"
   | "line2-status";
@@ -204,6 +205,69 @@ export interface BaslerCaptureStillResult {
   note: string;
 }
 
+export interface BaslerOperatorPreviewWindowMetrics {
+  mean: number;
+  max: number;
+  clippedFraction: number;
+  darkFraction: number;
+  sharpness: number;
+}
+
+export interface BaslerOperatorPreviewWindowResult {
+  windowVisible: true;
+  implementationType: "windows_winforms_pylon_live_stream";
+  framesUpdateAutomatically: true;
+  fps?: number;
+  frameAgeMs?: number;
+  skippedStaleFrames?: number;
+  frameSource?: string;
+  framesDisplayed: number;
+  overlayVisible: true;
+  metricsVisible: true;
+  displayOrientation: "portrait_rotated_90_for_operator_preview";
+  rawCaptureOrientation: "unchanged_unrotated_sensor_pixels";
+  sidebarLayout: "right_vertical_sidebar";
+  operatorDecision: "accepted" | "aborted" | "closed";
+  lastFramePath?: string | null;
+  lastFrameSha256?: string | null;
+  lastFrameByteSize?: number | null;
+  lastMetrics?: BaslerOperatorPreviewWindowMetrics | null;
+  lastError?: string | null;
+  previewLighting: {
+    controlsVisible: true;
+    controlsEnabled: boolean;
+    masterLightOn: boolean;
+    currentDutyPercent: number;
+    requestedDutyPercent?: number;
+    actualAppliedDutyPercent?: number;
+    actualAppliedPwmStep?: number;
+    actualAppliedPwmValue?: string;
+    defaultV1DutyMarkerPercent: 1.2;
+    maxDutyPercent: 5.0;
+    selectedChannels: number[];
+    channelMappingStatus: "unknown_uncalibrated";
+    safeOffOnExit: true;
+    leimacEngagedDuringPreview: boolean;
+    lastApplyLatencyMs?: number | null;
+    lastResponses: string[];
+  };
+  camera: BaslerCameraInfo;
+  exposureTime?: number | null;
+  gain?: number | null;
+  sourcePixelFormat?: string | null;
+  transport: "GigE";
+  pylon: BaslerPylonInstallInfo;
+  safety: {
+    leimacRequired: false;
+    leimacEngaged: false;
+    persistentBaslerSaved: false;
+    persistentLeimacSaved: false;
+    overlaysBakedIntoRawEvidence: false;
+    rawEvidenceClean: true;
+  };
+  note: string;
+}
+
 export interface BaslerPylonBridgeErrorPayload {
   code: string;
   message: string;
@@ -232,6 +296,17 @@ export interface BaslerCaptureStillOptions {
   savedFormat?: BaslerSavedImageFormat;
   lensModel?: string;
   exposureUs?: number;
+}
+
+export interface BaslerOperatorPreviewWindowOptions {
+  outputDir?: string;
+  cameraIndex?: number;
+  exposureUs?: number;
+  refreshIntervalMs?: number;
+  leimacHost?: string;
+  leimacPort?: number;
+  leimacUnit?: number;
+  previewDutyPercent?: number;
 }
 
 export interface BaslerLine2ExposureActiveOptions {
@@ -493,6 +568,30 @@ export class BaslerPylonClient {
     ]);
   }
 
+  async showOperatorPreviewWindow(options: BaslerOperatorPreviewWindowOptions = {}): Promise<BaslerOperatorPreviewWindowResult> {
+    const cameraIndex = options.cameraIndex ?? 0;
+    if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
+      throw new BaslerPylonClientError("BASLER_CAMERA_INDEX_INVALID", "--camera-index must be a non-negative integer.");
+    }
+    const refreshIntervalMs = options.refreshIntervalMs ?? 500;
+    if (!Number.isInteger(refreshIntervalMs) || refreshIntervalMs < 250 || refreshIntervalMs > 5000) {
+      throw new BaslerPylonClientError("BASLER_PREVIEW_REFRESH_INVALID", "--preview-refresh-ms must be an integer from 250 to 5000.");
+    }
+
+    return this.runBridge<BaslerOperatorPreviewWindowResult>("operator-preview-window", [
+      "-CameraIndex",
+      String(cameraIndex),
+      "-RefreshIntervalMs",
+      String(refreshIntervalMs),
+      ...(options.outputDir ? ["-OutputDir", assertBaslerCaptureOutputDirAllowed(options.outputDir)] : []),
+      ...(options.exposureUs ? ["-ExposureUs", String(options.exposureUs)] : []),
+      ...(options.leimacHost ? ["-LeimacHost", options.leimacHost] : []),
+      ...(options.leimacPort ? ["-LeimacPort", String(options.leimacPort)] : []),
+      ...(options.leimacUnit ? ["-LeimacUnit", String(options.leimacUnit)] : []),
+      ...(options.previewDutyPercent != null ? ["-PreviewDutyTenthsPercent", String(Math.round(options.previewDutyPercent * 10))] : []),
+    ]);
+  }
+
   private async runBridge<T>(action: BaslerPylonAction, extraArgs: string[] = []): Promise<T> {
     const scriptPath = this.config.bridgeScriptPath ?? defaultBaslerPylonBridgeScriptPath();
     if (!existsSync(scriptPath)) {
@@ -537,7 +636,7 @@ function defaultBridgeRunner(
   return new Promise<BaslerPylonBridgeEnvelope>((resolve, reject) => {
     const child = spawn(command, args, {
       stdio: "pipe",
-      windowsHide: true,
+      windowsHide: !args.includes("operator-preview-window"),
     }) as ChildProcessWithoutNullStreams;
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];

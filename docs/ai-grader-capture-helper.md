@@ -885,3 +885,148 @@ Before the first real hardware driver integration:
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
 - keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package/operator workflow/experimental non-certified grading capture, including outside-git SDK runtime diagnostics for EDOF, until a later approved lens/focus/exposure/DPQ/certified-grading slice
 - keep Basler pylon work limited to manual readiness/list/transient Line2 ExposureActive setup and uncalibrated still/sync smoke capture until a later approved calibration, lighting, persistent settings, and production macro evidence slice
+
+### Fixed-Rig Calibration / Preview Foundation
+
+PR #39 adds local/offline fixed-rig calibration foundation commands and report metadata only. It does not make the rig calibrated and does not add final grading, certificate, or certified-grading claims.
+
+New command surfaces:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-fixed-rig-operator-preview `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --output-dir C:\TenKings\capture-data\fixed-rig-calibration `
+  --exposure-us 45000 `
+  --gain 0 `
+  --preview-refresh-ms 500 `
+  --operator-mode `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off `
+  --apply `
+  --confirm "RUN BASLER FIXED RIG OPERATOR PREVIEW"
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-channel-characterization `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --output-dir C:\TenKings\capture-data\fixed-rig-calibration `
+  --duty 1 `
+  --exposure-us 45000 `
+  --apply `
+  --confirm "RUN LEIMAC CHANNEL CHARACTERIZATION" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off
+```
+
+The preview command opens a visible Windows Basler pylon live-stream operator window. It uses Basler pylon only after explicit `--apply`, confirmation, `--operator-mode`, and `--mark-present`. It can run ambient-only without Leimac; when `--leimac-host` is supplied, preview lighting controls are enabled only with `--wiring-confirmed`, `--leimac-status-green`, and `--operator-confirmed-light-idle-off`. The window uses pylon continuous acquisition with `GrabStrategy.LatestImages`, a compiled .NET frame-pump thread that calls `RetrieveResult`, newest-frame display, and stale-frame dropping so the UI does not queue old frames. The preview explicitly disables camera trigger mode for the operator view and leaves the grading capture profile separate. It displays measured FPS, frame age, and skipped stale frames, rotates the operator display into portrait orientation while leaving raw capture orientation unchanged, and shows the guide overlay plus basic frame metrics while the operator manually turns the lens focus ring, adjusts boom height, or moves the card. This is not autofocus. Saved PNG/HTML artifacts are diagnostic only and do not satisfy operator-preview acceptance by themselves.
+
+The live preview sidebar includes frame/FPS/latency status, sharpness, mean, max, clipped/dark fractions, operator framing status, Accept/Start/Continue, Abort/Close, Safe Off, current preview lighting state, and the uncalibrated warning. Preview lighting controls are setup-only hardware controls and still do not save a persistent Leimac User Set, but an accepted operator preview setting now becomes the local software active fixed-rig lighting profile for later focus-assist, fixed-rig V1, and evidence-package commands unless a CLI override or Reset Default is used. The software profile is stored outside the repo as `fixed-rig-active-lighting-profile.json` near the fixed-rig capture-data root and records `selectedDutyPercent`, `actualLeimacPwmStep`, `selectedChannels`, `profileSource`, `acceptedAt`, and `resetToDefault`. The Preview Light On/Off control, brightness slider, numeric duty input, default V1 duty marker (`1.2%`), hard cap (`5%`), Reset to Default Preview Duty, all-on/all-off buttons, and 8-channel ring toggle UI send only low-duty allowlisted Leimac frames. Preview lighting uses a compiled .NET coalescing worker and the rig-proven `W11` low PWM plus `W86` lighting-output-enable path for continuous operator setup light; synchronized grading capture still applies transient ExposureActive-triggered settings and safe-offs on exit. The lighting writes are debounced at about 50 ms, run off the UI thread, coalesce rapid slider/channel changes, and report requested duty separately from ACKed applied PWM. If channels are unchanged and the preview light is already on, brightness-only changes send only a `W11` PWM update instead of safe-off plus re-enable, avoiding a bright flash. Status polling updates labels without repainting the 8-segment ring, so the ring UI does not flicker while requested channels are unchanged. The Leimac PWM command value is `0000-0999`; PR #39 rounds preview duty to the nearest supported 0.1% step, so `1.2%` displays/applies as PWM `0012`. Channel mapping remains `UNKNOWN/UNCALIBRATED` until characterization evidence is reviewed. Preview lighting safe-offs on Abort/Close and before the command returns.
+
+Fixed-rig reports now carry a local `FixedRigCalibrationProfile` with `isCalibrated=false`, selected V1 setting metadata, card physical size defaults (`63.5mm x 88.9mm`), optional uncalibrated pixel/mm estimates when a boundary is detected, and calibration status such as `preview_assisted`, `focus_assisted`, `framing_assisted`, or `channel_characterized`. Lens distortion and lighting calibration remain false.
+
+Report images now separate raw sensor evidence from operator/report display assets. Raw Basler evidence images remain in `basler_sensor_pixels` coordinates with original hashes unchanged. Derived report thumbnails, overlay debug images, and ROI crops use the `ai_grader_card_portrait_display` coordinate frame with metadata recording `displayTransform` (`none`, `rotate90cw`, `rotate90ccw`, or `rotate180`). Overlay/debug images are generated separately from raw evidence and are not baked into the raw capture. Overlays include a 2.5:3.5 placement guide, center crosshair, boundary guide when detected, and full-card/corner/edge/surface ROI rectangles.
+
+Pixel/mm estimates are still uncalibrated, but they now account for raw/display orientation. If the detected card is landscape in raw Basler sensor space, raw width maps to the card long side (`88.9mm`) and raw height maps to the card short side (`63.5mm`). If the detected card is portrait in raw sensor space, raw width maps to `63.5mm` and raw height maps to `88.9mm`. Reports include the orientation used and a consistency status; if X/Y estimates diverge beyond tolerance, the profile remains `isCalibrated=false` and the report warns rather than claiming a calibrated scale.
+
+Overlay alignment is auditable in manifests/reports. The same template and ROI geometry are used for live preview and report overlay debug images, and reports include `templateRect`, `detectedBoundaryRect`, `centerOffsetPx`, optional `centerOffsetMm`, margins, detected/expected aspect ratio, `orientationUsed`, and `overlayAlignmentStatus`. If the detected card touches the frame edge, is off-center, or has an unexpected aspect ratio, the report records a framing warning.
+
+The Basler fixed rig remains fixed overhead full-frame capture. Basler does not zoom automatically. Corner, edge, and surface screening uses full-resolution image ROIs/crops and remains uncalibrated until a real calibration/repeatability workflow is implemented. Dino-Lite remains optional manual close-up confirmation for later flagged or operator-requested regions.
+
+`leimac-channel-characterization` is a supervised low-duty diagnostic for future multi-light work. It labels channels numerically only, safe-offs before and after each channel, captures dark/all-on/per-channel Basler images, computes image and quadrant brightness stats, and records `channelToPhysicalMappingStatus=unknown` unless later reviewed evidence supports an explicit inferred/confirmed mapping. It does not save persistent Leimac settings and rejects duty above 5%. Multi-light surface screening is future work after channel mapping and quality review.
+
+`ai-grader-fixed-rig-v1-evidence-package` is a supervised uncalibrated evidence acquisition command. For front and back it captures a dark control, all-on synced Basler image, accepted active lighting profile image, and Leimac channels `1-8`, then generates portrait display images, overlays, and ROI crops for full card, corners, edges, and surface regions. It uses `evidenceClass=macro_fixed_rig_v1_uncalibrated`, writes outputs outside the repo, safe-offs around lighting, and does not compute a final grade or mark evidence calibrated.
+
+PR #39 also includes a ruler-based fixed-fixture calibration and repeatability foundation for Mark's operator-built fixed-position V1 fixture. This is local/offline diagnostic tooling only. The preferred reference is now `referenceType=fixed_metric_rulers`: the operator captures a calibration image with fixed metric rulers visible, enters horizontal and vertical ruler-span pixel coordinates plus the known physical span in millimeters, and the helper computes `pixelsPerMmX/Y` and `mmPerPixelX/Y` from those ruler spans. Standard card size remains a cross-check/reference fallback, not the primary production-candidate scale source. Non-certified references are marked `ruler_reference_unvalidated` or `rough_reference_unvalidated`, and `isCalibrated=false` remains mandatory. The profile records fixture label/id, reference type, ruler span coordinates/distances, calibration image path, raw/display coordinate frames, display transform, pixel/mm and mm/pixel estimates, X/Y consistency warnings, detected/expected aspect ratio, lighting profile used, exposure/gain/duty/channels, operator acceptance, and notes. Lens distortion and homography remain `not_computed`.
+
+Fixture reports now include a strict framing/margin gate and a production-readiness summary. The card must be fully visible, have margin around all edges, avoid touching image borders, be close to expected card aspect ratio, and have passing overlay alignment before the setup can be treated as a `production_candidate` diagnostic fixture. If the card touches the frame edge, the framing gate fails and the report records exact blockers. A production-candidate summary also requires ruler calibration, passing repeatability, locked lighting profile metadata, and final ring-light-off confirmation; it is still not a final grade, certificate, or certified calibration claim.
+
+New rough fixture/repeatability command surfaces:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js fixed-rig-fixture-calibration `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --output-dir C:\TenKings\capture-data\fixed-rig-calibration `
+  --exposure-us 45000 `
+  --reference-type fixed_metric_rulers `
+  --horizontal-span-mm 50 `
+  --horizontal-start-px 100,100 `
+  --horizontal-end-px 1100,100 `
+  --vertical-span-mm 50 `
+  --vertical-start-px 100,100 `
+  --vertical-end-px 100,1100 `
+  --fixture-label fixed-v1-l-stop `
+  --operator-accepted `
+  --apply `
+  --confirm "RUN FIXED RIG ROUGH FIXTURE CALIBRATION" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js fixed-rig-repeatability-test `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --output-dir C:\TenKings\capture-data\fixed-rig-calibration `
+  --repeatability-phase no-touch `
+  --capture-count 5 `
+  --exposure-us 45000 `
+  --apply `
+  --confirm "RUN FIXED RIG REPEATABILITY TEST" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off
+```
+
+`fixed-rig-repeatability-test` uses the active preview lighting profile unless a CLI override/reset is supplied. It reports no-touch or remove/re-place diagnostic repeatability metrics: center offset mean/max, optional mm offsets from the ruler profile when supplied, boundary width/height variation, pixel/mm variation, sharpness variation, brightness/clipping stability, overlay alignment counts, and `repeatabilityStatus=pass|warn|fail`. Remove/re-place mode requires `--operator-replace-confirmed`; it now defaults to five placements/captures unless `--capture-count` is supplied. An optional `--operator-replace-delay-ms` can pause between captures so the operator can re-seat the card. Normal evidence package capture does not wait between lighting configurations; only the front/back flip is human-gated. Repeatability does not set calibrated/final status.
+
+The fixed-rig evidence package analysis now includes preliminary diagnostic-only grading scaffolding and 8-channel surface-analysis evidence. Centering is computed only when boundary/margin evidence exists and is labeled diagnostic. Corner and edge sections report ROI-level proxy metrics only. Surface analysis records per-channel image stats and portrait display images under `preliminary_surface_anomaly_detector_v0`; robust defect candidates remain `not_computed` unless accepted later. Reports and `analysis.json` explicitly record `finalGradeComputed=false`, `certifiedClaim=false`, and no final/certified grade output.
+
+#### Dell PR #39 Rough Fixture Smoke
+
+On 2026-06-30, Mark ran the rough fixed-fixture flow using the operator-built fixed-position V1 fixture. The accepted live preview folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`. The preview measured about `20.5 FPS` with `0 ms` frame age and accepted a software active profile of `1.4%` Leimac duty, PWM step `14`, channels `1-8`, source `operator_preview`. Preview/report display used `rotate90cw`; raw Basler sensor captures remained unchanged. The preview and later reports warned that the detected card boundary touched the frame edge, so the run remains rough/unvalidated and not calibrated.
+
+The rough fixture calibration output is `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-fixture-calibration-2026-06-30T063338472Z`. It used `referenceType=card_dimensions`, fixture label `fixed-v1-l-stop`, and the accepted `1.4%` active lighting profile. The resulting profile is `rough_reference_unvalidated` with `isCalibrated=false`, `mmPerPixelX=0.039025`, `mmPerPixelY=0.031006`, and pixel-scale consistency `warn`.
+
+The no-touch repeatability output is `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-repeatability-test-2026-06-30T063417135Z`. It captured five repeated synced images at the accepted `1.4%` profile and reported `repeatabilityStatus=warn`, `centerOffsetMeanPx=84.6015`, `boundaryWidthVariationPx=1`, `boundaryHeightVariationPx=0`, and `clippingMax=0.01448`. Remove/re-place repeatability was not run in this smoke because that optional diagnostic specifically requires operator re-seat pauses; normal evidence package capture should run continuously per side and only pause for front/back flip.
+
+The fixed-rig V1 uncalibrated evidence package was captured for front and back. Front output is `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T064206795Z`; back output is `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T064843000Z`. Front used the accepted preview profile at `1.4%`; back was explicitly run with `--duty 1.4` after the back-positioning preview briefly accepted `1.2%`, so the back manifest records `profileSource=cli_override`. Each side captured 11 raw images: dark control, all-on, accepted-profile, and Leimac channels `1-8`; each also produced 8 portrait channel displays and 12 ROI crops. Front all-on raw SHA-256 is `3844fffbf4e0f52181608b13be9ebf8a8af26628c5e9cd523a9e023452399a72`, `2843916` bytes, `2448x2048`. Back all-on raw SHA-256 is `4a282671b0fba6f44505bc857a0651d3c6dcd8cdb2e431ca5255bf81613754f2`, `2680124` bytes, `2448x2048`.
+
+This smoke verifies the rough fixture, preview profile carry-over, no-touch repeatability report, front/back raw evidence package, portrait display outputs, ROI crops, and per-channel surface-analysis evidence schema. It does not verify production calibration. The evidence class remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`; preliminary diagnostic grading sections are labeled `computed_diagnostic`; surface analysis remains `not_computed` with no accepted robust defect candidates. Mark confirmed final physical Leimac ring light state off.
+
+#### Dell PR #39 Fixed-Ruler Acceptance Smoke
+
+Later on 2026-06-30, Mark aligned physical rulers in the fixed-position fixture using the live Basler preview and accepted the fixture/re-seat behavior as passed for production-candidate fixture positioning. The fixed-ruler calibration output is `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-fixture-calibration-2026-06-30T075916276Z`. It used `referenceType=fixed_metric_rulers` with a `50.8mm` horizontal span from raw px `540,205` to `1620,205` and a `50.8mm` vertical span from raw px `2295,145` to `2295,1218`. The operator-entered raw card boundary override was `285,349,1878,1350`. The resulting scale is `pixelsPerMmX=21.2599`, `pixelsPerMmY=21.122`, `mmPerPixelX=0.047037`, and `mmPerPixelY=0.047344`, with X/Y consistency `pass` and relative difference `0.0065`. The framing gate and overlay alignment both passed; margins were `285px` left/right and `349px` top/bottom.
+
+The guided remove/re-seat repeatability output is `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-repeatability-test-2026-06-30T080625670Z`. It ran `5` remove/re-place captures and Mark accepted the geometry as passed for production fixture positioning. Geometry metrics were stable: center offset max `0.7071px` (`0.0334mm`), boundary width variation `0px`, boundary height variation `0px`, and overlay alignment passed for all runs. The manifest still reports `repeatabilityStatus=warn` because clipping reached `0.082032`; treat that as a per-card lighting/exposure tuning warning, not a fixture positioning failure.
+
+The fixed-rig V1 uncalibrated evidence package was rerun with the fixed-ruler metadata and the same operator boundary. Front output is `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T082102851Z`; back output is `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T082749115Z`. Each side captured dark control, all-on, accepted-profile, and Leimac channels `1-8`, then generated 8 portrait channel displays and 12 ROI crops. Front all-on raw SHA-256 is `5879d28284911cdd4e845276f3d37a9c99fee8690a4648e78e672c306be5b571`; back all-on raw SHA-256 is `cf27e1ff636fb67eb911a91091077308282a3293c1970660105b8adc72e36e38`. Reports use `displayTransform=rotate90cw` for portrait display while raw evidence remains unchanged in `basler_sensor_pixels`.
+
+This fixed-ruler smoke clears the fixture-positioning/re-seat gate for diagnostic production-candidate use as accepted by Mark, but it is still not certified calibration. `isCalibrated=false` remains mandatory. Lighting/exposure stays per-card tunable; the `1.4%` duty evidence package still shows clipping warnings, especially on the back side. Channel physical mapping, robust surface anomaly candidates, and ring-glare mitigation remain future work. Mark confirmed the final physical Leimac ring light state was off.
+
+#### Ring Reflection / Glare Limitation
+
+During PR #39 preview review, Mark observed a circular ring reflection on the card. Treat this as an unresolved optical setup issue, not a software-calibrated condition. The likely cause is specular reflection from a glossy card, sleeve, or slab surface reflecting the ring/dome geometry into the fixed overhead Basler view. This can affect focus perception, clipping, surface anomaly screening, and later ROI measurements.
+
+Near-term software-safe mitigations to evaluate without physical modification are lower exposure/duty, selective Leimac channel subsets, multi-light profiles that avoid known glare zones, dark hood/ambient-light control, and flagging glare-affected pixels/regions instead of treating them as surface defects. These do not solve the optical reflection by themselves and must be tested.
+
+Physical mitigation candidates require explicit material/hardware review before use: cross-polarization with polarizing film over the light and an analyzer polarizer on the Basler lens, diffuser film/sheet between Leimac and card, dome/geometry changes, or changing ring height/angle. Tradeoffs include lower intensity, possible unevenness, heat/material compatibility, reduced contrast, and new calibration requirements. Cross-polarization is the strongest candidate for glossy specular glare, but it requires buying/placing polarizers and rotating the lens analyzer under supervision. Diffusion may soften the ring reflection but may also reduce intensity and require exposure/duty retuning. No PR #39 code or smoke may claim the ring reflection is solved until a controlled test proves it.
+
+#### Dell PR #39 Supervised Smoke
+
+On 2026-06-29, Mark accepted the fixed-rig operator preview after the Windows preview was changed to a pylon live stream and preview lighting controls were revised. The accepted preview artifact folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-29T210409349Z`. The preview displayed `4387` frames at about `20.44 FPS` with `2 ms` frame age, and Mark confirmed he could adjust physical Basler focus in real time while watching the PC window. Mark also confirmed the 8-section UI ring stopped flickering, the hardware brightness slider no longer caused a bright flash before settling, and the final Leimac ring light state was off. Preview lighting was safe-offed on exit; later PR #39 work changed accepted preview lighting from diagnostic-only to a local software active profile for subsequent fixed-rig commands, without saving persistent Leimac/Basler settings.
+
+The enhanced focus/framing assistant was run at the selected V1 setting (`1.2%` Leimac duty, `45000 us` Basler exposure, gain `0`). Output folder: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-focus-assist-2026-06-29T210908156Z`. Results: mean `45.3715`, clipped fraction `0.00007`, dark fraction `0.073087`, sharpness `206.7911`, detected card boundary coverage `0.84895`, and uncalibrated pixel/mm estimates `x=0.026392`, `y=0.050254`. ROI definitions were computed from the approximate detected boundary and overlays were saved separately from raw captures.
+
+The Leimac 8-channel characterization was run at `1%` duty and `45000 us` exposure. Output folder: `C:\TenKings\capture-data\fixed-rig-calibration\leimac-channel-characterization-2026-06-29T211116513Z`. It captured dark control, all-on, and channels `1` through `8`, with safe-off before and after each channel. `channelToPhysicalMappingStatus` remains `unknown`; quadrant brightness did not support directional inference, so no physical mapping was invented. Mark confirmed the final physical ring light state was off. PR #39 remains calibration/preview foundation only: `isCalibrated=false`, manual focus, channel mapping unconfirmed, and no final/certified grading claim.
+
+#### Dell PR #39 Active Profile / Evidence Package Follow-Up
+
+Later on 2026-06-29, Mark accepted the active preview lighting profile at `1.3%` Leimac duty, PWM step `13`, channels `1-8`, `profileSource=operator_preview`. The profile was stored outside the repo at `C:\TenKings\capture-data\fixed-rig-active-lighting-profile.json`; no persistent Basler or Leimac User Set was saved. The focus/framing assistant was run without a CLI duty override and proved carry-over from the accepted profile: manifest selected duty `1.3%`, PWM `13`, source `operator_preview`, output `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-focus-assist-2026-06-29T224331062Z`, mean `54.3913`, clipped `0.001314`, dark `0.068241`, sharpness `402.9915`, display transform `rotate90cw`. Framing remained `warn` because the card was near the frame edge, and pixel/mm consistency remained `warn`.
+
+The fixed-rig V1 uncalibrated evidence package was run side-by-side so Mark could use the live preview before the back capture. Front output: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-29T225500347Z`. Back output: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-29T230849461Z`. Both used the accepted `1.3%` active profile and generated dark control, all-on, accepted-profile, channel `1-8`, portrait display, overlay, and 12 ROI crop artifacts. Front all-on metrics: mean `61.0675`, clipped `0.010289`, dark `0.025929`, sharpness `494.9914`, card coverage `0.940953`, overlay alignment `warn`. Back all-on metrics: mean `120.8304`, clipped `0.013025`, dark `0.053224`, sharpness `681.029`, card coverage `0.690135`, overlay alignment `pass`. Both reports use portrait display assets (`rotate90cw`) while raw Basler captures remain unchanged in sensor coordinates. Evidence class remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`; no final grade, certificate, or certified grading claim was made. Mark confirmed the final physical ring light state was off.

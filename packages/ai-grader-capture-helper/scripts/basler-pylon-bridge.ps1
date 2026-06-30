@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("readiness", "list-cameras", "capture-still", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
+  [ValidateSet("readiness", "list-cameras", "capture-still", "operator-preview-window", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
   [string]$Action,
 
   [string]$PylonRoot,
@@ -17,6 +17,11 @@ param(
   [ValidateSet("true", "false")]
   [string]$IdleUserOutputValue = "false",
   [int]$ExposureUs = 0,
+  [int]$RefreshIntervalMs = 500,
+  [string]$LeimacHost,
+  [int]$LeimacPort = 1000,
+  [int]$LeimacUnit = 1,
+  [int]$PreviewDutyTenthsPercent = 12,
   [switch]$Apply
 )
 
@@ -691,11 +696,1238 @@ function Capture-Still {
   }
 }
 
+function Get-ZoomRect {
+  param([System.Drawing.Rectangle]$Bounds, [int]$ImageWidth, [int]$ImageHeight)
+  if ($ImageWidth -le 0 -or $ImageHeight -le 0 -or $Bounds.Width -le 0 -or $Bounds.Height -le 0) {
+    return $Bounds
+  }
+  $imageRatio = [double]$ImageWidth / [double]$ImageHeight
+  $boundsRatio = [double]$Bounds.Width / [double]$Bounds.Height
+  if ($boundsRatio -gt $imageRatio) {
+    $height = $Bounds.Height
+    $width = [int]([double]$height * $imageRatio)
+    $x = $Bounds.X + [int](($Bounds.Width - $width) / 2)
+    return [System.Drawing.Rectangle]::new($x, $Bounds.Y, $width, $height)
+  }
+  $width = $Bounds.Width
+  $height = [int]([double]$width / $imageRatio)
+  $y = $Bounds.Y + [int](($Bounds.Height - $height) / 2)
+  return [System.Drawing.Rectangle]::new($Bounds.X, $y, $width, $height)
+}
+
+function New-RelativeRect {
+  param([System.Drawing.RectangleF]$Guide, [double]$X, [double]$Y, [double]$Width, [double]$Height)
+  return [System.Drawing.RectangleF]::new(
+    [single]($Guide.X + ($Guide.Width * $X)),
+    [single]($Guide.Y + ($Guide.Height * $Y)),
+    [single]($Guide.Width * $Width),
+    [single]($Guide.Height * $Height)
+  )
+}
+
+function Measure-PreviewBitmap {
+  param([System.Drawing.Bitmap]$Bitmap)
+  $step = 16
+  $count = 0
+  $sum = 0.0
+  $max = 0
+  $clipped = 0
+  $dark = 0
+  $gradient = 0.0
+  $gradientCount = 0
+  for ($y = 0; $y -lt $Bitmap.Height; $y += $step) {
+    for ($x = 0; $x -lt $Bitmap.Width; $x += $step) {
+      $pixel = $Bitmap.GetPixel($x, $y)
+      $value = [int](($pixel.R + $pixel.G + $pixel.B) / 3)
+      $sum += $value
+      if ($value -gt $max) { $max = $value }
+      if ($value -ge 250) { $clipped += 1 }
+      if ($value -le 10) { $dark += 1 }
+      $count += 1
+      if (($x + $step) -lt $Bitmap.Width) {
+        $next = $Bitmap.GetPixel(($x + $step), $y)
+        $nextValue = [int](($next.R + $next.G + $next.B) / 3)
+        $gradient += [Math]::Abs($value - $nextValue)
+        $gradientCount += 1
+      }
+      if (($y + $step) -lt $Bitmap.Height) {
+        $nextY = $Bitmap.GetPixel($x, ($y + $step))
+        $nextYValue = [int](($nextY.R + $nextY.G + $nextY.B) / 3)
+        $gradient += [Math]::Abs($value - $nextYValue)
+        $gradientCount += 1
+      }
+    }
+  }
+  if ($count -eq 0) {
+    return [ordered]@{ mean = 0; max = 0; clippedFraction = 0; darkFraction = 0; sharpness = 0 }
+  }
+  [ordered]@{
+    mean = [Math]::Round(($sum / $count), 4)
+    max = $max
+    clippedFraction = [Math]::Round(($clipped / $count), 6)
+    darkFraction = [Math]::Round(($dark / $count), 6)
+    sharpness = $(if ($gradientCount -gt 0) { [Math]::Round(($gradient / $gradientCount), 4) } else { 0 })
+  }
+}
+
+function New-LeimacChannelData {
+  param([int[]]$EnabledChannels, [string]$EnabledValue, [string]$DisabledValue = "0000")
+  $data = ""
+  for ($channel = 1; $channel -le 8; $channel += 1) {
+    $value = $(if ($EnabledChannels -contains $channel) { $EnabledValue } else { $DisabledValue })
+    $data += ("{0:D2}{1}" -f $channel, $value)
+  }
+  return $data
+}
+
+function New-LeimacFrame {
+  param([string]$CommandNumber, [string]$ChannelData)
+  return "W$CommandNumber$("{0:D2}" -f $LeimacUnit)$ChannelData"
+}
+
+function Send-LeimacFrame {
+  param([string]$Frame)
+  if (-not $LeimacHost -or $LeimacHost.Trim().Length -eq 0) {
+    return "DISABLED"
+  }
+  $client = [System.Net.Sockets.TcpClient]::new()
+  try {
+    $connectTask = $client.ConnectAsync($LeimacHost, $LeimacPort)
+    if (-not $connectTask.Wait(1500)) {
+      throw "Timed out connecting to Leimac $LeimacHost`:$LeimacPort"
+    }
+    $stream = $client.GetStream()
+    $stream.ReadTimeout = 1500
+    $stream.WriteTimeout = 1500
+    $bytes = [System.Text.Encoding]::ASCII.GetBytes($Frame)
+    $stream.Write($bytes, 0, $bytes.Length)
+    $buffer = New-Object byte[] 256
+    $read = $stream.Read($buffer, 0, $buffer.Length)
+    if ($read -le 0) { return "" }
+    return [System.Text.Encoding]::ASCII.GetString($buffer, 0, $read)
+  } finally {
+    try { $client.Close() } catch {}
+    try { $client.Dispose() } catch {}
+  }
+}
+
+function Invoke-LeimacPreviewSafeOff {
+  $offData = New-LeimacChannelData -EnabledChannels @() -EnabledValue "0000" -DisabledValue "0000"
+  $responses = @()
+  $responses += Send-LeimacFrame (New-LeimacFrame "86" $offData)
+  $responses += Send-LeimacFrame (New-LeimacFrame "85" $offData)
+  $responses += Send-LeimacFrame (New-LeimacFrame "11" $offData)
+  return $responses
+}
+
+function Invoke-LeimacPreviewApply {
+  param([int[]]$EnabledChannels, [int]$DutyTenthsPercent)
+  if ($DutyTenthsPercent -lt 0 -or $DutyTenthsPercent -gt 50) {
+    throw "Preview duty must be from 0.0% to 5.0%."
+  }
+  [void](Invoke-LeimacPreviewSafeOff)
+  if ($EnabledChannels.Count -eq 0 -or $DutyTenthsPercent -eq 0) {
+    return @("preview-light-off")
+  }
+  $dutySteps = [int]$DutyTenthsPercent
+  $dutyValue = "{0:D4}" -f $dutySteps
+  $dutyData = New-LeimacChannelData -EnabledChannels $EnabledChannels -EnabledValue $dutyValue -DisabledValue "0000"
+  $onData = New-LeimacChannelData -EnabledChannels $EnabledChannels -EnabledValue "0001" -DisabledValue "0000"
+  $responses = @()
+  $responses += Send-LeimacFrame (New-LeimacFrame "11" $dutyData)
+  $responses += Send-LeimacFrame (New-LeimacFrame "86" $onData)
+  return $responses
+}
+
+function Convert-GrabResultToBitmap {
+  param([object]$GrabResult)
+  $width = [int]$GrabResult.Width
+  $height = [int]$GrabResult.Height
+  $converter = [Basler.Pylon.PixelDataConverter]::new()
+  $converter.OutputPixelFormat = [Basler.Pylon.PixelType]::BGR8packed
+  $buffer = New-Object byte[] ($width * $height * 3)
+  $converter.Convert($buffer, $GrabResult)
+  $bitmap = [System.Drawing.Bitmap]::new($width, $height, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+  $rect = [System.Drawing.Rectangle]::new(0, 0, $width, $height)
+  $data = $bitmap.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::WriteOnly, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+  try {
+    [System.Runtime.InteropServices.Marshal]::Copy($buffer, 0, $data.Scan0, $buffer.Length)
+  } finally {
+    $bitmap.UnlockBits($data)
+  }
+  return $bitmap
+}
+
+function Add-OperatorPreviewTypes {
+  param([System.Collections.IDictionary]$Install)
+  try {
+    [void][TenKings.PylonWinFormsPreviewPump]
+    [void][TenKings.LeimacPreviewLightController]
+    return
+  } catch {
+  }
+
+  $source = @"
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Windows.Forms;
+using Basler.Pylon;
+
+namespace TenKings {
+  public sealed class PreviewFrameMetrics {
+    public double Mean;
+    public int Max;
+    public double ClippedFraction;
+    public double DarkFraction;
+    public double Sharpness;
+  }
+
+  public sealed class PylonWinFormsPreviewPump : IDisposable {
+    private readonly Camera camera;
+    private readonly PictureBox picture;
+    private readonly Label statusLabel;
+    private readonly Label metricsLabel;
+    private readonly Stopwatch started = new Stopwatch();
+    private Thread worker;
+    private volatile bool stopRequested;
+    private volatile bool paused;
+    private volatile bool displayBusy;
+    private long frameCount;
+    private long skippedFrames;
+    private double fps;
+    private double frameAgeMs;
+    private string lastError;
+    private PreviewFrameMetrics lastMetrics;
+
+    public PylonWinFormsPreviewPump(Camera camera, PictureBox picture, Label statusLabel, Label metricsLabel) {
+      this.camera = camera;
+      this.picture = picture;
+      this.statusLabel = statusLabel;
+      this.metricsLabel = metricsLabel;
+    }
+
+    public bool Paused {
+      get { return paused; }
+      set { paused = value; }
+    }
+
+    public long FrameCount { get { return Interlocked.Read(ref frameCount); } }
+    public long SkippedFrames { get { return Interlocked.Read(ref skippedFrames); } }
+    public double Fps { get { return fps; } }
+    public double FrameAgeMs { get { return frameAgeMs; } }
+    public string LastError { get { return lastError; } }
+    public PreviewFrameMetrics LastMetrics { get { return lastMetrics; } }
+
+    public void Start() {
+      if (worker != null) return;
+      started.Start();
+      worker = new Thread(Run);
+      worker.IsBackground = true;
+      worker.Name = "TenKings Basler pylon preview pump";
+      worker.Start();
+    }
+
+    public void Stop() {
+      stopRequested = true;
+      Thread thread = worker;
+      if (thread != null && thread.IsAlive) {
+        try { thread.Join(1000); } catch {}
+      }
+    }
+
+    public void Dispose() {
+      Stop();
+    }
+
+    private void Run() {
+      while (!stopRequested) {
+        if (paused || displayBusy) {
+          Interlocked.Increment(ref skippedFrames);
+          Thread.Sleep(5);
+          continue;
+        }
+
+        IGrabResult grabResult = null;
+        Bitmap bitmap = null;
+        try {
+          grabResult = camera.StreamGrabber.RetrieveResult(100, TimeoutHandling.Return);
+          if (grabResult == null) {
+            continue;
+          }
+          if (!grabResult.GrabSucceeded || !grabResult.IsValid) {
+            continue;
+          }
+
+          bitmap = ConvertGrabResultToBitmap(grabResult);
+          bitmap.RotateFlip(RotateFlipType.Rotate90FlipNone);
+          PreviewFrameMetrics metrics = null;
+          if ((FrameCount % 5) == 0) {
+            metrics = MeasureBitmap(bitmap);
+          }
+          DateTime capturedAt = DateTime.UtcNow;
+          displayBusy = true;
+          Bitmap displayBitmap = bitmap;
+          bitmap = null;
+          try {
+            picture.BeginInvoke(new Action(delegate {
+              try {
+                Image oldImage = picture.Image;
+                picture.Image = displayBitmap;
+                if (oldImage != null) oldImage.Dispose();
+                long frames = Interlocked.Increment(ref frameCount);
+                double seconds = Math.Max(0.001, started.Elapsed.TotalSeconds);
+                fps = Math.Round(frames / seconds, 2);
+                frameAgeMs = Math.Round((DateTime.UtcNow - capturedAt).TotalMilliseconds, 1);
+                if (metrics != null) lastMetrics = metrics;
+                statusLabel.Text = "Pylon live stream. Frames: " + frames + ". FPS: " + fps + ". Frame age: " + frameAgeMs + " ms. Skipped stale: " + SkippedFrames + ". Display: portrait; raw unchanged.";
+                if (lastMetrics != null) {
+                  metricsLabel.Text = "sharpness=" + lastMetrics.Sharpness.ToString("0.####") + "\r\nmean=" + lastMetrics.Mean.ToString("0.####") + " max=" + lastMetrics.Max + "\r\nclipped=" + lastMetrics.ClippedFraction.ToString("0.######") + " dark=" + lastMetrics.DarkFraction.ToString("0.######") + "\r\ncoverage/framing=operator review";
+                }
+                picture.Invalidate();
+              } catch (Exception ex) {
+                lastError = ex.Message;
+                statusLabel.Text = "Preview display error: " + lastError;
+                if (displayBitmap != null) {
+                  try { displayBitmap.Dispose(); } catch {}
+                }
+              } finally {
+                displayBusy = false;
+              }
+            }));
+          } catch (Exception ex) {
+            lastError = ex.Message;
+            displayBusy = false;
+            if (displayBitmap != null) {
+              try { displayBitmap.Dispose(); } catch {}
+            }
+          }
+        } catch (Exception ex) {
+          lastError = ex.Message;
+          try {
+            if (!statusLabel.IsDisposed) {
+              statusLabel.BeginInvoke(new Action(delegate {
+                statusLabel.Text = "Preview stream error: " + lastError;
+              }));
+            }
+          } catch {}
+          Thread.Sleep(50);
+        } finally {
+          if (bitmap != null) {
+            try { bitmap.Dispose(); } catch {}
+          }
+          if (grabResult != null) {
+            try { grabResult.Dispose(); } catch {}
+          }
+        }
+      }
+    }
+
+    private static Bitmap ConvertGrabResultToBitmap(IGrabResult grabResult) {
+      int width = grabResult.Width;
+      int height = grabResult.Height;
+      PixelDataConverter converter = new PixelDataConverter();
+      converter.OutputPixelFormat = PixelType.BGR8packed;
+      byte[] buffer = new byte[width * height * 3];
+      converter.Convert(buffer, grabResult);
+      Bitmap bitmap = new Bitmap(width, height, PixelFormat.Format24bppRgb);
+      Rectangle rect = new Rectangle(0, 0, width, height);
+      BitmapData data = bitmap.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
+      try {
+        Marshal.Copy(buffer, 0, data.Scan0, buffer.Length);
+      } finally {
+        bitmap.UnlockBits(data);
+      }
+      return bitmap;
+    }
+
+    private static PreviewFrameMetrics MeasureBitmap(Bitmap bitmap) {
+      int width = bitmap.Width;
+      int height = bitmap.Height;
+      int stepX = Math.Max(1, width / 160);
+      int stepY = Math.Max(1, height / 160);
+      long count = 0;
+      double sum = 0;
+      int max = 0;
+      long clipped = 0;
+      long dark = 0;
+      double edge = 0;
+      int previous = -1;
+      for (int y = 0; y < height; y += stepY) {
+        previous = -1;
+        for (int x = 0; x < width; x += stepX) {
+          Color pixel = bitmap.GetPixel(x, y);
+          int value = (pixel.R + pixel.G + pixel.B) / 3;
+          sum += value;
+          if (value > max) max = value;
+          if (value >= 250) clipped += 1;
+          if (value <= 10) dark += 1;
+          if (previous >= 0) edge += Math.Abs(value - previous);
+          previous = value;
+          count += 1;
+        }
+      }
+      PreviewFrameMetrics metrics = new PreviewFrameMetrics();
+      metrics.Mean = count > 0 ? Math.Round(sum / count, 4) : 0;
+      metrics.Max = max;
+      metrics.ClippedFraction = count > 0 ? Math.Round((double)clipped / count, 6) : 0;
+      metrics.DarkFraction = count > 0 ? Math.Round((double)dark / count, 6) : 0;
+      metrics.Sharpness = count > 0 ? Math.Round(edge / count, 4) : 0;
+      return metrics;
+    }
+  }
+
+  public sealed class LeimacPreviewLightController : IDisposable {
+    private readonly string host;
+    private readonly int port;
+    private readonly int unit;
+    private readonly object gate = new object();
+    private readonly AutoResetEvent signal = new AutoResetEvent(false);
+    private Thread worker;
+    private volatile bool stopRequested;
+    private bool requestedOn;
+    private int requestedDutyTenths;
+    private int[] requestedChannels = new int[0];
+    private int requestedVersion;
+    private int appliedDutyTenths;
+    private int[] appliedChannels = new int[0];
+    private bool lightEnabled;
+    private bool everEngaged;
+    private bool applyInFlight;
+    private double lastLatencyMs;
+    private string[] lastResponses = new string[0];
+    private string lastError;
+
+    public LeimacPreviewLightController(string host, int port, int unit) {
+      this.host = host;
+      this.port = port;
+      this.unit = unit;
+    }
+
+    public int AppliedDutyTenths { get { return appliedDutyTenths; } }
+    public bool LightEnabled { get { return lightEnabled; } }
+    public bool EverEngaged { get { return everEngaged; } }
+    public bool ApplyInFlight { get { return applyInFlight; } }
+    public double LastLatencyMs { get { return lastLatencyMs; } }
+    public string[] LastResponses { get { return lastResponses; } }
+    public string LastError { get { return lastError; } }
+
+    public void Start() {
+      if (worker != null) return;
+      worker = new Thread(Run);
+      worker.IsBackground = true;
+      worker.Name = "TenKings Leimac preview light controller";
+      worker.Start();
+    }
+
+    public void Request(bool on, int dutyTenths, int[] channels) {
+      if (dutyTenths < 0) dutyTenths = 0;
+      if (dutyTenths > 50) dutyTenths = 50;
+      int[] copy = channels == null ? new int[0] : (int[])channels.Clone();
+      lock (gate) {
+        requestedOn = on;
+        requestedDutyTenths = dutyTenths;
+        requestedChannels = copy;
+        requestedVersion += 1;
+      }
+      signal.Set();
+    }
+
+    public void SafeOffSync() {
+      Stopwatch watch = Stopwatch.StartNew();
+      try {
+        string[] responses = SafeOff();
+        appliedDutyTenths = 0;
+        appliedChannels = new int[0];
+        lightEnabled = false;
+        lastResponses = responses;
+        lastError = null;
+      } catch (Exception ex) {
+        lastError = ex.Message;
+      } finally {
+        lastLatencyMs = Math.Round(watch.Elapsed.TotalMilliseconds, 1);
+      }
+    }
+
+    public void Stop() {
+      stopRequested = true;
+      signal.Set();
+      Thread thread = worker;
+      if (thread != null && thread.IsAlive) {
+        try { thread.Join(1000); } catch {}
+      }
+    }
+
+    public void Dispose() {
+      try { SafeOffSync(); } catch {}
+      Stop();
+      try { signal.Dispose(); } catch {}
+    }
+
+    private void Run() {
+      int lastAppliedVersion = -1;
+      while (!stopRequested) {
+        bool signaled = signal.WaitOne(100);
+        if (stopRequested) break;
+        if (!signaled) continue;
+        bool on;
+        int duty;
+        int[] channels;
+        int version;
+        lock (gate) {
+          on = requestedOn;
+          duty = requestedDutyTenths;
+          channels = (int[])requestedChannels.Clone();
+          version = requestedVersion;
+        }
+        Thread.Sleep(50);
+        lock (gate) {
+          if (version != requestedVersion) continue;
+          on = requestedOn;
+          duty = requestedDutyTenths;
+          channels = (int[])requestedChannels.Clone();
+          version = requestedVersion;
+        }
+        if (version == lastAppliedVersion) continue;
+        ApplyLatest(on, duty, channels);
+        lastAppliedVersion = version;
+      }
+    }
+
+    private void ApplyLatest(bool on, int dutyTenths, int[] channels) {
+      Stopwatch watch = Stopwatch.StartNew();
+      applyInFlight = true;
+      try {
+        List<string> responses = new List<string>();
+        if (on && dutyTenths > 0 && channels != null && channels.Length > 0) {
+          string dutyValue = dutyTenths.ToString("D4");
+          if (lightEnabled && SameChannels(appliedChannels, channels)) {
+            responses.Add(SendFrame(NewFrame("11", ChannelData(channels, dutyValue, "0000"))));
+          } else {
+            responses.AddRange(SafeOff());
+            responses.Add(SendFrame(NewFrame("11", ChannelData(channels, dutyValue, "0000"))));
+            responses.Add(SendFrame(NewFrame("86", ChannelData(channels, "0001", "0000"))));
+          }
+          appliedDutyTenths = dutyTenths;
+          appliedChannels = (int[])channels.Clone();
+          lightEnabled = true;
+          everEngaged = true;
+        } else {
+          responses.AddRange(SafeOff());
+          appliedDutyTenths = 0;
+          appliedChannels = new int[0];
+          lightEnabled = false;
+        }
+        lastResponses = responses.ToArray();
+        lastError = null;
+      } catch (Exception ex) {
+        lastError = ex.Message;
+        try { lastResponses = SafeOff(); } catch {}
+        appliedDutyTenths = 0;
+        appliedChannels = new int[0];
+        lightEnabled = false;
+      } finally {
+        lastLatencyMs = Math.Round(watch.Elapsed.TotalMilliseconds, 1);
+        applyInFlight = false;
+      }
+    }
+
+    private string[] SafeOff() {
+      string off = ChannelData(new int[0], "0000", "0000");
+      return new string[] {
+        SendFrame(NewFrame("86", off)),
+        SendFrame(NewFrame("85", off)),
+        SendFrame(NewFrame("11", off))
+      };
+    }
+
+    private string NewFrame(string commandNumber, string channelData) {
+      return "W" + commandNumber + unit.ToString("D2") + channelData;
+    }
+
+    private static bool SameChannels(int[] left, int[] right) {
+      if (left == null || right == null) return false;
+      if (left.Length != right.Length) return false;
+      bool[] seen = new bool[9];
+      for (int index = 0; index < left.Length; index += 1) {
+        int channel = left[index];
+        if (channel < 1 || channel > 8) return false;
+        seen[channel] = true;
+      }
+      for (int index = 0; index < right.Length; index += 1) {
+        int channel = right[index];
+        if (channel < 1 || channel > 8 || !seen[channel]) return false;
+      }
+      return true;
+    }
+
+    private static string ChannelData(int[] enabledChannels, string enabledValue, string disabledValue) {
+      StringBuilder builder = new StringBuilder();
+      for (int channel = 1; channel <= 8; channel += 1) {
+        bool enabled = false;
+        if (enabledChannels != null) {
+          for (int index = 0; index < enabledChannels.Length; index += 1) {
+            if (enabledChannels[index] == channel) {
+              enabled = true;
+              break;
+            }
+          }
+        }
+        builder.Append(channel.ToString("D2"));
+        builder.Append(enabled ? enabledValue : disabledValue);
+      }
+      return builder.ToString();
+    }
+
+    private string SendFrame(string frame) {
+      TcpClient client = new TcpClient();
+      try {
+        IAsyncResult connect = client.BeginConnect(host, port, null, null);
+        if (!connect.AsyncWaitHandle.WaitOne(1500)) {
+          throw new TimeoutException("Timed out connecting to Leimac " + host + ":" + port);
+        }
+        client.EndConnect(connect);
+        NetworkStream stream = client.GetStream();
+        stream.ReadTimeout = 1500;
+        stream.WriteTimeout = 1500;
+        byte[] bytes = Encoding.ASCII.GetBytes(frame);
+        stream.Write(bytes, 0, bytes.Length);
+        byte[] buffer = new byte[256];
+        int read = stream.Read(buffer, 0, buffer.Length);
+        return read > 0 ? Encoding.ASCII.GetString(buffer, 0, read) : "";
+      } finally {
+        try { client.Close(); } catch {}
+      }
+    }
+  }
+}
+"@
+
+  Add-Type -ReferencedAssemblies @($Install.assemblyPath, "System.Windows.Forms", "System.Drawing") -TypeDefinition $source
+}
+
+function Show-OperatorPreviewWindow {
+  param([System.Collections.IDictionary]$Install)
+
+  if ($RefreshIntervalMs -lt 250 -or $RefreshIntervalMs -gt 5000) {
+    throw "RefreshIntervalMs must be from 250 to 5000."
+  }
+
+  $devices = [Basler.Pylon.CameraFinder]::Enumerate([Basler.Pylon.DeviceType]::GigE)
+  if ($devices.Count -eq 0) {
+    throw "No Basler GigE cameras were detected."
+  }
+  if ($CameraIndex -lt 0 -or $CameraIndex -ge $devices.Count) {
+    throw "CameraIndex $CameraIndex is out of range for $($devices.Count) detected camera(s)."
+  }
+
+  if ($OutputDir -and $OutputDir.Trim().Length -gt 0) {
+    New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+  }
+  $lastFramePath = $(if ($OutputDir -and $OutputDir.Trim().Length -gt 0) { Join-Path $OutputDir "operator-preview-window-display-frame.png" } else { Join-Path $env:TEMP "operator-preview-window-display-frame.png" })
+
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  Add-OperatorPreviewTypes $Install
+  [System.Windows.Forms.Application]::EnableVisualStyles()
+
+  $cameraInfo = $devices[$CameraIndex]
+  $cameraMetadata = Convert-CameraInfo $cameraInfo $CameraIndex
+  $camera = [Basler.Pylon.Camera]::new($cameraInfo)
+  $script:operatorPreviewFrameCount = 0
+  $script:operatorPreviewLastMetrics = $null
+  $script:operatorPreviewLastError = $null
+  $script:operatorPreviewPaused = $false
+  $script:operatorPreviewDecision = "closed"
+  $script:operatorPreviewStreamStarted = $false
+  $script:operatorPreviewLightEnabled = $false
+  $script:operatorPreviewDutyTenths = $PreviewDutyTenthsPercent
+  $script:operatorPreviewChannels = @(1,2,3,4,5,6,7,8)
+  $script:operatorPreviewLeimacEngaged = $false
+  $script:operatorPreviewLeimacEverEngaged = $false
+  $script:operatorPreviewLeimacResponses = @()
+  $script:operatorPreviewFps = 0.0
+  $script:operatorPreviewStartedAt = Get-Date
+  $script:operatorPreviewLastFrameAt = $null
+  $script:operatorPreviewLightingStatus = $(if ($LeimacHost -and $LeimacHost.Trim().Length -gt 0) { "Preview light off; controls enabled. Channel mapping UNKNOWN/UNCALIBRATED." } else { "Preview lighting disabled; no Leimac host supplied." })
+  $leimacPreviewController = $null
+  if ($LeimacHost -and $LeimacHost.Trim().Length -gt 0) {
+    $leimacPreviewController = [TenKings.LeimacPreviewLightController]::new($LeimacHost, $LeimacPort, $LeimacUnit)
+    $leimacPreviewController.Start()
+  }
+
+  $form = [System.Windows.Forms.Form]::new()
+  $form.Text = "Ten Kings Basler Fixed-Rig Live Operator Preview - UNCALIBRATED GUIDE"
+  $form.Width = 1320
+  $form.Height = 980
+  $form.StartPosition = "CenterScreen"
+  $form.TopMost = $true
+
+  $layout = [System.Windows.Forms.TableLayoutPanel]::new()
+  $layout.Dock = [System.Windows.Forms.DockStyle]::Fill
+  $layout.ColumnCount = 2
+  $layout.RowCount = 1
+  [void]$layout.ColumnStyles.Add([System.Windows.Forms.ColumnStyle]::new([System.Windows.Forms.SizeType]::Percent, 74))
+  [void]$layout.ColumnStyles.Add([System.Windows.Forms.ColumnStyle]::new([System.Windows.Forms.SizeType]::Percent, 26))
+
+  $picture = [System.Windows.Forms.PictureBox]::new()
+  $picture.Dock = [System.Windows.Forms.DockStyle]::Fill
+  $picture.BackColor = [System.Drawing.Color]::Black
+  $picture.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+
+  $panel = [System.Windows.Forms.FlowLayoutPanel]::new()
+  $panel.Dock = [System.Windows.Forms.DockStyle]::Fill
+  $panel.FlowDirection = [System.Windows.Forms.FlowDirection]::TopDown
+  $panel.WrapContents = $false
+  $panel.AutoScroll = $true
+  $panel.Padding = [System.Windows.Forms.Padding]::new(10)
+  $panel.BackColor = [System.Drawing.Color]::FromArgb(238, 238, 238)
+
+  $statusLabel = [System.Windows.Forms.Label]::new()
+  $statusLabel.Width = 310
+  $statusLabel.Height = 86
+  $statusLabel.Text = "Opening Basler live stream..."
+
+  $metricsLabel = [System.Windows.Forms.Label]::new()
+  $metricsLabel.Width = 310
+  $metricsLabel.Height = 116
+  $metricsLabel.Text = "Metrics pending..."
+
+  $warningLabel = [System.Windows.Forms.Label]::new()
+  $warningLabel.Width = 310
+  $warningLabel.Height = 54
+  $warningLabel.ForeColor = [System.Drawing.Color]::DarkRed
+  $warningLabel.Text = "UNCALIBRATED GRID / GUIDE. Channel mapping UNKNOWN."
+
+  $lightingLabel = [System.Windows.Forms.Label]::new()
+  $lightingLabel.Width = 310
+  $lightingLabel.Height = 56
+  $lightingLabel.Text = $script:operatorPreviewLightingStatus
+
+  $previewLightCheck = [System.Windows.Forms.CheckBox]::new()
+  $previewLightCheck.Text = "Master Preview Light On"
+  $previewLightCheck.Width = 310
+  $previewLightCheck.Enabled = ($LeimacHost -and $LeimacHost.Trim().Length -gt 0)
+
+  $dutyLabel = [System.Windows.Forms.Label]::new()
+  $dutyLabel.Width = 310
+  $dutyLabel.Height = 40
+  $dutyLabel.Text = ("Requested duty: {0:N1}% (V1 marker 1.2%, hard cap 5.0%)" -f ($script:operatorPreviewDutyTenths / 10.0))
+
+  $dutySlider = [System.Windows.Forms.TrackBar]::new()
+  $dutySlider.Minimum = 0
+  $dutySlider.Maximum = 50
+  $dutySlider.TickFrequency = 5
+  $dutySlider.Value = [Math]::Max(0, [Math]::Min(50, $script:operatorPreviewDutyTenths))
+  $dutySlider.Width = 310
+  $dutySlider.Enabled = $previewLightCheck.Enabled
+
+  $dutyInputPanel = [System.Windows.Forms.FlowLayoutPanel]::new()
+  $dutyInputPanel.Width = 310
+  $dutyInputPanel.Height = 32
+  $dutyInputPanel.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+  $dutyInputLabel = [System.Windows.Forms.Label]::new()
+  $dutyInputLabel.Text = "Duty %:"
+  $dutyInputLabel.Width = 58
+  $dutyInputLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+  $dutyTextBox = [System.Windows.Forms.TextBox]::new()
+  $dutyTextBox.Width = 58
+  $dutyTextBox.Text = ("{0:N1}" -f ($script:operatorPreviewDutyTenths / 10.0))
+  $appliedDutyLabel = [System.Windows.Forms.Label]::new()
+  $appliedDutyLabel.Width = 175
+  $appliedDutyLabel.Text = "Applied: pending"
+  [void]$dutyInputPanel.Controls.Add($dutyInputLabel)
+  [void]$dutyInputPanel.Controls.Add($dutyTextBox)
+  [void]$dutyInputPanel.Controls.Add($appliedDutyLabel)
+
+  $ringPanel = [System.Windows.Forms.Panel]::new()
+  $ringPanel.Width = 230
+  $ringPanel.Height = 230
+  $ringPanel.BackColor = [System.Drawing.Color]::White
+  $ringPanel.Enabled = $previewLightCheck.Enabled
+
+  $channelButtons = [System.Windows.Forms.FlowLayoutPanel]::new()
+  $channelButtons.Width = 310
+  $channelButtons.Height = 36
+  $channelButtons.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+
+  $allOnButton = [System.Windows.Forms.Button]::new()
+  $allOnButton.Text = "All On"
+  $allOnButton.Width = 80
+  $allOnButton.Enabled = $previewLightCheck.Enabled
+  $allOffButton = [System.Windows.Forms.Button]::new()
+  $allOffButton.Text = "All Off"
+  $allOffButton.Width = 80
+  $allOffButton.Enabled = $previewLightCheck.Enabled
+  $resetDutyButton = [System.Windows.Forms.Button]::new()
+  $resetDutyButton.Text = "Reset 1.2%"
+  $resetDutyButton.Width = 90
+  $resetDutyButton.Enabled = $previewLightCheck.Enabled
+  [void]$channelButtons.Controls.Add($allOnButton)
+  [void]$channelButtons.Controls.Add($allOffButton)
+  [void]$channelButtons.Controls.Add($resetDutyButton)
+
+  $acceptButton = [System.Windows.Forms.Button]::new()
+  $acceptButton.Text = "Accept / Start / Continue"
+  $acceptButton.Width = 250
+  $acceptButton.Add_Click({
+    try {
+      if ($null -ne $leimacPreviewController) { $leimacPreviewController.SafeOffSync() } else { [void](Invoke-LeimacPreviewSafeOff) }
+      $script:operatorPreviewLeimacEngaged = $false
+    } catch {}
+    $script:operatorPreviewDecision = "accepted"
+    $form.Close()
+  })
+
+  $abortButton = [System.Windows.Forms.Button]::new()
+  $abortButton.Text = "Abort / Close"
+  $abortButton.Width = 250
+  $abortButton.Add_Click({
+    try {
+      if ($null -ne $leimacPreviewController) { $leimacPreviewController.SafeOffSync() } else { [void](Invoke-LeimacPreviewSafeOff) }
+      $script:operatorPreviewLeimacEngaged = $false
+    } catch {}
+    $script:operatorPreviewDecision = "aborted"
+    $form.Close()
+  })
+
+  $pauseButton = [System.Windows.Forms.Button]::new()
+  $pauseButton.Text = "Pause"
+  $pauseButton.Width = 250
+  $pauseButton.Add_Click({
+    $script:operatorPreviewPaused = -not $script:operatorPreviewPaused
+    $pauseButton.Text = $(if ($script:operatorPreviewPaused) { "Resume" } else { "Pause" })
+  })
+
+  $safeOffButton = [System.Windows.Forms.Button]::new()
+  $safeOffButton.Text = "Safe Off"
+  $safeOffButton.Width = 250
+  $safeOffButton.Enabled = $previewLightCheck.Enabled
+  $safeOffButton.Add_Click({
+    try {
+      if ($null -ne $leimacPreviewController) {
+        $leimacPreviewController.SafeOffSync()
+        $script:operatorPreviewLeimacResponses = @($leimacPreviewController.LastResponses)
+        $script:operatorPreviewLastApplyLatencyMs = $leimacPreviewController.LastLatencyMs
+      } else {
+        $script:operatorPreviewLeimacResponses = Invoke-LeimacPreviewSafeOff
+      }
+      $script:operatorPreviewAppliedDutySteps = 0
+      $script:operatorPreviewLeimacEngaged = $false
+      $script:operatorPreviewLightEnabled = $false
+      $previewLightCheck.Checked = $false
+      $script:operatorPreviewLightingStatus = "Safe Off sent. Preview light off."
+      $lightingLabel.Text = $script:operatorPreviewLightingStatus
+    } catch {
+      $script:operatorPreviewLightingStatus = "Safe Off error: $($_.Exception.Message)"
+      $lightingLabel.Text = $script:operatorPreviewLightingStatus
+    }
+  })
+
+  $script:operatorPreviewRequestedDutySteps = [int]($script:operatorPreviewDutyTenths)
+  $script:operatorPreviewAppliedDutySteps = 0
+  $script:operatorPreviewApplyInFlight = $false
+  $script:operatorPreviewApplyPending = $false
+  $script:operatorPreviewApplyVersion = 0
+  $script:operatorPreviewLastApplyLatencyMs = $null
+
+  function Update-RequestedLightingText {
+    param([bool]$InvalidateRing = $true)
+    $requestedDuty = [Math]::Round(($script:operatorPreviewDutyTenths / 10.0), 1)
+    $dutyLabel.Text = "Requested duty: $requestedDuty% (V1 marker 1.2%, hard cap 5.0%)"
+    $lightingLabel.Text = "Requested: $(if ($previewLightCheck.Checked) { 'ON' } else { 'OFF' }); duty $requestedDuty%; channels: $($script:operatorPreviewChannels -join ','). Applied: $($script:operatorPreviewLightingStatus)"
+    if ($InvalidateRing) { $ringPanel.Invalidate() }
+  }
+
+  function Apply-DutyTextBox {
+    $parsed = 0.0
+    if ([double]::TryParse($dutyTextBox.Text, [ref]$parsed)) {
+      if ($parsed -lt 0) { $parsed = 0 }
+      if ($parsed -gt 5) { $parsed = 5 }
+      $steps = [int]([Math]::Round($parsed * 10.0))
+      $script:operatorPreviewDutyTenths = $steps
+      $dutySlider.Value = [Math]::Max($dutySlider.Minimum, [Math]::Min($dutySlider.Maximum, $steps))
+      $dutyTextBox.Text = ("{0:N1}" -f ($steps / 10.0))
+      Update-RequestedLightingText
+    }
+  }
+
+  function Invoke-PreviewLightingAsync {
+    if (-not $previewLightCheck.Enabled) { return }
+    $script:operatorPreviewApplyVersion += 1
+    $appliedDutyLabel.Text = "Applied: sending..."
+    if ($null -ne $leimacPreviewController) {
+      $leimacPreviewController.Request([bool]$previewLightCheck.Checked, [int]$script:operatorPreviewDutyTenths, [int[]]@($script:operatorPreviewChannels))
+    } else {
+      $requestedOn = [bool]$previewLightCheck.Checked
+      $requestedDutyTenths = [int]$script:operatorPreviewDutyTenths
+      $requestedChannels = @($script:operatorPreviewChannels)
+      $requestedStarted = Get-Date
+      try {
+        if (-not $requestedOn -or $requestedChannels.Count -eq 0 -or $requestedDutyTenths -eq 0) {
+          $script:operatorPreviewLeimacResponses = Invoke-LeimacPreviewSafeOff
+          $script:operatorPreviewAppliedDutySteps = 0
+          $script:operatorPreviewLightEnabled = $false
+          $script:operatorPreviewLeimacEngaged = $false
+        } else {
+          $script:operatorPreviewLeimacResponses = Invoke-LeimacPreviewApply -EnabledChannels $requestedChannels -DutyTenthsPercent $requestedDutyTenths
+          $script:operatorPreviewAppliedDutySteps = $requestedDutyTenths
+          $script:operatorPreviewLightEnabled = $true
+          $script:operatorPreviewLeimacEngaged = $true
+          $script:operatorPreviewLeimacEverEngaged = $true
+        }
+        $script:operatorPreviewLastApplyLatencyMs = [Math]::Round(((Get-Date) - $requestedStarted).TotalMilliseconds, 1)
+        $script:operatorPreviewLightingStatus = "ACK $script:operatorPreviewLastApplyLatencyMs ms"
+      } catch {
+        try { $script:operatorPreviewLeimacResponses = Invoke-LeimacPreviewSafeOff } catch {}
+        $script:operatorPreviewAppliedDutySteps = 0
+        $script:operatorPreviewLightEnabled = $false
+        $script:operatorPreviewLeimacEngaged = $false
+        $script:operatorPreviewLightingStatus = "ERROR, safe-off: $($_.Exception.Message)"
+        $previewLightCheck.Checked = $false
+      }
+      $appliedDutyLabel.Text = ("Applied: {0:N1}% / PWM {1:D4}" -f ($script:operatorPreviewAppliedDutySteps / 10.0), $script:operatorPreviewAppliedDutySteps)
+      Update-RequestedLightingText
+    }
+  }
+
+  $lightingDebounceTimer = [System.Windows.Forms.Timer]::new()
+  $lightingDebounceTimer.Interval = 50
+  $lightingDebounceTimer.Add_Tick({
+    $lightingDebounceTimer.Stop()
+    Invoke-PreviewLightingAsync
+  })
+  $lightingPollTimer = [System.Windows.Forms.Timer]::new()
+  $lightingPollTimer.Interval = 100
+  $lightingPollTimer.Add_Tick({
+    if ($null -eq $leimacPreviewController) { return }
+    $script:operatorPreviewApplyInFlight = $leimacPreviewController.ApplyInFlight
+    $script:operatorPreviewLastApplyLatencyMs = $leimacPreviewController.LastLatencyMs
+    $script:operatorPreviewLeimacResponses = @($leimacPreviewController.LastResponses)
+    $script:operatorPreviewAppliedDutySteps = [int]$leimacPreviewController.AppliedDutyTenths
+    $script:operatorPreviewLightEnabled = [bool]$leimacPreviewController.LightEnabled
+    $script:operatorPreviewLeimacEngaged = [bool]$leimacPreviewController.LightEnabled
+    $script:operatorPreviewLeimacEverEngaged = [bool]$leimacPreviewController.EverEngaged
+    if ($leimacPreviewController.LastError) {
+      $script:operatorPreviewLightingStatus = "ERROR, safe-off: $($leimacPreviewController.LastError)"
+    } elseif ($script:operatorPreviewApplyInFlight) {
+      $script:operatorPreviewLightingStatus = "sending..."
+    } elseif ($script:operatorPreviewLastApplyLatencyMs -gt 0) {
+      $script:operatorPreviewLightingStatus = "ACK $script:operatorPreviewLastApplyLatencyMs ms"
+    }
+    $appliedDutyLabel.Text = ("Applied: {0:N1}% / PWM {1:D4}" -f ($script:operatorPreviewAppliedDutySteps / 10.0), $script:operatorPreviewAppliedDutySteps)
+    Update-RequestedLightingText -InvalidateRing $false
+  })
+  $lightingPollTimer.Start()
+  function Schedule-PreviewLightingApply {
+    if (-not $previewLightCheck.Enabled) { return }
+    Update-RequestedLightingText
+    $lightingDebounceTimer.Stop()
+    $lightingDebounceTimer.Start()
+  }
+
+  $previewLightCheck.Add_CheckedChanged({ Schedule-PreviewLightingApply })
+  $dutySlider.Add_ValueChanged({
+    $script:operatorPreviewDutyTenths = [int]$dutySlider.Value
+    $dutyTextBox.Text = ("{0:N1}" -f ($script:operatorPreviewDutyTenths / 10.0))
+    Schedule-PreviewLightingApply
+  })
+  $dutyTextBox.Add_Leave({ Apply-DutyTextBox; Schedule-PreviewLightingApply })
+  $dutyTextBox.Add_KeyDown({
+    param($sender, $eventArgs)
+    if ($eventArgs.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
+      Apply-DutyTextBox
+      Schedule-PreviewLightingApply
+      $eventArgs.SuppressKeyPress = $true
+    }
+  })
+  $allOnButton.Add_Click({ $script:operatorPreviewChannels = @(1,2,3,4,5,6,7,8); Schedule-PreviewLightingApply; $ringPanel.Invalidate() })
+  $allOffButton.Add_Click({ $script:operatorPreviewChannels = @(); Schedule-PreviewLightingApply; $ringPanel.Invalidate() })
+  $resetDutyButton.Add_Click({ $dutySlider.Value = 12; $dutyTextBox.Text = "1.2"; Schedule-PreviewLightingApply })
+
+  $ringPanel.Add_Paint({
+    param($sender, $eventArgs)
+    $g = $eventArgs.Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $rect = [System.Drawing.Rectangle]::new(15, 15, 190, 190)
+    $font = [System.Drawing.Font]::new("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+    try {
+      for ($channel = 1; $channel -le 8; $channel += 1) {
+        $start = -90 + (($channel - 1) * 45)
+        $brush = $(if ($script:operatorPreviewChannels -contains $channel) { [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(116, 185, 89)) } else { [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(210, 210, 210)) })
+        $pen = [System.Drawing.Pen]::new([System.Drawing.Color]::Black, 1)
+        try {
+          $g.FillPie($brush, $rect, $start, 45)
+          $g.DrawPie($pen, $rect, $start, 45)
+          $angle = ($start + 22.5) * [Math]::PI / 180.0
+          $tx = 110 + [int]([Math]::Cos($angle) * 70)
+          $ty = 110 + [int]([Math]::Sin($angle) * 70)
+          $g.DrawString("$channel", $font, [System.Drawing.Brushes]::Black, $tx - 6, $ty - 8)
+        } finally {
+          $brush.Dispose(); $pen.Dispose()
+        }
+      }
+      $g.FillEllipse([System.Drawing.Brushes]::White, 72, 72, 76, 76)
+      $g.DrawEllipse([System.Drawing.Pens]::Black, 72, 72, 76, 76)
+      $g.DrawString("UNKNOWN", $font, [System.Drawing.Brushes]::DarkRed, 65, 100)
+    } finally {
+      $font.Dispose()
+    }
+  })
+
+  $ringPanel.Add_MouseClick({
+    param($sender, $eventArgs)
+    if (-not $ringPanel.Enabled) { return }
+    $dx = $eventArgs.X - 110
+    $dy = $eventArgs.Y - 110
+    $distance = [Math]::Sqrt(($dx * $dx) + ($dy * $dy))
+    if ($distance -lt 45 -or $distance -gt 100) { return }
+    $angle = ([Math]::Atan2($dy, $dx) * 180.0 / [Math]::PI) + 90
+    if ($angle -lt 0) { $angle += 360 }
+    $channel = [int]([Math]::Floor($angle / 45.0)) + 1
+    if ($script:operatorPreviewChannels -contains $channel) {
+      $script:operatorPreviewChannels = @($script:operatorPreviewChannels | Where-Object { $_ -ne $channel })
+    } else {
+      $script:operatorPreviewChannels = @($script:operatorPreviewChannels + $channel | Sort-Object)
+    }
+    Schedule-PreviewLightingApply
+    $ringPanel.Invalidate()
+  })
+
+  [void]$panel.Controls.Add($statusLabel)
+  [void]$panel.Controls.Add($metricsLabel)
+  [void]$panel.Controls.Add($warningLabel)
+  [void]$panel.Controls.Add($lightingLabel)
+  [void]$panel.Controls.Add($previewLightCheck)
+  [void]$panel.Controls.Add($dutyLabel)
+  [void]$panel.Controls.Add($dutySlider)
+  [void]$panel.Controls.Add($dutyInputPanel)
+  [void]$panel.Controls.Add($ringPanel)
+  [void]$panel.Controls.Add($channelButtons)
+  [void]$panel.Controls.Add($acceptButton)
+  [void]$panel.Controls.Add($abortButton)
+  [void]$panel.Controls.Add($pauseButton)
+  [void]$panel.Controls.Add($safeOffButton)
+  [void]$layout.Controls.Add($picture, 0, 0)
+  [void]$layout.Controls.Add($panel, 1, 0)
+  [void]$form.Controls.Add($layout)
+
+  $picture.Add_Paint({
+    param($sender, $eventArgs)
+    if ($null -eq $picture.Image) { return }
+    $graphics = $eventArgs.Graphics
+    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $imageRect = Get-ZoomRect $picture.ClientRectangle $picture.Image.Width $picture.Image.Height
+    $cyan = [System.Drawing.Pen]::new([System.Drawing.Color]::Cyan, 2)
+    $yellow = [System.Drawing.Pen]::new([System.Drawing.Color]::Gold, 3)
+    $green = [System.Drawing.Pen]::new([System.Drawing.Color]::Lime, 2)
+    $orange = [System.Drawing.Pen]::new([System.Drawing.Color]::Orange, 2)
+    $pink = [System.Drawing.Pen]::new([System.Drawing.Color]::DeepPink, 2)
+    $whiteBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::White)
+    $blackBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(170, 0, 0, 0))
+    $font = [System.Drawing.Font]::new("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+
+    try {
+      $graphics.DrawLine($cyan, ($imageRect.Left + $imageRect.Width / 2), $imageRect.Top, ($imageRect.Left + $imageRect.Width / 2), $imageRect.Bottom)
+      $graphics.DrawLine($cyan, $imageRect.Left, ($imageRect.Top + $imageRect.Height / 2), $imageRect.Right, ($imageRect.Top + $imageRect.Height / 2))
+      $graphics.DrawRectangle($cyan, $imageRect)
+
+      $guideHeight = [single]($imageRect.Height * 0.86)
+      $guideWidth = [single]($guideHeight * (2.5 / 3.5))
+      if ($guideWidth -gt ($imageRect.Width * 0.86)) {
+        $guideWidth = [single]($imageRect.Width * 0.86)
+        $guideHeight = [single]($guideWidth * (3.5 / 2.5))
+      }
+      $guide = [System.Drawing.RectangleF]::new(
+        [single]($imageRect.Left + (($imageRect.Width - $guideWidth) / 2)),
+        [single]($imageRect.Top + (($imageRect.Height - $guideHeight) / 2)),
+        $guideWidth,
+        $guideHeight
+      )
+      $graphics.DrawRectangle($yellow, $guide.X, $guide.Y, $guide.Width, $guide.Height)
+
+      foreach ($rect in @(
+        (New-RelativeRect $guide 0 0 0.18 0.18),
+        (New-RelativeRect $guide 0.82 0 0.18 0.18),
+        (New-RelativeRect $guide 0.82 0.82 0.18 0.18),
+        (New-RelativeRect $guide 0 0.82 0.18 0.18)
+      )) {
+        $graphics.DrawRectangle($orange, $rect.X, $rect.Y, $rect.Width, $rect.Height)
+      }
+      foreach ($rect in @(
+        (New-RelativeRect $guide 0.18 0 0.64 0.12),
+        (New-RelativeRect $guide 0.88 0.18 0.12 0.64),
+        (New-RelativeRect $guide 0.18 0.88 0.64 0.12),
+        (New-RelativeRect $guide 0 0.18 0.12 0.64)
+      )) {
+        $graphics.DrawRectangle($pink, $rect.X, $rect.Y, $rect.Width, $rect.Height)
+      }
+      foreach ($rect in @(
+        (New-RelativeRect $guide 0.32 0.34 0.36 0.30),
+        (New-RelativeRect $guide 0.26 0.18 0.48 0.22),
+        (New-RelativeRect $guide 0.26 0.60 0.48 0.22)
+      )) {
+        $graphics.DrawRectangle($green, $rect.X, $rect.Y, $rect.Width, $rect.Height)
+      }
+
+      $text = "UNCALIBRATED GRID / GUIDE - raw preview image is clean; overlay is window-only"
+      $textRect = [System.Drawing.RectangleF]::new(8, 8, 760, 30)
+      $graphics.FillRectangle($blackBrush, $textRect)
+      $graphics.DrawString($text, $font, $whiteBrush, 12, 12)
+    } finally {
+      $cyan.Dispose(); $yellow.Dispose(); $green.Dispose(); $orange.Dispose(); $pink.Dispose()
+      $whiteBrush.Dispose(); $blackBrush.Dispose(); $font.Dispose()
+    }
+  })
+
+  $script:operatorPreviewDisplayBusy = $false
+  $script:operatorPreviewSkippedFrames = 0
+  $script:operatorPreviewLastDisplayStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+  $script:operatorPreviewFrameAgeMs = 0
+  $script:operatorPreviewFrameSource = "pylon_stream_grabber_retrieve_result_latest_images_threaded_csharp"
+  $script:operatorPreviewFormClosed = $false
+  $form.Add_FormClosed({ $script:operatorPreviewFormClosed = $true })
+
+  $previewPump = $null
+
+  try {
+    [void]$camera.Open()
+    if ($ExposureUs -gt 0) {
+      [void](Set-FloatParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs, "ExposureTime") ([double]$ExposureUs))
+    }
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerSelector, "TriggerSelector") "FrameStart" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerMode, "TriggerMode") "Off" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerSelector, "TriggerSelector") "AcquisitionStart" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerMode, "TriggerMode") "Off" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureAuto, "ExposureAuto") "Off" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::GainAuto, "GainAuto") "Off" } catch {}
+    try { [Basler.Pylon.Configuration]::AcquireContinuous($camera, $null) } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::AcquisitionMode, "AcquisitionMode") "Continuous" } catch {}
+    $exposureTime = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs)
+    $gain = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw)
+    $configuredPixelFormat = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::PixelFormat)
+    try {
+      $camera.Parameters[[Basler.Pylon.PLCameraInstance]::OutputQueueSize].SetValue(1)
+    } catch {}
+    [void]$camera.StreamGrabber.Start([Basler.Pylon.GrabStrategy]::LatestImages, [Basler.Pylon.GrabLoop]::ProvidedByUser)
+    $script:operatorPreviewStreamStarted = $true
+    $previewPump = [TenKings.PylonWinFormsPreviewPump]::new($camera, $picture, $statusLabel, $metricsLabel)
+    $previewPump.Start()
+    [void]$form.ShowDialog()
+    try {
+      if ($null -ne $previewPump) { $previewPump.Stop() }
+      if ($null -ne $leimacPreviewController) {
+        $leimacPreviewController.SafeOffSync()
+        $script:operatorPreviewLeimacResponses = @($leimacPreviewController.LastResponses)
+        $script:operatorPreviewLastApplyLatencyMs = $leimacPreviewController.LastLatencyMs
+        $script:operatorPreviewLeimacEverEngaged = [bool]$leimacPreviewController.EverEngaged
+      } else {
+        $script:operatorPreviewLeimacResponses = Invoke-LeimacPreviewSafeOff
+      }
+      $script:operatorPreviewAppliedDutySteps = 0
+      $script:operatorPreviewLightEnabled = $false
+      $script:operatorPreviewLeimacEngaged = $false
+      $script:operatorPreviewLightingStatus = "Safe Off sent on preview exit."
+    } catch {}
+
+    $file = $null
+    $sha256 = $null
+    if ($null -ne $picture.Image) {
+      try { $picture.Image.Save($lastFramePath, [System.Drawing.Imaging.ImageFormat]::Png) } catch {}
+    }
+    if (Test-Path -LiteralPath $lastFramePath) {
+      $file = Get-Item -LiteralPath $lastFramePath
+      $sha256 = (Get-FileHash -LiteralPath $lastFramePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+
+    return [ordered]@{
+      windowVisible = $true
+      implementationType = "windows_winforms_pylon_live_stream"
+      framesUpdateAutomatically = $true
+      fps = $(if ($null -ne $previewPump) { $previewPump.Fps } else { $script:operatorPreviewFps })
+      frameAgeMs = $(if ($null -ne $previewPump) { $previewPump.FrameAgeMs } else { $script:operatorPreviewFrameAgeMs })
+      skippedStaleFrames = $(if ($null -ne $previewPump) { $previewPump.SkippedFrames } else { $script:operatorPreviewSkippedFrames })
+      frameSource = $script:operatorPreviewFrameSource
+      framesDisplayed = $(if ($null -ne $previewPump) { $previewPump.FrameCount } else { $script:operatorPreviewFrameCount })
+      overlayVisible = $true
+      metricsVisible = $true
+      displayOrientation = "portrait_rotated_90_for_operator_preview"
+      rawCaptureOrientation = "unchanged_unrotated_sensor_pixels"
+      sidebarLayout = "right_vertical_sidebar"
+      operatorDecision = $script:operatorPreviewDecision
+      lastFramePath = $(if ($file) { $lastFramePath } else { $null })
+      lastFrameSha256 = $sha256
+      lastFrameByteSize = $(if ($file) { $file.Length } else { $null })
+      lastMetrics = $(if ($null -ne $previewPump -and $null -ne $previewPump.LastMetrics) {
+        [ordered]@{
+          mean = $previewPump.LastMetrics.Mean
+          max = $previewPump.LastMetrics.Max
+          clippedFraction = $previewPump.LastMetrics.ClippedFraction
+          darkFraction = $previewPump.LastMetrics.DarkFraction
+          sharpness = $previewPump.LastMetrics.Sharpness
+        }
+      } else { $script:operatorPreviewLastMetrics })
+      lastError = $(if ($null -ne $previewPump -and $previewPump.LastError) { $previewPump.LastError } else { $script:operatorPreviewLastError })
+      previewLighting = [ordered]@{
+        controlsVisible = $true
+        controlsEnabled = [bool]($LeimacHost -and $LeimacHost.Trim().Length -gt 0)
+        masterLightOn = $script:operatorPreviewLightEnabled
+        currentDutyPercent = [Math]::Round(($script:operatorPreviewDutyTenths / 10.0), 1)
+        requestedDutyPercent = [Math]::Round(($script:operatorPreviewDutyTenths / 10.0), 1)
+        actualAppliedDutyPercent = [Math]::Round(($script:operatorPreviewAppliedDutySteps / 10.0), 1)
+        actualAppliedPwmStep = $script:operatorPreviewAppliedDutySteps
+        actualAppliedPwmValue = ("{0:D4}" -f $script:operatorPreviewAppliedDutySteps)
+        defaultV1DutyMarkerPercent = 1.2
+        maxDutyPercent = 5.0
+        selectedChannels = $script:operatorPreviewChannels
+        channelMappingStatus = "unknown_uncalibrated"
+        safeOffOnExit = $true
+        leimacEngagedDuringPreview = $script:operatorPreviewLeimacEverEngaged
+        lastApplyLatencyMs = $script:operatorPreviewLastApplyLatencyMs
+        lastResponses = $script:operatorPreviewLeimacResponses
+      }
+      camera = $cameraMetadata
+      exposureTime = $exposureTime
+      gain = $gain
+      sourcePixelFormat = "$configuredPixelFormat"
+      transport = "GigE"
+      pylon = $Install
+      safety = [ordered]@{
+        leimacRequired = $false
+        leimacEngaged = $script:operatorPreviewLeimacEngaged
+        persistentBaslerSaved = $false
+        persistentLeimacSaved = $false
+        overlaysBakedIntoRawEvidence = $false
+        rawEvidenceClean = $true
+      }
+      note = "Visible Windows pylon live-stream Basler operator preview. Display is portrait-rotated for ergonomics; raw capture orientation is unchanged. Overlay is window-only; preview lighting safe-offs on exit and no User Set is saved."
+    }
+  } finally {
+    $script:operatorPreviewFormClosed = $true
+    try { $lightingDebounceTimer.Stop() } catch {}
+    try { $lightingPollTimer.Stop() } catch {}
+    if ($null -ne $previewPump) { try { $previewPump.Dispose() } catch {} }
+    if ($null -ne $leimacPreviewController) { try { $leimacPreviewController.Dispose() } catch {} }
+    try { [void](Invoke-LeimacPreviewSafeOff) } catch {}
+    if ($script:operatorPreviewStreamStarted) { try { [void]$camera.StreamGrabber.Stop() } catch {} }
+    if ($camera.IsOpen) { try { [void]$camera.Close() } catch {} }
+    try { $camera.Dispose() } catch {}
+    if ($null -ne $picture.Image) { try { $picture.Image.Dispose() } catch {} }
+    try { $form.Dispose() } catch {}
+  }
+}
+
 try {
   $install = Resolve-PylonInstall
 
   if (-not $install.installed) {
-    if ($Action -eq "capture-still") {
+    if ($Action -eq "capture-still" -or $Action -eq "operator-preview-window") {
       throw "Basler pylon is not installed or Basler.Pylon.dll was not found."
     }
     $result = New-ReadinessResult $install @()
@@ -735,6 +1967,12 @@ try {
 
   if ($Action -eq "line2-user-output-pulse") {
     $result = Pulse-Line2UserOutput $install
+    Write-BridgeJson ([ordered]@{ ok = $true; result = $result })
+    exit 0
+  }
+
+  if ($Action -eq "operator-preview-window") {
+    $result = Show-OperatorPreviewWindow $install
     Write-BridgeJson ([ordered]@{ ok = $true; result = $result })
     exit 0
   }
