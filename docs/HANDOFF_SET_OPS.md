@@ -11832,3 +11832,32 @@ Build Set Ops UI flow with:
   - Clipping remains high at the accepted `1.2%` profile, especially back (`0.337672`), so lighting/exposure needs per-card tuning before relying on diagnostic scores.
   - Channel physical mapping, robust surface grading, and ring-glare mitigation remain future work.
 - Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting change, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no captured image/vendor binary commit, and no final/certificate/certified claims.
+
+## Session Update (2026-06-30 UTC, AI Grader PR #40 unified front/back report)
+- PR #40 remains open and must not be merged yet.
+- Branch: `feature/ai-grader-fixed-rig-diagnostic-grading`.
+- Fixed the pre-merge report gap: the previous accepted smoke produced separate front and back reports; PR #40 now has an offline unified card report command, `ai-grader-fixed-rig-v1-card-report`.
+- No new hardware was run. The command reused the accepted PR #40 front/back evidence outputs:
+  - Front: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160133846Z`.
+  - Back: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160426641Z`.
+- Unified report output:
+  - Folder: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z`.
+  - Report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z\provisional-diagnostic-report.html`.
+  - Manifest: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z\manifest.json`.
+- Unified report contents:
+  - Ten Kings title, report/session ID, provisional status badge, `Diagnostic Grade Pending` hero, front portrait hero image, callouts for Centering/Corners/Edges/Surface, plain-English diagnostic summary, front/back portrait evidence, front/back overlays, front/back ROI crops, front/back 8-channel evidence, clipping warnings, and technical appendix.
+  - Accepted lighting profile remains Leimac duty `1.2%`, PWM `12`, channels `1-8`, source `operator_preview`, exposure `45000us`, gain `0`.
+  - Fixed-ruler profile remains `fixed_metric_rulers`, `mmPerPixelX=0.047037`, `mmPerPixelY=0.047344`, X/Y consistency `pass`, framing gate `pass`, overlay alignment `pass`.
+  - Front clipping warning: `0.107932`; back clipping warning: `0.337672`. The report recommends lowering preview duty/exposure before relying on diagnostics.
+  - Centering/corner/edge/surface sections are present for both sides and are labeled provisional/diagnostic only.
+  - `finalGradeComputed=false`, `certifiedClaim=false`, `isCalibrated=false`; no final grade, certificate, QR label, or certified grading claim.
+- Local validation after code/report update:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 143 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass, existing `<img>` warnings only.
+  - `git diff --check` -> pass with line-ending warnings only.
+- Pending:
+  - Commit/push PR #40 updates and wait for PR checks before merge.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting change, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no new hardware capture, no captured image/vendor binary commit, and no final/certificate/certified claims.

@@ -21720,3 +21720,52 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting was used.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, or certified grading claim was added.
+
+## 2026-06-30 - AI Grader PR #40 unified front/back report
+
+### Summary
+- Continued PR #40 on `feature/ai-grader-fixed-rig-diagnostic-grading`; do not merge yet.
+- Fixed the report-acceptance gap by adding `ai-grader-fixed-rig-v1-card-report`, a software-only front+back report combiner.
+- No new hardware was run; the accepted PR #40 front/back evidence folders were reused.
+- The unified report now gives Mark one card-level provisional diagnostic report instead of separate side-only reports.
+
+### Unified Report Evidence
+- Front input folder: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160133846Z`.
+- Back input folder: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160426641Z`.
+- Unified output folder: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z`.
+- Unified report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z\provisional-diagnostic-report.html`.
+- Unified manifest: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z\manifest.json`.
+
+### Report Contents
+- Premium report structure includes Ten Kings title, report/session ID, provisional status badge, `Diagnostic Grade Pending` hero, front portrait hero image, Centering/Corners/Edges/Surface callouts, plain-English diagnostic summary, detailed diagnostics, evidence gallery, ROI crops, 8-channel evidence, and technical appendix.
+- Report contains front and back portrait images, front and back overlay/debug images, front and back ROI crops, front and back centering/corner/edge/surface diagnostic sections, and combined warnings.
+- Accepted lighting profile: Leimac duty `1.2%`, PWM step `12`, channels `1-8`, source `operator_preview`, exposure `45000us`, gain `0`.
+- Framing/overlay gate: `pass`; fixed-ruler profile `fixed_metric_rulers`, `mmPerPixelX=0.047037`, `mmPerPixelY=0.047344`, X/Y consistency `pass`.
+- Clipping warnings are explicit: front `0.107932`, back `0.337672`; report recommends lowering preview duty/exposure before relying on diagnostics.
+- The report remains `macro_fixed_rig_v1_uncalibrated`, `isCalibrated=false`, `finalGradeComputed=false`, and `certifiedClaim=false`.
+- No final grade, certificate, QR label, or certified grading claim is present.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 143 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass, existing `<img>` warnings only.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Pending
+- Commit/push PR #40 update and confirm PR checks before merge.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino/stage/motor command was run.
+- No Leimac reset/default command was run.
+- No persistent Basler or Leimac User Set save was made.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, or certified grading claim was added.

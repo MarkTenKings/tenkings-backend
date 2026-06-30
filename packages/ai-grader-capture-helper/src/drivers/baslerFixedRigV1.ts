@@ -667,6 +667,28 @@ export interface LeimacChannelCharacterizationManifest {
   note: string;
 }
 
+export interface FixedRigUnifiedDiagnosticCardReportResult {
+  packageId: string;
+  packageDir: string;
+  reportPath: string;
+  manifestPath: string;
+  analysisPath: string;
+  status: "computed_diagnostic" | "insufficient_evidence";
+  evidenceClass: typeof FIXED_RIG_V1_EVIDENCE_CLASS;
+  isCalibrated: false;
+  finalGradeComputed: false;
+  certifiedClaim: false;
+  frontPackageDir: string;
+  backPackageDir: string;
+  frontReportPath?: string;
+  backReportPath?: string;
+  activeLightingProfile?: FixedRigActiveLightingProfile;
+  fixtureCalibrationProfile?: FixedRigFixtureCalibrationProfile;
+  framingGateStatus?: string;
+  overlayAlignmentStatus?: string;
+  warnings: string[];
+}
+
 function roundMetric(value: number, places = 4): number {
   const factor = 10 ** places;
   return Math.round(value * factor) / factor;
@@ -3118,6 +3140,418 @@ function surfaceAnalysisSection(analysis: FixedRigSurfaceAnalysis | undefined): 
     </tbody></table>
     <div class="grid">${analysis.perChannelStats.map((channel) => imageTag(channel.portraitDisplayImage?.outputFilePath, `channel ${channel.channel} portrait display`)).join("")}</div>
     <p>Candidates: ${escapeHtml(analysis.candidates.length)}. ${escapeHtml(analysis.warnings.join("; "))}</p>`;
+}
+
+type FixedRigEvidencePackageJson = Record<string, any>;
+
+async function readJsonFile(filePath: string): Promise<FixedRigEvidencePackageJson> {
+  return JSON.parse(await readFile(filePath, "utf-8")) as FixedRigEvidencePackageJson;
+}
+
+function evidenceSideFromPackage(manifest: FixedRigEvidencePackageJson, side: FixedRigCardSide): FixedRigEvidencePackageJson | undefined {
+  const value = manifest[side];
+  return value && typeof value === "object" ? value : undefined;
+}
+
+function sideDiagnosticFromAnalysis(analysis: FixedRigEvidencePackageJson, side: FixedRigCardSide): FixedRigEvidencePackageJson | undefined {
+  const value = analysis[side]?.diagnosticGrading;
+  return value && typeof value === "object" ? value : undefined;
+}
+
+function sideSurfaceFromAnalysis(analysis: FixedRigEvidencePackageJson, side: FixedRigCardSide): FixedRigEvidencePackageJson | undefined {
+  const value = analysis[side]?.surfaceAnalysis;
+  return value && typeof value === "object" ? value : undefined;
+}
+
+function sideAllOnStats(side: FixedRigEvidencePackageJson | undefined): FixedRigQualityMetrics | undefined {
+  return side?.allOn?.stats;
+}
+
+function sideClippingWarning(sideLabel: string, stats: FixedRigQualityMetrics | undefined): string | undefined {
+  const clipped = stats?.clippedPixelFraction;
+  if (clipped === undefined) return `${sideLabel} clipping metrics are unavailable.`;
+  if (clipped > 0.1) return `${sideLabel} clipping is high (${clipped}); lower preview duty and/or exposure before relying on diagnostics.`;
+  if (clipped > 0.02) return `${sideLabel} clipping exceeds the soft target (${clipped}); confidence is reduced.`;
+  return undefined;
+}
+
+function diagnosticStatusText(diagnostic: FixedRigEvidencePackageJson | undefined, element: string): string {
+  const value = diagnostic?.[element];
+  if (!value || typeof value !== "object") return "insufficient_evidence";
+  const score = value.score === undefined ? "" : ` score ${value.score}`;
+  return `${value.status ?? "not_computed"}${score}`;
+}
+
+function cornerStatusText(diagnostic: FixedRigEvidencePackageJson | undefined): string {
+  const corners = diagnostic?.corners ?? {};
+  return [
+    `TL ${corners.topLeft?.status ?? "not_computed"}`,
+    `TR ${corners.topRight?.status ?? "not_computed"}`,
+    `BR ${corners.bottomRight?.status ?? "not_computed"}`,
+    `BL ${corners.bottomLeft?.status ?? "not_computed"}`,
+  ].join(", ");
+}
+
+function edgeStatusText(diagnostic: FixedRigEvidencePackageJson | undefined): string {
+  const edges = diagnostic?.edges ?? {};
+  return [
+    `T ${edges.top?.status ?? "not_computed"}`,
+    `R ${edges.right?.status ?? "not_computed"}`,
+    `B ${edges.bottom?.status ?? "not_computed"}`,
+    `L ${edges.left?.status ?? "not_computed"}`,
+  ].join(", ");
+}
+
+function surfaceCandidateText(surface: FixedRigEvidencePackageJson | undefined): string {
+  const candidates = Array.isArray(surface?.candidates) ? surface.candidates : [];
+  if (!candidates.length) return "No V0 candidate emitted.";
+  return candidates
+    .map((candidate) => `${candidate.candidateId ?? "candidate"} ${candidate.severityBand ?? "unknown"} ${candidate.anomalyProxyScore ?? ""}`.trim())
+    .join(", ");
+}
+
+function premiumMetricCard(label: string, value: unknown, note?: string): string {
+  return `<div class="metric-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>${note ? `<small>${escapeHtml(note)}</small>` : ""}</div>`;
+}
+
+function reportImage(filePath: string | undefined, alt: string): string {
+  if (!filePath) return `<div class="missing">Missing ${escapeHtml(alt)}</div>`;
+  return `<img src="${escapeHtml(filePath)}" alt="${escapeHtml(alt)}">`;
+}
+
+function callout(label: string, status: string, className: string): string {
+  return `<div class="callout ${escapeHtml(className)}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(status)}</strong><small>provisional_diagnostic</small></div>`;
+}
+
+function roiGallery(sideLabel: string, side: FixedRigEvidencePackageJson | undefined): string {
+  const crops = Array.isArray(side?.roiCrops) ? side.roiCrops : [];
+  if (!crops.length) return `<p>${escapeHtml(sideLabel)} ROI crops are unavailable.</p>`;
+  return `<div class="thumb-grid">${crops
+    .map(
+      (crop) =>
+        `<figure>${reportImage(crop.outputFilePath, `${sideLabel} ${crop.roiId ?? "ROI"} crop`)}<figcaption>${escapeHtml(sideLabel)} ${escapeHtml(crop.roiId ?? "ROI")}</figcaption></figure>`
+    )
+    .join("")}</div>`;
+}
+
+function channelGallery(sideLabel: string, side: FixedRigEvidencePackageJson | undefined): string {
+  const channels = Array.isArray(side?.channelDisplayImages) ? side.channelDisplayImages : [];
+  if (!channels.length) return `<p>${escapeHtml(sideLabel)} channel displays are unavailable.</p>`;
+  return `<div class="thumb-grid compact">${channels
+    .map(
+      (entry) =>
+        `<figure>${reportImage(entry.displayImage?.outputFilePath, `${sideLabel} channel ${entry.channel}`)}<figcaption>${escapeHtml(sideLabel)} channel ${escapeHtml(entry.channel)}</figcaption></figure>`
+    )
+    .join("")}</div>`;
+}
+
+function diagnosticTable(title: string, diagnostic: FixedRigEvidencePackageJson | undefined): string {
+  return `<section class="panel">
+    <h3>${escapeHtml(title)}</h3>
+    <table><tbody>
+      <tr><th>Centering</th><td>${escapeHtml(diagnosticStatusText(diagnostic, "centering"))}</td></tr>
+      <tr><th>Corners</th><td>${escapeHtml(cornerStatusText(diagnostic))}</td></tr>
+      <tr><th>Edges</th><td>${escapeHtml(edgeStatusText(diagnostic))}</td></tr>
+      <tr><th>Surface</th><td>${escapeHtml(diagnosticStatusText(diagnostic, "surface"))}</td></tr>
+      <tr><th>Warnings</th><td>${escapeHtml(Array.isArray(diagnostic?.warnings) ? diagnostic.warnings.join("; ") : "none")}</td></tr>
+    </tbody></table>
+  </section>`;
+}
+
+function renderUnifiedFixedRigCardReport(input: {
+  packageId: string;
+  generatedAt: string;
+  frontPackageDir: string;
+  backPackageDir: string;
+  frontManifest: FixedRigEvidencePackageJson;
+  backManifest: FixedRigEvidencePackageJson;
+  frontAnalysis: FixedRigEvidencePackageJson;
+  backAnalysis: FixedRigEvidencePackageJson;
+  warnings: string[];
+}): string {
+  const front = evidenceSideFromPackage(input.frontManifest, "front");
+  const back = evidenceSideFromPackage(input.backManifest, "back");
+  const frontDiagnostic = sideDiagnosticFromAnalysis(input.frontAnalysis, "front") ?? front?.diagnosticGrading;
+  const backDiagnostic = sideDiagnosticFromAnalysis(input.backAnalysis, "back") ?? back?.diagnosticGrading;
+  const frontSurface = sideSurfaceFromAnalysis(input.frontAnalysis, "front") ?? front?.surfaceAnalysis;
+  const backSurface = sideSurfaceFromAnalysis(input.backAnalysis, "back") ?? back?.surfaceAnalysis;
+  const activeProfile = input.frontManifest.activeLightingProfile ?? input.backManifest.activeLightingProfile;
+  const fixtureProfile = front?.fixtureCalibrationProfile ?? back?.fixtureCalibrationProfile;
+  const frontStats = sideAllOnStats(front);
+  const backStats = sideAllOnStats(back);
+  const clippingWarnings = [sideClippingWarning("Front", frontStats), sideClippingWarning("Back", backStats)].filter(Boolean);
+  const strongestWarning = [...clippingWarnings, ...input.warnings][0] ?? "No blocking warning was emitted.";
+  const topCandidate = [frontSurface, backSurface]
+    .flatMap((surface) => (Array.isArray(surface?.candidates) ? surface.candidates : []))
+    .sort((a, b) => Number(b.anomalyProxyScore ?? 0) - Number(a.anomalyProxyScore ?? 0))[0];
+  const positiveFinding =
+    fixtureProfile?.framingGate?.status === "pass" && (fixtureProfile?.pixelToMmConsistency?.status === "pass" || fixtureProfile?.pixelToMmConsistency?.status === undefined)
+      ? "Fixed-ruler scale, framing, and overlay gates passed for this provisional diagnostic run."
+      : "Front/back evidence packages were generated with portrait displays, overlays, ROI crops, and 8-channel evidence.";
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ten Kings Fixed-Rig Provisional Diagnostic Report</title>
+  <style>
+    :root { color-scheme: light; --ink:#171717; --muted:#68645d; --paper:#f7f3ea; --panel:#fffdf8; --line:#d8d0c1; --gold:#b88a2d; --red:#9f2a2a; --blue:#1f5f7a; --green:#26734d; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: Arial, Helvetica, sans-serif; color:var(--ink); background:var(--paper); }
+    main { max-width:1280px; margin:0 auto; padding:28px; }
+    header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; border-bottom:1px solid var(--line); padding-bottom:18px; }
+    h1,h2,h3 { margin:0 0 12px; letter-spacing:0; }
+    h1 { font-size:30px; }
+    h2 { font-size:22px; margin-top:34px; }
+    h3 { font-size:17px; }
+    p { line-height:1.45; }
+    .brand { font-weight:700; text-transform:uppercase; color:#312a1b; letter-spacing:1px; }
+    .status { display:inline-block; border:1px solid var(--red); color:var(--red); background:#fff4f1; padding:8px 12px; font-weight:700; border-radius:4px; }
+    .meta { color:var(--muted); font-size:13px; margin-top:8px; }
+    .hero { margin-top:24px; display:grid; grid-template-columns:1fr minmax(320px,420px) 1fr; gap:22px; align-items:center; }
+    .grade-box { grid-column:1 / 4; text-align:center; padding:18px; border:1px solid var(--line); background:var(--panel); }
+    .grade-box strong { display:block; font-size:38px; margin-top:4px; }
+    .card-stage { grid-column:2; text-align:center; }
+    .card-stage img { max-height:760px; max-width:100%; border:1px solid #2c2c2c; background:#111; box-shadow:0 12px 30px rgba(0,0,0,.18); }
+    .callout-col { display:grid; gap:14px; }
+    .callout { border:1px solid var(--line); background:var(--panel); padding:14px; min-height:82px; position:relative; }
+    .callout span { display:block; color:var(--muted); font-size:13px; text-transform:uppercase; }
+    .callout strong { display:block; margin-top:8px; font-size:16px; }
+    .callout small { color:var(--blue); }
+    .summary-grid, .metric-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+    .panel, .metric-card { border:1px solid var(--line); background:var(--panel); padding:16px; }
+    .metric-card span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; }
+    .metric-card strong { display:block; font-size:20px; margin-top:6px; }
+    .metric-card small { display:block; color:var(--muted); margin-top:6px; }
+    .warning { border-left:5px solid var(--red); background:#fff8f5; padding:12px 14px; }
+    .good { border-left:5px solid var(--green); background:#f5fff9; padding:12px 14px; }
+    .side-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    .image-pair { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    img { max-width:100%; background:#111; }
+    figure { margin:0; }
+    figcaption { font-size:12px; color:var(--muted); margin-top:6px; word-break:break-all; }
+    .thumb-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+    .thumb-grid.compact { grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); }
+    table { border-collapse:collapse; width:100%; margin:10px 0 0; background:var(--panel); }
+    th,td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+    th { width:210px; background:#faf6ed; }
+    pre { white-space:pre-wrap; word-break:break-word; background:#24211d; color:#fff; padding:14px; overflow:auto; }
+    .missing { border:1px dashed var(--line); padding:20px; color:var(--muted); background:#fff; }
+    @media (max-width:900px) { .hero,.side-grid,.image-pair { grid-template-columns:1fr; } .grade-box,.card-stage { grid-column:auto; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <div class="brand">Ten Kings</div>
+      <h1>AI Fixed-Rig Card Diagnostic Report</h1>
+      <div class="meta">Report/session ID: ${escapeHtml(input.packageId)}<br>Generated: ${escapeHtml(input.generatedAt)}</div>
+    </div>
+    <div class="status">Provisional Diagnostic - Not Certified - No Final Grade</div>
+  </header>
+
+  <section class="hero">
+    <div class="grade-box">
+      <span>Large central grade area</span>
+      <strong>Diagnostic Grade Pending</strong>
+      <p>No final grade is computed in PR #40.</p>
+    </div>
+    <div class="callout-col">
+      ${callout("Centering", `Front ${diagnosticStatusText(frontDiagnostic, "centering")} / Back ${diagnosticStatusText(backDiagnostic, "centering")}`, "center")}
+      ${callout("Corners", `Front ${cornerStatusText(frontDiagnostic)} / Back ${cornerStatusText(backDiagnostic)}`, "corners")}
+    </div>
+    <div class="card-stage">
+      ${reportImage(front?.displayImage?.outputFilePath, "front portrait card image")}
+    </div>
+    <div class="callout-col">
+      ${callout("Edges", `Front ${edgeStatusText(frontDiagnostic)} / Back ${edgeStatusText(backDiagnostic)}`, "edges")}
+      ${callout("Surface", `Front ${surfaceCandidateText(frontSurface)} / Back ${surfaceCandidateText(backSurface)}`, "surface")}
+    </div>
+  </section>
+
+  <section>
+    <h2>Diagnostic Summary</h2>
+    <div class="summary-grid">
+      <p class="good"><strong>Strongest positive finding:</strong><br>${escapeHtml(positiveFinding)}</p>
+      <p class="warning"><strong>Strongest warning:</strong><br>${escapeHtml(strongestWarning)}</p>
+      <p class="panel"><strong>Top anomaly candidate:</strong><br>${escapeHtml(topCandidate ? `${topCandidate.candidateId} ${topCandidate.severityBand} ${topCandidate.anomalyProxyScore}` : "No candidate emitted.")}</p>
+      <p class="panel"><strong>Why this is not final:</strong><br>Evidence class is ${escapeHtml(FIXED_RIG_V1_EVIDENCE_CLASS)}, isCalibrated=false, and all scores are provisional_diagnostic only.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Card Session Metadata</h2>
+    <div class="metric-grid">
+      ${premiumMetricCard("Accepted duty", `${activeProfile?.selectedDutyPercent ?? "unknown"}%`, `PWM ${activeProfile?.actualLeimacPwmStep ?? "unknown"}`)}
+      ${premiumMetricCard("Channels", activeProfile?.selectedChannels?.join(", ") ?? "unknown")}
+      ${premiumMetricCard("Lighting source", activeProfile?.profileSource ?? "unknown")}
+      ${premiumMetricCard("Evidence class", FIXED_RIG_V1_EVIDENCE_CLASS, "isCalibrated=false")}
+    </div>
+  </section>
+
+  <section>
+    <h2>Clipping and Lighting Warnings</h2>
+    <div class="metric-grid">
+      ${premiumMetricCard("Front clipped fraction", frontStats?.clippedPixelFraction ?? "not_computed", "Soft target <= 0.02")}
+      ${premiumMetricCard("Back clipped fraction", backStats?.clippedPixelFraction ?? "not_computed", "Soft target <= 0.02")}
+    </div>
+    <p class="warning">${escapeHtml(clippingWarnings.join(" ") || "No clipping warning above threshold.")}</p>
+  </section>
+
+  <section>
+    <h2>Front and Back Evidence</h2>
+    <div class="side-grid">
+      <div class="panel"><h3>Front</h3><div class="image-pair">${reportImage(front?.displayImage?.outputFilePath, "front portrait evidence")}${reportImage(front?.overlayPreview?.outputFilePath, "front overlay/debug image")}</div></div>
+      <div class="panel"><h3>Back</h3><div class="image-pair">${reportImage(back?.displayImage?.outputFilePath, "back portrait evidence")}${reportImage(back?.overlayPreview?.outputFilePath, "back overlay/debug image")}</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Centering Diagnostics</h2>
+    <div class="side-grid">${diagnosticTable("Front diagnostic elements", frontDiagnostic)}${diagnosticTable("Back diagnostic elements", backDiagnostic)}</div>
+  </section>
+
+  <section>
+    <h2>Corner ROI Crops</h2>
+    <div class="side-grid"><div>${roiGallery("front", { ...front, roiCrops: (front?.roiCrops ?? []).filter((crop: any) => String(crop.roiId).includes("corner")) })}</div><div>${roiGallery("back", { ...back, roiCrops: (back?.roiCrops ?? []).filter((crop: any) => String(crop.roiId).includes("corner")) })}</div></div>
+  </section>
+
+  <section>
+    <h2>Edge ROI Crops</h2>
+    <div class="side-grid"><div>${roiGallery("front", { ...front, roiCrops: (front?.roiCrops ?? []).filter((crop: any) => String(crop.roiId).includes("edge")) })}</div><div>${roiGallery("back", { ...back, roiCrops: (back?.roiCrops ?? []).filter((crop: any) => String(crop.roiId).includes("edge")) })}</div></div>
+  </section>
+
+  <section>
+    <h2>Surface Evidence and Anomaly Diagnostics</h2>
+    <div class="side-grid">
+      <div class="panel"><h3>Front Surface</h3><p>${escapeHtml(surfaceCandidateText(frontSurface))}</p>${roiGallery("front", { ...front, roiCrops: (front?.roiCrops ?? []).filter((crop: any) => String(crop.roiId).includes("surface")) })}</div>
+      <div class="panel"><h3>Back Surface</h3><p>${escapeHtml(surfaceCandidateText(backSurface))}</p>${roiGallery("back", { ...back, roiCrops: (back?.roiCrops ?? []).filter((crop: any) => String(crop.roiId).includes("surface")) })}</div>
+    </div>
+    <h3>8-Channel Evidence</h3>
+    <div class="side-grid"><div>${channelGallery("front", front)}</div><div>${channelGallery("back", back)}</div></div>
+  </section>
+
+  <section>
+    <h2>Evidence Gallery</h2>
+    <h3>All ROI Crops</h3>
+    <div class="side-grid"><div>${roiGallery("front", front)}</div><div>${roiGallery("back", back)}</div></div>
+  </section>
+
+  <section>
+    <h2>Technical Appendix</h2>
+    <h3>Calibration Profile</h3>
+    ${fixtureCalibrationTable(fixtureProfile)}
+    <h3>Lighting Profile</h3>
+    ${activeLightingProfileTable(activeProfile)}
+    <h3>Front Quality</h3>
+    ${qualityTable(frontStats)}
+    <h3>Back Quality</h3>
+    ${qualityTable(backStats)}
+    <h3>Raw Source Folders</h3>
+    <table><tbody>
+      <tr><th>Front package</th><td>${escapeHtml(input.frontPackageDir)}</td></tr>
+      <tr><th>Back package</th><td>${escapeHtml(input.backPackageDir)}</td></tr>
+      <tr><th>Raw evidence rule</th><td>Raw Basler evidence remains clean in basler_sensor_pixels; overlays and ROI crops are derived report/debug assets.</td></tr>
+      <tr><th>Claims</th><td>finalGradeComputed=false; certifiedClaim=false; no certificate/certified grading claim.</td></tr>
+    </tbody></table>
+    <h3>Combined Diagnostic JSON</h3>
+    <pre>${escapeHtml(JSON.stringify({ front: frontDiagnostic, back: backDiagnostic, warnings: [...clippingWarnings, ...input.warnings] }, null, 2))}</pre>
+  </section>
+</main>
+</body>
+</html>
+`;
+}
+
+export async function createUnifiedFixedRigDiagnosticCardReport(input: {
+  frontPackageDir: string;
+  backPackageDir: string;
+  outputDir: string;
+}): Promise<FixedRigUnifiedDiagnosticCardReportResult> {
+  const { packageId, packageDir } = await createFixedRigPackageDir(input.outputDir, "ai-grader-fixed-rig-v1-unified-diagnostic-report");
+  const generatedAt = new Date().toISOString();
+  const [frontManifest, backManifest, frontAnalysis, backAnalysis] = await Promise.all([
+    readJsonFile(path.join(input.frontPackageDir, "manifest.json")),
+    readJsonFile(path.join(input.backPackageDir, "manifest.json")),
+    readJsonFile(path.join(input.frontPackageDir, "analysis.json")),
+    readJsonFile(path.join(input.backPackageDir, "analysis.json")),
+  ]);
+  const front = evidenceSideFromPackage(frontManifest, "front");
+  const back = evidenceSideFromPackage(backManifest, "back");
+  const warnings = [
+    ...(front ? [] : ["Front evidence package is missing front-side evidence; unified report is insufficient_evidence."]),
+    ...(back ? [] : ["Back evidence package is missing back-side evidence; unified report is insufficient_evidence."]),
+    sideClippingWarning("Front", sideAllOnStats(front)),
+    sideClippingWarning("Back", sideAllOnStats(back)),
+  ].filter((warning): warning is string => Boolean(warning));
+  const status: FixedRigUnifiedDiagnosticCardReportResult["status"] = front && back ? "computed_diagnostic" : "insufficient_evidence";
+  const activeLightingProfile = frontManifest.activeLightingProfile ?? backManifest.activeLightingProfile;
+  const fixtureCalibrationProfile = front?.fixtureCalibrationProfile ?? back?.fixtureCalibrationProfile;
+  const reportPath = path.join(packageDir, "provisional-diagnostic-report.html");
+  const manifestPath = path.join(packageDir, "manifest.json");
+  const analysisPath = path.join(packageDir, "analysis.json");
+  const reportHtml = renderUnifiedFixedRigCardReport({
+    packageId,
+    generatedAt,
+    frontPackageDir: input.frontPackageDir,
+    backPackageDir: input.backPackageDir,
+    frontManifest,
+    backManifest,
+    frontAnalysis,
+    backAnalysis,
+    warnings,
+  });
+  const result: FixedRigUnifiedDiagnosticCardReportResult = {
+    packageId,
+    packageDir,
+    reportPath,
+    manifestPath,
+    analysisPath,
+    status,
+    evidenceClass: FIXED_RIG_V1_EVIDENCE_CLASS,
+    isCalibrated: false,
+    finalGradeComputed: false,
+    certifiedClaim: false,
+    frontPackageDir: input.frontPackageDir,
+    backPackageDir: input.backPackageDir,
+    frontReportPath: frontManifest.previewReportPath,
+    backReportPath: backManifest.previewReportPath,
+    activeLightingProfile,
+    fixtureCalibrationProfile,
+    framingGateStatus: fixtureCalibrationProfile?.framingGate?.status,
+    overlayAlignmentStatus: fixtureCalibrationProfile?.framingGate?.overlayAlignmentStatus,
+    warnings,
+  };
+  await writeJsonArtifact(manifestPath, {
+    ...result,
+    generatedAt,
+    sourceReports: {
+      front: frontManifest.previewReportPath,
+      back: backManifest.previewReportPath,
+    },
+    reportContains: {
+      frontEvidenceImages: Boolean(front?.displayImage?.outputFilePath),
+      backEvidenceImages: Boolean(back?.displayImage?.outputFilePath),
+      centeringDiagnostic: Boolean(front?.diagnosticGrading?.centering || frontAnalysis.front?.diagnosticGrading?.centering) && Boolean(back?.diagnosticGrading?.centering || backAnalysis.back?.diagnosticGrading?.centering),
+      cornerDiagnostics: Boolean(front?.diagnosticGrading?.corners || frontAnalysis.front?.diagnosticGrading?.corners) && Boolean(back?.diagnosticGrading?.corners || backAnalysis.back?.diagnosticGrading?.corners),
+      edgeDiagnostics: Boolean(front?.diagnosticGrading?.edges || frontAnalysis.front?.diagnosticGrading?.edges) && Boolean(back?.diagnosticGrading?.edges || backAnalysis.back?.diagnosticGrading?.edges),
+      surfaceAnomalyDiagnostic: Boolean(front?.surfaceAnalysis || frontAnalysis.front?.surfaceAnalysis) && Boolean(back?.surfaceAnalysis || backAnalysis.back?.surfaceAnalysis),
+      finalGrade: false,
+      certificateOrCertifiedClaim: false,
+    },
+    note: "Unified front/back provisional diagnostic report only. No final grade, certificate, or certified grading claim is made.",
+  });
+  await writeJsonArtifact(analysisPath, {
+    status,
+    evidenceClass: FIXED_RIG_V1_EVIDENCE_CLASS,
+    front: frontAnalysis.front,
+    back: backAnalysis.back,
+    combinedWarnings: warnings,
+    finalGradeComputed: false,
+    certifiedClaim: false,
+  });
+  await writeFile(reportPath, reportHtml, "utf-8");
+  return result;
 }
 
 function sideSection(side: FixedRigSideCapture | undefined, title: string): string {

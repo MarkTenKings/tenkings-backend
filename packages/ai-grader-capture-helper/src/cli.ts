@@ -359,6 +359,13 @@ type ParsedCommand =
       verticalEndPx: { x: number; y: number } | undefined;
       cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
     }
+  | {
+      command: "ai-grader-fixed-rig-v1-card-report";
+      config: CaptureHelperConfigInput;
+      outputDir: string | undefined;
+      frontDir: string | undefined;
+      backDir: string | undefined;
+    }
   | { command: "fixed-rig-lighting-profile-plan"; config: CaptureHelperConfigInput }
   | {
       command: "leimac-channel-characterization";
@@ -465,6 +472,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let port: string | undefined;
   let deviceIndex: number | undefined;
   let outputDir: string | undefined;
+  let frontDir: string | undefined;
+  let backDir: string | undefined;
   let sdkRuntimeDir: string | undefined;
   let label: string | undefined;
   let pylonRoot: string | undefined;
@@ -625,6 +634,14 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--output-dir":
         outputDir = readOption(rest, index, "--output-dir");
+        index += 1;
+        break;
+      case "--front-dir":
+        frontDir = readOption(rest, index, "--front-dir");
+        index += 1;
+        break;
+      case "--back-dir":
+        backDir = readOption(rest, index, "--back-dir");
         index += 1;
         break;
       case "--label":
@@ -1169,6 +1186,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "fixed-rig-repeatability-test" ||
     command === "ai-grader-fixed-rig-v1-local" ||
     command === "ai-grader-fixed-rig-v1-evidence-package" ||
+    command === "ai-grader-fixed-rig-v1-card-report" ||
     command === "fixed-rig-lighting-profile-plan" ||
     command === "leimac-channel-characterization" ||
     command === "dinolite-enumerate" ||
@@ -1590,6 +1608,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
       };
     }
     if (command === "fixed-rig-lighting-profile-plan") return { command, config };
+    if (command === "ai-grader-fixed-rig-v1-card-report") return { command, config, outputDir, frontDir, backDir };
     if (command === "dinolite-status") return { command, config, deviceIndex };
     if (command === "dinolite-capture-still") return { command, config, deviceIndex, outputDir };
     if (command === "dinolite-capture-package" || command === "dinolite-capture-demo-package") {
@@ -1647,6 +1666,7 @@ function helpPayload() {
       "ai-grader-fixed-rig-v1-local --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --duty 5 --exposure-us 50000 --apply --confirm \"RUN AI GRADER FIXED RIG V1 LOCAL\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed --operator-flip-delay-ms 30000",
       "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side front --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side back --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed",
+      "ai-grader-fixed-rig-v1-card-report --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
       "leimac-channel-characterization --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --duty 1 --exposure-us 45000 --apply --confirm \"RUN LEIMAC CHANNEL CHARACTERIZATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
@@ -3167,6 +3187,45 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         operatorPrompt: "Proceed only if Mark confirms the visible pylon live-stream preview window was usable for manual focus and card alignment.",
       });
       return 0;
+    }
+
+    if (parsed.command === "ai-grader-fixed-rig-v1-card-report") {
+      const {
+        assertFixedRigOutputDirAllowed,
+        createUnifiedFixedRigDiagnosticCardReport,
+      } = await import("./drivers/baslerFixedRigV1");
+      if (!parsed.outputDir) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-card-report requires --output-dir <outside-repo-output-dir>.");
+      }
+      if (!parsed.frontDir) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-card-report requires --front-dir <front-evidence-package-dir>.");
+      }
+      if (!parsed.backDir) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-card-report requires --back-dir <back-evidence-package-dir>.");
+      }
+      assertFixedRigOutputDirAllowed(parsed.outputDir);
+      const report = await createUnifiedFixedRigDiagnosticCardReport({
+        outputDir: parsed.outputDir,
+        frontPackageDir: parsed.frontDir,
+        backPackageDir: parsed.backDir,
+      });
+      writeJson(stdout, {
+        ok: report.status === "computed_diagnostic",
+        service: "ai-grader-capture-helper",
+        command: "ai-grader-fixed-rig-v1-card-report",
+        report,
+        safety: {
+          hardwareAccessed: false,
+          baslerContacted: false,
+          leimacContacted: false,
+          persistentBaslerSaved: false,
+          persistentLeimacSaved: false,
+          capturedImagesCommitted: false,
+          finalGradeComputed: false,
+          certifiedClaim: false,
+        },
+      });
+      return report.status === "computed_diagnostic" ? 0 : 1;
     }
 
     if (parsed.command === "basler-fixed-rig-focus-assist") {

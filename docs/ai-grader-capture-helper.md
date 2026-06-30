@@ -1011,6 +1011,17 @@ Provisional diagnostic analysis computed centering, corners, edges, and prelimin
 
 The PR #40 smoke remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`; `finalGradeComputed=false`; `certifiedClaim=false`. The run passed the fixed-rig provisional diagnostic evidence-package flow, but lighting/exposure still needs per-card tuning because front clipping was about `10.8%` and back clipping was about `33.8%`. Mark confirmed the final physical Leimac ring light state was off after safe-off.
 
+PR #40 now adds a software-only unified card report combiner so a single report can show both sides of one card. It does not contact Basler or Leimac, does not capture images, and does not change raw evidence. It reads an existing front evidence-package folder plus an existing back evidence-package folder and writes a new card-level report under the fixed-rig output root:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-fixed-rig-v1-card-report `
+  --output-dir C:\TenKings\capture-data\fixed-rig-v1 `
+  --front-dir C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160133846Z `
+  --back-dir C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160426641Z
+```
+
+The accepted PR #40 unified report output is `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z`; the report HTML is `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z\provisional-diagnostic-report.html`. The report uses a premium front+back structure: Ten Kings title, session ID, provisional status badge, `Diagnostic Grade Pending` hero, front portrait hero image, element callouts for Centering/Corners/Edges/Surface, plain-English summary, front/back evidence, overlays, ROI crops, 8-channel evidence, and a technical appendix. It records the accepted lighting profile (`1.2%`, PWM `12`, channels `1-8`), fixed-ruler profile, framing/overlay pass, front/back diagnostic sections, and explicit clipping warnings. It still states `isCalibrated=false`, `finalGradeComputed=false`, `certifiedClaim=false`, and no final grade/certificate/certified claim.
+
 #### Dell PR #39 Rough Fixture Smoke
 
 On 2026-06-30, Mark ran the rough fixed-fixture flow using the operator-built fixed-position V1 fixture. The accepted live preview folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`. The preview measured about `20.5 FPS` with `0 ms` frame age and accepted a software active profile of `1.4%` Leimac duty, PWM step `14`, channels `1-8`, source `operator_preview`. Preview/report display used `rotate90cw`; raw Basler sensor captures remained unchanged. The preview and later reports warned that the detected card boundary touched the frame edge, so the run remains rough/unvalidated and not calibrated.
