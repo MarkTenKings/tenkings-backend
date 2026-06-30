@@ -20,6 +20,7 @@ const {
   FIXED_RIG_REPEATABILITY_TEST_CONFIRMATION,
   LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION,
   applyFixedRigCardBoundaryOverride,
+  addFixedRigDisplayRects,
   buildFixedRigActiveLightingProfile,
   buildFixedRigCalibrationProfile,
   buildFixedRigDiagnosticGradingResult,
@@ -29,6 +30,7 @@ const {
   buildFixedRigOperatorPreviewManifest,
   buildFixedRigRepeatabilityRun,
   buildFixedRigRepeatabilitySummary,
+  buildFixedRigRoiDefinitions,
   buildFixedRigSideCapture,
   buildFixedRigSurfaceAnalysis,
   buildFixedRigV1LocalManifest,
@@ -761,6 +763,194 @@ test("Fixed-rig lighting profile plan is dry-run and does not invent channel map
   assert.equal(cli.stdout.plan.channelMappingStatus, "unknown");
 });
 
+function writeFakeFixedRigEvidencePackage(rootDir, side, clippedPixelFraction) {
+  const packageDir = path.join(rootDir, `${side}-package`);
+  fs.mkdirSync(packageDir, { recursive: true });
+  const activeLightingProfile = buildFixedRigActiveLightingProfile({
+    selectedDutyPercent: 1.2,
+    selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+    profileSource: "operator_preview",
+    acceptedAt: "2026-06-30T16:01:02.654Z",
+  });
+  const quality = fakeFixedRigQuality({
+    clippedPixelFraction,
+    overlayAlignment: {
+      overlayAlignmentStatus: "pass",
+      centerOffsetPx: { x: 0, y: 0 },
+      marginLeft: 285,
+      marginRight: 285,
+      marginTop: 349,
+      marginBottom: 349,
+      detectedAspectRatio: 1.391111,
+      expectedAspectRatio: 1.4,
+      warnings: [],
+    },
+  });
+  const rois = addFixedRigDisplayRects(buildFixedRigRoiDefinitions(quality.cardBoundary), quality.width, quality.height);
+  const fixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
+    profileId: `${side}-fixture`,
+    fixtureLabel: "fixed-v1-l-stop",
+    referenceType: "fixed_metric_rulers",
+    horizontalSpanMm: 50.8,
+    horizontalStartPx: { x: 540, y: 205 },
+    horizontalEndPx: { x: 1620, y: 205 },
+    verticalSpanMm: 50.8,
+    verticalStartPx: { x: 2295, y: 145 },
+    verticalEndPx: { x: 2295, y: 1218 },
+    rawImageWidth: quality.width,
+    rawImageHeight: quality.height,
+    cardBoundary: quality.cardBoundary,
+    activeLightingProfile,
+    exposureUs: 45000,
+    gain: 0,
+    operatorAccepted: true,
+  });
+  const channelDisplayImages = Array.from({ length: 8 }, (_, index) => ({
+    channel: index + 1,
+    displayImage: {
+      outputFilePath: path.join(packageDir, side, `${side}-channel-${index + 1}-portrait-display.png`),
+    },
+  }));
+  const surfaceAnalysis = buildFixedRigSurfaceAnalysis({
+    side,
+    channels: channelDisplayImages.map((entry) => ({ channel: entry.channel, stats: quality, displayImage: entry.displayImage })),
+    roiDefinitions: rois,
+  });
+  const diagnosticGrading = buildFixedRigDiagnosticGradingResult({
+    side,
+    quality,
+    roiDefinitions: rois,
+    fixtureCalibrationProfile,
+    surfaceAnalysis,
+  });
+  const roiCrops = rois
+    .filter((roi) => roi.status === "computed")
+    .map((roi) => ({
+      roiId: roi.id,
+      outputFilePath: path.join(packageDir, side, "roi-crops", `${side}-${roi.id}-portrait-crop.png`),
+    }));
+  const sidePayload = {
+    side,
+    displayImage: { outputFilePath: path.join(packageDir, side, `${side}-all-on-portrait-display.png`) },
+    overlayPreview: { outputFilePath: path.join(packageDir, side, `${side}-all-on-overlay.png`) },
+    allOn: {
+      capture: { outputFilePath: path.join(packageDir, side, `basler-${side}-all-on.png`), sha256: `${side}-sha` },
+      stats: quality,
+    },
+    acceptedProfile: {
+      capture: { outputFilePath: path.join(packageDir, side, `basler-${side}-accepted-lighting-profile.png`) },
+      stats: quality,
+    },
+    channelDisplayImages,
+    roiCrops,
+    roiDefinitions: rois,
+    fixtureCalibrationProfile,
+    surfaceAnalysis,
+    diagnosticGrading,
+  };
+  const manifest = {
+    packageId: `${side}-package`,
+    packageDir,
+    previewReportPath: path.join(packageDir, "preview-report.html"),
+    evidenceClass: "macro_fixed_rig_v1_uncalibrated",
+    isCalibrated: false,
+    activeLightingProfile,
+    [side]: sidePayload,
+    note: "Uncalibrated fixed-rig V1 evidence package only; no final grade, certificate, or certified grading claim.",
+  };
+  const analysis = {
+    status: "computed_diagnostic",
+    evidenceClass: "macro_fixed_rig_v1_uncalibrated",
+    activeLightingProfile,
+    [side]: {
+      allOn: quality,
+      fixtureCalibrationProfile,
+      surfaceAnalysis,
+      diagnosticGrading,
+    },
+    finalGradeComputed: false,
+    certifiedClaim: false,
+  };
+  fs.writeFileSync(path.join(packageDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  fs.writeFileSync(path.join(packageDir, "analysis.json"), `${JSON.stringify(analysis, null, 2)}\n`);
+  return packageDir;
+}
+
+test("Unified fixed-rig card report combines front and back provisional diagnostics", async () => {
+  const root = path.join(os.tmpdir(), "fixed-rig-unified-card-report-test");
+  fs.rmSync(root, { recursive: true, force: true });
+  const frontDir = writeFakeFixedRigEvidencePackage(root, "front", 0.107932);
+  const backDir = writeFakeFixedRigEvidencePackage(root, "back", 0.337672);
+  const outputDir = path.join(root, "fixed-rig-v1");
+
+  const result = await runCli([
+    "ai-grader-fixed-rig-v1-card-report",
+    "--output-dir",
+    outputDir,
+    "--front-dir",
+    frontDir,
+    "--back-dir",
+    backDir,
+  ]);
+
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout.report.status, "computed_diagnostic");
+  assert.equal(result.stdout.safety.hardwareAccessed, false);
+  assert.equal(result.stdout.safety.leimacContacted, false);
+  const reportHtml = fs.readFileSync(result.stdout.report.reportPath, "utf-8");
+  assert.match(reportHtml, /Ten Kings/);
+  assert.match(reportHtml, /Diagnostic Grade Pending/);
+  assert.match(reportHtml, /Provisional Diagnostic - Not Certified - No Final Grade/);
+  assert.match(reportHtml, /Front and Back Evidence/);
+  assert.match(reportHtml, /front-all-on-portrait-display\.png/);
+  assert.match(reportHtml, /back-all-on-portrait-display\.png/);
+  assert.match(reportHtml, /Centering Diagnostics/);
+  assert.match(reportHtml, /Corner ROI Crops/);
+  assert.match(reportHtml, /Edge ROI Crops/);
+  assert.match(reportHtml, /Surface Evidence and Anomaly Diagnostics/);
+  assert.match(reportHtml, /Back clipping is high/);
+  assert.doesNotMatch(reportHtml, /certifiedClaim": true|finalGradeComputed": true/i);
+  const manifest = JSON.parse(fs.readFileSync(result.stdout.report.manifestPath, "utf-8"));
+  assert.equal(manifest.reportContains.frontEvidenceImages, true);
+  assert.equal(manifest.reportContains.backEvidenceImages, true);
+  assert.equal(manifest.reportContains.centeringDiagnostic, true);
+  assert.equal(manifest.reportContains.cornerDiagnostics, true);
+  assert.equal(manifest.reportContains.edgeDiagnostics, true);
+  assert.equal(manifest.reportContains.surfaceAnomalyDiagnostic, true);
+  assert.equal(manifest.reportContains.finalGrade, false);
+  assert.equal(manifest.reportContains.certificateOrCertifiedClaim, false);
+});
+
+test("Unified fixed-rig card report rejects repo output and missing side evidence", async () => {
+  const root = path.join(os.tmpdir(), "fixed-rig-unified-card-report-missing-test");
+  fs.rmSync(root, { recursive: true, force: true });
+  const frontDir = writeFakeFixedRigEvidencePackage(root, "front", 0.01);
+  const backDir = writeFakeFixedRigEvidencePackage(root, "front", 0.01);
+  const repoOutput = await runCli([
+    "ai-grader-fixed-rig-v1-card-report",
+    "--output-dir",
+    process.cwd(),
+    "--front-dir",
+    frontDir,
+    "--back-dir",
+    backDir,
+  ]);
+  assert.equal(repoOutput.code, 1);
+  assert.match(repoOutput.stderr.error, /outside the git repo/);
+
+  const missingBack = await runCli([
+    "ai-grader-fixed-rig-v1-card-report",
+    "--output-dir",
+    path.join(root, "fixed-rig-v1"),
+    "--front-dir",
+    frontDir,
+    "--back-dir",
+    backDir,
+  ]);
+  assert.equal(missingBack.code, 1);
+  assert.equal(missingBack.stdout.report.status, "insufficient_evidence");
+});
+
 test("Fixed-rig focus assist manifest reports manual focus metrics without autofocus claims", () => {
   const macroManifest = buildBaslerLeimacMacroPackageManifest({
     status: "captured",
@@ -1068,21 +1258,31 @@ test("Fixed-rig repeatability summary aggregates diagnostic variation without ca
 });
 
 test("Fixed-rig diagnostic grading and surface analysis are preliminary and do not output final grades", () => {
+  const cardBoundary = {
+    status: "detected",
+    x: 324,
+    y: 381,
+    width: 1800,
+    height: 1286,
+    coverage: 0.462,
+    confidence: 0.8,
+  };
   const quality = fakeFixedRigQuality({
+    cardBoundary,
     overlayAlignment: {
-      templateRect: { x: 180, y: 130, width: 2050, height: 1750 },
-      detectedBoundaryRect: { x: 200, y: 150, width: 2000, height: 1700 },
-      centerOffsetPx: { x: 5, y: 4 },
-      centerOffsetMm: { x: 0.2, y: 0.15 },
-      marginLeft: 200,
-      marginRight: 248,
-      marginTop: 150,
-      marginBottom: 198,
-      detectedAspectRatio: 1.176471,
+      templateRect: { x: 624, y: 184, width: 1199, height: 1679 },
+      detectedBoundaryRect: { x: 324, y: 381, width: 1800, height: 1286 },
+      centerOffsetPx: { x: 0.5, y: 0.5 },
+      centerOffsetMm: { x: 0.025, y: 0.025 },
+      marginLeft: 324,
+      marginRight: 324,
+      marginTop: 381,
+      marginBottom: 381,
+      detectedAspectRatio: 1.399689,
       expectedAspectRatio: 1.4,
       orientationUsed: "raw_landscape_rotated_to_portrait",
-      overlayAlignmentStatus: "warn",
-      warnings: ["test alignment warning"],
+      overlayAlignmentStatus: "pass",
+      warnings: [],
     },
   });
   const rois = buildFixedRigSideCapture({
@@ -1106,31 +1306,112 @@ test("Fixed-rig diagnostic grading and surface analysis are preliminary and do n
   }).roiDefinitions;
   const surfaceAnalysis = buildFixedRigSurfaceAnalysis({
     side: "front",
-    channels: Array.from({ length: 8 }, (_, index) => ({ channel: index + 1, stats: fakeFixedRigQuality({ mean: 40 + index }) })),
+    roiDefinitions: rois,
+    channels: Array.from({ length: 8 }, (_, index) => ({
+      channel: index + 1,
+      stats: fakeFixedRigQuality({
+        mean: 40 + index,
+        sharpnessScore: index === 2 ? 260 : 100,
+        clippedPixelFraction: index === 2 ? 0.001 : 0,
+      }),
+    })),
+  });
+  const fixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
+    profileId: "fixed-ruler-diagnostic",
+    referenceType: "fixed_metric_rulers",
+    horizontalSpanMm: 50,
+    horizontalStartPx: { x: 100, y: 100 },
+    horizontalEndPx: { x: 1100, y: 100 },
+    verticalSpanMm: 50,
+    verticalStartPx: { x: 120, y: 120 },
+    verticalEndPx: { x: 120, y: 1120 },
+    rawImageWidth: 2448,
+    rawImageHeight: 2048,
+    cardBoundary,
+    activeLightingProfile: buildFixedRigActiveLightingProfile({ selectedDutyPercent: 1.3 }),
+    operatorAccepted: true,
   });
   const diagnostic = buildFixedRigDiagnosticGradingResult({
     side: "front",
     quality,
     roiDefinitions: rois,
+    fixtureCalibrationProfile,
+    surfaceAnalysis,
+  });
+
+  assert.equal(surfaceAnalysis.detectorId, "preliminary_surface_anomaly_detector_v0");
+  assert.equal(surfaceAnalysis.status, "computed_diagnostic");
+  assert.equal(surfaceAnalysis.perChannelStats.length, 8);
+  assert.equal(surfaceAnalysis.candidates.length, 1);
+  assert.equal(surfaceAnalysis.candidates[0].severityBand, "medium");
+  assert.deepEqual(surfaceAnalysis.candidates[0].sourceChannels, [3]);
+  assert.equal(surfaceAnalysis.candidates[0].needsDinoLiteFollowUp, true);
+  assert.equal(diagnostic.diagnosticOnly, true);
+  assert.equal(diagnostic.finalGradeComputed, false);
+  assert.equal(diagnostic.certifiedClaim, false);
+  assert.equal(diagnostic.centering.status, "computed_diagnostic");
+  assert.equal(diagnostic.centering.metrics.scoreType, "provisional_diagnostic");
+  assert.equal(diagnostic.centering.metrics.horizontalCenteringPercent, 50);
+  assert.equal(diagnostic.centering.metrics.leftMm, 16.2);
+  assert.equal(diagnostic.corners.topLeft.status, "computed_diagnostic");
+  assert.equal(diagnostic.corners.topLeft.metrics.scoreType, "provisional_diagnostic");
+  assert.equal(diagnostic.surface.status, "computed_diagnostic");
+  assert.equal(diagnostic.surface.metrics.scoreType, "provisional_diagnostic");
+  assert.equal(diagnostic.surface.surfaceAnalysis.candidates[0].candidateId, "front-surface-candidate-001");
+  assert.doesNotMatch(JSON.stringify(diagnostic).toLowerCase(), /finalgradecomputed":true|certifiedclaim":true/);
+});
+
+test("Fixed-rig centering diagnostic is insufficient evidence when ruler or framing gates fail", () => {
+  const quality = fakeFixedRigQuality({
+    overlayAlignment: {
+      templateRect: { x: 624, y: 184, width: 1199, height: 1679 },
+      detectedBoundaryRect: { x: 200, y: 150, width: 2000, height: 1700 },
+      centerOffsetPx: { x: 5, y: 4 },
+      marginLeft: 200,
+      marginRight: 248,
+      marginTop: 150,
+      marginBottom: 198,
+      detectedAspectRatio: 1.176471,
+      expectedAspectRatio: 1.4,
+      orientationUsed: "raw_landscape_rotated_to_portrait",
+      overlayAlignmentStatus: "warn",
+      warnings: ["test alignment warning"],
+    },
+  });
+  const diagnostic = buildFixedRigDiagnosticGradingResult({
+    side: "front",
+    quality,
+    roiDefinitions: buildFixedRigSideCapture({
+      side: "front",
+      macroPackage: buildBaslerLeimacMacroPackageManifest({
+        status: "captured",
+        packageId: "macro",
+        packageDir: path.join(os.tmpdir(), "fixed-rig-v1", "macro"),
+        leimacHost: "169.254.191.156",
+        leimacPort: 1000,
+        leimacProfilePlan: buildLeimacIdmuTriggerProfilePlan({ dutyPercent: 1.3, unit: 1 }),
+        requestedExposureUs: 45000,
+        dutyPercent: 1.3,
+        synced: { capture: fakeCapture(), stats: quality },
+        supervised: true,
+        safeOffBefore: true,
+        safeOffAfter: true,
+      }),
+      quality,
+      activeLightingProfile: buildFixedRigActiveLightingProfile({ selectedDutyPercent: 1.3 }),
+    }).roiDefinitions,
     fixtureCalibrationProfile: buildFixedRigFixtureCalibrationProfile({
       profileId: "rough",
       cardBoundary: quality.cardBoundary,
       activeLightingProfile: buildFixedRigActiveLightingProfile({ selectedDutyPercent: 1.3 }),
       operatorAccepted: true,
     }),
-    surfaceAnalysis,
   });
 
-  assert.equal(surfaceAnalysis.detectorId, "preliminary_surface_anomaly_detector_v0");
-  assert.equal(surfaceAnalysis.perChannelStats.length, 8);
-  assert.equal(surfaceAnalysis.candidates.length, 0);
-  assert.equal(diagnostic.diagnosticOnly, true);
+  assert.equal(diagnostic.centering.status, "insufficient_evidence");
+  assert.match(diagnostic.centering.warnings.join(" "), /Fixed-ruler scale/);
   assert.equal(diagnostic.finalGradeComputed, false);
   assert.equal(diagnostic.certifiedClaim, false);
-  assert.equal(diagnostic.centering.status, "computed_diagnostic");
-  assert.equal(diagnostic.corners.topLeft.status, "computed_diagnostic");
-  assert.equal(diagnostic.surface.status, "not_computed");
-  assert.doesNotMatch(JSON.stringify(diagnostic).toLowerCase(), /finalgradecomputed":true|certifiedclaim":true/);
 });
 
 test("Fixed-rig active lighting profile persists accepted preview duty and channels outside repo", async () => {

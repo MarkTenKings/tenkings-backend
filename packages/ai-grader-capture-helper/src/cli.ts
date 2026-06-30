@@ -359,6 +359,13 @@ type ParsedCommand =
       verticalEndPx: { x: number; y: number } | undefined;
       cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
     }
+  | {
+      command: "ai-grader-fixed-rig-v1-card-report";
+      config: CaptureHelperConfigInput;
+      outputDir: string | undefined;
+      frontDir: string | undefined;
+      backDir: string | undefined;
+    }
   | { command: "fixed-rig-lighting-profile-plan"; config: CaptureHelperConfigInput }
   | {
       command: "leimac-channel-characterization";
@@ -465,6 +472,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let port: string | undefined;
   let deviceIndex: number | undefined;
   let outputDir: string | undefined;
+  let frontDir: string | undefined;
+  let backDir: string | undefined;
   let sdkRuntimeDir: string | undefined;
   let label: string | undefined;
   let pylonRoot: string | undefined;
@@ -625,6 +634,14 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--output-dir":
         outputDir = readOption(rest, index, "--output-dir");
+        index += 1;
+        break;
+      case "--front-dir":
+        frontDir = readOption(rest, index, "--front-dir");
+        index += 1;
+        break;
+      case "--back-dir":
+        backDir = readOption(rest, index, "--back-dir");
         index += 1;
         break;
       case "--label":
@@ -1169,6 +1186,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "fixed-rig-repeatability-test" ||
     command === "ai-grader-fixed-rig-v1-local" ||
     command === "ai-grader-fixed-rig-v1-evidence-package" ||
+    command === "ai-grader-fixed-rig-v1-card-report" ||
     command === "fixed-rig-lighting-profile-plan" ||
     command === "leimac-channel-characterization" ||
     command === "dinolite-enumerate" ||
@@ -1590,6 +1608,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
       };
     }
     if (command === "fixed-rig-lighting-profile-plan") return { command, config };
+    if (command === "ai-grader-fixed-rig-v1-card-report") return { command, config, outputDir, frontDir, backDir };
     if (command === "dinolite-status") return { command, config, deviceIndex };
     if (command === "dinolite-capture-still") return { command, config, deviceIndex, outputDir };
     if (command === "dinolite-capture-package" || command === "dinolite-capture-demo-package") {
@@ -1647,6 +1666,7 @@ function helpPayload() {
       "ai-grader-fixed-rig-v1-local --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --duty 5 --exposure-us 50000 --apply --confirm \"RUN AI GRADER FIXED RIG V1 LOCAL\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed --operator-flip-delay-ms 30000",
       "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side front --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side back --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed",
+      "ai-grader-fixed-rig-v1-card-report --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
       "leimac-channel-characterization --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --duty 1 --exposure-us 45000 --apply --confirm \"RUN LEIMAC CHANNEL CHARACTERIZATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
@@ -3169,6 +3189,45 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       return 0;
     }
 
+    if (parsed.command === "ai-grader-fixed-rig-v1-card-report") {
+      const {
+        assertFixedRigOutputDirAllowed,
+        createUnifiedFixedRigDiagnosticCardReport,
+      } = await import("./drivers/baslerFixedRigV1");
+      if (!parsed.outputDir) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-card-report requires --output-dir <outside-repo-output-dir>.");
+      }
+      if (!parsed.frontDir) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-card-report requires --front-dir <front-evidence-package-dir>.");
+      }
+      if (!parsed.backDir) {
+        throw new CaptureHelperCommandError("ai-grader-fixed-rig-v1-card-report requires --back-dir <back-evidence-package-dir>.");
+      }
+      assertFixedRigOutputDirAllowed(parsed.outputDir);
+      const report = await createUnifiedFixedRigDiagnosticCardReport({
+        outputDir: parsed.outputDir,
+        frontPackageDir: parsed.frontDir,
+        backPackageDir: parsed.backDir,
+      });
+      writeJson(stdout, {
+        ok: report.status === "computed_diagnostic",
+        service: "ai-grader-capture-helper",
+        command: "ai-grader-fixed-rig-v1-card-report",
+        report,
+        safety: {
+          hardwareAccessed: false,
+          baslerContacted: false,
+          leimacContacted: false,
+          persistentBaslerSaved: false,
+          persistentLeimacSaved: false,
+          capturedImagesCommitted: false,
+          finalGradeComputed: false,
+          certifiedClaim: false,
+        },
+      });
+      return report.status === "computed_diagnostic" ? 0 : 1;
+    }
+
     if (parsed.command === "basler-fixed-rig-focus-assist") {
       const {
         BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION,
@@ -4159,6 +4218,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
             stats: channelCapture.stats,
             displayImage: channelDisplayImages.find((entry) => entry.channel === channelCapture.channel)?.displayImage,
           })),
+          roiDefinitions: rois,
           warnings: allOn.stats.warnings,
         });
         const fixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
@@ -4293,7 +4353,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         );
         await writeFile(
           previewReportPath,
-          `<!doctype html><html><head><meta charset="utf-8"><title>Fixed-Rig V1 Evidence Package - Diagnostic</title><style>body{font-family:Arial,sans-serif;margin:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}img{max-width:100%;border:1px solid #aaa;background:#111}.warn{border-left:4px solid #a33;padding:8px 12px;background:#fff}table{border-collapse:collapse;width:100%;margin:8px 0 16px}td,th{border:1px solid #bbb;padding:6px 8px;text-align:left}</style></head><body><h1>Fixed-Rig V1 Evidence Package</h1><p class="warn">Uncalibrated diagnostic macro evidence package only. No final grade, certificate, or certified grading claim. Raw Basler evidence remains in sensor coordinates; display/ROI assets are derived portrait outputs.</p><p>Duty ${activeLightingProfile.selectedDutyPercent}% PWM ${activeLightingProfile.actualLeimacPwmStep}; channels ${activeLightingProfile.selectedChannels.join(", ")}; source ${activeLightingProfile.profileSource}; side ${parsed.evidenceSide}.</p>${front ? `<h2>Front Portrait Evidence</h2><img src="${front.displayImage.outputFilePath}" alt="front portrait all-on"><img src="${front.overlayPreview.outputFilePath}" alt="front portrait overlay"><p>Accepted profile raw capture: ${front.acceptedProfile.capture.outputFilePath}</p><p>Rough profile: ${front.fixtureCalibrationProfile.status}; pixel/mm ${front.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed"} x ${front.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed"}; diagnostic grading ${front.diagnosticGrading.status}; surface ${front.surfaceAnalysis.status}.</p><h3>Front 8-channel portrait displays</h3><div class="grid">${front.channelDisplayImages.map((entry) => `<figure><img src="${entry.displayImage.outputFilePath}" alt="front channel ${entry.channel} portrait"><figcaption>front channel ${entry.channel}</figcaption></figure>`).join("")}</div>` : ""}${back ? `<h2>Back Portrait Evidence</h2><img src="${back.displayImage.outputFilePath}" alt="back portrait all-on"><img src="${back.overlayPreview.outputFilePath}" alt="back portrait overlay"><p>Accepted profile raw capture: ${back.acceptedProfile.capture.outputFilePath}</p><p>Rough profile: ${back.fixtureCalibrationProfile.status}; pixel/mm ${back.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed"} x ${back.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed"}; diagnostic grading ${back.diagnosticGrading.status}; surface ${back.surfaceAnalysis.status}.</p><h3>Back 8-channel portrait displays</h3><div class="grid">${back.channelDisplayImages.map((entry) => `<figure><img src="${entry.displayImage.outputFilePath}" alt="back channel ${entry.channel} portrait"><figcaption>back channel ${entry.channel}</figcaption></figure>`).join("")}</div>` : ""}<h2>ROI Crops</h2><div class="grid">${[...(front?.roiCrops ?? []), ...(back?.roiCrops ?? [])].map((crop) => `<figure><img src="${crop.outputFilePath}" alt="${crop.roiId}"><figcaption>${crop.roiId}</figcaption></figure>`).join("")}</div><h2>Diagnostic JSON</h2><pre>${JSON.stringify({ front: front?.diagnosticGrading, back: back?.diagnosticGrading }, null, 2).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre></body></html>`,
+          `<!doctype html><html><head><meta charset="utf-8"><title>Fixed-Rig V1 Evidence Package - Provisional Diagnostic</title><style>body{font-family:Arial,sans-serif;margin:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}img{max-width:100%;border:1px solid #aaa;background:#111}.warn{border-left:4px solid #a33;padding:8px 12px;background:#fff}.banner{border:2px solid #a33;background:#fff4f4;padding:12px 16px;font-weight:bold}table{border-collapse:collapse;width:100%;margin:8px 0 16px}td,th{border:1px solid #bbb;padding:6px 8px;text-align:left}</style></head><body><h1>Fixed-Rig V1 Evidence Package</h1><p class="banner">Provisional Diagnostic Only - Not Certified - No Final Grade</p><p class="warn">Uncalibrated diagnostic macro evidence package only. No final grade, certificate, or certified grading claim. Raw Basler evidence remains in sensor coordinates; display/ROI assets are derived portrait outputs.</p><p>Duty ${activeLightingProfile.selectedDutyPercent}% PWM ${activeLightingProfile.actualLeimacPwmStep}; channels ${activeLightingProfile.selectedChannels.join(", ")}; source ${activeLightingProfile.profileSource}; side ${parsed.evidenceSide}.</p>${front ? `<h2>Front Portrait Evidence</h2><img src="${front.displayImage.outputFilePath}" alt="front portrait all-on"><img src="${front.overlayPreview.outputFilePath}" alt="front portrait overlay"><p>Accepted profile raw capture: ${front.acceptedProfile.capture.outputFilePath}</p><p>Rough profile: ${front.fixtureCalibrationProfile.status}; pixel/mm ${front.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed"} x ${front.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed"}; diagnostic grading ${front.diagnosticGrading.status}; surface ${front.surfaceAnalysis.status}; candidates ${front.surfaceAnalysis.candidates.length}.</p><table><tr><th>Centering</th><td>${front.diagnosticGrading.centering.status} score ${front.diagnosticGrading.centering.score ?? "not_computed"}</td></tr><tr><th>Corners</th><td>TL ${front.diagnosticGrading.corners.topLeft.status}, TR ${front.diagnosticGrading.corners.topRight.status}, BR ${front.diagnosticGrading.corners.bottomRight.status}, BL ${front.diagnosticGrading.corners.bottomLeft.status}</td></tr><tr><th>Edges</th><td>T ${front.diagnosticGrading.edges.top.status}, R ${front.diagnosticGrading.edges.right.status}, B ${front.diagnosticGrading.edges.bottom.status}, L ${front.diagnosticGrading.edges.left.status}</td></tr><tr><th>Surface candidates</th><td>${front.surfaceAnalysis.candidates.map((candidate) => `${candidate.candidateId} ${candidate.severityBand} ${candidate.anomalyProxyScore}`).join(", ") || "none"}</td></tr></table><h3>Front 8-channel portrait displays</h3><div class="grid">${front.channelDisplayImages.map((entry) => `<figure><img src="${entry.displayImage.outputFilePath}" alt="front channel ${entry.channel} portrait"><figcaption>front channel ${entry.channel}</figcaption></figure>`).join("")}</div>` : ""}${back ? `<h2>Back Portrait Evidence</h2><img src="${back.displayImage.outputFilePath}" alt="back portrait all-on"><img src="${back.overlayPreview.outputFilePath}" alt="back portrait overlay"><p>Accepted profile raw capture: ${back.acceptedProfile.capture.outputFilePath}</p><p>Rough profile: ${back.fixtureCalibrationProfile.status}; pixel/mm ${back.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed"} x ${back.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed"}; diagnostic grading ${back.diagnosticGrading.status}; surface ${back.surfaceAnalysis.status}; candidates ${back.surfaceAnalysis.candidates.length}.</p><table><tr><th>Centering</th><td>${back.diagnosticGrading.centering.status} score ${back.diagnosticGrading.centering.score ?? "not_computed"}</td></tr><tr><th>Corners</th><td>TL ${back.diagnosticGrading.corners.topLeft.status}, TR ${back.diagnosticGrading.corners.topRight.status}, BR ${back.diagnosticGrading.corners.bottomRight.status}, BL ${back.diagnosticGrading.corners.bottomLeft.status}</td></tr><tr><th>Edges</th><td>T ${back.diagnosticGrading.edges.top.status}, R ${back.diagnosticGrading.edges.right.status}, B ${back.diagnosticGrading.edges.bottom.status}, L ${back.diagnosticGrading.edges.left.status}</td></tr><tr><th>Surface candidates</th><td>${back.surfaceAnalysis.candidates.map((candidate) => `${candidate.candidateId} ${candidate.severityBand} ${candidate.anomalyProxyScore}`).join(", ") || "none"}</td></tr></table><h3>Back 8-channel portrait displays</h3><div class="grid">${back.channelDisplayImages.map((entry) => `<figure><img src="${entry.displayImage.outputFilePath}" alt="back channel ${entry.channel} portrait"><figcaption>back channel ${entry.channel}</figcaption></figure>`).join("")}</div>` : ""}<h2>ROI Crops</h2><div class="grid">${[...(front?.roiCrops ?? []), ...(back?.roiCrops ?? [])].map((crop) => `<figure><img src="${crop.outputFilePath}" alt="${crop.roiId}"><figcaption>${crop.roiId}</figcaption></figure>`).join("")}</div><h2>Diagnostic JSON</h2><pre>${JSON.stringify({ front: front?.diagnosticGrading, back: back?.diagnosticGrading }, null, 2).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre></body></html>`,
           "utf-8"
         );
         writeJson(stdout, {
