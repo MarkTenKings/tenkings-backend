@@ -11796,3 +11796,39 @@ Build Set Ops UI flow with:
   - Commit/push/open PR #40.
   - Supervised PR #40 hardware smoke only when Mark is present: live preview, accepted lighting profile, front/back evidence package, provisional diagnostic report, safe-off, and final physical ring-light-off confirmation.
 - Guardrails held so far: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no hardware capture, no captured image/vendor binary commit, and no final/certificate/certified claims.
+
+## Session Update (2026-06-30 UTC, AI Grader PR #40 supervised diagnostic smoke)
+- PR #40 remains open and must not be merged yet.
+- Branch: `feature/ai-grader-fixed-rig-diagnostic-grading`.
+- Live preview:
+  - Folder/report: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T155924860Z`, `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T155924860Z\preview-report.html`.
+  - Accepted by Mark; pylon live preview measured `20.49 FPS`, frame age `0 ms`, overlay visible, overlay alignment `pass`.
+  - Accepted lighting profile: Leimac duty `1.2%`, PWM `12`, channels `1-8`, source `operator_preview`, exposure `45000us`, gain `0`.
+  - Preview readiness stayed `not_ready` due clipping `0.099016`; this is documented as a lighting/exposure tuning warning, not a pass/fail fake.
+- Fixed-ruler profile used for evidence:
+  - Reference `fixed_metric_rulers`.
+  - Horizontal span `50.8mm`, raw px `540,205` to `1620,205`.
+  - Vertical span `50.8mm`, raw px `2295,145` to `2295,1218`.
+  - Operator card boundary override `285,349,1878,1350`.
+  - `mmPerPixelX=0.047037`, `mmPerPixelY=0.047344`; X/Y consistency `pass`; framing gate `pass`; overlay alignment `pass`.
+- Front evidence package:
+  - Folder/report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160133846Z`, `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160133846Z\preview-report.html`.
+  - All-on raw SHA-256 `98ddd3cc57ae4ae3ac20b176ab6d8c045231f95695f12990b343e44df0e3bc95`, `2704744` bytes, `2448x2048`.
+  - Metrics: mean `129.4267`, clipped `0.107932`, dark `0.000942`, sharpness `773.7366`, overlay `pass`.
+  - Generated dark, all-on, accepted-profile, channels `1-8`, 8 portrait channel displays, and 12 ROI crops.
+- Back evidence package:
+  - Folder/report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160426641Z`, `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160426641Z\preview-report.html`.
+  - All-on raw SHA-256 `6ad6abe2f686c8a35233f1d06fce6d33f5770b2520a6fbdd19634222f41fac49`, `2003771` bytes, `2448x2048`.
+  - Metrics: mean `171.5005`, clipped `0.337672`, dark `0.000098`, sharpness `1012.4593`, overlay `pass`.
+  - Generated dark, all-on, accepted-profile, channels `1-8`, 8 portrait channel displays, and 12 ROI crops.
+- Provisional diagnostic result:
+  - Evidence class `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`.
+  - Front and back centering: `computed_diagnostic`, score `10`, horizontal centering `50%`, vertical centering `50%`.
+  - Front and back corners/edges: all `computed_diagnostic`, provisional proxy metrics only; clipping warnings apply.
+  - Surface V0: `computed_diagnostic`, one low-severity candidate per side: `front-surface-candidate-001` anomaly proxy `5.1747`, `back-surface-candidate-001` anomaly proxy `2.2556`; both require later review/Dino-Lite follow-up before production use.
+- Final physical Leimac ring light state was confirmed off by Mark after safe-off.
+- Remaining limitations:
+  - Not certified calibration; `isCalibrated=false`.
+  - Clipping remains high at the accepted `1.2%` profile, especially back (`0.337672`), so lighting/exposure needs per-card tuning before relying on diagnostic scores.
+  - Channel physical mapping, robust surface grading, and ring-glare mitigation remain future work.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting change, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no captured image/vendor binary commit, and no final/certificate/certified claims.

@@ -21654,3 +21654,69 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or hardware capture was run.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, or certified grading claim was added.
+
+## 2026-06-30 - AI Grader PR #40 supervised diagnostic smoke
+
+### Summary
+- Continued PR #40 on `feature/ai-grader-fixed-rig-diagnostic-grading`; do not merge yet.
+- Ran the supervised fixed-rig provisional diagnostic smoke with Mark present.
+- The smoke used the existing PR #40 workflow and did not add new scope.
+
+### Live Preview
+- Output folder: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T155924860Z`.
+- Report: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T155924860Z\preview-report.html`.
+- Mark accepted the live Basler preview.
+- Measured `20.49 FPS`, frame age `0 ms`, overlay visible, overlay alignment `pass`.
+- Accepted lighting profile: duty `1.2%`, PWM step `12`, channels `1-8`, source `operator_preview`, exposure `45000us`, gain `0`.
+- Preview readiness remained `not_ready` because clipped fraction was `0.099016`; this was treated as a lighting/exposure tuning warning.
+
+### Fixed-Ruler Profile Used
+- Reference type: `fixed_metric_rulers`.
+- Horizontal ruler span: `50.8mm`, raw px `540,205` to `1620,205`.
+- Vertical ruler span: `50.8mm`, raw px `2295,145` to `2295,1218`.
+- Operator card boundary override: raw rect `285,349,1878,1350`.
+- Scale: `mmPerPixelX=0.047037`, `mmPerPixelY=0.047344`.
+- X/Y consistency `pass`; framing gate `pass`; overlay alignment `pass`.
+
+### Front Evidence Package
+- Output folder: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160133846Z`.
+- Manifest/report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160133846Z\manifest.json`, `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160133846Z\preview-report.html`.
+- All-on raw SHA-256 `98ddd3cc57ae4ae3ac20b176ab6d8c045231f95695f12990b343e44df0e3bc95`, `2704744` bytes, `2448x2048`.
+- Metrics: mean `129.4267`, clipped `0.107932`, dark `0.000942`, sharpness `773.7366`, overlay `pass`.
+- Captured dark, all-on, accepted-profile, and channels `1-8`; generated 8 portrait channel displays and 12 ROI crops.
+
+### Back Evidence Package
+- Output folder: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160426641Z`.
+- Manifest/report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160426641Z\manifest.json`, `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T160426641Z\preview-report.html`.
+- All-on raw SHA-256 `6ad6abe2f686c8a35233f1d06fce6d33f5770b2520a6fbdd19634222f41fac49`, `2003771` bytes, `2448x2048`.
+- Metrics: mean `171.5005`, clipped `0.337672`, dark `0.000098`, sharpness `1012.4593`, overlay `pass`.
+- Captured dark, all-on, accepted-profile, and channels `1-8`; generated 8 portrait channel displays and 12 ROI crops.
+
+### Provisional Diagnostic Result
+- Evidence class `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`.
+- Centering front/back: `computed_diagnostic`, score `10`, horizontal centering `50%`, vertical centering `50%`.
+- Corners front/back: all four `computed_diagnostic`.
+- Edges front/back: all four `computed_diagnostic`.
+- Surface V0 front: `computed_diagnostic`, `front-surface-candidate-001`, severity `low`, anomaly proxy `5.1747`.
+- Surface V0 back: `computed_diagnostic`, `back-surface-candidate-001`, severity `low`, anomaly proxy `2.2556`.
+- Surface candidates remain preliminary and need later review/Dino-Lite follow-up before production use.
+- No final grade, certificate, QR label, or certified claim was produced.
+
+### Final State
+- Safe-off succeeded after each evidence package.
+- Mark confirmed the final physical Leimac ring light state was off.
+- Remaining limitation: clipping remains high at the accepted `1.2%` profile, especially back-side all-on (`0.337672`), so lighting/exposure needs per-card tuning before relying on diagnostic scores.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino/stage/motor command was run.
+- No Leimac reset/default command was run.
+- No persistent Basler or Leimac User Set save was made.
+- No high-duty lighting was used.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, or certified grading claim was added.
