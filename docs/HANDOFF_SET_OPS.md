@@ -11861,3 +11861,22 @@ Build Set Ops UI flow with:
 - Pending:
   - Commit/push PR #40 updates and wait for PR checks before merge.
 - Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting change, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no new hardware capture, no captured image/vendor binary commit, and no final/certificate/certified claims.
+
+## Session Update (2026-06-30 UTC, AI Grader PR #40 merged)
+- PR #40 was merged into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/40`.
+- Merge commit: `824f40dbefa5ede981940646ee4c05b0a4bcb1dc`.
+- Merged branch: `feature/ai-grader-fixed-rig-diagnostic-grading`.
+- Fixed-rig provisional diagnostic grading V0 is now on `main`:
+  - Centering/corner/edge/surface diagnostics are provisional only and labeled diagnostic.
+  - The fixed-rig evidence package can emit dark/all-on/accepted-profile/channel `1-8` evidence, portrait displays, overlays, and ROI crops.
+  - `ai-grader-fixed-rig-v1-card-report` creates a unified front+back card-level provisional diagnostic report from existing side evidence packages.
+  - Accepted PR #40 unified report artifact for Mark review: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z\provisional-diagnostic-report.html`.
+  - Evidence remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`; no final grade, certificate, QR label, or certified claim.
+  - Lighting clipping warnings remain important: front `0.107932`, back `0.337672` in the PR #40 smoke.
+- Merge preflight:
+  - PR merge state was `CLEAN`.
+  - PR checks were passing before merge.
+  - Worktree was clean before merge.
+- Merge guardrails held:
+  - No migrations, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no hardware commands or image captures, no captured image/vendor binary commit, and no final/certificate/certified grading claims.

@@ -21769,3 +21769,40 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or hardware capture was run.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, or certified grading claim was added.
+
+## 2026-06-30 - AI Grader PR #40 merged
+
+### Summary
+- Merged PR #40 into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/40`.
+- Merge commit: `824f40dbefa5ede981940646ee4c05b0a4bcb1dc`.
+- Merged branch: `feature/ai-grader-fixed-rig-diagnostic-grading`.
+- Local checkout was switched to `main` and fast-forwarded to the merge commit.
+
+### Result
+- Fixed-rig provisional diagnostic grading V0 is now merged.
+- The merged workflow includes provisional centering, corner, edge, and preliminary surface diagnostics; fixed-rig front/back evidence-package support; and the unified front+back card-level report combiner.
+- Latest accepted unified report artifact remains outside the repo:
+  - `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z\provisional-diagnostic-report.html`.
+- Evidence remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`.
+- No final grade, certificate, QR label, or certified grading claim is made.
+- PR #40 smoke limitation remains: high clipping at accepted `1.2%` profile, front `0.107932`, back `0.337672`; per-card lighting/exposure tuning remains required before relying on diagnostics.
+
+### Merge Preflight
+- PR merge state was `CLEAN`.
+- PR checks were passing before merge.
+- Git status was clean before merge.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino/stage/motor command was run.
+- No Leimac reset/default command was run.
+- No persistent Basler or Leimac User Set save was made.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, or certified grading claim was added.
