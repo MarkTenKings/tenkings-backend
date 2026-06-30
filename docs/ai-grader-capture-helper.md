@@ -1022,6 +1022,35 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader
 
 The accepted PR #40 unified report output is `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z`; the report HTML is `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-06-30T174702051Z\provisional-diagnostic-report.html`. The report uses a premium front+back structure: Ten Kings title, session ID, provisional status badge, `Diagnostic Grade Pending` hero, front portrait hero image, element callouts for Centering/Corners/Edges/Surface, plain-English summary, front/back evidence, overlays, ROI crops, 8-channel evidence, and a technical appendix. It records the accepted lighting profile (`1.2%`, PWM `12`, channels `1-8`), fixed-ruler profile, framing/overlay pass, front/back diagnostic sections, and explicit clipping warnings. It still states `isCalibrated=false`, `finalGradeComputed=false`, `certifiedClaim=false`, and no final grade/certificate/certified claim.
 
+### AI Grader Station Operator Workflow
+
+PR #41 starts the internal AI Grader Station operator workflow as a software-only foundation. The new command is:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-station-operator-workflow `
+  --output-dir C:\TenKings\capture-data\ai-grader-station `
+  --mock-run `
+  --duty 1.2 `
+  --exposure-us 45000 `
+  --front-clipped-fraction 0.107932 `
+  --back-clipped-fraction 0.337672 `
+  --calibration-profile-id fixed-ruler-pr39 `
+  --framing-overlay-pass `
+  --repeatability-pass `
+  --front-dir <front-evidence-package-dir> `
+  --back-dir <back-evidence-package-dir>
+```
+
+The station workflow is intended to become Mark's guided local operator surface for the fixed-rig V1 flow. It models these states: Start New Card, Verify Fixture/Rulers, Live Preview / Focus / Framing, Lighting / Exposure Tune, Accept Capture Profile, Capture Front, Prompt Flip Card, Capture Back, Run Provisional Diagnostics, View Unified Report, Rerun If Warnings, Export/Open Report, and Safe Off / End Session. PR #41 does not run the hardware state machine unattended. Hardware execution remains pending until Mark is physically present.
+
+The PR #41 station output includes a local `manifest.json`, `station-report.html`, `integration-contract.json`, and a software active lighting profile file. The station report shows session status, accepted lighting profile, fixed-ruler calibration profile summary, framing/overlay and repeatability gates, clipping/focus warning surfaces, next operator action, report open/export paths, provisional diagnostic rule outputs, and guardrail status. It does not contact Basler or Leimac, does not capture images, does not write the database, does not generate labels/QR/certificates, and does not compute a final grade.
+
+Lighting/exposure tuning is a software decision layer in PR #41. It evaluates mean/clipping/dark/sharpness metrics when supplied, recommends lower Leimac duty and/or exposure when clipping exceeds the soft threshold, rounds duty to the Leimac 0.1% PWM step scale, caps duty at 5%, and requires explicit operator warning acceptance when capture quality remains outside thresholds. Preview tuning remains a local software profile; no persistent Basler or Leimac User Set is saved.
+
+The provisional diagnostic scoring rules V0 are an explicit rules layer for Centering, Corners, Edges, and Surface. Each element returns `provisional_diagnostic` or `insufficient_evidence`, confidence, primary metrics, warnings, evidence references, and explanation text. Rules are gated by fixed-ruler calibration, framing/overlay pass, repeatability, clipping/focus warnings, and front/back evidence completeness. `finalGradeComputed=false`, `certificateGenerated=false`, and `certifiedClaim=false` remain mandatory.
+
+PR #41 also documents a future integration contract without database changes. Reserved fields include `gradingSessionId`, optional `cardAssetId`, `reportId`, `reportStatus`, provisional/final status, reserved grade fields, reserved label/QR fields, report storage/export fields, front/back evidence references, and calibration profile reference. This prepares a later integration PR without adding migrations or runtime DB writes.
+
 #### Dell PR #39 Rough Fixture Smoke
 
 On 2026-06-30, Mark ran the rough fixed-fixture flow using the operator-built fixed-position V1 fixture. The accepted live preview folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`. The preview measured about `20.5 FPS` with `0 ms` frame age and accepted a software active profile of `1.4%` Leimac duty, PWM step `14`, channels `1-8`, source `operator_preview`. Preview/report display used `rotate90cw`; raw Basler sensor captures remained unchanged. The preview and later reports warned that the detected card boundary touched the frame edge, so the run remains rough/unvalidated and not calibrated.

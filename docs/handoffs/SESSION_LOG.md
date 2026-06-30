@@ -21770,6 +21770,48 @@ By enabling Rip It Live, I confirm:
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, or certified grading claim was added.
 
+## 2026-06-30 - AI Grader Station operator workflow PR #41 start
+
+### Summary
+- Created branch `feature/ai-grader-station-operator-ui` from latest `main`.
+- Added `ai-grader-station-operator-workflow`, a software-only guided station workflow foundation for fixed-rig V1.
+- The workflow models Mark-facing states for Start New Card, fixture/ruler verification, Basler live preview/focus/framing, lighting/exposure tuning, profile acceptance, front capture, flip prompt, back capture, provisional diagnostics, unified report view/export, rerun handling, and safe-off/end session.
+- Added clipping-aware lighting/exposure tune recommendation logic:
+  - Uses supplied mean/clipping/dark/sharpness metrics.
+  - Warns when clipping exceeds the soft threshold.
+  - Recommends lower Leimac duty rounded to the hardware 0.1% PWM step.
+  - Keeps duty capped at 5%.
+  - Requires explicit operator warning acceptance when the profile remains outside quality thresholds.
+- Added provisional diagnostic scoring rules V0 for Centering, Corners, Edges, and Surface.
+  - Rules are gated by fixed-ruler calibration, framing/overlay pass, repeatability, clipping/focus warnings, and complete front/back evidence.
+  - Outputs are `provisional_diagnostic` or `insufficient_evidence` only.
+  - No final grade, label, QR, certificate, or certified claim is produced.
+- Added future Ten Kings integration contract JSON for later DB/API integration without adding migrations or DB writes.
+- Added `station-report.html` rendering with Ten Kings station title, `Diagnostic Grade Pending`, workflow status, accepted lighting profile, tune warning, diagnostic rules, report open/export metadata, and guardrail status.
+- Added tests for station state transitions, accepted profile/tune behavior, provisional diagnostic schema, report sections, missing gates, output path guard, and software-only hardware guard.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 148 tests.
+
+### Hardware Status
+- Hardware smoke is pending until Mark is physically present.
+- No Basler preview, Basler capture, Leimac command, Dino-Lite command, Arduino/stage command, image capture, or safe-off hardware command was run in this software pass.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No network setting change was run.
+- No `regsvr32` command was run.
+- No Arduino/stage/motor command was run.
+- No Leimac reset/default command was run.
+- No persistent Basler or Leimac User Set save was run.
+- No high-duty lighting was run.
+- No captured image or vendor binary was committed.
+- No final grade, label, QR report, certificate, or certified grading claim was added.
+
 ## 2026-06-30 - AI Grader PR #40 merged
 
 ### Summary

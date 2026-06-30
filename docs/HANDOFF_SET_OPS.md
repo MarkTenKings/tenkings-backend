@@ -11880,3 +11880,19 @@ Build Set Ops UI flow with:
   - Worktree was clean before merge.
 - Merge guardrails held:
   - No migrations, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no hardware commands or image captures, no captured image/vendor binary commit, and no final/certificate/certified grading claims.
+
+## Session Update (2026-06-30 UTC, AI Grader PR #41 station operator workflow start)
+- Branch: `feature/ai-grader-station-operator-ui`.
+- PR #41 objective: first internal AI Grader Station operator workflow so Mark can run the fixed-rig V1 flow from a guided local workflow instead of individual Codex-run CLI commands.
+- Implemented software-only foundation so far:
+  - Added `ai-grader-station-operator-workflow`, a CLI-driven station manifest/report harness for the fixed-rig V1 operator states.
+  - Workflow states: Start New Card, Verify Fixture/Rulers, Live Preview / Focus / Framing, Lighting / Exposure Tune, Accept Capture Profile, Capture Front, Prompt Flip Card, Capture Back, Run Provisional Diagnostics, View Unified Report, Rerun If Warnings, Export/Open Report, and Safe Off / End Session.
+  - Added clipping-aware lighting/exposure tune recommendation that uses supplied metrics, rounds duty to the Leimac 0.1% PWM step scale, caps duty at 5%, and requires explicit operator warning acceptance when thresholds are exceeded.
+  - Added provisional diagnostic scoring rules V0 for Centering, Corners, Edges, and Surface; outputs remain `provisional_diagnostic` or `insufficient_evidence` and never compute a final grade.
+  - Added a local future integration contract with reserved report/grade/label fields and no database schema/write behavior.
+  - Added premium station report scaffolding with Ten Kings title, `Diagnostic Grade Pending`, current profile, next action, workflow table, tune recommendation, diagnostic rules, report open/export metadata, and guardrail status.
+- Focused validation:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `148` tests.
+- Hardware smoke status: pending. No Basler, Leimac, Dino-Lite, Arduino, stage, image capture, or safe-off command was run in this software pass.
+- Guardrails held so far: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no hardware commands or image captures, no captured image/vendor binary commit, and no final/certificate/certified grading claims.
