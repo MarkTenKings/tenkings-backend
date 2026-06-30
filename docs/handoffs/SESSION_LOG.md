@@ -21375,3 +21375,110 @@ By enabling Rip It Live, I confirm:
   - Ring reflection/glare remains unresolved.
   - No final grade, certificate, certified grading claim, captured image commit, or vendor binary commit.
 - Next required step: final validation, commit, push, and PR check review. Do not merge.
+
+## 2026-06-30 - AI Grader PR #39 rough fixed-fixture calibration extension
+
+### Summary
+- Continued PR #39 on `feature/ai-grader-fixed-rig-calibration-preview`; do not merge yet.
+- Mark updated the physical rig with fixed card positioning. The new work treats this as an operator-built fixed-position V1 fixture.
+- Added local/offline rough fixture calibration support:
+  - command `fixed-rig-fixture-calibration`
+  - rough profile fields for fixture label/id, reference type, physical reference dimensions, raw/display coordinate frames, display transform, pixel/mm and mm/pixel estimates, X/Y consistency warnings, detected/expected aspect ratio, active lighting profile, exposure/gain/duty/channels, operator acceptance, and notes
+  - non-certified references remain `rough_reference_unvalidated`
+  - `isCalibrated=false`, lens distortion `not_computed`, homography `not_computed`
+- Added diagnostic repeatability support:
+  - command `fixed-rig-repeatability-test`
+  - phases `no-touch` and `remove-replace`
+  - metrics for center offset, optional mm offset, boundary variation, pixel/mm variation, sharpness/brightness/clipping stability, overlay alignment counts, and `repeatabilityStatus`
+- Extended fixed-rig V1 evidence package:
+  - per-channel portrait display outputs for Leimac channels `1-8`
+  - preliminary `preliminary_surface_anomaly_detector_v0` schema with per-channel stats and no accepted defect candidates yet
+  - diagnostic-only centering/corner/edge/surface sections
+  - no final grade, no certificate, no certified claim
+
+### Validation Evidence
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 137 tests.
+- Full validation matrix and supervised hardware acceptance are still pending for this extension.
+
+### Pending Hardware
+- Start live preview and confirm fixed fixture positioning.
+- Run rough fixture calibration capture using accepted preview lighting profile.
+- Run no-touch repeatability, target 5 captures.
+- Run remove/re-place repeatability, target 3 captures if Mark is available.
+- Run front/back fixed-rig evidence package with dark, all-on, accepted profile, and channels `1-8`.
+- Review diagnostic report, safe-off, and record final physical Leimac ring light off.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation against a real app database was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino/stage/motor command was run.
+- No Leimac reset/default command was run.
+- No persistent Basler or Leimac User Set save was added.
+- No high-duty lighting command was run.
+- No captured image or vendor binary was committed.
+- No calibrated/final/certificate/certified grading claim was added.
+
+## 2026-06-30 - AI Grader PR #39 rough fixture hardware smoke
+
+### Summary
+- Continued PR #39 on `feature/ai-grader-fixed-rig-calibration-preview`; do not merge yet.
+- Mark confirmed preflight: present, Basler/Leimac connected, wiring unchanged, Leimac status green, fixed fixture/card in place, and physical ring light off.
+- Operator live preview was accepted at `1.4%` duty, PWM step `14`, channels `1-8`, `profileSource=operator_preview`.
+- Live preview output: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`.
+- Live preview report: `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z\preview-report.html`.
+- Preview measured `20.5 FPS`, frame age `0 ms`, portrait display transform `rotate90cw`, overlay visible, raw Basler capture unchanged.
+- Preview readiness remained `not_ready` because the detected card boundary touched the frame edge; Mark accepted proceeding as rough/unvalidated diagnostic work.
+
+### Rough Fixture Calibration
+- Command: `fixed-rig-fixture-calibration`.
+- Output folder: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-fixture-calibration-2026-06-30T063338472Z`.
+- Manifest: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-fixture-calibration-2026-06-30T063338472Z\manifest.json`.
+- Analysis: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-fixture-calibration-2026-06-30T063338472Z\analysis.json`.
+- Report: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-fixture-calibration-2026-06-30T063338472Z\preview-report.html`.
+- Lighting proof: used accepted active preview profile duty `1.4%`, PWM `14`, channels `1-8`, source `operator_preview`.
+- Profile result: `status=rough_reference_unvalidated`, `isCalibrated=false`, `referenceType=card_dimensions`, fixture label `fixed-v1-l-stop`.
+- Pixel scale estimate: `mmPerPixelX=0.039025`, `mmPerPixelY=0.031006`; consistency `warn` because the estimates diverged by about `20.55%`.
+- Boundary/framing: detected boundary `170,0,2278,2048`; overlay `warn`; aspect ratio warning; card touches frame edge.
+- Quality: mean `70.2119`, clipped `0.014553`, dark `0.033833`, sharpness `621.9442`.
+
+### Repeatability
+- Command: `fixed-rig-repeatability-test --repeatability-phase no-touch --capture-count 5`.
+- Output folder: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-repeatability-test-2026-06-30T063417135Z`.
+- Manifest: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-repeatability-test-2026-06-30T063417135Z\manifest.json`.
+- Analysis: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-repeatability-test-2026-06-30T063417135Z\analysis.json`.
+- Report: `C:\TenKings\capture-data\fixed-rig-calibration\fixed-rig-repeatability-test-2026-06-30T063417135Z\preview-report.html`.
+- Used accepted active preview profile duty `1.4%`, PWM `14`, channels `1-8`, source `operator_preview`.
+- Result: `repeatabilityStatus=warn`, `runCount=5`, `centerOffsetMeanPx=84.6015`, `centerOffsetMaxPx=85.0015`, `centerOffsetMeanMm=3.3019`, `boundaryWidthVariationPx=1`, `boundaryHeightVariationPx=0`, `meanBrightnessVariation=0.8244`, `clippingMax=0.01448`.
+- Overlay counts: `warn=5`, `pass=0`, `fail=0`; warning is dominated by consistent near-edge framing.
+- Remove/re-place repeatability was not run. It intentionally requires an operator re-seat pause between captures, and Mark clarified that normal evidence capture should not wait between lighting configurations. Treat remove/re-place as pending optional diagnostic work.
+
+### Fixed-Rig V1 Evidence Package
+- Front output: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T064206795Z`.
+- Front manifest/report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T064206795Z\manifest.json`, `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T064206795Z\preview-report.html`.
+- Front used accepted preview profile duty `1.4%`, PWM `14`, channels `1-8`, source `operator_preview`.
+- Front captured 11 raw Basler images: dark control, all-on, accepted-profile, and channels `1-8`; also generated 8 channel portrait displays and 12 ROI crops.
+- Front all-on raw: SHA-256 `3844fffbf4e0f52181608b13be9ebf8a8af26628c5e9cd523a9e023452399a72`, `2843916` bytes, `2448x2048`.
+- Front accepted-profile raw: SHA-256 `49809b8a4a385cb19f643bd8fc995a358ef5df9b8b04ed8d0a7b06c5be6b876b`, `2800607` bytes, `2448x2048`.
+- Back positioning live preview was accepted at `1.2%`; Mark requested the back evidence package use `1.4%` to match the front. Back evidence was run with an explicit CLI duty override.
+- Back output: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T064843000Z`.
+- Back manifest/report: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T064843000Z\manifest.json`, `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-30T064843000Z\preview-report.html`.
+- Back used duty `1.4%`, PWM `14`, channels `1-8`, source `cli_override`.
+- Back captured 11 raw Basler images: dark control, all-on, accepted-profile, and channels `1-8`; also generated 8 channel portrait displays and 12 ROI crops.
+- Back all-on raw: SHA-256 `4a282671b0fba6f44505bc857a0651d3c6dcd8cdb2e431ca5255bf81613754f2`, `2680124` bytes, `2448x2048`.
+- Back accepted-profile raw: SHA-256 `bde9541ca742ba7acd0fe256cc75dbabd1f242c6bea5d81907703800404182ec`, `2687203` bytes, `2448x2048`.
+- Both sides use `evidenceClass=macro_fixed_rig_v1_uncalibrated`, `isCalibrated=false`, raw coordinate frame `basler_sensor_pixels`, and portrait display coordinate frame `ai_grader_card_portrait_display`.
+- Preliminary diagnostic grading sections were generated with `status=computed_diagnostic`; surface analysis remains `not_computed` with `preliminary_surface_anomaly_detector_v0` per-channel stats and no robust defect candidates.
+- Final physical Leimac ring light state: confirmed off by Mark.
+
+### Limitations
+- The fixed fixture is still rough/unvalidated and not production calibrated.
+- Card framing touches or nearly touches the frame edge, so overlay alignment and pixel/mm consistency remain warnings.
+- Pixel scale estimates diverge; do not treat them as calibrated measurements.
+- Channel physical mapping remains unconfirmed.
+- Surface anomaly detection is schema/evidence only; robust candidate detection is not accepted yet.
+- No final grade, certificate, certified grading claim, captured image commit, vendor binary commit, migration, deploy, DB operation, network setting change, Arduino/stage/motor command, Leimac reset/default, or persistent Basler/Leimac User Set save occurred.

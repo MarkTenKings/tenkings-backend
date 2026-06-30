@@ -22,6 +22,8 @@ import {
 
 export const BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION = "RUN BASLER FIXED RIG FOCUS ASSIST";
 export const BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION = "RUN BASLER FIXED RIG OPERATOR PREVIEW";
+export const FIXED_RIG_FIXTURE_CALIBRATION_CONFIRMATION = "RUN FIXED RIG ROUGH FIXTURE CALIBRATION";
+export const FIXED_RIG_REPEATABILITY_TEST_CONFIRMATION = "RUN FIXED RIG REPEATABILITY TEST";
 export const AI_GRADER_FIXED_RIG_V1_CONFIRMATION = "RUN AI GRADER FIXED RIG V1 LOCAL";
 export const AI_GRADER_FIXED_RIG_V1_EVIDENCE_PACKAGE_CONFIRMATION = "RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE";
 export const LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION = "RUN LEIMAC CHANNEL CHARACTERIZATION";
@@ -39,6 +41,7 @@ export type FixedRigDisplayTransform = "none" | "rotate90cw" | "rotate90ccw" | "
 export type FixedRigOrientationUsed = "raw_landscape_rotated_to_portrait" | "raw_portrait";
 
 export type FixedRigCardSide = "front" | "back";
+export type FixedRigReferenceType = "card_dimensions" | "metric_ruler" | "cutting_mat" | "measurement_board" | "certified_target" | "unknown";
 export type FixedRigCalibrationStatus =
   | "uncalibrated"
   | "preview_assisted"
@@ -100,6 +103,44 @@ export interface FixedRigActiveLightingProfile {
   selectedPolarity: FixedRigSelectedPolarity;
   persistentLeimacSaved: false;
   note: string;
+}
+
+export interface FixedRigFixtureCalibrationProfile {
+  profileId: string;
+  profileVersion: "fixed-rig-fixture-calibration-profile-v0.1";
+  fixtureId?: string;
+  fixtureLabel: string;
+  status: "draft" | "rough_reference_unvalidated" | "repeatability_checked" | "rejected";
+  isCalibrated: false;
+  referenceType: FixedRigReferenceType;
+  referencePhysicalWidthMm: number;
+  referencePhysicalHeightMm: number;
+  rawCoordinateFrame: "basler_sensor_pixels";
+  displayTransform: FixedRigDisplayTransform;
+  displayCoordinateFrame: "ai_grader_card_portrait_display";
+  pixelPerMmX?: number;
+  pixelPerMmY?: number;
+  mmPerPixelX?: number;
+  mmPerPixelY?: number;
+  pixelToMmConsistency: {
+    status: "not_computed" | "pass" | "warn";
+    relativeDifference?: number;
+    tolerance: number;
+    warning?: string;
+  };
+  expectedCardAspectRatio: number;
+  detectedCardAspectRatio?: number;
+  lensDistortionStatus: "not_computed";
+  homographyStatus: "not_computed";
+  lightingProfileUsed: FixedRigActiveLightingProfile;
+  exposureUs: number;
+  gain: number;
+  dutyPercent: number;
+  channels: number[];
+  createdAt: string;
+  operatorAccepted: boolean;
+  operatorNotes?: string;
+  warning: string;
 }
 
 export interface FixedRigCardBoundary {
@@ -213,6 +254,121 @@ export interface FixedRigSuggestedDinoLiteTargets {
   status: "not_computed";
   reason: "surface anomaly detector not implemented yet";
   suggestedDinoLiteTargets: [];
+}
+
+export interface FixedRigRepeatabilityRun {
+  index: number;
+  phase: "no_touch" | "remove_replace";
+  capture?: BaslerCaptureStillResult;
+  quality: FixedRigQualityMetrics;
+  centerOffsetPx?: { x: number; y: number };
+  centerOffsetMm?: { x: number; y: number };
+  boundaryWidth?: number;
+  boundaryHeight?: number;
+  pixelToMmEstimateX?: number;
+  pixelToMmEstimateY?: number;
+  sharpnessScore: number;
+  mean: number;
+  clippedPixelFraction: number;
+  overlayAlignmentStatus: "pass" | "warn" | "fail" | "not_computed";
+}
+
+export interface FixedRigRepeatabilitySummary {
+  status: "not_computed" | "computed";
+  repeatabilityStatus: "pass" | "warn" | "fail";
+  runCount: number;
+  phase: "no_touch" | "remove_replace" | "combined";
+  centerOffsetMeanPx?: number;
+  centerOffsetMaxPx?: number;
+  centerOffsetMeanMm?: number;
+  centerOffsetMaxMm?: number;
+  boundaryWidthVariationPx?: number;
+  boundaryHeightVariationPx?: number;
+  pixelToMmVariation?: number;
+  sharpnessVariation?: number;
+  meanBrightnessVariation?: number;
+  clippingMax?: number;
+  overlayAlignmentCounts: { pass: number; warn: number; fail: number; notComputed: number };
+  warnings: string[];
+}
+
+export interface FixedRigRepeatabilityManifest {
+  packageId: string;
+  packageDir: string;
+  manifestPath?: string;
+  analysisPath?: string;
+  previewReportPath?: string;
+  status: "planned" | "completed" | "aborted";
+  phase: "no_touch" | "remove_replace";
+  requestedCaptureCount: number;
+  activeLightingProfile: FixedRigActiveLightingProfile;
+  fixtureCalibrationProfile?: FixedRigFixtureCalibrationProfile;
+  runs: FixedRigRepeatabilityRun[];
+  summary: FixedRigRepeatabilitySummary;
+  safety: {
+    localOnly: true;
+    diagnosticOnly: true;
+    safeOffBeforeEachCapture: boolean;
+    safeOffAfterEachCapture: boolean;
+    persistentBaslerSaved: false;
+    persistentLeimacSaved: false;
+    finalLightOffConfirmedByMark: boolean;
+  };
+  warning: string;
+}
+
+export interface FixedRigDiagnosticElement {
+  status: "computed_diagnostic" | "not_computed" | "insufficient_evidence";
+  score?: number;
+  confidence: number;
+  metrics: Record<string, unknown>;
+  warnings: string[];
+}
+
+export interface FixedRigSurfaceAnomalyCandidate {
+  candidateId: string;
+  side: FixedRigCardSide;
+  displayRect?: { x: number; y: number; width: number; height: number };
+  rawRect?: { x: number; y: number; width: number; height: number };
+  sourceChannels: number[];
+  severityProxy: number;
+  needsDinoLiteFollowUp: boolean;
+}
+
+export interface FixedRigSurfaceAnalysis {
+  detectorId: "preliminary_surface_anomaly_detector_v0";
+  status: "not_computed" | "computed_diagnostic" | "insufficient_evidence";
+  registration: {
+    status: "assumed_fixed_rig" | "not_computed";
+    note: string;
+  };
+  perChannelStats: Array<{
+    channel: number;
+    mean?: number;
+    max?: number;
+    clippedPixelFraction?: number;
+    darkPixelFraction?: number;
+    sharpnessScore?: number;
+    anomalyProxyMetric?: number;
+    portraitDisplayImage?: FixedRigDisplayArtifact;
+  }>;
+  heatmap?: FixedRigDisplayArtifact;
+  glareMask?: FixedRigDisplayArtifact;
+  candidates: FixedRigSurfaceAnomalyCandidate[];
+  warnings: string[];
+}
+
+export interface FixedRigDiagnosticGradingResult {
+  status: "computed_diagnostic" | "not_computed" | "insufficient_evidence";
+  diagnosticOnly: true;
+  finalGradeComputed: false;
+  certifiedClaim: false;
+  calibrationStatus: "rough_reference_unvalidated" | "uncalibrated" | "repeatability_checked";
+  centering: FixedRigDiagnosticElement;
+  corners: Record<"topLeft" | "topRight" | "bottomRight" | "bottomLeft", FixedRigDiagnosticElement>;
+  edges: Record<"top" | "right" | "bottom" | "left", FixedRigDiagnosticElement>;
+  surface: FixedRigDiagnosticElement & { surfaceAnalysis?: FixedRigSurfaceAnalysis };
+  warnings: string[];
 }
 
 export interface FixedRigLightingProfilePlan {
@@ -657,6 +813,320 @@ export function buildFixedRigCalibrationProfile(input: {
     calibrationStatus: input.calibrationStatus ?? "uncalibrated",
     warning:
       "Local fixed-rig profile is a calibration foundation only; pixel/mm values are estimates when present and no calibrated evidence claim is made.",
+  };
+}
+
+export function buildFixedRigFixtureCalibrationProfile(input: {
+  profileId: string;
+  fixtureId?: string;
+  fixtureLabel?: string;
+  status?: FixedRigFixtureCalibrationProfile["status"];
+  referenceType?: FixedRigReferenceType;
+  referencePhysicalWidthMm?: number;
+  referencePhysicalHeightMm?: number;
+  rawImageWidth?: number;
+  rawImageHeight?: number;
+  displayTransform?: FixedRigDisplayTransform;
+  cardBoundary?: FixedRigCardBoundary;
+  activeLightingProfile?: FixedRigActiveLightingProfile;
+  exposureUs?: number;
+  gain?: number;
+  operatorAccepted?: boolean;
+  operatorNotes?: string;
+  createdAt?: string;
+}): FixedRigFixtureCalibrationProfile {
+  const referencePhysicalWidthMm = input.referencePhysicalWidthMm ?? FIXED_RIG_DEFAULT_CARD_WIDTH_MM;
+  const referencePhysicalHeightMm = input.referencePhysicalHeightMm ?? FIXED_RIG_DEFAULT_CARD_HEIGHT_MM;
+  const width = input.cardBoundary?.width;
+  const height = input.cardBoundary?.height;
+  const displayTransform =
+    input.displayTransform ??
+    fixedRigDisplayTransformForDimensions(input.rawImageWidth ?? 2448, input.rawImageHeight ?? 2048);
+  const isRawLandscape = width !== undefined && height !== undefined && width >= height;
+  const physicalX = isRawLandscape ? Math.max(referencePhysicalWidthMm, referencePhysicalHeightMm) : Math.min(referencePhysicalWidthMm, referencePhysicalHeightMm);
+  const physicalY = isRawLandscape ? Math.min(referencePhysicalWidthMm, referencePhysicalHeightMm) : Math.max(referencePhysicalWidthMm, referencePhysicalHeightMm);
+  const mmPerPixelX = width && width > 0 ? roundMetric(physicalX / width, 6) : undefined;
+  const mmPerPixelY = height && height > 0 ? roundMetric(physicalY / height, 6) : undefined;
+  const pixelPerMmX = mmPerPixelX ? roundMetric(1 / mmPerPixelX, 4) : undefined;
+  const pixelPerMmY = mmPerPixelY ? roundMetric(1 / mmPerPixelY, 4) : undefined;
+  const tolerance = 0.08;
+  const relativeDifference =
+    mmPerPixelX && mmPerPixelY ? roundMetric(Math.abs(mmPerPixelX - mmPerPixelY) / Math.max(mmPerPixelX, mmPerPixelY), 4) : undefined;
+  const consistencyStatus = relativeDifference === undefined ? "not_computed" : relativeDifference <= tolerance ? "pass" : "warn";
+  const activeLightingProfile = input.activeLightingProfile ?? buildFixedRigActiveLightingProfile();
+  const referenceType = input.referenceType ?? "card_dimensions";
+  const status = input.status ?? (referenceType === "certified_target" ? "draft" : "rough_reference_unvalidated");
+  return {
+    profileId: input.profileId,
+    profileVersion: "fixed-rig-fixture-calibration-profile-v0.1",
+    ...(input.fixtureId ? { fixtureId: input.fixtureId } : {}),
+    fixtureLabel: input.fixtureLabel ?? "operator-built-fixed-position-v1-fixture",
+    status,
+    isCalibrated: false,
+    referenceType,
+    referencePhysicalWidthMm,
+    referencePhysicalHeightMm,
+    rawCoordinateFrame: "basler_sensor_pixels",
+    displayTransform,
+    displayCoordinateFrame: "ai_grader_card_portrait_display",
+    ...(pixelPerMmX !== undefined ? { pixelPerMmX } : {}),
+    ...(pixelPerMmY !== undefined ? { pixelPerMmY } : {}),
+    ...(mmPerPixelX !== undefined ? { mmPerPixelX } : {}),
+    ...(mmPerPixelY !== undefined ? { mmPerPixelY } : {}),
+    pixelToMmConsistency: {
+      status: consistencyStatus,
+      ...(relativeDifference !== undefined ? { relativeDifference } : {}),
+      tolerance,
+      ...(consistencyStatus === "warn"
+        ? { warning: "Rough reference X/Y pixel scale estimates diverge; do not treat this profile as calibrated." }
+        : {}),
+    },
+    expectedCardAspectRatio: roundMetric(Math.max(referencePhysicalWidthMm, referencePhysicalHeightMm) / Math.min(referencePhysicalWidthMm, referencePhysicalHeightMm), 6),
+    ...(width && height ? { detectedCardAspectRatio: roundMetric(Math.max(width, height) / Math.min(width, height), 6) } : {}),
+    lensDistortionStatus: "not_computed",
+    homographyStatus: "not_computed",
+    lightingProfileUsed: activeLightingProfile,
+    exposureUs: input.exposureUs ?? FIXED_RIG_SELECTED_EXPOSURE_US,
+    gain: input.gain ?? FIXED_RIG_SELECTED_GAIN,
+    dutyPercent: activeLightingProfile.selectedDutyPercent,
+    channels: activeLightingProfile.selectedChannels,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    operatorAccepted: input.operatorAccepted ?? false,
+    ...(input.operatorNotes ? { operatorNotes: input.operatorNotes } : {}),
+    warning:
+      referenceType === "certified_target"
+        ? "Certified target metadata is recorded, but this PR still keeps isCalibrated=false until validated calibration math and acceptance tests exist."
+        : "Rough fixture calibration only. Reference is not a certified machine-vision target; isCalibrated remains false.",
+  };
+}
+
+function distancePx(point?: { x: number; y: number }): number | undefined {
+  return point ? Math.sqrt(point.x * point.x + point.y * point.y) : undefined;
+}
+
+function range(values: Array<number | undefined>): number | undefined {
+  const finite = values.filter((value): value is number => Number.isFinite(value));
+  if (finite.length < 2) return undefined;
+  return roundMetric(Math.max(...finite) - Math.min(...finite), 4);
+}
+
+function mean(values: Array<number | undefined>): number | undefined {
+  const finite = values.filter((value): value is number => Number.isFinite(value));
+  if (!finite.length) return undefined;
+  return roundMetric(finite.reduce((sum, value) => sum + value, 0) / finite.length, 4);
+}
+
+export function buildFixedRigRepeatabilityRun(input: {
+  index: number;
+  phase: FixedRigRepeatabilityRun["phase"];
+  capture?: BaslerCaptureStillResult;
+  quality: FixedRigQualityMetrics;
+}): FixedRigRepeatabilityRun {
+  const pixelToMm = buildFixedRigPixelToMmEstimate(input.quality.cardBoundary);
+  const centerOffsetPx = input.quality.overlayAlignment?.centerOffsetPx;
+  const centerOffsetMm =
+    centerOffsetPx && pixelToMm.pixelToMmEstimateX && pixelToMm.pixelToMmEstimateY
+      ? { x: roundMetric(centerOffsetPx.x * pixelToMm.pixelToMmEstimateX, 4), y: roundMetric(centerOffsetPx.y * pixelToMm.pixelToMmEstimateY, 4) }
+      : undefined;
+  return {
+    index: input.index,
+    phase: input.phase,
+    ...(input.capture ? { capture: input.capture } : {}),
+    quality: input.quality,
+    ...(centerOffsetPx ? { centerOffsetPx } : {}),
+    ...(centerOffsetMm ? { centerOffsetMm } : {}),
+    ...(input.quality.cardBoundary.width !== undefined ? { boundaryWidth: input.quality.cardBoundary.width } : {}),
+    ...(input.quality.cardBoundary.height !== undefined ? { boundaryHeight: input.quality.cardBoundary.height } : {}),
+    ...(pixelToMm.pixelToMmEstimateX !== undefined ? { pixelToMmEstimateX: pixelToMm.pixelToMmEstimateX } : {}),
+    ...(pixelToMm.pixelToMmEstimateY !== undefined ? { pixelToMmEstimateY: pixelToMm.pixelToMmEstimateY } : {}),
+    sharpnessScore: input.quality.sharpnessScore,
+    mean: input.quality.mean,
+    clippedPixelFraction: input.quality.clippedPixelFraction,
+    overlayAlignmentStatus: input.quality.overlayAlignment?.overlayAlignmentStatus ?? "not_computed",
+  };
+}
+
+export function buildFixedRigRepeatabilitySummary(runs: FixedRigRepeatabilityRun[], phase: FixedRigRepeatabilitySummary["phase"]): FixedRigRepeatabilitySummary {
+  const centerPx = runs.map((run) => distancePx(run.centerOffsetPx));
+  const centerMm = runs.map((run) => distancePx(run.centerOffsetMm));
+  const pixelScaleValues = runs.flatMap((run) => [run.pixelToMmEstimateX, run.pixelToMmEstimateY]);
+  const overlayAlignmentCounts = {
+    pass: runs.filter((run) => run.overlayAlignmentStatus === "pass").length,
+    warn: runs.filter((run) => run.overlayAlignmentStatus === "warn").length,
+    fail: runs.filter((run) => run.overlayAlignmentStatus === "fail").length,
+    notComputed: runs.filter((run) => run.overlayAlignmentStatus === "not_computed").length,
+  };
+  const warnings: string[] = [];
+  const centerOffsetMaxPx = range([0, ...centerPx]) ?? mean(centerPx);
+  const boundaryWidthVariationPx = range(runs.map((run) => run.boundaryWidth));
+  const boundaryHeightVariationPx = range(runs.map((run) => run.boundaryHeight));
+  const pixelToMmVariation = range(pixelScaleValues);
+  const sharpnessVariation = range(runs.map((run) => run.sharpnessScore));
+  const meanBrightnessVariation = range(runs.map((run) => run.mean));
+  const clippingMax = runs.length ? roundMetric(Math.max(...runs.map((run) => run.clippedPixelFraction)), 6) : undefined;
+  if (runs.length < 2) warnings.push("Repeatability requires at least two captures for variation metrics.");
+  if (overlayAlignmentCounts.fail > 0 || overlayAlignmentCounts.notComputed > 0) warnings.push("One or more captures had failed or missing overlay alignment.");
+  if ((centerOffsetMaxPx ?? 0) > 20) warnings.push("Center offset variation is above the rough fixed-fixture warning threshold.");
+  if ((boundaryWidthVariationPx ?? 0) > 30 || (boundaryHeightVariationPx ?? 0) > 30) warnings.push("Detected boundary size variation is above the rough fixed-fixture warning threshold.");
+  if ((clippingMax ?? 0) > 0.02) warnings.push("At least one repeatability capture exceeded the soft clipping target.");
+  const repeatabilityStatus = warnings.some((warning) => /failed|missing/i.test(warning)) ? "fail" : warnings.length ? "warn" : "pass";
+  return {
+    status: runs.length ? "computed" : "not_computed",
+    repeatabilityStatus,
+    runCount: runs.length,
+    phase,
+    ...(mean(centerPx) !== undefined ? { centerOffsetMeanPx: mean(centerPx) } : {}),
+    ...(centerOffsetMaxPx !== undefined ? { centerOffsetMaxPx: roundMetric(centerOffsetMaxPx, 4) } : {}),
+    ...(mean(centerMm) !== undefined ? { centerOffsetMeanMm: mean(centerMm) } : {}),
+    ...(range([0, ...centerMm]) !== undefined ? { centerOffsetMaxMm: range([0, ...centerMm]) } : {}),
+    ...(boundaryWidthVariationPx !== undefined ? { boundaryWidthVariationPx } : {}),
+    ...(boundaryHeightVariationPx !== undefined ? { boundaryHeightVariationPx } : {}),
+    ...(pixelToMmVariation !== undefined ? { pixelToMmVariation } : {}),
+    ...(sharpnessVariation !== undefined ? { sharpnessVariation } : {}),
+    ...(meanBrightnessVariation !== undefined ? { meanBrightnessVariation } : {}),
+    ...(clippingMax !== undefined ? { clippingMax } : {}),
+    overlayAlignmentCounts,
+    warnings,
+  };
+}
+
+function diagnosticElementNotComputed(reason: string): FixedRigDiagnosticElement {
+  return { status: "not_computed", confidence: 0, metrics: {}, warnings: [reason] };
+}
+
+export function buildFixedRigSurfaceAnalysis(input: {
+  side: FixedRigCardSide;
+  channels?: Array<{ channel: number; stats?: FixedRigQualityMetrics; displayImage?: FixedRigDisplayArtifact }>;
+  warnings?: string[];
+}): FixedRigSurfaceAnalysis {
+  const perChannelStats = (input.channels ?? []).map((channel) => ({
+    channel: channel.channel,
+    ...(channel.stats
+      ? {
+          mean: channel.stats.mean,
+          max: channel.stats.max,
+          clippedPixelFraction: channel.stats.clippedPixelFraction,
+          darkPixelFraction: channel.stats.darkPixelFraction,
+          sharpnessScore: channel.stats.sharpnessScore,
+          anomalyProxyMetric: roundMetric(channel.stats.sharpnessScore * Math.max(0, 1 - channel.stats.clippedPixelFraction), 4),
+        }
+      : {}),
+    ...(channel.displayImage ? { portraitDisplayImage: channel.displayImage } : {}),
+  }));
+  return {
+    detectorId: "preliminary_surface_anomaly_detector_v0",
+    status: perChannelStats.length >= 8 ? "not_computed" : "insufficient_evidence",
+    registration: {
+      status: "assumed_fixed_rig",
+      note: "Per-channel images are assumed aligned by the fixed fixture; no explicit registration or homography is computed in PR #39.",
+    },
+    perChannelStats,
+    candidates: [],
+    warnings: [
+      "Surface anomaly detector is preliminary; no final surface grade is computed.",
+      "No robust defect candidate detector is accepted yet, so candidate list remains empty.",
+      ...(input.warnings ?? []),
+    ],
+  };
+}
+
+export function buildFixedRigDiagnosticGradingResult(input: {
+  side?: FixedRigCardSide;
+  quality?: FixedRigQualityMetrics;
+  roiDefinitions?: FixedRigRoiDefinition[];
+  fixtureCalibrationProfile?: FixedRigFixtureCalibrationProfile;
+  repeatabilitySummary?: FixedRigRepeatabilitySummary;
+  surfaceAnalysis?: FixedRigSurfaceAnalysis;
+}): FixedRigDiagnosticGradingResult {
+  const warnings = [
+    "Diagnostic-only fixed-rig analysis. No final grade, certificate, or certified grading claim is made.",
+    ...(input.fixtureCalibrationProfile?.isCalibrated === false ? ["Fixture profile is not calibrated."] : ["No fixture calibration profile supplied."]),
+    ...(input.repeatabilitySummary && input.repeatabilitySummary.repeatabilityStatus !== "pass"
+      ? [`Repeatability is ${input.repeatabilitySummary.repeatabilityStatus}.`]
+      : []),
+    ...(input.quality?.warnings ?? []),
+  ];
+  const alignment = input.quality?.overlayAlignment;
+  const boundary = input.quality?.cardBoundary;
+  const left = alignment?.marginLeft;
+  const right = alignment?.marginRight;
+  const top = alignment?.marginTop;
+  const bottom = alignment?.marginBottom;
+  const lrTotal = left !== undefined && right !== undefined ? left + right : undefined;
+  const tbTotal = top !== undefined && bottom !== undefined ? top + bottom : undefined;
+  const centering =
+    boundary?.status === "detected" && lrTotal && tbTotal
+      ? {
+          status: "computed_diagnostic" as const,
+          confidence: alignment?.overlayAlignmentStatus === "pass" ? 0.65 : 0.45,
+          metrics: {
+            leftPx: left,
+            rightPx: right,
+            topPx: top,
+            bottomPx: bottom,
+            leftRightPercent: roundMetric((Math.min(left ?? 0, right ?? 0) / lrTotal) * 100, 2),
+            topBottomPercent: roundMetric((Math.min(top ?? 0, bottom ?? 0) / tbTotal) * 100, 2),
+            overlayAlignmentStatus: alignment?.overlayAlignmentStatus,
+          },
+          warnings: ["Centering is based on rough detected boundary/template margins and is diagnostic only."],
+        }
+      : diagnosticElementNotComputed("Card boundary/margins unavailable; centering diagnostic not computed.");
+  const roiById = new Map((input.roiDefinitions ?? []).map((roi) => [roi.id, roi]));
+  const roiMetric = (roiId: FixedRigRoiDefinition["id"], label: string): FixedRigDiagnosticElement => {
+    const roi = roiById.get(roiId);
+    if (!roi || roi.status !== "computed") return diagnosticElementNotComputed(`${label} ROI unavailable.`);
+    return {
+      status: "computed_diagnostic",
+      confidence: input.quality?.cardBoundary.status === "detected" ? 0.35 : 0.15,
+      metrics: {
+        roiId,
+        rect: roi.rect,
+        rawRect: roi.rawRect,
+        displayRect: roi.displayRect,
+        sharpnessProxy: input.quality?.sharpnessScore,
+        clippedPixelFraction: input.quality?.clippedPixelFraction,
+        darkPixelFraction: input.quality?.darkPixelFraction,
+      },
+      warnings: [`${label} ROI proxy metrics are preliminary and not a production corner/edge grade.`],
+    };
+  };
+  const surfaceWarnings = input.surfaceAnalysis?.warnings ?? ["Surface analysis not supplied."];
+  return {
+    status: input.quality ? "computed_diagnostic" : "not_computed",
+    diagnosticOnly: true,
+    finalGradeComputed: false,
+    certifiedClaim: false,
+    calibrationStatus:
+      input.repeatabilitySummary?.repeatabilityStatus === "pass"
+        ? "repeatability_checked"
+        : input.fixtureCalibrationProfile?.status === "rough_reference_unvalidated"
+          ? "rough_reference_unvalidated"
+          : "uncalibrated",
+    centering,
+    corners: {
+      topLeft: roiMetric("top-left-corner", "Top-left corner"),
+      topRight: roiMetric("top-right-corner", "Top-right corner"),
+      bottomRight: roiMetric("bottom-right-corner", "Bottom-right corner"),
+      bottomLeft: roiMetric("bottom-left-corner", "Bottom-left corner"),
+    },
+    edges: {
+      top: roiMetric("top-edge", "Top edge"),
+      right: roiMetric("right-edge", "Right edge"),
+      bottom: roiMetric("bottom-edge", "Bottom edge"),
+      left: roiMetric("left-edge", "Left edge"),
+    },
+    surface: {
+      status: input.surfaceAnalysis?.status === "computed_diagnostic" ? "computed_diagnostic" : "not_computed",
+      confidence: input.surfaceAnalysis?.status === "computed_diagnostic" ? 0.25 : 0,
+      metrics: {
+        detectorId: input.surfaceAnalysis?.detectorId ?? "preliminary_surface_anomaly_detector_v0",
+        candidateCount: input.surfaceAnalysis?.candidates.length ?? 0,
+        perChannelCount: input.surfaceAnalysis?.perChannelStats.length ?? 0,
+      },
+      warnings: surfaceWarnings,
+      ...(input.surfaceAnalysis ? { surfaceAnalysis: input.surfaceAnalysis } : {}),
+    },
+    warnings,
   };
 }
 
@@ -1830,6 +2300,124 @@ export async function writeFixedRigFocusAssistArtifacts(
   return withPaths;
 }
 
+export async function writeFixedRigFixtureCalibrationArtifacts(input: {
+  packageId: string;
+  packageDir: string;
+  status: "planned" | "captured" | "aborted";
+  activeLightingProfile: FixedRigActiveLightingProfile;
+  macroPackage?: BaslerLeimacMacroPackageManifest;
+  quality?: FixedRigQualityMetrics;
+  fixtureCalibrationProfile: FixedRigFixtureCalibrationProfile;
+  safeOffBefore: boolean;
+  safeOffAfter: boolean;
+}): Promise<{
+  packageId: string;
+  packageDir: string;
+  manifestPath: string;
+  analysisPath: string;
+  previewReportPath: string;
+  status: typeof input.status;
+  activeLightingProfile: FixedRigActiveLightingProfile;
+  macroPackage?: BaslerLeimacMacroPackageManifest;
+  quality?: FixedRigQualityMetrics;
+  displayImage?: FixedRigDisplayArtifact;
+  overlayPreview?: FixedRigOverlayArtifact;
+  roiDefinitions: FixedRigRoiDefinition[];
+  fixtureCalibrationProfile: FixedRigFixtureCalibrationProfile;
+  safety: {
+    localOnly: true;
+    diagnosticOnly: true;
+    safeOffBefore: boolean;
+    safeOffAfter: boolean;
+    persistentBaslerSaved: false;
+    persistentLeimacSaved: false;
+  };
+  warning: string;
+}> {
+  const syncedCapture = input.macroPackage?.synced?.capture;
+  const roiDefinitions = addFixedRigDisplayRects(
+    buildFixedRigRoiDefinitions(input.quality?.cardBoundary ?? { status: "not_computed", confidence: 0 }),
+    input.quality?.width ?? syncedCapture?.imageWidth ?? 2448,
+    input.quality?.height ?? syncedCapture?.imageHeight ?? 2048
+  );
+  const displayImage = syncedCapture
+    ? await createFixedRigDisplayImage({
+        sourceImagePath: syncedCapture.outputFilePath,
+        outputDir: input.packageDir,
+        filePrefix: "fixture-calibration",
+        rawSourceSha256: syncedCapture.sha256,
+      })
+    : undefined;
+  const overlayPreview =
+    displayImage && input.quality
+      ? await createFixedRigOverlayPreview({
+          sourceImagePath: displayImage.outputFilePath,
+          outputDir: input.packageDir,
+          filePrefix: "fixture-calibration",
+          quality: transformQualityForDisplay(input.quality, displayImage.displayTransform),
+          roiDefinitions: roisForDisplayOverlay(roiDefinitions),
+          title: "Rough fixture calibration overlay",
+          displayTransform: displayImage.displayTransform,
+        })
+      : undefined;
+  const manifestPath = path.join(input.packageDir, "manifest.json");
+  const analysisPath = path.join(input.packageDir, "analysis.json");
+  const previewReportPath = path.join(input.packageDir, "preview-report.html");
+  const manifest = {
+    packageId: input.packageId,
+    packageDir: input.packageDir,
+    manifestPath,
+    analysisPath,
+    previewReportPath,
+    status: input.status,
+    activeLightingProfile: input.activeLightingProfile,
+    ...(input.macroPackage ? { macroPackage: input.macroPackage } : {}),
+    ...(input.quality ? { quality: input.quality } : {}),
+    ...(displayImage ? { displayImage } : {}),
+    ...(overlayPreview ? { overlayPreview } : {}),
+    roiDefinitions,
+    fixtureCalibrationProfile: input.fixtureCalibrationProfile,
+    safety: {
+      localOnly: true as const,
+      diagnosticOnly: true as const,
+      safeOffBefore: input.safeOffBefore,
+      safeOffAfter: input.safeOffAfter,
+      persistentBaslerSaved: false as const,
+      persistentLeimacSaved: false as const,
+    },
+    warning:
+      "Rough fixed-fixture calibration only. This is not production calibration, does not set isCalibrated=true, and does not support final/certified grading claims.",
+  };
+  await writeJsonArtifact(manifestPath, manifest);
+  await writeJsonArtifact(analysisPath, {
+    status: input.status === "captured" ? "computed_diagnostic" : "not_computed",
+    fixtureCalibrationProfile: input.fixtureCalibrationProfile,
+    quality: input.quality,
+    activeLightingProfile: input.activeLightingProfile,
+    warning: manifest.warning,
+  });
+  await writeFile(previewReportPath, renderFixedRigFixtureCalibrationReport(manifest), "utf-8");
+  return manifest;
+}
+
+export async function writeFixedRigRepeatabilityArtifacts(manifest: FixedRigRepeatabilityManifest): Promise<FixedRigRepeatabilityManifest> {
+  const manifestPath = path.join(manifest.packageDir, "manifest.json");
+  const analysisPath = path.join(manifest.packageDir, "analysis.json");
+  const previewReportPath = path.join(manifest.packageDir, "preview-report.html");
+  const withPaths = { ...manifest, manifestPath, analysisPath, previewReportPath };
+  await writeJsonArtifact(manifestPath, withPaths);
+  await writeJsonArtifact(analysisPath, {
+    status: manifest.status === "completed" ? "computed_diagnostic" : "not_computed",
+    phase: manifest.phase,
+    activeLightingProfile: manifest.activeLightingProfile,
+    fixtureCalibrationProfile: manifest.fixtureCalibrationProfile,
+    summary: manifest.summary,
+    warning: manifest.warning,
+  });
+  await writeFile(previewReportPath, renderFixedRigRepeatabilityReport(withPaths), "utf-8");
+  return withPaths;
+}
+
 export async function writeFixedRigV1Artifacts(manifest: FixedRigV1LocalManifest): Promise<FixedRigV1LocalManifest> {
   const frontDisplay =
     manifest.front?.macroPackage.synced?.capture.outputFilePath
@@ -1992,6 +2580,81 @@ function roiTable(rois: FixedRigRoiDefinition[] | undefined): string {
     .join("")}</tbody></table>`;
 }
 
+function fixtureCalibrationTable(profile: FixedRigFixtureCalibrationProfile | undefined): string {
+  if (!profile) return "<p>Fixture calibration profile unavailable.</p>";
+  return `<table><tbody>
+    <tr><th>Status</th><td>${escapeHtml(profile.status)}</td></tr>
+    <tr><th>isCalibrated</th><td>${escapeHtml(profile.isCalibrated)}</td></tr>
+    <tr><th>Fixture</th><td>${escapeHtml(profile.fixtureLabel)} ${escapeHtml(profile.fixtureId ?? "")}</td></tr>
+    <tr><th>Reference</th><td>${escapeHtml(profile.referenceType)} ${escapeHtml(profile.referencePhysicalWidthMm)}mm x ${escapeHtml(profile.referencePhysicalHeightMm)}mm</td></tr>
+    <tr><th>Coordinate frames</th><td>raw=${escapeHtml(profile.rawCoordinateFrame)}, transform=${escapeHtml(profile.displayTransform)}, display=${escapeHtml(profile.displayCoordinateFrame)}</td></tr>
+    <tr><th>Pixel/mm</th><td>${escapeHtml(profile.pixelPerMmX ?? "not_computed")} x ${escapeHtml(profile.pixelPerMmY ?? "not_computed")}</td></tr>
+    <tr><th>mm/pixel</th><td>${escapeHtml(profile.mmPerPixelX ?? "not_computed")} x ${escapeHtml(profile.mmPerPixelY ?? "not_computed")}</td></tr>
+    <tr><th>X/Y consistency</th><td>${escapeHtml(profile.pixelToMmConsistency.status)} ${escapeHtml(profile.pixelToMmConsistency.relativeDifference ?? "")} ${escapeHtml(profile.pixelToMmConsistency.warning ?? "")}</td></tr>
+    <tr><th>Aspect</th><td>expected ${escapeHtml(profile.expectedCardAspectRatio)}; detected ${escapeHtml(profile.detectedCardAspectRatio ?? "not_computed")}</td></tr>
+    <tr><th>Lens / homography</th><td>${escapeHtml(profile.lensDistortionStatus)} / ${escapeHtml(profile.homographyStatus)}</td></tr>
+    <tr><th>Lighting</th><td>${escapeHtml(profile.dutyPercent)}% PWM ${escapeHtml(profile.lightingProfileUsed.actualLeimacPwmStep)} channels ${escapeHtml(profile.channels.join(", "))}</td></tr>
+    <tr><th>Operator accepted</th><td>${escapeHtml(profile.operatorAccepted)}</td></tr>
+    <tr><th>Warning</th><td>${escapeHtml(profile.warning)}</td></tr>
+  </tbody></table>`;
+}
+
+function repeatabilityTable(summary: FixedRigRepeatabilitySummary | undefined): string {
+  if (!summary) return "<p>Repeatability summary unavailable.</p>";
+  return `<table><tbody>
+    <tr><th>Status</th><td>${escapeHtml(summary.repeatabilityStatus)}</td></tr>
+    <tr><th>Phase / runs</th><td>${escapeHtml(summary.phase)} / ${escapeHtml(summary.runCount)}</td></tr>
+    <tr><th>Center offset px mean/max</th><td>${escapeHtml(summary.centerOffsetMeanPx ?? "not_computed")} / ${escapeHtml(summary.centerOffsetMaxPx ?? "not_computed")}</td></tr>
+    <tr><th>Center offset mm mean/max</th><td>${escapeHtml(summary.centerOffsetMeanMm ?? "not_computed")} / ${escapeHtml(summary.centerOffsetMaxMm ?? "not_computed")}</td></tr>
+    <tr><th>Boundary variation px</th><td>w=${escapeHtml(summary.boundaryWidthVariationPx ?? "not_computed")}; h=${escapeHtml(summary.boundaryHeightVariationPx ?? "not_computed")}</td></tr>
+    <tr><th>Pixel/mm variation</th><td>${escapeHtml(summary.pixelToMmVariation ?? "not_computed")}</td></tr>
+    <tr><th>Sharpness / brightness variation</th><td>${escapeHtml(summary.sharpnessVariation ?? "not_computed")} / ${escapeHtml(summary.meanBrightnessVariation ?? "not_computed")}</td></tr>
+    <tr><th>Max clipping</th><td>${escapeHtml(summary.clippingMax ?? "not_computed")}</td></tr>
+    <tr><th>Overlay counts</th><td>pass ${escapeHtml(summary.overlayAlignmentCounts.pass)}, warn ${escapeHtml(summary.overlayAlignmentCounts.warn)}, fail ${escapeHtml(summary.overlayAlignmentCounts.fail)}, not computed ${escapeHtml(summary.overlayAlignmentCounts.notComputed)}</td></tr>
+    <tr><th>Warnings</th><td>${escapeHtml(summary.warnings.join("; ") || "none")}</td></tr>
+  </tbody></table>`;
+}
+
+function diagnosticElementTable(title: string, element: FixedRigDiagnosticElement | undefined): string {
+  if (!element) return `<h3>${escapeHtml(title)}</h3><p>Not computed.</p>`;
+  return `<h3>${escapeHtml(title)}</h3><table><tbody>
+    <tr><th>Status</th><td>${escapeHtml(element.status)}</td></tr>
+    <tr><th>Score</th><td>${escapeHtml(element.score ?? "omitted_diagnostic_only")}</td></tr>
+    <tr><th>Confidence</th><td>${escapeHtml(element.confidence)}</td></tr>
+    <tr><th>Metrics</th><td><pre>${escapeHtml(JSON.stringify(element.metrics, null, 2))}</pre></td></tr>
+    <tr><th>Warnings</th><td>${escapeHtml(element.warnings.join("; ") || "none")}</td></tr>
+  </tbody></table>`;
+}
+
+function diagnosticGradingSection(result: FixedRigDiagnosticGradingResult | undefined): string {
+  if (!result) return "<h2>Preliminary Diagnostic Grading</h2><p>Not computed.</p>";
+  return `<h2>Preliminary Diagnostic Grading</h2>
+    <p class="warn">Diagnostic only. finalGradeComputed=${escapeHtml(result.finalGradeComputed)}; certifiedClaim=${escapeHtml(result.certifiedClaim)}.</p>
+    <p>Status ${escapeHtml(result.status)}; calibration status ${escapeHtml(result.calibrationStatus)}.</p>
+    ${diagnosticElementTable("Centering", result.centering)}
+    ${diagnosticElementTable("Top-left corner", result.corners.topLeft)}
+    ${diagnosticElementTable("Top-right corner", result.corners.topRight)}
+    ${diagnosticElementTable("Bottom-right corner", result.corners.bottomRight)}
+    ${diagnosticElementTable("Bottom-left corner", result.corners.bottomLeft)}
+    ${diagnosticElementTable("Top edge", result.edges.top)}
+    ${diagnosticElementTable("Right edge", result.edges.right)}
+    ${diagnosticElementTable("Bottom edge", result.edges.bottom)}
+    ${diagnosticElementTable("Left edge", result.edges.left)}
+    ${diagnosticElementTable("Surface", result.surface)}
+    <h3>Diagnostic warnings</h3><ul>${result.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`;
+}
+
+function surfaceAnalysisSection(analysis: FixedRigSurfaceAnalysis | undefined): string {
+  if (!analysis) return "<h2>8-Channel Surface Analysis</h2><p>Not computed.</p>";
+  return `<h2>8-Channel Surface Analysis</h2>
+    <p>Status ${escapeHtml(analysis.status)}; detector ${escapeHtml(analysis.detectorId)}. ${escapeHtml(analysis.registration.note)}</p>
+    <table><thead><tr><th>Channel</th><th>Mean</th><th>Max</th><th>Clipped</th><th>Dark</th><th>Sharpness</th><th>Anomaly proxy</th></tr></thead><tbody>
+      ${analysis.perChannelStats.map((channel) => `<tr><td>${escapeHtml(channel.channel)}</td><td>${escapeHtml(channel.mean ?? "")}</td><td>${escapeHtml(channel.max ?? "")}</td><td>${escapeHtml(channel.clippedPixelFraction ?? "")}</td><td>${escapeHtml(channel.darkPixelFraction ?? "")}</td><td>${escapeHtml(channel.sharpnessScore ?? "")}</td><td>${escapeHtml(channel.anomalyProxyMetric ?? "")}</td></tr>`).join("")}
+    </tbody></table>
+    <div class="grid">${analysis.perChannelStats.map((channel) => imageTag(channel.portraitDisplayImage?.outputFilePath, `channel ${channel.channel} portrait display`)).join("")}</div>
+    <p>Candidates: ${escapeHtml(analysis.candidates.length)}. ${escapeHtml(analysis.warnings.join("; "))}</p>`;
+}
+
 function sideSection(side: FixedRigSideCapture | undefined, title: string): string {
   if (!side) return `<section><h2>${escapeHtml(title)}</h2><p>Not captured.</p></section>`;
   return `<section>
@@ -2012,6 +2675,79 @@ function sideSection(side: FixedRigSideCapture | undefined, title: string): stri
     ${roiTable(side.roiDefinitions)}
     <p><strong>ROI status:</strong> ${escapeHtml(side.analysis.boundaryStatus)} | <strong>Analysis:</strong> ${escapeHtml(side.analysis.status)}</p>
   </section>`;
+}
+
+export function renderFixedRigFixtureCalibrationReport(manifest: {
+  status: string;
+  activeLightingProfile: FixedRigActiveLightingProfile;
+  quality?: FixedRigQualityMetrics;
+  displayImage?: FixedRigDisplayArtifact;
+  overlayPreview?: FixedRigOverlayArtifact;
+  roiDefinitions: FixedRigRoiDefinition[];
+  fixtureCalibrationProfile: FixedRigFixtureCalibrationProfile;
+  warning: string;
+}): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixed-Rig Rough Fixture Calibration - Diagnostic</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #171717; background: #f7f7f4; }
+    main { max-width: 1180px; margin: 0 auto; }
+    img { max-width: 100%; border: 1px solid #aaa; background: #111; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; }
+    th, td { border: 1px solid #bbb; padding: 6px 8px; text-align: left; }
+    .warn { border-left: 4px solid #a33; padding: 8px 12px; background: #fff; }
+  </style>
+</head>
+<body><main>
+  <h1>Fixed-Rig Rough Fixture Calibration</h1>
+  <p class="warn">${escapeHtml(manifest.warning)} No final grade, certificate, or certified grading claim is made.</p>
+  <h2>Active Lighting Profile</h2>
+  ${activeLightingProfileTable(manifest.activeLightingProfile)}
+  <h2>Rough Fixture Calibration Profile</h2>
+  ${fixtureCalibrationTable(manifest.fixtureCalibrationProfile)}
+  <h2>Portrait Display Image</h2>
+  ${imageTag(manifest.displayImage?.outputFilePath, "rough fixture calibration portrait display")}
+  <h2>Overlay Audit</h2>
+  ${imageTag(manifest.overlayPreview?.outputFilePath, "rough fixture calibration overlay")}
+  ${qualityTable(manifest.quality)}
+  <h2>ROIs</h2>
+  ${roiTable(manifest.roiDefinitions)}
+</main></body></html>
+`;
+}
+
+export function renderFixedRigRepeatabilityReport(manifest: FixedRigRepeatabilityManifest): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixed-Rig Repeatability Test - Diagnostic</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #171717; background: #f7f7f4; }
+    main { max-width: 1180px; margin: 0 auto; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; }
+    th, td { border: 1px solid #bbb; padding: 6px 8px; text-align: left; }
+    .warn { border-left: 4px solid #a33; padding: 8px 12px; background: #fff; }
+  </style>
+</head>
+<body><main>
+  <h1>Fixed-Rig Repeatability Test</h1>
+  <p class="warn">${escapeHtml(manifest.warning)} Diagnostic only; this does not make the rig calibrated.</p>
+  <h2>Active Lighting Profile</h2>
+  ${activeLightingProfileTable(manifest.activeLightingProfile)}
+  <h2>Fixture Calibration Profile</h2>
+  ${fixtureCalibrationTable(manifest.fixtureCalibrationProfile)}
+  <h2>Repeatability Summary</h2>
+  ${repeatabilityTable(manifest.summary)}
+  <h2>Runs</h2>
+  <table><thead><tr><th>#</th><th>Phase</th><th>Mean</th><th>Clipped</th><th>Sharpness</th><th>Center px</th><th>Boundary</th><th>Overlay</th><th>Capture</th></tr></thead><tbody>
+    ${manifest.runs.map((run) => `<tr><td>${escapeHtml(run.index)}</td><td>${escapeHtml(run.phase)}</td><td>${escapeHtml(run.mean)}</td><td>${escapeHtml(run.clippedPixelFraction)}</td><td>${escapeHtml(run.sharpnessScore)}</td><td>${escapeHtml(run.centerOffsetPx ? `${run.centerOffsetPx.x},${run.centerOffsetPx.y}` : "not_computed")}</td><td>${escapeHtml(run.boundaryWidth ?? "")} x ${escapeHtml(run.boundaryHeight ?? "")}</td><td>${escapeHtml(run.overlayAlignmentStatus)}</td><td>${escapeHtml(run.capture?.outputFilePath ?? "")}</td></tr>`).join("")}
+  </tbody></table>
+</main></body></html>
+`;
 }
 
 export function renderFixedRigFocusAssistReport(manifest: FixedRigFocusAssistManifest): string {

@@ -16,19 +16,28 @@ const {
   AI_GRADER_FIXED_RIG_V1_CONFIRMATION,
   BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION,
   BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION,
+  FIXED_RIG_FIXTURE_CALIBRATION_CONFIRMATION,
+  FIXED_RIG_REPEATABILITY_TEST_CONFIRMATION,
   LEIMAC_CHANNEL_CHARACTERIZATION_CONFIRMATION,
   buildFixedRigActiveLightingProfile,
   buildFixedRigCalibrationProfile,
+  buildFixedRigDiagnosticGradingResult,
+  buildFixedRigFixtureCalibrationProfile,
   buildFixedRigFocusAssistManifest,
   buildFixedRigLightingProfilePlan,
   buildFixedRigOperatorPreviewManifest,
+  buildFixedRigRepeatabilityRun,
+  buildFixedRigRepeatabilitySummary,
   buildFixedRigSideCapture,
+  buildFixedRigSurfaceAnalysis,
   buildFixedRigV1LocalManifest,
   buildLeimacChannelCharacterizationManifest,
   buildLeimacCharacterizationFrames,
   readFixedRigActiveLightingProfile,
   renderFixedRigFocusAssistReport,
+  renderFixedRigFixtureCalibrationReport,
   renderFixedRigOperatorPreviewReport,
+  renderFixedRigRepeatabilityReport,
   renderFixedRigV1Report,
   renderLeimacChannelCharacterizationReport,
   writeFixedRigActiveLightingProfile,
@@ -824,6 +833,167 @@ test("Fixed-rig calibration profile defaults are uncalibrated and estimate pixel
   assert.equal(withBoundary.pixelToMmConsistency.status, "warn");
 });
 
+test("Fixed-rig rough fixture calibration profile remains uncalibrated and records reference metadata", () => {
+  const activeLightingProfile = buildFixedRigActiveLightingProfile({
+    selectedDutyPercent: 1.3,
+    selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+    profileSource: "operator_preview",
+    acceptedAt: "2026-06-30T10:00:00.000Z",
+  });
+  const profile = buildFixedRigFixtureCalibrationProfile({
+    profileId: "rough-fixture",
+    fixtureId: "fixture-v1",
+    fixtureLabel: "fixed card L-stop",
+    referenceType: "card_dimensions",
+    referencePhysicalWidthMm: 63.5,
+    referencePhysicalHeightMm: 88.9,
+    rawImageWidth: 2448,
+    rawImageHeight: 2048,
+    cardBoundary: fakeFixedRigQuality().cardBoundary,
+    activeLightingProfile,
+    exposureUs: 45000,
+    gain: 0,
+    operatorAccepted: true,
+    operatorNotes: "standard card in fixed fixture",
+  });
+
+  assert.equal(profile.status, "rough_reference_unvalidated");
+  assert.equal(profile.isCalibrated, false);
+  assert.equal(profile.referenceType, "card_dimensions");
+  assert.equal(profile.rawCoordinateFrame, "basler_sensor_pixels");
+  assert.equal(profile.displayCoordinateFrame, "ai_grader_card_portrait_display");
+  assert.equal(profile.displayTransform, "rotate90cw");
+  assert.equal(profile.lensDistortionStatus, "not_computed");
+  assert.equal(profile.homographyStatus, "not_computed");
+  assert.equal(profile.lightingProfileUsed.selectedDutyPercent, 1.3);
+  assert.equal(profile.operatorAccepted, true);
+  assert.match(profile.warning, /Rough fixture calibration/i);
+  assert.doesNotMatch(JSON.stringify(profile).toLowerCase(), /"iscalibrated":true|production calibrated/);
+  assert.match(
+    renderFixedRigFixtureCalibrationReport({
+      status: "captured",
+      activeLightingProfile,
+      quality: fakeFixedRigQuality(),
+      roiDefinitions: [],
+      fixtureCalibrationProfile: profile,
+      warning: "Rough only.",
+    }),
+    /Rough Fixture Calibration/i
+  );
+});
+
+test("Fixed-rig repeatability summary aggregates diagnostic variation without calibrating", () => {
+  const base = fakeFixedRigQuality();
+  const run1 = buildFixedRigRepeatabilityRun({ index: 1, phase: "no_touch", capture: fakeCapture(), quality: base });
+  const run2 = buildFixedRigRepeatabilityRun({
+    index: 2,
+    phase: "no_touch",
+    capture: { ...fakeCapture(), outputFilePath: path.join(os.tmpdir(), "repeatability-2.png") },
+    quality: fakeFixedRigQuality({
+      mean: base.mean + 1,
+      sharpnessScore: base.sharpnessScore + 3,
+      cardBoundary: { ...base.cardBoundary, x: base.cardBoundary.x + 2, y: base.cardBoundary.y + 1 },
+    }),
+  });
+  const summary = buildFixedRigRepeatabilitySummary([run1, run2], "no_touch");
+
+  assert.equal(summary.status, "computed");
+  assert.equal(summary.runCount, 2);
+  assert.equal(["pass", "warn", "fail"].includes(summary.repeatabilityStatus), true);
+  assert.equal(summary.overlayAlignmentCounts.pass + summary.overlayAlignmentCounts.warn + summary.overlayAlignmentCounts.fail + summary.overlayAlignmentCounts.notComputed, 2);
+  assert.equal(summary.sharpnessVariation, 3);
+  assert.doesNotMatch(JSON.stringify(summary).toLowerCase(), /finalgrade|certified/);
+  assert.match(
+    renderFixedRigRepeatabilityReport({
+      packageId: "repeatability",
+      packageDir: path.join(os.tmpdir(), "repeatability"),
+      status: "completed",
+      phase: "no_touch",
+      requestedCaptureCount: 2,
+      activeLightingProfile: buildFixedRigActiveLightingProfile(),
+      runs: [run1, run2],
+      summary,
+      safety: {
+        localOnly: true,
+        diagnosticOnly: true,
+        safeOffBeforeEachCapture: true,
+        safeOffAfterEachCapture: true,
+        persistentBaslerSaved: false,
+        persistentLeimacSaved: false,
+        finalLightOffConfirmedByMark: false,
+      },
+      warning: "Diagnostic only.",
+    }),
+    /Repeatability Summary/i
+  );
+});
+
+test("Fixed-rig diagnostic grading and surface analysis are preliminary and do not output final grades", () => {
+  const quality = fakeFixedRigQuality({
+    overlayAlignment: {
+      templateRect: { x: 180, y: 130, width: 2050, height: 1750 },
+      detectedBoundaryRect: { x: 200, y: 150, width: 2000, height: 1700 },
+      centerOffsetPx: { x: 5, y: 4 },
+      centerOffsetMm: { x: 0.2, y: 0.15 },
+      marginLeft: 200,
+      marginRight: 248,
+      marginTop: 150,
+      marginBottom: 198,
+      detectedAspectRatio: 1.176471,
+      expectedAspectRatio: 1.4,
+      orientationUsed: "raw_landscape_rotated_to_portrait",
+      overlayAlignmentStatus: "warn",
+      warnings: ["test alignment warning"],
+    },
+  });
+  const rois = buildFixedRigSideCapture({
+    side: "front",
+    macroPackage: buildBaslerLeimacMacroPackageManifest({
+      status: "captured",
+      packageId: "macro",
+      packageDir: path.join(os.tmpdir(), "fixed-rig-v1", "macro"),
+      leimacHost: "169.254.191.156",
+      leimacPort: 1000,
+      leimacProfilePlan: buildLeimacIdmuTriggerProfilePlan({ dutyPercent: 1.3, unit: 1 }),
+      requestedExposureUs: 45000,
+      dutyPercent: 1.3,
+      synced: { capture: fakeCapture(), stats: quality },
+      supervised: true,
+      safeOffBefore: true,
+      safeOffAfter: true,
+    }),
+    quality,
+    activeLightingProfile: buildFixedRigActiveLightingProfile({ selectedDutyPercent: 1.3, profileSource: "operator_preview" }),
+  }).roiDefinitions;
+  const surfaceAnalysis = buildFixedRigSurfaceAnalysis({
+    side: "front",
+    channels: Array.from({ length: 8 }, (_, index) => ({ channel: index + 1, stats: fakeFixedRigQuality({ mean: 40 + index }) })),
+  });
+  const diagnostic = buildFixedRigDiagnosticGradingResult({
+    side: "front",
+    quality,
+    roiDefinitions: rois,
+    fixtureCalibrationProfile: buildFixedRigFixtureCalibrationProfile({
+      profileId: "rough",
+      cardBoundary: quality.cardBoundary,
+      activeLightingProfile: buildFixedRigActiveLightingProfile({ selectedDutyPercent: 1.3 }),
+      operatorAccepted: true,
+    }),
+    surfaceAnalysis,
+  });
+
+  assert.equal(surfaceAnalysis.detectorId, "preliminary_surface_anomaly_detector_v0");
+  assert.equal(surfaceAnalysis.perChannelStats.length, 8);
+  assert.equal(surfaceAnalysis.candidates.length, 0);
+  assert.equal(diagnostic.diagnosticOnly, true);
+  assert.equal(diagnostic.finalGradeComputed, false);
+  assert.equal(diagnostic.certifiedClaim, false);
+  assert.equal(diagnostic.centering.status, "computed_diagnostic");
+  assert.equal(diagnostic.corners.topLeft.status, "computed_diagnostic");
+  assert.equal(diagnostic.surface.status, "not_computed");
+  assert.doesNotMatch(JSON.stringify(diagnostic).toLowerCase(), /finalgradecomputed":true|certifiedclaim":true/);
+});
+
 test("Fixed-rig active lighting profile persists accepted preview duty and channels outside repo", async () => {
   const outputRoot = path.join(os.tmpdir(), "fixed-rig-calibration-active-profile-test");
   const outputDir = path.join(outputRoot, "fixed-rig-calibration");
@@ -888,6 +1058,17 @@ test("Fixed-rig commands carry accepted preview lighting profile unless overridd
     "channel-7",
     "channel-8",
   ]);
+
+  const calibrationDryRun = await runCli(["fixed-rig-fixture-calibration", "--output-dir", captureDir, "--reference-type", "card_dimensions"]);
+  assert.equal(calibrationDryRun.code, 0);
+  assert.equal(calibrationDryRun.stdout.activeLightingProfile.selectedDutyPercent, 1.4);
+  assert.equal(calibrationDryRun.stdout.fixtureCalibrationProfile.isCalibrated, false);
+  assert.equal(calibrationDryRun.stdout.fixtureCalibrationProfile.referenceType, "card_dimensions");
+
+  const repeatabilityDryRun = await runCli(["fixed-rig-repeatability-test", "--output-dir", captureDir, "--repeatability-phase", "no-touch"]);
+  assert.equal(repeatabilityDryRun.code, 0);
+  assert.equal(repeatabilityDryRun.stdout.activeLightingProfile.selectedDutyPercent, 1.4);
+  assert.equal(repeatabilityDryRun.stdout.requestedCaptureCount, 5);
 
   const overrideDryRun = await runCli(["basler-fixed-rig-focus-assist", "--output-dir", captureDir, "--duty", "1.3", "--exposure-us", "45000"]);
   assert.equal(overrideDryRun.code, 0);
@@ -1417,6 +1598,44 @@ test("Fixed-rig V1 CLIs reject unsafe inputs before hardware", async () => {
   ]);
   assert.equal(evidenceBackMissingFlip.code, 1);
   assert.match(evidenceBackMissingFlip.stderr.error, /--operator-flip-confirmed/);
+
+  const fixtureInvalidReference = await runCli(["fixed-rig-fixture-calibration", "--reference-type", "magic-target"]);
+  assert.equal(fixtureInvalidReference.code, 1);
+  assert.match(fixtureInvalidReference.stderr.error, /--reference-type/);
+
+  const fixtureMissingConfirmation = await runCli([
+    "fixed-rig-fixture-calibration",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--apply",
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(fixtureMissingConfirmation.code, 1);
+  assert.match(fixtureMissingConfirmation.stderr.error, /ROUGH FIXTURE CALIBRATION/);
+
+  const repeatabilityMissingReplace = await runCli([
+    "fixed-rig-repeatability-test",
+    "--leimac-host",
+    "169.254.191.156",
+    "--output-dir",
+    outputDir,
+    "--repeatability-phase",
+    "remove-replace",
+    "--apply",
+    "--confirm",
+    FIXED_RIG_REPEATABILITY_TEST_CONFIRMATION,
+    "--mark-present",
+    "--wiring-confirmed",
+    "--leimac-status-green",
+    "--operator-confirmed-light-idle-off",
+  ]);
+  assert.equal(repeatabilityMissingReplace.code, 1);
+  assert.match(repeatabilityMissingReplace.stderr.error, /--operator-replace-confirmed/);
 
   const channelRepoOutput = await runCli([
     "leimac-channel-characterization",
