@@ -1178,6 +1178,34 @@ Back confidence map:    C:\TenKings\capture-data\light-direction-pr44\ai-grader-
 
 Sample summary: physical direction mapping `approximate_directional_model`, intensity balancing `intensity_balanced`, flat-field status `unknown`, normal-map status `preliminary_normal_proxy`, front/back confidence `medium`. The sample still carries front clipping/glare warnings and fallback-normalization warnings.
 
+### Provisional Grade Rules / Grade Story Engine
+
+PR #45 adds the first controlled provisional grade calculation layer and Grade Story Engine to the existing unified fixed-rig report path. It is software-only by default: `ai-grader-fixed-rig-v1-card-report` reads existing front/back evidence folders, writes a derived report outside the repo, and does not contact Basler or Leimac.
+
+The Grade Story Engine emits `provisional_diagnostic_grade` only when the required gates pass or are explicitly allowed as accepted diagnostic warnings. Required gates are fixed-ruler calibration, repeatability, framing/overlay, front evidence completeness, back evidence completeness, Surface Intelligence completeness, clipping threshold or accepted warning, and focus/sharpness threshold or accepted warning. If a hard gate fails, the story returns `insufficient_evidence`, explains the failed gate, and omits the provisional grade.
+
+When allowed, the rules output:
+
+- provisional overall grade on a `1_to_10` scale
+- provisional element scores for centering, corners, edges, and surface
+- confidence score/band and confidence warnings
+- grade-impact candidates with evidence refs and source channels where available
+- `Why Not 10?` reasons
+- evidence-linked narrative claims for Story Mode
+- formula metadata and cap rules
+
+All PR #45 outputs remain non-certified. The report and JSON keep `certificationStatus=not_certified`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`. The report hero may show a provisional diagnostic grade, but it must also show `Not Certified - No Final Grade`.
+
+The PR #45 sample report was generated from existing PR #41 station evidence only:
+
+```text
+Report: C:\TenKings\capture-data\provisional-grade-story-pr45\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T173733758Z\provisional-diagnostic-report.html
+Front evidence: C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z
+Back evidence:  C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z
+```
+
+Sample PR #45 result: status `provisional_diagnostic_grade`, provisional overall grade `8.5`, confidence `low` (`0.361`). Element scores were centering `10`, corners `8.97`, edges `8.97`, and surface `5.5`. Gates passed for ruler calibration, framing/overlay, front evidence, back evidence, Surface Intelligence, and focus/sharpness; repeatability and clipping were accepted diagnostic warnings from the existing evidence artifacts. The strongest `Why Not 10?` reasons were high-severity back surface candidates from Surface Intelligence V0, especially source channels `3`, `1`, and `6`, plus accepted-warning clipping confidence reduction. This is a provisional diagnostic story only, not a final grade or certificate.
+
 #### Dell PR #39 Rough Fixture Smoke
 
 On 2026-06-30, Mark ran the rough fixed-fixture flow using the operator-built fixed-position V1 fixture. The accepted live preview folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`. The preview measured about `20.5 FPS` with `0 ms` frame age and accepted a software active profile of `1.4%` Leimac duty, PWM step `14`, channels `1-8`, source `operator_preview`. Preview/report display used `rotate90cw`; raw Basler sensor captures remained unchanged. The preview and later reports warned that the detected card boundary touched the frame edge, so the run remains rough/unvalidated and not calibrated.

@@ -1,5 +1,21 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #45 provisional grade story start)
+- Branch: `feature/ai-grader-provisional-grade-story`.
+- Objective: Sprint 5 Grade Story Engine plus Sprint 6 controlled Provisional Grade Rules for the fixed-rig report.
+- Implementation status: software/report update in progress. No hardware commands were run. Existing PR #41 station evidence was reused:
+  - Front evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z`.
+  - Back evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z`.
+- Added `provisional_grade_rules_v0.1` and `ten-kings-grade-story-engine-v0.1` as a pure rules/story layer. It computes a `provisional_diagnostic_grade` only when required gates pass or are explicitly allowed as diagnostic warnings; hard gate failures return `insufficient_evidence`.
+- Unified report now shows a provisional diagnostic grade hero, element scores, confidence, Grade Story Engine narrative, `Why Not 10?`, grade-impact candidates, evidence-linked claims, gate summary, and formula/cap-rule metadata.
+- Sample PR #45 report generated outside the repo: `C:\TenKings\capture-data\provisional-grade-story-pr45\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T173733758Z\provisional-diagnostic-report.html`.
+- Sample result: status `provisional_diagnostic_grade`; provisional overall grade `8.5`; confidence `low` (`0.361`); element scores centering `10`, corners `8.97`, edges `8.97`, surface `5.5`.
+- Gate summary: ruler calibration `pass`, repeatability `accepted_warning`, framing/overlay `pass`, front evidence `pass`, back evidence `pass`, Surface Intelligence `pass`, clipping `accepted_warning`, focus/sharpness `pass`.
+- Top grade-impact reasons are high-severity back surface candidates from Surface Intelligence V0, strongest source channels including `3`, `1`, and `6`; front clipping above the soft target remains a confidence warning.
+- The report remains non-certified: `certificationStatus=not_certified`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`.
+- Full local validation passed: `pnpm --filter @tenkings/ai-grader-capture-helper build`; `pnpm --filter @tenkings/ai-grader-capture-helper test` (`156` tests); `pnpm --filter @tenkings/shared test` (`105` tests); `pnpm --filter @tenkings/ai-grader-simulator test` (`6` tests); `pnpm --filter @tenkings/nextjs-app build` (existing `<img>` lint warnings only); `git diff --check` (line-ending warnings only).
+- Guardrails held so far: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no hardware commands or image captures, no captured image/vendor binary commit, and no certified/final grade, label, QR, or certificate claim.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #44 merged)
 - PR #44 (`feature/ai-grader-light-direction-calibration`) was merged into `main`.
 - Merge commit: `f80461f59579ba94893247006e7a39925d3af65c`.

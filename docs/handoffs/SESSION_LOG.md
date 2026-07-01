@@ -22227,3 +22227,51 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or image capture was run.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, certified grading claim, or certified photometric-stereo claim was added.
+
+## 2026-07-01 - AI Grader PR #45 provisional grade story start
+
+### Summary
+- Created branch `feature/ai-grader-provisional-grade-story` from latest `main`.
+- Objective: Sprint 5 Grade Story Engine plus Sprint 6 controlled Provisional Grade Rules for the fixed-rig report.
+- Added a pure `provisional_grade_rules_v0.1` / `ten-kings-grade-story-engine-v0.1` layer that computes `provisional_diagnostic_grade` only when required gates pass or are accepted as diagnostic warnings.
+- Hard gate failures return `insufficient_evidence` and omit the provisional score.
+- The unified fixed-rig report now includes a provisional diagnostic grade hero, element scores, confidence, Grade Story Engine narrative, `Why Not 10?`, grade-impact candidates, evidence-linked claims, gate summary, and formula/cap-rule metadata.
+- Report/analysis JSON keep `certificationStatus=not_certified`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`.
+
+### Sample Report
+- No hardware was run. Existing PR #41 station evidence was reused:
+  - Front evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z`.
+  - Back evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z`.
+- Sample report: `C:\TenKings\capture-data\provisional-grade-story-pr45\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T173733758Z\provisional-diagnostic-report.html`.
+- Sample provisional result:
+  - status `provisional_diagnostic_grade`;
+  - overall grade `8.5`;
+  - confidence `low` (`0.361`);
+  - centering `10`;
+  - corners `8.97`;
+  - edges `8.97`;
+  - surface `5.5`.
+- Gate summary: ruler calibration `pass`, repeatability `accepted_warning`, framing/overlay `pass`, front evidence `pass`, back evidence `pass`, Surface Intelligence `pass`, clipping `accepted_warning`, focus/sharpness `pass`.
+- Top grade-impact reasons: high-severity back surface candidates from Surface Intelligence V0, with source channels including `3`, `1`, and `6`; front clipping above the soft target remains a confidence warning.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `156` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` lint warnings only.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- All generated report artifacts stayed outside the repo under `C:\TenKings\capture-data`.
+- No certified/final Ten Kings grade, label, QR report, certificate, or certified grading claim was generated.

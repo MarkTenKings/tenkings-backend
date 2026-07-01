@@ -56,6 +56,11 @@ const {
   buildLightDirectionCalibrationArtifacts,
 } = require("../dist/drivers/fixedRigLightDirectionCalibration");
 const {
+  PROVISIONAL_GRADE_RULES_VERSION,
+  PROVISIONAL_GRADE_STORY_ENGINE_VERSION,
+  buildFixedRigProvisionalGradeStory,
+} = require("../dist/drivers/fixedRigProvisionalGradeStory");
+const {
   BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_SYNC_SMOKE_CONFIRMATION,
@@ -945,6 +950,131 @@ async function writeFakeFixedRigEvidencePackage(rootDir, side, clippedPixelFract
   return packageDir;
 }
 
+test("Provisional Grade Story Engine computes only with passing or accepted-warning gates", async () => {
+  const root = path.join(os.tmpdir(), "fixed-rig-provisional-grade-story-test");
+  fs.rmSync(root, { recursive: true, force: true });
+  const frontDir = await writeFakeFixedRigEvidencePackage(root, "front", 0.03);
+  const backDir = await writeFakeFixedRigEvidencePackage(root, "back", 0.015);
+  const frontAnalysis = JSON.parse(fs.readFileSync(path.join(frontDir, "analysis.json"), "utf-8"));
+  const backAnalysis = JSON.parse(fs.readFileSync(path.join(backDir, "analysis.json"), "utf-8"));
+  const passingDiagnosticProfile = {
+    ...frontAnalysis.front.fixtureCalibrationProfile,
+    framingGate: {
+      ...frontAnalysis.front.fixtureCalibrationProfile.framingGate,
+      status: "pass",
+      overlayAlignmentStatus: "pass",
+      warnings: [],
+    },
+    productionReadiness: {
+      ...frontAnalysis.front.fixtureCalibrationProfile.productionReadiness,
+      gates: {
+        ...frontAnalysis.front.fixtureCalibrationProfile.productionReadiness.gates,
+        framing: "pass",
+        overlayAlignment: "pass",
+      },
+      diagnosticOnlyAllowedWithOperatorAcceptance: true,
+    },
+  };
+  const frontDiagnostic = {
+    ...frontAnalysis.front.diagnosticGrading,
+    centering: {
+      status: "computed_diagnostic",
+      score: 9.8,
+      confidence: 0.72,
+      metrics: {
+        scoreType: "provisional_diagnostic",
+        horizontalCenteringPercent: 49.8,
+        verticalCenteringPercent: 49.6,
+        leftMm: 12.1,
+        rightMm: 12.2,
+        topMm: 16.4,
+        bottomMm: 16.6,
+      },
+      warnings: ["Centering score is provisional_diagnostic only and is not a final grade."],
+    },
+  };
+  const backDiagnostic = {
+    ...backAnalysis.back.diagnosticGrading,
+    centering: {
+      status: "computed_diagnostic",
+      score: 9.7,
+      confidence: 0.72,
+      metrics: {
+        scoreType: "provisional_diagnostic",
+        horizontalCenteringPercent: 49.5,
+        verticalCenteringPercent: 49.4,
+        leftMm: 12.0,
+        rightMm: 12.3,
+        topMm: 16.2,
+        bottomMm: 16.5,
+      },
+      warnings: ["Centering score is provisional_diagnostic only and is not a final grade."],
+    },
+  };
+  const story = buildFixedRigProvisionalGradeStory({
+    frontDiagnostic,
+    backDiagnostic,
+    frontSurface: frontAnalysis.front.surfaceAnalysis,
+    backSurface: backAnalysis.back.surfaceAnalysis,
+    frontStats: frontAnalysis.front.allOn,
+    backStats: backAnalysis.back.allOn,
+    fixtureProfile: passingDiagnosticProfile,
+    activeLightingProfile: frontAnalysis.activeLightingProfile,
+    allowAcceptedWarnings: true,
+  });
+  assert.equal(story.schemaVersion, PROVISIONAL_GRADE_STORY_ENGINE_VERSION);
+  assert.equal(story.rulesVersion, PROVISIONAL_GRADE_RULES_VERSION);
+  assert.equal(story.status, "provisional_diagnostic_grade");
+  assert.equal(story.certificationStatus, "not_certified");
+  assert.equal(story.finalGradeComputed, false);
+  assert.equal(story.certifiedClaim, false);
+  assert.equal(story.labelGenerated, false);
+  assert.equal(story.qrGenerated, false);
+  assert.equal(story.certificateGenerated, false);
+  assert.equal(story.provisionalGradeComputed, true);
+  assert.ok(story.provisionalOverallGrade > 0);
+  assert.equal(story.elementScores.centering.status, "provisional_diagnostic");
+  assert.equal(story.elementScores.corners.status, "provisional_diagnostic");
+  assert.equal(story.elementScores.edges.status, "provisional_diagnostic");
+  assert.equal(story.elementScores.surface.status, "provisional_diagnostic");
+  assert.ok(story.gates.results.some((gate) => gate.status === "accepted_warning"));
+  assert.ok(story.whyNot10.length > 0);
+  assert.ok(story.gradeImpactCandidates.length > 0);
+  assert.ok(story.story.claims.every((claim) => Array.isArray(claim.evidenceRefs) && claim.evidenceRefs.length > 0));
+
+  const failingProfile = {
+    ...passingDiagnosticProfile,
+    referenceType: "unknown",
+    mmPerPixelX: undefined,
+    mmPerPixelY: undefined,
+    pixelToMmConsistency: { status: "fail" },
+    productionReadiness: {
+      ...passingDiagnosticProfile.productionReadiness,
+      gates: {
+        ...passingDiagnosticProfile.productionReadiness.gates,
+        rulerCalibration: "fail",
+      },
+      diagnosticOnlyAllowedWithOperatorAcceptance: false,
+    },
+  };
+  const refused = buildFixedRigProvisionalGradeStory({
+    frontDiagnostic,
+    backDiagnostic,
+    frontSurface: frontAnalysis.front.surfaceAnalysis,
+    backSurface: backAnalysis.back.surfaceAnalysis,
+    frontStats: frontAnalysis.front.allOn,
+    backStats: backAnalysis.back.allOn,
+    fixtureProfile: failingProfile,
+    activeLightingProfile: frontAnalysis.activeLightingProfile,
+    allowAcceptedWarnings: true,
+  });
+  assert.equal(refused.status, "insufficient_evidence");
+  assert.equal(refused.provisionalGradeComputed, false);
+  assert.equal(refused.provisionalOverallGrade, undefined);
+  assert.ok(refused.gates.blockers.some((blocker) => blocker.includes("ruler_calibration")));
+  assert.equal(refused.elementScores.centering.status, "insufficient_evidence");
+});
+
 test("Unified fixed-rig card report combines front and back provisional diagnostics", async () => {
   const root = path.join(os.tmpdir(), "fixed-rig-unified-card-report-test");
   fs.rmSync(root, { recursive: true, force: true });
@@ -968,7 +1098,14 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.equal(result.stdout.safety.leimacContacted, false);
   const reportHtml = fs.readFileSync(result.stdout.report.reportPath, "utf-8");
   assert.match(reportHtml, /Ten Kings/);
-  assert.match(reportHtml, /Diagnostic Grade Pending/);
+  assert.match(reportHtml, /Provisional Diagnostic Grade/);
+  assert.match(reportHtml, /Grade Story Engine/);
+  assert.match(reportHtml, /Why Not 10\?/);
+  assert.match(reportHtml, /Grade-Impact Candidates/);
+  assert.match(reportHtml, /provisional_diagnostic_grade/i);
+  assert.match(reportHtml, /labelGenerated=false/);
+  assert.match(reportHtml, /qrGenerated=false/);
+  assert.match(reportHtml, /certificateGenerated=false/);
   assert.match(reportHtml, /Provisional Diagnostic - Not Certified - No Final Grade/);
   assert.match(reportHtml, /Front and Back Evidence/);
   assert.match(reportHtml, /front-all-on-portrait-display\.png/);
@@ -1026,6 +1163,11 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.equal(manifest.reportContains.normalProxy, true);
   assert.equal(manifest.reportContains.reliefProxy, true);
   assert.equal(manifest.reportContains.confidenceMap, true);
+  assert.equal(manifest.reportContains.provisionalDiagnosticGrade, true);
+  assert.equal(manifest.reportContains.gradeStoryEngine, true);
+  assert.equal(manifest.reportContains.whyNot10, true);
+  assert.equal(manifest.reportContains.gradeImpactCandidates, true);
+  assert.equal(manifest.reportContains.collectorExpertGradeModes, true);
   assert.equal(manifest.visionLab.localStaticHtml, true);
   assert.equal(manifest.visionLab.dataContract.frontBackTrueViewImageRefs, true);
   assert.equal(manifest.visionLab.dataContract.frontBackChannelImageRefs1Through8, true);
@@ -1036,9 +1178,22 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.equal(manifest.visionLab.dataContract.channelBalanceMetrics, true);
   assert.equal(manifest.visionLab.dataContract.lightDirectionProfileMetadata, true);
   assert.equal(manifest.visionLab.dataContract.sourceChannelAttribution, true);
+  assert.equal(manifest.visionLab.dataContract.provisionalGradeStory, true);
+  assert.equal(manifest.visionLab.dataContract.gradeImpactCandidates, true);
+  assert.equal(manifest.visionLab.dataContract.whyNot10Reasons, true);
   assert.equal(manifest.visionLab.dataContract.measurementOverlayMetadata, true);
   assert.equal(manifest.reportContains.finalGrade, false);
+  assert.equal(manifest.reportContains.labelQrOrCertificate, false);
   assert.equal(manifest.reportContains.certificateOrCertifiedClaim, false);
+  assert.equal(manifest.provisionalGradeStory.schemaVersion, PROVISIONAL_GRADE_STORY_ENGINE_VERSION);
+  assert.equal(manifest.provisionalGradeStory.rulesVersion, PROVISIONAL_GRADE_RULES_VERSION);
+  assert.equal(manifest.provisionalGradeStory.status, "provisional_diagnostic_grade");
+  assert.equal(manifest.provisionalGradeStory.provisionalGradeComputed, true);
+  assert.equal(manifest.provisionalGradeStory.finalGradeComputed, false);
+  assert.equal(manifest.provisionalGradeStory.certifiedClaim, false);
+  assert.equal(manifest.provisionalGradeStory.labelGenerated, false);
+  assert.equal(manifest.provisionalGradeStory.qrGenerated, false);
+  assert.equal(manifest.provisionalGradeStory.certificateGenerated, false);
   const analysis = JSON.parse(fs.readFileSync(result.stdout.report.analysisPath, "utf-8"));
   assert.equal(analysis.visionLab.schemaVersion, "ten-kings-vision-lab-v0.1");
   assert.equal(analysis.visionLab.sides.front.channels.length, 8);
@@ -1061,8 +1216,21 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.equal(analysis.lightDirectionCalibration.front.profile.isCertifiedPhotometricStereo, false);
   assert.equal(analysis.lightDirectionCalibration.front.profile.channelMetadata.length, 8);
   assert.equal(analysis.visionLab.measurementOverlay.status, "available");
+  assert.equal(analysis.visionLab.provisionalGradeStory.status, "provisional_diagnostic_grade");
+  assert.ok(analysis.visionLab.gradeImpactCandidates.length > 0);
+  assert.equal(analysis.provisionalGradeStory.status, "provisional_diagnostic_grade");
+  assert.equal(analysis.provisionalGradeStory.certificationStatus, "not_certified");
+  assert.equal(analysis.provisionalGradeStory.provisionalGradeComputed, true);
+  assert.ok(analysis.provisionalGradeStory.provisionalOverallGrade > 0);
+  assert.ok(analysis.provisionalGradeStory.whyNot10.length > 0);
+  assert.ok(analysis.provisionalGradeStory.gradeImpactCandidates.length > 0);
+  assert.ok(analysis.provisionalGradeStory.story.claims.every((claim) => claim.evidenceRefs.length > 0));
+  assert.ok(analysis.provisionalGradeStory.gates.results.some((gate) => gate.status === "accepted_warning"));
   assert.equal(analysis.finalGradeComputed, false);
   assert.equal(analysis.certifiedClaim, false);
+  assert.equal(analysis.labelGenerated, false);
+  assert.equal(analysis.qrGenerated, false);
+  assert.equal(analysis.certificateGenerated, false);
 });
 
 test("Unified fixed-rig card report rejects repo output and missing side evidence", async () => {
