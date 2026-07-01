@@ -22154,3 +22154,51 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or image capture was run during merge.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, certified grading claim, or certified photometric-stereo claim was added.
+
+## 2026-07-01 - AI Grader PR #44 light direction calibration start
+
+### Summary
+- Created branch `feature/ai-grader-light-direction-calibration` from latest `main` after PR #43 merge.
+- Objective: Light Direction Calibration / True Photometric Stereo Prep for the fixed-rig V1 8-channel evidence stack.
+- Added a software-only light-direction calibration/prep module that reads existing portrait Leimac channel `1-8` evidence, computes an approximate channel-direction profile, emits per-channel intensity balancing metrics, writes normalized channel artifacts, and generates preliminary normal proxy, gradient magnitude proxy, relief proxy, and confidence map artifacts.
+- Integrated the new artifacts into the unified fixed-rig provisional diagnostic report and Ten Kings Vision Lab.
+- Vision Lab now includes `Normal Proxy`, `Relief Proxy`, and `Confidence Map` views, plus expert Channel Balance and Light Direction Status panels.
+- The direction model remains `approximate_directional_model`; physical Leimac direction mapping is not certified. `isCertifiedPhotometricStereo=false` is mandatory.
+
+### Sample Report
+- No hardware was run. Existing PR #41 station evidence was reused:
+  - Front evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z`.
+  - Back evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z`.
+- Sample report: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\provisional-diagnostic-report.html`.
+- Front normal proxy: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\front\front-preliminary-normal-proxy.png`.
+- Front gradient magnitude proxy: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\front\front-gradient-magnitude-proxy.png`.
+- Front relief proxy: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\front\front-surface-relief-proxy.png`.
+- Front confidence map: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\front\front-light-direction-confidence-map.png`.
+- Back normal proxy: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\back\back-preliminary-normal-proxy.png`.
+- Back gradient magnitude proxy: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\back\back-gradient-magnitude-proxy.png`.
+- Back relief proxy: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\back\back-surface-relief-proxy.png`.
+- Back confidence map: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\back\back-light-direction-confidence-map.png`.
+- Sample profile summary: physical direction mapping `approximate_directional_model`, intensity balancing `intensity_balanced`, flat-field status `unknown`, normal-map status `preliminary_normal_proxy`, front/back confidence `medium`.
+- Fallback normalization warning is expected because no certified flat-field/reference target was supplied.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `155` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` lint warnings only.
+- `git diff --check` -> pass.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- All generated report artifacts stayed outside the repo under `C:\TenKings\capture-data`.
+- No final grade, certificate, QR label, certified grading claim, or certified photometric-stereo claim was added.

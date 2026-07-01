@@ -12,6 +12,12 @@ import {
   mergeSurfaceAnalysisWithSurfaceIntelligence,
 } from "./fixedRigSurfaceIntelligence";
 import {
+  LIGHT_DIRECTION_CALIBRATION_PROFILE_VERSION,
+  PRELIMINARY_NORMAL_RELIEF_PROXY_VERSION,
+  buildLightDirectionCalibrationArtifacts,
+  mergeSurfaceAnalysisWithLightDirection,
+} from "./fixedRigLightDirectionCalibration";
+import {
   LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
   buildLeimacIdmuSafeOffFrames,
   composeLeimacIdmuChannelWriteFrame,
@@ -278,7 +284,16 @@ export interface FixedRigOverlayArtifact {
 }
 
 export interface FixedRigDisplayArtifact {
-  kind: "portrait_display_image" | "roi_crop" | "surface_heatmap" | "surface_vision_image" | "confidence_mask";
+  kind:
+    | "portrait_display_image"
+    | "roi_crop"
+    | "surface_heatmap"
+    | "surface_vision_image"
+    | "confidence_mask"
+    | "normalized_channel_image"
+    | "normal_proxy_map"
+    | "gradient_magnitude_map"
+    | "relief_proxy_map";
   outputFilePath: string;
   sha256: string;
   byteSize: number;
@@ -294,7 +309,18 @@ export interface FixedRigDisplayArtifact {
   rawRect?: { x: number; y: number; width: number; height: number };
   displayRect?: { x: number; y: number; width: number; height: number };
   rawEvidenceUnmodified: true;
-  artifactRole?: "true_view" | "roi_crop" | "surface_heatmap" | "surface_vision" | "glare_mask" | "underexposure_mask";
+  artifactRole?:
+    | "true_view"
+    | "roi_crop"
+    | "surface_heatmap"
+    | "surface_vision"
+    | "glare_mask"
+    | "underexposure_mask"
+    | "normalized_channel"
+    | "normal_proxy"
+    | "gradient_magnitude"
+    | "relief_proxy"
+    | "confidence_map";
   sourceInputPaths?: string[];
   physicalDirectionMappingStatus?: "pending" | "inferred" | "confirmed";
   note: string;
@@ -432,9 +458,14 @@ export interface FixedRigSurfaceAnalysis {
   surfaceVision?: FixedRigDisplayArtifact;
   glareMask?: FixedRigDisplayArtifact;
   underexposureMask?: FixedRigDisplayArtifact;
+  normalProxy?: FixedRigDisplayArtifact;
+  gradientMagnitude?: FixedRigDisplayArtifact;
+  reliefProxy?: FixedRigDisplayArtifact;
+  confidenceMap?: FixedRigDisplayArtifact;
   physicalDirectionMappingStatus?: "pending" | "inferred" | "confirmed";
   normalization?: Record<string, unknown>;
   masks?: Record<string, unknown>;
+  lightDirection?: Record<string, unknown>;
   confidence?: {
     score: number;
     band: "low" | "medium" | "high";
@@ -3271,6 +3302,27 @@ function channelGallery(sideLabel: string, side: FixedRigEvidencePackageJson | u
     .join("")}</div>`;
 }
 
+function lightDirectionSummary(surface: FixedRigEvidencePackageJson | undefined): string {
+  const lightDirection = surface?.lightDirection;
+  if (!lightDirection || lightDirection.status === "missing") return "Light direction prep artifacts are unavailable.";
+  const profile = lightDirection.profile ?? {};
+  const confidence = lightDirection.confidence ?? {};
+  return `Status ${lightDirection.status}; mapping ${profile.physicalDirectionMappingStatus ?? "pending"}; flat field ${profile.flatFieldStatus ?? "unknown"}; normal map ${profile.normalMapStatus ?? "unknown"}; confidence ${confidence.band ?? "unknown"} ${confidence.score ?? ""}`.trim();
+}
+
+function channelBalanceTable(surface: FixedRigEvidencePackageJson | undefined): string {
+  const rows = Array.isArray(surface?.lightDirection?.channelBalance) ? surface.lightDirection.channelBalance : [];
+  if (!rows.length) return "<p>Channel balance metrics are unavailable.</p>";
+  return `<table><thead><tr><th>Channel</th><th>Mean</th><th>Max</th><th>Clipped</th><th>Dark</th><th>Ratio vs median</th><th>Recommended scale</th></tr></thead><tbody>
+    ${rows
+      .map(
+        (row: FixedRigEvidencePackageJson) =>
+          `<tr><td>${escapeHtml(row.channel)}</td><td>${escapeHtml(row.mean)}</td><td>${escapeHtml(row.max)}</td><td>${escapeHtml(row.clippedPixelFraction)}</td><td>${escapeHtml(row.darkPixelFraction)}</td><td>${escapeHtml(row.responseRatioVsMedian)}</td><td>${escapeHtml(row.recommendedIntensityScale)}</td></tr>`
+      )
+      .join("")}
+  </tbody></table>`;
+}
+
 function scriptJson(value: unknown): string {
   return JSON.stringify(value)
     .replace(/</g, "\\u003c")
@@ -3412,6 +3464,10 @@ function visionLabSidePayload(input: {
     surfaceVision: artifactRef(input.surface?.surfaceVision, `${input.sideName} Surface Vision V0`, "surface_vision"),
     glareMask: artifactRef(input.surface?.glareMask, `${input.sideName} glare/clipping mask`, "confidence_mask"),
     underexposureMask: artifactRef(input.surface?.underexposureMask, `${input.sideName} underexposure mask`, "confidence_mask"),
+    normalProxy: artifactRef(input.surface?.normalProxy, `${input.sideName} preliminary normal proxy`, "normal_proxy"),
+    gradientMagnitude: artifactRef(input.surface?.gradientMagnitude, `${input.sideName} gradient magnitude proxy`, "gradient_magnitude"),
+    reliefProxy: artifactRef(input.surface?.reliefProxy, `${input.sideName} relief proxy`, "relief_proxy"),
+    confidenceMap: artifactRef(input.surface?.confidenceMap, `${input.sideName} light-direction confidence map`, "confidence_map"),
     channels,
     roiCrops,
     candidates,
@@ -3426,6 +3482,7 @@ function visionLabSidePayload(input: {
           physicalDirectionMappingStatus: input.surface.physicalDirectionMappingStatus,
         }
       : { status: "missing" },
+    lightDirection: input.surface?.lightDirection ?? { status: "missing" },
     diagnostics: diagnosticSideSummary(input.diagnostic),
     quality: input.stats
       ? {
@@ -3477,6 +3534,8 @@ function buildVisionLabData(input: {
       "Monochrome Basler evidence is used for high-detail surface analysis. Later color photography can be added as a customer visual layer.",
     surfaceVisionNote:
       "Surface Vision V0 - directional light evidence visualization. This is not certified photometric stereo.",
+    normalReliefProxyNote:
+      "Preliminary normal/relief proxy - approximate directional model. Physical light vectors are not certified, so this is not certified photometric stereo.",
     channelMappingStatus: "physical_direction_calibration_pending",
     activeLightingProfile: input.activeProfile,
     measurementOverlay: {
@@ -3505,7 +3564,18 @@ function buildVisionLabData(input: {
       note: "Confidence Lens highlights where evidence is strong or weak; it does not change raw evidence files.",
     },
     severityFilters: ["low", "medium", "high"],
-    views: ["true_view", "surface_vision", "heatmap", "light_sweep", "measurement_overlay", "confidence_lens", "evidence_replay"],
+    views: [
+      "true_view",
+      "surface_vision",
+      "heatmap",
+      "normal_proxy",
+      "relief_proxy",
+      "confidence_map",
+      "light_sweep",
+      "measurement_overlay",
+      "confidence_lens",
+      "evidence_replay",
+    ],
     sides: {
       front: visionLabSidePayload({
         sideName: "front",
@@ -3555,6 +3625,9 @@ function visionLabSection(data: FixedRigEvidencePackageJson): string {
             <button type="button" class="active" data-view="true_view">True View</button>
             <button type="button" data-view="surface_vision">Surface Vision</button>
             <button type="button" data-view="heatmap">Heatmap</button>
+            <button type="button" data-view="normal_proxy">Normal Proxy</button>
+            <button type="button" data-view="relief_proxy">Relief Proxy</button>
+            <button type="button" data-view="confidence_map">Confidence Map</button>
             <button type="button" data-view="light_sweep">Light Sweep Wheel</button>
             <button type="button" data-view="measurement_overlay">Measurement Overlay</button>
             <button type="button" data-view="confidence_lens">Confidence Lens</button>
@@ -3608,6 +3681,14 @@ function visionLabSection(data: FixedRigEvidencePackageJson): string {
             <div id="lab-replay"></div>
           </section>
           <section class="lab-panel expert-only">
+            <h3>Channel Balance</h3>
+            <div id="lab-channel-balance"></div>
+          </section>
+          <section class="lab-panel expert-only">
+            <h3>Light Direction Status</h3>
+            <div id="lab-light-direction"></div>
+          </section>
+          <section class="lab-panel expert-only">
             <h3>Expert Data</h3>
             <pre id="lab-expert-json"></pre>
           </section>
@@ -3633,6 +3714,9 @@ function visionLabSection(data: FixedRigEvidencePackageJson): string {
           true_view: "True View",
           surface_vision: "Surface Vision V0",
           heatmap: "Heatmap",
+          normal_proxy: "Normal Proxy",
+          relief_proxy: "Relief Proxy",
+          confidence_map: "Confidence Map",
           light_sweep: "Light Sweep Wheel",
           measurement_overlay: "Measurement Overlay",
           confidence_lens: "Confidence Lens",
@@ -3643,6 +3727,9 @@ function visionLabSection(data: FixedRigEvidencePackageJson): string {
           if (state.view === "light_sweep") return side.channels?.find((entry) => entry.channel === state.channel)?.image;
           if (state.view === "heatmap") return side.heatmap?.outputFilePath ? side.heatmap : side.trueView;
           if (state.view === "surface_vision") return side.surfaceVision?.outputFilePath ? side.surfaceVision : side.channels?.find((entry) => entry.channel === state.channel)?.image || side.trueView;
+          if (state.view === "normal_proxy") return side.normalProxy?.outputFilePath ? side.normalProxy : side.trueView;
+          if (state.view === "relief_proxy") return side.reliefProxy?.outputFilePath ? side.reliefProxy : side.trueView;
+          if (state.view === "confidence_map") return side.confidenceMap?.outputFilePath ? side.confidenceMap : side.trueView;
           if (state.view === "confidence_lens") return side.glareMask?.outputFilePath ? side.glareMask : side.overlay?.outputFilePath ? side.overlay : side.trueView;
           return side.trueView;
         }
@@ -3678,9 +3765,10 @@ function visionLabSection(data: FixedRigEvidencePackageJson): string {
             ["Centering", d.centering],
             ["Corners", d.corners],
             ["Edges", d.edges],
-            ["Surface", d.surface]
+            ["Surface", d.surface],
+            ["Normal Proxy", side.lightDirection?.status]
           ].map(([name, value]) => {
-            const statusValue = value?.status || Object.values(value || {}).map((entry) => entry.status).join(", ") || "insufficient_evidence";
+            const statusValue = typeof value === "string" ? value : value?.status || Object.values(value || {}).map((entry) => entry.status).join(", ") || "insufficient_evidence";
             return "<div class=\\"lab-mini-row\\"><span>" + escapeText(name) + "</span><strong>" + escapeText(statusValue) + "</strong></div>";
           }).join("");
         }
@@ -3697,6 +3785,18 @@ function visionLabSection(data: FixedRigEvidencePackageJson): string {
           }).join("");
         }
         function renderExpert(side) {
+          const channelBalance = side.lightDirection?.channelBalance || side.lightDirection?.profile?.channelMetadata || [];
+          document.getElementById("lab-channel-balance").innerHTML = Array.isArray(channelBalance) && channelBalance.length
+            ? channelBalance.slice(0, 8).map((entry) => "<div class=\\"lab-mini-row\\"><span>Channel " + escapeText(entry.channel || entry.channelNumber) + "</span><strong>" + escapeText(entry.responseRatioVsMedian || entry.intensityScale || "unknown") + "</strong></div>").join("")
+            : "<p>Channel balance is unavailable.</p>";
+          const profile = side.lightDirection?.profile || {};
+          document.getElementById("lab-light-direction").innerHTML = [
+            ["Profile", profile.profileId || "missing"],
+            ["Mapping", profile.physicalDirectionMappingStatus || "pending"],
+            ["Flat field", profile.flatFieldStatus || "unknown"],
+            ["Normal map", profile.normalMapStatus || "unknown"],
+            ["Certified photometric stereo", profile.isCertifiedPhotometricStereo === false ? "false" : "not claimed"]
+          ].map(([name, value]) => "<div class=\\"lab-mini-row\\"><span>" + escapeText(name) + "</span><strong>" + escapeText(value) + "</strong></div>").join("");
           expert.textContent = JSON.stringify({
             schemaVersion: data.schemaVersion,
             measurementOverlay: data.measurementOverlay,
@@ -3720,6 +3820,9 @@ function visionLabSection(data: FixedRigEvidencePackageJson): string {
           status.textContent = side.status === "available" ? state.side + " evidence ready" : state.side + " evidence insufficient";
           if (state.view === "surface_vision" && image?.status === "missing") status.textContent = "Surface Vision data is insufficient for this side.";
           if (state.view === "heatmap" && side.heatmap?.status === "missing") status.textContent = "Heatmap unavailable; showing True View with candidate markers when available.";
+          if (state.view === "normal_proxy" && side.normalProxy?.status === "missing") status.textContent = "Normal proxy unavailable; physical light-direction prep evidence is insufficient.";
+          if (state.view === "relief_proxy" && side.reliefProxy?.status === "missing") status.textContent = "Relief proxy unavailable; physical light-direction prep evidence is insufficient.";
+          if (state.view === "confidence_map" && side.confidenceMap?.status === "missing") status.textContent = "Confidence map unavailable; showing True View.";
           if (state.view === "confidence_lens" && side.glareMask?.status === "missing") status.textContent = "Confidence mask unavailable; showing overlay/True View with warnings.";
           renderMarkers(side);
           renderElementStatus(side);
@@ -4017,6 +4120,27 @@ function renderUnifiedFixedRigCardReport(input: {
   </section>
 
   <section>
+    <h2>Light Direction / Normal Proxy Foundation</h2>
+    <p class="warning">Preliminary normal/relief proxy uses an approximate directional model. This is not certified photometric stereo and not a final surface grade.</p>
+    <div class="side-grid">
+      <div class="panel">
+        <h3>Front Light Direction Prep</h3>
+        <p>${escapeHtml(lightDirectionSummary(frontSurface))}</p>
+        <div class="image-pair">${reportImage(frontSurface?.normalProxy?.outputFilePath, "front preliminary normal proxy")}${reportImage(frontSurface?.reliefProxy?.outputFilePath, "front relief proxy")}</div>
+        <div class="image-pair">${reportImage(frontSurface?.gradientMagnitude?.outputFilePath, "front gradient magnitude proxy")}${reportImage(frontSurface?.confidenceMap?.outputFilePath, "front light-direction confidence map")}</div>
+        ${channelBalanceTable(frontSurface)}
+      </div>
+      <div class="panel">
+        <h3>Back Light Direction Prep</h3>
+        <p>${escapeHtml(lightDirectionSummary(backSurface))}</p>
+        <div class="image-pair">${reportImage(backSurface?.normalProxy?.outputFilePath, "back preliminary normal proxy")}${reportImage(backSurface?.reliefProxy?.outputFilePath, "back relief proxy")}</div>
+        <div class="image-pair">${reportImage(backSurface?.gradientMagnitude?.outputFilePath, "back gradient magnitude proxy")}${reportImage(backSurface?.confidenceMap?.outputFilePath, "back light-direction confidence map")}</div>
+        ${channelBalanceTable(backSurface)}
+      </div>
+    </div>
+  </section>
+
+  <section>
     <h2>Evidence Gallery</h2>
     <h3>All ROI Crops</h3>
     <div class="side-grid"><div>${roiGallery("front", front)}</div><div>${roiGallery("back", back)}</div></div>
@@ -4159,13 +4283,45 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     : undefined;
   const enhancedFrontSurface = frontSurfaceIntelligence ? mergeSurfaceAnalysisWithSurfaceIntelligence(frontSurface, frontSurfaceIntelligence) : frontSurface;
   const enhancedBackSurface = backSurfaceIntelligence ? mergeSurfaceAnalysisWithSurfaceIntelligence(backSurface, backSurfaceIntelligence) : backSurface;
-  const enhancedFrontAnalysis = withSurfaceAnalysisForSide(frontAnalysis, "front", enhancedFrontSurface);
-  const enhancedBackAnalysis = withSurfaceAnalysisForSide(backAnalysis, "back", enhancedBackSurface);
+  const frontLightDirection = front
+    ? await buildLightDirectionCalibrationArtifacts({
+        side: "front",
+        outputDir: path.join(packageDir, "light-direction", "front"),
+        trueView: front.displayImage,
+        darkControl: front.darkControl?.displayImage,
+        allOn: front.displayImage,
+        channelImages: surfaceIntelligenceChannels(front, enhancedFrontSurface),
+        roiDefinitions: front.roiDefinitions,
+        inheritedWarnings: [...baseWarnings, ...(enhancedFrontSurface?.warnings ?? [])],
+        fixtureId: fixtureCalibrationProfile?.fixtureId ?? fixtureCalibrationProfile?.fixtureLabel,
+        leimacModel: "IDMU-P8B-24",
+        cameraModel: front.allOn?.capture?.camera?.modelName ?? front.displayImage?.camera?.modelName,
+      })
+    : undefined;
+  const backLightDirection = back
+    ? await buildLightDirectionCalibrationArtifacts({
+        side: "back",
+        outputDir: path.join(packageDir, "light-direction", "back"),
+        trueView: back.displayImage,
+        darkControl: back.darkControl?.displayImage,
+        allOn: back.displayImage,
+        channelImages: surfaceIntelligenceChannels(back, enhancedBackSurface),
+        roiDefinitions: back.roiDefinitions,
+        inheritedWarnings: [...baseWarnings, ...(enhancedBackSurface?.warnings ?? [])],
+        fixtureId: fixtureCalibrationProfile?.fixtureId ?? fixtureCalibrationProfile?.fixtureLabel,
+        leimacModel: "IDMU-P8B-24",
+        cameraModel: back.allOn?.capture?.camera?.modelName ?? back.displayImage?.camera?.modelName,
+      })
+    : undefined;
+  const enhancedFrontSurfaceWithLight = frontLightDirection ? mergeSurfaceAnalysisWithLightDirection(enhancedFrontSurface, frontLightDirection) : enhancedFrontSurface;
+  const enhancedBackSurfaceWithLight = backLightDirection ? mergeSurfaceAnalysisWithLightDirection(enhancedBackSurface, backLightDirection) : enhancedBackSurface;
+  const enhancedFrontAnalysis = withSurfaceAnalysisForSide(frontAnalysis, "front", enhancedFrontSurfaceWithLight);
+  const enhancedBackAnalysis = withSurfaceAnalysisForSide(backAnalysis, "back", enhancedBackSurfaceWithLight);
   const warnings = Array.from(
     new Set([
       ...baseWarnings,
-      ...(enhancedFrontSurface?.warnings ?? []),
-      ...(enhancedBackSurface?.warnings ?? []),
+      ...(enhancedFrontSurfaceWithLight?.warnings ?? []),
+      ...(enhancedBackSurfaceWithLight?.warnings ?? []),
     ])
   );
   const visionLabData = buildVisionLabData({
@@ -4175,8 +4331,8 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     back,
     frontDiagnostic,
     backDiagnostic,
-    frontSurface: enhancedFrontSurface,
-    backSurface: enhancedBackSurface,
+    frontSurface: enhancedFrontSurfaceWithLight,
+    backSurface: enhancedBackSurfaceWithLight,
     frontStats,
     backStats,
     activeProfile: activeLightingProfile,
@@ -4234,7 +4390,16 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
       trueView: true,
       surfaceVision: true,
       heatmap: true,
-      surfaceIntelligenceV0: Boolean(enhancedFrontSurface?.surfaceVision || enhancedFrontSurface?.heatmap || enhancedBackSurface?.surfaceVision || enhancedBackSurface?.heatmap),
+      surfaceIntelligenceV0: Boolean(
+        enhancedFrontSurfaceWithLight?.surfaceVision ||
+          enhancedFrontSurfaceWithLight?.heatmap ||
+          enhancedBackSurfaceWithLight?.surfaceVision ||
+          enhancedBackSurfaceWithLight?.heatmap
+      ),
+      lightDirectionCalibration: Boolean(frontLightDirection?.profile || backLightDirection?.profile),
+      normalProxy: Boolean(enhancedFrontSurfaceWithLight?.normalProxy || enhancedBackSurfaceWithLight?.normalProxy),
+      reliefProxy: Boolean(enhancedFrontSurfaceWithLight?.reliefProxy || enhancedBackSurfaceWithLight?.reliefProxy),
+      confidenceMap: Boolean(enhancedFrontSurfaceWithLight?.confidenceMap || enhancedBackSurfaceWithLight?.confidenceMap),
       lightSweepWheel: true,
       measurementOverlay: true,
       confidenceLens: true,
@@ -4253,6 +4418,11 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
         frontBackChannelImageRefs1Through8: true,
         heatmapRefs: true,
         surfaceVisionRefs: true,
+        normalProxyRefs: true,
+        reliefProxyRefs: true,
+        confidenceMapRefs: true,
+        channelBalanceMetrics: true,
+        lightDirectionProfileMetadata: true,
         sourceChannelAttribution: true,
         anomalyCandidateList: true,
         measurementOverlayMetadata: true,
@@ -4272,8 +4442,14 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     back: enhancedBackAnalysis.back,
     surfaceIntelligence: {
       detectorId: PRELIMINARY_SURFACE_INTELLIGENCE_VERSION,
-      front: enhancedFrontSurface,
-      back: enhancedBackSurface,
+      front: enhancedFrontSurfaceWithLight,
+      back: enhancedBackSurfaceWithLight,
+    },
+    lightDirectionCalibration: {
+      profileVersion: LIGHT_DIRECTION_CALIBRATION_PROFILE_VERSION,
+      proxyVersion: PRELIMINARY_NORMAL_RELIEF_PROXY_VERSION,
+      front: frontLightDirection,
+      back: backLightDirection,
     },
     visionLab: visionLabData,
     combinedWarnings: warnings,
