@@ -7,6 +7,11 @@ import type { BaslerLeimacMacroPackageManifest } from "./baslerLeimacFullRig";
 import { ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID } from "./baslerLeimacFullRig";
 import { assertBaslerLeimacSyncSmokeOutputDirAllowed, type BaslerLeimacImageStats } from "./baslerLeimacSync";
 import {
+  PRELIMINARY_SURFACE_INTELLIGENCE_VERSION,
+  buildPreliminarySurfaceIntelligenceV0,
+  mergeSurfaceAnalysisWithSurfaceIntelligence,
+} from "./fixedRigSurfaceIntelligence";
+import {
   LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
   buildLeimacIdmuSafeOffFrames,
   composeLeimacIdmuChannelWriteFrame,
@@ -273,7 +278,7 @@ export interface FixedRigOverlayArtifact {
 }
 
 export interface FixedRigDisplayArtifact {
-  kind: "portrait_display_image" | "roi_crop";
+  kind: "portrait_display_image" | "roi_crop" | "surface_heatmap" | "surface_vision_image" | "confidence_mask";
   outputFilePath: string;
   sha256: string;
   byteSize: number;
@@ -289,6 +294,9 @@ export interface FixedRigDisplayArtifact {
   rawRect?: { x: number; y: number; width: number; height: number };
   displayRect?: { x: number; y: number; width: number; height: number };
   rawEvidenceUnmodified: true;
+  artifactRole?: "true_view" | "roi_crop" | "surface_heatmap" | "surface_vision" | "glare_mask" | "underexposure_mask";
+  sourceInputPaths?: string[];
+  physicalDirectionMappingStatus?: "pending" | "inferred" | "confirmed";
   note: string;
 }
 
@@ -386,18 +394,26 @@ export interface FixedRigDiagnosticElement {
 export interface FixedRigSurfaceAnomalyCandidate {
   candidateId: string;
   side: FixedRigCardSide;
+  category?: "surface";
   displayRect?: { x: number; y: number; width: number; height: number };
   rawRect?: { x: number; y: number; width: number; height: number };
   sourceChannels: number[];
+  strongestChannel?: number;
+  physicalDirectionMappingStatus?: "pending" | "inferred" | "confirmed";
   anomalyProxyScore: number;
   severityProxy: number;
   severityBand: "low" | "medium" | "high";
+  confidence?: number;
+  confidenceBand?: "low" | "medium" | "high";
   needsDinoLiteFollowUp: boolean;
+  evidenceRefs?: Record<string, unknown>;
+  explanation?: string;
 }
 
 export interface FixedRigSurfaceAnalysis {
-  detectorId: "preliminary_surface_anomaly_detector_v0";
+  detectorId: "preliminary_surface_anomaly_detector_v0" | typeof PRELIMINARY_SURFACE_INTELLIGENCE_VERSION;
   status: "not_computed" | "computed_diagnostic" | "insufficient_evidence";
+  version?: typeof PRELIMINARY_SURFACE_INTELLIGENCE_VERSION;
   registration: {
     status: "assumed_fixed_rig" | "not_computed";
     note: string;
@@ -413,7 +429,17 @@ export interface FixedRigSurfaceAnalysis {
     portraitDisplayImage?: FixedRigDisplayArtifact;
   }>;
   heatmap?: FixedRigDisplayArtifact;
+  surfaceVision?: FixedRigDisplayArtifact;
   glareMask?: FixedRigDisplayArtifact;
+  underexposureMask?: FixedRigDisplayArtifact;
+  physicalDirectionMappingStatus?: "pending" | "inferred" | "confirmed";
+  normalization?: Record<string, unknown>;
+  masks?: Record<string, unknown>;
+  confidence?: {
+    score: number;
+    band: "low" | "medium" | "high";
+    warnings: string[];
+  };
   candidates: FixedRigSurfaceAnomalyCandidate[];
   warnings: string[];
 }
@@ -3264,6 +3290,11 @@ function artifactRef(artifact: FixedRigEvidencePackageJson | undefined, label: s
         displayCoordinateFrame: artifact.displayCoordinateFrame,
         imageWidth: artifact.imageWidth,
         imageHeight: artifact.imageHeight,
+        sha256: artifact.sha256,
+        byteSize: artifact.byteSize,
+        artifactRole: artifact.artifactRole,
+        sourceInputPaths: artifact.sourceInputPaths,
+        physicalDirectionMappingStatus: artifact.physicalDirectionMappingStatus,
       }
     : { label, role, status: "missing" };
 }
@@ -3303,13 +3334,18 @@ function normalizeCandidate(candidate: FixedRigEvidencePackageJson, side: FixedR
     side,
     category: "surface",
     severityBand: candidate.severityBand ?? "low",
-    confidence: candidate.confidence ?? "low",
+    confidence: candidate.confidenceBand ?? candidate.confidence ?? "low",
     anomalyProxyScore: candidate.anomalyProxyScore ?? candidate.severityProxy ?? 0,
+    severityProxy: candidate.severityProxy ?? candidate.anomalyProxyScore ?? 0,
     displayRect: candidate.displayRect,
     rawRect: candidate.rawRect,
     sourceChannels: Array.isArray(candidate.sourceChannels) ? candidate.sourceChannels : [],
+    strongestChannel: candidate.strongestChannel,
+    physicalDirectionMappingStatus: candidate.physicalDirectionMappingStatus ?? "pending",
     needsDinoLiteFollowUp: Boolean(candidate.needsDinoLiteFollowUp),
+    evidenceRefs: candidate.evidenceRefs,
     explanation:
+      candidate.explanation ??
       "Surface Vision V0 highlighted this provisional candidate from directional light evidence. It is not a final surface grade.",
   };
 }
@@ -3373,10 +3409,23 @@ function visionLabSidePayload(input: {
     allOn: artifactRef(input.side?.allOn?.capture, `${input.sideName} all-on raw evidence`, "all_on_raw"),
     acceptedProfile: artifactRef(input.side?.acceptedProfile?.capture, `${input.sideName} accepted-profile raw evidence`, "accepted_profile_raw"),
     heatmap: artifactRef(input.surface?.heatmap, `${input.sideName} anomaly heatmap`, "surface_heatmap"),
+    surfaceVision: artifactRef(input.surface?.surfaceVision, `${input.sideName} Surface Vision V0`, "surface_vision"),
     glareMask: artifactRef(input.surface?.glareMask, `${input.sideName} glare/clipping mask`, "confidence_mask"),
+    underexposureMask: artifactRef(input.surface?.underexposureMask, `${input.sideName} underexposure mask`, "confidence_mask"),
     channels,
     roiCrops,
     candidates,
+    surfaceIntelligence: input.surface
+      ? {
+          detectorId: input.surface.detectorId,
+          version: input.surface.version,
+          status: input.surface.status,
+          confidence: input.surface.confidence,
+          normalization: input.surface.normalization,
+          masks: input.surface.masks,
+          physicalDirectionMappingStatus: input.surface.physicalDirectionMappingStatus,
+        }
+      : { status: "missing" },
     diagnostics: diagnosticSideSummary(input.diagnostic),
     quality: input.stats
       ? {
@@ -3593,7 +3642,8 @@ function visionLabSection(data: FixedRigEvidencePackageJson): string {
         function imageFor(side) {
           if (state.view === "light_sweep") return side.channels?.find((entry) => entry.channel === state.channel)?.image;
           if (state.view === "heatmap") return side.heatmap?.outputFilePath ? side.heatmap : side.trueView;
-          if (state.view === "surface_vision") return side.channels?.find((entry) => entry.channel === state.channel)?.image || side.trueView;
+          if (state.view === "surface_vision") return side.surfaceVision?.outputFilePath ? side.surfaceVision : side.channels?.find((entry) => entry.channel === state.channel)?.image || side.trueView;
+          if (state.view === "confidence_lens") return side.glareMask?.outputFilePath ? side.glareMask : side.overlay?.outputFilePath ? side.overlay : side.trueView;
           return side.trueView;
         }
         function setButtons(selector, attr, value) {
@@ -3640,7 +3690,11 @@ function visionLabSection(data: FixedRigEvidencePackageJson): string {
             replay.innerHTML = "<p>No provisional anomaly candidates were emitted for this side.</p>";
             return;
           }
-          replay.innerHTML = candidates.map((candidate) => "<article class=\\"replay-card severity-" + escapeText(candidate.severityBand || "low") + "\\"><strong>" + escapeText(candidate.candidateId) + "</strong><span>" + escapeText(candidate.severityBand || "low") + " severity / confidence " + escapeText(candidate.confidence || "low") + "</span><p>" + escapeText(candidate.explanation) + "</p><small>Source channels: " + escapeText((candidate.sourceChannels || []).join(", ") || "not computed") + " / Dino-Lite follow-up: " + escapeText(candidate.needsDinoLiteFollowUp) + "</small></article>").join("");
+          replay.innerHTML = candidates.map((candidate) => {
+            const refs = candidate.evidenceRefs || {};
+            const sourceRefs = Array.isArray(refs.sourceChannels) ? refs.sourceChannels.map((entry) => "Channel " + escapeText(entry.channel)).join(", ") : "";
+            return "<article class=\\"replay-card severity-" + escapeText(candidate.severityBand || "low") + "\\"><strong>" + escapeText(candidate.candidateId) + "</strong><span>" + escapeText(candidate.severityBand || "low") + " severity / confidence " + escapeText(candidate.confidence || "low") + "</span><p>" + escapeText(candidate.explanation) + "</p><small>Source channels: " + escapeText((candidate.sourceChannels || []).join(", ") || "not computed") + " / strongest " + escapeText(candidate.strongestChannel || "not computed") + " / Dino-Lite follow-up: " + escapeText(candidate.needsDinoLiteFollowUp) + "</small><small>Evidence replay: heatmap " + escapeText(refs.heatmap || "missing") + " / surface vision " + escapeText(refs.surfaceVision || "missing") + " / " + sourceRefs + "</small></article>";
+          }).join("");
         }
         function renderExpert(side) {
           expert.textContent = JSON.stringify({
@@ -3666,6 +3720,7 @@ function visionLabSection(data: FixedRigEvidencePackageJson): string {
           status.textContent = side.status === "available" ? state.side + " evidence ready" : state.side + " evidence insufficient";
           if (state.view === "surface_vision" && image?.status === "missing") status.textContent = "Surface Vision data is insufficient for this side.";
           if (state.view === "heatmap" && side.heatmap?.status === "missing") status.textContent = "Heatmap unavailable; showing True View with candidate markers when available.";
+          if (state.view === "confidence_lens" && side.glareMask?.status === "missing") status.textContent = "Confidence mask unavailable; showing overlay/True View with warnings.";
           renderMarkers(side);
           renderElementStatus(side);
           renderReplay(side);
@@ -3953,9 +4008,10 @@ function renderUnifiedFixedRigCardReport(input: {
   <section>
     <h2>Surface Evidence and Anomaly Diagnostics</h2>
     <div class="side-grid">
-      <div class="panel"><h3>Front Surface</h3><p>${escapeHtml(surfaceCandidateText(frontSurface))}</p>${roiGallery("front", { ...front, roiCrops: (front?.roiCrops ?? []).filter((crop: any) => String(crop.roiId).includes("surface")) })}</div>
-      <div class="panel"><h3>Back Surface</h3><p>${escapeHtml(surfaceCandidateText(backSurface))}</p>${roiGallery("back", { ...back, roiCrops: (back?.roiCrops ?? []).filter((crop: any) => String(crop.roiId).includes("surface")) })}</div>
+      <div class="panel"><h3>Front Surface</h3><p>${escapeHtml(surfaceCandidateText(frontSurface))}</p><div class="image-pair">${reportImage(frontSurface?.surfaceVision?.outputFilePath, "front Surface Vision V0")}${reportImage(frontSurface?.heatmap?.outputFilePath, "front surface heatmap")}</div>${roiGallery("front", { ...front, roiCrops: (front?.roiCrops ?? []).filter((crop: any) => String(crop.roiId).includes("surface")) })}</div>
+      <div class="panel"><h3>Back Surface</h3><p>${escapeHtml(surfaceCandidateText(backSurface))}</p><div class="image-pair">${reportImage(backSurface?.surfaceVision?.outputFilePath, "back Surface Vision V0")}${reportImage(backSurface?.heatmap?.outputFilePath, "back surface heatmap")}</div>${roiGallery("back", { ...back, roiCrops: (back?.roiCrops ?? []).filter((crop: any) => String(crop.roiId).includes("surface")) })}</div>
     </div>
+    <p class="warning">Surface Intelligence V0 is directional-light evidence visualization only. Physical Leimac direction mapping is pending, and this report does not compute a final surface grade.</p>
     <h3>8-Channel Evidence</h3>
     <div class="side-grid"><div>${channelGallery("front", front)}</div><div>${channelGallery("back", back)}</div></div>
   </section>
@@ -3992,6 +4048,54 @@ function renderUnifiedFixedRigCardReport(input: {
 `;
 }
 
+function surfaceIntelligenceChannels(side: FixedRigEvidencePackageJson | undefined, surface: FixedRigEvidencePackageJson | undefined): Array<{
+  channel: number;
+  displayImage?: FixedRigEvidencePackageJson;
+  stats?: FixedRigEvidencePackageJson;
+}> {
+  return Array.from({ length: 8 }, (_, index) => {
+    const channel = index + 1;
+    const fromSide = Array.isArray(side?.channelDisplayImages)
+      ? side.channelDisplayImages.find((entry: FixedRigEvidencePackageJson) => Number(entry.channel) === channel)
+      : undefined;
+    const fromSurface = Array.isArray(surface?.perChannelStats)
+      ? surface.perChannelStats.find((entry: FixedRigEvidencePackageJson) => Number(entry.channel) === channel)
+      : undefined;
+    return {
+      channel,
+      displayImage: fromSide?.displayImage ?? fromSurface?.portraitDisplayImage,
+      stats: fromSurface,
+    };
+  });
+}
+
+function withSurfaceAnalysisForSide(
+  analysis: FixedRigEvidencePackageJson,
+  side: FixedRigCardSide,
+  surfaceAnalysis: FixedRigEvidencePackageJson | undefined
+): FixedRigEvidencePackageJson {
+  if (!surfaceAnalysis) return analysis;
+  const sideAnalysis = analysis[side] ?? {};
+  const diagnosticGrading = sideAnalysis.diagnosticGrading
+    ? {
+        ...sideAnalysis.diagnosticGrading,
+        surface: {
+          ...(sideAnalysis.diagnosticGrading.surface ?? {}),
+          status: surfaceAnalysis.status ?? sideAnalysis.diagnosticGrading.surface?.status ?? "computed_diagnostic",
+          surfaceAnalysis,
+        },
+      }
+    : undefined;
+  return {
+    ...analysis,
+    [side]: {
+      ...sideAnalysis,
+      surfaceAnalysis,
+      ...(diagnosticGrading ? { diagnosticGrading } : {}),
+    },
+  };
+}
+
 export async function createUnifiedFixedRigDiagnosticCardReport(input: {
   frontPackageDir: string;
   backPackageDir: string;
@@ -4007,7 +4111,7 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
   ]);
   const front = evidenceSideFromPackage(frontManifest, "front");
   const back = evidenceSideFromPackage(backManifest, "back");
-  const warnings = [
+  const baseWarnings = [
     ...(front ? [] : ["Front evidence package is missing front-side evidence; unified report is insufficient_evidence."]),
     ...(back ? [] : ["Back evidence package is missing back-side evidence; unified report is insufficient_evidence."]),
     sideClippingWarning("Front", sideAllOnStats(front)),
@@ -4025,6 +4129,45 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
   const backSurface = sideSurfaceFromAnalysis(backAnalysis, "back") ?? back?.surfaceAnalysis;
   const frontStats = sideAllOnStats(front);
   const backStats = sideAllOnStats(back);
+  const frontSurfaceIntelligence = front
+    ? await buildPreliminarySurfaceIntelligenceV0({
+        side: "front",
+        outputDir: path.join(packageDir, "surface-intelligence", "front"),
+        trueView: front.displayImage,
+        allOn: front.displayImage,
+        acceptedProfile: front.acceptedProfile?.displayImage,
+        channelImages: surfaceIntelligenceChannels(front, frontSurface),
+        roiDefinitions: front.roiDefinitions,
+        roiCrops: front.roiCrops,
+        quality: frontStats,
+        inheritedWarnings: baseWarnings,
+      })
+    : undefined;
+  const backSurfaceIntelligence = back
+    ? await buildPreliminarySurfaceIntelligenceV0({
+        side: "back",
+        outputDir: path.join(packageDir, "surface-intelligence", "back"),
+        trueView: back.displayImage,
+        allOn: back.displayImage,
+        acceptedProfile: back.acceptedProfile?.displayImage,
+        channelImages: surfaceIntelligenceChannels(back, backSurface),
+        roiDefinitions: back.roiDefinitions,
+        roiCrops: back.roiCrops,
+        quality: backStats,
+        inheritedWarnings: baseWarnings,
+      })
+    : undefined;
+  const enhancedFrontSurface = frontSurfaceIntelligence ? mergeSurfaceAnalysisWithSurfaceIntelligence(frontSurface, frontSurfaceIntelligence) : frontSurface;
+  const enhancedBackSurface = backSurfaceIntelligence ? mergeSurfaceAnalysisWithSurfaceIntelligence(backSurface, backSurfaceIntelligence) : backSurface;
+  const enhancedFrontAnalysis = withSurfaceAnalysisForSide(frontAnalysis, "front", enhancedFrontSurface);
+  const enhancedBackAnalysis = withSurfaceAnalysisForSide(backAnalysis, "back", enhancedBackSurface);
+  const warnings = Array.from(
+    new Set([
+      ...baseWarnings,
+      ...(enhancedFrontSurface?.warnings ?? []),
+      ...(enhancedBackSurface?.warnings ?? []),
+    ])
+  );
   const visionLabData = buildVisionLabData({
     packageId,
     generatedAt,
@@ -4032,8 +4175,8 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     back,
     frontDiagnostic,
     backDiagnostic,
-    frontSurface,
-    backSurface,
+    frontSurface: enhancedFrontSurface,
+    backSurface: enhancedBackSurface,
     frontStats,
     backStats,
     activeProfile: activeLightingProfile,
@@ -4047,8 +4190,8 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     backPackageDir: input.backPackageDir,
     frontManifest,
     backManifest,
-    frontAnalysis,
-    backAnalysis,
+    frontAnalysis: enhancedFrontAnalysis,
+    backAnalysis: enhancedBackAnalysis,
     warnings,
     visionLabData,
   });
@@ -4086,11 +4229,12 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
       centeringDiagnostic: Boolean(front?.diagnosticGrading?.centering || frontAnalysis.front?.diagnosticGrading?.centering) && Boolean(back?.diagnosticGrading?.centering || backAnalysis.back?.diagnosticGrading?.centering),
       cornerDiagnostics: Boolean(front?.diagnosticGrading?.corners || frontAnalysis.front?.diagnosticGrading?.corners) && Boolean(back?.diagnosticGrading?.corners || backAnalysis.back?.diagnosticGrading?.corners),
       edgeDiagnostics: Boolean(front?.diagnosticGrading?.edges || frontAnalysis.front?.diagnosticGrading?.edges) && Boolean(back?.diagnosticGrading?.edges || backAnalysis.back?.diagnosticGrading?.edges),
-      surfaceAnomalyDiagnostic: Boolean(front?.surfaceAnalysis || frontAnalysis.front?.surfaceAnalysis) && Boolean(back?.surfaceAnalysis || backAnalysis.back?.surfaceAnalysis),
+      surfaceAnomalyDiagnostic: Boolean(front?.surfaceAnalysis || enhancedFrontAnalysis.front?.surfaceAnalysis) && Boolean(back?.surfaceAnalysis || enhancedBackAnalysis.back?.surfaceAnalysis),
       visionLab: true,
       trueView: true,
       surfaceVision: true,
       heatmap: true,
+      surfaceIntelligenceV0: Boolean(enhancedFrontSurface?.surfaceVision || enhancedFrontSurface?.heatmap || enhancedBackSurface?.surfaceVision || enhancedBackSurface?.heatmap),
       lightSweepWheel: true,
       measurementOverlay: true,
       confidenceLens: true,
@@ -4108,6 +4252,8 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
         frontBackOverlayImageRefs: true,
         frontBackChannelImageRefs1Through8: true,
         heatmapRefs: true,
+        surfaceVisionRefs: true,
+        sourceChannelAttribution: true,
         anomalyCandidateList: true,
         measurementOverlayMetadata: true,
         calibrationProfileMetadata: true,
@@ -4122,8 +4268,13 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
   await writeJsonArtifact(analysisPath, {
     status,
     evidenceClass: FIXED_RIG_V1_EVIDENCE_CLASS,
-    front: frontAnalysis.front,
-    back: backAnalysis.back,
+    front: enhancedFrontAnalysis.front,
+    back: enhancedBackAnalysis.back,
+    surfaceIntelligence: {
+      detectorId: PRELIMINARY_SURFACE_INTELLIGENCE_VERSION,
+      front: enhancedFrontSurface,
+      back: enhancedBackSurface,
+    },
     visionLab: visionLabData,
     combinedWarnings: warnings,
     finalGradeComputed: false,

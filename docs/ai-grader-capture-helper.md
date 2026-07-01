@@ -1104,6 +1104,39 @@ Front: C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidenc
 Back:  C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z
 ```
 
+### Preliminary Surface Intelligence V0
+
+PR #43 adds `preliminary_surface_intelligence_v0` to the existing software-only unified report path. It reads the front/back fixed-rig evidence packages already captured by PR #41, uses the portrait Leimac channel `1-8` display images, and generates derived report artifacts outside the repo. It does not contact Basler or Leimac, does not capture images, and does not alter raw evidence.
+
+The V0 surface pipeline performs dark-aware directional response processing when matching inputs are available, normalizes the channel stack, creates clipping/glare and underexposure confidence masks, builds a combined anomaly response map, and restricts analysis to the full-card ROI when available. It writes per-side artifacts:
+
+- `*-surface-intelligence-v0-heatmap.png`
+- `*-surface-vision-v0.png`
+- `*-glare-clipping-mask.png`
+- `*-underexposure-mask.png`
+- `*-surface-intelligence-v0.json`
+
+Surface Vision remains labeled `Surface Vision V0 - directional light evidence visualization`; this is not certified photometric stereo. Candidate source attribution uses numeric Leimac channels only because physical direction mapping remains pending. Candidates include side, display rect, severity proxy/band, confidence, source channels, strongest channel, evidence refs, and `needsDinoLiteFollowUp`.
+
+The PR #43 sample report was generated from existing PR #41 station evidence only:
+
+```text
+Report: C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\provisional-diagnostic-report.html
+Front evidence: C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z
+Back evidence:  C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z
+```
+
+Sample artifacts:
+
+```text
+Front heatmap: C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\front\front-surface-intelligence-v0-heatmap.png
+Front Surface Vision: C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\front\front-surface-vision-v0.png
+Back heatmap: C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\back\back-surface-intelligence-v0-heatmap.png
+Back Surface Vision: C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\back\back-surface-vision-v0.png
+```
+
+The sample emitted `8` front candidates and `8` back candidates. Front confidence was `medium` because the V0 glare/clipping mask fraction was `0.068289`; back confidence was `high` with clipping mask fraction `0.001159`. Representative source-channel attribution used numeric channels such as front strongest channel `3`/`4` and back strongest channel `3`/`4`. Treat these as conservative preliminary evidence candidates only; no final surface grade, certificate, or certified claim is generated.
+
 #### Dell PR #39 Rough Fixture Smoke
 
 On 2026-06-30, Mark ran the rough fixed-fixture flow using the operator-built fixed-position V1 fixture. The accepted live preview folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`. The preview measured about `20.5 FPS` with `0 ms` frame age and accepted a software active profile of `1.4%` Leimac duty, PWM step `14`, channels `1-8`, source `operator_preview`. Preview/report display used `rotate90cw`; raw Basler sensor captures remained unchanged. The preview and later reports warned that the detected card boundary touched the frame edge, so the run remains rough/unvalidated and not calibrated.

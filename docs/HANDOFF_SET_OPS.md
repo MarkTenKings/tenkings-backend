@@ -1,5 +1,23 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #43 surface intelligence start)
+- Branch: `feature/ai-grader-surface-intelligence-v0`.
+- Objective: `preliminary_surface_intelligence_v0`, the first real multi-light surface analysis layer from fixed-rig Leimac channel `1-8` evidence feeding Ten Kings Vision Lab.
+- PR #42 was merged first and `main` was updated before this branch was created. Final post-PR42 docs HEAD on `main` was `bed6e4fd6af3c9137b67017f7d6e3e81f828a5ce`.
+- Implementation status: software/report update in progress. No hardware commands were run for PR #43. Existing PR #41 station evidence was reused:
+  - Front evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z`.
+  - Back evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z`.
+- Added a dedicated surface-intelligence module that reads portrait channel images, computes dark-aware directional response normalization when inputs are available, generates heatmap / Surface Vision / glare mask / underexposure mask artifacts, emits conservative surface candidates with numeric source-channel attribution, and records confidence/warnings.
+- Sample PR #43 report generated outside the repo: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\provisional-diagnostic-report.html`.
+- Sample artifacts:
+  - Front heatmap: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\front\front-surface-intelligence-v0-heatmap.png`.
+  - Front Surface Vision: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\front\front-surface-vision-v0.png`.
+  - Back heatmap: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\back\back-surface-intelligence-v0-heatmap.png`.
+  - Back Surface Vision: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\back\back-surface-vision-v0.png`.
+- Sample result: `8` front candidates and `8` back candidates. Front confidence `medium` due to clipping/glare mask fraction `0.068289`; back confidence `high` with clipping mask fraction `0.001159`. Source channels are numeric only because physical Leimac direction mapping remains pending.
+- Evidence remains `macro_fixed_rig_v1_uncalibrated`, `isCalibrated=false`, `finalGradeComputed=false`, and `certifiedClaim=false`. No final grade, label, QR report, certificate, or certified grading claim is generated.
+- Guardrails held so far: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no DB ops, no network changes, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no hardware capture, and no captured image/vendor binary commit.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #42 merged)
 - PR #42 (`feature/ai-grader-vision-lab-report`) was merged into `main`.
 - Merge commit: `9f19f40325f51d6ecb3c990aff99e58768272ba6`.
