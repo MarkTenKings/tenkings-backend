@@ -22123,3 +22123,34 @@ By enabling Rip It Live, I confirm:
 - No captured image or vendor binary was committed.
 - All generated report artifacts stayed outside the repo under `C:\TenKings\capture-data`.
 - Evidence remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`; `finalGradeComputed=false`; `certifiedClaim=false`; no final grade, label, QR report, certificate, or certified grading claim was added.
+
+## 2026-07-01 - AI Grader PR #43 merge
+
+### Summary
+- Merged PR #43 into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/43`.
+- Merge commit: `a4d30a73922f3045a721c14283488e3887a1b695`.
+- Mark accepted PR #43 as good enough for Surface Intelligence V0. Remaining tuning/noise limitations are acceptable for this preliminary diagnostic phase.
+- The merged workflow keeps `preliminary_surface_intelligence_v0` in the software-only unified report path and Vision Lab: heatmap, Surface Vision, confidence masks, conservative candidates, numeric source-channel attribution, confidence/warning metadata, and clean missing-data states.
+
+### Merge Preflight
+- PR merge state was `CLEAN`.
+- PR checks were passing before merge:
+  - Install & Build.
+  - Vercel.
+  - Vercel Preview Comments.
+  - Docker image builds for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
+- Local git status was clean before merge.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or image capture was run during merge.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, certified grading claim, or certified photometric-stereo claim was added.

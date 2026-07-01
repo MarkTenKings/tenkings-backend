@@ -1,5 +1,14 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #43 merged)
+- PR #43 (`feature/ai-grader-surface-intelligence-v0`) was merged into `main`.
+- Merge commit: `a4d30a73922f3045a721c14283488e3887a1b695`.
+- Mark accepted Surface Intelligence V0 as good enough for this phase. Remaining tuning/noise limitations are accepted as preliminary diagnostic limitations.
+- Merged result: the unified fixed-rig report now includes `preliminary_surface_intelligence_v0` derived artifacts for Vision Lab when existing front/back channel evidence is available: heatmap, Surface Vision false-color contrast image, glare/clipping mask, underexposure mask, conservative surface candidates, numeric source-channel attribution, and confidence/warning metadata.
+- The sample PR #43 report remains outside the repo at `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\provisional-diagnostic-report.html`.
+- Evidence remains `macro_fixed_rig_v1_uncalibrated`, `isCalibrated=false`, `finalGradeComputed=false`, and `certifiedClaim=false`. No final grade, label, QR report, certificate, certified grading claim, or certified photometric-stereo claim is generated.
+- No hardware commands, migrations, DB operations, network changes, Arduino/stage/motor commands, Leimac reset/default, persistent Basler/Leimac saves, image captures, captured image/vendor binary commits, or manual deploy were run during the merge.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #43 surface intelligence start)
 - Branch: `feature/ai-grader-surface-intelligence-v0`.
 - Objective: `preliminary_surface_intelligence_v0`, the first real multi-light surface analysis layer from fixed-rig Leimac channel `1-8` evidence feeding Ten Kings Vision Lab.
