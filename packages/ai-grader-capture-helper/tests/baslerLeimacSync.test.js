@@ -3,6 +3,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const sharp = require("sharp");
 const {
   ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID,
   AI_GRADER_FULL_RIG_LOCAL_SMOKE_CONFIRMATION,
@@ -45,6 +46,10 @@ const {
   renderLeimacChannelCharacterizationReport,
   writeFixedRigActiveLightingProfile,
 } = require("../dist/drivers/baslerFixedRigV1");
+const {
+  PRELIMINARY_SURFACE_INTELLIGENCE_VERSION,
+  buildPreliminarySurfaceIntelligenceV0,
+} = require("../dist/drivers/fixedRigSurfaceIntelligence");
 const {
   BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION,
@@ -763,7 +768,47 @@ test("Fixed-rig lighting profile plan is dry-run and does not invent channel map
   assert.equal(cli.stdout.plan.channelMappingStatus, "unknown");
 });
 
-function writeFakeFixedRigEvidencePackage(rootDir, side, clippedPixelFraction) {
+async function writeSyntheticSurfaceImage(filePath, width, height, options = {}) {
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  const buffer = Buffer.alloc(width * height * 3);
+  const channel = options.channel ?? 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 3;
+      let value = 72 + Math.round((x / Math.max(1, width - 1)) * 18) + Math.round((y / Math.max(1, height - 1)) * 12);
+      if (channel === 3 && x >= Math.floor(width * 0.48) && x < Math.floor(width * 0.62) && y >= Math.floor(height * 0.38) && y < Math.floor(height * 0.52)) {
+        value = 210;
+      }
+      if (channel === 7 && x >= Math.floor(width * 0.50) && x < Math.floor(width * 0.64) && y >= Math.floor(height * 0.38) && y < Math.floor(height * 0.52)) {
+        value = 30;
+      }
+      if (options.clipped && x > Math.floor(width * 0.84) && y < Math.floor(height * 0.16)) {
+        value = 255;
+      }
+      buffer[index] = value;
+      buffer[index + 1] = value;
+      buffer[index + 2] = value;
+    }
+  }
+  await sharp(buffer, { raw: { width, height, channels: 3 } }).png().toFile(filePath);
+}
+
+async function writeFakeFixedRigEvidenceImages(sidePayload, quality, clipped) {
+  const displayWidth = quality.height;
+  const displayHeight = quality.width;
+  await writeSyntheticSurfaceImage(sidePayload.displayImage.outputFilePath, displayWidth, displayHeight, { clipped });
+  await writeSyntheticSurfaceImage(sidePayload.overlayPreview.outputFilePath, displayWidth, displayHeight, { clipped });
+  await writeSyntheticSurfaceImage(sidePayload.allOn.capture.outputFilePath, displayWidth, displayHeight, { clipped });
+  await writeSyntheticSurfaceImage(sidePayload.acceptedProfile.capture.outputFilePath, displayWidth, displayHeight, { clipped });
+  for (const entry of sidePayload.channelDisplayImages) {
+    await writeSyntheticSurfaceImage(entry.displayImage.outputFilePath, displayWidth, displayHeight, { channel: entry.channel, clipped });
+  }
+  for (const crop of sidePayload.roiCrops) {
+    await writeSyntheticSurfaceImage(crop.outputFilePath, 96, 96, { clipped: false });
+  }
+}
+
+async function writeFakeFixedRigEvidencePackage(rootDir, side, clippedPixelFraction, options = {}) {
   const packageDir = path.join(rootDir, `${side}-package`);
   fs.mkdirSync(packageDir, { recursive: true });
   const activeLightingProfile = buildFixedRigActiveLightingProfile({
@@ -772,15 +817,31 @@ function writeFakeFixedRigEvidencePackage(rootDir, side, clippedPixelFraction) {
     profileSource: "operator_preview",
     acceptedAt: "2026-06-30T16:01:02.654Z",
   });
+  const imageOverrides = options.withImages
+    ? {
+        width: 320,
+        height: 240,
+        cardBoundary: {
+          status: "detected",
+          x: 38,
+          y: 28,
+          width: 244,
+          height: 174,
+          coverage: 0.552,
+          confidence: 0.8,
+        },
+      }
+    : {};
   const quality = fakeFixedRigQuality({
+    ...imageOverrides,
     clippedPixelFraction,
     overlayAlignment: {
       overlayAlignmentStatus: "pass",
       centerOffsetPx: { x: 0, y: 0 },
-      marginLeft: 285,
-      marginRight: 285,
-      marginTop: 349,
-      marginBottom: 349,
+      marginLeft: options.withImages ? 28 : 285,
+      marginRight: options.withImages ? 28 : 285,
+      marginTop: options.withImages ? 38 : 349,
+      marginBottom: options.withImages ? 38 : 349,
       detectedAspectRatio: 1.391111,
       expectedAspectRatio: 1.4,
       warnings: [],
@@ -871,6 +932,9 @@ function writeFakeFixedRigEvidencePackage(rootDir, side, clippedPixelFraction) {
     finalGradeComputed: false,
     certifiedClaim: false,
   };
+  if (options.withImages) {
+    await writeFakeFixedRigEvidenceImages(sidePayload, quality, clippedPixelFraction > 0.1);
+  }
   fs.writeFileSync(path.join(packageDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   fs.writeFileSync(path.join(packageDir, "analysis.json"), `${JSON.stringify(analysis, null, 2)}\n`);
   return packageDir;
@@ -879,8 +943,8 @@ function writeFakeFixedRigEvidencePackage(rootDir, side, clippedPixelFraction) {
 test("Unified fixed-rig card report combines front and back provisional diagnostics", async () => {
   const root = path.join(os.tmpdir(), "fixed-rig-unified-card-report-test");
   fs.rmSync(root, { recursive: true, force: true });
-  const frontDir = writeFakeFixedRigEvidencePackage(root, "front", 0.107932);
-  const backDir = writeFakeFixedRigEvidencePackage(root, "back", 0.337672);
+  const frontDir = await writeFakeFixedRigEvidencePackage(root, "front", 0.107932, { withImages: true });
+  const backDir = await writeFakeFixedRigEvidencePackage(root, "back", 0.337672, { withImages: true });
   const outputDir = path.join(root, "fixed-rig-v1");
 
   const result = await runCli([
@@ -928,8 +992,9 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   for (let channel = 1; channel <= 8; channel += 1) {
     assert.match(reportHtml, new RegExp(`Channel ${channel}`));
   }
-  assert.match(reportHtml, /Heatmap unavailable; showing True View/);
-  assert.match(reportHtml, /No provisional anomaly candidates were emitted/);
+  assert.match(reportHtml, /surface-intelligence-v0-heatmap\.png/);
+  assert.match(reportHtml, /surface-vision-v0\.png/);
+  assert.match(reportHtml, /Surface Intelligence V0 is directional-light evidence visualization only/);
   assert.match(reportHtml, /physical_direction_calibration_pending/);
   assert.doesNotMatch(reportHtml, /certifiedClaim": true|finalGradeComputed": true/i);
   const manifest = JSON.parse(fs.readFileSync(result.stdout.report.manifestPath, "utf-8"));
@@ -940,9 +1005,12 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.equal(manifest.reportContains.edgeDiagnostics, true);
   assert.equal(manifest.reportContains.surfaceAnomalyDiagnostic, true);
   assert.equal(manifest.reportContains.visionLab, true);
+  assert.equal(manifest.reportContains.surfaceIntelligenceV0, true);
   assert.equal(manifest.visionLab.localStaticHtml, true);
   assert.equal(manifest.visionLab.dataContract.frontBackTrueViewImageRefs, true);
   assert.equal(manifest.visionLab.dataContract.frontBackChannelImageRefs1Through8, true);
+  assert.equal(manifest.visionLab.dataContract.surfaceVisionRefs, true);
+  assert.equal(manifest.visionLab.dataContract.sourceChannelAttribution, true);
   assert.equal(manifest.visionLab.dataContract.measurementOverlayMetadata, true);
   assert.equal(manifest.reportContains.finalGrade, false);
   assert.equal(manifest.reportContains.certificateOrCertifiedClaim, false);
@@ -950,6 +1018,11 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.equal(analysis.visionLab.schemaVersion, "ten-kings-vision-lab-v0.1");
   assert.equal(analysis.visionLab.sides.front.channels.length, 8);
   assert.equal(analysis.visionLab.sides.back.channels.length, 8);
+  assert.equal(analysis.surfaceIntelligence.detectorId, PRELIMINARY_SURFACE_INTELLIGENCE_VERSION);
+  assert.match(analysis.visionLab.sides.front.heatmap.outputFilePath, /surface-intelligence-v0-heatmap\.png/);
+  assert.match(analysis.visionLab.sides.front.surfaceVision.outputFilePath, /surface-vision-v0\.png/);
+  assert.ok(analysis.visionLab.sides.front.candidates.length > 0);
+  assert.ok(analysis.visionLab.sides.front.candidates[0].sourceChannels.length > 0);
   assert.equal(analysis.visionLab.measurementOverlay.status, "available");
   assert.equal(analysis.finalGradeComputed, false);
   assert.equal(analysis.certifiedClaim, false);
@@ -958,8 +1031,8 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
 test("Unified fixed-rig card report rejects repo output and missing side evidence", async () => {
   const root = path.join(os.tmpdir(), "fixed-rig-unified-card-report-missing-test");
   fs.rmSync(root, { recursive: true, force: true });
-  const frontDir = writeFakeFixedRigEvidencePackage(root, "front", 0.01);
-  const backDir = writeFakeFixedRigEvidencePackage(root, "front", 0.01);
+  const frontDir = await writeFakeFixedRigEvidencePackage(root, "front", 0.01);
+  const backDir = await writeFakeFixedRigEvidencePackage(root, "front", 0.01);
   const repoOutput = await runCli([
     "ai-grader-fixed-rig-v1-card-report",
     "--output-dir",
@@ -983,6 +1056,101 @@ test("Unified fixed-rig card report rejects repo output and missing side evidenc
   ]);
   assert.equal(missingBack.code, 1);
   assert.equal(missingBack.stdout.report.status, "insufficient_evidence");
+});
+
+test("Surface Intelligence V0 generates heatmap, Surface Vision, masks, and conservative candidates", async () => {
+  const root = path.join(os.tmpdir(), "fixed-rig-surface-intelligence-test");
+  fs.rmSync(root, { recursive: true, force: true });
+  const imageDir = path.join(root, "images");
+  const outputDir = path.join(root, "analysis");
+  const width = 180;
+  const height = 260;
+  const channelImages = [];
+  for (let channel = 1; channel <= 8; channel += 1) {
+    const outputFilePath = path.join(imageDir, `channel-${channel}.png`);
+    await writeSyntheticSurfaceImage(outputFilePath, width, height, { channel, clipped: channel === 8 });
+    channelImages.push({
+      channel,
+      displayImage: {
+        outputFilePath,
+        imageWidth: width,
+        imageHeight: height,
+        rawSourceFilePath: outputFilePath,
+        displayTransform: "none",
+      },
+      stats: {
+        mean: 88 + channel,
+        max: channel === 8 ? 255 : 215,
+        clippedPixelFraction: channel === 8 ? 0.035 : 0.005,
+        darkPixelFraction: 0.02,
+        sharpnessScore: 80 + channel,
+      },
+    });
+  }
+  const trueView = path.join(imageDir, "true-view.png");
+  await writeSyntheticSurfaceImage(trueView, width, height, { clipped: false });
+  const result = await buildPreliminarySurfaceIntelligenceV0({
+    side: "front",
+    outputDir,
+    trueView: {
+      outputFilePath: trueView,
+      imageWidth: width,
+      imageHeight: height,
+      rawSourceFilePath: trueView,
+      displayTransform: "none",
+    },
+    allOn: {
+      outputFilePath: trueView,
+      imageWidth: width,
+      imageHeight: height,
+      rawSourceFilePath: trueView,
+      displayTransform: "none",
+    },
+    channelImages,
+    roiDefinitions: [
+      {
+        id: "full-card",
+        label: "Full card",
+        type: "surface",
+        status: "computed",
+        rect: { x: 12, y: 14, width: 156, height: 230 },
+        displayRect: { x: 12, y: 14, width: 156, height: 230 },
+        source: "approximate_detected_boundary",
+      },
+    ],
+    roiCrops: [{ roiId: "center-surface", outputFilePath: path.join(imageDir, "center-surface.png"), displayRect: { x: 50, y: 70, width: 80, height: 90 } }],
+    inheritedWarnings: ["fixture warning carried through"],
+  });
+
+  assert.equal(result.detectorId, PRELIMINARY_SURFACE_INTELLIGENCE_VERSION);
+  assert.equal(result.status, "computed_diagnostic");
+  assert.match(result.heatmap.outputFilePath, /surface-intelligence-v0-heatmap\.png/);
+  assert.match(result.surfaceVision.outputFilePath, /surface-vision-v0\.png/);
+  assert.match(result.glareMask.outputFilePath, /glare-clipping-mask\.png/);
+  assert.match(result.underexposureMask.outputFilePath, /underexposure-mask\.png/);
+  assert.equal(fs.existsSync(result.heatmap.outputFilePath), true);
+  assert.equal(fs.existsSync(result.surfaceVision.outputFilePath), true);
+  assert.equal(result.physicalDirectionMappingStatus, "pending");
+  assert.equal(result.perChannelStats.length, 8);
+  assert.ok(result.confidence.score > 0);
+  assert.ok(result.candidates.length > 0);
+  assert.equal(result.candidates[0].category, "surface");
+  assert.ok(result.candidates[0].sourceChannels.length > 0);
+  assert.ok(result.candidates[0].strongestChannel >= 1);
+  assert.equal(result.candidates[0].physicalDirectionMappingStatus, "pending");
+  assert.equal(typeof result.candidates[0].needsDinoLiteFollowUp, "boolean");
+  assert.match(JSON.stringify(result.candidates[0].evidenceRefs), /surface-vision-v0|surface-intelligence-v0-heatmap/);
+  assert.match(result.warnings.join(" "), /provisional_diagnostic/);
+  assert.doesNotMatch(JSON.stringify(result).toLowerCase(), /finalgradecomputed":true|certifiedclaim":true/);
+
+  const missing = await buildPreliminarySurfaceIntelligenceV0({
+    side: "back",
+    outputDir: path.join(root, "missing"),
+    channelImages: [{ channel: 1, displayImage: { outputFilePath: path.join(root, "does-not-exist.png") } }],
+  });
+  assert.equal(missing.status, "insufficient_evidence");
+  assert.equal(missing.candidates.length, 0);
+  assert.match(missing.warnings.join(" "), /insufficient_evidence/);
 });
 
 test("Fixed-rig focus assist manifest reports manual focus metrics without autofocus claims", () => {

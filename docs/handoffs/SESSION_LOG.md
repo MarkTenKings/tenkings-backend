@@ -22067,3 +22067,59 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or image capture was run during merge.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, or certified grading claim was added.
+
+## 2026-07-01 - AI Grader PR #43 surface intelligence V0 start
+
+### Summary
+- Created branch `feature/ai-grader-surface-intelligence-v0` from latest `main` after PR #42 merge and post-merge handoff docs commit.
+- Implemented `preliminary_surface_intelligence_v0`, a software-only fixed-rig multi-light surface analysis layer for the unified card report and Ten Kings Vision Lab.
+- Added `packages/ai-grader-capture-helper/src/drivers/fixedRigSurfaceIntelligence.ts`.
+- Extended the unified report path so `ai-grader-fixed-rig-v1-card-report` attempts per-side surface-intelligence generation from existing front/back evidence packages:
+  - portrait Leimac channel `1-8` image stack,
+  - dark-aware directional response normalization when matching inputs are available,
+  - combined anomaly heatmap,
+  - Surface Vision false-color contrast image,
+  - glare/clipping mask,
+  - underexposure mask,
+  - conservative surface anomaly candidates,
+  - numeric source-channel attribution,
+  - confidence/warning metadata.
+- Vision Lab now prefers real `surfaceVision` and `heatmap` artifacts when available, keeps a clean missing-data state when not available, and shows candidate Evidence Replay details with source channels, strongest channel, evidence refs, severity, confidence, and Dino-Lite follow-up flag.
+- Physical Leimac direction mapping remains pending; source-channel labels are numeric only.
+- Surface Vision remains `Surface Vision V0 - directional light evidence visualization`, not certified photometric stereo.
+
+### Sample Report
+- Generated from existing PR #41 station evidence only; no hardware commands or image captures were run.
+- Command path was the hardware-free unified report command.
+- Report: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\provisional-diagnostic-report.html`.
+- Manifest: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\manifest.json`.
+- Analysis: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\analysis.json`.
+- Front source evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z`.
+- Back source evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z`.
+
+### Surface Artifacts
+- Front heatmap: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\front\front-surface-intelligence-v0-heatmap.png`.
+- Front Surface Vision: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\front\front-surface-vision-v0.png`.
+- Back heatmap: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\back\back-surface-intelligence-v0-heatmap.png`.
+- Back Surface Vision: `C:\TenKings\capture-data\surface-intelligence-pr43\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T100837933Z\surface-intelligence\back\back-surface-vision-v0.png`.
+- Front candidates: `8`; front confidence `medium`; front clipping/glare mask fraction `0.068289`.
+- Back candidates: `8`; back confidence `high`; back clipping/glare mask fraction `0.001159`.
+- Representative front candidates include high-severity candidates with strongest channels `3` and `4`; representative back candidates include high-severity candidates with strongest channels `3` and `4`. These are preliminary evidence candidates only and require later calibrated review / Dino-Lite follow-up before production scoring.
+
+### Validation So Far
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `154` tests.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- All generated report artifacts stayed outside the repo under `C:\TenKings\capture-data`.
+- Evidence remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`; `finalGradeComputed=false`; `certifiedClaim=false`; no final grade, label, QR report, certificate, or certified grading claim was added.

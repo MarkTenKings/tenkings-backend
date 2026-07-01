@@ -56,6 +56,16 @@ export type {
   BaslerLeimacMacroPackageManifest,
   FullRigLocalSmokeManifest,
 } from "./baslerLeimacFullRig";
+export {
+  PRELIMINARY_SURFACE_INTELLIGENCE_VERSION,
+  buildPreliminarySurfaceIntelligenceV0,
+  mergeSurfaceAnalysisWithSurfaceIntelligence,
+} from "./fixedRigSurfaceIntelligence";
+export type {
+  BuildPreliminarySurfaceIntelligenceInput,
+  SurfaceIntelligenceChannelInput,
+  SurfaceIntelligenceImageInput,
+} from "./fixedRigSurfaceIntelligence";
 export type {
   FixedRigCardBoundary,
   FixedRigCardSide,
