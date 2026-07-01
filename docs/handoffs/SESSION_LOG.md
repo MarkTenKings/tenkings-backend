@@ -21770,6 +21770,44 @@ By enabling Rip It Live, I confirm:
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, or certified grading claim was added.
 
+## 2026-07-01 - AI Grader PR #41 real station orchestration
+
+### Summary
+- Continued PR #41 on branch `feature/ai-grader-station-operator-ui`.
+- Converted `ai-grader-station-operator-workflow --apply` from a mock-only rejection into a supervised hardware-capable station orchestrator.
+- The station command now runs the existing guarded fixed-rig commands in order:
+  - `basler-fixed-rig-operator-preview` for the visible Windows pylon live preview/focus/framing/tuning window.
+  - `ai-grader-fixed-rig-v1-evidence-package` for front capture.
+  - `ai-grader-fixed-rig-v1-evidence-package` for back capture after explicit `--operator-flip-confirmed`.
+  - `ai-grader-fixed-rig-v1-card-report` for the unified front/back provisional diagnostic report.
+  - `leimac-idmu-safe-off` for cleanup.
+- Added command-plan/result recording to the station manifest/report so a real station session records preview, front package, back package, unified report, and safe-off results.
+- Hardware mode requires the exact confirmation `RUN AI GRADER STATION OPERATOR WORKFLOW` plus explicit Mark/wiring/status/light-off/fixture/preview/flip/final-light-off confirmations.
+- Mock mode remains for automated tests and does not touch hardware.
+- Mark replaced the physical rulers and improved the fixed card positioning. Hardware smoke remains pending; next supervised run should use the Basler live preview to align the new rulers/card fixture and then run the station workflow with the updated ruler coordinates/boundary override.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 152 tests.
+
+### Hardware Status
+- Hardware smoke was not run in this code pass.
+- No Basler preview, Basler capture, Leimac command, image capture, or safe-off hardware command was run.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino/stage/motor command was run.
+- No Leimac reset/default command was run.
+- No persistent Basler or Leimac User Set save was made.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, or certified grading claim was added.
+
 ## 2026-06-30 - AI Grader Station operator workflow PR #41 start
 
 ### Summary

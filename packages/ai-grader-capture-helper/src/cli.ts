@@ -372,11 +372,28 @@ type ParsedCommand =
       outputDir: string | undefined;
       frontDir: string | undefined;
       backDir: string | undefined;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      baslerBridgeScript: string | undefined;
+      cameraIndex: number | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacTimeoutMs: number | undefined;
+      leimacUnit: number | undefined;
       duty: number | undefined;
       exposureUs: number | undefined;
       gain: number | undefined;
       apply: boolean;
+      confirmation: string | undefined;
       mockRun: boolean;
+      markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
+      operatorConfirmedLightIdleOff: boolean;
+      operatorFlipConfirmed: boolean;
+      operatorConfirmedFixtureRulersVisible: boolean;
+      operatorConfirmedPreviewAccepted: boolean;
+      operatorConfirmedFinalLightOff: boolean;
       operatorAcceptedWarnings: boolean;
       calibrationProfileId: string | undefined;
       mmPerPixelX: number | undefined;
@@ -385,6 +402,16 @@ type ParsedCommand =
       backClippedFraction: number | undefined;
       framingOverlayPass: boolean;
       repeatabilityPass: boolean;
+      fixtureLabel: string | undefined;
+      fixtureId: string | undefined;
+      referenceType: string | undefined;
+      horizontalSpanMm: number | undefined;
+      horizontalStartPx: { x: number; y: number } | undefined;
+      horizontalEndPx: { x: number; y: number } | undefined;
+      verticalSpanMm: number | undefined;
+      verticalStartPx: { x: number; y: number } | undefined;
+      verticalEndPx: { x: number; y: number } | undefined;
+      cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
     }
   | { command: "fixed-rig-lighting-profile-plan"; config: CaptureHelperConfigInput }
   | {
@@ -535,6 +562,9 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let leimacStatusGreen = false;
   let operatorConfirmedLightNotContinuous = false;
   let operatorConfirmedLightIdleOff = false;
+  let operatorConfirmedFixtureRulersVisible = false;
+  let operatorConfirmedPreviewAccepted = false;
+  let operatorConfirmedFinalLightOff = false;
   let operatorReportedIdleOn = false;
   let operatorFlipConfirmed = false;
   let operatorFlipDelayMs: number | undefined;
@@ -838,6 +868,15 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--operator-confirmed-light-idle-off":
         operatorConfirmedLightIdleOff = true;
+        break;
+      case "--operator-confirmed-fixture-rulers-visible":
+        operatorConfirmedFixtureRulersVisible = true;
+        break;
+      case "--operator-confirmed-preview-accepted":
+        operatorConfirmedPreviewAccepted = true;
+        break;
+      case "--operator-confirmed-final-light-off":
+        operatorConfirmedFinalLightOff = true;
         break;
       case "--operator-flip-confirmed":
         operatorFlipConfirmed = true;
@@ -1684,17 +1723,40 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     if (command === "fixed-rig-lighting-profile-plan") return { command, config };
     if (command === "ai-grader-fixed-rig-v1-card-report") return { command, config, outputDir, frontDir, backDir };
     if (command === "ai-grader-station-operator-workflow") {
+      const leimacHostValue = leimacHost ?? host;
+      const leimacPortValue = leimacPort ?? port;
+      const parsedLeimacPort = leimacPortValue === undefined ? undefined : Number(leimacPortValue);
+      if (parsedLeimacPort !== undefined && (!Number.isInteger(parsedLeimacPort) || parsedLeimacPort <= 0)) {
+        throw new CaptureHelperCommandError("--leimac-port must be a positive integer.");
+      }
       return {
         command,
         config,
         outputDir,
         frontDir,
         backDir,
+        pylonRoot,
+        pylonTimeoutMs,
+        baslerBridgeScript,
+        cameraIndex,
+        leimacHost: leimacHostValue,
+        leimacPort: parsedLeimacPort,
+        leimacTimeoutMs,
+        leimacUnit,
         duty,
         exposureUs,
         gain,
         apply,
+        confirmation,
         mockRun,
+        markPresent,
+        wiringConfirmed,
+        leimacStatusGreen,
+        operatorConfirmedLightIdleOff,
+        operatorFlipConfirmed,
+        operatorConfirmedFixtureRulersVisible,
+        operatorConfirmedPreviewAccepted,
+        operatorConfirmedFinalLightOff,
         operatorAcceptedWarnings,
         calibrationProfileId,
         mmPerPixelX,
@@ -1703,6 +1765,16 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         backClippedFraction,
         framingOverlayPass,
         repeatabilityPass,
+        fixtureLabel,
+        fixtureId,
+        referenceType,
+        horizontalSpanMm,
+        horizontalStartPx,
+        horizontalEndPx,
+        verticalSpanMm,
+        verticalStartPx,
+        verticalEndPx,
+        cardBoundaryRect,
       };
     }
     if (command === "dinolite-status") return { command, config, deviceIndex };
@@ -1764,6 +1836,7 @@ function helpPayload() {
       "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side back --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed",
       "ai-grader-fixed-rig-v1-card-report --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
       "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --mock-run --duty 1.2 --exposure-us 45000 --front-clipped-fraction 0.107932 --back-clipped-fraction 0.337672 --calibration-profile-id fixed-ruler-pr39 --framing-overlay-pass --repeatability-pass --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
+      "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --reference-type fixed_metric_rulers --horizontal-span-mm 50.8 --horizontal-start-px 540,205 --horizontal-end-px 1620,205 --vertical-span-mm 50.8 --vertical-start-px 2295,145 --vertical-end-px 2295,1218 --card-boundary-rect 285,349,1878,1350 --apply --confirm \"RUN AI GRADER STATION OPERATOR WORKFLOW\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-confirmed-fixture-rulers-visible --operator-confirmed-preview-accepted --operator-flip-confirmed --operator-confirmed-final-light-off",
       "leimac-channel-characterization --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --duty 1 --exposure-us 45000 --apply --confirm \"RUN LEIMAC CHANNEL CHARACTERIZATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
@@ -3327,13 +3400,84 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
 
     if (parsed.command === "ai-grader-station-operator-workflow") {
       const {
+        AI_GRADER_STATION_OPERATOR_WORKFLOW_CONFIRMATION,
         buildAiGraderStationWorkflowManifest,
+        runAiGraderStationRealWorkflow,
         writeAiGraderStationWorkflowArtifacts,
       } = await import("./drivers/aiGraderStationWorkflow");
       if (parsed.apply) {
-        throw new CaptureHelperCommandError(
-          "ai-grader-station-operator-workflow hardware execution is intentionally pending for PR #41; run the supervised fixed-rig commands only when Mark is present."
-        );
+        if (parsed.confirmation !== AI_GRADER_STATION_OPERATOR_WORKFLOW_CONFIRMATION) {
+          throw new CaptureHelperCommandError(`ai-grader-station-operator-workflow --apply requires --confirm "${AI_GRADER_STATION_OPERATOR_WORKFLOW_CONFIRMATION}".`);
+        }
+        if (!parsed.outputDir) {
+          throw new CaptureHelperCommandError("ai-grader-station-operator-workflow --apply requires --output-dir <outside-repo-output-dir>.");
+        }
+        if (!parsed.leimacHost) {
+          throw new CaptureHelperCommandError("ai-grader-station-operator-workflow --apply requires --leimac-host <ip>.");
+        }
+        const realWorkflow = await runAiGraderStationRealWorkflow({
+          outputDir: parsed.outputDir,
+          leimacHost: parsed.leimacHost,
+          leimacPort: parsed.leimacPort,
+          leimacTimeoutMs: parsed.leimacTimeoutMs,
+          leimacUnit: parsed.leimacUnit,
+          pylonRoot: parsed.pylonRoot,
+          pylonTimeoutMs: parsed.pylonTimeoutMs,
+          baslerBridgeScript: parsed.baslerBridgeScript,
+          cameraIndex: parsed.cameraIndex,
+          exposureUs: parsed.exposureUs,
+          gain: parsed.gain,
+          duty: parsed.duty,
+          markPresent: parsed.markPresent,
+          wiringConfirmed: parsed.wiringConfirmed,
+          leimacStatusGreen: parsed.leimacStatusGreen,
+          operatorConfirmedLightIdleOff: parsed.operatorConfirmedLightIdleOff,
+          operatorFlipConfirmed: parsed.operatorFlipConfirmed,
+          operatorConfirmedFixtureRulersVisible: parsed.operatorConfirmedFixtureRulersVisible,
+          operatorConfirmedPreviewAccepted: parsed.operatorConfirmedPreviewAccepted,
+          operatorConfirmedFinalLightOff: parsed.operatorConfirmedFinalLightOff,
+          fixtureLabel: parsed.fixtureLabel,
+          fixtureId: parsed.fixtureId,
+          referenceType: parsed.referenceType,
+          horizontalSpanMm: parsed.horizontalSpanMm,
+          horizontalStartPx: parsed.horizontalStartPx,
+          horizontalEndPx: parsed.horizontalEndPx,
+          verticalSpanMm: parsed.verticalSpanMm,
+          verticalStartPx: parsed.verticalStartPx,
+          verticalEndPx: parsed.verticalEndPx,
+          cardBoundaryRect: parsed.cardBoundaryRect,
+        });
+        const manifest = await writeAiGraderStationWorkflowArtifacts({
+          outputDir: parsed.outputDir,
+          acceptedDutyPercent: realWorkflow.acceptedLightingProfile?.selectedDutyPercent ?? parsed.duty,
+          exposureUs: parsed.exposureUs,
+          gain: parsed.gain,
+          operatorAcceptedWarnings: parsed.operatorAcceptedWarnings,
+          calibrationProfileId: parsed.calibrationProfileId,
+          mmPerPixelX: parsed.mmPerPixelX,
+          mmPerPixelY: parsed.mmPerPixelY,
+          framingOverlayPass: parsed.framingOverlayPass,
+          repeatabilityPass: parsed.repeatabilityPass,
+          realWorkflow,
+        });
+        writeJson(stdout, {
+          ok: realWorkflow.status === "completed",
+          service: "ai-grader-capture-helper",
+          command: "ai-grader-station-operator-workflow",
+          manifestPath: manifest.manifestPath,
+          reportPath: manifest.reportPath,
+          contractPath: manifest.contractPath,
+          stationSessionOutputFolder: manifest.packageDir,
+          unifiedReportPath: realWorkflow.unifiedReportPath,
+          frontPackageDir: realWorkflow.frontPackageDir,
+          backPackageDir: realWorkflow.backPackageDir,
+          acceptedLightingProfile: realWorkflow.acceptedLightingProfile ?? manifest.acceptedLightingProfile,
+          realWorkflow,
+          manifest,
+          hardwareSmokeStatus: realWorkflow.status === "completed" ? "completed_mark_supervised" : "blocked",
+          safety: manifest.safety,
+        });
+        return realWorkflow.status === "completed" ? 0 : 1;
       }
       const common = {
         mockRun: parsed.mockRun,

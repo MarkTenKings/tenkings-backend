@@ -1024,7 +1024,7 @@ The accepted PR #40 unified report output is `C:\TenKings\capture-data\fixed-rig
 
 ### AI Grader Station Operator Workflow
 
-PR #41 starts the internal AI Grader Station operator workflow as a software-only foundation. The new command is:
+PR #41 starts the internal AI Grader Station operator workflow as a real local orchestrator on top of the fixed-rig V1 commands from PR #39/#40. Mock mode remains available for tests and dry software review, but `--apply` now runs the supervised station sequence instead of stopping at a mock-only harness. The software-only command is:
 
 ```powershell
 pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-station-operator-workflow `
@@ -1041,9 +1041,38 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader
   --back-dir <back-evidence-package-dir>
 ```
 
-The station workflow is intended to become Mark's guided local operator surface for the fixed-rig V1 flow. It models these states: Start New Card, Verify Fixture/Rulers, Live Preview / Focus / Framing, Lighting / Exposure Tune, Accept Capture Profile, Capture Front, Prompt Flip Card, Capture Back, Run Provisional Diagnostics, View Unified Report, Rerun If Warnings, Export/Open Report, and Safe Off / End Session. PR #41 does not run the hardware state machine unattended. Hardware execution remains pending until Mark is physically present.
+The supervised hardware-capable station command is:
 
-The PR #41 station output includes a local `manifest.json`, `station-report.html`, `integration-contract.json`, and a software active lighting profile file. The station report shows session status, accepted lighting profile, fixed-ruler calibration profile summary, framing/overlay and repeatability gates, clipping/focus warning surfaces, next operator action, report open/export paths, provisional diagnostic rule outputs, and guardrail status. It does not contact Basler or Leimac, does not capture images, does not write the database, does not generate labels/QR/certificates, and does not compute a final grade.
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-station-operator-workflow `
+  --output-dir C:\TenKings\capture-data\ai-grader-station `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --exposure-us 45000 `
+  --gain 0 `
+  --reference-type fixed_metric_rulers `
+  --horizontal-span-mm 50.8 `
+  --horizontal-start-px 540,205 `
+  --horizontal-end-px 1620,205 `
+  --vertical-span-mm 50.8 `
+  --vertical-start-px 2295,145 `
+  --vertical-end-px 2295,1218 `
+  --card-boundary-rect 285,349,1878,1350 `
+  --apply `
+  --confirm "RUN AI GRADER STATION OPERATOR WORKFLOW" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off `
+  --operator-confirmed-fixture-rulers-visible `
+  --operator-confirmed-preview-accepted `
+  --operator-flip-confirmed `
+  --operator-confirmed-final-light-off
+```
+
+The station workflow is Mark's guided local operator surface for the fixed-rig V1 flow. It models these states: Start New Card, Verify Fixture/Rulers, Live Preview / Focus / Framing, Lighting / Exposure Tune, Accept Capture Profile, Capture Front, Prompt Flip Card, Capture Back, Run Provisional Diagnostics, View Unified Report, Rerun If Warnings, Export/Open Report, and Safe Off / End Session. In supervised `--apply` mode it invokes the existing `basler-fixed-rig-operator-preview` live Windows pylon preview, captures front and back evidence packages, generates the unified provisional diagnostic card report, and runs Leimac safe-off. It does not duplicate capture logic. The only human-gated pause in the capture sequence is the front/back flip; per-side lighting configurations run continuously through the existing evidence-package command.
+
+The PR #41 station output includes a local `manifest.json`, `station-report.html`, `integration-contract.json`, and a software active lighting profile file. The station report shows session status, accepted lighting profile, fixed-ruler calibration profile summary, framing/overlay and repeatability gates, clipping/focus warning surfaces, next operator action, report open/export paths, command plan/results, front/back evidence package paths, unified report path, provisional diagnostic rule outputs, and guardrail status. In mock mode it does not contact Basler or Leimac. In supervised hardware mode it contacts Basler/Leimac only through the existing guarded commands, requires `--apply`, the exact confirmation phrase, Mark/wiring/status/light-off confirmations, fixture/ruler confirmation, preview acceptance confirmation, flip confirmation, and final physical ring-light-off confirmation.
 
 Lighting/exposure tuning is a software decision layer in PR #41. It evaluates mean/clipping/dark/sharpness metrics when supplied, recommends lower Leimac duty and/or exposure when clipping exceeds the soft threshold, rounds duty to the Leimac 0.1% PWM step scale, caps duty at 5%, and requires explicit operator warning acceptance when capture quality remains outside thresholds. Preview tuning remains a local software profile; no persistent Basler or Leimac User Set is saved.
 

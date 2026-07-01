@@ -1,6 +1,9 @@
+import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  AI_GRADER_FIXED_RIG_V1_EVIDENCE_PACKAGE_CONFIRMATION,
+  BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION,
   FIXED_RIG_SELECTED_EXPOSURE_US,
   FIXED_RIG_SELECTED_GAIN,
   FIXED_RIG_SELECTED_LEIMAC_DUTY,
@@ -11,6 +14,7 @@ import {
   fixedRigActiveLightingProfilePath,
   type FixedRigActiveLightingProfile,
 } from "./baslerFixedRigV1";
+import { LEIMAC_IDMU_SAFE_OFF_CONFIRMATION } from "./leimacIdmuClient";
 
 export const AI_GRADER_STATION_OPERATOR_WORKFLOW_VERSION = "ai-grader-station-operator-workflow-v0.1";
 export const AI_GRADER_STATION_OPERATOR_WORKFLOW_CONFIRMATION = "RUN AI GRADER STATION OPERATOR WORKFLOW";
@@ -134,7 +138,7 @@ export interface AiGraderStationWorkflowManifest {
   reportPath?: string;
   contractPath?: string;
   workflowVersion: typeof AI_GRADER_STATION_OPERATOR_WORKFLOW_VERSION;
-  status: "planned" | "mock_completed" | "hardware_pending" | "blocked";
+  status: "planned" | "mock_completed" | "hardware_pending" | "hardware_completed" | "blocked";
   session: {
     gradingSessionId: string;
     reportId: string;
@@ -162,15 +166,16 @@ export interface AiGraderStationWorkflowManifest {
     missingReportHandling: string;
   };
   integrationContract: AiGraderStationIntegrationContract;
+  realWorkflow?: AiGraderStationRealWorkflowSummary;
   hardwareAcceptance: {
-    status: "pending_mark_present" | "not_run_software_only";
+    status: "pending_mark_present" | "not_run_software_only" | "completed_mark_supervised";
     requiredFlow: string[];
   };
   safety: {
     localOnly: true;
-    hardwareAccessed: false;
-    baslerContacted: false;
-    leimacContacted: false;
+    hardwareAccessed: boolean;
+    baslerContacted: boolean;
+    leimacContacted: boolean;
     databaseWrites: false;
     migrationsRun: false;
     deployRun: false;
@@ -183,6 +188,78 @@ export interface AiGraderStationWorkflowManifest {
     certifiedClaim: false;
   };
   warnings: string[];
+}
+
+export interface AiGraderStationCommandStep {
+  id: "operator_preview" | "capture_front" | "capture_back" | "unified_report" | "safe_off";
+  label: string;
+  command: string;
+  args: string[];
+  hardwareAccess: boolean;
+  required: boolean;
+}
+
+export interface AiGraderStationCommandResult {
+  stepId: AiGraderStationCommandStep["id"];
+  ok: boolean;
+  exitCode: number;
+  stdoutText?: string;
+  stderrText?: string;
+  payload?: any;
+  error?: string;
+}
+
+export interface AiGraderStationCommandRunner {
+  run(step: AiGraderStationCommandStep): Promise<AiGraderStationCommandResult>;
+}
+
+export interface AiGraderStationRealWorkflowInput {
+  outputDir: string;
+  leimacHost: string;
+  leimacPort?: number;
+  leimacTimeoutMs?: number;
+  leimacUnit?: number;
+  pylonRoot?: string;
+  pylonTimeoutMs?: number;
+  baslerBridgeScript?: string;
+  cameraIndex?: number;
+  exposureUs?: number;
+  gain?: number;
+  duty?: number;
+  markPresent: boolean;
+  wiringConfirmed: boolean;
+  leimacStatusGreen: boolean;
+  operatorConfirmedLightIdleOff: boolean;
+  operatorFlipConfirmed: boolean;
+  operatorConfirmedFixtureRulersVisible: boolean;
+  operatorConfirmedPreviewAccepted: boolean;
+  operatorConfirmedFinalLightOff: boolean;
+  fixtureLabel?: string;
+  fixtureId?: string;
+  referenceType?: string;
+  horizontalSpanMm?: number;
+  horizontalStartPx?: { x: number; y: number };
+  horizontalEndPx?: { x: number; y: number };
+  verticalSpanMm?: number;
+  verticalStartPx?: { x: number; y: number };
+  verticalEndPx?: { x: number; y: number };
+  cardBoundaryRect?: { x: number; y: number; width: number; height: number };
+}
+
+export interface AiGraderStationRealWorkflowSummary {
+  mode: "hardware_supervised";
+  commandPlan: AiGraderStationCommandStep[];
+  stepResults: AiGraderStationCommandResult[];
+  previewPackageDir?: string;
+  frontPackageDir?: string;
+  backPackageDir?: string;
+  unifiedReportDir?: string;
+  unifiedReportPath?: string;
+  acceptedLightingProfile?: FixedRigActiveLightingProfile;
+  safeOffResult?: AiGraderStationCommandResult;
+  finalPhysicalRingLightOffConfirmed: boolean;
+  status: "completed" | "blocked";
+  blocker?: string;
 }
 
 function roundDutyToPwmStep(dutyPercent: number): { dutyPercent: number; step: number } {
@@ -221,6 +298,29 @@ function buildStationStates(input: { mockRun?: boolean; reportPath?: string; war
     safeOffRequiredAfterState: Boolean(hardwareAccess),
     warnings: Boolean(hardwareAccess) && !completed ? ["Hardware action pending until Mark is physically present."] : [],
   }));
+}
+
+function buildRealStationStates(realWorkflow: AiGraderStationRealWorkflowSummary): AiGraderStationWorkflowState[] {
+  const completedStepIds = new Set(realWorkflow.stepResults.filter((result) => result.ok).map((result) => result.stepId));
+  return buildStationStates({ mockRun: false, warnings: [] }).map((state) => {
+    const completed =
+      state.id === "live_preview_focus_framing"
+        ? completedStepIds.has("operator_preview")
+        : state.id === "capture_front"
+          ? completedStepIds.has("capture_front")
+          : state.id === "capture_back"
+            ? completedStepIds.has("capture_back")
+            : state.id === "run_provisional_diagnostics" || state.id === "view_unified_report" || state.id === "export_open_report"
+              ? completedStepIds.has("unified_report")
+              : state.id === "safe_off_end_session"
+                ? completedStepIds.has("safe_off")
+                : realWorkflow.status === "completed";
+    return {
+      ...state,
+      status: completed ? "completed" : realWorkflow.status === "blocked" && state.hardwareAccess ? "blocked" : state.status,
+      warnings: completed ? [] : state.warnings,
+    };
+  });
 }
 
 export function buildAiGraderLightingTuneRecommendation(input: {
@@ -388,6 +488,7 @@ export function buildAiGraderStationWorkflowManifest(input: {
   repeatabilityPass?: boolean;
   frontPackageDir?: string;
   backPackageDir?: string;
+  realWorkflow?: AiGraderStationRealWorkflowSummary;
 }): AiGraderStationWorkflowManifest {
   const createdAt = new Date().toISOString();
   const packageId = input.packageId ?? `ai-grader-station-${createdAt.replace(/[:.]/g, "")}`;
@@ -416,19 +517,23 @@ export function buildAiGraderStationWorkflowManifest(input: {
   const warnings = [
     ...tuneRecommendation.warnings,
     ...diagnostics.warnings,
-    "Hardware smoke is pending until Mark is physically present.",
+    ...(input.realWorkflow
+      ? input.realWorkflow.status === "blocked"
+        ? [`Hardware-supervised station workflow blocked: ${input.realWorkflow.blocker ?? "unknown blocker"}.`]
+        : []
+      : ["Hardware smoke is pending until Mark is physically present."]),
     "Provisional diagnostic only; no final grade, label, QR, certificate, or certified claim.",
   ];
   const integrationContract = buildAiGraderStationIntegrationContract({
     gradingSessionId,
     reportId,
     packageDir: input.packageDir,
-    reportPath: input.reportPath,
+    reportPath: input.realWorkflow?.unifiedReportPath ?? input.reportPath,
     manifestPath: input.manifestPath,
-    frontPackageDir: input.frontPackageDir,
-    backPackageDir: input.backPackageDir,
+    frontPackageDir: input.realWorkflow?.frontPackageDir ?? input.frontPackageDir,
+    backPackageDir: input.realWorkflow?.backPackageDir ?? input.backPackageDir,
     calibrationProfileId: input.calibrationProfileId,
-    reportReady: Boolean(input.reportPath),
+    reportReady: Boolean(input.realWorkflow?.unifiedReportPath ?? input.reportPath),
   });
   return {
     packageId,
@@ -437,14 +542,20 @@ export function buildAiGraderStationWorkflowManifest(input: {
     reportPath: input.reportPath,
     contractPath: input.contractPath,
     workflowVersion: AI_GRADER_STATION_OPERATOR_WORKFLOW_VERSION,
-    status: input.mockRun ? "mock_completed" : "hardware_pending",
+    status: input.realWorkflow ? (input.realWorkflow.status === "completed" ? "hardware_completed" : "blocked") : input.mockRun ? "mock_completed" : "hardware_pending",
     session: {
       gradingSessionId,
       reportId,
       createdAt,
       operatorWorkflow: "fixed_rig_v1_station",
-      currentState: input.mockRun ? "view_unified_report" : "start_new_card",
-      nextAction: input.mockRun ? "Review generated software-only station report; hardware acceptance remains pending." : "Launch station workflow with Mark present for live preview and supervised capture.",
+      currentState: input.realWorkflow?.status === "completed" ? "view_unified_report" : input.mockRun ? "view_unified_report" : "start_new_card",
+      nextAction: input.realWorkflow?.status === "completed"
+        ? "Open the unified provisional diagnostic report and confirm final physical ring light state remains off."
+        : input.realWorkflow?.status === "blocked"
+          ? "Resolve the blocked station step, safe-off, and rerun only with Mark present."
+          : input.mockRun
+            ? "Review generated software-only station report; hardware acceptance remains pending."
+            : "Launch station workflow with Mark present for live preview and supervised capture.",
     },
     acceptedLightingProfile,
     calibrationProfile: {
@@ -456,17 +567,18 @@ export function buildAiGraderStationWorkflowManifest(input: {
       mmPerPixelY: input.mmPerPixelY,
     },
     tuneRecommendation,
-    states: buildStationStates({ mockRun: input.mockRun, reportPath: input.reportPath, warnings }),
+    states: input.realWorkflow ? buildRealStationStates(input.realWorkflow) : buildStationStates({ mockRun: input.mockRun, reportPath: input.reportPath, warnings }),
     diagnostics,
     reportOpenExport: {
-      latestUnifiedReportPath: input.reportPath,
+      latestUnifiedReportPath: input.realWorkflow?.unifiedReportPath ?? input.reportPath,
       outputFolder: input.packageDir,
-      openReportAction: input.reportPath ? "available_when_report_exists" : "missing_report",
+      openReportAction: input.realWorkflow?.unifiedReportPath || input.reportPath ? "available_when_report_exists" : "missing_report",
       missingReportHandling: "Station UI must show a clear missing-report state and keep Run Diagnostics / Generate Report as the next action.",
     },
     integrationContract,
+    realWorkflow: input.realWorkflow,
     hardwareAcceptance: {
-      status: "pending_mark_present",
+      status: input.realWorkflow?.status === "completed" ? "completed_mark_supervised" : "pending_mark_present",
       requiredFlow: [
         "Launch AI Grader Station workflow.",
         "Verify fixture and rulers visible.",
@@ -482,9 +594,9 @@ export function buildAiGraderStationWorkflowManifest(input: {
     },
     safety: {
       localOnly: true,
-      hardwareAccessed: false,
-      baslerContacted: false,
-      leimacContacted: false,
+      hardwareAccessed: Boolean(input.realWorkflow),
+      baslerContacted: Boolean(input.realWorkflow?.stepResults.some((result) => result.stepId === "operator_preview" || result.stepId === "capture_front" || result.stepId === "capture_back")),
+      leimacContacted: Boolean(input.realWorkflow?.stepResults.some((result) => result.stepId === "operator_preview" || result.stepId === "capture_front" || result.stepId === "capture_back" || result.stepId === "safe_off")),
       databaseWrites: false,
       migrationsRun: false,
       deployRun: false,
@@ -515,6 +627,286 @@ function stateRows(states: AiGraderStationWorkflowState[]): string {
 
 function diagnosticCards(rules: AiGraderStationDiagnosticRulesV0): string {
   return rules.elements.map((rule) => `<section class="card"><h3>${escapeHtml(rule.element)}</h3><strong>${escapeHtml(rule.status)}</strong><p>Confidence: ${escapeHtml(rule.confidence)}</p><p>${escapeHtml(rule.explanation)}</p><p>${escapeHtml(rule.warnings.join(" "))}</p></section>`).join("");
+}
+
+function realWorkflowRows(realWorkflow: AiGraderStationRealWorkflowSummary | undefined): string {
+  if (!realWorkflow) return "<p>No hardware-supervised station workflow was run in this station package.</p>";
+  return `<table><thead><tr><th>Step</th><th>Result</th><th>Exit</th><th>Path/result</th></tr></thead><tbody>${realWorkflow.stepResults
+    .map((result) => {
+      const detail =
+        result.stepId === "operator_preview"
+          ? realWorkflow.previewPackageDir
+          : result.stepId === "capture_front"
+            ? realWorkflow.frontPackageDir
+            : result.stepId === "capture_back"
+              ? realWorkflow.backPackageDir
+              : result.stepId === "unified_report"
+                ? realWorkflow.unifiedReportPath
+                : result.error ?? "";
+      return `<tr><td>${escapeHtml(result.stepId)}</td><td>${escapeHtml(result.ok ? "pass" : "fail")}</td><td>${escapeHtml(result.exitCode)}</td><td>${escapeHtml(detail)}</td></tr>`;
+    })
+    .join("")}</tbody></table><p>Final physical ring light off confirmed: ${escapeHtml(realWorkflow.finalPhysicalRingLightOffConfirmed)}.</p>`;
+}
+
+function pushOptionalArg(args: string[], name: string, value: string | number | undefined): void {
+  if (value === undefined) return;
+  args.push(name, String(value));
+}
+
+function pushPointArg(args: string[], name: string, point: { x: number; y: number } | undefined): void {
+  if (!point) return;
+  args.push(name, `${point.x},${point.y}`);
+}
+
+function pushRectArg(args: string[], name: string, rect: { x: number; y: number; width: number; height: number } | undefined): void {
+  if (!rect) return;
+  args.push(name, `${rect.x},${rect.y},${rect.width},${rect.height}`);
+}
+
+function commonFixedRigHardwareArgs(input: AiGraderStationRealWorkflowInput): string[] {
+  const args: string[] = [];
+  pushOptionalArg(args, "--leimac-host", input.leimacHost);
+  pushOptionalArg(args, "--leimac-port", input.leimacPort);
+  pushOptionalArg(args, "--timeout-ms", input.leimacTimeoutMs);
+  pushOptionalArg(args, "--unit", input.leimacUnit);
+  pushOptionalArg(args, "--pylon-root", input.pylonRoot);
+  pushOptionalArg(args, "--pylon-timeout-ms", input.pylonTimeoutMs);
+  pushOptionalArg(args, "--basler-bridge-script", input.baslerBridgeScript);
+  pushOptionalArg(args, "--camera-index", input.cameraIndex);
+  args.push("--mark-present", "--wiring-confirmed", "--leimac-status-green", "--operator-confirmed-light-idle-off");
+  return args;
+}
+
+function commonFixtureArgs(input: AiGraderStationRealWorkflowInput): string[] {
+  const args: string[] = [];
+  pushOptionalArg(args, "--fixture-label", input.fixtureLabel);
+  pushOptionalArg(args, "--fixture-id", input.fixtureId);
+  pushOptionalArg(args, "--reference-type", input.referenceType);
+  pushOptionalArg(args, "--horizontal-span-mm", input.horizontalSpanMm);
+  pushPointArg(args, "--horizontal-start-px", input.horizontalStartPx);
+  pushPointArg(args, "--horizontal-end-px", input.horizontalEndPx);
+  pushOptionalArg(args, "--vertical-span-mm", input.verticalSpanMm);
+  pushPointArg(args, "--vertical-start-px", input.verticalStartPx);
+  pushPointArg(args, "--vertical-end-px", input.verticalEndPx);
+  pushRectArg(args, "--card-boundary-rect", input.cardBoundaryRect);
+  return args;
+}
+
+export function buildAiGraderStationRealCommandPlan(input: AiGraderStationRealWorkflowInput): AiGraderStationCommandStep[] {
+  const exposureUs = input.exposureUs ?? FIXED_RIG_SELECTED_EXPOSURE_US;
+  const gain = input.gain ?? FIXED_RIG_SELECTED_GAIN;
+  const previewArgs = [
+    "basler-fixed-rig-operator-preview",
+    "--output-dir",
+    input.outputDir,
+    "--exposure-us",
+    String(exposureUs),
+    "--gain",
+    String(gain),
+    "--operator-mode",
+    "--apply",
+    "--confirm",
+    BASLER_FIXED_RIG_OPERATOR_PREVIEW_CONFIRMATION,
+    ...commonFixedRigHardwareArgs(input),
+  ];
+  const frontArgs = [
+    "ai-grader-fixed-rig-v1-evidence-package",
+    "--output-dir",
+    input.outputDir,
+    "--evidence-side",
+    "front",
+    "--exposure-us",
+    String(exposureUs),
+    "--gain",
+    String(gain),
+    "--apply",
+    "--confirm",
+    AI_GRADER_FIXED_RIG_V1_EVIDENCE_PACKAGE_CONFIRMATION,
+    ...commonFixedRigHardwareArgs(input),
+    ...commonFixtureArgs(input),
+  ];
+  const backArgs = [
+    "ai-grader-fixed-rig-v1-evidence-package",
+    "--output-dir",
+    input.outputDir,
+    "--evidence-side",
+    "back",
+    "--exposure-us",
+    String(exposureUs),
+    "--gain",
+    String(gain),
+    "--operator-flip-confirmed",
+    "--apply",
+    "--confirm",
+    AI_GRADER_FIXED_RIG_V1_EVIDENCE_PACKAGE_CONFIRMATION,
+    ...commonFixedRigHardwareArgs(input),
+    ...commonFixtureArgs(input),
+  ];
+  if (input.duty !== undefined) {
+    frontArgs.push("--duty", String(input.duty));
+    backArgs.push("--duty", String(input.duty));
+  }
+  const safeOffArgs = [
+    "leimac-idmu-safe-off",
+    "--host",
+    input.leimacHost,
+    "--apply",
+    "--confirm",
+    LEIMAC_IDMU_SAFE_OFF_CONFIRMATION,
+  ];
+  pushOptionalArg(safeOffArgs, "--port", input.leimacPort);
+  pushOptionalArg(safeOffArgs, "--timeout-ms", input.leimacTimeoutMs);
+  pushOptionalArg(safeOffArgs, "--unit", input.leimacUnit);
+
+  return [
+    { id: "operator_preview", label: "Open Basler live preview, tune lighting/exposure, accept profile", command: "node", args: previewArgs, hardwareAccess: true, required: true },
+    { id: "capture_front", label: "Capture front fixed-rig evidence package", command: "node", args: frontArgs, hardwareAccess: true, required: true },
+    { id: "capture_back", label: "Capture back fixed-rig evidence package after operator flip confirmation", command: "node", args: backArgs, hardwareAccess: true, required: true },
+    { id: "unified_report", label: "Generate unified front/back provisional diagnostic report", command: "node", args: ["ai-grader-fixed-rig-v1-card-report", "--output-dir", input.outputDir, "--front-dir", "<frontPackageDir>", "--back-dir", "<backPackageDir>"], hardwareAccess: false, required: true },
+    { id: "safe_off", label: "Run Leimac safe-off cleanup", command: "node", args: safeOffArgs, hardwareAccess: true, required: true },
+  ];
+}
+
+function parseJsonPayload(stdoutText: string): any | undefined {
+  const trimmed = stdoutText.trim();
+  if (!trimmed) return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const firstBrace = trimmed.indexOf("{");
+    const lastBrace = trimmed.lastIndexOf("}");
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      try {
+        return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+}
+
+function extractPackageDir(payload: any): string | undefined {
+  return payload?.packageDir ?? payload?.manifest?.packageDir ?? payload?.report?.packageDir;
+}
+
+function extractUnifiedReportPath(payload: any): string | undefined {
+  return payload?.report?.reportPath ?? payload?.report?.reportHtmlPath ?? payload?.manifest?.reportPath;
+}
+
+export function createAiGraderStationCliRunner(cliPath = path.join(__dirname, "..", "cli.js")): AiGraderStationCommandRunner {
+  return {
+    run(step: AiGraderStationCommandStep) {
+      return new Promise<AiGraderStationCommandResult>((resolve) => {
+        const child = spawn(process.execPath, [cliPath, ...step.args], { stdio: ["inherit", "pipe", "pipe"] });
+        let stdoutText = "";
+        let stderrText = "";
+        child.stdout.on("data", (chunk) => {
+          const text = String(chunk);
+          stdoutText += text;
+          process.stdout.write(text);
+        });
+        child.stderr.on("data", (chunk) => {
+          const text = String(chunk);
+          stderrText += text;
+          process.stderr.write(text);
+        });
+        child.on("error", (error) => {
+          resolve({ stepId: step.id, ok: false, exitCode: 1, stdoutText, stderrText, error: error.message });
+        });
+        child.on("close", (code) => {
+          const payload = parseJsonPayload(stdoutText);
+          resolve({ stepId: step.id, ok: code === 0, exitCode: code ?? 1, stdoutText, stderrText, payload, error: code === 0 ? undefined : stderrText.trim() || `Step exited ${code}` });
+        });
+      });
+    },
+  };
+}
+
+function validateRealWorkflowInput(input: AiGraderStationRealWorkflowInput): void {
+  assertFixedRigOutputDirAllowed(input.outputDir);
+  if (!input.leimacHost) throw new Error("ai-grader-station-operator-workflow --apply requires --leimac-host <ip>.");
+  if (!input.markPresent) throw new Error("ai-grader-station-operator-workflow --apply requires --mark-present.");
+  if (!input.wiringConfirmed) throw new Error("ai-grader-station-operator-workflow --apply requires --wiring-confirmed.");
+  if (!input.leimacStatusGreen) throw new Error("ai-grader-station-operator-workflow --apply requires --leimac-status-green.");
+  if (!input.operatorConfirmedLightIdleOff) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-light-idle-off.");
+  if (!input.operatorConfirmedFixtureRulersVisible) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-fixture-rulers-visible.");
+  if (!input.operatorConfirmedPreviewAccepted) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-preview-accepted after the live preview is usable.");
+  if (!input.operatorFlipConfirmed) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-flip-confirmed before back-side capture.");
+  if (!input.operatorConfirmedFinalLightOff) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-final-light-off for the supervised station smoke record.");
+}
+
+export async function runAiGraderStationRealWorkflow(
+  input: AiGraderStationRealWorkflowInput,
+  runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner()
+): Promise<AiGraderStationRealWorkflowSummary> {
+  validateRealWorkflowInput(input);
+  const plan = buildAiGraderStationRealCommandPlan(input);
+  const stepResults: AiGraderStationCommandResult[] = [];
+  let frontPackageDir: string | undefined;
+  let backPackageDir: string | undefined;
+  let acceptedLightingProfile: FixedRigActiveLightingProfile | undefined;
+
+  for (const step of plan) {
+    let runnableStep = step;
+    if (step.id === "unified_report") {
+      if (!frontPackageDir || !backPackageDir) {
+        const blocked = { stepId: step.id, ok: false, exitCode: 1, error: "Missing front or back evidence package directory; unified report not generated." };
+        stepResults.push(blocked);
+        break;
+      }
+      runnableStep = {
+        ...step,
+        args: ["ai-grader-fixed-rig-v1-card-report", "--output-dir", input.outputDir, "--front-dir", frontPackageDir, "--back-dir", backPackageDir],
+      };
+    }
+    const result = await runner.run(runnableStep);
+    stepResults.push(result);
+    if (result.ok) {
+      if (step.id === "operator_preview") {
+        acceptedLightingProfile = result.payload?.acceptedLightingProfile ?? result.payload?.manifest?.acceptedLightingProfile;
+      }
+      if (step.id === "capture_front") frontPackageDir = extractPackageDir(result.payload);
+      if (step.id === "capture_back") backPackageDir = extractPackageDir(result.payload);
+      continue;
+    }
+    if (step.id !== "safe_off") {
+      const safeOff = plan.find((candidate) => candidate.id === "safe_off");
+      if (safeOff) stepResults.push(await runner.run(safeOff));
+    }
+    return {
+      mode: "hardware_supervised",
+      commandPlan: plan,
+      stepResults,
+      acceptedLightingProfile,
+      frontPackageDir,
+      backPackageDir,
+      safeOffResult: stepResults.find((candidate) => candidate.stepId === "safe_off"),
+      finalPhysicalRingLightOffConfirmed: input.operatorConfirmedFinalLightOff,
+      status: "blocked",
+      blocker: result.error ?? `${step.label} failed.`,
+    };
+  }
+
+  const reportResult = stepResults.find((candidate) => candidate.stepId === "unified_report");
+  const reportPayload = reportResult?.payload;
+  const safeOffResult = stepResults.find((candidate) => candidate.stepId === "safe_off");
+  const ok = stepResults.every((result) => result.ok);
+  return {
+    mode: "hardware_supervised",
+    commandPlan: plan,
+    stepResults,
+    previewPackageDir: extractPackageDir(stepResults.find((candidate) => candidate.stepId === "operator_preview")?.payload),
+    frontPackageDir,
+    backPackageDir,
+    unifiedReportDir: reportPayload?.report?.packageDir,
+    unifiedReportPath: extractUnifiedReportPath(reportPayload),
+    acceptedLightingProfile,
+    safeOffResult,
+    finalPhysicalRingLightOffConfirmed: input.operatorConfirmedFinalLightOff,
+    status: ok ? "completed" : "blocked",
+    blocker: ok ? undefined : stepResults.find((result) => !result.ok)?.error,
+  };
 }
 
 export function renderAiGraderStationWorkflowReport(manifest: AiGraderStationWorkflowManifest): string {
@@ -558,6 +950,8 @@ export function renderAiGraderStationWorkflowReport(manifest: AiGraderStationWor
   </section>
   <h2>Operator Workflow</h2>
   <table><thead><tr><th>State</th><th>Status</th><th>Operator action</th><th>Button</th><th>Hardware</th></tr></thead><tbody>${stateRows(manifest.states)}</tbody></table>
+  <h2>Real Station Run</h2>
+  ${realWorkflowRows(manifest.realWorkflow)}
   <h2>Lighting / Exposure Tune</h2>
   <table><tbody>
     <tr><th>Status</th><td>${escapeHtml(manifest.tuneRecommendation.status)}</td></tr>
@@ -575,7 +969,7 @@ export function renderAiGraderStationWorkflowReport(manifest: AiGraderStationWor
     <tr><th>Certificate generated</th><td>${escapeHtml(manifest.integrationContract.certificateGenerated)}</td></tr>
   </tbody></table>
   <h2>Guardrails</h2>
-  <p>No hardware, DB, migration, deploy, persistent device save, high-duty lighting, final grade, certificate, or certified claim was performed by this software-only station report.</p>
+  <p>${manifest.safety.hardwareAccessed ? "Hardware was accessed only through the supervised station command plan above; safe-off is recorded in the step results." : "No hardware was accessed by this software-only station report."} No DB, migration, deploy, persistent device save, high-duty lighting, final grade, certificate, or certified claim was performed.</p>
 </main></body></html>
 `;
 }
@@ -597,6 +991,7 @@ export async function writeAiGraderStationWorkflowArtifacts(input: {
   repeatabilityPass?: boolean;
   frontPackageDir?: string;
   backPackageDir?: string;
+  realWorkflow?: AiGraderStationRealWorkflowSummary;
 }): Promise<AiGraderStationWorkflowManifest> {
   assertFixedRigOutputDirAllowed(input.outputDir);
   const { packageId, packageDir } = await createFixedRigPackageDir(input.outputDir, "ai-grader-station-operator-workflow");
@@ -626,8 +1021,9 @@ export async function writeAiGraderStationWorkflowArtifacts(input: {
     mmPerPixelY: input.mmPerPixelY,
     framingOverlayPass: input.framingOverlayPass,
     repeatabilityPass: input.repeatabilityPass,
-    frontPackageDir: input.frontPackageDir,
-    backPackageDir: input.backPackageDir,
+    frontPackageDir: input.realWorkflow?.frontPackageDir ?? input.frontPackageDir,
+    backPackageDir: input.realWorkflow?.backPackageDir ?? input.backPackageDir,
+    realWorkflow: input.realWorkflow,
   });
   await mkdir(packageDir, { recursive: true });
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");

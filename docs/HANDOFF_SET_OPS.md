@@ -1,5 +1,24 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #41 real station orchestration)
+- Branch: `feature/ai-grader-station-operator-ui`.
+- PR #41 was updated from mock-only station scaffolding to a supervised hardware-capable local station orchestrator.
+- `ai-grader-station-operator-workflow --apply` now runs the existing fixed-rig command pipeline instead of rejecting hardware mode:
+  - launches `basler-fixed-rig-operator-preview` for the visible Windows pylon live preview/focus/framing/tuning window;
+  - captures the front side with `ai-grader-fixed-rig-v1-evidence-package`;
+  - captures the back side with the same evidence-package command after explicit `--operator-flip-confirmed`;
+  - generates a unified front/back provisional diagnostic report with `ai-grader-fixed-rig-v1-card-report`;
+  - runs `leimac-idmu-safe-off` cleanup.
+- The station command does not duplicate capture logic. It shells back into the existing PR #39/#40 guarded commands and records the command plan/results in the station manifest/report.
+- Hardware mode is gated by exact confirmation `RUN AI GRADER STATION OPERATOR WORKFLOW`, `--apply`, `--mark-present`, `--wiring-confirmed`, `--leimac-status-green`, `--operator-confirmed-light-idle-off`, `--operator-confirmed-fixture-rulers-visible`, `--operator-confirmed-preview-accepted`, `--operator-flip-confirmed`, and `--operator-confirmed-final-light-off`.
+- Mock mode remains for tests and writes the same station manifest/report/contract structure without touching hardware.
+- Mark replaced the physical rulers and improved fixed card positioning; the next supervised hardware run should start by using the Basler live preview window to align the better rulers/card fixture, then run the station workflow with the updated ruler coordinates/boundary override.
+- Focused validation so far:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `152` tests.
+- Hardware smoke status: pending. No Basler preview, Basler capture, Leimac command, image capture, or safe-off hardware command was run in this code pass.
+- Guardrails held so far: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no hardware commands or image captures, no captured image/vendor binary commit, and no final/certificate/certified claims.
+
 ## Current State
 - Last reviewed: `2026-04-25` (PR #5 merged to `main` with merge commit `7a57811947a7645f7831302b2fcd04d92332b66e`; Vercel production deploy `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/3h2pnZDq4Wdvnuuzqws1xKu3iDZv` completed successfully; production `_prisma_migrations` contains `20260424170000_live_rip_consent` with `finished_at=2026-04-25 07:06:49.66572+00`)
 - Branch: `feature/rip-it-live`

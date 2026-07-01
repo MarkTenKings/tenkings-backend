@@ -6,8 +6,10 @@ const assert = require("node:assert/strict");
 const {
   buildAiGraderLightingTuneRecommendation,
   buildAiGraderStationDiagnosticRulesV0,
+  buildAiGraderStationRealCommandPlan,
   buildAiGraderStationWorkflowManifest,
   renderAiGraderStationWorkflowReport,
+  runAiGraderStationRealWorkflow,
 } = require("../dist/drivers/aiGraderStationWorkflow");
 const { runCaptureHelperCli } = require("../dist/cli");
 
@@ -124,7 +126,111 @@ test("station report has premium provisional structure and no generated grade ar
   assert.equal(manifest.integrationContract.finalStatus, "not_computed");
 });
 
-test("station CLI writes software-only manifest/report and rejects hardware apply mode", async () => {
+function realWorkflowInput(overrides = {}) {
+  return {
+    outputDir: path.join(os.tmpdir(), "ai-grader-station-real"),
+    leimacHost: "169.254.191.156",
+    leimacPort: 1000,
+    exposureUs: 45000,
+    gain: 0,
+    markPresent: true,
+    wiringConfirmed: true,
+    leimacStatusGreen: true,
+    operatorConfirmedLightIdleOff: true,
+    operatorFlipConfirmed: true,
+    operatorConfirmedFixtureRulersVisible: true,
+    operatorConfirmedPreviewAccepted: true,
+    operatorConfirmedFinalLightOff: true,
+    referenceType: "fixed_metric_rulers",
+    horizontalSpanMm: 50.8,
+    horizontalStartPx: { x: 540, y: 205 },
+    horizontalEndPx: { x: 1620, y: 205 },
+    verticalSpanMm: 50.8,
+    verticalStartPx: { x: 2295, y: 145 },
+    verticalEndPx: { x: 2295, y: 1218 },
+    cardBoundaryRect: { x: 285, y: 349, width: 1878, height: 1350 },
+    ...overrides,
+  };
+}
+
+test("station real command plan orchestrates preview, front, back, unified report, and safe-off", () => {
+  const plan = buildAiGraderStationRealCommandPlan(realWorkflowInput());
+  assert.deepEqual(plan.map((step) => step.id), ["operator_preview", "capture_front", "capture_back", "unified_report", "safe_off"]);
+  assert.equal(plan.find((step) => step.id === "operator_preview").args[0], "basler-fixed-rig-operator-preview");
+  assert.equal(plan.find((step) => step.id === "capture_front").args.includes("--evidence-side"), true);
+  assert.equal(plan.find((step) => step.id === "capture_back").args.includes("--operator-flip-confirmed"), true);
+  assert.equal(plan.find((step) => step.id === "safe_off").args[0], "leimac-idmu-safe-off");
+  assert.equal(plan.every((step) => step.command === "node"), true);
+});
+
+test("station real workflow succeeds with a fake runner and preserves front/back/report paths", async () => {
+  const calls = [];
+  const runner = {
+    async run(step) {
+      calls.push(step);
+      if (step.id === "operator_preview") {
+        return {
+          stepId: step.id,
+          ok: true,
+          exitCode: 0,
+          payload: {
+            packageDir: "preview-package",
+            acceptedLightingProfile: {
+              selectedDutyPercent: 1.3,
+              actualLeimacPwmStep: 13,
+              selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+              profileSource: "operator_preview",
+            },
+          },
+        };
+      }
+      if (step.id === "capture_front") return { stepId: step.id, ok: true, exitCode: 0, payload: { packageDir: "front-package" } };
+      if (step.id === "capture_back") return { stepId: step.id, ok: true, exitCode: 0, payload: { packageDir: "back-package" } };
+      if (step.id === "unified_report") {
+        assert.equal(step.args.includes("front-package"), true);
+        assert.equal(step.args.includes("back-package"), true);
+        return { stepId: step.id, ok: true, exitCode: 0, payload: { report: { packageDir: "unified-report", reportPath: "unified-report/provisional-diagnostic-report.html" } } };
+      }
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+    },
+  };
+  const result = await runAiGraderStationRealWorkflow(realWorkflowInput(), runner);
+  assert.equal(result.status, "completed");
+  assert.equal(result.frontPackageDir, "front-package");
+  assert.equal(result.backPackageDir, "back-package");
+  assert.equal(result.unifiedReportPath, "unified-report/provisional-diagnostic-report.html");
+  assert.equal(result.acceptedLightingProfile.selectedDutyPercent, 1.3);
+  assert.equal(calls.map((step) => step.id).join(","), "operator_preview,capture_front,capture_back,unified_report,safe_off");
+});
+
+test("station real workflow fails closed and safe-offs after a capture failure", async () => {
+  const calls = [];
+  const runner = {
+    async run(step) {
+      calls.push(step.id);
+      if (step.id === "capture_front") return { stepId: step.id, ok: false, exitCode: 1, error: "front capture failed" };
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { packageDir: `${step.id}-package` } };
+    },
+  };
+  const result = await runAiGraderStationRealWorkflow(realWorkflowInput(), runner);
+  assert.equal(result.status, "blocked");
+  assert.match(result.blocker, /front capture failed/);
+  assert.equal(calls.includes("safe_off"), true);
+  assert.equal(calls.includes("capture_back"), false);
+});
+
+test("station real workflow requires explicit supervised safety flags", async () => {
+  await assert.rejects(
+    () => runAiGraderStationRealWorkflow(realWorkflowInput({ markPresent: false }), { run: async () => ({ stepId: "safe_off", ok: true, exitCode: 0 }) }),
+    /--mark-present/
+  );
+  await assert.rejects(
+    () => runAiGraderStationRealWorkflow(realWorkflowInput({ operatorConfirmedPreviewAccepted: false }), { run: async () => ({ stepId: "safe_off", ok: true, exitCode: 0 }) }),
+    /--operator-confirmed-preview-accepted/
+  );
+});
+
+test("station CLI writes software-only manifest/report and gates hardware apply mode", async () => {
   const outputDir = path.join(os.tmpdir(), "ai-grader-station");
   const result = await runCli([
     "ai-grader-station-operator-workflow",
@@ -174,5 +280,5 @@ test("station CLI writes software-only manifest/report and rejects hardware appl
     "--apply",
   ]);
   assert.equal(apply.code, 1);
-  assert.match(apply.stderr.error, /hardware execution is intentionally pending/);
+  assert.match(apply.stderr.error, /requires --confirm/);
 });
