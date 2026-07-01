@@ -1,5 +1,13 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #44 merged)
+- PR #44 (`feature/ai-grader-light-direction-calibration`) was merged into `main`.
+- Merge commit: `f80461f59579ba94893247006e7a39925d3af65c`.
+- Mark accepted Light Direction Calibration / True Photometric Stereo Prep V0 as a software/report foundation. It remains preliminary diagnostic only.
+- Merged result: the unified fixed-rig report can now emit an approximate Leimac channel-direction profile, channel intensity balance metrics, normalized channel artifacts, preliminary normal proxy, gradient magnitude proxy, relief proxy, confidence map, and Vision Lab Normal Proxy / Relief Proxy / Confidence Map / Channel Balance / Light Direction Status views from existing 8-channel evidence.
+- Direction mapping remains `approximate_directional_model`; flat-field/reference normalization uses fallback unless a real reference is supplied; `isCertifiedPhotometricStereo=false`.
+- No hardware commands, migrations, DB operations, network changes, Arduino/stage/motor commands, Leimac reset/default, persistent Basler/Leimac saves, image captures, captured image/vendor binary commits, or manual deploy were run during the merge.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #44 light direction calibration start)
 - Branch: `feature/ai-grader-light-direction-calibration`.
 - Objective: light-direction calibration / true photometric stereo preparation for the fixed-rig V1 evidence stack, while staying preliminary diagnostic only.

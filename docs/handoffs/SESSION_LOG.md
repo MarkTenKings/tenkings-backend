@@ -22202,3 +22202,28 @@ By enabling Rip It Live, I confirm:
 - No captured image or vendor binary was committed.
 - All generated report artifacts stayed outside the repo under `C:\TenKings\capture-data`.
 - No final grade, certificate, QR label, certified grading claim, or certified photometric-stereo claim was added.
+
+## 2026-07-01 - AI Grader PR #44 merged
+
+### Summary
+- Merged PR #44 into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/44`.
+- Merge commit: `f80461f59579ba94893247006e7a39925d3af65c`.
+- PR preflight before merge:
+  - merge state `CLEAN`;
+  - all PR checks passing, including Install & Build, Vercel, Vercel Preview Comments, and Docker image builds;
+  - local git status clean.
+- PR #44 adds the light-direction calibration / true photometric-stereo preparation foundation only. It remains preliminary diagnostic evidence and keeps `isCertifiedPhotometricStereo=false`.
+
+### Guardrails
+- No hardware command was run.
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run manually.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or image capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, certified grading claim, or certified photometric-stereo claim was added.
