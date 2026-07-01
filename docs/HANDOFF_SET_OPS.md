@@ -10,7 +10,7 @@
   - generates a unified front/back provisional diagnostic report with `ai-grader-fixed-rig-v1-card-report`;
   - runs `leimac-idmu-safe-off` cleanup.
 - The station command does not duplicate capture logic. It shells back into the existing PR #39/#40 guarded commands and records the command plan/results in the station manifest/report.
-- Hardware mode is gated by exact confirmation `RUN AI GRADER STATION OPERATOR WORKFLOW`, `--apply`, `--mark-present`, `--wiring-confirmed`, `--leimac-status-green`, `--operator-confirmed-light-idle-off`, `--operator-confirmed-fixture-rulers-visible`, `--operator-confirmed-preview-accepted`, `--operator-flip-confirmed`, and `--operator-confirmed-final-light-off`.
+- Hardware mode is gated by exact confirmation `RUN AI GRADER STATION OPERATOR WORKFLOW`, `--apply`, `--mark-present`, `--wiring-confirmed`, `--leimac-status-green`, `--operator-confirmed-light-idle-off`, `--operator-confirmed-fixture-rulers-visible`, `--operator-flip-confirmed`, and `--operator-confirmed-final-light-off`. Preview acceptance happens in the visible Basler preview window; abort/close fails closed and safe-offs.
 - Mock mode remains for tests and writes the same station manifest/report/contract structure without touching hardware.
 - Mark replaced the physical rulers and improved fixed card positioning; the next supervised hardware run should start by using the Basler live preview window to align the better rulers/card fixture, then run the station workflow with the updated ruler coordinates/boundary override.
 - Focused validation so far:

@@ -232,7 +232,6 @@ export interface AiGraderStationRealWorkflowInput {
   operatorConfirmedLightIdleOff: boolean;
   operatorFlipConfirmed: boolean;
   operatorConfirmedFixtureRulersVisible: boolean;
-  operatorConfirmedPreviewAccepted: boolean;
   operatorConfirmedFinalLightOff: boolean;
   fixtureLabel?: string;
   fixtureId?: string;
@@ -831,7 +830,6 @@ function validateRealWorkflowInput(input: AiGraderStationRealWorkflowInput): voi
   if (!input.leimacStatusGreen) throw new Error("ai-grader-station-operator-workflow --apply requires --leimac-status-green.");
   if (!input.operatorConfirmedLightIdleOff) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-light-idle-off.");
   if (!input.operatorConfirmedFixtureRulersVisible) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-fixture-rulers-visible.");
-  if (!input.operatorConfirmedPreviewAccepted) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-preview-accepted after the live preview is usable.");
   if (!input.operatorFlipConfirmed) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-flip-confirmed before back-side capture.");
   if (!input.operatorConfirmedFinalLightOff) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-final-light-off for the supervised station smoke record.");
 }

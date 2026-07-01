@@ -392,7 +392,6 @@ type ParsedCommand =
       operatorConfirmedLightIdleOff: boolean;
       operatorFlipConfirmed: boolean;
       operatorConfirmedFixtureRulersVisible: boolean;
-      operatorConfirmedPreviewAccepted: boolean;
       operatorConfirmedFinalLightOff: boolean;
       operatorAcceptedWarnings: boolean;
       calibrationProfileId: string | undefined;
@@ -563,7 +562,6 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let operatorConfirmedLightNotContinuous = false;
   let operatorConfirmedLightIdleOff = false;
   let operatorConfirmedFixtureRulersVisible = false;
-  let operatorConfirmedPreviewAccepted = false;
   let operatorConfirmedFinalLightOff = false;
   let operatorReportedIdleOn = false;
   let operatorFlipConfirmed = false;
@@ -871,9 +869,6 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--operator-confirmed-fixture-rulers-visible":
         operatorConfirmedFixtureRulersVisible = true;
-        break;
-      case "--operator-confirmed-preview-accepted":
-        operatorConfirmedPreviewAccepted = true;
         break;
       case "--operator-confirmed-final-light-off":
         operatorConfirmedFinalLightOff = true;
@@ -1755,7 +1750,6 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         operatorConfirmedLightIdleOff,
         operatorFlipConfirmed,
         operatorConfirmedFixtureRulersVisible,
-        operatorConfirmedPreviewAccepted,
         operatorConfirmedFinalLightOff,
         operatorAcceptedWarnings,
         calibrationProfileId,
@@ -1836,7 +1830,7 @@ function helpPayload() {
       "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side back --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed",
       "ai-grader-fixed-rig-v1-card-report --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
       "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --mock-run --duty 1.2 --exposure-us 45000 --front-clipped-fraction 0.107932 --back-clipped-fraction 0.337672 --calibration-profile-id fixed-ruler-pr39 --framing-overlay-pass --repeatability-pass --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
-      "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --reference-type fixed_metric_rulers --horizontal-span-mm 50.8 --horizontal-start-px 540,205 --horizontal-end-px 1620,205 --vertical-span-mm 50.8 --vertical-start-px 2295,145 --vertical-end-px 2295,1218 --card-boundary-rect 285,349,1878,1350 --apply --confirm \"RUN AI GRADER STATION OPERATOR WORKFLOW\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-confirmed-fixture-rulers-visible --operator-confirmed-preview-accepted --operator-flip-confirmed --operator-confirmed-final-light-off",
+      "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --reference-type fixed_metric_rulers --horizontal-span-mm 50.8 --horizontal-start-px 540,205 --horizontal-end-px 1620,205 --vertical-span-mm 50.8 --vertical-start-px 2295,145 --vertical-end-px 2295,1218 --card-boundary-rect 285,349,1878,1350 --apply --confirm \"RUN AI GRADER STATION OPERATOR WORKFLOW\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-confirmed-fixture-rulers-visible --operator-flip-confirmed --operator-confirmed-final-light-off",
       "leimac-channel-characterization --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --duty 1 --exposure-us 45000 --apply --confirm \"RUN LEIMAC CHANNEL CHARACTERIZATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
@@ -3434,7 +3428,6 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           operatorConfirmedLightIdleOff: parsed.operatorConfirmedLightIdleOff,
           operatorFlipConfirmed: parsed.operatorFlipConfirmed,
           operatorConfirmedFixtureRulersVisible: parsed.operatorConfirmedFixtureRulersVisible,
-          operatorConfirmedPreviewAccepted: parsed.operatorConfirmedPreviewAccepted,
           operatorConfirmedFinalLightOff: parsed.operatorConfirmedFinalLightOff,
           fixtureLabel: parsed.fixtureLabel,
           fixtureId: parsed.fixtureId,

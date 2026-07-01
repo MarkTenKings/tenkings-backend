@@ -21782,7 +21782,7 @@ By enabling Rip It Live, I confirm:
   - `ai-grader-fixed-rig-v1-card-report` for the unified front/back provisional diagnostic report.
   - `leimac-idmu-safe-off` for cleanup.
 - Added command-plan/result recording to the station manifest/report so a real station session records preview, front package, back package, unified report, and safe-off results.
-- Hardware mode requires the exact confirmation `RUN AI GRADER STATION OPERATOR WORKFLOW` plus explicit Mark/wiring/status/light-off/fixture/preview/flip/final-light-off confirmations.
+- Hardware mode requires the exact confirmation `RUN AI GRADER STATION OPERATOR WORKFLOW` plus explicit Mark/wiring/status/light-off/fixture/flip/final-light-off confirmations. Preview acceptance happens in the visible Basler preview window; abort/close fails closed and safe-offs.
 - Mock mode remains for automated tests and does not touch hardware.
 - Mark replaced the physical rulers and improved the fixed card positioning. Hardware smoke remains pending; next supervised run should use the Basler live preview to align the new rulers/card fixture and then run the station workflow with the updated ruler coordinates/boundary override.
 

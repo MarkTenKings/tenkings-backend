@@ -139,7 +139,6 @@ function realWorkflowInput(overrides = {}) {
     operatorConfirmedLightIdleOff: true,
     operatorFlipConfirmed: true,
     operatorConfirmedFixtureRulersVisible: true,
-    operatorConfirmedPreviewAccepted: true,
     operatorConfirmedFinalLightOff: true,
     referenceType: "fixed_metric_rulers",
     horizontalSpanMm: 50.8,
@@ -225,8 +224,8 @@ test("station real workflow requires explicit supervised safety flags", async ()
     /--mark-present/
   );
   await assert.rejects(
-    () => runAiGraderStationRealWorkflow(realWorkflowInput({ operatorConfirmedPreviewAccepted: false }), { run: async () => ({ stepId: "safe_off", ok: true, exitCode: 0 }) }),
-    /--operator-confirmed-preview-accepted/
+    () => runAiGraderStationRealWorkflow(realWorkflowInput({ operatorConfirmedFixtureRulersVisible: false }), { run: async () => ({ stepId: "safe_off", ok: true, exitCode: 0 }) }),
+    /--operator-confirmed-fixture-rulers-visible/
   );
 });
 
