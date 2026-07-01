@@ -21886,3 +21886,33 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or hardware capture was run.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, or certified grading claim was added.
+
+## 2026-07-01 - AI Grader Station PR #41 staged hardware confirmations
+
+### Summary
+- Continued PR #41 on branch `feature/ai-grader-station-operator-ui`.
+- Updated `ai-grader-station-operator-workflow --apply` so supervised hardware mode does not require future operator actions to be pre-confirmed at command launch.
+- The station now records staged operator confirmations:
+  - physical Leimac ring light idle/off before preview,
+  - fixed card fixture and rulers visible before preview,
+  - card flipped to back after front capture and before back capture,
+  - final physical ring light off after safe-off cleanup.
+- Missing confirmations are prompted in a visible interactive terminal. Non-interactive runs fail closed unless the corresponding explicit flag is supplied after the action has actually happened.
+- Preview acceptance remains inside the visible Basler live preview window; abort/close still fails closed and safe-offs.
+- Focused validation passed:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` with `153` tests.
+- Hardware acceptance has not been run yet in this continuation; no Basler preview, Leimac command, safe-off, or image capture was run by this log entry.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or image capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, or certified grading claim was added.

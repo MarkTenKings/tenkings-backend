@@ -213,6 +213,24 @@ export interface AiGraderStationCommandRunner {
   run(step: AiGraderStationCommandStep): Promise<AiGraderStationCommandResult>;
 }
 
+export type AiGraderStationOperatorConfirmationId =
+  | "light_idle_off"
+  | "fixture_rulers_visible"
+  | "flip_complete"
+  | "final_light_off";
+
+export interface AiGraderStationOperatorConfirmationRecord {
+  id: AiGraderStationOperatorConfirmationId;
+  prompt: string;
+  confirmed: boolean;
+  confirmedAt?: string;
+  source: "flag" | "interactive_prompt";
+}
+
+export interface AiGraderStationOperatorPrompter {
+  confirm(id: AiGraderStationOperatorConfirmationId, prompt: string): Promise<boolean>;
+}
+
 export interface AiGraderStationRealWorkflowInput {
   outputDir: string;
   leimacHost: string;
@@ -229,10 +247,11 @@ export interface AiGraderStationRealWorkflowInput {
   markPresent: boolean;
   wiringConfirmed: boolean;
   leimacStatusGreen: boolean;
-  operatorConfirmedLightIdleOff: boolean;
-  operatorFlipConfirmed: boolean;
-  operatorConfirmedFixtureRulersVisible: boolean;
-  operatorConfirmedFinalLightOff: boolean;
+  operatorConfirmedLightIdleOff?: boolean;
+  operatorFlipConfirmed?: boolean;
+  operatorConfirmedFixtureRulersVisible?: boolean;
+  operatorConfirmedFinalLightOff?: boolean;
+  operatorPrompter?: AiGraderStationOperatorPrompter;
   fixtureLabel?: string;
   fixtureId?: string;
   referenceType?: string;
@@ -257,6 +276,7 @@ export interface AiGraderStationRealWorkflowSummary {
   acceptedLightingProfile?: FixedRigActiveLightingProfile;
   safeOffResult?: AiGraderStationCommandResult;
   finalPhysicalRingLightOffConfirmed: boolean;
+  operatorConfirmations: AiGraderStationOperatorConfirmationRecord[];
   status: "completed" | "blocked";
   blocker?: string;
 }
@@ -644,7 +664,11 @@ function realWorkflowRows(realWorkflow: AiGraderStationRealWorkflowSummary | und
                 : result.error ?? "";
       return `<tr><td>${escapeHtml(result.stepId)}</td><td>${escapeHtml(result.ok ? "pass" : "fail")}</td><td>${escapeHtml(result.exitCode)}</td><td>${escapeHtml(detail)}</td></tr>`;
     })
-    .join("")}</tbody></table><p>Final physical ring light off confirmed: ${escapeHtml(realWorkflow.finalPhysicalRingLightOffConfirmed)}.</p>`;
+    .join("")}</tbody></table><p>Final physical ring light off confirmed: ${escapeHtml(realWorkflow.finalPhysicalRingLightOffConfirmed)}.</p>
+  <h3>Operator Confirmations</h3>
+  <table><thead><tr><th>Confirmation</th><th>Source</th><th>Confirmed</th><th>Confirmed at</th></tr></thead><tbody>${realWorkflow.operatorConfirmations
+    .map((confirmation) => `<tr><td>${escapeHtml(confirmation.prompt)}</td><td>${escapeHtml(confirmation.source)}</td><td>${escapeHtml(confirmation.confirmed)}</td><td>${escapeHtml(confirmation.confirmedAt ?? "")}</td></tr>`)
+    .join("")}</tbody></table>`;
 }
 
 function pushOptionalArg(args: string[], name: string, value: string | number | undefined): void {
@@ -828,10 +852,28 @@ function validateRealWorkflowInput(input: AiGraderStationRealWorkflowInput): voi
   if (!input.markPresent) throw new Error("ai-grader-station-operator-workflow --apply requires --mark-present.");
   if (!input.wiringConfirmed) throw new Error("ai-grader-station-operator-workflow --apply requires --wiring-confirmed.");
   if (!input.leimacStatusGreen) throw new Error("ai-grader-station-operator-workflow --apply requires --leimac-status-green.");
-  if (!input.operatorConfirmedLightIdleOff) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-light-idle-off.");
-  if (!input.operatorConfirmedFixtureRulersVisible) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-fixture-rulers-visible.");
-  if (!input.operatorFlipConfirmed) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-flip-confirmed before back-side capture.");
-  if (!input.operatorConfirmedFinalLightOff) throw new Error("ai-grader-station-operator-workflow --apply requires --operator-confirmed-final-light-off for the supervised station smoke record.");
+}
+
+async function confirmOperatorAction(
+  input: AiGraderStationRealWorkflowInput,
+  records: AiGraderStationOperatorConfirmationRecord[],
+  id: AiGraderStationOperatorConfirmationId,
+  flagValue: boolean | undefined,
+  prompt: string
+): Promise<boolean> {
+  if (flagValue) {
+    records.push({ id, prompt, confirmed: true, confirmedAt: new Date().toISOString(), source: "flag" });
+    return true;
+  }
+  if (!input.operatorPrompter) {
+    throw new Error(`ai-grader-station-operator-workflow requires ${prompt}; rerun in an interactive terminal or pass the explicit confirmation flag only after the operator action is complete.`);
+  }
+  const confirmed = await input.operatorPrompter.confirm(id, prompt);
+  records.push({ id, prompt, confirmed, confirmedAt: confirmed ? new Date().toISOString() : undefined, source: "interactive_prompt" });
+  if (!confirmed) {
+    throw new Error(`Operator did not confirm: ${prompt}`);
+  }
+  return true;
 }
 
 export async function runAiGraderStationRealWorkflow(
@@ -839,6 +881,9 @@ export async function runAiGraderStationRealWorkflow(
   runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner()
 ): Promise<AiGraderStationRealWorkflowSummary> {
   validateRealWorkflowInput(input);
+  const operatorConfirmations: AiGraderStationOperatorConfirmationRecord[] = [];
+  await confirmOperatorAction(input, operatorConfirmations, "light_idle_off", input.operatorConfirmedLightIdleOff, "Confirm the physical Leimac ring light is idle/off before opening preview.");
+  await confirmOperatorAction(input, operatorConfirmations, "fixture_rulers_visible", input.operatorConfirmedFixtureRulersVisible, "Confirm the fixed card fixture and metric rulers are visible in the Basler view.");
   const plan = buildAiGraderStationRealCommandPlan(input);
   const stepResults: AiGraderStationCommandResult[] = [];
   let frontPackageDir: string | undefined;
@@ -847,6 +892,29 @@ export async function runAiGraderStationRealWorkflow(
 
   for (const step of plan) {
     let runnableStep = step;
+    if (step.id === "capture_back") {
+      try {
+        await confirmOperatorAction(input, operatorConfirmations, "flip_complete", input.operatorFlipConfirmed, "Confirm the card has been flipped to the back side and is seated in the fixed fixture.");
+      } catch (error) {
+        const blocked = { stepId: step.id, ok: false, exitCode: 1, error: error instanceof Error ? error.message : "Operator flip confirmation failed." };
+        stepResults.push(blocked);
+        const safeOff = plan.find((candidate) => candidate.id === "safe_off");
+        if (safeOff) stepResults.push(await runner.run(safeOff));
+        return {
+          mode: "hardware_supervised",
+          commandPlan: plan,
+          stepResults,
+          acceptedLightingProfile,
+          frontPackageDir,
+          backPackageDir,
+          safeOffResult: stepResults.find((candidate) => candidate.stepId === "safe_off"),
+          finalPhysicalRingLightOffConfirmed: false,
+          operatorConfirmations,
+          status: "blocked",
+          blocker: blocked.error,
+        };
+      }
+    }
     if (step.id === "unified_report") {
       if (!frontPackageDir || !backPackageDir) {
         const blocked = { stepId: step.id, ok: false, exitCode: 1, error: "Missing front or back evidence package directory; unified report not generated." };
@@ -872,6 +940,13 @@ export async function runAiGraderStationRealWorkflow(
       const safeOff = plan.find((candidate) => candidate.id === "safe_off");
       if (safeOff) stepResults.push(await runner.run(safeOff));
     }
+    if (step.id !== "safe_off") {
+      try {
+        await confirmOperatorAction(input, operatorConfirmations, "final_light_off", input.operatorConfirmedFinalLightOff, "Confirm the physical Leimac ring light is off after safe-off cleanup.");
+      } catch {
+        // The blocking step error remains the primary blocker; the missing final light confirmation is recorded by its absence.
+      }
+    }
     return {
       mode: "hardware_supervised",
       commandPlan: plan,
@@ -880,7 +955,8 @@ export async function runAiGraderStationRealWorkflow(
       frontPackageDir,
       backPackageDir,
       safeOffResult: stepResults.find((candidate) => candidate.stepId === "safe_off"),
-      finalPhysicalRingLightOffConfirmed: input.operatorConfirmedFinalLightOff,
+      finalPhysicalRingLightOffConfirmed: operatorConfirmations.some((confirmation) => confirmation.id === "final_light_off" && confirmation.confirmed),
+      operatorConfirmations,
       status: "blocked",
       blocker: result.error ?? `${step.label} failed.`,
     };
@@ -890,6 +966,17 @@ export async function runAiGraderStationRealWorkflow(
   const reportPayload = reportResult?.payload;
   const safeOffResult = stepResults.find((candidate) => candidate.stepId === "safe_off");
   const ok = stepResults.every((result) => result.ok);
+  let finalPhysicalRingLightOffConfirmed = false;
+  if (safeOffResult?.ok) {
+    try {
+      await confirmOperatorAction(input, operatorConfirmations, "final_light_off", input.operatorConfirmedFinalLightOff, "Confirm the physical Leimac ring light is off after safe-off cleanup.");
+      finalPhysicalRingLightOffConfirmed = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Final physical light-off confirmation failed.";
+      stepResults.push({ stepId: "safe_off", ok: false, exitCode: 1, error: message });
+    }
+  }
+  const completed = ok && finalPhysicalRingLightOffConfirmed;
   return {
     mode: "hardware_supervised",
     commandPlan: plan,
@@ -901,9 +988,10 @@ export async function runAiGraderStationRealWorkflow(
     unifiedReportPath: extractUnifiedReportPath(reportPayload),
     acceptedLightingProfile,
     safeOffResult,
-    finalPhysicalRingLightOffConfirmed: input.operatorConfirmedFinalLightOff,
-    status: ok ? "completed" : "blocked",
-    blocker: ok ? undefined : stepResults.find((result) => !result.ok)?.error,
+    finalPhysicalRingLightOffConfirmed,
+    operatorConfirmations,
+    status: completed ? "completed" : "blocked",
+    blocker: completed ? undefined : stepResults.find((result) => !result.ok)?.error ?? "Final physical light-off confirmation is required.",
   };
 }
 

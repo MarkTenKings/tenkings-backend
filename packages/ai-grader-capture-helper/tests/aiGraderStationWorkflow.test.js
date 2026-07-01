@@ -225,8 +225,41 @@ test("station real workflow requires explicit supervised safety flags", async ()
   );
   await assert.rejects(
     () => runAiGraderStationRealWorkflow(realWorkflowInput({ operatorConfirmedFixtureRulersVisible: false }), { run: async () => ({ stepId: "safe_off", ok: true, exitCode: 0 }) }),
-    /--operator-confirmed-fixture-rulers-visible/
+    /requires Confirm the fixed card fixture/
   );
+});
+
+test("station real workflow supports staged operator confirmations instead of fake startup flags", async () => {
+  const prompts = [];
+  const runner = {
+    async run(step) {
+      if (step.id === "operator_preview") return { stepId: step.id, ok: true, exitCode: 0, payload: { packageDir: "preview-package" } };
+      if (step.id === "capture_front") return { stepId: step.id, ok: true, exitCode: 0, payload: { packageDir: "front-package" } };
+      if (step.id === "capture_back") return { stepId: step.id, ok: true, exitCode: 0, payload: { packageDir: "back-package" } };
+      if (step.id === "unified_report") return { stepId: step.id, ok: true, exitCode: 0, payload: { report: { packageDir: "report-package", reportPath: "report-package/provisional-diagnostic-report.html" } } };
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+    },
+  };
+  const result = await runAiGraderStationRealWorkflow(
+    realWorkflowInput({
+      operatorConfirmedLightIdleOff: false,
+      operatorConfirmedFixtureRulersVisible: false,
+      operatorFlipConfirmed: false,
+      operatorConfirmedFinalLightOff: false,
+      operatorPrompter: {
+        async confirm(id) {
+          prompts.push(id);
+          return true;
+        },
+      },
+    }),
+    runner
+  );
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(prompts, ["light_idle_off", "fixture_rulers_visible", "flip_complete", "final_light_off"]);
+  assert.equal(result.operatorConfirmations.every((confirmation) => confirmation.source === "interactive_prompt"), true);
+  assert.equal(result.finalPhysicalRingLightOffConfirmed, true);
 });
 
 test("station CLI writes software-only manifest/report and gates hardware apply mode", async () => {
