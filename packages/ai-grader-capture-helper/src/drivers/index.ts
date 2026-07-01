@@ -72,6 +72,20 @@ export {
   buildLightDirectionCalibrationArtifacts,
   mergeSurfaceAnalysisWithLightDirection,
 } from "./fixedRigLightDirectionCalibration";
+export {
+  PROVISIONAL_GRADE_RULES_VERSION,
+  PROVISIONAL_GRADE_STORY_ENGINE_VERSION,
+  buildFixedRigProvisionalGradeStory,
+} from "./fixedRigProvisionalGradeStory";
+export type {
+  BuildFixedRigProvisionalGradeStoryInput,
+  FixedRigGradeImpactCandidate,
+  FixedRigGradeStoryClaim,
+  FixedRigProvisionalElementScore,
+  FixedRigProvisionalGateResult,
+  FixedRigProvisionalGradeStoryResult,
+  FixedRigWhyNot10Reason,
+} from "./fixedRigProvisionalGradeStory";
 export type {
   BuildLightDirectionCalibrationInput,
   ChannelPhysicalDirectionStatus,

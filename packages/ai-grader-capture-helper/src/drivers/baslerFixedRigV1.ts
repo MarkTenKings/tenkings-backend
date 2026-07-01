@@ -18,6 +18,12 @@ import {
   mergeSurfaceAnalysisWithLightDirection,
 } from "./fixedRigLightDirectionCalibration";
 import {
+  PROVISIONAL_GRADE_RULES_VERSION,
+  PROVISIONAL_GRADE_STORY_ENGINE_VERSION,
+  buildFixedRigProvisionalGradeStory,
+  type FixedRigProvisionalGradeStoryResult,
+} from "./fixedRigProvisionalGradeStory";
+import {
   LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
   buildLeimacIdmuSafeOffFrames,
   composeLeimacIdmuChannelWriteFrame,
@@ -3512,6 +3518,7 @@ function buildVisionLabData(input: {
   backStats: FixedRigQualityMetrics | undefined;
   activeProfile: FixedRigEvidencePackageJson | undefined;
   fixtureProfile: FixedRigEvidencePackageJson | undefined;
+  provisionalGradeStory?: FixedRigProvisionalGradeStoryResult;
   warnings: string[];
 }): FixedRigEvidencePackageJson {
   const frontClipping = sideClippingWarning("Front", input.frontStats);
@@ -3537,6 +3544,8 @@ function buildVisionLabData(input: {
     normalReliefProxyNote:
       "Preliminary normal/relief proxy - approximate directional model. Physical light vectors are not certified, so this is not certified photometric stereo.",
     channelMappingStatus: "physical_direction_calibration_pending",
+    provisionalGradeStory: input.provisionalGradeStory,
+    gradeImpactCandidates: input.provisionalGradeStory?.gradeImpactCandidates ?? [],
     activeLightingProfile: input.activeProfile,
     measurementOverlay: {
       status: measurementAvailable ? "available" : "unavailable",
@@ -3883,6 +3892,109 @@ function diagnosticTable(title: string, diagnostic: FixedRigEvidencePackageJson 
   </section>`;
 }
 
+function elementScoreText(element: FixedRigProvisionalGradeStoryResult["elementScores"][keyof FixedRigProvisionalGradeStoryResult["elementScores"]] | undefined): string {
+  if (!element) return "insufficient_evidence";
+  if (element.status !== "provisional_diagnostic") return "insufficient_evidence";
+  return `${element.score ?? "not_scored"} / 10 (${element.confidenceBand} confidence)`;
+}
+
+function gradeValueText(story: FixedRigProvisionalGradeStoryResult | undefined): string {
+  if (!story || story.status !== "provisional_diagnostic_grade" || story.provisionalOverallGrade === undefined) return "Insufficient Evidence";
+  return `${story.provisionalOverallGrade} / 10`;
+}
+
+function gradeStorySummarySection(story: FixedRigProvisionalGradeStoryResult | undefined): string {
+  if (!story) return "";
+  return `<section>
+    <h2>Grade Story Engine</h2>
+    <div class="summary-grid">
+      <p class="panel"><strong>Story Mode:</strong><br>${escapeHtml(story.story.summary)}</p>
+      <p class="good"><strong>Strongest positive finding:</strong><br>${escapeHtml(story.story.strongestPositiveFinding)}</p>
+      <p class="warning"><strong>Strongest warning:</strong><br>${escapeHtml(story.story.strongestWarning)}</p>
+      <p class="panel"><strong>Confidence:</strong><br>${escapeHtml(`${story.confidence.band} (${story.confidence.score}) - ${story.confidence.explanation}`)}</p>
+    </div>
+    <h3>Element Scores</h3>
+    <div class="metric-grid">
+      ${premiumMetricCard("Centering", elementScoreText(story.elementScores.centering), story.elementScores.centering.explanation)}
+      ${premiumMetricCard("Corners", elementScoreText(story.elementScores.corners), story.elementScores.corners.weakestFinding ?? story.elementScores.corners.explanation)}
+      ${premiumMetricCard("Edges", elementScoreText(story.elementScores.edges), story.elementScores.edges.weakestFinding ?? story.elementScores.edges.explanation)}
+      ${premiumMetricCard("Surface", elementScoreText(story.elementScores.surface), story.elementScores.surface.weakestFinding ?? story.elementScores.surface.explanation)}
+    </div>
+    <p class="warning">This is a provisional_diagnostic_grade only. certificationStatus=${escapeHtml(story.certificationStatus)}; finalGradeComputed=${escapeHtml(story.finalGradeComputed)}; certifiedClaim=${escapeHtml(story.certifiedClaim)}; labelGenerated=${escapeHtml(story.labelGenerated)}; qrGenerated=${escapeHtml(story.qrGenerated)}; certificateGenerated=${escapeHtml(story.certificateGenerated)}.</p>
+  </section>`;
+}
+
+function whyNot10Section(story: FixedRigProvisionalGradeStoryResult | undefined): string {
+  if (!story) return "";
+  const reasons = story.whyNot10.length
+    ? story.whyNot10
+    : [
+        {
+          id: "why-not-10-none",
+          category: "confidence",
+          severity: "low",
+          reason: "No V0 grade-impact reason was emitted. The result is still provisional and not certified.",
+          evidenceRefs: ["analysis.provisionalGradeStory"],
+        },
+      ];
+  return `<section>
+    <h2>Why Not 10?</h2>
+    <div class="summary-grid">
+      ${reasons
+        .map(
+          (reason) =>
+            `<article class="panel"><h3>${escapeHtml(reason.category)} / ${escapeHtml(reason.severity)}</h3><p>${escapeHtml(reason.reason)}</p><small>Evidence: ${escapeHtml(reason.evidenceRefs.join(", "))}</small></article>`
+        )
+        .join("")}
+    </div>
+  </section>`;
+}
+
+function gradeImpactSection(story: FixedRigProvisionalGradeStoryResult | undefined): string {
+  if (!story) return "";
+  const candidates = story.gradeImpactCandidates;
+  return `<section>
+    <h2>Grade-Impact Candidates</h2>
+    ${
+      candidates.length
+        ? `<table><thead><tr><th>ID</th><th>Category</th><th>Side</th><th>Severity</th><th>Impact</th><th>Evidence</th><th>Explanation</th></tr></thead><tbody>${candidates
+            .map(
+              (candidate) =>
+                `<tr><td>${escapeHtml(candidate.id)}</td><td>${escapeHtml(candidate.category)}</td><td>${escapeHtml(candidate.side)}</td><td>${escapeHtml(candidate.severity)} / ${escapeHtml(candidate.confidenceBand)}</td><td>${escapeHtml(candidate.provisionalGradeImpact)}</td><td>${escapeHtml(candidate.evidenceRefs.join(", "))}${candidate.sourceChannels?.length ? `<br>Channels ${escapeHtml(candidate.sourceChannels.join(", "))}` : ""}</td><td>${escapeHtml(candidate.explanation)} ${escapeHtml(candidate.recommendedFollowUp ?? "")}</td></tr>`
+            )
+            .join("")}</tbody></table>`
+        : "<p>No grade-impact candidates were emitted by V0.</p>"
+    }
+  </section>`;
+}
+
+function gradeGateSection(story: FixedRigProvisionalGradeStoryResult | undefined): string {
+  if (!story) return "";
+  return `<section class="expert-only-section">
+    <h2>Provisional Grade Rules</h2>
+    <p class="warning">The formulas below are provisional_diagnostic only. They do not create a certified/final Ten Kings grade.</p>
+    <table><tbody>
+      <tr><th>Rules version</th><td>${escapeHtml(story.rulesVersion)}</td></tr>
+      <tr><th>Weights</th><td>${escapeHtml(JSON.stringify(story.formulas.weights))}</td></tr>
+      <tr><th>Clipping soft threshold</th><td>${escapeHtml(story.formulas.clippingSoftThreshold)}</td></tr>
+      <tr><th>Sharpness soft threshold</th><td>${escapeHtml(story.formulas.sharpnessSoftThreshold)}</td></tr>
+      <tr><th>Cap rules</th><td>${escapeHtml(story.formulas.capRules.join("; "))}</td></tr>
+    </tbody></table>
+    <h3>Gate Summary</h3>
+    <table><thead><tr><th>Gate</th><th>Status</th><th>Summary</th><th>Evidence</th></tr></thead><tbody>
+      ${story.gates.results
+        .map((result) => `<tr><td>${escapeHtml(result.gate)}</td><td>${escapeHtml(result.status)}</td><td>${escapeHtml(result.summary)}</td><td>${escapeHtml(result.evidenceRefs.join(", "))}</td></tr>`)
+        .join("")}
+    </tbody></table>
+    <h3>Story Claims</h3>
+    <table><thead><tr><th>Claim</th><th>Category</th><th>Evidence</th></tr></thead><tbody>
+      ${story.story.claims
+        .map((claim) => `<tr><td>${escapeHtml(claim.text)}</td><td>${escapeHtml(claim.category)}</td><td>${escapeHtml(claim.evidenceRefs.join(", "))}</td></tr>`)
+        .join("")}
+    </tbody></table>
+  </section>`;
+}
+
 function renderUnifiedFixedRigCardReport(input: {
   packageId: string;
   generatedAt: string;
@@ -3894,6 +4006,7 @@ function renderUnifiedFixedRigCardReport(input: {
   backAnalysis: FixedRigEvidencePackageJson;
   warnings: string[];
   visionLabData?: FixedRigEvidencePackageJson;
+  provisionalGradeStory?: FixedRigProvisionalGradeStoryResult;
 }): string {
   const front = evidenceSideFromPackage(input.frontManifest, "front");
   const back = evidenceSideFromPackage(input.backManifest, "back");
@@ -3916,6 +4029,22 @@ function renderUnifiedFixedRigCardReport(input: {
     fixtureProfile?.framingGate?.status === "pass" && (fixtureProfile?.pixelToMmConsistency?.status === "pass" || fixtureProfile?.pixelToMmConsistency?.status === undefined)
       ? "Fixed-ruler scale, framing, and overlay gates passed for this provisional diagnostic run."
       : "Front/back evidence packages were generated with portrait displays, overlays, ROI crops, and 8-channel evidence.";
+  const provisionalGradeStory =
+    input.provisionalGradeStory ??
+    buildFixedRigProvisionalGradeStory({
+      packageId: input.packageId,
+      generatedAt: input.generatedAt,
+      frontDiagnostic,
+      backDiagnostic,
+      frontSurface,
+      backSurface,
+      frontStats,
+      backStats,
+      fixtureProfile,
+      activeLightingProfile: activeProfile,
+      warnings: [...clippingWarnings, ...input.warnings],
+      allowAcceptedWarnings: true,
+    });
   const visionLabData =
     input.visionLabData ??
     buildVisionLabData({
@@ -3931,6 +4060,7 @@ function renderUnifiedFixedRigCardReport(input: {
       backStats,
       activeProfile,
       fixtureProfile,
+      provisionalGradeStory,
       warnings: [...clippingWarnings, ...input.warnings],
     });
   return `<!doctype html>
@@ -4020,6 +4150,8 @@ function renderUnifiedFixedRigCardReport(input: {
     .replay-card.severity-high { border-color:#d95d4f; }
     .expert-only { display:none; }
     .expert-mode .expert-only { display:block; grid-column:1 / -1; }
+    .grade-subline { margin:6px 0 0; color:var(--muted); font-weight:700; }
+    .formula-note { color:var(--muted); font-size:13px; }
     @media (max-width:900px) { .hero,.side-grid,.image-pair { grid-template-columns:1fr; } .grade-box,.card-stage { grid-column:auto; } }
     @media (max-width:900px) { .lab-header,.lab-shell,.lab-panel-grid { grid-template-columns:1fr; display:grid; } .lab-sidebar { border-right:0; border-bottom:1px solid #2f332f; } }
   </style>
@@ -4037,20 +4169,21 @@ function renderUnifiedFixedRigCardReport(input: {
 
   <section class="hero">
     <div class="grade-box">
-      <span>Large central grade area</span>
-      <strong>Diagnostic Grade Pending</strong>
-      <p>No final grade is computed in PR #40.</p>
+      <span>Provisional Diagnostic Grade</span>
+      <strong>${escapeHtml(gradeValueText(provisionalGradeStory))}</strong>
+      <p class="grade-subline">Confidence ${escapeHtml(provisionalGradeStory.confidence.band)} (${escapeHtml(provisionalGradeStory.confidence.score)})</p>
+      <p>Not Certified - No Final Grade. finalGradeComputed=false; certifiedClaim=false.</p>
     </div>
     <div class="callout-col">
-      ${callout("Centering", `Front ${diagnosticStatusText(frontDiagnostic, "centering")} / Back ${diagnosticStatusText(backDiagnostic, "centering")}`, "center")}
-      ${callout("Corners", `Front ${cornerStatusText(frontDiagnostic)} / Back ${cornerStatusText(backDiagnostic)}`, "corners")}
+      ${callout("Centering", elementScoreText(provisionalGradeStory.elementScores.centering), "center")}
+      ${callout("Corners", elementScoreText(provisionalGradeStory.elementScores.corners), "corners")}
     </div>
     <div class="card-stage">
       ${reportImage(front?.displayImage?.outputFilePath, "front portrait card image")}
     </div>
     <div class="callout-col">
-      ${callout("Edges", `Front ${edgeStatusText(frontDiagnostic)} / Back ${edgeStatusText(backDiagnostic)}`, "edges")}
-      ${callout("Surface", `Front ${surfaceCandidateText(frontSurface)} / Back ${surfaceCandidateText(backSurface)}`, "surface")}
+      ${callout("Edges", elementScoreText(provisionalGradeStory.elementScores.edges), "edges")}
+      ${callout("Surface", elementScoreText(provisionalGradeStory.elementScores.surface), "surface")}
     </div>
   </section>
 
@@ -4063,6 +4196,10 @@ function renderUnifiedFixedRigCardReport(input: {
       <p class="panel"><strong>Why this is not final:</strong><br>Evidence class is ${escapeHtml(FIXED_RIG_V1_EVIDENCE_CLASS)}, isCalibrated=false, and all scores are provisional_diagnostic only.</p>
     </div>
   </section>
+
+  ${gradeStorySummarySection(provisionalGradeStory)}
+  ${whyNot10Section(provisionalGradeStory)}
+  ${gradeImpactSection(provisionalGradeStory)}
 
   ${visionLabSection(visionLabData)}
 
@@ -4156,6 +4293,7 @@ function renderUnifiedFixedRigCardReport(input: {
     ${qualityTable(frontStats)}
     <h3>Back Quality</h3>
     ${qualityTable(backStats)}
+    ${gradeGateSection(provisionalGradeStory)}
     <h3>Raw Source Folders</h3>
     <table><tbody>
       <tr><th>Front package</th><td>${escapeHtml(input.frontPackageDir)}</td></tr>
@@ -4324,6 +4462,20 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
       ...(enhancedBackSurfaceWithLight?.warnings ?? []),
     ])
   );
+  const provisionalGradeStory = buildFixedRigProvisionalGradeStory({
+    packageId,
+    generatedAt,
+    frontDiagnostic,
+    backDiagnostic,
+    frontSurface: enhancedFrontSurfaceWithLight,
+    backSurface: enhancedBackSurfaceWithLight,
+    frontStats,
+    backStats,
+    fixtureProfile: fixtureCalibrationProfile,
+    activeLightingProfile,
+    warnings,
+    allowAcceptedWarnings: true,
+  });
   const visionLabData = buildVisionLabData({
     packageId,
     generatedAt,
@@ -4337,6 +4489,7 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     backStats,
     activeProfile: activeLightingProfile,
     fixtureProfile: fixtureCalibrationProfile,
+    provisionalGradeStory,
     warnings,
   });
   const reportHtml = renderUnifiedFixedRigCardReport({
@@ -4350,6 +4503,7 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     backAnalysis: enhancedBackAnalysis,
     warnings,
     visionLabData,
+    provisionalGradeStory,
   });
   const result: FixedRigUnifiedDiagnosticCardReportResult = {
     packageId,
@@ -4400,12 +4554,32 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
       normalProxy: Boolean(enhancedFrontSurfaceWithLight?.normalProxy || enhancedBackSurfaceWithLight?.normalProxy),
       reliefProxy: Boolean(enhancedFrontSurfaceWithLight?.reliefProxy || enhancedBackSurfaceWithLight?.reliefProxy),
       confidenceMap: Boolean(enhancedFrontSurfaceWithLight?.confidenceMap || enhancedBackSurfaceWithLight?.confidenceMap),
+      provisionalDiagnosticGrade: provisionalGradeStory.status === "provisional_diagnostic_grade",
+      gradeStoryEngine: true,
+      whyNot10: true,
+      gradeImpactCandidates: true,
+      collectorExpertGradeModes: true,
       lightSweepWheel: true,
       measurementOverlay: true,
       confidenceLens: true,
       evidenceReplay: true,
       finalGrade: false,
+      labelQrOrCertificate: false,
       certificateOrCertifiedClaim: false,
+    },
+    provisionalGradeStory: {
+      schemaVersion: PROVISIONAL_GRADE_STORY_ENGINE_VERSION,
+      rulesVersion: PROVISIONAL_GRADE_RULES_VERSION,
+      status: provisionalGradeStory.status,
+      provisionalGradeComputed: provisionalGradeStory.provisionalGradeComputed,
+      provisionalOverallGrade: provisionalGradeStory.provisionalOverallGrade,
+      confidence: provisionalGradeStory.confidence,
+      gateSummary: provisionalGradeStory.gates,
+      finalGradeComputed: false,
+      certifiedClaim: false,
+      labelGenerated: false,
+      qrGenerated: false,
+      certificateGenerated: false,
     },
     visionLab: {
       schemaVersion: visionLabData.schemaVersion,
@@ -4424,6 +4598,9 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
         channelBalanceMetrics: true,
         lightDirectionProfileMetadata: true,
         sourceChannelAttribution: true,
+        provisionalGradeStory: true,
+        gradeImpactCandidates: true,
+        whyNot10Reasons: true,
         anomalyCandidateList: true,
         measurementOverlayMetadata: true,
         calibrationProfileMetadata: true,
@@ -4451,10 +4628,14 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
       front: frontLightDirection,
       back: backLightDirection,
     },
+    provisionalGradeStory,
     visionLab: visionLabData,
     combinedWarnings: warnings,
     finalGradeComputed: false,
     certifiedClaim: false,
+    labelGenerated: false,
+    qrGenerated: false,
+    certificateGenerated: false,
   });
   await writeFile(reportPath, reportHtml, "utf-8");
   return result;
