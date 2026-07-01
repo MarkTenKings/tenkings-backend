@@ -21770,6 +21770,86 @@ By enabling Rip It Live, I confirm:
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, or certified grading claim was added.
 
+## 2026-07-01 - AI Grader PR #41 real station orchestration
+
+### Summary
+- Continued PR #41 on branch `feature/ai-grader-station-operator-ui`.
+- Converted `ai-grader-station-operator-workflow --apply` from a mock-only rejection into a supervised hardware-capable station orchestrator.
+- The station command now runs the existing guarded fixed-rig commands in order:
+  - `basler-fixed-rig-operator-preview` for the visible Windows pylon live preview/focus/framing/tuning window.
+  - `ai-grader-fixed-rig-v1-evidence-package` for front capture.
+  - `ai-grader-fixed-rig-v1-evidence-package` for back capture after explicit `--operator-flip-confirmed`.
+  - `ai-grader-fixed-rig-v1-card-report` for the unified front/back provisional diagnostic report.
+  - `leimac-idmu-safe-off` for cleanup.
+- Added command-plan/result recording to the station manifest/report so a real station session records preview, front package, back package, unified report, and safe-off results.
+- Hardware mode requires the exact confirmation `RUN AI GRADER STATION OPERATOR WORKFLOW` plus explicit Mark/wiring/status/light-off/fixture/flip/final-light-off confirmations. Preview acceptance happens in the visible Basler preview window; abort/close fails closed and safe-offs.
+- Mock mode remains for automated tests and does not touch hardware.
+- Mark replaced the physical rulers and improved the fixed card positioning. Hardware smoke remains pending; next supervised run should use the Basler live preview to align the new rulers/card fixture and then run the station workflow with the updated ruler coordinates/boundary override.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 152 tests.
+
+### Hardware Status
+- Hardware smoke was not run in this code pass.
+- No Basler preview, Basler capture, Leimac command, image capture, or safe-off hardware command was run.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino/stage/motor command was run.
+- No Leimac reset/default command was run.
+- No persistent Basler or Leimac User Set save was made.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, or certified grading claim was added.
+
+## 2026-06-30 - AI Grader Station operator workflow PR #41 start
+
+### Summary
+- Created branch `feature/ai-grader-station-operator-ui` from latest `main`.
+- Added `ai-grader-station-operator-workflow`, a software-only guided station workflow foundation for fixed-rig V1.
+- The workflow models Mark-facing states for Start New Card, fixture/ruler verification, Basler live preview/focus/framing, lighting/exposure tuning, profile acceptance, front capture, flip prompt, back capture, provisional diagnostics, unified report view/export, rerun handling, and safe-off/end session.
+- Added clipping-aware lighting/exposure tune recommendation logic:
+  - Uses supplied mean/clipping/dark/sharpness metrics.
+  - Warns when clipping exceeds the soft threshold.
+  - Recommends lower Leimac duty rounded to the hardware 0.1% PWM step.
+  - Keeps duty capped at 5%.
+  - Requires explicit operator warning acceptance when the profile remains outside quality thresholds.
+- Added provisional diagnostic scoring rules V0 for Centering, Corners, Edges, and Surface.
+  - Rules are gated by fixed-ruler calibration, framing/overlay pass, repeatability, clipping/focus warnings, and complete front/back evidence.
+  - Outputs are `provisional_diagnostic` or `insufficient_evidence` only.
+  - No final grade, label, QR, certificate, or certified claim is produced.
+- Added future Ten Kings integration contract JSON for later DB/API integration without adding migrations or DB writes.
+- Added `station-report.html` rendering with Ten Kings station title, `Diagnostic Grade Pending`, workflow status, accepted lighting profile, tune warning, diagnostic rules, report open/export metadata, and guardrail status.
+- Added tests for station state transitions, accepted profile/tune behavior, provisional diagnostic schema, report sections, missing gates, output path guard, and software-only hardware guard.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 148 tests.
+
+### Hardware Status
+- Hardware smoke is pending until Mark is physically present.
+- No Basler preview, Basler capture, Leimac command, Dino-Lite command, Arduino/stage command, image capture, or safe-off hardware command was run in this software pass.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No network setting change was run.
+- No `regsvr32` command was run.
+- No Arduino/stage/motor command was run.
+- No Leimac reset/default command was run.
+- No persistent Basler or Leimac User Set save was run.
+- No high-duty lighting was run.
+- No captured image or vendor binary was committed.
+- No final grade, label, QR report, certificate, or certified grading claim was added.
+
 ## 2026-06-30 - AI Grader PR #40 merged
 
 ### Summary
@@ -21805,4 +21885,92 @@ By enabling Rip It Live, I confirm:
 - No persistent Basler or Leimac User Set save was made.
 - No high-duty lighting or hardware capture was run.
 - No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, or certified grading claim was added.
+
+## 2026-07-01 - AI Grader Station PR #41 staged hardware confirmations
+
+### Summary
+- Continued PR #41 on branch `feature/ai-grader-station-operator-ui`.
+- Updated `ai-grader-station-operator-workflow --apply` so supervised hardware mode does not require future operator actions to be pre-confirmed at command launch.
+- The station now records staged operator confirmations:
+  - physical Leimac ring light idle/off before preview,
+  - fixed card fixture and rulers visible before preview,
+  - card flipped to back after front capture and before back capture,
+  - final physical ring light off after safe-off cleanup.
+- Missing confirmations are prompted in a visible interactive terminal. Non-interactive runs fail closed unless the corresponding explicit flag is supplied after the action has actually happened.
+- Preview acceptance remains inside the visible Basler live preview window; abort/close still fails closed and safe-offs.
+- Focused validation passed:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` with `153` tests.
+- Hardware acceptance has not been run yet in this continuation; no Basler preview, Leimac command, safe-off, or image capture was run by this log entry.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or image capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, or certified grading claim was added.
+
+## 2026-07-01 - AI Grader Station PR #41 supervised station hardware smoke
+
+### Summary
+- Ran the real `ai-grader-station-operator-workflow --apply` path on the Dell Windows capture node with Mark present.
+- The workflow used staged interactive confirmations at the actual operator checkpoints instead of pre-confirming future actions:
+  - `light_idle_off` confirmed in the station terminal before preview.
+  - `fixture_rulers_visible` confirmed in the station terminal before preview.
+  - `flip_complete` confirmed in the station terminal after front capture and before back capture.
+  - `final_light_off` was not entered inside the station terminal; the station manifest therefore ended as `status=blocked` with blocker `Operator did not confirm: Confirm the physical Leimac ring light is off after safe-off cleanup.`
+- The station did complete the hardware/product workflow before that final confirmation miss: visible Basler live preview, accepted profile, front evidence package, flip prompt, back evidence package, unified provisional diagnostic report, and station safe-off step.
+- Codex then ran an explicit separate `leimac-idmu-safe-off` command. It ACKed `W86ACK0`, `W85ACK0`, and `W11ACK0`; Mark confirmed in chat that the physical ring light was off.
+
+### Hardware Output
+- Station folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-station-operator-workflow-2026-07-01T083502382Z`.
+- Station manifest: `C:\TenKings\capture-data\ai-grader-station\ai-grader-station-operator-workflow-2026-07-01T083502382Z\manifest.json`.
+- Station report: `C:\TenKings\capture-data\ai-grader-station\ai-grader-station-operator-workflow-2026-07-01T083502382Z\station-report.html`.
+- Integration contract: `C:\TenKings\capture-data\ai-grader-station\ai-grader-station-operator-workflow-2026-07-01T083502382Z\integration-contract.json`.
+- Preview folder: `C:\TenKings\capture-data\ai-grader-station\basler-fixed-rig-operator-preview-2026-07-01T080519758Z`.
+- Front evidence folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z`.
+- Back evidence folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z`.
+- Unified report folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T083500922Z`.
+- Unified provisional diagnostic report: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T083500922Z\provisional-diagnostic-report.html`.
+
+### Acceptance Evidence
+- Basler live preview: visible Windows pylon live stream, about `20.5 FPS`, `0 ms` frame age, portrait overlay/sidebar visible.
+- Accepted lighting/exposure profile: Leimac duty `1.3%`, PWM step `13`, channels `1-8`, source `operator_preview`, exposure `45000 us`, gain `0`, Basler `LineInverter=true`, Leimac `TriggerActivation=LevelLow`.
+- Ruler calibration in unified report: horizontal `50.8 mm` span from `540,205` to `1620,205`; vertical `50.8 mm` span from `2295,145` to `2295,1218`.
+- Scale result: `mmPerPixelX=0.047037`, `mmPerPixelY=0.047344`, `pixelsPerMmX=21.2599`, `pixelsPerMmY=21.122`, consistency `pass`.
+- Framing/overlay: `framingGateStatus=pass`, `overlayAlignmentStatus=pass`, margins `285 px` left/right and `349 px` top/bottom.
+- Front capture: completed; `11` raw Basler images, `8` portrait channel displays, `12` ROI crops.
+- Back capture: completed; `11` raw Basler images, `8` portrait channel displays, `12` ROI crops.
+- Unified report: `computed_diagnostic`, evidence class `macro_fixed_rig_v1_uncalibrated`, `isCalibrated=false`, `finalGradeComputed=false`, `certifiedClaim=false`.
+- Report contains front/back evidence images, centering diagnostics, corner diagnostics, edge diagnostics, surface anomaly diagnostics, and no final grade/certificate/certified claim.
+- Centering: front/back `computed_diagnostic`, provisional score `10`.
+- Corners/edges: front `computed_diagnostic`, provisional score `8.26`, with clipping warning; back `computed_diagnostic`, provisional score `9.68`.
+- Surface: `preliminary_surface_anomaly_detector_v0`; one low-severity front candidate from channel `3`, one low-severity back candidate from channels `3,4`.
+- Clipping/tune: front remains above the soft clipping target (`all-on=0.033017`, accepted-profile `0.031747`); back is low (`all-on=0.000656`, accepted-profile `0.00064`).
+
+### Merge Recommendation
+- The real station is hardware-capable and completed the core operator workflow.
+- Because the station manifest itself is `blocked` from the missed in-window final light-off confirmation, the cleanest merge evidence is either:
+  - Mark explicitly accepts this run using the separate safe-off plus chat-confirmed physical light-off closeout, or
+  - a short rerun is performed where final light-off is confirmed inside the station prompt.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting was used.
+- No captured image or vendor binary was committed.
+- All hardware artifacts stayed outside the repo under `C:\TenKings\capture-data`.
 - No final grade, certificate, QR label, or certified grading claim was added.
