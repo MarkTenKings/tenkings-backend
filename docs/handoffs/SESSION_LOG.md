@@ -21974,3 +21974,34 @@ By enabling Rip It Live, I confirm:
 - No captured image or vendor binary was committed.
 - All hardware artifacts stayed outside the repo under `C:\TenKings\capture-data`.
 - No final grade, certificate, QR label, or certified grading claim was added.
+
+## 2026-07-01 - AI Grader PR #41 merge
+
+### Summary
+- Merged PR #41 into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/41`.
+- Merge commit: `d06b081cb8c4d5010e752c5835236d264fbc8ca8`.
+- Mark explicitly accepted the PR #41 hardware station smoke as sufficient even though the final physical light-off confirmation was recorded through explicit Leimac safe-off plus chat confirmation rather than inside the station prompt.
+- The merged workflow is the real local AI Grader Station operator orchestrator for Basler live preview, accepted profile, front/back fixed-rig evidence capture, unified provisional diagnostic report generation, station manifest/report/contract output, and safe-off cleanup.
+
+### Merge Preflight
+- PR merge state was `CLEAN`.
+- PR checks were passing before merge:
+  - Install & Build.
+  - Vercel.
+  - Vercel Preview Comments.
+  - Docker image builds for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
+- Local git status was clean before merge.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or image capture was run during merge.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, or certified grading claim was added.

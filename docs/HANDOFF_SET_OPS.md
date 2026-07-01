@@ -1,5 +1,13 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #41 merged)
+- PR #41 (`feature/ai-grader-station-operator-ui`) was merged into `main`.
+- Merge commit: `d06b081cb8c4d5010e752c5835236d264fbc8ca8`.
+- Mark explicitly accepted the PR #41 hardware station smoke as sufficient even though final physical ring-light-off confirmation was entered through explicit Leimac safe-off plus chat confirmation rather than inside the station prompt.
+- Merged result: the AI Grader Station operator workflow is now on `main`. It provides the real local station orchestrator for visible Basler live preview, accepted profile, front capture, flip prompt, back capture, unified provisional diagnostic report generation, station manifest/report/contract output, and Leimac safe-off cleanup.
+- Evidence remains `macro_fixed_rig_v1_uncalibrated`, `isCalibrated=false`, and no final grade/certificate/certified claim is made.
+- No hardware commands, migrations, DB operations, network changes, Arduino/stage/motor commands, Leimac reset/default, persistent Basler/Leimac saves, image captures, or manual deploy were run during the merge.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #41 supervised station smoke)
 - Branch: `feature/ai-grader-station-operator-ui`.
 - PR #41 staged hardware workflow was run on the Dell Windows capture node with Mark present.
