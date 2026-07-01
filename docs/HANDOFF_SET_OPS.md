@@ -1,5 +1,40 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #41 supervised station smoke)
+- Branch: `feature/ai-grader-station-operator-ui`.
+- PR #41 staged hardware workflow was run on the Dell Windows capture node with Mark present.
+- The station command used interactive/staged confirmations instead of pre-confirming future operator actions:
+  - `light_idle_off` -> confirmed in the station terminal before preview.
+  - `fixture_rulers_visible` -> confirmed in the station terminal after Mark used the Basler view to verify fixture/rulers.
+  - `flip_complete` -> confirmed in the station terminal after front capture and before back capture.
+  - `final_light_off` -> not entered inside the station terminal; the station manifest is therefore honestly `blocked`, even though capture/report/safe-off steps completed. Codex then ran an explicit Leimac safe-off and Mark confirmed the physical ring light was off in chat.
+- Hardware output:
+  - Station folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-station-operator-workflow-2026-07-01T083502382Z`.
+  - Station manifest: `C:\TenKings\capture-data\ai-grader-station\ai-grader-station-operator-workflow-2026-07-01T083502382Z\manifest.json`.
+  - Station report: `C:\TenKings\capture-data\ai-grader-station\ai-grader-station-operator-workflow-2026-07-01T083502382Z\station-report.html`.
+  - Integration contract: `C:\TenKings\capture-data\ai-grader-station\ai-grader-station-operator-workflow-2026-07-01T083502382Z\integration-contract.json`.
+  - Preview folder: `C:\TenKings\capture-data\ai-grader-station\basler-fixed-rig-operator-preview-2026-07-01T080519758Z`.
+  - Front evidence folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z`.
+  - Back evidence folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z`.
+  - Unified report folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T083500922Z`.
+  - Unified provisional diagnostic report: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T083500922Z\provisional-diagnostic-report.html`.
+- Live preview result: visible Windows pylon live stream, about `20.5 FPS`, `0 ms` frame age in manifest metrics, portrait overlay/sidebar visible, Mark accepted the preview profile.
+- Accepted capture profile: Leimac duty `1.3%`, PWM step `13`, channels `1-8`, source `operator_preview`, exposure `45000 us`, gain `0`, Basler `LineInverter=true`, Leimac `TriggerActivation=LevelLow`, no persistent Leimac/Basler User Set save.
+- Ruler/framing result in the unified report:
+  - fixed metric ruler spans: horizontal `50.8 mm` from `540,205` to `1620,205`; vertical `50.8 mm` from `2295,145` to `2295,1218`.
+  - `mmPerPixelX=0.047037`, `mmPerPixelY=0.047344`, `pixelsPerMmX=21.2599`, `pixelsPerMmY=21.122`, consistency `pass`.
+  - `framingGateStatus=pass`, `overlayAlignmentStatus=pass`, margins `285 px` left/right and `349 px` top/bottom.
+- Capture result: front and back evidence packages each completed with `11` raw Basler images, `8` portrait channel display images, and `12` ROI crops. Raw Basler evidence remains in sensor coordinates; report/display images are derived.
+- Unified report status: `computed_diagnostic`, evidence class `macro_fixed_rig_v1_uncalibrated`, `isCalibrated=false`, `finalGradeComputed=false`, `certifiedClaim=false`; report contains front/back evidence images, centering diagnostics, corner diagnostics, edge diagnostics, surface anomaly diagnostics, and no final grade/certificate/certified claim.
+- Diagnostic summary:
+  - Centering: front/back `computed_diagnostic`, score `10`, overlay pass.
+  - Corners/edges: front `computed_diagnostic` score `8.26` with clipping warning; back `computed_diagnostic` score `9.68`.
+  - Surface: `preliminary_surface_anomaly_detector_v0`, front one low-severity candidate from channel `3`; back one low-severity candidate from channels `3,4`.
+  - Clipping: front all-on clipped fraction `0.033017` and accepted-profile clipped fraction `0.031747`, above the soft `0.02` target; back all-on clipped fraction `0.000656` and accepted-profile clipped fraction `0.00064`.
+- Safety closeout: station safe-off step completed, then explicit `leimac-idmu-safe-off` was run separately and ACKed `W86ACK0`, `W85ACK0`, `W11ACK0`; Mark confirmed the physical ring light was off after that explicit safe-off.
+- Merge recommendation as of this handoff: do not merge solely on the station manifest status unless Mark explicitly accepts the external final-light-off closeout as sufficient. The product workflow is functionally proven, but the cleanest merge evidence would be either a short rerun where final light-off is confirmed inside the station prompt or a code follow-up that allows final safe-off confirmation recovery without recapturing images.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no DB ops, no network setting changes, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no captured images/vendor binaries committed, no final/certificate/certified claims.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #41 real station orchestration)
 - Branch: `feature/ai-grader-station-operator-ui`.
 - PR #41 was updated from mock-only station scaffolding to a supervised hardware-capable local station orchestrator.
