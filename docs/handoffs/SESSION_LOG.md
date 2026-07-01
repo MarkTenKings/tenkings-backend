@@ -22005,3 +22005,34 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or image capture was run during merge.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, or certified grading claim was added.
+
+## 2026-07-01 - AI Grader PR #42 Vision Lab start
+
+### Summary
+- Created branch `feature/ai-grader-vision-lab-report` from latest `main` after PR #41 merge.
+- Added Ten Kings Vision Lab V0 to the unified front/back provisional diagnostic report path.
+- Vision Lab is implemented as local static HTML/CSS/JS inside `ai-grader-fixed-rig-v1-card-report`; it does not require a server and does not contact Basler or Leimac.
+- Implemented report modes/controls: True View, Surface Vision V0, Heatmap, Light Sweep Wheel, Measurement Overlay, Confidence Lens, Evidence Replay, front/back toggle, zoom/pan, severity filters, and Collector/Expert mode.
+- Embedded a `visionLab` data contract in `analysis.json` and report manifest metadata for front/back image refs, overlay refs, channel refs, heatmap/glare-mask refs when present, anomaly candidates, measurement overlay metadata, calibration metadata, and confidence warnings.
+
+### Sample Report
+- Generated from existing PR #41 station evidence only; no hardware commands were run.
+- Report: `C:\TenKings\capture-data\vision-lab-pr42\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T092011021Z\provisional-diagnostic-report.html`.
+- Front source: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z`.
+- Back source: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z`.
+
+### Validation So Far
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `153` tests.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- Evidence remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`; `finalGradeComputed=false`; `certifiedClaim=false`; no final grade, label, QR report, certificate, or certified grading claim was added.

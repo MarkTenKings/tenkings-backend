@@ -1083,6 +1083,27 @@ The front evidence folder is `C:\TenKings\capture-data\ai-grader-station\ai-grad
 
 The unified report status is `computed_diagnostic`, evidence class `macro_fixed_rig_v1_uncalibrated`, `isCalibrated=false`, `finalGradeComputed=false`, and `certifiedClaim=false`. It contains front/back evidence images, centering diagnostics, corner diagnostics, edge diagnostics, surface anomaly diagnostics, and no final grade or certificate/certified claim. Centering computed as provisional diagnostic score `10` on both sides. Front corners/edges computed as provisional diagnostic score `8.26` with a clipping warning; back corners/edges computed as `9.68`. Surface analysis used `preliminary_surface_anomaly_detector_v0` and produced one low-severity front candidate from channel `3` plus one low-severity back candidate from channels `3,4`. Front clipping remains above the soft target: all-on `0.033017`, accepted-profile `0.031747`. Back clipping was low: all-on `0.000656`, accepted-profile `0.00064`.
 
+### Ten Kings Vision Lab V0
+
+PR #42 extends the software-only `ai-grader-fixed-rig-v1-card-report` output with Ten Kings Vision Lab V0, an interactive local static HTML inspection widget inside the unified front/back provisional diagnostic report. Vision Lab is not a hardware command and does not contact Basler or Leimac. It reads existing front/back evidence package folders, writes a new report outside the repo, and preserves clean raw evidence images in `basler_sensor_pixels`.
+
+Vision Lab V0 includes `True View`, `Surface Vision V0`, `Heatmap`, `Light Sweep Wheel`, `Measurement Overlay`, `Confidence Lens`, and `Evidence Replay` modes, plus front/back toggle, zoom/pan, severity filters, and Collector/Expert mode. The Light Sweep Wheel shows channels `1-8` numerically only; physical direction mapping remains pending until characterized and reviewed. Surface Vision V0 is labeled as directional light evidence visualization, not certified photometric stereo. Measurement overlay uses fixed-ruler calibration metadata when present and reports unavailable instead of guessing when calibration metadata is missing. Confidence Lens exposes clipping, focus/framing, missing-evidence, and low-confidence diagnostics so the report shows evidence strength as well as findings.
+
+The Vision Lab data contract is embedded in `analysis.json` under `visionLab` and referenced from the report manifest. It includes front/back true-view image refs, overlay refs, channel image refs, heatmap/glare-mask refs when available, anomaly candidates, evidence replay metadata, measurement overlay calibration fields, and confidence warnings. The report keeps the top-level banner `Provisional Diagnostic - Not Certified - No Final Grade`; `isCalibrated=false`, `finalGradeComputed=false`, and `certifiedClaim=false` remain mandatory.
+
+Sample PR #42 report generated from the accepted PR #41 station evidence without new hardware access:
+
+```text
+C:\TenKings\capture-data\vision-lab-pr42\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T092011021Z\provisional-diagnostic-report.html
+```
+
+Source evidence reused:
+
+```text
+Front: C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z
+Back:  C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z
+```
+
 #### Dell PR #39 Rough Fixture Smoke
 
 On 2026-06-30, Mark ran the rough fixed-fixture flow using the operator-built fixed-position V1 fixture. The accepted live preview folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`. The preview measured about `20.5 FPS` with `0 ms` frame age and accepted a software active profile of `1.4%` Leimac duty, PWM step `14`, channels `1-8`, source `operator_preview`. Preview/report display used `rotate90cw`; raw Basler sensor captures remained unchanged. The preview and later reports warned that the detected card boundary touched the frame edge, so the run remains rough/unvalidated and not calibrated.
