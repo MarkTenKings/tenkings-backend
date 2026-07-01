@@ -1,5 +1,13 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #45 merged)
+- PR #45 (`feature/ai-grader-provisional-grade-story`) was merged into `main`.
+- Merge commit: `0c06db40a4a3d06951aff7ec88486b359efe081d`.
+- Mark accepted Provisional Grade Rules V0 and Grade Story Engine V0 as good enough for this phase, with scoring/report tuning expected in later work.
+- Merged result: the unified fixed-rig report can now emit a controlled `provisional_diagnostic_grade`, provisional element scores, confidence, Grade Story Engine narrative, `Why Not 10?`, grade-impact candidates, evidence-linked claims, gate summary, and formula/cap-rule metadata.
+- Reports remain explicitly non-certified: `certificationStatus=not_certified`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`.
+- No hardware commands, migrations, DB operations, network changes, Arduino/stage/motor commands, Leimac reset/default, persistent Basler/Leimac saves, image captures, captured image/vendor binary commits, or manual deploy were run during the merge.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #45 provisional grade story start)
 - Branch: `feature/ai-grader-provisional-grade-story`.
 - Objective: Sprint 5 Grade Story Engine plus Sprint 6 controlled Provisional Grade Rules for the fixed-rig report.
