@@ -1,5 +1,20 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader local station/web viewer start)
+- Branch: `feature/ai-grader-local-station-web-viewer`.
+- PR #45 (`feature/ai-grader-provisional-grade-story`) was merged first. Merge commit: `0c06db40a4a3d06951aff7ec88486b359efe081d`; docs handoff commit on `main`: `0027165b47c597b53223219a4d7e74b67bf2be5b`.
+- Objective: first local Dell operator station page plus web/shareable report viewer foundation so Mark can eventually run and review fixed-rig grading sessions without Codex or Windows Terminal.
+- Implementation status: software/web foundation in progress. No hardware commands were run. The proven hardware-capable path remains the PR #41 CLI station orchestrator until a later approved bridge connects browser actions to local capture-helper commands.
+- Added local no-login operator station route `/ai-grader/station`, local station API contract `/api/ai-grader/station/...`, fixture-backed public report viewer route `/ai-grader/reports/[reportId]`, and a capture-helper `ai-grader-report-bundle` export command that writes `report-bundle.json`, `asset-manifest.json`, and `checksums.json` outside the repo.
+- Sample bundle generated from the existing PR #45 report:
+  - `C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\report-bundle.json`.
+  - `C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\asset-manifest.json`.
+  - `C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\checksums.json`.
+- The local web bridge is contract/mock only in this pass: no Basler/Leimac/Dino-Lite contact, no DB or storage writes, no upload, no hardware success is faked.
+- Report and bundle outputs remain provisional only: no final grade, no label, no QR certificate, no certificate, and no certified grading claim.
+- Local validation passed: `pnpm --filter @tenkings/ai-grader-capture-helper build`; `pnpm --filter @tenkings/ai-grader-capture-helper test` (`159` tests); `pnpm --filter @tenkings/shared test` (`105` tests); `pnpm --filter @tenkings/ai-grader-simulator test` (`6` tests); `pnpm --filter @tenkings/nextjs-app build` (existing unrelated `<img>` lint warnings only); `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` (`5` tests); `git diff --check` (line-ending warnings only).
+- Guardrails held so far: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no hardware commands or image captures, and no captured image/vendor binary commit.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #45 merged)
 - PR #45 (`feature/ai-grader-provisional-grade-story`) was merged into `main`.
 - Merge commit: `0c06db40a4a3d06951aff7ec88486b359efe081d`.

@@ -1206,6 +1206,61 @@ Back evidence:  C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v
 
 Sample PR #45 result: status `provisional_diagnostic_grade`, provisional overall grade `8.5`, confidence `low` (`0.361`). Element scores were centering `10`, corners `8.97`, edges `8.97`, and surface `5.5`. Gates passed for ruler calibration, framing/overlay, front evidence, back evidence, Surface Intelligence, and focus/sharpness; repeatability and clipping were accepted diagnostic warnings from the existing evidence artifacts. The strongest `Why Not 10?` reasons were high-severity back surface candidates from Surface Intelligence V0, especially source channels `3`, `1`, and `6`, plus accepted-warning clipping confidence reduction. This is a provisional diagnostic story only, not a final grade or certificate.
 
+### Local Operator Station / Web Report Viewer V0
+
+The local operator station web pass adds the first browser-facing station shell for the Dell capture node without replacing the existing supervised CLI hardware orchestrator. The local operator page is available in the Next.js app at:
+
+```text
+http://localhost:<port>/ai-grader/station
+```
+
+It is intentionally local/no-login and shows Start New Card, fixture/ruler checklist, live preview launch/status, lighting/exposure tune status, accepted profile summary, Capture Front, Flip Card, Capture Back, Run Diagnostics, Open Report, Rerun, Safe Off, End Session, warnings, and report links. In this first pass, the browser bridge is a contract/mock adapter only: it does not contact Basler, Leimac, a database, storage, or any hardware. The real hardware-capable operator path remains `ai-grader-station-operator-workflow --apply` from PR #41 until a later approved bridge connects browser actions to local capture-helper commands.
+
+The local station API contract is exposed under:
+
+```text
+GET  /api/ai-grader/station/status
+POST /api/ai-grader/station/start-session
+POST /api/ai-grader/station/launch-preview
+POST /api/ai-grader/station/accept-profile
+POST /api/ai-grader/station/capture-front
+POST /api/ai-grader/station/confirm-flip
+POST /api/ai-grader/station/capture-back
+POST /api/ai-grader/station/run-diagnostics
+POST /api/ai-grader/station/safe-off
+GET  /api/ai-grader/station/latest-report
+GET  /api/ai-grader/station/session-manifest
+```
+
+The API contract is safe for local development: `hardwareActionsEnabled=false`, `databaseConnected=false`, `databaseWrites=false`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`.
+
+A public/shareable report viewer foundation is available at:
+
+```text
+/ai-grader/reports/[reportId]
+```
+
+The current route uses fixture/sample report-bundle data only. It is read-only, has no hardware controls, performs no DB lookup/write, and shows provisional diagnostic report content with Vision Lab-style sections and graceful missing-asset states. It is the foundation for a future `collect.tenkings.co/...` report viewer, not a QR/certificate flow.
+
+The capture-helper now includes a software-only report-bundle export command for converting an existing local unified report folder into a web-ready bundle:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-report-bundle `
+  --report-dir C:\TenKings\capture-data\provisional-grade-story-pr45\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T173733758Z `
+  --output-dir C:\TenKings\capture-data\ai-grader-report-bundles `
+  --report-id sample-pr45
+```
+
+The command writes `report-bundle.json`, `asset-manifest.json`, and `checksums.json` outside the repo. The bundle reserves future public storage, label, QR, certificate, slab photo, and eBay comps fields, but does not upload files, write the database, generate labels/QR/certificates, or claim a final/certified grade.
+
+The first sample bundle from the PR #45 report was written to:
+
+```text
+C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\report-bundle.json
+C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\asset-manifest.json
+C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\checksums.json
+```
+
 #### Dell PR #39 Rough Fixture Smoke
 
 On 2026-06-30, Mark ran the rough fixed-fixture flow using the operator-built fixed-position V1 fixture. The accepted live preview folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`. The preview measured about `20.5 FPS` with `0 ms` frame age and accepted a software active profile of `1.4%` Leimac duty, PWM step `14`, channels `1-8`, source `operator_preview`. Preview/report display used `rotate90cw`; raw Basler sensor captures remained unchanged. The preview and later reports warned that the detected card boundary touched the frame edge, so the run remains rough/unvalidated and not calibrated.

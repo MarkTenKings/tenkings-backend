@@ -77,6 +77,16 @@ export {
   PROVISIONAL_GRADE_STORY_ENGINE_VERSION,
   buildFixedRigProvisionalGradeStory,
 } from "./fixedRigProvisionalGradeStory";
+export {
+  AI_GRADER_REPORT_BUNDLE_VERSION,
+  buildAiGraderReportBundle,
+  writeAiGraderReportBundle,
+} from "./aiGraderReportBundle";
+export type {
+  AiGraderReportBundle,
+  AiGraderReportBundleAsset,
+  AiGraderReportBundleWriteResult,
+} from "./aiGraderReportBundle";
 export type {
   BuildFixedRigProvisionalGradeStoryInput,
   FixedRigGradeImpactCandidate,

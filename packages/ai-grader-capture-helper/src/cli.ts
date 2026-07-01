@@ -368,6 +368,14 @@ type ParsedCommand =
       backDir: string | undefined;
     }
   | {
+      command: "ai-grader-report-bundle";
+      config: CaptureHelperConfigInput;
+      outputDir: string | undefined;
+      reportDir: string | undefined;
+      reportId: string | undefined;
+      publicBasePath: string | undefined;
+    }
+  | {
       command: "ai-grader-station-operator-workflow";
       config: CaptureHelperConfigInput;
       outputDir: string | undefined;
@@ -521,6 +529,9 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let outputDir: string | undefined;
   let frontDir: string | undefined;
   let backDir: string | undefined;
+  let reportDir: string | undefined;
+  let reportId: string | undefined;
+  let publicBasePath: string | undefined;
   let mockRun = false;
   let operatorAcceptedWarnings = false;
   let calibrationProfileId: string | undefined;
@@ -700,6 +711,18 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--back-dir":
         backDir = readOption(rest, index, "--back-dir");
+        index += 1;
+        break;
+      case "--report-dir":
+        reportDir = readOption(rest, index, "--report-dir");
+        index += 1;
+        break;
+      case "--report-id":
+        reportId = readOption(rest, index, "--report-id");
+        index += 1;
+        break;
+      case "--public-base-path":
+        publicBasePath = readOption(rest, index, "--public-base-path");
         index += 1;
         break;
       case "--mock-run":
@@ -1295,6 +1318,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "ai-grader-fixed-rig-v1-local" ||
     command === "ai-grader-fixed-rig-v1-evidence-package" ||
     command === "ai-grader-fixed-rig-v1-card-report" ||
+    command === "ai-grader-report-bundle" ||
     command === "ai-grader-station-operator-workflow" ||
     command === "fixed-rig-lighting-profile-plan" ||
     command === "leimac-channel-characterization" ||
@@ -1718,6 +1742,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     }
     if (command === "fixed-rig-lighting-profile-plan") return { command, config };
     if (command === "ai-grader-fixed-rig-v1-card-report") return { command, config, outputDir, frontDir, backDir };
+    if (command === "ai-grader-report-bundle") return { command, config, outputDir, reportDir, reportId, publicBasePath };
     if (command === "ai-grader-station-operator-workflow") {
       const leimacHostValue = leimacHost ?? host;
       const leimacPortValue = leimacPort ?? port;
@@ -1830,6 +1855,7 @@ function helpPayload() {
       "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side front --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "ai-grader-fixed-rig-v1-evidence-package --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --evidence-side back --exposure-us 45000 --apply --confirm \"RUN FIXED RIG V1 UNCALIBRATED EVIDENCE PACKAGE\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off --operator-flip-confirmed",
       "ai-grader-fixed-rig-v1-card-report --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
+      "ai-grader-report-bundle --report-dir <unified-report-dir> --output-dir C:\\TenKings\\capture-data\\ai-grader-report-bundles --report-id <report-id>",
       "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --mock-run --duty 1.2 --exposure-us 45000 --front-clipped-fraction 0.107932 --back-clipped-fraction 0.337672 --calibration-profile-id fixed-ruler-pr39 --framing-overlay-pass --repeatability-pass --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
       "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --reference-type fixed_metric_rulers --horizontal-span-mm 50.8 --horizontal-start-px 540,205 --horizontal-end-px 1620,205 --vertical-span-mm 50.8 --vertical-start-px 2295,145 --vertical-end-px 2295,1218 --card-boundary-rect 285,349,1878,1350 --apply --confirm \"RUN AI GRADER STATION OPERATOR WORKFLOW\" --mark-present --wiring-confirmed --leimac-status-green",
       "leimac-channel-characterization --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --duty 1 --exposure-us 45000 --apply --confirm \"RUN LEIMAC CHANNEL CHARACTERIZATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
@@ -3413,6 +3439,58 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         },
       });
       return report.status === "computed_diagnostic" ? 0 : 1;
+    }
+
+    if (parsed.command === "ai-grader-report-bundle") {
+      const { writeAiGraderReportBundle } = await import("./drivers/aiGraderReportBundle");
+      if (!parsed.reportDir) {
+        throw new CaptureHelperCommandError("ai-grader-report-bundle requires --report-dir <unified-report-dir>.");
+      }
+      if (!parsed.outputDir) {
+        throw new CaptureHelperCommandError("ai-grader-report-bundle requires --output-dir <outside-repo-output-dir>.");
+      }
+      let result;
+      try {
+        result = await writeAiGraderReportBundle({
+          reportDir: parsed.reportDir,
+          outputDir: parsed.outputDir,
+          reportId: parsed.reportId,
+          publicBasePath: parsed.publicBasePath,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "ai-grader-report-bundle failed.";
+        if (message.includes("AI Grader report bundle")) {
+          throw new CaptureHelperCommandError(message);
+        }
+        throw error;
+      }
+      writeJson(stdout, {
+        ok: result.bundle.reportStatus !== "missing_report_data",
+        service: "ai-grader-capture-helper",
+        command: "ai-grader-report-bundle",
+        reportBundlePath: result.bundlePath,
+        assetManifestPath: result.assetManifestPath,
+        checksumsPath: result.checksumsPath,
+        outputDir: result.outputDir,
+        bundle: result.bundle,
+        safety: {
+          hardwareAccessed: false,
+          baslerContacted: false,
+          leimacContacted: false,
+          databaseWrites: false,
+          migrationsRun: false,
+          deployRun: false,
+          persistentBaslerSaved: false,
+          persistentLeimacSaved: false,
+          capturedImagesCommitted: false,
+          finalGradeComputed: false,
+          certifiedClaim: false,
+          labelGenerated: false,
+          qrGenerated: false,
+          certificateGenerated: false,
+        },
+      });
+      return result.bundle.reportStatus !== "missing_report_data" ? 0 : 1;
     }
 
     if (parsed.command === "ai-grader-station-operator-workflow") {

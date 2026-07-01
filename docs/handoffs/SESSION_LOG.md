@@ -22300,3 +22300,44 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or image capture was run.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, or certified grading claim was added.
+
+## 2026-07-01 - AI Grader local station / web report viewer start
+
+### Summary
+- Created branch `feature/ai-grader-local-station-web-viewer` from latest `main` after PR #45 merge and handoff docs commit.
+- Objective: first usable local Dell operator station page and web/shareable report viewer foundation.
+- Added local no-login operator station UI route `/ai-grader/station`.
+- Added local station API contract route `/api/ai-grader/station/[...action]` with status, start-session, launch-preview, accept-profile, capture-front, confirm-flip, capture-back, run-diagnostics, safe-off, latest-report, and session-manifest actions.
+- Added fixture-backed public/shareable report viewer route `/ai-grader/reports/[reportId]`, currently using sample report-bundle data only.
+- Added a capture-helper `ai-grader-report-bundle` command that converts an existing local unified report folder into `report-bundle.json`, `asset-manifest.json`, and `checksums.json` outside the repo.
+- The browser station bridge is contract/mock only in this pass. It does not run Basler/Leimac/Dino-Lite hardware, does not write DB/storage, and does not fake hardware success.
+- The real hardware-capable local flow remains the PR #41 `ai-grader-station-operator-workflow --apply` CLI orchestrator until a later approved local bridge connects browser actions to capture-helper commands.
+
+### Sample Bundle
+- Existing PR #45 report source: `C:\TenKings\capture-data\provisional-grade-story-pr45\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T173733758Z`.
+- Bundle output:
+  - `C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\report-bundle.json`.
+  - `C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\asset-manifest.json`.
+  - `C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\checksums.json`.
+- Bundle status: `provisional_diagnostic_ready`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `159` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>` lint warnings only.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `5` tests.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, label generation, or certified grading claim was added.
