@@ -18,15 +18,19 @@ export type AiGraderStationStepId =
 export type AiGraderStationAction =
   | "status"
   | "start-session"
+  | "confirm-light-idle-off"
+  | "confirm-fixture-rulers"
   | "launch-preview"
   | "accept-profile"
   | "capture-front"
   | "confirm-flip"
   | "capture-back"
   | "run-diagnostics"
+  | "export-report-bundle"
   | "safe-off"
   | "latest-report"
-  | "session-manifest";
+  | "session-manifest"
+  | "end-session";
 
 export type AiGraderStationStep = {
   id: AiGraderStationStepId;
@@ -36,7 +40,7 @@ export type AiGraderStationStep = {
   hardwareCapable: boolean;
 };
 
-export type AiGraderLocalStationBridgeMode = "mock_dev" | "contract_only" | "future_hardware_bridge";
+export type AiGraderLocalStationBridgeMode = "mock_dev" | "contract_only" | "future_hardware_bridge" | "mock" | "real";
 
 export type AiGraderLocalStationStatus = {
   bridgeVersion: typeof AI_GRADER_LOCAL_STATION_BRIDGE_VERSION;
@@ -44,7 +48,7 @@ export type AiGraderLocalStationStatus = {
   mode: AiGraderLocalStationBridgeMode;
   localOnly: true;
   loginRequired: false;
-  hardwareActionsEnabled: false;
+  hardwareActionsEnabled: boolean;
   currentStep: AiGraderStationStepId;
   nextAction: AiGraderStationAction;
   nextActionLabel: string;
@@ -53,7 +57,9 @@ export type AiGraderLocalStationStatus = {
     exposureUs: number;
     gain: number;
     channels: number[];
-    source: "operator_preview" | "default" | "mock";
+    source: "operator_preview" | "default" | "mock" | "bridge_operator" | "cli_override";
+    actualLeimacPwmStep?: number;
+    acceptedAt?: string;
   };
   calibrationProfile: {
     referenceType: "fixed_metric_rulers";
@@ -72,7 +78,7 @@ export type AiGraderLocalStationStatus = {
   sessionManifest: {
     gradingSessionId: string;
     reportId: string;
-    status: "planned" | "mock_ready" | "contract_only";
+    status: "planned" | "mock_ready" | "contract_only" | "hardware_pending" | "hardware_completed" | "blocked";
     frontCaptured: boolean;
     backCaptured: boolean;
     provisionalDiagnosticsRun: boolean;
@@ -83,7 +89,7 @@ export type AiGraderLocalStationStatus = {
     databaseWrites: false;
     migrationsRun: false;
     deployRun: false;
-    hardwareAccessed: false;
+    hardwareAccessed: boolean;
     finalGradeComputed: false;
     certifiedClaim: false;
     labelGenerated: false;
@@ -91,15 +97,37 @@ export type AiGraderLocalStationStatus = {
     certificateGenerated: false;
   };
   bridgeContract: {
-    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderStationAction; hardwareAccess: false; description: string }>;
+    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderStationAction; hardwareAccess: boolean; description: string }>;
     realHardwarePending: string[];
   };
-  reportBundle: AiGraderReportBundle;
+  reportBundle?: AiGraderReportBundle;
+  stationUrl?: string;
+  bridgeSecurity?: {
+    tokenRequired: true;
+    allowedOrigins: string[];
+    host: string;
+    port: number;
+    rejectsNonLoopback: true;
+  };
+  confirmations?: {
+    lightIdleOff: boolean;
+    fixtureRulersVisible: boolean;
+    flipComplete: boolean;
+    finalLightOff: boolean;
+  };
+  outputs?: {
+    sessionDir?: string;
+    manifestPath?: string;
+    frontPackageDir?: string;
+    backPackageDir?: string;
+    unifiedReportPath?: string;
+    reportBundlePath?: string;
+  };
 };
 
 export const AI_GRADER_STATION_STEPS: AiGraderStationStep[] = [
   { id: "start_new_card", label: "Start New Card", operatorAction: "Create a local grading session.", primaryAction: "start-session", hardwareCapable: false },
-  { id: "verify_fixture_rulers", label: "Verify Fixture/Rulers", operatorAction: "Confirm fixture and rulers are visible.", primaryAction: "launch-preview", hardwareCapable: true },
+  { id: "verify_fixture_rulers", label: "Verify Fixture/Rulers", operatorAction: "Confirm ring light idle/off, fixture, and rulers before live preview.", primaryAction: "launch-preview", hardwareCapable: true },
   { id: "live_preview_focus_framing", label: "Live Preview / Focus / Framing", operatorAction: "Use the Basler live preview to align and focus.", primaryAction: "launch-preview", hardwareCapable: true },
   { id: "lighting_exposure_tune", label: "Lighting / Exposure Tune", operatorAction: "Tune duty/exposure until clipping is acceptable.", primaryAction: "accept-profile", hardwareCapable: true },
   { id: "accept_capture_profile", label: "Accept Capture Profile", operatorAction: "Lock the software capture profile for this card.", primaryAction: "accept-profile", hardwareCapable: false },
@@ -114,15 +142,19 @@ export const AI_GRADER_STATION_STEPS: AiGraderStationStep[] = [
 const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   status: "start_new_card",
   "start-session": "verify_fixture_rulers",
+  "confirm-light-idle-off": "verify_fixture_rulers",
+  "confirm-fixture-rulers": "verify_fixture_rulers",
   "launch-preview": "live_preview_focus_framing",
   "accept-profile": "capture_front",
   "capture-front": "prompt_flip_card",
   "confirm-flip": "capture_back",
   "capture-back": "run_provisional_diagnostics",
   "run-diagnostics": "view_unified_report",
+  "export-report-bundle": "view_unified_report",
   "safe-off": "safe_off_end_session",
   "latest-report": "view_unified_report",
   "session-manifest": "view_unified_report",
+  "end-session": "safe_off_end_session",
 };
 
 const NEXT_ACTION_BY_STEP: Record<AiGraderStationStepId, AiGraderStationAction> = {
@@ -150,12 +182,15 @@ function bridgeEndpoints() {
   const actions: Array<{ method: "GET" | "POST"; action: AiGraderStationAction; description: string }> = [
     { method: "GET", action: "status", description: "Read current local station status." },
     { method: "POST", action: "start-session", description: "Start a local station session in mock/contract mode." },
+    { method: "POST", action: "confirm-light-idle-off", description: "Record operator confirmation that the physical ring light is idle/off." },
+    { method: "POST", action: "confirm-fixture-rulers", description: "Record operator confirmation that the fixture/rulers are visible." },
     { method: "POST", action: "launch-preview", description: "Contract endpoint for launching Basler live preview." },
     { method: "POST", action: "accept-profile", description: "Accept the current capture profile." },
     { method: "POST", action: "capture-front", description: "Contract endpoint for front capture." },
     { method: "POST", action: "confirm-flip", description: "Record operator flip confirmation." },
     { method: "POST", action: "capture-back", description: "Contract endpoint for back capture." },
     { method: "POST", action: "run-diagnostics", description: "Generate or attach the provisional report." },
+    { method: "POST", action: "export-report-bundle", description: "Export report-bundle.json, asset manifest, and checksums." },
     { method: "POST", action: "safe-off", description: "Contract endpoint for Leimac safe-off." },
     { method: "GET", action: "latest-report", description: "Read latest report location." },
     { method: "GET", action: "session-manifest", description: "Read station session manifest." },
@@ -163,7 +198,7 @@ function bridgeEndpoints() {
   return actions.map((endpoint) => ({
     ...endpoint,
     path: `/api/ai-grader/station/${endpoint.action}`,
-    hardwareAccess: false as const,
+    hardwareAccess: false,
   }));
 }
 
@@ -196,6 +231,7 @@ export function buildAiGraderLocalStationStatus(input: {
       gain: 0,
       channels: [1, 2, 3, 4, 5, 6, 7, 8],
       source: "operator_preview",
+      actualLeimacPwmStep: 13,
     },
     calibrationProfile: {
       referenceType: "fixed_metric_rulers",
@@ -258,15 +294,19 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
   const allowed: AiGraderStationAction[] = [
     "status",
     "start-session",
+    "confirm-light-idle-off",
+    "confirm-fixture-rulers",
     "launch-preview",
     "accept-profile",
     "capture-front",
     "confirm-flip",
     "capture-back",
     "run-diagnostics",
+    "export-report-bundle",
     "safe-off",
     "latest-report",
     "session-manifest",
+    "end-session",
   ];
   return allowed.includes(raw as AiGraderStationAction) ? (raw as AiGraderStationAction) : null;
 }

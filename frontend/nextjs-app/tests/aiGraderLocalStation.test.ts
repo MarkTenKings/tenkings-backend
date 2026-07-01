@@ -8,6 +8,10 @@ import {
   parseAiGraderStationAction,
 } from "../lib/aiGraderLocalStation";
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE, hasNoFinalCertifiedClaims } from "../lib/aiGraderReportBundle";
+import {
+  DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+  normalizeAiGraderStationBridgeUrl,
+} from "../lib/aiGraderStationBridgeClient";
 
 type MockResponse = NextApiResponse & {
   statusCodeValue: number | null;
@@ -60,6 +64,8 @@ test("local station contract exposes workflow status with no login, DB, or hardw
 
 test("local station action parser accepts known actions and rejects unknown actions", () => {
   assert.equal(parseAiGraderStationAction(["capture-front"]), "capture-front");
+  assert.equal(parseAiGraderStationAction(["export-report-bundle"]), "export-report-bundle");
+  assert.equal(parseAiGraderStationAction(["confirm-fixture-rulers"]), "confirm-fixture-rulers");
   assert.equal(parseAiGraderStationAction(undefined), "status");
   assert.equal(parseAiGraderStationAction(["delete-all"]), null);
 });
@@ -98,4 +104,11 @@ test("sample public report bundle keeps provisional-only safety flags", () => {
   assert.equal(SAMPLE_AI_GRADER_REPORT_BUNDLE.visionLab.available, true);
   assert.equal(hasNoFinalCertifiedClaims(SAMPLE_AI_GRADER_REPORT_BUNDLE), true);
   assert.match(SAMPLE_AI_GRADER_REPORT_BUNDLE.limitations.join(" "), /No QR Certificate Yet/);
+});
+
+test("browser station bridge client accepts only loopback bridge URLs", () => {
+  assert.equal(normalizeAiGraderStationBridgeUrl(""), DEFAULT_AI_GRADER_STATION_BRIDGE_URL);
+  assert.equal(normalizeAiGraderStationBridgeUrl("http://localhost:47652/path?x=1"), "http://localhost:47652");
+  assert.throws(() => normalizeAiGraderStationBridgeUrl("https://collect.tenkings.co/api/ai-grader/station"), /loopback|localhost|127/);
+  assert.throws(() => normalizeAiGraderStationBridgeUrl("http://192.168.1.20:47652"), /localhost|127/);
 });

@@ -22341,3 +22341,44 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or hardware capture was run.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, label generation, or certified grading claim was added.
+
+## 2026-07-01 - AI Grader PR #46 real local station bridge update
+
+### Summary
+- Continued PR #46 on branch `feature/ai-grader-local-station-web-viewer`.
+- Converted the browser station path from mock/contract-only toward the real production architecture:
+  - the hosted/local Next page `/ai-grader/station` remains the operator UI;
+  - the public route `/ai-grader/reports/[reportId]` remains read-only and has no hardware controls;
+  - the Dell PC now has a capture-helper loopback bridge command, `ai-grader-station-bridge`, for staged local browser-to-hardware orchestration.
+- Added a real local bridge module that binds to loopback, is disabled by default, requires `--enable-local-station`, requires a station token, origin-checks browser calls, and rejects unsafe/non-local bridge URLs.
+- Bridge actions are staged and token-gated: `start-session`, `confirm-light-idle-off`, `confirm-fixture-rulers`, `launch-preview`, `accept-profile`, `capture-front`, `confirm-flip`, `capture-back`, `run-diagnostics`, `export-report-bundle`, `safe-off`, and `end-session`.
+- Real bridge mode delegates to the existing PR #41 station command plan and requires `--apply`, Mark-present, wiring-confirmed, Leimac-status-green, and Leimac/Basler configuration flags before any hardware-capable path is available.
+- The Next station page can now connect directly to a local loopback bridge URL with a station token, while the existing Next API route stays as a safe mock/contract fallback.
+- Added browser-side loopback bridge URL validation and tests.
+- DB/storage production integration remains deferred. Existing Prisma AI Grader models and storage/presign helpers are the future integration path, but this update adds no migration, runs no migration, writes no runtime DB record, and uploads no artifacts.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `163` tests.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `6` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>` lint warnings only.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Pending
+- Commit and push PR #46 updates.
+- Browser-driven hardware smoke remains pending until Mark is present and explicitly approves launching the real bridge/hardware flow.
+
+### Guardrails
+- No hardware command was run.
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, label generation, or certified grading claim was added.

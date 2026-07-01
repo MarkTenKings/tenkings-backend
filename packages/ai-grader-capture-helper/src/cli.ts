@@ -421,6 +421,44 @@ type ParsedCommand =
       verticalEndPx: { x: number; y: number } | undefined;
       cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
     }
+  | {
+      command: "ai-grader-station-bridge";
+      config: CaptureHelperConfigInput;
+      host: string | undefined;
+      port: string | undefined;
+      outputDir: string | undefined;
+      reportBundleOutputDir: string | undefined;
+      publicBasePath: string | undefined;
+      stationToken: string | undefined;
+      allowedOrigins: string[];
+      stationBridgeMode: "mock" | "real";
+      enableLocalStation: boolean;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      baslerBridgeScript: string | undefined;
+      cameraIndex: number | undefined;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacTimeoutMs: number | undefined;
+      leimacUnit: number | undefined;
+      duty: number | undefined;
+      exposureUs: number | undefined;
+      gain: number | undefined;
+      apply: boolean;
+      markPresent: boolean;
+      wiringConfirmed: boolean;
+      leimacStatusGreen: boolean;
+      fixtureLabel: string | undefined;
+      fixtureId: string | undefined;
+      referenceType: string | undefined;
+      horizontalSpanMm: number | undefined;
+      horizontalStartPx: { x: number; y: number } | undefined;
+      horizontalEndPx: { x: number; y: number } | undefined;
+      verticalSpanMm: number | undefined;
+      verticalStartPx: { x: number; y: number } | undefined;
+      verticalEndPx: { x: number; y: number } | undefined;
+      cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
+    }
   | { command: "fixed-rig-lighting-profile-plan"; config: CaptureHelperConfigInput }
   | {
       command: "leimac-channel-characterization";
@@ -532,6 +570,11 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let reportDir: string | undefined;
   let reportId: string | undefined;
   let publicBasePath: string | undefined;
+  let reportBundleOutputDir: string | undefined;
+  let stationToken: string | undefined;
+  const allowedOrigins: string[] = [];
+  let stationBridgeMode: "mock" | "real" = "mock";
+  let enableLocalStation = false;
   let mockRun = false;
   let operatorAcceptedWarnings = false;
   let calibrationProfileId: string | undefined;
@@ -724,6 +767,30 @@ function parseCliArgs(argv: string[]): ParsedCommand {
       case "--public-base-path":
         publicBasePath = readOption(rest, index, "--public-base-path");
         index += 1;
+        break;
+      case "--report-bundle-output-dir":
+        reportBundleOutputDir = readOption(rest, index, "--report-bundle-output-dir");
+        index += 1;
+        break;
+      case "--station-token":
+        stationToken = readOption(rest, index, "--station-token");
+        index += 1;
+        break;
+      case "--allowed-origin":
+        allowedOrigins.push(readOption(rest, index, "--allowed-origin"));
+        index += 1;
+        break;
+      case "--station-bridge-mode": {
+        const value = readOption(rest, index, "--station-bridge-mode");
+        if (value !== "mock" && value !== "real") {
+          throw new CaptureHelperCommandError("--station-bridge-mode must be mock or real.");
+        }
+        stationBridgeMode = value;
+        index += 1;
+        break;
+      }
+      case "--enable-local-station":
+        enableLocalStation = true;
         break;
       case "--mock-run":
         mockRun = true;
@@ -1320,6 +1387,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "ai-grader-fixed-rig-v1-card-report" ||
     command === "ai-grader-report-bundle" ||
     command === "ai-grader-station-operator-workflow" ||
+    command === "ai-grader-station-bridge" ||
     command === "fixed-rig-lighting-profile-plan" ||
     command === "leimac-channel-characterization" ||
     command === "dinolite-enumerate" ||
@@ -1335,6 +1403,52 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   ) {
     if (command === "manifest") return { command, config, mode };
     if (command === "serve") return { command, config, host, port };
+    if (command === "ai-grader-station-bridge") {
+      const leimacHostValue = leimacHost;
+      const leimacPortValue = leimacPort;
+      const parsedLeimacPort = leimacPortValue === undefined ? undefined : Number(leimacPortValue);
+      if (parsedLeimacPort !== undefined && (!Number.isInteger(parsedLeimacPort) || parsedLeimacPort <= 0)) {
+        throw new CaptureHelperCommandError("--leimac-port must be a positive integer.");
+      }
+      return {
+        command,
+        config,
+        host,
+        port,
+        outputDir,
+        reportBundleOutputDir,
+        publicBasePath,
+        stationToken,
+        allowedOrigins,
+        stationBridgeMode,
+        enableLocalStation,
+        pylonRoot,
+        pylonTimeoutMs,
+        baslerBridgeScript,
+        cameraIndex,
+        leimacHost: leimacHostValue,
+        leimacPort: parsedLeimacPort,
+        leimacTimeoutMs,
+        leimacUnit,
+        duty,
+        exposureUs,
+        gain,
+        apply,
+        markPresent,
+        wiringConfirmed,
+        leimacStatusGreen,
+        fixtureLabel,
+        fixtureId,
+        referenceType,
+        horizontalSpanMm,
+        horizontalStartPx,
+        horizontalEndPx,
+        verticalSpanMm,
+        verticalStartPx,
+        verticalEndPx,
+        cardBoundaryRect,
+      };
+    }
     if (command === "leimac-idmu-trigger-sync-plan") return { command, config, mode };
     if (
       command === "leimac-idmu-readiness" ||
@@ -1858,6 +1972,8 @@ function helpPayload() {
       "ai-grader-report-bundle --report-dir <unified-report-dir> --output-dir C:\\TenKings\\capture-data\\ai-grader-report-bundles --report-id <report-id>",
       "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --mock-run --duty 1.2 --exposure-us 45000 --front-clipped-fraction 0.107932 --back-clipped-fraction 0.337672 --calibration-profile-id fixed-ruler-pr39 --framing-overlay-pass --repeatability-pass --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
       "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --reference-type fixed_metric_rulers --horizontal-span-mm 50.8 --horizontal-start-px 540,205 --horizontal-end-px 1620,205 --vertical-span-mm 50.8 --vertical-start-px 2295,145 --vertical-end-px 2295,1218 --card-boundary-rect 285,349,1878,1350 --apply --confirm \"RUN AI GRADER STATION OPERATOR WORKFLOW\" --mark-present --wiring-confirmed --leimac-status-green",
+      "ai-grader-station-bridge --enable-local-station --station-bridge-mode mock --host 127.0.0.1 --port 47652 --station-token local-dev-token --output-dir C:\\TenKings\\capture-data\\ai-grader-station",
+      "ai-grader-station-bridge --enable-local-station --station-bridge-mode real --host 127.0.0.1 --port 47652 --station-token <local-secret> --allowed-origin https://collect.tenkings.co --output-dir C:\\TenKings\\capture-data\\ai-grader-station --report-bundle-output-dir C:\\TenKings\\capture-data\\ai-grader-report-bundles --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --duty 1.2 --apply --mark-present --wiring-confirmed --leimac-status-green",
       "leimac-channel-characterization --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --duty 1 --exposure-us 45000 --apply --confirm \"RUN LEIMAC CHANNEL CHARACTERIZATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
@@ -1883,6 +1999,11 @@ function helpPayload() {
       "--sdk-runtime-dir",
       "--device-index",
       "--output-dir",
+      "--report-bundle-output-dir",
+      "--station-token",
+      "--allowed-origin",
+      "--station-bridge-mode mock|real",
+      "--enable-local-station",
       "--label",
       "--pylon-root",
       "--bridge-script",
@@ -5628,6 +5749,76 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         service: "ai-grader-capture-helper",
         command: "dinolite-capture-still",
         capture,
+      });
+      return 0;
+    }
+
+    if (parsed.command === "ai-grader-station-bridge") {
+      const { startAiGraderLocalStationBridgeHttpServer } = await import("./drivers/aiGraderLocalStationBridge");
+      const started = await startAiGraderLocalStationBridgeHttpServer(
+        {
+          enabled: parsed.enableLocalStation,
+          host: parsed.host,
+          port: parsed.port,
+          mode: parsed.stationBridgeMode,
+          stationToken: parsed.stationToken,
+          allowedOrigins: parsed.allowedOrigins,
+          outputDir: parsed.outputDir,
+          reportBundleOutputDir: parsed.reportBundleOutputDir,
+          publicBasePath: parsed.publicBasePath,
+          apply: parsed.apply,
+          markPresent: parsed.markPresent,
+          wiringConfirmed: parsed.wiringConfirmed,
+          leimacStatusGreen: parsed.leimacStatusGreen,
+          leimacHost: parsed.leimacHost,
+          leimacPort: parsed.leimacPort,
+          leimacTimeoutMs: parsed.leimacTimeoutMs,
+          leimacUnit: parsed.leimacUnit,
+          pylonRoot: parsed.pylonRoot,
+          pylonTimeoutMs: parsed.pylonTimeoutMs,
+          baslerBridgeScript: parsed.baslerBridgeScript,
+          cameraIndex: parsed.cameraIndex,
+          exposureUs: parsed.exposureUs,
+          gain: parsed.gain,
+          duty: parsed.duty,
+          fixtureLabel: parsed.fixtureLabel,
+          fixtureId: parsed.fixtureId,
+          referenceType: parsed.referenceType,
+          horizontalSpanMm: parsed.horizontalSpanMm,
+          horizontalStartPx: parsed.horizontalStartPx,
+          horizontalEndPx: parsed.horizontalEndPx,
+          verticalSpanMm: parsed.verticalSpanMm,
+          verticalStartPx: parsed.verticalStartPx,
+          verticalEndPx: parsed.verticalEndPx,
+          cardBoundaryRect: parsed.cardBoundaryRect,
+        },
+        io.env ?? process.env
+      );
+      writeJson(stdout, {
+        ok: true,
+        service: "ai-grader-capture-helper",
+        command: "ai-grader-station-bridge",
+        bridge: {
+          enabled: true,
+          localOnly: true,
+          mode: started.config.mode,
+          host: started.host,
+          port: started.port,
+          url: started.url,
+          tokenRequired: true,
+          allowedOrigins: started.config.allowedOrigins,
+          hardwareActionsEnabled: started.config.mode === "real",
+        },
+        safety: {
+          databaseWrites: false,
+          migrationsRun: false,
+          deployRun: false,
+          finalGradeComputed: false,
+          certifiedClaim: false,
+          labelGenerated: false,
+          qrGenerated: false,
+          certificateGenerated: false,
+        },
       });
       return 0;
     }

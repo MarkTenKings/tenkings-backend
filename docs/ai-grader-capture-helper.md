@@ -1214,7 +1214,7 @@ The local operator station web pass adds the first browser-facing station shell 
 http://localhost:<port>/ai-grader/station
 ```
 
-It is intentionally local/no-login and shows Start New Card, fixture/ruler checklist, live preview launch/status, lighting/exposure tune status, accepted profile summary, Capture Front, Flip Card, Capture Back, Run Diagnostics, Open Report, Rerun, Safe Off, End Session, warnings, and report links. In this first pass, the browser bridge is a contract/mock adapter only: it does not contact Basler, Leimac, a database, storage, or any hardware. The real hardware-capable operator path remains `ai-grader-station-operator-workflow --apply` from PR #41 until a later approved bridge connects browser actions to local capture-helper commands.
+It is intentionally local/no-login and shows Start New Card, fixture/ruler checklist, live preview launch/status, lighting/exposure tune status, accepted profile summary, Capture Front, Flip Card, Capture Back, Run Diagnostics, Open Report, Rerun, Safe Off, End Session, warnings, and report links. The Next.js route still has a safe contract/mock fallback for development, but PR #46 adds a real local Dell bridge path: the browser can call a loopback-only capture-helper service that orchestrates the existing PR #41 station command plan. The bridge is disabled by default, requires an explicit local station enable flag, requires a station token, only accepts loopback hosts, origin-checks browser calls, and requires the same Mark-present/wiring/status/apply flags before hardware mode is available. Public/shareable report pages never expose these hardware actions.
 
 The local station API contract is exposed under:
 
@@ -1234,6 +1234,43 @@ GET  /api/ai-grader/station/session-manifest
 
 The API contract is safe for local development: `hardwareActionsEnabled=false`, `databaseConnected=false`, `databaseWrites=false`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`.
 
+The real loopback bridge is launched from the capture-helper on the Dell PC. Mock bridge mode is useful for browser/UI testing and still does not contact hardware:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-station-bridge `
+  --enable-local-station `
+  --station-bridge-mode mock `
+  --host 127.0.0.1 `
+  --port 47652 `
+  --station-token local-dev-token `
+  --output-dir C:\TenKings\capture-data\ai-grader-station
+```
+
+The supervised hardware-capable bridge mode remains local-only and guarded. It must be started only with Mark present and the rig status confirmed:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-station-bridge `
+  --enable-local-station `
+  --station-bridge-mode real `
+  --host 127.0.0.1 `
+  --port 47652 `
+  --station-token <local-secret> `
+  --allowed-origin https://collect.tenkings.co `
+  --output-dir C:\TenKings\capture-data\ai-grader-station `
+  --report-bundle-output-dir C:\TenKings\capture-data\ai-grader-report-bundles `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --exposure-us 45000 `
+  --gain 0 `
+  --duty 1.2 `
+  --apply `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green
+```
+
+The bridge exposes `GET /health`, token-gated `GET /status`, `GET /latest-report`, `GET /session-manifest`, and token-gated `POST /actions/<action>`. Actions are staged: `start-session`, `confirm-light-idle-off`, `confirm-fixture-rulers`, `launch-preview`, `accept-profile`, `capture-front`, `confirm-flip`, `capture-back`, `run-diagnostics`, `export-report-bundle`, `safe-off`, and `end-session`. The bridge writes station session manifests outside the repo and fails closed if required confirmations, side outputs, report outputs, or safe-off cleanup are missing.
+
 A public/shareable report viewer foundation is available at:
 
 ```text
@@ -1252,6 +1289,8 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader
 ```
 
 The command writes `report-bundle.json`, `asset-manifest.json`, and `checksums.json` outside the repo. The bundle reserves future public storage, label, QR, certificate, slab photo, and eBay comps fields, but does not upload files, write the database, generate labels/QR/certificates, or claim a final/certified grade.
+
+DB and storage integration remain intentionally deferred in PR #46. Existing Prisma AI Grader entities (`CaptureSession`, `CaptureManifest`, `GradeRun`, `EvidenceArtifact`, `CalibrationSnapshot`, and related reserved certificate/report shapes) are the likely production record home once migrations are approved. Existing storage/presign helpers are the likely upload path for bundle assets. PR #46 adds no migration, applies no migration, writes no runtime DB record, and performs no cloud upload; it keeps the file-backed report bundle and documents the future integration contract.
 
 The first sample bundle from the PR #45 report was written to:
 
