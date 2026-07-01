@@ -3245,6 +3245,473 @@ function channelGallery(sideLabel: string, side: FixedRigEvidencePackageJson | u
     .join("")}</div>`;
 }
 
+function scriptJson(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
+}
+
+function artifactRef(artifact: FixedRigEvidencePackageJson | undefined, label: string, role: string): FixedRigEvidencePackageJson {
+  return artifact?.outputFilePath
+    ? {
+        label,
+        role,
+        outputFilePath: artifact.outputFilePath,
+        rawSourceSha256: artifact.rawSourceSha256,
+        displayTransform: artifact.displayTransform,
+        rawCoordinateFrame: artifact.rawCoordinateFrame,
+        displayCoordinateFrame: artifact.displayCoordinateFrame,
+        imageWidth: artifact.imageWidth,
+        imageHeight: artifact.imageHeight,
+      }
+    : { label, role, status: "missing" };
+}
+
+function diagnosticElementSummary(element: FixedRigEvidencePackageJson | undefined): FixedRigEvidencePackageJson {
+  return {
+    status: element?.status ?? "insufficient_evidence",
+    score: element?.score ?? null,
+    confidence: element?.confidence ?? 0,
+    warnings: Array.isArray(element?.warnings) ? element.warnings : [],
+  };
+}
+
+function diagnosticSideSummary(diagnostic: FixedRigEvidencePackageJson | undefined): FixedRigEvidencePackageJson {
+  return {
+    centering: diagnosticElementSummary(diagnostic?.centering),
+    corners: {
+      topLeft: diagnosticElementSummary(diagnostic?.corners?.topLeft),
+      topRight: diagnosticElementSummary(diagnostic?.corners?.topRight),
+      bottomRight: diagnosticElementSummary(diagnostic?.corners?.bottomRight),
+      bottomLeft: diagnosticElementSummary(diagnostic?.corners?.bottomLeft),
+    },
+    edges: {
+      top: diagnosticElementSummary(diagnostic?.edges?.top),
+      right: diagnosticElementSummary(diagnostic?.edges?.right),
+      bottom: diagnosticElementSummary(diagnostic?.edges?.bottom),
+      left: diagnosticElementSummary(diagnostic?.edges?.left),
+    },
+    surface: diagnosticElementSummary(diagnostic?.surface),
+    warnings: Array.isArray(diagnostic?.warnings) ? diagnostic.warnings : [],
+  };
+}
+
+function normalizeCandidate(candidate: FixedRigEvidencePackageJson, side: FixedRigCardSide): FixedRigEvidencePackageJson {
+  return {
+    candidateId: candidate.candidateId ?? `${side}-surface-candidate`,
+    side,
+    category: "surface",
+    severityBand: candidate.severityBand ?? "low",
+    confidence: candidate.confidence ?? "low",
+    anomalyProxyScore: candidate.anomalyProxyScore ?? candidate.severityProxy ?? 0,
+    displayRect: candidate.displayRect,
+    rawRect: candidate.rawRect,
+    sourceChannels: Array.isArray(candidate.sourceChannels) ? candidate.sourceChannels : [],
+    needsDinoLiteFollowUp: Boolean(candidate.needsDinoLiteFollowUp),
+    explanation:
+      "Surface Vision V0 highlighted this provisional candidate from directional light evidence. It is not a final surface grade.",
+  };
+}
+
+function visionLabSidePayload(input: {
+  sideName: FixedRigCardSide;
+  side: FixedRigEvidencePackageJson | undefined;
+  diagnostic: FixedRigEvidencePackageJson | undefined;
+  surface: FixedRigEvidencePackageJson | undefined;
+  stats: FixedRigQualityMetrics | undefined;
+  clippingWarning?: string;
+}): FixedRigEvidencePackageJson {
+  const channels = Array.from({ length: 8 }, (_, index) => {
+    const channel = index + 1;
+    const fromSide = Array.isArray(input.side?.channelDisplayImages)
+      ? input.side.channelDisplayImages.find((entry: FixedRigEvidencePackageJson) => Number(entry.channel) === channel)
+      : undefined;
+    const fromSurface = Array.isArray(input.surface?.perChannelStats)
+      ? input.surface.perChannelStats.find((entry: FixedRigEvidencePackageJson) => Number(entry.channel) === channel)
+      : undefined;
+    return {
+      channel,
+      label: `Channel ${channel}`,
+      mappingStatus: "physical_direction_calibration_pending",
+      image: artifactRef(fromSide?.displayImage ?? fromSurface?.portraitDisplayImage, `${input.sideName} channel ${channel}`, "directional_light_channel"),
+      stats: fromSurface
+        ? {
+            mean: fromSurface.mean,
+            max: fromSurface.max,
+            clippedPixelFraction: fromSurface.clippedPixelFraction,
+            darkPixelFraction: fromSurface.darkPixelFraction,
+            sharpnessScore: fromSurface.sharpnessScore,
+            anomalyProxyMetric: fromSurface.anomalyProxyMetric,
+          }
+        : undefined,
+    };
+  });
+  const candidates = Array.isArray(input.surface?.candidates)
+    ? input.surface.candidates.map((candidate: FixedRigEvidencePackageJson) => normalizeCandidate(candidate, input.sideName))
+    : [];
+  const roiCrops = Array.isArray(input.side?.roiCrops)
+    ? input.side.roiCrops.map((crop: FixedRigEvidencePackageJson) => ({
+        roiId: crop.roiId,
+        label: crop.roiId ?? "ROI",
+        outputFilePath: crop.outputFilePath,
+        coordinateFrame: crop.displayCoordinateFrame ?? "ai_grader_card_portrait_display",
+        rawCoordinateFrame: crop.rawCoordinateFrame ?? "basler_sensor_pixels",
+      }))
+    : [];
+  const confidenceWarnings = [
+    input.clippingWarning,
+    ...(Array.isArray(input.stats?.warnings) ? input.stats.warnings : []),
+    ...(Array.isArray(input.diagnostic?.warnings) ? input.diagnostic.warnings : []),
+    ...(Array.isArray(input.surface?.warnings) ? input.surface.warnings : []),
+  ].filter(Boolean);
+  return {
+    side: input.sideName,
+    status: input.side ? "available" : "insufficient_evidence",
+    trueView: artifactRef(input.side?.displayImage, `${input.sideName} True View portrait image`, "true_view"),
+    overlay: artifactRef(input.side?.overlayPreview, `${input.sideName} measurement overlay/debug image`, "measurement_overlay"),
+    allOn: artifactRef(input.side?.allOn?.capture, `${input.sideName} all-on raw evidence`, "all_on_raw"),
+    acceptedProfile: artifactRef(input.side?.acceptedProfile?.capture, `${input.sideName} accepted-profile raw evidence`, "accepted_profile_raw"),
+    heatmap: artifactRef(input.surface?.heatmap, `${input.sideName} anomaly heatmap`, "surface_heatmap"),
+    glareMask: artifactRef(input.surface?.glareMask, `${input.sideName} glare/clipping mask`, "confidence_mask"),
+    channels,
+    roiCrops,
+    candidates,
+    diagnostics: diagnosticSideSummary(input.diagnostic),
+    quality: input.stats
+      ? {
+          mean: input.stats.mean,
+          max: input.stats.max,
+          clippedPixelFraction: input.stats.clippedPixelFraction,
+          darkPixelFraction: input.stats.darkPixelFraction,
+          sharpnessScore: input.stats.sharpnessScore,
+          cardBoundary: input.stats.cardBoundary,
+          overlayAlignment: input.stats.overlayAlignment,
+        }
+      : { status: "missing" },
+    confidenceWarnings,
+  };
+}
+
+function buildVisionLabData(input: {
+  packageId: string;
+  generatedAt: string;
+  front: FixedRigEvidencePackageJson | undefined;
+  back: FixedRigEvidencePackageJson | undefined;
+  frontDiagnostic: FixedRigEvidencePackageJson | undefined;
+  backDiagnostic: FixedRigEvidencePackageJson | undefined;
+  frontSurface: FixedRigEvidencePackageJson | undefined;
+  backSurface: FixedRigEvidencePackageJson | undefined;
+  frontStats: FixedRigQualityMetrics | undefined;
+  backStats: FixedRigQualityMetrics | undefined;
+  activeProfile: FixedRigEvidencePackageJson | undefined;
+  fixtureProfile: FixedRigEvidencePackageJson | undefined;
+  warnings: string[];
+}): FixedRigEvidencePackageJson {
+  const frontClipping = sideClippingWarning("Front", input.frontStats);
+  const backClipping = sideClippingWarning("Back", input.backStats);
+  const measurementAvailable =
+    input.fixtureProfile?.referenceType === "fixed_metric_rulers" &&
+    typeof input.fixtureProfile?.mmPerPixelX === "number" &&
+    typeof input.fixtureProfile?.mmPerPixelY === "number";
+  return {
+    schemaVersion: "ten-kings-vision-lab-v0.1",
+    packageId: input.packageId,
+    generatedAt: input.generatedAt,
+    mode: "local_static_report",
+    banner: "Provisional Diagnostic - Not Certified - No Final Grade",
+    evidenceClass: FIXED_RIG_V1_EVIDENCE_CLASS,
+    isCalibrated: false,
+    finalGradeComputed: false,
+    certifiedClaim: false,
+    imagingNote:
+      "Monochrome Basler evidence is used for high-detail surface analysis. Later color photography can be added as a customer visual layer.",
+    surfaceVisionNote:
+      "Surface Vision V0 - directional light evidence visualization. This is not certified photometric stereo.",
+    channelMappingStatus: "physical_direction_calibration_pending",
+    activeLightingProfile: input.activeProfile,
+    measurementOverlay: {
+      status: measurementAvailable ? "available" : "unavailable",
+      unavailableReason: measurementAvailable ? undefined : "Ruler calibration metadata is missing; measurement overlay is not guessed.",
+      calibrationProfileId: input.fixtureProfile?.profileId,
+      referenceType: input.fixtureProfile?.referenceType,
+      mmPerPixelX: input.fixtureProfile?.mmPerPixelX,
+      mmPerPixelY: input.fixtureProfile?.mmPerPixelY,
+      pixelsPerMmX: input.fixtureProfile?.pixelPerMmX,
+      pixelsPerMmY: input.fixtureProfile?.pixelPerMmY,
+      rawCoordinateFrame: input.fixtureProfile?.rawCoordinateFrame ?? "basler_sensor_pixels",
+      displayTransform: input.fixtureProfile?.displayTransform,
+      displayCoordinateFrame: input.fixtureProfile?.displayCoordinateFrame ?? "ai_grader_card_portrait_display",
+      expectedCardRectMm: { width: FIXED_RIG_DEFAULT_CARD_WIDTH_MM, height: FIXED_RIG_DEFAULT_CARD_HEIGHT_MM },
+      expectedCardRectPx: input.fixtureProfile?.expectedCardRectPx,
+      detectedCardRectPx: input.fixtureProfile?.detectedCardRectPx,
+      alignmentDeltaPx: input.fixtureProfile?.alignmentDeltaPx,
+      alignmentDeltaMm: input.fixtureProfile?.alignmentDeltaMm,
+      framingGate: input.fixtureProfile?.framingGate,
+      overlayScaleSource: input.fixtureProfile?.overlayScaleSource,
+    },
+    confidenceLens: {
+      clippingWarnings: [frontClipping, backClipping].filter(Boolean),
+      focusFramingWarnings: input.warnings,
+      note: "Confidence Lens highlights where evidence is strong or weak; it does not change raw evidence files.",
+    },
+    severityFilters: ["low", "medium", "high"],
+    views: ["true_view", "surface_vision", "heatmap", "light_sweep", "measurement_overlay", "confidence_lens", "evidence_replay"],
+    sides: {
+      front: visionLabSidePayload({
+        sideName: "front",
+        side: input.front,
+        diagnostic: input.frontDiagnostic,
+        surface: input.frontSurface,
+        stats: input.frontStats,
+        clippingWarning: frontClipping,
+      }),
+      back: visionLabSidePayload({
+        sideName: "back",
+        side: input.back,
+        diagnostic: input.backDiagnostic,
+        surface: input.backSurface,
+        stats: input.backStats,
+        clippingWarning: backClipping,
+      }),
+    },
+  };
+}
+
+function visionLabSection(data: FixedRigEvidencePackageJson): string {
+  return `<section class="vision-lab" id="ten-kings-vision-lab" data-vision-lab>
+    <div class="lab-header">
+      <div>
+        <p class="eyebrow">Ten Kings Vision Lab V0</p>
+        <h2>Interactive Evidence Inspection</h2>
+        <p class="lab-intro">Premium forensic intelligence view for front/back Basler evidence, 8-channel directional lighting, measurement overlays, and confidence review.</p>
+      </div>
+      <div class="lab-mode" role="group" aria-label="Vision Lab mode">
+        <button type="button" class="lab-pill active" data-lab-mode="collector">Collector Mode</button>
+        <button type="button" class="lab-pill" data-lab-mode="expert">Expert Mode</button>
+      </div>
+    </div>
+    <div class="lab-shell">
+      <aside class="lab-sidebar" aria-label="Vision Lab controls">
+        <div class="lab-control-group">
+          <span class="control-label">Side</span>
+          <div class="segmented">
+            <button type="button" class="active" data-side="front">Front</button>
+            <button type="button" data-side="back">Back</button>
+          </div>
+        </div>
+        <div class="lab-control-group">
+          <span class="control-label">View</span>
+          <div class="view-stack">
+            <button type="button" class="active" data-view="true_view">True View</button>
+            <button type="button" data-view="surface_vision">Surface Vision</button>
+            <button type="button" data-view="heatmap">Heatmap</button>
+            <button type="button" data-view="light_sweep">Light Sweep Wheel</button>
+            <button type="button" data-view="measurement_overlay">Measurement Overlay</button>
+            <button type="button" data-view="confidence_lens">Confidence Lens</button>
+            <button type="button" data-view="evidence_replay">Evidence Replay</button>
+          </div>
+        </div>
+        <div class="lab-control-group">
+          <span class="control-label">Light Sweep</span>
+          <div class="light-wheel" aria-label="8-channel light wheel">
+            ${Array.from({ length: 8 }, (_, index) => `<button type="button" data-channel="${index + 1}" style="--i:${index};">Channel ${index + 1}</button>`).join("")}
+          </div>
+          <p class="lab-note">Physical direction calibration pending; channels are labeled numerically.</p>
+        </div>
+        <div class="lab-control-group">
+          <span class="control-label">Severity</span>
+          <label><input type="checkbox" data-severity="low" checked> Low</label>
+          <label><input type="checkbox" data-severity="medium" checked> Medium</label>
+          <label><input type="checkbox" data-severity="high" checked> High</label>
+        </div>
+        <div class="lab-control-group">
+          <span class="control-label">Zoom / Pan</span>
+          <div class="segmented">
+            <button type="button" data-zoom="fit">Fit</button>
+            <button type="button" data-zoom="100">100%</button>
+            <button type="button" data-zoom="in">+</button>
+            <button type="button" data-zoom="out">-</button>
+          </div>
+          <p class="lab-note">Drag the image area to pan when zoomed.</p>
+        </div>
+      </aside>
+      <div class="lab-workspace">
+        <div class="lab-status-row">
+          <span id="lab-view-label">True View</span>
+          <span id="lab-evidence-state">Loading local evidence refs</span>
+        </div>
+        <div class="lab-viewer" id="lab-viewer">
+          <div class="lab-image-plane" id="lab-image-plane">
+            <img id="lab-main-image" alt="Vision Lab active evidence view">
+            <img id="lab-overlay-image" alt="Vision Lab overlay layer">
+            <div id="lab-marker-layer" class="lab-marker-layer" aria-label="Anomaly markers"></div>
+          </div>
+          <div class="missing lab-empty" id="lab-empty-state">Evidence unavailable for this mode.</div>
+        </div>
+        <div class="lab-panel-grid">
+          <section class="lab-panel">
+            <h3>Element Status</h3>
+            <div id="lab-element-status"></div>
+          </section>
+          <section class="lab-panel">
+            <h3>Evidence Replay</h3>
+            <div id="lab-replay"></div>
+          </section>
+          <section class="lab-panel expert-only">
+            <h3>Expert Data</h3>
+            <pre id="lab-expert-json"></pre>
+          </section>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="vision-lab-data">${scriptJson(data)}</script>
+    <script>
+      (function () {
+        const data = JSON.parse(document.getElementById("vision-lab-data").textContent);
+        const state = { side: "front", view: "true_view", channel: 1, zoom: 1, panX: 0, panY: 0, mode: "collector", severities: new Set(["low", "medium", "high"]) };
+        const main = document.getElementById("lab-main-image");
+        const overlay = document.getElementById("lab-overlay-image");
+        const markers = document.getElementById("lab-marker-layer");
+        const empty = document.getElementById("lab-empty-state");
+        const plane = document.getElementById("lab-image-plane");
+        const status = document.getElementById("lab-evidence-state");
+        const label = document.getElementById("lab-view-label");
+        const elementStatus = document.getElementById("lab-element-status");
+        const replay = document.getElementById("lab-replay");
+        const expert = document.getElementById("lab-expert-json");
+        const viewLabels = {
+          true_view: "True View",
+          surface_vision: "Surface Vision V0",
+          heatmap: "Heatmap",
+          light_sweep: "Light Sweep Wheel",
+          measurement_overlay: "Measurement Overlay",
+          confidence_lens: "Confidence Lens",
+          evidence_replay: "Evidence Replay"
+        };
+        function sideData() { return data.sides[state.side] || {}; }
+        function imageFor(side) {
+          if (state.view === "light_sweep") return side.channels?.find((entry) => entry.channel === state.channel)?.image;
+          if (state.view === "heatmap") return side.heatmap?.outputFilePath ? side.heatmap : side.trueView;
+          if (state.view === "surface_vision") return side.channels?.find((entry) => entry.channel === state.channel)?.image || side.trueView;
+          return side.trueView;
+        }
+        function setButtons(selector, attr, value) {
+          document.querySelectorAll(selector).forEach((button) => button.classList.toggle("active", button.getAttribute(attr) === String(value)));
+        }
+        function escapeText(value) {
+          return String(value ?? "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char]));
+        }
+        function renderMarkers(side) {
+          markers.innerHTML = "";
+          const visible = (side.candidates || []).filter((candidate) => state.severities.has(candidate.severityBand || "low"));
+          visible.forEach((candidate) => {
+            const rect = candidate.displayRect;
+            if (!rect) return;
+            const frameWidth = side.trueView?.imageWidth || side.overlay?.imageWidth || 1;
+            const frameHeight = side.trueView?.imageHeight || side.overlay?.imageHeight || 1;
+            const marker = document.createElement("button");
+            marker.type = "button";
+            marker.className = "lab-marker severity-" + (candidate.severityBand || "low");
+            marker.style.left = (rect.x / frameWidth) * 100 + "%";
+            marker.style.top = (rect.y / frameHeight) * 100 + "%";
+            marker.style.width = Math.max((rect.width / frameWidth) * 100, 1.4) + "%";
+            marker.style.height = Math.max((rect.height / frameHeight) * 100, 1.4) + "%";
+            marker.title = candidate.candidateId + " " + candidate.severityBand;
+            marker.addEventListener("click", () => renderReplay(side, candidate));
+            markers.appendChild(marker);
+          });
+        }
+        function renderElementStatus(side) {
+          const d = side.diagnostics || {};
+          elementStatus.innerHTML = [
+            ["Centering", d.centering],
+            ["Corners", d.corners],
+            ["Edges", d.edges],
+            ["Surface", d.surface]
+          ].map(([name, value]) => {
+            const statusValue = value?.status || Object.values(value || {}).map((entry) => entry.status).join(", ") || "insufficient_evidence";
+            return "<div class=\\"lab-mini-row\\"><span>" + escapeText(name) + "</span><strong>" + escapeText(statusValue) + "</strong></div>";
+          }).join("");
+        }
+        function renderReplay(side, selected) {
+          const candidates = selected ? [selected] : (side.candidates || []);
+          if (!candidates.length) {
+            replay.innerHTML = "<p>No provisional anomaly candidates were emitted for this side.</p>";
+            return;
+          }
+          replay.innerHTML = candidates.map((candidate) => "<article class=\\"replay-card severity-" + escapeText(candidate.severityBand || "low") + "\\"><strong>" + escapeText(candidate.candidateId) + "</strong><span>" + escapeText(candidate.severityBand || "low") + " severity / confidence " + escapeText(candidate.confidence || "low") + "</span><p>" + escapeText(candidate.explanation) + "</p><small>Source channels: " + escapeText((candidate.sourceChannels || []).join(", ") || "not computed") + " / Dino-Lite follow-up: " + escapeText(candidate.needsDinoLiteFollowUp) + "</small></article>").join("");
+        }
+        function renderExpert(side) {
+          expert.textContent = JSON.stringify({
+            schemaVersion: data.schemaVersion,
+            measurementOverlay: data.measurementOverlay,
+            confidenceLens: data.confidenceLens,
+            side,
+          }, null, 2);
+        }
+        function update() {
+          const side = sideData();
+          const image = imageFor(side);
+          const src = image?.outputFilePath;
+          label.textContent = viewLabels[state.view] || state.view;
+          main.style.display = src ? "block" : "none";
+          empty.style.display = src ? "none" : "block";
+          if (src) main.src = src;
+          const showOverlay = state.view === "measurement_overlay" || state.view === "confidence_lens";
+          overlay.style.display = showOverlay && side.overlay?.outputFilePath ? "block" : "none";
+          if (showOverlay && side.overlay?.outputFilePath) overlay.src = side.overlay.outputFilePath;
+          markers.style.display = ["heatmap", "surface_vision", "evidence_replay"].includes(state.view) ? "block" : "none";
+          plane.style.transform = "translate(" + state.panX + "px, " + state.panY + "px) scale(" + state.zoom + ")";
+          status.textContent = side.status === "available" ? state.side + " evidence ready" : state.side + " evidence insufficient";
+          if (state.view === "surface_vision" && image?.status === "missing") status.textContent = "Surface Vision data is insufficient for this side.";
+          if (state.view === "heatmap" && side.heatmap?.status === "missing") status.textContent = "Heatmap unavailable; showing True View with candidate markers when available.";
+          renderMarkers(side);
+          renderElementStatus(side);
+          renderReplay(side);
+          renderExpert(side);
+          setButtons("[data-side]", "data-side", state.side);
+          setButtons("[data-view]", "data-view", state.view);
+          setButtons("[data-channel]", "data-channel", state.channel);
+          document.querySelector(".vision-lab").classList.toggle("expert-mode", state.mode === "expert");
+        }
+        document.querySelectorAll("[data-side]").forEach((button) => button.addEventListener("click", () => { state.side = button.dataset.side; update(); }));
+        document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => { state.view = button.dataset.view; update(); }));
+        document.querySelectorAll("[data-channel]").forEach((button) => button.addEventListener("click", () => { state.channel = Number(button.dataset.channel); state.view = "light_sweep"; update(); }));
+        document.querySelectorAll("[data-lab-mode]").forEach((button) => button.addEventListener("click", () => {
+          state.mode = button.dataset.labMode;
+          document.querySelectorAll("[data-lab-mode]").forEach((entry) => entry.classList.toggle("active", entry === button));
+          update();
+        }));
+        document.querySelectorAll("[data-severity]").forEach((checkbox) => checkbox.addEventListener("change", () => {
+          if (checkbox.checked) state.severities.add(checkbox.dataset.severity); else state.severities.delete(checkbox.dataset.severity);
+          update();
+        }));
+        document.querySelectorAll("[data-zoom]").forEach((button) => button.addEventListener("click", () => {
+          const action = button.dataset.zoom;
+          if (action === "fit") { state.zoom = 1; state.panX = 0; state.panY = 0; }
+          if (action === "100") state.zoom = 1;
+          if (action === "in") state.zoom = Math.min(4, state.zoom + 0.25);
+          if (action === "out") state.zoom = Math.max(0.5, state.zoom - 0.25);
+          update();
+        }));
+        let dragging = false, startX = 0, startY = 0, baseX = 0, baseY = 0;
+        document.getElementById("lab-viewer").addEventListener("pointerdown", (event) => {
+          dragging = true; startX = event.clientX; startY = event.clientY; baseX = state.panX; baseY = state.panY;
+        });
+        window.addEventListener("pointerup", () => { dragging = false; });
+        window.addEventListener("pointermove", (event) => {
+          if (!dragging) return;
+          state.panX = baseX + event.clientX - startX;
+          state.panY = baseY + event.clientY - startY;
+          update();
+        });
+        update();
+      })();
+    </script>
+  </section>`;
+}
+
 function diagnosticTable(title: string, diagnostic: FixedRigEvidencePackageJson | undefined): string {
   return `<section class="panel">
     <h3>${escapeHtml(title)}</h3>
@@ -3268,6 +3735,7 @@ function renderUnifiedFixedRigCardReport(input: {
   frontAnalysis: FixedRigEvidencePackageJson;
   backAnalysis: FixedRigEvidencePackageJson;
   warnings: string[];
+  visionLabData?: FixedRigEvidencePackageJson;
 }): string {
   const front = evidenceSideFromPackage(input.frontManifest, "front");
   const back = evidenceSideFromPackage(input.backManifest, "back");
@@ -3279,7 +3747,9 @@ function renderUnifiedFixedRigCardReport(input: {
   const fixtureProfile = front?.fixtureCalibrationProfile ?? back?.fixtureCalibrationProfile;
   const frontStats = sideAllOnStats(front);
   const backStats = sideAllOnStats(back);
-  const clippingWarnings = [sideClippingWarning("Front", frontStats), sideClippingWarning("Back", backStats)].filter(Boolean);
+  const clippingWarnings = [sideClippingWarning("Front", frontStats), sideClippingWarning("Back", backStats)].filter(
+    (warning): warning is string => Boolean(warning)
+  );
   const strongestWarning = [...clippingWarnings, ...input.warnings][0] ?? "No blocking warning was emitted.";
   const topCandidate = [frontSurface, backSurface]
     .flatMap((surface) => (Array.isArray(surface?.candidates) ? surface.candidates : []))
@@ -3288,6 +3758,23 @@ function renderUnifiedFixedRigCardReport(input: {
     fixtureProfile?.framingGate?.status === "pass" && (fixtureProfile?.pixelToMmConsistency?.status === "pass" || fixtureProfile?.pixelToMmConsistency?.status === undefined)
       ? "Fixed-ruler scale, framing, and overlay gates passed for this provisional diagnostic run."
       : "Front/back evidence packages were generated with portrait displays, overlays, ROI crops, and 8-channel evidence.";
+  const visionLabData =
+    input.visionLabData ??
+    buildVisionLabData({
+      packageId: input.packageId,
+      generatedAt: input.generatedAt,
+      front,
+      back,
+      frontDiagnostic,
+      backDiagnostic,
+      frontSurface,
+      backSurface,
+      frontStats,
+      backStats,
+      activeProfile,
+      fixtureProfile,
+      warnings: [...clippingWarnings, ...input.warnings],
+    });
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -3336,7 +3823,47 @@ function renderUnifiedFixedRigCardReport(input: {
     th { width:210px; background:#faf6ed; }
     pre { white-space:pre-wrap; word-break:break-word; background:#24211d; color:#fff; padding:14px; overflow:auto; }
     .missing { border:1px dashed var(--line); padding:20px; color:var(--muted); background:#fff; }
+    .eyebrow { margin:0 0 6px; color:#b99651; font-size:12px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase; }
+    .vision-lab { margin-top:36px; border:1px solid #2f332f; background:#11120f; color:#f4efe4; box-shadow:0 20px 46px rgba(0,0,0,.22); }
+    .lab-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding:22px; border-bottom:1px solid #2f332f; background:#171813; }
+    .vision-lab h2, .vision-lab h3 { color:#fffaf0; }
+    .lab-intro { max-width:780px; margin:0; color:#c9c0ae; }
+    .lab-mode, .segmented { display:flex; flex-wrap:wrap; gap:8px; }
+    .lab-pill, .segmented button, .view-stack button, .light-wheel button { border:1px solid #514833; background:#211f18; color:#f4efe4; padding:9px 11px; border-radius:4px; cursor:pointer; font:inherit; }
+    .lab-pill.active, .segmented button.active, .view-stack button.active, .light-wheel button.active { border-color:#d5ad5b; background:#3a2c13; color:#fff3ce; }
+    .lab-shell { display:grid; grid-template-columns:280px minmax(0,1fr); min-height:720px; }
+    .lab-sidebar { border-right:1px solid #2f332f; padding:18px; background:#151610; }
+    .lab-control-group { border-bottom:1px solid #2b2b24; padding:0 0 16px; margin-bottom:16px; }
+    .control-label { display:block; margin-bottom:9px; color:#c7a969; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.9px; }
+    .view-stack { display:grid; gap:7px; }
+    .view-stack button { text-align:left; }
+    .lab-note { margin:8px 0 0; color:#aaa08e; font-size:12px; }
+    .light-wheel { position:relative; width:184px; height:184px; margin:6px auto 8px; border:1px solid #4e4737; border-radius:50%; background:radial-gradient(circle at center,#25231c 0 31%,#151610 32% 100%); }
+    .light-wheel button { position:absolute; left:50%; top:50%; width:76px; min-height:34px; margin:-17px 0 0 -38px; padding:5px; font-size:11px; transform:rotate(calc(var(--i) * 45deg)) translate(0,-72px) rotate(calc(var(--i) * -45deg)); }
+    .lab-workspace { min-width:0; padding:18px; }
+    .lab-status-row { display:flex; justify-content:space-between; gap:12px; color:#d4c8b2; padding:0 0 12px; }
+    .lab-viewer { position:relative; min-height:560px; overflow:hidden; border:1px solid #39372e; background:#050505; display:flex; align-items:center; justify-content:center; touch-action:none; }
+    .lab-image-plane { position:relative; transform-origin:center center; transition:transform .08s linear; }
+    #lab-main-image { display:block; max-height:720px; max-width:100%; object-fit:contain; }
+    #lab-overlay-image { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; opacity:.74; pointer-events:none; mix-blend-mode:screen; }
+    .lab-marker-layer { position:absolute; inset:0; pointer-events:none; }
+    .lab-marker { position:absolute; border:2px solid #f1d35f; background:rgba(241,211,95,.12); border-radius:4px; pointer-events:auto; }
+    .lab-marker.severity-low { border-color:#68b879; }
+    .lab-marker.severity-medium { border-color:#e6b650; }
+    .lab-marker.severity-high { border-color:#d95d4f; }
+    .lab-empty { position:absolute; max-width:420px; text-align:center; }
+    .lab-panel-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }
+    .lab-panel { border:1px solid #39372e; background:#191914; padding:14px; }
+    .lab-mini-row { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid #2f332f; padding:8px 0; }
+    .lab-mini-row span { color:#c9c0ae; }
+    .replay-card { border-left:4px solid #68b879; background:#222018; padding:10px; margin-bottom:9px; }
+    .replay-card span, .replay-card small { display:block; color:#c9c0ae; margin-top:4px; }
+    .replay-card.severity-medium { border-color:#e6b650; }
+    .replay-card.severity-high { border-color:#d95d4f; }
+    .expert-only { display:none; }
+    .expert-mode .expert-only { display:block; grid-column:1 / -1; }
     @media (max-width:900px) { .hero,.side-grid,.image-pair { grid-template-columns:1fr; } .grade-box,.card-stage { grid-column:auto; } }
+    @media (max-width:900px) { .lab-header,.lab-shell,.lab-panel-grid { grid-template-columns:1fr; display:grid; } .lab-sidebar { border-right:0; border-bottom:1px solid #2f332f; } }
   </style>
 </head>
 <body>
@@ -3378,6 +3905,8 @@ function renderUnifiedFixedRigCardReport(input: {
       <p class="panel"><strong>Why this is not final:</strong><br>Evidence class is ${escapeHtml(FIXED_RIG_V1_EVIDENCE_CLASS)}, isCalibrated=false, and all scores are provisional_diagnostic only.</p>
     </div>
   </section>
+
+  ${visionLabSection(visionLabData)}
 
   <section>
     <h2>Card Session Metadata</h2>
@@ -3490,6 +4019,27 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
   const reportPath = path.join(packageDir, "provisional-diagnostic-report.html");
   const manifestPath = path.join(packageDir, "manifest.json");
   const analysisPath = path.join(packageDir, "analysis.json");
+  const frontDiagnostic = sideDiagnosticFromAnalysis(frontAnalysis, "front") ?? front?.diagnosticGrading;
+  const backDiagnostic = sideDiagnosticFromAnalysis(backAnalysis, "back") ?? back?.diagnosticGrading;
+  const frontSurface = sideSurfaceFromAnalysis(frontAnalysis, "front") ?? front?.surfaceAnalysis;
+  const backSurface = sideSurfaceFromAnalysis(backAnalysis, "back") ?? back?.surfaceAnalysis;
+  const frontStats = sideAllOnStats(front);
+  const backStats = sideAllOnStats(back);
+  const visionLabData = buildVisionLabData({
+    packageId,
+    generatedAt,
+    front,
+    back,
+    frontDiagnostic,
+    backDiagnostic,
+    frontSurface,
+    backSurface,
+    frontStats,
+    backStats,
+    activeProfile: activeLightingProfile,
+    fixtureProfile: fixtureCalibrationProfile,
+    warnings,
+  });
   const reportHtml = renderUnifiedFixedRigCardReport({
     packageId,
     generatedAt,
@@ -3500,6 +4050,7 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     frontAnalysis,
     backAnalysis,
     warnings,
+    visionLabData,
   });
   const result: FixedRigUnifiedDiagnosticCardReportResult = {
     packageId,
@@ -3536,8 +4087,35 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
       cornerDiagnostics: Boolean(front?.diagnosticGrading?.corners || frontAnalysis.front?.diagnosticGrading?.corners) && Boolean(back?.diagnosticGrading?.corners || backAnalysis.back?.diagnosticGrading?.corners),
       edgeDiagnostics: Boolean(front?.diagnosticGrading?.edges || frontAnalysis.front?.diagnosticGrading?.edges) && Boolean(back?.diagnosticGrading?.edges || backAnalysis.back?.diagnosticGrading?.edges),
       surfaceAnomalyDiagnostic: Boolean(front?.surfaceAnalysis || frontAnalysis.front?.surfaceAnalysis) && Boolean(back?.surfaceAnalysis || backAnalysis.back?.surfaceAnalysis),
+      visionLab: true,
+      trueView: true,
+      surfaceVision: true,
+      heatmap: true,
+      lightSweepWheel: true,
+      measurementOverlay: true,
+      confidenceLens: true,
+      evidenceReplay: true,
       finalGrade: false,
       certificateOrCertifiedClaim: false,
+    },
+    visionLab: {
+      schemaVersion: visionLabData.schemaVersion,
+      localStaticHtml: true,
+      modes: ["Collector Mode", "Expert Mode"],
+      views: visionLabData.views,
+      dataContract: {
+        frontBackTrueViewImageRefs: true,
+        frontBackOverlayImageRefs: true,
+        frontBackChannelImageRefs1Through8: true,
+        heatmapRefs: true,
+        anomalyCandidateList: true,
+        measurementOverlayMetadata: true,
+        calibrationProfileMetadata: true,
+        clippingFocusConfidenceWarnings: true,
+      },
+      noServerRequired: true,
+      noFinalGrade: true,
+      noCertificateOrCertifiedClaim: true,
     },
     note: "Unified front/back provisional diagnostic report only. No final grade, certificate, or certified grading claim is made.",
   });
@@ -3546,6 +4124,7 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     evidenceClass: FIXED_RIG_V1_EVIDENCE_CLASS,
     front: frontAnalysis.front,
     back: backAnalysis.back,
+    visionLab: visionLabData,
     combinedWarnings: warnings,
     finalGradeComputed: false,
     certifiedClaim: false,

@@ -909,6 +909,28 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.match(reportHtml, /Edge ROI Crops/);
   assert.match(reportHtml, /Surface Evidence and Anomaly Diagnostics/);
   assert.match(reportHtml, /Back clipping is high/);
+  assert.match(reportHtml, /Ten Kings Vision Lab V0/);
+  assert.match(reportHtml, /data-vision-lab/);
+  assert.match(reportHtml, /True View/);
+  assert.match(reportHtml, /Surface Vision V0 - directional light evidence visualization/);
+  assert.match(reportHtml, /Heatmap/);
+  assert.match(reportHtml, /Light Sweep Wheel/);
+  assert.match(reportHtml, /Measurement Overlay/);
+  assert.match(reportHtml, /Confidence Lens/);
+  assert.match(reportHtml, /Evidence Replay/);
+  assert.match(reportHtml, /Collector Mode/);
+  assert.match(reportHtml, /Expert Mode/);
+  assert.match(reportHtml, /data-side="front"/);
+  assert.match(reportHtml, /data-side="back"/);
+  assert.match(reportHtml, /data-severity="low"/);
+  assert.match(reportHtml, /data-severity="medium"/);
+  assert.match(reportHtml, /data-severity="high"/);
+  for (let channel = 1; channel <= 8; channel += 1) {
+    assert.match(reportHtml, new RegExp(`Channel ${channel}`));
+  }
+  assert.match(reportHtml, /Heatmap unavailable; showing True View/);
+  assert.match(reportHtml, /No provisional anomaly candidates were emitted/);
+  assert.match(reportHtml, /physical_direction_calibration_pending/);
   assert.doesNotMatch(reportHtml, /certifiedClaim": true|finalGradeComputed": true/i);
   const manifest = JSON.parse(fs.readFileSync(result.stdout.report.manifestPath, "utf-8"));
   assert.equal(manifest.reportContains.frontEvidenceImages, true);
@@ -917,8 +939,20 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.equal(manifest.reportContains.cornerDiagnostics, true);
   assert.equal(manifest.reportContains.edgeDiagnostics, true);
   assert.equal(manifest.reportContains.surfaceAnomalyDiagnostic, true);
+  assert.equal(manifest.reportContains.visionLab, true);
+  assert.equal(manifest.visionLab.localStaticHtml, true);
+  assert.equal(manifest.visionLab.dataContract.frontBackTrueViewImageRefs, true);
+  assert.equal(manifest.visionLab.dataContract.frontBackChannelImageRefs1Through8, true);
+  assert.equal(manifest.visionLab.dataContract.measurementOverlayMetadata, true);
   assert.equal(manifest.reportContains.finalGrade, false);
   assert.equal(manifest.reportContains.certificateOrCertifiedClaim, false);
+  const analysis = JSON.parse(fs.readFileSync(result.stdout.report.analysisPath, "utf-8"));
+  assert.equal(analysis.visionLab.schemaVersion, "ten-kings-vision-lab-v0.1");
+  assert.equal(analysis.visionLab.sides.front.channels.length, 8);
+  assert.equal(analysis.visionLab.sides.back.channels.length, 8);
+  assert.equal(analysis.visionLab.measurementOverlay.status, "available");
+  assert.equal(analysis.finalGradeComputed, false);
+  assert.equal(analysis.certifiedClaim, false);
 });
 
 test("Unified fixed-rig card report rejects repo output and missing side evidence", async () => {

@@ -1,5 +1,17 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #42 Vision Lab start)
+- Branch: `feature/ai-grader-vision-lab-report`.
+- Objective: Ten Kings Vision Lab V0, an interactive local static HTML inspection widget inside the unified front/back provisional diagnostic card report.
+- Implementation status: software/report update in progress. No hardware commands were run for PR #42. Existing PR #41 station evidence was reused as the data source:
+  - Front evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z`.
+  - Back evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z`.
+- Sample Vision Lab report generated outside the repo: `C:\TenKings\capture-data\vision-lab-pr42\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T092011021Z\provisional-diagnostic-report.html`.
+- Vision Lab V0 adds True View, Surface Vision V0, Heatmap, Light Sweep Wheel, Measurement Overlay, Confidence Lens, Evidence Replay, front/back toggle, zoom/pan, severity filters, and Collector/Expert mode to the static report.
+- The Light Sweep Wheel labels channels `1-8` numerically only; physical direction mapping remains pending. Surface Vision V0 is directional light evidence visualization only, not certified photometric stereo.
+- Evidence remains `macro_fixed_rig_v1_uncalibrated`, `isCalibrated=false`, `finalGradeComputed=false`, and `certifiedClaim=false`. No final grade, label, QR report, certificate, or certified grading claim is generated.
+- Guardrails held so far: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no DB ops, no network changes, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no hardware capture, and no captured image/vendor binary commit.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #41 merged)
 - PR #41 (`feature/ai-grader-station-operator-ui`) was merged into `main`.
 - Merge commit: `d06b081cb8c4d5010e752c5835236d264fbc8ca8`.
