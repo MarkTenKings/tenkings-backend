@@ -1,5 +1,13 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #42 merged)
+- PR #42 (`feature/ai-grader-vision-lab-report`) was merged into `main`.
+- Merge commit: `9f19f40325f51d6ecb3c990aff99e58768272ba6`.
+- Mark accepted the Vision Lab V0 shell after reviewing the report. UI polish and richer heatmap/surface intelligence remain planned follow-up work for PR #43.
+- Merged result: the unified fixed-rig front/back provisional diagnostic report now includes Ten Kings Vision Lab V0 as local static HTML/CSS/JS with True View, Surface Vision V0, Heatmap, Light Sweep Wheel, Measurement Overlay, Confidence Lens, Evidence Replay, front/back toggle, zoom/pan, severity filters, and Collector/Expert mode.
+- Evidence remains `macro_fixed_rig_v1_uncalibrated`, `isCalibrated=false`, `finalGradeComputed=false`, and `certifiedClaim=false`. No final grade, label, QR report, certificate, or certified grading claim is generated.
+- No hardware commands, migrations, DB operations, network changes, Arduino/stage/motor commands, Leimac reset/default, persistent Basler/Leimac saves, image captures, or manual deploy were run during the merge.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #42 Vision Lab start)
 - Branch: `feature/ai-grader-vision-lab-report`.
 - Objective: Ten Kings Vision Lab V0, an interactive local static HTML inspection widget inside the unified front/back provisional diagnostic card report.

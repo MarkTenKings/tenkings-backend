@@ -22036,3 +22036,34 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or hardware capture was run.
 - No captured image or vendor binary was committed.
 - Evidence remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`; `finalGradeComputed=false`; `certifiedClaim=false`; no final grade, label, QR report, certificate, or certified grading claim was added.
+
+## 2026-07-01 - AI Grader PR #42 merge
+
+### Summary
+- Merged PR #42 into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/42`.
+- Merge commit: `9f19f40325f51d6ecb3c990aff99e58768272ba6`.
+- Mark accepted Vision Lab V0 as the initial shell; UI polish and richer heatmap/surface intelligence are deferred to PR #43.
+- Main now includes the static Ten Kings Vision Lab V0 report viewer inside the unified fixed-rig front/back provisional diagnostic card report.
+
+### Merge Preflight
+- PR merge state was `CLEAN`.
+- PR checks were passing before merge:
+  - Install & Build.
+  - Vercel.
+  - Vercel Preview Comments.
+  - Docker image builds for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
+- Local git status was clean before merge.
+
+### Guardrails
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No `regsvr32` command was run.
+- No Arduino, stage, or motor command was run.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or image capture was run during merge.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, or certified grading claim was added.
