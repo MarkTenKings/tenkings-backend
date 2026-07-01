@@ -51,6 +51,11 @@ const {
   buildPreliminarySurfaceIntelligenceV0,
 } = require("../dist/drivers/fixedRigSurfaceIntelligence");
 const {
+  LIGHT_DIRECTION_CALIBRATION_PROFILE_VERSION,
+  PRELIMINARY_NORMAL_RELIEF_PROXY_VERSION,
+  buildLightDirectionCalibrationArtifacts,
+} = require("../dist/drivers/fixedRigLightDirectionCalibration");
+const {
   BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_SYNC_SMOKE_CONFIRMATION,
@@ -978,10 +983,17 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.match(reportHtml, /True View/);
   assert.match(reportHtml, /Surface Vision V0 - directional light evidence visualization/);
   assert.match(reportHtml, /Heatmap/);
+  assert.match(reportHtml, /Normal Proxy/);
+  assert.match(reportHtml, /Relief Proxy/);
+  assert.match(reportHtml, /Confidence Map/);
   assert.match(reportHtml, /Light Sweep Wheel/);
   assert.match(reportHtml, /Measurement Overlay/);
   assert.match(reportHtml, /Confidence Lens/);
   assert.match(reportHtml, /Evidence Replay/);
+  assert.match(reportHtml, /Light Direction \/ Normal Proxy Foundation/);
+  assert.match(reportHtml, /Preliminary normal\/relief proxy uses an approximate directional model/);
+  assert.match(reportHtml, /Channel Balance/);
+  assert.match(reportHtml, /Light Direction Status/);
   assert.match(reportHtml, /Collector Mode/);
   assert.match(reportHtml, /Expert Mode/);
   assert.match(reportHtml, /data-side="front"/);
@@ -994,7 +1006,11 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   }
   assert.match(reportHtml, /surface-intelligence-v0-heatmap\.png/);
   assert.match(reportHtml, /surface-vision-v0\.png/);
+  assert.match(reportHtml, /preliminary-normal-proxy\.png/);
+  assert.match(reportHtml, /surface-relief-proxy\.png/);
+  assert.match(reportHtml, /light-direction-confidence-map\.png/);
   assert.match(reportHtml, /Surface Intelligence V0 is directional-light evidence visualization only/);
+  assert.match(reportHtml, /not certified photometric stereo/i);
   assert.match(reportHtml, /physical_direction_calibration_pending/);
   assert.doesNotMatch(reportHtml, /certifiedClaim": true|finalGradeComputed": true/i);
   const manifest = JSON.parse(fs.readFileSync(result.stdout.report.manifestPath, "utf-8"));
@@ -1006,10 +1022,19 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.equal(manifest.reportContains.surfaceAnomalyDiagnostic, true);
   assert.equal(manifest.reportContains.visionLab, true);
   assert.equal(manifest.reportContains.surfaceIntelligenceV0, true);
+  assert.equal(manifest.reportContains.lightDirectionCalibration, true);
+  assert.equal(manifest.reportContains.normalProxy, true);
+  assert.equal(manifest.reportContains.reliefProxy, true);
+  assert.equal(manifest.reportContains.confidenceMap, true);
   assert.equal(manifest.visionLab.localStaticHtml, true);
   assert.equal(manifest.visionLab.dataContract.frontBackTrueViewImageRefs, true);
   assert.equal(manifest.visionLab.dataContract.frontBackChannelImageRefs1Through8, true);
   assert.equal(manifest.visionLab.dataContract.surfaceVisionRefs, true);
+  assert.equal(manifest.visionLab.dataContract.normalProxyRefs, true);
+  assert.equal(manifest.visionLab.dataContract.reliefProxyRefs, true);
+  assert.equal(manifest.visionLab.dataContract.confidenceMapRefs, true);
+  assert.equal(manifest.visionLab.dataContract.channelBalanceMetrics, true);
+  assert.equal(manifest.visionLab.dataContract.lightDirectionProfileMetadata, true);
   assert.equal(manifest.visionLab.dataContract.sourceChannelAttribution, true);
   assert.equal(manifest.visionLab.dataContract.measurementOverlayMetadata, true);
   assert.equal(manifest.reportContains.finalGrade, false);
@@ -1021,8 +1046,20 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.equal(analysis.surfaceIntelligence.detectorId, PRELIMINARY_SURFACE_INTELLIGENCE_VERSION);
   assert.match(analysis.visionLab.sides.front.heatmap.outputFilePath, /surface-intelligence-v0-heatmap\.png/);
   assert.match(analysis.visionLab.sides.front.surfaceVision.outputFilePath, /surface-vision-v0\.png/);
+  assert.match(analysis.visionLab.sides.front.normalProxy.outputFilePath, /preliminary-normal-proxy\.png/);
+  assert.match(analysis.visionLab.sides.front.reliefProxy.outputFilePath, /surface-relief-proxy\.png/);
+  assert.match(analysis.visionLab.sides.front.confidenceMap.outputFilePath, /light-direction-confidence-map\.png/);
+  assert.equal(analysis.visionLab.sides.front.lightDirection.profile.isCertifiedPhotometricStereo, false);
+  assert.equal(analysis.visionLab.sides.front.lightDirection.profile.physicalDirectionMappingStatus, "approximate_directional_model");
+  assert.equal(analysis.visionLab.sides.front.lightDirection.profile.profileVersion, LIGHT_DIRECTION_CALIBRATION_PROFILE_VERSION);
+  assert.equal(analysis.visionLab.sides.front.lightDirection.version, PRELIMINARY_NORMAL_RELIEF_PROXY_VERSION);
+  assert.ok(analysis.visionLab.views.includes("normal_proxy"));
+  assert.ok(analysis.visionLab.views.includes("relief_proxy"));
+  assert.ok(analysis.visionLab.views.includes("confidence_map"));
   assert.ok(analysis.visionLab.sides.front.candidates.length > 0);
   assert.ok(analysis.visionLab.sides.front.candidates[0].sourceChannels.length > 0);
+  assert.equal(analysis.lightDirectionCalibration.front.profile.isCertifiedPhotometricStereo, false);
+  assert.equal(analysis.lightDirectionCalibration.front.profile.channelMetadata.length, 8);
   assert.equal(analysis.visionLab.measurementOverlay.status, "available");
   assert.equal(analysis.finalGradeComputed, false);
   assert.equal(analysis.certifiedClaim, false);
@@ -1150,6 +1187,97 @@ test("Surface Intelligence V0 generates heatmap, Surface Vision, masks, and cons
   });
   assert.equal(missing.status, "insufficient_evidence");
   assert.equal(missing.candidates.length, 0);
+  assert.match(missing.warnings.join(" "), /insufficient_evidence/);
+});
+
+test("Light direction calibration prep emits approximate profile, balance metrics, and proxy maps without certified claims", async () => {
+  const root = path.join(os.tmpdir(), "fixed-rig-light-direction-test");
+  fs.rmSync(root, { recursive: true, force: true });
+  const imageDir = path.join(root, "images");
+  const outputDir = path.join(root, "light-direction");
+  const width = 168;
+  const height = 232;
+  const channelImages = [];
+  for (let channel = 1; channel <= 8; channel += 1) {
+    const outputFilePath = path.join(imageDir, `channel-${channel}.png`);
+    await writeSyntheticSurfaceImage(outputFilePath, width, height, { channel, clipped: channel === 3 });
+    channelImages.push({
+      channel,
+      displayImage: {
+        outputFilePath,
+        imageWidth: width,
+        imageHeight: height,
+        rawSourceFilePath: outputFilePath,
+        displayTransform: "none",
+      },
+      stats: {
+        mean: channel === 3 ? 150 : 82 + channel,
+        max: channel === 3 ? 255 : 215,
+        clippedPixelFraction: channel === 3 ? 0.05 : 0.004,
+        darkPixelFraction: 0.02,
+        sharpnessScore: 90 + channel,
+      },
+    });
+  }
+  const trueView = path.join(imageDir, "true-view.png");
+  await writeSyntheticSurfaceImage(trueView, width, height, { clipped: false });
+
+  const result = await buildLightDirectionCalibrationArtifacts({
+    side: "front",
+    outputDir,
+    trueView: {
+      outputFilePath: trueView,
+      imageWidth: width,
+      imageHeight: height,
+      rawSourceFilePath: trueView,
+      displayTransform: "none",
+    },
+    channelImages,
+    roiDefinitions: [
+      {
+        id: "full-card",
+        label: "Full card",
+        type: "surface",
+        status: "computed",
+        rect: { x: 10, y: 12, width: 148, height: 208 },
+        displayRect: { x: 10, y: 12, width: 148, height: 208 },
+        source: "approximate_detected_boundary",
+      },
+    ],
+  });
+
+  assert.equal(result.version, PRELIMINARY_NORMAL_RELIEF_PROXY_VERSION);
+  assert.equal(result.status, "computed_diagnostic");
+  assert.equal(result.profile.profileVersion, LIGHT_DIRECTION_CALIBRATION_PROFILE_VERSION);
+  assert.equal(result.profile.physicalDirectionMappingStatus, "approximate_directional_model");
+  assert.equal(result.profile.normalMapStatus, "preliminary_normal_proxy");
+  assert.equal(result.profile.flatFieldStatus, "unknown");
+  assert.equal(result.profile.isCertifiedPhotometricStereo, false);
+  assert.equal(result.profile.channelMetadata.length, 8);
+  assert.equal(result.profile.channelMetadata[0].label, "Channel 1");
+  assert.equal(result.profile.channelMetadata[0].physicalDirectionStatus, "approximate_directional_model");
+  assert.equal(result.profile.channelMetadata[0].calibrationSource, "synthetic_even_8_channel_ring_model_unvalidated");
+  assert.ok(result.profile.channelMetadata[0].lightVector);
+  assert.equal(result.channelBalance.length, 8);
+  assert.ok(result.channelBalance.some((entry) => entry.warnings.join(" ").match(/saturated|response differs/i)));
+  assert.equal(result.normalizedChannels.length, 8);
+  assert.equal(fs.existsSync(result.profilePath), true);
+  assert.equal(fs.existsSync(result.resultPath), true);
+  assert.equal(fs.existsSync(result.normalProxy.outputFilePath), true);
+  assert.equal(fs.existsSync(result.gradientMagnitude.outputFilePath), true);
+  assert.equal(fs.existsSync(result.reliefProxy.outputFilePath), true);
+  assert.equal(fs.existsSync(result.confidenceMap.outputFilePath), true);
+  assert.match(result.warnings.join(" "), /Flat-field reference is unavailable/);
+  assert.match(result.warnings.join(" "), /not certified photometric stereo/i);
+  assert.doesNotMatch(JSON.stringify(result).toLowerCase(), /iscertifiedphotometricstereo":true|finalgradecomputed":true|certifiedclaim":true/);
+
+  const missing = await buildLightDirectionCalibrationArtifacts({
+    side: "back",
+    outputDir: path.join(root, "missing"),
+    channelImages: [{ channel: 1, displayImage: { outputFilePath: path.join(root, "missing.png") } }],
+  });
+  assert.equal(missing.status, "insufficient_evidence");
+  assert.equal(missing.profile.isCertifiedPhotometricStereo, false);
   assert.match(missing.warnings.join(" "), /insufficient_evidence/);
 });
 

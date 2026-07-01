@@ -1137,6 +1137,47 @@ Back Surface Vision: C:\TenKings\capture-data\surface-intelligence-pr43\ai-grade
 
 The sample emitted `8` front candidates and `8` back candidates. Front confidence was `medium` because the V0 glare/clipping mask fraction was `0.068289`; back confidence was `high` with clipping mask fraction `0.001159`. Representative source-channel attribution used numeric channels such as front strongest channel `3`/`4` and back strongest channel `3`/`4`. Treat these as conservative preliminary evidence candidates only; no final surface grade, certificate, or certified claim is generated.
 
+### Light Direction Calibration / Normal-Relief Proxy Prep
+
+PR #44 adds a software-only light-direction calibration foundation to the existing unified fixed-rig report path. It does not contact Basler or Leimac, does not capture images, and does not save persistent Basler or Leimac User Sets. The report command reads existing front/back evidence package folders and writes derived artifacts outside the repo.
+
+The light-direction profile records Leimac channel metadata for channels `1-8`, per-channel intensity balancing metrics, optional flat-field/reference normalization status, normal-map status, source evidence refs, warnings, and `isCertifiedPhotometricStereo=false`. Until a physical light-direction calibration target is run and reviewed, the channel direction model is `approximate_directional_model` only. Channel labels remain numeric `Channel 1` through `Channel 8`; no north/east/etc. physical direction labels are invented.
+
+The PR #44 pipeline generates derived artifacts when the 8-channel portrait display stack is available:
+
+- normalized per-channel images
+- preliminary normal proxy map
+- gradient magnitude proxy map
+- surface relief proxy map
+- confidence map
+- light-direction profile JSON
+- normal/relief proxy JSON
+
+These artifacts are labeled `Preliminary normal/relief proxy - approximate directional model`. They are not certified photometric stereo, not a final surface grade, and not production certification. If no certified flat-field reference is supplied, the module uses fallback normalization from the current evidence and reports that warning explicitly. High clipping, glare, underexposure, missing channels, or fallback normalization reduce confidence.
+
+Vision Lab now includes `Normal Proxy`, `Relief Proxy`, and `Confidence Map` views, plus expert `Channel Balance` and `Light Direction Status` panels. Missing artifacts render as an unavailable state rather than guessing.
+
+The PR #44 sample report was generated from existing PR #41 station evidence only:
+
+```text
+Report: C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\provisional-diagnostic-report.html
+Front evidence: C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z
+Back evidence:  C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z
+```
+
+Sample normal/relief artifacts:
+
+```text
+Front normal proxy:     C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\front\front-preliminary-normal-proxy.png
+Front relief proxy:     C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\front\front-surface-relief-proxy.png
+Front confidence map:   C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\front\front-light-direction-confidence-map.png
+Back normal proxy:      C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\back\back-preliminary-normal-proxy.png
+Back relief proxy:      C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\back\back-surface-relief-proxy.png
+Back confidence map:    C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\back\back-light-direction-confidence-map.png
+```
+
+Sample summary: physical direction mapping `approximate_directional_model`, intensity balancing `intensity_balanced`, flat-field status `unknown`, normal-map status `preliminary_normal_proxy`, front/back confidence `medium`. The sample still carries front clipping/glare warnings and fallback-normalization warnings.
+
 #### Dell PR #39 Rough Fixture Smoke
 
 On 2026-06-30, Mark ran the rough fixed-fixture flow using the operator-built fixed-position V1 fixture. The accepted live preview folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`. The preview measured about `20.5 FPS` with `0 ms` frame age and accepted a software active profile of `1.4%` Leimac duty, PWM step `14`, channels `1-8`, source `operator_preview`. Preview/report display used `rotate90cw`; raw Basler sensor captures remained unchanged. The preview and later reports warned that the detected card boundary touched the frame edge, so the run remains rough/unvalidated and not calibrated.

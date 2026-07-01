@@ -1,5 +1,27 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-01 UTC, AI Grader PR #44 light direction calibration start)
+- Branch: `feature/ai-grader-light-direction-calibration`.
+- Objective: light-direction calibration / true photometric stereo preparation for the fixed-rig V1 evidence stack, while staying preliminary diagnostic only.
+- PR #43 was merged first. Merge commit: `a4d30a73922f3045a721c14283488e3887a1b695`. Final `origin/main` after the PR #43 handoff docs commit: `21e8e06a82e32708ebd02a81f42f5c556937f1a7`. Main CI passed and the automatic Vercel deployment completed for that HEAD.
+- Implementation status: software/report update complete locally. No hardware commands were run for PR #44. Existing PR #41 station evidence was reused:
+  - Front evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z`.
+  - Back evidence: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z`.
+- Added a dedicated light-direction calibration/prep module that emits an approximate Leimac channel-direction profile, normalized channel artifacts, intensity balancing metrics, preliminary normal proxy, gradient magnitude proxy, relief proxy, and confidence map from existing 8-channel portrait evidence.
+- The profile remains `approximate_directional_model`; `isCertifiedPhotometricStereo=false`. Flat-field status is `unknown` unless a real reference is supplied, and fallback normalization warnings are recorded.
+- Vision Lab now has `Normal Proxy`, `Relief Proxy`, and `Confidence Map` views plus expert Channel Balance and Light Direction Status panels.
+- Sample PR #44 report generated outside the repo: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\provisional-diagnostic-report.html`.
+- Sample artifacts include:
+  - Front normal proxy: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\front\front-preliminary-normal-proxy.png`.
+  - Front relief proxy: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\front\front-surface-relief-proxy.png`.
+  - Front confidence map: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\front\front-light-direction-confidence-map.png`.
+  - Back normal proxy: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\back\back-preliminary-normal-proxy.png`.
+  - Back relief proxy: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\back\back-surface-relief-proxy.png`.
+  - Back confidence map: `C:\TenKings\capture-data\light-direction-pr44\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T105021412Z\light-direction\back\back-light-direction-confidence-map.png`.
+- Sample summary: front/back confidence `medium`; front/back candidates remain `8` and `8` from Surface Intelligence V0; channel direction is approximate only; flat-field/reference normalization uses fallback because no reference target exists.
+- Local validation passed: `pnpm --filter @tenkings/ai-grader-capture-helper build`, `pnpm --filter @tenkings/ai-grader-capture-helper test` (`155` tests), `pnpm --filter @tenkings/shared test` (`105` tests), `pnpm --filter @tenkings/ai-grader-simulator test` (`6` tests), `pnpm --filter @tenkings/nextjs-app build` (existing `<img>` lint warnings only), and `git diff --check`.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network changes, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no hardware capture, no captured image/vendor binary commit, and no final/certificate/certified/photometric-stereo claim.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #43 merged)
 - PR #43 (`feature/ai-grader-surface-intelligence-v0`) was merged into `main`.
 - Merge commit: `a4d30a73922f3045a721c14283488e3887a1b695`.

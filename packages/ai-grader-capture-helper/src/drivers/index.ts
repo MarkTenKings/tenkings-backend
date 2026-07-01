@@ -66,6 +66,23 @@ export type {
   SurfaceIntelligenceChannelInput,
   SurfaceIntelligenceImageInput,
 } from "./fixedRigSurfaceIntelligence";
+export {
+  LIGHT_DIRECTION_CALIBRATION_PROFILE_VERSION,
+  PRELIMINARY_NORMAL_RELIEF_PROXY_VERSION,
+  buildLightDirectionCalibrationArtifacts,
+  mergeSurfaceAnalysisWithLightDirection,
+} from "./fixedRigLightDirectionCalibration";
+export type {
+  BuildLightDirectionCalibrationInput,
+  ChannelPhysicalDirectionStatus,
+  FixedRigLightDirectionCalibrationResult,
+  LeimacChannelDirectionMetadata,
+  LeimacLightDirectionCalibrationProfile,
+  LightDirectionCalibrationChannelInput,
+  LightDirectionCalibrationImageInput,
+  LightDirectionChannelBalance,
+  LightDirectionProfileStatus,
+} from "./fixedRigLightDirectionCalibration";
 export type {
   FixedRigCardBoundary,
   FixedRigCardSide,
