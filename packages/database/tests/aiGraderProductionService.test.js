@@ -1,0 +1,357 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {
+  buildAiGraderLabelPreviewHtml,
+  buildAiGraderCompsSearchQuery,
+  buildAiGraderProductionStoragePlan,
+  computeAiGraderValuationStatus,
+  persistAiGraderSlabbedPhotoAsset,
+  persistAiGraderProductionRelease,
+  persistAiGraderValuationResult,
+  sanitizeAiGraderPublicJson,
+} = require("../dist/database/src/aiGraderProductionService");
+
+function sampleBundle(overrides = {}) {
+  return {
+    gradingSessionId: "station-session-1",
+    reportId: "report-1",
+    generatedAt: "2026-07-02T12:00:00.000Z",
+    reportStatus: "final_ai_grader_report_v0",
+    localReportFolder: "C:\\TenKings\\capture-data\\ai-grader-station\\report-1",
+    reportHtmlPath: "C:\\TenKings\\capture-data\\ai-grader-station\\report-1\\provisional-diagnostic-report.html",
+    cardIdentity: {
+      title: "1996 Test Card #1",
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+    },
+    provisionalGrade: {
+      gradeStory: {
+        strongestPositiveFinding: "Centering is strong.",
+      },
+    },
+    evidenceReferences: {
+      frontPackageDir: "C:\\TenKings\\capture-data\\front",
+      backPackageDir: "C:\\TenKings\\capture-data\\back",
+    },
+    visionLab: {
+      heatmapRefs: ["front heatmap"],
+      surfaceVisionRefs: ["front surface vision"],
+    },
+    calibrationProfile: {
+      referenceType: "fixed_metric_rulers",
+      mmPerPixelX: 0.047,
+      mmPerPixelY: 0.047,
+    },
+    lightingProfile: {
+      dutyPercent: 1.4,
+      exposureUs: 45000,
+    },
+    warnings: ["fixture calibration is local"],
+    ...overrides,
+  };
+}
+
+function sampleRelease(overrides = {}) {
+  return {
+    gradingSessionId: "station-session-1",
+    reportId: "report-1",
+    reportStatus: "final_ai_grader_report_v0",
+    finalStatus: "final_grade_computed",
+    finalGradeComputed: true,
+    certifiedClaim: false,
+    certificateGenerated: false,
+    finalGrade: {
+      status: "final_ai_grader_grade_v0",
+      overall: 8.6,
+      elements: {
+        centering: { score: 9.7 },
+        corners: { score: 8.8 },
+        edges: { score: 8.7 },
+        surface: { score: 7.8 },
+      },
+      confidence: {
+        score: 0.72,
+        band: "medium",
+      },
+      gradeImpactReasons: [
+        {
+          id: "surface-1",
+          severity: "medium",
+          evidenceRefs: ["heatmap.front"],
+        },
+      ],
+      whyNot10: [
+        {
+          id: "surface-warning",
+          title: "Surface warning",
+          explanation: "Surface candidate reduced the score.",
+        },
+      ],
+    },
+    label: {
+      status: "label_data_ready",
+      certId: "TK-AIG-REPORT1",
+      reportId: "report-1",
+      labelGradeText: "8.6",
+      qrPayloadUrl: "http://127.0.0.1:3020/ai-grader/reports/report-1",
+      publicReportUrl: "http://127.0.0.1:3020/ai-grader/reports/report-1",
+      certificateStatus: "report_id_issued_not_certified",
+    },
+    publication: {
+      status: "local_bundle_ready",
+      publicReportUrl: "http://127.0.0.1:3020/ai-grader/reports/report-1",
+      storageMode: "local_artifact_only",
+    },
+    operatorFinalization: {
+      operatorId: "operator-1",
+      warningsAccepted: true,
+      overrideReason: "V0 accepted warning gates.",
+    },
+    gates: [{ id: "ruler_calibration", status: "pass" }],
+    warnings: ["V0 final report is not certified."],
+    ebayCompsContract: {
+      status: "not_run",
+      compsRefs: [],
+    },
+    cardInventoryLinkage: {
+      status: "contract_ready",
+      cardAssetId: "card-asset-1",
+    },
+    ...overrides,
+  };
+}
+
+function createMockDelegate(name, calls, id) {
+  return {
+    async upsert(args) {
+      calls.push({ delegate: name, method: "upsert", args });
+      return {
+        id,
+        ...(args.create ?? {}),
+        ...(args.update ?? {}),
+      };
+    },
+    async findUnique(args) {
+      calls.push({ delegate: name, method: "findUnique", args });
+      if (name === "aiGraderReport") {
+        return {
+          id: "db-report-1",
+          tenantId: "tenant-1",
+          sessionId: "db-session-1",
+          reportId: args.where?.reportId ?? "report-1",
+          cardAssetId: "card-asset-1",
+          itemId: "item-1",
+        };
+      }
+      return null;
+    },
+    async updateMany(args) {
+      calls.push({ delegate: name, method: "updateMany", args });
+      return { count: 1 };
+    },
+  };
+}
+
+function createMockProductionDb() {
+  const calls = [];
+  const tx = {
+    aiGraderSession: createMockDelegate("aiGraderSession", calls, "db-session-1"),
+    aiGraderReport: createMockDelegate("aiGraderReport", calls, "db-report-1"),
+    aiGraderEvidenceAsset: createMockDelegate("aiGraderEvidenceAsset", calls, "db-evidence-1"),
+    aiGraderGrade: createMockDelegate("aiGraderGrade", calls, "db-grade-1"),
+    aiGraderLabel: createMockDelegate("aiGraderLabel", calls, "db-label-1"),
+    aiGraderPublication: createMockDelegate("aiGraderPublication", calls, "db-publication-1"),
+    aiGraderValuation: createMockDelegate("aiGraderValuation", calls, "db-valuation-1"),
+    cardAsset: createMockDelegate("cardAsset", calls, "card-asset-1"),
+    item: createMockDelegate("item", calls, "item-1"),
+  };
+  return {
+    calls,
+    db: {
+      ...tx,
+      async $transaction(callback) {
+        calls.push({ delegate: "$transaction", method: "$transaction" });
+        return callback(tx);
+      },
+    },
+  };
+}
+
+test("production storage plan sanitizes local Dell paths and loopback URLs", () => {
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+  });
+
+  assert.equal(plan.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/report-1");
+  assert.equal(plan.qrPayloadUrl, plan.publicReportUrl);
+  assert.equal(plan.artifacts.some((artifact) => artifact.kind === "report-bundle.json"), true);
+  assert.equal(plan.artifacts.some((artifact) => artifact.kind === "label-preview.html"), true);
+  assert.equal(plan.artifacts.some((artifact) => artifact.kind === "asset-manifest.json"), true);
+  const combinedBodies = plan.artifacts.map((artifact) => artifact.body).join("\n");
+  assert.doesNotMatch(combinedBodies, /C:\\TenKings/);
+  assert.doesNotMatch(combinedBodies, /127\.0\.0\.1/);
+  assert.match(combinedBodies, /"publicReportUrl": "https:\/\/collect\.tenkings\.co\/ai-grader\/reports\/report-1"/);
+});
+
+test("public JSON sanitizer removes local path and loopback fields without dropping evidence refs", () => {
+  const sanitized = sanitizeAiGraderPublicJson({
+    localReportFolder: "C:\\TenKings\\capture-data\\report",
+    reportHtmlPath: "C:\\TenKings\\capture-data\\report\\report.html",
+    publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/report-1",
+    evidenceRefs: ["front", "back"],
+  });
+
+  assert.equal("localReportFolder" in sanitized, false);
+  assert.equal("reportHtmlPath" in sanitized, false);
+  assert.equal(sanitized.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/report-1");
+  assert.deepEqual(sanitized.evidenceRefs, ["front", "back"]);
+});
+
+test("valuation readiness requires final grade and card identity", () => {
+  assert.equal(
+    computeAiGraderValuationStatus({
+      reportBundle: sampleBundle(),
+      productionRelease: sampleRelease({ finalGradeComputed: false }),
+    }),
+    "not_ready_missing_grade"
+  );
+  assert.equal(
+    computeAiGraderValuationStatus({
+      reportBundle: sampleBundle({ cardIdentity: {} }),
+      productionRelease: sampleRelease(),
+    }),
+    "not_ready_missing_identity"
+  );
+  assert.equal(
+    computeAiGraderValuationStatus({
+      reportBundle: sampleBundle(),
+      productionRelease: sampleRelease(),
+    }),
+    "ready"
+  );
+});
+
+test("label preview is print-ready HTML with certification claim disabled", () => {
+  const html = buildAiGraderLabelPreviewHtml(sampleRelease());
+  assert.match(html, /Ten Kings AI Grader/);
+  assert.match(html, /8\.6/);
+  assert.match(html, /TK-AIG-REPORT1/);
+  assert.match(html, /Certification claim disabled/);
+  assert.doesNotMatch(html, /Certified Grade/);
+});
+
+test("production release persistence upserts durable records and optional card linkage", async () => {
+  const { db, calls } = createMockProductionDb();
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+
+  const result = await persistAiGraderProductionRelease(db, {
+    tenantId: "tenant-1",
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    storagePlan: plan,
+    operatorUserId: "user-1",
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    persistedAt: "2026-07-02T12:30:00.000Z",
+  });
+
+  assert.equal(result.reportId, "report-1");
+  assert.equal(result.publicationStatus, "published");
+  assert.equal(result.evidenceAssetCount, plan.artifacts.length);
+  assert.equal(result.cardAssetUpdatedCount, 1);
+  assert.equal(result.itemUpdatedCount, 1);
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`).slice(0, 8),
+    [
+      "$transaction.$transaction",
+      "aiGraderSession.upsert",
+      "aiGraderReport.upsert",
+      "aiGraderGrade.upsert",
+      "aiGraderLabel.upsert",
+      "aiGraderPublication.upsert",
+      "aiGraderEvidenceAsset.upsert",
+      "aiGraderEvidenceAsset.upsert",
+    ]
+  );
+  assert.ok(calls.some((call) => call.delegate === "aiGraderValuation" && call.method === "upsert"));
+  const cardUpdate = calls.find((call) => call.delegate === "cardAsset" && call.method === "updateMany");
+  assert.equal(cardUpdate.args.data.aiGradeFinal, 8.6);
+  assert.equal(cardUpdate.args.data.aiGradeLabel, "8.6");
+  const itemUpdate = calls.find((call) => call.delegate === "item" && call.method === "updateMany");
+  assert.equal(itemUpdate.args.data.detailsJson.aiGraderReportId, "report-1");
+});
+
+test("comps query builder uses selected card identity and final grade", () => {
+  const query = buildAiGraderCompsSearchQuery({
+    reportBundle: sampleBundle({ cardIdentity: { title: "Fallback Card" } }),
+    productionRelease: sampleRelease(),
+    selection: {
+      source: "item",
+      itemId: "item-1",
+      title: "1996 Finest Michael Jordan",
+      set: "Topps Finest",
+      cardNumber: "291",
+    },
+  });
+
+  assert.match(query, /1996 Finest Michael Jordan/);
+  assert.match(query, /#291/);
+  assert.match(query, /AI Grade 8\.6/);
+});
+
+test("slabbed color photo persistence upserts a separate evidence asset", async () => {
+  const { db, calls } = createMockProductionDb();
+
+  const result = await persistAiGraderSlabbedPhotoAsset(db, {
+    tenantId: "tenant-1",
+    reportId: "report-1",
+    side: "front",
+    storageKey: "ai-grader/reports/report-1/slabbed/front.png",
+    publicUrl: "https://cdn.tenkings.test/ai-grader/reports/report-1/slabbed/front.png",
+    mimeType: "image/png",
+    byteSize: 1234,
+    checksumSha256: "abc123",
+    operatorUserId: "admin-1",
+    uploadedAt: "2026-07-02T13:00:00.000Z",
+  });
+
+  assert.equal(result.reportId, "report-1");
+  assert.equal(result.side, "front");
+  const evidenceUpsert = calls.find((call) => call.delegate === "aiGraderEvidenceAsset" && call.method === "upsert");
+  assert.equal(evidenceUpsert.args.create.artifactClass, "slabbed_photo");
+  assert.equal(evidenceUpsert.args.create.kind, "slabbed_front_color_photo");
+  assert.equal(evidenceUpsert.args.create.side, "front");
+  assert.equal(evidenceUpsert.args.create.publicUrl, "https://cdn.tenkings.test/ai-grader/reports/report-1/slabbed/front.png");
+});
+
+test("valuation persistence records operator-triggered eBay comps result", async () => {
+  const { db, calls } = createMockProductionDb();
+
+  const result = await persistAiGraderValuationResult(db, {
+    tenantId: "tenant-1",
+    reportId: "report-1",
+    status: "completed",
+    source: "ebay_sold",
+    searchQuery: "1996 Finest Michael Jordan #291 AI Grade 8.6",
+    compsRefs: [{ id: "comp-1", price: "$100.00" }],
+    resultSummary: { valuationMinor: 10000, valuationCurrency: "USD" },
+    valuationMinor: 10000,
+    valuationCurrency: "USD",
+    requestedByUserId: "admin-1",
+    requestedAt: "2026-07-02T13:05:00.000Z",
+    completedAt: "2026-07-02T13:06:00.000Z",
+  });
+
+  assert.equal(result.status, "completed");
+  const valuationUpsert = calls.find((call) => call.delegate === "aiGraderValuation" && call.method === "upsert");
+  assert.equal(valuationUpsert.args.create.status, "completed");
+  assert.equal(valuationUpsert.args.create.searchQuery, "1996 Finest Michael Jordan #291 AI Grade 8.6");
+  assert.equal(valuationUpsert.args.create.valuationMinor, 10000);
+});

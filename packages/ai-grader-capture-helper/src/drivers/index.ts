@@ -82,11 +82,24 @@ export {
   buildAiGraderReportBundle,
   writeAiGraderReportBundle,
 } from "./aiGraderReportBundle";
+export {
+  AI_GRADER_PRODUCTION_RELEASE_VERSION,
+  buildAiGraderProductionRelease,
+  writeAiGraderProductionRelease,
+} from "./aiGraderProductionRelease";
 export type {
   AiGraderReportBundle,
   AiGraderReportBundleAsset,
   AiGraderReportBundleWriteResult,
 } from "./aiGraderReportBundle";
+export type {
+  AiGraderFinalGrade,
+  AiGraderLabelData,
+  AiGraderProductionGate,
+  AiGraderProductionRelease,
+  AiGraderProductionReleaseWriteResult,
+  AiGraderPublicationManifest,
+} from "./aiGraderProductionRelease";
 export type {
   BuildFixedRigProvisionalGradeStoryInput,
   FixedRigGradeImpactCandidate,

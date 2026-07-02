@@ -1,4 +1,5 @@
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE, type AiGraderReportBundle } from "./aiGraderReportBundle";
+import type { AiGraderProductionRelease } from "./aiGraderProductionRelease";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.1";
 
@@ -13,6 +14,9 @@ export type AiGraderStationStepId =
   | "capture_back"
   | "run_provisional_diagnostics"
   | "view_unified_report"
+  | "calculate_final_grade"
+  | "finalize_publish_report"
+  | "label_data_ready"
   | "safe_off_end_session";
 
 export type AiGraderStationAction =
@@ -27,6 +31,10 @@ export type AiGraderStationAction =
   | "capture-back"
   | "run-diagnostics"
   | "export-report-bundle"
+  | "calculate-final-grade"
+  | "finalize-report"
+  | "publish-report"
+  | "generate-label-data"
   | "safe-off"
   | "latest-report"
   | "session-manifest"
@@ -90,10 +98,10 @@ export type AiGraderLocalStationStatus = {
     migrationsRun: false;
     deployRun: false;
     hardwareAccessed: boolean;
-    finalGradeComputed: false;
+    finalGradeComputed: boolean;
     certifiedClaim: false;
-    labelGenerated: false;
-    qrGenerated: false;
+    labelGenerated: boolean;
+    qrGenerated: boolean;
     certificateGenerated: false;
   };
   bridgeContract: {
@@ -122,8 +130,13 @@ export type AiGraderLocalStationStatus = {
     backPackageDir?: string;
     unifiedReportPath?: string;
     reportBundlePath?: string;
+    productionReleasePath?: string;
+    labelDataPath?: string;
+    publicationManifestPath?: string;
+    integrationContractPath?: string;
   };
   timingSummary?: AiGraderLocalStationTimingSummary;
+  productionRelease?: AiGraderProductionRelease;
 };
 
 export type AiGraderLocalStationTimingSummary = {
@@ -149,10 +162,12 @@ export type AiGraderLocalReportHistoryItem = {
   viewerPath: string;
   localHtmlPath?: string;
   reportBundlePath?: string;
+  productionReleasePath?: string;
   sessionDir?: string;
   frontPackageDir?: string;
   backPackageDir?: string;
   provisionalOverallGrade?: number;
+  finalOverallGrade?: number;
   confidenceBand?: string;
   title?: string;
   category?: string;
@@ -169,7 +184,12 @@ export type AiGraderLocalReportHistory = {
     weekly: number;
     daily: number;
     averageProvisionalGrade?: number;
+    averageFinalGrade?: number;
     provisionalGradeCounts: Record<string, number>;
+    finalGradeCounts: Record<string, number>;
+    finalizedCount: number;
+    draftCount: number;
+    warningsCount: number;
   };
 };
 
@@ -184,6 +204,9 @@ export const AI_GRADER_STATION_STEPS: AiGraderStationStep[] = [
   { id: "capture_back", label: "Capture Back", operatorAction: "Capture back fixed-rig evidence after flip confirmation.", primaryAction: "capture-back", hardwareCapable: true },
   { id: "run_provisional_diagnostics", label: "Run Provisional Diagnostics", operatorAction: "Generate the unified provisional diagnostic report.", primaryAction: "run-diagnostics", hardwareCapable: false },
   { id: "view_unified_report", label: "View Unified Report", operatorAction: "Open the local report and review Vision Lab.", primaryAction: "latest-report", hardwareCapable: false },
+  { id: "calculate_final_grade", label: "Calculate Final Grade", operatorAction: "Compute Final AI-Grader Grade V0 from accepted evidence and gates.", primaryAction: "calculate-final-grade", hardwareCapable: false },
+  { id: "finalize_publish_report", label: "Finalize / Publish Report", operatorAction: "Write production-release and publication artifacts.", primaryAction: "finalize-report", hardwareCapable: false },
+  { id: "label_data_ready", label: "Label Data Ready", operatorAction: "Review label-ready JSON and QR payload URL.", primaryAction: "generate-label-data", hardwareCapable: false },
   { id: "safe_off_end_session", label: "Safe Off / End Session", operatorAction: "Run safe-off and end the station session.", primaryAction: "safe-off", hardwareCapable: true },
 ];
 
@@ -199,6 +222,10 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "capture-back": "run_provisional_diagnostics",
   "run-diagnostics": "view_unified_report",
   "export-report-bundle": "view_unified_report",
+  "calculate-final-grade": "calculate_final_grade",
+  "finalize-report": "finalize_publish_report",
+  "publish-report": "finalize_publish_report",
+  "generate-label-data": "label_data_ready",
   "safe-off": "safe_off_end_session",
   "latest-report": "view_unified_report",
   "session-manifest": "view_unified_report",
@@ -215,7 +242,10 @@ const NEXT_ACTION_BY_STEP: Record<AiGraderStationStepId, AiGraderStationAction> 
   prompt_flip_card: "confirm-flip",
   capture_back: "capture-back",
   run_provisional_diagnostics: "run-diagnostics",
-  view_unified_report: "latest-report",
+  view_unified_report: "calculate-final-grade",
+  calculate_final_grade: "finalize-report",
+  finalize_publish_report: "generate-label-data",
+  label_data_ready: "latest-report",
   safe_off_end_session: "safe-off",
 };
 
@@ -239,6 +269,10 @@ function bridgeEndpoints() {
     { method: "POST", action: "capture-back", description: "Contract endpoint for back capture." },
     { method: "POST", action: "run-diagnostics", description: "Generate or attach the provisional report." },
     { method: "POST", action: "export-report-bundle", description: "Export report-bundle.json, asset manifest, and checksums." },
+    { method: "POST", action: "calculate-final-grade", description: "Calculate Final AI-Grader Grade V0 from the report bundle." },
+    { method: "POST", action: "finalize-report", description: "Finalize the local report and record operator warning acceptance." },
+    { method: "POST", action: "publish-report", description: "Prepare local publication manifest and public URL data." },
+    { method: "POST", action: "generate-label-data", description: "Generate label-ready JSON and QR payload URL data." },
     { method: "POST", action: "safe-off", description: "Contract endpoint for Leimac safe-off." },
     { method: "GET", action: "latest-report", description: "Read latest report location." },
     { method: "GET", action: "session-manifest", description: "Read station session manifest." },
@@ -259,9 +293,11 @@ export function buildAiGraderLocalStationStatus(input: {
   const currentStep = ACTION_TO_STEP[action] ?? "start_new_card";
   const nextAction = NEXT_ACTION_BY_STEP[currentStep];
   const reportBundle = SAMPLE_AI_GRADER_REPORT_BUNDLE;
-  const frontCaptured = ["prompt_flip_card", "capture_back", "run_provisional_diagnostics", "view_unified_report", "safe_off_end_session"].includes(currentStep);
-  const backCaptured = ["run_provisional_diagnostics", "view_unified_report", "safe_off_end_session"].includes(currentStep);
-  const diagnosticsRun = ["view_unified_report", "safe_off_end_session"].includes(currentStep);
+  const frontCaptured = ["prompt_flip_card", "capture_back", "run_provisional_diagnostics", "view_unified_report", "calculate_final_grade", "finalize_publish_report", "label_data_ready", "safe_off_end_session"].includes(currentStep);
+  const backCaptured = ["run_provisional_diagnostics", "view_unified_report", "calculate_final_grade", "finalize_publish_report", "label_data_ready", "safe_off_end_session"].includes(currentStep);
+  const diagnosticsRun = ["view_unified_report", "calculate_final_grade", "finalize_publish_report", "label_data_ready", "safe_off_end_session"].includes(currentStep);
+  const finalComputed = ["calculate_final_grade", "finalize_publish_report", "label_data_ready"].includes(currentStep);
+  const labelReady = currentStep === "label_data_ready";
 
   return {
     bridgeVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
@@ -305,22 +341,22 @@ export function buildAiGraderLocalStationStatus(input: {
     },
     progressLog: [
       `${input.now ?? "local"} ${actionLabel(action)} requested.`,
-      "PR #46 local station bridge is mock/contract-only and does not run hardware.",
+      "Local station contract status does not run hardware.",
       diagnosticsRun ? "Sample report bundle is attached for local viewer review." : "Report opens after diagnostics complete.",
     ],
     warnings: [
-      "Hardware browser control is pending a supervised local bridge implementation.",
-      "No final grade, certificate, QR certificate, or certified claim is generated.",
+      "Contract preview uses fixture data unless connected to the real Dell bridge.",
+      "Certified claims remain disabled; final AI-Grader V0 is software/report status only.",
     ],
     safety: {
       databaseWrites: false,
       migrationsRun: false,
       deployRun: false,
       hardwareAccessed: false,
-      finalGradeComputed: false,
+      finalGradeComputed: finalComputed,
       certifiedClaim: false,
-      labelGenerated: false,
-      qrGenerated: false,
+      labelGenerated: labelReady,
+      qrGenerated: labelReady,
       certificateGenerated: false,
     },
     bridgeContract: {
@@ -333,6 +369,12 @@ export function buildAiGraderLocalStationStatus(input: {
       ],
     },
     reportBundle,
+    outputs: {
+      productionReleasePath: finalComputed ? "sample-production-release.json" : undefined,
+      labelDataPath: labelReady ? "sample-label-data.json" : undefined,
+      publicationManifestPath: finalComputed ? "sample-publication-manifest.json" : undefined,
+      integrationContractPath: finalComputed ? "sample-integration-contract.json" : undefined,
+    },
     timingSummary: {
       totalCommandMs: 0,
       bridgeActionOverheadMs: 0,
@@ -361,6 +403,7 @@ export function buildSampleAiGraderReportHistory(): AiGraderLocalReportHistory {
         frontPackageDir: SAMPLE_AI_GRADER_REPORT_BUNDLE.evidenceReferences.frontPackageDir,
         backPackageDir: SAMPLE_AI_GRADER_REPORT_BUNDLE.evidenceReferences.backPackageDir,
         provisionalOverallGrade: SAMPLE_AI_GRADER_REPORT_BUNDLE.provisionalGrade?.overall,
+        finalOverallGrade: undefined,
         confidenceBand: SAMPLE_AI_GRADER_REPORT_BUNDLE.provisionalGrade?.confidence?.band,
         title: SAMPLE_AI_GRADER_REPORT_BUNDLE.cardIdentity.title,
         category: "Unknown",
@@ -373,7 +416,12 @@ export function buildSampleAiGraderReportHistory(): AiGraderLocalReportHistory {
       weekly: 1,
       daily: 1,
       averageProvisionalGrade: SAMPLE_AI_GRADER_REPORT_BUNDLE.provisionalGrade?.overall,
+      averageFinalGrade: undefined,
       provisionalGradeCounts: { "8": 1 },
+      finalGradeCounts: {},
+      finalizedCount: 0,
+      draftCount: 1,
+      warningsCount: 1,
     },
   };
 }
@@ -393,6 +441,10 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "capture-back",
     "run-diagnostics",
     "export-report-bundle",
+    "calculate-final-grade",
+    "finalize-report",
+    "publish-report",
+    "generate-label-data",
     "safe-off",
     "latest-report",
     "session-manifest",

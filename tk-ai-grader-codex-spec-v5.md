@@ -1840,3 +1840,42 @@ Every artifact written to object storage must have:
 - retention class.
 
 No GradeRun or AuthRun is certifiable until required original artifacts have checksum-verified storage records.
+
+## Appendix C. AI Grader Production Release V0
+
+Production Release V0 introduces the first controlled finalization/export and publication foundation for AI Grader report bundles. It may produce a `final_ai_grader_grade_v0` value, element scores, confidence, gate results, accepted warnings, operator finalization metadata, label-ready JSON, QR payload URL data, report publication metadata, and Ten Kings persistence/storage contracts.
+
+This is not certified grading. The release artifact must keep:
+
+- `certifiedClaim=false`
+- `certificateGenerated=false`
+- `physicalLabelPrinted=false`
+- no QR certificate generated
+- no production database write from Codex
+- no storage upload unless the approved production storage/env-gated admin path is explicitly configured
+- no migration application from Codex
+
+The local artifact set is:
+
+- `production-release.json`
+- `label-data.json`
+- `publication-manifest.json`
+- `integration-contract.json`
+
+PR #47 adds review-only Prisma schema/migration support for the production AI Grader record set:
+
+- `AiGraderSession`
+- `AiGraderReport`
+- `AiGraderEvidenceAsset`
+- `AiGraderGrade`
+- `AiGraderLabel`
+- `AiGraderPublication`
+- `AiGraderValuation`
+
+The migration must be reviewed and applied only through the approved migration runbook. `RUN_DB_MIGRATIONS=true` must not be set from Codex. The runtime publication path is disabled by default and must require both admin access and `AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true` before upload/persistence actions can run.
+
+The production publication API may upload sanitized report bundles, production-release data, label data, publication manifests, integration contracts, label previews, and asset manifests through the existing storage helpers. Public report reads must use the read-only persisted report endpoint gated by `AI_GRADER_PUBLIC_REPORT_DB_ENABLED=true`, and public bundles must not leak Dell local paths or loopback bridge URLs.
+
+Slabbed-photo refs, eBay comps refs, label status, QR/public URL status, and card/inventory linkage may be persisted as production V0 statuses/contracts. PR #47 implements the operator-facing production paths behind admin/env gates: existing `CardAsset`/`Item` lookup plus manual draft identity, persisted `cardAssetId`/`itemId` linkage, slabbed front/back color photo upload through the existing storage helper as distinct `slabbed_photo` evidence assets, and operator-triggered eBay comps through the existing KingsReview/SerpAPI sold-comps helper. Live publication/upload actions still require admin access and `AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true`; live comps additionally require `AI_GRADER_EBAY_COMPS_ENABLED=true` plus SerpAPI/eBay environment. Tests must mock DB/storage/comps behavior and must not perform production DB operations or external API calls.
+
+Migration runbook summary: migration `20260702120000_ai_grader_production_release_v0` adds `AiGraderSession`, `AiGraderReport`, `AiGraderEvidenceAsset`, `AiGraderGrade`, `AiGraderLabel`, `AiGraderPublication`, and `AiGraderValuation`. Codex must not apply the production migration and must not set `RUN_DB_MIGRATIONS=true`. A human rollout must review the migration, apply it only with an approved production `DATABASE_URL` through the database package migration command, regenerate clients as required, verify storage/auth/public-report env in a controlled environment, then enable publication gates. Public reports must read persisted/stored data only through read-only endpoints and must not leak Dell local filesystem paths, local bridge URLs, or station tokens.

@@ -112,6 +112,18 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.ok(status.outputs.reportBundlePath);
   assert.equal(status.safety.finalGradeComputed, false);
   assert.equal(status.safety.certifiedClaim, false);
+  status = await service.action("calculate-final-grade", {
+    operatorId: "mark",
+    warningsAccepted: true,
+    overrideReason: "Bridge test warning acceptance.",
+  });
+  assert.ok(status.outputs.productionReleasePath);
+  assert.ok(status.outputs.labelDataPath);
+  assert.equal(status.safety.certifiedClaim, false);
+  assert.equal(status.safety.certificateGenerated, false);
+  const release = JSON.parse(fs.readFileSync(status.outputs.productionReleasePath, "utf8"));
+  assert.equal(release.databaseIntegration.productionDbWritesPerformed, false);
+  assert.equal(release.storageIntegration.uploadPerformed, false);
 });
 
 test("real station bridge uses allow-listed station command plan with fake runner", async () => {
@@ -205,6 +217,7 @@ test("station bridge CLI help exposes local bridge command and flags", async () 
   assert.equal(code, 0);
   const payload = JSON.parse(stdout);
   assert.equal(payload.commands.some((command) => command.startsWith("ai-grader-station-bridge")), true);
+  assert.equal(payload.commands.some((command) => command.startsWith("ai-grader-production-release")), true);
   assert.equal(payload.options.includes("--station-token"), true);
   assert.equal(payload.options.includes("--enable-local-station"), true);
 });

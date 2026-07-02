@@ -1394,3 +1394,45 @@ The Leimac 8-channel characterization was run at `1%` duty and `45000 us` exposu
 Later on 2026-06-29, Mark accepted the active preview lighting profile at `1.3%` Leimac duty, PWM step `13`, channels `1-8`, `profileSource=operator_preview`. The profile was stored outside the repo at `C:\TenKings\capture-data\fixed-rig-active-lighting-profile.json`; no persistent Basler or Leimac User Set was saved. The focus/framing assistant was run without a CLI duty override and proved carry-over from the accepted profile: manifest selected duty `1.3%`, PWM `13`, source `operator_preview`, output `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-focus-assist-2026-06-29T224331062Z`, mean `54.3913`, clipped `0.001314`, dark `0.068241`, sharpness `402.9915`, display transform `rotate90cw`. Framing remained `warn` because the card was near the frame edge, and pixel/mm consistency remained `warn`.
 
 The fixed-rig V1 uncalibrated evidence package was run side-by-side so Mark could use the live preview before the back capture. Front output: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-29T225500347Z`. Back output: `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-evidence-package-2026-06-29T230849461Z`. Both used the accepted `1.3%` active profile and generated dark control, all-on, accepted-profile, channel `1-8`, portrait display, overlay, and 12 ROI crop artifacts. Front all-on metrics: mean `61.0675`, clipped `0.010289`, dark `0.025929`, sharpness `494.9914`, card coverage `0.940953`, overlay alignment `warn`. Back all-on metrics: mean `120.8304`, clipped `0.013025`, dark `0.053224`, sharpness `681.029`, card coverage `0.690135`, overlay alignment `pass`. Both reports use portrait display assets (`rotate90cw`) while raw Basler captures remain unchanged in sensor coordinates. Evidence class remains `macro_fixed_rig_v1_uncalibrated`; `isCalibrated=false`; no final grade, certificate, or certified grading claim was made. Mark confirmed the final physical ring light state was off.
+
+#### AI Grader Production Release V0
+
+The production release V0 helper adds the first software-side finalization/export layer on top of the local AI Grader report bundle. It does not run hardware and the standalone helper still does not write the production database, upload storage assets, or apply migrations. The command is:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec ai-grader-production-release --report-bundle-path <report-bundle.json> --output-dir C:\TenKings\capture-data\ai-grader-production-releases --operator-id <operator> --operator-accepted-warnings
+```
+
+The command writes local artifacts outside the repo: `production-release.json`, `label-data.json`, `publication-manifest.json`, and `integration-contract.json`. These artifacts contain the final AI-Grader Grade V0 calculation, element scores, confidence, gates, accepted warnings, operator finalization metadata, report/public URL placeholders, label-ready data, QR payload URL data, slabbed photo placeholders, eBay comps placeholders, and card/inventory linkage contracts.
+
+PR #47 adds the reviewed production persistence/publication foundation, but keeps it disabled until an approved migration/storage rollout:
+
+- Prisma models and a migration file are present for `AiGraderSession`, `AiGraderReport`, `AiGraderEvidenceAsset`, `AiGraderGrade`, `AiGraderLabel`, `AiGraderPublication`, and `AiGraderValuation`.
+- The migration is committed for review only and was not applied by Codex. `RUN_DB_MIGRATIONS=true` must remain unset unless an explicit migration rollout is approved.
+- The admin API route `/api/admin/ai-grader/production/[...action]` exposes `status`, `publish`, and `history`; write/upload actions are disabled unless `AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true` and an admin session is present.
+- The public read-only API route `/api/ai-grader/reports/[reportId]` is disabled unless `AI_GRADER_PUBLIC_REPORT_DB_ENABLED=true`; it reads a persisted published report bundle from storage and never exposes hardware controls.
+- The station page can send a finalized local production release/report bundle to the admin publish API and then show DB persistence, storage upload, publication, public URL, QR URL, label, card linkage, and comps readiness status.
+- The report viewer first attempts the persisted public report endpoint for generated report IDs, then falls back to the local Dell bridge when present, then to fixture/sample data.
+- The label preview route `/ai-grader/labels/[reportId]` renders print-ready label preview data from the report bundle. It is not a printer integration and does not create a certified certificate.
+
+Production release V0 is an AI-Grader final report workflow, but it is not a certified Ten Kings grading/certificate process. It must keep `certifiedClaim=false`, `certificateGenerated=false`, and `physicalLabelPrinted=false` until a later certification/ops process is approved. The generated label data is JSON/preview data only; it does not print a physical label or create a QR certificate.
+
+The PR #47 production integration continuation adds the live operator-facing pieces behind explicit admin/env gates:
+
+- The station page can search/select existing Ten Kings `CardAsset` or `Item` records through `/api/admin/ai-grader/production/card-search`, or mark the report as a manual draft identity when no record exists yet.
+- The selected `cardAssetId` and/or `itemId` are carried into the report bundle card identity and persisted by the production publication service.
+- The station page can upload slabbed front/back color photos through `/api/admin/ai-grader/production/upload-slab-photo`; those uploads use the existing storage helper path, persist as `AiGraderEvidenceAsset` rows with `artifactClass=slabbed_photo`, and remain distinct from Basler monochrome evidence.
+- The station page can run operator-triggered eBay comps through `/api/admin/ai-grader/production/run-comps`; readiness requires a final grade and card identity. Live SerpAPI/eBay execution is disabled unless `AI_GRADER_EBAY_COMPS_ENABLED=true` and the normal SerpAPI environment is configured. Tests use mocked comps execution only.
+- The public read-only report API merges persisted production-release, label, slabbed-photo, and valuation/comps data when `AI_GRADER_PUBLIC_REPORT_DB_ENABLED=true`; public bundles must not include Dell local file paths or local bridge tokens.
+- The label preview route can read the persisted public report bundle and render label-ready data from the stored report.
+
+Production rollout remains gated. The review migration is `20260702120000_ai_grader_production_release_v0` and adds `AiGraderSession`, `AiGraderReport`, `AiGraderEvidenceAsset`, `AiGraderGrade`, `AiGraderLabel`, `AiGraderPublication`, and `AiGraderValuation`. Codex must not run the production migration or set `RUN_DB_MIGRATIONS=true`. A human migration rollout should review the migration, set an approved production `DATABASE_URL`, run the repo migration deploy command from the database package, regenerate Prisma clients as required by the runbook, and verify the new admin/public AI Grader endpoints with publish env gates still off before enabling writes.
+
+Required production environment/configuration:
+
+- Database: approved `DATABASE_URL`, existing admin auth/session config, and `AI_GRADER_PRODUCTION_TENANT_ID`.
+- Publication gates: `AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true` only after migration/storage review, and `AI_GRADER_PUBLIC_REPORT_DB_ENABLED=true` only when published report reads are ready.
+- Storage: existing storage mode/bucket/region/public-base-url/access-key configuration used by the Ten Kings storage helper.
+- Local station: Dell bridge URL/token/origin config remains local and token-gated; hardware control stays in the loopback bridge, never in public report routes.
+- Public reports: `AI_GRADER_PUBLIC_REPORT_BASE_URL` or equivalent deploy base URL for QR/public report URL generation.
+- eBay comps: `AI_GRADER_EBAY_COMPS_ENABLED=true` plus SerpAPI/eBay env only when an operator intentionally runs comps for a finalized, identified card.

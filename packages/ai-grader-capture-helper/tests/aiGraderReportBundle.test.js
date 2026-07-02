@@ -8,6 +8,11 @@ const {
   buildAiGraderReportBundle,
   writeAiGraderReportBundle,
 } = require("../dist/drivers/aiGraderReportBundle");
+const {
+  AI_GRADER_PRODUCTION_RELEASE_VERSION,
+  buildAiGraderProductionRelease,
+  writeAiGraderProductionRelease,
+} = require("../dist/drivers/aiGraderProductionRelease");
 const { runCaptureHelperCli } = require("../dist/cli");
 
 async function runCli(argv) {
@@ -133,4 +138,88 @@ test("report bundle CLI rejects repo output and writes software-only safety payl
   assert.equal(result.stdout.safety.databaseWrites, false);
   assert.equal(result.stdout.safety.finalGradeComputed, false);
   assert.equal(fs.existsSync(result.stdout.reportBundlePath), true);
+});
+
+test("production release computes final AI-Grader V0 with label and QR data when warning gates are accepted", async () => {
+  const reportDir = fixtureReportDir();
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "production-fixture" });
+  const release = buildAiGraderProductionRelease({
+    bundle,
+    operatorId: "mark",
+    warningsAccepted: true,
+    overrideReason: "Accepted V0 warning gates for production release test.",
+    publicBaseUrl: "https://collect.tenkings.co",
+  });
+
+  assert.equal(release.schemaVersion, AI_GRADER_PRODUCTION_RELEASE_VERSION);
+  assert.equal(release.reportStatus, "final_ai_grader_report_v0");
+  assert.equal(release.finalGradeComputed, true);
+  assert.equal(release.finalGrade.overall, 8.5);
+  assert.equal(release.label.status, "label_data_ready");
+  assert.equal(release.label.qrPayloadUrl, "https://collect.tenkings.co/ai-grader/reports/production-fixture");
+  assert.equal(release.certifiedClaim, false);
+  assert.equal(release.certificateGenerated, false);
+  assert.equal(release.databaseIntegration.productionDbWritesPerformed, false);
+  assert.equal(release.storageIntegration.uploadPerformed, false);
+});
+
+test("production release fails closed when required front/back evidence is missing", async () => {
+  const reportDir = fixtureReportDir();
+  fs.rmSync(path.join(reportDir, "front"), { recursive: true, force: true });
+  fs.rmSync(path.join(reportDir, "back"), { recursive: true, force: true });
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "missing-evidence" });
+  bundle.evidenceReferences.frontEvidenceRefs = [];
+  bundle.evidenceReferences.backEvidenceRefs = [];
+  bundle.evidenceReferences.frontPackageDir = undefined;
+  bundle.evidenceReferences.backPackageDir = undefined;
+  const release = buildAiGraderProductionRelease({ bundle, warningsAccepted: true });
+
+  assert.equal(release.reportStatus, "insufficient_evidence");
+  assert.equal(release.finalGradeComputed, false);
+  assert.equal(release.finalGrade.status, "insufficient_evidence");
+  assert.equal(release.label.status, "blocked_insufficient_evidence");
+  assert.equal(release.gates.some((gate) => gate.id === "front_evidence" && gate.status === "fail"), true);
+});
+
+test("production release writer and CLI write local publication artifacts without hardware or DB side effects", async () => {
+  const reportDir = fixtureReportDir();
+  const bundleOutput = fs.mkdtempSync(path.join(os.tmpdir(), "ai-grader-production-bundle-"));
+  const bundleResult = await writeAiGraderReportBundle({ reportDir, outputDir: bundleOutput, reportId: "release-cli" });
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "ai-grader-production-release-"));
+  const result = await writeAiGraderProductionRelease({
+    reportBundlePath: bundleResult.bundlePath,
+    outputDir,
+    operatorId: "mark",
+    warningsAccepted: true,
+  });
+
+  assert.equal(fs.existsSync(result.productionReleasePath), true);
+  assert.equal(fs.existsSync(result.labelDataPath), true);
+  assert.equal(fs.existsSync(result.publicationManifestPath), true);
+  assert.equal(fs.existsSync(result.integrationContractPath), true);
+
+  const repoOutput = await runCli(["ai-grader-production-release", "--report-bundle-path", bundleResult.bundlePath, "--output-dir", process.cwd()]);
+  assert.equal(repoOutput.code, 1);
+  assert.match(repoOutput.stderr.error, /outside the git repo/);
+
+  const cliOutputDir = fs.mkdtempSync(path.join(os.tmpdir(), "ai-grader-production-release-cli-"));
+  const cliResult = await runCli([
+    "ai-grader-production-release",
+    "--report-bundle-path",
+    bundleResult.bundlePath,
+    "--output-dir",
+    cliOutputDir,
+    "--operator-id",
+    "mark",
+    "--operator-accepted-warnings",
+    "--override-reason",
+    "Accepted warning gates for V0 release.",
+  ]);
+  assert.equal(cliResult.code, 0);
+  assert.equal(cliResult.stdout.command, "ai-grader-production-release");
+  assert.equal(cliResult.stdout.productionRelease.finalGradeComputed, true);
+  assert.equal(cliResult.stdout.safety.hardwareAccessed, false);
+  assert.equal(cliResult.stdout.safety.databaseWrites, false);
+  assert.equal(cliResult.stdout.safety.certifiedClaim, false);
+  assert.equal(fs.existsSync(cliResult.stdout.labelDataPath), true);
 });

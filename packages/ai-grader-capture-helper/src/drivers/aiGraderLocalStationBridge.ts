@@ -26,6 +26,10 @@ import {
   writeAiGraderReportBundle,
   type AiGraderReportBundle,
 } from "./aiGraderReportBundle";
+import {
+  writeAiGraderProductionRelease,
+  type AiGraderProductionRelease,
+} from "./aiGraderProductionRelease";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.2";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
@@ -45,6 +49,10 @@ export type AiGraderLocalStationBridgeAction =
   | "capture-back"
   | "run-diagnostics"
   | "export-report-bundle"
+  | "calculate-final-grade"
+  | "finalize-report"
+  | "publish-report"
+  | "generate-label-data"
   | "safe-off"
   | "latest-report"
   | "session-manifest"
@@ -61,6 +69,9 @@ export type AiGraderLocalStationStepId =
   | "capture_back"
   | "run_provisional_diagnostics"
   | "view_unified_report"
+  | "calculate_final_grade"
+  | "finalize_publish_report"
+  | "label_data_ready"
   | "safe_off_end_session";
 
 export interface AiGraderLocalStationAcceptedProfile {
@@ -175,6 +186,10 @@ export interface AiGraderLocalStationBridgeManifest {
     reportBundlePath?: string;
     assetManifestPath?: string;
     checksumsPath?: string;
+    productionReleasePath?: string;
+    labelDataPath?: string;
+    publicationManifestPath?: string;
+    integrationContractPath?: string;
   };
   safety: {
     localOnly: true;
@@ -186,16 +201,17 @@ export interface AiGraderLocalStationBridgeManifest {
     persistentLeimacSaved: false;
     highDutyLighting: false;
     capturedImagesCommitted: false;
-    finalGradeComputed: false;
+    finalGradeComputed: boolean;
     certifiedClaim: false;
-    labelGenerated: false;
-    qrGenerated: false;
+    labelGenerated: boolean;
+    qrGenerated: boolean;
     certificateGenerated: false;
   };
   commandResults: AiGraderStationCommandResult[];
   progressLog: string[];
   warnings: string[];
   reportBundle?: AiGraderReportBundle;
+  productionRelease?: AiGraderProductionRelease;
 }
 
 export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBridgeManifest {
@@ -267,10 +283,12 @@ export interface AiGraderLocalStationReportHistoryItem {
   viewerPath: string;
   localHtmlPath?: string;
   reportBundlePath?: string;
+  productionReleasePath?: string;
   sessionDir?: string;
   frontPackageDir?: string;
   backPackageDir?: string;
   provisionalOverallGrade?: number;
+  finalOverallGrade?: number;
   confidenceBand?: string;
   title?: string;
   category?: string;
@@ -287,7 +305,12 @@ export interface AiGraderLocalStationReportHistory {
     weekly: number;
     daily: number;
     averageProvisionalGrade?: number;
+    averageFinalGrade?: number;
     provisionalGradeCounts: Record<string, number>;
+    finalGradeCounts: Record<string, number>;
+    finalizedCount: number;
+    draftCount: number;
+    warningsCount: number;
   };
 }
 
@@ -295,6 +318,9 @@ export interface AiGraderLocalStationBridgeActionRequest {
   acceptedProfile?: Partial<AiGraderLocalStationAcceptedProfile>;
   confirmations?: Partial<AiGraderLocalStationBridgeManifest["confirmations"]>;
   reportId?: string;
+  operatorId?: string;
+  warningsAccepted?: boolean;
+  overrideReason?: string;
 }
 
 export interface StartedAiGraderLocalStationBridge {
@@ -317,7 +343,10 @@ const NEXT_ACTION_BY_STEP: Record<AiGraderLocalStationStepId, AiGraderLocalStati
   prompt_flip_card: "confirm-flip",
   capture_back: "capture-back",
   run_provisional_diagnostics: "run-diagnostics",
-  view_unified_report: "latest-report",
+  view_unified_report: "calculate-final-grade",
+  calculate_final_grade: "finalize-report",
+  finalize_publish_report: "generate-label-data",
+  label_data_ready: "latest-report",
   safe_off_end_session: "safe-off",
 };
 
@@ -694,6 +723,10 @@ function bridgeEndpoints() {
     { method: "POST", action: "capture-back", hardwareAccess: true, description: "Run back fixed-rig evidence capture after flip confirmation." },
     { method: "POST", action: "run-diagnostics", hardwareAccess: false, description: "Generate the unified provisional diagnostic report." },
     { method: "POST", action: "export-report-bundle", hardwareAccess: false, description: "Export report-bundle.json, asset manifest, and checksums." },
+    { method: "POST", action: "calculate-final-grade", hardwareAccess: false, description: "Calculate the V0 final AI-Grader grade from the report bundle." },
+    { method: "POST", action: "finalize-report", hardwareAccess: false, description: "Record operator finalization metadata and write production-release.json." },
+    { method: "POST", action: "publish-report", hardwareAccess: false, description: "Prepare local publication manifest and future public report URL data." },
+    { method: "POST", action: "generate-label-data", hardwareAccess: false, description: "Write label-ready JSON and QR payload URL data." },
     { method: "POST", action: "safe-off", hardwareAccess: true, description: "Run guarded Leimac safe-off cleanup." },
     { method: "GET", action: "latest-report", hardwareAccess: false, description: "Read latest report location." },
     { method: "GET", action: "session-manifest", hardwareAccess: false, description: "Read station manifest path and state." },
@@ -763,25 +796,29 @@ function gradeBucket(grade: number | undefined): string | undefined {
 
 function historyItemFromBundle(input: {
   bundle: AiGraderReportBundle;
+  productionRelease?: AiGraderProductionRelease;
   reportBundlePath?: string;
+  productionReleasePath?: string;
   sessionDir?: string;
 }): AiGraderLocalStationReportHistoryItem {
   return {
     reportId: input.bundle.reportId,
     gradingSessionId: input.bundle.gradingSessionId,
     generatedAt: input.bundle.generatedAt,
-    status: input.bundle.reportStatus,
+    status: input.productionRelease?.reportStatus ?? input.bundle.reportStatus,
     viewerPath: reportRoute(input.bundle.reportId),
     localHtmlPath: input.bundle.reportHtmlPath,
     reportBundlePath: input.reportBundlePath,
+    productionReleasePath: input.productionReleasePath,
     sessionDir: input.sessionDir,
     frontPackageDir: input.bundle.evidenceReferences.frontPackageDir,
     backPackageDir: input.bundle.evidenceReferences.backPackageDir,
     provisionalOverallGrade: input.bundle.provisionalGrade?.overall,
-    confidenceBand: input.bundle.provisionalGrade?.confidence?.band,
+    finalOverallGrade: input.productionRelease?.finalGrade.overall,
+    confidenceBand: input.productionRelease?.finalGrade.confidence.band ?? input.bundle.provisionalGrade?.confidence?.band,
     title: input.bundle.cardIdentity.title,
     category: undefined,
-    warnings: input.bundle.warnings,
+    warnings: input.productionRelease?.warnings ?? input.bundle.warnings,
   };
 }
 
@@ -793,10 +830,16 @@ function historyStats(items: AiGraderLocalStationReportHistoryItem[]): AiGraderL
   const grades = items
     .map((item) => item.provisionalOverallGrade)
     .filter((grade): grade is number => typeof grade === "number" && Number.isFinite(grade));
+  const finalGrades = items
+    .map((item) => item.finalOverallGrade)
+    .filter((grade): grade is number => typeof grade === "number" && Number.isFinite(grade));
   const gradeCounts: Record<string, number> = {};
+  const finalGradeCounts: Record<string, number> = {};
   for (const item of items) {
     const bucket = gradeBucket(item.provisionalOverallGrade);
     if (bucket) gradeCounts[bucket] = (gradeCounts[bucket] ?? 0) + 1;
+    const finalBucket = gradeBucket(item.finalOverallGrade);
+    if (finalBucket) finalGradeCounts[finalBucket] = (finalGradeCounts[finalBucket] ?? 0) + 1;
   }
   const timestamp = (item: AiGraderLocalStationReportHistoryItem) => item.generatedAt ? new Date(item.generatedAt).getTime() : 0;
   return {
@@ -807,7 +850,14 @@ function historyStats(items: AiGraderLocalStationReportHistoryItem[]): AiGraderL
     averageProvisionalGrade: grades.length
       ? Number((grades.reduce((sum, grade) => sum + grade, 0) / grades.length).toFixed(2))
       : undefined,
+    averageFinalGrade: finalGrades.length
+      ? Number((finalGrades.reduce((sum, grade) => sum + grade, 0) / finalGrades.length).toFixed(2))
+      : undefined,
     provisionalGradeCounts: gradeCounts,
+    finalGradeCounts,
+    finalizedCount: finalGrades.length,
+    draftCount: items.length - finalGrades.length,
+    warningsCount: items.filter((item) => item.warnings.length > 0).length,
   };
 }
 
@@ -850,6 +900,26 @@ async function readBundleFromPath(bundlePath: string | undefined): Promise<AiGra
   if (!bundlePath) return undefined;
   const parsed = await readJsonFile(bundlePath);
   return parsed?.schemaVersion === "ai-grader-report-bundle-v0.1" ? parsed as AiGraderReportBundle : undefined;
+}
+
+async function readProductionReleaseFromPath(releasePath: string | undefined): Promise<AiGraderProductionRelease | undefined> {
+  if (!releasePath) return undefined;
+  const parsed = await readJsonFile(releasePath);
+  return parsed?.schemaVersion === "ai-grader-production-release-v0.1" ? parsed as AiGraderProductionRelease : undefined;
+}
+
+function bundleWithProductionRelease(bundle: AiGraderReportBundle, productionRelease: AiGraderProductionRelease | undefined): AiGraderReportBundle {
+  if (!productionRelease) return bundle;
+  return {
+    ...bundle,
+    finalStatus: productionRelease.finalStatus as any,
+    finalGradeComputed: productionRelease.finalGradeComputed as any,
+    certifiedClaim: false,
+    labelGenerated: productionRelease.labelDataGenerated as any,
+    qrGenerated: productionRelease.qrPayloadGenerated as any,
+    certificateGenerated: false,
+    ...(productionRelease ? { productionRelease } : {}),
+  } as AiGraderReportBundle;
 }
 
 export class AiGraderLocalStationBridgeService {
@@ -921,13 +991,15 @@ export class AiGraderLocalStationBridgeService {
     const expectedReportId = reportId?.trim() || this.manifest.reportId;
     if (!expectedReportId) throw new Error("No AI Grader report ID is available yet.");
     if (this.manifest.reportBundle?.reportId === expectedReportId) {
-      return { reportId: expectedReportId, bundle: this.manifest.reportBundle, source: "active_manifest_memory" };
+      return { reportId: expectedReportId, bundle: bundleWithProductionRelease(this.manifest.reportBundle, this.manifest.productionRelease), source: "active_manifest_memory" };
     }
 
     const bundleFromPath = await readBundleFromPath(this.manifest.outputs.reportBundlePath);
     if (bundleFromPath?.reportId === expectedReportId) {
       this.manifest.reportBundle = bundleFromPath;
-      return { reportId: expectedReportId, bundle: bundleFromPath, source: "active_manifest_report_bundle_path" };
+      const productionRelease = this.manifest.productionRelease ?? await readProductionReleaseFromPath(this.manifest.outputs.productionReleasePath);
+      this.manifest.productionRelease = productionRelease;
+      return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundleFromPath, productionRelease), source: "active_manifest_report_bundle_path" };
     }
 
     const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
@@ -939,13 +1011,16 @@ export class AiGraderLocalStationBridgeService {
         publicBasePath: this.config.publicBasePath,
       });
       this.manifest.reportBundle = bundle;
-      return { reportId: expectedReportId, bundle, source: "active_manifest_generated_from_report_dir" };
+      return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, this.manifest.productionRelease), source: "active_manifest_generated_from_report_dir" };
     }
 
     for (const item of await this.reportHistoryItems()) {
       if (item.reportId !== expectedReportId) continue;
       const bundle = await readBundleFromPath(item.reportBundlePath);
-      if (bundle) return { reportId: expectedReportId, bundle, source: "history_report_bundle_path" };
+      if (bundle) {
+        const release = await readProductionReleaseFromPath(item.productionReleasePath);
+        return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, release), source: "history_report_bundle_path" };
+      }
       const reportDirFromHtml = dirnameIfFile(item.localHtmlPath);
       if (reportDirFromHtml) {
         const generated = await buildAiGraderReportBundle({
@@ -971,12 +1046,46 @@ export class AiGraderLocalStationBridgeService {
     };
   }
 
+  private async writeProductionRelease(request: AiGraderLocalStationBridgeActionRequest): Promise<AiGraderProductionRelease> {
+    const reportId = this.manifest.reportId;
+    if (!reportId) throw new Error("Production release requires an active AI Grader report ID.");
+    if (!this.manifest.outputs.reportBundlePath) {
+      await this.action("export-report-bundle", request);
+    }
+    if (!this.manifest.outputs.reportBundlePath) {
+      throw new Error("Production release requires an exported report-bundle.json.");
+    }
+    const outputDir = path.join(this.config.outputDir, "production-releases", reportId);
+    const result = await writeAiGraderProductionRelease({
+      reportBundlePath: this.manifest.outputs.reportBundlePath,
+      outputDir,
+      operatorId: request.operatorId,
+      warningsAccepted: request.warningsAccepted,
+      overrideReason: request.overrideReason,
+      publicBaseUrl: this.config.publicBasePath?.startsWith("http") ? this.config.publicBasePath : undefined,
+      publicBasePath: this.config.publicBasePath,
+    });
+    this.manifest.outputs.productionReleasePath = result.productionReleasePath;
+    this.manifest.outputs.labelDataPath = result.labelDataPath;
+    this.manifest.outputs.publicationManifestPath = result.publicationManifestPath;
+    this.manifest.outputs.integrationContractPath = result.integrationContractPath;
+    this.manifest.productionRelease = result.productionRelease;
+    this.manifest.safety.finalGradeComputed = result.productionRelease.finalGradeComputed;
+    this.manifest.safety.labelGenerated = result.productionRelease.labelDataGenerated;
+    this.manifest.safety.qrGenerated = result.productionRelease.qrPayloadGenerated;
+    this.manifest.progressLog.push(`${new Date().toISOString()} Production release artifacts written to ${result.outputDir}.`);
+    await writeSessionManifest(this.manifest);
+    return result.productionRelease;
+  }
+
   private async reportHistoryItems(): Promise<AiGraderLocalStationReportHistoryItem[]> {
     const items: AiGraderLocalStationReportHistoryItem[] = [];
     if (this.manifest.reportBundle) {
       items.push(historyItemFromBundle({
         bundle: this.manifest.reportBundle,
+        productionRelease: this.manifest.productionRelease,
         reportBundlePath: this.manifest.outputs.reportBundlePath,
+        productionReleasePath: this.manifest.outputs.productionReleasePath,
         sessionDir: this.manifest.outputs.sessionDir,
       }));
     } else if (this.manifest.reportId && this.manifest.outputs.unifiedReportPath) {
@@ -984,7 +1093,9 @@ export class AiGraderLocalStationBridgeService {
         const resolved = await this.reportBundle(this.manifest.reportId);
         items.push(historyItemFromBundle({
           bundle: resolved.bundle,
+          productionRelease: this.manifest.productionRelease,
           reportBundlePath: this.manifest.outputs.reportBundlePath,
+          productionReleasePath: this.manifest.outputs.productionReleasePath,
           sessionDir: this.manifest.outputs.sessionDir,
         }));
       } catch {
@@ -996,6 +1107,7 @@ export class AiGraderLocalStationBridgeService {
           viewerPath: reportRoute(this.manifest.reportId),
           localHtmlPath: this.manifest.outputs.unifiedReportPath,
           reportBundlePath: this.manifest.outputs.reportBundlePath,
+          productionReleasePath: this.manifest.outputs.productionReleasePath,
           sessionDir: this.manifest.outputs.sessionDir,
           frontPackageDir: this.manifest.outputs.frontPackageDir,
           backPackageDir: this.manifest.outputs.backPackageDir,
@@ -1019,10 +1131,13 @@ export class AiGraderLocalStationBridgeService {
       const stationManifest = await readJsonFile(stationManifestPath) as AiGraderLocalStationBridgeManifest | undefined;
       if (!stationManifest?.reportId) continue;
       const bundle = await readBundleFromPath(stationManifest.outputs?.reportBundlePath);
+      const productionRelease = await readProductionReleaseFromPath(stationManifest.outputs?.productionReleasePath);
       if (bundle) {
         items.push(historyItemFromBundle({
           bundle,
+          productionRelease,
           reportBundlePath: stationManifest.outputs.reportBundlePath,
+          productionReleasePath: stationManifest.outputs.productionReleasePath,
           sessionDir,
         }));
         continue;
@@ -1038,7 +1153,9 @@ export class AiGraderLocalStationBridgeService {
           });
           items.push(historyItemFromBundle({
             bundle: generated,
+            productionRelease,
             reportBundlePath: stationManifest.outputs?.reportBundlePath,
+            productionReleasePath: stationManifest.outputs?.productionReleasePath,
             sessionDir,
           }));
         } catch {
@@ -1050,6 +1167,7 @@ export class AiGraderLocalStationBridgeService {
             viewerPath: reportRoute(stationManifest.reportId),
             localHtmlPath: stationManifest.outputs?.unifiedReportPath,
             reportBundlePath: stationManifest.outputs?.reportBundlePath,
+            productionReleasePath: stationManifest.outputs?.productionReleasePath,
             sessionDir,
             frontPackageDir: stationManifest.outputs?.frontPackageDir,
             backPackageDir: stationManifest.outputs?.backPackageDir,
@@ -1234,6 +1352,20 @@ export class AiGraderLocalStationBridgeService {
       return this.status();
     }
 
+    if (action === "calculate-final-grade" || action === "finalize-report" || action === "publish-report" || action === "generate-label-data") {
+      const release = await this.writeProductionRelease(request);
+      if (action === "calculate-final-grade") {
+        this.manifest.currentStep = "calculate_final_grade";
+      } else if (action === "finalize-report" || action === "publish-report") {
+        this.manifest.currentStep = "finalize_publish_report";
+      } else {
+        this.manifest.currentStep = "label_data_ready";
+      }
+      this.manifest.progressLog.push(`${now} ${actionLabel(action)} completed with status ${release.reportStatus}.`);
+      await writeSessionManifest(this.manifest);
+      return this.status();
+    }
+
     throw new Error(`Unsupported AI Grader station bridge action: ${action}`);
   }
 }
@@ -1251,6 +1383,10 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
     "capture-back",
     "run-diagnostics",
     "export-report-bundle",
+    "calculate-final-grade",
+    "finalize-report",
+    "publish-report",
+    "generate-label-data",
     "safe-off",
     "latest-report",
     "session-manifest",

@@ -1,3 +1,5 @@
+import { buildSampleAiGraderProductionRelease, type AiGraderProductionRelease } from "./aiGraderProductionRelease";
+
 export const AI_GRADER_WEB_REPORT_BUNDLE_VERSION = "ai-grader-report-bundle-v0.1";
 
 export type AiGraderReportElementKey = "centering" | "corners" | "edges" | "surface";
@@ -7,14 +9,15 @@ export type AiGraderReportBundle = {
   generatedAt: string;
   gradingSessionId: string;
   reportId: string;
-  reportStatus: "provisional_diagnostic_ready" | "insufficient_evidence" | "missing_report_data";
+  reportStatus: "provisional_diagnostic_ready" | "insufficient_evidence" | "missing_report_data" | "final_ai_grader_report_v0";
   provisionalStatus: "provisional_diagnostic";
-  finalStatus: "not_computed";
-  finalGradeComputed: false;
+  finalStatus: "not_computed" | "final_grade_computed" | "insufficient_evidence";
+  finalGradeComputed: boolean;
   certifiedClaim: false;
-  labelGenerated: false;
-  qrGenerated: false;
+  labelGenerated: boolean;
+  qrGenerated: boolean;
   certificateGenerated: false;
+  productionRelease?: AiGraderProductionRelease;
   localReportFolder?: string;
   reportHtmlPath?: string;
   publicPathPlaceholders: {
@@ -24,7 +27,11 @@ export type AiGraderReportBundle = {
   };
   cardIdentity: {
     cardAssetId?: string;
+    itemId?: string;
     title?: string;
+    set?: string;
+    cardNumber?: string;
+    source?: "card_asset" | "item" | "manual_draft" | string;
     sideCount: 2;
     futureSlabbedPhotoRefsReserved: true;
     futureEbayCompsRefsReserved: true;
@@ -199,6 +206,24 @@ export const SAMPLE_AI_GRADER_REPORT_BUNDLE: AiGraderReportBundle = {
 
 export function getAiGraderReportBundle(reportId: string | string[] | undefined): AiGraderReportBundle {
   const normalized = Array.isArray(reportId) ? reportId[0] : reportId;
+  if (normalized === "sample-final-v0") {
+    const productionRelease = buildSampleAiGraderProductionRelease({
+      ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+      reportId: "sample-final-v0",
+    });
+    return {
+      ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+      reportId: "sample-final-v0",
+      reportStatus: "final_ai_grader_report_v0",
+      finalStatus: "final_grade_computed",
+      finalGradeComputed: true,
+      labelGenerated: true,
+      qrGenerated: true,
+      productionRelease,
+      warnings: ["Final AI-Grader Report V0 fixture.", "Not certified."],
+      limitations: ["No physical label printed in fixture.", "No production DB write in fixture."],
+    };
+  }
   return {
     ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
     reportId: normalized && normalized.trim().length > 0 ? normalized : SAMPLE_AI_GRADER_REPORT_BUNDLE.reportId,
@@ -214,4 +239,8 @@ export function hasNoFinalCertifiedClaims(bundle: AiGraderReportBundle) {
     bundle.certificateGenerated === false &&
     bundle.finalStatus === "not_computed"
   );
+}
+
+export function hasNoCertifiedClaim(bundle: AiGraderReportBundle) {
+  return bundle.certifiedClaim === false && bundle.certificateGenerated === false && (bundle.productionRelease?.certifiedClaim ?? false) === false;
 }
