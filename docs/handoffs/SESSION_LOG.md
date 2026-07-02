@@ -22549,6 +22549,50 @@ By enabling Rip It Live, I confirm:
 - No captured image or vendor binary was committed.
 - No certified grade, physical label, QR certificate, or certificate claim was generated.
 
+## 2026-07-02 - AI Grader PR #47 production integration continuation
+
+### Summary
+- Continued PR #47 on branch `feature/ai-grader-production-release-v0`; PR remains open and must not be merged yet.
+- Added the remaining production-path implementation behind admin/env gates:
+  - Card/item selection in the station flow through existing `CardAsset`/`Item` lookup plus manual draft identity fallback.
+  - Selected `cardAssetId`/`itemId` carry into the production report bundle and persistence request.
+  - Slabbed front/back color photo upload through the admin production API and existing storage helper path.
+  - Slabbed photos persist as separate `AiGraderEvidenceAsset` records with `artifactClass=slabbed_photo`, distinct from Basler evidence.
+  - Operator-triggered eBay comps flow with readiness statuses, mocked tests, and live execution gated by `AI_GRADER_EBAY_COMPS_ENABLED=true` plus SerpAPI env.
+  - Public report API merges persisted report bundle, production release, label data, slabbed photos, and valuation/comps data when enabled.
+  - Label preview can load persisted public report data.
+
+### Migration and Env Notes
+- Review migration: `20260702120000_ai_grader_production_release_v0`.
+- Models/tables covered: `AiGraderSession`, `AiGraderReport`, `AiGraderEvidenceAsset`, `AiGraderGrade`, `AiGraderLabel`, `AiGraderPublication`, and `AiGraderValuation`.
+- Codex did not apply the migration and did not set `RUN_DB_MIGRATIONS=true`.
+- Human rollout later requires approved `DATABASE_URL`, migration deploy through the database package runbook, Prisma/client regeneration as needed, storage verification, then explicit enablement of `AI_GRADER_PRODUCTION_PUBLISH_ENABLED` and `AI_GRADER_PUBLIC_REPORT_DB_ENABLED`.
+- Comps live execution additionally requires `AI_GRADER_EBAY_COMPS_ENABLED=true` and SerpAPI/eBay env.
+
+### Validation
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database exec node --test tests/aiGraderService.test.js tests/aiGraderProductionService.test.js` -> pass, `44` tests.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `17` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>` warnings only.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `167` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` with dummy local `DATABASE_URL` -> pass.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No hardware command was run.
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No production DB operation was run.
+- No network setting change was made.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- No certified grading claim, QR certificate, or physical label was generated.
+
 ## 2026-07-01 - AI Grader PR #46 local browser smoke prep
 
 ### Summary

@@ -113,9 +113,24 @@ export type AiGraderProductionRelease = {
     storageKeyPrefix: string;
     recommendedUploadPath: string;
   };
-  slabbedPhotoContract: { status: "reserved_not_uploaded"; note: string; frontPhotoRef?: string; backPhotoRef?: string };
-  ebayCompsContract: { status: "not_run"; valuationStatus: "pending_card_identity_and_final_sale_context"; compsRefs: string[]; note: string };
-  cardInventoryLinkage: { status: "contract_ready_not_persisted"; cardAssetId?: string; itemId?: string; note: string };
+  slabbedPhotoContract: {
+    status: "reserved_not_uploaded" | "uploaded" | "upload_pending" | "failed";
+    note: string;
+    frontPhotoRef?: string;
+    backPhotoRef?: string;
+    photos?: unknown[];
+  };
+  ebayCompsContract: {
+    status: "not_run" | "not_ready_missing_grade" | "not_ready_missing_identity" | "ready" | "running" | "completed" | "failed";
+    valuationStatus: "pending_card_identity_and_final_sale_context" | "ready" | "completed" | "failed";
+    compsRefs: unknown[];
+    note: string;
+    searchQuery?: string;
+    valuationMinor?: number | null;
+    valuationCurrency?: string | null;
+    resultSummary?: unknown;
+  };
+  cardInventoryLinkage: { status: "contract_ready_not_persisted" | "manual_draft" | "linked"; cardAssetId?: string; itemId?: string; note: string };
 };
 
 function certId(reportId: string) {

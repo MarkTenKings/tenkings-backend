@@ -27,7 +27,11 @@ export type AiGraderReportBundle = {
   };
   cardIdentity: {
     cardAssetId?: string;
+    itemId?: string;
     title?: string;
+    set?: string;
+    cardNumber?: string;
+    source?: "card_asset" | "item" | "manual_draft" | string;
     sideCount: 2;
     futureSlabbedPhotoRefsReserved: true;
     futureEbayCompsRefsReserved: true;

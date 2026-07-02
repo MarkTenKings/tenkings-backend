@@ -27,6 +27,31 @@ type ProductionPublishState = {
   uploadedAssetCount?: number;
 };
 
+type CardSelectionState = {
+  source: "card_asset" | "item" | "manual_draft";
+  cardAssetId?: string;
+  itemId?: string;
+  title?: string;
+  set?: string;
+  cardNumber?: string;
+  category?: string;
+  displayTitle?: string;
+  subtitle?: string;
+};
+
+type SlabUploadState = {
+  front?: { status: string; publicUrl?: string; message?: string };
+  back?: { status: string; publicUrl?: string; message?: string };
+};
+
+type CompsState = {
+  status: "idle" | "ready" | "running" | "completed" | "not_ready_missing_grade" | "not_ready_missing_identity" | "failed";
+  message: string;
+  searchQuery?: string;
+  searchUrl?: string;
+  count?: number;
+};
+
 async function callStationContract(action: AiGraderStationAction): Promise<AiGraderLocalStationStatus> {
   const method = action === "status" || action === "latest-report" || action === "session-manifest" ? "GET" : "POST";
   const response = await fetch(`/api/ai-grader/station/${action}`, { method });
@@ -77,6 +102,15 @@ export default function AiGraderStationPage() {
     status: "idle",
     message: "Ten Kings DB/storage publish has not been run.",
   });
+  const [cardSearchQuery, setCardSearchQuery] = useState("");
+  const [cardSearchResults, setCardSearchResults] = useState<CardSelectionState[]>([]);
+  const [cardSearchMessage, setCardSearchMessage] = useState("Select an existing card/item or enter a draft identity before final publish.");
+  const [selectedCard, setSelectedCard] = useState<CardSelectionState | null>(null);
+  const [slabUploads, setSlabUploads] = useState<SlabUploadState>({});
+  const [compsState, setCompsState] = useState<CompsState>({
+    status: "idle",
+    message: "Comps have not been run.",
+  });
   const [profileDraft, setProfileDraft] = useState({
     dutyPercent: status.acceptedProfile.dutyPercent,
     exposureUs: status.acceptedProfile.exposureUs,
@@ -96,6 +130,17 @@ export default function AiGraderStationPage() {
   );
 
   const sortedHistory = useMemo(() => sortHistory(history.items, historySort), [history.items, historySort]);
+  const selectedCardIdentity = useMemo(() => {
+    if (!selectedCard) return null;
+    return {
+      cardAssetId: selectedCard.cardAssetId,
+      itemId: selectedCard.itemId,
+      title: selectedCard.title ?? selectedCard.displayTitle,
+      set: selectedCard.set,
+      cardNumber: selectedCard.cardNumber,
+      source: selectedCard.source,
+    };
+  }, [selectedCard]);
   const reportReady = status.latestReport.exists && Boolean(status.latestReport.reportId);
   const finalReady = status.safety.finalGradeComputed || Boolean(status.productionRelease?.finalGradeComputed);
   const labelReady = status.safety.labelGenerated || Boolean(status.outputs?.labelDataPath);
@@ -250,11 +295,63 @@ export default function AiGraderStationPage() {
     }
   };
 
+  const buildReportBundleForProduction = () => {
+    if (!status.reportBundle) return null;
+    if (!selectedCardIdentity) return status.reportBundle;
+    return {
+      ...status.reportBundle,
+      cardIdentity: {
+        ...status.reportBundle.cardIdentity,
+        ...selectedCardIdentity,
+        sideCount: 2 as const,
+        futureSlabbedPhotoRefsReserved: true as const,
+        futureEbayCompsRefsReserved: true as const,
+      },
+    };
+  };
+
+  const searchCardItems = async () => {
+    setBusy("card-search");
+    setError(null);
+    setCardSearchMessage("Searching Ten Kings card/item records.");
+    try {
+      const query = cardSearchQuery.trim();
+      if (!query) throw new Error("Enter a card, player, set, item, or card asset search first.");
+      const response = await fetch(`/api/admin/ai-grader/production/card-search?q=${encodeURIComponent(query)}&limit=8`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true) {
+        setCardSearchResults([]);
+        setCardSearchMessage(payload.message ?? "Card/item search is not available. Use manual draft identity.");
+        return;
+      }
+      const items = Array.isArray(payload.result?.items) ? payload.result.items : [];
+      setCardSearchResults(items);
+      setCardSearchMessage(items.length ? `${items.length} result(s) found.` : "No records found. Use manual draft identity.");
+    } catch (requestError) {
+      setCardSearchResults([]);
+      setCardSearchMessage(requestError instanceof Error ? requestError.message : "Card/item search failed.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const useManualDraftIdentity = () => {
+    const title = cardSearchQuery.trim() || status.reportBundle?.cardIdentity.title || "Draft AI Grader Card";
+    setSelectedCard({
+      source: "manual_draft",
+      title,
+      displayTitle: title,
+      subtitle: "Manual draft identity; no CardAsset/Item linked yet.",
+    });
+    setCardSearchMessage("Manual draft identity selected. Publish will clearly show card linkage as draft/manual.");
+  };
+
   const publishToTenKingsSystem = async () => {
     setBusy("ten-kings-publish");
     setError(null);
     try {
-      if (!status.reportBundle || !status.productionRelease) {
+      const reportBundle = buildReportBundleForProduction();
+      if (!reportBundle || !status.productionRelease) {
         throw new Error("A finalized production release and report bundle are required before Ten Kings publish.");
       }
       const response = await fetch("/api/admin/ai-grader/production/publish", {
@@ -262,9 +359,10 @@ export default function AiGraderStationPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           publicationStatus: "published",
-          reportBundle: status.reportBundle,
+          reportBundle,
           productionRelease: status.productionRelease,
-          cardAssetId: status.reportBundle.cardIdentity.cardAssetId,
+          cardAssetId: selectedCard?.cardAssetId ?? reportBundle.cardIdentity.cardAssetId,
+          itemId: selectedCard?.itemId ?? reportBundle.cardIdentity.itemId,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -286,6 +384,101 @@ export default function AiGraderStationPage() {
       setProductionPublish({
         status: "error",
         message: requestError instanceof Error ? requestError.message : "Ten Kings publish failed.",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const uploadSlabbedPhoto = async (side: "front" | "back", file: File | null) => {
+    if (!file) return;
+    setBusy(`slab-${side}`);
+    setError(null);
+    setSlabUploads((current) => ({
+      ...current,
+      [side]: { status: "uploading", message: `Uploading slabbed ${side} color photo.` },
+    }));
+    try {
+      const reportId = status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      if (!reportId) throw new Error("A report ID is required before uploading slabbed photos.");
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ""));
+        reader.onerror = () => reject(new Error("Could not read selected file."));
+        reader.readAsDataURL(file);
+      });
+      const response = await fetch("/api/admin/ai-grader/production/upload-slab-photo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          reportId,
+          side,
+          fileName: file.name,
+          mimeType: file.type,
+          dataUrl,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true) {
+        throw new Error(payload.message ?? `Slabbed ${side} photo upload failed.`);
+      }
+      setSlabUploads((current) => ({
+        ...current,
+        [side]: {
+          status: "uploaded",
+          publicUrl: payload.result.publicUrl,
+          message: `Slabbed ${side} photo uploaded and attached.`,
+        },
+      }));
+    } catch (requestError) {
+      setSlabUploads((current) => ({
+        ...current,
+        [side]: {
+          status: "failed",
+          message: requestError instanceof Error ? requestError.message : `Slabbed ${side} photo upload failed.`,
+        },
+      }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runEbayComps = async () => {
+    setBusy("run-comps");
+    setError(null);
+    setCompsState({ status: "running", message: "Preparing operator-triggered eBay comps." });
+    try {
+      const reportBundle = buildReportBundleForProduction();
+      if (!reportBundle || !status.productionRelease) {
+        throw new Error("A finalized production release and selected report bundle are required before comps.");
+      }
+      const response = await fetch("/api/admin/ai-grader/production/run-comps", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          reportId: status.productionRelease.reportId,
+          reportBundle,
+          productionRelease: status.productionRelease,
+          selection: selectedCardIdentity,
+          limit: 10,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true) {
+        throw new Error(payload.message ?? "eBay comps action failed.");
+      }
+      const result = payload.result ?? {};
+      setCompsState({
+        status: result.status ?? "failed",
+        message: result.message ?? (result.status === "completed" ? "Comps completed." : "Comps status updated."),
+        searchQuery: result.searchQuery,
+        searchUrl: result.searchUrl,
+        count: Array.isArray(result.compsRefs) ? result.compsRefs.length : undefined,
+      });
+    } catch (requestError) {
+      setCompsState({
+        status: "failed",
+        message: requestError instanceof Error ? requestError.message : "eBay comps action failed.",
       });
     } finally {
       setBusy(null);
@@ -445,6 +638,45 @@ export default function AiGraderStationPage() {
             </label>
           </section>
 
+          <section className="card-linkage">
+            <p className="eyebrow">Card / Item Linkage</p>
+            <h3>{selectedCard?.displayTitle ?? "No card selected"}</h3>
+            <p>{selectedCard?.subtitle ?? cardSearchMessage}</p>
+            <label>
+              Search or Draft Title
+              <input
+                value={cardSearchQuery}
+                onChange={(event) => setCardSearchQuery(event.target.value)}
+                placeholder="Player, set, card number, item id"
+              />
+            </label>
+            <div className="mini-actions">
+              <button type="button" onClick={searchCardItems} disabled={busy !== null}>
+                {busy === "card-search" ? "Searching" : "Search"}
+              </button>
+              <button type="button" onClick={useManualDraftIdentity} disabled={busy !== null}>
+                Use Draft
+              </button>
+            </div>
+            {cardSearchResults.length ? (
+              <div className="card-results">
+                {cardSearchResults.map((result) => (
+                  <button
+                    type="button"
+                    key={`${result.source}:${result.cardAssetId ?? result.itemId ?? result.displayTitle}`}
+                    onClick={() => {
+                      setSelectedCard(result);
+                      setCardSearchMessage("Existing Ten Kings card/item selected.");
+                    }}
+                  >
+                    <strong>{result.displayTitle}</strong>
+                    <span>{result.subtitle ?? result.source}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </section>
+
           <section className="status">
             <div>
               <span>Report</span>
@@ -480,6 +712,9 @@ export default function AiGraderStationPage() {
             <button type="button" onClick={publishToTenKingsSystem} disabled={!status.productionRelease || busy !== null}>
               {busy === "ten-kings-publish" ? "Publishing" : "Publish to Ten Kings System"}
             </button>
+            <button type="button" onClick={runEbayComps} disabled={!status.productionRelease || busy !== null}>
+              {busy === "run-comps" ? "Running Comps" : "Run eBay Comps"}
+            </button>
             <button type="button" onClick={openHistory}>
               Card History Reports
             </button>
@@ -503,8 +738,24 @@ export default function AiGraderStationPage() {
             {productionPublish.publicReportUrl ? <p>Public URL: {productionPublish.publicReportUrl}</p> : null}
             {productionPublish.qrPayloadUrl ? <p>QR URL: {productionPublish.qrPayloadUrl}</p> : null}
             <p>Label: {labelReady ? "label data ready" : "pending"}</p>
-            <p>Card linkage: {status.reportBundle?.cardIdentity.cardAssetId ?? "not linked"}</p>
-            <p>Comps: operator-triggered only after card identity and final grade are present</p>
+            <p>Card linkage: {selectedCard?.cardAssetId ?? selectedCard?.itemId ?? status.reportBundle?.cardIdentity.cardAssetId ?? "manual draft / not linked"}</p>
+            <p>Comps: {compsState.status} - {compsState.message}</p>
+            {compsState.searchQuery ? <p>Comps query: {compsState.searchQuery}</p> : null}
+          </section>
+
+          <section className="slabbed-photos">
+            <p className="eyebrow">Slabbed Color Photos</p>
+            <p>Attach post-slab color photos. These are separate from Basler monochrome evidence.</p>
+            <label>
+              Front color photo
+              <input type="file" accept="image/*" onChange={(event) => uploadSlabbedPhoto("front", event.target.files?.[0] ?? null)} />
+            </label>
+            <p>{slabUploads.front?.message ?? "Front photo not uploaded."}</p>
+            <label>
+              Back color photo
+              <input type="file" accept="image/*" onChange={(event) => uploadSlabbedPhoto("back", event.target.files?.[0] ?? null)} />
+            </label>
+            <p>{slabUploads.back?.message ?? "Back photo not uploaded."}</p>
           </section>
 
           <button type="button" className="safe" onClick={safeOff} disabled={busy !== null}>
@@ -815,8 +1066,10 @@ export default function AiGraderStationPage() {
         }
         .next-card,
         .profile,
+        .card-linkage,
         .status,
         .production-status,
+        .slabbed-photos,
         .paths,
         .timing {
           border: 1px solid rgba(255, 255, 255, 0.1);
@@ -844,6 +1097,40 @@ export default function AiGraderStationPage() {
         .profile label {
           grid-column: span 3;
           margin-top: 0;
+        }
+        .card-linkage h3 {
+          margin: 6px 0;
+          font-size: 17px;
+        }
+        .card-linkage p,
+        .slabbed-photos p {
+          color: #bdb5a8;
+          font-size: 12px;
+          line-height: 1.45;
+          overflow-wrap: anywhere;
+        }
+        .mini-actions {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+          margin-top: 10px;
+        }
+        .card-results {
+          display: grid;
+          gap: 8px;
+          margin-top: 10px;
+        }
+        .card-results button {
+          display: grid;
+          gap: 3px;
+          min-height: 0;
+          text-align: left;
+          letter-spacing: 0;
+          text-transform: none;
+        }
+        .card-results span {
+          color: #bdb5a8;
+          font-size: 12px;
         }
         .profile span,
         .status span,

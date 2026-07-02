@@ -5,6 +5,10 @@ import {
   createAiGraderProductionApiHandler,
   listProductionReportHistoryRuntime,
   persistProductionReleaseRuntime,
+  persistAiGraderCompsRuntime,
+  runAiGraderEbayCompsRuntime,
+  searchAiGraderCardItemsRuntime,
+  uploadAiGraderSlabbedPhotoRuntime,
 } from "../../../../../lib/server/aiGraderProductionApi";
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -17,6 +21,10 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     }),
     persist: persistProductionReleaseRuntime,
     listHistory: listProductionReportHistoryRuntime,
+    searchCards: searchAiGraderCardItemsRuntime,
+    uploadSlabbedPhoto: uploadAiGraderSlabbedPhotoRuntime,
+    runComps: runAiGraderEbayCompsRuntime,
+    persistComps: persistAiGraderCompsRuntime,
   });
   return runtime(req, res);
 }

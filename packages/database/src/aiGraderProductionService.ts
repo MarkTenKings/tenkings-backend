@@ -21,6 +21,7 @@ export type AiGraderValuationStatus =
 
 export type AiGraderProductionDbDelegate = {
   upsert(args: unknown): Promise<unknown>;
+  findUnique?(args: unknown): Promise<unknown | null>;
   findMany?(args: unknown): Promise<unknown[]>;
   updateMany?(args: unknown): Promise<{ count: number }>;
 };
@@ -128,12 +129,77 @@ export type AiGraderProductionPersistResult = {
   storagePlan: AiGraderProductionStoragePlan;
 };
 
+export type AiGraderCardItemSelection = {
+  source: "card_asset" | "item" | "manual_draft";
+  cardAssetId?: string | null;
+  itemId?: string | null;
+  title?: string | null;
+  set?: string | null;
+  cardNumber?: string | null;
+  category?: string | null;
+  imageUrl?: string | null;
+  details?: JsonRecord;
+};
+
+export type AiGraderSlabbedPhotoSide = "front" | "back";
+
+export type AiGraderSlabbedPhotoPersistInput = {
+  tenantId: string;
+  reportId: string;
+  side: AiGraderSlabbedPhotoSide;
+  storageKey: string;
+  publicUrl: string;
+  mimeType: string;
+  byteSize: number;
+  checksumSha256?: string | null;
+  widthPx?: number | null;
+  heightPx?: number | null;
+  operatorUserId?: string | null;
+  uploadedAt?: string | Date;
+  metadata?: JsonRecord;
+};
+
+export type AiGraderSlabbedPhotoPersistResult = {
+  reportId: string;
+  artifactId: string;
+  side: AiGraderSlabbedPhotoSide;
+  storageKey: string;
+  publicUrl: string;
+  asset: unknown;
+};
+
+export type AiGraderValuationPersistInput = {
+  tenantId: string;
+  reportId: string;
+  status: AiGraderValuationStatus;
+  source?: string;
+  searchQuery?: string | null;
+  compsRefs?: unknown;
+  resultSummary?: unknown;
+  valuationMinor?: number | null;
+  valuationCurrency?: string | null;
+  requestedByUserId?: string | null;
+  requestedAt?: string | Date;
+  completedAt?: string | Date | null;
+  errorCode?: string | null;
+};
+
+export type AiGraderValuationPersistResult = {
+  reportId: string;
+  status: AiGraderValuationStatus;
+  valuation: unknown;
+};
+
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringValue(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim().length > 0 ? value : fallback;
+}
+
+function trimmedString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : "";
 }
 
 function numberValue(value: unknown) {
@@ -427,6 +493,22 @@ export function computeAiGraderValuationStatus(input: {
   const cardNumber = stringValue(cardIdentity.cardNumber, "");
   if (!title && (!set || !cardNumber)) return "not_ready_missing_identity";
   return "ready";
+}
+
+export function buildAiGraderCompsSearchQuery(input: {
+  reportBundle: AiGraderProductionReportBundleLike;
+  productionRelease?: AiGraderProductionReleaseLike;
+  selection?: AiGraderCardItemSelection | null;
+}) {
+  const cardIdentity = isRecord(input.reportBundle.cardIdentity) ? input.reportBundle.cardIdentity : {};
+  const selection = input.selection ?? null;
+  const finalGrade = isRecord(input.productionRelease?.finalGrade) ? input.productionRelease?.finalGrade : {};
+  const title = trimmedString(selection?.title) || trimmedString(cardIdentity.title);
+  const setName = trimmedString(selection?.set) || trimmedString(cardIdentity.set);
+  const cardNumber = trimmedString(selection?.cardNumber) || trimmedString(cardIdentity.cardNumber);
+  const grade = numberValue(finalGrade?.overall);
+  const parts = [title, setName, cardNumber ? `#${cardNumber}` : "", grade ? `AI Grade ${grade.toFixed(1)}` : ""].filter(Boolean);
+  return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
 function finalOverallGrade(productionRelease: AiGraderProductionReleaseLike) {
@@ -792,9 +874,170 @@ export async function persistAiGraderProductionRelease(
   });
 }
 
+async function findAiGraderReportForProductionAsset(
+  db: AiGraderProductionPrismaClient,
+  reportId: string
+): Promise<JsonRecord> {
+  if (typeof db.aiGraderReport.findUnique !== "function") {
+    throw new Error("AiGraderReport.findUnique is required for this production operation.");
+  }
+  const report = await db.aiGraderReport.findUnique({
+    where: { reportId },
+    select: {
+      id: true,
+      tenantId: true,
+      sessionId: true,
+      reportId: true,
+      cardAssetId: true,
+      itemId: true,
+    },
+  });
+  if (!isRecord(report)) {
+    throw new Error(`AI Grader report ${reportId} was not found.`);
+  }
+  return report;
+}
+
+export async function persistAiGraderSlabbedPhotoAsset(
+  db: AiGraderProductionPrismaClient,
+  input: AiGraderSlabbedPhotoPersistInput
+): Promise<AiGraderSlabbedPhotoPersistResult> {
+  if (!input.tenantId.trim()) throw new Error("tenantId is required.");
+  if (!input.reportId.trim()) throw new Error("reportId is required.");
+  if (input.side !== "front" && input.side !== "back") throw new Error("side must be front or back.");
+  if (!input.storageKey.trim()) throw new Error("storageKey is required.");
+  if (!input.publicUrl.trim()) throw new Error("publicUrl is required.");
+  if (!input.mimeType.trim()) throw new Error("mimeType is required.");
+  if (!Number.isFinite(input.byteSize) || input.byteSize <= 0) throw new Error("byteSize must be positive.");
+
+  return runInTransaction(db, async (tx) => {
+    const report = await findAiGraderReportForProductionAsset(tx as AiGraderProductionPrismaClient, input.reportId);
+    const now = dateValue(input.uploadedAt);
+    const artifactId = `slabbed-photo:${input.reportId}:${input.side}`;
+    const asset = await tx.aiGraderEvidenceAsset.upsert({
+      where: { tenantId_artifactId: { tenantId: input.tenantId, artifactId } },
+      update: {
+        sessionId: stringValue(report.sessionId, "") || null,
+        reportId: stringValue(report.id, ""),
+        artifactClass: "slabbed_photo",
+        kind: `slabbed_${input.side}_color_photo`,
+        side: input.side,
+        storageKey: input.storageKey,
+        publicUrl: input.publicUrl,
+        checksumSha256: input.checksumSha256 ?? null,
+        mimeType: input.mimeType,
+        byteSize: Math.round(input.byteSize),
+        widthPx: input.widthPx ?? null,
+        heightPx: input.heightPx ?? null,
+        metadata: json({
+          ...(input.metadata ?? {}),
+          source: "ai_grader_slabbed_photo_upload_v0",
+          uploadedByUserId: input.operatorUserId ?? null,
+          uploadedAt: now.toISOString(),
+          cardAssetId: report.cardAssetId ?? null,
+          itemId: report.itemId ?? null,
+        }),
+      },
+      create: {
+        tenantId: input.tenantId,
+        sessionId: stringValue(report.sessionId, "") || null,
+        reportId: stringValue(report.id, ""),
+        artifactId,
+        artifactClass: "slabbed_photo",
+        kind: `slabbed_${input.side}_color_photo`,
+        side: input.side,
+        storageKey: input.storageKey,
+        publicUrl: input.publicUrl,
+        checksumSha256: input.checksumSha256 ?? null,
+        mimeType: input.mimeType,
+        byteSize: Math.round(input.byteSize),
+        widthPx: input.widthPx ?? null,
+        heightPx: input.heightPx ?? null,
+        metadata: json({
+          ...(input.metadata ?? {}),
+          source: "ai_grader_slabbed_photo_upload_v0",
+          uploadedByUserId: input.operatorUserId ?? null,
+          uploadedAt: now.toISOString(),
+          cardAssetId: report.cardAssetId ?? null,
+          itemId: report.itemId ?? null,
+        }),
+        createdAt: now,
+      },
+    });
+    return {
+      reportId: input.reportId,
+      artifactId,
+      side: input.side,
+      storageKey: input.storageKey,
+      publicUrl: input.publicUrl,
+      asset,
+    };
+  });
+}
+
+export async function persistAiGraderValuationResult(
+  db: AiGraderProductionPrismaClient,
+  input: AiGraderValuationPersistInput
+): Promise<AiGraderValuationPersistResult> {
+  if (!input.tenantId.trim()) throw new Error("tenantId is required.");
+  if (!input.reportId.trim()) throw new Error("reportId is required.");
+  const now = dateValue(input.requestedAt);
+  const completedAt = input.completedAt === null ? null : input.status === "completed" ? dateValue(input.completedAt ?? now) : null;
+
+  return runInTransaction(db, async (tx) => {
+    const report = await findAiGraderReportForProductionAsset(tx as AiGraderProductionPrismaClient, input.reportId);
+    const valuationId = `ai-grader-valuation:${input.reportId}`;
+    const valuation = await tx.aiGraderValuation.upsert({
+      where: { id: valuationId },
+      update: {
+        tenantId: input.tenantId,
+        sessionId: stringValue(report.sessionId, "") || null,
+        status: input.status,
+        source: stringValue(input.source, "ebay_sold"),
+        searchQuery: input.searchQuery ?? null,
+        compsRefs: nullableJson(input.compsRefs),
+        resultSummary: nullableJson(input.resultSummary),
+        valuationMinor: input.valuationMinor ?? null,
+        valuationCurrency: input.valuationCurrency ?? "USD",
+        requestedByUserId: input.requestedByUserId ?? null,
+        requestedAt: now,
+        completedAt,
+        errorCode: input.errorCode ?? null,
+        updatedAt: now,
+      },
+      create: {
+        id: valuationId,
+        tenantId: input.tenantId,
+        sessionId: stringValue(report.sessionId, "") || null,
+        reportId: stringValue(report.id, ""),
+        status: input.status,
+        source: stringValue(input.source, "ebay_sold"),
+        searchQuery: input.searchQuery ?? null,
+        compsRefs: nullableJson(input.compsRefs),
+        resultSummary: nullableJson(input.resultSummary),
+        valuationMinor: input.valuationMinor ?? null,
+        valuationCurrency: input.valuationCurrency ?? "USD",
+        requestedByUserId: input.requestedByUserId ?? null,
+        requestedAt: now,
+        completedAt,
+        errorCode: input.errorCode ?? null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    return {
+      reportId: input.reportId,
+      status: input.status,
+      valuation,
+    };
+  });
+}
+
 export function createAiGraderProductionService(db: AiGraderProductionPrismaClient) {
   return {
     buildStoragePlan: buildAiGraderProductionStoragePlan,
     persistProductionRelease: (input: AiGraderProductionPersistInput) => persistAiGraderProductionRelease(db, input),
+    persistSlabbedPhotoAsset: (input: AiGraderSlabbedPhotoPersistInput) => persistAiGraderSlabbedPhotoAsset(db, input),
+    persistValuationResult: (input: AiGraderValuationPersistInput) => persistAiGraderValuationResult(db, input),
   };
 }

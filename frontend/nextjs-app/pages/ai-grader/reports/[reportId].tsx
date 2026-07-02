@@ -44,6 +44,10 @@ export default function AiGraderReportViewerPage() {
   const noFinalClaims = hasNoFinalCertifiedClaims(bundle);
   const primaryCandidate = story?.gradeImpactCandidates?.[0];
   const impactCandidate = productionRelease?.finalGrade.gradeImpactReasons[0] ?? primaryCandidate;
+  const slabbedPhotos = Array.isArray(productionRelease?.slabbedPhotoContract.photos)
+    ? productionRelease?.slabbedPhotoContract.photos
+    : [];
+  const compsContract = productionRelease?.ebayCompsContract;
   const isSampleFallback = !localBundle && !persistedBundle && bundle.reportId !== "sample-pr45" && bundle.reportId !== "sample-final-v0";
   const reportIsFinal = productionRelease?.finalGradeComputed === true;
 
@@ -178,6 +182,14 @@ export default function AiGraderReportViewerPage() {
                 <span>Certified Claim</span>
                 <strong>{productionRelease.certifiedClaim ? "Unexpected" : "Disabled"}</strong>
               </article>
+              <article>
+                <span>Slab Photos</span>
+                <strong>{slabbedPhotos.length ? `${slabbedPhotos.length} attached` : productionRelease.slabbedPhotoContract.status}</strong>
+              </article>
+              <article>
+                <span>Valuation</span>
+                <strong>{compsContract?.status ?? "not_run"}</strong>
+              </article>
             </div>
             <div className="gate-list">
               {productionRelease.gates.map((gate) => (
@@ -187,6 +199,53 @@ export default function AiGraderReportViewerPage() {
                   <p>{gate.reason}</p>
                 </article>
               ))}
+            </div>
+          </section>
+        ) : null}
+
+        {productionRelease ? (
+          <section className="production">
+            <div className="section-head">
+              <p className="eyebrow">Slab Photos and Valuation</p>
+              <h2>Customer visual layer and operator-triggered comps</h2>
+            </div>
+            <div className="production-grid">
+              {slabbedPhotos.length ? (
+                slabbedPhotos.map((photo, index) => {
+                  const record = typeof photo === "object" && photo !== null ? (photo as Record<string, unknown>) : {};
+                  return (
+                    <article key={`${record.side ?? "photo"}-${index}`}>
+                      <span>{String(record.side ?? "photo")}</span>
+                      <strong>{String(record.kind ?? "slabbed color photo")}</strong>
+                      {typeof record.publicUrl === "string" ? <p>{record.publicUrl}</p> : null}
+                    </article>
+                  );
+                })
+              ) : (
+                <article>
+                  <span>Slabbed color photos</span>
+                  <strong>{productionRelease.slabbedPhotoContract.status}</strong>
+                  <p>{productionRelease.slabbedPhotoContract.note}</p>
+                </article>
+              )}
+              <article>
+                <span>eBay comps</span>
+                <strong>{compsContract?.status ?? "not_run"}</strong>
+                <p>
+                  {compsContract?.searchQuery
+                    ? `Query: ${compsContract.searchQuery}`
+                    : compsContract?.note ?? "Operator-triggered comps have not been run."}
+                </p>
+              </article>
+              <article>
+                <span>Valuation</span>
+                <strong>
+                  {typeof compsContract?.valuationMinor === "number"
+                    ? `$${(compsContract.valuationMinor / 100).toFixed(2)}`
+                    : "pending"}
+                </strong>
+                <p>{Array.isArray(compsContract?.compsRefs) ? `${compsContract?.compsRefs.length} comp ref(s)` : "No comps attached."}</p>
+              </article>
             </div>
           </section>
         ) : null}

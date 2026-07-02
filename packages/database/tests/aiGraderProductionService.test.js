@@ -2,9 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   buildAiGraderLabelPreviewHtml,
+  buildAiGraderCompsSearchQuery,
   buildAiGraderProductionStoragePlan,
   computeAiGraderValuationStatus,
+  persistAiGraderSlabbedPhotoAsset,
   persistAiGraderProductionRelease,
+  persistAiGraderValuationResult,
   sanitizeAiGraderPublicJson,
 } = require("../dist/database/src/aiGraderProductionService");
 
@@ -127,6 +130,20 @@ function createMockDelegate(name, calls, id) {
         ...(args.create ?? {}),
         ...(args.update ?? {}),
       };
+    },
+    async findUnique(args) {
+      calls.push({ delegate: name, method: "findUnique", args });
+      if (name === "aiGraderReport") {
+        return {
+          id: "db-report-1",
+          tenantId: "tenant-1",
+          sessionId: "db-session-1",
+          reportId: args.where?.reportId ?? "report-1",
+          cardAssetId: "card-asset-1",
+          itemId: "item-1",
+        };
+      }
+      return null;
     },
     async updateMany(args) {
       calls.push({ delegate: name, method: "updateMany", args });
@@ -269,4 +286,72 @@ test("production release persistence upserts durable records and optional card l
   assert.equal(cardUpdate.args.data.aiGradeLabel, "8.6");
   const itemUpdate = calls.find((call) => call.delegate === "item" && call.method === "updateMany");
   assert.equal(itemUpdate.args.data.detailsJson.aiGraderReportId, "report-1");
+});
+
+test("comps query builder uses selected card identity and final grade", () => {
+  const query = buildAiGraderCompsSearchQuery({
+    reportBundle: sampleBundle({ cardIdentity: { title: "Fallback Card" } }),
+    productionRelease: sampleRelease(),
+    selection: {
+      source: "item",
+      itemId: "item-1",
+      title: "1996 Finest Michael Jordan",
+      set: "Topps Finest",
+      cardNumber: "291",
+    },
+  });
+
+  assert.match(query, /1996 Finest Michael Jordan/);
+  assert.match(query, /#291/);
+  assert.match(query, /AI Grade 8\.6/);
+});
+
+test("slabbed color photo persistence upserts a separate evidence asset", async () => {
+  const { db, calls } = createMockProductionDb();
+
+  const result = await persistAiGraderSlabbedPhotoAsset(db, {
+    tenantId: "tenant-1",
+    reportId: "report-1",
+    side: "front",
+    storageKey: "ai-grader/reports/report-1/slabbed/front.png",
+    publicUrl: "https://cdn.tenkings.test/ai-grader/reports/report-1/slabbed/front.png",
+    mimeType: "image/png",
+    byteSize: 1234,
+    checksumSha256: "abc123",
+    operatorUserId: "admin-1",
+    uploadedAt: "2026-07-02T13:00:00.000Z",
+  });
+
+  assert.equal(result.reportId, "report-1");
+  assert.equal(result.side, "front");
+  const evidenceUpsert = calls.find((call) => call.delegate === "aiGraderEvidenceAsset" && call.method === "upsert");
+  assert.equal(evidenceUpsert.args.create.artifactClass, "slabbed_photo");
+  assert.equal(evidenceUpsert.args.create.kind, "slabbed_front_color_photo");
+  assert.equal(evidenceUpsert.args.create.side, "front");
+  assert.equal(evidenceUpsert.args.create.publicUrl, "https://cdn.tenkings.test/ai-grader/reports/report-1/slabbed/front.png");
+});
+
+test("valuation persistence records operator-triggered eBay comps result", async () => {
+  const { db, calls } = createMockProductionDb();
+
+  const result = await persistAiGraderValuationResult(db, {
+    tenantId: "tenant-1",
+    reportId: "report-1",
+    status: "completed",
+    source: "ebay_sold",
+    searchQuery: "1996 Finest Michael Jordan #291 AI Grade 8.6",
+    compsRefs: [{ id: "comp-1", price: "$100.00" }],
+    resultSummary: { valuationMinor: 10000, valuationCurrency: "USD" },
+    valuationMinor: 10000,
+    valuationCurrency: "USD",
+    requestedByUserId: "admin-1",
+    requestedAt: "2026-07-02T13:05:00.000Z",
+    completedAt: "2026-07-02T13:06:00.000Z",
+  });
+
+  assert.equal(result.status, "completed");
+  const valuationUpsert = calls.find((call) => call.delegate === "aiGraderValuation" && call.method === "upsert");
+  assert.equal(valuationUpsert.args.create.status, "completed");
+  assert.equal(valuationUpsert.args.create.searchQuery, "1996 Finest Michael Jordan #291 AI Grade 8.6");
+  assert.equal(valuationUpsert.args.create.valuationMinor, 10000);
 });

@@ -1,16 +1,33 @@
 import Head from "next/head";
 import { useRouter } from "next/router";
-import { getAiGraderReportBundle } from "../../../lib/aiGraderReportBundle";
+import { useEffect, useState } from "react";
+import { getAiGraderReportBundle, type AiGraderReportBundle } from "../../../lib/aiGraderReportBundle";
 
 export default function AiGraderLabelPreviewPage() {
   const router = useRouter();
-  const bundle = getAiGraderReportBundle(router.query.reportId ?? "sample-final-v0");
+  const fallbackBundle = getAiGraderReportBundle(router.query.reportId ?? "sample-final-v0");
+  const [persistedBundle, setPersistedBundle] = useState<AiGraderReportBundle | null>(null);
+  const bundle = persistedBundle ?? fallbackBundle;
   const release = bundle.productionRelease;
   const label = release?.label;
   const gradeText = label?.labelGradeText ?? "PENDING";
   const reportId = label?.reportId ?? bundle.reportId;
   const qrPayloadUrl = label?.qrPayloadUrl ?? `/ai-grader/reports/${reportId}`;
   const certId = label?.certId ?? reportId;
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    const nextReportId = Array.isArray(router.query.reportId) ? router.query.reportId[0] : router.query.reportId;
+    if (!nextReportId || nextReportId === "sample-final-v0" || nextReportId === "sample-pr45") return;
+    fetch(`/api/ai-grader/reports/${encodeURIComponent(nextReportId)}`)
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (response.ok && payload.ok === true && payload.bundle) {
+          setPersistedBundle(payload.bundle);
+        }
+      })
+      .catch(() => undefined);
+  }, [router.isReady, router.query.reportId]);
 
   return (
     <>
@@ -38,6 +55,7 @@ export default function AiGraderLabelPreviewPage() {
             This preview renders label-ready data for the AI Grader production workflow. It is not a printer integration,
             certificate, or certified grading claim.
           </p>
+          <p>{persistedBundle ? "Loaded from persisted report data." : "Using local fixture/report fallback until persisted data is available."}</p>
         </aside>
       </main>
       <style jsx>{`

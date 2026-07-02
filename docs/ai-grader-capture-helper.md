@@ -1415,4 +1415,24 @@ PR #47 adds the reviewed production persistence/publication foundation, but keep
 - The report viewer first attempts the persisted public report endpoint for generated report IDs, then falls back to the local Dell bridge when present, then to fixture/sample data.
 - The label preview route `/ai-grader/labels/[reportId]` renders print-ready label preview data from the report bundle. It is not a printer integration and does not create a certified certificate.
 
-Production release V0 is an AI-Grader final report workflow, but it is not a certified Ten Kings grading/certificate process. It must keep `certifiedClaim=false`, `certificateGenerated=false`, and `physicalLabelPrinted=false` until a later certification/ops process is approved. The generated label data is JSON/preview data only; it does not print a physical label or create a QR certificate. Slabbed color photo upload and live eBay/SerpAPI comps execution remain contract/UI-ready only until the approved storage, identity, and operator-triggered external API paths are configured.
+Production release V0 is an AI-Grader final report workflow, but it is not a certified Ten Kings grading/certificate process. It must keep `certifiedClaim=false`, `certificateGenerated=false`, and `physicalLabelPrinted=false` until a later certification/ops process is approved. The generated label data is JSON/preview data only; it does not print a physical label or create a QR certificate.
+
+The PR #47 production integration continuation adds the live operator-facing pieces behind explicit admin/env gates:
+
+- The station page can search/select existing Ten Kings `CardAsset` or `Item` records through `/api/admin/ai-grader/production/card-search`, or mark the report as a manual draft identity when no record exists yet.
+- The selected `cardAssetId` and/or `itemId` are carried into the report bundle card identity and persisted by the production publication service.
+- The station page can upload slabbed front/back color photos through `/api/admin/ai-grader/production/upload-slab-photo`; those uploads use the existing storage helper path, persist as `AiGraderEvidenceAsset` rows with `artifactClass=slabbed_photo`, and remain distinct from Basler monochrome evidence.
+- The station page can run operator-triggered eBay comps through `/api/admin/ai-grader/production/run-comps`; readiness requires a final grade and card identity. Live SerpAPI/eBay execution is disabled unless `AI_GRADER_EBAY_COMPS_ENABLED=true` and the normal SerpAPI environment is configured. Tests use mocked comps execution only.
+- The public read-only report API merges persisted production-release, label, slabbed-photo, and valuation/comps data when `AI_GRADER_PUBLIC_REPORT_DB_ENABLED=true`; public bundles must not include Dell local file paths or local bridge tokens.
+- The label preview route can read the persisted public report bundle and render label-ready data from the stored report.
+
+Production rollout remains gated. The review migration is `20260702120000_ai_grader_production_release_v0` and adds `AiGraderSession`, `AiGraderReport`, `AiGraderEvidenceAsset`, `AiGraderGrade`, `AiGraderLabel`, `AiGraderPublication`, and `AiGraderValuation`. Codex must not run the production migration or set `RUN_DB_MIGRATIONS=true`. A human migration rollout should review the migration, set an approved production `DATABASE_URL`, run the repo migration deploy command from the database package, regenerate Prisma clients as required by the runbook, and verify the new admin/public AI Grader endpoints with publish env gates still off before enabling writes.
+
+Required production environment/configuration:
+
+- Database: approved `DATABASE_URL`, existing admin auth/session config, and `AI_GRADER_PRODUCTION_TENANT_ID`.
+- Publication gates: `AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true` only after migration/storage review, and `AI_GRADER_PUBLIC_REPORT_DB_ENABLED=true` only when published report reads are ready.
+- Storage: existing storage mode/bucket/region/public-base-url/access-key configuration used by the Ten Kings storage helper.
+- Local station: Dell bridge URL/token/origin config remains local and token-gated; hardware control stays in the loopback bridge, never in public report routes.
+- Public reports: `AI_GRADER_PUBLIC_REPORT_BASE_URL` or equivalent deploy base URL for QR/public report URL generation.
+- eBay comps: `AI_GRADER_EBAY_COMPS_ENABLED=true` plus SerpAPI/eBay env only when an operator intentionally runs comps for a finalized, identified card.

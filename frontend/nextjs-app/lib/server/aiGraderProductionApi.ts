@@ -1,19 +1,28 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import type {
+  AiGraderCardItemSelection,
   AiGraderProductionPersistResult,
   AiGraderProductionReleaseLike,
   AiGraderProductionReportBundleLike,
   AiGraderProductionStoragePlan,
+  AiGraderSlabbedPhotoSide,
+  AiGraderValuationStatus,
 } from "@tenkings/database";
 import {
+  aiGraderSha256,
+  buildAiGraderCompsSearchQuery,
   buildAiGraderProductionStoragePlan,
+  computeAiGraderValuationStatus,
+  persistAiGraderSlabbedPhotoAsset,
   persistAiGraderProductionRelease,
+  persistAiGraderValuationResult,
 } from "@tenkings/database";
 import type { AdminSession } from "./admin";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
 export const AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV = "AI_GRADER_PUBLIC_REPORT_DB_ENABLED";
+export const AI_GRADER_EBAY_COMPS_ENABLED_ENV = "AI_GRADER_EBAY_COMPS_ENABLED";
 
 type JsonRecord = Record<string, unknown>;
 type EnvLike = Record<string, string | undefined>;
@@ -21,6 +30,32 @@ type EnvLike = Record<string, string | undefined>;
 export type AiGraderProductionUploadResult = {
   storageKey: string;
   publicUrl: string;
+};
+
+export type AiGraderCardItemSearchResult = AiGraderCardItemSelection & {
+  displayTitle: string;
+  subtitle?: string | null;
+};
+
+export type AiGraderSlabbedPhotoUploadResult = {
+  reportId: string;
+  side: AiGraderSlabbedPhotoSide;
+  storageKey: string;
+  publicUrl: string;
+  byteSize: number;
+  checksumSha256: string;
+  persisted: boolean;
+};
+
+export type AiGraderCompsRunResult = {
+  status: AiGraderValuationStatus;
+  liveExecutionEnabled: boolean;
+  searchQuery?: string;
+  searchUrl?: string;
+  compsRefs: unknown[];
+  resultSummary?: unknown;
+  persisted: boolean;
+  message?: string;
 };
 
 export type AiGraderProductionApiDependencies = {
@@ -43,6 +78,37 @@ export type AiGraderProductionApiDependencies = {
     itemId?: string | null;
   }): Promise<AiGraderProductionPersistResult>;
   listHistory?(): Promise<AiGraderProductionHistoryResult>;
+  searchCards?(input: {
+    query: string;
+    limit: number;
+    admin: AdminSession;
+  }): Promise<AiGraderCardItemSearchResult[]>;
+  uploadSlabbedPhoto?(input: {
+    tenantId: string;
+    reportId: string;
+    side: AiGraderSlabbedPhotoSide;
+    fileName: string;
+    mimeType: string;
+    body: Buffer;
+    operatorUserId?: string | null;
+  }): Promise<AiGraderSlabbedPhotoUploadResult>;
+  runComps?(input: {
+    reportId: string;
+    searchQuery: string;
+    reportBundle: AiGraderProductionReportBundleLike;
+    productionRelease: AiGraderProductionReleaseLike;
+    limit: number;
+    admin: AdminSession;
+  }): Promise<Omit<AiGraderCompsRunResult, "status" | "liveExecutionEnabled" | "persisted">>;
+  persistComps?(input: {
+    tenantId: string;
+    reportId: string;
+    status: AiGraderValuationStatus;
+    searchQuery?: string | null;
+    compsRefs?: unknown;
+    resultSummary?: unknown;
+    requestedByUserId?: string | null;
+  }): Promise<unknown>;
 };
 
 export type AiGraderProductionHistoryItem = {
@@ -102,6 +168,15 @@ function stringValue(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
+function optionalString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function numericValue(value: unknown, fallback: number) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function parsePublishBody(body: unknown) {
   if (!isRecord(body)) throw new Error("JSON object body is required.");
   if (!isRecord(body.reportBundle)) throw new Error("reportBundle is required.");
@@ -117,6 +192,66 @@ function parsePublishBody(body: unknown) {
     cardAssetId: typeof body.cardAssetId === "string" ? body.cardAssetId : undefined,
     itemId: typeof body.itemId === "string" ? body.itemId : undefined,
   };
+}
+
+function parseCardSearchQuery(req: NextApiRequest) {
+  const query = stringValue(Array.isArray(req.query.q) ? req.query.q[0] : req.query.q, "");
+  const limit = Math.max(
+    1,
+    Math.min(25, Math.trunc(numericValue(Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit, 10)))
+  );
+  if (!query) throw new Error("q is required.");
+  return { query, limit };
+}
+
+function parseDataUrlOrBase64(body: JsonRecord) {
+  const raw = stringValue(body.dataUrl ?? body.base64, "");
+  if (!raw) throw new Error("dataUrl or base64 is required.");
+  const match = raw.match(/^data:([^;]+);base64,(.+)$/);
+  const mimeType = match ? match[1] : optionalString(body.mimeType);
+  const base64 = match ? match[2] : raw;
+  if (!mimeType) throw new Error("mimeType is required.");
+  if (!/^image\//i.test(mimeType)) throw new Error("Only image uploads are supported for slabbed photos.");
+  const buffer = Buffer.from(base64, "base64");
+  if (!buffer.length) throw new Error("Uploaded image body is empty.");
+  return { buffer, mimeType };
+}
+
+function parseSlabbedPhotoBody(body: unknown) {
+  if (!isRecord(body)) throw new Error("JSON object body is required.");
+  const reportId = stringValue(body.reportId, "");
+  const side = stringValue(body.side, "") as AiGraderSlabbedPhotoSide;
+  const fileName = stringValue(body.fileName, `${side || "slabbed"}-photo.jpg`);
+  if (!reportId) throw new Error("reportId is required.");
+  if (side !== "front" && side !== "back") throw new Error("side must be front or back.");
+  const parsed = parseDataUrlOrBase64(body);
+  return {
+    reportId,
+    side,
+    fileName,
+    mimeType: parsed.mimeType,
+    body: parsed.buffer,
+  };
+}
+
+function parseCompsBody(body: unknown) {
+  if (!isRecord(body)) throw new Error("JSON object body is required.");
+  if (!isRecord(body.reportBundle)) throw new Error("reportBundle is required.");
+  if (!isRecord(body.productionRelease)) throw new Error("productionRelease is required.");
+  const reportBundle = body.reportBundle as AiGraderProductionReportBundleLike;
+  const productionRelease = body.productionRelease as AiGraderProductionReleaseLike;
+  const reportId = stringValue(body.reportId ?? productionRelease.reportId ?? reportBundle.reportId, "");
+  if (!reportId) throw new Error("reportId is required.");
+  const selection = isRecord(body.selection) ? (body.selection as AiGraderCardItemSelection) : null;
+  const searchQuery =
+    stringValue(body.searchQuery, "") ||
+    buildAiGraderCompsSearchQuery({
+      reportBundle,
+      productionRelease,
+      selection,
+    });
+  const limit = Math.max(1, Math.min(25, Math.trunc(numericValue(body.limit, 10))));
+  return { reportId, reportBundle, productionRelease, searchQuery, limit };
 }
 
 function dateString(value: unknown) {
@@ -225,19 +360,22 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         service: "ai-grader-production-publication",
         writesRequireEnv: AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
         publicReportDbReadsEnabled: isEnabled(env, AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV),
+        liveEbayCompsEnabled: isEnabled(env, AI_GRADER_EBAY_COMPS_ENABLED_ENV),
+        actions: ["publish", "history", "card-search", "upload-slab-photo", "run-comps"],
         noHardwareControls: true,
       });
     }
 
-    if (key !== "publish" && key !== "history") {
+    const allowedActions = ["publish", "history", "card-search", "upload-slab-photo", "run-comps"];
+    if (!allowedActions.includes(key)) {
       return res.status(404).json({ ok: false, message: "AI Grader production API route not found" });
     }
-    const allow = key === "history" ? "GET" : "POST";
+    const allow = key === "history" || key === "card-search" ? "GET" : "POST";
     if (req.method !== allow) {
       res.setHeader("Allow", allow);
       return res.status(405).json({ ok: false, message: "Method not allowed" });
     }
-    if (!isEnabled(env, AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV)) {
+    if (key !== "run-comps" && !isEnabled(env, AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV)) {
       return res.status(503).json({
         ok: false,
         enabled: false,
@@ -251,6 +389,134 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       if (key === "history") {
         const result = deps.listHistory ? await deps.listHistory() : { status: "not_implemented", items: [] };
         return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderProductionHistory", result });
+      }
+      if (key === "card-search") {
+        if (!deps.searchCards) throw new Error("AI Grader card/item search is not configured.");
+        const query = parseCardSearchQuery(req);
+        const results = await deps.searchCards({ ...query, admin });
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderCardItemSearch",
+          result: {
+            query: query.query,
+            items: results,
+            manualDraftAllowed: true,
+          },
+        });
+      }
+      if (key === "upload-slab-photo") {
+        if (!deps.uploadSlabbedPhoto) throw new Error("AI Grader slabbed photo upload is not configured.");
+        const input = parseSlabbedPhotoBody(req.body);
+        const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const result = await deps.uploadSlabbedPhoto({
+          tenantId,
+          reportId: input.reportId,
+          side: input.side,
+          fileName: input.fileName,
+          mimeType: input.mimeType,
+          body: input.body,
+          operatorUserId: admin.user.id,
+        });
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderSlabbedPhotoUpload",
+          result,
+        });
+      }
+      if (key === "run-comps") {
+        const input = parseCompsBody(req.body);
+        const readiness = computeAiGraderValuationStatus({
+          reportBundle: input.reportBundle,
+          productionRelease: input.productionRelease,
+        });
+        if (readiness !== "ready") {
+          return res.status(200).json({
+            ok: true,
+            enabled: true,
+            operation: "aiGraderEbayComps",
+            result: {
+              status: readiness,
+              liveExecutionEnabled: false,
+              compsRefs: [],
+              persisted: false,
+              message:
+                readiness === "not_ready_missing_grade"
+                  ? "Final grade is required before comps execution."
+                  : "Card identity is required before comps execution.",
+            } satisfies AiGraderCompsRunResult,
+          });
+        }
+        if (!input.searchQuery) {
+          return res.status(200).json({
+            ok: true,
+            enabled: true,
+            operation: "aiGraderEbayComps",
+            result: {
+              status: "not_ready_missing_identity",
+              liveExecutionEnabled: false,
+              compsRefs: [],
+              persisted: false,
+              message: "A searchable card identity is required before comps execution.",
+            } satisfies AiGraderCompsRunResult,
+          });
+        }
+        if (!isEnabled(env, AI_GRADER_EBAY_COMPS_ENABLED_ENV)) {
+          return res.status(200).json({
+            ok: true,
+            enabled: true,
+            operation: "aiGraderEbayComps",
+            result: {
+              status: "ready",
+              liveExecutionEnabled: false,
+              searchQuery: input.searchQuery,
+              compsRefs: [],
+              persisted: false,
+              message: `Live eBay comps are ready but disabled. Set ${AI_GRADER_EBAY_COMPS_ENABLED_ENV}=true with SERPAPI_KEY and operator approval to execute.`,
+            } satisfies AiGraderCompsRunResult,
+          });
+        }
+        if (!deps.runComps) throw new Error("AI Grader eBay comps runner is not configured.");
+        const comps = await deps.runComps({
+          reportId: input.reportId,
+          searchQuery: input.searchQuery,
+          reportBundle: input.reportBundle,
+          productionRelease: input.productionRelease,
+          limit: input.limit,
+          admin,
+        });
+        let persisted = false;
+        if (deps.persistComps && isEnabled(env, AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV)) {
+          const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+          await deps.persistComps({
+            tenantId,
+            reportId: input.reportId,
+            status: "completed",
+            searchQuery: input.searchQuery,
+            compsRefs: comps.compsRefs,
+            resultSummary: comps.resultSummary,
+            requestedByUserId: admin.user.id,
+          });
+          persisted = true;
+        }
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderEbayComps",
+          result: {
+            status: "completed",
+            liveExecutionEnabled: true,
+            searchQuery: input.searchQuery,
+            searchUrl: comps.searchUrl,
+            compsRefs: comps.compsRefs,
+            resultSummary: comps.resultSummary,
+            persisted,
+            message: persisted
+              ? "Comps completed and persisted."
+              : "Comps completed; persistence skipped because production publish gate is disabled.",
+          } satisfies AiGraderCompsRunResult,
+        });
       }
       const input = parsePublishBody(req.body);
       const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
@@ -337,6 +603,219 @@ export async function persistProductionReleaseRuntime(input: {
 }) {
   const { prisma } = await import("@tenkings/database");
   return persistAiGraderProductionRelease(prisma as any, input);
+}
+
+function safeStorageSegment(value: string) {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_.-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "ai-grader"
+  );
+}
+
+function sanitizeUploadFileName(value: string) {
+  const fallback = "slabbed-photo.jpg";
+  const cleaned = safeStorageSegment(value || fallback);
+  return cleaned.includes(".") ? cleaned : `${cleaned}.jpg`;
+}
+
+function publicImageUrlFromCard(row: JsonRecord) {
+  return optionalString(row.cdnThumbUrl) ?? optionalString(row.thumbnailUrl) ?? optionalString(row.cdnHdUrl) ?? optionalString(row.imageUrl) ?? null;
+}
+
+export async function searchAiGraderCardItemsRuntime(input: {
+  query: string;
+  limit: number;
+}): Promise<AiGraderCardItemSearchResult[]> {
+  const { prisma } = await import("@tenkings/database");
+  const db = prisma as any;
+  const query = input.query.trim();
+  const take = Math.max(1, Math.min(25, input.limit));
+  const contains = { contains: query, mode: "insensitive" as const };
+  const [cards, items] = await Promise.all([
+    db.cardAsset?.findMany?.({
+      where: {
+        OR: [
+          { customTitle: contains },
+          { resolvedPlayerName: contains },
+          { resolvedTeamName: contains },
+          { fileName: contains },
+        ],
+      },
+      orderBy: { updatedAt: "desc" },
+      take,
+      select: {
+        id: true,
+        customTitle: true,
+        resolvedPlayerName: true,
+        resolvedTeamName: true,
+        category: true,
+        subCategory: true,
+        imageUrl: true,
+        thumbnailUrl: true,
+        cdnHdUrl: true,
+        cdnThumbUrl: true,
+        classificationJson: true,
+      },
+    }) ?? [],
+    db.item?.findMany?.({
+      where: {
+        OR: [{ name: contains }, { set: contains }, { number: contains }],
+      },
+      orderBy: { updatedAt: "desc" },
+      take,
+      select: {
+        id: true,
+        name: true,
+        set: true,
+        number: true,
+        imageUrl: true,
+        thumbnailUrl: true,
+        cdnHdUrl: true,
+        cdnThumbUrl: true,
+        detailsJson: true,
+      },
+    }) ?? [],
+  ]);
+  const cardResults = (Array.isArray(cards) ? cards : []).map((row: JsonRecord) => {
+    const title = optionalString(row.customTitle) ?? optionalString(row.resolvedPlayerName) ?? "Card asset";
+    return {
+      source: "card_asset" as const,
+      cardAssetId: optionalString(row.id),
+      title,
+      category: optionalString(row.category) ?? optionalString(row.subCategory) ?? null,
+      imageUrl: publicImageUrlFromCard(row),
+      displayTitle: title,
+      subtitle: [row.category, row.subCategory, row.resolvedTeamName].filter(Boolean).join(" / ") || "CardAsset",
+      details: isRecord(row.classificationJson) ? row.classificationJson : undefined,
+    };
+  });
+  const itemResults = (Array.isArray(items) ? items : []).map((row: JsonRecord) => {
+    const title = optionalString(row.name) ?? "Inventory item";
+    return {
+      source: "item" as const,
+      itemId: optionalString(row.id),
+      title,
+      set: optionalString(row.set) ?? null,
+      cardNumber: optionalString(row.number) ?? null,
+      imageUrl: publicImageUrlFromCard(row),
+      displayTitle: title,
+      subtitle: [row.set, row.number].filter(Boolean).join(" #") || "Item",
+      details: isRecord(row.detailsJson) ? row.detailsJson : undefined,
+    };
+  });
+  return [...cardResults, ...itemResults].slice(0, take);
+}
+
+export async function uploadAiGraderSlabbedPhotoRuntime(input: {
+  tenantId: string;
+  reportId: string;
+  side: AiGraderSlabbedPhotoSide;
+  fileName: string;
+  mimeType: string;
+  body: Buffer;
+  operatorUserId?: string | null;
+}): Promise<AiGraderSlabbedPhotoUploadResult> {
+  const { publicUrlFor, uploadBuffer } = await import("./storage");
+  const reportSegment = safeStorageSegment(input.reportId);
+  const fileName = sanitizeUploadFileName(input.fileName);
+  const storageKey = `ai-grader/reports/${reportSegment}/slabbed/${input.side}-${Date.now()}-${fileName}`;
+  const publicUrl = await uploadBuffer(storageKey, input.body, input.mimeType);
+  const checksumSha256 = aiGraderSha256(input.body);
+  const { prisma } = await import("@tenkings/database");
+  await persistAiGraderSlabbedPhotoAsset(prisma as any, {
+    tenantId: input.tenantId,
+    reportId: input.reportId,
+    side: input.side,
+    storageKey,
+    publicUrl: publicUrl || publicUrlFor(storageKey),
+    mimeType: input.mimeType,
+    byteSize: input.body.length,
+    checksumSha256,
+    operatorUserId: input.operatorUserId,
+  });
+  return {
+    reportId: input.reportId,
+    side: input.side,
+    storageKey,
+    publicUrl: publicUrl || publicUrlFor(storageKey),
+    byteSize: input.body.length,
+    checksumSha256,
+    persisted: true,
+  };
+}
+
+function parseCurrencyMinor(price: string | null | undefined) {
+  if (!price) return null;
+  const match = price.replace(/,/g, "").match(/([0-9]+(?:\.[0-9]{1,2})?)/);
+  if (!match) return null;
+  return Math.round(Number(match[1]) * 100);
+}
+
+export async function runAiGraderEbayCompsRuntime(input: {
+  searchQuery: string;
+  limit: number;
+}): Promise<Omit<AiGraderCompsRunResult, "status" | "liveExecutionEnabled" | "persisted">> {
+  const { fetchKingsreviewEbaySoldCompPage } = await import("./kingsreviewEbayComps");
+  const page = await fetchKingsreviewEbaySoldCompPage({
+    query: input.searchQuery,
+    limit: input.limit,
+  });
+  const compsRefs = page.comps.map((comp, index) => ({
+    id: `ebay-sold-${index + 1}`,
+    source: comp.source,
+    title: comp.title,
+    url: comp.url,
+    price: comp.price,
+    soldDate: comp.soldDate,
+    matchScore: comp.matchScore ?? null,
+    matchQuality: comp.matchQuality ?? null,
+    listingImageUrl: comp.listingImageUrl ?? comp.thumbnail ?? null,
+  }));
+  const prices = page.comps.map((comp) => parseCurrencyMinor(comp.price)).filter((value): value is number => value != null);
+  const valuationMinor = prices.length ? Math.round(prices.reduce((sum, value) => sum + value, 0) / prices.length) : null;
+  return {
+    searchQuery: input.searchQuery,
+    searchUrl: page.searchUrl,
+    compsRefs,
+    resultSummary: {
+      source: "ebay_sold",
+      searchUrl: page.searchUrl,
+      count: compsRefs.length,
+      valuationMinor,
+      valuationCurrency: "USD",
+      comps: compsRefs,
+    },
+  };
+}
+
+export async function persistAiGraderCompsRuntime(input: {
+  tenantId: string;
+  reportId: string;
+  status: AiGraderValuationStatus;
+  searchQuery?: string | null;
+  compsRefs?: unknown;
+  resultSummary?: unknown;
+  requestedByUserId?: string | null;
+}) {
+  const { prisma } = await import("@tenkings/database");
+  const resultSummary = isRecord(input.resultSummary) ? input.resultSummary : {};
+  return persistAiGraderValuationResult(prisma as any, {
+    tenantId: input.tenantId,
+    reportId: input.reportId,
+    status: input.status,
+    source: "ebay_sold",
+    searchQuery: input.searchQuery ?? null,
+    compsRefs: input.compsRefs,
+    resultSummary: input.resultSummary,
+    valuationMinor: typeof resultSummary.valuationMinor === "number" ? resultSummary.valuationMinor : null,
+    valuationCurrency: typeof resultSummary.valuationCurrency === "string" ? resultSummary.valuationCurrency : "USD",
+    requestedByUserId: input.requestedByUserId ?? null,
+    completedAt: input.status === "completed" ? new Date() : null,
+  });
 }
 
 export async function listProductionReportHistoryRuntime(): Promise<AiGraderProductionHistoryResult> {
