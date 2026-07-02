@@ -1,0 +1,217 @@
+export const AI_GRADER_WEB_REPORT_BUNDLE_VERSION = "ai-grader-report-bundle-v0.1";
+
+export type AiGraderReportElementKey = "centering" | "corners" | "edges" | "surface";
+
+export type AiGraderReportBundle = {
+  schemaVersion: typeof AI_GRADER_WEB_REPORT_BUNDLE_VERSION;
+  generatedAt: string;
+  gradingSessionId: string;
+  reportId: string;
+  reportStatus: "provisional_diagnostic_ready" | "insufficient_evidence" | "missing_report_data";
+  provisionalStatus: "provisional_diagnostic";
+  finalStatus: "not_computed";
+  finalGradeComputed: false;
+  certifiedClaim: false;
+  labelGenerated: false;
+  qrGenerated: false;
+  certificateGenerated: false;
+  localReportFolder?: string;
+  reportHtmlPath?: string;
+  publicPathPlaceholders: {
+    reportViewerRoute: string;
+    reportUrlTemplate: string;
+    assetBaseUrlTemplate: string;
+  };
+  cardIdentity: {
+    cardAssetId?: string;
+    title?: string;
+    sideCount: 2;
+    futureSlabbedPhotoRefsReserved: true;
+    futureEbayCompsRefsReserved: true;
+  };
+  provisionalGrade?: {
+    status?: string;
+    overall?: number;
+    elementScores?: Partial<Record<AiGraderReportElementKey, { score?: number; confidence?: string; status?: string; explanation?: string }>>;
+    confidence?: { band?: string; score?: number; warnings?: string[] };
+    gradeStory?: { summary?: string; strongestPositiveFinding?: string; strongestWarning?: string; claims?: Array<{ claim: string; evidenceRefs: string[] }> };
+    whyNot10?: Array<{ id: string; title: string; explanation: string; evidenceRefs: string[] }>;
+    gradeImpactCandidates?: AiGraderGradeImpactCandidate[];
+  };
+  evidenceReferences: {
+    frontPackageDir?: string;
+    backPackageDir?: string;
+    frontEvidenceRefs: string[];
+    backEvidenceRefs: string[];
+  };
+  visionLab: {
+    available: boolean;
+    trueViewRefs: string[];
+    overlayRefs: string[];
+    channelImageRefs: string[];
+    heatmapRefs: string[];
+    surfaceVisionRefs: string[];
+    confidenceRefs: string[];
+    candidateCount: number;
+    missingDataWarnings: string[];
+  };
+  calibrationProfile?: Record<string, unknown>;
+  rulerCalibration?: Record<string, unknown>;
+  lightingProfile?: Record<string, unknown>;
+  warnings: string[];
+  limitations: string[];
+};
+
+export type AiGraderGradeImpactCandidate = {
+  id: string;
+  category: AiGraderReportElementKey | "confidence";
+  side: "front" | "back" | "both";
+  severity: "low" | "medium" | "high";
+  confidence: string;
+  provisionalGradeImpact: string;
+  evidenceRefs: string[];
+  sourceChannels?: number[];
+  explanation: string;
+};
+
+export const SAMPLE_AI_GRADER_REPORT_BUNDLE: AiGraderReportBundle = {
+  schemaVersion: AI_GRADER_WEB_REPORT_BUNDLE_VERSION,
+  generatedAt: "2026-07-01T17:37:33.758Z",
+  gradingSessionId: "ai-grader-station-sample-pr45",
+  reportId: "sample-pr45",
+  reportStatus: "provisional_diagnostic_ready",
+  provisionalStatus: "provisional_diagnostic",
+  finalStatus: "not_computed",
+  finalGradeComputed: false,
+  certifiedClaim: false,
+  labelGenerated: false,
+  qrGenerated: false,
+  certificateGenerated: false,
+  localReportFolder: "C:\\TenKings\\capture-data\\provisional-grade-story-pr45\\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T173733758Z",
+  reportHtmlPath:
+    "C:\\TenKings\\capture-data\\provisional-grade-story-pr45\\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T173733758Z\\provisional-diagnostic-report.html",
+  publicPathPlaceholders: {
+    reportViewerRoute: "/ai-grader/reports/[reportId]",
+    reportUrlTemplate: "/ai-grader/reports/{reportId}",
+    assetBaseUrlTemplate: "/ai-grader/reports/{reportId}/assets",
+  },
+  cardIdentity: {
+    title: "Fixed-Rig Diagnostic Card Report",
+    sideCount: 2,
+    futureSlabbedPhotoRefsReserved: true,
+    futureEbayCompsRefsReserved: true,
+  },
+  provisionalGrade: {
+    status: "provisional_diagnostic_grade",
+    overall: 8.5,
+    elementScores: {
+      centering: { score: 10, confidence: "high", status: "provisional_diagnostic", explanation: "Front/back border balance measured near 50/50 in the fixed-ruler geometry." },
+      corners: { score: 8.97, confidence: "low", status: "provisional_diagnostic", explanation: "Corner ROI proxy metrics remain diagnostic and clipping reduces confidence." },
+      edges: { score: 8.97, confidence: "low", status: "provisional_diagnostic", explanation: "Edge ROI proxy metrics remain diagnostic and require additional tuning." },
+      surface: { score: 5.5, confidence: "high", status: "provisional_diagnostic", explanation: "Surface Intelligence V0 found high-severity back-side surface candidates." },
+    },
+    confidence: {
+      band: "low",
+      score: 0.361,
+      warnings: ["Repeatability and clipping were accepted diagnostic warnings in the source run.", "This is not certified and not a final grade."],
+    },
+    gradeStory: {
+      summary: "Centering is the strongest element; surface evidence is the strongest provisional limiter.",
+      strongestPositiveFinding: "Centering measured close to balanced on both sides.",
+      strongestWarning: "Back-side surface candidates and clipping warnings reduce confidence.",
+      claims: [
+        { claim: "Centering is strongest because fixed-ruler border balance was near 50/50.", evidenceRefs: ["analysis.provisionalGradeStory.elementScores.centering"] },
+        { claim: "Surface confidence is limited by high-severity back candidates.", evidenceRefs: ["analysis.visionLab.gradeImpactCandidates"] },
+      ],
+    },
+    whyNot10: [
+      {
+        id: "surface-candidate-back",
+        title: "Back-side surface candidate",
+        explanation: "The strongest provisional limiter is a back-side surface response visible in multi-light evidence.",
+        evidenceRefs: ["analysis.visionLab.surfaceCandidates.back"],
+      },
+      {
+        id: "confidence-clipping",
+        title: "Clipping accepted as warning",
+        explanation: "Clipping exceeded the soft target and lowers report confidence.",
+        evidenceRefs: ["analysis.provisionalGradeStory.gates.clipping"],
+      },
+    ],
+    gradeImpactCandidates: [
+      {
+        id: "back-surface-intelligence-v0-001",
+        category: "surface",
+        side: "back",
+        severity: "high",
+        confidence: "medium",
+        provisionalGradeImpact: "caps provisional overall grade",
+        sourceChannels: [3, 1, 6],
+        evidenceRefs: ["visionLab.heatmap.back", "visionLab.lightSweep.channel3"],
+        explanation: "A high-response back-side region was strongest in numeric Leimac channels 3, 1, and 6. Physical direction mapping remains pending.",
+      },
+    ],
+  },
+  evidenceReferences: {
+    frontPackageDir: "C:\\TenKings\\capture-data\\ai-grader-station\\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z",
+    backPackageDir: "C:\\TenKings\\capture-data\\ai-grader-station\\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z",
+    frontEvidenceRefs: ["front true view", "front overlay", "front channels 1-8", "front ROI crops"],
+    backEvidenceRefs: ["back true view", "back overlay", "back channels 1-8", "back ROI crops"],
+  },
+  visionLab: {
+    available: true,
+    trueViewRefs: ["front true view", "back true view"],
+    overlayRefs: ["front overlay", "back overlay"],
+    channelImageRefs: ["front channels 1-8", "back channels 1-8"],
+    heatmapRefs: ["front heatmap", "back heatmap"],
+    surfaceVisionRefs: ["front Surface Vision V0", "back Surface Vision V0"],
+    confidenceRefs: ["front confidence map", "back confidence map"],
+    candidateCount: 1,
+    missingDataWarnings: [],
+  },
+  calibrationProfile: {
+    referenceType: "fixed_metric_rulers",
+    isCalibrated: false,
+    mmPerPixelX: 0.047037,
+    mmPerPixelY: 0.047344,
+  },
+  rulerCalibration: {
+    horizontalSpanMm: 50.8,
+    verticalSpanMm: 50.8,
+    scaleConsistency: "pass",
+  },
+  lightingProfile: {
+    dutyPercent: 1.3,
+    pwmStep: 13,
+    channels: [1, 2, 3, 4, 5, 6, 7, 8],
+    profileSource: "operator_preview",
+  },
+  warnings: ["Provisional diagnostic only.", "Not certified.", "No final grade.", "No QR certificate yet."],
+  limitations: [
+    "No public storage upload in this PR.",
+    "No DB write or migration.",
+    "No Label.",
+    "No Certificate.",
+    "No QR Certificate Yet.",
+    "Fixture/ruler profile remains local and non-certified.",
+  ],
+};
+
+export function getAiGraderReportBundle(reportId: string | string[] | undefined): AiGraderReportBundle {
+  const normalized = Array.isArray(reportId) ? reportId[0] : reportId;
+  return {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    reportId: normalized && normalized.trim().length > 0 ? normalized : SAMPLE_AI_GRADER_REPORT_BUNDLE.reportId,
+  };
+}
+
+export function hasNoFinalCertifiedClaims(bundle: AiGraderReportBundle) {
+  return (
+    bundle.finalGradeComputed === false &&
+    bundle.certifiedClaim === false &&
+    bundle.labelGenerated === false &&
+    bundle.qrGenerated === false &&
+    bundle.certificateGenerated === false &&
+    bundle.finalStatus === "not_computed"
+  );
+}

@@ -1,5 +1,75 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-02 UTC, AI Grader PR #46 browser report retest)
+- Branch: `feature/ai-grader-local-station-web-viewer`; PR #46 remains open and must not be merged yet until Mark accepts the final browser retest.
+- Restarted the local bridge with latest code at `http://127.0.0.1:47652` and token `tk-local-pr46-retest`, plus local Next at `http://127.0.0.1:3020`.
+- No new hardware grading session was run; the retest reused the existing generated browser-station report:
+  - Report route: `http://127.0.0.1:3020/ai-grader/reports/ai-grader-browser-station-session-2026-07-02T035658313Z-report`.
+  - Local HTML: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-02T041413536Z\provisional-diagnostic-report.html`.
+- Fixed a restart-specific report button blocker: a fresh bridge process now promotes the newest local station history report into `/status.latestReport` when no active in-memory session exists.
+- Verification:
+  - Bridge `/status` returned `latestReport.exists=true` for the generated report above.
+  - Bridge `/report-history` listed the generated local report with provisional grade `6.69`, local path, and local stats.
+  - Bridge `/reports/<reportId>/bundle` resolved the generated report bundle from local history/report directory.
+  - Browser report route rendered the generated report id and grade `6.69` with `No Final Grade`, without falling back to `sample-pr45` and without showing the local-bridge-needed warning when the station token was present.
+  - Station page connected to the bridge, showed report status `Ready`, enabled `View Report`, and displayed the generated local report path.
+  - Card History opened and showed the generated local report path and provisional grade.
+- Added focused test coverage for the fresh-bridge/latest-history fallback. Capture-helper build and tests passed (`164` tests); remaining full validation is pending after docs.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no production DB ops, no manual deploy, no network changes, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no hardware/image capture commands, no captured image/vendor binary commits, and no final/certified/label/QR/certificate claims.
+
+## Session Update (2026-07-02 UTC, AI Grader PR #46 cockpit/report open fix)
+- Branch: `feature/ai-grader-local-station-web-viewer`.
+- PR #46 remains open and must not be merged yet.
+- Mark's browser-driven station smoke reached the generated-report step, but the gold report button did not open the generated report because the Next report viewer still behaved like a fixture/sample route for new local report IDs.
+- Implemented a real local report resolution path:
+  - The Dell bridge now exposes token-gated read-only endpoints `GET /reports/<reportId>/bundle`, `GET /reports/<reportId>/html`, and `GET /report-history`.
+  - Generated report IDs resolve from the active bridge manifest, exported `report-bundle.json`, or the generated unified report folder without DB writes or uploads.
+  - The Next report viewer now fetches generated local bundles through the saved Dell bridge URL/token when opened from the station page, and shows a clear local-bridge-needed state when it cannot resolve a generated report.
+- Redesigned `/ai-grader/station` into a cockpit-style operator page:
+  - full-screen camera workspace with placement guide/crosshair,
+  - minimal connect scrim,
+  - right sidebar for Start New Card, Start Grading, profile, status, report, history, Safe Off, paths, and timing,
+  - red flip-card scrim after front capture,
+  - one-click back capture/diagnostics/bundle export after flip confirmation.
+- Card History Reports is now local file-backed through the bridge history endpoint, with list/tile views, sort controls, all-time/month/week/day stats, provisional grade counts, and average provisional grade when available.
+- Embedded browser Basler streaming remains pending. The current real preview remains the native Windows pylon live-preview window launched by the bridge; the station page labels this honestly and does not pretend an embedded stream exists.
+- Command-level timing is now recorded on station command results and surfaced in bridge status/page summary. Current timing still includes existing command/process orchestration; reducing inter-image delay toward one second requires a later warm-session capture runner.
+- Validation run so far:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` passed.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` passed (`163` tests).
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` passed (`7` tests).
+  - `pnpm --filter @tenkings/nextjs-app build` passed after stopping the stale local Next dev process that held `.next\trace`; existing unrelated `<img>`, Browserslist, and Tailwind glob warnings remain.
+- Pending before merge:
+  - Run remaining validation (`shared`, `ai-grader-simulator`, final `git diff --check`).
+  - Restart Next/bridge with the updated code.
+  - Run a Mark-supervised browser smoke to confirm: connect scrim, report button opens the generated report, Card History shows the report, Safe Off works, and final physical ring light is off.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no production DB ops, no manual deploy, no network setting changes, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no captured images/vendor binaries committed, no hardware commands in this software update, and no final/certified/label/QR/certificate claims.
+
+## Session Update (2026-07-01 UTC, AI Grader local station/web viewer start)
+- Branch: `feature/ai-grader-local-station-web-viewer`.
+- PR #45 (`feature/ai-grader-provisional-grade-story`) was merged first. Merge commit: `0c06db40a4a3d06951aff7ec88486b359efe081d`; docs handoff commit on `main`: `0027165b47c597b53223219a4d7e74b67bf2be5b`.
+- Objective: first local Dell operator station page plus web/shareable report viewer foundation so Mark can eventually run and review fixed-rig grading sessions without Codex or Windows Terminal.
+- Implementation status: software/web foundation in progress. No hardware commands were run. The proven PR #41 CLI station orchestrator is now reachable through a new local loopback bridge when the Dell bridge service is started explicitly with safety flags and a station token.
+- Added local no-login operator station route `/ai-grader/station`, local station API contract/mock fallback `/api/ai-grader/station/...`, fixture-backed public report viewer route `/ai-grader/reports/[reportId]`, a real capture-helper `ai-grader-station-bridge` loopback service, and a capture-helper `ai-grader-report-bundle` export command that writes `report-bundle.json`, `asset-manifest.json`, and `checksums.json` outside the repo.
+- Sample bundle generated from the existing PR #45 report:
+  - `C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\report-bundle.json`.
+  - `C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\asset-manifest.json`.
+  - `C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\checksums.json`.
+- The Next API route remains a contract/mock fallback: no Basler/Leimac/Dino-Lite contact, no DB or storage writes, no upload, and no hardware success is faked.
+- The real local bridge is `ai-grader-station-bridge`. It is disabled by default, must bind to loopback (`127.0.0.1`), requires `--enable-local-station`, requires a station token, checks allowed browser origins, and exposes staged actions for session start, light idle/off confirmation, fixture/ruler confirmation, preview launch, profile acceptance, front capture, flip confirmation, back capture, diagnostics, report bundle export, safe-off, and session end.
+- Hardware-capable bridge mode delegates to the existing PR #41 station command plan and requires `--station-bridge-mode real`, `--apply`, `--mark-present`, `--wiring-confirmed`, `--leimac-status-green`, and the existing Leimac/Basler settings. It must only be run with Mark present and the rig safe/ready. Browser-driven hardware smoke remains pending.
+- Exact Dell browser URLs:
+  - Station: `http://127.0.0.1:3020/ai-grader/station`.
+  - Sample report: `http://127.0.0.1:3020/ai-grader/reports/sample-pr45`.
+- Two-process Dell startup:
+  - Terminal 1: `pnpm --filter @tenkings/nextjs-app exec next dev --hostname 127.0.0.1 --port 3020`.
+  - Terminal 2: `.\scripts\ai-grader\start-local-station-bridge.ps1 -Real`.
+- The bridge launcher prints the generated station token and bridge URL (`http://127.0.0.1:47652`) for the browser station page. Mock-only bridge mode is `.\scripts\ai-grader\start-local-station-bridge.ps1` without `-Real`.
+- DB/storage integration is deferred: no Prisma migration was added or applied, no runtime DB record is written, and no cloud upload is performed. Existing AI Grader Prisma models and existing storage/presign helpers are the intended future production path once explicitly approved.
+- Report and bundle outputs remain provisional only: no final grade, no label, no QR certificate, no certificate, and no certified grading claim.
+- Local validation passed: `pnpm --filter @tenkings/ai-grader-capture-helper build`; `pnpm --filter @tenkings/ai-grader-capture-helper test` (`163` tests); `pnpm --filter @tenkings/shared test` (`105` tests); `pnpm --filter @tenkings/ai-grader-simulator test` (`6` tests); `pnpm --filter @tenkings/nextjs-app build` (existing unrelated `<img>` lint warnings only); `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` (`6` tests); `git diff --check` (line-ending warnings only).
+- Guardrails held so far: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no hardware commands or image captures, and no captured image/vendor binary commit.
+
 ## Session Update (2026-07-01 UTC, AI Grader PR #45 merged)
 - PR #45 (`feature/ai-grader-provisional-grade-story`) was merged into `main`.
 - Merge commit: `0c06db40a4a3d06951aff7ec88486b359efe081d`.

@@ -1206,6 +1206,151 @@ Back evidence:  C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v
 
 Sample PR #45 result: status `provisional_diagnostic_grade`, provisional overall grade `8.5`, confidence `low` (`0.361`). Element scores were centering `10`, corners `8.97`, edges `8.97`, and surface `5.5`. Gates passed for ruler calibration, framing/overlay, front evidence, back evidence, Surface Intelligence, and focus/sharpness; repeatability and clipping were accepted diagnostic warnings from the existing evidence artifacts. The strongest `Why Not 10?` reasons were high-severity back surface candidates from Surface Intelligence V0, especially source channels `3`, `1`, and `6`, plus accepted-warning clipping confidence reduction. This is a provisional diagnostic story only, not a final grade or certificate.
 
+### Local Operator Station / Web Report Viewer V0
+
+The local operator station web pass adds the first browser-facing station shell for the Dell capture node. The local operator page is available in the Next.js app at the fixed Dell dev URL:
+
+```text
+http://127.0.0.1:3020/ai-grader/station
+```
+
+The sample fixture-backed report viewer is:
+
+```text
+http://127.0.0.1:3020/ai-grader/reports/sample-pr45
+```
+
+It is intentionally local/no-login and shows Start New Card, fixture/ruler checklist, live preview launch/status, lighting/exposure tune status, accepted profile summary, Capture Front, Flip Card, Capture Back, Run Diagnostics, Open Report, Rerun, Safe Off, End Session, warnings, and report links. The Next.js route still has a safe contract/mock fallback for development, but PR #46 adds a real local Dell bridge path: the browser can call a loopback-only capture-helper service that orchestrates the existing PR #41 station command plan. The bridge is disabled by default, requires an explicit local station enable flag, requires a station token, only accepts loopback hosts, origin-checks browser calls, and requires the same Mark-present/wiring/status/apply flags before hardware mode is available. Public/shareable report pages never expose these hardware actions.
+
+The local station API contract is exposed under:
+
+```text
+GET  /api/ai-grader/station/status
+POST /api/ai-grader/station/start-session
+POST /api/ai-grader/station/confirm-light-idle-off
+POST /api/ai-grader/station/confirm-fixture-rulers
+POST /api/ai-grader/station/launch-preview
+POST /api/ai-grader/station/accept-profile
+POST /api/ai-grader/station/capture-front
+POST /api/ai-grader/station/confirm-flip
+POST /api/ai-grader/station/capture-back
+POST /api/ai-grader/station/run-diagnostics
+POST /api/ai-grader/station/export-report-bundle
+POST /api/ai-grader/station/safe-off
+POST /api/ai-grader/station/end-session
+GET  /api/ai-grader/station/latest-report
+GET  /api/ai-grader/station/session-manifest
+```
+
+The API contract is safe for local development: `hardwareActionsEnabled=false`, `databaseConnected=false`, `databaseWrites=false`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`.
+
+The Dell browser workflow uses two local processes:
+
+```powershell
+# Terminal 1 - local Next web app
+pnpm --filter @tenkings/nextjs-app exec next dev --hostname 127.0.0.1 --port 3020
+```
+
+```powershell
+# Terminal 2 - local capture-station bridge
+.\scripts\ai-grader\start-local-station-bridge.ps1 -Real
+```
+
+The launcher prints the bridge URL and generated station token. In the browser, use:
+
+```text
+Station URL: http://127.0.0.1:3020/ai-grader/station
+Bridge URL:  http://127.0.0.1:47652
+```
+
+Mock bridge mode is useful for browser/UI testing and still does not contact hardware:
+
+```powershell
+.\scripts\ai-grader\start-local-station-bridge.ps1
+```
+
+The supervised hardware-capable bridge mode remains local-only and guarded. The launcher expands to this shape and must be started only with Mark present and the rig status confirmed:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-station-bridge `
+  --enable-local-station `
+  --station-bridge-mode real `
+  --host 127.0.0.1 `
+  --port 47652 `
+  --station-token <local-secret> `
+  --allowed-origin http://127.0.0.1:3020 `
+  --allowed-origin http://localhost:3020 `
+  --allowed-origin https://collect.tenkings.co `
+  --output-dir C:\TenKings\capture-data\ai-grader-station `
+  --report-bundle-output-dir C:\TenKings\capture-data\ai-grader-report-bundles `
+  --public-base-path /ai-grader/reports `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --exposure-us 45000 `
+  --gain 0 `
+  --duty 1.2 `
+  --fixture-label fixed-ruler-v1-dell `
+  --reference-type fixed_metric_rulers `
+  --horizontal-span-mm 50.8 `
+  --horizontal-start-px 540,205 `
+  --horizontal-end-px 1620,205 `
+  --vertical-span-mm 50.8 `
+  --vertical-start-px 2295,145 `
+  --vertical-end-px 2295,1218 `
+  --card-boundary-rect 285,349,1878,1350 `
+  --apply `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green
+```
+
+The bridge exposes `GET /health`, token-gated `GET /status`, `GET /latest-report`, `GET /session-manifest`, and token-gated `POST /actions/<action>`. Actions are staged: `start-session`, `confirm-light-idle-off`, `confirm-fixture-rulers`, `launch-preview`, `accept-profile`, `capture-front`, `confirm-flip`, `capture-back`, `run-diagnostics`, `export-report-bundle`, `safe-off`, and `end-session`. The bridge writes station session manifests outside the repo and fails closed if required confirmations, side outputs, report outputs, or safe-off cleanup are missing.
+
+A public/shareable report viewer foundation is available at:
+
+```text
+/ai-grader/reports/[reportId]
+```
+
+The route is read-only, has no hardware controls, performs no DB lookup/write, and shows provisional diagnostic report content with Vision Lab-style sections and graceful missing-asset states. The fixture/sample report remains `sample-pr45`, but generated Dell station report IDs can now resolve through the token-gated local bridge when the browser opened the report from the station page. The station page stores only the local bridge URL/token in Dell browser local storage; the report viewer uses that token to fetch `GET /reports/<reportId>/bundle` from the local bridge and displays the generated local `report-bundle.json` data. If the local bridge/token is missing, the report route shows an explicit local-bridge-needed state instead of pretending fixture data is the generated report. This is the foundation for a future `collect.tenkings.co/...` report viewer, not a QR/certificate flow.
+
+PR #46 also adds read-only bridge report endpoints:
+
+```text
+GET /report-history
+GET /reports/<reportId>/bundle
+GET /reports/<reportId>/html
+```
+
+All three endpoints remain loopback-only, token-gated, and read-only. They do not expose hardware controls, do not write the database, and do not upload files. `/report-history` builds a local file-backed history index from station session manifests and report bundles under the local AI Grader output root. The browser station history panel uses that endpoint to show recent local card reports, list/tile views, basic all-time/month/week/day counts, provisional grade counts, and average provisional grade when available. Missing card category metadata is displayed as `Unknown`.
+
+After a bridge restart, `GET /status` also promotes the newest existing local station report from `station-session.json` history into `latestReport` when no active in-memory session is loaded. This keeps the browser station `View Report` control usable for the most recent generated report even after restarting the Dell bridge. The 2026-07-02 PR #46 retest verified the generated report route `http://127.0.0.1:3020/ai-grader/reports/ai-grader-browser-station-session-2026-07-02T035658313Z-report` rendered the real generated bundle (`6.69`, `No Final Grade`) instead of the `sample-pr45` fallback when the station token was present, and Card History showed the generated local report path and provisional grade.
+
+The station page has been redesigned into a cockpit-style local workflow. The first screen is a large camera workspace with a placement guide and right-side control sidebar. The sidebar surfaces Start New Card, Start Grading, lighting/exposure draft values, report readiness, Safe Off, local paths, and command timing. Start Grading acts as the operator's ready confirmation for light idle/off plus fixture/ruler visibility, launches the existing native Basler pylon preview, preserves the preview-accepted profile, accepts it software-side, and captures the front. After front capture the page displays a red flip-card scrim; once the operator confirms the back is seated, the page captures the back, generates diagnostics, exports the local report bundle, and refreshes history. The only required operator pause in the browser flow is the front/back flip.
+
+Embedded browser Basler streaming is still pending. The production hardware preview path remains the native Windows pylon live preview window launched by the bridge. The browser page is designed around the camera cockpit, but it honestly labels embedded streaming as pending until an MJPEG/WebSocket/latest-frame bridge stream exists. PR #46 command timing is command-level timing only: the bridge records per-step durations for preview/front/back/report/safe-off, but the current bridge still delegates to existing capture-helper commands. Reducing inter-image delay toward one second requires a later warm-session capture runner that avoids process startup and preserves safety/sync behavior.
+
+The capture-helper now includes a software-only report-bundle export command for converting an existing local unified report folder into a web-ready bundle:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-report-bundle `
+  --report-dir C:\TenKings\capture-data\provisional-grade-story-pr45\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T173733758Z `
+  --output-dir C:\TenKings\capture-data\ai-grader-report-bundles `
+  --report-id sample-pr45
+```
+
+The command writes `report-bundle.json`, `asset-manifest.json`, and `checksums.json` outside the repo. The bundle reserves future public storage, label, QR, certificate, slab photo, and eBay comps fields, but does not upload files, write the database, generate labels/QR/certificates, or claim a final/certified grade.
+
+DB and storage integration remain intentionally deferred in PR #46. Existing Prisma AI Grader entities (`CaptureSession`, `CaptureManifest`, `GradeRun`, `EvidenceArtifact`, `CalibrationSnapshot`, and related reserved certificate/report shapes) are the likely production record home once migrations are approved. Existing storage/presign helpers are the likely upload path for bundle assets. PR #46 adds no migration, applies no migration, writes no runtime DB record, and performs no cloud upload; it keeps the file-backed report bundle and documents the future integration contract.
+
+The first sample bundle from the PR #45 report was written to:
+
+```text
+C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\report-bundle.json
+C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\asset-manifest.json
+C:\TenKings\capture-data\ai-grader-report-bundles\sample-pr45\checksums.json
+```
+
 #### Dell PR #39 Rough Fixture Smoke
 
 On 2026-06-30, Mark ran the rough fixed-fixture flow using the operator-built fixed-position V1 fixture. The accepted live preview folder is `C:\TenKings\capture-data\fixed-rig-calibration\basler-fixed-rig-operator-preview-2026-06-30T062619141Z`. The preview measured about `20.5 FPS` with `0 ms` frame age and accepted a software active profile of `1.4%` Leimac duty, PWM step `14`, channels `1-8`, source `operator_preview`. Preview/report display used `rotate90cw`; raw Basler sensor captures remained unchanged. The preview and later reports warned that the detected card boundary touched the frame edge, so the run remains rough/unvalidated and not calibrated.
