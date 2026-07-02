@@ -22662,3 +22662,44 @@ By enabling Rip It Live, I confirm:
 - No high-duty lighting or hardware capture was run.
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, label generation, or certified grading claim was added.
+
+## 2026-07-02 - AI Grader PR #47 merged
+
+### Summary
+- Merged PR #47 into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/47`.
+- Merge commit: `f4101eaf74ff10a8652750db20feb5a73d20455f`.
+- Merged branch: `feature/ai-grader-production-release-v0`.
+- Final `origin/main` HEAD before this handoff-doc commit: `f4101eaf74ff10a8652750db20feb5a73d20455f`.
+- AI Grader Production Release V0 is now on `main` with:
+  - final AI-Grader Grade V0 local artifact/export path;
+  - review-only Prisma migration and production persistence service;
+  - env-gated admin publish/history/card-search/slabbed-photo/comps APIs;
+  - read-only persisted public report API and label preview support;
+  - station UI production publish, card/item linkage, slab photo, and comps controls.
+
+### Merge Preflight
+- PR merge state was `CLEAN`.
+- PR checks were passing before merge:
+  - Install & Build.
+  - Vercel.
+  - Vercel Preview Comments.
+  - Docker image builds.
+- Worktree was clean before merge.
+
+### Migration and Env Reminder
+- Migration `20260702120000_ai_grader_production_release_v0` is committed for human review/application only.
+- Codex did not run migrations and did not set `RUN_DB_MIGRATIONS=true`.
+- Human rollout must use an approved `DATABASE_URL` and the approved database migration runbook.
+- Remaining production configuration blockers: production DB/storage env, publication gates, public report base URL, and optional `AI_GRADER_EBAY_COMPS_ENABLED` plus SerpAPI env for operator-triggered comps.
+
+### Guardrails
+- No hardware command was run.
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy command was run.
+- No DB operation was run.
+- No network setting change was made.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or image capture was run.
+- No captured image or vendor binary was committed.

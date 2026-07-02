@@ -12236,3 +12236,30 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` with dummy local `DATABASE_URL` -> pass.
   - `git diff --check` -> pass with line-ending warnings only.
 - Guardrails held so far: no hardware command, no image capture, no production DB operation, no production migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no network setting change, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no captured image/vendor binary commit, and no certified grading claim.
+
+## Session Update (2026-07-02 UTC, AI Grader PR #47 merged)
+- PR #47 was merged into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/47`.
+- Merge commit: `f4101eaf74ff10a8652750db20feb5a73d20455f`.
+- Merged branch: `feature/ai-grader-production-release-v0`.
+- Final `origin/main` HEAD before this handoff-doc commit: `f4101eaf74ff10a8652750db20feb5a73d20455f`.
+- AI Grader Production Release V0 is now on `main`:
+  - Final AI-Grader Grade V0 artifact/export path.
+  - Review-only Prisma migration and production persistence service.
+  - Env-gated admin publish/history/card-search/slabbed-photo/comps APIs.
+  - Read-only persisted public report API and label preview support.
+  - Station UI production publish/card linkage/slab photo/comps controls.
+- Merge preflight:
+  - PR merge state was `CLEAN`.
+  - PR checks were passing before merge: Install & Build, Vercel, Vercel Preview Comments, and Docker image builds.
+  - Worktree was clean before merge.
+- Migration/runbook reminder:
+  - Migration `20260702120000_ai_grader_production_release_v0` is committed for human review/application only.
+  - Codex did not run migrations and did not set `RUN_DB_MIGRATIONS=true`.
+  - Human rollout must apply the migration only through the approved database migration runbook with an approved `DATABASE_URL`.
+- Remaining production config blockers:
+  - Enable and verify production DB/storage env.
+  - Enable `AI_GRADER_PRODUCTION_PUBLISH_ENABLED` and `AI_GRADER_PUBLIC_REPORT_DB_ENABLED` only after migration/storage/auth verification.
+  - Configure public report base URL and, if needed, `AI_GRADER_EBAY_COMPS_ENABLED` plus SerpAPI env for operator-triggered comps.
+- Merge guardrails held:
+  - No hardware commands, no migrations, no `RUN_DB_MIGRATIONS=true`, no DB ops, no deploy commands, no network changes, no Leimac reset/default, no persistent Basler/Leimac saves, no image captures, and no captured/vendor file commit after merge.
