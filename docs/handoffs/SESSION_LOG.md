@@ -22342,6 +22342,35 @@ By enabling Rip It Live, I confirm:
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, label generation, or certified grading claim was added.
 
+## 2026-07-01 - AI Grader PR #46 local browser smoke prep
+
+### Summary
+- Continued PR #46 on branch `feature/ai-grader-local-station-web-viewer`.
+- Fixed local station/report launch instructions to use explicit Dell URLs:
+  - Station: `http://127.0.0.1:3020/ai-grader/station`.
+  - Sample report: `http://127.0.0.1:3020/ai-grader/reports/sample-pr45`.
+- Added `scripts/ai-grader/start-local-station-bridge.ps1` so Mark does not have to retype the long real bridge command. The real launch is:
+  - Terminal 1: `pnpm --filter @tenkings/nextjs-app exec next dev --hostname 127.0.0.1 --port 3020`.
+  - Terminal 2: `.\scripts\ai-grader\start-local-station-bridge.ps1 -Real`.
+- The bridge launcher binds to `127.0.0.1:47652`, prints the generated station token, includes local `3020` origins plus `https://collect.tenkings.co`, and carries the accepted fixed-ruler geometry defaults into the bridge.
+- Staged browser confirmations remain required for light idle/off, fixture/rulers visible, card flip, safe-off/end session, and final physical light-off.
+
+### Pending
+- Run validation after the launcher/docs update.
+- Run Mark-supervised browser-driven hardware smoke from the local station page.
+
+### Guardrails
+- No hardware command was run in this prep step.
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- No final grade, certificate, QR label, label generation, or certified grading claim was added.
+
 ## 2026-07-01 - AI Grader PR #46 real local station bridge update
 
 ### Summary

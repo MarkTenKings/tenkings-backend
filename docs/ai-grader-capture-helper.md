@@ -1208,10 +1208,16 @@ Sample PR #45 result: status `provisional_diagnostic_grade`, provisional overall
 
 ### Local Operator Station / Web Report Viewer V0
 
-The local operator station web pass adds the first browser-facing station shell for the Dell capture node without replacing the existing supervised CLI hardware orchestrator. The local operator page is available in the Next.js app at:
+The local operator station web pass adds the first browser-facing station shell for the Dell capture node. The local operator page is available in the Next.js app at the fixed Dell dev URL:
 
 ```text
-http://localhost:<port>/ai-grader/station
+http://127.0.0.1:3020/ai-grader/station
+```
+
+The sample fixture-backed report viewer is:
+
+```text
+http://127.0.0.1:3020/ai-grader/reports/sample-pr45
 ```
 
 It is intentionally local/no-login and shows Start New Card, fixture/ruler checklist, live preview launch/status, lighting/exposure tune status, accepted profile summary, Capture Front, Flip Card, Capture Back, Run Diagnostics, Open Report, Rerun, Safe Off, End Session, warnings, and report links. The Next.js route still has a safe contract/mock fallback for development, but PR #46 adds a real local Dell bridge path: the browser can call a loopback-only capture-helper service that orchestrates the existing PR #41 station command plan. The bridge is disabled by default, requires an explicit local station enable flag, requires a station token, only accepts loopback hosts, origin-checks browser calls, and requires the same Mark-present/wiring/status/apply flags before hardware mode is available. Public/shareable report pages never expose these hardware actions.
@@ -1221,32 +1227,49 @@ The local station API contract is exposed under:
 ```text
 GET  /api/ai-grader/station/status
 POST /api/ai-grader/station/start-session
+POST /api/ai-grader/station/confirm-light-idle-off
+POST /api/ai-grader/station/confirm-fixture-rulers
 POST /api/ai-grader/station/launch-preview
 POST /api/ai-grader/station/accept-profile
 POST /api/ai-grader/station/capture-front
 POST /api/ai-grader/station/confirm-flip
 POST /api/ai-grader/station/capture-back
 POST /api/ai-grader/station/run-diagnostics
+POST /api/ai-grader/station/export-report-bundle
 POST /api/ai-grader/station/safe-off
+POST /api/ai-grader/station/end-session
 GET  /api/ai-grader/station/latest-report
 GET  /api/ai-grader/station/session-manifest
 ```
 
 The API contract is safe for local development: `hardwareActionsEnabled=false`, `databaseConnected=false`, `databaseWrites=false`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`.
 
-The real loopback bridge is launched from the capture-helper on the Dell PC. Mock bridge mode is useful for browser/UI testing and still does not contact hardware:
+The Dell browser workflow uses two local processes:
 
 ```powershell
-pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-station-bridge `
-  --enable-local-station `
-  --station-bridge-mode mock `
-  --host 127.0.0.1 `
-  --port 47652 `
-  --station-token local-dev-token `
-  --output-dir C:\TenKings\capture-data\ai-grader-station
+# Terminal 1 - local Next web app
+pnpm --filter @tenkings/nextjs-app exec next dev --hostname 127.0.0.1 --port 3020
 ```
 
-The supervised hardware-capable bridge mode remains local-only and guarded. It must be started only with Mark present and the rig status confirmed:
+```powershell
+# Terminal 2 - local capture-station bridge
+.\scripts\ai-grader\start-local-station-bridge.ps1 -Real
+```
+
+The launcher prints the bridge URL and generated station token. In the browser, use:
+
+```text
+Station URL: http://127.0.0.1:3020/ai-grader/station
+Bridge URL:  http://127.0.0.1:47652
+```
+
+Mock bridge mode is useful for browser/UI testing and still does not contact hardware:
+
+```powershell
+.\scripts\ai-grader\start-local-station-bridge.ps1
+```
+
+The supervised hardware-capable bridge mode remains local-only and guarded. The launcher expands to this shape and must be started only with Mark present and the rig status confirmed:
 
 ```powershell
 pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-station-bridge `
@@ -1255,14 +1278,26 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader
   --host 127.0.0.1 `
   --port 47652 `
   --station-token <local-secret> `
+  --allowed-origin http://127.0.0.1:3020 `
+  --allowed-origin http://localhost:3020 `
   --allowed-origin https://collect.tenkings.co `
   --output-dir C:\TenKings\capture-data\ai-grader-station `
   --report-bundle-output-dir C:\TenKings\capture-data\ai-grader-report-bundles `
+  --public-base-path /ai-grader/reports `
   --leimac-host 169.254.191.156 `
   --leimac-port 1000 `
   --exposure-us 45000 `
   --gain 0 `
   --duty 1.2 `
+  --fixture-label fixed-ruler-v1-dell `
+  --reference-type fixed_metric_rulers `
+  --horizontal-span-mm 50.8 `
+  --horizontal-start-px 540,205 `
+  --horizontal-end-px 1620,205 `
+  --vertical-span-mm 50.8 `
+  --vertical-start-px 2295,145 `
+  --vertical-end-px 2295,1218 `
+  --card-boundary-rect 285,349,1878,1350 `
   --apply `
   --mark-present `
   --wiring-confirmed `

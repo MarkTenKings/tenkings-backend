@@ -13,6 +13,13 @@
 - The Next API route remains a contract/mock fallback: no Basler/Leimac/Dino-Lite contact, no DB or storage writes, no upload, and no hardware success is faked.
 - The real local bridge is `ai-grader-station-bridge`. It is disabled by default, must bind to loopback (`127.0.0.1`), requires `--enable-local-station`, requires a station token, checks allowed browser origins, and exposes staged actions for session start, light idle/off confirmation, fixture/ruler confirmation, preview launch, profile acceptance, front capture, flip confirmation, back capture, diagnostics, report bundle export, safe-off, and session end.
 - Hardware-capable bridge mode delegates to the existing PR #41 station command plan and requires `--station-bridge-mode real`, `--apply`, `--mark-present`, `--wiring-confirmed`, `--leimac-status-green`, and the existing Leimac/Basler settings. It must only be run with Mark present and the rig safe/ready. Browser-driven hardware smoke remains pending.
+- Exact Dell browser URLs:
+  - Station: `http://127.0.0.1:3020/ai-grader/station`.
+  - Sample report: `http://127.0.0.1:3020/ai-grader/reports/sample-pr45`.
+- Two-process Dell startup:
+  - Terminal 1: `pnpm --filter @tenkings/nextjs-app exec next dev --hostname 127.0.0.1 --port 3020`.
+  - Terminal 2: `.\scripts\ai-grader\start-local-station-bridge.ps1 -Real`.
+- The bridge launcher prints the generated station token and bridge URL (`http://127.0.0.1:47652`) for the browser station page. Mock-only bridge mode is `.\scripts\ai-grader\start-local-station-bridge.ps1` without `-Real`.
 - DB/storage integration is deferred: no Prisma migration was added or applied, no runtime DB record is written, and no cloud upload is performed. Existing AI Grader Prisma models and existing storage/presign helpers are the intended future production path once explicitly approved.
 - Report and bundle outputs remain provisional only: no final grade, no label, no QR certificate, no certificate, and no certified grading claim.
 - Local validation passed: `pnpm --filter @tenkings/ai-grader-capture-helper build`; `pnpm --filter @tenkings/ai-grader-capture-helper test` (`163` tests); `pnpm --filter @tenkings/shared test` (`105` tests); `pnpm --filter @tenkings/ai-grader-simulator test` (`6` tests); `pnpm --filter @tenkings/nextjs-app build` (existing unrelated `<img>` lint warnings only); `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` (`6` tests); `git diff --check` (line-ending warnings only).
