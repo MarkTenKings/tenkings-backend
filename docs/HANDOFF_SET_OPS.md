@@ -1,5 +1,25 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-02 UTC, AI Grader PR #46 merged)
+- PR #46 (`feature/ai-grader-local-station-web-viewer`) was merged into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/46`.
+- Merge commit: `e8fa88d82d46452c89fbb8a02813510105f9e9c9`.
+- Mark accepted the final browser/report retest. The local station `View Report` and Card History blockers were fixed before merge.
+- Merged result:
+  - Dell local AI Grader Station page at `/ai-grader/station`.
+  - Read-only report viewer foundation at `/ai-grader/reports/[reportId]`.
+  - Token-gated loopback Dell bridge `ai-grader-station-bridge` with local report bundle/history endpoints.
+  - Browser station can resolve generated local report IDs through the bridge instead of fixture/sample data.
+  - Bridge restart fallback exposes the newest local station report as `latestReport`.
+- Accepted retest evidence:
+  - Generated report route `http://127.0.0.1:3020/ai-grader/reports/ai-grader-browser-station-session-2026-07-02T035658313Z-report` rendered the real generated bundle with provisional grade `6.69`, `No Final Grade`, no `sample-pr45` fallback, and no bridge-needed warning when the station token was present.
+  - Card History showed the generated local report path and provisional grade.
+  - No new hardware grading session or image capture was run for the retest.
+- Merge guardrails held:
+  - No migrations, no `RUN_DB_MIGRATIONS=true`, no production DB ops, no manual deploy, no network changes, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no hardware/image capture commands, no captured image/vendor binary commits, and no final/certified/label/QR/certificate claims.
+- Pending after this docs commit:
+  - Confirm post-merge `main` CI and automatic Vercel deployment for the final `origin/main` HEAD.
+
 ## Session Update (2026-07-02 UTC, AI Grader PR #46 browser report retest)
 - Branch: `feature/ai-grader-local-station-web-viewer`; PR #46 remains open and must not be merged yet until Mark accepts the final browser retest.
 - Restarted the local bridge with latest code at `http://127.0.0.1:47652` and token `tk-local-pr46-retest`, plus local Next at `http://127.0.0.1:3020`.
