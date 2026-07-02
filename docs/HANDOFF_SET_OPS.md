@@ -1,5 +1,33 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-02 UTC, AI Grader PR #46 cockpit/report open fix)
+- Branch: `feature/ai-grader-local-station-web-viewer`.
+- PR #46 remains open and must not be merged yet.
+- Mark's browser-driven station smoke reached the generated-report step, but the gold report button did not open the generated report because the Next report viewer still behaved like a fixture/sample route for new local report IDs.
+- Implemented a real local report resolution path:
+  - The Dell bridge now exposes token-gated read-only endpoints `GET /reports/<reportId>/bundle`, `GET /reports/<reportId>/html`, and `GET /report-history`.
+  - Generated report IDs resolve from the active bridge manifest, exported `report-bundle.json`, or the generated unified report folder without DB writes or uploads.
+  - The Next report viewer now fetches generated local bundles through the saved Dell bridge URL/token when opened from the station page, and shows a clear local-bridge-needed state when it cannot resolve a generated report.
+- Redesigned `/ai-grader/station` into a cockpit-style operator page:
+  - full-screen camera workspace with placement guide/crosshair,
+  - minimal connect scrim,
+  - right sidebar for Start New Card, Start Grading, profile, status, report, history, Safe Off, paths, and timing,
+  - red flip-card scrim after front capture,
+  - one-click back capture/diagnostics/bundle export after flip confirmation.
+- Card History Reports is now local file-backed through the bridge history endpoint, with list/tile views, sort controls, all-time/month/week/day stats, provisional grade counts, and average provisional grade when available.
+- Embedded browser Basler streaming remains pending. The current real preview remains the native Windows pylon live-preview window launched by the bridge; the station page labels this honestly and does not pretend an embedded stream exists.
+- Command-level timing is now recorded on station command results and surfaced in bridge status/page summary. Current timing still includes existing command/process orchestration; reducing inter-image delay toward one second requires a later warm-session capture runner.
+- Validation run so far:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` passed.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` passed (`163` tests).
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` passed (`7` tests).
+  - `pnpm --filter @tenkings/nextjs-app build` passed after stopping the stale local Next dev process that held `.next\trace`; existing unrelated `<img>`, Browserslist, and Tailwind glob warnings remain.
+- Pending before merge:
+  - Run remaining validation (`shared`, `ai-grader-simulator`, final `git diff --check`).
+  - Restart Next/bridge with the updated code.
+  - Run a Mark-supervised browser smoke to confirm: connect scrim, report button opens the generated report, Card History shows the report, Safe Off works, and final physical ring light is off.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no production DB ops, no manual deploy, no network setting changes, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no captured images/vendor binaries committed, no hardware commands in this software update, and no final/certified/label/QR/certificate claims.
+
 ## Session Update (2026-07-01 UTC, AI Grader local station/web viewer start)
 - Branch: `feature/ai-grader-local-station-web-viewer`.
 - PR #45 (`feature/ai-grader-provisional-grade-story`) was merged first. Merge commit: `0c06db40a4a3d06951aff7ec88486b359efe081d`; docs handoff commit on `main`: `0027165b47c597b53223219a4d7e74b67bf2be5b`.

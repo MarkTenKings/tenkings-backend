@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import {
   assertFixedRigOutputDirAllowed,
   buildFixedRigActiveLightingProfile,
@@ -20,7 +20,11 @@ import {
   type AiGraderStationCommandStep,
   type AiGraderStationRealWorkflowInput,
 } from "./aiGraderStationWorkflow";
-import { writeAiGraderReportBundle, type AiGraderReportBundle } from "./aiGraderReportBundle";
+import {
+  buildAiGraderReportBundle,
+  writeAiGraderReportBundle,
+  type AiGraderReportBundle,
+} from "./aiGraderReportBundle";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.2";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
@@ -233,6 +237,56 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     host: string;
     port: number;
     rejectsNonLoopback: true;
+  };
+  timingSummary: AiGraderLocalStationTimingSummary;
+}
+
+export interface AiGraderLocalStationTimingEntry {
+  stepId: string;
+  durationMs: number;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface AiGraderLocalStationTimingSummary {
+  totalCommandMs: number;
+  bridgeActionOverheadMs: number;
+  captureCommandMs: number;
+  reportGenerationMs: number;
+  safeOffMs: number;
+  entries: AiGraderLocalStationTimingEntry[];
+  targetInterCaptureNote: string;
+}
+
+export interface AiGraderLocalStationReportHistoryItem {
+  reportId: string;
+  gradingSessionId: string;
+  generatedAt?: string;
+  status: string;
+  viewerPath: string;
+  localHtmlPath?: string;
+  reportBundlePath?: string;
+  sessionDir?: string;
+  frontPackageDir?: string;
+  backPackageDir?: string;
+  provisionalOverallGrade?: number;
+  confidenceBand?: string;
+  title?: string;
+  category?: string;
+  warnings: string[];
+}
+
+export interface AiGraderLocalStationReportHistory {
+  generatedAt: string;
+  source: "local_bridge_file_backed";
+  items: AiGraderLocalStationReportHistoryItem[];
+  stats: {
+    allTime: number;
+    monthly: number;
+    weekly: number;
+    daily: number;
+    averageProvisionalGrade?: number;
+    provisionalGradeCounts: Record<string, number>;
   };
 }
 
@@ -589,9 +643,20 @@ async function runStepOrMock(
   runner: AiGraderStationCommandRunner,
   step: AiGraderStationCommandStep
 ): Promise<AiGraderStationCommandResult> {
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
+  const finish = (result: AiGraderStationCommandResult): AiGraderStationCommandResult => {
+    const finishedAtMs = Date.now();
+    return {
+      ...result,
+      startedAt,
+      finishedAt: new Date(finishedAtMs).toISOString(),
+      durationMs: Math.max(0, finishedAtMs - startedAtMs),
+    };
+  };
   manifest.safety.hardwareAccessed = manifest.safety.hardwareAccessed || config.mode === "real" && step.hardwareAccess;
   if (config.mode === "mock") {
-    return {
+    return finish({
       stepId: step.id,
       ok: true,
       exitCode: 0,
@@ -606,9 +671,9 @@ async function runStepOrMock(
           : undefined,
         acceptedLightingProfile: step.id === "operator_preview" ? buildFixedRigProfile(manifest.acceptedProfile) : undefined,
       },
-    };
+    });
   }
-  return runner.run(step);
+  return finish(await runner.run(step));
 }
 
 function reportRoute(reportId: string | undefined) {
@@ -637,6 +702,118 @@ function bridgeEndpoints() {
     ...endpoint,
     path: endpoint.method === "GET" ? `/${endpoint.action}` : `/actions/${endpoint.action}`,
   }));
+}
+
+function safeJsonParse(text: string): any | undefined {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+async function readJsonFile(filePath: string): Promise<any | undefined> {
+  try {
+    return safeJsonParse(await readFile(filePath, "utf-8"));
+  } catch {
+    return undefined;
+  }
+}
+
+async function exists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function timingSummary(results: AiGraderStationCommandResult[]): AiGraderLocalStationTimingSummary {
+  const entries = results
+    .filter((result) => typeof result.durationMs === "number")
+    .map((result) => ({
+      stepId: result.stepId,
+      durationMs: result.durationMs ?? 0,
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+    }));
+  const durationFor = (stepIds: string[]) =>
+    entries
+      .filter((entry) => stepIds.includes(entry.stepId))
+      .reduce((sum, entry) => sum + entry.durationMs, 0);
+  const totalCommandMs = entries.reduce((sum, entry) => sum + entry.durationMs, 0);
+  return {
+    totalCommandMs,
+    bridgeActionOverheadMs: 0,
+    captureCommandMs: durationFor(["operator_preview", "capture_front", "capture_back"]),
+    reportGenerationMs: durationFor(["unified_report"]),
+    safeOffMs: durationFor(["safe_off"]),
+    entries,
+    targetInterCaptureNote:
+      "PR #46 records command-level timing. The current bridge still delegates to existing capture-helper commands; eliminating per-image process startup requires a later warm-session capture runner.",
+  };
+}
+
+function gradeBucket(grade: number | undefined): string | undefined {
+  if (typeof grade !== "number" || !Number.isFinite(grade)) return undefined;
+  return String(Math.max(0, Math.min(10, Math.floor(grade))));
+}
+
+function historyItemFromBundle(input: {
+  bundle: AiGraderReportBundle;
+  reportBundlePath?: string;
+  sessionDir?: string;
+}): AiGraderLocalStationReportHistoryItem {
+  return {
+    reportId: input.bundle.reportId,
+    gradingSessionId: input.bundle.gradingSessionId,
+    generatedAt: input.bundle.generatedAt,
+    status: input.bundle.reportStatus,
+    viewerPath: reportRoute(input.bundle.reportId),
+    localHtmlPath: input.bundle.reportHtmlPath,
+    reportBundlePath: input.reportBundlePath,
+    sessionDir: input.sessionDir,
+    frontPackageDir: input.bundle.evidenceReferences.frontPackageDir,
+    backPackageDir: input.bundle.evidenceReferences.backPackageDir,
+    provisionalOverallGrade: input.bundle.provisionalGrade?.overall,
+    confidenceBand: input.bundle.provisionalGrade?.confidence?.band,
+    title: input.bundle.cardIdentity.title,
+    category: undefined,
+    warnings: input.bundle.warnings,
+  };
+}
+
+function historyStats(items: AiGraderLocalStationReportHistoryItem[]): AiGraderLocalStationReportHistory["stats"] {
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfWeek = startOfDay - now.getDay() * 24 * 60 * 60 * 1000;
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const grades = items
+    .map((item) => item.provisionalOverallGrade)
+    .filter((grade): grade is number => typeof grade === "number" && Number.isFinite(grade));
+  const gradeCounts: Record<string, number> = {};
+  for (const item of items) {
+    const bucket = gradeBucket(item.provisionalOverallGrade);
+    if (bucket) gradeCounts[bucket] = (gradeCounts[bucket] ?? 0) + 1;
+  }
+  const timestamp = (item: AiGraderLocalStationReportHistoryItem) => item.generatedAt ? new Date(item.generatedAt).getTime() : 0;
+  return {
+    allTime: items.length,
+    monthly: items.filter((item) => timestamp(item) >= startOfMonth).length,
+    weekly: items.filter((item) => timestamp(item) >= startOfWeek).length,
+    daily: items.filter((item) => timestamp(item) >= startOfDay).length,
+    averageProvisionalGrade: grades.length
+      ? Number((grades.reduce((sum, grade) => sum + grade, 0) / grades.length).toFixed(2))
+      : undefined,
+    provisionalGradeCounts: gradeCounts,
+  };
+}
+
+async function readBundleFromPath(bundlePath: string | undefined): Promise<AiGraderReportBundle | undefined> {
+  if (!bundlePath) return undefined;
+  const parsed = await readJsonFile(bundlePath);
+  return parsed?.schemaVersion === "ai-grader-report-bundle-v0.1" ? parsed as AiGraderReportBundle : undefined;
 }
 
 export class AiGraderLocalStationBridgeService {
@@ -698,8 +875,156 @@ export class AiGraderLocalStationBridgeService {
         port: this.config.port,
         rejectsNonLoopback: true,
       },
+      timingSummary: timingSummary(this.manifest.commandResults),
       ...this.manifest,
     };
+  }
+
+  async reportBundle(reportId: string | undefined): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
+    const expectedReportId = reportId?.trim() || this.manifest.reportId;
+    if (!expectedReportId) throw new Error("No AI Grader report ID is available yet.");
+    if (this.manifest.reportBundle?.reportId === expectedReportId) {
+      return { reportId: expectedReportId, bundle: this.manifest.reportBundle, source: "active_manifest_memory" };
+    }
+
+    const bundleFromPath = await readBundleFromPath(this.manifest.outputs.reportBundlePath);
+    if (bundleFromPath?.reportId === expectedReportId) {
+      this.manifest.reportBundle = bundleFromPath;
+      return { reportId: expectedReportId, bundle: bundleFromPath, source: "active_manifest_report_bundle_path" };
+    }
+
+    const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
+    if (reportDir && this.manifest.reportId === expectedReportId) {
+      const bundle = await buildAiGraderReportBundle({
+        reportDir,
+        outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+        reportId: expectedReportId,
+        publicBasePath: this.config.publicBasePath,
+      });
+      this.manifest.reportBundle = bundle;
+      return { reportId: expectedReportId, bundle, source: "active_manifest_generated_from_report_dir" };
+    }
+
+    for (const item of await this.reportHistoryItems()) {
+      if (item.reportId !== expectedReportId) continue;
+      const bundle = await readBundleFromPath(item.reportBundlePath);
+      if (bundle) return { reportId: expectedReportId, bundle, source: "history_report_bundle_path" };
+      const reportDirFromHtml = dirnameIfFile(item.localHtmlPath);
+      if (reportDirFromHtml) {
+        const generated = await buildAiGraderReportBundle({
+          reportDir: reportDirFromHtml,
+          outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+          reportId: expectedReportId,
+          publicBasePath: this.config.publicBasePath,
+        });
+        return { reportId: expectedReportId, bundle: generated, source: "history_generated_from_report_dir" };
+      }
+    }
+
+    throw new Error(`AI Grader report ${expectedReportId} was not found in the local station output directory.`);
+  }
+
+  async reportHistory(): Promise<AiGraderLocalStationReportHistory> {
+    const items = await this.reportHistoryItems();
+    return {
+      generatedAt: new Date().toISOString(),
+      source: "local_bridge_file_backed",
+      items,
+      stats: historyStats(items),
+    };
+  }
+
+  private async reportHistoryItems(): Promise<AiGraderLocalStationReportHistoryItem[]> {
+    const items: AiGraderLocalStationReportHistoryItem[] = [];
+    if (this.manifest.reportBundle) {
+      items.push(historyItemFromBundle({
+        bundle: this.manifest.reportBundle,
+        reportBundlePath: this.manifest.outputs.reportBundlePath,
+        sessionDir: this.manifest.outputs.sessionDir,
+      }));
+    } else if (this.manifest.reportId && this.manifest.outputs.unifiedReportPath) {
+      try {
+        const resolved = await this.reportBundle(this.manifest.reportId);
+        items.push(historyItemFromBundle({
+          bundle: resolved.bundle,
+          reportBundlePath: this.manifest.outputs.reportBundlePath,
+          sessionDir: this.manifest.outputs.sessionDir,
+        }));
+      } catch {
+        items.push({
+          reportId: this.manifest.reportId,
+          gradingSessionId: this.manifest.sessionId ?? this.manifest.reportId,
+          generatedAt: this.manifest.updatedAt,
+          status: "provisional_diagnostic_ready",
+          viewerPath: reportRoute(this.manifest.reportId),
+          localHtmlPath: this.manifest.outputs.unifiedReportPath,
+          reportBundlePath: this.manifest.outputs.reportBundlePath,
+          sessionDir: this.manifest.outputs.sessionDir,
+          frontPackageDir: this.manifest.outputs.frontPackageDir,
+          backPackageDir: this.manifest.outputs.backPackageDir,
+          warnings: this.manifest.warnings,
+        });
+      }
+    }
+
+    let entries: Array<{ name: string; isDirectory(): boolean }> = [];
+    try {
+      entries = await readdir(this.config.outputDir, { withFileTypes: true });
+    } catch {
+      entries = [];
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const sessionDir = path.join(this.config.outputDir, entry.name);
+      const stationManifestPath = path.join(sessionDir, "station-session.json");
+      if (!(await exists(stationManifestPath))) continue;
+      const stationManifest = await readJsonFile(stationManifestPath) as AiGraderLocalStationBridgeManifest | undefined;
+      if (!stationManifest?.reportId) continue;
+      const bundle = await readBundleFromPath(stationManifest.outputs?.reportBundlePath);
+      if (bundle) {
+        items.push(historyItemFromBundle({
+          bundle,
+          reportBundlePath: stationManifest.outputs.reportBundlePath,
+          sessionDir,
+        }));
+        continue;
+      }
+      const reportDir = stationManifest.outputs?.unifiedReportDir ?? dirnameIfFile(stationManifest.outputs?.unifiedReportPath);
+      if (reportDir) {
+        try {
+          const generated = await buildAiGraderReportBundle({
+            reportDir,
+            outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+            reportId: stationManifest.reportId,
+            publicBasePath: this.config.publicBasePath,
+          });
+          items.push(historyItemFromBundle({
+            bundle: generated,
+            reportBundlePath: stationManifest.outputs?.reportBundlePath,
+            sessionDir,
+          }));
+        } catch {
+          items.push({
+            reportId: stationManifest.reportId,
+            gradingSessionId: stationManifest.sessionId ?? stationManifest.reportId,
+            generatedAt: stationManifest.updatedAt,
+            status: "provisional_diagnostic_ready",
+            viewerPath: reportRoute(stationManifest.reportId),
+            localHtmlPath: stationManifest.outputs?.unifiedReportPath,
+            reportBundlePath: stationManifest.outputs?.reportBundlePath,
+            sessionDir,
+            frontPackageDir: stationManifest.outputs?.frontPackageDir,
+            backPackageDir: stationManifest.outputs?.backPackageDir,
+            warnings: stationManifest.warnings ?? [],
+          });
+        }
+      }
+    }
+
+    const deduped = new Map<string, AiGraderLocalStationReportHistoryItem>();
+    for (const item of items) deduped.set(item.reportId, item);
+    return Array.from(deduped.values()).sort((a, b) => String(b.generatedAt ?? "").localeCompare(String(a.generatedAt ?? "")));
   }
 
   async action(action: AiGraderLocalStationBridgeAction, request: AiGraderLocalStationBridgeActionRequest = {}): Promise<AiGraderLocalStationBridgeStatus> {
@@ -936,6 +1261,22 @@ function sendJson(res: http.ServerResponse, statusCode: number, body: unknown, o
   res.end(`${JSON.stringify(body)}\n`);
 }
 
+function sendText(
+  res: http.ServerResponse,
+  statusCode: number,
+  body: string,
+  origin: string | undefined,
+  config: AiGraderLocalStationBridgeConfig,
+  contentType = "text/plain; charset=utf-8"
+) {
+  setCors(res, origin, config);
+  res.writeHead(statusCode, {
+    "Content-Type": contentType,
+    "Cache-Control": "no-store",
+  });
+  res.end(body);
+}
+
 async function readJsonBody(req: http.IncomingMessage): Promise<JsonBody> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -1011,6 +1352,30 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for this route." }, origin, config);
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         return sendJson(res, 200, { ok: true, operation: url.pathname.slice(1), result: service.status() }, origin, config);
+      }
+
+      if (url.pathname === "/report-history") {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for /report-history." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        return sendJson(res, 200, { ok: true, operation: "report-history", result: await service.reportHistory() }, origin, config);
+      }
+
+      const reportBundleMatch = url.pathname.match(/^\/reports\/([^/]+)\/bundle$/);
+      if (reportBundleMatch) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for report bundles." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const reportId = decodeURIComponent(reportBundleMatch[1]);
+        return sendJson(res, 200, { ok: true, operation: "report-bundle", result: await service.reportBundle(reportId) }, origin, config);
+      }
+
+      const reportHtmlMatch = url.pathname.match(/^\/reports\/([^/]+)\/html$/);
+      if (reportHtmlMatch) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for report HTML." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const reportId = decodeURIComponent(reportHtmlMatch[1]);
+        const resolved = await service.reportBundle(reportId);
+        if (!resolved.bundle.reportHtmlPath) throw new Error("Report HTML path is not available for this local report.");
+        return sendText(res, 200, await readFile(resolved.bundle.reportHtmlPath, "utf-8"), origin, config, "text/html; charset=utf-8");
       }
 
       if (url.pathname.startsWith("/actions/")) {

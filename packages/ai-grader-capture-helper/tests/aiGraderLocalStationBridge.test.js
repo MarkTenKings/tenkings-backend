@@ -101,6 +101,12 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(status.sessionManifest.backCaptured, true);
   status = await service.action("run-diagnostics");
   assert.equal(status.latestReport.exists, true);
+  const resolvedReport = await service.reportBundle(status.latestReport.reportId);
+  assert.equal(resolvedReport.reportId, status.latestReport.reportId);
+  assert.equal(resolvedReport.bundle.finalGradeComputed, false);
+  const history = await service.reportHistory();
+  assert.equal(history.items.some((item) => item.reportId === status.latestReport.reportId), true);
+  assert.equal(history.stats.allTime >= 1, true);
   status = await service.action("export-report-bundle");
   assert.ok(status.outputs.reportBundlePath);
   assert.equal(status.safety.finalGradeComputed, false);
@@ -157,6 +163,8 @@ test("real station bridge uses allow-listed station command plan with fake runne
   assert.equal(status.hardwareActionsEnabled, true);
   assert.equal(status.safety.hardwareAccessed, true);
   assert.equal(status.outputs.unifiedReportPath, "unified-report/provisional-diagnostic-report.html");
+  assert.equal(status.timingSummary.entries.length, 4);
+  assert.equal(status.timingSummary.totalCommandMs >= 0, true);
 });
 
 test("station bridge CLI help exposes local bridge command and flags", async () => {

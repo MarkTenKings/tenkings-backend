@@ -203,6 +203,9 @@ export interface AiGraderStationCommandResult {
   stepId: AiGraderStationCommandStep["id"];
   ok: boolean;
   exitCode: number;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
   stdoutText?: string;
   stderrText?: string;
   payload?: any;

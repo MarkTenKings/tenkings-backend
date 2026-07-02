@@ -1312,7 +1312,21 @@ A public/shareable report viewer foundation is available at:
 /ai-grader/reports/[reportId]
 ```
 
-The current route uses fixture/sample report-bundle data only. It is read-only, has no hardware controls, performs no DB lookup/write, and shows provisional diagnostic report content with Vision Lab-style sections and graceful missing-asset states. It is the foundation for a future `collect.tenkings.co/...` report viewer, not a QR/certificate flow.
+The route is read-only, has no hardware controls, performs no DB lookup/write, and shows provisional diagnostic report content with Vision Lab-style sections and graceful missing-asset states. The fixture/sample report remains `sample-pr45`, but generated Dell station report IDs can now resolve through the token-gated local bridge when the browser opened the report from the station page. The station page stores only the local bridge URL/token in Dell browser local storage; the report viewer uses that token to fetch `GET /reports/<reportId>/bundle` from the local bridge and displays the generated local `report-bundle.json` data. If the local bridge/token is missing, the report route shows an explicit local-bridge-needed state instead of pretending fixture data is the generated report. This is the foundation for a future `collect.tenkings.co/...` report viewer, not a QR/certificate flow.
+
+PR #46 also adds read-only bridge report endpoints:
+
+```text
+GET /report-history
+GET /reports/<reportId>/bundle
+GET /reports/<reportId>/html
+```
+
+All three endpoints remain loopback-only, token-gated, and read-only. They do not expose hardware controls, do not write the database, and do not upload files. `/report-history` builds a local file-backed history index from station session manifests and report bundles under the local AI Grader output root. The browser station history panel uses that endpoint to show recent local card reports, list/tile views, basic all-time/month/week/day counts, provisional grade counts, and average provisional grade when available. Missing card category metadata is displayed as `Unknown`.
+
+The station page has been redesigned into a cockpit-style local workflow. The first screen is a large camera workspace with a placement guide and right-side control sidebar. The sidebar surfaces Start New Card, Start Grading, lighting/exposure draft values, report readiness, Safe Off, local paths, and command timing. Start Grading acts as the operator's ready confirmation for light idle/off plus fixture/ruler visibility, launches the existing native Basler pylon preview, preserves the preview-accepted profile, accepts it software-side, and captures the front. After front capture the page displays a red flip-card scrim; once the operator confirms the back is seated, the page captures the back, generates diagnostics, exports the local report bundle, and refreshes history. The only required operator pause in the browser flow is the front/back flip.
+
+Embedded browser Basler streaming is still pending. The production hardware preview path remains the native Windows pylon live preview window launched by the bridge. The browser page is designed around the camera cockpit, but it honestly labels embedded streaming as pending until an MJPEG/WebSocket/latest-frame bridge stream exists. PR #46 command timing is command-level timing only: the bridge records per-step durations for preview/front/back/report/safe-off, but the current bridge still delegates to existing capture-helper commands. Reducing inter-image delay toward one second requires a later warm-session capture runner that avoids process startup and preserves safety/sync behavior.
 
 The capture-helper now includes a software-only report-bundle export command for converting an existing local unified report folder into a web-ready bundle:
 

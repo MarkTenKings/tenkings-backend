@@ -1,5 +1,45 @@
 # Session Log (Append Only)
 
+## 2026-07-02 - AI Grader PR #46 cockpit/report open fix
+
+### Summary
+- Continued PR #46 on branch `feature/ai-grader-local-station-web-viewer`.
+- Mark reported that the browser-driven station hardware workflow mostly worked, but clicking the final report button did not open/view the generated final report.
+- Root cause fixed in software: the bridge had the generated unified report path and report ID, but the Next report viewer route still behaved like a fixture/sample report route for new local report IDs.
+- Added token-gated read-only bridge endpoints:
+  - `GET /reports/<reportId>/bundle`
+  - `GET /reports/<reportId>/html`
+  - `GET /report-history`
+- The bridge can now resolve a generated report bundle from the active station manifest, exported `report-bundle.json`, or the generated unified report directory. No DB write, storage upload, or hardware action is involved in this report-resolution path.
+- Updated the Next report viewer so generated local report IDs fetch their real bundle through the saved Dell bridge URL/token. If the bridge/token is missing, the viewer shows a clear local-bridge-needed state instead of silently showing fixture data as if it were the generated report.
+- Redesigned `/ai-grader/station` into a local cockpit-style page with a camera-first workspace, connect scrim, right sidebar, Start New Card, Start Grading, red flip-card scrim, View Report, Card History Reports, Safe Off, local output paths, and command timing.
+- Card History Reports is now file-backed through the local bridge history endpoint and shows local session/report items plus all-time/month/week/day counts, provisional grade counts, and average provisional grade when available.
+- Embedded browser Basler streaming remains pending. The current real live preview remains the native Windows pylon preview window launched by the bridge; the cockpit labels this limitation honestly.
+- Command-level timing is now recorded for station command results and surfaced in bridge status/page summary. Further capture speedup requires a later warm-session capture runner to avoid per-command process startup while preserving Basler/Leimac safety.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `163` tests.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `7` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass after stopping a stale local Next dev process that held `.next\trace`; existing unrelated `<img>`, Browserslist, and Tailwind glob warnings remain.
+
+### Pending
+- Run remaining validation: shared tests, simulator tests, final `git diff --check`.
+- Restart the local Next server and bridge with the updated code.
+- Mark-supervised browser smoke still needed before merge: connect station, run/verify workflow, click View Report and confirm generated report opens, open Card History and confirm the report appears, run Safe Off, and visually confirm final physical ring light off.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No production DB operation was run.
+- No manual deploy was run.
+- No network setting change was run.
+- No Leimac reset/default or persistent Basler/Leimac save was run.
+- No high-duty lighting command was run.
+- No hardware/image capture command was run in this software update.
+- No captured image or vendor binary was committed.
+- No final/certified/label/QR/certificate claim was added.
+
 ## 2026-06-09 - AI Grader Dino-Lite EDOF runtime PR #30 merged
 
 ### Summary

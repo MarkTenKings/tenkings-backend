@@ -123,6 +123,54 @@ export type AiGraderLocalStationStatus = {
     unifiedReportPath?: string;
     reportBundlePath?: string;
   };
+  timingSummary?: AiGraderLocalStationTimingSummary;
+};
+
+export type AiGraderLocalStationTimingSummary = {
+  totalCommandMs: number;
+  bridgeActionOverheadMs: number;
+  captureCommandMs: number;
+  reportGenerationMs: number;
+  safeOffMs: number;
+  entries: Array<{
+    stepId: string;
+    durationMs: number;
+    startedAt?: string;
+    finishedAt?: string;
+  }>;
+  targetInterCaptureNote: string;
+};
+
+export type AiGraderLocalReportHistoryItem = {
+  reportId: string;
+  gradingSessionId: string;
+  generatedAt?: string;
+  status: string;
+  viewerPath: string;
+  localHtmlPath?: string;
+  reportBundlePath?: string;
+  sessionDir?: string;
+  frontPackageDir?: string;
+  backPackageDir?: string;
+  provisionalOverallGrade?: number;
+  confidenceBand?: string;
+  title?: string;
+  category?: string;
+  warnings: string[];
+};
+
+export type AiGraderLocalReportHistory = {
+  generatedAt: string;
+  source: "local_bridge_file_backed" | "fixture";
+  items: AiGraderLocalReportHistoryItem[];
+  stats: {
+    allTime: number;
+    monthly: number;
+    weekly: number;
+    daily: number;
+    averageProvisionalGrade?: number;
+    provisionalGradeCounts: Record<string, number>;
+  };
 };
 
 export const AI_GRADER_STATION_STEPS: AiGraderStationStep[] = [
@@ -285,6 +333,48 @@ export function buildAiGraderLocalStationStatus(input: {
       ],
     },
     reportBundle,
+    timingSummary: {
+      totalCommandMs: 0,
+      bridgeActionOverheadMs: 0,
+      captureCommandMs: 0,
+      reportGenerationMs: 0,
+      safeOffMs: 0,
+      entries: [],
+      targetInterCaptureNote: "Contract preview uses fixture data; real timing appears when connected to the local bridge.",
+    },
+  };
+}
+
+export function buildSampleAiGraderReportHistory(): AiGraderLocalReportHistory {
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "fixture",
+    items: [
+      {
+        reportId: SAMPLE_AI_GRADER_REPORT_BUNDLE.reportId,
+        gradingSessionId: SAMPLE_AI_GRADER_REPORT_BUNDLE.gradingSessionId,
+        generatedAt: SAMPLE_AI_GRADER_REPORT_BUNDLE.generatedAt,
+        status: SAMPLE_AI_GRADER_REPORT_BUNDLE.reportStatus,
+        viewerPath: `/ai-grader/reports/${SAMPLE_AI_GRADER_REPORT_BUNDLE.reportId}`,
+        localHtmlPath: SAMPLE_AI_GRADER_REPORT_BUNDLE.reportHtmlPath,
+        sessionDir: SAMPLE_AI_GRADER_REPORT_BUNDLE.localReportFolder,
+        frontPackageDir: SAMPLE_AI_GRADER_REPORT_BUNDLE.evidenceReferences.frontPackageDir,
+        backPackageDir: SAMPLE_AI_GRADER_REPORT_BUNDLE.evidenceReferences.backPackageDir,
+        provisionalOverallGrade: SAMPLE_AI_GRADER_REPORT_BUNDLE.provisionalGrade?.overall,
+        confidenceBand: SAMPLE_AI_GRADER_REPORT_BUNDLE.provisionalGrade?.confidence?.band,
+        title: SAMPLE_AI_GRADER_REPORT_BUNDLE.cardIdentity.title,
+        category: "Unknown",
+        warnings: SAMPLE_AI_GRADER_REPORT_BUNDLE.warnings,
+      },
+    ],
+    stats: {
+      allTime: 1,
+      monthly: 1,
+      weekly: 1,
+      daily: 1,
+      averageProvisionalGrade: SAMPLE_AI_GRADER_REPORT_BUNDLE.provisionalGrade?.overall,
+      provisionalGradeCounts: { "8": 1 },
+    },
   };
 }
 

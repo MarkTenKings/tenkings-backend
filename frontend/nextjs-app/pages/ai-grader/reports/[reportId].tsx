@@ -1,6 +1,17 @@
 import Head from "next/head";
 import { useRouter } from "next/router";
-import { getAiGraderReportBundle, hasNoFinalCertifiedClaims } from "../../../lib/aiGraderReportBundle";
+import { useEffect, useState } from "react";
+import {
+  getAiGraderReportBundle,
+  hasNoFinalCertifiedClaims,
+  type AiGraderReportBundle,
+} from "../../../lib/aiGraderReportBundle";
+import {
+  AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY,
+  AI_GRADER_STATION_TOKEN_STORAGE_KEY,
+  DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+  fetchAiGraderStationReportBundle,
+} from "../../../lib/aiGraderStationBridgeClient";
 
 const ELEMENT_LABELS = ["centering", "corners", "edges", "surface"] as const;
 const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Confidence", "Evidence Replay"];
@@ -11,10 +22,39 @@ function scoreText(score?: number) {
 
 export default function AiGraderReportViewerPage() {
   const router = useRouter();
-  const bundle = getAiGraderReportBundle(router.query.reportId);
+  const fallbackBundle = getAiGraderReportBundle(router.query.reportId);
+  const [localBundle, setLocalBundle] = useState<AiGraderReportBundle | null>(null);
+  const [localBridgeError, setLocalBridgeError] = useState<string | null>(null);
+  const [localBridgeLoading, setLocalBridgeLoading] = useState(false);
+  const bundle = localBundle ?? fallbackBundle;
   const story = bundle.provisionalGrade;
   const noClaims = hasNoFinalCertifiedClaims(bundle);
   const primaryCandidate = story?.gradeImpactCandidates?.[0];
+  const isSampleFallback = !localBundle && bundle.reportId !== "sample-pr45";
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    const reportId = Array.isArray(router.query.reportId) ? router.query.reportId[0] : router.query.reportId;
+    if (!reportId || reportId === "sample-pr45") return;
+    const bridgeUrl = window.localStorage.getItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY) ?? DEFAULT_AI_GRADER_STATION_BRIDGE_URL;
+    const stationToken = window.localStorage.getItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY) ?? "";
+    if (!stationToken) {
+      setLocalBridgeError("Generated local reports require the Dell station bridge token saved by the station page.");
+      return;
+    }
+    setLocalBridgeLoading(true);
+    setLocalBridgeError(null);
+    fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId })
+      .then((nextBundle) => {
+        setLocalBundle(nextBundle);
+      })
+      .catch((error) => {
+        setLocalBridgeError(error instanceof Error ? error.message : "Could not load generated local AI Grader report.");
+      })
+      .finally(() => {
+        setLocalBridgeLoading(false);
+      });
+  }, [router.isReady, router.query.reportId]);
 
   return (
     <>
@@ -34,6 +74,19 @@ export default function AiGraderReportViewerPage() {
             <strong>Provisional Diagnostic - Not Certified - No Final Grade</strong>
           </div>
         </header>
+
+        {localBridgeLoading || localBridgeError || isSampleFallback ? (
+          <section className={localBridgeError || isSampleFallback ? "local-status warn" : "local-status"}>
+            <strong>{localBridgeLoading ? "Loading generated Dell report" : localBundle ? "Generated local report loaded" : "Local report bridge needed"}</strong>
+            <p>
+              {localBridgeLoading
+                ? "The viewer is reading the generated report bundle from the token-gated Dell bridge."
+                : localBridgeError
+                  ? localBridgeError
+                  : "This route is open, but the generated report bundle was not resolved from the local bridge. Open it from the Station page after connecting the bridge."}
+            </p>
+          </section>
+        ) : null}
 
         <section className="hero">
           <div className="grade-panel">
@@ -157,6 +210,8 @@ export default function AiGraderReportViewerPage() {
           <dl>
             <dt>Local report path</dt>
             <dd>{bundle.reportHtmlPath ?? "not provided"}</dd>
+            <dt>Bundle source</dt>
+            <dd>{localBundle ? "Dell local station bridge" : "fixture/sample fallback"}</dd>
             <dt>Front evidence</dt>
             <dd>{bundle.evidenceReferences.frontPackageDir ?? "missing"}</dd>
             <dt>Back evidence</dt>
@@ -183,6 +238,7 @@ export default function AiGraderReportViewerPage() {
           font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
         .topbar,
+        .local-status,
         .hero,
         .summary,
         .vision-lab,
@@ -197,6 +253,24 @@ export default function AiGraderReportViewerPage() {
           justify-content: space-between;
           gap: 20px;
           align-items: flex-start;
+        }
+        .local-status {
+          max-width: 1260px;
+          margin: 0 auto 20px;
+          border: 1px solid rgba(35, 118, 75, 0.24);
+          background: rgba(226, 247, 235, 0.82);
+          border-radius: 8px;
+          padding: 14px 16px;
+          color: #17442a;
+        }
+        .local-status.warn {
+          border-color: rgba(166, 92, 20, 0.3);
+          background: rgba(255, 244, 220, 0.92);
+          color: #68400e;
+        }
+        .local-status p {
+          margin-top: 5px;
+          line-height: 1.45;
         }
         .eyebrow {
           margin: 0 0 8px;

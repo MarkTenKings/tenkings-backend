@@ -4,6 +4,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import aiGraderLocalStationHandler from "../pages/api/ai-grader/station/[...action]";
 import {
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+  buildSampleAiGraderReportHistory,
   buildAiGraderLocalStationStatus,
   parseAiGraderStationAction,
 } from "../lib/aiGraderLocalStation";
@@ -104,6 +105,16 @@ test("sample public report bundle keeps provisional-only safety flags", () => {
   assert.equal(SAMPLE_AI_GRADER_REPORT_BUNDLE.visionLab.available, true);
   assert.equal(hasNoFinalCertifiedClaims(SAMPLE_AI_GRADER_REPORT_BUNDLE), true);
   assert.match(SAMPLE_AI_GRADER_REPORT_BUNDLE.limitations.join(" "), /No QR Certificate Yet/);
+});
+
+test("local station sample history aggregates report stats without certified claims", () => {
+  const history = buildSampleAiGraderReportHistory();
+  assert.equal(history.source, "fixture");
+  assert.equal(history.items.length, 1);
+  assert.equal(history.items[0].viewerPath, "/ai-grader/reports/sample-pr45");
+  assert.equal(history.stats.allTime, 1);
+  assert.equal(history.stats.provisionalGradeCounts["8"], 1);
+  assert.equal(hasNoFinalCertifiedClaims(SAMPLE_AI_GRADER_REPORT_BUNDLE), true);
 });
 
 test("browser station bridge client accepts only loopback bridge URLs", () => {

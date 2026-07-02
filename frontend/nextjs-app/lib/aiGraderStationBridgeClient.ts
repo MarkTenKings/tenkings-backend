@@ -1,6 +1,13 @@
-import type { AiGraderLocalStationStatus, AiGraderStationAction } from "./aiGraderLocalStation";
+import type {
+  AiGraderLocalReportHistory,
+  AiGraderLocalStationStatus,
+  AiGraderStationAction,
+} from "./aiGraderLocalStation";
+import type { AiGraderReportBundle } from "./aiGraderReportBundle";
 
 export const DEFAULT_AI_GRADER_STATION_BRIDGE_URL = "http://127.0.0.1:47652";
+export const AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY = "tenkings.aiGraderStation.bridgeUrl";
+export const AI_GRADER_STATION_TOKEN_STORAGE_KEY = "tenkings.aiGraderStation.stationToken";
 
 export type AiGraderStationBridgeCallInput = {
   baseUrl: string;
@@ -51,4 +58,54 @@ export async function callAiGraderStationBridge(input: AiGraderStationBridgeCall
     throw new Error(payload.message ?? payload.error?.message ?? "AI Grader local station bridge request failed.");
   }
   return payload.result as AiGraderLocalStationStatus;
+}
+
+async function bridgeGetJson<T>(input: { baseUrl: string; stationToken: string; path: string }): Promise<T> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  if (!input.stationToken.trim()) {
+    throw new Error("AI Grader station bridge token is required.");
+  }
+  const response = await fetch(`${baseUrl}${input.path}`, {
+    method: "GET",
+    headers: {
+      "x-ai-grader-station-token": input.stationToken,
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok !== true) {
+    throw new Error(payload.message ?? payload.error?.message ?? "AI Grader local station bridge request failed.");
+  }
+  return payload.result as T;
+}
+
+export async function fetchAiGraderStationReportBundle(input: {
+  baseUrl: string;
+  stationToken: string;
+  reportId: string;
+}): Promise<AiGraderReportBundle> {
+  const result = await bridgeGetJson<{ reportId: string; bundle: AiGraderReportBundle; source: string }>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: `/reports/${encodeURIComponent(input.reportId)}/bundle`,
+  });
+  return result.bundle;
+}
+
+export async function fetchAiGraderStationReportHistory(input: {
+  baseUrl: string;
+  stationToken: string;
+}): Promise<AiGraderLocalReportHistory> {
+  return bridgeGetJson<AiGraderLocalReportHistory>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: "/report-history",
+  });
+}
+
+export function aiGraderStationReportHtmlBridgeUrl(input: {
+  baseUrl: string;
+  reportId: string;
+}) {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  return `${baseUrl}/reports/${encodeURIComponent(input.reportId)}/html`;
 }
