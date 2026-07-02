@@ -1,5 +1,22 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-02 UTC, AI Grader PR #46 browser report retest)
+- Branch: `feature/ai-grader-local-station-web-viewer`; PR #46 remains open and must not be merged yet until Mark accepts the final browser retest.
+- Restarted the local bridge with latest code at `http://127.0.0.1:47652` and token `tk-local-pr46-retest`, plus local Next at `http://127.0.0.1:3020`.
+- No new hardware grading session was run; the retest reused the existing generated browser-station report:
+  - Report route: `http://127.0.0.1:3020/ai-grader/reports/ai-grader-browser-station-session-2026-07-02T035658313Z-report`.
+  - Local HTML: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-02T041413536Z\provisional-diagnostic-report.html`.
+- Fixed a restart-specific report button blocker: a fresh bridge process now promotes the newest local station history report into `/status.latestReport` when no active in-memory session exists.
+- Verification:
+  - Bridge `/status` returned `latestReport.exists=true` for the generated report above.
+  - Bridge `/report-history` listed the generated local report with provisional grade `6.69`, local path, and local stats.
+  - Bridge `/reports/<reportId>/bundle` resolved the generated report bundle from local history/report directory.
+  - Browser report route rendered the generated report id and grade `6.69` with `No Final Grade`, without falling back to `sample-pr45` and without showing the local-bridge-needed warning when the station token was present.
+  - Station page connected to the bridge, showed report status `Ready`, enabled `View Report`, and displayed the generated local report path.
+  - Card History opened and showed the generated local report path and provisional grade.
+- Added focused test coverage for the fresh-bridge/latest-history fallback. Capture-helper build and tests passed (`164` tests); remaining full validation is pending after docs.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no production DB ops, no manual deploy, no network changes, no Leimac reset/default, no persistent Basler/Leimac saves, no high-duty lighting, no hardware/image capture commands, no captured image/vendor binary commits, and no final/certified/label/QR/certificate claims.
+
 ## Session Update (2026-07-02 UTC, AI Grader PR #46 cockpit/report open fix)
 - Branch: `feature/ai-grader-local-station-web-viewer`.
 - PR #46 remains open and must not be merged yet.

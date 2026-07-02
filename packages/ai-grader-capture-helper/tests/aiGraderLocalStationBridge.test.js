@@ -1,5 +1,6 @@
 const os = require("node:os");
 const path = require("node:path");
+const fs = require("node:fs");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
@@ -165,6 +166,31 @@ test("real station bridge uses allow-listed station command plan with fake runne
   assert.equal(status.outputs.unifiedReportPath, "unified-report/provisional-diagnostic-report.html");
   assert.equal(status.timingSummary.entries.length, 4);
   assert.equal(status.timingSummary.totalCommandMs >= 0, true);
+});
+
+test("fresh bridge status exposes latest generated report from local history", () => {
+  const dir = outputDir(`history-latest-${Date.now()}`);
+  const sessionDir = path.join(dir, "ai-grader-browser-station-session-2026-07-02T035658313Z");
+  const reportDir = path.join(dir, "ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-02T041413536Z");
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.mkdirSync(reportDir, { recursive: true });
+  const reportHtmlPath = path.join(reportDir, "provisional-diagnostic-report.html");
+  fs.writeFileSync(reportHtmlPath, "<html><body>generated report</body></html>");
+  fs.writeFileSync(path.join(sessionDir, "station-session.json"), JSON.stringify({
+    reportId: "ai-grader-browser-station-session-2026-07-02T035658313Z-report",
+    sessionId: "ai-grader-browser-station-session-2026-07-02T035658313Z-session",
+    createdAt: "2026-07-02T03:56:58.313Z",
+    updatedAt: "2026-07-02T04:14:13.536Z",
+    outputs: { unifiedReportPath: reportHtmlPath, unifiedReportDir: reportDir },
+  }));
+
+  const service = new AiGraderLocalStationBridgeService(mockConfig({ outputDir: dir }));
+  const status = service.status();
+  assert.equal(status.latestReport.exists, true);
+  assert.equal(status.latestReport.reportId, "ai-grader-browser-station-session-2026-07-02T035658313Z-report");
+  assert.equal(status.latestReport.localHtmlPath, reportHtmlPath);
+  assert.equal(status.latestReport.localViewerPath, "/ai-grader/reports/ai-grader-browser-station-session-2026-07-02T035658313Z-report");
 });
 
 test("station bridge CLI help exposes local bridge command and flags", async () => {

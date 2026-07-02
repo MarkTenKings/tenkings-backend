@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import {
   assertFixedRigOutputDirAllowed,
@@ -810,6 +811,41 @@ function historyStats(items: AiGraderLocalStationReportHistoryItem[]): AiGraderL
   };
 }
 
+function latestReportFromHistorySync(outputDir: string): AiGraderLocalStationBridgeStatus["latestReport"] | undefined {
+  let entries: ReturnType<typeof readdirSync> = [];
+  try {
+    entries = readdirSync(outputDir, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+
+  const candidates: Array<{ reportId: string; localHtmlPath: string; generatedAt?: string }> = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const stationManifestPath = path.join(outputDir, entry.name, "station-session.json");
+    if (!existsSync(stationManifestPath)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(stationManifestPath, "utf8")) as Partial<AiGraderLocalStationBridgeManifest>;
+      const reportId = parsed.reportId?.trim();
+      const localHtmlPath = parsed.outputs?.unifiedReportPath;
+      if (!reportId || !localHtmlPath || !existsSync(localHtmlPath)) continue;
+      candidates.push({ reportId, localHtmlPath, generatedAt: parsed.updatedAt ?? parsed.createdAt });
+    } catch {
+      continue;
+    }
+  }
+
+  const latest = candidates.sort((a, b) => String(b.generatedAt ?? "").localeCompare(String(a.generatedAt ?? "")))[0];
+  if (!latest) return undefined;
+  return {
+    reportId: latest.reportId,
+    localHtmlPath: latest.localHtmlPath,
+    localViewerPath: reportRoute(latest.reportId),
+    publicViewerRoute: "/ai-grader/reports/[reportId]",
+    exists: true,
+  };
+}
+
 async function readBundleFromPath(bundlePath: string | undefined): Promise<AiGraderReportBundle | undefined> {
   if (!bundlePath) return undefined;
   const parsed = await readJsonFile(bundlePath);
@@ -834,6 +870,7 @@ export class AiGraderLocalStationBridgeService {
     const reportId = this.manifest.reportId;
     const viewerRoute = reportRoute(reportId);
     const reportReady = Boolean(this.manifest.outputs.unifiedReportPath);
+    const latestHistoryReport = reportReady ? undefined : latestReportFromHistorySync(this.config.outputDir);
     return {
       ok: true,
       bridgeVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
@@ -843,7 +880,7 @@ export class AiGraderLocalStationBridgeService {
       stationUrl: this.stationUrl,
       nextAction,
       nextActionLabel: actionLabel(nextAction),
-      latestReport: {
+      latestReport: latestHistoryReport ?? {
         reportId,
         localHtmlPath: this.manifest.outputs.unifiedReportPath,
         localViewerPath: viewerRoute,

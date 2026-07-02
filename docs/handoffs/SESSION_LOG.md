@@ -1,5 +1,40 @@
 # Session Log (Append Only)
 
+## 2026-07-02 - AI Grader PR #46 browser report retest
+
+### Summary
+- Continued PR #46 on branch `feature/ai-grader-local-station-web-viewer`.
+- Restarted the local Dell station bridge on `http://127.0.0.1:47652` with token `tk-local-pr46-retest` and restarted the local Next dev server on `http://127.0.0.1:3020`.
+- No new hardware grading session was run. No Basler capture, Leimac light write, safe-off hardware command, image capture, DB operation, migration, deploy, or network-setting change was run in this retest.
+- Found and fixed one restart-specific issue: after a bridge restart, `/status` forgot the previous generated report even though `/report-history` could resolve it. This left the station `View Report` button dependent on active in-memory session state.
+- Added a bridge status fallback that scans local station `station-session.json` history and exposes the newest existing generated report as `latestReport` when no active report is loaded.
+- Verified through the bridge:
+  - `/status` now returns `latestReport.exists=true` for `ai-grader-browser-station-session-2026-07-02T035658313Z-report`.
+  - `/report-history` lists the generated report with grade `6.69`, local HTML path, front/back package paths, and local stats.
+  - `/reports/<reportId>/bundle` resolves the generated bundle from local history/report directory.
+- Browser retest:
+  - Direct report route `http://127.0.0.1:3020/ai-grader/reports/ai-grader-browser-station-session-2026-07-02T035658313Z-report` rendered the generated bundle with report id, provisional grade `6.69`, `No Final Grade`, no `sample-pr45` fallback, and no local-bridge-needed warning when the station token was present.
+  - Station page connected to the bridge and showed report status `Ready`; `View Report` button was enabled and station displayed the generated local report HTML path.
+  - Card History panel opened and showed the generated local report path and provisional grade.
+- Added focused bridge test coverage for a fresh bridge process exposing the latest generated local report from prior station history.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `164` tests.
+- Remaining full validation is pending after this doc update.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No production DB operation was run.
+- No manual deploy was run.
+- No network setting change was run.
+- No Leimac reset/default or persistent Basler/Leimac save was run.
+- No high-duty lighting command was run.
+- No hardware capture command was run.
+- No captured image or vendor binary was committed.
+- No final/certified/label/QR/certificate claim was added.
+
 ## 2026-07-02 - AI Grader PR #46 cockpit/report open fix
 
 ### Summary
