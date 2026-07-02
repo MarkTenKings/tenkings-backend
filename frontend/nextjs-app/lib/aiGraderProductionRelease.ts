@@ -102,7 +102,7 @@ export type AiGraderProductionRelease = {
   limitations: string[];
   databaseIntegration: {
     existingModels: string[];
-    migrationsAdded: false;
+    migrationsAdded: true;
     migrationsRun: false;
     productionDbWritesPerformed: false;
     recommendedPersistPath: string[];
@@ -231,11 +231,15 @@ export function buildSampleAiGraderProductionRelease(bundle: AiGraderReportBundl
     warnings: ["Final AI-Grader Report V0 is not a certified claim."],
     limitations: ["No production DB write in this fixture.", "No physical label was printed."],
     databaseIntegration: {
-      existingModels: ["CaptureSession", "GradeRun", "EvidenceArtifact", "GradeCertificate", "CardAsset", "Item", "PackLabel", "QrCode"],
-      migrationsAdded: false,
+      existingModels: ["AiGraderSession", "AiGraderReport", "AiGraderEvidenceAsset", "AiGraderGrade", "AiGraderLabel", "AiGraderPublication", "AiGraderValuation", "CardAsset", "Item", "PackLabel", "QrCode"],
+      migrationsAdded: true,
       migrationsRun: false,
       productionDbWritesPerformed: false,
-      recommendedPersistPath: ["finalizeGradeRun", "createGradeCertificateDraft", "issueGradeCertificate after readiness"],
+      recommendedPersistPath: [
+        "Apply reviewed AiGrader production-release migration through approved runbook.",
+        "Enable env-gated production publish API after DB/storage readiness.",
+        "Persist AiGraderSession/AiGraderReport/AiGraderEvidenceAsset/AiGraderGrade/AiGraderLabel/AiGraderPublication/AiGraderValuation.",
+      ],
     },
     storageIntegration: {
       mode: "local_bundle_only",

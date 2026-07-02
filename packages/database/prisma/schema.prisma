@@ -2853,6 +2853,217 @@ model EvidenceArtifact {
   @@index([certificateId])
 }
 
+model AiGraderSession {
+  id                   String   @id @default(cuid())
+  tenantId             String
+  gradingSessionId     String   @unique
+  reportId             String?
+  operatorUserId       String?
+  operatorId           String?
+  cardAssetId          String?
+  itemId               String?
+  status               String   @default("draft")
+  source               String   @default("browser_station")
+  cardIdentity         Json?
+  acceptedProfile      Json?
+  calibrationProfile   Json?
+  captureSummary       Json?
+  safetySummary        Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  reports        AiGraderReport[]
+  evidenceAssets AiGraderEvidenceAsset[]
+  labels         AiGraderLabel[]
+  valuations     AiGraderValuation[]
+
+  @@index([tenantId, status, createdAt])
+  @@index([cardAssetId])
+  @@index([itemId])
+  @@index([operatorUserId])
+}
+
+model AiGraderReport {
+  id                          String   @id @default(cuid())
+  tenantId                    String
+  sessionId                   String
+  session                     AiGraderSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  reportId                    String   @unique
+  reportStatus                String   @default("draft")
+  finalGradeStatus            String   @default("not_computed")
+  visibilityStatus            String   @default("private")
+  publicationStatus           String   @default("draft")
+  cardAssetId                 String?
+  itemId                      String?
+  publicReportUrl             String?
+  qrPayloadUrl                String?
+  reportBundleStorageKey      String?
+  productionReleaseStorageKey String?
+  labelDataStorageKey         String?
+  assetManifestStorageKey     String?
+  reportHtmlStorageKey        String?
+  finalOverallGrade           Float?
+  elementScores               Json?
+  confidence                  Json?
+  gradeStory                  Json?
+  whyNot10                    Json?
+  gradeImpactCandidates       Json?
+  gates                       Json?
+  warnings                    Json?
+  calibrationProfile          Json?
+  repeatabilitySummary        Json?
+  lightingProfile             Json?
+  visionLabArtifacts          Json?
+  valuationSummary            Json?
+  checksumSummary             Json?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+  finalizedAt                 DateTime?
+  publishedAt                 DateTime?
+  unpublishedAt               DateTime?
+  revokedAt                   DateTime?
+  errorCode                   String?
+
+  grade          AiGraderGrade?
+  labels         AiGraderLabel[]
+  publication    AiGraderPublication?
+  evidenceAssets AiGraderEvidenceAsset[]
+  valuations     AiGraderValuation[]
+
+  @@index([tenantId, publicationStatus, createdAt])
+  @@index([cardAssetId])
+  @@index([itemId])
+  @@index([sessionId])
+}
+
+model AiGraderEvidenceAsset {
+  id               String   @id @default(cuid())
+  tenantId         String
+  sessionId        String?
+  session          AiGraderSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  reportId         String?
+  report           AiGraderReport?  @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  artifactId       String
+  artifactClass    String
+  kind             String
+  side             String?
+  storageKey       String
+  publicUrl        String?
+  checksumSha256   String?
+  mimeType         String?
+  byteSize         Int?
+  widthPx          Int?
+  heightPx         Int?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  @@unique([tenantId, artifactId])
+  @@unique([storageKey])
+  @@index([tenantId, artifactClass, kind])
+  @@index([sessionId])
+  @@index([reportId])
+}
+
+model AiGraderGrade {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  reportId              String   @unique
+  report                AiGraderReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  status                String
+  overall               Float?
+  centeringScore        Float?
+  cornersScore          Float?
+  edgesScore            Float?
+  surfaceScore          Float?
+  confidenceScore       Float?
+  confidenceBand        String?
+  gradeImpactReasons    Json?
+  whyNot10              Json?
+  gates                 Json?
+  warnings              Json?
+  operatorFinalization  Json?
+  overrideReason        String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([overall])
+}
+
+model AiGraderLabel {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  sessionId           String?
+  session             AiGraderSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  reportId            String
+  report              AiGraderReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  certId              String   @unique
+  labelStatus         String   @default("label_data_ready")
+  certificateStatus   String   @default("report_id_issued_not_certified")
+  qrPayloadUrl        String
+  publicReportUrl     String
+  labelGradeText      String
+  labelDataStorageKey String?
+  labelPreviewKey     String?
+  labelPreviewUrl     String?
+  physicalPrintStatus String   @default("not_printed")
+  payload             Json
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([tenantId, labelStatus])
+  @@index([reportId])
+}
+
+model AiGraderPublication {
+  id                     String   @id @default(cuid())
+  tenantId               String
+  reportId               String   @unique
+  report                 AiGraderReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  status                 String   @default("draft")
+  publicReportUrl        String?
+  qrPayloadUrl           String?
+  reportBundleStorageKey String?
+  storageKeyPrefix       String?
+  assetManifest          Json?
+  publicationManifest    Json?
+  publishedByUserId      String?
+  publishedAt            DateTime?
+  unpublishedAt          DateTime?
+  revokedAt              DateTime?
+  revocationReason       String?
+  errorCode              String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([tenantId, status, updatedAt])
+}
+
+model AiGraderValuation {
+  id              String   @id @default(cuid())
+  tenantId        String
+  sessionId       String?
+  session         AiGraderSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  reportId        String
+  report          AiGraderReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  status          String   @default("not_ready_missing_grade")
+  source          String   @default("ebay_sold")
+  searchQuery     String?
+  valuationMinor  Int?
+  valuationCurrency String? @default("USD")
+  compsRefs       Json?
+  resultSummary   Json?
+  requestedByUserId String?
+  requestedAt     DateTime?
+  completedAt     DateTime?
+  errorCode       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId, status, updatedAt])
+  @@index([reportId])
+}
+
 model CustodyEvent {
   id                 String            @id @default(cuid())
   tenantId           String

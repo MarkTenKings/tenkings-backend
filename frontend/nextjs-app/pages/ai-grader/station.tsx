@@ -19,6 +19,13 @@ import {
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
+type ProductionPublishState = {
+  status: "idle" | "pending" | "published" | "disabled" | "error";
+  message: string;
+  publicReportUrl?: string;
+  qrPayloadUrl?: string;
+  uploadedAssetCount?: number;
+};
 
 async function callStationContract(action: AiGraderStationAction): Promise<AiGraderLocalStationStatus> {
   const method = action === "status" || action === "latest-report" || action === "session-manifest" ? "GET" : "POST";
@@ -66,6 +73,10 @@ export default function AiGraderStationPage() {
   const [historyView, setHistoryView] = useState<HistoryView>("list");
   const [historySort, setHistorySort] = useState<HistorySort>("most_recent");
   const [history, setHistory] = useState<AiGraderLocalReportHistory>(() => buildSampleAiGraderReportHistory());
+  const [productionPublish, setProductionPublish] = useState<ProductionPublishState>({
+    status: "idle",
+    message: "Ten Kings DB/storage publish has not been run.",
+  });
   const [profileDraft, setProfileDraft] = useState({
     dutyPercent: status.acceptedProfile.dutyPercent,
     exposureUs: status.acceptedProfile.exposureUs,
@@ -234,6 +245,48 @@ export default function AiGraderStationPage() {
       await refreshHistory();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Production release action failed.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const publishToTenKingsSystem = async () => {
+    setBusy("ten-kings-publish");
+    setError(null);
+    try {
+      if (!status.reportBundle || !status.productionRelease) {
+        throw new Error("A finalized production release and report bundle are required before Ten Kings publish.");
+      }
+      const response = await fetch("/api/admin/ai-grader/production/publish", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          publicationStatus: "published",
+          reportBundle: status.reportBundle,
+          productionRelease: status.productionRelease,
+          cardAssetId: status.reportBundle.cardIdentity.cardAssetId,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true) {
+        setProductionPublish({
+          status: payload.code === "AI_GRADER_PRODUCTION_PUBLISH_DISABLED" ? "disabled" : "error",
+          message: payload.message ?? "Ten Kings publish failed.",
+        });
+        return;
+      }
+      setProductionPublish({
+        status: "published",
+        message: "Report bundle/assets were uploaded through the configured storage mode and persistence returned successfully.",
+        publicReportUrl: payload.result.publicReportUrl,
+        qrPayloadUrl: payload.result.qrPayloadUrl,
+        uploadedAssetCount: payload.result.uploadedAssetCount,
+      });
+    } catch (requestError) {
+      setProductionPublish({
+        status: "error",
+        message: requestError instanceof Error ? requestError.message : "Ten Kings publish failed.",
+      });
     } finally {
       setBusy(null);
     }
@@ -424,10 +477,35 @@ export default function AiGraderStationPage() {
             <button type="button" onClick={() => runProductionAction("generate-label-data")} disabled={!finalReady || busy !== null}>
               {busy === "generate-label-data" ? "Generating" : "Generate Label Data"}
             </button>
+            <button type="button" onClick={publishToTenKingsSystem} disabled={!status.productionRelease || busy !== null}>
+              {busy === "ten-kings-publish" ? "Publishing" : "Publish to Ten Kings System"}
+            </button>
             <button type="button" onClick={openHistory}>
               Card History Reports
             </button>
           </div>
+
+          <section className="production-status">
+            <p className="eyebrow">Production Publish</p>
+            <div>
+              <span>DB persistence</span>
+              <strong>{productionPublish.status === "published" ? "Complete" : productionPublish.status === "disabled" ? "Disabled" : "Pending"}</strong>
+            </div>
+            <div>
+              <span>Storage upload</span>
+              <strong>{productionPublish.uploadedAssetCount ? `${productionPublish.uploadedAssetCount} assets` : "Pending"}</strong>
+            </div>
+            <div>
+              <span>Publication</span>
+              <strong>{productionPublish.status}</strong>
+            </div>
+            <p>{productionPublish.message}</p>
+            {productionPublish.publicReportUrl ? <p>Public URL: {productionPublish.publicReportUrl}</p> : null}
+            {productionPublish.qrPayloadUrl ? <p>QR URL: {productionPublish.qrPayloadUrl}</p> : null}
+            <p>Label: {labelReady ? "label data ready" : "pending"}</p>
+            <p>Card linkage: {status.reportBundle?.cardIdentity.cardAssetId ?? "not linked"}</p>
+            <p>Comps: operator-triggered only after card identity and final grade are present</p>
+          </section>
 
           <button type="button" className="safe" onClick={safeOff} disabled={busy !== null}>
             {busy === "safe-off" ? "Safe Off Running" : "Safe Off / End Session"}
@@ -738,6 +816,7 @@ export default function AiGraderStationPage() {
         .next-card,
         .profile,
         .status,
+        .production-status,
         .paths,
         .timing {
           border: 1px solid rgba(255, 255, 255, 0.1);
@@ -787,6 +866,34 @@ export default function AiGraderStationPage() {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
           gap: 10px;
+        }
+        .production-status {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 10px;
+        }
+        .production-status .eyebrow,
+        .production-status p {
+          grid-column: 1 / -1;
+        }
+        .production-status p {
+          color: #bdb5a8;
+          font-size: 12px;
+          line-height: 1.45;
+          overflow-wrap: anywhere;
+        }
+        .production-status span {
+          display: block;
+          color: #9d9688;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+        }
+        .production-status strong {
+          display: block;
+          margin-top: 5px;
+          font-size: 16px;
         }
         .action-row {
           display: grid;

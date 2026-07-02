@@ -1,5 +1,41 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-02 UTC, AI Grader PR #47 production integration)
+- Branch: `feature/ai-grader-production-release-v0`; PR #47 remains open and must not be merged yet.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/47`.
+- Continued Production Release V0 beyond local artifact contracts into an env-gated Ten Kings persistence/publication foundation:
+  - Added Prisma schema and review-only migration file for `AiGraderSession`, `AiGraderReport`, `AiGraderEvidenceAsset`, `AiGraderGrade`, `AiGraderLabel`, `AiGraderPublication`, and `AiGraderValuation`.
+  - Added a database production service that builds sanitized storage plans, label preview HTML, valuation readiness, persistence upserts, evidence asset rows, and optional `CardAsset`/`Item` linkage updates.
+  - Added admin production API actions for `status`, `publish`, and persisted `history`; upload/persistence remains disabled unless `AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true` and an admin session is present.
+  - Added read-only persisted public report API support gated by `AI_GRADER_PUBLIC_REPORT_DB_ENABLED=true`.
+  - Updated the browser station with `Publish to Ten Kings System` and DB/storage/publication/label/card-linkage/comps status.
+  - Added `/ai-grader/labels/[reportId]` label preview and updated report viewing to prefer persisted report data before falling back to the local Dell bridge/fixtures.
+- Migration/storage status:
+  - Migration file was added for review but not applied.
+  - `RUN_DB_MIGRATIONS=true` was not set.
+  - No production database operation was run.
+  - No storage upload was run.
+  - Public/publish env gates remain disabled by default.
+- Validation:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` passed.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` passed (`167` tests).
+  - `pnpm --filter @tenkings/shared test` passed (`105` tests).
+  - `pnpm --filter @tenkings/ai-grader-simulator test` passed (`6` tests).
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` passed (`13` tests).
+  - `pnpm --filter @tenkings/database exec node --test tests/aiGraderService.test.js tests/aiGraderProductionService.test.js` passed (`41` tests).
+  - `pnpm --filter @tenkings/database build` passed.
+  - Static Prisma validation passed with a dummy local `DATABASE_URL`; no database connection/migration was run.
+  - `pnpm --filter @tenkings/nextjs-app build` passed with existing unrelated `<img>`, Browserslist, baseline-browser-mapping, and Tailwind glob warnings.
+  - `git diff --check` passed with CRLF conversion warnings only.
+- Scope still pending before full live use:
+  - Approved migration rollout.
+  - Approved storage credentials/config and production publish enablement.
+  - Live public report publication verification against stored assets.
+  - Slabbed color photo upload UI/storage path.
+  - Operator-triggered live eBay/SerpAPI comps execution.
+  - Real card/item identity selection and inventory workflow handoff.
+- Guardrails held so far: no hardware command, no image capture, no manual deploy, no network setting change, no Leimac reset/default, no persistent Basler/Leimac save, no high-duty lighting, no captured image/vendor binary commit, and no certified grading/certificate claim.
+
 ## Session Update (2026-07-02 UTC, AI Grader PR #46 merged)
 - PR #46 (`feature/ai-grader-local-station-web-viewer`) was merged into `main`.
 - PR: `https://github.com/MarkTenKings/tenkings-backend/pull/46`.

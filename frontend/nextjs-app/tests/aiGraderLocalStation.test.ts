@@ -11,6 +11,13 @@ import {
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE, getAiGraderReportBundle, hasNoCertifiedClaim, hasNoFinalCertifiedClaims } from "../lib/aiGraderReportBundle";
 import { buildSampleAiGraderProductionRelease } from "../lib/aiGraderProductionRelease";
 import {
+  AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
+  AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV,
+  buildAiGraderProductionHistoryResult,
+  createAiGraderProductionApiHandler,
+  createAiGraderPublicReportApiHandler,
+} from "../lib/server/aiGraderProductionApi";
+import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   normalizeAiGraderStationBridgeUrl,
 } from "../lib/aiGraderStationBridgeClient";
@@ -132,10 +139,175 @@ test("production release fixture reserves label and QR URL but does not perform 
   assert.equal(release.label.qrPayloadUrl, "https://collect.tenkings.co/ai-grader/reports/sample-final-v0");
   assert.equal(release.publication.dbWritesPerformed, false);
   assert.equal(release.publication.uploadPerformed, false);
-  assert.equal(release.databaseIntegration.existingModels.includes("GradeCertificate"), true);
+  assert.equal(release.databaseIntegration.existingModels.includes("AiGraderReport"), true);
+  assert.equal(release.databaseIntegration.migrationsAdded, true);
   assert.equal(release.slabbedPhotoContract.status, "reserved_not_uploaded");
   assert.equal(release.ebayCompsContract.status, "not_run");
   assert.equal(release.cardInventoryLinkage.status, "contract_ready_not_persisted");
+});
+
+test("production publication API is disabled by default and does not require DB access", async () => {
+  let adminCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {},
+    async requireAdminSession() {
+      adminCalled = true;
+      throw new Error("admin should not be loaded while disabled");
+    },
+    publicUrlFor: (storageKey) => `/uploads/cards/${storageKey}`,
+    async uploadArtifact() {
+      throw new Error("upload should not run while disabled");
+    },
+    async persist() {
+      throw new Error("persist should not run while disabled");
+    },
+  });
+
+  const statusRes = mockResponse();
+  await handler(mockRequest("GET", ["status"]), statusRes);
+  assert.equal(statusRes.statusCodeValue, 200);
+  assert.equal((statusRes.jsonBody as { enabled: boolean }).enabled, false);
+
+  const publishRes = mockResponse();
+  await handler(mockRequest("POST", ["publish"]), publishRes);
+  assert.equal(publishRes.statusCodeValue, 503);
+  assert.equal(adminCalled, false);
+});
+
+test("production publication API uploads artifacts and persists only when env-gated and admin-authenticated", async () => {
+  const calls: string[] = [];
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      calls.push("admin");
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async uploadArtifact(input) {
+      calls.push(`upload:${input.storageKey}`);
+      return { storageKey: input.storageKey, publicUrl: `https://cdn.tenkings.test/${input.storageKey}` };
+    },
+    async persist(input) {
+      calls.push("persist");
+      return {
+        gradingSessionId: input.reportBundle.gradingSessionId,
+        reportId: input.productionRelease.reportId,
+        publicationStatus: input.publicationStatus,
+        storagePlan: input.storagePlan,
+        evidenceAssetCount: input.storagePlan.artifacts.length,
+        cardAssetUpdatedCount: input.cardAssetId ? 1 : 0,
+        itemUpdatedCount: 0,
+      } as any;
+    },
+  });
+
+  const req = mockRequest("POST", ["publish"]);
+  req.body = {
+    publicationStatus: "published",
+    reportBundle: SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    productionRelease: buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE),
+    cardAssetId: "card-asset-1",
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 200);
+  const body = res.jsonBody as { ok: boolean; result: { publicReportUrl: string; uploadedAssetCount: number } };
+  assert.equal(body.ok, true);
+  assert.equal(body.result.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/sample-final-v0");
+  assert.equal(body.result.uploadedAssetCount, 7);
+  assert.equal(calls[0], "admin");
+  assert.equal(calls.at(-1), "persist");
+  assert.ok(calls.some((call) => call.startsWith("upload:ai-grader/reports/sample-final-v0/report-bundle.json")));
+});
+
+test("production history API returns persisted report stats when env-gated", async () => {
+  let adminCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+    },
+    async requireAdminSession() {
+      adminCalled = true;
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async uploadArtifact() {
+      throw new Error("history should not upload");
+    },
+    async persist() {
+      throw new Error("history should not persist");
+    },
+    async listHistory() {
+      return buildAiGraderProductionHistoryResult([
+        {
+          reportId: "final-report-1",
+          reportStatus: "final_ai_grader_report_v0",
+          publicationStatus: "published",
+          visibilityStatus: "public",
+          publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/final-report-1",
+          qrPayloadUrl: "https://collect.tenkings.co/ai-grader/reports/final-report-1",
+          finalOverallGrade: 8.5,
+          warnings: ["accepted clipping warning"],
+          createdAt: new Date("2026-07-02T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-02T00:01:00.000Z"),
+          session: { gradingSessionId: "session-1" },
+        },
+      ]);
+    },
+  });
+
+  const res = mockResponse();
+  await handler(mockRequest("GET", ["history"]), res);
+
+  assert.equal(res.statusCodeValue, 200);
+  const body = res.jsonBody as { ok: boolean; result: { source: string; stats: { total: number; published: number; averageFinalGrade: number; warningCount: number } } };
+  assert.equal(body.ok, true);
+  assert.equal(adminCalled, true);
+  assert.equal(body.result.source, "persisted_records");
+  assert.equal(body.result.stats.total, 1);
+  assert.equal(body.result.stats.published, 1);
+  assert.equal(body.result.stats.averageFinalGrade, 8.5);
+  assert.equal(body.result.stats.warningCount, 1);
+});
+
+test("public report API is read-only and disabled unless explicitly configured", async () => {
+  const disabled = createAiGraderPublicReportApiHandler({
+    env: {},
+    async readPublishedBundle() {
+      throw new Error("read should not run while disabled");
+    },
+  });
+  const disabledRes = mockResponse();
+  const disabledReq = mockRequest("GET");
+  disabledReq.query = { reportId: "sample-final-v0" };
+  await disabled(disabledReq, disabledRes);
+  assert.equal(disabledRes.statusCodeValue, 503);
+
+  const enabled = createAiGraderPublicReportApiHandler({
+    env: { [AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV]: "true" },
+    async readPublishedBundle(reportId) {
+      assert.equal(reportId, "sample-final-v0");
+      return getAiGraderReportBundle("sample-final-v0");
+    },
+  });
+  const enabledRes = mockResponse();
+  const enabledReq = mockRequest("GET");
+  enabledReq.query = { reportId: "sample-final-v0" };
+  await enabled(enabledReq, enabledRes);
+  assert.equal(enabledRes.statusCodeValue, 200);
+  const body = enabledRes.jsonBody as { ok: boolean; readOnly: boolean; noHardwareControls: boolean; bundle: { reportId: string } };
+  assert.equal(body.ok, true);
+  assert.equal(body.readOnly, true);
+  assert.equal(body.noHardwareControls, true);
+  assert.equal(body.bundle.reportId, "sample-final-v0");
 });
 
 test("local station sample history aggregates report stats without certified claims", () => {

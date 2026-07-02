@@ -134,7 +134,7 @@ export interface AiGraderProductionRelease {
   };
   databaseIntegration: {
     existingModels: string[];
-    migrationsAdded: false;
+    migrationsAdded: true;
     migrationsRun: false;
     productionDbWritesPerformed: false;
     recommendedPersistPath: string[];
@@ -389,7 +389,8 @@ export function buildAiGraderProductionRelease(input: {
     reportBundlePath: input.reportBundlePath,
     requiredFutureProductionSteps: [
       "Upload report-bundle.json, production-release.json, label-data.json, and referenced assets through existing storage helpers.",
-      "Persist CaptureSession, GradeRun, EvidenceArtifact, and GradeCertificate rows through @tenkings/database service methods.",
+      "Apply the reviewed AI Grader production-release migration through the approved runbook.",
+      "Persist AiGraderSession, AiGraderReport, AiGraderEvidenceAsset, AiGraderGrade, AiGraderLabel, AiGraderPublication, and AiGraderValuation through the env-gated admin API.",
       "Bind slabbed front/back color photos after physical encapsulation.",
       "Run valuation/comps lookup only after card identity and final sale workflow are approved.",
     ],
@@ -440,18 +441,14 @@ export function buildAiGraderProductionRelease(input: {
       note: "Production Release V0 emits linkage fields but performs no DB write.",
     },
     databaseIntegration: {
-      existingModels: ["CaptureSession", "CaptureManifest", "GradeRun", "EvidenceArtifact", "GradeCertificate", "CardAsset", "Item", "PackLabel", "QrCode"],
-      migrationsAdded: false,
+      existingModels: ["AiGraderSession", "AiGraderReport", "AiGraderEvidenceAsset", "AiGraderGrade", "AiGraderLabel", "AiGraderPublication", "AiGraderValuation", "CardAsset", "Item", "PackLabel", "QrCode"],
+      migrationsAdded: true,
       migrationsRun: false,
       productionDbWritesPerformed: false,
       recommendedPersistPath: [
-        "createCaptureSessionDraft",
-        "recordCaptureManifest",
-        "createGradeRunDraft",
-        "finalizeGradeRun",
-        "recordEvidenceArtifact",
-        "createGradeCertificateDraft",
-        "issueGradeCertificate after readiness passes",
+        "Run reviewed migration only through the approved deploy/migration runbook.",
+        "Enable AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true only after migration and storage are ready.",
+        "POST /api/admin/ai-grader/production/publish with report-bundle and production-release payloads.",
       ],
     },
     storageIntegration: {

@@ -1397,7 +1397,7 @@ The fixed-rig V1 uncalibrated evidence package was run side-by-side so Mark coul
 
 #### AI Grader Production Release V0
 
-The production release V0 helper adds the first software-side finalization/export layer on top of the local AI Grader report bundle. It does not run hardware, does not write the production database, does not upload storage assets, and does not apply migrations. The command is:
+The production release V0 helper adds the first software-side finalization/export layer on top of the local AI Grader report bundle. It does not run hardware and the standalone helper still does not write the production database, upload storage assets, or apply migrations. The command is:
 
 ```powershell
 pnpm --filter @tenkings/ai-grader-capture-helper exec ai-grader-production-release --report-bundle-path <report-bundle.json> --output-dir C:\TenKings\capture-data\ai-grader-production-releases --operator-id <operator> --operator-accepted-warnings
@@ -1405,4 +1405,14 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec ai-grader-production-relea
 
 The command writes local artifacts outside the repo: `production-release.json`, `label-data.json`, `publication-manifest.json`, and `integration-contract.json`. These artifacts contain the final AI-Grader Grade V0 calculation, element scores, confidence, gates, accepted warnings, operator finalization metadata, report/public URL placeholders, label-ready data, QR payload URL data, slabbed photo placeholders, eBay comps placeholders, and card/inventory linkage contracts.
 
-Production release V0 is not a certified Ten Kings grade. It must keep `certifiedClaim=false`, `certificateGenerated=false`, and `physicalLabelPrinted=false` until a later certification/ops process is approved. The generated label data is JSON/preview data only; it does not print a physical label or create a QR certificate. Database and storage integration are contract-ready through existing Ten Kings model concepts, but this PR remains local-file backed and defers runtime persistence/upload.
+PR #47 adds the reviewed production persistence/publication foundation, but keeps it disabled until an approved migration/storage rollout:
+
+- Prisma models and a migration file are present for `AiGraderSession`, `AiGraderReport`, `AiGraderEvidenceAsset`, `AiGraderGrade`, `AiGraderLabel`, `AiGraderPublication`, and `AiGraderValuation`.
+- The migration is committed for review only and was not applied by Codex. `RUN_DB_MIGRATIONS=true` must remain unset unless an explicit migration rollout is approved.
+- The admin API route `/api/admin/ai-grader/production/[...action]` exposes `status`, `publish`, and `history`; write/upload actions are disabled unless `AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true` and an admin session is present.
+- The public read-only API route `/api/ai-grader/reports/[reportId]` is disabled unless `AI_GRADER_PUBLIC_REPORT_DB_ENABLED=true`; it reads a persisted published report bundle from storage and never exposes hardware controls.
+- The station page can send a finalized local production release/report bundle to the admin publish API and then show DB persistence, storage upload, publication, public URL, QR URL, label, card linkage, and comps readiness status.
+- The report viewer first attempts the persisted public report endpoint for generated report IDs, then falls back to the local Dell bridge when present, then to fixture/sample data.
+- The label preview route `/ai-grader/labels/[reportId]` renders print-ready label preview data from the report bundle. It is not a printer integration and does not create a certified certificate.
+
+Production release V0 is an AI-Grader final report workflow, but it is not a certified Ten Kings grading/certificate process. It must keep `certifiedClaim=false`, `certificateGenerated=false`, and `physicalLabelPrinted=false` until a later certification/ops process is approved. The generated label data is JSON/preview data only; it does not print a physical label or create a QR certificate. Slabbed color photo upload and live eBay/SerpAPI comps execution remain contract/UI-ready only until the approved storage, identity, and operator-triggered external API paths are configured.
