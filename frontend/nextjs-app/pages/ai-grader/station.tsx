@@ -86,6 +86,8 @@ export default function AiGraderStationPage() {
 
   const sortedHistory = useMemo(() => sortHistory(history.items, historySort), [history.items, historySort]);
   const reportReady = status.latestReport.exists && Boolean(status.latestReport.reportId);
+  const finalReady = status.safety.finalGradeComputed || Boolean(status.productionRelease?.finalGradeComputed);
+  const labelReady = status.safety.labelGenerated || Boolean(status.outputs?.labelDataPath);
   const showFlipScrim = status.currentStep === "prompt_flip_card";
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
 
@@ -212,6 +214,26 @@ export default function AiGraderStationPage() {
       await refreshHistory();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Back capture or report generation failed.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runProductionAction = async (action: "calculate-final-grade" | "finalize-report" | "publish-report" | "generate-label-data") => {
+    setBusy(action);
+    setError(null);
+    try {
+      const next = await runAction(action, {
+        operatorId: "local-browser-operator",
+        warningsAccepted: true,
+        overrideReason: "Operator accepted Production Release V0 warning gates from the browser station.",
+      });
+      if (action !== "generate-label-data") {
+        setStatus(next);
+      }
+      await refreshHistory();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Production release action failed.");
     } finally {
       setBusy(null);
     }
@@ -376,6 +398,10 @@ export default function AiGraderStationPage() {
               <strong>{reportReady ? "Ready" : "Pending"}</strong>
             </div>
             <div>
+              <span>Final V0</span>
+              <strong>{finalReady ? "Computed" : "Pending"}</strong>
+            </div>
+            <div>
               <span>Safe Off</span>
               <strong>{status.confirmations?.finalLightOff ? "Confirmed" : "Available"}</strong>
             </div>
@@ -388,6 +414,15 @@ export default function AiGraderStationPage() {
           <div className="action-row">
             <button type="button" onClick={openReport} disabled={!reportReady}>
               View Report
+            </button>
+            <button type="button" onClick={() => runProductionAction("calculate-final-grade")} disabled={!reportReady || busy !== null}>
+              {busy === "calculate-final-grade" ? "Calculating" : "Calculate Final Grade"}
+            </button>
+            <button type="button" onClick={() => runProductionAction("finalize-report")} disabled={!reportReady || busy !== null}>
+              {busy === "finalize-report" ? "Finalizing" : "Finalize / Publish"}
+            </button>
+            <button type="button" onClick={() => runProductionAction("generate-label-data")} disabled={!finalReady || busy !== null}>
+              {busy === "generate-label-data" ? "Generating" : "Generate Label Data"}
             </button>
             <button type="button" onClick={openHistory}>
               Card History Reports
@@ -403,6 +438,8 @@ export default function AiGraderStationPage() {
             <p>Bridge: {bridgeUrl}</p>
             <p>Report path: {status.latestReport.localHtmlPath ?? "pending"}</p>
             <p>Bundle: {status.outputs?.reportBundlePath ?? "pending"}</p>
+            <p>Production release: {status.outputs?.productionReleasePath ?? "pending"}</p>
+            <p>Label data: {status.outputs?.labelDataPath ?? (labelReady ? "ready" : "pending")}</p>
           </section>
 
           <section className="timing">
@@ -445,7 +482,8 @@ export default function AiGraderStationPage() {
             <article><span>Month</span><strong>{history.stats.monthly}</strong></article>
             <article><span>Week</span><strong>{history.stats.weekly}</strong></article>
             <article><span>Today</span><strong>{history.stats.daily}</strong></article>
-            <article><span>Average</span><strong>{history.stats.averageProvisionalGrade ?? "n/a"}</strong></article>
+            <article><span>Avg Final</span><strong>{history.stats.averageFinalGrade ?? history.stats.averageProvisionalGrade ?? "n/a"}</strong></article>
+            <article><span>Finalized</span><strong>{history.stats.finalizedCount ?? 0}</strong></article>
           </div>
 
           <div className={historyView === "tiles" ? "history-list tiles" : "history-list"}>
@@ -457,8 +495,8 @@ export default function AiGraderStationPage() {
                   <p>{item.localHtmlPath ?? item.reportBundlePath ?? "Local report path pending."}</p>
                 </div>
                 <div className="history-grade">
-                  <span>Provisional</span>
-                  <strong>{item.provisionalOverallGrade ?? "Pending"}</strong>
+                  <span>{item.finalOverallGrade ? "Final V0" : "Provisional"}</span>
+                  <strong>{item.finalOverallGrade ?? item.provisionalOverallGrade ?? "Pending"}</strong>
                 </div>
                 <button type="button" onClick={() => window.open(reportUrlFor(item), "_blank", "noopener,noreferrer")}>
                   Open

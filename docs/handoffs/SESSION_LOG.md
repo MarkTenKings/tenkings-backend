@@ -22450,6 +22450,48 @@ By enabling Rip It Live, I confirm:
 - No captured image or vendor binary was committed.
 - No final grade, certificate, QR label, label generation, or certified grading claim was added.
 
+## 2026-07-02 - AI Grader production release V0 branch
+
+### Summary
+- Confirmed PR #46 had already been merged before starting the next PR work.
+- Created branch `feature/ai-grader-production-release-v0` from latest `main`.
+- Added a software-only production release V0 finalization/export layer for AI Grader report bundles:
+  - controlled final AI-Grader Grade V0 calculation;
+  - element scores, confidence, gates, accepted warnings, and operator finalization metadata;
+  - grade-impact reasons and Why Not 10 carry-through from the report bundle;
+  - local publication manifest and web/public URL placeholders;
+  - label-ready JSON and QR payload URL data;
+  - integration contract for future DB/storage/report publication;
+  - slabbed photo, eBay comps, and card/inventory linkage placeholders.
+- Extended the local station bridge with software-only actions for `calculate-final-grade`, `finalize-report`, `publish-report`, and `generate-label-data`.
+- Updated the browser station and read-only report viewer so final AI-Grader Report V0 artifacts can be displayed when present.
+
+### Integration Status
+- No production DB write was run.
+- No storage upload was run.
+- No migration was added or run.
+- DB/storage integration remains contract-ready and local-file backed for this PR.
+
+### Validation
+- Initial targeted validation passed before docs update:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test`, `167` tests.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts`, `9` tests.
+  - `pnpm --filter @tenkings/nextjs-app build`, pass with existing warning noise only.
+- Full validation is pending after handoff docs update.
+
+### Guardrails
+- No hardware command was run.
+- No migrations were run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation was run.
+- No network setting change was made.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or hardware capture was run.
+- No captured image or vendor binary was committed.
+- No certified grade, physical label, QR certificate, or certificate claim was generated.
+
 ## 2026-07-01 - AI Grader PR #46 local browser smoke prep
 
 ### Summary

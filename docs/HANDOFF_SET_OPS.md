@@ -12149,3 +12149,22 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `148` tests.
 - Hardware smoke status: pending. No Basler, Leimac, Dino-Lite, Arduino, stage, image capture, or safe-off command was run in this software pass.
 - Guardrails held so far: no migrations, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB ops, no network setting changes, no `regsvr32`, no Arduino/stage/motor commands, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no hardware commands or image captures, no captured image/vendor binary commit, and no final/certificate/certified grading claims.
+
+## Session Update (2026-07-02 UTC, AI Grader production release V0)
+- Branch: `feature/ai-grader-production-release-v0`.
+- PR #46 was already merged into `main`; merge commit `e8fa88d82d46452c89fbb8a02813510105f9e9c9` and handoff main HEAD `ba9bc6106931b2472c8ca7666f8faf4c1b5a61ab`.
+- Added the first production release V0 software layer:
+  - `ai-grader-production-release` builds local finalization/export artifacts from an existing AI Grader report bundle.
+  - Outputs: `production-release.json`, `label-data.json`, `publication-manifest.json`, and `integration-contract.json`.
+  - Station bridge actions now include `calculate-final-grade`, `finalize-report`, `publish-report`, and `generate-label-data`.
+  - The browser station can surface production release paths/status, and the read-only report viewer can render final AI-Grader Report V0 data when present.
+- Database/storage integration remains contract-only:
+  - Existing model concepts such as `GradeRun`, `GradeCertificate`, `EvidenceArtifact`, `CardAsset`, `Item`, `PackLabel`, and `QrCode` are referenced in the integration contract.
+  - No Prisma migration was added or run.
+  - No runtime database write or storage upload was run.
+- Label/QR/certificate status:
+  - Label-ready JSON and QR payload URL data are generated locally.
+  - No physical label printing, QR certificate generation, or certified claim is made.
+  - `certifiedClaim=false`, `certificateGenerated=false`, and `physicalLabelPrinted=false` remain mandatory.
+- Hardware status: no hardware command, image capture, safe-off command, or Leimac/Basler setting change was run for this software-only PR.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no production DB ops, no network setting change, no Leimac reset/default, no persistent Basler/Leimac User Set save, no high-duty lighting, no captured image/vendor binary commit, and no certified grading claim.

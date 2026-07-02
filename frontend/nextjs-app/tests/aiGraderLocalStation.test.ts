@@ -8,7 +8,8 @@ import {
   buildAiGraderLocalStationStatus,
   parseAiGraderStationAction,
 } from "../lib/aiGraderLocalStation";
-import { SAMPLE_AI_GRADER_REPORT_BUNDLE, hasNoFinalCertifiedClaims } from "../lib/aiGraderReportBundle";
+import { SAMPLE_AI_GRADER_REPORT_BUNDLE, getAiGraderReportBundle, hasNoCertifiedClaim, hasNoFinalCertifiedClaims } from "../lib/aiGraderReportBundle";
+import { buildSampleAiGraderProductionRelease } from "../lib/aiGraderProductionRelease";
 import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   normalizeAiGraderStationBridgeUrl,
@@ -66,6 +67,9 @@ test("local station contract exposes workflow status with no login, DB, or hardw
 test("local station action parser accepts known actions and rejects unknown actions", () => {
   assert.equal(parseAiGraderStationAction(["capture-front"]), "capture-front");
   assert.equal(parseAiGraderStationAction(["export-report-bundle"]), "export-report-bundle");
+  assert.equal(parseAiGraderStationAction(["calculate-final-grade"]), "calculate-final-grade");
+  assert.equal(parseAiGraderStationAction(["finalize-report"]), "finalize-report");
+  assert.equal(parseAiGraderStationAction(["generate-label-data"]), "generate-label-data");
   assert.equal(parseAiGraderStationAction(["confirm-fixture-rulers"]), "confirm-fixture-rulers");
   assert.equal(parseAiGraderStationAction(undefined), "status");
   assert.equal(parseAiGraderStationAction(["delete-all"]), null);
@@ -107,6 +111,33 @@ test("sample public report bundle keeps provisional-only safety flags", () => {
   assert.match(SAMPLE_AI_GRADER_REPORT_BUNDLE.limitations.join(" "), /No QR Certificate Yet/);
 });
 
+test("sample final report bundle exposes final V0 data without certified claim", () => {
+  const bundle = getAiGraderReportBundle("sample-final-v0");
+
+  assert.equal(bundle.reportStatus, "final_ai_grader_report_v0");
+  assert.equal(bundle.finalGradeComputed, true);
+  assert.equal(bundle.labelGenerated, true);
+  assert.equal(bundle.qrGenerated, true);
+  assert.equal(bundle.productionRelease?.label.status, "label_data_ready");
+  assert.equal(bundle.productionRelease?.publication.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/sample-final-v0");
+  assert.equal(hasNoCertifiedClaim(bundle), true);
+});
+
+test("production release fixture reserves label and QR URL but does not perform DB or storage writes", () => {
+  const release = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
+
+  assert.equal(release.finalGradeComputed, true);
+  assert.equal(release.certifiedClaim, false);
+  assert.equal(release.certificateGenerated, false);
+  assert.equal(release.label.qrPayloadUrl, "https://collect.tenkings.co/ai-grader/reports/sample-final-v0");
+  assert.equal(release.publication.dbWritesPerformed, false);
+  assert.equal(release.publication.uploadPerformed, false);
+  assert.equal(release.databaseIntegration.existingModels.includes("GradeCertificate"), true);
+  assert.equal(release.slabbedPhotoContract.status, "reserved_not_uploaded");
+  assert.equal(release.ebayCompsContract.status, "not_run");
+  assert.equal(release.cardInventoryLinkage.status, "contract_ready_not_persisted");
+});
+
 test("local station sample history aggregates report stats without certified claims", () => {
   const history = buildSampleAiGraderReportHistory();
   assert.equal(history.source, "fixture");
@@ -114,6 +145,9 @@ test("local station sample history aggregates report stats without certified cla
   assert.equal(history.items[0].viewerPath, "/ai-grader/reports/sample-pr45");
   assert.equal(history.stats.allTime, 1);
   assert.equal(history.stats.provisionalGradeCounts["8"], 1);
+  assert.equal(history.stats.finalizedCount, 0);
+  assert.equal(history.stats.draftCount, 1);
+  assert.equal(history.stats.warningsCount, 1);
   assert.equal(hasNoFinalCertifiedClaims(SAMPLE_AI_GRADER_REPORT_BUNDLE), true);
 });
 

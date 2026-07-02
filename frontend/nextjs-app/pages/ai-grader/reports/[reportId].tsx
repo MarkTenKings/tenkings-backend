@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import {
   getAiGraderReportBundle,
+  hasNoCertifiedClaim,
   hasNoFinalCertifiedClaims,
   type AiGraderReportBundle,
 } from "../../../lib/aiGraderReportBundle";
@@ -20,6 +21,14 @@ function scoreText(score?: number) {
   return typeof score === "number" ? score.toFixed(score % 1 === 0 ? 0 : 2) : "Pending";
 }
 
+function sourceChannelsText(candidate: unknown) {
+  const channels =
+    typeof candidate === "object" && candidate !== null && "sourceChannels" in candidate && Array.isArray(candidate.sourceChannels)
+      ? candidate.sourceChannels
+      : [];
+  return channels.length ? channels.map(String).join(", ") : "see evidence refs";
+}
+
 export default function AiGraderReportViewerPage() {
   const router = useRouter();
   const fallbackBundle = getAiGraderReportBundle(router.query.reportId);
@@ -28,14 +37,19 @@ export default function AiGraderReportViewerPage() {
   const [localBridgeLoading, setLocalBridgeLoading] = useState(false);
   const bundle = localBundle ?? fallbackBundle;
   const story = bundle.provisionalGrade;
-  const noClaims = hasNoFinalCertifiedClaims(bundle);
+  const productionRelease = bundle.productionRelease;
+  const finalGrade = productionRelease?.finalGrade;
+  const noClaims = hasNoCertifiedClaim(bundle);
+  const noFinalClaims = hasNoFinalCertifiedClaims(bundle);
   const primaryCandidate = story?.gradeImpactCandidates?.[0];
-  const isSampleFallback = !localBundle && bundle.reportId !== "sample-pr45";
+  const impactCandidate = productionRelease?.finalGrade.gradeImpactReasons[0] ?? primaryCandidate;
+  const isSampleFallback = !localBundle && bundle.reportId !== "sample-pr45" && bundle.reportId !== "sample-final-v0";
+  const reportIsFinal = productionRelease?.finalGradeComputed === true;
 
   useEffect(() => {
     if (!router.isReady) return;
     const reportId = Array.isArray(router.query.reportId) ? router.query.reportId[0] : router.query.reportId;
-    if (!reportId || reportId === "sample-pr45") return;
+    if (!reportId || reportId === "sample-pr45" || reportId === "sample-final-v0") return;
     const bridgeUrl = window.localStorage.getItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY) ?? DEFAULT_AI_GRADER_STATION_BRIDGE_URL;
     const stationToken = window.localStorage.getItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY) ?? "";
     if (!stationToken) {
@@ -71,7 +85,7 @@ export default function AiGraderReportViewerPage() {
           <div className="meta">
             <span>Report {bundle.reportId}</span>
             <span>{new Date(bundle.generatedAt).toLocaleString()}</span>
-            <strong>Provisional Diagnostic - Not Certified - No Final Grade</strong>
+            <strong>{reportIsFinal ? "Final AI-Grader Report V0 - Not Certified" : "Provisional Diagnostic - Not Certified - No Final Grade"}</strong>
           </div>
         </header>
 
@@ -90,12 +104,13 @@ export default function AiGraderReportViewerPage() {
 
         <section className="hero">
           <div className="grade-panel">
-            <p className="eyebrow">Provisional Diagnostic Grade</p>
-            <strong>{scoreText(story?.overall)}</strong>
-            <span>Confidence {story?.confidence?.band ?? "pending"}</span>
+            <p className="eyebrow">{reportIsFinal ? "Final AI-Grader Grade V0" : "Provisional Diagnostic Grade"}</p>
+            <strong>{scoreText(finalGrade?.overall ?? story?.overall)}</strong>
+            <span>Confidence {finalGrade?.confidence.band ?? story?.confidence?.band ?? "pending"}</span>
             <p>
-              This is a controlled provisional diagnostic output. It is not a certified Ten Kings grade and it does not create a
-              label, QR certificate, or final certificate.
+              {reportIsFinal
+                ? "This is the Ten Kings AI-Grader final report V0. It creates label-ready data and a QR report URL, but it is not a certified grading claim."
+                : "This is a controlled provisional diagnostic output. It is not a certified Ten Kings grade and it does not create a label, QR certificate, or final certificate."}
             </p>
           </div>
           <div className="card-stage" aria-label="front card visual placeholder">
@@ -103,12 +118,48 @@ export default function AiGraderReportViewerPage() {
               <span>Front True View</span>
               <em>Basler analysis imagery</em>
             </div>
-            <div className="callout c1">Centering {scoreText(story?.elementScores?.centering?.score)}</div>
-            <div className="callout c2">Corners {scoreText(story?.elementScores?.corners?.score)}</div>
-            <div className="callout c3">Edges {scoreText(story?.elementScores?.edges?.score)}</div>
-            <div className="callout c4">Surface {scoreText(story?.elementScores?.surface?.score)}</div>
+            <div className="callout c1">Centering {scoreText(finalGrade?.elements.centering?.score ?? story?.elementScores?.centering?.score)}</div>
+            <div className="callout c2">Corners {scoreText(finalGrade?.elements.corners?.score ?? story?.elementScores?.corners?.score)}</div>
+            <div className="callout c3">Edges {scoreText(finalGrade?.elements.edges?.score ?? story?.elementScores?.edges?.score)}</div>
+            <div className="callout c4">Surface {scoreText(finalGrade?.elements.surface?.score ?? story?.elementScores?.surface?.score)}</div>
           </div>
         </section>
+
+        {productionRelease ? (
+          <section className="production">
+            <div className="section-head">
+              <p className="eyebrow">Production Release V0</p>
+              <h2>Final report, label data, and QR report URL</h2>
+            </div>
+            <div className="production-grid">
+              <article>
+                <span>Public Report URL</span>
+                <strong>{productionRelease.publication.publicReportUrl}</strong>
+              </article>
+              <article>
+                <span>Cert / Report ID</span>
+                <strong>{productionRelease.label.certId}</strong>
+              </article>
+              <article>
+                <span>Label Grade</span>
+                <strong>{productionRelease.label.labelGradeText}</strong>
+              </article>
+              <article>
+                <span>Certified Claim</span>
+                <strong>{productionRelease.certifiedClaim ? "Unexpected" : "Disabled"}</strong>
+              </article>
+            </div>
+            <div className="gate-list">
+              {productionRelease.gates.map((gate) => (
+                <article key={gate.id} className={gate.status}>
+                  <span>{gate.status.replace("_", " ")}</span>
+                  <strong>{gate.label}</strong>
+                  <p>{gate.reason}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="summary">
           <article>
@@ -121,7 +172,7 @@ export default function AiGraderReportViewerPage() {
           </article>
           <article>
             <span>Top Candidate</span>
-            <p>{primaryCandidate ? `${primaryCandidate.id}: ${primaryCandidate.explanation}` : "No anomaly candidate available."}</p>
+            <p>{impactCandidate ? `${impactCandidate.id}: ${impactCandidate.explanation}` : "No anomaly candidate available."}</p>
           </article>
         </section>
 
@@ -148,16 +199,16 @@ export default function AiGraderReportViewerPage() {
             </div>
             <aside className="evidence">
               <h3>Evidence Replay</h3>
-              {primaryCandidate ? (
+              {impactCandidate ? (
                 <dl>
                   <dt>Candidate</dt>
-                  <dd>{primaryCandidate.id}</dd>
+                  <dd>{impactCandidate.id}</dd>
                   <dt>Severity</dt>
-                  <dd>{primaryCandidate.severity}</dd>
+                  <dd>{impactCandidate.severity}</dd>
                   <dt>Source channels</dt>
-                  <dd>{primaryCandidate.sourceChannels?.join(", ") ?? "pending"}</dd>
+                  <dd>{sourceChannelsText(impactCandidate)}</dd>
                   <dt>Evidence</dt>
-                  <dd>{primaryCandidate.evidenceRefs.join(", ")}</dd>
+                  <dd>{impactCandidate.evidenceRefs.join(", ")}</dd>
                 </dl>
               ) : (
                 <p>No candidate details available.</p>
@@ -174,12 +225,13 @@ export default function AiGraderReportViewerPage() {
           <div className="element-grid">
             {ELEMENT_LABELS.map((element) => {
               const result = story?.elementScores?.[element];
+              const finalResult = finalGrade?.elements[element];
               return (
                 <article key={element}>
                   <span>{element}</span>
-                  <strong>{scoreText(result?.score)}</strong>
-                  <p>{result?.explanation ?? "Insufficient evidence."}</p>
-                  <em>{result?.confidence ?? "pending"} confidence</em>
+                  <strong>{scoreText(finalResult?.score ?? result?.score)}</strong>
+                  <p>{finalResult?.explanation ?? result?.explanation ?? "Insufficient evidence."}</p>
+                  <em>{finalResult?.confidence ?? result?.confidence ?? "pending"} confidence</em>
                 </article>
               );
             })}
@@ -219,7 +271,13 @@ export default function AiGraderReportViewerPage() {
             <dt>Ruler calibration</dt>
             <dd>{JSON.stringify(bundle.rulerCalibration ?? {})}</dd>
             <dt>Final/certified claims</dt>
-            <dd>{noClaims ? "none generated" : "unexpected claim flag present"}</dd>
+            <dd>{noClaims ? (reportIsFinal ? "final AI-Grader V0 present; certified claim disabled" : "none generated") : "unexpected certified claim flag present"}</dd>
+            <dt>Legacy provisional-only flags</dt>
+            <dd>{noFinalClaims ? "provisional only" : "final report data present"}</dd>
+            <dt>Label data</dt>
+            <dd>{productionRelease ? `${productionRelease.label.status} (${productionRelease.label.qrPayloadUrl})` : "not generated"}</dd>
+            <dt>DB/storage publication</dt>
+            <dd>{productionRelease ? `${productionRelease.publication.storageMode}; DB writes ${productionRelease.publication.dbWritesPerformed}` : "not generated"}</dd>
           </dl>
           <ul>
             {bundle.limitations.map((limitation) => (
@@ -240,6 +298,7 @@ export default function AiGraderReportViewerPage() {
         .topbar,
         .local-status,
         .hero,
+        .production,
         .summary,
         .vision-lab,
         .elements,
@@ -315,6 +374,7 @@ export default function AiGraderReportViewerPage() {
         }
         .grade-panel,
         .card-stage,
+        .production,
         .summary article,
         .vision-lab,
         .elements,
@@ -398,6 +458,59 @@ export default function AiGraderReportViewerPage() {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 14px;
+        }
+        .production {
+          padding: 24px;
+        }
+        .production-grid,
+        .gate-list {
+          display: grid;
+          gap: 12px;
+        }
+        .production-grid {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          margin-bottom: 16px;
+        }
+        .production-grid article,
+        .gate-list article {
+          border: 1px solid rgba(20, 20, 20, 0.1);
+          background: rgba(255, 255, 255, 0.7);
+          border-radius: 8px;
+          padding: 14px;
+          overflow-wrap: anywhere;
+        }
+        .production-grid span,
+        .gate-list span {
+          color: #8a6a27;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+        }
+        .production-grid strong,
+        .gate-list strong {
+          display: block;
+          margin-top: 8px;
+        }
+        .gate-list {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+        .gate-list article.fail {
+          border-color: rgba(142, 45, 45, 0.45);
+          background: rgba(255, 232, 232, 0.8);
+        }
+        .gate-list article.accepted_warning {
+          border-color: rgba(185, 127, 33, 0.45);
+          background: rgba(255, 244, 220, 0.8);
+        }
+        .gate-list article.pass {
+          border-color: rgba(35, 118, 75, 0.26);
+          background: rgba(226, 247, 235, 0.78);
+        }
+        .gate-list p {
+          margin-top: 8px;
+          color: #514c44;
+          line-height: 1.45;
         }
         .summary article {
           padding: 18px;
@@ -567,6 +680,8 @@ export default function AiGraderReportViewerPage() {
           .topbar,
           .hero,
           .summary,
+          .production-grid,
+          .gate-list,
           .lab-layout,
           .element-grid,
           .appendix dl {

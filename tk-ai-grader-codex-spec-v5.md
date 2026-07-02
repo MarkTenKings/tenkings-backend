@@ -1840,3 +1840,25 @@ Every artifact written to object storage must have:
 - retention class.
 
 No GradeRun or AuthRun is certifiable until required original artifacts have checksum-verified storage records.
+
+## Appendix C. AI Grader Production Release V0
+
+Production Release V0 introduces the first controlled finalization/export layer for AI Grader report bundles. It may produce a `final_ai_grader_grade_v0` value, element scores, confidence, gate results, accepted warnings, operator finalization metadata, label-ready JSON, QR payload URL data, and future Ten Kings integration contracts.
+
+This is not certified grading. The release artifact must keep:
+
+- `certifiedClaim=false`
+- `certificateGenerated=false`
+- `physicalLabelPrinted=false`
+- no QR certificate generated
+- no production database write from Codex
+- no storage upload unless an approved production storage path is explicitly configured later
+
+The local artifact set is:
+
+- `production-release.json`
+- `label-data.json`
+- `publication-manifest.json`
+- `integration-contract.json`
+
+The integration contract may reference existing Ten Kings model concepts such as `GradeRun`, `GradeCertificate`, `EvidenceArtifact`, `CardAsset`, `Item`, `PackLabel`, and `QrCode`, but PR-level software must not apply migrations or perform production DB operations. Slabbed-photo refs, eBay comps refs, label status, QR/public URL status, and card/inventory linkage may be emitted as contract placeholders until the corresponding production services are enabled.
