@@ -43,7 +43,8 @@ async function readPublishedBundle(reportId: string) {
     },
   });
   if (!report || report.publicationStatus !== "published" || !report.reportBundleStorageKey) return null;
-  const raw = await readStorageBuffer(report.reportBundleStorageKey);
+  const raw = await readStorageBuffer(report.reportBundleStorageKey).catch(() => null);
+  if (!raw) return null;
   const bundle = JSON.parse(raw.toString("utf8"));
   let productionRelease = bundle.productionRelease;
   if (report.productionReleaseStorageKey) {

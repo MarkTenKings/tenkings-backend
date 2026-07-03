@@ -204,8 +204,57 @@ export const SAMPLE_AI_GRADER_REPORT_BUNDLE: AiGraderReportBundle = {
   ],
 };
 
+function buildMissingAiGraderReportBundle(reportId: string): AiGraderReportBundle {
+  const safeReportId = reportId.trim() || "missing-report-data";
+  return {
+    schemaVersion: AI_GRADER_WEB_REPORT_BUNDLE_VERSION,
+    generatedAt: "2026-07-03T00:00:00.000Z",
+    gradingSessionId: `${safeReportId}-unresolved`,
+    reportId: safeReportId,
+    reportStatus: "missing_report_data",
+    provisionalStatus: "provisional_diagnostic",
+    finalStatus: "insufficient_evidence",
+    finalGradeComputed: false,
+    certifiedClaim: false,
+    labelGenerated: false,
+    qrGenerated: false,
+    certificateGenerated: false,
+    publicPathPlaceholders: {
+      reportViewerRoute: "/ai-grader/reports/[reportId]",
+      reportUrlTemplate: "/ai-grader/reports/{reportId}",
+      assetBaseUrlTemplate: "/ai-grader/reports/{reportId}/assets",
+    },
+    cardIdentity: {
+      title: "AI Grader report not resolved",
+      sideCount: 2,
+      futureSlabbedPhotoRefsReserved: true,
+      futureEbayCompsRefsReserved: true,
+    },
+    evidenceReferences: {
+      frontEvidenceRefs: [],
+      backEvidenceRefs: [],
+    },
+    visionLab: {
+      available: false,
+      trueViewRefs: [],
+      overlayRefs: [],
+      channelImageRefs: [],
+      heatmapRefs: [],
+      surfaceVisionRefs: [],
+      confidenceRefs: [],
+      candidateCount: 0,
+      missingDataWarnings: ["Persisted storage or local bridge data was not resolved for this report ID."],
+    },
+    warnings: ["Report data was not resolved from persisted storage or the local station bridge."],
+    limitations: ["No fixture/sample data is substituted for generated report IDs."],
+  };
+}
+
 export function getAiGraderReportBundle(reportId: string | string[] | undefined): AiGraderReportBundle {
   const normalized = Array.isArray(reportId) ? reportId[0] : reportId;
+  if (!normalized || normalized.trim().length === 0 || normalized === "sample-pr45") {
+    return SAMPLE_AI_GRADER_REPORT_BUNDLE;
+  }
   if (normalized === "sample-final-v0") {
     const productionRelease = buildSampleAiGraderProductionRelease({
       ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
@@ -224,10 +273,7 @@ export function getAiGraderReportBundle(reportId: string | string[] | undefined)
       limitations: ["No physical label printed in fixture.", "No production DB write in fixture."],
     };
   }
-  return {
-    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
-    reportId: normalized && normalized.trim().length > 0 ? normalized : SAMPLE_AI_GRADER_REPORT_BUNDLE.reportId,
-  };
+  return buildMissingAiGraderReportBundle(normalized);
 }
 
 export function hasNoFinalCertifiedClaims(bundle: AiGraderReportBundle) {

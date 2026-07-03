@@ -119,6 +119,20 @@ test("sample public report bundle keeps provisional-only safety flags", () => {
   assert.match(SAMPLE_AI_GRADER_REPORT_BUNDLE.limitations.join(" "), /No QR Certificate Yet/);
 });
 
+test("unknown generated report ids do not reuse fixture report data", () => {
+  const bundle = getAiGraderReportBundle("ai-grader-prod-smoke-missing-storage");
+
+  assert.equal(bundle.reportId, "ai-grader-prod-smoke-missing-storage");
+  assert.equal(bundle.reportStatus, "missing_report_data");
+  assert.equal(bundle.visionLab.available, false);
+  assert.equal(bundle.provisionalGrade, undefined);
+  assert.equal(bundle.reportHtmlPath, undefined);
+  assert.equal(bundle.evidenceReferences.frontPackageDir, undefined);
+  assert.equal(bundle.evidenceReferences.backPackageDir, undefined);
+  assert.match(bundle.limitations.join(" "), /No fixture\/sample data/);
+  assert.equal(hasNoCertifiedClaim(bundle), true);
+});
+
 test("sample final report bundle exposes final V0 data without certified claim", () => {
   const bundle = getAiGraderReportBundle("sample-final-v0");
 
@@ -521,6 +535,18 @@ test("public report API is read-only and disabled unless explicitly configured",
   assert.equal(body.readOnly, true);
   assert.equal(body.noHardwareControls, true);
   assert.equal(body.bundle.reportId, "sample-final-v0");
+
+  const missing = createAiGraderPublicReportApiHandler({
+    env: { [AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV]: "true" },
+    async readPublishedBundle() {
+      return null;
+    },
+  });
+  const missingRes = mockResponse();
+  const missingReq = mockRequest("GET");
+  missingReq.query = { reportId: "missing-storage-report" };
+  await missing(missingReq, missingRes);
+  assert.equal(missingRes.statusCodeValue, 404);
 });
 
 test("local station sample history aggregates report stats without certified claims", () => {
