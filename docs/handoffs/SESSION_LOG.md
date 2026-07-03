@@ -23137,3 +23137,64 @@ By enabling Rip It Live, I confirm:
 - Do not print secrets, database URLs, storage keys, SerpAPI keys, service credentials, or auth tokens.
 - Keep public report routes read-only and unauthenticated.
 - Do not run hardware capture unless Mark explicitly starts a supervised Dell grading session.
+
+## 2026-07-03 - Final AI Grader production-live smoke with permanent auth
+
+### Observed Result
+- Local repo was verified on `main` at `aee7ac9cd6c28a0a5474fe1297c70ad9ad0288e3`, matching `origin/main`; `git diff --check` passed before final docs updates.
+- PR #49 permanent auth was merged and deployed to Vercel Production. After Mark configured the permanent-auth Vercel Production env vars and redeployed, the hosted status endpoint returned publish enabled, public DB reads enabled, live comps enabled, human operator/admin configured, service account configured, service scope count `5`, and `noHardwareControls=true`.
+- PR #50 public-output security fix was merged at `2026-07-03T21:20:02Z`, merge commit `aee7ac9cd6c28a0a5474fe1297c70ad9ad0288e3`, and Vercel Production reported deployment success at `2026-07-03T21:21:03Z`.
+- Fresh hosted production publish smoke through permanent service-account auth succeeded:
+  - `reportId`: `ai-grader-prod-smoke-20260703T212555`
+  - `certId`: `TK-AIG-6C033F43`
+  - Public report URL: `https://collect.tenkings.co/ai-grader/reports/ai-grader-prod-smoke-20260703T212555`
+  - Label preview URL: `https://collect.tenkings.co/ai-grader/labels/ai-grader-prod-smoke-20260703T212555`
+  - QR payload URL matched the public report URL.
+- Publish/storage/readback:
+  - Publish returned `200`, `publicationStatus=published`, `uploadedAssetCount=7`, and `evidenceAssetCount=7`.
+  - Public API readback verified the expected uploaded artifacts: `report-bundle.json`, `production-release.json`, `label-data.json`, `publication-manifest.json`, `integration-contract.json`, `asset-manifest.json`, and `label-preview.html`.
+  - Public report API returned `200`, matched report/cert IDs, showed generated label/QR data, and stayed read-only with no hardware controls.
+- DB persistence:
+  - Verified through hosted production API write/read surfaces rather than direct SQL. Publish, public report readback, slab uploads, comps persistence, and history/latest confirmed persisted production data paths.
+  - No direct production SQL row-count query was run in the final pass.
+- Slabbed photo:
+  - Safe front/back PNG uploads returned `200`.
+  - Public report merged two `slabbed_photo` assets with sides `front` and `back`; Basler evidence was not overwritten.
+- Card/item linkage:
+  - Used safe manual draft identity: `1990 SkyBox Michael Jordan #41 AI Grader Smoke Draft`.
+  - No production `CardAsset` or `Item` row was modified; update counts were `0`.
+- eBay/SerpAPI comps:
+  - One controlled live comps request ran with limit `1`.
+  - Endpoint returned `200`, `resultStatus=completed`, `liveExecutionEnabled=true`, and `persisted=true`.
+  - The query returned zero comp refs/no valuation amount; public report still merged valuation status as `completed`.
+- Station/history/security:
+  - Production station route was reachable.
+  - Authenticated history returned `200`, found the fresh report at index `0`, and latest report ID matched the fresh report.
+  - Wrong service token returned `401`; unauthenticated publish returned `401`; public report `POST` returned `405`.
+  - Post-PR #50 public JSON/HTML scan found no `DATABASE_URL`, storage key/secret markers, SerpAPI key markers, service token, token hash, Dell local paths, bridge URLs/tokens, or hardware controls.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `23` tests.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database exec node --test tests/aiGraderProductionService.test.js` -> pass, `9` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `167` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass.
+
+### Result
+- AI Grader is production-live for hosted publish, production storage upload/readback, persisted public report/label/QR, slabbed photo upload, manual draft identity, controlled live comps execution path, station history/latest, and public-output security under the permanent auth model.
+
+### Remaining Follow-Up
+- DigitalOcean managed Postgres credential rotation remains deferred by Mark and should still be completed after rollout.
+- If business acceptance requires non-empty eBay comps, run one additional approved controlled comps smoke with a card/query likely to return sold comps.
+
+### Guardrails
+- No secret value was printed.
+- No shell tracing was used.
+- No destructive DB operation was run.
+- No hardware command or image capture was run.
+- No temporary auth bypass was added.
+- No production untracked file was deleted or modified.
