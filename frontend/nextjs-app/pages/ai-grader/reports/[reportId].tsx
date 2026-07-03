@@ -7,12 +7,6 @@ import {
   hasNoFinalCertifiedClaims,
   type AiGraderReportBundle,
 } from "../../../lib/aiGraderReportBundle";
-import {
-  AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY,
-  AI_GRADER_STATION_TOKEN_STORAGE_KEY,
-  DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
-  fetchAiGraderStationReportBundle,
-} from "../../../lib/aiGraderStationBridgeClient";
 
 const ELEMENT_LABELS = ["centering", "corners", "edges", "surface"] as const;
 const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Confidence", "Evidence Replay"];
@@ -32,11 +26,9 @@ function sourceChannelsText(candidate: unknown) {
 export default function AiGraderReportViewerPage() {
   const router = useRouter();
   const fallbackBundle = getAiGraderReportBundle(router.query.reportId);
-  const [localBundle, setLocalBundle] = useState<AiGraderReportBundle | null>(null);
   const [persistedBundle, setPersistedBundle] = useState<AiGraderReportBundle | null>(null);
-  const [localBridgeError, setLocalBridgeError] = useState<string | null>(null);
-  const [localBridgeLoading, setLocalBridgeLoading] = useState(false);
-  const bundle = localBundle ?? persistedBundle ?? fallbackBundle;
+  const [publicLookupError, setPublicLookupError] = useState<string | null>(null);
+  const bundle = persistedBundle ?? fallbackBundle;
   const story = bundle.provisionalGrade;
   const productionRelease = bundle.productionRelease;
   const finalGrade = productionRelease?.finalGrade;
@@ -48,56 +40,25 @@ export default function AiGraderReportViewerPage() {
     ? productionRelease?.slabbedPhotoContract.photos
     : [];
   const compsContract = productionRelease?.ebayCompsContract;
-  const isSampleFallback = !localBundle && !persistedBundle && bundle.reportStatus === "missing_report_data";
+  const isSampleFallback = !persistedBundle && bundle.reportStatus === "missing_report_data";
   const reportIsFinal = productionRelease?.finalGradeComputed === true;
 
   useEffect(() => {
     if (!router.isReady) return;
     const reportId = Array.isArray(router.query.reportId) ? router.query.reportId[0] : router.query.reportId;
     if (!reportId || reportId === "sample-pr45" || reportId === "sample-final-v0") return;
+    setPublicLookupError(null);
     fetch(`/api/ai-grader/reports/${encodeURIComponent(reportId)}`)
       .then(async (response) => {
         const payload = await response.json().catch(() => ({}));
         if (response.ok && payload.ok === true && payload.bundle) {
           setPersistedBundle(payload.bundle);
-          setLocalBridgeError(null);
-          return true;
-        }
-        return false;
-      })
-      .then((resolvedFromDb) => {
-        if (resolvedFromDb) return;
-        const bridgeUrl = window.localStorage.getItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY) ?? DEFAULT_AI_GRADER_STATION_BRIDGE_URL;
-        const stationToken = window.localStorage.getItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY) ?? "";
-        if (!stationToken) {
-          setLocalBridgeError("This report was not resolved from persisted storage. Generated local reports require the Dell station bridge token saved by the station page.");
           return;
         }
-        setLocalBridgeLoading(true);
-        setLocalBridgeError(null);
-        fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId })
-          .then((nextBundle) => {
-            setLocalBundle(nextBundle);
-          })
-          .catch((error) => {
-            setLocalBridgeError(error instanceof Error ? error.message : "Could not load generated local AI Grader report.");
-          })
-          .finally(() => {
-            setLocalBridgeLoading(false);
-          });
+        setPublicLookupError("This report was not resolved from persisted production storage.");
       })
       .catch(() => {
-        const bridgeUrl = window.localStorage.getItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY) ?? DEFAULT_AI_GRADER_STATION_BRIDGE_URL;
-        const stationToken = window.localStorage.getItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY) ?? "";
-        if (!stationToken) {
-          setLocalBridgeError("Persisted report lookup failed and no Dell station bridge token is saved.");
-          return;
-        }
-        setLocalBridgeLoading(true);
-        fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId })
-          .then((nextBundle) => setLocalBundle(nextBundle))
-          .catch((error) => setLocalBridgeError(error instanceof Error ? error.message : "Could not load generated local AI Grader report."))
-          .finally(() => setLocalBridgeLoading(false));
+        setPublicLookupError("Persisted production report lookup failed.");
       });
     return;
   }, [router.isReady, router.query.reportId]);
@@ -121,17 +82,12 @@ export default function AiGraderReportViewerPage() {
           </div>
         </header>
 
-        {localBridgeLoading || localBridgeError || isSampleFallback ? (
-          <section className={localBridgeError || isSampleFallback ? "local-status warn" : "local-status"}>
-            <strong>{localBridgeLoading ? "Loading generated Dell report" : localBundle ? "Generated local report loaded" : persistedBundle ? "Published report bundle loaded" : "Local report bridge needed"}</strong>
+        {publicLookupError || isSampleFallback ? (
+          <section className="local-status warn">
+            <strong>{persistedBundle ? "Published report bundle loaded" : "Published report not found"}</strong>
             <p>
-              {localBridgeLoading
-                ? "The viewer is reading the generated report bundle from the token-gated Dell bridge."
-                : localBridgeError
-                  ? localBridgeError
-                  : persistedBundle
-                    ? "The viewer resolved this report from the persisted read-only report endpoint."
-                    : "This route is open, but the generated report bundle was not resolved from persisted storage or the local bridge. Open it from the Station page after connecting the bridge."}
+              {publicLookupError ??
+                "This route is open, but the generated report bundle was not resolved from persisted production storage."}
             </p>
           </section>
         ) : null}
@@ -349,14 +305,12 @@ export default function AiGraderReportViewerPage() {
             <h2>Bundle and safety status</h2>
           </div>
           <dl>
-            <dt>Local report path</dt>
-            <dd>{bundle.reportHtmlPath ?? "not provided"}</dd>
-            <dt>Bundle source</dt>
-            <dd>{localBundle ? "Dell local station bridge" : persistedBundle ? "persisted read-only report endpoint" : "fixture/sample fallback"}</dd>
+            <dt>Report source</dt>
+            <dd>{persistedBundle ? "persisted read-only report endpoint" : "fixture/sample fallback"}</dd>
             <dt>Front evidence</dt>
-            <dd>{bundle.evidenceReferences.frontPackageDir ?? "missing"}</dd>
+            <dd>{bundle.evidenceReferences.frontEvidenceRefs.join(", ") || "missing"}</dd>
             <dt>Back evidence</dt>
-            <dd>{bundle.evidenceReferences.backPackageDir ?? "missing"}</dd>
+            <dd>{bundle.evidenceReferences.backEvidenceRefs.join(", ") || "missing"}</dd>
             <dt>Ruler calibration</dt>
             <dd>{JSON.stringify(bundle.rulerCalibration ?? {})}</dd>
             <dt>Final/certified claims</dt>

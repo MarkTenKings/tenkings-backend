@@ -2,6 +2,13 @@
 
 ## Session Update (2026-07-03 UTC, AI Grader permanent auth implementation)
 - Branch: `feature/ai-grader-permanent-auth` at base HEAD `bf2b70990082ef6599f8d654a23774e55cb16155` before the permanent-auth commit.
+- Final rollout continuation after Mark configured the permanent-auth Vercel Production env:
+  - Runtime status now returns `humanOperatorRolesConfigured=true`, `humanAdminRolesConfigured=true`, `globalAdminFallbackConfigured=true`, `serviceAccountConfigured=true`, and `serviceAccountScopeCount=5`.
+  - Vercel reported a fresh successful Production deployment for PR #49 merge commit `e786e400343e658f8a5bad739df7e686827eca24`, updated `2026-07-03T20:17:35Z`.
+  - Hosted publish/storage/slab/comps/history smoke through permanent service-account auth succeeded for `reportId=ai-grader-prod-smoke-20260703T211033`, `certId=TK-AIG-6C02B7DF`.
+  - Smoke output: publish returned `uploadedAssetCount=7`, `evidenceAssetCount=7`, no CardAsset/Item updates, public report API read persisted storage data, slabbed front/back safe PNG uploads persisted and merged into public report, one live comps request completed/persisted with zero comp refs, history/latest found the smoke report at index `0`, wrong-token history returned `401`, unauthenticated publish returned `401`, and public report `POST` returned `405`.
+  - Public-output security scan found no service token, token hash, `DATABASE_URL`, storage key names, or SerpAPI key, but did flag legacy fixture-local path and hardware wording in public report static output.
+  - Security fix in progress: remove absolute local fixture paths/hardware-vendor wording from public fixture data and remove local station bridge fallback text/imports from the public report page before final production-live signoff.
 - Prior release state carried forward:
   - PR #48 (`fix/ai-grader-public-report-missing-data`) was merged and deployed to Vercel Production at merge commit `bf2b70990082ef6599f8d654a23774e55cb16155`.
   - Production migration `20260702120000_ai_grader_production_release_v0` was already applied and previously verified with Prisma reporting the schema up to date and the seven `AiGrader*` tables present.
@@ -23,7 +30,16 @@
   - `AI_GRADER_SERVICE_ACCOUNT_SCOPES=publish,history,card-search,upload-slab-photo,run-comps`
   - Existing required runtime vars remain: production `DATABASE_URL`, AI Grader publish/public/comps gates, `AI_GRADER_PUBLIC_REPORT_BASE_URL`, `AI_GRADER_PRODUCTION_TENANT_ID`, storage helper config, and optional SerpAPI/comps config.
 - Credential rotation status: DigitalOcean Postgres credential rotation remains deferred by Mark; do not rotate it in this pass. Mark must generate any new plaintext service token locally and set only its SHA-256 hash in Vercel. Do not print the token.
-- Production smoke status: pending until permanent-auth PR is validated, merged, deployed, Vercel env behavior is verified, and a fresh authenticated hosted publish/storage/slab/comps smoke is run.
+- PR/deploy result:
+  - PR #49 (`feature/ai-grader-permanent-auth`) merged at `2026-07-03T08:55:08Z` with merge commit `e786e400343e658f8a5bad739df7e686827eca24`.
+  - GitHub main CI passed for merge commit `e786e400343e658f8a5bad739df7e686827eca24` in run `28649789936`.
+  - Vercel reported Production deployment success for merge commit `e786e400343e658f8a5bad739df7e686827eca24`; GitHub deployment id `5297147293`, commit status `Vercel=success`, description `Deployment has completed`, updated `2026-07-03T08:56:24Z`.
+- Vercel env/runtime behavior verified after deploy:
+  - `GET https://collect.tenkings.co/api/admin/ai-grader/production/status` returned `200`, `enabled=true`, `publicReportDbReadsEnabled=true`, `liveEbayCompsEnabled=true`, and `noHardwareControls=true`.
+  - Runtime auth status returned `humanOperatorRolesConfigured=false`, `humanAdminRolesConfigured=false`, `globalAdminFallbackConfigured=true`, `serviceAccountConfigured=false`, and `serviceAccountScopeCount=0`.
+  - New permanent-auth Vercel Production env vars are therefore not configured yet; write smokes are blocked until Mark installs them.
+- Public API security smoke after deploy: `POST https://collect.tenkings.co/api/ai-grader/reports/ai-grader-prod-smoke-20260703T040532` returned `405 Method Not Allowed`.
+- Production smoke status: blocked before fresh hosted publish/storage/slab/comps because permanent-auth service/human env vars are missing. Do not reuse the compromised operator key and do not add a bypass. The old direct-DB smoke report now returned `Published AI Grader report not found` and remains invalid as hosted storage-backed proof.
 - Validation in this implementation pass:
   - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts tests/aiGraderApi.test.ts` -> pass, `42` tests.
   - `pnpm --filter @tenkings/database build` -> pass.
