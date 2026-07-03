@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { publicUrlFor, uploadBuffer } from "../../../../../lib/server/storage";
 import { requireAdminSession } from "../../../../../lib/server/admin";
+import { requireUserSession } from "../../../../../lib/server/session";
 import {
   createAiGraderProductionApiHandler,
   listProductionReportHistoryRuntime,
@@ -14,6 +15,7 @@ import {
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const runtime = createAiGraderProductionApiHandler({
     requireAdminSession,
+    requireUserSession,
     publicUrlFor,
     uploadArtifact: async ({ storageKey, body, contentType }) => ({
       storageKey,

@@ -1,5 +1,7 @@
 import Head from "next/head";
 import { useEffect, useMemo, useState } from "react";
+import { useSession } from "../../hooks/useSession";
+import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   AI_GRADER_STATION_STEPS,
   buildAiGraderLocalStationStatus,
@@ -87,6 +89,7 @@ function sortHistory(items: AiGraderLocalReportHistoryItem[], sort: HistorySort)
 }
 
 export default function AiGraderStationPage() {
+  const { ensureSession } = useSession();
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +149,11 @@ export default function AiGraderStationPage() {
   const labelReady = status.safety.labelGenerated || Boolean(status.outputs?.labelDataPath);
   const showFlipScrim = status.currentStep === "prompt_flip_card";
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
+
+  const productionAuthHeaders = async (extra: Record<string, string> = {}) => {
+    const activeSession = await ensureSession();
+    return buildAdminHeaders(activeSession.token, extra);
+  };
 
   const refreshHistory = async () => {
     if (!bridgeConnected) {
@@ -317,7 +325,9 @@ export default function AiGraderStationPage() {
     try {
       const query = cardSearchQuery.trim();
       if (!query) throw new Error("Enter a card, player, set, item, or card asset search first.");
-      const response = await fetch(`/api/admin/ai-grader/production/card-search?q=${encodeURIComponent(query)}&limit=8`);
+      const response = await fetch(`/api/admin/ai-grader/production/card-search?q=${encodeURIComponent(query)}&limit=8`, {
+        headers: await productionAuthHeaders(),
+      });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload.ok !== true) {
         setCardSearchResults([]);
@@ -356,7 +366,7 @@ export default function AiGraderStationPage() {
       }
       const response = await fetch("/api/admin/ai-grader/production/publish", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: await productionAuthHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           publicationStatus: "published",
           reportBundle,
@@ -409,7 +419,7 @@ export default function AiGraderStationPage() {
       });
       const response = await fetch("/api/admin/ai-grader/production/upload-slab-photo", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: await productionAuthHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           reportId,
           side,
@@ -454,7 +464,7 @@ export default function AiGraderStationPage() {
       }
       const response = await fetch("/api/admin/ai-grader/production/run-comps", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: await productionAuthHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           reportId: status.productionRelease.reportId,
           reportBundle,

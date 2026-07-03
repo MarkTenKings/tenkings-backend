@@ -18,6 +18,14 @@ import {
   persistAiGraderValuationResult,
 } from "@tenkings/database";
 import type { AdminSession } from "./admin";
+import type { UserSession } from "./session";
+import {
+  aiGraderProductionAuthStatus,
+  requireAiGraderProductionActor,
+  type AiGraderProductionAction,
+  type AiGraderProductionActor,
+  type AiGraderProductionActorAudit,
+} from "./aiGraderProductionAuth";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
@@ -61,6 +69,12 @@ export type AiGraderCompsRunResult = {
 export type AiGraderProductionApiDependencies = {
   env?: EnvLike;
   requireAdminSession(req: NextApiRequest): Promise<AdminSession>;
+  requireUserSession?(req: NextApiRequest): Promise<UserSession>;
+  requireProductionActor?(
+    req: NextApiRequest,
+    action: AiGraderProductionAction,
+    env: EnvLike
+  ): Promise<AiGraderProductionActor>;
   publicUrlFor(storageKey: string): string;
   uploadArtifact(input: {
     storageKey: string;
@@ -76,12 +90,14 @@ export type AiGraderProductionApiDependencies = {
     operatorUserId?: string | null;
     cardAssetId?: string | null;
     itemId?: string | null;
+    actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderProductionPersistResult>;
   listHistory?(): Promise<AiGraderProductionHistoryResult>;
   searchCards?(input: {
     query: string;
     limit: number;
-    admin: AdminSession;
+    admin?: AdminSession | null;
+    actor: AiGraderProductionActor;
   }): Promise<AiGraderCardItemSearchResult[]>;
   uploadSlabbedPhoto?(input: {
     tenantId: string;
@@ -91,6 +107,7 @@ export type AiGraderProductionApiDependencies = {
     mimeType: string;
     body: Buffer;
     operatorUserId?: string | null;
+    actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderSlabbedPhotoUploadResult>;
   runComps?(input: {
     reportId: string;
@@ -98,7 +115,8 @@ export type AiGraderProductionApiDependencies = {
     reportBundle: AiGraderProductionReportBundleLike;
     productionRelease: AiGraderProductionReleaseLike;
     limit: number;
-    admin: AdminSession;
+    admin?: AdminSession | null;
+    actor: AiGraderProductionActor;
   }): Promise<Omit<AiGraderCompsRunResult, "status" | "liveExecutionEnabled" | "persisted">>;
   persistComps?(input: {
     tenantId: string;
@@ -108,6 +126,7 @@ export type AiGraderProductionApiDependencies = {
     compsRefs?: unknown;
     resultSummary?: unknown;
     requestedByUserId?: string | null;
+    actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<unknown>;
 };
 
@@ -175,6 +194,31 @@ function optionalString(value: unknown) {
 function numericValue(value: unknown, fallback: number) {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function errorStatus(error: unknown, fallback = 400) {
+  if (isRecord(error) && typeof error.statusCode === "number" && Number.isFinite(error.statusCode)) {
+    return Math.max(400, Math.min(599, Math.round(error.statusCode)));
+  }
+  return fallback;
+}
+
+function actorOperatorUserId(actor: AiGraderProductionActor) {
+  return actor.type === "human_operator" ? actor.user.id : null;
+}
+
+function adminSessionForActor(actor: AiGraderProductionActor): AdminSession | null {
+  if (actor.type !== "human_operator") return null;
+  if (actor.adminSession) return actor.adminSession;
+  return {
+    sessionId: actor.sessionId,
+    tokenHash: actor.tokenHash,
+    user: {
+      id: actor.user.id,
+      phone: actor.user.phone,
+      displayName: actor.user.displayName,
+    },
+  };
 }
 
 function parsePublishBody(body: unknown) {
@@ -362,6 +406,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         publicReportDbReadsEnabled: isEnabled(env, AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV),
         liveEbayCompsEnabled: isEnabled(env, AI_GRADER_EBAY_COMPS_ENABLED_ENV),
         actions: ["publish", "history", "card-search", "upload-slab-photo", "run-comps"],
+        auth: aiGraderProductionAuthStatus(env),
         noHardwareControls: true,
       });
     }
@@ -385,7 +430,15 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
     }
 
     try {
-      const admin = await deps.requireAdminSession(req);
+      const actor =
+        deps.requireProductionActor?.(req, key as AiGraderProductionAction, env) ??
+        requireAiGraderProductionActor(req, key as AiGraderProductionAction, {
+          env,
+          requireUserSession: deps.requireUserSession,
+          requireAdminSession: deps.requireAdminSession,
+        });
+      const authorizedActor = await actor;
+      const admin = adminSessionForActor(authorizedActor);
       if (key === "history") {
         const result = deps.listHistory ? await deps.listHistory() : { status: "not_implemented", items: [] };
         return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderProductionHistory", result });
@@ -393,7 +446,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       if (key === "card-search") {
         if (!deps.searchCards) throw new Error("AI Grader card/item search is not configured.");
         const query = parseCardSearchQuery(req);
-        const results = await deps.searchCards({ ...query, admin });
+        const results = await deps.searchCards({ ...query, admin, actor: authorizedActor });
         return res.status(200).json({
           ok: true,
           enabled: true,
@@ -416,7 +469,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           fileName: input.fileName,
           mimeType: input.mimeType,
           body: input.body,
-          operatorUserId: admin.user.id,
+          operatorUserId: actorOperatorUserId(authorizedActor),
+          actorAudit: authorizedActor.audit,
         });
         return res.status(200).json({
           ok: true,
@@ -485,6 +539,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           productionRelease: input.productionRelease,
           limit: input.limit,
           admin,
+          actor: authorizedActor,
         });
         let persisted = false;
         if (deps.persistComps && isEnabled(env, AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV)) {
@@ -496,7 +551,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             searchQuery: input.searchQuery,
             compsRefs: comps.compsRefs,
             resultSummary: comps.resultSummary,
-            requestedByUserId: admin.user.id,
+            requestedByUserId: actorOperatorUserId(authorizedActor),
+            actorAudit: authorizedActor.audit,
           });
           persisted = true;
         }
@@ -533,9 +589,10 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         productionRelease: input.productionRelease,
         storagePlan: uploadedPlan,
         publicationStatus: input.publicationStatus,
-        operatorUserId: admin.user.id,
+        operatorUserId: actorOperatorUserId(authorizedActor),
         cardAssetId: input.cardAssetId,
         itemId: input.itemId,
+        actorAudit: authorizedActor.audit,
       });
       return res.status(200).json({
         ok: true,
@@ -554,7 +611,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         },
       });
     } catch (error) {
-      return res.status(400).json({
+      return res.status(errorStatus(error)).json({
         ok: false,
         message: error instanceof Error ? error.message : "AI Grader production publish failed.",
       });
@@ -600,6 +657,7 @@ export async function persistProductionReleaseRuntime(input: {
   operatorUserId?: string | null;
   cardAssetId?: string | null;
   itemId?: string | null;
+  actorAudit?: AiGraderProductionActorAudit | null;
 }) {
   const { prisma } = await import("@tenkings/database");
   return persistAiGraderProductionRelease(prisma as any, input);
@@ -629,6 +687,8 @@ function publicImageUrlFromCard(row: JsonRecord) {
 export async function searchAiGraderCardItemsRuntime(input: {
   query: string;
   limit: number;
+  admin?: AdminSession | null;
+  actor?: AiGraderProductionActor;
 }): Promise<AiGraderCardItemSearchResult[]> {
   const { prisma } = await import("@tenkings/database");
   const db = prisma as any;
@@ -718,6 +778,7 @@ export async function uploadAiGraderSlabbedPhotoRuntime(input: {
   mimeType: string;
   body: Buffer;
   operatorUserId?: string | null;
+  actorAudit?: AiGraderProductionActorAudit | null;
 }): Promise<AiGraderSlabbedPhotoUploadResult> {
   const { publicUrlFor, uploadBuffer } = await import("./storage");
   const reportSegment = safeStorageSegment(input.reportId);
@@ -736,6 +797,7 @@ export async function uploadAiGraderSlabbedPhotoRuntime(input: {
     byteSize: input.body.length,
     checksumSha256,
     operatorUserId: input.operatorUserId,
+    actorAudit: input.actorAudit ?? null,
   });
   return {
     reportId: input.reportId,
@@ -758,6 +820,8 @@ function parseCurrencyMinor(price: string | null | undefined) {
 export async function runAiGraderEbayCompsRuntime(input: {
   searchQuery: string;
   limit: number;
+  admin?: AdminSession | null;
+  actor?: AiGraderProductionActor;
 }): Promise<Omit<AiGraderCompsRunResult, "status" | "liveExecutionEnabled" | "persisted">> {
   const { fetchKingsreviewEbaySoldCompPage } = await import("./kingsreviewEbayComps");
   const page = await fetchKingsreviewEbaySoldCompPage({
@@ -800,6 +864,7 @@ export async function persistAiGraderCompsRuntime(input: {
   compsRefs?: unknown;
   resultSummary?: unknown;
   requestedByUserId?: string | null;
+  actorAudit?: AiGraderProductionActorAudit | null;
 }) {
   const { prisma } = await import("@tenkings/database");
   const resultSummary = isRecord(input.resultSummary) ? input.resultSummary : {};
@@ -814,6 +879,7 @@ export async function persistAiGraderCompsRuntime(input: {
     valuationMinor: typeof resultSummary.valuationMinor === "number" ? resultSummary.valuationMinor : null,
     valuationCurrency: typeof resultSummary.valuationCurrency === "string" ? resultSummary.valuationCurrency : "USD",
     requestedByUserId: input.requestedByUserId ?? null,
+    actorAudit: input.actorAudit ?? null,
     completedAt: input.status === "completed" ? new Date() : null,
   });
 }

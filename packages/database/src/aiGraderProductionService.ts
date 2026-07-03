@@ -101,6 +101,15 @@ export type AiGraderProductionStoragePlan = {
   }>;
 };
 
+export type AiGraderProductionActorAudit = JsonRecord & {
+  actorType: "human_operator" | "service_account";
+  action: string;
+  requestedAt: string;
+  userId?: string | null;
+  serviceAccountId?: string | null;
+  role?: string | null;
+};
+
 export type AiGraderProductionPersistInput = {
   tenantId: string;
   reportBundle: AiGraderProductionReportBundleLike;
@@ -110,6 +119,7 @@ export type AiGraderProductionPersistInput = {
   operatorUserId?: string | null;
   cardAssetId?: string | null;
   itemId?: string | null;
+  actorAudit?: AiGraderProductionActorAudit | null;
   persistedAt?: string | Date;
 };
 
@@ -157,6 +167,7 @@ export type AiGraderSlabbedPhotoPersistInput = {
   operatorUserId?: string | null;
   uploadedAt?: string | Date;
   metadata?: JsonRecord;
+  actorAudit?: AiGraderProductionActorAudit | null;
 };
 
 export type AiGraderSlabbedPhotoPersistResult = {
@@ -179,6 +190,7 @@ export type AiGraderValuationPersistInput = {
   valuationMinor?: number | null;
   valuationCurrency?: string | null;
   requestedByUserId?: string | null;
+  actorAudit?: AiGraderProductionActorAudit | null;
   requestedAt?: string | Date;
   completedAt?: string | Date | null;
   errorCode?: string | null;
@@ -222,6 +234,24 @@ function json(value: unknown): Prisma.InputJsonValue {
 
 function nullableJson(value: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull {
   return value === undefined || value === null ? Prisma.JsonNull : (value as Prisma.InputJsonValue);
+}
+
+function actorAuditJson(value: AiGraderProductionActorAudit | null | undefined): JsonRecord | null {
+  if (!isRecord(value)) return null;
+  return {
+    actorType: stringValue(value.actorType, "unknown"),
+    action: stringValue(value.action, "unknown"),
+    requestedAt: stringValue(value.requestedAt, new Date().toISOString()),
+    userId: stringValue(value.userId, "") || null,
+    serviceAccountId: stringValue(value.serviceAccountId, "") || null,
+    role: stringValue(value.role, "") || null,
+  };
+}
+
+function withActorAudit(value: unknown, audit: AiGraderProductionActorAudit | null | undefined): JsonRecord {
+  const base = isRecord(value) ? value : {};
+  const cleanedAudit = actorAuditJson(audit);
+  return cleanedAudit ? { ...base, actorAudit: cleanedAudit } : base;
 }
 
 export function aiGraderSha256(value: string | Buffer) {
@@ -560,6 +590,7 @@ function sessionData(input: AiGraderProductionPersistInput, gradingSessionId: st
       finalGradeComputed: input.productionRelease.finalGradeComputed === true,
       certifiedClaim: false,
       warnings: input.productionRelease.warnings ?? input.reportBundle.warnings ?? [],
+      actorAudit: actorAuditJson(input.actorAudit),
     }),
     updatedAt: now,
   };
@@ -600,7 +631,10 @@ function reportData(input: AiGraderProductionPersistInput, sessionId: string, re
     lightingProfile: nullableJson(input.reportBundle.lightingProfile),
     visionLabArtifacts: nullableJson(input.reportBundle.visionLab),
     valuationSummary: nullableJson(release.ebayCompsContract),
-    checksumSummary: nullableJson(input.storagePlan.assetManifest),
+    checksumSummary: nullableJson({
+      assets: input.storagePlan.assetManifest,
+      actorAudit: actorAuditJson(input.actorAudit),
+    }),
     finalizedAt: now,
     publishedAt: status === "published" ? now : null,
     updatedAt: now,
@@ -648,6 +682,7 @@ export async function persistAiGraderProductionRelease(
     const finalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
     const elements = elementScores(input.productionRelease);
     const confidenceData = confidence(input.productionRelease);
+    const operatorFinalizationJson = withActorAudit(input.productionRelease.operatorFinalization, input.actorAudit);
     const grade = await tx.aiGraderGrade.upsert({
       where: { reportId: reportRowId },
       update: {
@@ -664,7 +699,7 @@ export async function persistAiGraderProductionRelease(
         whyNot10: nullableJson(finalGrade.whyNot10),
         gates: nullableJson(input.productionRelease.gates),
         warnings: nullableJson(input.productionRelease.warnings),
-        operatorFinalization: nullableJson(input.productionRelease.operatorFinalization),
+        operatorFinalization: nullableJson(operatorFinalizationJson),
         overrideReason: stringValue(input.productionRelease.operatorFinalization?.overrideReason, "") || null,
         updatedAt: now,
       },
@@ -683,7 +718,7 @@ export async function persistAiGraderProductionRelease(
         whyNot10: nullableJson(finalGrade.whyNot10),
         gates: nullableJson(input.productionRelease.gates),
         warnings: nullableJson(input.productionRelease.warnings),
-        operatorFinalization: nullableJson(input.productionRelease.operatorFinalization),
+        operatorFinalization: nullableJson(operatorFinalizationJson),
         overrideReason: stringValue(input.productionRelease.operatorFinalization?.overrideReason, "") || null,
         createdAt: now,
         updatedAt: now,
@@ -736,7 +771,7 @@ export async function persistAiGraderProductionRelease(
         reportBundleStorageKey: `${input.storagePlan.storageKeyPrefix}report-bundle.json`,
         storageKeyPrefix: input.storagePlan.storageKeyPrefix,
         assetManifest: json(input.storagePlan.assetManifest),
-        publicationManifest: nullableJson(input.productionRelease.publication),
+        publicationManifest: nullableJson(withActorAudit(input.productionRelease.publication, input.actorAudit)),
         publishedByUserId: input.operatorUserId ?? null,
         publishedAt: publicationStatus === "published" ? now : null,
         updatedAt: now,
@@ -750,7 +785,7 @@ export async function persistAiGraderProductionRelease(
         reportBundleStorageKey: `${input.storagePlan.storageKeyPrefix}report-bundle.json`,
         storageKeyPrefix: input.storagePlan.storageKeyPrefix,
         assetManifest: json(input.storagePlan.assetManifest),
-        publicationManifest: nullableJson(input.productionRelease.publication),
+        publicationManifest: nullableJson(withActorAudit(input.productionRelease.publication, input.actorAudit)),
         publishedByUserId: input.operatorUserId ?? null,
         publishedAt: publicationStatus === "published" ? now : null,
         createdAt: now,
@@ -771,7 +806,10 @@ export async function persistAiGraderProductionRelease(
           checksumSha256: asset.checksumSha256,
           mimeType: asset.contentType,
           byteSize: asset.byteSize,
-          metadata: json({ source: "ai_grader_production_release_v0" }),
+          metadata: json({
+            source: "ai_grader_production_release_v0",
+            actorAudit: actorAuditJson(input.actorAudit),
+          }),
         },
         create: {
           tenantId: input.tenantId,
@@ -785,7 +823,10 @@ export async function persistAiGraderProductionRelease(
           checksumSha256: asset.checksumSha256,
           mimeType: asset.contentType,
           byteSize: asset.byteSize,
-          metadata: json({ source: "ai_grader_production_release_v0" }),
+          metadata: json({
+            source: "ai_grader_production_release_v0",
+            actorAudit: actorAuditJson(input.actorAudit),
+          }),
           createdAt: now,
         },
       });
@@ -802,7 +843,7 @@ export async function persistAiGraderProductionRelease(
         source: "ebay_sold",
         searchQuery: stringValue(input.reportBundle.cardIdentity?.title, "") || null,
         compsRefs: nullableJson(input.productionRelease.ebayCompsContract?.compsRefs),
-        resultSummary: nullableJson(input.productionRelease.ebayCompsContract),
+        resultSummary: nullableJson(withActorAudit(input.productionRelease.ebayCompsContract, input.actorAudit)),
         updatedAt: now,
       },
       create: {
@@ -814,7 +855,7 @@ export async function persistAiGraderProductionRelease(
         source: "ebay_sold",
         searchQuery: stringValue(input.reportBundle.cardIdentity?.title, "") || null,
         compsRefs: nullableJson(input.productionRelease.ebayCompsContract?.compsRefs),
-        resultSummary: nullableJson(input.productionRelease.ebayCompsContract),
+        resultSummary: nullableJson(withActorAudit(input.productionRelease.ebayCompsContract, input.actorAudit)),
         createdAt: now,
         updatedAt: now,
       },
@@ -833,6 +874,7 @@ export async function persistAiGraderProductionRelease(
             publicationStatus,
             finalGrade: input.productionRelease.finalGrade,
             label,
+            actorAudit: actorAuditJson(input.actorAudit),
           }),
           aiGradeGeneratedAt: now,
         },
@@ -850,6 +892,7 @@ export async function persistAiGraderProductionRelease(
             aiGraderPublicReportUrl: input.storagePlan.publicReportUrl,
             aiGraderFinalGrade: finalOverallGrade(input.productionRelease) ?? null,
             aiGraderLabel: label.labelGradeText ?? null,
+            aiGraderActorAudit: actorAuditJson(input.actorAudit),
           }),
         },
       });
@@ -936,6 +979,7 @@ export async function persistAiGraderSlabbedPhotoAsset(
           uploadedAt: now.toISOString(),
           cardAssetId: report.cardAssetId ?? null,
           itemId: report.itemId ?? null,
+          actorAudit: actorAuditJson(input.actorAudit),
         }),
       },
       create: {
@@ -960,6 +1004,7 @@ export async function persistAiGraderSlabbedPhotoAsset(
           uploadedAt: now.toISOString(),
           cardAssetId: report.cardAssetId ?? null,
           itemId: report.itemId ?? null,
+          actorAudit: actorAuditJson(input.actorAudit),
         }),
         createdAt: now,
       },
@@ -996,7 +1041,7 @@ export async function persistAiGraderValuationResult(
         source: stringValue(input.source, "ebay_sold"),
         searchQuery: input.searchQuery ?? null,
         compsRefs: nullableJson(input.compsRefs),
-        resultSummary: nullableJson(input.resultSummary),
+        resultSummary: nullableJson(withActorAudit(input.resultSummary, input.actorAudit)),
         valuationMinor: input.valuationMinor ?? null,
         valuationCurrency: input.valuationCurrency ?? "USD",
         requestedByUserId: input.requestedByUserId ?? null,
@@ -1014,7 +1059,7 @@ export async function persistAiGraderValuationResult(
         source: stringValue(input.source, "ebay_sold"),
         searchQuery: input.searchQuery ?? null,
         compsRefs: nullableJson(input.compsRefs),
-        resultSummary: nullableJson(input.resultSummary),
+        resultSummary: nullableJson(withActorAudit(input.resultSummary, input.actorAudit)),
         valuationMinor: input.valuationMinor ?? null,
         valuationCurrency: input.valuationCurrency ?? "USD",
         requestedByUserId: input.requestedByUserId ?? null,

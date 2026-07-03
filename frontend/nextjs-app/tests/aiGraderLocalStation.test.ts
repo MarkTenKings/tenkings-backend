@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import aiGraderLocalStationHandler from "../pages/api/ai-grader/station/[...action]";
@@ -18,6 +19,12 @@ import {
   createAiGraderProductionApiHandler,
   createAiGraderPublicReportApiHandler,
 } from "../lib/server/aiGraderProductionApi";
+import {
+  AI_GRADER_OPERATOR_USER_IDS_ENV,
+  AI_GRADER_SERVICE_ACCOUNT_ID_ENV,
+  AI_GRADER_SERVICE_ACCOUNT_SCOPES_ENV,
+  AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256_ENV,
+} from "../lib/server/aiGraderProductionAuth";
 import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   normalizeAiGraderStationBridgeUrl,
@@ -56,6 +63,10 @@ function mockResponse(): MockResponse {
       return this;
     },
   } as MockResponse;
+}
+
+function sha256Hex(value: string) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 test("local station contract exposes workflow status with no login, DB, or hardware actions", () => {
@@ -187,6 +198,230 @@ test("production publication API is disabled by default and does not require DB 
   await handler(mockRequest("POST", ["publish"]), publishRes);
   assert.equal(publishRes.statusCodeValue, 503);
   assert.equal(adminCalled, false);
+});
+
+test("production publish accepts a bearer user session in the AI Grader operator allowlist", async () => {
+  let adminCalled = false;
+  let persistedActorAudit: unknown = null;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      [AI_GRADER_OPERATOR_USER_IDS_ENV]: "operator-1",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      adminCalled = true;
+      throw new Error("operator bearer auth should not use generic admin auth");
+    },
+    async requireUserSession() {
+      return {
+        id: "session-operator-1",
+        tokenHash: "session-token-hash",
+        user: { id: "operator-1", phone: null, displayName: "Operator", avatarUrl: null },
+      };
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async uploadArtifact(input) {
+      return { storageKey: input.storageKey, publicUrl: `https://cdn.tenkings.test/${input.storageKey}` };
+    },
+    async persist(input) {
+      persistedActorAudit = input.actorAudit;
+      return {
+        gradingSessionId: input.reportBundle.gradingSessionId,
+        reportId: input.productionRelease.reportId,
+        publicationStatus: input.publicationStatus,
+        storagePlan: input.storagePlan,
+        evidenceAssetCount: input.storagePlan.artifacts.length,
+        cardAssetUpdatedCount: 0,
+        itemUpdatedCount: 0,
+      } as any;
+    },
+  });
+
+  const req = mockRequest("POST", ["publish"]);
+  req.body = {
+    publicationStatus: "published",
+    reportBundle: SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    productionRelease: buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE),
+  };
+  req.headers.authorization = "Bearer harmless-test-session";
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 200);
+  assert.equal(adminCalled, false);
+  assert.deepEqual(
+    {
+      actorType: (persistedActorAudit as any)?.actorType,
+      action: (persistedActorAudit as any)?.action,
+      userId: (persistedActorAudit as any)?.userId,
+      role: (persistedActorAudit as any)?.role,
+    },
+    {
+      actorType: "human_operator",
+      action: "publish",
+      userId: "operator-1",
+      role: "ai_grader_operator",
+    }
+  );
+  assert.match((persistedActorAudit as any)?.requestedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("production API rejects bearer users outside AI Grader and global admin allowlists", async () => {
+  let historyCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      [AI_GRADER_OPERATOR_USER_IDS_ENV]: "operator-1",
+    },
+    async requireAdminSession() {
+      throw new Error("admin auth should not run for bearer operator path");
+    },
+    async requireUserSession() {
+      return {
+        id: "session-unlisted",
+        tokenHash: "session-token-hash",
+        user: { id: "unlisted-user", phone: null, displayName: "Unlisted", avatarUrl: null },
+      };
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async uploadArtifact() {
+      throw new Error("history should not upload");
+    },
+    async persist() {
+      throw new Error("history should not persist");
+    },
+    async listHistory() {
+      historyCalled = true;
+      return buildAiGraderProductionHistoryResult([]);
+    },
+  });
+
+  const req = mockRequest("GET", ["history"]);
+  req.headers.authorization = "Bearer harmless-unlisted-session";
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 403);
+  assert.equal((res.jsonBody as { message?: string }).message, "AI Grader operator role required");
+  assert.equal(historyCalled, false);
+});
+
+test("production API accepts a scoped service account token hash", async () => {
+  let userSessionCalled = false;
+  let historyCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      [AI_GRADER_SERVICE_ACCOUNT_ID_ENV]: "ai-grader-smoke-service",
+      [AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256_ENV]: sha256Hex("test-service-token"),
+      [AI_GRADER_SERVICE_ACCOUNT_SCOPES_ENV]: "history",
+    },
+    async requireAdminSession() {
+      throw new Error("service account should not use generic admin auth");
+    },
+    async requireUserSession() {
+      userSessionCalled = true;
+      throw new Error("service account should not use bearer user auth");
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async uploadArtifact() {
+      throw new Error("history should not upload");
+    },
+    async persist() {
+      throw new Error("history should not persist");
+    },
+    async listHistory() {
+      historyCalled = true;
+      return buildAiGraderProductionHistoryResult([]);
+    },
+  });
+
+  const req = mockRequest("GET", ["history"]);
+  req.headers["x-ai-grader-service-token"] = "test-service-token";
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 200);
+  assert.equal(userSessionCalled, false);
+  assert.equal(historyCalled, true);
+});
+
+test("production API rejects an incorrect service account token with 401", async () => {
+  let userSessionCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      [AI_GRADER_SERVICE_ACCOUNT_ID_ENV]: "ai-grader-smoke-service",
+      [AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256_ENV]: sha256Hex("expected-test-service-token"),
+      [AI_GRADER_SERVICE_ACCOUNT_SCOPES_ENV]: "history",
+    },
+    async requireAdminSession() {
+      throw new Error("service account should not use generic admin auth");
+    },
+    async requireUserSession() {
+      userSessionCalled = true;
+      throw new Error("wrong service token should not fall through to bearer user auth");
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async uploadArtifact() {
+      throw new Error("history should not upload");
+    },
+    async persist() {
+      throw new Error("history should not persist");
+    },
+    async listHistory() {
+      throw new Error("history should not run");
+    },
+  });
+
+  const req = mockRequest("GET", ["history"]);
+  req.headers["x-ai-grader-service-token"] = "wrong-test-service-token";
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 401);
+  assert.equal((res.jsonBody as { message?: string }).message, "AI Grader service account credentials rejected");
+  assert.equal(userSessionCalled, false);
+});
+
+test("production API rejects a service account token missing the requested scope", async () => {
+  let userSessionCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      [AI_GRADER_SERVICE_ACCOUNT_ID_ENV]: "ai-grader-smoke-service",
+      [AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256_ENV]: sha256Hex("scoped-test-service-token"),
+      [AI_GRADER_SERVICE_ACCOUNT_SCOPES_ENV]: "history",
+    },
+    async requireAdminSession() {
+      throw new Error("service account should not use generic admin auth");
+    },
+    async requireUserSession() {
+      userSessionCalled = true;
+      throw new Error("scope denied service token should not fall through to bearer user auth");
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async uploadArtifact() {
+      throw new Error("card search should not upload");
+    },
+    async persist() {
+      throw new Error("card search should not persist");
+    },
+    async searchCards() {
+      throw new Error("card search should not run");
+    },
+  });
+
+  const req = mockRequest("GET", ["card-search"]);
+  req.query = { action: ["card-search"], q: "Jordan" };
+  req.headers["x-ai-grader-service-token"] = "scoped-test-service-token";
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 403);
+  assert.equal((res.jsonBody as { message?: string }).message, "AI Grader service account scope denied");
+  assert.equal(userSessionCalled, false);
 });
 
 test("production publication API uploads artifacts and persists only when env-gated and admin-authenticated", async () => {
@@ -371,6 +606,21 @@ test("slabbed photo upload action persists through the env-gated production API"
       assert.equal(input.side, "front");
       assert.equal(input.mimeType, "image/png");
       assert.equal(input.body.toString("utf8"), "hello");
+      assert.equal(input.operatorUserId, "admin-1");
+      assert.deepEqual(
+        {
+          actorType: input.actorAudit?.actorType,
+          action: input.actorAudit?.action,
+          userId: input.actorAudit?.userId,
+          role: input.actorAudit?.role,
+        },
+        {
+          actorType: "human_operator",
+          action: "upload-slab-photo",
+          userId: "admin-1",
+          role: "ai_grader_admin",
+        }
+      );
       return {
         reportId: input.reportId,
         side: input.side,
@@ -480,6 +730,21 @@ test("eBay comps action can run and persist through mocked operator-triggered de
       assert.equal(input.tenantId, "tenant-1");
       assert.equal(input.status, "completed");
       assert.equal(input.reportId, "sample-final-v0");
+      assert.equal(input.requestedByUserId, "admin-1");
+      assert.deepEqual(
+        {
+          actorType: input.actorAudit?.actorType,
+          action: input.actorAudit?.action,
+          userId: input.actorAudit?.userId,
+          role: input.actorAudit?.role,
+        },
+        {
+          actorType: "human_operator",
+          action: "run-comps",
+          userId: "admin-1",
+          role: "ai_grader_admin",
+        }
+      );
       return { ok: true };
     },
   });
@@ -506,6 +771,22 @@ test("eBay comps action can run and persist through mocked operator-triggered de
 });
 
 test("public report API is read-only and disabled unless explicitly configured", async () => {
+  let postReadCalled = false;
+  const postHandler = createAiGraderPublicReportApiHandler({
+    env: { [AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV]: "true" },
+    async readPublishedBundle() {
+      postReadCalled = true;
+      throw new Error("POST should not read public report data");
+    },
+  });
+  const postRes = mockResponse();
+  const postReq = mockRequest("POST");
+  postReq.query = { reportId: "sample-final-v0" };
+  await postHandler(postReq, postRes);
+  assert.equal(postRes.statusCodeValue, 405);
+  assert.equal(postRes.headers.Allow, "GET");
+  assert.equal(postReadCalled, false);
+
   const disabled = createAiGraderPublicReportApiHandler({
     env: {},
     async readPublishedBundle() {
