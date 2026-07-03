@@ -94,9 +94,6 @@ export const SAMPLE_AI_GRADER_REPORT_BUNDLE: AiGraderReportBundle = {
   labelGenerated: false,
   qrGenerated: false,
   certificateGenerated: false,
-  localReportFolder: "C:\\TenKings\\capture-data\\provisional-grade-story-pr45\\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T173733758Z",
-  reportHtmlPath:
-    "C:\\TenKings\\capture-data\\provisional-grade-story-pr45\\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-01T173733758Z\\provisional-diagnostic-report.html",
   publicPathPlaceholders: {
     reportViewerRoute: "/ai-grader/reports/[reportId]",
     reportUrlTemplate: "/ai-grader/reports/{reportId}",
@@ -155,13 +152,11 @@ export const SAMPLE_AI_GRADER_REPORT_BUNDLE: AiGraderReportBundle = {
         provisionalGradeImpact: "caps provisional overall grade",
         sourceChannels: [3, 1, 6],
         evidenceRefs: ["visionLab.heatmap.back", "visionLab.lightSweep.channel3"],
-        explanation: "A high-response back-side region was strongest in numeric Leimac channels 3, 1, and 6. Physical direction mapping remains pending.",
+        explanation: "A high-response back-side region was strongest in numbered light channels 3, 1, and 6. Physical direction mapping remains pending.",
       },
     ],
   },
   evidenceReferences: {
-    frontPackageDir: "C:\\TenKings\\capture-data\\ai-grader-station\\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T082954516Z",
-    backPackageDir: "C:\\TenKings\\capture-data\\ai-grader-station\\ai-grader-fixed-rig-v1-evidence-package-2026-07-01T083251860Z",
     frontEvidenceRefs: ["front true view", "front overlay", "front channels 1-8", "front ROI crops"],
     backEvidenceRefs: ["back true view", "back overlay", "back channels 1-8", "back ROI crops"],
   },
