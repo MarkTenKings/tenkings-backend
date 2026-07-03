@@ -1,5 +1,54 @@
 # Session Log (Append Only)
 
+## 2026-07-03 - AI Grader permanent production auth implementation
+
+### Planned Action
+- Continue the AI Grader production rollout from branch `feature/ai-grader-permanent-auth` at base HEAD `bf2b70990082ef6599f8d654a23774e55cb16155`.
+- Planned work: finish permanent scoped auth for AI Grader production endpoints, add focused API/database audit tests, update redacted docs/env examples, run validation, push a PR, wait for checks, merge after clean checks, verify Vercel Production deployment, and then run hosted production smokes only if permanent auth/env behavior is confirmed.
+- Safety constraints remain active: do not print secrets, do not echo `DATABASE_URL`, API keys, storage keys, SerpAPI keys, operator keys, service tokens, or service-token plaintext; do not use shell tracing; do not run destructive DB operations; do not run hardware/capture commands; do not rotate DigitalOcean Postgres credentials in this pass; do not reuse the compromised operator/API key; do not add temporary auth bypasses.
+
+### Summary So Far
+- Prior production state carried forward:
+  - PR #48 was merged and deployed to Vercel Production at merge commit `bf2b70990082ef6599f8d654a23774e55cb16155`.
+  - Production migration `20260702120000_ai_grader_production_release_v0` was previously applied and verified up to date.
+  - The old direct-DB smoke report `ai-grader-prod-smoke-20260703T040532` / `TK-AIG-9EF7505D` is still not a valid hosted storage-backed proof.
+- Implemented local permanent auth changes:
+  - Human AI Grader production writes/read-actions use bearer/session auth through `requireUserSession` plus AI Grader scoped env allowlists.
+  - Existing global admin allowlists remain an `ai_grader_admin` fallback.
+  - Service automation uses `x-ai-grader-service-token` only on AI Grader production actions and validates against `AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256` plus configured scopes.
+  - The station page now sends an existing Ten Kings bearer session for production card search, publish, slabbed-photo upload, and comps calls; local bridge hardware workflow remains local/no-login.
+  - Actor audit metadata is passed into publish, slabbed-photo, and comps persistence and stored in existing JSON fields without a new migration.
+  - Public report API remains unauthenticated, read-only, and rejects non-GET methods.
+- Required new Vercel Production env vars:
+  - `AI_GRADER_OPERATOR_USER_IDS` and/or `AI_GRADER_OPERATOR_PHONES`
+  - optional `AI_GRADER_ADMIN_USER_IDS` / `AI_GRADER_ADMIN_PHONES`
+  - `AI_GRADER_SERVICE_ACCOUNT_ID`
+  - `AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256`
+  - `AI_GRADER_SERVICE_ACCOUNT_SCOPES=publish,history,card-search,upload-slab-photo,run-comps`
+- Credential status:
+  - DigitalOcean Postgres credential rotation remains deferred by Mark.
+  - The previously exposed operator/API key is treated as compromised and was not reused.
+  - Mark must generate any plaintext service token locally and set only its SHA-256 hash in Vercel; no plaintext service token was generated or printed by Codex.
+
+### Validation So Far
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts tests/aiGraderApi.test.ts` -> pass, `42` tests.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database exec node --test tests/aiGraderProductionService.test.js` -> pass, `9` tests.
+- `pnpm --filter @tenkings/database test` -> pass, `45` tests, after changing the package script from a shell wildcard to the repo's portable `node --test tests` pattern.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `23` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist, baseline-browser-mapping, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `167` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with CRLF conversion warnings only.
+
+### Guardrails
+- No secrets were printed.
+- No shell tracing was used.
+- No production DB mutation, destructive DB operation, migration, storage upload, Vercel env mutation, deploy, restart, hardware command, or image capture was run.
+- No production untracked files were deleted or modified.
+
 ## 2026-07-03 - AI Grader production rollout resumed with credential rotation deferred
 
 ### Planned Action

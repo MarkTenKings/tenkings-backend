@@ -7,6 +7,7 @@ type MockRequestInput = {
   method: string;
   action?: string[];
   body?: unknown;
+  headers?: Record<string, string>;
 };
 
 type MockResponse = NextApiResponse & {
@@ -30,7 +31,7 @@ function mockRequest(input: MockRequestInput): NextApiRequest {
     method: input.method,
     query: input.action ? { action: input.action } : {},
     body: input.body,
-    headers: {},
+    headers: input.headers ?? {},
   } as NextApiRequest;
 }
 
@@ -155,6 +156,39 @@ test("unauthorized admin request is rejected before service loading", async () =
 
   assert.equal(res.statusCodeValue, 403);
   assert.deepEqual(res.jsonBody, { ok: false, message: "Admin privileges required" });
+  assert.equal(serviceLoads, 0);
+});
+
+test("AI Grader service account token cannot access unrelated admin API endpoints", async () => {
+  let authCalls = 0;
+  let serviceLoads = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: { AI_GRADER_API_ENABLED: "true" },
+    requireAdminSession: async (req) => {
+      authCalls += 1;
+      assert.equal(req.headers["x-ai-grader-service-token"], "harmless-service-token");
+      throw Object.assign(new Error("Missing or invalid Authorization header"), { statusCode: 401 });
+    },
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+  });
+  const res = mockResponse();
+
+  await handler(
+    mockRequest({
+      method: "POST",
+      action: ["capture-sessions", "draft"],
+      body: { tenantId: "tenant-1" },
+      headers: { "x-ai-grader-service-token": "harmless-service-token" },
+    }),
+    res
+  );
+
+  assert.equal(res.statusCodeValue, 401);
+  assert.deepEqual(res.jsonBody, { ok: false, message: "Missing or invalid Authorization header" });
+  assert.equal(authCalls, 1);
   assert.equal(serviceLoads, 0);
 });
 

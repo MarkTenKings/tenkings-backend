@@ -121,6 +121,17 @@ function sampleRelease(overrides = {}) {
   };
 }
 
+function sampleActorAudit(overrides = {}) {
+  return {
+    actorType: "service_account",
+    action: "publish",
+    requestedAt: "2026-07-03T12:00:00.000Z",
+    serviceAccountId: "ai-grader-smoke-service",
+    role: "ai_grader_service",
+    ...overrides,
+  };
+}
+
 function createMockDelegate(name, calls, id) {
   return {
     async upsert(args) {
@@ -288,6 +299,59 @@ test("production release persistence upserts durable records and optional card l
   assert.equal(itemUpdate.args.data.detailsJson.aiGraderReportId, "report-1");
 });
 
+test("production release persistence stores actor audit in existing JSON surfaces", async () => {
+  const { db, calls } = createMockProductionDb();
+  const actorAudit = sampleActorAudit();
+  const expectedAudit = {
+    actorType: "service_account",
+    action: "publish",
+    requestedAt: "2026-07-03T12:00:00.000Z",
+    userId: null,
+    serviceAccountId: "ai-grader-smoke-service",
+    role: "ai_grader_service",
+  };
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+
+  await persistAiGraderProductionRelease(db, {
+    tenantId: "tenant-1",
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    storagePlan: plan,
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    actorAudit,
+    persistedAt: "2026-07-02T12:30:00.000Z",
+  });
+
+  const sessionUpsert = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "upsert");
+  assert.deepEqual(sessionUpsert.args.create.safetySummary.actorAudit, expectedAudit);
+
+  const reportUpsert = calls.find((call) => call.delegate === "aiGraderReport" && call.method === "upsert");
+  assert.deepEqual(reportUpsert.args.create.checksumSummary.actorAudit, expectedAudit);
+
+  const gradeUpsert = calls.find((call) => call.delegate === "aiGraderGrade" && call.method === "upsert");
+  assert.deepEqual(gradeUpsert.args.create.operatorFinalization.actorAudit, expectedAudit);
+
+  const publicationUpsert = calls.find((call) => call.delegate === "aiGraderPublication" && call.method === "upsert");
+  assert.deepEqual(publicationUpsert.args.create.publicationManifest.actorAudit, expectedAudit);
+
+  const evidenceUpsert = calls.find((call) => call.delegate === "aiGraderEvidenceAsset" && call.method === "upsert");
+  assert.deepEqual(evidenceUpsert.args.create.metadata.actorAudit, expectedAudit);
+
+  const valuationUpsert = calls.find((call) => call.delegate === "aiGraderValuation" && call.method === "upsert");
+  assert.deepEqual(valuationUpsert.args.create.resultSummary.actorAudit, expectedAudit);
+
+  const cardUpdate = calls.find((call) => call.delegate === "cardAsset" && call.method === "updateMany");
+  assert.deepEqual(cardUpdate.args.data.aiGradingJson.actorAudit, expectedAudit);
+
+  const itemUpdate = calls.find((call) => call.delegate === "item" && call.method === "updateMany");
+  assert.deepEqual(itemUpdate.args.data.detailsJson.aiGraderActorAudit, expectedAudit);
+});
+
 test("comps query builder uses selected card identity and final grade", () => {
   const query = buildAiGraderCompsSearchQuery({
     reportBundle: sampleBundle({ cardIdentity: { title: "Fallback Card" } }),
@@ -319,6 +383,13 @@ test("slabbed color photo persistence upserts a separate evidence asset", async 
     byteSize: 1234,
     checksumSha256: "abc123",
     operatorUserId: "admin-1",
+    actorAudit: sampleActorAudit({
+      actorType: "human_operator",
+      action: "upload-slab-photo",
+      userId: "admin-1",
+      serviceAccountId: null,
+      role: "ai_grader_admin",
+    }),
     uploadedAt: "2026-07-02T13:00:00.000Z",
   });
 
@@ -329,6 +400,14 @@ test("slabbed color photo persistence upserts a separate evidence asset", async 
   assert.equal(evidenceUpsert.args.create.kind, "slabbed_front_color_photo");
   assert.equal(evidenceUpsert.args.create.side, "front");
   assert.equal(evidenceUpsert.args.create.publicUrl, "https://cdn.tenkings.test/ai-grader/reports/report-1/slabbed/front.png");
+  assert.deepEqual(evidenceUpsert.args.create.metadata.actorAudit, {
+    actorType: "human_operator",
+    action: "upload-slab-photo",
+    requestedAt: "2026-07-03T12:00:00.000Z",
+    userId: "admin-1",
+    serviceAccountId: null,
+    role: "ai_grader_admin",
+  });
 });
 
 test("valuation persistence records operator-triggered eBay comps result", async () => {
@@ -345,6 +424,13 @@ test("valuation persistence records operator-triggered eBay comps result", async
     valuationMinor: 10000,
     valuationCurrency: "USD",
     requestedByUserId: "admin-1",
+    actorAudit: sampleActorAudit({
+      actorType: "human_operator",
+      action: "run-comps",
+      userId: "admin-1",
+      serviceAccountId: null,
+      role: "ai_grader_admin",
+    }),
     requestedAt: "2026-07-02T13:05:00.000Z",
     completedAt: "2026-07-02T13:06:00.000Z",
   });
@@ -354,4 +440,12 @@ test("valuation persistence records operator-triggered eBay comps result", async
   assert.equal(valuationUpsert.args.create.status, "completed");
   assert.equal(valuationUpsert.args.create.searchQuery, "1996 Finest Michael Jordan #291 AI Grade 8.6");
   assert.equal(valuationUpsert.args.create.valuationMinor, 10000);
+  assert.deepEqual(valuationUpsert.args.create.resultSummary.actorAudit, {
+    actorType: "human_operator",
+    action: "run-comps",
+    requestedAt: "2026-07-03T12:00:00.000Z",
+    userId: "admin-1",
+    serviceAccountId: null,
+    role: "ai_grader_admin",
+  });
 });
