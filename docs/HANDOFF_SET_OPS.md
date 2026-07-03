@@ -12275,3 +12275,54 @@ Build Set Ops UI flow with:
   - Load the correct production SSH key into an interactive Windows `ssh-agent` session or provide another approved non-interactive production access path. Do not put private keys or passphrases in chat.
 - Guardrails held:
   - No migration, no `RUN_DB_MIGRATIONS=true`, no production DB operation, no env gate change, no service restart/recreate, no deploy command, no storage upload, no public report smoke, no hardware command, no Leimac command, no image capture, no network setting change, no persistent Basler/Leimac save, and no untracked production droplet file modification.
+
+## Session Update (2026-07-02 UTC, AI Grader production migration applied, rollout stopped for credential rotation)
+- Mark fixed SSH access from the Dell; `ssh -o BatchMode=yes root@104.131.27.245 "echo ssh_ok"` worked from the Codex tool context.
+- Production droplet repo `/root/tenkings-backend` was fast-forwarded safely to `main`/`origin/main` at `0dda9336950023675d2c5640d15313f5bcbc1207`.
+- Existing untracked production droplet files were preserved and not deleted/cleaned/overwritten/modified:
+  - `backend/Dockerfile`
+  - `data/`
+  - `frontend/nextjs-app/start.sh`
+  - `logs/`
+  - `packages/database/seed-progress.js`
+  - `scripts/backfill-item-images.js`
+  - `scripts/variant-db/*.bak`
+- Redacted production target check:
+  - DB host/name verified as DigitalOcean managed Postgres `db-postgresql-nyc3-83816-do-user-27093151-0.f.db.ondigitalocean.com` / `defaultdb`.
+  - `SERPAPI_KEY` was present in the droplet service env.
+  - AI Grader publish/read gates and public report base URL were missing from the checked droplet `bytebot-lite-service` env.
+  - Production storage bucket/region/base URL/access-key env was not verified from the checked droplet service; only `env/nextjs-app.env` showed `CARD_STORAGE_MODE=s3`.
+  - Local Vercel CLI was not installed, so hosted Vercel env gates could not be inspected/enabled from an unambiguous linked project in this session.
+- Production migration result:
+  - Migration file `packages/database/prisma/migrations/20260702120000_ai_grader_production_release_v0/migration.sql` was present after the droplet pull.
+  - Approved migration command was run by sourcing the approved service `DATABASE_URL`, without setting `RUN_DB_MIGRATIONS=true`.
+  - `pnpm --filter @tenkings/database migrate:deploy` applied:
+    - `20260305120000_cvri_storage_key`
+    - `20260528120000_ai_grader_v5_foundation`
+    - `20260702120000_ai_grader_production_release_v0`
+  - `pnpm --filter @tenkings/database generate` completed.
+  - `pnpm --filter @tenkings/database exec prisma migrate status --schema prisma/schema.prisma` reported `Database schema is up to date!`.
+  - `pnpm --filter @tenkings/database build` passed on the droplet after client generation.
+- Stop condition:
+  - Rollout stopped immediately after migration verification because a debugging command accidentally ran with shell tracing enabled and printed the production `DATABASE_URL` in command output.
+  - The value is intentionally not repeated here.
+  - Treat the production database credential as exposed in the Codex execution transcript/log context. Rotate the database password/connection string before continuing publication/storage/report smokes.
+- Not run after the stop condition:
+  - No production env gate was changed.
+  - No service restart/recreate or deploy command was run.
+  - No storage upload smoke, production report publish smoke, public report URL smoke, label/QR smoke, slabbed photo smoke, card/inventory smoke, or eBay/SerpAPI smoke was run.
+  - No hardware command or image capture was run.
+- Required next steps:
+  - Rotate the production database credential and update all approved runtime environments with the new redacted connection string.
+  - Re-run redacted preflight.
+  - Verify/enable hosted Vercel env gates and storage configuration from an unambiguous Ten Kings production project target.
+  - Continue storage/publication/public-report/label/QR/slabbed-photo/card-linkage/eBay-comps/security smokes.
+- Guardrails held after the migration:
+  - `RUN_DB_MIGRATIONS=true` was not set.
+  - No destructive DB operation was run.
+  - No env gate was changed.
+  - No deploy command was run.
+  - No network setting change was made.
+  - No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+  - No high-duty lighting or image capture was run.
+  - No captured image or vendor binary was committed.

@@ -22747,3 +22747,85 @@ By enabling Rip It Live, I confirm:
 - No storage upload or public report smoke was run.
 - No hardware command, Leimac command, image capture, network setting change, or persistent Basler/Leimac save was run.
 - No untracked production droplet files were modified.
+
+## 2026-07-02 - Resumed AI Grader production rollout after SSH agent setup
+
+### Planned Action
+- Mark reported that the Dell SSH agent is running, production key is loaded, and `ssh -o BatchMode=yes root@104.131.27.245 "echo ssh_ok"` succeeds.
+- Resume the staged production rollout:
+  - verify production droplet identity, repo path, branch, and untracked-file safety;
+  - verify redacted production DB/storage/env targets;
+  - pull latest `main` on the droplet without deleting or modifying untracked files;
+  - apply migration `20260702120000_ai_grader_production_release_v0` through the approved runbook if targets match;
+  - enable/verify AI Grader production env gates and restart/recreate only required services if needed;
+  - run storage, publication, public report, label/QR, slabbed photo, card/inventory linkage, eBay comps, and security smokes where production configuration supports them;
+  - run validation and record observed results.
+- Safety constraints remain active:
+  - redact secrets;
+  - do not print DB URLs, passwords, API keys, storage keys, tokens, or SerpAPI keys;
+  - do not run destructive DB operations;
+  - do not delete, clean, overwrite, or modify untracked production droplet files;
+  - do not run hardware unless Mark is physically present;
+  - stop if a target is ambiguous, unexpected, or unsafe.
+
+### Observed Result
+- SSH checkpoint passed from the Dell Codex tool context:
+  - `ssh -o BatchMode=yes root@104.131.27.245 "echo ssh_ok"` returned `ssh_ok`.
+  - Droplet repo path `/root/tenkings-backend` exists.
+- Droplet repo was fast-forwarded safely to `main`/`origin/main` at `0dda9336950023675d2c5640d15313f5bcbc1207`.
+- Existing untracked production droplet files remained present and were not deleted, cleaned, overwritten, or modified:
+  - `backend/Dockerfile`
+  - `data/`
+  - `frontend/nextjs-app/start.sh`
+  - `logs/`
+  - `packages/database/seed-progress.js`
+  - `scripts/backfill-item-images.js`
+  - `scripts/variant-db/*.bak`
+- Migration file `packages/database/prisma/migrations/20260702120000_ai_grader_production_release_v0/migration.sql` was present after the pull.
+- Redacted target verification:
+  - Production DB target resolved to DigitalOcean managed Postgres host `db-postgresql-nyc3-83816-do-user-27093151-0.f.db.ondigitalocean.com` and database `defaultdb`.
+  - Droplet `bytebot-lite-service` environment had `SERPAPI_KEY` set.
+  - Droplet `bytebot-lite-service` environment did not have `AI_GRADER_PRODUCTION_PUBLISH_ENABLED`, `AI_GRADER_PUBLIC_REPORT_DB_ENABLED`, `AI_GRADER_PUBLIC_REPORT_BASE_URL`, or `CARD_STORAGE_*` publish/storage vars set.
+  - `env/nextjs-app.env` contained `CARD_STORAGE_MODE=s3`, but storage bucket/region/base URL/access-key env was not verified from the droplet service.
+  - Local Vercel CLI was not installed, so hosted Vercel production env gates could not be inspected or enabled from this tool context through an unambiguous project link.
+- Production migration was applied through the approved runbook command by sourcing the approved service `DATABASE_URL` without setting `RUN_DB_MIGRATIONS=true`:
+  - `pnpm --filter @tenkings/database migrate:deploy`
+  - `pnpm --filter @tenkings/database generate`
+  - Prisma reported `68 migrations found` and applied:
+    - `20260305120000_cvri_storage_key`
+    - `20260528120000_ai_grader_v5_foundation`
+    - `20260702120000_ai_grader_production_release_v0`
+  - `pnpm --filter @tenkings/database exec prisma migrate status --schema prisma/schema.prisma` reported `Database schema is up to date!`.
+  - `pnpm --filter @tenkings/database build` passed on the droplet after client generation.
+
+### Stop Condition
+- Rollout was stopped immediately after migration verification because a debugging command accidentally ran with shell tracing enabled and printed the production `DATABASE_URL` in command output.
+- The value is intentionally not repeated here.
+- Treat the production database credential as exposed in the Codex execution transcript/log context and rotate the database password/connection string before continuing production publication/storage/report smokes.
+
+### Not Run
+- No production env gate was changed.
+- No service restart/recreate or deploy command was run.
+- No storage upload smoke was run.
+- No production report publish smoke was run.
+- No public report URL, label/QR, slabbed photo, card/inventory, or eBay/SerpAPI smoke was run.
+- No hardware command or image capture was run.
+
+### Required Next Step
+- Rotate the production database credential and update the approved runtime environments with the new redacted connection string.
+- After rotation, re-run a redacted preflight and continue with:
+  - hosted Vercel/env gate verification or enablement;
+  - production storage config verification;
+  - service redeploy/restart only if required;
+  - storage, publication, public report, label/QR, slabbed photo, card/inventory, eBay comps, and security smokes.
+
+### Guardrails
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No destructive DB operation was run.
+- No production env gate was changed.
+- No deploy command was run.
+- No network setting change was made.
+- No Leimac reset/default or persistent Basler/Leimac User Set save was run.
+- No high-duty lighting or image capture was run.
+- No captured image or vendor binary was committed.
+- No untracked production droplet file was deleted, cleaned, overwritten, or modified.
