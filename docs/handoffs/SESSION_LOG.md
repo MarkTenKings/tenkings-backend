@@ -22703,3 +22703,47 @@ By enabling Rip It Live, I confirm:
 - No Leimac reset/default or persistent Basler/Leimac User Set save was run.
 - No high-duty lighting or image capture was run.
 - No captured image or vendor binary was committed.
+
+## 2026-07-02 - Planned AI Grader production rollout
+
+### Planned Action
+- Mark approved proceeding with the AI Grader Production Release V0 rollout after PR #47 merge.
+- Planned staged actions:
+  - verify production droplet target and repo state;
+  - verify redacted production DB/storage/env targets;
+  - apply migration `20260702120000_ai_grader_production_release_v0` through the approved runbook if targets match;
+  - enable/verify AI Grader production env gates;
+  - restart/recreate only required services if env changes require it;
+  - run storage, publication, public report, label/QR, slabbed photo, card linkage, and eBay comps smokes where configuration supports them;
+  - run validation and record observed results.
+- Safety constraints:
+  - Redact secrets.
+  - Do not print DB URLs, API keys, tokens, storage keys, or SerpAPI keys.
+  - Do not run destructive DB operations.
+  - Do not delete, clean, overwrite, or modify untracked production droplet files.
+  - Do not run hardware unless Mark is physically present.
+  - Stop if any production target is ambiguous or unexpected.
+
+### Observed Result
+- Production rollout stopped at the SSH access checkpoint before any migration, env gate, DB, storage, deployment, or smoke action.
+- Host key trust for `104.131.27.245` was established on the Dell.
+- OpenSSH authentication from this Codex tool context still failed:
+  - default SSH returned `Permission denied (publickey)`;
+  - explicit key `C:\Users\Mark\.ssh\id_ed25519` returned `Permission denied (publickey)` in batch mode;
+  - explicit key without batch mode hung until timeout, consistent with a passphrase prompt or an unavailable interactive auth path.
+- WSL is not installed on this Dell, so there is no alternate WSL SSH context available.
+- No production target verification could be completed from the tool context.
+
+### Blocker
+- The Codex tool process needs a usable SSH auth path to `root@104.131.27.245` before production DB/storage/env targets can be verified.
+- Mark should load the correct key into an interactive Windows `ssh-agent` session or provide an approved non-interactive production access path. Do not send private keys or passphrases in chat.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No production DB operation was run.
+- No env gate was changed.
+- No service restart/recreate or deploy command was run.
+- No storage upload or public report smoke was run.
+- No hardware command, Leimac command, image capture, network setting change, or persistent Basler/Leimac save was run.
+- No untracked production droplet files were modified.

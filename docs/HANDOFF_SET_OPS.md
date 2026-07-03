@@ -12263,3 +12263,15 @@ Build Set Ops UI flow with:
   - Configure public report base URL and, if needed, `AI_GRADER_EBAY_COMPS_ENABLED` plus SerpAPI env for operator-triggered comps.
 - Merge guardrails held:
   - No hardware commands, no migrations, no `RUN_DB_MIGRATIONS=true`, no DB ops, no deploy commands, no network changes, no Leimac reset/default, no persistent Basler/Leimac saves, no image captures, and no captured/vendor file commit after merge.
+
+## Session Update (2026-07-02 UTC, AI Grader production rollout blocked at SSH auth)
+- Mark approved proceeding with the AI Grader Production Release V0 rollout, including migration, env gates, storage/publication smokes, label/QR, slabbed photo, card linkage, and eBay comps smokes.
+- Rollout stopped at the production access checkpoint before any production change:
+  - Host key trust for `104.131.27.245` was established on the Dell.
+  - OpenSSH authentication from this Codex tool context still failed with `Permission denied (publickey)` in batch mode.
+  - Explicit key `C:\Users\Mark\.ssh\id_ed25519` also failed in batch mode and hung without batch mode, consistent with a passphrase prompt or unavailable interactive auth path.
+  - WSL is not installed, so no alternate WSL SSH context is available.
+- Required next step:
+  - Load the correct production SSH key into an interactive Windows `ssh-agent` session or provide another approved non-interactive production access path. Do not put private keys or passphrases in chat.
+- Guardrails held:
+  - No migration, no `RUN_DB_MIGRATIONS=true`, no production DB operation, no env gate change, no service restart/recreate, no deploy command, no storage upload, no public report smoke, no hardware command, no Leimac command, no image capture, no network setting change, no persistent Basler/Leimac save, and no untracked production droplet file modification.
