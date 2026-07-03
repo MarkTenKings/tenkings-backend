@@ -1,5 +1,34 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-03 UTC, AI Grader credential rotation checkpoint)
+- Resumed AI Grader production rollout after the credential exposure stop condition.
+- No rollout changes were made in this pass: no production env files were edited, no service restart/recreate was run, no DB mutation was run, no storage upload was run, no public report publish smoke was run, no hardware command was run, and no untracked production files were modified.
+- Local runbooks do not contain a Ten Kings-specific DigitalOcean managed database password rotation command. Official DigitalOcean PostgreSQL docs identify the approved manual path as resetting the affected database user's password from the database cluster `Users & Databases` tab, or using the documented database user API with an authenticated DigitalOcean token.
+- Stop condition remains active until Mark rotates the exposed production Postgres credential for the user referenced by the current production `DATABASE_URL` and provides/installs the rotated connection string through approved runtime env management. Do not paste the value into chat or logs.
+- Redacted droplet runtime checklist from key-only inspection:
+  - `env/auth-service.env` -> `DATABASE_URL`
+  - `env/bytebot-lite-service.env` -> `DATABASE_URL`; `SERPAPI_KEY` present
+  - `env/ingestion-service.env` -> `DATABASE_URL`
+  - `env/marketplace-service.env` -> `DATABASE_URL`
+  - `env/pack-service.env` -> `DATABASE_URL`
+  - `env/pricing-service.env` -> `DATABASE_URL`
+  - `env/vault-service.env` -> `DATABASE_URL`
+  - `env/vending-gw.env` -> `DATABASE_URL`
+  - `env/wallet-service.env` -> `DATABASE_URL`
+  - `env/nextjs-app.env` -> `CARD_STORAGE_MODE`; no `DATABASE_URL` key found in this file
+- Running compose service checklist from key-only inspection:
+  - `auth-service`, `bytebot-lite-service`, `ingestion-service`, `marketplace-service`, `pack-service`, `pricing-service`, `vault-service`, `vending-gw`, and `wallet-service` currently expose `DATABASE_URL` in the container environment.
+  - `bytebot-lite-service` currently exposes `SERPAPI_KEY`.
+  - `caddy`, `postgres`, and `ocr-service` did not expose the checked DB/AI-Grader/storage/SerpAPI keys.
+- AI Grader gates were not found in checked droplet env files/running service envs:
+  - `AI_GRADER_PRODUCTION_PUBLISH_ENABLED`
+  - `AI_GRADER_PUBLIC_REPORT_DB_ENABLED`
+  - `AI_GRADER_PUBLIC_REPORT_BASE_URL`
+  - `AI_GRADER_PRODUCTION_TENANT_ID`
+  - `AI_GRADER_EBAY_COMPS_ENABLED`
+- Local and droplet `vercel` CLI/project linkage was not available. Vercel production env updates, if required for DB-backed public report reads, must be done from the approved Ten Kings Vercel project target; do not guess the project/env.
+- Local and droplet `doctl` were not available. DigitalOcean password reset must be completed by Mark through the dashboard or an approved authenticated API path outside this transcript.
+
 ## Session Update (2026-07-02 UTC, AI Grader PR #47 production integration)
 - Branch: `feature/ai-grader-production-release-v0`; PR #47 remains open and must not be merged yet.
 - PR: `https://github.com/MarkTenKings/tenkings-backend/pull/47`.
@@ -12326,3 +12355,102 @@ Build Set Ops UI flow with:
   - No Leimac reset/default or persistent Basler/Leimac User Set save was run.
   - No high-duty lighting or image capture was run.
   - No captured image or vendor binary was committed.
+
+## Session Update (2026-07-03 UTC, AI Grader production rollout resumed with credential rotation deferred)
+- Mark explicitly accepted the temporary risk of continuing with the currently exposed production Postgres credential and deferred DigitalOcean managed Postgres credential rotation until after the AI Grader production rollout. The credential remains exposed and must still be rotated after rollout; no rotation was attempted in this pass.
+- Redacted production verification:
+  - Production DB connection worked from approved droplet service env without printing the connection string.
+  - Prisma migration status reported `68 migrations found` and `Database schema is up to date!`.
+  - AI Grader table presence check returned `7` matching `AiGrader*` tables.
+  - Droplet repo stayed on `main` at `0dda9336950023675d2c5640d15313f5bcbc1207`.
+  - Known untracked production files remained present: `backend/Dockerfile`, `data/`, `frontend/nextjs-app/start.sh`, `logs/`, `packages/database/seed-progress.js`, `scripts/backfill-item-images.js`, and the existing `scripts/variant-db/*.bak` files.
+- Env gate result:
+  - `env/nextjs-app.env` was backed up as `env/nextjs-app.env.backup-ai-grader-20260703T040107Z`.
+  - `AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true`, `AI_GRADER_PUBLIC_REPORT_DB_ENABLED=true`, `AI_GRADER_PUBLIC_REPORT_BASE_URL=https://collect.tenkings.co`, and `AI_GRADER_PRODUCTION_TENANT_ID=ten-kings` were added/verified in that env file.
+  - `AI_GRADER_EBAY_COMPS_ENABLED` was not added to `env/nextjs-app.env` because `SERPAPI_KEY` was not present in that same Next env source.
+  - Current droplet `tenkings-kiosk.service` runs `frontend/nextjs-app/start.sh`, and that known untracked start script does not source `env/nextjs-app.env`; therefore no active droplet web runtime was confirmed to consume the added gates.
+  - `collect.tenkings.co` is served by Vercel. Local/droplet Vercel CLI/project linkage was unavailable or ambiguous, so Vercel production env mutation was skipped.
+- Service restart/deploy result:
+  - No service restart/recreate was run because the edited droplet env file is not consumed by the active systemd service, and changing the untracked start script or guessing the Vercel project/env target would be unsafe.
+- Storage/slab result:
+  - Managed storage smoke was skipped. Active runtime storage config was not available: only `CARD_STORAGE_MODE` was present in `env/nextjs-app.env`; bucket/region/public-base/access/secret keys were not verified in the active web runtime.
+  - Slabbed photo upload smoke was skipped for the same storage/runtime blocker.
+- Public report and label/QR smoke:
+  - A direct DB persisted smoke report was created without managed storage upload.
+  - `reportId`: `ai-grader-prod-smoke-20260703T040532`.
+  - `certId`: `TK-AIG-9EF7505D`.
+  - Public/QR URL: `https://collect.tenkings.co/ai-grader/reports/ai-grader-prod-smoke-20260703T040532`.
+  - Publication status: `published`; label status: `label_data_ready`; certificate status: `report_id_issued_not_certified`; evidence asset count: `7`; artifact plan count: `7`; uploaded asset count: `0`.
+  - Hosted public report API returned `503` with `AI_GRADER_PUBLIC_REPORT_DB_DISABLED`, confirming hosted Vercel env gates are still pending.
+  - Hosted report and label pages returned `200`, but they cannot be accepted as persisted/stored-data reads until Vercel env and storage are configured.
+- Card/inventory linkage result:
+  - Manual draft identity path was verified in the DB smoke.
+  - No `CardAsset` or `Item` production inventory row was linked or modified; update counts were `0`.
+- eBay/SerpAPI comps result:
+  - One controlled live SerpAPI/eBay smoke was run from the existing droplet service env because `SERPAPI_KEY` was present there.
+  - It required the persisted report final grade and manual card identity, persisted one valuation row, returned `status=completed`, and returned `compsCount=1`; parsed valuation amount remained `null`.
+- Security verification:
+  - Smoke report/related JSON scan found no local Windows paths, loopback URLs, `DATABASE_URL` markers, SerpAPI markers, or generic secret markers.
+  - Hosted API/report/label scans did not show Dell paths, bridge URLs/tokens, hardware controls, or secret markers.
+  - Public report API rejected `POST` with `405`; public API `GET` remains env-disabled until Vercel env is configured.
+  - No additional secrets were printed in this resumed pass.
+- Validation:
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database exec node --test tests/aiGraderService.test.js tests/aiGraderProductionService.test.js` -> pass, `44` tests.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts` -> pass, `49` tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist, and Tailwind glob warnings.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `167` tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+  - Local Prisma schema validate with a dummy non-production `DATABASE_URL` -> pass.
+  - Production Prisma migrate status -> up to date.
+  - `git diff --check` -> pass with line-ending warnings only.
+- Remaining blockers:
+  - Configure the Vercel production project identified in repo docs as `ten-kings/tenkings-backend-nextjs-app` for `collect.tenkings.co` with the redacted required envs: `DATABASE_URL`, `AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true`, `AI_GRADER_PUBLIC_REPORT_DB_ENABLED=true`, `AI_GRADER_PUBLIC_REPORT_BASE_URL=https://collect.tenkings.co`, `AI_GRADER_PRODUCTION_TENANT_ID=ten-kings`, full Ten Kings storage helper env, and optional `SERPAPI_KEY` plus `AI_GRADER_EBAY_COMPS_ENABLED=true` if web-runtime comps are desired.
+  - Redeploy/restart the confirmed Vercel production target after env updates, then re-run hosted persisted report/storage/label/slab smokes.
+  - Rotate the exposed DigitalOcean managed Postgres credential after rollout and update every approved runtime `DATABASE_URL` without printing the value.
+
+## Session Update (2026-07-03 UTC, AI Grader Vercel env verification and authenticated-smoke blocker)
+- Mark reported that the required Vercel Production env vars were added for the `collect.tenkings.co` project, including the production database URL, AI Grader gates, storage config, and SerpAPI/comps config where applicable. DigitalOcean Postgres credential rotation remains deferred by Mark.
+- Local repo state:
+  - Branch `main`.
+  - HEAD `1b992dc7776e6a8e15e806cd7059163ef70b6d25`, matching `origin/main` after fetch.
+  - Worktree was not clean because previous rollout docs were already modified locally; those changes were preserved.
+- Production DB verification:
+  - Prisma migration status from the approved droplet service env reported `68 migrations found` and `Database schema is up to date!`.
+  - AI Grader table check returned `7` matching tables.
+  - Droplet repo remains at `0dda9336950023675d2c5640d15313f5bcbc1207` with only the known untracked production files present.
+- Vercel deployment/env behavior:
+  - GitHub deployment record for `1b992dc7776e6a8e15e806cd7059163ef70b6d25` reports Production `success`.
+  - Deployment URL: `https://tenkings-backend-nextjs-lmo5jwx69-ten-kings.vercel.app`.
+  - Runtime behavior confirmed the new AI Grader Vercel env gates are active without printing env values:
+    - `GET /api/admin/ai-grader/production/status` returned `enabled=true`.
+    - `publicReportDbReadsEnabled=true`.
+    - `liveEbayCompsEnabled=true`.
+    - `noHardwareControls=true`.
+  - Fresh redeploy was not triggered because the hosted runtime had already picked up the new production env behavior.
+- Existing persisted smoke report check:
+  - `GET /api/ai-grader/reports/ai-grader-prod-smoke-20260703T040532` no longer returns `AI_GRADER_PUBLIC_REPORT_DB_DISABLED`; it now reaches the storage-backed read path but returns `500`.
+  - DB row inspection showed the old direct-DB smoke row is `published` and has storage-key fields, but it was not created through the real storage-upload path. It is not a valid hosted storage-backed public report proof.
+  - The public report page returned `200`, but it was still showing fixture/sample fallback content rather than persisted report content.
+- Code hardening applied locally for a PR:
+  - Unknown generated report IDs now render a `missing_report_data` bundle instead of rewriting fixture/sample data to the requested ID.
+  - The report viewer marks unresolved generated report IDs as missing persisted/local-bridge data.
+  - The public report API treats a missing report-bundle storage object as not found instead of throwing a server `500`.
+  - Focused test `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` passed with `18` tests.
+- Authenticated write-smoke blocker:
+  - Production status confirms publish/storage/comps gates are active, but publish/history/card-search/slab/comps actions remain correctly admin-gated.
+  - Unauthenticated `history`, `card-search`, and `publish` attempts returned `Missing or invalid Authorization header`.
+  - The only attempted non-interactive operator-key path was stopped after a malformed remote curl command may have emitted an operator-key-like value in tool output. Treat that operator key as exposed; it is intentionally not repeated here.
+  - No further authenticated production write, storage, slabbed-photo, card/item linkage, or comps smoke was run with that key.
+- Operator station/web verification:
+  - `GET /ai-grader/station` returned `200`.
+  - Production station route is reachable and still includes local bridge configuration for the Dell operator workflow.
+  - Public report API `POST` remains rejected with `405`.
+  - Admin routes require existing Ten Kings auth/operator auth before writes.
+- Remaining blockers:
+  - Rotate the exposed operator/API key used for the attempted non-interactive admin smoke, then provide a safe authenticated smoke path without printing the value.
+  - Merge/deploy the public-report missing-data hardening PR before relying on unknown report URLs.
+  - Run a fresh authenticated production publish through the real API/UI path to verify storage-backed report bundles, label/QR, slabbed photos, card/item linkage, history, and one live eBay comps request.
+  - Rotate the previously exposed production Postgres credential after rollout, per Mark's deferred-rotation decision.

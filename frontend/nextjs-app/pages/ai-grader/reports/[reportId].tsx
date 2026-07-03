@@ -48,7 +48,7 @@ export default function AiGraderReportViewerPage() {
     ? productionRelease?.slabbedPhotoContract.photos
     : [];
   const compsContract = productionRelease?.ebayCompsContract;
-  const isSampleFallback = !localBundle && !persistedBundle && bundle.reportId !== "sample-pr45" && bundle.reportId !== "sample-final-v0";
+  const isSampleFallback = !localBundle && !persistedBundle && bundle.reportStatus === "missing_report_data";
   const reportIsFinal = productionRelease?.finalGradeComputed === true;
 
   useEffect(() => {
