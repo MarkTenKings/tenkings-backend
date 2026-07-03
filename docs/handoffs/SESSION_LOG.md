@@ -23012,3 +23012,22 @@ By enabling Rip It Live, I confirm:
 - No hardware command or image capture was run.
 - No Vercel redeploy was triggered.
 - No known untracked production droplet file was deleted, cleaned, overwritten, or modified.
+
+## 2026-07-03 - Planned PR #48 merge and AI Grader permanent auth follow-up
+
+### Planned Action
+- Merge PR #48 after confirming it is clean and all checks pass.
+- Confirm the production Vercel deployment for the merged commit.
+- Continue with a permanent AI Grader auth/permission model; do not implement a temporary auth bypass and do not reuse the previously exposed operator/API key.
+- Required production smokes after permanent auth is live:
+  - fresh authenticated publish through the hosted production API/UI path;
+  - production storage artifact upload/read verification;
+  - slabbed front/back photo upload;
+  - safe card/item linkage or documented blocker;
+  - one controlled live eBay/SerpAPI comps run;
+  - persisted report/history/label/QR/security verification.
+
+### Safety Constraints
+- Do not print secrets, database URLs, storage keys, SerpAPI keys, service credentials, or auth tokens.
+- Keep public report routes read-only and unauthenticated.
+- Do not run hardware capture unless Mark explicitly starts a supervised Dell grading session.
