@@ -12,6 +12,9 @@ $bridgeUrl = if ($config -and $config.bridgeUrl) { [string]$config.bridgeUrl } e
 $health = Get-AiGraderBridgeHealth -BridgeUrl $bridgeUrl
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 $taskInfo = if ($task) { Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue } else { $null }
+$startupShortcutPath = Get-AiGraderBridgeStartupShortcutPath
+$startupShortcutInstalled = Test-Path -LiteralPath $startupShortcutPath
+$autoStartInstalled = [bool]($task -or $startupShortcutInstalled)
 
 [pscustomobject]@{
   configPath = $ConfigPath
@@ -26,6 +29,10 @@ $taskInfo = if ($task) { Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction 
   scheduledTaskState = if ($task) { $task.State } else { $null }
   lastTaskResult = if ($taskInfo) { $taskInfo.LastTaskResult } else { $null }
   nextRunTime = if ($taskInfo) { $taskInfo.NextRunTime } else { $null }
+  startupShortcutInstalled = $startupShortcutInstalled
+  startupShortcutPath = if ($startupShortcutInstalled) { $startupShortcutPath } else { $null }
+  autoStartInstalled = $autoStartInstalled
+  autoStartMethod = if ($task) { "scheduledTask" } elseif ($startupShortcutInstalled) { "startupShortcut" } else { $null }
   bridgeRunning = [bool]$health
   bridgeHealth = if ($health) {
     [pscustomobject]@{

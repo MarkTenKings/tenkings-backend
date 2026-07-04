@@ -5,9 +5,47 @@ $script:AiGraderBridgeTaskName = "TenKingsAiGraderLocalBridge"
 $script:AiGraderBridgeConfigPath = "C:\TenKings\config\ai-grader-local-bridge.json"
 $script:AiGraderBridgeUrl = "http://127.0.0.1:47652"
 $script:AiGraderStationUrl = "https://collect.tenkings.co/ai-grader/station"
+$script:AiGraderBridgeStartupShortcutName = "Ten Kings AI Grader Local Bridge.lnk"
+$script:AiGraderStationShortcutName = "Ten Kings AI Grader Station.lnk"
 
 function Get-AiGraderRepoRoot {
   return (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+}
+
+function Get-AiGraderBridgeStartupShortcutPath {
+  return (Join-Path ([Environment]::GetFolderPath("Startup")) $script:AiGraderBridgeStartupShortcutName)
+}
+
+function Get-AiGraderStationDesktopShortcutPath {
+  return (Join-Path ([Environment]::GetFolderPath("Desktop")) $script:AiGraderStationShortcutName)
+}
+
+function New-AiGraderPowerShellShortcut {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$ScriptPath,
+    [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+    [string]$ScriptArguments = "",
+    [string]$Description = "Ten Kings AI Grader",
+    [switch]$Hidden
+  )
+
+  $shortcutDirectory = Split-Path -Parent $Path
+  if (-not (Test-Path -LiteralPath $shortcutDirectory)) {
+    New-Item -ItemType Directory -Path $shortcutDirectory -Force | Out-Null
+  }
+
+  $shell = New-Object -ComObject WScript.Shell
+  $shortcut = $shell.CreateShortcut($Path)
+  $shortcut.TargetPath = "powershell.exe"
+  $windowStyle = if ($Hidden) { " -WindowStyle Hidden" } else { "" }
+  $shortcut.Arguments = "-NoProfile$windowStyle -ExecutionPolicy Bypass -File `"$ScriptPath`" $ScriptArguments".Trim()
+  $shortcut.WorkingDirectory = $WorkingDirectory
+  $shortcut.Description = $Description
+  if ($Hidden) {
+    $shortcut.WindowStyle = 7
+  }
+  $shortcut.Save()
 }
 
 function New-AiGraderLocalSecret {

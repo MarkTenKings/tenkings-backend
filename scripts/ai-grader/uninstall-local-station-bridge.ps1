@@ -16,12 +16,16 @@ if ($task) {
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
+$startupShortcutPath = Get-AiGraderBridgeStartupShortcutPath
+$startupShortcutExisted = Test-Path -LiteralPath $startupShortcutPath
+Remove-Item -LiteralPath $startupShortcutPath -Force -ErrorAction SilentlyContinue
+
 if ($KillProcess) {
   & (Join-Path $PSScriptRoot "stop-local-station-bridge.ps1") -TaskName $TaskName -KillProcess | Out-Null
 }
 
 if ($RemoveShortcut) {
-  $shortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "Ten Kings AI Grader Station.lnk"
+  $shortcutPath = Get-AiGraderStationDesktopShortcutPath
   Remove-Item -LiteralPath $shortcutPath -Force -ErrorAction SilentlyContinue
 }
 
@@ -32,6 +36,7 @@ if ($RemoveConfig) {
 [pscustomobject]@{
   ok = $true
   taskRemoved = [bool]$task
+  startupShortcutRemoved = $startupShortcutExisted
   configRemoved = [bool]$RemoveConfig
   shortcutRemoved = [bool]$RemoveShortcut
   processKillRequested = [bool]$KillProcess
