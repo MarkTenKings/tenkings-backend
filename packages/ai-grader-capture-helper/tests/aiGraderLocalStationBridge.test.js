@@ -7,6 +7,7 @@ const {
   AiGraderLocalStationBridgeService,
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
   buildAiGraderLocalStationBridgeConfig,
+  startAiGraderLocalStationBridgeHttpServer,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
 const { runCaptureHelperCli } = require("../dist/cli");
 
@@ -40,6 +41,15 @@ function realConfig(overrides = {}) {
   });
 }
 
+function closeServer(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
 test("station bridge config is explicit, local-only, and real mode is gated", () => {
   assert.throws(
     () => buildAiGraderLocalStationBridgeConfig({ mode: "mock", outputDir: outputDir("disabled") }, {}),
@@ -63,6 +73,95 @@ test("station bridge config is explicit, local-only, and real mode is gated", ()
   assert.equal(config.port, 47652);
   assert.equal(config.localOnly, true);
   assert.equal(config.mode, "real");
+});
+
+test("station bridge config accepts separate pairing code and keeps it distinct from station token", () => {
+  const config = buildAiGraderLocalStationBridgeConfig({
+    enabled: true,
+    mode: "real",
+    outputDir: outputDir("pairing-config"),
+    apply: true,
+    markPresent: true,
+    wiringConfirmed: true,
+    leimacStatusGreen: true,
+    leimacHost: "169.254.191.156",
+  }, {
+    AI_GRADER_STATION_BRIDGE_TOKEN: "1234567890abcdef",
+    AI_GRADER_STATION_PAIRING_CODE: "pairing-code-123456",
+    AI_GRADER_STATION_PAIRING_EXPIRES_AT: "2099-01-01T00:00:00.000Z",
+  });
+
+  assert.equal(config.stationToken, "1234567890abcdef");
+  assert.equal(config.stationPairingCode, "pairing-code-123456");
+  assert.notEqual(config.stationPairingCode, config.stationToken);
+  assert.equal(config.stationPairingExpiresAt, "2099-01-01T00:00:00.000Z");
+  assert.throws(
+    () => buildAiGraderLocalStationBridgeConfig({ enabled: true, mode: "mock", stationPairingCode: "short", outputDir: outputDir("short-pairing") }, {}),
+    /pairing code/
+  );
+});
+
+test("station bridge HTTP health and pairing support production web auto-connect without production service token", async () => {
+  const started = await startAiGraderLocalStationBridgeHttpServer({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 0,
+    stationToken: "local-station-token-123",
+    stationPairingCode: "pairing-code-123456",
+    stationPairingExpiresAt: "2099-01-01T00:00:00.000Z",
+    allowedOrigins: ["https://collect.tenkings.co"],
+    outputDir: outputDir(`http-pairing-${Date.now()}`),
+  });
+  try {
+    const health = await fetch(`${started.url}/health`, {
+      headers: {
+        Origin: "https://collect.tenkings.co",
+        "Access-Control-Request-Private-Network": "true",
+      },
+    });
+    assert.equal(health.status, 200);
+    assert.equal(health.headers.get("access-control-allow-origin"), "https://collect.tenkings.co");
+    assert.equal(health.headers.get("access-control-allow-private-network"), "true");
+    const healthBody = await health.json();
+    assert.equal(healthBody.pairingAvailable, true);
+    assert.equal(healthBody.tokenRequired, true);
+    assert.equal(healthBody.stationToken, undefined);
+
+    const rejected = await fetch(`${started.url}/pair`, {
+      method: "POST",
+      headers: { Origin: "https://collect.tenkings.co", "content-type": "application/json" },
+      body: JSON.stringify({ pairingCode: "wrong-pairing-code" }),
+    });
+    assert.equal(rejected.status, 403);
+
+    const paired = await fetch(`${started.url}/pair`, {
+      method: "POST",
+      headers: { Origin: "https://collect.tenkings.co", "content-type": "application/json" },
+      body: JSON.stringify({ pairingCode: "pairing-code-123456" }),
+    });
+    assert.equal(paired.status, 200);
+    const pairedBody = await paired.json();
+    assert.equal(pairedBody.result.stationToken, "local-station-token-123");
+    assert.equal(pairedBody.result.tokenStorage, "browser_localStorage_only");
+
+    const secondPair = await fetch(`${started.url}/pair`, {
+      method: "POST",
+      headers: { Origin: "https://collect.tenkings.co", "content-type": "application/json" },
+      body: JSON.stringify({ pairingCode: "pairing-code-123456" }),
+    });
+    assert.equal(secondPair.status, 403);
+
+    const status = await fetch(`${started.url}/status`, {
+      headers: { Origin: "https://collect.tenkings.co", "x-ai-grader-station-token": "local-station-token-123" },
+    });
+    assert.equal(status.status, 200);
+    const statusBody = await status.json();
+    assert.equal(statusBody.result.localOnly, true);
+    assert.equal(statusBody.result.safety.databaseWrites, false);
+  } finally {
+    await closeServer(started.server);
+  }
 });
 
 test("mock station bridge runs staged workflow without claiming hardware", async () => {
@@ -216,8 +315,25 @@ test("station bridge CLI help exposes local bridge command and flags", async () 
   });
   assert.equal(code, 0);
   const payload = JSON.parse(stdout);
-  assert.equal(payload.commands.some((command) => command.startsWith("ai-grader-station-bridge")), true);
+  assert.equal(payload.commands.some((command) => command.includes("ai-grader-station-bridge")), true);
   assert.equal(payload.commands.some((command) => command.startsWith("ai-grader-production-release")), true);
   assert.equal(payload.options.includes("--station-token"), true);
+  assert.equal(payload.options.includes("--station-pairing-code"), true);
   assert.equal(payload.options.includes("--enable-local-station"), true);
+});
+
+test("Windows bridge scripts keep station token out of scheduled task and launcher command lines", () => {
+  const repoRoot = path.resolve(__dirname, "..", "..", "..");
+  const startScript = fs.readFileSync(path.join(repoRoot, "scripts", "ai-grader", "start-local-station-bridge.ps1"), "utf8");
+  const installScript = fs.readFileSync(path.join(repoRoot, "scripts", "ai-grader", "install-local-station-bridge.ps1"), "utf8");
+  const openScript = fs.readFileSync(path.join(repoRoot, "scripts", "ai-grader", "open-local-station.ps1"), "utf8");
+  const statusScript = fs.readFileSync(path.join(repoRoot, "scripts", "ai-grader", "status-local-station-bridge.ps1"), "utf8");
+
+  assert.equal(startScript.includes("--station-token"), false);
+  assert.equal(installScript.includes("--station-token"), false);
+  assert.equal(openScript.includes("--station-token"), false);
+  assert.equal(installScript.includes("AI_GRADER_SERVICE_ACCOUNT_TOKEN"), false);
+  assert.equal(openScript.includes("AI_GRADER_SERVICE_ACCOUNT_TOKEN"), false);
+  assert.equal(statusScript.includes("tokenFingerprint"), true);
+  assert.equal(statusScript.includes("ConvertTo-Json"), true);
 });

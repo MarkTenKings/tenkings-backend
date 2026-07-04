@@ -27,7 +27,9 @@ import {
 } from "../lib/server/aiGraderProductionAuth";
 import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+  fetchAiGraderStationBridgeHealth,
   normalizeAiGraderStationBridgeUrl,
+  pairAiGraderStationBridge,
 } from "../lib/aiGraderStationBridgeClient";
 
 type MockResponse = NextApiResponse & {
@@ -848,4 +850,73 @@ test("browser station bridge client accepts only loopback bridge URLs", () => {
   assert.equal(normalizeAiGraderStationBridgeUrl("http://localhost:47652/path?x=1"), "http://localhost:47652");
   assert.throws(() => normalizeAiGraderStationBridgeUrl("https://collect.tenkings.co/api/ai-grader/station"), /loopback|localhost|127/);
   assert.throws(() => normalizeAiGraderStationBridgeUrl("http://192.168.1.20:47652"), /localhost|127/);
+});
+
+test("browser station bridge client checks local bridge health without station or production service tokens", async () => {
+  const fetchImpl: typeof fetch = async (input, init) => {
+    assert.equal(String(input), "http://127.0.0.1:47652/health");
+    assert.equal(init?.method, "GET");
+    assert.equal((init?.headers as Record<string, string> | undefined)?.["x-ai-grader-service-token"], undefined);
+    assert.equal((init?.headers as Record<string, string> | undefined)?.["x-ai-grader-station-token"], undefined);
+    return new Response(JSON.stringify({
+      ok: true,
+      bridgeVersion: "ai-grader-local-station-bridge-v0.2",
+      mode: "real",
+      localOnly: true,
+      tokenRequired: true,
+      pairingAvailable: true,
+      hardwareActionsEnabled: true,
+      allowedOrigins: ["https://collect.tenkings.co"],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  const health = await fetchAiGraderStationBridgeHealth({ baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL }, fetchImpl);
+  assert.equal(health.ok, true);
+  assert.equal(health.localOnly, true);
+  assert.equal(health.pairingAvailable, true);
+  assert.equal(health.allowedOrigins.includes("https://collect.tenkings.co"), true);
+});
+
+test("browser station bridge pairing exchanges a local pairing code for browser-local station token only", async () => {
+  const fetchImpl: typeof fetch = async (input, init) => {
+    assert.equal(String(input), "http://127.0.0.1:47652/pair");
+    assert.equal(init?.method, "POST");
+    const headers = init?.headers as Record<string, string>;
+    assert.equal(headers["x-ai-grader-service-token"], undefined);
+    assert.equal(headers["x-ai-grader-station-token"], undefined);
+    assert.deepEqual(JSON.parse(String(init?.body)), { pairingCode: "pairing-code-123456" });
+    return new Response(JSON.stringify({
+      ok: true,
+      result: {
+        bridgeUrl: "http://127.0.0.1:47652",
+        stationToken: "browser-local-station-token",
+        localOnly: true,
+        tokenStorage: "browser_localStorage_only",
+        hardwareActionsEnabled: true,
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  const paired = await pairAiGraderStationBridge(
+    { baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL, pairingCode: "pairing-code-123456" },
+    fetchImpl
+  );
+
+  assert.equal(paired.bridgeUrl, DEFAULT_AI_GRADER_STATION_BRIDGE_URL);
+  assert.equal(paired.stationToken, "browser-local-station-token");
+  assert.equal(paired.tokenStorage, "browser_localStorage_only");
+});
+
+test("browser station bridge client reports missing bridge and missing pairing code cleanly", async () => {
+  const unavailableFetch: typeof fetch = async () =>
+    new Response(JSON.stringify({ ok: false, message: "bridge not running" }), { status: 503 });
+
+  await assert.rejects(
+    () => fetchAiGraderStationBridgeHealth({ baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL }, unavailableFetch),
+    /bridge not running/
+  );
+  await assert.rejects(
+    () => pairAiGraderStationBridge({ baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL, pairingCode: " " }, unavailableFetch),
+    /pairing code is required/
+  );
 });

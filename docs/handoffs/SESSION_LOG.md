@@ -23198,3 +23198,55 @@ By enabling Rip It Live, I confirm:
 - No hardware command or image capture was run.
 - No temporary auth bypass was added.
 - No production untracked file was deleted or modified.
+
+## 2026-07-03 - PR #51 no-terminal Dell AI Grader bridge productization
+
+### Planned Action
+- Implement the permanent no-terminal Dell operator path for AI Grader production station use.
+- Keep hardware control local to `127.0.0.1`; do not remove the local bridge.
+- Do not weaken production auth and do not use the production AI Grader service-account token for routine bridge use.
+- Do not print secrets, run hardware, run migrations, write production DB rows, change env vars, or rotate credentials.
+
+### Observed Result
+- Branch: `feature/ai-grader-local-bridge-productized`.
+- Added Windows local station software scripts for installing, launching, checking, stopping, uninstalling, and rotating the Dell bridge token.
+- Local bridge config path is `C:\TenKings\config\ai-grader-local-bridge.json`.
+- The config stores the local station token and pairing code outside git and scripts attempt to restrict ACLs to the current Windows user, Administrators, and SYSTEM.
+- The Scheduled Task installer starts the bridge at user logon under the interactive Dell operator user.
+- The Scheduled Task and desktop shortcut command lines do not include the local station token.
+- The bridge start script reads the token from local config and passes it to the child process environment.
+- Added bridge `/pair` support with a separate local pairing code and retained token-gated `/status`, `/latest-report`, `/session-manifest`, `/report-history`, report bundle/html, and action endpoints.
+- Added private-network CORS support for `https://collect.tenkings.co` to call the loopback bridge.
+- Updated `/ai-grader/station` to health-check the local bridge, auto-connect with a saved browser-local token, exchange launcher pairing codes from the URL fragment, and present clean Bridge Connected / Bridge Not Running / Pairing Required states.
+- Public report routes remain read-only and hardware-control-free.
+- The production AI Grader service-account token is not used for local bridge pairing or operator bridge use.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `node --test packages/ai-grader-capture-helper/tests/aiGraderLocalStationBridge.test.js` -> pass, `8` tests.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `26` tests.
+- PowerShell syntax parse for all new/updated local bridge scripts -> pass.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `170` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Not Run
+- No Scheduled Task was installed in this pass.
+- No real bridge was started.
+- No hardware command, Leimac/Basler action, image capture, migration, production DB write, env change, or credential rotation was run.
+
+### Next Local Smoke After Mark Approval
+- Run `.\scripts\ai-grader\install-local-station-bridge.ps1 -StartNow -CreateShortcut`.
+- Run `.\scripts\ai-grader\status-local-station-bridge.ps1` and verify the task/bridge state without printing secrets.
+- Open the `Ten Kings AI Grader Station` shortcut and confirm `https://collect.tenkings.co/ai-grader/station` pairs/auto-connects.
+- Do not start capture/hardware workflow unless Mark explicitly starts a supervised Dell grading session.
+
+### Guardrails
+- No secret value was printed.
+- No shell tracing was used.
+- No destructive operation was run.
+- No production DB write or migration was run.
+- No hardware command or image capture was run.
+- DigitalOcean Postgres credential rotation remains deferred by Mark.

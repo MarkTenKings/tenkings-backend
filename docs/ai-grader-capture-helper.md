@@ -1244,67 +1244,53 @@ GET  /api/ai-grader/station/session-manifest
 
 The API contract is safe for local development: `hardwareActionsEnabled=false`, `databaseConnected=false`, `databaseWrites=false`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`.
 
-The Dell browser workflow uses two local processes:
+The production Dell operator workflow uses installed local station software. The browser still cannot directly control Basler/Leimac hardware; it talks to a loopback-only bridge on the Dell. The bridge should be installed once as a Windows Scheduled Task under the Dell operator user:
 
 ```powershell
-# Terminal 1 - local Next web app
-pnpm --filter @tenkings/nextjs-app exec next dev --hostname 127.0.0.1 --port 3020
+.\scripts\ai-grader\install-local-station-bridge.ps1 -StartNow -CreateShortcut
 ```
 
-```powershell
-# Terminal 2 - local capture-station bridge
-.\scripts\ai-grader\start-local-station-bridge.ps1 -Real
-```
+Normal operator use after install:
 
-The launcher prints the bridge URL and generated station token. In the browser, use:
+1. Open the `Ten Kings AI Grader Station` desktop shortcut, or browse to `https://collect.tenkings.co/ai-grader/station`.
+2. Log into Ten Kings with an approved AI Grader operator/admin account.
+3. The page checks `http://127.0.0.1:47652/health`.
+4. If this browser is already paired, it auto-connects with the locally saved browser token.
+5. If pairing is needed, the desktop shortcut opens the station with a short local pairing code in the URL fragment; the page exchanges that code with `POST http://127.0.0.1:47652/pair` and stores the returned local bridge token in this Dell/browser `localStorage`.
+6. Start New Card from the station UI.
+
+The local bridge config is stored outside git:
 
 ```text
-Station URL: http://127.0.0.1:3020/ai-grader/station
-Bridge URL:  http://127.0.0.1:47652
+C:\TenKings\config\ai-grader-local-bridge.json
 ```
 
-Mock bridge mode is useful for browser/UI testing and still does not contact hardware:
+The config contains the local bridge token and pairing code and should not be committed or pasted into logs. The installer attempts to lock file permissions to the current Windows user, Administrators, and SYSTEM. Status output redacts secrets and prints only non-secret fingerprints:
 
 ```powershell
-.\scripts\ai-grader\start-local-station-bridge.ps1
+.\scripts\ai-grader\status-local-station-bridge.ps1
 ```
 
-The supervised hardware-capable bridge mode remains local-only and guarded. The launcher expands to this shape and must be started only with Mark present and the rig status confirmed:
+Maintenance commands:
 
 ```powershell
-pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-station-bridge `
-  --enable-local-station `
-  --station-bridge-mode real `
-  --host 127.0.0.1 `
-  --port 47652 `
-  --station-token <local-secret> `
-  --allowed-origin http://127.0.0.1:3020 `
-  --allowed-origin http://localhost:3020 `
-  --allowed-origin https://collect.tenkings.co `
-  --output-dir C:\TenKings\capture-data\ai-grader-station `
-  --report-bundle-output-dir C:\TenKings\capture-data\ai-grader-report-bundles `
-  --public-base-path /ai-grader/reports `
-  --leimac-host 169.254.191.156 `
-  --leimac-port 1000 `
-  --exposure-us 45000 `
-  --gain 0 `
-  --duty 1.2 `
-  --fixture-label fixed-ruler-v1-dell `
-  --reference-type fixed_metric_rulers `
-  --horizontal-span-mm 50.8 `
-  --horizontal-start-px 540,205 `
-  --horizontal-end-px 1620,205 `
-  --vertical-span-mm 50.8 `
-  --vertical-start-px 2295,145 `
-  --vertical-end-px 2295,1218 `
-  --card-boundary-rect 285,349,1878,1350 `
-  --apply `
-  --mark-present `
-  --wiring-confirmed `
-  --leimac-status-green
+.\scripts\ai-grader\open-local-station.ps1 -RestartBridge
+.\scripts\ai-grader\stop-local-station-bridge.ps1 -KillProcess
+.\scripts\ai-grader\rotate-local-station-bridge-token.ps1 -RestartBridge
+.\scripts\ai-grader\uninstall-local-station-bridge.ps1 -KillProcess -RemoveShortcut
 ```
 
-The bridge exposes `GET /health`, token-gated `GET /status`, `GET /latest-report`, `GET /session-manifest`, and token-gated `POST /actions/<action>`. Actions are staged: `start-session`, `confirm-light-idle-off`, `confirm-fixture-rulers`, `launch-preview`, `accept-profile`, `capture-front`, `confirm-flip`, `capture-back`, `run-diagnostics`, `export-report-bundle`, `safe-off`, and `end-session`. The bridge writes station session manifests outside the repo and fails closed if required confirmations, side outputs, report outputs, or safe-off cleanup are missing.
+The Scheduled Task starts `scripts/ai-grader/start-local-station-bridge.ps1 -Real` at user logon. The script reads the local token from config and passes it to the bridge process through the child process environment, not through task/shortcut command-line arguments. It allows `https://collect.tenkings.co`, binds only to `127.0.0.1:47652`, uses output directories under `C:\TenKings\capture-data`, and carries the accepted fixed-ruler Dell rig defaults.
+
+Mock bridge mode remains available for development and does not contact hardware:
+
+```powershell
+.\scripts\ai-grader\start-local-station-bridge.ps1 -NoLocalConfig
+```
+
+The supervised hardware-capable bridge mode remains local-only and guarded. Starting the bridge does not capture images or turn on lighting by itself. Hardware actions still require the production station UI, the local bridge token, and staged operator confirmations. Public/shareable report pages never expose bridge tokens, pairing codes, or hardware controls.
+
+The bridge exposes public local `GET /health`, pairing `POST /pair`, token-gated `GET /status`, `GET /latest-report`, `GET /session-manifest`, and token-gated `POST /actions/<action>`. Actions are staged: `start-session`, `confirm-light-idle-off`, `confirm-fixture-rulers`, `launch-preview`, `accept-profile`, `capture-front`, `confirm-flip`, `capture-back`, `run-diagnostics`, `export-report-bundle`, `safe-off`, and `end-session`. The bridge writes station session manifests outside the repo and fails closed if required confirmations, side outputs, report outputs, or safe-off cleanup are missing.
 
 A public/shareable report viewer foundation is available at:
 

@@ -1,5 +1,55 @@
 # Set Ops Handoff (Living)
 
+## Session Update (2026-07-03 UTC, AI Grader PR #51 no-terminal Dell bridge productization)
+- Branch: `feature/ai-grader-local-bridge-productized`.
+- Goal: productize the Dell AI Grader local hardware bridge so production operators use `https://collect.tenkings.co/ai-grader/station` like an installed station app instead of manually opening PowerShell or pasting station tokens.
+- Implementation:
+  - Added Windows Scheduled Task installer/maintenance scripts:
+    - `scripts/ai-grader/install-local-station-bridge.ps1`
+    - `scripts/ai-grader/start-local-station-bridge.ps1`
+    - `scripts/ai-grader/stop-local-station-bridge.ps1`
+    - `scripts/ai-grader/status-local-station-bridge.ps1`
+    - `scripts/ai-grader/uninstall-local-station-bridge.ps1`
+    - `scripts/ai-grader/open-local-station.ps1`
+    - `scripts/ai-grader/rotate-local-station-bridge-token.ps1`
+    - `scripts/ai-grader/ai-grader-local-bridge-common.ps1`
+  - Local config path: `C:\TenKings\config\ai-grader-local-bridge.json`.
+  - Config stores the local bridge token and short local pairing code outside git; scripts attempt to lock ACLs to the current Windows user, Administrators, and SYSTEM.
+  - The installed Scheduled Task runs at user logon under the interactive Dell operator user and starts the real loopback bridge at `127.0.0.1:47652`.
+  - The bridge token is passed to the child process via environment from protected local config, not as a Scheduled Task/shortcut command-line argument.
+  - The production station page now health-checks `http://127.0.0.1:47652/health`, auto-connects with a saved browser-local station token, and pairs first-time browsers by exchanging a local pairing code at `POST /pair`.
+  - The production service-account token is not used for local bridge operation.
+  - Bridge CORS now supports the production origin and private-network loopback browser access while keeping the bridge bound to loopback only.
+  - Public report routes remain read-only and hardware-control-free.
+- Normal operator path after install:
+  - Open the `Ten Kings AI Grader Station` desktop shortcut or `https://collect.tenkings.co/ai-grader/station`.
+  - Log in with an approved Ten Kings AI Grader operator/admin account.
+  - The station auto-connects when the local Dell bridge is running and this browser is paired.
+  - Start New Card from the station UI.
+- Install command:
+  - `.\scripts\ai-grader\install-local-station-bridge.ps1 -StartNow -CreateShortcut`
+- Uninstall command:
+  - `.\scripts\ai-grader\uninstall-local-station-bridge.ps1 -KillProcess -RemoveShortcut`
+- Validation in this implementation pass:
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `26` tests.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `node --test packages/ai-grader-capture-helper/tests/aiGraderLocalStationBridge.test.js` -> pass, `8` tests.
+  - PowerShell syntax parse for all new/updated bridge scripts -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `170` tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+  - `git diff --check` -> pass with line-ending warnings only.
+- Not run in this pass:
+  - No Scheduled Task was installed locally yet.
+  - No bridge was started in real mode.
+  - No hardware command, lighting command, image capture, migration, DB write, env change, or credential rotation was run.
+- Remaining local smoke after Mark approval:
+  - Run the installer on the Dell.
+  - Confirm status script reports task installed and bridge running without printing secrets.
+  - Open the desktop shortcut and verify `collect.tenkings.co/ai-grader/station` pairs/auto-connects.
+  - Do not run capture/hardware actions unless Mark explicitly starts a supervised Dell grading session.
+
 ## Session Update (2026-07-03 UTC, AI Grader production-live smoke complete)
 - Branch/HEAD verified before final docs update: `main` at `aee7ac9cd6c28a0a5474fe1297c70ad9ad0288e3`, matching `origin/main`, with `git diff --check` clean.
 - PR/deploy status:

@@ -31,7 +31,7 @@ import {
   type AiGraderProductionRelease,
 } from "./aiGraderProductionRelease";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.2";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.3";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 
@@ -90,6 +90,8 @@ export interface AiGraderLocalStationBridgeConfigInput {
   port?: number | string;
   mode?: AiGraderLocalStationBridgeMode;
   stationToken?: string;
+  stationPairingCode?: string;
+  stationPairingExpiresAt?: string;
   allowedOrigins?: string[];
   outputDir?: string;
   reportBundleOutputDir?: string;
@@ -129,6 +131,8 @@ export interface AiGraderLocalStationBridgeConfig {
   outputDir: string;
   localOnly: true;
   stationToken: string;
+  stationPairingCode?: string;
+  stationPairingExpiresAt?: string;
   allowedOrigins: string[];
   reportBundleOutputDir?: string;
   publicBasePath?: string;
@@ -404,6 +408,13 @@ function parseAllowedOrigins(value: string | undefined, explicit: string[] | und
   return origins.length ? Array.from(new Set(origins)) : ["http://127.0.0.1:*", "http://localhost:*"];
 }
 
+function pairingCodeIsActive(config: Pick<AiGraderLocalStationBridgeConfig, "stationPairingCode" | "stationPairingExpiresAt">) {
+  if (!config.stationPairingCode) return false;
+  if (!config.stationPairingExpiresAt) return true;
+  const expiresAt = Date.parse(config.stationPairingExpiresAt);
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+}
+
 function roundDuty(input: number) {
   const capped = Math.max(0, Math.min(5, input));
   const step = Math.max(0, Math.min(50, Math.round(capped * 10)));
@@ -430,10 +441,15 @@ export function buildAiGraderLocalStationBridgeConfig(
   const mode = input.mode ?? parseMode(env.AI_GRADER_STATION_BRIDGE_MODE);
   const outputDir = firstNonEmpty(input.outputDir, env.AI_GRADER_STATION_OUTPUT_DIR) ?? "C:\\TenKings\\capture-data\\ai-grader-station";
   const stationToken = firstNonEmpty(input.stationToken, env.AI_GRADER_STATION_BRIDGE_TOKEN) ?? (mode === "mock" ? "local-dev-token" : "");
+  const stationPairingCode = firstNonEmpty(input.stationPairingCode, env.AI_GRADER_STATION_PAIRING_CODE);
+  const stationPairingExpiresAt = firstNonEmpty(input.stationPairingExpiresAt, env.AI_GRADER_STATION_PAIRING_EXPIRES_AT);
   if (!enabled) {
     throw new Error("AI Grader station bridge requires --enable-local-station or AI_GRADER_LOCAL_STATION_ENABLED=true.");
   }
   assertFixedRigOutputDirAllowed(outputDir);
+  if (stationPairingCode && stationPairingCode.length < 16) {
+    throw new Error("AI Grader station bridge pairing code must be at least 16 characters.");
+  }
   if (mode === "real") {
     if (!stationToken || stationToken.length < 16) {
       throw new Error("AI Grader station bridge real mode requires a station token of at least 16 characters.");
@@ -461,6 +477,8 @@ export function buildAiGraderLocalStationBridgeConfig(
     mode,
     localOnly: true,
     stationToken,
+    stationPairingCode,
+    stationPairingExpiresAt,
     allowedOrigins: parseAllowedOrigins(env.AI_GRADER_STATION_ALLOWED_ORIGINS, input.allowedOrigins),
     outputDir,
     reportBundleOutputDir: firstNonEmpty(input.reportBundleOutputDir, env.AI_GRADER_REPORT_BUNDLE_OUTPUT_DIR),
@@ -1422,6 +1440,7 @@ function setCors(res: http.ServerResponse, origin: string | undefined, config: A
   }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "content-type,x-ai-grader-station-token");
+  res.setHeader("Access-Control-Allow-Private-Network", "true");
   res.setHeader("Access-Control-Max-Age", "600");
 }
 
@@ -1481,6 +1500,13 @@ function tokenMatches(req: http.IncomingMessage, config: AiGraderLocalStationBri
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+function secretMatches(supplied: string | undefined, expected: string | undefined) {
+  if (!supplied || !expected) return false;
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 export function createAiGraderLocalStationBridgeHttpServer(
   input: AiGraderLocalStationBridgeConfigInput = {},
   env: NodeJS.ProcessEnv = process.env,
@@ -1488,6 +1514,7 @@ export function createAiGraderLocalStationBridgeHttpServer(
 ): http.Server {
   const config = buildAiGraderLocalStationBridgeConfig(input, env);
   const service = new AiGraderLocalStationBridgeService(config, runner);
+  let pairingCodeConsumed = false;
 
   return http.createServer(async (req, res) => {
     const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
@@ -1515,8 +1542,34 @@ export function createAiGraderLocalStationBridgeHttpServer(
           mode: config.mode,
           localOnly: true,
           tokenRequired: true,
+          pairingAvailable: pairingCodeIsActive(config) && !pairingCodeConsumed,
+          pairingCodeExpiresAt: config.stationPairingExpiresAt,
           hardwareActionsEnabled: config.mode === "real",
           allowedOrigins: config.allowedOrigins,
+        }, origin, config);
+      }
+
+      if (url.pathname === "/pair") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for /pair." }, origin, config);
+        if (pairingCodeConsumed || !pairingCodeIsActive(config)) {
+          return sendJson(res, 403, { ok: false, code: "AI_GRADER_STATION_BRIDGE_PAIRING_UNAVAILABLE", message: "Local station bridge pairing is not available. Relaunch the Ten Kings AI Grader Station shortcut." }, origin, config);
+        }
+        const body = await readJsonBody(req);
+        const pairingCode = typeof body.pairingCode === "string" ? body.pairingCode : "";
+        if (!secretMatches(pairingCode, config.stationPairingCode)) {
+          return sendJson(res, 403, { ok: false, code: "AI_GRADER_STATION_BRIDGE_PAIRING_REJECTED", message: "Local station bridge pairing code was rejected." }, origin, config);
+        }
+        pairingCodeConsumed = true;
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "pair",
+          result: {
+            bridgeUrl: service.stationUrl,
+            stationToken: config.stationToken,
+            localOnly: true,
+            tokenStorage: "browser_localStorage_only",
+            hardwareActionsEnabled: config.mode === "real",
+          },
         }, origin, config);
       }
 
