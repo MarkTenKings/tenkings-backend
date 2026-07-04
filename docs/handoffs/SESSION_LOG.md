@@ -23264,12 +23264,17 @@ By enabling Rip It Live, I confirm:
 - Prepared a compatibility hotfix to generate local bridge secrets with `RandomNumberGenerator.Create().GetBytes(...)`, which works under Windows PowerShell and newer PowerShell runtimes.
 - The second installer attempt advanced to Scheduled Task registration and found that this Windows Scheduled Tasks runtime accepts `-RunLevel Limited`, not `LeastPrivilege`.
 - Prepared a follow-up compatibility hotfix to register the AI Grader bridge task with the non-elevated `Limited` run level.
+- A later install attempt still received Windows `Access is denied` from Scheduled Tasks for this non-elevated user session, even for a harmless current-user task probe.
+- Prepared a non-admin Startup-folder fallback so the bridge still starts at Mark's Windows logon without terminal use when Scheduled Task registration is blocked by local policy.
+- Updated status/uninstall scripts to report and clean up both Scheduled Task and Startup shortcut autostart mechanisms.
 
 ### Validation
 - Local secret generation helper smoke under Windows PowerShell -> pass, with no secret value printed.
 - PowerShell syntax parse for `scripts/ai-grader/*.ps1` -> pass.
 - `git diff --check` -> pass with line-ending warnings only.
 - Scheduled Task principal creation with `-RunLevel Limited` -> pass.
+- Scheduled Task current-user permission probe -> blocked with `Access is denied`, no task left installed.
+- Startup/Desktop shortcut path helper smoke -> pass.
 
 ### Guardrails
 - No secret value was printed.
