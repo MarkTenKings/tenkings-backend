@@ -23267,6 +23267,8 @@ By enabling Rip It Live, I confirm:
 - A later install attempt still received Windows `Access is denied` from Scheduled Tasks for this non-elevated user session, even for a harmless current-user task probe.
 - Prepared a non-admin Startup-folder fallback so the bridge still starts at Mark's Windows logon without terminal use when Scheduled Task registration is blocked by local policy.
 - Updated status/uninstall scripts to report and clean up both Scheduled Task and Startup shortcut autostart mechanisms.
+- Desktop shortcut launch showed that bridge restart needed to stop spawned Node child processes that no longer include the repo path in their command line.
+- Prepared a stop-script fix to match the loopback AI Grader bridge child process by `ai-grader-station-bridge`, host `127.0.0.1`, and port `47652`.
 
 ### Validation
 - Local secret generation helper smoke under Windows PowerShell -> pass, with no secret value printed.
@@ -23275,6 +23277,7 @@ By enabling Rip It Live, I confirm:
 - Scheduled Task principal creation with `-RunLevel Limited` -> pass.
 - Scheduled Task current-user permission probe -> blocked with `Access is denied`, no task left installed.
 - Startup/Desktop shortcut path helper smoke -> pass.
+- Added focused static coverage for stop-script loopback bridge child-process matching.
 
 ### Guardrails
 - No secret value was printed.

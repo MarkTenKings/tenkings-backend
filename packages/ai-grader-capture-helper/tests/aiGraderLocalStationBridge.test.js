@@ -328,6 +328,7 @@ test("Windows bridge scripts keep station token out of scheduled task and launch
   const installScript = fs.readFileSync(path.join(repoRoot, "scripts", "ai-grader", "install-local-station-bridge.ps1"), "utf8");
   const openScript = fs.readFileSync(path.join(repoRoot, "scripts", "ai-grader", "open-local-station.ps1"), "utf8");
   const statusScript = fs.readFileSync(path.join(repoRoot, "scripts", "ai-grader", "status-local-station-bridge.ps1"), "utf8");
+  const stopScript = fs.readFileSync(path.join(repoRoot, "scripts", "ai-grader", "stop-local-station-bridge.ps1"), "utf8");
 
   assert.equal(startScript.includes("--station-token"), false);
   assert.equal(installScript.includes("--station-token"), false);
@@ -336,4 +337,7 @@ test("Windows bridge scripts keep station token out of scheduled task and launch
   assert.equal(openScript.includes("AI_GRADER_SERVICE_ACCOUNT_TOKEN"), false);
   assert.equal(statusScript.includes("tokenFingerprint"), true);
   assert.equal(statusScript.includes("ConvertTo-Json"), true);
+  assert.equal(stopScript.includes("ai-grader-station-bridge"), true);
+  assert.equal(stopScript.includes("--host 127.0.0.1"), true);
+  assert.equal(stopScript.includes("--port 47652"), true);
 });
