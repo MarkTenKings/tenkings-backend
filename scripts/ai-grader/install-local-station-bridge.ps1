@@ -17,7 +17,7 @@ $config = Initialize-AiGraderBridgeConfig -Path $ConfigPath -Mode "real" -Rotate
 $taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$startScript`" -Real -ConfigPath `"$ConfigPath`""
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $taskArgs -WorkingDirectory $repoRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn
-$principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel LeastPrivilege
+$principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "Ten Kings AI Grader local loopback hardware bridge. Token is read from protected local config, not task arguments." -Force | Out-Null
