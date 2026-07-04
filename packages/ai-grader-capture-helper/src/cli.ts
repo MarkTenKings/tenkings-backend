@@ -443,6 +443,8 @@ type ParsedCommand =
       reportBundleOutputDir: string | undefined;
       publicBasePath: string | undefined;
       stationToken: string | undefined;
+      stationPairingCode: string | undefined;
+      stationPairingExpiresAt: string | undefined;
       allowedOrigins: string[];
       stationBridgeMode: "mock" | "real";
       enableLocalStation: boolean;
@@ -587,6 +589,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let publicReportBaseUrl: string | undefined;
   let reportBundleOutputDir: string | undefined;
   let stationToken: string | undefined;
+  let stationPairingCode: string | undefined;
+  let stationPairingExpiresAt: string | undefined;
   const allowedOrigins: string[] = [];
   let stationBridgeMode: "mock" | "real" = "mock";
   let enableLocalStation = false;
@@ -798,6 +802,14 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--station-token":
         stationToken = readOption(rest, index, "--station-token");
+        index += 1;
+        break;
+      case "--station-pairing-code":
+        stationPairingCode = readOption(rest, index, "--station-pairing-code");
+        index += 1;
+        break;
+      case "--station-pairing-expires-at":
+        stationPairingExpiresAt = readOption(rest, index, "--station-pairing-expires-at");
         index += 1;
         break;
       case "--allowed-origin":
@@ -1448,6 +1460,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         reportBundleOutputDir,
         publicBasePath,
         stationToken,
+        stationPairingCode,
+        stationPairingExpiresAt,
         allowedOrigins,
         stationBridgeMode,
         enableLocalStation,
@@ -2017,8 +2031,8 @@ function helpPayload() {
       "ai-grader-production-release --report-bundle-path <report-bundle.json> --output-dir C:\\TenKings\\capture-data\\ai-grader-production-releases --operator-id mark --operator-accepted-warnings --override-reason \"V0 production release accepted warnings\" --public-report-base-url https://collect.tenkings.co",
       "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --mock-run --duty 1.2 --exposure-us 45000 --front-clipped-fraction 0.107932 --back-clipped-fraction 0.337672 --calibration-profile-id fixed-ruler-pr39 --framing-overlay-pass --repeatability-pass --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
       "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --reference-type fixed_metric_rulers --horizontal-span-mm 50.8 --horizontal-start-px 540,205 --horizontal-end-px 1620,205 --vertical-span-mm 50.8 --vertical-start-px 2295,145 --vertical-end-px 2295,1218 --card-boundary-rect 285,349,1878,1350 --apply --confirm \"RUN AI GRADER STATION OPERATOR WORKFLOW\" --mark-present --wiring-confirmed --leimac-status-green",
-      "ai-grader-station-bridge --enable-local-station --station-bridge-mode mock --host 127.0.0.1 --port 47652 --station-token local-dev-token --output-dir C:\\TenKings\\capture-data\\ai-grader-station",
-      "ai-grader-station-bridge --enable-local-station --station-bridge-mode real --host 127.0.0.1 --port 47652 --station-token <local-secret> --allowed-origin https://collect.tenkings.co --output-dir C:\\TenKings\\capture-data\\ai-grader-station --report-bundle-output-dir C:\\TenKings\\capture-data\\ai-grader-report-bundles --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --duty 1.2 --apply --mark-present --wiring-confirmed --leimac-status-green",
+      "AI_GRADER_STATION_BRIDGE_TOKEN=<local-secret> ai-grader-station-bridge --enable-local-station --station-bridge-mode mock --host 127.0.0.1 --port 47652 --output-dir C:\\TenKings\\capture-data\\ai-grader-station",
+      "AI_GRADER_STATION_BRIDGE_TOKEN=<local-secret> AI_GRADER_STATION_PAIRING_CODE=<local-pairing-code> ai-grader-station-bridge --enable-local-station --station-bridge-mode real --host 127.0.0.1 --port 47652 --allowed-origin https://collect.tenkings.co --output-dir C:\\TenKings\\capture-data\\ai-grader-station --report-bundle-output-dir C:\\TenKings\\capture-data\\ai-grader-report-bundles --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --duty 1.2 --apply --mark-present --wiring-confirmed --leimac-status-green",
       "leimac-channel-characterization --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --duty 1 --exposure-us 45000 --apply --confirm \"RUN LEIMAC CHANNEL CHARACTERIZATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
@@ -2051,6 +2065,8 @@ function helpPayload() {
       "--public-report-base-url",
       "--report-bundle-output-dir",
       "--station-token",
+      "--station-pairing-code",
+      "--station-pairing-expires-at",
       "--allowed-origin",
       "--station-bridge-mode mock|real",
       "--enable-local-station",
@@ -5872,6 +5888,8 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           port: parsed.port,
           mode: parsed.stationBridgeMode,
           stationToken: parsed.stationToken,
+          stationPairingCode: parsed.stationPairingCode,
+          stationPairingExpiresAt: parsed.stationPairingExpiresAt,
           allowedOrigins: parsed.allowedOrigins,
           outputDir: parsed.outputDir,
           reportBundleOutputDir: parsed.reportBundleOutputDir,

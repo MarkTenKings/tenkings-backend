@@ -3,35 +3,72 @@ param(
   [switch]$Real,
   [switch]$SkipBuild,
   [string]$StationToken = $env:AI_GRADER_STATION_TOKEN,
-  [string]$HostName = "127.0.0.1",
-  [int]$Port = 47652,
-  [string[]]$AllowedOrigin = @("http://127.0.0.1:3020", "http://localhost:3020", "https://collect.tenkings.co"),
-  [string]$OutputDir = "C:\TenKings\capture-data\ai-grader-station",
-  [string]$ReportBundleOutputDir = "C:\TenKings\capture-data\ai-grader-report-bundles",
-  [string]$LeimacHost = "169.254.191.156",
-  [int]$LeimacPort = 1000,
-  [int]$ExposureUs = 45000,
-  [double]$Gain = 0,
-  [double]$Duty = 1.2,
-  [string]$FixtureLabel = "fixed-ruler-v1-dell",
-  [double]$HorizontalSpanMm = 50.8,
-  [string]$HorizontalStartPx = "540,205",
-  [string]$HorizontalEndPx = "1620,205",
-  [double]$VerticalSpanMm = 50.8,
-  [string]$VerticalStartPx = "2295,145",
-  [string]$VerticalEndPx = "2295,1218",
-  [string]$CardBoundaryRect = "285,349,1878,1350"
+  [string]$ConfigPath = "C:\TenKings\config\ai-grader-local-bridge.json",
+  [switch]$NoLocalConfig,
+  [switch]$RotatePairingCode,
+  [switch]$OpenStation,
+  [string]$HostName,
+  [int]$Port,
+  [string[]]$AllowedOrigin,
+  [string]$OutputDir,
+  [string]$ReportBundleOutputDir,
+  [string]$LeimacHost,
+  [int]$LeimacPort,
+  [int]$ExposureUs,
+  [double]$Gain,
+  [double]$Duty,
+  [string]$FixtureLabel,
+  [double]$HorizontalSpanMm,
+  [string]$HorizontalStartPx,
+  [string]$HorizontalEndPx,
+  [double]$VerticalSpanMm,
+  [string]$VerticalStartPx,
+  [string]$VerticalEndPx,
+  [string]$CardBoundaryRect
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+. (Join-Path $PSScriptRoot "ai-grader-local-bridge-common.ps1")
+
+$repoRoot = Get-AiGraderRepoRoot
 Set-Location $repoRoot
 
-if ([string]::IsNullOrWhiteSpace($StationToken)) {
-  $StationToken = "tk-local-" + ([guid]::NewGuid().ToString("N"))
+$mode = if ($Real) { "real" } else { "mock" }
+$config = $null
+if (-not $NoLocalConfig) {
+  $config = Initialize-AiGraderBridgeConfig -Path $ConfigPath -Mode $mode -RotatePairingCode:$RotatePairingCode
 }
+
+if ([string]::IsNullOrWhiteSpace($StationToken)) {
+  if ($null -ne $config -and -not [string]::IsNullOrWhiteSpace($config.stationToken)) {
+    $StationToken = [string]$config.stationToken
+  } elseif ($mode -eq "mock") {
+    $StationToken = "local-dev-token"
+  } else {
+    throw "AI Grader real bridge requires a local station token. Use the installer/config path instead of passing tokens on the command line."
+  }
+}
+
+$selectedHost = if ($PSBoundParameters.ContainsKey("HostName")) { $HostName } elseif ($config) { [string]$config.host } else { "127.0.0.1" }
+$selectedPort = if ($PSBoundParameters.ContainsKey("Port")) { $Port } elseif ($config) { [int]$config.port } else { 47652 }
+$selectedAllowedOrigins = if ($PSBoundParameters.ContainsKey("AllowedOrigin")) { $AllowedOrigin } elseif ($config) { @($config.allowedOrigins) } else { @("http://127.0.0.1:3020", "http://localhost:3020", "https://collect.tenkings.co") }
+$selectedOutputDir = if ($PSBoundParameters.ContainsKey("OutputDir")) { $OutputDir } elseif ($config) { [string]$config.outputDir } else { "C:\TenKings\capture-data\ai-grader-station" }
+$selectedReportBundleOutputDir = if ($PSBoundParameters.ContainsKey("ReportBundleOutputDir")) { $ReportBundleOutputDir } elseif ($config) { [string]$config.reportBundleOutputDir } else { "C:\TenKings\capture-data\ai-grader-report-bundles" }
+$selectedLeimacHost = if ($PSBoundParameters.ContainsKey("LeimacHost")) { $LeimacHost } elseif ($config) { [string]$config.leimacHost } else { "169.254.191.156" }
+$selectedLeimacPort = if ($PSBoundParameters.ContainsKey("LeimacPort")) { $LeimacPort } elseif ($config) { [int]$config.leimacPort } else { 1000 }
+$selectedExposureUs = if ($PSBoundParameters.ContainsKey("ExposureUs")) { $ExposureUs } elseif ($config) { [int]$config.exposureUs } else { 45000 }
+$selectedGain = if ($PSBoundParameters.ContainsKey("Gain")) { $Gain } elseif ($config) { [double]$config.gain } else { 0 }
+$selectedDuty = if ($PSBoundParameters.ContainsKey("Duty")) { $Duty } elseif ($config) { [double]$config.duty } else { 1.2 }
+$selectedFixtureLabel = if ($PSBoundParameters.ContainsKey("FixtureLabel")) { $FixtureLabel } elseif ($config) { [string]$config.fixtureLabel } else { "fixed-ruler-v1-dell" }
+$selectedHorizontalSpanMm = if ($PSBoundParameters.ContainsKey("HorizontalSpanMm")) { $HorizontalSpanMm } elseif ($config) { [double]$config.horizontalSpanMm } else { 50.8 }
+$selectedHorizontalStartPx = if ($PSBoundParameters.ContainsKey("HorizontalStartPx")) { $HorizontalStartPx } elseif ($config) { [string]$config.horizontalStartPx } else { "540,205" }
+$selectedHorizontalEndPx = if ($PSBoundParameters.ContainsKey("HorizontalEndPx")) { $HorizontalEndPx } elseif ($config) { [string]$config.horizontalEndPx } else { "1620,205" }
+$selectedVerticalSpanMm = if ($PSBoundParameters.ContainsKey("VerticalSpanMm")) { $VerticalSpanMm } elseif ($config) { [double]$config.verticalSpanMm } else { 50.8 }
+$selectedVerticalStartPx = if ($PSBoundParameters.ContainsKey("VerticalStartPx")) { $VerticalStartPx } elseif ($config) { [string]$config.verticalStartPx } else { "2295,145" }
+$selectedVerticalEndPx = if ($PSBoundParameters.ContainsKey("VerticalEndPx")) { $VerticalEndPx } elseif ($config) { [string]$config.verticalEndPx } else { "2295,1218" }
+$selectedCardBoundaryRect = if ($PSBoundParameters.ContainsKey("CardBoundaryRect")) { $CardBoundaryRect } elseif ($config) { [string]$config.cardBoundaryRect } else { "285,349,1878,1350" }
 
 $cliPath = Join-Path $repoRoot "packages\ai-grader-capture-helper\dist\cli.js"
 if (-not $SkipBuild -and -not (Test-Path -LiteralPath $cliPath)) {
@@ -46,21 +83,35 @@ if (-not (Test-Path -LiteralPath $cliPath)) {
   throw "Missing $cliPath. Run: pnpm --filter @tenkings/ai-grader-capture-helper build"
 }
 
-$mode = if ($Real) { "real" } else { "mock" }
+$env:AI_GRADER_STATION_BRIDGE_TOKEN = $StationToken
+if ($config -and -not [string]::IsNullOrWhiteSpace($config.pairingCode)) {
+  $env:AI_GRADER_STATION_PAIRING_CODE = [string]$config.pairingCode
+  $env:AI_GRADER_STATION_PAIRING_EXPIRES_AT = [string]$config.pairingCodeExpiresAt
+}
 
 Write-Host ""
 Write-Host "Ten Kings AI Grader local station bridge"
 Write-Host "Mode: $mode"
-Write-Host "Station page: http://127.0.0.1:3020/ai-grader/station"
-Write-Host "Sample report: http://127.0.0.1:3020/ai-grader/reports/sample-pr45"
-Write-Host "Bridge URL: http://${HostName}:$Port"
-Write-Host "Station token: $StationToken"
+Write-Host "Bridge URL: http://${selectedHost}:$selectedPort"
+Write-Host "Station page: https://collect.tenkings.co/ai-grader/station"
+Write-Host "Local config: $ConfigPath"
+Write-Host "Station token: stored locally; not printed"
+Write-Host "Station token fingerprint: $(Get-AiGraderSecretFingerprint -Value $StationToken)"
+if ($config -and -not [string]::IsNullOrWhiteSpace($config.pairingCode)) {
+  Write-Host "Pairing code: stored locally; not printed"
+  Write-Host "Pairing code fingerprint: $(Get-AiGraderSecretFingerprint -Value ([string]$config.pairingCode))"
+  Write-Host "Pairing expires: $($config.pairingCodeExpiresAt)"
+}
 Write-Host ""
 
 if ($Real) {
   Write-Host "Real bridge mode is armed for Mark-supervised local hardware actions."
-  Write-Host "The browser workflow must still stage-confirm light idle/off, fixture/rulers visible, flip complete, safe-off, and final light off."
+  Write-Host "No capture or lighting action runs until the browser station sends staged operator-confirmed actions."
   Write-Host ""
+}
+
+if ($OpenStation -and $config) {
+  Start-Process (Get-AiGraderBridgePairingUrl -Config $config) | Out-Null
 }
 
 $bridgeArgs = @(
@@ -69,27 +120,26 @@ $bridgeArgs = @(
   "ai-grader-station-bridge",
   "--enable-local-station",
   "--station-bridge-mode", $mode,
-  "--host", $HostName,
-  "--port", "$Port",
-  "--station-token", $StationToken,
-  "--output-dir", $OutputDir,
-  "--report-bundle-output-dir", $ReportBundleOutputDir,
+  "--host", $selectedHost,
+  "--port", "$selectedPort",
+  "--output-dir", $selectedOutputDir,
+  "--report-bundle-output-dir", $selectedReportBundleOutputDir,
   "--public-base-path", "/ai-grader/reports",
-  "--exposure-us", "$ExposureUs",
-  "--gain", "$Gain",
-  "--duty", "$Duty",
-  "--fixture-label", $FixtureLabel,
+  "--exposure-us", "$selectedExposureUs",
+  "--gain", "$selectedGain",
+  "--duty", "$selectedDuty",
+  "--fixture-label", $selectedFixtureLabel,
   "--reference-type", "fixed_metric_rulers",
-  "--horizontal-span-mm", "$HorizontalSpanMm",
-  "--horizontal-start-px", $HorizontalStartPx,
-  "--horizontal-end-px", $HorizontalEndPx,
-  "--vertical-span-mm", "$VerticalSpanMm",
-  "--vertical-start-px", $VerticalStartPx,
-  "--vertical-end-px", $VerticalEndPx,
-  "--card-boundary-rect", $CardBoundaryRect
+  "--horizontal-span-mm", "$selectedHorizontalSpanMm",
+  "--horizontal-start-px", $selectedHorizontalStartPx,
+  "--horizontal-end-px", $selectedHorizontalEndPx,
+  "--vertical-span-mm", "$selectedVerticalSpanMm",
+  "--vertical-start-px", $selectedVerticalStartPx,
+  "--vertical-end-px", $selectedVerticalEndPx,
+  "--card-boundary-rect", $selectedCardBoundaryRect
 )
 
-foreach ($origin in $AllowedOrigin) {
+foreach ($origin in $selectedAllowedOrigins) {
   if (-not [string]::IsNullOrWhiteSpace($origin)) {
     $bridgeArgs += @("--allowed-origin", $origin)
   }
@@ -97,8 +147,8 @@ foreach ($origin in $AllowedOrigin) {
 
 if ($Real) {
   $bridgeArgs += @(
-    "--leimac-host", $LeimacHost,
-    "--leimac-port", "$LeimacPort",
+    "--leimac-host", $selectedLeimacHost,
+    "--leimac-port", "$selectedLeimacPort",
     "--apply",
     "--mark-present",
     "--wiring-confirmed",
@@ -106,5 +156,11 @@ if ($Real) {
   )
 }
 
-& pnpm @bridgeArgs
-exit $LASTEXITCODE
+try {
+  & pnpm @bridgeArgs
+  exit $LASTEXITCODE
+} finally {
+  Remove-Item Env:\AI_GRADER_STATION_BRIDGE_TOKEN -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_STATION_PAIRING_CODE -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_STATION_PAIRING_EXPIRES_AT -ErrorAction SilentlyContinue
+}

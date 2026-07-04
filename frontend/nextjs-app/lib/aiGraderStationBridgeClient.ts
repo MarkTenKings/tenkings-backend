@@ -16,6 +16,26 @@ export type AiGraderStationBridgeCallInput = {
   body?: Record<string, unknown>;
 };
 
+export type AiGraderStationBridgeHealth = {
+  ok: boolean;
+  bridgeVersion: string;
+  mode: "mock" | "real";
+  localOnly: true;
+  tokenRequired: true;
+  pairingAvailable?: boolean;
+  pairingCodeExpiresAt?: string;
+  hardwareActionsEnabled: boolean;
+  allowedOrigins: string[];
+};
+
+export type AiGraderStationBridgePairingResult = {
+  bridgeUrl: string;
+  stationToken: string;
+  localOnly: true;
+  tokenStorage: "browser_localStorage_only";
+  hardwareActionsEnabled: boolean;
+};
+
 export function normalizeAiGraderStationBridgeUrl(input: string) {
   const trimmed = input.trim() || DEFAULT_AI_GRADER_STATION_BRIDGE_URL;
   const url = new URL(trimmed);
@@ -37,6 +57,44 @@ function actionPath(action: AiGraderStationAction) {
   if (action === "latest-report") return "/latest-report";
   if (action === "session-manifest") return "/session-manifest";
   return `/actions/${encodeURIComponent(action)}`;
+}
+
+export async function fetchAiGraderStationBridgeHealth(
+  input: { baseUrl: string },
+  fetchImpl: typeof fetch = fetch
+): Promise<AiGraderStationBridgeHealth> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  const response = await fetchImpl(`${baseUrl}/health`, { method: "GET" });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok !== true) {
+    throw new Error(payload.message ?? payload.error?.message ?? "AI Grader local station bridge health check failed.");
+  }
+  return payload as AiGraderStationBridgeHealth;
+}
+
+export async function pairAiGraderStationBridge(
+  input: { baseUrl: string; pairingCode: string },
+  fetchImpl: typeof fetch = fetch
+): Promise<AiGraderStationBridgePairingResult> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  const pairingCode = input.pairingCode.trim();
+  if (!pairingCode) {
+    throw new Error("AI Grader station bridge pairing code is required.");
+  }
+  const response = await fetchImpl(`${baseUrl}/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pairingCode }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok !== true) {
+    throw new Error(payload.message ?? payload.error?.message ?? "AI Grader local station bridge pairing failed.");
+  }
+  const result = payload.result as AiGraderStationBridgePairingResult | undefined;
+  if (!result?.stationToken?.trim()) {
+    throw new Error("AI Grader local station bridge pairing did not return a usable local token.");
+  }
+  return result;
 }
 
 export async function callAiGraderStationBridge(input: AiGraderStationBridgeCallInput): Promise<AiGraderLocalStationStatus> {

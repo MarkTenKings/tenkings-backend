@@ -16,7 +16,9 @@ import {
   AI_GRADER_STATION_TOKEN_STORAGE_KEY,
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   callAiGraderStationBridge,
+  fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationReportHistory,
+  pairAiGraderStationBridge,
 } from "../../lib/aiGraderStationBridgeClient";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
@@ -53,6 +55,7 @@ type CompsState = {
   searchUrl?: string;
   count?: number;
 };
+type BridgeConnectionState = "checking" | "connected" | "not_running" | "pairing_required" | "error";
 
 async function callStationContract(action: AiGraderStationAction): Promise<AiGraderLocalStationStatus> {
   const method = action === "status" || action === "latest-report" || action === "session-manifest" ? "GET" : "POST";
@@ -96,6 +99,9 @@ export default function AiGraderStationPage() {
   const [bridgeUrl, setBridgeUrl] = useState(DEFAULT_AI_GRADER_STATION_BRIDGE_URL);
   const [stationToken, setStationToken] = useState("");
   const [bridgeConnected, setBridgeConnected] = useState(false);
+  const [bridgeConnectionState, setBridgeConnectionState] = useState<BridgeConnectionState>("checking");
+  const [manualPairingCode, setManualPairingCode] = useState("");
+  const [advancedConnectOpen, setAdvancedConnectOpen] = useState(false);
   const [contractPreviewEnabled, setContractPreviewEnabled] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyView, setHistoryView] = useState<HistoryView>("list");
@@ -120,11 +126,75 @@ export default function AiGraderStationPage() {
     gain: status.acceptedProfile.gain,
   });
 
+  const connectBridgeWithCredentials = async (targetBridgeUrl: string, targetStationToken: string) => {
+    const next = await callAiGraderStationBridge({ baseUrl: targetBridgeUrl, stationToken: targetStationToken, action: "status" });
+    window.localStorage.setItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY, targetBridgeUrl);
+    window.localStorage.setItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY, targetStationToken);
+    setBridgeUrl(targetBridgeUrl);
+    setStationToken(targetStationToken);
+    setStatus(next);
+    setBridgeConnected(true);
+    setBridgeConnectionState("connected");
+    setProfileDraft({
+      dutyPercent: next.acceptedProfile.dutyPercent,
+      exposureUs: next.acceptedProfile.exposureUs,
+      gain: next.acceptedProfile.gain,
+    });
+    setHistory(await fetchAiGraderStationReportHistory({ baseUrl: targetBridgeUrl, stationToken: targetStationToken }));
+    return next;
+  };
+
   useEffect(() => {
-    const savedBridgeUrl = window.localStorage.getItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY);
-    const savedToken = window.localStorage.getItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY);
-    if (savedBridgeUrl) setBridgeUrl(savedBridgeUrl);
-    if (savedToken) setStationToken(savedToken);
+    let cancelled = false;
+    const setupBridge = async () => {
+      const savedBridgeUrl = window.localStorage.getItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY) || DEFAULT_AI_GRADER_STATION_BRIDGE_URL;
+      const savedToken = window.localStorage.getItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY) || "";
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const pairingCode = hashParams.get("aiGraderBridgePair") ?? "";
+      if (cancelled) return;
+      setBridgeUrl(savedBridgeUrl);
+      if (savedToken) setStationToken(savedToken);
+      try {
+        await fetchAiGraderStationBridgeHealth({ baseUrl: savedBridgeUrl });
+      } catch {
+        if (!cancelled) setBridgeConnectionState("not_running");
+        return;
+      }
+      if (pairingCode) {
+        try {
+          const paired = await pairAiGraderStationBridge({ baseUrl: savedBridgeUrl, pairingCode });
+          if (cancelled) return;
+          window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+          await connectBridgeWithCredentials(paired.bridgeUrl || savedBridgeUrl, paired.stationToken);
+          return;
+        } catch (requestError) {
+          if (!cancelled) {
+            setBridgeConnectionState("pairing_required");
+            setError(requestError instanceof Error ? requestError.message : "AI Grader station pairing failed.");
+          }
+          return;
+        }
+      }
+      if (savedToken) {
+        try {
+          await connectBridgeWithCredentials(savedBridgeUrl, savedToken);
+          return;
+        } catch {
+          window.localStorage.removeItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY);
+          if (!cancelled) {
+            setStationToken("");
+            setBridgeConnected(false);
+            setBridgeConnectionState("pairing_required");
+          }
+          return;
+        }
+      }
+      if (!cancelled) setBridgeConnectionState("pairing_required");
+    };
+    void setupBridge();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const currentStep = useMemo(
@@ -168,20 +238,27 @@ export default function AiGraderStationPage() {
     setBusy("connect");
     setError(null);
     try {
-      const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action: "status" });
-      window.localStorage.setItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY, bridgeUrl);
-      window.localStorage.setItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY, stationToken);
-      setStatus(next);
-      setBridgeConnected(true);
-      setProfileDraft({
-        dutyPercent: next.acceptedProfile.dutyPercent,
-        exposureUs: next.acceptedProfile.exposureUs,
-        gain: next.acceptedProfile.gain,
-      });
-      setHistory(await fetchAiGraderStationReportHistory({ baseUrl: bridgeUrl, stationToken }));
+      await connectBridgeWithCredentials(bridgeUrl, stationToken);
     } catch (requestError) {
       setBridgeConnected(false);
+      setBridgeConnectionState("error");
       setError(requestError instanceof Error ? requestError.message : "AI Grader station bridge connection failed.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const pairBridge = async (pairingCode = manualPairingCode) => {
+    setBusy("pair");
+    setError(null);
+    try {
+      const paired = await pairAiGraderStationBridge({ baseUrl: bridgeUrl, pairingCode });
+      await connectBridgeWithCredentials(paired.bridgeUrl || bridgeUrl, paired.stationToken);
+      setManualPairingCode("");
+    } catch (requestError) {
+      setBridgeConnected(false);
+      setBridgeConnectionState("pairing_required");
+      setError(requestError instanceof Error ? requestError.message : "AI Grader station bridge pairing failed.");
     } finally {
       setBusy(null);
     }
@@ -527,6 +604,27 @@ export default function AiGraderStationPage() {
     }
   };
 
+  const bridgeStatusLabel =
+    bridgeConnectionState === "connected"
+      ? "Bridge Connected"
+      : bridgeConnectionState === "checking"
+        ? "Checking Bridge"
+        : bridgeConnectionState === "not_running"
+          ? "Bridge Not Running"
+          : bridgeConnectionState === "pairing_required"
+            ? "Pairing Required"
+            : "Bridge Error";
+  const bridgeStatusDetail =
+    bridgeConnectionState === "connected"
+      ? "This Dell browser is paired with the local station bridge."
+      : bridgeConnectionState === "not_running"
+        ? "Use the Ten Kings AI Grader Station desktop shortcut to start the local Dell bridge and reopen this page."
+        : bridgeConnectionState === "pairing_required"
+          ? "Use the Ten Kings AI Grader Station desktop shortcut to pair this browser, or enter a local pairing code."
+          : bridgeConnectionState === "checking"
+            ? "Checking the local Dell bridge at 127.0.0.1."
+            : "The local Dell bridge could not be reached with the saved browser pairing.";
+
   return (
     <>
       <Head>
@@ -540,7 +638,7 @@ export default function AiGraderStationPage() {
             <div className="crosshair horizontal" />
             <div className="crosshair vertical" />
             <div className="camera-status">
-              <span>{bridgeConnected ? "Dell bridge connected" : "Bridge disconnected"}</span>
+              <span>{bridgeStatusLabel}</span>
               <strong>{currentStep.label}</strong>
               <p>
                 Embedded browser Basler streaming is pending. The real low-latency pylon preview opens in the native Windows
@@ -553,19 +651,33 @@ export default function AiGraderStationPage() {
             <div className="connect-scrim">
               <div>
                 <p className="eyebrow">Ten Kings AI Grader</p>
-                <h1>Connect AI Grader Station</h1>
-                <p>Connect this browser to the local Dell bridge before running hardware. Public report pages never expose controls.</p>
+                <h1>{bridgeStatusLabel}</h1>
+                <p>{bridgeStatusDetail}</p>
                 <label>
-                  Bridge URL
-                  <input value={bridgeUrl} onChange={(event) => setBridgeUrl(event.target.value)} />
+                  Local pairing code
+                  <input value={manualPairingCode} onChange={(event) => setManualPairingCode(event.target.value)} type="password" />
                 </label>
-                <label>
-                  Station Token
-                  <input value={stationToken} onChange={(event) => setStationToken(event.target.value)} type="password" />
-                </label>
-                <button type="button" onClick={connectBridge} disabled={busy !== null}>
-                  {busy === "connect" ? "Connecting" : "Connect"}
+                <button type="button" onClick={() => void pairBridge()} disabled={busy !== null || !manualPairingCode.trim()}>
+                  {busy === "pair" ? "Pairing" : "Pair Browser"}
                 </button>
+                <button type="button" onClick={connectBridge} disabled={busy !== null || !stationToken.trim()}>
+                  {busy === "connect" ? "Connecting" : "Connect Saved Token"}
+                </button>
+                <button type="button" className="link-button" onClick={() => setAdvancedConnectOpen((current) => !current)}>
+                  {advancedConnectOpen ? "Hide Advanced" : "Advanced"}
+                </button>
+                {advancedConnectOpen ? (
+                  <div className="advanced-connect">
+                    <label>
+                      Bridge URL
+                      <input value={bridgeUrl} onChange={(event) => setBridgeUrl(event.target.value)} />
+                    </label>
+                    <label>
+                      Saved station token
+                      <input value={stationToken} onChange={(event) => setStationToken(event.target.value)} type="password" />
+                    </label>
+                  </div>
+                ) : null}
                 <label className="checkbox">
                   <input
                     type="checkbox"
@@ -1033,6 +1145,17 @@ export default function AiGraderStationPage() {
           background: #5bff9d;
           color: #06100a;
           box-shadow: 0 0 36px rgba(91, 255, 157, 0.22);
+        }
+        .connect-scrim .link-button {
+          border-color: rgba(255, 255, 255, 0.18);
+          background: transparent;
+          color: #d7cebf;
+          box-shadow: none;
+        }
+        .advanced-connect {
+          margin-top: 14px;
+          padding-top: 10px;
+          border-top: 1px solid rgba(255, 255, 255, 0.12);
         }
         .checkbox {
           display: flex;
