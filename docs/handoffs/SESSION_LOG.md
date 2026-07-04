@@ -23250,3 +23250,26 @@ By enabling Rip It Live, I confirm:
 - No production DB write or migration was run.
 - No hardware command or image capture was run.
 - DigitalOcean Postgres credential rotation remains deferred by Mark.
+
+## 2026-07-04 - PR #51 merge and local bridge Windows PowerShell hotfix
+
+### Planned Action
+- Merge approved PR #51 to `main`, wait for CI/Vercel production success, then run the supervised Dell no-terminal local bridge install smoke.
+- If the install smoke exposes a blocking installer bug, make the smallest follow-up fix without changing production auth, env vars, migrations, DB data, or hardware capture behavior.
+
+### Observed Result
+- PR #51 merged to `main` at merge commit `e52934fc9da08e4f6d8c5e4d7dc6f872b983465a`.
+- Vercel reported success for the merge commit and main CI completed successfully.
+- The first installer attempt failed on stock Windows PowerShell because `RandomNumberGenerator.Fill(...)` is unavailable in that runtime.
+- Prepared a compatibility hotfix to generate local bridge secrets with `RandomNumberGenerator.Create().GetBytes(...)`, which works under Windows PowerShell and newer PowerShell runtimes.
+
+### Validation
+- Local secret generation helper smoke under Windows PowerShell -> pass, with no secret value printed.
+- PowerShell syntax parse for `scripts/ai-grader/*.ps1` -> pass.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No secret value was printed.
+- No shell tracing was used.
+- No migration, production DB write, Vercel env change, credential rotation, hardware command, or image capture was run.
+- DigitalOcean Postgres credential rotation remains deferred by Mark.
