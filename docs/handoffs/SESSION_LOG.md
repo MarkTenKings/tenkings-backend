@@ -23284,3 +23284,29 @@ By enabling Rip It Live, I confirm:
 - No shell tracing was used.
 - No migration, production DB write, Vercel env change, credential rotation, hardware command, or image capture was run.
 - DigitalOcean Postgres credential rotation remains deferred by Mark.
+
+## 2026-07-05 - AI Grader station operator feedback: local report view fix
+
+### Planned Action
+- Investigate Mark's first real Dell station test feedback without running any hardware capture from Codex.
+- Keep production auth unchanged and do not run migrations, DB writes, env changes, credential rotation, or hardware commands.
+
+### Observed Result
+- Local bridge was running and paired from the Dell desktop shortcut.
+- The active station session had a local provisional diagnostic report ready.
+- Actual command timing from the run was about `180s` for operator preview, `130s` for front evidence package capture, `131s` for back evidence package capture, and `20s` for unified report generation.
+- The station still delegates front/back capture to full `ai-grader-fixed-rig-v1-evidence-package` commands, so speed is dominated by process startup, Leimac/Basler setup, multi-frame evidence capture, and image/report processing rather than an intentional inter-shot sleep.
+- The station `View Report` button opened the public cloud route for a local provisional report, which can 404 before production publish.
+
+### Fix
+- Updated the browser station bridge client to fetch local report HTML from the paired local bridge with the browser-local station token.
+- Updated `/ai-grader/station` so `View Report` opens local provisional report HTML as a browser blob instead of sending the operator to the public report route before publish.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `27` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Remaining Follow-Up
+- Productize a live in-browser Basler preview stream for the station page.
+- Design a warm-session/fast-capture runner if production throughput needs one-card-per-minute or faster operation; changing a fixed delay alone will not reduce the current full evidence-package capture times.

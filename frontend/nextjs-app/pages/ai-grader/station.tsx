@@ -18,6 +18,7 @@ import {
   callAiGraderStationBridge,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationReportHistory,
+  fetchAiGraderStationReportHtml,
   pairAiGraderStationBridge,
 } from "../../lib/aiGraderStationBridgeClient";
 
@@ -584,14 +585,39 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const openReport = () => {
-    if (!reportReady) {
+  const openReport = async () => {
+    const reportId = status.latestReport.reportId;
+    if (!reportReady || !reportId) {
       setError("No generated report is ready yet.");
       return;
     }
+    if (!bridgeConnected || !stationToken.trim()) {
+      setError("Connect the Dell local station bridge before opening the local report.");
+      return;
+    }
+    setBusy("open-report");
+    setError(null);
     window.localStorage.setItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY, bridgeUrl);
     window.localStorage.setItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY, stationToken);
-    window.open(status.latestReport.localViewerPath, "_blank", "noopener,noreferrer");
+    try {
+      const html = await fetchAiGraderStationReportHtml({
+        baseUrl: bridgeUrl,
+        stationToken,
+        reportId,
+      });
+      const objectUrl = window.URL.createObjectURL(new Blob([html], { type: "text/html" }));
+      const opened = window.open(objectUrl, "_blank", "noopener,noreferrer");
+      if (!opened) {
+        window.URL.revokeObjectURL(objectUrl);
+        setError("Allow pop-ups for collect.tenkings.co to open the local AI Grader report.");
+        return;
+      }
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60000);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Could not open the local AI Grader report.");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const openHistory = async () => {
@@ -819,8 +845,8 @@ export default function AiGraderStationPage() {
           </section>
 
           <div className="action-row">
-            <button type="button" onClick={openReport} disabled={!reportReady}>
-              View Report
+            <button type="button" onClick={() => void openReport()} disabled={!reportReady || busy !== null}>
+              {busy === "open-report" ? "Opening Report" : "View Report"}
             </button>
             <button type="button" onClick={() => runProductionAction("calculate-final-grade")} disabled={!reportReady || busy !== null}>
               {busy === "calculate-final-grade" ? "Calculating" : "Calculate Final Grade"}

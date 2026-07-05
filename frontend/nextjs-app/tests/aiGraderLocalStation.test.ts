@@ -28,6 +28,7 @@ import {
 import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   fetchAiGraderStationBridgeHealth,
+  fetchAiGraderStationReportHtml,
   normalizeAiGraderStationBridgeUrl,
   pairAiGraderStationBridge,
 } from "../lib/aiGraderStationBridgeClient";
@@ -905,6 +906,28 @@ test("browser station bridge pairing exchanges a local pairing code for browser-
   assert.equal(paired.bridgeUrl, DEFAULT_AI_GRADER_STATION_BRIDGE_URL);
   assert.equal(paired.stationToken, "browser-local-station-token");
   assert.equal(paired.tokenStorage, "browser_localStorage_only");
+});
+
+test("browser station bridge client opens local report HTML with station token only", async () => {
+  const fetchImpl: typeof fetch = async (input, init) => {
+    assert.equal(String(input), "http://127.0.0.1:47652/reports/report-123/html");
+    assert.equal(init?.method, "GET");
+    const headers = init?.headers as Record<string, string>;
+    assert.equal(headers["x-ai-grader-station-token"], "browser-local-station-token");
+    assert.equal(headers["x-ai-grader-service-token"], undefined);
+    return new Response("<!doctype html><title>Local report</title>", { status: 200, headers: { "content-type": "text/html" } });
+  };
+
+  const html = await fetchAiGraderStationReportHtml(
+    {
+      baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+      stationToken: "browser-local-station-token",
+      reportId: "report-123",
+    },
+    fetchImpl
+  );
+
+  assert.match(html, /Local report/);
 });
 
 test("browser station bridge client reports missing bridge and missing pairing code cleanly", async () => {
