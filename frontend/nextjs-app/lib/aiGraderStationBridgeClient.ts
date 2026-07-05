@@ -149,6 +149,38 @@ export async function fetchAiGraderStationReportBundle(input: {
   return result.bundle;
 }
 
+export async function fetchAiGraderStationReportHtml(
+  input: {
+    baseUrl: string;
+    stationToken: string;
+    reportId: string;
+  },
+  fetchImpl: typeof fetch = fetch
+): Promise<string> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  if (!input.stationToken.trim()) {
+    throw new Error("AI Grader station bridge token is required.");
+  }
+  const response = await fetchImpl(`${baseUrl}/reports/${encodeURIComponent(input.reportId)}/html`, {
+    method: "GET",
+    headers: {
+      "x-ai-grader-station-token": input.stationToken,
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    let message = "AI Grader local station report could not be opened.";
+    try {
+      const payload = JSON.parse(text);
+      message = payload.message ?? payload.error?.message ?? message;
+    } catch {
+      if (text.trim()) message = text.trim();
+    }
+    throw new Error(message);
+  }
+  return text;
+}
+
 export async function fetchAiGraderStationReportHistory(input: {
   baseUrl: string;
   stationToken: string;
