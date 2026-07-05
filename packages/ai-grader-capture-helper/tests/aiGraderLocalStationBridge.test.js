@@ -1,6 +1,7 @@
 const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs");
+const http = require("node:http");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
@@ -9,6 +10,7 @@ const {
   buildAiGraderLocalStationBridgeConfig,
   startAiGraderLocalStationBridgeHttpServer,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
+const { buildAiGraderStationRealCommandPlan } = require("../dist/drivers/aiGraderStationWorkflow");
 const { runCaptureHelperCli } = require("../dist/cli");
 
 function outputDir(label) {
@@ -162,6 +164,100 @@ test("station bridge HTTP health and pairing support production web auto-connect
   } finally {
     await closeServer(started.server);
   }
+});
+
+test("station bridge preview status and stream are token-gated and local-only", async () => {
+  const started = await startAiGraderLocalStationBridgeHttpServer({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 0,
+    stationToken: "local-station-token-456",
+    allowedOrigins: ["https://collect.tenkings.co"],
+    outputDir: outputDir(`http-preview-${Date.now()}`),
+  });
+  try {
+    const unauthorizedStatus = await fetch(`${started.url}/preview/status`, {
+      headers: { Origin: "https://collect.tenkings.co" },
+    });
+    assert.equal(unauthorizedStatus.status, 401);
+    await unauthorizedStatus.text();
+
+    const status = await fetch(`${started.url}/preview/status`, {
+      headers: { Origin: "https://collect.tenkings.co", "x-ai-grader-station-token": "local-station-token-456" },
+    });
+    assert.equal(status.status, 200);
+    const statusBody = await status.json();
+    assert.equal(statusBody.result.localOnly, true);
+    assert.equal(statusBody.result.browserEmbedded, true);
+    assert.equal(statusBody.result.tokenRequired, true);
+    assert.equal(statusBody.result.safety.publicRouteExposed, false);
+    assert.equal(statusBody.result.safety.productionServiceTokenUsed, false);
+
+    const unauthorizedStream = await fetch(`${started.url}/preview/stream`, {
+      headers: { Origin: "https://collect.tenkings.co" },
+    });
+    assert.equal(unauthorizedStream.status, 401);
+    await unauthorizedStream.text();
+
+    const streamChunk = await new Promise((resolve, reject) => {
+      let settled = false;
+      const req = http.request(`${started.url}/preview/stream`, {
+        headers: { Origin: "https://collect.tenkings.co", "x-ai-grader-station-token": "local-station-token-456" },
+      }, (res) => {
+        assert.equal(res.statusCode, 200);
+        assert.match(res.headers["content-type"] ?? "", /multipart\/x-mixed-replace/);
+        res.once("data", (chunk) => {
+          settled = true;
+          res.destroy();
+          req.destroy();
+          resolve(Buffer.from(chunk));
+        });
+      });
+      req.on("error", (error) => {
+        if (!settled) reject(error);
+      });
+      req.setTimeout(5000, () => {
+        if (settled) return;
+        settled = true;
+        req.destroy();
+        reject(new Error("Preview stream did not return a frame."));
+      });
+      req.end();
+    });
+    assert.match(streamChunk.toString("utf8"), /tenkings-ai-grader-preview/);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  } finally {
+    if (typeof started.server.closeAllConnections === "function") {
+      started.server.closeAllConnections();
+    }
+    await closeServer(started.server);
+  }
+});
+
+test("real station command plan still uses full forensic front/back evidence packages", () => {
+  const plan = buildAiGraderStationRealCommandPlan({
+    outputDir: outputDir("forensic-plan"),
+    leimacHost: "169.254.191.156",
+    markPresent: true,
+    wiringConfirmed: true,
+    leimacStatusGreen: true,
+    operatorConfirmedLightIdleOff: true,
+    operatorConfirmedFixtureRulersVisible: true,
+    operatorFlipConfirmed: true,
+  });
+  const front = plan.find((step) => step.id === "capture_front");
+  const back = plan.find((step) => step.id === "capture_back");
+  assert.ok(front);
+  assert.ok(back);
+  assert.equal(front.args[0], "ai-grader-fixed-rig-v1-evidence-package");
+  assert.equal(back.args[0], "ai-grader-fixed-rig-v1-evidence-package");
+  assert.deepEqual(front.args.slice(front.args.indexOf("--evidence-side") + 1, front.args.indexOf("--evidence-side") + 2), ["front"]);
+  assert.deepEqual(back.args.slice(back.args.indexOf("--evidence-side") + 1, back.args.indexOf("--evidence-side") + 2), ["back"]);
+  assert.equal(front.label.includes("evidence package"), true);
+  assert.equal(back.label.includes("evidence package"), true);
+  assert.equal(plan.find((step) => step.id === "unified_report")?.required, true);
+  assert.equal(JSON.stringify(plan).includes("fast"), false);
 });
 
 test("mock station bridge runs staged workflow without claiming hardware", async () => {

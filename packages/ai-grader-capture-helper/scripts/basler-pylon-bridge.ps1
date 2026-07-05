@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("readiness", "list-cameras", "capture-still", "operator-preview-window", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
+  [ValidateSet("readiness", "list-cameras", "capture-still", "operator-preview-window", "operator-preview-mjpeg-stream", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
   [string]$Action,
 
   [string]$PylonRoot,
@@ -18,6 +18,7 @@ param(
   [string]$IdleUserOutputValue = "false",
   [int]$ExposureUs = 0,
   [int]$RefreshIntervalMs = 500,
+  [int]$JpegQuality = 72,
   [string]$LeimacHost,
   [int]$LeimacPort = 1000,
   [int]$LeimacUnit = 1,
@@ -627,16 +628,26 @@ function Capture-Still {
   $camera = [Basler.Pylon.Camera]::new($cameraInfo)
   $streamStarted = $false
   $grabResult = $null
+  $timing = [ordered]@{
+    startedAt = (Get-Date).ToUniversalTime().ToString("o")
+  }
 
   try {
+    $phase = [System.Diagnostics.Stopwatch]::StartNew()
     [void]$camera.Open()
+    $phase.Stop()
+    $timing.open = [ordered]@{ durationMs = [Math]::Round($phase.Elapsed.TotalMilliseconds, 1) }
+    $phase.Restart()
     if ($ExposureUs -gt 0) {
       [void](Set-FloatParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs, "ExposureTime") ([double]$ExposureUs))
     }
     $configuredPixelFormat = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::PixelFormat)
     $exposureTime = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs)
     $gain = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw)
+    $phase.Stop()
+    $timing.configure = [ordered]@{ durationMs = [Math]::Round($phase.Elapsed.TotalMilliseconds, 1) }
 
+    $phase.Restart()
     [void]$camera.StreamGrabber.Start(1)
     $streamStarted = $true
     $grabResult = $camera.StreamGrabber.RetrieveResult(10000, [Basler.Pylon.TimeoutHandling]::ThrowException)
@@ -650,11 +661,20 @@ function Capture-Still {
     }
     $imageWidth = [int]$grabResult.Width
     $imageHeight = [int]$grabResult.Height
+    $phase.Stop()
+    $timing.grab = [ordered]@{ durationMs = [Math]::Round($phase.Elapsed.TotalMilliseconds, 1) }
 
+    $phase.Restart()
     [Basler.Pylon.ImagePersistence]::Save($imageFileFormat, $outputFilePath, $grabResult)
+    $phase.Stop()
+    $timing.save = [ordered]@{ durationMs = [Math]::Round($phase.Elapsed.TotalMilliseconds, 1) }
 
+    $phase.Restart()
     $file = Get-Item -LiteralPath $outputFilePath
     $sha256 = (Get-FileHash -LiteralPath $outputFilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $phase.Stop()
+    $timing.hash = [ordered]@{ durationMs = [Math]::Round($phase.Elapsed.TotalMilliseconds, 1) }
+    $timing.finishedBeforeCloseAt = (Get-Date).ToUniversalTime().ToString("o")
 
     $captureResult = [ordered]@{
       outputFilePath = $outputFilePath
@@ -679,10 +699,12 @@ function Capture-Still {
         evidenceClass = "macro_raw_smoke"
         coordinateFrame = "basler_sensor_pixels"
       }
+      timing = $timing
       note = "Uncalibrated macro smoke capture only; not production macro evidence and not a final AI grade."
     }
     return $captureResult
   } finally {
+    $closePhase = [System.Diagnostics.Stopwatch]::StartNew()
     if ($null -ne $grabResult) {
       try { $grabResult.Dispose() } catch {}
     }
@@ -693,6 +715,8 @@ function Capture-Still {
       try { [void]$camera.Close() } catch {}
     }
     try { $camera.Dispose() } catch {}
+    $closePhase.Stop()
+    $timing.closeDispose = [ordered]@{ durationMs = [Math]::Round($closePhase.Elapsed.TotalMilliseconds, 1) }
   }
 }
 
@@ -856,6 +880,120 @@ function Convert-GrabResultToBitmap {
     $bitmap.UnlockBits($data)
   }
   return $bitmap
+}
+
+function Convert-BitmapToJpegBytes {
+  param(
+    [System.Drawing.Bitmap]$Bitmap,
+    [int]$Quality
+  )
+  $stream = [System.IO.MemoryStream]::new()
+  $encoderParameters = $null
+  try {
+    $jpegCodec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq "image/jpeg" } | Select-Object -First 1
+    if ($null -ne $jpegCodec) {
+      $encoderParameters = [System.Drawing.Imaging.EncoderParameters]::new(1)
+      $encoderParameters.Param[0] = [System.Drawing.Imaging.EncoderParameter]::new([System.Drawing.Imaging.Encoder]::Quality, [int64]$Quality)
+      $Bitmap.Save($stream, $jpegCodec, $encoderParameters)
+    } else {
+      $Bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+    }
+    return $stream.ToArray()
+  } finally {
+    if ($null -ne $encoderParameters) { try { $encoderParameters.Dispose() } catch {} }
+    try { $stream.Dispose() } catch {}
+  }
+}
+
+function Write-MjpegChunk {
+  param(
+    [System.IO.Stream]$Output,
+    [string]$Boundary,
+    [byte[]]$JpegBytes,
+    [int]$FrameIndex,
+    [datetime]$CapturedAt
+  )
+  $header = "--$Boundary`r`nContent-Type: image/jpeg`r`nContent-Length: $($JpegBytes.Length)`r`nX-AI-Grader-Frame-Index: $FrameIndex`r`nX-AI-Grader-Captured-At: $($CapturedAt.ToUniversalTime().ToString("o"))`r`n`r`n"
+  $headerBytes = [System.Text.Encoding]::ASCII.GetBytes($header)
+  $footerBytes = [System.Text.Encoding]::ASCII.GetBytes("`r`n")
+  $Output.Write($headerBytes, 0, $headerBytes.Length)
+  $Output.Write($JpegBytes, 0, $JpegBytes.Length)
+  $Output.Write($footerBytes, 0, $footerBytes.Length)
+  $Output.Flush()
+}
+
+function Start-OperatorPreviewMjpegStream {
+  param([System.Collections.IDictionary]$Install)
+
+  if ($RefreshIntervalMs -lt 50 -or $RefreshIntervalMs -gt 2000) {
+    throw "RefreshIntervalMs must be from 50 to 2000 for browser MJPEG preview."
+  }
+  if ($JpegQuality -lt 35 -or $JpegQuality -gt 95) {
+    throw "JpegQuality must be from 35 to 95."
+  }
+
+  Add-Type -AssemblyName System.Drawing
+
+  $devices = [Basler.Pylon.CameraFinder]::Enumerate([Basler.Pylon.DeviceType]::GigE)
+  if ($devices.Count -eq 0) {
+    throw "No Basler GigE cameras were detected."
+  }
+  if ($CameraIndex -lt 0 -or $CameraIndex -ge $devices.Count) {
+    throw "CameraIndex $CameraIndex is out of range for $($devices.Count) detected camera(s)."
+  }
+
+  $camera = [Basler.Pylon.Camera]::new($devices[$CameraIndex])
+  $streamStarted = $false
+  $grabResult = $null
+  $stdout = [Console]::OpenStandardOutput()
+  $boundary = "tenkings-ai-grader-preview"
+  $frameIndex = 0
+
+  try {
+    [void]$camera.Open()
+    if ($ExposureUs -gt 0) {
+      [void](Set-FloatParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs, "ExposureTime") ([double]$ExposureUs))
+    }
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerSelector, "TriggerSelector") "FrameStart" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerMode, "TriggerMode") "Off" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureAuto, "ExposureAuto") "Off" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::GainAuto, "GainAuto") "Off" } catch {}
+    try { [Basler.Pylon.Configuration]::AcquireContinuous($camera, $null) } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::AcquisitionMode, "AcquisitionMode") "Continuous" } catch {}
+    try { $camera.Parameters[[Basler.Pylon.PLCameraInstance]::OutputQueueSize].SetValue(1) } catch {}
+    [void]$camera.StreamGrabber.Start([Basler.Pylon.GrabStrategy]::LatestImages, [Basler.Pylon.GrabLoop]::ProvidedByUser)
+    $streamStarted = $true
+
+    while ($true) {
+      $grabResult = $camera.StreamGrabber.RetrieveResult(1000, [Basler.Pylon.TimeoutHandling]::Return)
+      if ($null -eq $grabResult) {
+        continue
+      }
+      if (-not $grabResult.GrabSucceeded -or -not $grabResult.IsValid) {
+        try { $grabResult.Dispose() } catch {}
+        $grabResult = $null
+        continue
+      }
+      $bitmap = $null
+      try {
+        $bitmap = Convert-GrabResultToBitmap $grabResult
+        $bitmap.RotateFlip([System.Drawing.RotateFlipType]::Rotate90FlipNone)
+        $bytes = Convert-BitmapToJpegBytes -Bitmap $bitmap -Quality $JpegQuality
+        $frameIndex += 1
+        Write-MjpegChunk -Output $stdout -Boundary $boundary -JpegBytes $bytes -FrameIndex $frameIndex -CapturedAt (Get-Date)
+      } finally {
+        if ($null -ne $bitmap) { try { $bitmap.Dispose() } catch {} }
+        if ($null -ne $grabResult) { try { $grabResult.Dispose() } catch {} }
+        $grabResult = $null
+      }
+      Start-Sleep -Milliseconds $RefreshIntervalMs
+    }
+  } finally {
+    if ($null -ne $grabResult) { try { $grabResult.Dispose() } catch {} }
+    if ($streamStarted) { try { [void]$camera.StreamGrabber.Stop() } catch {} }
+    if ($camera.IsOpen) { try { [void]$camera.Close() } catch {} }
+    try { $camera.Dispose() } catch {}
+  }
 }
 
 function Add-OperatorPreviewTypes {
@@ -1927,7 +2065,7 @@ try {
   $install = Resolve-PylonInstall
 
   if (-not $install.installed) {
-    if ($Action -eq "capture-still" -or $Action -eq "operator-preview-window") {
+    if ($Action -eq "capture-still" -or $Action -eq "operator-preview-window" -or $Action -eq "operator-preview-mjpeg-stream") {
       throw "Basler pylon is not installed or Basler.Pylon.dll was not found."
     }
     $result = New-ReadinessResult $install @()
@@ -1974,6 +2112,11 @@ try {
   if ($Action -eq "operator-preview-window") {
     $result = Show-OperatorPreviewWindow $install
     Write-BridgeJson ([ordered]@{ ok = $true; result = $result })
+    exit 0
+  }
+
+  if ($Action -eq "operator-preview-mjpeg-stream") {
+    Start-OperatorPreviewMjpegStream $install
     exit 0
   }
 

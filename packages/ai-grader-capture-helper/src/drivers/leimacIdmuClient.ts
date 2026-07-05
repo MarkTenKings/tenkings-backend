@@ -151,6 +151,9 @@ export interface LeimacIdmuWriteResult {
   host: string;
   port: number;
   timeoutMs: number;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
   frame: LeimacIdmuWriteFrame;
   rawResponse?: string;
   responseKind: "ack" | "nak" | "unknown";
@@ -201,6 +204,9 @@ export interface LeimacIdmuSafeOffResult {
   host: string;
   port: number;
   timeoutMs: number;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
   applied: boolean;
   frames: LeimacIdmuWriteFrame[];
   writes: LeimacIdmuWriteResult[];
@@ -1166,6 +1172,16 @@ export class LeimacIdmuClient {
   }
 
   async safeOff(apply = false): Promise<LeimacIdmuSafeOffResult> {
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    const timing = () => {
+      const finishedAtMs = Date.now();
+      return {
+        startedAt,
+        finishedAt: new Date(finishedAtMs).toISOString(),
+        durationMs: Math.max(0, finishedAtMs - startedAtMs),
+      };
+    };
     const frames = buildLeimacIdmuSafeOffFrames(this.unit);
     if (!apply) {
       return {
@@ -1173,6 +1189,7 @@ export class LeimacIdmuClient {
         host: this.host,
         port: this.port,
         timeoutMs: this.timeoutMs,
+        ...timing(),
         applied: false,
         frames,
         writes: [],
@@ -1196,6 +1213,7 @@ export class LeimacIdmuClient {
           host: this.host,
           port: this.port,
           timeoutMs: this.timeoutMs,
+          ...timing(),
           applied: true,
           frames,
           writes,
@@ -1216,6 +1234,7 @@ export class LeimacIdmuClient {
       host: this.host,
       port: this.port,
       timeoutMs: this.timeoutMs,
+      ...timing(),
       applied: true,
       frames,
       writes,
@@ -1414,6 +1433,16 @@ export class LeimacIdmuClient {
     if (!frame.allowlisted || !Object.values(WRITE_COMMAND_NUMBERS).includes(frame.commandNumber)) {
       throw new LeimacIdmuClientError("LEIMAC_IDMU_WRITE_REJECTED", "Leimac IDMU write frame is not in the PR #36 trigger-profile allowlist.");
     }
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    const timing = () => {
+      const finishedAtMs = Date.now();
+      return {
+        startedAt,
+        finishedAt: new Date(finishedAtMs).toISOString(),
+        durationMs: Math.max(0, finishedAtMs - startedAtMs),
+      };
+    };
     try {
       const rawResponse = await this.transport.send({
         host: this.host,
@@ -1429,6 +1458,7 @@ export class LeimacIdmuClient {
           host: this.host,
           port: this.port,
           timeoutMs: this.timeoutMs,
+          ...timing(),
           frame,
           rawResponse,
           responseKind: "nak",
@@ -1441,6 +1471,7 @@ export class LeimacIdmuClient {
         host: this.host,
         port: this.port,
         timeoutMs: this.timeoutMs,
+        ...timing(),
         frame,
         rawResponse,
         responseKind: ok ? "ack" : "unknown",
@@ -1453,6 +1484,7 @@ export class LeimacIdmuClient {
         host: this.host,
         port: this.port,
         timeoutMs: this.timeoutMs,
+        ...timing(),
         frame,
         responseKind: "unknown",
         error: message,

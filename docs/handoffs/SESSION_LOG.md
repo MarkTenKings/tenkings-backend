@@ -23310,3 +23310,45 @@ By enabling Rip It Live, I confirm:
 ### Remaining Follow-Up
 - Productize a live in-browser Basler preview stream for the station page.
 - Design a warm-session/fast-capture runner if production throughput needs one-card-per-minute or faster operation; changing a fixed delay alone will not reduce the current full evidence-package capture times.
+
+## 2026-07-05 - PR #57 AI Grader browser preview and timing foundation
+
+### Planned Action
+- Start PR #57 from latest `main` on branch `feature/ai-grader-browser-preview-timing`.
+- Add embedded browser live preview and detailed timing instrumentation only.
+- Do not reduce forensic evidence, implement the warm runner, run hardware capture, run migrations, write production DB rows, change env vars, rotate credentials, or print secrets.
+
+### Observed Result
+- Branch: `feature/ai-grader-browser-preview-timing`.
+- Added token-gated local bridge preview endpoints: `GET /preview/status` and `GET /preview/stream`.
+- Preview stream implementation is local-only MJPEG over `127.0.0.1:47652`, requires the existing browser-local station token, and remains origin-limited to the configured station origin.
+- Real preview uses a Basler pylon continuous-grab stream, portrait rotation, in-memory JPEG encoding, and multipart frame output to the browser.
+- Preview does not command Leimac lighting, save persistent Basler/Leimac settings, use production service-account auth, or expose any public report route.
+- The station page now shows the embedded preview as the main camera workspace with alignment/grid overlay, Bridge Connected / Preview Live / Capturing / Processing / Report Ready status language, and a compact timing panel.
+- Capture actions pause/release the preview stream before the existing capture commands take camera ownership; the station reconnects preview after the workflow returns to idle.
+- Full forensic capture was not reduced: front/back dark control, all-on, accepted profile, channels `1-8`, ROI/display artifacts, Surface Intelligence, Vision Lab, and unified report generation remain in the workflow.
+- Added timing schema fields for preview start/first frame, Basler open/configure/grab/save/hash/close-dispose, Leimac write/ack/safe-off, front/back package totals, report generation, local report open, publish/upload placeholders, detailed entries, and phase breakdown.
+- Added focused tests for preview token gating, public-route non-exposure, station preview client behavior, missing bridge handling, timing schema, local report behavior, and full forensic command-plan preservation.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- PowerShell parser check for `packages/ai-grader-capture-helper/scripts/basler-pylon-bridge.ps1` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `172` tests.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `29` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings and one expected preview `<img>` warning on the station page.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+
+### Not Run
+- No supervised Dell hardware smoke was run.
+- No capture command, Leimac lighting command, Basler image capture, migration, production DB write, env change, credential rotation, or production deploy was run in this implementation pass.
+
+### Remaining Follow-Up
+- PR #58 should implement the staged warm-session runner if approved: keep Basler/Leimac initialized safely, remove repeated process/hardware setup, pipeline processing/report generation, and preserve the complete forensic evidence stack.
+- A supervised local smoke can measure real preview FPS/latency only after Mark explicitly approves starting the installed bridge and opening the station page; no full capture should run without separate explicit approval.
+
+### Guardrails
+- No secret value was printed.
+- No shell tracing was used.
+- Public report routes remain read-only and hardware-control-free.
+- DigitalOcean Postgres credential rotation remains deferred by Mark.
