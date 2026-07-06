@@ -27,12 +27,17 @@ import {
 } from "../lib/server/aiGraderProductionAuth";
 import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+  acceptAiGraderLiveLightingProfile,
+  applyAiGraderLiveLighting,
+  fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
   fetchAiGraderStationReportHtml,
+  heartbeatAiGraderLiveLighting,
   normalizeAiGraderStationBridgeUrl,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
+  safeOffAiGraderLiveLighting,
   stopAiGraderStationPreview,
 } from "../lib/aiGraderStationBridgeClient";
 
@@ -91,6 +96,12 @@ test("local station contract exposes workflow status with no login, DB, or hardw
   assert.equal(status.previewStatus.localOnly, true);
   assert.equal(status.previewStatus.safety.productionServiceTokenUsed, false);
   assert.equal(status.previewStatus.safety.publicRouteExposed, false);
+  assert.equal(status.liveLighting.localOnly, true);
+  assert.equal(status.liveLighting.tokenRequired, true);
+  assert.equal(status.liveLighting.safety.publicRouteExposed, false);
+  assert.equal(status.liveLighting.safety.productionServiceTokenUsed, false);
+  assert.equal(status.liveLighting.safety.maxDutyPercent, 5);
+  assert.equal(status.bridgeContract.endpoints.some((endpoint) => endpoint.path === "/lighting/apply"), true);
   assert.equal(status.warmRunnerStatus.mode, "full_forensic");
   assert.equal(status.executionPath, "warm_full_forensic_runner");
   assert.equal(status.fallbackUsed, false);
@@ -986,6 +997,49 @@ test("browser station bridge client opens local report HTML with station token o
 
 test("browser station bridge preview status and stream use local station token only", async () => {
   const frameBytes = new TextEncoder().encode("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
+  const lightingResult = {
+    status: "on",
+    mode: "browser_live_tuning",
+    localOnly: true,
+    tokenRequired: true,
+    controlsEnabled: true,
+    previewRequired: true,
+    profile: {
+      enabled: true,
+      dutyPercent: 1.4,
+      actualLeimacPwmStep: 14,
+      channels: [1, 3, 5],
+      source: "browser_live_tuning",
+      acceptedForCapture: true,
+    },
+    applied: {
+      enabled: true,
+      dutyPercent: 1.4,
+      actualLeimacPwmStep: 14,
+      channels: [1, 3, 5],
+      lastApplyLatencyMs: 24,
+    },
+    watchdog: { enabled: true, timeoutMs: 15000 },
+    connection: { state: "mock", persistentLeimacSession: false },
+    safety: {
+      publicRouteExposed: false,
+      requiresStationToken: true,
+      bindsLoopbackOnly: true,
+      productionServiceTokenUsed: false,
+      lowDutyCapEnforced: true,
+      maxDutyPercent: 5,
+      safeOffOnAllOff: true,
+      safeOffOnDisconnect: true,
+      safeOffOnTimeout: true,
+      safeOffOnCaptureStart: true,
+      safeOffOnCaptureFailure: true,
+      safeOffOnSessionEnd: true,
+      persistentLeimacSaved: false,
+      arbitraryWritesAllowed: false,
+    },
+    safetyEvents: [],
+    note: "test",
+  };
   const fetchImpl: typeof fetch = async (input, init) => {
     const headers = init?.headers as Record<string, string>;
     assert.equal(headers["x-ai-grader-station-token"], "browser-local-station-token");
@@ -1048,6 +1102,24 @@ test("browser station bridge preview status and stream use local station token o
         },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
+    if (String(input).includes("/lighting/")) {
+      if (String(input).endsWith("/lighting/status")) {
+        assert.equal(init?.method, "GET");
+      } else {
+        assert.equal(init?.method, "POST");
+      }
+      return new Response(JSON.stringify({
+        ok: true,
+        result: String(input).endsWith("/lighting/safe-off")
+          ? {
+              ...lightingResult,
+              status: "safe_off",
+              profile: { ...lightingResult.profile, enabled: false },
+              applied: { ...lightingResult.applied, enabled: false, dutyPercent: 0, actualLeimacPwmStep: 0, channels: [] },
+            }
+          : lightingResult,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     assert.equal(String(input), "http://127.0.0.1:47652/preview/stream");
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -1077,6 +1149,51 @@ test("browser station bridge preview status and stream use local station token o
   }, fetchImpl);
   assert.equal(stoppedPreview.cameraOwnership, "released");
 
+  const lightingStatus = await fetchAiGraderLiveLightingStatus({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+  }, fetchImpl);
+  assert.equal(lightingStatus.localOnly, true);
+  assert.equal(lightingStatus.tokenRequired, true);
+  assert.equal(lightingStatus.safety.productionServiceTokenUsed, false);
+  assert.equal(lightingStatus.safety.maxDutyPercent, 5);
+
+  const appliedLighting = await applyAiGraderLiveLighting({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    enabled: true,
+    dutyPercent: 1.4,
+    channels: [1, 3, 5],
+    reason: "test live tuning apply",
+  }, fetchImpl);
+  assert.deepEqual(appliedLighting.applied.channels, [1, 3, 5]);
+  assert.equal(appliedLighting.applied.actualLeimacPwmStep, 14);
+
+  const heartbeatLighting = await heartbeatAiGraderLiveLighting({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    reason: "test heartbeat",
+  }, fetchImpl);
+  assert.equal(heartbeatLighting.mode, "browser_live_tuning");
+
+  const acceptedLighting = await acceptAiGraderLiveLightingProfile({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    dutyPercent: 1.4,
+    channels: [1, 3, 5],
+    exposureUs: 47000,
+    gain: 0,
+  }, fetchImpl);
+  assert.equal(acceptedLighting.profile.acceptedForCapture, true);
+
+  const safeOffLighting = await safeOffAiGraderLiveLighting({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    reason: "test all off",
+  }, fetchImpl);
+  assert.equal(safeOffLighting.applied.enabled, false);
+  assert.equal(safeOffLighting.status, "safe_off");
+
   const frames: Array<{ frameIndex?: number; contentType: string; byteLength: number }> = [];
   await openAiGraderStationPreviewStream(
     { baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL, stationToken: "browser-local-station-token" },
@@ -1094,6 +1211,8 @@ test("public AI Grader report surfaces do not expose preview endpoints or hardwa
   const publicBundleText = JSON.stringify(getAiGraderReportBundle("sample-final-v0"));
   assert.equal(publicBundleText.includes("/preview/stream"), false);
   assert.equal(publicBundleText.includes("x-ai-grader-station-token"), false);
+  assert.equal(publicBundleText.includes("/lighting/"), false);
+  assert.equal(publicBundleText.includes("lighting-apply"), false);
   assert.equal(publicBundleText.includes("hardware controls"), false);
 });
 

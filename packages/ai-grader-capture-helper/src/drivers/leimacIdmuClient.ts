@@ -1429,7 +1429,7 @@ export class LeimacIdmuClient {
     };
   }
 
-  private async writeAllowlistedFrame(frame: LeimacIdmuWriteFrame): Promise<LeimacIdmuWriteResult> {
+  async writeAllowlistedFrame(frame: LeimacIdmuWriteFrame): Promise<LeimacIdmuWriteResult> {
     if (!frame.allowlisted || !Object.values(WRITE_COMMAND_NUMBERS).includes(frame.commandNumber)) {
       throw new LeimacIdmuClientError("LEIMAC_IDMU_WRITE_REJECTED", "Leimac IDMU write frame is not in the PR #36 trigger-profile allowlist.");
     }
