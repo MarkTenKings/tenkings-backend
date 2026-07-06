@@ -169,8 +169,13 @@ export interface AiGraderWarmRunnerStatus {
   previewPolicy: {
     pauseDuringCapture: true;
     resumeAfterSafeIdle: true;
+    holdPreviewDuringFullForensicRun: true;
+    holdActive?: boolean;
+    holdReason?: string;
     lastPausedAt?: string;
     lastResumeReadyAt?: string;
+    lastHoldStartedAt?: string;
+    lastHoldReleasedAt?: string;
   };
   evidencePlan: {
     defaultFullForensic: true;
@@ -619,6 +624,22 @@ function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
+async function stopOrphanedBaslerPreviewStreamsUntilReleased(timeoutMs: number, settleMs: number): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let totalStopped = 0;
+  while (true) {
+    const stopped = stopOrphanedBaslerPreviewStreams();
+    totalStopped += stopped;
+    if (stopped === 0) return totalStopped;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `AI Grader preview stream did not release the Basler camera within ${timeoutMs} ms; stale preview process(es) were still present.`
+      );
+    }
+    await delay(settleMs);
+  }
+}
+
 function childProcessHasExited(child: ChildProcessWithoutNullStreams) {
   return child.exitCode !== null || child.signalCode !== null;
 }
@@ -1004,6 +1025,8 @@ function defaultWarmRunnerStatus(config?: Pick<AiGraderLocalStationBridgeConfig,
     previewPolicy: {
       pauseDuringCapture: true,
       resumeAfterSafeIdle: true,
+      holdPreviewDuringFullForensicRun: true,
+      holdActive: false,
     },
     evidencePlan: {
       defaultFullForensic: true,
@@ -1768,6 +1791,34 @@ export class AiGraderLocalStationBridgeService {
     };
   }
 
+  private activateFullForensicPreviewHold(reason: string) {
+    if (this.manifest.warmRunnerStatus.previewPolicy.holdActive) return;
+    const now = new Date().toISOString();
+    this.manifest.warmRunnerStatus.previewPolicy = {
+      ...this.manifest.warmRunnerStatus.previewPolicy,
+      holdPreviewDuringFullForensicRun: true,
+      holdActive: true,
+      holdReason: reason,
+      lastHoldStartedAt: now,
+    };
+    this.manifest.progressLog.push(`${now} Browser preview hold active for full forensic capture: ${reason}.`);
+  }
+
+  private releaseFullForensicPreviewHold(reason: string) {
+    if (!this.manifest.warmRunnerStatus.previewPolicy.holdActive) return;
+    const now = new Date().toISOString();
+    const currentPolicy = { ...this.manifest.warmRunnerStatus.previewPolicy };
+    delete currentPolicy.holdReason;
+    this.manifest.warmRunnerStatus.previewPolicy = {
+      ...currentPolicy,
+      holdPreviewDuringFullForensicRun: true,
+      holdActive: false,
+      lastHoldReleasedAt: now,
+      lastResumeReadyAt: now,
+    };
+    this.manifest.progressLog.push(`${now} Browser preview hold released: ${reason}.`);
+  }
+
   private updateLiveLightingStatus(update: Partial<AiGraderLiveLightingStatus>) {
     this.manifest.liveLighting = {
       ...this.manifest.liveLighting,
@@ -2093,7 +2144,10 @@ export class AiGraderLocalStationBridgeService {
     this.previewStop?.(reason);
     this.previewStop = undefined;
     if (child) stopChildProcessTree(child);
-    const stoppedOrphans = stopOrphanedBaslerPreviewStreams();
+    const stoppedOrphans = await stopOrphanedBaslerPreviewStreamsUntilReleased(
+      PREVIEW_RELEASE_TIMEOUT_MS,
+      options.settleMs ?? PREVIEW_CAMERA_SETTLE_MS
+    );
     if (stoppedOrphans > 0) {
       this.manifest.progressLog.push(`${new Date().toISOString()} Stopped ${stoppedOrphans} orphaned Basler browser preview process(es) during preview release.`);
     }
@@ -2145,21 +2199,27 @@ export class AiGraderLocalStationBridgeService {
 
   private async stopPreviewForHardwareAction(action: string) {
     await this.safeOffLiveLighting(`capture start before ${action}`, "capture_start_safe_off");
-    if (this.manifest.previewStatus.cameraOwnership === "preview_stream" || this.previewProcess || this.previewStop) {
-      await this.stopPreviewStream(`preview released before ${action} capture action`, {
-        waitForRelease: true,
-        requireRelease: true,
-        settleMs: PREVIEW_CAMERA_SETTLE_MS,
-        captureOwner: true,
-      });
-      this.manifest.warmRunnerStatus.previewPolicy.lastPausedAt = new Date().toISOString();
-      this.manifest.progressLog.push(`${new Date().toISOString()} Browser preview stream paused/released before ${action}.`);
-    }
-    const stoppedOrphans = stopOrphanedBaslerPreviewStreams();
+    await this.stopPreviewStream(`preview released before ${action} capture action`, {
+      waitForRelease: true,
+      requireRelease: true,
+      settleMs: PREVIEW_CAMERA_SETTLE_MS,
+      captureOwner: true,
+    });
+    this.manifest.warmRunnerStatus.previewPolicy.lastPausedAt = new Date().toISOString();
+    this.manifest.progressLog.push(`${new Date().toISOString()} Browser preview stream paused/released before ${action}.`);
+    const stoppedOrphans = await stopOrphanedBaslerPreviewStreamsUntilReleased(PREVIEW_RELEASE_TIMEOUT_MS, PREVIEW_CAMERA_SETTLE_MS);
     if (stoppedOrphans > 0) {
       this.manifest.progressLog.push(`${new Date().toISOString()} Stopped ${stoppedOrphans} stale Basler browser preview process(es) before ${action} capture.`);
       await delay(PREVIEW_CAMERA_SETTLE_MS);
     }
+    if (this.previewProcess || this.previewStop || this.manifest.previewStatus.cameraOwnership === "preview_stream") {
+      throw new Error(`AI Grader preview did not release the Basler camera before ${action} capture.`);
+    }
+    this.updatePreviewStatus({
+      status: "paused_for_capture",
+      cameraOwnership: "capture_action",
+      lastStopReason: `Preview released and verified before ${action} capture.`,
+    });
   }
 
   private acquireCaptureLock(owner: string) {
@@ -2183,8 +2243,12 @@ export class AiGraderLocalStationBridgeService {
     this.captureLock = undefined;
     this.manifest.warmRunnerStatus.captureLock = { held: false };
     this.manifest.warmRunnerStatus.activeSide = undefined;
-    this.manifest.warmRunnerStatus.previewPolicy.lastResumeReadyAt = releasedAt;
-    this.manifest.progressLog.push(`${releasedAt} Capture lock released by ${owner}; preview may resume when the browser returns to idle.`);
+    if (this.manifest.warmRunnerStatus.previewPolicy.holdActive) {
+      this.manifest.progressLog.push(`${releasedAt} Capture lock released by ${owner}; preview remains paused for the full forensic grading session.`);
+    } else {
+      this.manifest.warmRunnerStatus.previewPolicy.lastResumeReadyAt = releasedAt;
+      this.manifest.progressLog.push(`${releasedAt} Capture lock released by ${owner}; preview may resume when the browser returns to idle.`);
+    }
   }
 
   private markWarmPhase(input: {
@@ -2344,6 +2408,7 @@ export class AiGraderLocalStationBridgeService {
     const owner = `cold-fallback-${stepId}`;
     const phaseId = `capture_${side}`;
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
+    this.activateFullForensicPreviewHold(`${side} cold fallback full forensic capture starting`);
     this.setExecutionPath("cold_command_fallback", reason);
     this.acquireCaptureLock(owner);
     let phase: AiGraderWarmRunnerPhase | undefined;
@@ -2407,6 +2472,7 @@ export class AiGraderLocalStationBridgeService {
       this.manifest.warmRunnerStatus.status = "failed";
       await this.runSafeOffCleanup(`${side} cold fallback capture failure`);
       this.manifest.warmRunnerStatus.status = "failed";
+      this.releaseFullForensicPreviewHold(`${side} cold fallback capture failed after safe-off cleanup`);
       throw error;
     } finally {
       this.releaseCaptureLock(owner);
@@ -2418,6 +2484,7 @@ export class AiGraderLocalStationBridgeService {
     const owner = `warm-${stepId}`;
     const phaseId = `capture_${side}`;
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
+    this.activateFullForensicPreviewHold(`${side} warm full forensic capture starting`);
     if (this.config.warmRunnerDisabled) {
       return this.runColdFallbackSideCapture(side, "Warm runner disabled by explicit debug flag.");
     }
@@ -2561,13 +2628,15 @@ export class AiGraderLocalStationBridgeService {
       return result;
     } catch (error) {
       this.manifest.warmRunnerStatus.status = "failed";
+      const allowFallback = warmFailureAllowsColdFallback(error);
       await this.runSafeOffCleanup(`${side} warm capture failure`);
-      if (warmFailureAllowsColdFallback(error)) {
+      if (allowFallback) {
         const reason = `${side} warm runner failed before capture started and reported safe fallback eligibility.`;
         this.releaseCaptureLock(owner);
         return this.runColdFallbackSideCapture(side, reason);
       }
       this.manifest.warmRunnerStatus.status = "failed";
+      this.releaseFullForensicPreviewHold(`${side} warm capture failed after safe-off cleanup`);
       throw error;
     } finally {
       if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
@@ -2640,6 +2709,32 @@ export class AiGraderLocalStationBridgeService {
           ok: false,
           code: "AI_GRADER_CAPTURE_LOCK_HELD",
           message: "AI Grader capture owns the Basler camera; preview will resume after safe idle.",
+          result: this.previewStatus(),
+        },
+        origin,
+        this.config
+      );
+      return Promise.resolve();
+    }
+    if (this.manifest.warmRunnerStatus.previewPolicy.holdActive) {
+      const reason = this.manifest.warmRunnerStatus.previewPolicy.holdReason ?? "full forensic grading session in progress";
+      await this.stopPreviewStream(`preview stream blocked during ${reason}`, {
+        waitForRelease: true,
+        requireRelease: true,
+        settleMs: PREVIEW_CAMERA_SETTLE_MS,
+      });
+      this.updatePreviewStatus({
+        status: "paused_for_capture",
+        cameraOwnership: "released",
+        lastStopReason: `Preview paused while ${reason}.`,
+      });
+      sendJson(
+        res,
+        409,
+        {
+          ok: false,
+          code: "AI_GRADER_PREVIEW_PAUSED_FOR_GRADING_SESSION",
+          message: "AI Grader preview is paused while the full forensic capture/report session owns Basler access.",
           result: this.previewStatus(),
         },
         origin,
@@ -3001,6 +3096,7 @@ export class AiGraderLocalStationBridgeService {
 
     if (action === "start-session") {
       const { packageId, packageDir } = await createFixedRigPackageDir(this.config.outputDir, "ai-grader-browser-station-session");
+      this.releaseFullForensicPreviewHold("new station session started");
       this.manifest.sessionId = `${packageId}-session`;
       this.manifest.reportId = request.reportId ?? `${packageId}-report`;
       this.manifest.createdAt = now;
@@ -3065,6 +3161,7 @@ export class AiGraderLocalStationBridgeService {
     if (action === "cancel-session") {
       await this.safeOffLiveLighting("station cancellation", "safe_off");
       await this.runSafeOffCleanup("station cancellation");
+      this.releaseFullForensicPreviewHold("station cancellation completed");
       this.manifest.currentStep = "safe_off_end_session";
       this.manifest.warmRunnerStatus.status = "cancelled";
       this.markWarmPhase({
@@ -3083,6 +3180,7 @@ export class AiGraderLocalStationBridgeService {
     if (action === "end-session") {
       await this.safeOffLiveLighting("station session end", "safe_off");
       await this.runSafeOffCleanup("station session end");
+      this.releaseFullForensicPreviewHold("station session end completed");
       this.manifest.currentStep = "safe_off_end_session";
       this.manifest.warmRunnerStatus.status = "complete";
       this.manifest.progressLog.push(`${now} Station session ended.`);
@@ -3105,6 +3203,7 @@ export class AiGraderLocalStationBridgeService {
       this.manifest.commandResults.push(result);
       this.manifest.confirmations.finalLightOff = Boolean(request.confirmations?.finalLightOff) || this.manifest.confirmations.finalLightOff;
       this.manifest.currentStep = "safe_off_end_session";
+      this.releaseFullForensicPreviewHold("operator safe-off completed");
       this.markWarmPhase({
         id: "warm_safe_cleanup",
         label: "Watchdog safe-off cleanup",

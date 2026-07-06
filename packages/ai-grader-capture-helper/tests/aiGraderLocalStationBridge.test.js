@@ -542,7 +542,9 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   status = await service.action("capture-front");
   assert.equal(status.sessionManifest.frontCaptured, true);
   assert.equal(status.warmRunnerStatus.captureLock.held, false);
-  assert.ok(status.warmRunnerStatus.previewPolicy.lastResumeReadyAt);
+  assert.equal(status.warmRunnerStatus.previewPolicy.holdActive, true);
+  assert.ok(status.warmRunnerStatus.previewPolicy.lastHoldStartedAt);
+  assert.equal(status.warmRunnerStatus.previewPolicy.lastResumeReadyAt, undefined);
   assert.equal(status.warmRunnerStatus.evidencePlan.rolesBySide.front.every((role) => role.status === "completed"), true);
   assert.equal(status.warmRunnerStatus.evidencePlan.rolesBySide.back.every((role) => role.status === "pending"), true);
   assert.equal(status.warmRunnerStatus.queues.capture.some((phase) => phase.id === "capture_front" && phase.status === "completed"), true);
@@ -553,10 +555,12 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(status.confirmations.flipComplete, true);
   status = await service.action("capture-back");
   assert.equal(status.sessionManifest.backCaptured, true);
+  assert.equal(status.warmRunnerStatus.previewPolicy.holdActive, true);
   assert.equal(status.warmRunnerStatus.evidencePlan.rolesBySide.back.every((role) => role.status === "completed"), true);
   assert.equal(status.warmRunnerStatus.queues.processing.some((phase) => phase.id === "process_back_artifacts" && phase.status === "completed"), true);
   status = await service.action("run-diagnostics");
   assert.equal(status.latestReport.exists, true);
+  assert.equal(status.warmRunnerStatus.previewPolicy.holdActive, true);
   assert.equal(status.warmRunnerStatus.queues.report.some((phase) => phase.id === "report_queue" && phase.status === "completed"), true);
   assert.equal(status.timingSummary.detailedEntries.some((entry) => entry.category === "warm_runner"), true);
   assert.equal(status.timingSummary.executionPath, "warm_full_forensic_runner");
@@ -813,9 +817,131 @@ test("warm runner capture lock blocks preview stream until capture releases", as
     releaseCapture();
     const captureStatus = await capturePromise;
     assert.equal(captureStatus.warmRunnerStatus.captureLock.held, false);
-    assert.ok(captureStatus.warmRunnerStatus.previewPolicy.lastResumeReadyAt);
+    assert.equal(captureStatus.warmRunnerStatus.previewPolicy.holdActive, true);
+    assert.ok(captureStatus.warmRunnerStatus.previewPolicy.lastHoldStartedAt);
   } finally {
     releaseCapture();
+    if (typeof started.server.closeAllConnections === "function") {
+      started.server.closeAllConnections();
+    }
+    await closeServer(started.server);
+  }
+});
+
+test("full forensic session holds preview stopped through flip and back capture", async () => {
+  const token = "local-station-token-full-forensic-hold";
+  const started = await startAiGraderLocalStationBridgeHttpServer({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 0,
+    stationToken: token,
+    allowedOrigins: ["https://collect.tenkings.co"],
+    outputDir: outputDir(`full-forensic-hold-${Date.now()}`),
+  });
+  const headers = {
+    Origin: "https://collect.tenkings.co",
+    "x-ai-grader-station-token": token,
+    "content-type": "application/json",
+  };
+  const postAction = async (action, body = {}) => {
+    const response = await fetch(`${started.url}/actions/${action}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.message ?? `action ${action} failed`);
+    return payload.result;
+  };
+  const readOnePreviewFrame = async () => {
+    const chunk = await new Promise((resolve, reject) => {
+      let settled = false;
+      const req = http.request(`${started.url}/preview/stream`, { headers }, (res) => {
+        assert.equal(res.statusCode, 200);
+        res.once("data", (data) => {
+          settled = true;
+          res.destroy();
+          req.destroy();
+          resolve(Buffer.from(data));
+        });
+      });
+      req.on("error", (error) => {
+        if (!settled) reject(error);
+      });
+      req.setTimeout(5000, () => {
+        if (settled) return;
+        settled = true;
+        req.destroy();
+        reject(new Error("Preview stream did not return a frame."));
+      });
+      req.end();
+    });
+    assert.match(chunk.toString("utf8"), /tenkings-ai-grader-preview/);
+  };
+  let activeReq;
+
+  try {
+    await postAction("start-session");
+    await postAction("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+    await postAction("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+
+    const activeStreamClosed = new Promise((resolve, reject) => {
+      let sawFrame = false;
+      activeReq = http.request(`${started.url}/preview/stream`, { headers }, (res) => {
+        assert.equal(res.statusCode, 200);
+        res.once("data", () => {
+          sawFrame = true;
+        });
+        res.once("close", () => {
+          if (!sawFrame) reject(new Error("Preview closed before a frame was observed."));
+          else resolve();
+        });
+      });
+      activeReq.on("error", (error) => {
+        if (!sawFrame) reject(error);
+      });
+      activeReq.end();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const frontStatus = await postAction("capture-front");
+    assert.equal(frontStatus.currentStep, "prompt_flip_card");
+    assert.equal(frontStatus.warmRunnerStatus.previewPolicy.holdActive, true);
+    assert.equal(frontStatus.previewStatus.status, "paused_for_capture");
+    assert.notEqual(frontStatus.previewStatus.cameraOwnership, "preview_stream");
+    await activeStreamClosed;
+    activeReq.destroy();
+
+    const blockedDuringFlip = await fetch(`${started.url}/preview/stream`, { headers });
+    assert.equal(blockedDuringFlip.status, 409);
+    const blockedDuringFlipBody = await blockedDuringFlip.json();
+    assert.equal(blockedDuringFlipBody.code, "AI_GRADER_PREVIEW_PAUSED_FOR_GRADING_SESSION");
+    assert.equal(blockedDuringFlipBody.result.cameraOwnership, "released");
+
+    await postAction("confirm-flip", { confirmations: { flipComplete: true } });
+    const blockedBeforeBack = await fetch(`${started.url}/preview/stream`, { headers });
+    assert.equal(blockedBeforeBack.status, 409);
+    await blockedBeforeBack.text();
+
+    const backStatus = await postAction("capture-back");
+    assert.equal(backStatus.sessionManifest.backCaptured, true);
+    assert.equal(backStatus.executionPath, "warm_full_forensic_runner");
+    assert.equal(backStatus.fallbackUsed, false);
+    assert.equal(backStatus.warmRunnerStatus.previewPolicy.holdActive, true);
+    assert.notEqual(backStatus.previewStatus.cameraOwnership, "preview_stream");
+
+    const reportStatus = await postAction("run-diagnostics");
+    assert.equal(reportStatus.latestReport.exists, true);
+    assert.equal(reportStatus.warmRunnerStatus.previewPolicy.holdActive, true);
+
+    const ended = await postAction("end-session");
+    assert.equal(ended.currentStep, "safe_off_end_session");
+    assert.equal(ended.warmRunnerStatus.previewPolicy.holdActive, false);
+    assert.ok(ended.warmRunnerStatus.previewPolicy.lastHoldReleasedAt);
+    await readOnePreviewFrame();
+  } finally {
+    if (typeof activeReq?.destroy === "function") activeReq.destroy();
     if (typeof started.server.closeAllConnections === "function") {
       started.server.closeAllConnections();
     }
@@ -843,6 +969,8 @@ test("warm runner runs safe-off cleanup on failure, cancellation, and session en
   assert.deepEqual(failureWarm.calls.map((call) => `${call.type}:${call.side}`), ["capture:front"]);
   assert.equal(failureStatus.warmRunnerStatus.status, "failed");
   assert.equal(failureStatus.warmRunnerStatus.captureLock.held, false);
+  assert.equal(failureStatus.warmRunnerStatus.previewPolicy.holdActive, false);
+  assert.notEqual(failureStatus.previewStatus.cameraOwnership, "preview_stream");
   assert.equal(failureStatus.warmRunnerStatus.phases.some((phase) => phase.id === "warm_safe_cleanup" && phase.status === "completed"), true);
   assert.equal(failureStatus.executionPath, "warm_full_forensic_runner");
   assert.equal(failureStatus.fallbackUsed, false);

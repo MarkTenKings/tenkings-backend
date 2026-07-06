@@ -23666,3 +23666,43 @@ By enabling Rip It Live, I confirm:
   - `imageAssetsWithBodies=72`;
   - source `history_generated_with_asset_bodies`.
 - No hardware capture, Leimac lighting command, migration, manual production DB write, Vercel env change, credential rotation, or secret-printing action was run.
+
+## 2026-07-06 - AI Grader preview ownership hold before back capture
+
+### Planned Action
+- Create focused branch `fix/ai-grader-preview-release-before-back-capture` from production `main` at `802dc10fe9c835fd8ee8507aaf2dcc536fbe6a7b`.
+- Fix the production Basler ownership bug reproduced from `https://collect.tenkings.co/ai-grader/station`, where front capture succeeded, the station prompted for card flip, and back capture failed because a browser Basler preview owner still held the GigE camera.
+- Keep the default `warm_full_forensic_runner` path, preserve full front/back forensic evidence, keep `fallbackUsed=false`, and keep public report routes read-only/hardware-free.
+- Guardrails: no hardware capture without Mark approval, no migrations, no production DB writes, no Vercel env changes, no credential rotation, no secrets printed.
+
+### Diagnosis / Fix In Progress
+- Confirmed local branch started from `main` at `802dc10fe9c835fd8ee8507aaf2dcc536fbe6a7b`.
+- PR #59 added explicit preview stop/release before capture and the browser now calls that helper before both front and back capture, but the browser preview loop could still reacquire Basler during the operator flip prompt after the front capture lock released.
+- Root cause: after front capture completed, `busy` cleared and the bridge capture lock was released while `currentStep=prompt_flip_card`; the browser preview effect was then allowed to restart MJPEG preview before the operator pressed the green back-side confirm button.
+- Bridge fix:
+  - Added an explicit full-forensic preview hold policy to `warmRunnerStatus.previewPolicy`.
+  - Activates the hold as soon as front/back full forensic capture starts.
+  - Keeps preview stopped through front capture, flip prompt, back capture, and report generation.
+  - Rejects new `/preview/stream` requests with `AI_GRADER_PREVIEW_PAUSED_FOR_GRADING_SESSION` while the hold is active.
+  - Always stops preview, waits for tracked process close, sweeps stale Windows `operator-preview-mjpeg-stream` processes with a bounded verify loop, settles, and verifies no tracked preview owner remains before capture opens hardware.
+  - Releases the hold only on session end, cancellation, safe-off, or failure cleanup.
+- Browser station fix:
+  - Uses `warmRunnerStatus.previewPolicy.holdActive` to stop opening preview streams during the full forensic hold.
+  - Keeps the last displayed frame visible with paused/progress status instead of blanking and reacquiring Basler during the flip prompt.
+- Docs updated in `docs/ai-grader-capture-helper.md` to clarify that live preview is for setup/tuning before grading, pauses during full forensic capture/report generation, and true live preview during capture requires a future single in-process hardware owner.
+
+### Validation So Far
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `30` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper exec node --test tests/aiGraderLocalStationBridge.test.js` -> pass, `17` tests.
+- Hardware smoke has not been run in this pass.
+- No migration, production DB write, Vercel env change, credential rotation, deploy, hardware capture, Leimac command, or secret-printing action was run.
+
+### Validation Complete
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>`, Browserslist/baseline-browser-mapping, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `30` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `180` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with line-ending warnings only.

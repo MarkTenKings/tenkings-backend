@@ -266,6 +266,15 @@ export default function AiGraderStationPage() {
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (previewFrameUrlRef.current) {
+        window.URL.revokeObjectURL(previewFrameUrlRef.current);
+        previewFrameUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!bridgeConnected || !stationToken.trim() || !liveLighting.applied.enabled) return;
     const timer = setInterval(() => {
       void heartbeatAiGraderLiveLighting({ baseUrl: bridgeUrl, stationToken }).then(setLiveLighting).catch(() => {});
@@ -292,7 +301,9 @@ export default function AiGraderStationPage() {
   }, [bridgeConnected, bridgeUrl, liveLighting.applied.enabled, stationToken]);
 
   useEffect(() => {
+    const previewHeldForFullForensicRun = status.warmRunnerStatus.previewPolicy.holdActive === true;
     const previewSuspendedForStationAction =
+      previewHeldForFullForensicRun ||
       busy === "start-grading" ||
       busy === "back" ||
       busy === "capture-front" ||
@@ -300,20 +311,24 @@ export default function AiGraderStationPage() {
       busy === "safe-off" ||
       status.warmRunnerStatus.captureLock.held ||
       status.warmRunnerStatus.status === "capturing";
-    if (!bridgeConnected || !stationToken.trim() || previewSuspendedForStationAction) {
+    if (!bridgeConnected || !stationToken.trim()) {
       if (previewFrameUrlRef.current) {
         window.URL.revokeObjectURL(previewFrameUrlRef.current);
         previewFrameUrlRef.current = null;
       }
       setPreviewFrameUrl(null);
-      if (previewSuspendedForStationAction) {
-        setPreviewStatus((currentStatus) => ({
-          ...currentStatus,
-          status: "paused_for_capture",
-          cameraOwnership: "capture_action",
-          lastStopReason: "Preview suspended while station action is running.",
-        }));
-      }
+      return;
+    }
+    if (previewSuspendedForStationAction) {
+      const holdReason = status.warmRunnerStatus.previewPolicy.holdReason;
+      setPreviewStatus((currentStatus) => ({
+        ...currentStatus,
+        status: "paused_for_capture",
+        cameraOwnership: status.warmRunnerStatus.captureLock.held || status.warmRunnerStatus.status === "capturing" ? "capture_action" : "released",
+        lastStopReason: previewHeldForFullForensicRun
+          ? holdReason ?? "Preview paused during full forensic capture and report generation."
+          : "Preview suspended while station action is running.",
+      }));
       return;
     }
 
@@ -377,13 +392,17 @@ export default function AiGraderStationPage() {
     return () => {
       cancelled = true;
       controller.abort();
-      if (previewFrameUrlRef.current) {
-        window.URL.revokeObjectURL(previewFrameUrlRef.current);
-        previewFrameUrlRef.current = null;
-      }
-      setPreviewFrameUrl(null);
     };
-  }, [bridgeConnected, bridgeUrl, busy, stationToken, status.warmRunnerStatus.captureLock.held, status.warmRunnerStatus.status]);
+  }, [
+    bridgeConnected,
+    bridgeUrl,
+    busy,
+    stationToken,
+    status.warmRunnerStatus.captureLock.held,
+    status.warmRunnerStatus.previewPolicy.holdActive,
+    status.warmRunnerStatus.previewPolicy.holdReason,
+    status.warmRunnerStatus.status,
+  ]);
 
   const currentStep = useMemo(
     () => AI_GRADER_STATION_STEPS.find((step) => step.id === status.currentStep) ?? AI_GRADER_STATION_STEPS[0],
@@ -1035,7 +1054,9 @@ export default function AiGraderStationPage() {
       : previewStatus.status === "live"
       ? `${previewStatus.implementationType}; ${previewStatus.frameCount || 0} frame(s) displayed${previewStatus.fps ? `, ${previewStatus.fps} FPS` : ""}.`
       : previewStatus.status === "paused_for_capture"
-        ? "The preview stream released the Basler camera for capture."
+        ? warmRunner.previewPolicy.holdActive
+          ? "Live preview is paused while full forensic capture and report generation use the Basler evidence session."
+          : "The preview stream released the Basler camera for capture."
         : previewStatus.status === "error"
           ? previewStatus.lastError ?? "The local preview stream is not available."
           : "The local Dell bridge will stream Basler preview frames here when connected.";

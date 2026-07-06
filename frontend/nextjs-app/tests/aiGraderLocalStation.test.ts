@@ -109,6 +109,8 @@ test("local station contract exposes workflow status with no login, DB, or hardw
   assert.equal(status.warmRunnerStatus.backend, "warm_full_forensic_runner");
   assert.equal(status.warmRunnerStatus.fallbackUsed, false);
   assert.equal(status.warmRunnerStatus.fallback.active, false);
+  assert.equal(status.warmRunnerStatus.previewPolicy.holdPreviewDuringFullForensicRun, true);
+  assert.equal(status.warmRunnerStatus.previewPolicy.holdActive, false);
   assert.equal(status.timingSummary?.executionPath, "warm_full_forensic_runner");
   assert.equal(status.timingSummary?.fallbackUsed, false);
   assert.equal(status.warmRunnerStatus.evidencePlan.defaultFullForensic, true);
