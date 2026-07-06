@@ -413,6 +413,11 @@ export default function AiGraderStationPage() {
     previewStatus.status === "live" &&
     !warmRunner.captureLock.held &&
     warmRunner.status !== "capturing";
+  const liveLightingCommandable =
+    bridgeConnected &&
+    liveLighting.controlsEnabled &&
+    !warmRunner.captureLock.held &&
+    warmRunner.status !== "capturing";
   const liveLightingAppliedLabel = liveLighting.applied.enabled
     ? `${liveLighting.applied.dutyPercent}% / PWM ${String(liveLighting.applied.actualLeimacPwmStep).padStart(4, "0")} / Ch ${liveLighting.applied.channels.join(", ")}`
     : "off";
@@ -542,11 +547,19 @@ export default function AiGraderStationPage() {
     throw new Error(`AI Grader preview did not release the Basler camera before capture. Current preview owner: ${latest.cameraOwnership}.`);
   };
 
+  const ensureLiveLightingSession = async () => {
+    if (status.currentStep === "start_new_card" || status.currentStep === "safe_off_end_session") {
+      return runAction("start-session");
+    }
+    return status;
+  };
+
   const applyLiveLightingDraft = async (
     draft = liveLightingDraft,
     reason = "browser live lighting apply"
   ) => {
     if (!bridgeConnected || !stationToken.trim()) throw new Error("Connect the Dell local station bridge before live lighting tuning.");
+    await ensureLiveLightingSession();
     const next = await applyAiGraderLiveLighting({
       baseUrl: bridgeUrl,
       stationToken,
@@ -571,7 +584,7 @@ export default function AiGraderStationPage() {
 
   const updateLiveLightingDraft = (nextDraft: typeof liveLightingDraft, reason: string) => {
     setLiveLightingDraft(nextDraft);
-    if (nextDraft.enabled && liveLightingAvailable) scheduleLiveLightingApply(nextDraft, reason);
+    if (nextDraft.enabled && liveLightingCommandable) scheduleLiveLightingApply(nextDraft, reason);
   };
 
   const safeOffLiveLighting = async (reason = "operator requested browser live lighting safe-off") => {
@@ -616,7 +629,7 @@ export default function AiGraderStationPage() {
     const nextDraft = { ...liveLightingDraft, enabled };
     setLiveLightingDraft(nextDraft);
     if (enabled) {
-      if (liveLightingAvailable) scheduleLiveLightingApply(nextDraft, "browser live lighting enabled");
+      if (liveLightingCommandable) scheduleLiveLightingApply(nextDraft, "browser live lighting enabled");
     } else {
       void safeOffLiveLighting("browser live lighting disabled").catch((requestError) => {
         setError(requestError instanceof Error ? requestError.message : "Live lighting safe-off failed.");
@@ -633,7 +646,7 @@ export default function AiGraderStationPage() {
       });
       return;
     }
-    if (liveLightingAvailable) scheduleLiveLightingApply(nextDraft, "browser live lighting channels changed");
+    if (liveLightingCommandable) scheduleLiveLightingApply(nextDraft, "browser live lighting channels changed");
   };
 
   const toggleLiveLightingChannel = (channel: number) => {

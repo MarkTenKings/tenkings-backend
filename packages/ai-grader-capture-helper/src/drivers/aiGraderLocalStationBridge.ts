@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -621,6 +621,20 @@ function delay(ms: number) {
 
 function childProcessHasExited(child: ChildProcessWithoutNullStreams) {
   return child.exitCode !== null || child.signalCode !== null;
+}
+
+function stopChildProcessTree(child: ChildProcessWithoutNullStreams) {
+  if (childProcessHasExited(child)) return;
+  try { child.kill(); } catch {}
+  if (process.platform === "win32" && typeof child.pid === "number") {
+    try {
+      spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+        timeout: 5000,
+      });
+    } catch {}
+  }
 }
 
 function waitForChildProcessClose(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
@@ -2053,9 +2067,7 @@ export class AiGraderLocalStationBridgeService {
     const captureOwner = options.captureOwner === true;
     this.previewStop?.(reason);
     this.previewStop = undefined;
-    if (child && !child.killed) {
-      try { child.kill(); } catch {}
-    }
+    if (child) stopChildProcessTree(child);
     if (options.waitForRelease && child) {
       this.updatePreviewStatus({
         status: captureOwner ? "paused_for_capture" : "stopped",
@@ -2064,6 +2076,18 @@ export class AiGraderLocalStationBridgeService {
       });
       const released = await waitForChildProcessClose(child, PREVIEW_RELEASE_TIMEOUT_MS);
       if (!released) {
+        stopChildProcessTree(child);
+        const releasedAfterForceKill = await waitForChildProcessClose(child, 1500);
+        if (releasedAfterForceKill) {
+          await delay(options.settleMs ?? PREVIEW_CAMERA_SETTLE_MS);
+          this.previewProcess = undefined;
+          this.updatePreviewStatus({
+            status: captureOwner ? "paused_for_capture" : "stopped",
+            cameraOwnership: captureOwner ? "capture_action" : "released",
+            lastStopReason: `${reason}; preview process tree force-stopped before camera handoff.`,
+          });
+          return;
+        }
         const message = `AI Grader preview stream did not release the Basler camera within ${PREVIEW_RELEASE_TIMEOUT_MS} ms. Close the preview or restart the local bridge before capture.`;
         this.updatePreviewStatus({
           status: "error",
@@ -2622,9 +2646,7 @@ export class AiGraderLocalStationBridgeService {
           mockPreviewTimer = undefined;
         }
         this.previewStop = undefined;
-        if (this.previewProcess && !this.previewProcess.killed) {
-          try { this.previewProcess.kill(); } catch {}
-        }
+        if (this.previewProcess) stopChildProcessTree(this.previewProcess);
         this.previewProcess = undefined;
         this.updatePreviewStatus({
           status: reason.includes("error") ? "error" : "stopped",
@@ -2698,9 +2720,7 @@ export class AiGraderLocalStationBridgeService {
           finish("preview process stopped");
         });
         this.previewStop = (reason: string) => {
-          if (!child.killed) {
-            try { child.kill(); } catch {}
-          }
+          stopChildProcessTree(child);
           finish(reason);
         };
       } catch (error) {
