@@ -125,7 +125,7 @@ export interface FixedRigActiveLightingProfile {
   selectedDutyPercent: number;
   actualLeimacPwmStep: number;
   selectedChannels: number[];
-  profileSource: "operator_preview" | "default" | "cli_override";
+  profileSource: "operator_preview" | "browser_live_tuning" | "default" | "cli_override";
   acceptedAt: string;
   resetToDefault: boolean;
   selectedLightingProfileId: typeof ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID;
@@ -888,7 +888,12 @@ export async function readFixedRigActiveLightingProfile(outputDir: string): Prom
     return buildFixedRigActiveLightingProfile({
       selectedDutyPercent: parsed.selectedDutyPercent,
       selectedChannels: parsed.selectedChannels,
-      profileSource: parsed.profileSource === "operator_preview" || parsed.profileSource === "cli_override" ? parsed.profileSource : "default",
+      profileSource:
+        parsed.profileSource === "operator_preview" ||
+        parsed.profileSource === "browser_live_tuning" ||
+        parsed.profileSource === "cli_override"
+          ? parsed.profileSource
+          : "default",
       acceptedAt: parsed.acceptedAt,
       resetToDefault: parsed.resetToDefault,
     });

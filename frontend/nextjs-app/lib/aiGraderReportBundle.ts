@@ -4,6 +4,18 @@ export const AI_GRADER_WEB_REPORT_BUNDLE_VERSION = "ai-grader-report-bundle-v0.1
 
 export type AiGraderReportElementKey = "centering" | "corners" | "edges" | "surface";
 
+export type AiGraderReportPublicAsset = {
+  id: string;
+  kind?: string;
+  fileName?: string;
+  contentType?: string;
+  storageKey?: string;
+  publicUrl?: string;
+  byteSize?: number;
+  checksumSha256?: string;
+  side?: "front" | "back" | string;
+};
+
 export type AiGraderReportBundle = {
   schemaVersion: typeof AI_GRADER_WEB_REPORT_BUNDLE_VERSION;
   generatedAt: string;
@@ -65,6 +77,8 @@ export type AiGraderReportBundle = {
   calibrationProfile?: Record<string, unknown>;
   rulerCalibration?: Record<string, unknown>;
   lightingProfile?: Record<string, unknown>;
+  assets?: AiGraderReportPublicAsset[];
+  publicAssets?: AiGraderReportPublicAsset[];
   warnings: string[];
   limitations: string[];
 };

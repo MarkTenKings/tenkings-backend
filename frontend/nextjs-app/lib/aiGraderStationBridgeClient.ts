@@ -1,4 +1,5 @@
 import type {
+  AiGraderLiveLightingStatus,
   AiGraderLocalReportHistory,
   AiGraderLocalStationPreviewStatus,
   AiGraderLocalStationStatus,
@@ -190,6 +191,111 @@ export async function stopAiGraderStationPreview(input: {
   return payload.result as AiGraderLocalStationPreviewStatus;
 }
 
+async function bridgePostJson<T>(
+  input: { baseUrl: string; stationToken: string; path: string; body?: Record<string, unknown>; keepalive?: boolean },
+  fetchImpl: typeof fetch = fetch
+): Promise<T> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  if (!input.stationToken.trim()) {
+    throw new Error("AI Grader station bridge token is required.");
+  }
+  const response = await fetchImpl(`${baseUrl}${input.path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-ai-grader-station-token": input.stationToken,
+    },
+    body: JSON.stringify(input.body ?? {}),
+    keepalive: input.keepalive,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok !== true) {
+    throw new Error(payload.message ?? payload.error?.message ?? "AI Grader local station bridge request failed.");
+  }
+  return payload.result as T;
+}
+
+export async function fetchAiGraderLiveLightingStatus(input: {
+  baseUrl: string;
+  stationToken: string;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLiveLightingStatus> {
+  return bridgeGetJson<AiGraderLiveLightingStatus>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: "/lighting/status",
+  }, fetchImpl);
+}
+
+export async function applyAiGraderLiveLighting(input: {
+  baseUrl: string;
+  stationToken: string;
+  enabled: boolean;
+  dutyPercent: number;
+  channels: number[];
+  reason?: string;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLiveLightingStatus> {
+  return bridgePostJson<AiGraderLiveLightingStatus>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: "/lighting/apply",
+    body: {
+      enabled: input.enabled,
+      dutyPercent: input.dutyPercent,
+      channels: input.channels,
+      reason: input.reason ?? "browser live lighting apply",
+    },
+  }, fetchImpl);
+}
+
+export async function safeOffAiGraderLiveLighting(input: {
+  baseUrl: string;
+  stationToken: string;
+  reason?: string;
+  keepalive?: boolean;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLiveLightingStatus> {
+  return bridgePostJson<AiGraderLiveLightingStatus>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: "/lighting/safe-off",
+    body: { reason: input.reason ?? "browser live lighting safe-off" },
+    keepalive: input.keepalive,
+  }, fetchImpl);
+}
+
+export async function acceptAiGraderLiveLightingProfile(input: {
+  baseUrl: string;
+  stationToken: string;
+  dutyPercent: number;
+  channels: number[];
+  exposureUs: number;
+  gain: number;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLiveLightingStatus> {
+  return bridgePostJson<AiGraderLiveLightingStatus>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: "/lighting/accept",
+    body: {
+      dutyPercent: input.dutyPercent,
+      channels: input.channels,
+      exposureUs: input.exposureUs,
+      gain: input.gain,
+    },
+  }, fetchImpl);
+}
+
+export async function heartbeatAiGraderLiveLighting(input: {
+  baseUrl: string;
+  stationToken: string;
+  reason?: string;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLiveLightingStatus> {
+  return bridgePostJson<AiGraderLiveLightingStatus>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: "/lighting/heartbeat",
+    body: { reason: input.reason ?? "browser live lighting heartbeat" },
+  }, fetchImpl);
+}
+
 function concatBytes(left: Uint8Array, right: Uint8Array) {
   const joined = new Uint8Array(left.length + right.length);
   joined.set(left, 0);
@@ -324,11 +430,13 @@ export async function fetchAiGraderStationReportBundle(input: {
   baseUrl: string;
   stationToken: string;
   reportId: string;
+  includeAssetBodies?: boolean;
 }): Promise<AiGraderReportBundle> {
+  const query = input.includeAssetBodies ? "?includeAssetBodies=1" : "";
   const result = await bridgeGetJson<{ reportId: string; bundle: AiGraderReportBundle; source: string }>({
     baseUrl: input.baseUrl,
     stationToken: input.stationToken,
-    path: `/reports/${encodeURIComponent(input.reportId)}/bundle`,
+    path: `/reports/${encodeURIComponent(input.reportId)}/bundle${query}`,
   });
   return result.bundle;
 }

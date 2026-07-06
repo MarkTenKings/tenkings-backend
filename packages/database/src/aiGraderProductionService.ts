@@ -54,6 +54,8 @@ export type AiGraderProductionReportBundleLike = JsonRecord & {
   calibrationProfile?: JsonRecord;
   rulerCalibration?: JsonRecord;
   lightingProfile?: JsonRecord;
+  assets?: unknown[];
+  publicAssets?: unknown[];
   warnings?: unknown[];
 };
 
@@ -76,11 +78,20 @@ export type AiGraderProductionReleaseLike = JsonRecord & {
 
 export type AiGraderProductionArtifactPlan = {
   artifactId: string;
-  artifactClass: "report_bundle" | "production_release" | "label_data" | "publication_manifest" | "integration_contract" | "asset_manifest" | "label_preview";
+  artifactClass:
+    | "report_bundle"
+    | "production_release"
+    | "label_data"
+    | "publication_manifest"
+    | "integration_contract"
+    | "asset_manifest"
+    | "label_preview"
+    | "report_asset";
   kind: string;
   storageKey: string;
   contentType: string;
   body: string;
+  bodyEncoding?: "utf8" | "base64";
   checksumSha256: string;
   byteSize: number;
   publicUrl?: string;
@@ -271,6 +282,25 @@ function safeSegment(value: string) {
     .replace(/^-|-$/g, "") || "ai-grader-report";
 }
 
+function safeAssetFileName(value: string, fallback: string) {
+  const normalized = value.replace(/\\/g, "/").split("/").pop() || fallback;
+  const cleaned = normalized
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return cleaned || fallback;
+}
+
+function fileExtensionForContentType(contentType: string) {
+  const normalized = contentType.toLowerCase();
+  if (normalized.includes("image/png")) return ".png";
+  if (normalized.includes("image/jpeg")) return ".jpg";
+  if (normalized.includes("image/webp")) return ".webp";
+  return ".bin";
+}
+
 function looksLikeLocalPathOrLoopback(value: string) {
   return /^[a-z]:\\/i.test(value) || value.includes("\\TenKings\\") || /https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|::1)/i.test(value);
 }
@@ -320,14 +350,53 @@ function artifact(input: {
   storageKey: string;
   contentType: string;
   body: string;
+  bodyEncoding?: "utf8" | "base64";
   publicUrl?: string;
 }): AiGraderProductionArtifactPlan {
-  const byteSize = Buffer.byteLength(input.body);
+  const bytes = Buffer.from(input.body, input.bodyEncoding === "base64" ? "base64" : "utf8");
   return {
     ...input,
-    checksumSha256: aiGraderSha256(input.body),
-    byteSize,
+    checksumSha256: aiGraderSha256(bytes),
+    byteSize: bytes.length,
   };
+}
+
+function reportAssetArtifacts(input: {
+  reportId: string;
+  storageKeyPrefix: string;
+  reportBundle: AiGraderProductionReportBundleLike;
+  publicUrlFor: (storageKey: string) => string;
+}) {
+  const rawAssets = Array.isArray(input.reportBundle.assets) ? input.reportBundle.assets : [];
+  const seenStorageKeys = new Set<string>();
+  return rawAssets
+    .filter(isRecord)
+    .map((asset, index) => {
+      const bodyBase64 = stringValue(asset.bodyBase64, "");
+      if (!bodyBase64) return null;
+      const contentType = stringValue(asset.contentType, "application/octet-stream");
+      if (!contentType.toLowerCase().startsWith("image/")) return null;
+      const id = stringValue(asset.id, `image-${index + 1}`);
+      const fileName = safeAssetFileName(
+        stringValue(asset.fileName ?? asset.localPath, ""),
+        `${safeSegment(id)}${fileExtensionForContentType(contentType)}`
+      );
+      const uniqueName = `${String(index + 1).padStart(3, "0")}-${fileName}`;
+      const storageKey = `${input.storageKeyPrefix}assets/${uniqueName}`;
+      if (seenStorageKeys.has(storageKey)) return null;
+      seenStorageKeys.add(storageKey);
+      return artifact({
+        artifactId: `${input.reportId}:report-asset:${safeSegment(id)}:${index + 1}`,
+        artifactClass: "report_asset",
+        kind: "report-image",
+        storageKey,
+        contentType,
+        body: bodyBase64,
+        bodyEncoding: "base64",
+        publicUrl: input.publicUrlFor(storageKey),
+      });
+    })
+    .filter((entry): entry is AiGraderProductionArtifactPlan => Boolean(entry));
 }
 
 export function buildAiGraderLabelPreviewHtml(productionRelease: AiGraderProductionReleaseLike) {
@@ -376,9 +445,22 @@ export function buildAiGraderProductionStoragePlan(input: {
   const publicReportUrl = `${base}/ai-grader/reports/${encodeURIComponent(reportId)}`;
   const qrPayloadUrl = publicReportUrl;
   const publicUrlFor = input.publicUrlFor ?? ((storageKey: string) => `${base}/storage/${storageKey}`);
+  const reportAssets = reportAssetArtifacts({ reportId, storageKeyPrefix, reportBundle: input.reportBundle, publicUrlFor });
+  const publicAssets = reportAssets.map((entry) => ({
+    id: entry.artifactId.replace(`${reportId}:report-asset:`, ""),
+    kind: entry.kind,
+    fileName: entry.storageKey.split("/").pop(),
+    contentType: entry.contentType,
+    storageKey: entry.storageKey,
+    publicUrl: entry.publicUrl,
+    byteSize: entry.byteSize,
+    checksumSha256: entry.checksumSha256,
+  }));
   const sanitizedBundle = sanitizeAiGraderPublicJson({
     ...input.reportBundle,
     reportId,
+    assets: publicAssets,
+    publicAssets,
     publicPathPlaceholders: {
       reportViewerRoute: "/ai-grader/reports/[reportId]",
       reportUrlTemplate: "/ai-grader/reports/{reportId}",
@@ -475,6 +557,7 @@ export function buildAiGraderProductionStoragePlan(input: {
       contentType: "text/html; charset=utf-8",
       body: buildAiGraderLabelPreviewHtml(sanitizedRelease),
     }),
+    ...reportAssets,
   ];
   const assetManifest = artifacts.map((entry) => ({
     artifactId: entry.artifactId,

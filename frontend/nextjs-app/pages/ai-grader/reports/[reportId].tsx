@@ -10,6 +10,7 @@ import {
 
 const ELEMENT_LABELS = ["centering", "corners", "edges", "surface"] as const;
 const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Confidence", "Evidence Replay"];
+type ReportImageAsset = NonNullable<AiGraderReportBundle["assets"]>[number] & { publicUrl: string };
 
 function scoreText(score?: number) {
   return typeof score === "number" ? score.toFixed(score % 1 === 0 ? 0 : 2) : "Pending";
@@ -21,6 +22,26 @@ function sourceChannelsText(candidate: unknown) {
       ? candidate.sourceChannels
       : [];
   return channels.length ? channels.map(String).join(", ") : "see evidence refs";
+}
+
+function reportImageAssets(bundle: AiGraderReportBundle): ReportImageAsset[] {
+  const assets = [...(bundle.publicAssets ?? []), ...(bundle.assets ?? [])];
+  const deduped = new Map<string, ReportImageAsset>();
+  for (const asset of assets) {
+    if (!asset?.publicUrl) continue;
+    const haystack = `${asset.contentType ?? ""} ${asset.fileName ?? ""} ${asset.id ?? ""}`.toLowerCase();
+    if (!haystack.includes("image") && !/\.(png|jpe?g|webp)$/i.test(asset.publicUrl)) continue;
+    deduped.set(asset.publicUrl, asset as ReportImageAsset);
+  }
+  return Array.from(deduped.values());
+}
+
+function findReportImage(assets: ReturnType<typeof reportImageAssets>, terms: string[]) {
+  const normalizedTerms = terms.map((term) => term.toLowerCase());
+  return assets.find((asset) => {
+    const haystack = `${asset.id ?? ""} ${asset.fileName ?? ""} ${asset.storageKey ?? ""}`.toLowerCase();
+    return normalizedTerms.every((term) => haystack.includes(term));
+  });
 }
 
 export default function AiGraderReportViewerPage() {
@@ -42,6 +63,20 @@ export default function AiGraderReportViewerPage() {
   const compsContract = productionRelease?.ebayCompsContract;
   const isSampleFallback = !persistedBundle && bundle.reportStatus === "missing_report_data";
   const reportIsFinal = productionRelease?.finalGradeComputed === true;
+  const images = reportImageAssets(bundle);
+  const frontTrueView =
+    findReportImage(images, ["front", "all-on", "portrait"]) ??
+    findReportImage(images, ["front", "accepted"]) ??
+    findReportImage(images, ["front"]);
+  const backTrueView =
+    findReportImage(images, ["back", "all-on", "portrait"]) ??
+    findReportImage(images, ["back", "accepted"]) ??
+    findReportImage(images, ["back"]);
+  const galleryImages = [
+    frontTrueView,
+    backTrueView,
+    ...images.filter((asset) => asset.publicUrl !== frontTrueView?.publicUrl && asset.publicUrl !== backTrueView?.publicUrl),
+  ].filter((asset): asset is ReportImageAsset => Boolean(asset)).slice(0, 36);
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -104,15 +139,39 @@ export default function AiGraderReportViewerPage() {
             </p>
           </div>
           <div className="card-stage" aria-label="front card visual placeholder">
-            <div className="card-visual">
-              <span>Front True View</span>
-              <em>Basler analysis imagery</em>
-            </div>
+            {frontTrueView?.publicUrl ? (
+              <img className="card-photo" src={frontTrueView.publicUrl} alt="Front true view evidence" />
+            ) : (
+              <div className="card-visual">
+                <span>Front True View</span>
+                <em>Basler analysis imagery unavailable</em>
+              </div>
+            )}
             <div className="callout c1">Centering {scoreText(finalGrade?.elements.centering?.score ?? story?.elementScores?.centering?.score)}</div>
             <div className="callout c2">Corners {scoreText(finalGrade?.elements.corners?.score ?? story?.elementScores?.corners?.score)}</div>
             <div className="callout c3">Edges {scoreText(finalGrade?.elements.edges?.score ?? story?.elementScores?.edges?.score)}</div>
             <div className="callout c4">Surface {scoreText(finalGrade?.elements.surface?.score ?? story?.elementScores?.surface?.score)}</div>
           </div>
+        </section>
+
+        <section className="evidence-gallery">
+          <div className="section-head">
+            <p className="eyebrow">Published Evidence Images</p>
+            <h2>Front/back Basler evidence and report artifacts</h2>
+            <p>{images.length ? `${images.length} image asset(s) are attached to this production report.` : "No public image assets are attached to this report bundle."}</p>
+          </div>
+          {galleryImages.length ? (
+            <div className="image-grid">
+              {galleryImages.map((asset) => (
+                <figure key={asset.publicUrl}>
+                  <img src={asset.publicUrl} alt={asset.fileName ?? asset.id ?? "AI Grader evidence image"} loading="lazy" />
+                  <figcaption>{asset.fileName ?? asset.id ?? "evidence image"}</figcaption>
+                </figure>
+              ))}
+            </div>
+          ) : (
+            <div className="missing-assets">Published report bundle has no rendered image assets.</div>
+          )}
         </section>
 
         {productionRelease ? (
@@ -236,10 +295,14 @@ export default function AiGraderReportViewerPage() {
               ))}
             </aside>
             <div className="lab-canvas">
-              <div className="viewer-card">
-                <span>True View</span>
-                <strong>{bundle.visionLab.trueViewRefs.length ? "Front/back imagery referenced" : "True View unavailable"}</strong>
-              </div>
+              {frontTrueView?.publicUrl ? <img className="lab-image" src={frontTrueView.publicUrl} alt="Vision Lab front true view" /> : null}
+              {backTrueView?.publicUrl ? <img className="lab-image back" src={backTrueView.publicUrl} alt="Vision Lab back true view" /> : null}
+              {!frontTrueView?.publicUrl && !backTrueView?.publicUrl ? (
+                <div className="viewer-card">
+                  <span>True View</span>
+                  <strong>{bundle.visionLab.trueViewRefs.length ? "Front/back imagery referenced" : "True View unavailable"}</strong>
+                </div>
+              ) : null}
               <div className="marker">Surface candidate</div>
             </div>
             <aside className="evidence">
@@ -311,6 +374,8 @@ export default function AiGraderReportViewerPage() {
             <dd>{bundle.evidenceReferences.frontEvidenceRefs.join(", ") || "missing"}</dd>
             <dt>Back evidence</dt>
             <dd>{bundle.evidenceReferences.backEvidenceRefs.join(", ") || "missing"}</dd>
+            <dt>Published image assets</dt>
+            <dd>{images.length ? `${images.length} image(s)` : "missing"}</dd>
             <dt>Ruler calibration</dt>
             <dd>{JSON.stringify(bundle.rulerCalibration ?? {})}</dd>
             <dt>Final/certified claims</dt>
@@ -418,6 +483,7 @@ export default function AiGraderReportViewerPage() {
         .grade-panel,
         .card-stage,
         .production,
+        .evidence-gallery,
         .summary article,
         .vision-lab,
         .elements,
@@ -483,6 +549,15 @@ export default function AiGraderReportViewerPage() {
           font-style: normal;
           color: #5d5750;
         }
+        .card-photo {
+          width: min(520px, 72%);
+          max-height: 470px;
+          object-fit: contain;
+          border: 1px solid rgba(10, 10, 10, 0.18);
+          border-radius: 8px;
+          background: #111;
+          box-shadow: 0 30px 80px rgba(0, 0, 0, 0.18);
+        }
         .callout {
           position: absolute;
           width: 160px;
@@ -504,6 +579,45 @@ export default function AiGraderReportViewerPage() {
         }
         .production {
           padding: 24px;
+        }
+        .evidence-gallery {
+          padding: 24px;
+        }
+        .image-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+          gap: 14px;
+        }
+        .image-grid figure {
+          margin: 0;
+          border: 1px solid rgba(26, 24, 20, 0.1);
+          border-radius: 8px;
+          overflow: hidden;
+          background: #171614;
+        }
+        .image-grid img {
+          display: block;
+          width: 100%;
+          aspect-ratio: 4 / 3;
+          object-fit: contain;
+          background: #111;
+        }
+        .image-grid figcaption {
+          min-height: 38px;
+          padding: 8px;
+          color: #554e42;
+          background: #fffaf0;
+          font-size: 11px;
+          line-height: 1.25;
+          overflow-wrap: anywhere;
+        }
+        .missing-assets {
+          border: 1px dashed rgba(142, 45, 45, 0.4);
+          border-radius: 8px;
+          padding: 18px;
+          color: #8e2d2d;
+          background: #fff4f4;
+          font-weight: 800;
         }
         .production-grid,
         .gate-list {
@@ -619,6 +733,20 @@ export default function AiGraderReportViewerPage() {
           position: relative;
           display: grid;
           place-items: center;
+        }
+        .lab-image {
+          position: absolute;
+          inset: 24px auto 24px 32px;
+          width: min(46%, 440px);
+          height: calc(100% - 48px);
+          object-fit: contain;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          border-radius: 8px;
+          background: #10100f;
+        }
+        .lab-image.back {
+          left: auto;
+          right: 32px;
         }
         .viewer-card {
           width: min(250px, 48vw);
@@ -746,6 +874,18 @@ export default function AiGraderReportViewerPage() {
           }
           .card-visual {
             margin: 0 auto 12px;
+          }
+          .card-photo {
+            display: block;
+            width: 100%;
+            margin: 0 auto 12px;
+          }
+          .lab-image,
+          .lab-image.back {
+            position: static;
+            width: 100%;
+            height: auto;
+            margin-bottom: 12px;
           }
         }
       `}</style>

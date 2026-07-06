@@ -17,9 +17,9 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     requireAdminSession,
     requireUserSession,
     publicUrlFor,
-    uploadArtifact: async ({ storageKey, body, contentType }) => ({
+    uploadArtifact: async ({ storageKey, body, bodyEncoding, contentType }) => ({
       storageKey,
-      publicUrl: await uploadBuffer(storageKey, Buffer.from(body), contentType),
+      publicUrl: await uploadBuffer(storageKey, Buffer.from(body, bodyEncoding === "base64" ? "base64" : "utf8"), contentType),
     }),
     persist: persistProductionReleaseRuntime,
     listHistory: listProductionReportHistoryRuntime,

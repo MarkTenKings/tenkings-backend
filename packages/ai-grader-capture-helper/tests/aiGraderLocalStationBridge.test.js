@@ -349,6 +349,126 @@ test("station bridge preview status and stream are token-gated and local-only", 
   }
 });
 
+test("station bridge live lighting endpoints are token-gated and validate duty and channels", async () => {
+  const token = "local-station-token-lighting";
+  const started = await startAiGraderLocalStationBridgeHttpServer({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 0,
+    stationToken: token,
+    allowedOrigins: ["https://collect.tenkings.co"],
+    outputDir: outputDir(`http-lighting-${Date.now()}`),
+  });
+  const headers = {
+    Origin: "https://collect.tenkings.co",
+    "x-ai-grader-station-token": token,
+    "content-type": "application/json",
+  };
+  try {
+    const unauthorizedStatus = await fetch(`${started.url}/lighting/status`, {
+      headers: { Origin: "https://collect.tenkings.co" },
+    });
+    assert.equal(unauthorizedStatus.status, 401);
+    await unauthorizedStatus.text();
+
+    const unauthorizedApply = await fetch(`${started.url}/lighting/apply`, {
+      method: "POST",
+      headers: { Origin: "https://collect.tenkings.co", "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true, dutyPercent: 1.2, channels: [1] }),
+    });
+    assert.equal(unauthorizedApply.status, 401);
+    await unauthorizedApply.text();
+
+    const status = await fetch(`${started.url}/lighting/status`, { headers });
+    assert.equal(status.status, 200);
+    const statusBody = await status.json();
+    assert.equal(statusBody.result.localOnly, true);
+    assert.equal(statusBody.result.tokenRequired, true);
+    assert.equal(statusBody.result.safety.publicRouteExposed, false);
+    assert.equal(statusBody.result.safety.productionServiceTokenUsed, false);
+    assert.equal(statusBody.result.safety.maxDutyPercent, 5);
+
+    const applyBeforeSession = await fetch(`${started.url}/lighting/apply`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ enabled: true, dutyPercent: 1.2, channels: [1, 2] }),
+    });
+    assert.equal(applyBeforeSession.status, 400);
+
+    const startSession = await fetch(`${started.url}/actions/start-session`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    assert.equal(startSession.status, 200);
+
+    const highDuty = await fetch(`${started.url}/lighting/apply`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ enabled: true, dutyPercent: 5.1, channels: [1, 2] }),
+    });
+    assert.equal(highDuty.status, 400);
+    assert.match(await highDuty.text(), /0 to 5 percent/);
+
+    const badChannels = await fetch(`${started.url}/lighting/apply`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ enabled: true, dutyPercent: 1.2, channels: [1, 1] }),
+    });
+    assert.equal(badChannels.status, 400);
+    assert.match(await badChannels.text(), /channels/);
+
+    const applied = await fetch(`${started.url}/lighting/apply`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ enabled: true, dutyPercent: 1.4, channels: [1, 3, 5] }),
+    });
+    assert.equal(applied.status, 200);
+    const appliedBody = await applied.json();
+    assert.equal(appliedBody.operation, "lighting-apply");
+    assert.equal(appliedBody.result.status, "on");
+    assert.equal(appliedBody.result.applied.actualLeimacPwmStep, 14);
+    assert.deepEqual(appliedBody.result.applied.channels, [1, 3, 5]);
+
+    const heartbeat = await fetch(`${started.url}/lighting/heartbeat`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ reason: "test heartbeat" }),
+    });
+    assert.equal(heartbeat.status, 200);
+    const heartbeatBody = await heartbeat.json();
+    assert.ok(heartbeatBody.result.watchdog.expiresAt);
+
+    const accepted = await fetch(`${started.url}/lighting/accept`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ dutyPercent: 1.4, channels: [1, 3, 5], exposureUs: 47000, gain: 0 }),
+    });
+    assert.equal(accepted.status, 200);
+    const stationStatus = await fetch(`${started.url}/status`, { headers });
+    const stationStatusBody = await stationStatus.json();
+    assert.equal(stationStatusBody.result.acceptedProfile.source, "browser_live_tuning");
+    assert.deepEqual(stationStatusBody.result.acceptedProfile.channels, [1, 3, 5]);
+    assert.equal(stationStatusBody.result.acceptedProfile.dutyPercent, 1.4);
+
+    const safeOff = await fetch(`${started.url}/lighting/safe-off`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ reason: "test all off" }),
+    });
+    assert.equal(safeOff.status, 200);
+    const safeOffBody = await safeOff.json();
+    assert.equal(safeOffBody.result.applied.enabled, false);
+    assert.equal(safeOffBody.result.status, "safe_off");
+  } finally {
+    if (typeof started.server.closeAllConnections === "function") {
+      started.server.closeAllConnections();
+    }
+    await closeServer(started.server);
+  }
+});
+
 test("real station command plan still uses full forensic front/back evidence packages", () => {
   const plan = buildAiGraderStationRealCommandPlan({
     outputDir: outputDir("forensic-plan"),
@@ -467,6 +587,59 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   const release = JSON.parse(fs.readFileSync(status.outputs.productionReleasePath, "utf8"));
   assert.equal(release.databaseIntegration.productionDbWritesPerformed, false);
   assert.equal(release.storageIntegration.uploadPerformed, false);
+});
+
+test("browser live lighting safe-offs on capture start and records safety event", async () => {
+  const service = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`lighting-capture-safeoff-${Date.now()}`),
+  }));
+
+  await service.action("start-session");
+  await service.applyLiveLighting({ enabled: true, dutyPercent: 1.2, channels: [1, 2, 3] });
+  assert.equal(service.status().liveLighting.applied.enabled, true);
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  const status = await service.action("capture-front");
+
+  assert.equal(status.liveLighting.applied.enabled, false);
+  assert.equal(status.liveLighting.safetyEvents.some((event) => event.type === "capture_start_safe_off" && event.ok), true);
+  const sessionManifest = JSON.parse(fs.readFileSync(status.outputs.manifestPath, "utf8"));
+  assert.equal(sessionManifest.liveLighting.applied.enabled, false);
+  assert.equal(sessionManifest.liveLighting.safetyEvents.some((event) => event.type === "capture_start_safe_off"), true);
+});
+
+test("accepted browser live lighting profile is passed to warm capture", async () => {
+  const warm = makeFakeWarmRunner();
+  const runner = {
+    async run(step) {
+      if (step.id === "unified_report") {
+        return {
+          stepId: step.id,
+          ok: true,
+          exitCode: 0,
+          payload: { report: { packageDir: "unified-report", reportPath: "unified-report/provisional-diagnostic-report.html" } },
+        };
+      }
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+    },
+  };
+  const service = new AiGraderLocalStationBridgeService(realConfig({
+    outputDir: outputDir(`lighting-accepted-${Date.now()}`),
+  }), runner, warm.runner);
+
+  await service.action("start-session");
+  await service.acceptLiveLightingForCapture({ dutyPercent: 1.7, channels: [2, 4, 6, 8], exposureUs: 46000, gain: 0 });
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  const status = await service.action("capture-front");
+
+  assert.equal(status.acceptedProfile.source, "browser_live_tuning");
+  assert.equal(status.acceptedProfile.dutyPercent, 1.7);
+  assert.deepEqual(status.acceptedProfile.channels, [2, 4, 6, 8]);
+  assert.equal(warm.calls[0].type, "capture");
+  assert.equal(warm.calls[0].input.activeLightingProfile.profileSource, "browser_live_tuning");
+  assert.equal(warm.calls[0].input.activeLightingProfile.selectedDutyPercent, 1.7);
+  assert.deepEqual(warm.calls[0].input.activeLightingProfile.selectedChannels, [2, 4, 6, 8]);
 });
 
 test("real station bridge uses warm full forensic runner by default with fake runner", async () => {

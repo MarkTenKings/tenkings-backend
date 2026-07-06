@@ -87,9 +87,18 @@ function fixtureReportDir() {
       2
     )
   );
-  fs.writeFileSync(path.join(dir, "provisional-diagnostic-report.html"), "<html><body>Provisional Diagnostic - Not Certified - No Final Grade</body></html>");
   fs.mkdirSync(path.join(dir, "front"));
   fs.mkdirSync(path.join(dir, "back"));
+  fs.writeFileSync(path.join(dir, "front", "front-all-on-portrait-display.png"), Buffer.from("front-image"));
+  fs.writeFileSync(path.join(dir, "back", "back-all-on-portrait-display.png"), Buffer.from("back-image"));
+  fs.writeFileSync(path.join(dir, "back-surface-intelligence-v0-heatmap.png"), Buffer.from("heatmap-image"));
+  fs.writeFileSync(
+    path.join(dir, "provisional-diagnostic-report.html"),
+    `<html><body>Provisional Diagnostic - Not Certified - No Final Grade
+<img src="${path.join(dir, "front", "front-all-on-portrait-display.png")}" alt="front">
+<img src="${path.join(dir, "back", "back-all-on-portrait-display.png")}" alt="back">
+</body></html>`
+  );
   return dir;
 }
 
@@ -103,12 +112,24 @@ test("report bundle exports web-ready provisional contract without final/certifi
   assert.equal(bundle.provisionalGrade?.overall, 8.5);
   assert.equal(bundle.visionLab.available, true);
   assert.equal(bundle.visionLab.candidateCount, 1);
+  assert.equal(bundle.assets.some((asset) => asset.kind === "image" && asset.fileName === "front-all-on-portrait-display.png"), true);
   assert.equal(bundle.finalGradeComputed, false);
   assert.equal(bundle.certifiedClaim, false);
   assert.equal(bundle.labelGenerated, false);
   assert.equal(bundle.qrGenerated, false);
   assert.equal(bundle.certificateGenerated, false);
   assert.match(bundle.limitations.join(" "), /No QR Certificate Yet/);
+});
+
+test("report bundle can include base64 image bodies for production publish", async () => {
+  const reportDir = fixtureReportDir();
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "fixture-report", includeAssetBodies: true });
+
+  const frontImage = bundle.assets.find((asset) => asset.kind === "image" && asset.fileName === "front-all-on-portrait-display.png");
+  assert.equal(frontImage?.contentType, "image/png");
+  assert.equal(frontImage?.bodyEncoding, "base64");
+  assert.equal(Buffer.from(frontImage?.bodyBase64 ?? "", "base64").toString("utf8"), "front-image");
+  assert.equal(frontImage?.sha256, "635c727b41c225c9496e646413781d7c3aa11874287dd7a9d584911839f42999");
 });
 
 test("report bundle writer creates bundle, asset manifest, and checksums", async () => {

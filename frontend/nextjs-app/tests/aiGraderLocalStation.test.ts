@@ -27,12 +27,17 @@ import {
 } from "../lib/server/aiGraderProductionAuth";
 import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+  acceptAiGraderLiveLightingProfile,
+  applyAiGraderLiveLighting,
+  fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
   fetchAiGraderStationReportHtml,
+  heartbeatAiGraderLiveLighting,
   normalizeAiGraderStationBridgeUrl,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
+  safeOffAiGraderLiveLighting,
   stopAiGraderStationPreview,
 } from "../lib/aiGraderStationBridgeClient";
 
@@ -91,6 +96,12 @@ test("local station contract exposes workflow status with no login, DB, or hardw
   assert.equal(status.previewStatus.localOnly, true);
   assert.equal(status.previewStatus.safety.productionServiceTokenUsed, false);
   assert.equal(status.previewStatus.safety.publicRouteExposed, false);
+  assert.equal(status.liveLighting.localOnly, true);
+  assert.equal(status.liveLighting.tokenRequired, true);
+  assert.equal(status.liveLighting.safety.publicRouteExposed, false);
+  assert.equal(status.liveLighting.safety.productionServiceTokenUsed, false);
+  assert.equal(status.liveLighting.safety.maxDutyPercent, 5);
+  assert.equal(status.bridgeContract.endpoints.some((endpoint) => endpoint.path === "/lighting/apply"), true);
   assert.equal(status.warmRunnerStatus.mode, "full_forensic");
   assert.equal(status.executionPath, "warm_full_forensic_runner");
   assert.equal(status.fallbackUsed, false);
@@ -531,6 +542,74 @@ test("production publication API uploads artifacts and persists only when env-ga
   assert.equal(calls[0], "admin");
   assert.equal(calls.at(-1), "persist");
   assert.ok(calls.some((call) => call.startsWith("upload:ai-grader/reports/sample-final-v0/report-bundle.json")));
+});
+
+test("production publication API uploads AI Grader evidence images from report bundle bodies", async () => {
+  const uploaded: Array<{ storageKey: string; contentType: string; bodyEncoding?: string; bodyText: string }> = [];
+  const imageBody = Buffer.from("front-image").toString("base64");
+  const reportBundle = {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    assets: [
+      {
+        id: "front/front-all-on-portrait-display.png",
+        kind: "image",
+        fileName: "front-all-on-portrait-display.png",
+        localPath: "C:\\TenKings\\capture-data\\front\\front-all-on-portrait-display.png",
+        contentType: "image/png",
+        bodyEncoding: "base64",
+        bodyBase64: imageBody,
+      },
+    ],
+  };
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async uploadArtifact(input) {
+      uploaded.push({
+        storageKey: input.storageKey,
+        contentType: input.contentType,
+        bodyEncoding: input.bodyEncoding,
+        bodyText: Buffer.from(input.body, input.bodyEncoding === "base64" ? "base64" : "utf8").toString("utf8"),
+      });
+      return { storageKey: input.storageKey, publicUrl: `https://cdn.tenkings.test/${input.storageKey}` };
+    },
+    async persist(input) {
+      return {
+        gradingSessionId: input.reportBundle.gradingSessionId,
+        reportId: input.productionRelease.reportId,
+        publicationStatus: input.publicationStatus,
+        storagePlan: input.storagePlan,
+        evidenceAssetCount: input.storagePlan.artifacts.length,
+        cardAssetUpdatedCount: 0,
+        itemUpdatedCount: 0,
+      } as any;
+    },
+  });
+
+  const req = mockRequest("POST", ["publish"]);
+  req.body = {
+    publicationStatus: "published",
+    reportBundle,
+    productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 200);
+  const imageUpload = uploaded.find((upload) => upload.contentType === "image/png");
+  assert.equal(imageUpload?.bodyEncoding, "base64");
+  assert.equal(imageUpload?.bodyText, "front-image");
+  assert.match(imageUpload?.storageKey ?? "", /assets\/001-front-all-on-portrait-display\.png/);
+  const body = res.jsonBody as { ok: boolean; result: { uploadedAssetCount: number } };
+  assert.equal(body.result.uploadedAssetCount, 8);
 });
 
 test("production history API returns persisted report stats when env-gated", async () => {
@@ -986,6 +1065,49 @@ test("browser station bridge client opens local report HTML with station token o
 
 test("browser station bridge preview status and stream use local station token only", async () => {
   const frameBytes = new TextEncoder().encode("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
+  const lightingResult = {
+    status: "on",
+    mode: "browser_live_tuning",
+    localOnly: true,
+    tokenRequired: true,
+    controlsEnabled: true,
+    previewRequired: true,
+    profile: {
+      enabled: true,
+      dutyPercent: 1.4,
+      actualLeimacPwmStep: 14,
+      channels: [1, 3, 5],
+      source: "browser_live_tuning",
+      acceptedForCapture: true,
+    },
+    applied: {
+      enabled: true,
+      dutyPercent: 1.4,
+      actualLeimacPwmStep: 14,
+      channels: [1, 3, 5],
+      lastApplyLatencyMs: 24,
+    },
+    watchdog: { enabled: true, timeoutMs: 15000 },
+    connection: { state: "mock", persistentLeimacSession: false },
+    safety: {
+      publicRouteExposed: false,
+      requiresStationToken: true,
+      bindsLoopbackOnly: true,
+      productionServiceTokenUsed: false,
+      lowDutyCapEnforced: true,
+      maxDutyPercent: 5,
+      safeOffOnAllOff: true,
+      safeOffOnDisconnect: true,
+      safeOffOnTimeout: true,
+      safeOffOnCaptureStart: true,
+      safeOffOnCaptureFailure: true,
+      safeOffOnSessionEnd: true,
+      persistentLeimacSaved: false,
+      arbitraryWritesAllowed: false,
+    },
+    safetyEvents: [],
+    note: "test",
+  };
   const fetchImpl: typeof fetch = async (input, init) => {
     const headers = init?.headers as Record<string, string>;
     assert.equal(headers["x-ai-grader-station-token"], "browser-local-station-token");
@@ -1048,6 +1170,24 @@ test("browser station bridge preview status and stream use local station token o
         },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
+    if (String(input).includes("/lighting/")) {
+      if (String(input).endsWith("/lighting/status")) {
+        assert.equal(init?.method, "GET");
+      } else {
+        assert.equal(init?.method, "POST");
+      }
+      return new Response(JSON.stringify({
+        ok: true,
+        result: String(input).endsWith("/lighting/safe-off")
+          ? {
+              ...lightingResult,
+              status: "safe_off",
+              profile: { ...lightingResult.profile, enabled: false },
+              applied: { ...lightingResult.applied, enabled: false, dutyPercent: 0, actualLeimacPwmStep: 0, channels: [] },
+            }
+          : lightingResult,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     assert.equal(String(input), "http://127.0.0.1:47652/preview/stream");
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -1077,6 +1217,51 @@ test("browser station bridge preview status and stream use local station token o
   }, fetchImpl);
   assert.equal(stoppedPreview.cameraOwnership, "released");
 
+  const lightingStatus = await fetchAiGraderLiveLightingStatus({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+  }, fetchImpl);
+  assert.equal(lightingStatus.localOnly, true);
+  assert.equal(lightingStatus.tokenRequired, true);
+  assert.equal(lightingStatus.safety.productionServiceTokenUsed, false);
+  assert.equal(lightingStatus.safety.maxDutyPercent, 5);
+
+  const appliedLighting = await applyAiGraderLiveLighting({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    enabled: true,
+    dutyPercent: 1.4,
+    channels: [1, 3, 5],
+    reason: "test live tuning apply",
+  }, fetchImpl);
+  assert.deepEqual(appliedLighting.applied.channels, [1, 3, 5]);
+  assert.equal(appliedLighting.applied.actualLeimacPwmStep, 14);
+
+  const heartbeatLighting = await heartbeatAiGraderLiveLighting({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    reason: "test heartbeat",
+  }, fetchImpl);
+  assert.equal(heartbeatLighting.mode, "browser_live_tuning");
+
+  const acceptedLighting = await acceptAiGraderLiveLightingProfile({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    dutyPercent: 1.4,
+    channels: [1, 3, 5],
+    exposureUs: 47000,
+    gain: 0,
+  }, fetchImpl);
+  assert.equal(acceptedLighting.profile.acceptedForCapture, true);
+
+  const safeOffLighting = await safeOffAiGraderLiveLighting({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    reason: "test all off",
+  }, fetchImpl);
+  assert.equal(safeOffLighting.applied.enabled, false);
+  assert.equal(safeOffLighting.status, "safe_off");
+
   const frames: Array<{ frameIndex?: number; contentType: string; byteLength: number }> = [];
   await openAiGraderStationPreviewStream(
     { baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL, stationToken: "browser-local-station-token" },
@@ -1094,6 +1279,8 @@ test("public AI Grader report surfaces do not expose preview endpoints or hardwa
   const publicBundleText = JSON.stringify(getAiGraderReportBundle("sample-final-v0"));
   assert.equal(publicBundleText.includes("/preview/stream"), false);
   assert.equal(publicBundleText.includes("x-ai-grader-station-token"), false);
+  assert.equal(publicBundleText.includes("/lighting/"), false);
+  assert.equal(publicBundleText.includes("lighting-apply"), false);
   assert.equal(publicBundleText.includes("hardware controls"), false);
 });
 

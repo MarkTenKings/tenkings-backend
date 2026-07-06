@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -21,6 +21,15 @@ import {
   type FixedRigWarmEvidencePackageResult,
   type FixedRigWarmSideCaptureBatch,
 } from "./baslerFixedRigV1";
+import {
+  buildLeimacIdmuSafeOffFrames,
+  composeLeimacIdmuExplicitChannelWriteFrame,
+  leimacIdmuDutyPercentToSteps,
+  LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
+  LeimacIdmuClient,
+  type LeimacIdmuWriteFrame,
+  type LeimacIdmuWriteResult,
+} from "./leimacIdmuClient";
 import {
   buildAiGraderStationRealCommandPlan,
   createAiGraderStationCliRunner,
@@ -45,6 +54,7 @@ export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
 const PREVIEW_CAMERA_SETTLE_MS = 350;
+const LIVE_LIGHTING_WATCHDOG_MS = 15000;
 
 export type AiGraderLocalStationBridgeMode = "mock" | "real";
 
@@ -91,7 +101,7 @@ export interface AiGraderLocalStationAcceptedProfile {
   exposureUs: number;
   gain: number;
   channels: number[];
-  source: "operator_preview" | "default" | "cli_override" | "bridge_operator";
+  source: "operator_preview" | "browser_live_tuning" | "default" | "cli_override" | "bridge_operator";
   actualLeimacPwmStep: number;
   acceptedAt?: string;
 }
@@ -339,6 +349,7 @@ export interface AiGraderLocalStationBridgeManifest {
     qrGenerated: boolean;
     certificateGenerated: false;
   };
+  liveLighting: AiGraderLiveLightingStatus;
   previewStatus: AiGraderLocalStationPreviewStatus;
   warmRunnerStatus: AiGraderWarmRunnerStatus;
   commandResults: AiGraderStationCommandResult[];
@@ -378,7 +389,13 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     isCalibrated: false;
   };
   bridgeContract: {
-    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "preview-stop"; hardwareAccess: boolean; description: string }>;
+    endpoints: Array<{
+      method: "GET" | "POST";
+      path: string;
+      action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "preview-stop" | "lighting-status" | "lighting-apply" | "lighting-safe-off" | "lighting-accept" | "lighting-heartbeat";
+      hardwareAccess: boolean;
+      description: string;
+    }>;
     realHardwarePending: string[];
   };
   publicViewerRoute: string;
@@ -474,6 +491,71 @@ export interface AiGraderLocalStationPreviewStatus {
   note: string;
 }
 
+export interface AiGraderLiveLightingProfile {
+  enabled: boolean;
+  dutyPercent: number;
+  actualLeimacPwmStep: number;
+  channels: number[];
+  source: "browser_live_tuning" | "default";
+  acceptedForCapture: boolean;
+  acceptedAt?: string;
+}
+
+export interface AiGraderLiveLightingSafetyEvent {
+  at: string;
+  type: "apply" | "safe_off" | "accept" | "heartbeat" | "watchdog_safe_off" | "capture_start_safe_off" | "failure_safe_off";
+  reason: string;
+  ok: boolean;
+}
+
+export interface AiGraderLiveLightingStatus {
+  status: "unavailable" | "off" | "applying" | "on" | "safe_off" | "error";
+  mode: "browser_live_tuning";
+  localOnly: true;
+  tokenRequired: true;
+  controlsEnabled: boolean;
+  previewRequired: true;
+  profile: AiGraderLiveLightingProfile;
+  applied: {
+    enabled: boolean;
+    dutyPercent: number;
+    actualLeimacPwmStep: number;
+    channels: number[];
+    appliedAt?: string;
+    lastApplyLatencyMs?: number;
+    lastResponseKinds?: Array<LeimacIdmuWriteResult["responseKind"] | "mock">;
+  };
+  watchdog: {
+    enabled: true;
+    timeoutMs: number;
+    lastHeartbeatAt?: string;
+    expiresAt?: string;
+  };
+  connection: {
+    state: "mock" | "not_configured" | "idle" | "writing" | "error";
+    persistentLeimacSession: false;
+  };
+  safety: {
+    publicRouteExposed: false;
+    requiresStationToken: true;
+    bindsLoopbackOnly: true;
+    productionServiceTokenUsed: false;
+    lowDutyCapEnforced: true;
+    maxDutyPercent: number;
+    safeOffOnAllOff: true;
+    safeOffOnDisconnect: true;
+    safeOffOnTimeout: true;
+    safeOffOnCaptureStart: true;
+    safeOffOnCaptureFailure: true;
+    safeOffOnSessionEnd: true;
+    persistentLeimacSaved: false;
+    arbitraryWritesAllowed: false;
+  };
+  safetyEvents: AiGraderLiveLightingSafetyEvent[];
+  lastError?: string;
+  note: string;
+}
+
 export interface AiGraderLocalStationReportHistoryItem {
   reportId: string;
   gradingSessionId: string;
@@ -539,6 +621,45 @@ function delay(ms: number) {
 
 function childProcessHasExited(child: ChildProcessWithoutNullStreams) {
   return child.exitCode !== null || child.signalCode !== null;
+}
+
+function stopChildProcessTree(child: ChildProcessWithoutNullStreams) {
+  if (childProcessHasExited(child)) return;
+  try { child.kill(); } catch {}
+  if (process.platform === "win32" && typeof child.pid === "number") {
+    try {
+      spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+        timeout: 5000,
+      });
+    } catch {}
+  }
+}
+
+function stopOrphanedBaslerPreviewStreams(): number {
+  if (process.platform !== "win32") return 0;
+  const command = [
+    "$matches = Get-CimInstance Win32_Process | Where-Object {",
+    "$_.ProcessId -ne $PID -and $_.CommandLine -and",
+    "$_.CommandLine -like '*basler-pylon-bridge.ps1*' -and",
+    "$_.CommandLine -like '*operator-preview-mjpeg-stream*'",
+    "};",
+    "$count = @($matches).Count;",
+    "foreach ($process in $matches) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue };",
+    "Write-Output $count",
+  ].join(" ");
+  try {
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 8000,
+    });
+    const count = Number(String(result.stdout ?? "").trim().split(/\s+/).pop() ?? "0");
+    return Number.isFinite(count) ? count : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function waitForChildProcessClose(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
@@ -679,6 +800,38 @@ function roundDuty(input: number) {
   return { dutyPercent: step / 10, actualLeimacPwmStep: step };
 }
 
+function normalizeLightingChannels(input: unknown, options: { allowEmpty: boolean }): number[] {
+  const channels = Array.isArray(input) ? input : [1, 2, 3, 4, 5, 6, 7, 8];
+  if (
+    channels.some((channel) => !Number.isInteger(channel) || channel < 1 || channel > 8) ||
+    new Set(channels).size !== channels.length ||
+    (!options.allowEmpty && channels.length === 0)
+  ) {
+    throw new Error(options.allowEmpty
+      ? "AI Grader live lighting channels must be unique integers from 1 to 8."
+      : "AI Grader capture profile channels must include unique integers from 1 to 8.");
+  }
+  return [...channels].sort((a, b) => a - b);
+}
+
+function validateLiveLightingRequest(value: JsonBody | undefined, current: AiGraderLiveLightingStatus): AiGraderLiveLightingProfile {
+  const requestedEnabled = typeof value?.enabled === "boolean" ? value.enabled : current.profile.enabled;
+  const requestedDuty = typeof value?.dutyPercent === "number" ? value.dutyPercent : current.profile.dutyPercent;
+  if (!Number.isFinite(requestedDuty) || requestedDuty < 0 || requestedDuty > LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT) {
+    throw new Error(`AI Grader live lighting duty must be from 0 to ${LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT} percent.`);
+  }
+  const duty = roundDuty(requestedDuty);
+  const channels = normalizeLightingChannels(value?.channels, { allowEmpty: true });
+  return {
+    enabled: requestedEnabled && duty.dutyPercent > 0 && channels.length > 0,
+    dutyPercent: duty.dutyPercent,
+    actualLeimacPwmStep: duty.actualLeimacPwmStep,
+    channels,
+    source: "browser_live_tuning",
+    acceptedForCapture: false,
+  };
+}
+
 function defaultProfile(config: Pick<AiGraderLocalStationBridgeConfig, "duty" | "exposureUs" | "gain">): AiGraderLocalStationAcceptedProfile {
   const duty = roundDuty(config.duty);
   return {
@@ -804,6 +957,7 @@ function newManifest(config: AiGraderLocalStationBridgeConfig): AiGraderLocalSta
       qrGenerated: false,
       certificateGenerated: false,
     },
+    liveLighting: defaultLiveLightingStatus(config),
     previewStatus: defaultPreviewStatus(config),
     warmRunnerStatus: defaultWarmRunnerStatus(config),
     commandResults: [],
@@ -931,6 +1085,59 @@ function defaultPreviewStatus(config: AiGraderLocalStationBridgeConfig): AiGrade
   };
 }
 
+function defaultLiveLightingStatus(config: AiGraderLocalStationBridgeConfig): AiGraderLiveLightingStatus {
+  const profile = defaultProfile(config);
+  return {
+    status: config.mode === "real" && config.leimacHost ? "off" : config.mode === "mock" ? "off" : "unavailable",
+    mode: "browser_live_tuning",
+    localOnly: true,
+    tokenRequired: true,
+    controlsEnabled: config.mode === "mock" || Boolean(config.leimacHost),
+    previewRequired: true,
+    profile: {
+      enabled: false,
+      dutyPercent: profile.dutyPercent,
+      actualLeimacPwmStep: profile.actualLeimacPwmStep,
+      channels: profile.channels,
+      source: "default",
+      acceptedForCapture: false,
+    },
+    applied: {
+      enabled: false,
+      dutyPercent: 0,
+      actualLeimacPwmStep: 0,
+      channels: [],
+    },
+    watchdog: {
+      enabled: true,
+      timeoutMs: LIVE_LIGHTING_WATCHDOG_MS,
+    },
+    connection: {
+      state: config.mode === "mock" ? "mock" : config.leimacHost ? "idle" : "not_configured",
+      persistentLeimacSession: false,
+    },
+    safety: {
+      publicRouteExposed: false,
+      requiresStationToken: true,
+      bindsLoopbackOnly: true,
+      productionServiceTokenUsed: false,
+      lowDutyCapEnforced: true,
+      maxDutyPercent: LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
+      safeOffOnAllOff: true,
+      safeOffOnDisconnect: true,
+      safeOffOnTimeout: true,
+      safeOffOnCaptureStart: true,
+      safeOffOnCaptureFailure: true,
+      safeOffOnSessionEnd: true,
+      persistentLeimacSaved: false,
+      arbitraryWritesAllowed: false,
+    },
+    safetyEvents: [],
+    note:
+      "Browser live lighting tuning is local-only through the paired Dell bridge. Live edits command Leimac for visual tuning only until the operator accepts the profile for capture.",
+  };
+}
+
 function mergeConfirmations(
   manifest: AiGraderLocalStationBridgeManifest,
   confirmations: Partial<AiGraderLocalStationBridgeManifest["confirmations"]> | undefined
@@ -954,21 +1161,14 @@ function validateProfile(profile: Partial<AiGraderLocalStationAcceptedProfile> |
   }
   const gain = typeof profile.gain === "number" ? profile.gain : current.gain;
   if (!Number.isFinite(gain) || gain < 0) throw new Error("Accepted AI Grader station gain must be non-negative.");
-  const channels = Array.isArray(profile.channels) ? profile.channels : current.channels;
-  if (
-    channels.length === 0 ||
-    channels.some((channel) => !Number.isInteger(channel) || channel < 1 || channel > 8) ||
-    new Set(channels).size !== channels.length
-  ) {
-    throw new Error("Accepted AI Grader station channels must be unique integers from 1 to 8.");
-  }
+  const channels = normalizeLightingChannels(Array.isArray(profile.channels) ? profile.channels : current.channels, { allowEmpty: false });
   const duty = roundDuty(requestedDuty);
   return {
     dutyPercent: duty.dutyPercent,
     actualLeimacPwmStep: duty.actualLeimacPwmStep,
     exposureUs,
     gain,
-    channels: [...channels].sort((a, b) => a - b),
+    channels,
     source: profile.source ?? "bridge_operator",
     acceptedAt: new Date().toISOString(),
   };
@@ -978,7 +1178,13 @@ function buildFixedRigProfile(profile: AiGraderLocalStationAcceptedProfile): Fix
   return buildFixedRigActiveLightingProfile({
     selectedDutyPercent: profile.dutyPercent,
     selectedChannels: profile.channels,
-    profileSource: profile.source === "default" ? "default" : "operator_preview",
+    profileSource: profile.source === "browser_live_tuning"
+      ? "browser_live_tuning"
+      : profile.source === "default"
+        ? "default"
+        : profile.source === "cli_override"
+          ? "cli_override"
+          : "operator_preview",
     acceptedAt: profile.acceptedAt,
   });
 }
@@ -1107,11 +1313,22 @@ function reportRoute(reportId: string | undefined) {
 }
 
 function bridgeEndpoints() {
-    const actions: Array<{ method: "GET" | "POST"; action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "preview-stop"; hardwareAccess: boolean; description: string; path?: string }> = [
+    const actions: Array<{
+      method: "GET" | "POST";
+      action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "preview-stop" | "lighting-status" | "lighting-apply" | "lighting-safe-off" | "lighting-accept" | "lighting-heartbeat";
+      hardwareAccess: boolean;
+      description: string;
+      path?: string;
+    }> = [
     { method: "GET", action: "status", hardwareAccess: false, description: "Read current local station bridge status." },
     { method: "GET", action: "preview-status", path: "/preview/status", hardwareAccess: false, description: "Read embedded browser preview stream status." },
     { method: "GET", action: "preview-stream", path: "/preview/stream", hardwareAccess: true, description: "Open token-gated local MJPEG browser preview stream." },
     { method: "POST", action: "preview-stop", path: "/preview/stop", hardwareAccess: true, description: "Stop embedded browser preview and wait for Basler camera release before capture." },
+    { method: "GET", action: "lighting-status", path: "/lighting/status", hardwareAccess: false, description: "Read browser live Leimac lighting tuning status." },
+    { method: "POST", action: "lighting-apply", path: "/lighting/apply", hardwareAccess: true, description: "Apply low-duty browser live Leimac lighting for preview tuning." },
+    { method: "POST", action: "lighting-safe-off", path: "/lighting/safe-off", hardwareAccess: true, description: "Safe-off browser live Leimac lighting." },
+    { method: "POST", action: "lighting-accept", path: "/lighting/accept", hardwareAccess: false, description: "Accept current browser live lighting profile for warm capture." },
+    { method: "POST", action: "lighting-heartbeat", path: "/lighting/heartbeat", hardwareAccess: false, description: "Keep browser live lighting watchdog alive while the operator page is connected." },
     { method: "POST", action: "start-session", hardwareAccess: false, description: "Create a local station session folder and manifest." },
     { method: "POST", action: "confirm-light-idle-off", hardwareAccess: false, description: "Record operator light-idle/off confirmation." },
     { method: "POST", action: "confirm-fixture-rulers", hardwareAccess: false, description: "Record operator fixture/ruler visibility confirmation." },
@@ -1465,6 +1682,8 @@ export class AiGraderLocalStationBridgeService {
   private previewStop?: (reason: string) => void;
   private captureLock?: { owner: string; acquiredAt: string };
   private warmProcessingJobs: Partial<Record<AiGraderWarmRunnerSide, Promise<FixedRigWarmEvidencePackageResult>>> = {};
+  private liveLightingWatchdog?: ReturnType<typeof setTimeout>;
+  private leimacClient?: LeimacIdmuClient;
 
   constructor(
     config: AiGraderLocalStationBridgeConfig,
@@ -1534,6 +1753,10 @@ export class AiGraderLocalStationBridgeService {
     return this.manifest.previewStatus;
   }
 
+  liveLightingStatus(): AiGraderLiveLightingStatus {
+    return this.manifest.liveLighting;
+  }
+
   private updatePreviewStatus(update: Partial<AiGraderLocalStationPreviewStatus>) {
     this.manifest.previewStatus = {
       ...this.manifest.previewStatus,
@@ -1543,6 +1766,307 @@ export class AiGraderLocalStationBridgeService {
         ...(update.safety ?? {}),
       },
     };
+  }
+
+  private updateLiveLightingStatus(update: Partial<AiGraderLiveLightingStatus>) {
+    this.manifest.liveLighting = {
+      ...this.manifest.liveLighting,
+      ...update,
+      profile: {
+        ...this.manifest.liveLighting.profile,
+        ...(update.profile ?? {}),
+      },
+      applied: {
+        ...this.manifest.liveLighting.applied,
+        ...(update.applied ?? {}),
+      },
+      watchdog: {
+        ...this.manifest.liveLighting.watchdog,
+        ...(update.watchdog ?? {}),
+      },
+      connection: {
+        ...this.manifest.liveLighting.connection,
+        ...(update.connection ?? {}),
+      },
+      safety: {
+        ...this.manifest.liveLighting.safety,
+        ...(update.safety ?? {}),
+      },
+    };
+  }
+
+  private recordLiveLightingEvent(event: Omit<AiGraderLiveLightingSafetyEvent, "at">) {
+    const nextEvent = { at: new Date().toISOString(), ...event };
+    this.manifest.liveLighting.safetyEvents = [
+      ...this.manifest.liveLighting.safetyEvents.slice(-19),
+      nextEvent,
+    ];
+    this.manifest.progressLog.push(`${nextEvent.at} Browser live lighting ${event.type}: ${event.reason} (${event.ok ? "ok" : "failed"}).`);
+  }
+
+  private clearLiveLightingWatchdog() {
+    if (this.liveLightingWatchdog) {
+      clearTimeout(this.liveLightingWatchdog);
+      this.liveLightingWatchdog = undefined;
+    }
+    this.updateLiveLightingStatus({
+      watchdog: {
+        enabled: true,
+        timeoutMs: LIVE_LIGHTING_WATCHDOG_MS,
+        lastHeartbeatAt: this.manifest.liveLighting.watchdog.lastHeartbeatAt,
+        expiresAt: undefined,
+      },
+    });
+  }
+
+  private scheduleLiveLightingWatchdog(reason: string) {
+    if (this.liveLightingWatchdog) clearTimeout(this.liveLightingWatchdog);
+    const lastHeartbeatAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + LIVE_LIGHTING_WATCHDOG_MS).toISOString();
+    this.updateLiveLightingStatus({
+      watchdog: {
+        enabled: true,
+        timeoutMs: LIVE_LIGHTING_WATCHDOG_MS,
+        lastHeartbeatAt,
+        expiresAt,
+      },
+    });
+    this.liveLightingWatchdog = setTimeout(() => {
+      void this.safeOffLiveLighting(`watchdog timeout after ${reason}`, "watchdog_safe_off").catch(() => {});
+    }, LIVE_LIGHTING_WATCHDOG_MS);
+  }
+
+  private assertLiveLightingReady() {
+    if (this.captureLock) throw new Error(`AI Grader capture lock is held by ${this.captureLock.owner}; live lighting is unavailable during capture.`);
+    if (this.config.mode === "mock") return;
+    if (!this.config.apply || !this.config.markPresent || !this.config.wiringConfirmed || !this.config.leimacStatusGreen || !this.config.leimacHost) {
+      throw new Error("Browser live lighting requires the real Dell bridge to be armed with Mark/wiring/Leimac confirmations.");
+    }
+  }
+
+  private liveLeimacClient() {
+    if (this.leimacClient) return this.leimacClient;
+    if (!this.config.leimacHost) throw new Error("Browser live lighting requires a configured Leimac host.");
+    this.leimacClient = new LeimacIdmuClient({
+      host: this.config.leimacHost,
+      port: this.config.leimacPort,
+      timeoutMs: this.config.leimacTimeoutMs,
+      unit: this.config.leimacUnit,
+    });
+    return this.leimacClient;
+  }
+
+  private liveLightingFrames(profile: AiGraderLiveLightingProfile): LeimacIdmuWriteFrame[] {
+    if (!profile.enabled || profile.dutyPercent <= 0 || profile.channels.length === 0) {
+      return buildLeimacIdmuSafeOffFrames(this.config.leimacUnit ?? 1);
+    }
+    const dutySteps = leimacIdmuDutyPercentToSteps(profile.dutyPercent);
+    const dutyValue = String(dutySteps).padStart(4, "0");
+    const selected = new Set(profile.channels);
+    const channelValues = Array.from({ length: 8 }, (_, index) => {
+      const channel = index + 1;
+      return {
+        channel,
+        value: selected.has(channel) ? dutyValue : "0000",
+        meaning: selected.has(channel) ? `Browser live tuning PWM duty ${profile.dutyPercent}%` : "Off / disabled",
+      };
+    });
+    const outputValues = Array.from({ length: 8 }, (_, index) => {
+      const channel = index + 1;
+      return {
+        channel,
+        value: selected.has(channel) ? "0001" : "0000",
+        meaning: selected.has(channel) ? "Lighting output enabled for browser live tuning" : "Off / disabled",
+      };
+    });
+    return [
+      ...buildLeimacIdmuSafeOffFrames(this.config.leimacUnit ?? 1),
+      composeLeimacIdmuExplicitChannelWriteFrame({
+        name: "lightingOutputValue",
+        unit: this.config.leimacUnit ?? 1,
+        channelValues,
+      }),
+      composeLeimacIdmuExplicitChannelWriteFrame({
+        name: "lightingOutput",
+        unit: this.config.leimacUnit ?? 1,
+        channelValues: outputValues,
+      }),
+    ];
+  }
+
+  private async writeLiveLightingFrames(frames: LeimacIdmuWriteFrame[]): Promise<Array<LeimacIdmuWriteResult | { responseKind: "mock"; ok: true }>> {
+    if (this.config.mode === "mock") {
+      return frames.map(() => ({ responseKind: "mock" as const, ok: true as const }));
+    }
+    const client = this.liveLeimacClient();
+    const writes: LeimacIdmuWriteResult[] = [];
+    for (const frame of frames) {
+      const result = await client.writeAllowlistedFrame(frame);
+      writes.push(result);
+      if (!result.ok) throw new Error(result.error ?? `Leimac live lighting write ${frame.name} failed.`);
+    }
+    return writes;
+  }
+
+  async applyLiveLighting(request: JsonBody = {}): Promise<AiGraderLiveLightingStatus> {
+    this.assertLiveLightingReady();
+    if (!this.manifest.sessionId) throw new Error("Start a station session before browser live lighting tuning.");
+    const profile = validateLiveLightingRequest(request, this.manifest.liveLighting);
+    const currentApplied = this.manifest.liveLighting.applied;
+    const sameAsApplied =
+      currentApplied.enabled === profile.enabled &&
+      currentApplied.dutyPercent === profile.dutyPercent &&
+      currentApplied.channels.join(",") === profile.channels.join(",");
+
+    if (sameAsApplied) {
+      if (profile.enabled) this.scheduleLiveLightingWatchdog("no-op apply");
+      this.updateLiveLightingStatus({ profile });
+      this.recordLiveLightingEvent({ type: "heartbeat", reason: "live lighting request matched current applied state", ok: true });
+      await writeSessionManifest(this.manifest);
+      return this.liveLightingStatus();
+    }
+
+    const startedAtMs = Date.now();
+    this.updateLiveLightingStatus({
+      status: "applying",
+      profile,
+      connection: { state: this.config.mode === "mock" ? "mock" : "writing", persistentLeimacSession: false },
+      lastError: undefined,
+    });
+    try {
+      const writes = await this.writeLiveLightingFrames(this.liveLightingFrames(profile));
+      const appliedAt = new Date().toISOString();
+      const lastApplyLatencyMs = Math.max(0, Date.now() - startedAtMs);
+      this.updateLiveLightingStatus({
+        status: profile.enabled ? "on" : "safe_off",
+        applied: {
+          enabled: profile.enabled,
+          dutyPercent: profile.enabled ? profile.dutyPercent : 0,
+          actualLeimacPwmStep: profile.enabled ? profile.actualLeimacPwmStep : 0,
+          channels: profile.enabled ? profile.channels : [],
+          appliedAt,
+          lastApplyLatencyMs,
+          lastResponseKinds: writes.map((write) => write.responseKind),
+        },
+        connection: { state: this.config.mode === "mock" ? "mock" : "idle", persistentLeimacSession: false },
+      });
+      this.recordLiveLightingEvent({ type: profile.enabled ? "apply" : "safe_off", reason: String(request.reason ?? "browser live lighting apply"), ok: true });
+      if (profile.enabled) this.scheduleLiveLightingWatchdog("live lighting apply");
+      else this.clearLiveLightingWatchdog();
+      await writeSessionManifest(this.manifest);
+      return this.liveLightingStatus();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Browser live lighting apply failed.";
+      this.updateLiveLightingStatus({
+        status: "error",
+        lastError: message,
+        connection: { state: "error", persistentLeimacSession: false },
+      });
+      this.recordLiveLightingEvent({ type: "failure_safe_off", reason: message, ok: false });
+      try {
+        await this.safeOffLiveLighting("live lighting apply failure", "failure_safe_off", { force: true });
+      } catch {}
+      await writeSessionManifest(this.manifest);
+      throw error;
+    }
+  }
+
+  async heartbeatLiveLighting(reason = "browser live lighting heartbeat"): Promise<AiGraderLiveLightingStatus> {
+    if (this.manifest.liveLighting.applied.enabled) this.scheduleLiveLightingWatchdog(reason);
+    else this.updateLiveLightingStatus({ watchdog: { enabled: true, timeoutMs: LIVE_LIGHTING_WATCHDOG_MS, lastHeartbeatAt: new Date().toISOString() } });
+    this.recordLiveLightingEvent({ type: "heartbeat", reason, ok: true });
+    await writeSessionManifest(this.manifest);
+    return this.liveLightingStatus();
+  }
+
+  async acceptLiveLightingForCapture(request: JsonBody = {}): Promise<AiGraderLiveLightingStatus> {
+    if (!this.manifest.sessionId) throw new Error("Start a station session before accepting a browser live lighting profile.");
+    const profile = validateLiveLightingRequest({
+      enabled: true,
+      dutyPercent: request.dutyPercent ?? this.manifest.liveLighting.profile.dutyPercent,
+      channels: request.channels ?? this.manifest.liveLighting.profile.channels,
+    }, this.manifest.liveLighting);
+    if (!profile.enabled || profile.channels.length === 0 || profile.dutyPercent <= 0) {
+      throw new Error("Browser live lighting profile must have at least one channel and nonzero duty before it can be accepted for capture.");
+    }
+    this.manifest.acceptedProfile = validateProfile({
+      dutyPercent: profile.dutyPercent,
+      exposureUs: typeof request.exposureUs === "number" ? request.exposureUs : this.manifest.acceptedProfile.exposureUs,
+      gain: typeof request.gain === "number" ? request.gain : this.manifest.acceptedProfile.gain,
+      channels: profile.channels,
+      source: "browser_live_tuning",
+    }, this.manifest.acceptedProfile);
+    const acceptedAt = this.manifest.acceptedProfile.acceptedAt;
+    this.updateLiveLightingStatus({
+      profile: {
+        ...profile,
+        acceptedForCapture: true,
+        acceptedAt,
+      },
+    });
+    this.manifest.currentStep = "capture_front";
+    this.recordLiveLightingEvent({ type: "accept", reason: "operator accepted browser live lighting profile for capture", ok: true });
+    await writeSessionManifest(this.manifest);
+    return this.liveLightingStatus();
+  }
+
+  async safeOffLiveLightingForOperator(reason = "operator requested browser live lighting safe-off"): Promise<AiGraderLiveLightingStatus> {
+    await this.safeOffLiveLighting(reason, "safe_off");
+    await writeSessionManifest(this.manifest);
+    return this.liveLightingStatus();
+  }
+
+  private async safeOffLiveLighting(
+    reason: string,
+    eventType: AiGraderLiveLightingSafetyEvent["type"] = "safe_off",
+    options: { force?: boolean } = {}
+  ): Promise<void> {
+    const shouldSend = options.force === true || this.manifest.liveLighting.applied.enabled || this.manifest.liveLighting.status === "on" || this.manifest.liveLighting.status === "applying";
+    this.clearLiveLightingWatchdog();
+    if (!shouldSend) {
+      this.updateLiveLightingStatus({
+        status: "safe_off",
+        profile: {
+          ...this.manifest.liveLighting.profile,
+          enabled: false,
+          acceptedForCapture: this.manifest.liveLighting.profile.acceptedForCapture,
+        },
+        applied: { enabled: false, dutyPercent: 0, actualLeimacPwmStep: 0, channels: [], appliedAt: new Date().toISOString() },
+      });
+      this.recordLiveLightingEvent({ type: eventType, reason, ok: true });
+      return;
+    }
+    try {
+      const writes = await this.writeLiveLightingFrames(buildLeimacIdmuSafeOffFrames(this.config.leimacUnit ?? 1));
+      this.updateLiveLightingStatus({
+        status: "safe_off",
+        profile: {
+          ...this.manifest.liveLighting.profile,
+          enabled: false,
+          acceptedForCapture: this.manifest.liveLighting.profile.acceptedForCapture,
+        },
+        applied: {
+          enabled: false,
+          dutyPercent: 0,
+          actualLeimacPwmStep: 0,
+          channels: [],
+          appliedAt: new Date().toISOString(),
+          lastResponseKinds: writes.map((write) => write.responseKind),
+        },
+        connection: { state: this.config.mode === "mock" ? "mock" : "idle", persistentLeimacSession: false },
+        lastError: undefined,
+      });
+      this.recordLiveLightingEvent({ type: eventType, reason, ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Browser live lighting safe-off failed.";
+      this.updateLiveLightingStatus({
+        status: "error",
+        lastError: message,
+        connection: { state: "error", persistentLeimacSession: false },
+      });
+      this.recordLiveLightingEvent({ type: eventType, reason: `${reason}: ${message}`, ok: false });
+      throw error;
+    }
   }
 
   private notePreviewFrame(frameCount: number) {
@@ -1568,8 +2092,10 @@ export class AiGraderLocalStationBridgeService {
     const captureOwner = options.captureOwner === true;
     this.previewStop?.(reason);
     this.previewStop = undefined;
-    if (child && !child.killed) {
-      try { child.kill(); } catch {}
+    if (child) stopChildProcessTree(child);
+    const stoppedOrphans = stopOrphanedBaslerPreviewStreams();
+    if (stoppedOrphans > 0) {
+      this.manifest.progressLog.push(`${new Date().toISOString()} Stopped ${stoppedOrphans} orphaned Basler browser preview process(es) during preview release.`);
     }
     if (options.waitForRelease && child) {
       this.updatePreviewStatus({
@@ -1579,6 +2105,18 @@ export class AiGraderLocalStationBridgeService {
       });
       const released = await waitForChildProcessClose(child, PREVIEW_RELEASE_TIMEOUT_MS);
       if (!released) {
+        stopChildProcessTree(child);
+        const releasedAfterForceKill = await waitForChildProcessClose(child, 1500);
+        if (releasedAfterForceKill) {
+          await delay(options.settleMs ?? PREVIEW_CAMERA_SETTLE_MS);
+          this.previewProcess = undefined;
+          this.updatePreviewStatus({
+            status: captureOwner ? "paused_for_capture" : "stopped",
+            cameraOwnership: captureOwner ? "capture_action" : "released",
+            lastStopReason: `${reason}; preview process tree force-stopped before camera handoff.`,
+          });
+          return;
+        }
         const message = `AI Grader preview stream did not release the Basler camera within ${PREVIEW_RELEASE_TIMEOUT_MS} ms. Close the preview or restart the local bridge before capture.`;
         this.updatePreviewStatus({
           status: "error",
@@ -1606,6 +2144,7 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private async stopPreviewForHardwareAction(action: string) {
+    await this.safeOffLiveLighting(`capture start before ${action}`, "capture_start_safe_off");
     if (this.manifest.previewStatus.cameraOwnership === "preview_stream" || this.previewProcess || this.previewStop) {
       await this.stopPreviewStream(`preview released before ${action} capture action`, {
         waitForRelease: true,
@@ -1615,6 +2154,11 @@ export class AiGraderLocalStationBridgeService {
       });
       this.manifest.warmRunnerStatus.previewPolicy.lastPausedAt = new Date().toISOString();
       this.manifest.progressLog.push(`${new Date().toISOString()} Browser preview stream paused/released before ${action}.`);
+    }
+    const stoppedOrphans = stopOrphanedBaslerPreviewStreams();
+    if (stoppedOrphans > 0) {
+      this.manifest.progressLog.push(`${new Date().toISOString()} Stopped ${stoppedOrphans} stale Basler browser preview process(es) before ${action} capture.`);
+      await delay(PREVIEW_CAMERA_SETTLE_MS);
     }
   }
 
@@ -2136,9 +2680,7 @@ export class AiGraderLocalStationBridgeService {
           mockPreviewTimer = undefined;
         }
         this.previewStop = undefined;
-        if (this.previewProcess && !this.previewProcess.killed) {
-          try { this.previewProcess.kill(); } catch {}
-        }
+        if (this.previewProcess) stopChildProcessTree(this.previewProcess);
         this.previewProcess = undefined;
         this.updatePreviewStatus({
           status: reason.includes("error") ? "error" : "stopped",
@@ -2212,9 +2754,7 @@ export class AiGraderLocalStationBridgeService {
           finish("preview process stopped");
         });
         this.previewStop = (reason: string) => {
-          if (!child.killed) {
-            try { child.kill(); } catch {}
-          }
+          stopChildProcessTree(child);
           finish(reason);
         };
       } catch (error) {
@@ -2228,9 +2768,25 @@ export class AiGraderLocalStationBridgeService {
     });
   }
 
-  async reportBundle(reportId: string | undefined): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
+  async reportBundle(
+    reportId: string | undefined,
+    options: { includeAssetBodies?: boolean } = {}
+  ): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
     const expectedReportId = reportId?.trim() || this.manifest.reportId;
     if (!expectedReportId) throw new Error("No AI Grader report ID is available yet.");
+    if (options.includeAssetBodies) {
+      const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
+      if (reportDir && this.manifest.reportId === expectedReportId) {
+        const bundle = await buildAiGraderReportBundle({
+          reportDir,
+          outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+          reportId: expectedReportId,
+          publicBasePath: this.config.publicBasePath,
+          includeAssetBodies: true,
+        });
+        return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, this.manifest.productionRelease), source: "active_manifest_generated_with_asset_bodies" };
+      }
+    }
     if (this.manifest.reportBundle?.reportId === expectedReportId) {
       return { reportId: expectedReportId, bundle: bundleWithProductionRelease(this.manifest.reportBundle, this.manifest.productionRelease), source: "active_manifest_memory" };
     }
@@ -2440,6 +2996,8 @@ export class AiGraderLocalStationBridgeService {
       this.manifest.outputs.sessionDir = packageDir;
       this.manifest.outputs.manifestPath = path.join(packageDir, "station-session.json");
       this.manifest.currentStep = "verify_fixture_rulers";
+      this.clearLiveLightingWatchdog();
+      this.manifest.liveLighting = defaultLiveLightingStatus(this.config);
       this.setExecutionPath(this.config.warmRunnerDisabled ? "cold_command_fallback" : "warm_full_forensic_runner", this.config.warmRunnerDisabled ? "Warm runner disabled by explicit debug flag." : undefined);
       this.manifest.warmRunnerStatus.sessionId = this.manifest.sessionId;
       this.manifest.warmRunnerStatus.status = "warming";
@@ -2494,6 +3052,7 @@ export class AiGraderLocalStationBridgeService {
     }
 
     if (action === "cancel-session") {
+      await this.safeOffLiveLighting("station cancellation", "safe_off");
       await this.runSafeOffCleanup("station cancellation");
       this.manifest.currentStep = "safe_off_end_session";
       this.manifest.warmRunnerStatus.status = "cancelled";
@@ -2511,6 +3070,7 @@ export class AiGraderLocalStationBridgeService {
     }
 
     if (action === "end-session") {
+      await this.safeOffLiveLighting("station session end", "safe_off");
       await this.runSafeOffCleanup("station session end");
       this.manifest.currentStep = "safe_off_end_session";
       this.manifest.warmRunnerStatus.status = "complete";
@@ -2521,6 +3081,7 @@ export class AiGraderLocalStationBridgeService {
 
     if (action === "safe-off") {
       assertRealReady(this.config, this.manifest);
+      await this.safeOffLiveLighting("operator safe-off action", "safe_off");
       this.manifest.warmRunnerStatus.status = "safe_off";
       const phase = this.markWarmPhase({
         id: "warm_safe_cleanup",
@@ -2771,7 +3332,7 @@ export function createAiGraderLocalStationBridgeHttpServer(
   const service = new AiGraderLocalStationBridgeService(config, runner, warmRunner);
   let pairingCodeConsumed = false;
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
     try {
       if (!remoteIsLoopback(req.socket.remoteAddress) || !hostHeaderIsLoopback(req.headers.host)) {
@@ -2861,12 +3422,58 @@ export function createAiGraderLocalStationBridgeHttpServer(
         return service.streamPreview(req, res, origin);
       }
 
+      if (url.pathname === "/lighting/status") {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for /lighting/status." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        return sendJson(res, 200, { ok: true, operation: "lighting-status", result: service.liveLightingStatus() }, origin, config);
+      }
+
+      if (url.pathname === "/lighting/apply") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for /lighting/apply." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, operation: "lighting-apply", result: await service.applyLiveLighting(body) }, origin, config);
+      }
+
+      if (url.pathname === "/lighting/safe-off") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for /lighting/safe-off." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        const reason = typeof body?.reason === "string" && body.reason.trim() ? body.reason.trim() : "operator requested browser live lighting safe-off";
+        return sendJson(res, 200, { ok: true, operation: "lighting-safe-off", result: await service.safeOffLiveLightingForOperator(reason) }, origin, config);
+      }
+
+      if (url.pathname === "/lighting/accept") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for /lighting/accept." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, operation: "lighting-accept", result: await service.acceptLiveLightingForCapture(body) }, origin, config);
+      }
+
+      if (url.pathname === "/lighting/heartbeat") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for /lighting/heartbeat." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        const reason = typeof body?.reason === "string" && body.reason.trim() ? body.reason.trim() : "browser live lighting heartbeat";
+        return sendJson(res, 200, { ok: true, operation: "lighting-heartbeat", result: await service.heartbeatLiveLighting(reason) }, origin, config);
+      }
+
       const reportBundleMatch = url.pathname.match(/^\/reports\/([^/]+)\/bundle$/);
       if (reportBundleMatch) {
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for report bundles." }, origin, config);
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         const reportId = decodeURIComponent(reportBundleMatch[1]);
-        return sendJson(res, 200, { ok: true, operation: "report-bundle", result: await service.reportBundle(reportId) }, origin, config);
+        return sendJson(
+          res,
+          200,
+          {
+            ok: true,
+            operation: "report-bundle",
+            result: await service.reportBundle(reportId, { includeAssetBodies: url.searchParams.get("includeAssetBodies") === "1" }),
+          },
+          origin,
+          config
+        );
       }
 
       const reportHtmlMatch = url.pathname.match(/^\/reports\/([^/]+)\/html$/);
@@ -2895,6 +3502,10 @@ export function createAiGraderLocalStationBridgeHttpServer(
       return sendJson(res, 400, { ok: false, code: "AI_GRADER_STATION_BRIDGE_ERROR", message }, origin, config);
     }
   });
+  server.on("close", () => {
+    void service.safeOffLiveLightingForOperator("local bridge server closing").catch(() => {});
+  });
+  return server;
 }
 
 export async function startAiGraderLocalStationBridgeHttpServer(

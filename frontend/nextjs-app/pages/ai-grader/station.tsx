@@ -16,15 +16,22 @@ import {
   AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY,
   AI_GRADER_STATION_TOKEN_STORAGE_KEY,
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+  acceptAiGraderLiveLightingProfile,
+  applyAiGraderLiveLighting,
   callAiGraderStationBridge,
+  fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
+  fetchAiGraderStationReportBundle,
   fetchAiGraderStationReportHistory,
   fetchAiGraderStationReportHtml,
+  heartbeatAiGraderLiveLighting,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
+  safeOffAiGraderLiveLighting,
   stopAiGraderStationPreview,
 } from "../../lib/aiGraderStationBridgeClient";
+import type { AiGraderReportBundle } from "../../lib/aiGraderReportBundle";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
@@ -133,6 +140,8 @@ export default function AiGraderStationPage() {
   const [previewStatus, setPreviewStatus] = useState(status.previewStatus);
   const [previewFrameUrl, setPreviewFrameUrl] = useState<string | null>(null);
   const previewFrameUrlRef = useRef<string | null>(null);
+  const [liveLighting, setLiveLighting] = useState(status.liveLighting);
+  const liveLightingApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [manualPairingCode, setManualPairingCode] = useState("");
   const [advancedConnectOpen, setAdvancedConnectOpen] = useState(false);
   const [contractPreviewEnabled, setContractPreviewEnabled] = useState(false);
@@ -158,6 +167,11 @@ export default function AiGraderStationPage() {
     exposureUs: status.acceptedProfile.exposureUs,
     gain: status.acceptedProfile.gain,
   });
+  const [liveLightingDraft, setLiveLightingDraft] = useState({
+    enabled: false,
+    dutyPercent: status.acceptedProfile.dutyPercent,
+    channels: status.acceptedProfile.channels,
+  });
 
   const connectBridgeWithCredentials = async (targetBridgeUrl: string, targetStationToken: string) => {
     const next = await callAiGraderStationBridge({ baseUrl: targetBridgeUrl, stationToken: targetStationToken, action: "status" });
@@ -167,6 +181,7 @@ export default function AiGraderStationPage() {
     setStationToken(targetStationToken);
     setStatus(next);
     setPreviewStatus(next.previewStatus);
+    setLiveLighting(next.liveLighting);
     setBridgeConnected(true);
     setBridgeConnectionState("connected");
     setProfileDraft({
@@ -174,13 +189,19 @@ export default function AiGraderStationPage() {
       exposureUs: next.acceptedProfile.exposureUs,
       gain: next.acceptedProfile.gain,
     });
+    setLiveLightingDraft({
+      enabled: next.liveLighting.profile.enabled,
+      dutyPercent: next.liveLighting.profile.dutyPercent,
+      channels: next.liveLighting.profile.channels,
+    });
     setHistory(await fetchAiGraderStationReportHistory({ baseUrl: targetBridgeUrl, stationToken: targetStationToken }));
     return next;
   };
 
   useEffect(() => {
     setPreviewStatus(status.previewStatus);
-  }, [status.previewStatus]);
+    setLiveLighting(status.liveLighting);
+  }, [status.previewStatus, status.liveLighting]);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,6 +255,41 @@ export default function AiGraderStationPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (liveLightingApplyTimerRef.current) {
+        clearTimeout(liveLightingApplyTimerRef.current);
+        liveLightingApplyTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!bridgeConnected || !stationToken.trim() || !liveLighting.applied.enabled) return;
+    const timer = setInterval(() => {
+      void heartbeatAiGraderLiveLighting({ baseUrl: bridgeUrl, stationToken }).then(setLiveLighting).catch(() => {});
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [bridgeConnected, bridgeUrl, liveLighting.applied.enabled, stationToken]);
+
+  useEffect(() => {
+    const handlePageExit = () => {
+      if (!bridgeConnected || !stationToken.trim() || !liveLighting.applied.enabled) return;
+      void safeOffAiGraderLiveLighting({
+        baseUrl: bridgeUrl,
+        stationToken,
+        reason: "browser page closed or hidden",
+        keepalive: true,
+      }).catch(() => {});
+    };
+    window.addEventListener("pagehide", handlePageExit);
+    window.addEventListener("beforeunload", handlePageExit);
+    return () => {
+      window.removeEventListener("pagehide", handlePageExit);
+      window.removeEventListener("beforeunload", handlePageExit);
+    };
+  }, [bridgeConnected, bridgeUrl, liveLighting.applied.enabled, stationToken]);
 
   useEffect(() => {
     const previewSuspendedForStationAction =
@@ -353,6 +409,20 @@ export default function AiGraderStationPage() {
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
   const warmRunner = status.warmRunnerStatus;
   const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held || busy === "start-grading" || busy === "back";
+  const liveLightingAvailable =
+    bridgeConnected &&
+    liveLighting.controlsEnabled &&
+    previewStatus.status === "live" &&
+    !warmRunner.captureLock.held &&
+    warmRunner.status !== "capturing";
+  const liveLightingCommandable =
+    bridgeConnected &&
+    liveLighting.controlsEnabled &&
+    !warmRunner.captureLock.held &&
+    warmRunner.status !== "capturing";
+  const liveLightingAppliedLabel = liveLighting.applied.enabled
+    ? `${liveLighting.applied.dutyPercent}% / PWM ${String(liveLighting.applied.actualLeimacPwmStep).padStart(4, "0")} / Ch ${liveLighting.applied.channels.join(", ")}`
+    : "off";
   const warmEvidenceCounts = {
     front: warmRunner.evidencePlan.rolesBySide.front.filter((role) => role.status === "completed").length,
     back: warmRunner.evidencePlan.rolesBySide.back.filter((role) => role.status === "completed").length,
@@ -444,6 +514,7 @@ export default function AiGraderStationPage() {
           })();
     setStatus(next);
     setPreviewStatus(next.previewStatus);
+    setLiveLighting(next.liveLighting);
     setProfileDraft({
       dutyPercent: next.acceptedProfile.dutyPercent,
       exposureUs: next.acceptedProfile.exposureUs,
@@ -454,6 +525,8 @@ export default function AiGraderStationPage() {
 
   const waitForPreviewReleaseBeforeCapture = async (reason: string) => {
     if (!canUseBridge) throw new Error("Connect the Dell local station bridge before starting capture.");
+    await safeOffAiGraderLiveLighting({ baseUrl: bridgeUrl, stationToken, reason: `${reason}; browser live lighting safe-off before capture` });
+    setLiveLighting(await fetchAiGraderLiveLightingStatus({ baseUrl: bridgeUrl, stationToken }));
     setPreviewStatus((currentStatus) => ({
       ...currentStatus,
       status: "paused_for_capture",
@@ -474,6 +547,120 @@ export default function AiGraderStationPage() {
       if (releaseStates.has(latest.cameraOwnership)) return;
     }
     throw new Error(`AI Grader preview did not release the Basler camera before capture. Current preview owner: ${latest.cameraOwnership}.`);
+  };
+
+  const ensureLiveLightingSession = async () => {
+    if (status.currentStep === "start_new_card" || status.currentStep === "safe_off_end_session") {
+      return runAction("start-session");
+    }
+    return status;
+  };
+
+  const applyLiveLightingDraft = async (
+    draft = liveLightingDraft,
+    reason = "browser live lighting apply"
+  ) => {
+    if (!bridgeConnected || !stationToken.trim()) throw new Error("Connect the Dell local station bridge before live lighting tuning.");
+    await ensureLiveLightingSession();
+    const next = await applyAiGraderLiveLighting({
+      baseUrl: bridgeUrl,
+      stationToken,
+      enabled: draft.enabled,
+      dutyPercent: Number(draft.dutyPercent),
+      channels: draft.channels,
+      reason,
+    });
+    setLiveLighting(next);
+    return next;
+  };
+
+  const scheduleLiveLightingApply = (draft = liveLightingDraft, reason = "browser live lighting adjustment") => {
+    if (liveLightingApplyTimerRef.current) clearTimeout(liveLightingApplyTimerRef.current);
+    liveLightingApplyTimerRef.current = setTimeout(() => {
+      liveLightingApplyTimerRef.current = null;
+      void applyLiveLightingDraft(draft, reason).catch((requestError) => {
+        setError(requestError instanceof Error ? requestError.message : "Live lighting apply failed.");
+      });
+    }, 120);
+  };
+
+  const updateLiveLightingDraft = (nextDraft: typeof liveLightingDraft, reason: string) => {
+    setLiveLightingDraft(nextDraft);
+    if (nextDraft.enabled && liveLightingCommandable) scheduleLiveLightingApply(nextDraft, reason);
+  };
+
+  const safeOffLiveLighting = async (reason = "operator requested browser live lighting safe-off") => {
+    if (liveLightingApplyTimerRef.current) {
+      clearTimeout(liveLightingApplyTimerRef.current);
+      liveLightingApplyTimerRef.current = null;
+    }
+    setLiveLightingDraft((current) => ({ ...current, enabled: false }));
+    const next = await safeOffAiGraderLiveLighting({ baseUrl: bridgeUrl, stationToken, reason });
+    setLiveLighting(next);
+    return next;
+  };
+
+  const acceptLiveLightingProfile = async () => {
+    setBusy("lighting-accept");
+    setError(null);
+    try {
+      const nextLighting = await acceptAiGraderLiveLightingProfile({
+        baseUrl: bridgeUrl,
+        stationToken,
+        dutyPercent: Number(liveLightingDraft.dutyPercent),
+        channels: liveLightingDraft.channels,
+        exposureUs: Number(profileDraft.exposureUs),
+        gain: Number(profileDraft.gain),
+      });
+      setLiveLighting(nextLighting);
+      const nextStatus = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action: "status" });
+      setStatus(nextStatus);
+      setProfileDraft({
+        dutyPercent: nextStatus.acceptedProfile.dutyPercent,
+        exposureUs: nextStatus.acceptedProfile.exposureUs,
+        gain: nextStatus.acceptedProfile.gain,
+      });
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Could not accept live lighting profile.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const setLiveLightingEnabled = (enabled: boolean) => {
+    const nextDraft = { ...liveLightingDraft, enabled };
+    setLiveLightingDraft(nextDraft);
+    if (enabled) {
+      if (liveLightingCommandable) scheduleLiveLightingApply(nextDraft, "browser live lighting enabled");
+    } else {
+      void safeOffLiveLighting("browser live lighting disabled").catch((requestError) => {
+        setError(requestError instanceof Error ? requestError.message : "Live lighting safe-off failed.");
+      });
+    }
+  };
+
+  const setAllLiveLightingChannels = (channels: number[]) => {
+    const nextDraft = { ...liveLightingDraft, enabled: channels.length > 0, channels };
+    setLiveLightingDraft(nextDraft);
+    if (channels.length === 0) {
+      void safeOffLiveLighting("browser live lighting all off").catch((requestError) => {
+        setError(requestError instanceof Error ? requestError.message : "Live lighting safe-off failed.");
+      });
+      return;
+    }
+    if (liveLightingCommandable) scheduleLiveLightingApply(nextDraft, "browser live lighting channels changed");
+  };
+
+  const toggleLiveLightingChannel = (channel: number) => {
+    const selected = new Set(liveLightingDraft.channels);
+    if (selected.has(channel)) selected.delete(channel);
+    else selected.add(channel);
+    setAllLiveLightingChannels(Array.from(selected).sort((a, b) => a - b));
+  };
+
+  const setLiveLightingDuty = (dutyPercent: number) => {
+    const nextDraft = { ...liveLightingDraft, dutyPercent };
+    updateLiveLightingDraft(nextDraft, "browser live lighting duty changed");
   };
 
   const startNewCard = async () => {
@@ -497,7 +684,7 @@ export default function AiGraderStationPage() {
       if (latest.currentStep === "start_new_card") latest = await runAction("start-session");
       latest = await runAction("confirm-light-idle-off", actionBody({ lightIdleOff: true }, latest, false));
       latest = await runAction("confirm-fixture-rulers", actionBody({ fixtureRulersVisible: true }, latest, false));
-      latest = await runAction("accept-profile", actionBody({}, latest, true));
+      latest = await runAction("accept-profile", actionBody({}, latest, false));
       await waitForPreviewReleaseBeforeCapture("operator starting front full forensic capture");
       await runAction("capture-front", actionBody({}, latest, false));
     } catch (requestError) {
@@ -544,13 +731,13 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const buildReportBundleForProduction = () => {
-    if (!status.reportBundle) return null;
-    if (!selectedCardIdentity) return status.reportBundle;
+  const buildReportBundleForProduction = (baseBundle: AiGraderReportBundle | undefined = status.reportBundle) => {
+    if (!baseBundle) return null;
+    if (!selectedCardIdentity) return baseBundle;
     return {
-      ...status.reportBundle,
+      ...baseBundle,
       cardIdentity: {
-        ...status.reportBundle.cardIdentity,
+        ...baseBundle.cardIdentity,
         ...selectedCardIdentity,
         sideCount: 2 as const,
         futureSlabbedPhotoRefsReserved: true as const,
@@ -601,7 +788,17 @@ export default function AiGraderStationPage() {
     setBusy("ten-kings-publish");
     setError(null);
     try {
-      const reportBundle = buildReportBundleForProduction();
+      let sourceBundle = status.reportBundle;
+      const reportId = status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      if (bridgeConnected && stationToken.trim() && reportId) {
+        sourceBundle = await fetchAiGraderStationReportBundle({
+          baseUrl: bridgeUrl,
+          stationToken,
+          reportId,
+          includeAssetBodies: true,
+        });
+      }
+      const reportBundle = buildReportBundleForProduction(sourceBundle);
       if (!reportBundle || !status.productionRelease) {
         throw new Error("A finalized production release and report bundle are required before Ten Kings publish.");
       }
@@ -740,6 +937,9 @@ export default function AiGraderStationPage() {
     setBusy("safe-off");
     setError(null);
     try {
+      if (bridgeConnected && stationToken.trim()) {
+        await safeOffLiveLighting("operator station safe-off");
+      }
       await runAction("safe-off", { confirmations: { finalLightOff: true, lightIdleOff: true } });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Safe Off failed.");
@@ -942,41 +1142,108 @@ export default function AiGraderStationPage() {
             </button>
           </section>
 
-          <section className="profile">
-            <div>
-              <span>Duty</span>
-              <strong>{profileDraft.dutyPercent}%</strong>
+          <section className="live-lighting">
+            <div className="lighting-head">
+              <div>
+                <p className="eyebrow">Live Lighting</p>
+                <h3>Leimac Ring</h3>
+              </div>
+              <button
+                type="button"
+                className={liveLightingDraft.enabled ? "toggle active" : "toggle"}
+                onClick={() => setLiveLightingEnabled(!liveLightingDraft.enabled)}
+                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held}
+              >
+                {liveLightingDraft.enabled ? "Live" : "Off"}
+              </button>
             </div>
-            <div>
-              <span>Exposure</span>
-              <strong>{profileDraft.exposureUs} us</strong>
+            <div className="lighting-status-grid">
+              <div>
+                <span>Applied</span>
+                <strong>{liveLightingAppliedLabel}</strong>
+              </div>
+              <div>
+                <span>Safe Off</span>
+                <strong>{liveLighting.applied.enabled ? "Armed" : "Off"}</strong>
+              </div>
+              <div>
+                <span>Capture Profile</span>
+                <strong>{status.acceptedProfile.source === "browser_live_tuning" ? "Live Accepted" : "Default"}</strong>
+              </div>
+              <div>
+                <span>Latency</span>
+                <strong>{formatMs(liveLighting.applied.lastApplyLatencyMs)}</strong>
+              </div>
             </div>
-            <div>
-              <span>Gain</span>
-              <strong>{profileDraft.gain}</strong>
+            <div className="ring-control" aria-label="Leimac channels">
+              {Array.from({ length: 8 }, (_, index) => index + 1).map((channel) => (
+                <button
+                  type="button"
+                  key={channel}
+                  className={liveLightingDraft.channels.includes(channel) ? `segment segment-${channel} active` : `segment segment-${channel}`}
+                  onClick={() => toggleLiveLightingChannel(channel)}
+                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held}
+                  aria-label={`Toggle Leimac channel ${channel}`}
+                  title={`Channel ${channel}`}
+                >
+                  {channel}
+                </button>
+              ))}
+            </div>
+            <div className="mini-actions">
+              <button type="button" onClick={() => setAllLiveLightingChannels([1, 2, 3, 4, 5, 6, 7, 8])} disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held}>
+                All On
+              </button>
+              <button type="button" onClick={() => setAllLiveLightingChannels([])} disabled={!bridgeConnected || busy !== null}>
+                All Off
+              </button>
             </div>
             <label>
-              Duty %
+              Brightness %
               <input
-                type="number"
+                type="range"
                 min="0"
                 max="5"
                 step="0.1"
-                value={profileDraft.dutyPercent}
-                onChange={(event) => setProfileDraft((current) => ({ ...current, dutyPercent: Number(event.target.value) }))}
+                value={liveLightingDraft.dutyPercent}
+                onChange={(event) => setLiveLightingDuty(Number(event.target.value))}
+                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held}
               />
             </label>
-            <label>
-              Exposure us
-              <input
-                type="number"
-                min="1"
-                max="100000"
-                step="1000"
-                value={profileDraft.exposureUs}
-                onChange={(event) => setProfileDraft((current) => ({ ...current, exposureUs: Number(event.target.value) }))}
-              />
-            </label>
+            <div className="lighting-inputs">
+              <label>
+                Duty %
+                <input
+                  type="number"
+                  min="0"
+                  max="5"
+                  step="0.1"
+                  value={liveLightingDraft.dutyPercent}
+                  onChange={(event) => setLiveLightingDuty(Number(event.target.value))}
+                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held}
+                />
+              </label>
+              <label>
+                Exposure us
+                <input
+                  type="number"
+                  min="1"
+                  max="100000"
+                  step="1000"
+                  value={profileDraft.exposureUs}
+                  onChange={(event) => setProfileDraft((current) => ({ ...current, exposureUs: Number(event.target.value) }))}
+                />
+              </label>
+            </div>
+            <button
+              type="button"
+              className="accept-lighting"
+              onClick={acceptLiveLightingProfile}
+              disabled={!bridgeConnected || busy !== null || liveLightingDraft.channels.length === 0 || Number(liveLightingDraft.dutyPercent) <= 0}
+            >
+              {busy === "lighting-accept" ? "Accepting" : "Use This Profile For Capture"}
+            </button>
+            {liveLighting.lastError ? <p className="status-note">{liveLighting.lastError}</p> : null}
           </section>
 
           <section className="card-linkage">
@@ -1550,6 +1817,7 @@ export default function AiGraderStationPage() {
         }
         .next-card,
         .profile,
+        .live-lighting,
         .card-linkage,
         .status,
         .warm-runner,
@@ -1582,6 +1850,99 @@ export default function AiGraderStationPage() {
         .profile label {
           grid-column: span 3;
           margin-top: 0;
+        }
+        .live-lighting {
+          display: grid;
+          gap: 12px;
+        }
+        .lighting-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 12px;
+        }
+        .lighting-head h3 {
+          margin: 4px 0 0;
+          font-size: 16px;
+        }
+        .toggle {
+          min-width: 74px;
+          min-height: 38px;
+        }
+        .toggle.active,
+        .accept-lighting {
+          border-color: rgba(91, 255, 157, 0.72);
+          background: rgba(91, 255, 157, 0.14);
+          color: #caffe0;
+        }
+        .lighting-status-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .lighting-status-grid span,
+        .lighting-inputs span {
+          display: block;
+          color: #9d9688;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+        }
+        .lighting-status-grid strong {
+          display: block;
+          margin-top: 4px;
+          font-size: 13px;
+          overflow-wrap: anywhere;
+        }
+        .ring-control {
+          position: relative;
+          width: 158px;
+          height: 158px;
+          margin: 2px auto;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 50%;
+          background: radial-gradient(circle, rgba(228, 191, 105, 0.08) 0 34%, rgba(255, 255, 255, 0.04) 35% 100%);
+        }
+        .segment {
+          position: absolute;
+          width: 38px;
+          height: 38px;
+          min-height: 38px;
+          padding: 0;
+          border-radius: 50%;
+          display: grid;
+          place-items: center;
+          background: rgba(255, 255, 255, 0.06);
+          color: #cfc7b8;
+          font-size: 12px;
+          letter-spacing: 0;
+        }
+        .segment.active {
+          border-color: rgba(91, 255, 157, 0.78);
+          background: rgba(91, 255, 157, 0.18);
+          color: #d8ffe6;
+          box-shadow: 0 0 18px rgba(91, 255, 157, 0.18);
+        }
+        .segment-1 { left: 60px; top: 8px; }
+        .segment-2 { right: 24px; top: 24px; }
+        .segment-3 { right: 8px; top: 60px; }
+        .segment-4 { right: 24px; bottom: 24px; }
+        .segment-5 { left: 60px; bottom: 8px; }
+        .segment-6 { left: 24px; bottom: 24px; }
+        .segment-7 { left: 8px; top: 60px; }
+        .segment-8 { left: 24px; top: 24px; }
+        .lighting-inputs {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+        }
+        .lighting-inputs label {
+          margin-top: 0;
+        }
+        .live-lighting input[type="range"] {
+          padding: 0;
+          accent-color: #5bff9d;
         }
         .card-linkage h3 {
           margin: 6px 0;

@@ -23543,3 +23543,76 @@ By enabling Rip It Live, I confirm:
 ### Not Run
 - No hardware capture, Leimac command, Basler capture, migration, production DB write, Vercel env change, credential rotation, or secret-printing action was run for this hotfix.
 - Lighting-control behavior during embedded preview remains unchanged: the embedded preview does not command Leimac lighting; capture profile changes apply to subsequent capture unless a future supervised live-lighting preview feature is implemented.
+
+## 2026-07-06 - AI Grader PR #59 merge/deploy and PR #60 live lighting start
+
+### Planned Action
+- Merge/deploy PR #59 after confirming clean merge state and passing checks.
+- Verify Vercel Production deployment, pull latest `main` locally on the Dell, and restart/update the local Dell bridge so the preview-stop bridge endpoint is active.
+- Confirm bridge health and production station route reachability; verify embedded preview if available, but do not start grading/capture without Mark approval.
+- Start PR #60 from latest `main` for browser live Leimac lighting tuning through the paired local Dell bridge.
+- Guardrails: no migrations, no production DB writes, no Vercel env changes, no credential rotation, no secret printing, no public hardware controls, and no capture unless Mark explicitly approves it.
+
+### PR #59 Observed Result
+- PR #59 merged at `2026-07-06T07:21:59Z` with merge commit `b523234cde296da80d372c7401525fcf5ad3fdbb`.
+- Vercel Production deployment for merge commit `b523234cde296da80d372c7401525fcf5ad3fdbb` completed successfully at `2026-07-06T07:22:59Z`.
+- Main CI for the merge commit completed successfully: Install & Build plus Docker image builds for frontend, wallet-service, vault-service, marketplace-service, pricing-service, pack-service, ingestion-service, and vending-gw.
+- Local Dell checkout was pulled to `main` at `b523234cde296da80d372c7401525fcf5ad3fdbb`.
+- Rebuilt `@tenkings/ai-grader-capture-helper` locally so the bridge `dist/cli.js` includes the PR #59 preview-stop release code.
+- Restarted the local bridge from the startup-shortcut fallback path in real/local-only mode; bridge health reported `ok=true`, `tokenRequired=true`, `hardwareActionsEnabled=true`, and allowed origin `https://collect.tenkings.co`.
+- Production station route `GET https://collect.tenkings.co/ai-grader/station` returned `200`.
+- Minimal token-gated MJPEG preview smoke read preview bytes successfully, then called `POST /preview/stop`; follow-up status reported `cameraOwnership=released`.
+- Opened the production station URL locally for operator-side verification. No grading/capture was started.
+- Guardrails held: no migration, no production DB write, no Vercel env change, no credential rotation, no secret printing, no Leimac lighting command, and no Basler capture/grading run.
+
+### PR #60 Implementation Result
+- Created branch `feature/ai-grader-browser-live-lighting-tuning` from latest `main`.
+- Added paired-local-bridge browser live Leimac lighting tuning endpoints: `GET /lighting/status`, `POST /lighting/apply`, `POST /lighting/safe-off`, `POST /lighting/accept`, and `POST /lighting/heartbeat`.
+- Endpoints remain loopback/local-token gated and do not use the production service-account token.
+- Added low-duty validation, channel-combination validation, live-lighting watchdog heartbeat/timeout state, manifest persistence, safety event logging, and accepted profile source `browser_live_tuning`.
+- Browser station now has a live lighting panel with 8-channel ring controls, all-on/all-off, duty slider, numeric duty input, applied status, safe-off status, accepted/default profile marker, and "Use This Profile For Capture".
+- Capture transition now safe-offs browser live lighting before preview release/capture, preserves the PR #59 preview-stop release path, and keeps warm-runner capture ownership authoritative.
+- Capture profile acceptance records `browser_live_tuning` so warm capture uses the accepted channels/duty/exposure/gain when the operator explicitly accepts the live-tuned profile.
+- Public report/API surfaces remain read-only and do not expose live lighting control paths.
+
+### PR #60 Validation
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist, baseline-browser-mapping, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `29` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `178` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### PR #60 Not Run
+- No supervised Dell live-lighting smoke was run yet.
+- No capture, Leimac hardware command, migration, production DB write, Vercel env change, credential rotation, or secret-printing action was run for PR #60.
+
+## 2026-07-06 - AI Grader PR #60 supervised live-lighting smoke
+
+### Planned Action
+- Run Mark-supervised PR #60 browser live Leimac lighting smoke from branch `feature/ai-grader-browser-live-lighting-tuning`.
+- Use the PR #60 local station UI, not production main, so the live-lighting panel is present before merge.
+- Rebuild/restart the Dell local bridge from the PR #60 branch in real/local-only mode with local station origins allowed.
+- Rotate only the local Dell bridge pairing code if the previous pairing code is expired, then open the PR #60 local station URL with the pairing hash without printing the code.
+- Verify bridge health, embedded Basler MJPEG preview, live Leimac channel/duty tuning, profile acceptance, capture transition safe-off, warm capture using the accepted live-tuned profile, report open, and final physical light off.
+- Guardrails: no migrations, no production DB writes, no Vercel env changes, no credential rotation, no secret printing, no public hardware controls.
+
+### Observed Result In Progress
+- Browser live Leimac lighting tuning worked from the PR #60 local station UI; bridge status showed live lighting applied through the local token path while Basler MJPEG preview remained live.
+- Mark reported the front side moved quickly after `Start Grading`.
+- Back-side capture failed with the Basler `device is controlled by another application` error after operator flip/confirm.
+- Bridge status and process checks showed safe-off/release was possible afterward: `liveLighting=safe_off`, `cameraOwnership=released`, `finalLightOff=true`, and no active Basler preview subprocess remained after forced stop.
+- Root cause: during the flip/back transition, a stale/orphaned Basler `operator-preview-mjpeg-stream` PowerShell process can survive outside the bridge's tracked child process and keep the GigE camera locked.
+- Patch added a Windows-only orphan preview sweep before capture that kills only `basler-pylon-bridge.ps1 -Action operator-preview-mjpeg-stream` processes, plus the prior tracked child process tree kill, before Basler warm capture opens the camera.
+- Patch also lets browser live lighting start a bridge session automatically when the station is still on `start_new_card`/`safe_off_end_session`, so Mark does not need to use `Start Grading` to make live tuning command the light.
+
+### Patch Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `29` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `178` tests.
+- `git diff --check` -> pass with line-ending warnings only.
+
+## 2026-07-06T10:04:53Z - PR60 production image report fix
+- Planned: fix AI Grader production report image publishing/rendering so production reports show captured evidence images, then validate and deploy PR #60 if checks are clean.
+- Guardrails: no hardware capture, no migrations, no production DB writes outside normal deploy path, no env changes, no secrets printed.

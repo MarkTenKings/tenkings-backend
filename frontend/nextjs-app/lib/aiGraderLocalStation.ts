@@ -180,7 +180,7 @@ export type AiGraderLocalStationStatus = {
     exposureUs: number;
     gain: number;
     channels: number[];
-    source: "operator_preview" | "default" | "mock" | "bridge_operator" | "cli_override";
+    source: "operator_preview" | "browser_live_tuning" | "default" | "mock" | "bridge_operator" | "cli_override";
     actualLeimacPwmStep?: number;
     acceptedAt?: string;
   };
@@ -220,10 +220,17 @@ export type AiGraderLocalStationStatus = {
     certificateGenerated: false;
   };
   bridgeContract: {
-    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderStationAction | "preview-status" | "preview-stream" | "preview-stop"; hardwareAccess: boolean; description: string }>;
+    endpoints: Array<{
+      method: "GET" | "POST";
+      path: string;
+      action: AiGraderStationAction | "preview-status" | "preview-stream" | "preview-stop" | "lighting-status" | "lighting-apply" | "lighting-safe-off" | "lighting-accept" | "lighting-heartbeat";
+      hardwareAccess: boolean;
+      description: string;
+    }>;
     realHardwarePending: string[];
   };
   previewStatus: AiGraderLocalStationPreviewStatus;
+  liveLighting: AiGraderLiveLightingStatus;
   warmRunnerStatus: AiGraderWarmRunnerStatus;
   reportBundle?: AiGraderReportBundle;
   stationUrl?: string;
@@ -344,6 +351,67 @@ export type AiGraderLocalStationPreviewStatus = {
   note: string;
 };
 
+export type AiGraderLiveLightingStatus = {
+  status: "unavailable" | "off" | "applying" | "on" | "safe_off" | "error";
+  mode: "browser_live_tuning";
+  localOnly: true;
+  tokenRequired: true;
+  controlsEnabled: boolean;
+  previewRequired: true;
+  profile: {
+    enabled: boolean;
+    dutyPercent: number;
+    actualLeimacPwmStep: number;
+    channels: number[];
+    source: "browser_live_tuning" | "default";
+    acceptedForCapture: boolean;
+    acceptedAt?: string;
+  };
+  applied: {
+    enabled: boolean;
+    dutyPercent: number;
+    actualLeimacPwmStep: number;
+    channels: number[];
+    appliedAt?: string;
+    lastApplyLatencyMs?: number;
+    lastResponseKinds?: string[];
+  };
+  watchdog: {
+    enabled: true;
+    timeoutMs: number;
+    lastHeartbeatAt?: string;
+    expiresAt?: string;
+  };
+  connection: {
+    state: "mock" | "not_configured" | "idle" | "writing" | "error";
+    persistentLeimacSession: false;
+  };
+  safety: {
+    publicRouteExposed: false;
+    requiresStationToken: true;
+    bindsLoopbackOnly: true;
+    productionServiceTokenUsed: false;
+    lowDutyCapEnforced: true;
+    maxDutyPercent: number;
+    safeOffOnAllOff: true;
+    safeOffOnDisconnect: true;
+    safeOffOnTimeout: true;
+    safeOffOnCaptureStart: true;
+    safeOffOnCaptureFailure: true;
+    safeOffOnSessionEnd: true;
+    persistentLeimacSaved: false;
+    arbitraryWritesAllowed: false;
+  };
+  safetyEvents: Array<{
+    at: string;
+    type: "apply" | "safe_off" | "accept" | "heartbeat" | "watchdog_safe_off" | "capture_start_safe_off" | "failure_safe_off";
+    reason: string;
+    ok: boolean;
+  }>;
+  lastError?: string;
+  note: string;
+};
+
 export type AiGraderLocalReportHistoryItem = {
   reportId: string;
   gradingSessionId: string;
@@ -448,11 +516,21 @@ function actionLabel(action: AiGraderStationAction) {
 }
 
 function bridgeEndpoints() {
-  const actions: Array<{ method: "GET" | "POST"; action: AiGraderStationAction | "preview-status" | "preview-stream" | "preview-stop"; description: string; path?: string }> = [
+  const actions: Array<{
+    method: "GET" | "POST";
+    action: AiGraderStationAction | "preview-status" | "preview-stream" | "preview-stop" | "lighting-status" | "lighting-apply" | "lighting-safe-off" | "lighting-accept" | "lighting-heartbeat";
+    description: string;
+    path?: string;
+  }> = [
     { method: "GET", action: "status", description: "Read current local station status." },
     { method: "GET", action: "preview-status", path: "/preview/status", description: "Read embedded browser preview status." },
     { method: "GET", action: "preview-stream", path: "/preview/stream", description: "Open local token-gated embedded preview stream." },
     { method: "POST", action: "preview-stop", path: "/preview/stop", description: "Stop embedded browser preview and release the Basler camera before capture." },
+    { method: "GET", action: "lighting-status", path: "/lighting/status", description: "Read browser live Leimac lighting status." },
+    { method: "POST", action: "lighting-apply", path: "/lighting/apply", description: "Apply low-duty browser live Leimac lighting for preview tuning." },
+    { method: "POST", action: "lighting-safe-off", path: "/lighting/safe-off", description: "Safe-off browser live Leimac lighting." },
+    { method: "POST", action: "lighting-accept", path: "/lighting/accept", description: "Use the browser live lighting profile for capture." },
+    { method: "POST", action: "lighting-heartbeat", path: "/lighting/heartbeat", description: "Refresh browser live lighting watchdog." },
     { method: "POST", action: "start-session", description: "Start a local station session in mock/contract mode." },
     { method: "POST", action: "confirm-light-idle-off", description: "Record operator confirmation that the physical ring light is idle/off." },
     { method: "POST", action: "confirm-fixture-rulers", description: "Record operator confirmation that the fixture/rulers are visible." },
@@ -586,6 +664,57 @@ function defaultPreviewStatus(): AiGraderLocalStationPreviewStatus {
   };
 }
 
+function defaultLiveLightingStatus(): AiGraderLiveLightingStatus {
+  return {
+    status: "off",
+    mode: "browser_live_tuning",
+    localOnly: true,
+    tokenRequired: true,
+    controlsEnabled: true,
+    previewRequired: true,
+    profile: {
+      enabled: false,
+      dutyPercent: 1.3,
+      actualLeimacPwmStep: 13,
+      channels: [1, 2, 3, 4, 5, 6, 7, 8],
+      source: "default",
+      acceptedForCapture: false,
+    },
+    applied: {
+      enabled: false,
+      dutyPercent: 0,
+      actualLeimacPwmStep: 0,
+      channels: [],
+    },
+    watchdog: {
+      enabled: true,
+      timeoutMs: 15000,
+    },
+    connection: {
+      state: "mock",
+      persistentLeimacSession: false,
+    },
+    safety: {
+      publicRouteExposed: false,
+      requiresStationToken: true,
+      bindsLoopbackOnly: true,
+      productionServiceTokenUsed: false,
+      lowDutyCapEnforced: true,
+      maxDutyPercent: 5,
+      safeOffOnAllOff: true,
+      safeOffOnDisconnect: true,
+      safeOffOnTimeout: true,
+      safeOffOnCaptureStart: true,
+      safeOffOnCaptureFailure: true,
+      safeOffOnSessionEnd: true,
+      persistentLeimacSaved: false,
+      arbitraryWritesAllowed: false,
+    },
+    safetyEvents: [],
+    note: "Browser live lighting tuning is local-only through the paired Dell bridge.",
+  };
+}
+
 export function buildAiGraderLocalStationStatus(input: {
   action?: AiGraderStationAction;
   mode?: AiGraderLocalStationBridgeMode;
@@ -673,6 +802,7 @@ export function buildAiGraderLocalStationStatus(input: {
       ],
     },
     previewStatus: defaultPreviewStatus(),
+    liveLighting: defaultLiveLightingStatus(),
     warmRunnerStatus: defaultWarmRunnerStatus(),
     reportBundle,
     outputs: {
