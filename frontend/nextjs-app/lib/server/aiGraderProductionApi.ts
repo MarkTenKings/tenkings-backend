@@ -79,6 +79,7 @@ export type AiGraderProductionApiDependencies = {
   uploadArtifact(input: {
     storageKey: string;
     body: string;
+    bodyEncoding?: "utf8" | "base64";
     contentType: string;
   }): Promise<AiGraderProductionUploadResult>;
   persist(input: {
@@ -368,6 +369,7 @@ async function uploadPlanArtifacts(
     const result = await deps.uploadArtifact({
       storageKey: artifact.storageKey,
       body: artifact.body,
+      bodyEncoding: artifact.bodyEncoding,
       contentType: artifact.contentType,
     });
     uploaded.push({

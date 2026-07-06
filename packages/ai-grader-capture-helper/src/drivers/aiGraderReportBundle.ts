@@ -10,9 +10,13 @@ export interface AiGraderReportBundleAsset {
   id: string;
   kind: "report_html" | "manifest" | "analysis" | "image" | "data" | "folder" | "unknown";
   localPath: string;
+  fileName?: string;
+  contentType?: string;
   publicPathPlaceholder?: string;
   sha256?: string;
   byteSize?: number;
+  bodyEncoding?: "base64";
+  bodyBase64?: string;
   required: boolean;
 }
 
@@ -111,6 +115,16 @@ async function fileMetadata(filePath: string) {
   };
 }
 
+function contentTypeForPath(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".html") return "text/html; charset=utf-8";
+  if (extension === ".json") return "application/json";
+  return "application/octet-stream";
+}
+
 function normalizeLocalPath(filePath: string) {
   return path.resolve(filePath);
 }
@@ -138,6 +152,7 @@ async function maybeAsset(input: {
   localPath: string | undefined;
   required: boolean;
   reportId: string;
+  includeBody?: boolean;
 }): Promise<AiGraderReportBundleAsset | undefined> {
   if (!input.localPath) return undefined;
   const localPath = normalizeLocalPath(input.localPath);
@@ -153,12 +168,16 @@ async function maybeAsset(input: {
       };
     }
     const metadata = await fileMetadata(localPath);
+    const body = input.includeBody ? await readFile(localPath) : undefined;
     return {
       id: input.id,
       kind: input.kind,
       localPath,
+      fileName: path.basename(localPath),
+      contentType: contentTypeForPath(localPath),
       publicPathPlaceholder: `/ai-grader/reports/${input.reportId}/assets/${path.basename(localPath)}`,
       required: input.required,
+      ...(body ? { bodyEncoding: "base64" as const, bodyBase64: body.toString("base64") } : {}),
       ...metadata,
     };
   } catch {
@@ -167,6 +186,8 @@ async function maybeAsset(input: {
           id: input.id,
           kind: input.kind,
           localPath,
+          fileName: path.basename(localPath),
+          contentType: contentTypeForPath(localPath),
           publicPathPlaceholder: `/ai-grader/reports/${input.reportId}/assets/${path.basename(localPath)}`,
           required: true,
         }
@@ -183,6 +204,39 @@ function collectStringRefs(value: unknown, predicate: (key: string, text: string
 
 function unique(values: string[]) {
   return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
+}
+
+function isImagePath(value: string) {
+  return /\.(png|jpe?g|webp)$/i.test(value);
+}
+
+function normalizeReferencedPath(value: string, baseDir: string) {
+  const decoded = value.replace(/&amp;/g, "&").replace(/&#92;/g, "\\");
+  if (/^https?:\/\//i.test(decoded) || decoded.startsWith("data:")) return "";
+  if (/^[a-z]:\\/i.test(decoded) || path.isAbsolute(decoded)) return path.resolve(decoded);
+  return path.resolve(baseDir, decoded);
+}
+
+async function imageRefsFromHtml(reportHtmlPath: string, baseDir: string) {
+  try {
+    const html = await readFile(reportHtmlPath, "utf-8");
+    const refs: string[] = [];
+    for (const match of html.matchAll(/<img\b[^>]*\bsrc=(["'])(.*?)\1/gi)) {
+      const ref = normalizeReferencedPath(match[2] ?? "", baseDir);
+      if (ref && isImagePath(ref)) refs.push(ref);
+    }
+    return refs;
+  } catch {
+    return [];
+  }
+}
+
+function evidenceImageAssetId(filePath: string, roots: Array<{ label: string; root: string }>) {
+  const resolved = path.resolve(filePath);
+  const root = roots.find((candidate) => isSubpath(resolved, candidate.root));
+  const relative = root ? path.relative(path.resolve(root.root), resolved) : path.basename(resolved);
+  const prefix = root?.label ?? "report";
+  return `${prefix}/${relative.replace(/\\/g, "/")}`;
 }
 
 function firstRecord(...values: unknown[]): JsonRecord | undefined {
@@ -252,6 +306,7 @@ export async function buildAiGraderReportBundle(input: {
   reportId?: string;
   generatedAt?: string;
   publicBasePath?: string;
+  includeAssetBodies?: boolean;
 }): Promise<AiGraderReportBundle> {
   const reportDir = normalizeLocalPath(input.reportDir);
   const outputDir = normalizeLocalPath(input.outputDir ?? reportDir);
@@ -276,6 +331,31 @@ export async function buildAiGraderReportBundle(input: {
   ]);
   const frontPackageDir = String(manifest?.frontPackageDir ?? manifest?.front?.packageDir ?? analysis?.frontPackageDir ?? "");
   const backPackageDir = String(manifest?.backPackageDir ?? manifest?.back?.packageDir ?? analysis?.backPackageDir ?? "");
+  const imageRefs = unique([
+    ...(await imageRefsFromHtml(reportHtmlPath, reportDir)),
+    ...visionRefs(analysis, ["true", "portrait", "overlay", "channel", "heatmap", "surface vision", "surface-vision", "confidence"]),
+  ])
+    .map((ref) => normalizeReferencedPath(ref, reportDir))
+    .filter((ref) => ref && isImagePath(ref));
+  const roots = [
+    { label: "report", root: reportDir },
+    ...(frontPackageDir ? [{ label: "front", root: frontPackageDir }] : []),
+    ...(backPackageDir ? [{ label: "back", root: backPackageDir }] : []),
+  ];
+  const imageAssets = (
+    await Promise.all(
+      unique(imageRefs).map((localPath) =>
+        maybeAsset({
+          id: evidenceImageAssetId(localPath, roots),
+          kind: "image",
+          localPath,
+          required: false,
+          reportId,
+          includeBody: input.includeAssetBodies,
+        })
+      )
+    )
+  ).filter((asset): asset is AiGraderReportBundleAsset => Boolean(asset));
   const assets = (
     await Promise.all([
       maybeAsset({ id: "report-html", kind: "report_html", localPath: reportHtmlPath, required: true, reportId }),
@@ -284,7 +364,7 @@ export async function buildAiGraderReportBundle(input: {
       maybeAsset({ id: "front-package", kind: "folder", localPath: frontPackageDir, required: false, reportId }),
       maybeAsset({ id: "back-package", kind: "folder", localPath: backPackageDir, required: false, reportId }),
     ])
-  ).filter((asset): asset is AiGraderReportBundleAsset => Boolean(asset));
+  ).filter((asset): asset is AiGraderReportBundleAsset => Boolean(asset)).concat(imageAssets);
 
   return {
     schemaVersion: AI_GRADER_REPORT_BUNDLE_VERSION,

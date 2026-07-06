@@ -544,6 +544,74 @@ test("production publication API uploads artifacts and persists only when env-ga
   assert.ok(calls.some((call) => call.startsWith("upload:ai-grader/reports/sample-final-v0/report-bundle.json")));
 });
 
+test("production publication API uploads AI Grader evidence images from report bundle bodies", async () => {
+  const uploaded: Array<{ storageKey: string; contentType: string; bodyEncoding?: string; bodyText: string }> = [];
+  const imageBody = Buffer.from("front-image").toString("base64");
+  const reportBundle = {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    assets: [
+      {
+        id: "front/front-all-on-portrait-display.png",
+        kind: "image",
+        fileName: "front-all-on-portrait-display.png",
+        localPath: "C:\\TenKings\\capture-data\\front\\front-all-on-portrait-display.png",
+        contentType: "image/png",
+        bodyEncoding: "base64",
+        bodyBase64: imageBody,
+      },
+    ],
+  };
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async uploadArtifact(input) {
+      uploaded.push({
+        storageKey: input.storageKey,
+        contentType: input.contentType,
+        bodyEncoding: input.bodyEncoding,
+        bodyText: Buffer.from(input.body, input.bodyEncoding === "base64" ? "base64" : "utf8").toString("utf8"),
+      });
+      return { storageKey: input.storageKey, publicUrl: `https://cdn.tenkings.test/${input.storageKey}` };
+    },
+    async persist(input) {
+      return {
+        gradingSessionId: input.reportBundle.gradingSessionId,
+        reportId: input.productionRelease.reportId,
+        publicationStatus: input.publicationStatus,
+        storagePlan: input.storagePlan,
+        evidenceAssetCount: input.storagePlan.artifacts.length,
+        cardAssetUpdatedCount: 0,
+        itemUpdatedCount: 0,
+      } as any;
+    },
+  });
+
+  const req = mockRequest("POST", ["publish"]);
+  req.body = {
+    publicationStatus: "published",
+    reportBundle,
+    productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 200);
+  const imageUpload = uploaded.find((upload) => upload.contentType === "image/png");
+  assert.equal(imageUpload?.bodyEncoding, "base64");
+  assert.equal(imageUpload?.bodyText, "front-image");
+  assert.match(imageUpload?.storageKey ?? "", /assets\/001-front-all-on-portrait-display\.png/);
+  const body = res.jsonBody as { ok: boolean; result: { uploadedAssetCount: number } };
+  assert.equal(body.result.uploadedAssetCount, 8);
+});
+
 test("production history API returns persisted report stats when env-gated", async () => {
   let adminCalled = false;
   const handler = createAiGraderProductionApiHandler({

@@ -22,6 +22,7 @@ import {
   fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
+  fetchAiGraderStationReportBundle,
   fetchAiGraderStationReportHistory,
   fetchAiGraderStationReportHtml,
   heartbeatAiGraderLiveLighting,
@@ -30,6 +31,7 @@ import {
   safeOffAiGraderLiveLighting,
   stopAiGraderStationPreview,
 } from "../../lib/aiGraderStationBridgeClient";
+import type { AiGraderReportBundle } from "../../lib/aiGraderReportBundle";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
@@ -729,13 +731,13 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const buildReportBundleForProduction = () => {
-    if (!status.reportBundle) return null;
-    if (!selectedCardIdentity) return status.reportBundle;
+  const buildReportBundleForProduction = (baseBundle: AiGraderReportBundle | undefined = status.reportBundle) => {
+    if (!baseBundle) return null;
+    if (!selectedCardIdentity) return baseBundle;
     return {
-      ...status.reportBundle,
+      ...baseBundle,
       cardIdentity: {
-        ...status.reportBundle.cardIdentity,
+        ...baseBundle.cardIdentity,
         ...selectedCardIdentity,
         sideCount: 2 as const,
         futureSlabbedPhotoRefsReserved: true as const,
@@ -786,7 +788,17 @@ export default function AiGraderStationPage() {
     setBusy("ten-kings-publish");
     setError(null);
     try {
-      const reportBundle = buildReportBundleForProduction();
+      let sourceBundle = status.reportBundle;
+      const reportId = status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      if (bridgeConnected && stationToken.trim() && reportId) {
+        sourceBundle = await fetchAiGraderStationReportBundle({
+          baseUrl: bridgeUrl,
+          stationToken,
+          reportId,
+          includeAssetBodies: true,
+        });
+      }
+      const reportBundle = buildReportBundleForProduction(sourceBundle);
       if (!reportBundle || !status.productionRelease) {
         throw new Error("A finalized production release and report bundle are required before Ten Kings publish.");
       }

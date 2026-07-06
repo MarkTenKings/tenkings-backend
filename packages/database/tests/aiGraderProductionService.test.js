@@ -207,6 +207,45 @@ test("production storage plan sanitizes local Dell paths and loopback URLs", () 
   assert.match(combinedBodies, /"publicReportUrl": "https:\/\/collect\.tenkings\.co\/ai-grader\/reports\/report-1"/);
 });
 
+test("production storage plan uploads AI Grader evidence image assets with public URLs", () => {
+  const imageBody = Buffer.from("front-image").toString("base64");
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle({
+      assets: [
+        {
+          id: "front/front-all-on-portrait-display.png",
+          kind: "image",
+          fileName: "front-all-on-portrait-display.png",
+          localPath: "C:\\TenKings\\capture-data\\front\\front-all-on-portrait-display.png",
+          contentType: "image/png",
+          bodyEncoding: "base64",
+          bodyBase64: imageBody,
+        },
+      ],
+    }),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+  });
+
+  const imageArtifact = plan.artifacts.find((artifact) => artifact.artifactClass === "report_asset");
+  assert.equal(imageArtifact?.kind, "report-image");
+  assert.equal(imageArtifact?.contentType, "image/png");
+  assert.equal(imageArtifact?.bodyEncoding, "base64");
+  assert.equal(imageArtifact?.body, imageBody);
+  assert.equal(imageArtifact?.byteSize, Buffer.byteLength("front-image"));
+  assert.match(imageArtifact?.storageKey ?? "", /ai-grader\/reports\/report-1\/assets\/001-front-all-on-portrait-display\.png/);
+  assert.equal(imageArtifact?.publicUrl, `https://cdn.tenkings.test/${imageArtifact?.storageKey}`);
+
+  const reportBundleArtifact = plan.artifacts.find((artifact) => artifact.kind === "report-bundle.json");
+  const publicBundle = JSON.parse(reportBundleArtifact?.body ?? "{}");
+  assert.equal(publicBundle.publicAssets[0].publicUrl, imageArtifact?.publicUrl);
+  assert.equal(publicBundle.assets[0].contentType, "image/png");
+  assert.equal(publicBundle.assets[0].bodyBase64, undefined);
+  assert.equal(publicBundle.assets[0].localPath, undefined);
+  assert.doesNotMatch(reportBundleArtifact?.body ?? "", /C:\\TenKings/);
+});
+
 test("public JSON sanitizer removes local path and loopback fields without dropping evidence refs", () => {
   const sanitized = sanitizeAiGraderPublicJson({
     localReportFolder: "C:\\TenKings\\capture-data\\report",

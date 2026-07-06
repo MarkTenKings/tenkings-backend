@@ -2768,9 +2768,25 @@ export class AiGraderLocalStationBridgeService {
     });
   }
 
-  async reportBundle(reportId: string | undefined): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
+  async reportBundle(
+    reportId: string | undefined,
+    options: { includeAssetBodies?: boolean } = {}
+  ): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
     const expectedReportId = reportId?.trim() || this.manifest.reportId;
     if (!expectedReportId) throw new Error("No AI Grader report ID is available yet.");
+    if (options.includeAssetBodies) {
+      const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
+      if (reportDir && this.manifest.reportId === expectedReportId) {
+        const bundle = await buildAiGraderReportBundle({
+          reportDir,
+          outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+          reportId: expectedReportId,
+          publicBasePath: this.config.publicBasePath,
+          includeAssetBodies: true,
+        });
+        return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, this.manifest.productionRelease), source: "active_manifest_generated_with_asset_bodies" };
+      }
+    }
     if (this.manifest.reportBundle?.reportId === expectedReportId) {
       return { reportId: expectedReportId, bundle: bundleWithProductionRelease(this.manifest.reportBundle, this.manifest.productionRelease), source: "active_manifest_memory" };
     }
@@ -3447,7 +3463,17 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for report bundles." }, origin, config);
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         const reportId = decodeURIComponent(reportBundleMatch[1]);
-        return sendJson(res, 200, { ok: true, operation: "report-bundle", result: await service.reportBundle(reportId) }, origin, config);
+        return sendJson(
+          res,
+          200,
+          {
+            ok: true,
+            operation: "report-bundle",
+            result: await service.reportBundle(reportId, { includeAssetBodies: url.searchParams.get("includeAssetBodies") === "1" }),
+          },
+          origin,
+          config
+        );
       }
 
       const reportHtmlMatch = url.pathname.match(/^\/reports\/([^/]+)\/html$/);

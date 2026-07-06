@@ -23612,3 +23612,7 @@ By enabling Rip It Live, I confirm:
 - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `29` tests.
 - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `178` tests.
 - `git diff --check` -> pass with line-ending warnings only.
+
+## 2026-07-06T10:04:53Z - PR60 production image report fix
+- Planned: fix AI Grader production report image publishing/rendering so production reports show captured evidence images, then validate and deploy PR #60 if checks are clean.
+- Guardrails: no hardware capture, no migrations, no production DB writes outside normal deploy path, no env changes, no secrets printed.
