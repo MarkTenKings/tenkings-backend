@@ -23587,3 +23587,12 @@ By enabling Rip It Live, I confirm:
 ### PR #60 Not Run
 - No supervised Dell live-lighting smoke was run yet.
 - No capture, Leimac hardware command, migration, production DB write, Vercel env change, credential rotation, or secret-printing action was run for PR #60.
+
+## 2026-07-06 - AI Grader PR #60 supervised live-lighting smoke
+
+### Planned Action
+- Run Mark-supervised PR #60 browser live Leimac lighting smoke from branch `feature/ai-grader-browser-live-lighting-tuning`.
+- Use the PR #60 local station UI, not production main, so the live-lighting panel is present before merge.
+- Rebuild/restart the Dell local bridge from the PR #60 branch in real/local-only mode with local station origins allowed.
+- Verify bridge health, embedded Basler MJPEG preview, live Leimac channel/duty tuning, profile acceptance, capture transition safe-off, warm capture using the accepted live-tuned profile, report open, and final physical light off.
+- Guardrails: no migrations, no production DB writes, no Vercel env changes, no credential rotation, no secret printing, no public hardware controls.
