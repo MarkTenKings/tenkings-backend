@@ -24,7 +24,6 @@ import {
   fetchAiGraderStationPreviewStatus,
   fetchAiGraderStationReportBundle,
   fetchAiGraderStationReportHistory,
-  fetchAiGraderStationReportHtml,
   heartbeatAiGraderLiveLighting,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
@@ -32,6 +31,7 @@ import {
   stopAiGraderStationPreview,
 } from "../../lib/aiGraderStationBridgeClient";
 import type { AiGraderReportBundle } from "../../lib/aiGraderReportBundle";
+import { findReportImage, reportImageAssets } from "../../lib/aiGraderReportImages";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
@@ -68,6 +68,13 @@ type CompsState = {
   count?: number;
 };
 type BridgeConnectionState = "checking" | "connected" | "not_running" | "pairing_required" | "error";
+type LocalReportState = {
+  open: boolean;
+  status: "idle" | "loading" | "ready" | "error";
+  message: string;
+  reportId?: string;
+  bundle?: AiGraderReportBundle;
+};
 
 async function callStationContract(action: AiGraderStationAction): Promise<AiGraderLocalStationStatus> {
   const method = action === "status" || action === "latest-report" || action === "session-manifest" ? "GET" : "POST";
@@ -108,10 +115,6 @@ function queueSummary(phases: AiGraderWarmRunnerPhase[]) {
   if (failed) return `${failed} failed`;
   if (active) return `${active} active`;
   return `${completed}/${phases.length} complete`;
-}
-
-function reportUrlFor(item: AiGraderLocalReportHistoryItem) {
-  return item.viewerPath || `/ai-grader/reports/${encodeURIComponent(item.reportId)}`;
 }
 
 function sortHistory(items: AiGraderLocalReportHistoryItem[], sort: HistorySort) {
@@ -161,6 +164,11 @@ export default function AiGraderStationPage() {
   const [compsState, setCompsState] = useState<CompsState>({
     status: "idle",
     message: "Comps have not been run.",
+  });
+  const [localReport, setLocalReport] = useState<LocalReportState>({
+    open: false,
+    status: "idle",
+    message: "No local report is open.",
   });
   const [profileDraft, setProfileDraft] = useState({
     dutyPercent: status.acceptedProfile.dutyPercent,
@@ -424,6 +432,33 @@ export default function AiGraderStationPage() {
   const reportReady = status.latestReport.exists && Boolean(status.latestReport.reportId);
   const finalReady = status.safety.finalGradeComputed || Boolean(status.productionRelease?.finalGradeComputed);
   const labelReady = status.safety.labelGenerated || Boolean(status.outputs?.labelDataPath);
+  const localReportImages = useMemo(
+    () => (localReport.bundle ? reportImageAssets(localReport.bundle, { allowEmbeddedBodies: true }) : []),
+    [localReport.bundle]
+  );
+  const localFrontTrueView =
+    findReportImage(localReportImages, ["front", "all-on", "portrait"]) ??
+    findReportImage(localReportImages, ["front", "accepted"]) ??
+    findReportImage(localReportImages, ["front"]);
+  const localBackTrueView =
+    findReportImage(localReportImages, ["back", "all-on", "portrait"]) ??
+    findReportImage(localReportImages, ["back", "accepted"]) ??
+    findReportImage(localReportImages, ["back"]);
+  const localReportGallery = [
+    localFrontTrueView,
+    localBackTrueView,
+    ...localReportImages.filter((asset) => asset.renderUrl !== localFrontTrueView?.renderUrl && asset.renderUrl !== localBackTrueView?.renderUrl),
+  ].filter((asset): asset is NonNullable<typeof localReportImages[number]> => Boolean(asset));
+  const localReportCounts = {
+    front: localReportImages.filter((asset) => `${asset.id ?? ""} ${asset.fileName ?? ""}`.toLowerCase().includes("front")).length,
+    back: localReportImages.filter((asset) => `${asset.id ?? ""} ${asset.fileName ?? ""}`.toLowerCase().includes("back")).length,
+    roi: localReportImages.filter((asset) => `${asset.id ?? ""} ${asset.fileName ?? ""}`.toLowerCase().includes("roi")).length,
+    channel: localReportImages.filter((asset) => `${asset.id ?? ""} ${asset.fileName ?? ""}`.toLowerCase().includes("channel")).length,
+    vision: localReportImages.filter((asset) => {
+      const haystack = `${asset.id ?? ""} ${asset.fileName ?? ""}`.toLowerCase();
+      return haystack.includes("surface") || haystack.includes("heatmap") || haystack.includes("confidence") || haystack.includes("normal");
+    }).length,
+  };
   const showFlipScrim = status.currentStep === "prompt_flip_card";
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
   const warmRunner = status.warmRunnerStatus;
@@ -973,30 +1008,92 @@ export default function AiGraderStationPage() {
       setError("No generated report is ready yet.");
       return;
     }
+    const publishedUrl = productionPublish.status === "published" ? productionPublish.publicReportUrl ?? "" : "";
+    if (publishedUrl) {
+      window.location.assign(publishedUrl);
+      return;
+    }
     if (!bridgeConnected || !stationToken.trim()) {
       setError("Connect the Dell local station bridge before opening the local report.");
       return;
     }
     setBusy("open-report");
     setError(null);
+    setLocalReport({
+      open: true,
+      status: "loading",
+      message: "Loading local report images from the paired Dell bridge.",
+      reportId,
+    });
     window.localStorage.setItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY, bridgeUrl);
     window.localStorage.setItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY, stationToken);
     try {
-      const html = await fetchAiGraderStationReportHtml({
+      const bundle = await fetchAiGraderStationReportBundle({
         baseUrl: bridgeUrl,
         stationToken,
         reportId,
+        includeAssetBodies: true,
       });
-      const objectUrl = window.URL.createObjectURL(new Blob([html], { type: "text/html" }));
-      const opened = window.open(objectUrl, "_blank", "noopener,noreferrer");
-      if (!opened) {
-        window.URL.revokeObjectURL(objectUrl);
-        setError("Allow pop-ups for collect.tenkings.co to open the local AI Grader report.");
-        return;
-      }
-      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60000);
+      const imageCount = reportImageAssets(bundle, { allowEmbeddedBodies: true }).length;
+      setLocalReport({
+        open: true,
+        status: "ready",
+        message: imageCount ? `${imageCount} local report image(s) loaded through the paired bridge.` : "Local report loaded, but no renderable image assets were returned.",
+        reportId,
+        bundle,
+      });
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not open the local AI Grader report.");
+      const message = requestError instanceof Error ? requestError.message : "Could not open the local AI Grader report.";
+      setLocalReport({
+        open: true,
+        status: "error",
+        message,
+        reportId,
+      });
+      setError(message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openHistoryReport = async (reportId: string) => {
+    if (!reportId) return;
+    if (!bridgeConnected || !stationToken.trim()) {
+      setError("Connect the Dell local station bridge before opening local report history.");
+      return;
+    }
+    setBusy("open-report");
+    setError(null);
+    setLocalReport({
+      open: true,
+      status: "loading",
+      message: "Loading local history report images from the paired Dell bridge.",
+      reportId,
+    });
+    try {
+      const bundle = await fetchAiGraderStationReportBundle({
+        baseUrl: bridgeUrl,
+        stationToken,
+        reportId,
+        includeAssetBodies: true,
+      });
+      const imageCount = reportImageAssets(bundle, { allowEmbeddedBodies: true }).length;
+      setLocalReport({
+        open: true,
+        status: "ready",
+        message: imageCount ? `${imageCount} local report image(s) loaded through the paired bridge.` : "Local report loaded, but no renderable image assets were returned.",
+        reportId,
+        bundle,
+      });
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Could not open the local AI Grader report.";
+      setLocalReport({
+        open: true,
+        status: "error",
+        message,
+        reportId,
+      });
+      setError(message);
     } finally {
       setBusy(null);
     }
@@ -1140,6 +1237,70 @@ export default function AiGraderStationPage() {
                 </button>
               </div>
             </div>
+          ) : null}
+
+          {localReport.open ? (
+            <section className="local-report" aria-label="Local AI Grader report viewer">
+              <div className="local-report-head">
+                <div>
+                  <p className="eyebrow">Local Operator Report</p>
+                  <h2>{localReport.bundle?.cardIdentity.title ?? localReport.reportId ?? "AI Grader report"}</h2>
+                  <p>{localReport.message}</p>
+                </div>
+                <button
+                  type="button"
+                  className="close-report"
+                  onClick={() => setLocalReport({ open: false, status: "idle", message: "No local report is open." })}
+                  aria-label="Close local report viewer"
+                >
+                  X
+                </button>
+              </div>
+              {localReport.status === "loading" ? (
+                <div className="report-loading">Loading paired-bridge report assets</div>
+              ) : localReport.status === "error" ? (
+                <div className="report-error">{localReport.message}</div>
+              ) : localReport.bundle ? (
+                <>
+                  <div className="report-hero">
+                    {localFrontTrueView ? (
+                      <figure>
+                        <img src={localFrontTrueView.renderUrl} alt="Front true view evidence" />
+                        <figcaption>{localFrontTrueView.fileName ?? localFrontTrueView.id ?? "Front evidence"}</figcaption>
+                      </figure>
+                    ) : null}
+                    {localBackTrueView ? (
+                      <figure>
+                        <img src={localBackTrueView.renderUrl} alt="Back true view evidence" />
+                        <figcaption>{localBackTrueView.fileName ?? localBackTrueView.id ?? "Back evidence"}</figcaption>
+                      </figure>
+                    ) : null}
+                    <div className="report-facts">
+                      <span>Report ID</span>
+                      <strong>{localReport.bundle.reportId}</strong>
+                      <span>Images</span>
+                      <strong>{localReportImages.length}</strong>
+                      <span>Front / Back</span>
+                      <strong>{localReportCounts.front} / {localReportCounts.back}</strong>
+                      <span>ROI / Channels / Vision</span>
+                      <strong>{localReportCounts.roi} / {localReportCounts.channel} / {localReportCounts.vision}</strong>
+                    </div>
+                  </div>
+                  {localReportGallery.length ? (
+                    <div className="report-grid">
+                      {localReportGallery.map((asset) => (
+                        <figure key={asset.renderUrl}>
+                          <img src={asset.renderUrl} alt={asset.fileName ?? asset.id ?? "AI Grader evidence image"} loading="lazy" />
+                          <figcaption>{asset.fileName ?? asset.id ?? "evidence image"}</figcaption>
+                        </figure>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="report-error">No renderable local report images were returned by the paired bridge.</div>
+                  )}
+                </>
+              ) : null}
+            </section>
           ) : null}
         </section>
 
@@ -1560,7 +1721,7 @@ export default function AiGraderStationPage() {
                   <span>{item.finalOverallGrade ? "Final V0" : "Provisional"}</span>
                   <strong>{item.finalOverallGrade ?? item.provisionalOverallGrade ?? "Pending"}</strong>
                 </div>
-                <button type="button" onClick={() => window.open(reportUrlFor(item), "_blank", "noopener,noreferrer")}>
+                <button type="button" onClick={() => void openHistoryReport(item.reportId)} disabled={busy !== null}>
                   Open
                 </button>
               </article>
@@ -1587,6 +1748,117 @@ export default function AiGraderStationPage() {
             radial-gradient(circle at center, rgba(76, 91, 70, 0.32), transparent 58%),
             #121311;
           padding: 28px;
+        }
+        .local-report {
+          position: absolute;
+          inset: 28px;
+          z-index: 9;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          border: 1px solid rgba(225, 205, 155, 0.28);
+          border-radius: 8px;
+          background: rgba(12, 14, 13, 0.96);
+          box-shadow: 0 22px 80px rgba(0, 0, 0, 0.42);
+          padding: 18px;
+          overflow: auto;
+        }
+        .local-report-head {
+          display: flex;
+          justify-content: space-between;
+          gap: 18px;
+          align-items: flex-start;
+          position: sticky;
+          top: 0;
+          z-index: 2;
+          background: rgba(12, 14, 13, 0.96);
+          padding-bottom: 10px;
+          border-bottom: 1px solid rgba(225, 205, 155, 0.18);
+        }
+        .local-report-head h2 {
+          margin: 0 0 6px;
+          font-size: 22px;
+        }
+        .local-report-head p {
+          color: #d5c8a7;
+        }
+        .close-report {
+          width: 36px;
+          height: 36px;
+          border-radius: 8px;
+          padding: 0;
+        }
+        .report-loading,
+        .report-error {
+          border: 1px solid rgba(225, 205, 155, 0.2);
+          border-radius: 8px;
+          padding: 18px;
+          background: rgba(255, 255, 255, 0.06);
+          color: #f4e9c8;
+        }
+        .report-error {
+          border-color: rgba(224, 109, 91, 0.38);
+          color: #ffcdc4;
+        }
+        .report-hero {
+          display: grid;
+          grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(220px, 0.8fr);
+          gap: 14px;
+          align-items: stretch;
+        }
+        .report-hero figure,
+        .report-grid figure {
+          margin: 0;
+          border: 1px solid rgba(225, 205, 155, 0.18);
+          border-radius: 8px;
+          background: #171916;
+          overflow: hidden;
+        }
+        .report-hero img,
+        .report-grid img {
+          display: block;
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          background: #060706;
+        }
+        .report-hero img {
+          max-height: 340px;
+        }
+        .report-hero figcaption,
+        .report-grid figcaption {
+          padding: 8px 10px;
+          color: #d5c8a7;
+          font-size: 12px;
+          overflow-wrap: anywhere;
+        }
+        .report-facts {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 8px;
+          align-content: start;
+          border: 1px solid rgba(225, 205, 155, 0.18);
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.05);
+          padding: 14px;
+        }
+        .report-facts span {
+          color: #a89976;
+          font-size: 11px;
+          text-transform: uppercase;
+          font-weight: 800;
+        }
+        .report-facts strong {
+          color: #f7f0dc;
+          overflow-wrap: anywhere;
+        }
+        .report-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+          gap: 12px;
+        }
+        .report-grid img {
+          aspect-ratio: 1 / 1;
         }
         .camera-frame {
           position: relative;
@@ -2329,6 +2601,17 @@ export default function AiGraderStationPage() {
           .history-list.tiles,
           .history-list article {
             grid-template-columns: 1fr;
+          }
+          .local-report {
+            position: fixed;
+            inset: 12px;
+          }
+          .local-report-head,
+          .report-hero {
+            grid-template-columns: 1fr;
+          }
+          .local-report-head {
+            display: grid;
           }
         }
       `}</style>

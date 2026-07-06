@@ -14,6 +14,8 @@ export type AiGraderReportPublicAsset = {
   byteSize?: number;
   checksumSha256?: string;
   side?: "front" | "back" | string;
+  bodyEncoding?: "base64" | string;
+  bodyBase64?: string;
 };
 
 export type AiGraderReportBundle = {

@@ -23706,3 +23706,50 @@ By enabling Rip It Live, I confirm:
 - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
 - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
 - `git diff --check` -> pass with line-ending warnings only.
+
+## 2026-07-06 - AI Grader PR #61 merge/deploy and supervised production smoke
+
+### Planned Action
+- Mark approved PR #61 for merge/deploy and approved a supervised production station smoke.
+- Planned steps: confirm PR #61 clean merge state and passing checks, merge PR #61, verify Vercel Production deployment, pull latest `main` locally on the Dell, rebuild/update/restart the local Dell bridge from merged `main`, confirm bridge health, then run a Mark-supervised production station smoke from `https://collect.tenkings.co/ai-grader/station`.
+- Smoke acceptance: preview works before grading, preview stops/holds through front capture, flip prompt, back capture, and report generation, `/preview/stream` remains blocked during the hold, back capture has no Basler controlled-by-another-application error, `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, full front/back evidence stack exists, local report opens, publish runs only with Mark approval, production report images appear if published, and final physical Leimac light is off with Mark confirmation.
+- Guardrails: no migrations, DB schema changes, Vercel env changes, credential rotation, destructive operations, secret printing, or unsupervised hardware capture.
+
+### Observed Result / Follow-On
+- PR #61 merged to `main` as `5c0db795ad6f7d49553d60be87d6879cbe311fb1`; Vercel Production deployment for that merge commit succeeded.
+- Dell bridge was rebuilt from merged `main` and restarted in real/local-only mode; token-gated bridge status reported `bridgeVersion=ai-grader-local-station-bridge-v0.4`, `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, and `currentStep=start_new_card`.
+- Mark later confirmed the production full front/back workflow now reaches and gets past back capture after PR #61.
+- Remaining issue reported by Mark: operator View Report still depended on a popup and report images did not appear.
+
+## 2026-07-06 - AI Grader PR #62 report view/images no popup
+
+### Planned Action
+- Create focused branch `fix/ai-grader-report-view-images-no-popup`.
+- Remove popup dependency for operator report viewing, render local reports inline in the station through the paired Dell bridge, and keep the local bridge token out of URLs/logs.
+- Ensure local operator report images render from bridge-supplied image bodies and customer-facing public report images render only from storage-backed public URLs.
+- Keep public report routes GET-only/read-only and hardware-free.
+- Guardrails: no migrations, DB schema changes, Vercel env changes, credential rotation, destructive operations, secret printing, or hardware capture without explicit Mark approval.
+
+### Diagnosis
+- Latest post-PR #61 local station session: `ai-grader-browser-station-session-2026-07-06T171328519Z-report`.
+- Local station manifest had full front/back evidence and `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, but no production public URL was recorded for the latest session, indicating Mark was viewing the local report before publish.
+- Local report HTML contained `79` image tags and all `79` `src` values were absolute `C:\TenKings\...` Windows paths, which do not render when wrapped in a `collect.tenkings.co` blob/popup.
+- Exported `report-bundle.json` had `77` assets and `72` images but `0` image bodies, so a bundle-only viewer cannot render images unless it explicitly requests `includeAssetBodies=1`.
+- Read-only paired bridge check for the same report with `includeAssetBodies=1` returned `77` assets, `72` image assets, and `72` image bodies; no hardware capture was run.
+- Public API check for the latest report returned `404 Published AI Grader report not found`, so this latest session was not yet a published customer report.
+
+### Fix / Validation
+- Station View Report no longer fetches raw local HTML or calls `window.open`; it fetches `/reports/:reportId/bundle?includeAssetBodies=1` through the paired Dell bridge with the local station token header and renders an inline Local Operator Report overlay.
+- Local operator report rendering uses bridge-supplied image bodies as in-memory data URLs and keeps the bridge token out of URLs/logs.
+- Station report history Open now uses the same inline local viewer instead of a popup.
+- Public customer report rendering was refactored through a shared image resolver that only accepts safe public/storage URLs unless operator-only embedded bodies are explicitly enabled.
+- Publish coverage now asserts stored public report bundles contain storage-backed image `publicUrl` values and do not contain `bodyBase64` or local Dell paths.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>`, Browserslist/baseline-browser-mapping, and Tailwind glob warnings.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `32` tests.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `180` tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+  - `git diff --check` -> pass with line-ending warnings only.
+- No hardware capture, migration, production DB write, Vercel env change, credential rotation, deploy, or secret-printing action was run.

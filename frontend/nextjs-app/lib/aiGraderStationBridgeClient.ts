@@ -431,13 +431,13 @@ export async function fetchAiGraderStationReportBundle(input: {
   stationToken: string;
   reportId: string;
   includeAssetBodies?: boolean;
-}): Promise<AiGraderReportBundle> {
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderReportBundle> {
   const query = input.includeAssetBodies ? "?includeAssetBodies=1" : "";
   const result = await bridgeGetJson<{ reportId: string; bundle: AiGraderReportBundle; source: string }>({
     baseUrl: input.baseUrl,
     stationToken: input.stationToken,
     path: `/reports/${encodeURIComponent(input.reportId)}/bundle${query}`,
-  });
+  }, fetchImpl);
   return result.bundle;
 }
 

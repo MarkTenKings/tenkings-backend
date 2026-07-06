@@ -7,10 +7,10 @@ import {
   hasNoFinalCertifiedClaims,
   type AiGraderReportBundle,
 } from "../../../lib/aiGraderReportBundle";
+import { findReportImage, reportImageAssets, type AiGraderRenderableReportImage } from "../../../lib/aiGraderReportImages";
 
 const ELEMENT_LABELS = ["centering", "corners", "edges", "surface"] as const;
 const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Confidence", "Evidence Replay"];
-type ReportImageAsset = NonNullable<AiGraderReportBundle["assets"]>[number] & { publicUrl: string };
 
 function scoreText(score?: number) {
   return typeof score === "number" ? score.toFixed(score % 1 === 0 ? 0 : 2) : "Pending";
@@ -22,26 +22,6 @@ function sourceChannelsText(candidate: unknown) {
       ? candidate.sourceChannels
       : [];
   return channels.length ? channels.map(String).join(", ") : "see evidence refs";
-}
-
-function reportImageAssets(bundle: AiGraderReportBundle): ReportImageAsset[] {
-  const assets = [...(bundle.publicAssets ?? []), ...(bundle.assets ?? [])];
-  const deduped = new Map<string, ReportImageAsset>();
-  for (const asset of assets) {
-    if (!asset?.publicUrl) continue;
-    const haystack = `${asset.contentType ?? ""} ${asset.fileName ?? ""} ${asset.id ?? ""}`.toLowerCase();
-    if (!haystack.includes("image") && !/\.(png|jpe?g|webp)$/i.test(asset.publicUrl)) continue;
-    deduped.set(asset.publicUrl, asset as ReportImageAsset);
-  }
-  return Array.from(deduped.values());
-}
-
-function findReportImage(assets: ReturnType<typeof reportImageAssets>, terms: string[]) {
-  const normalizedTerms = terms.map((term) => term.toLowerCase());
-  return assets.find((asset) => {
-    const haystack = `${asset.id ?? ""} ${asset.fileName ?? ""} ${asset.storageKey ?? ""}`.toLowerCase();
-    return normalizedTerms.every((term) => haystack.includes(term));
-  });
 }
 
 export default function AiGraderReportViewerPage() {
@@ -75,8 +55,8 @@ export default function AiGraderReportViewerPage() {
   const galleryImages = [
     frontTrueView,
     backTrueView,
-    ...images.filter((asset) => asset.publicUrl !== frontTrueView?.publicUrl && asset.publicUrl !== backTrueView?.publicUrl),
-  ].filter((asset): asset is ReportImageAsset => Boolean(asset)).slice(0, 36);
+    ...images.filter((asset) => asset.renderUrl !== frontTrueView?.renderUrl && asset.renderUrl !== backTrueView?.renderUrl),
+  ].filter((asset): asset is AiGraderRenderableReportImage => Boolean(asset)).slice(0, 36);
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -139,8 +119,8 @@ export default function AiGraderReportViewerPage() {
             </p>
           </div>
           <div className="card-stage" aria-label="front card visual placeholder">
-            {frontTrueView?.publicUrl ? (
-              <img className="card-photo" src={frontTrueView.publicUrl} alt="Front true view evidence" />
+            {frontTrueView?.renderUrl ? (
+              <img className="card-photo" src={frontTrueView.renderUrl} alt="Front true view evidence" />
             ) : (
               <div className="card-visual">
                 <span>Front True View</span>
@@ -163,8 +143,8 @@ export default function AiGraderReportViewerPage() {
           {galleryImages.length ? (
             <div className="image-grid">
               {galleryImages.map((asset) => (
-                <figure key={asset.publicUrl}>
-                  <img src={asset.publicUrl} alt={asset.fileName ?? asset.id ?? "AI Grader evidence image"} loading="lazy" />
+                <figure key={asset.renderUrl}>
+                  <img src={asset.renderUrl} alt={asset.fileName ?? asset.id ?? "AI Grader evidence image"} loading="lazy" />
                   <figcaption>{asset.fileName ?? asset.id ?? "evidence image"}</figcaption>
                 </figure>
               ))}
@@ -295,9 +275,9 @@ export default function AiGraderReportViewerPage() {
               ))}
             </aside>
             <div className="lab-canvas">
-              {frontTrueView?.publicUrl ? <img className="lab-image" src={frontTrueView.publicUrl} alt="Vision Lab front true view" /> : null}
-              {backTrueView?.publicUrl ? <img className="lab-image back" src={backTrueView.publicUrl} alt="Vision Lab back true view" /> : null}
-              {!frontTrueView?.publicUrl && !backTrueView?.publicUrl ? (
+              {frontTrueView?.renderUrl ? <img className="lab-image" src={frontTrueView.renderUrl} alt="Vision Lab front true view" /> : null}
+              {backTrueView?.renderUrl ? <img className="lab-image back" src={backTrueView.renderUrl} alt="Vision Lab back true view" /> : null}
+              {!frontTrueView?.renderUrl && !backTrueView?.renderUrl ? (
                 <div className="viewer-card">
                   <span>True View</span>
                   <strong>{bundle.visionLab.trueViewRefs.length ? "Front/back imagery referenced" : "True View unavailable"}</strong>
