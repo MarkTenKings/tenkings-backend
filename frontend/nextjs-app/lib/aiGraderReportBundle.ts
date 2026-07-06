@@ -1,6 +1,12 @@
 import { buildSampleAiGraderProductionRelease, type AiGraderProductionRelease } from "./aiGraderProductionRelease";
 
 export const AI_GRADER_WEB_REPORT_BUNDLE_VERSION = "ai-grader-report-bundle-v0.1";
+export const AI_GRADER_EXPLICIT_SAMPLE_REPORT_IDS = ["sample-pr45", "sample-final-v0"] as const;
+
+export function isExplicitAiGraderSampleReportId(reportId: string | string[] | undefined) {
+  const normalized = Array.isArray(reportId) ? reportId[0] : reportId;
+  return AI_GRADER_EXPLICIT_SAMPLE_REPORT_IDS.includes((normalized ?? "").trim() as (typeof AI_GRADER_EXPLICIT_SAMPLE_REPORT_IDS)[number]);
+}
 
 export type AiGraderReportElementKey = "centering" | "corners" | "edges" | "surface";
 
@@ -269,10 +275,11 @@ function buildMissingAiGraderReportBundle(reportId: string): AiGraderReportBundl
 
 export function getAiGraderReportBundle(reportId: string | string[] | undefined): AiGraderReportBundle {
   const normalized = Array.isArray(reportId) ? reportId[0] : reportId;
-  if (!normalized || normalized.trim().length === 0 || normalized === "sample-pr45") {
+  const trimmed = normalized?.trim() ?? "";
+  if (trimmed === "sample-pr45") {
     return SAMPLE_AI_GRADER_REPORT_BUNDLE;
   }
-  if (normalized === "sample-final-v0") {
+  if (trimmed === "sample-final-v0") {
     const productionRelease = buildSampleAiGraderProductionRelease({
       ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
       reportId: "sample-final-v0",
@@ -290,7 +297,7 @@ export function getAiGraderReportBundle(reportId: string | string[] | undefined)
       limitations: ["No physical label printed in fixture.", "No production DB write in fixture."],
     };
   }
-  return buildMissingAiGraderReportBundle(normalized);
+  return buildMissingAiGraderReportBundle(trimmed || "missing-report-data");
 }
 
 export function hasNoFinalCertifiedClaims(bundle: AiGraderReportBundle) {

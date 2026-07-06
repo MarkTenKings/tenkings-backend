@@ -598,6 +598,14 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         publicReportBaseUrl: "https://collect.tenkings.co",
         publicUrlFor: deps.publicUrlFor,
       });
+      const reportImageAssetCount = initialPlan.artifacts.filter((artifact) => artifact.artifactClass === "report_asset").length;
+      if (input.publicationStatus === "published" && reportImageAssetCount < 1) {
+        return res.status(400).json({
+          ok: false,
+          code: "AI_GRADER_REPORT_IMAGES_REQUIRED",
+          message: "AI Grader publish requires storage-backed report image assets. Refetch the local bundle with includeAssetBodies=1 before publishing.",
+        });
+      }
       const uploadedPlan = await uploadPlanArtifacts(deps, initialPlan);
       const result = await deps.persist({
         tenantId,

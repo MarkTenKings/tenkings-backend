@@ -223,6 +223,16 @@ test("unknown generated report ids do not reuse fixture report data", () => {
   assert.equal(hasNoCertifiedClaim(bundle), true);
 });
 
+test("missing report route params do not render sample AI Grader report data", () => {
+  const bundle = getAiGraderReportBundle(undefined);
+
+  assert.equal(bundle.reportId, "missing-report-data");
+  assert.equal(bundle.reportStatus, "missing_report_data");
+  assert.equal(bundle.provisionalGrade, undefined);
+  assert.equal(bundle.visionLab.available, false);
+  assert.match(bundle.limitations.join(" "), /No fixture\/sample data/);
+});
+
 test("sample final report bundle exposes final V0 data without certified claim", () => {
   const bundle = getAiGraderReportBundle("sample-final-v0");
 
@@ -265,7 +275,7 @@ test("normal AI Grader operator workflow hides internal pipeline buttons", () =>
   assert.equal(AI_GRADER_NORMAL_OPERATOR_ACTION_LABELS.includes("Publish to Ten Kings System" as any), false);
 });
 
-test("AI Grader publish readiness exposes public report and printable label links", () => {
+test("AI Grader publish readiness holds public links until hosted publish succeeds", () => {
   const release = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
   const finalBundle = {
     ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
@@ -281,10 +291,18 @@ test("AI Grader publish readiness exposes public report and printable label link
 
   assert.equal(readiness.ready, true);
   assert.equal(readiness.status, "ready");
-  assert.equal(readiness.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/sample-final-v0");
-  assert.equal(readiness.qrPayloadUrl, readiness.publicReportUrl);
-  assert.equal(readiness.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/sample-final-v0");
+  assert.equal(readiness.publicReportUrl, undefined);
+  assert.equal(readiness.qrPayloadUrl, undefined);
+  assert.equal(readiness.labelPreviewUrl, undefined);
   assert.equal(readiness.certId, release.label.certId);
+
+  const publishedReadiness = buildAiGraderPublishReadiness({ bundle: finalBundle, productionRelease: release, published: true });
+  assert.equal(publishedReadiness.ready, true);
+  assert.equal(publishedReadiness.status, "published");
+  assert.equal(publishedReadiness.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/sample-final-v0");
+  assert.equal(publishedReadiness.qrPayloadUrl, publishedReadiness.publicReportUrl);
+  assert.equal(publishedReadiness.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/sample-final-v0");
+  assert.equal(publishedReadiness.certId, release.label.certId);
 });
 
 test("insufficient evidence AI Grader reports cannot be published", () => {
@@ -433,6 +451,20 @@ test("production publication API rejects insufficient evidence reports before up
 test("production publish accepts a bearer user session in the AI Grader operator allowlist", async () => {
   let adminCalled = false;
   let persistedActorAudit: unknown = null;
+  const imageBody = Buffer.from("front-image").toString("base64");
+  const reportBundle = {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    assets: [
+      {
+        id: "front/front-all-on-portrait-display.png",
+        kind: "image",
+        fileName: "front-all-on-portrait-display.png",
+        contentType: "image/png",
+        bodyEncoding: "base64",
+        bodyBase64: imageBody,
+      },
+    ],
+  };
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
@@ -471,8 +503,8 @@ test("production publish accepts a bearer user session in the AI Grader operator
   const req = mockRequest("POST", ["publish"]);
   req.body = {
     publicationStatus: "published",
-    reportBundle: SAMPLE_AI_GRADER_REPORT_BUNDLE,
-    productionRelease: buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE),
+    reportBundle,
+    productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
   };
   req.headers.authorization = "Bearer harmless-test-session";
   const res = mockResponse();
@@ -656,6 +688,21 @@ test("production API rejects a service account token missing the requested scope
 
 test("production publication API uploads artifacts and persists only when env-gated and admin-authenticated", async () => {
   const calls: string[] = [];
+  const imageBody = Buffer.from("front-image").toString("base64");
+  const reportBundle = {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    assets: [
+      {
+        id: "front/front-all-on-portrait-display.png",
+        kind: "image",
+        fileName: "front-all-on-portrait-display.png",
+        contentType: "image/png",
+        bodyEncoding: "base64",
+        bodyBase64: imageBody,
+      },
+    ],
+  };
+  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
@@ -689,8 +736,8 @@ test("production publication API uploads artifacts and persists only when env-ga
   const req = mockRequest("POST", ["publish"]);
   req.body = {
     publicationStatus: "published",
-    reportBundle: SAMPLE_AI_GRADER_REPORT_BUNDLE,
-    productionRelease: buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE),
+    reportBundle,
+    productionRelease,
     cardAssetId: "card-asset-1",
   };
   const res = mockResponse();
@@ -699,13 +746,49 @@ test("production publication API uploads artifacts and persists only when env-ga
   assert.equal(res.statusCodeValue, 200);
   const body = res.jsonBody as { ok: boolean; result: { certId: string; publicReportUrl: string; labelPreviewUrl: string; uploadedAssetCount: number } };
   assert.equal(body.ok, true);
-  assert.equal(body.result.certId, buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE).label.certId);
+  assert.equal(body.result.certId, productionRelease.label.certId);
   assert.equal(body.result.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/sample-final-v0");
   assert.equal(body.result.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/sample-final-v0");
-  assert.equal(body.result.uploadedAssetCount, 7);
+  assert.equal(body.result.uploadedAssetCount, 8);
   assert.equal(calls[0], "admin");
   assert.equal(calls.at(-1), "persist");
   assert.ok(calls.some((call) => call.startsWith("upload:ai-grader/reports/sample-final-v0/report-bundle.json")));
+});
+
+test("production publication API rejects published reports without image asset bodies", async () => {
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async uploadArtifact() {
+      throw new Error("publish without image bodies should not upload");
+    },
+    async persist() {
+      throw new Error("publish without image bodies should not persist");
+    },
+  });
+
+  const req = mockRequest("POST", ["publish"]);
+  req.body = {
+    publicationStatus: "published",
+    reportBundle: SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    productionRelease: buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE),
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 400);
+  const body = res.jsonBody as { ok: boolean; code?: string; message?: string };
+  assert.equal(body.ok, false);
+  assert.equal(body.code, "AI_GRADER_REPORT_IMAGES_REQUIRED");
+  assert.match(body.message ?? "", /includeAssetBodies=1/);
 });
 
 test("production publication API uploads AI Grader evidence images from report bundle bodies", async () => {

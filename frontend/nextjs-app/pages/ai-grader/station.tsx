@@ -35,7 +35,6 @@ import { findReportImage, reportImageAssets } from "../../lib/aiGraderReportImag
 import {
   aiGraderOperatorStepCopy,
   buildAiGraderCompsReadiness,
-  buildAiGraderLabelPreviewUrl,
   buildAiGraderPublishReadiness,
 } from "../../lib/aiGraderOperatorWorkflow";
 
@@ -459,12 +458,15 @@ export default function AiGraderStationPage() {
     productionRelease: status.productionRelease,
     selectedCard,
   });
-  const reportIdForLinks = publishReadiness.reportId ?? status.latestReport.reportId;
-  const labelPreviewUrl = productionPublish.labelPreviewUrl ?? publishReadiness.labelPreviewUrl ?? (reportIdForLinks ? buildAiGraderLabelPreviewUrl(reportIdForLinks) : undefined);
-  const publicReportUrl = productionPublish.publicReportUrl ?? publishReadiness.publicReportUrl;
-  const qrPayloadUrl = productionPublish.qrPayloadUrl ?? publishReadiness.qrPayloadUrl;
+  const productionPublished = productionPublish.status === "published";
+  const reportIdForLinks = productionPublish.reportId ?? publishReadiness.reportId ?? status.latestReport.reportId;
+  const labelPreviewUrl = productionPublished ? productionPublish.labelPreviewUrl : undefined;
+  const publicReportUrl = productionPublished ? productionPublish.publicReportUrl : undefined;
+  const qrPayloadUrl = productionPublished ? productionPublish.qrPayloadUrl : undefined;
   const certId = productionPublish.certId ?? publishReadiness.certId;
-  const canPublishToTenKings = publishReadiness.ready && productionPublish.status !== "published";
+  const canPublishToTenKings = publishReadiness.ready && productionPublish.status !== "published" && productionPublish.status !== "pending";
+  const publicationStatusLabel =
+    productionPublish.status === "idle" ? formatStationValue(publishReadiness.status) : formatStationValue(productionPublish.status);
   const localReportImages = useMemo(
     () => (localReport.bundle ? reportImageAssets(localReport.bundle, { allowEmbeddedBodies: true }) : []),
     [localReport.bundle]
@@ -890,6 +892,41 @@ export default function AiGraderStationPage() {
     setCardSearchMessage("Manual draft identity selected. Publish will clearly show card linkage as draft/manual.");
   };
 
+  const verifyPublishedReportRoute = async (reportId: string) => {
+    let lastMessage = "Published report verification failed.";
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
+      }
+      const response = await fetch(`/api/ai-grader/reports/${encodeURIComponent(reportId)}`, {
+        method: "GET",
+        headers: { accept: "application/json" },
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true || !payload.bundle) {
+        lastMessage = payload.message ?? `Public report verification returned HTTP ${response.status}.`;
+        continue;
+      }
+      if (payload.bundle.reportId !== reportId) {
+        lastMessage = `Public report verification returned ${payload.bundle.reportId ?? "unknown report"} instead of ${reportId}.`;
+        continue;
+      }
+      const publicImages = reportImageAssets(payload.bundle).filter((asset) => asset.renderSource === "public_url");
+      if (publicImages.length < 1) {
+        lastMessage = "Published report has no storage-backed image assets.";
+        continue;
+      }
+      const serialized = JSON.stringify(payload.bundle);
+      if (/C:\\\\TenKings|127\.0\.0\.1|localhost|data:image|stationToken|x-ai-grader/i.test(serialized)) {
+        lastMessage = "Published report contains local paths, bridge URLs, embedded image bodies, or token markers.";
+        continue;
+      }
+      return { imageCount: publicImages.length };
+    }
+    throw new Error(lastMessage);
+  };
+
   const publishToTenKingsSystem = async () => {
     setBusy("ten-kings-publish");
     setError(null);
@@ -940,13 +977,18 @@ export default function AiGraderStationPage() {
         });
         return;
       }
+      const publishedReportId = payload.result.reportId;
+      if (!publishedReportId || !payload.result.publicReportUrl || !payload.result.labelPreviewUrl) {
+        throw new Error("Ten Kings publish response did not include reportId, publicReportUrl, and labelPreviewUrl.");
+      }
+      const publicVerification = await verifyPublishedReportRoute(publishedReportId);
       setProductionPublish({
         status: "published",
-        message: "Published. Public report, printable label, and QR payload are ready.",
-        reportId: payload.result.reportId,
+        message: `Published and verified. Public report, printable label, QR payload, and ${publicVerification.imageCount} storage-backed image(s) are ready.`,
+        reportId: publishedReportId,
         certId: payload.result.certId ?? productionRelease.label?.certId,
         publicReportUrl: payload.result.publicReportUrl,
-        labelPreviewUrl: payload.result.labelPreviewUrl ?? (payload.result.reportId ? buildAiGraderLabelPreviewUrl(payload.result.reportId) : undefined),
+        labelPreviewUrl: payload.result.labelPreviewUrl,
         qrPayloadUrl: payload.result.qrPayloadUrl,
         uploadedAssetCount: payload.result.uploadedAssetCount,
         evidenceAssetCount: payload.result.evidenceAssetCount,
@@ -1804,7 +1846,7 @@ export default function AiGraderStationPage() {
             <p className="eyebrow">Public Report / Label</p>
             <div>
               <span>Publication</span>
-              <strong>{productionPublish.status === "published" ? "Published" : formatStationValue(publishReadiness.status)}</strong>
+              <strong>{publicationStatusLabel}</strong>
             </div>
             <div>
               <span>Report ID</span>
@@ -1816,7 +1858,7 @@ export default function AiGraderStationPage() {
             </div>
             <div>
               <span>Storage upload</span>
-              <strong>{productionPublish.uploadedAssetCount ? `${productionPublish.uploadedAssetCount} assets` : "Pending"}</strong>
+              <strong>{productionPublish.uploadedAssetCount ? `${productionPublish.uploadedAssetCount} assets` : productionPublish.status === "error" ? "Failed" : "Pending"}</strong>
             </div>
             <p>{productionPublish.message}</p>
             {publicReportUrl ? (

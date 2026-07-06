@@ -5,6 +5,7 @@ import {
   getAiGraderReportBundle,
   hasNoCertifiedClaim,
   hasNoFinalCertifiedClaims,
+  isExplicitAiGraderSampleReportId,
   type AiGraderReportBundle,
 } from "../../../lib/aiGraderReportBundle";
 import { findReportImage, reportImageAssets, type AiGraderRenderableReportImage } from "../../../lib/aiGraderReportImages";
@@ -42,7 +43,12 @@ export default function AiGraderReportViewerPage() {
     ? productionRelease?.slabbedPhotoContract.photos
     : [];
   const compsContract = productionRelease?.ebayCompsContract;
-  const isSampleFallback = !persistedBundle && bundle.reportStatus === "missing_report_data";
+  const isMissingGeneratedReport = !persistedBundle && bundle.reportStatus === "missing_report_data";
+  const reportSource = persistedBundle
+    ? "persisted read-only report endpoint"
+    : isExplicitAiGraderSampleReportId(router.query.reportId)
+      ? "explicit sample fixture"
+      : "not found in persisted production storage";
   const reportIsFinal = productionRelease?.finalGradeComputed === true;
   const images = reportImageAssets(bundle);
   const frontTrueView =
@@ -62,7 +68,12 @@ export default function AiGraderReportViewerPage() {
   useEffect(() => {
     if (!router.isReady) return;
     const reportId = Array.isArray(router.query.reportId) ? router.query.reportId[0] : router.query.reportId;
-    if (!reportId || reportId === "sample-pr45" || reportId === "sample-final-v0") return;
+    if (!reportId) return;
+    if (isExplicitAiGraderSampleReportId(reportId)) {
+      setPersistedBundle(null);
+      setPublicLookupError(null);
+      return;
+    }
     setPublicLookupError(null);
     fetch(`/api/ai-grader/reports/${encodeURIComponent(reportId)}`)
       .then(async (response) => {
@@ -71,9 +82,11 @@ export default function AiGraderReportViewerPage() {
           setPersistedBundle(payload.bundle);
           return;
         }
-        setPublicLookupError("This report was not resolved from persisted production storage.");
+        setPersistedBundle(null);
+        setPublicLookupError(payload.message ?? "This report was not resolved from persisted production storage.");
       })
       .catch(() => {
+        setPersistedBundle(null);
         setPublicLookupError("Persisted production report lookup failed.");
       });
     return;
@@ -98,12 +111,12 @@ export default function AiGraderReportViewerPage() {
           </div>
         </header>
 
-        {publicLookupError || isSampleFallback ? (
+        {publicLookupError || isMissingGeneratedReport ? (
           <section className="local-status warn">
             <strong>{persistedBundle ? "Published report bundle loaded" : "Published report not found"}</strong>
             <p>
               {publicLookupError ??
-                "This route is open, but the generated report bundle was not resolved from persisted production storage."}
+                "This generated report ID has no published DB/storage record. No sample report data is being substituted."}
             </p>
           </section>
         ) : null}
@@ -370,7 +383,7 @@ export default function AiGraderReportViewerPage() {
           </div>
           <dl>
             <dt>Report source</dt>
-            <dd>{persistedBundle ? "persisted read-only report endpoint" : "fixture/sample fallback"}</dd>
+            <dd>{reportSource}</dd>
             <dt>Front evidence</dt>
             <dd>{bundle.evidenceReferences.frontEvidenceRefs.join(", ") || "missing"}</dd>
             <dt>Back evidence</dt>

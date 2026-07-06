@@ -2,33 +2,47 @@ import Head from "next/head";
 import { useRouter } from "next/router";
 import QRCode from "qrcode";
 import { useEffect, useRef, useState } from "react";
-import { getAiGraderReportBundle, type AiGraderReportBundle } from "../../../lib/aiGraderReportBundle";
+import { getAiGraderReportBundle, isExplicitAiGraderSampleReportId, type AiGraderReportBundle } from "../../../lib/aiGraderReportBundle";
 
 export default function AiGraderLabelPreviewPage() {
   const router = useRouter();
-  const fallbackBundle = getAiGraderReportBundle(router.query.reportId ?? "sample-final-v0");
+  const fallbackBundle = getAiGraderReportBundle(router.query.reportId);
   const [persistedBundle, setPersistedBundle] = useState<AiGraderReportBundle | null>(null);
+  const [lookupError, setLookupError] = useState<string | null>(null);
   const bundle = persistedBundle ?? fallbackBundle;
   const release = bundle.productionRelease;
   const label = release?.label;
-  const gradeText = label?.labelGradeText ?? "PENDING";
+  const missingGeneratedReport = !persistedBundle && bundle.reportStatus === "missing_report_data";
+  const gradeText = missingGeneratedReport ? "NOT FOUND" : label?.labelGradeText ?? "PENDING";
   const reportId = label?.reportId ?? bundle.reportId;
-  const qrPayloadUrl = label?.qrPayloadUrl ?? `/ai-grader/reports/${reportId}`;
+  const qrPayloadUrl = missingGeneratedReport ? "" : label?.qrPayloadUrl ?? `/ai-grader/reports/${reportId}`;
   const certId = label?.certId ?? reportId;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     if (!router.isReady) return;
     const nextReportId = Array.isArray(router.query.reportId) ? router.query.reportId[0] : router.query.reportId;
-    if (!nextReportId || nextReportId === "sample-final-v0" || nextReportId === "sample-pr45") return;
+    if (!nextReportId) return;
+    if (isExplicitAiGraderSampleReportId(nextReportId)) {
+      setPersistedBundle(null);
+      setLookupError(null);
+      return;
+    }
+    setLookupError(null);
     fetch(`/api/ai-grader/reports/${encodeURIComponent(nextReportId)}`)
       .then(async (response) => {
         const payload = await response.json().catch(() => ({}));
         if (response.ok && payload.ok === true && payload.bundle) {
           setPersistedBundle(payload.bundle);
+          return;
         }
+        setPersistedBundle(null);
+        setLookupError(payload.message ?? "Published AI Grader report not found.");
       })
-      .catch(() => undefined);
+      .catch(() => {
+        setPersistedBundle(null);
+        setLookupError("Persisted production label lookup failed.");
+      });
   }, [router.isReady, router.query.reportId]);
 
   useEffect(() => {
@@ -60,11 +74,11 @@ export default function AiGraderLabelPreviewPage() {
               <dt>Cert/Report ID</dt>
               <dd>{certId}</dd>
               <dt>QR URL</dt>
-              <dd>{qrPayloadUrl}</dd>
+              <dd>{qrPayloadUrl || "not published"}</dd>
             </dl>
           </div>
-          <canvas ref={canvasRef} width={116} height={116} aria-label="AI Grader public report QR code" />
-          <p>AI-Grader Report V0. Certification claim disabled until approved.</p>
+          {qrPayloadUrl ? <canvas ref={canvasRef} width={116} height={116} aria-label="AI Grader public report QR code" /> : <div className="qr-missing">No QR</div>}
+          <p>{missingGeneratedReport ? "Published report not found. No sample label data is substituted." : "AI-Grader Report V0. Certification claim disabled until approved."}</p>
         </section>
         <aside>
           <h1>Print-Ready Label Preview</h1>
@@ -72,10 +86,16 @@ export default function AiGraderLabelPreviewPage() {
             This preview renders label-ready data for the AI Grader production workflow. It is not a printer integration,
             certificate, or certified grading claim.
           </p>
-          <p>{persistedBundle ? "Loaded from persisted report data." : "Using local fixture/report fallback until persisted data is available."}</p>
+          <p>
+            {persistedBundle
+              ? "Loaded from persisted report data."
+              : isExplicitAiGraderSampleReportId(router.query.reportId)
+                ? "Loaded from explicit sample fixture data."
+                : lookupError ?? "This generated report ID is not published yet."}
+          </p>
           <div className="actions">
-            <a href={qrPayloadUrl} target="_blank" rel="noreferrer">Open Public Report</a>
-            <button type="button" onClick={() => window.print()}>Print Label</button>
+            {qrPayloadUrl ? <a href={qrPayloadUrl} target="_blank" rel="noreferrer">Open Public Report</a> : null}
+            <button type="button" onClick={() => window.print()} disabled={!qrPayloadUrl}>Print Label</button>
           </div>
         </aside>
       </main>
@@ -123,6 +143,18 @@ export default function AiGraderLabelPreviewPage() {
           height: 1.18in;
           border: 1px solid #171512;
           background: #fffaf0;
+        }
+        .qr-missing {
+          width: 1.18in;
+          height: 1.18in;
+          border: 1px dashed #7a2b2b;
+          background: #fff4f4;
+          color: #7a2b2b;
+          display: grid;
+          place-items: center;
+          font-weight: 900;
+          font-size: 12px;
+          text-transform: uppercase;
         }
         dl {
           display: grid;
