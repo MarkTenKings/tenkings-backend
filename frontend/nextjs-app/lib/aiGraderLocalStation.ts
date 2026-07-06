@@ -114,8 +114,13 @@ export type AiGraderWarmRunnerStatus = {
   previewPolicy: {
     pauseDuringCapture: true;
     resumeAfterSafeIdle: true;
+    holdPreviewDuringFullForensicRun: true;
+    holdActive?: boolean;
+    holdReason?: string;
     lastPausedAt?: string;
     lastResumeReadyAt?: string;
+    lastHoldStartedAt?: string;
+    lastHoldReleasedAt?: string;
   };
   evidencePlan: {
     defaultFullForensic: true;
@@ -589,6 +594,8 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
     previewPolicy: {
       pauseDuringCapture: true,
       resumeAfterSafeIdle: true,
+      holdPreviewDuringFullForensicRun: true,
+      holdActive: false,
     },
     evidencePlan: {
       defaultFullForensic: true,
