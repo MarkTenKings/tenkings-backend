@@ -12621,3 +12621,33 @@ Build Set Ops UI flow with:
 - Validation passed for Next station tests/build, capture-helper build/tests, shared tests, simulator tests, and PowerShell parse. No supervised Dell preview smoke or hardware capture was run.
 - Next speed work should be a staged warm-session runner PR; do not optimize by removing forensic evidence.
 - DigitalOcean Postgres credential rotation remains deferred by Mark.
+
+## Session Update (2026-07-06 UTC, PR #58 warm runner Dell smoke)
+- Branch `feature/ai-grader-warm-forensic-runner` remains open as PR #58 and was not merged.
+- Smoke commit before local docs update: `e90c6f8672eb7590cbace37a8abfdae6974e61b4`.
+- PR #58 was open, clean, and checks/Vercel preview were passing before the smoke.
+- Mark approved and supervised one Dell hardware smoke. Mark confirmed pre-run light idle/off and fixture/card/rulers ready; after cleanup Mark confirmed the physical ring light was off.
+- Embedded preview was verified through the token-gated local MJPEG path before capture: first frame in `1764 ms`, `frameCount=33`, `fps=4.2`, `lastError=null`.
+- The smoke used the default `warm_full_forensic_runner` path. `fallbackUsed=false`, `fallbackReason=null`; no `--disable-warm-runner` or `AI_GRADER_WARM_RUNNER_DISABLED` path was used.
+- Session/report id: `pr58-warm-smoke-20260706T051208Z`.
+- Station session: `C:\TenKings\capture-data\ai-grader-station\ai-grader-browser-station-session-2026-07-06T051208634Z`.
+- Front package: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-06T051208742Z`.
+- Back package: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-06T051420124Z`.
+- Unified report: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-06T051505763Z\provisional-diagnostic-report.html`.
+- The bridge report HTML endpoint returned `200` for `GET /reports/pr58-warm-smoke-20260706T051208Z/html`; the returned size matched the local report file (`610234` bytes), and the report opened locally.
+- Full evidence was preserved on both front and back: dark control, all-on, accepted profile, channels `1-8`, 8 channel display images, 12 ROI definitions, 12 ROI crops, Surface Intelligence, diagnostic grading, and unified report artifacts.
+- Both side manifests recorded `persistentBaslerSession=true`, `persistentLeimacSession=true`, `safeOffBefore=true`, `safeOffAfter=true`, and `finalLightOffAttempted=true`.
+- Timing results:
+  - front capture `9442 ms`
+  - front processing queue `4229 ms`, completed during the operator flip window
+  - back capture `9243 ms`
+  - back processing queue `3611 ms`
+  - unified report generation `14867 ms`
+  - first safe-off `1441 ms`
+  - confirmation safe-off `1493 ms`, used only to persist Mark's physical `finalLightOff=true` confirmation
+  - report-ready bridge timing summary before cleanup `74944 ms`, inside the 60-150 second target
+  - chat-supervised wall clock from first capture start to report ready `191786 ms`, inflated by about `117711 ms` of chat/operator flip wait and about `32683 ms` of Codex/operator delay before report generation
+  - active measured phase sum including capture, processing, and report generation `41392 ms`; critical path with front processing overlapped during flip about `37163 ms`
+- Hardware timing aggregates: warm Basler open/configure `454.3 ms` front and `454.4 ms` back; aggregate Basler grab `3156.2 ms`; image save `11517.3 ms`; image hash `161.1 ms`; per-image Basler open was saved and close/dispose deferred for each side batch. Leimac capture write/ack before cleanup totaled `614.1 ms`; no fallback/reconnect was observed in status/manifests.
+- Acceptance state: actual warm hardware execution is validated, full evidence is preserved, report opens, final light is physically off, and the speed target is met by bridge report-ready accounting. A final normal-speed hands-on UI run can still produce a cleaner end-user wall-clock number because this smoke used chat-mediated flip/report triggers.
+- Guardrails held: no secrets printed, no migration, no production DB write, no Vercel env change, no credential rotation, no production deploy, and no public report route exposed hardware controls.

@@ -23440,3 +23440,75 @@ By enabling Rip It Live, I confirm:
 ### Remaining Risk
 - Actual speed target is not accepted yet because no supervised Dell smoke/timing was run.
 - Warm runner implementation is code-validated and test-validated, but real persistent Basler/Leimac behavior still needs Mark-approved Dell hardware validation before claiming measured 60-150 second production timing.
+
+## 2026-07-06 - AI Grader PR #58 supervised warm-runner Dell smoke
+
+### Planned Action
+- Run one Mark-supervised Dell smoke for PR #58 without merging the PR.
+- Confirm branch `feature/ai-grader-warm-forensic-runner` at `e90c6f8672eb7590cbace37a8abfdae6974e61b4` or newer, clean status, PR checks passing, bridge/station running, Mark present, Leimac physically off/idle, fixture/card/rulers ready, and embedded browser preview working before capture.
+- Use the default `warm_full_forensic_runner` path only. Do not set `AI_GRADER_WARM_RUNNER_DISABLED`, do not pass `--disable-warm-runner`, and do not count `cold_command_fallback` as speed success.
+- Preserve full forensic evidence: dark control, all-on, accepted profile, Leimac channels `1-8`, front/back evidence, ROI/display crops, Surface Intelligence, Vision Lab, unified report, and safe-off cleanup.
+- Guardrails held: no secrets printed, no credential rotation, no migration, no production DB write, no Vercel env change, no production deploy, no public hardware controls.
+
+### Pre-Run State
+- Branch: `feature/ai-grader-warm-forensic-runner`.
+- HEAD: `e90c6f8672eb7590cbace37a8abfdae6974e61b4`.
+- Worktree: clean before the smoke.
+- PR #58: open, non-draft, `mergeStateStatus=CLEAN`, checks/Vercel preview passing before smoke.
+- Local bridge/station: running at the paired loopback bridge for `https://collect.tenkings.co/ai-grader/station`; bridge status reported `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, hardware actions enabled, local-only/token-required mode.
+- Embedded preview verification: token-gated MJPEG stream returned bytes; `/preview/status` reported `frameCount=33`, `fps=4.2`, `lastError=null`, and preview first-frame time `1764 ms`.
+- Mark confirmed the physical preconditions before capture: Mark present, Leimac/ring light physically off/idle, card/fixture/rulers ready.
+
+### Smoke Output
+- Report/session id: `pr58-warm-smoke-20260706T051208Z`.
+- Station session folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-browser-station-session-2026-07-06T051208634Z`.
+- Station manifest: `C:\TenKings\capture-data\ai-grader-station\ai-grader-browser-station-session-2026-07-06T051208634Z\station-session.json`.
+- Front evidence folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-06T051208742Z`.
+- Back evidence folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-06T051420124Z`.
+- Unified report folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-06T051505763Z`.
+- Unified report HTML: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-06T051505763Z\provisional-diagnostic-report.html`.
+- The token-gated local bridge report endpoint `GET /reports/pr58-warm-smoke-20260706T051208Z/html` returned `200`; HTML size matched the local report file at `610234` bytes; the report opened locally.
+
+### Execution Result
+- `executionPath=warm_full_forensic_runner`.
+- `fallbackUsed=false`.
+- `fallbackReason=null`.
+- No fallback or reconnect was observed in bridge status or package manifests.
+- Capture lock was released after front capture, after back capture, and after safe-off.
+- Front artifact processing ran during the operator flip window: `process_front_artifacts` started at front capture completion and completed in `4229 ms` before back capture began.
+- Back artifact processing completed in `3611 ms` before unified report generation.
+- Report generation preserved unified report, Surface Intelligence, Vision Lab, ROI/display crops, and report-compatible artifacts.
+
+### Evidence Completeness
+- Front package: `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, `persistentBaslerSession=true`, `persistentLeimacSession=true`, selected channels `1,2,3,4,5,6,7,8`.
+- Front package counts: 1 dark control, 1 all-on, 1 accepted profile, 8 raw channel PNGs, 8 channel display images, 12 ROI definitions, 12 ROI crops, Surface Intelligence present, diagnostic grading present.
+- Back package: `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, `persistentBaslerSession=true`, `persistentLeimacSession=true`, selected channels `1,2,3,4,5,6,7,8`.
+- Back package counts: 1 dark control, 1 all-on, 1 accepted profile, 8 raw channel PNGs, 8 channel display images, 12 ROI definitions, 12 ROI crops, Surface Intelligence present, diagnostic grading present.
+- Both side manifests record `safeOffBefore=true`, `safeOffAfter=true`, and `finalLightOffAttempted=true`.
+
+### Timing
+- Baseline comparison target: previous full workflow about `461 s` / `7 min 41 sec`.
+- Preview ready: `1764 ms`.
+- Front capture command: `9442 ms`.
+- Front processing queue: `4229 ms`, overlapped with operator flip.
+- Back capture command: `9243 ms`.
+- Back processing queue: `3611 ms`.
+- Unified report command: `14867 ms`.
+- First safe-off command: `1441 ms`.
+- Second confirmation safe-off command: `1493 ms`; this was run after Mark's physical `off` confirmation to persist `finalLightOff=true` in the session manifest and is not counted as report-ready time.
+- Report-ready bridge timing summary observed immediately after report generation and before cleanup: `74944 ms`, within the 60-150 second target.
+- Actual chat-supervised wall clock from first front capture start to report-ready finish: `191786 ms`. This includes about `117711 ms` of operator/chat flip wait and about `32683 ms` of Codex/operator delay before invoking report generation, so it is not a representative hands-on UI-speed wall-clock measurement.
+- Measured active phase sum including capture, front/back processing, and report generation was `41392 ms`; critical path with front processing overlapped during flip was about `37163 ms`.
+- Basler timing summary: warm camera open/configure `454.3 ms` front and `454.4 ms` back; aggregate frame grab `3156.2 ms`; image save `11517.3 ms`; image hash `161.1 ms`; per-image open was saved and close/dispose was deferred for each side batch.
+- Leimac timing summary: capture write/ack aggregate before cleanup `614.1 ms`; first safe-off completed in `1441 ms`; final confirmation safe-off completed in `1493 ms`; final physical ring light state was confirmed off by Mark.
+
+### Acceptance
+- Warm hardware execution path was validated on the Dell.
+- Full forensic evidence was preserved.
+- Report opened successfully.
+- Final light-off was confirmed physically by Mark and recorded in the session manifest with `finalLightOff=true`.
+- Timing materially improved versus the `~461 s` baseline. The bridge report-ready accounting (`74.944 s`) is inside the 60-150 second target; the active measured runner phases are lower, while the chat-supervised wall clock was inflated by human/Codex pauses.
+
+### Follow-Up
+- PR #58 was not merged.
+- The PR is hardware-smoke validated for the actual warm execution path. A final hands-on UI run with a normal operator flip, rather than a chat-mediated flip/report trigger, would give a cleaner end-user wall-clock number before declaring stretch-target acceptance.
