@@ -53,6 +53,7 @@ export type AiGraderLocalStationBridgeMode = "mock_dev" | "contract_only" | "fut
 
 export type AiGraderWarmRunnerSide = "front" | "back";
 export type AiGraderWarmRunnerPhaseStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
+export type AiGraderWarmRunnerExecutionPath = "warm_full_forensic_runner" | "cold_command_fallback";
 export type AiGraderWarmRunnerStatusName =
   | "idle"
   | "warming"
@@ -90,14 +91,18 @@ export type AiGraderWarmRunnerPhase = {
   startedAt?: string;
   finishedAt?: string;
   durationMs?: number;
-  backend?: "persistent_session_contract" | "cold_command_fallback";
+  backend?: AiGraderWarmRunnerExecutionPath;
+  executionPath?: AiGraderWarmRunnerExecutionPath;
   detail?: string;
 };
 
 export type AiGraderWarmRunnerStatus = {
   enabled: true;
   mode: "full_forensic";
-  backend: "persistent_session_contract" | "cold_command_fallback";
+  backend: AiGraderWarmRunnerExecutionPath;
+  executionPath: AiGraderWarmRunnerExecutionPath;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
   status: AiGraderWarmRunnerStatusName;
   sessionId?: string;
   activeSide?: AiGraderWarmRunnerSide;
@@ -167,6 +172,9 @@ export type AiGraderLocalStationStatus = {
   currentStep: AiGraderStationStepId;
   nextAction: AiGraderStationAction;
   nextActionLabel: string;
+  executionPath: AiGraderWarmRunnerExecutionPath;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
   acceptedProfile: {
     dutyPercent: number;
     exposureUs: number;
@@ -250,6 +258,9 @@ export type AiGraderLocalStationStatus = {
 
 export type AiGraderLocalStationTimingSummary = {
   totalCommandMs: number;
+  executionPath: AiGraderWarmRunnerExecutionPath;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
   bridgeActionOverheadMs: number;
   captureCommandMs: number;
   reportGenerationMs: number;
@@ -489,7 +500,9 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
   return {
     enabled: true,
     mode: "full_forensic",
-    backend: "cold_command_fallback",
+    backend: "warm_full_forensic_runner",
+    executionPath: "warm_full_forensic_runner",
+    fallbackUsed: false,
     status: "idle",
     captureLock: {
       held: false,
@@ -527,8 +540,7 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
     },
     fallback: {
       available: true,
-      active: true,
-      reason: "Contract mode preserves the existing cold evidence command until the persistent hardware loop is validated on the Dell.",
+      active: false,
     },
     safety: {
       captureLock: true,
@@ -543,7 +555,7 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
       persistentLeimacSaved: false,
     },
     note:
-      "Full forensic evidence remains the default. The local Dell bridge owns session, lock, queue, and timing state; contract mode does not access hardware.",
+      "Full forensic evidence remains the default. The local Dell bridge owns warm capture, lock, queue, timing, and safe cleanup state.",
   };
 }
 
@@ -598,6 +610,8 @@ export function buildAiGraderLocalStationStatus(input: {
     currentStep,
     nextAction,
     nextActionLabel: actionLabel(nextAction),
+    executionPath: "warm_full_forensic_runner",
+    fallbackUsed: false,
     acceptedProfile: {
       dutyPercent: 1.3,
       exposureUs: 45000,
@@ -668,6 +682,8 @@ export function buildAiGraderLocalStationStatus(input: {
     },
     timingSummary: {
       totalCommandMs: 0,
+      executionPath: "warm_full_forensic_runner",
+      fallbackUsed: false,
       bridgeActionOverheadMs: 0,
       captureCommandMs: 0,
       reportGenerationMs: 0,

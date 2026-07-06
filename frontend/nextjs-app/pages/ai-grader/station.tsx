@@ -1028,8 +1028,12 @@ export default function AiGraderStationPage() {
             </div>
             <div className="warm-grid">
               <div>
-                <span>Backend</span>
-                <strong>{warmRunner.backend === "cold_command_fallback" ? "Cold Fallback" : "Persistent"}</strong>
+                <span>Execution Path</span>
+                <strong>{warmRunner.executionPath === "cold_command_fallback" ? "Cold Fallback" : "Warm Runner"}</strong>
+              </div>
+              <div>
+                <span>Fallback</span>
+                <strong>{warmRunner.fallbackUsed || warmRunner.fallback.active ? "Used" : "No"}</strong>
               </div>
               <div>
                 <span>Capture Lock</span>
@@ -1052,6 +1056,9 @@ export default function AiGraderStationPage() {
                 <strong>{formatMs(warmRunner.timing.targetTotalMinMs)}-{formatMs(warmRunner.timing.targetTotalMaxMs)}</strong>
               </div>
             </div>
+            {(warmRunner.fallbackUsed || warmRunner.fallback.active) && (
+              <p className="status-note">{warmRunner.fallbackReason ?? warmRunner.fallback.reason ?? "Cold fallback was used; this run does not count for speed acceptance."}</p>
+            )}
             <div className="evidence-side">
               <div>
                 <span>Front Evidence</span>

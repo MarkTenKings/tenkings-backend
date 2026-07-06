@@ -448,6 +448,7 @@ type ParsedCommand =
       allowedOrigins: string[];
       stationBridgeMode: "mock" | "real";
       enableLocalStation: boolean;
+      warmRunnerDisabled: boolean;
       pylonRoot: string | undefined;
       pylonTimeoutMs: number | undefined;
       baslerBridgeScript: string | undefined;
@@ -594,6 +595,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   const allowedOrigins: string[] = [];
   let stationBridgeMode: "mock" | "real" = "mock";
   let enableLocalStation = false;
+  let warmRunnerDisabled = false;
   let mockRun = false;
   let operatorAcceptedWarnings = false;
   let calibrationProfileId: string | undefined;
@@ -827,6 +829,9 @@ function parseCliArgs(argv: string[]): ParsedCommand {
       }
       case "--enable-local-station":
         enableLocalStation = true;
+        break;
+      case "--disable-warm-runner":
+        warmRunnerDisabled = true;
         break;
       case "--mock-run":
         mockRun = true;
@@ -1465,6 +1470,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         allowedOrigins,
         stationBridgeMode,
         enableLocalStation,
+        warmRunnerDisabled,
         pylonRoot,
         pylonTimeoutMs,
         baslerBridgeScript,
@@ -2070,6 +2076,7 @@ function helpPayload() {
       "--allowed-origin",
       "--station-bridge-mode mock|real",
       "--enable-local-station",
+      "--disable-warm-runner",
       "--label",
       "--pylon-root",
       "--bridge-script",
@@ -5887,6 +5894,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           host: parsed.host,
           port: parsed.port,
           mode: parsed.stationBridgeMode,
+          warmRunnerDisabled: parsed.warmRunnerDisabled,
           stationToken: parsed.stationToken,
           stationPairingCode: parsed.stationPairingCode,
           stationPairingExpiresAt: parsed.stationPairingExpiresAt,

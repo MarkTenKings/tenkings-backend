@@ -23399,3 +23399,44 @@ By enabling Rip It Live, I confirm:
 ### PR #58 Remaining Risk
 - Real timing improvement is not measured in this PR because hardware smoke was not approved.
 - The persistent in-process Basler/Leimac backend is staged behind the warm-runner contract; the safe cold command fallback preserves evidence and behavior until the Dell can validate persistent hardware ownership.
+
+## 2026-07-06 - AI Grader PR #58 actual warm execution path
+
+### Planned Action
+- Continue PR #58 without merging.
+- Replace the normal `cold_command_fallback` execution path with actual `warm_full_forensic_runner` execution.
+- Keep cold fallback only for explicit debug disable or safe pre-capture warm failure recovery.
+- Preserve full forensic evidence: dark control, all-on, accepted profile, Leimac channels `1-8`, front/back evidence, ROI/display crops, Surface Intelligence, Vision Lab, unified report, and safe-off cleanup.
+- Guardrails: no secrets printed, no credential rotation, no migrations, no production DB writes, no Vercel env changes, no hardware capture without Mark approval, public report routes remain read-only/hardware-free.
+
+### Observed Result
+- Added Basler bridge action `fixed-rig-side-batch`.
+- Warm side batch opens/configures the Basler camera once per side batch, reuses exposure/gain/Line2 state, captures the full side stack (`dark`, `all-on`, `accepted profile`, channels `1-8`), and defers close/dispose until the side completes.
+- Added state-aware warm Leimac helpers in the bridge script: one session attempts persistent TCP ownership, reconnects safely if needed, writes trigger setup once, applies tight per-role channel changes, and always attempts safe-off on batch end/failure.
+- Added TypeScript Basler client method `captureFixedRigSideBatch`.
+- Added warm evidence-package builder that converts the warm side batch into report-compatible `manifest.json`, `analysis.json`, preview report, channel display images, ROI crops, Surface Intelligence inputs, Vision Lab inputs, and unified report inputs.
+- Local station bridge now defaults to `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`.
+- Cold fallback remains available only through explicit `warmRunnerDisabled` / `AI_GRADER_WARM_RUNNER_DISABLED` / `--disable-warm-runner`, or a warm failure object that explicitly reports `safeToFallback=true` and `capturesStarted=false`.
+- UI now shows current execution path, fallback-used state, and fallback reason.
+- Session manifest and timing summary now record `executionPath`, `fallbackUsed`, and `fallbackReason` when present.
+- Front artifact processing starts in the background after front capture so it can run during the operator flip window; report generation waits for queued front/back processing before building the unified report.
+- Tests now assert warm runner is default, cold fallback is not default, fallback requires explicit disable, execution path/fallback metadata persists, preview/capture lock still blocks collisions, safe-off runs on failure/cancel/end, and public routes expose no hardware controls.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, browserslist/baseline, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `29` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- PowerShell parser check for `packages/ai-grader-capture-helper/scripts/basler-pylon-bridge.ps1` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper exec node --test tests/aiGraderLocalStationBridge.test.js` -> pass, `13` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `175` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Not Run
+- No supervised Dell hardware smoke was run.
+- No hardware capture, Leimac lighting command, Basler image capture, migration, production DB write, Vercel env change, credential rotation, production deploy, or secret-printing action was run.
+
+### Remaining Risk
+- Actual speed target is not accepted yet because no supervised Dell smoke/timing was run.
+- Warm runner implementation is code-validated and test-validated, but real persistent Basler/Leimac behavior still needs Mark-approved Dell hardware validation before claiming measured 60-150 second production timing.

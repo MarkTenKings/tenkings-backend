@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import type { BaslerCaptureStillResult, BaslerOperatorPreviewWindowResult } from "./baslerPylonClient";
+import {
+  BaslerPylonClient,
+  type BaslerCaptureStillResult,
+  type BaslerFixedRigSideBatchResult,
+  type BaslerOperatorPreviewWindowResult,
+} from "./baslerPylonClient";
 import type { BaslerLeimacMacroPackageManifest } from "./baslerLeimacFullRig";
 import { ACCEPTED_BASLER_LEIMAC_LIGHTING_PROFILE_ID } from "./baslerLeimacFullRig";
 import { assertBaslerLeimacSyncSmokeOutputDirAllowed, type BaslerLeimacImageStats } from "./baslerLeimacSync";
@@ -660,6 +665,72 @@ export interface FixedRigV1LocalManifest {
   };
   warnings: string[];
   note: string;
+}
+
+export interface FixedRigWarmEvidencePackageInput {
+  outputDir: string;
+  side: FixedRigCardSide;
+  activeLightingProfile?: FixedRigActiveLightingProfile;
+  pylonRoot?: string;
+  pylonTimeoutMs?: number;
+  baslerBridgeScript?: string;
+  env?: NodeJS.ProcessEnv;
+  leimacHost: string;
+  leimacPort?: number;
+  leimacUnit?: number;
+  cameraIndex?: number;
+  exposureUs?: number;
+  gain?: number;
+  lensModel?: string;
+  fixtureLabel?: string;
+  fixtureId?: string;
+  referenceType?: FixedRigReferenceType;
+  referenceWidthMm?: number;
+  referenceHeightMm?: number;
+  horizontalSpanMm?: number;
+  horizontalStartPx?: { x: number; y: number };
+  horizontalEndPx?: { x: number; y: number };
+  verticalSpanMm?: number;
+  verticalStartPx?: { x: number; y: number };
+  verticalEndPx?: { x: number; y: number };
+  cardBoundaryRect?: { x: number; y: number; width: number; height: number };
+}
+
+export interface FixedRigWarmSideCaptureBatch {
+  executionPath: "warm_full_forensic_runner";
+  fallbackUsed: false;
+  packageId: string;
+  packageDir: string;
+  sideDir: string;
+  side: FixedRigCardSide;
+  activeLightingProfile: FixedRigActiveLightingProfile;
+  batch: BaslerFixedRigSideBatchResult;
+  exposureUs: number;
+  gain: number;
+  lensModel?: string;
+  fixtureLabel?: string;
+  fixtureId?: string;
+  referenceType?: FixedRigReferenceType;
+  referenceWidthMm?: number;
+  referenceHeightMm?: number;
+  horizontalSpanMm?: number;
+  horizontalStartPx?: { x: number; y: number };
+  horizontalEndPx?: { x: number; y: number };
+  verticalSpanMm?: number;
+  verticalStartPx?: { x: number; y: number };
+  verticalEndPx?: { x: number; y: number };
+  cardBoundaryRect?: { x: number; y: number; width: number; height: number };
+}
+
+export interface FixedRigWarmEvidencePackageResult {
+  executionPath: "warm_full_forensic_runner";
+  fallbackUsed: false;
+  packageId: string;
+  packageDir: string;
+  manifestPath: string;
+  analysisPath: string;
+  previewReportPath: string;
+  manifest: Record<string, unknown>;
 }
 
 export interface FixedRigQuadrantBrightnessSummary {
@@ -3054,6 +3125,305 @@ export async function writeFixedRigV1Artifacts(manifest: FixedRigV1LocalManifest
   });
   await writeFile(previewReportPath, renderFixedRigV1Report(withPaths), "utf-8");
   return withPaths;
+}
+
+export async function captureFixedRigWarmSideBatch(input: FixedRigWarmEvidencePackageInput): Promise<FixedRigWarmSideCaptureBatch> {
+  assertFixedRigOutputDirAllowed(input.outputDir);
+  const { packageId, packageDir } = await createFixedRigPackageDir(input.outputDir, "ai-grader-fixed-rig-v1-evidence-package");
+  const sideDir = path.join(packageDir, input.side);
+  await mkdir(sideDir, { recursive: true });
+  const activeLightingProfile =
+    input.activeLightingProfile ??
+    buildFixedRigActiveLightingProfile({
+      selectedDutyPercent: FIXED_RIG_SELECTED_LEIMAC_DUTY,
+      profileSource: "default",
+    });
+  const exposureUs = input.exposureUs ?? FIXED_RIG_SELECTED_EXPOSURE_US;
+  const gain = input.gain ?? FIXED_RIG_SELECTED_GAIN;
+  const env = input.env ?? process.env;
+  const baslerClient = new BaslerPylonClient({
+    pylonRoot: input.pylonRoot ?? env.TENKINGS_BASLER_PYLON_ROOT ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT,
+    bridgeScriptPath: input.baslerBridgeScript,
+    timeoutMs: input.pylonTimeoutMs,
+    env,
+  });
+  const batch = await baslerClient.captureFixedRigSideBatch({
+    outputDir: sideDir,
+    side: input.side,
+    selectedChannels: activeLightingProfile.selectedChannels,
+    cameraIndex: input.cameraIndex,
+    savedFormat: "png",
+    lensModel: input.lensModel ?? env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
+    exposureUs,
+    gain,
+    leimacHost: input.leimacHost,
+    leimacPort: input.leimacPort,
+    leimacUnit: input.leimacUnit,
+    dutyPercent: activeLightingProfile.selectedDutyPercent,
+  });
+  return {
+    executionPath: "warm_full_forensic_runner",
+    fallbackUsed: false,
+    packageId,
+    packageDir,
+    sideDir,
+    side: input.side,
+    activeLightingProfile,
+    batch,
+    exposureUs,
+    gain,
+    lensModel: input.lensModel ?? env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
+    fixtureLabel: input.fixtureLabel,
+    fixtureId: input.fixtureId,
+    referenceType: input.referenceType,
+    referenceWidthMm: input.referenceWidthMm,
+    referenceHeightMm: input.referenceHeightMm,
+    horizontalSpanMm: input.horizontalSpanMm,
+    horizontalStartPx: input.horizontalStartPx,
+    horizontalEndPx: input.horizontalEndPx,
+    verticalSpanMm: input.verticalSpanMm,
+    verticalStartPx: input.verticalStartPx,
+    verticalEndPx: input.verticalEndPx,
+    cardBoundaryRect: input.cardBoundaryRect,
+  };
+}
+
+export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSideCaptureBatch): Promise<FixedRigWarmEvidencePackageResult> {
+  const {
+    packageId,
+    packageDir,
+    sideDir,
+    side,
+    activeLightingProfile,
+    batch,
+    exposureUs,
+    gain,
+    fixtureLabel,
+    fixtureId,
+    referenceType,
+    referenceWidthMm,
+    referenceHeightMm,
+    horizontalSpanMm,
+    horizontalStartPx,
+    horizontalEndPx,
+    verticalSpanMm,
+    verticalStartPx,
+    verticalEndPx,
+    cardBoundaryRect,
+  } = captureBatch;
+  const applyBoundary = (quality: FixedRigQualityMetrics) =>
+    cardBoundaryRect ? applyFixedRigCardBoundaryOverride(quality, cardBoundaryRect) : quality;
+  const darkControlCapture = batch.captures.darkControl.capture;
+  const darkStats = applyBoundary(await analyzeFixedRigMacroQuality(darkControlCapture.outputFilePath));
+  const analyzeRole = async (role: BaslerFixedRigSideBatchResult["captures"]["allOn"]) => {
+    const analyzedStats = await analyzeFixedRigMacroQuality(role.capture.outputFilePath);
+    const stats = applyBoundary(analyzedStats);
+    const quadrantBrightness = await analyzeFixedRigQuadrants(role.capture.outputFilePath);
+    return {
+      label: role.label,
+      channel: role.channel,
+      frames: role.frames ?? [],
+      writes: role.writes ?? [],
+      capture: role.capture,
+      stats,
+      quadrantBrightness,
+    };
+  };
+  const allOn = await analyzeRole(batch.captures.allOn);
+  const acceptedProfile = await analyzeRole(batch.captures.acceptedProfile);
+  const channels = await Promise.all(
+    batch.captures.channels
+      .slice()
+      .sort((a, b) => Number(a.channel ?? 0) - Number(b.channel ?? 0))
+      .map(async (role) => ({
+        ...(await analyzeRole(role)),
+        channel: Number(role.channel),
+      }))
+  );
+  const channelDisplayImages: Array<{ channel: number; displayImage: Awaited<ReturnType<typeof createFixedRigDisplayImage>> }> = [];
+  for (const channelCapture of channels) {
+    channelDisplayImages.push({
+      channel: channelCapture.channel,
+      displayImage: await createFixedRigDisplayImage({
+        sourceImagePath: channelCapture.capture.outputFilePath,
+        outputDir: sideDir,
+        filePrefix: `${side}-channel-${channelCapture.channel}`,
+        rawSourceSha256: channelCapture.capture.sha256,
+      }),
+    });
+  }
+  const roiDefinitions = addFixedRigDisplayRects(buildFixedRigRoiDefinitions(allOn.stats.cardBoundary), allOn.stats.width, allOn.stats.height);
+  const displayImage = await createFixedRigDisplayImage({
+    sourceImagePath: allOn.capture.outputFilePath,
+    outputDir: sideDir,
+    filePrefix: `${side}-all-on`,
+    rawSourceSha256: allOn.capture.sha256,
+  });
+  const overlayPreview = await createFixedRigOverlayPreview({
+    sourceImagePath: displayImage.outputFilePath,
+    outputDir: sideDir,
+    filePrefix: `${side}-all-on`,
+    quality: transformQualityForDisplay(allOn.stats, displayImage.displayTransform),
+    roiDefinitions: roiDefinitions.map((roi) => (roi.displayRect ? { ...roi, rect: roi.displayRect } : roi)),
+    title: `${side} evidence overlay`,
+    displayTransform: displayImage.displayTransform,
+  });
+  const roiCrops = await createFixedRigRoiCrops({
+    sourceDisplayImagePath: displayImage.outputFilePath,
+    rawSourceImagePath: allOn.capture.outputFilePath,
+    outputDir: path.join(sideDir, "roi-crops"),
+    rois: roiDefinitions,
+    displayTransform: displayImage.displayTransform,
+    rawSourceSha256: allOn.capture.sha256,
+    filePrefix: side,
+  });
+  const surfaceAnalysis = buildFixedRigSurfaceAnalysis({
+    side,
+    channels: channels.map((channelCapture) => ({
+      channel: channelCapture.channel,
+      stats: channelCapture.stats,
+      displayImage: channelDisplayImages.find((entry) => entry.channel === channelCapture.channel)?.displayImage,
+    })),
+    roiDefinitions,
+    warnings: allOn.stats.warnings,
+  });
+  const fixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
+    profileId: `${packageId}-${side}-rough-fixture-profile`,
+    fixtureLabel: fixtureLabel ?? "operator-built-fixed-position-v1-fixture",
+    fixtureId,
+    referenceType: referenceType ?? "card_dimensions",
+    referencePhysicalWidthMm: referenceWidthMm,
+    referencePhysicalHeightMm: referenceHeightMm,
+    horizontalSpanMm,
+    horizontalStartPx,
+    horizontalEndPx,
+    verticalSpanMm,
+    verticalStartPx,
+    verticalEndPx,
+    calibrationImagePath: allOn.capture.outputFilePath,
+    rawImageWidth: allOn.stats.width,
+    rawImageHeight: allOn.stats.height,
+    cardBoundary: allOn.stats.cardBoundary,
+    activeLightingProfile,
+    exposureUs,
+    gain,
+    operatorAccepted: true,
+    operatorNotes:
+      referenceType === "fixed_metric_rulers"
+        ? "Generated from warm fixed-rig V1 evidence package using operator-supplied fixed-ruler spans; still uncalibrated and diagnostic only."
+        : "Generated from warm fixed-rig V1 evidence package; rough reference uses standard card dimensions.",
+  });
+  const diagnosticGrading = buildFixedRigDiagnosticGradingResult({
+    side,
+    quality: allOn.stats,
+    roiDefinitions,
+    fixtureCalibrationProfile,
+    surfaceAnalysis,
+  });
+  const sideEvidence = {
+    side,
+    safeOffBeforeDark: batch.leimac?.safeOffStart,
+    darkControl: { capture: darkControlCapture, stats: darkStats },
+    allOn,
+    acceptedProfile,
+    channels,
+    channelDisplayImages,
+    roiDefinitions,
+    displayImage,
+    overlayPreview,
+    roiCrops,
+    fixtureCalibrationProfile,
+    surfaceAnalysis,
+    diagnosticGrading,
+  };
+  const manifest = {
+    packageId,
+    packageDir,
+    status: "completed",
+    evidenceClass: FIXED_RIG_V1_EVIDENCE_CLASS,
+    isCalibrated: false,
+    rawCoordinateFrame: "basler_sensor_pixels",
+    displayCoordinateFrame: "ai_grader_card_portrait_display",
+    evidenceSide: side,
+    executionPath: "warm_full_forensic_runner",
+    fallbackUsed: false,
+    fallbackReason: undefined,
+    activeLightingProfile,
+    exposureUs,
+    gain,
+    warmBatch: {
+      openedAt: batch.openedAt,
+      finishedAt: batch.finishedAt,
+      persistentBaslerSession: batch.persistentBaslerSession,
+      persistentLeimacSession: batch.persistentLeimacSession,
+      selectedChannels: batch.selectedChannels,
+      dutyTenthsPercent: batch.dutyTenthsPercent,
+      timing: batch.timing,
+      safety: batch.safety,
+    },
+    safeOffStart: batch.leimac?.safeOffStart,
+    safeOffEnd: batch.leimac?.safeOffEnd,
+    [side]: sideEvidence,
+    suggestedDinoLiteTargets: { status: "not_computed", reason: "surface anomaly detector not implemented yet" },
+    note:
+      "Warm full-forensic fixed-rig V1 evidence package only; no final grade, certificate, or certified grading claim. Full evidence roles preserved.",
+  };
+  const manifestPath = path.join(packageDir, "manifest.json");
+  const analysisPath = path.join(packageDir, "analysis.json");
+  const previewReportPath = path.join(packageDir, "preview-report.html");
+  const manifestWithPaths = { ...manifest, manifestPath, analysisPath, previewReportPath };
+  await writeJsonArtifact(manifestPath, manifestWithPaths);
+  await writeJsonArtifact(analysisPath, {
+    status: "computed_diagnostic",
+    evidenceClass: manifest.evidenceClass,
+    executionPath: "warm_full_forensic_runner",
+    fallbackUsed: false,
+    activeLightingProfile,
+    [side]: {
+      allOn: allOn.stats,
+      acceptedProfile: acceptedProfile.stats,
+      fixtureCalibrationProfile,
+      surfaceAnalysis,
+      diagnosticGrading,
+    },
+    finalGradeComputed: false,
+    certifiedClaim: false,
+  });
+  await writeFile(previewReportPath, renderWarmFixedRigEvidencePackageReport({ side, activeLightingProfile, sideEvidence, manifest: manifestWithPaths }), "utf-8");
+  return {
+    executionPath: "warm_full_forensic_runner",
+    fallbackUsed: false,
+    packageId,
+    packageDir,
+    manifestPath,
+    analysisPath,
+    previewReportPath,
+    manifest: manifestWithPaths,
+  };
+}
+
+export async function createFixedRigWarmEvidencePackage(input: FixedRigWarmEvidencePackageInput): Promise<FixedRigWarmEvidencePackageResult> {
+  return processFixedRigWarmSideBatch(await captureFixedRigWarmSideBatch(input));
+}
+
+function renderWarmFixedRigEvidencePackageReport(input: {
+  side: FixedRigCardSide;
+  activeLightingProfile: FixedRigActiveLightingProfile;
+  sideEvidence: {
+    displayImage: FixedRigDisplayArtifact;
+    overlayPreview: FixedRigOverlayArtifact;
+    acceptedProfile: { capture: BaslerCaptureStillResult };
+    channelDisplayImages: Array<{ channel: number; displayImage: FixedRigDisplayArtifact }>;
+    roiCrops: FixedRigDisplayArtifact[];
+    fixtureCalibrationProfile: FixedRigFixtureCalibrationProfile;
+    surfaceAnalysis: FixedRigSurfaceAnalysis;
+    diagnosticGrading: FixedRigDiagnosticGradingResult;
+  };
+  manifest: Record<string, unknown>;
+}): string {
+  const side = input.side;
+  const sideTitle = side === "front" ? "Front" : "Back";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Warm Fixed-Rig V1 Evidence Package - Provisional Diagnostic</title><style>body{font-family:Arial,sans-serif;margin:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}img{max-width:100%;border:1px solid #aaa;background:#111}.warn{border-left:4px solid #a33;padding:8px 12px;background:#fff}.banner{border:2px solid #a33;background:#fff4f4;padding:12px 16px;font-weight:bold}table{border-collapse:collapse;width:100%;margin:8px 0 16px}td,th{border:1px solid #bbb;padding:6px 8px;text-align:left}</style></head><body><h1>Warm Fixed-Rig V1 Evidence Package</h1><p class="banner">Provisional Diagnostic Only - Not Certified - No Final Grade</p><p class="warn">Warm full-forensic capture preserved dark control, all-on, accepted profile, and Leimac channels 1-8. Raw Basler evidence remains in sensor coordinates; display/ROI assets are derived portrait outputs.</p><p>Execution path warm_full_forensic_runner; fallbackUsed=false. Duty ${escapeHtml(input.activeLightingProfile.selectedDutyPercent)}% PWM ${escapeHtml(input.activeLightingProfile.actualLeimacPwmStep)}; channels ${escapeHtml(input.activeLightingProfile.selectedChannels.join(", "))}; source ${escapeHtml(input.activeLightingProfile.profileSource)}.</p><h2>${sideTitle} Portrait Evidence</h2><img src="${escapeHtml(input.sideEvidence.displayImage.outputFilePath)}" alt="${side} portrait all-on"><img src="${escapeHtml(input.sideEvidence.overlayPreview.outputFilePath)}" alt="${side} portrait overlay"><p>Accepted profile raw capture: ${escapeHtml(input.sideEvidence.acceptedProfile.capture.outputFilePath)}</p><p>Rough profile: ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.status)}; pixel/mm ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed")} x ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed")}; diagnostic grading ${escapeHtml(input.sideEvidence.diagnosticGrading.status)}; surface ${escapeHtml(input.sideEvidence.surfaceAnalysis.status)}; candidates ${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.length)}.</p><table><tr><th>Centering</th><td>${escapeHtml(input.sideEvidence.diagnosticGrading.centering.status)} score ${escapeHtml(input.sideEvidence.diagnosticGrading.centering.score ?? "not_computed")}</td></tr><tr><th>Corners</th><td>TL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topLeft.status)}, TR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topRight.status)}, BR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomRight.status)}, BL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomLeft.status)}</td></tr><tr><th>Edges</th><td>T ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.top.status)}, R ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.right.status)}, B ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.bottom.status)}, L ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.left.status)}</td></tr><tr><th>Surface candidates</th><td>${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.map((candidate) => `${candidate.candidateId} ${candidate.severityBand} ${candidate.anomalyProxyScore}`).join(", ") || "none")}</td></tr></table><h3>${sideTitle} 8-channel portrait displays</h3><div class="grid">${input.sideEvidence.channelDisplayImages.map((entry) => `<figure><img src="${escapeHtml(entry.displayImage.outputFilePath)}" alt="${side} channel ${entry.channel} portrait"><figcaption>${side} channel ${entry.channel}</figcaption></figure>`).join("")}</div><h2>ROI Crops</h2><div class="grid">${input.sideEvidence.roiCrops.map((crop) => `<figure><img src="${escapeHtml(crop.outputFilePath)}" alt="${escapeHtml(crop.roiId)}"><figcaption>${escapeHtml(crop.roiId)}</figcaption></figure>`).join("")}</div><h2>Diagnostic JSON</h2><pre>${escapeHtml(JSON.stringify({ diagnosticGrading: input.sideEvidence.diagnosticGrading, manifest: input.manifest }, null, 2))}</pre></body></html>`;
 }
 
 async function writeJsonArtifact(filePath: string, data: unknown): Promise<void> {

@@ -8,11 +8,18 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import {
   assertFixedRigOutputDirAllowed,
   buildFixedRigActiveLightingProfile,
+  captureFixedRigWarmSideBatch,
   createFixedRigPackageDir,
   FIXED_RIG_SELECTED_EXPOSURE_US,
   FIXED_RIG_SELECTED_GAIN,
   FIXED_RIG_SELECTED_LEIMAC_DUTY,
+  processFixedRigWarmSideBatch,
   type FixedRigActiveLightingProfile,
+  type FixedRigCardSide,
+  type FixedRigReferenceType,
+  type FixedRigWarmEvidencePackageInput,
+  type FixedRigWarmEvidencePackageResult,
+  type FixedRigWarmSideCaptureBatch,
 } from "./baslerFixedRigV1";
 import {
   buildAiGraderStationRealCommandPlan,
@@ -89,6 +96,7 @@ export interface AiGraderLocalStationAcceptedProfile {
 
 export type AiGraderWarmRunnerSide = "front" | "back";
 export type AiGraderWarmRunnerPhaseStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
+export type AiGraderWarmRunnerExecutionPath = "warm_full_forensic_runner" | "cold_command_fallback";
 export type AiGraderWarmRunnerStatusName =
   | "idle"
   | "warming"
@@ -126,14 +134,18 @@ export interface AiGraderWarmRunnerPhase {
   startedAt?: string;
   finishedAt?: string;
   durationMs?: number;
-  backend?: "persistent_session_contract" | "cold_command_fallback";
+  backend?: AiGraderWarmRunnerExecutionPath;
+  executionPath?: AiGraderWarmRunnerExecutionPath;
   detail?: string;
 }
 
 export interface AiGraderWarmRunnerStatus {
   enabled: true;
   mode: "full_forensic";
-  backend: "persistent_session_contract" | "cold_command_fallback";
+  backend: AiGraderWarmRunnerExecutionPath;
+  executionPath: AiGraderWarmRunnerExecutionPath;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
   status: AiGraderWarmRunnerStatusName;
   sessionId?: string;
   activeSide?: AiGraderWarmRunnerSide;
@@ -220,6 +232,7 @@ export interface AiGraderLocalStationBridgeConfigInput {
   exposureUs?: number;
   gain?: number;
   duty?: number;
+  warmRunnerDisabled?: boolean;
   fixtureLabel?: string;
   fixtureId?: string;
   referenceType?: string;
@@ -260,6 +273,7 @@ export interface AiGraderLocalStationBridgeConfig {
   exposureUs: number;
   gain: number;
   duty: number;
+  warmRunnerDisabled: boolean;
   fixtureLabel?: string;
   fixtureId?: string;
   referenceType?: string;
@@ -282,6 +296,9 @@ export interface AiGraderLocalStationBridgeManifest {
   createdAt?: string;
   updatedAt: string;
   acceptedProfile: AiGraderLocalStationAcceptedProfile;
+  executionPath: AiGraderWarmRunnerExecutionPath;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
   confirmations: {
     lightIdleOff: boolean;
     fixtureRulersVisible: boolean;
@@ -385,6 +402,9 @@ export interface AiGraderLocalStationTimingEntry {
 
 export interface AiGraderLocalStationTimingSummary {
   totalCommandMs: number;
+  executionPath: AiGraderWarmRunnerExecutionPath;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
   bridgeActionOverheadMs: number;
   captureCommandMs: number;
   reportGenerationMs: number;
@@ -608,6 +628,10 @@ function parseAllowedOrigins(value: string | undefined, explicit: string[] | und
   return origins.length ? Array.from(new Set(origins)) : ["http://127.0.0.1:*", "http://localhost:*"];
 }
 
+function debugFlagEnabled(value: string | undefined): boolean {
+  return /^(1|true|yes|on)$/i.test((value ?? "").trim());
+}
+
 function pairingCodeIsActive(config: Pick<AiGraderLocalStationBridgeConfig, "stationPairingCode" | "stationPairingExpiresAt">) {
   if (!config.stationPairingCode) return false;
   if (!config.stationPairingExpiresAt) return true;
@@ -698,6 +722,7 @@ export function buildAiGraderLocalStationBridgeConfig(
     exposureUs,
     gain,
     duty,
+    warmRunnerDisabled: input.warmRunnerDisabled ?? debugFlagEnabled(env.AI_GRADER_WARM_RUNNER_DISABLED),
     fixtureLabel: input.fixtureLabel,
     fixtureId: input.fixtureId,
     referenceType: input.referenceType,
@@ -719,6 +744,9 @@ function newManifest(config: AiGraderLocalStationBridgeConfig): AiGraderLocalSta
     mode: config.mode,
     updatedAt: new Date().toISOString(),
     acceptedProfile: defaultProfile(config),
+    executionPath: config.warmRunnerDisabled ? "cold_command_fallback" : "warm_full_forensic_runner",
+    fallbackUsed: config.warmRunnerDisabled,
+    ...(config.warmRunnerDisabled ? { fallbackReason: "Warm runner disabled by explicit debug flag." } : {}),
     confirmations: {
       lightIdleOff: false,
       fixtureRulersVisible: false,
@@ -743,7 +771,7 @@ function newManifest(config: AiGraderLocalStationBridgeConfig): AiGraderLocalSta
       certificateGenerated: false,
     },
     previewStatus: defaultPreviewStatus(config),
-    warmRunnerStatus: defaultWarmRunnerStatus(),
+    warmRunnerStatus: defaultWarmRunnerStatus(config),
     commandResults: [],
     progressLog: ["Station bridge initialized. No hardware action has run."],
     warnings: [
@@ -772,11 +800,15 @@ function fullForensicEvidenceRoles(status: AiGraderWarmRunnerPhaseStatus = "pend
   ];
 }
 
-function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
+function defaultWarmRunnerStatus(config?: Pick<AiGraderLocalStationBridgeConfig, "warmRunnerDisabled">): AiGraderWarmRunnerStatus {
+  const fallbackDisabled = config?.warmRunnerDisabled === true;
   return {
     enabled: true,
     mode: "full_forensic",
-    backend: "cold_command_fallback",
+    backend: fallbackDisabled ? "cold_command_fallback" : "warm_full_forensic_runner",
+    executionPath: fallbackDisabled ? "cold_command_fallback" : "warm_full_forensic_runner",
+    fallbackUsed: fallbackDisabled,
+    ...(fallbackDisabled ? { fallbackReason: "Warm runner disabled by explicit debug flag." } : {}),
     status: "idle",
     captureLock: {
       held: false,
@@ -814,9 +846,8 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
     },
     fallback: {
       available: true,
-      active: true,
-      reason:
-        "Persistent in-process Basler/Leimac capture is staged behind this bridge-owned warm-runner contract; PR #58 preserves the existing cold command as the safe fallback backend.",
+      active: fallbackDisabled,
+      ...(fallbackDisabled ? { reason: "Warm runner disabled by explicit debug flag." } : {}),
     },
     safety: {
       captureLock: true,
@@ -831,7 +862,9 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
       persistentLeimacSaved: false,
     },
     note:
-      "Full forensic evidence remains the default. Speed comes from bridge-owned session orchestration, capture/process/report queues, preview locking, and a swappable persistent hardware backend; this build falls back to the proven cold evidence command when real warm hardware execution is unavailable.",
+      fallbackDisabled
+        ? "Full forensic evidence remains the default, but this run is explicitly using the cold command fallback because the warm runner was disabled by debug flag."
+        : "Full forensic evidence remains the default. Speed comes from the bridge-owned warm full forensic runner, persistent side-batch camera ownership, state-aware Leimac writes, capture/process/report queues, preview locking, and safe cleanup.",
   };
 }
 
@@ -1152,6 +1185,9 @@ function timingSummary(results: AiGraderStationCommandResult[], warmRunnerStatus
   };
   return {
     totalCommandMs,
+    executionPath: warmRunnerStatus?.executionPath ?? "warm_full_forensic_runner",
+    fallbackUsed: warmRunnerStatus?.fallbackUsed ?? false,
+    ...(warmRunnerStatus?.fallbackReason ? { fallbackReason: warmRunnerStatus.fallbackReason } : {}),
     bridgeActionOverheadMs: 0,
     captureCommandMs: durationFor(["operator_preview", "capture_front", "capture_back"]),
     reportGenerationMs,
@@ -1160,9 +1196,9 @@ function timingSummary(results: AiGraderStationCommandResult[], warmRunnerStatus
     detailedEntries,
     phaseBreakdown,
     targetInterCaptureNote:
-      warmRunnerStatus?.backend === "cold_command_fallback"
-        ? "Warm runner orchestration is active with full evidence preserved; this build is using the safe cold command fallback until the persistent hardware backend is validated on the Dell."
-        : "Warm runner orchestration is active with bridge-owned capture/process/report phases and full forensic evidence preserved.",
+      warmRunnerStatus?.executionPath === "cold_command_fallback"
+        ? "Cold command fallback was used. This run preserves full evidence but does not count for warm-runner speed acceptance."
+        : "Warm full forensic runner is active with bridge-owned capture/process/report phases and full forensic evidence preserved.",
   };
 }
 
@@ -1368,18 +1404,41 @@ function bundleWithProductionRelease(bundle: AiGraderReportBundle, productionRel
   } as AiGraderReportBundle;
 }
 
+export interface AiGraderWarmForensicRunner {
+  captureSide(input: FixedRigWarmEvidencePackageInput): Promise<FixedRigWarmSideCaptureBatch>;
+  processSide(batch: FixedRigWarmSideCaptureBatch): Promise<FixedRigWarmEvidencePackageResult>;
+}
+
+const defaultWarmForensicRunner: AiGraderWarmForensicRunner = {
+  captureSide: captureFixedRigWarmSideBatch,
+  processSide: processFixedRigWarmSideBatch,
+};
+
+function warmFailureAllowsColdFallback(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { safeToFallback?: unknown; capturesStarted?: unknown };
+  return candidate.safeToFallback === true && candidate.capturesStarted === false;
+}
+
 export class AiGraderLocalStationBridgeService {
   readonly config: AiGraderLocalStationBridgeConfig;
   readonly runner: AiGraderStationCommandRunner;
+  readonly warmRunner: AiGraderWarmForensicRunner;
   readonly stationUrl: string;
   private manifest: AiGraderLocalStationBridgeManifest;
   private previewProcess?: ChildProcessWithoutNullStreams;
   private previewStop?: (reason: string) => void;
   private captureLock?: { owner: string; acquiredAt: string };
+  private warmProcessingJobs: Partial<Record<AiGraderWarmRunnerSide, Promise<FixedRigWarmEvidencePackageResult>>> = {};
 
-  constructor(config: AiGraderLocalStationBridgeConfig, runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner()) {
+  constructor(
+    config: AiGraderLocalStationBridgeConfig,
+    runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner(),
+    warmRunner: AiGraderWarmForensicRunner = defaultWarmForensicRunner
+  ) {
     this.config = config;
     this.runner = runner;
+    this.warmRunner = warmRunner;
     this.stationUrl = `http://${hostForUrl(config.host)}:${config.port}`;
     this.manifest = newManifest(config);
   }
@@ -1521,6 +1580,7 @@ export class AiGraderLocalStationBridgeService {
     startedAt?: string;
     finishedAt?: string;
     backend?: AiGraderWarmRunnerPhase["backend"];
+    executionPath?: AiGraderWarmRunnerPhase["executionPath"];
     detail?: string;
   }): AiGraderWarmRunnerPhase {
     const previous = this.manifest.warmRunnerStatus.phases.find((phase) => phase.id === input.id);
@@ -1535,6 +1595,7 @@ export class AiGraderLocalStationBridgeService {
       ...(finishedAt ? { finishedAt } : {}),
       ...(startedAt && finishedAt ? { durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)) } : {}),
       ...(input.backend ? { backend: input.backend } : previous?.backend ? { backend: previous.backend } : {}),
+      ...(input.executionPath ? { executionPath: input.executionPath } : previous?.executionPath ? { executionPath: previous.executionPath } : {}),
       ...(input.detail ? { detail: input.detail } : previous?.detail ? { detail: previous.detail } : {}),
     };
     const others = this.manifest.warmRunnerStatus.phases.filter((candidate) => candidate.id !== input.id);
@@ -1549,6 +1610,78 @@ export class AiGraderLocalStationBridgeService {
 
   private updateEvidenceRoles(side: AiGraderWarmRunnerSide, status: AiGraderWarmRunnerPhaseStatus) {
     this.manifest.warmRunnerStatus.evidencePlan.rolesBySide[side] = fullForensicEvidenceRoles(status);
+  }
+
+  private setExecutionPath(pathName: AiGraderWarmRunnerExecutionPath, fallbackReason?: string) {
+    this.manifest.executionPath = pathName;
+    this.manifest.fallbackUsed = pathName === "cold_command_fallback";
+    if (fallbackReason) this.manifest.fallbackReason = fallbackReason;
+    else delete this.manifest.fallbackReason;
+    this.manifest.warmRunnerStatus.backend = pathName;
+    this.manifest.warmRunnerStatus.executionPath = pathName;
+    this.manifest.warmRunnerStatus.fallbackUsed = pathName === "cold_command_fallback";
+    if (fallbackReason) this.manifest.warmRunnerStatus.fallbackReason = fallbackReason;
+    else delete this.manifest.warmRunnerStatus.fallbackReason;
+    this.manifest.warmRunnerStatus.fallback.active = pathName === "cold_command_fallback";
+    if (fallbackReason) this.manifest.warmRunnerStatus.fallback.reason = fallbackReason;
+    else delete this.manifest.warmRunnerStatus.fallback.reason;
+  }
+
+  private buildWarmEvidenceInput(side: AiGraderWarmRunnerSide): FixedRigWarmEvidencePackageInput {
+    return {
+      outputDir: this.config.outputDir,
+      side: side as FixedRigCardSide,
+      activeLightingProfile: buildFixedRigProfile(this.manifest.acceptedProfile),
+      pylonRoot: this.config.pylonRoot,
+      pylonTimeoutMs: this.config.pylonTimeoutMs,
+      baslerBridgeScript: this.config.baslerBridgeScript,
+      leimacHost: this.config.leimacHost ?? "",
+      leimacPort: this.config.leimacPort,
+      leimacUnit: this.config.leimacUnit,
+      cameraIndex: this.config.cameraIndex,
+      exposureUs: this.manifest.acceptedProfile.exposureUs,
+      gain: this.manifest.acceptedProfile.gain,
+      fixtureLabel: this.config.fixtureLabel,
+      fixtureId: this.config.fixtureId,
+      referenceType: this.config.referenceType as FixedRigReferenceType | undefined,
+      horizontalSpanMm: this.config.horizontalSpanMm,
+      horizontalStartPx: this.config.horizontalStartPx,
+      horizontalEndPx: this.config.horizontalEndPx,
+      verticalSpanMm: this.config.verticalSpanMm,
+      verticalStartPx: this.config.verticalStartPx,
+      verticalEndPx: this.config.verticalEndPx,
+      cardBoundaryRect: this.config.cardBoundaryRect,
+    };
+  }
+
+  private warmSideCommandResult(side: AiGraderWarmRunnerSide, result: FixedRigWarmEvidencePackageResult, startedAtMs: number, packageDir: string): AiGraderStationCommandResult {
+    const finishedAtMs = Date.now();
+    return {
+      stepId: side === "front" ? "capture_front" : "capture_back",
+      ok: true,
+      exitCode: 0,
+      startedAt: new Date(startedAtMs).toISOString(),
+      finishedAt: new Date(finishedAtMs).toISOString(),
+      durationMs: Math.max(0, finishedAtMs - startedAtMs),
+      payload: {
+        ok: true,
+        executionPath: "warm_full_forensic_runner",
+        fallbackUsed: false,
+        packageDir,
+        manifestPath: result.manifestPath,
+        analysisPath: result.analysisPath,
+        previewReportPath: result.previewReportPath,
+        manifest: result.manifest,
+      },
+    };
+  }
+
+  private async awaitWarmProcessing(side: AiGraderWarmRunnerSide): Promise<FixedRigWarmEvidencePackageResult | undefined> {
+    const job = this.warmProcessingJobs[side];
+    if (!job) return undefined;
+    const result = await job;
+    delete this.warmProcessingJobs[side];
+    return result;
   }
 
   private async runSafeOffCleanup(reason: string): Promise<void> {
@@ -1591,17 +1724,14 @@ export class AiGraderLocalStationBridgeService {
     }
   }
 
-  private async runWarmSideCapture(side: AiGraderWarmRunnerSide): Promise<AiGraderStationCommandResult> {
+  private async runColdFallbackSideCapture(side: AiGraderWarmRunnerSide, reason: string): Promise<AiGraderStationCommandResult> {
     const stepId = side === "front" ? "capture_front" : "capture_back";
-    const owner = `warm-${stepId}`;
+    const owner = `cold-fallback-${stepId}`;
     const phaseId = `capture_${side}`;
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
+    this.setExecutionPath("cold_command_fallback", reason);
     this.acquireCaptureLock(owner);
     this.stopPreviewForHardwareAction(side);
-    this.manifest.warmRunnerStatus.backend = "cold_command_fallback";
-    this.manifest.warmRunnerStatus.fallback.active = true;
-    this.manifest.warmRunnerStatus.fallback.reason =
-      "Using the existing full evidence package command as the safe backend while the persistent Basler/Leimac hardware loop is staged behind the warm-runner contract.";
     this.updateEvidenceRoles(side, "active");
     const phase = this.markWarmPhase({
       id: phaseId,
@@ -1609,10 +1739,17 @@ export class AiGraderLocalStationBridgeService {
       status: "active",
       side,
       backend: "cold_command_fallback",
-      detail: "dark_control, all_on, accepted_profile, and Leimac channels 1-8 remain required.",
+      executionPath: "cold_command_fallback",
+      detail: "Emergency/debug cold fallback preserves dark_control, all_on, accepted_profile, and Leimac channels 1-8.",
     });
     try {
       const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, stepId));
+      result.payload = {
+        ...(result.payload ?? {}),
+        executionPath: "cold_command_fallback",
+        fallbackUsed: true,
+        fallbackReason: reason,
+      };
       this.manifest.commandResults.push(result);
       if (!result.ok) {
         this.updateEvidenceRoles(side, "failed");
@@ -1623,6 +1760,7 @@ export class AiGraderLocalStationBridgeService {
           side,
           startedAt: phase.startedAt,
           backend: "cold_command_fallback",
+          executionPath: "cold_command_fallback",
           detail: result.error ?? "Cold fallback evidence package failed.",
         });
         throw new Error(result.error ?? `${side} evidence capture failed.`);
@@ -1635,28 +1773,187 @@ export class AiGraderLocalStationBridgeService {
         side,
         startedAt: phase.startedAt,
         backend: "cold_command_fallback",
-        detail: "Full forensic side stack captured through cold fallback.",
+        executionPath: "cold_command_fallback",
+        detail: "Full forensic side stack captured through emergency/debug cold fallback.",
       });
       this.markWarmPhase({
         id: `process_${side}_artifacts`,
         label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
         status: "completed",
         side,
-        backend: "persistent_session_contract",
+        backend: "cold_command_fallback",
+        executionPath: "cold_command_fallback",
+        detail: "Artifacts were processed by the cold evidence package command; this run does not count for speed acceptance.",
+      });
+      this.manifest.warmRunnerStatus.status = "processing";
+      return result;
+    } catch (error) {
+      this.manifest.warmRunnerStatus.status = "failed";
+      await this.runSafeOffCleanup(`${side} cold fallback capture failure`);
+      this.manifest.warmRunnerStatus.status = "failed";
+      throw error;
+    } finally {
+      this.releaseCaptureLock(owner);
+    }
+  }
+
+  private async runWarmSideCapture(side: AiGraderWarmRunnerSide): Promise<AiGraderStationCommandResult> {
+    const stepId = side === "front" ? "capture_front" : "capture_back";
+    const owner = `warm-${stepId}`;
+    const phaseId = `capture_${side}`;
+    const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
+    if (this.config.warmRunnerDisabled) {
+      return this.runColdFallbackSideCapture(side, "Warm runner disabled by explicit debug flag.");
+    }
+    this.acquireCaptureLock(owner);
+    this.stopPreviewForHardwareAction(side);
+    this.setExecutionPath("warm_full_forensic_runner");
+    this.updateEvidenceRoles(side, "active");
+    const captureStartedAtMs = Date.now();
+    const phase = this.markWarmPhase({
+      id: phaseId,
+      label,
+      status: "active",
+      side,
+      backend: "warm_full_forensic_runner",
+      executionPath: "warm_full_forensic_runner",
+      detail: "dark_control, all_on, accepted_profile, and Leimac channels 1-8 remain required.",
+    });
+    try {
+      if (this.config.mode === "mock") {
+        const finishedAtMs = Date.now();
+        const mockPackageDir = path.join(this.manifest.outputs.sessionDir ?? this.config.outputDir, `mock-${stepId}`);
+        const result: AiGraderStationCommandResult = {
+          stepId,
+          ok: true,
+          exitCode: 0,
+          startedAt: new Date(captureStartedAtMs).toISOString(),
+          finishedAt: new Date(finishedAtMs).toISOString(),
+          durationMs: Math.max(0, finishedAtMs - captureStartedAtMs),
+          payload: {
+            ok: true,
+            executionPath: "warm_full_forensic_runner",
+            fallbackUsed: false,
+            packageDir: mockPackageDir,
+          },
+        };
+        this.manifest.commandResults.push(result);
+        this.updateEvidenceRoles(side, "completed");
+        this.markWarmPhase({
+          id: phaseId,
+          label,
+          status: "completed",
+          side,
+          startedAt: phase.startedAt,
+          backend: "warm_full_forensic_runner",
+          executionPath: "warm_full_forensic_runner",
+          detail: "Mock warm full forensic side stack captured for UI/test flow.",
+        });
+        this.markWarmPhase({
+          id: `process_${side}_artifacts`,
+          label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
+          status: "completed",
+          side,
+          backend: "warm_full_forensic_runner",
+          executionPath: "warm_full_forensic_runner",
+          detail: "Mock processing completed; real mode processes captured artifacts in this queue.",
+        });
+        this.manifest.warmRunnerStatus.status = "processing";
+        return result;
+      }
+
+      const batch = await this.warmRunner.captureSide(this.buildWarmEvidenceInput(side));
+      const finishedAtMs = Date.now();
+      const result: AiGraderStationCommandResult = {
+        stepId,
+        ok: true,
+        exitCode: 0,
+        startedAt: new Date(captureStartedAtMs).toISOString(),
+        finishedAt: new Date(finishedAtMs).toISOString(),
+        durationMs: Math.max(0, finishedAtMs - captureStartedAtMs),
+        payload: {
+          ok: true,
+          executionPath: "warm_full_forensic_runner",
+          fallbackUsed: false,
+          packageDir: batch.packageDir,
+          warmBatch: batch.batch,
+        },
+      };
+      this.manifest.commandResults.push(result);
+      this.updateEvidenceRoles(side, "completed");
+      this.markWarmPhase({
+        id: phaseId,
+        label,
+        status: "completed",
+        side,
+        startedAt: phase.startedAt,
+        backend: "warm_full_forensic_runner",
+        executionPath: "warm_full_forensic_runner",
+        detail: "Full forensic side stack captured through warm Basler/Leimac side batch.",
+      });
+      const processingPhase = this.markWarmPhase({
+        id: `process_${side}_artifacts`,
+        label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
+        status: "active",
+        side,
+        backend: "warm_full_forensic_runner",
+        executionPath: "warm_full_forensic_runner",
         detail:
           side === "front"
-            ? "Front processing is queued during the operator flip window when a persistent backend is available."
-            : "Back processing is queued before unified report generation.",
+            ? "Front artifact processing is running during the operator flip window."
+            : "Back artifact processing is running before unified report generation.",
+      });
+      this.warmProcessingJobs[side] = this.warmRunner.processSide(batch).then((processed) => {
+        this.markWarmPhase({
+          id: `process_${side}_artifacts`,
+          label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
+          status: "completed",
+          side,
+          startedAt: processingPhase.startedAt,
+          backend: "warm_full_forensic_runner",
+          executionPath: "warm_full_forensic_runner",
+          detail: "Warm captured artifacts processed; report-compatible manifest, ROI/display crops, Surface Intelligence inputs, and Vision Lab inputs are ready.",
+        });
+        return processed;
+      }).catch((error) => {
+        const message = error instanceof Error ? error.message : `${side} warm artifact processing failed.`;
+        this.markWarmPhase({
+          id: `process_${side}_artifacts`,
+          label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
+          status: "failed",
+          side,
+          startedAt: processingPhase.startedAt,
+          backend: "warm_full_forensic_runner",
+          executionPath: "warm_full_forensic_runner",
+          detail: message,
+        });
+        this.manifest.warmRunnerStatus.status = "failed";
+        throw error;
+      });
+      void this.warmProcessingJobs[side]?.catch(() => {});
+      this.markWarmPhase({
+        id: `process_${side}_artifacts_started`,
+        label: `${side === "front" ? "Front" : "Back"} processing started`,
+        status: "completed",
+        side,
+        backend: "warm_full_forensic_runner",
+        executionPath: "warm_full_forensic_runner",
+        detail: "Background processing queue accepted the warm side batch.",
       });
       this.manifest.warmRunnerStatus.status = "processing";
       return result;
     } catch (error) {
       this.manifest.warmRunnerStatus.status = "failed";
       await this.runSafeOffCleanup(`${side} warm capture failure`);
+      if (warmFailureAllowsColdFallback(error)) {
+        const reason = `${side} warm runner failed before capture started and reported safe fallback eligibility.`;
+        this.releaseCaptureLock(owner);
+        return this.runColdFallbackSideCapture(side, reason);
+      }
       this.manifest.warmRunnerStatus.status = "failed";
       throw error;
     } finally {
-      this.releaseCaptureLock(owner);
+      if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
     }
   }
 
@@ -1668,10 +1965,12 @@ export class AiGraderLocalStationBridgeService {
       id: "report_queue",
       label: "Unified report queue",
       status: "active",
-      backend: "persistent_session_contract",
+      backend: this.manifest.executionPath,
+      executionPath: this.manifest.executionPath,
       detail: "Builds from already processed front/back full forensic artifacts.",
     });
     this.manifest.warmRunnerStatus.status = "reporting";
+    await Promise.all([this.awaitWarmProcessing("front"), this.awaitWarmProcessing("back")]);
     const step = {
       ...stepById(this.config, this.manifest, "unified_report"),
       args: [
@@ -1685,13 +1984,20 @@ export class AiGraderLocalStationBridgeService {
       ],
     };
     const result = await runStepOrMock(this.config, this.manifest, this.runner, step);
+    result.payload = {
+      ...(result.payload ?? {}),
+      executionPath: this.manifest.executionPath,
+      fallbackUsed: this.manifest.fallbackUsed,
+      ...(this.manifest.fallbackReason ? { fallbackReason: this.manifest.fallbackReason } : {}),
+    };
     this.manifest.commandResults.push(result);
     this.markWarmPhase({
       id: "report_queue",
       label: "Unified report queue",
       status: result.ok ? "completed" : "failed",
       startedAt: phase.startedAt,
-      backend: "persistent_session_contract",
+      backend: this.manifest.executionPath,
+      executionPath: this.manifest.executionPath,
       detail: result.ok ? "Unified report, Surface Intelligence, and Vision Lab outputs preserved." : result.error ?? "Unified report failed.",
     });
     this.manifest.warmRunnerStatus.status = result.ok ? "complete" : "failed";
@@ -2061,14 +2367,18 @@ export class AiGraderLocalStationBridgeService {
       this.manifest.outputs.sessionDir = packageDir;
       this.manifest.outputs.manifestPath = path.join(packageDir, "station-session.json");
       this.manifest.currentStep = "verify_fixture_rulers";
+      this.setExecutionPath(this.config.warmRunnerDisabled ? "cold_command_fallback" : "warm_full_forensic_runner", this.config.warmRunnerDisabled ? "Warm runner disabled by explicit debug flag." : undefined);
       this.manifest.warmRunnerStatus.sessionId = this.manifest.sessionId;
       this.manifest.warmRunnerStatus.status = "warming";
       this.markWarmPhase({
         id: "warm_session_setup",
         label: "Warm session setup",
         status: "completed",
-        backend: "persistent_session_contract",
-        detail: "Bridge-owned session initialized; Basler/Leimac ownership will be serialized through the capture lock.",
+        backend: this.manifest.executionPath,
+        executionPath: this.manifest.executionPath,
+        detail: this.manifest.executionPath === "cold_command_fallback"
+          ? "Bridge-owned session initialized with cold fallback explicitly selected by debug flag."
+          : "Bridge-owned warm session initialized; Basler/Leimac ownership will be serialized through the capture lock.",
       });
       this.manifest.warmRunnerStatus.status = "idle";
       this.manifest.progressLog.push(`${now} Started station session ${this.manifest.sessionId}.`);
@@ -2118,7 +2428,8 @@ export class AiGraderLocalStationBridgeService {
         id: "station_cancelled",
         label: "Station cancellation",
         status: "cancelled",
-        backend: "persistent_session_contract",
+        backend: this.manifest.executionPath,
+        executionPath: this.manifest.executionPath,
         detail: "Cancellation requested; safe-off cleanup attempted in real mode.",
       });
       this.manifest.progressLog.push(`${now} Station session cancelled.`);
@@ -2380,10 +2691,11 @@ function secretMatches(supplied: string | undefined, expected: string | undefine
 export function createAiGraderLocalStationBridgeHttpServer(
   input: AiGraderLocalStationBridgeConfigInput = {},
   env: NodeJS.ProcessEnv = process.env,
-  runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner()
+  runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner(),
+  warmRunner: AiGraderWarmForensicRunner = defaultWarmForensicRunner
 ): http.Server {
   const config = buildAiGraderLocalStationBridgeConfig(input, env);
-  const service = new AiGraderLocalStationBridgeService(config, runner);
+  const service = new AiGraderLocalStationBridgeService(config, runner, warmRunner);
   let pairingCodeConsumed = false;
 
   return http.createServer(async (req, res) => {
@@ -2507,10 +2819,11 @@ export function createAiGraderLocalStationBridgeHttpServer(
 export async function startAiGraderLocalStationBridgeHttpServer(
   input: AiGraderLocalStationBridgeConfigInput = {},
   env: NodeJS.ProcessEnv = process.env,
-  runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner()
+  runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner(),
+  warmRunner: AiGraderWarmForensicRunner = defaultWarmForensicRunner
 ): Promise<StartedAiGraderLocalStationBridge> {
   const config = buildAiGraderLocalStationBridgeConfig(input, env);
-  const server = createAiGraderLocalStationBridgeHttpServer(config, env, runner);
+  const server = createAiGraderLocalStationBridgeHttpServer(config, env, runner, warmRunner);
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
       server.off("listening", onListening);

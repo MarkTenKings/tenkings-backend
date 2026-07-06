@@ -91,6 +91,14 @@ test("local station contract exposes workflow status with no login, DB, or hardw
   assert.equal(status.previewStatus.safety.productionServiceTokenUsed, false);
   assert.equal(status.previewStatus.safety.publicRouteExposed, false);
   assert.equal(status.warmRunnerStatus.mode, "full_forensic");
+  assert.equal(status.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.fallbackUsed, false);
+  assert.equal(status.warmRunnerStatus.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.warmRunnerStatus.backend, "warm_full_forensic_runner");
+  assert.equal(status.warmRunnerStatus.fallbackUsed, false);
+  assert.equal(status.warmRunnerStatus.fallback.active, false);
+  assert.equal(status.timingSummary?.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.timingSummary?.fallbackUsed, false);
   assert.equal(status.warmRunnerStatus.evidencePlan.defaultFullForensic, true);
   assert.deepEqual(status.warmRunnerStatus.evidencePlan.rolesBySide.front.map((role) => role.role), [
     "dark_control",

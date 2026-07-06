@@ -68,6 +68,63 @@ function fullEvidenceRoleIds() {
   ];
 }
 
+function makeFakeWarmRunner(options = {}) {
+  const calls = [];
+  return {
+    calls,
+    runner: {
+      async captureSide(input) {
+        calls.push({ type: "capture", side: input.side, input });
+        if (options.onCaptureStarted) options.onCaptureStarted(input);
+        if (options.captureDelay) await options.captureDelay(input);
+        if (options.captureError) throw options.captureError;
+        return {
+          executionPath: "warm_full_forensic_runner",
+          fallbackUsed: false,
+          packageId: `${input.side}-package`,
+          packageDir: `${input.side}-package`,
+          sideDir: `${input.side}-package/${input.side}`,
+          side: input.side,
+          activeLightingProfile: input.activeLightingProfile,
+          batch: {
+            executionPath: "warm_full_forensic_runner",
+            fallbackUsed: false,
+            side: input.side,
+            outputDir: `${input.side}-package/${input.side}`,
+            cameraIndex: input.cameraIndex ?? 0,
+            persistentBaslerSession: true,
+            persistentLeimacSession: true,
+            selectedChannels: input.activeLightingProfile.selectedChannels,
+            dutyTenthsPercent: Math.round(input.activeLightingProfile.selectedDutyPercent * 10),
+            captures: {},
+          },
+          exposureUs: input.exposureUs,
+          gain: input.gain,
+        };
+      },
+      async processSide(batch) {
+        calls.push({ type: "process", side: batch.side, batch });
+        if (options.processDelay) await options.processDelay(batch);
+        if (options.processError) throw options.processError;
+        return {
+          executionPath: "warm_full_forensic_runner",
+          fallbackUsed: false,
+          packageId: batch.packageId,
+          packageDir: batch.packageDir,
+          manifestPath: path.join(batch.packageDir, "manifest.json"),
+          analysisPath: path.join(batch.packageDir, "analysis.json"),
+          previewReportPath: path.join(batch.packageDir, "preview-report.html"),
+          manifest: {
+            executionPath: "warm_full_forensic_runner",
+            fallbackUsed: false,
+            evidenceSide: batch.side,
+          },
+        };
+      },
+    },
+  };
+}
+
 test("station bridge config is explicit, local-only, and real mode is gated", () => {
   assert.throws(
     () => buildAiGraderLocalStationBridgeConfig({ mode: "mock", outputDir: outputDir("disabled") }, {}),
@@ -284,6 +341,12 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(status.hardwareActionsEnabled, false);
   assert.equal(status.safety.hardwareAccessed, false);
   assert.equal(status.warmRunnerStatus.mode, "full_forensic");
+  assert.equal(status.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.fallbackUsed, false);
+  assert.equal(status.warmRunnerStatus.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.warmRunnerStatus.backend, "warm_full_forensic_runner");
+  assert.equal(status.warmRunnerStatus.fallbackUsed, false);
+  assert.equal(status.warmRunnerStatus.fallback.active, false);
   assert.equal(status.warmRunnerStatus.fallback.available, true);
   assert.equal(status.warmRunnerStatus.safety.captureLock, true);
   assert.equal(status.warmRunnerStatus.safety.watchdogSafeOff, true);
@@ -335,7 +398,12 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(status.latestReport.exists, true);
   assert.equal(status.warmRunnerStatus.queues.report.some((phase) => phase.id === "report_queue" && phase.status === "completed"), true);
   assert.equal(status.timingSummary.detailedEntries.some((entry) => entry.category === "warm_runner"), true);
-  assert.match(status.timingSummary.targetInterCaptureNote, /full evidence preserved/i);
+  assert.equal(status.timingSummary.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.timingSummary.fallbackUsed, false);
+  assert.match(status.timingSummary.targetInterCaptureNote, /full forensic evidence preserved/i);
+  const warmSessionManifest = JSON.parse(fs.readFileSync(status.outputs.manifestPath, "utf8"));
+  assert.equal(warmSessionManifest.executionPath, "warm_full_forensic_runner");
+  assert.equal(warmSessionManifest.fallbackUsed, false);
   const resolvedReport = await service.reportBundle(status.latestReport.reportId);
   assert.equal(resolvedReport.reportId, status.latestReport.reportId);
   assert.equal(resolvedReport.bundle.finalGradeComputed, false);
@@ -360,8 +428,9 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(release.storageIntegration.uploadPerformed, false);
 });
 
-test("real station bridge uses allow-listed station command plan with fake runner", async () => {
+test("real station bridge uses warm full forensic runner by default with fake runner", async () => {
   const calls = [];
+  const warm = makeFakeWarmRunner();
   const runner = {
     async run(step) {
       calls.push(step);
@@ -379,8 +448,6 @@ test("real station bridge uses allow-listed station command plan with fake runne
           },
         };
       }
-      if (step.id === "capture_front") return { stepId: step.id, ok: true, exitCode: 0, payload: { packageDir: "front-package" } };
-      if (step.id === "capture_back") return { stepId: step.id, ok: true, exitCode: 0, payload: { packageDir: "back-package" } };
       if (step.id === "unified_report") {
         assert.equal(step.args.includes("front-package"), true);
         assert.equal(step.args.includes("back-package"), true);
@@ -394,7 +461,7 @@ test("real station bridge uses allow-listed station command plan with fake runne
       return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
     },
   };
-  const service = new AiGraderLocalStationBridgeService(realConfig(), runner);
+  const service = new AiGraderLocalStationBridgeService(realConfig(), runner, warm.runner);
   await service.action("start-session");
   await assert.rejects(() => service.action("capture-front"), /idle\/off/);
   await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
@@ -405,17 +472,68 @@ test("real station bridge uses allow-listed station command plan with fake runne
   await service.action("capture-back");
   const status = await service.action("run-diagnostics");
 
-  assert.deepEqual(calls.map((step) => step.id), ["operator_preview", "capture_front", "capture_back", "unified_report"]);
+  assert.deepEqual(calls.map((step) => step.id), ["operator_preview", "unified_report"]);
+  assert.deepEqual(warm.calls.map((call) => `${call.type}:${call.side}`), ["capture:front", "process:front", "capture:back", "process:back"]);
   assert.equal(calls.every((step) => step.command === "node"), true);
   assert.equal(status.hardwareActionsEnabled, true);
   assert.equal(status.safety.hardwareAccessed, true);
+  assert.equal(status.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.fallbackUsed, false);
+  assert.equal(status.warmRunnerStatus.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.warmRunnerStatus.fallbackUsed, false);
   assert.equal(status.outputs.unifiedReportPath, "unified-report/provisional-diagnostic-report.html");
   assert.equal(status.timingSummary.entries.some((entry) => entry.stepId === "operator_preview"), true);
   assert.equal(status.timingSummary.entries.some((entry) => entry.stepId === "capture_front"), true);
   assert.equal(status.timingSummary.entries.some((entry) => entry.stepId === "capture_back"), true);
   assert.equal(status.timingSummary.entries.some((entry) => entry.stepId === "unified_report"), true);
   assert.equal(status.timingSummary.entries.some((entry) => entry.category === "warm_runner"), true);
+  assert.equal(status.timingSummary.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.timingSummary.fallbackUsed, false);
   assert.equal(status.timingSummary.totalCommandMs >= 0, true);
+});
+
+test("cold command fallback requires explicit warm runner disable flag", async () => {
+  const calls = [];
+  const warm = makeFakeWarmRunner();
+  const runner = {
+    async run(step) {
+      calls.push(step);
+      if (step.id === "capture_front") {
+        return { stepId: step.id, ok: true, exitCode: 0, payload: { packageDir: "front-package" } };
+      }
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+    },
+  };
+  const service = new AiGraderLocalStationBridgeService(realConfig({
+    outputDir: outputDir(`fallback-${Date.now()}`),
+    warmRunnerDisabled: true,
+  }), runner, warm.runner);
+
+  let status = service.status();
+  assert.equal(status.executionPath, "cold_command_fallback");
+  assert.equal(status.fallbackUsed, true);
+  assert.match(status.fallbackReason, /debug flag/i);
+  assert.equal(status.warmRunnerStatus.fallback.active, true);
+
+  await service.action("start-session");
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  status = await service.action("capture-front");
+
+  assert.deepEqual(calls.map((step) => step.id), ["capture_front"]);
+  assert.deepEqual(warm.calls, []);
+  assert.equal(status.executionPath, "cold_command_fallback");
+  assert.equal(status.fallbackUsed, true);
+  assert.equal(status.warmRunnerStatus.executionPath, "cold_command_fallback");
+  assert.equal(status.warmRunnerStatus.fallbackUsed, true);
+  assert.match(status.warmRunnerStatus.fallbackReason, /debug flag/i);
+  assert.equal(status.timingSummary.executionPath, "cold_command_fallback");
+  assert.equal(status.timingSummary.fallbackUsed, true);
+  assert.match(status.timingSummary.targetInterCaptureNote, /does not count/i);
+  const fallbackSessionManifest = JSON.parse(fs.readFileSync(status.outputs.manifestPath, "utf8"));
+  assert.equal(fallbackSessionManifest.executionPath, "cold_command_fallback");
+  assert.equal(fallbackSessionManifest.fallbackUsed, true);
+  assert.match(fallbackSessionManifest.fallbackReason, /debug flag/i);
 });
 
 test("warm runner capture lock blocks preview stream until capture releases", async () => {
@@ -429,14 +547,17 @@ test("warm runner capture lock blocks preview stream until capture releases", as
   });
   const runner = {
     async run(step) {
-      if (step.id === "capture_front") {
-        captureStarted();
-        await releaseCapturePromise;
-        return { stepId: step.id, ok: true, exitCode: 0, payload: { packageDir: "front-package" } };
-      }
       return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
     },
   };
+  const warm = makeFakeWarmRunner({
+    onCaptureStarted() {
+      captureStarted();
+    },
+    async captureDelay() {
+      await releaseCapturePromise;
+    },
+  });
   const token = "local-station-token-lock";
   const started = await startAiGraderLocalStationBridgeHttpServer({
     ...realConfig({
@@ -445,7 +566,7 @@ test("warm runner capture lock blocks preview stream until capture releases", as
       outputDir: outputDir(`lock-${Date.now()}`),
       allowedOrigins: ["https://collect.tenkings.co"],
     }),
-  }, {}, runner);
+  }, {}, runner, warm.runner);
   const headers = {
     Origin: "https://collect.tenkings.co",
     "x-ai-grader-station-token": token,
@@ -493,21 +614,24 @@ test("warm runner runs safe-off cleanup on failure, cancellation, and session en
   const failureRunner = {
     async run(step) {
       failureCalls.push(step.id);
-      if (step.id === "capture_front") return { stepId: step.id, ok: false, exitCode: 1, error: "front boom" };
       return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
     },
   };
-  const failureService = new AiGraderLocalStationBridgeService(realConfig({ outputDir: outputDir(`failure-${Date.now()}`) }), failureRunner);
+  const failureWarm = makeFakeWarmRunner({ captureError: new Error("front boom") });
+  const failureService = new AiGraderLocalStationBridgeService(realConfig({ outputDir: outputDir(`failure-${Date.now()}`) }), failureRunner, failureWarm.runner);
   await failureService.action("start-session");
   await failureService.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
   await failureService.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
 
   await assert.rejects(() => failureService.action("capture-front"), /front boom/);
   const failureStatus = failureService.status();
-  assert.deepEqual(failureCalls, ["capture_front", "safe_off"]);
+  assert.deepEqual(failureCalls, ["safe_off"]);
+  assert.deepEqual(failureWarm.calls.map((call) => `${call.type}:${call.side}`), ["capture:front"]);
   assert.equal(failureStatus.warmRunnerStatus.status, "failed");
   assert.equal(failureStatus.warmRunnerStatus.captureLock.held, false);
   assert.equal(failureStatus.warmRunnerStatus.phases.some((phase) => phase.id === "warm_safe_cleanup" && phase.status === "completed"), true);
+  assert.equal(failureStatus.executionPath, "warm_full_forensic_runner");
+  assert.equal(failureStatus.fallbackUsed, false);
 
   const cancelCalls = [];
   const cancelService = new AiGraderLocalStationBridgeService(realConfig({ outputDir: outputDir(`cancel-${Date.now()}`) }), {
