@@ -637,6 +637,31 @@ function stopChildProcessTree(child: ChildProcessWithoutNullStreams) {
   }
 }
 
+function stopOrphanedBaslerPreviewStreams(): number {
+  if (process.platform !== "win32") return 0;
+  const command = [
+    "$matches = Get-CimInstance Win32_Process | Where-Object {",
+    "$_.ProcessId -ne $PID -and $_.CommandLine -and",
+    "$_.CommandLine -like '*basler-pylon-bridge.ps1*' -and",
+    "$_.CommandLine -like '*operator-preview-mjpeg-stream*'",
+    "};",
+    "$count = @($matches).Count;",
+    "foreach ($process in $matches) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue };",
+    "Write-Output $count",
+  ].join(" ");
+  try {
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 8000,
+    });
+    const count = Number(String(result.stdout ?? "").trim().split(/\s+/).pop() ?? "0");
+    return Number.isFinite(count) ? count : 0;
+  } catch {
+    return 0;
+  }
+}
+
 function waitForChildProcessClose(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
   if (childProcessHasExited(child)) return Promise.resolve(true);
   return new Promise((resolve) => {
@@ -2068,6 +2093,10 @@ export class AiGraderLocalStationBridgeService {
     this.previewStop?.(reason);
     this.previewStop = undefined;
     if (child) stopChildProcessTree(child);
+    const stoppedOrphans = stopOrphanedBaslerPreviewStreams();
+    if (stoppedOrphans > 0) {
+      this.manifest.progressLog.push(`${new Date().toISOString()} Stopped ${stoppedOrphans} orphaned Basler browser preview process(es) during preview release.`);
+    }
     if (options.waitForRelease && child) {
       this.updatePreviewStatus({
         status: captureOwner ? "paused_for_capture" : "stopped",
@@ -2125,6 +2154,11 @@ export class AiGraderLocalStationBridgeService {
       });
       this.manifest.warmRunnerStatus.previewPolicy.lastPausedAt = new Date().toISOString();
       this.manifest.progressLog.push(`${new Date().toISOString()} Browser preview stream paused/released before ${action}.`);
+    }
+    const stoppedOrphans = stopOrphanedBaslerPreviewStreams();
+    if (stoppedOrphans > 0) {
+      this.manifest.progressLog.push(`${new Date().toISOString()} Stopped ${stoppedOrphans} stale Basler browser preview process(es) before ${action} capture.`);
+      await delay(PREVIEW_CAMERA_SETTLE_MS);
     }
   }
 

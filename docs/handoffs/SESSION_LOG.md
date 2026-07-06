@@ -23597,3 +23597,18 @@ By enabling Rip It Live, I confirm:
 - Rotate only the local Dell bridge pairing code if the previous pairing code is expired, then open the PR #60 local station URL with the pairing hash without printing the code.
 - Verify bridge health, embedded Basler MJPEG preview, live Leimac channel/duty tuning, profile acceptance, capture transition safe-off, warm capture using the accepted live-tuned profile, report open, and final physical light off.
 - Guardrails: no migrations, no production DB writes, no Vercel env changes, no credential rotation, no secret printing, no public hardware controls.
+
+### Observed Result In Progress
+- Browser live Leimac lighting tuning worked from the PR #60 local station UI; bridge status showed live lighting applied through the local token path while Basler MJPEG preview remained live.
+- Mark reported the front side moved quickly after `Start Grading`.
+- Back-side capture failed with the Basler `device is controlled by another application` error after operator flip/confirm.
+- Bridge status and process checks showed safe-off/release was possible afterward: `liveLighting=safe_off`, `cameraOwnership=released`, `finalLightOff=true`, and no active Basler preview subprocess remained after forced stop.
+- Root cause: during the flip/back transition, a stale/orphaned Basler `operator-preview-mjpeg-stream` PowerShell process can survive outside the bridge's tracked child process and keep the GigE camera locked.
+- Patch added a Windows-only orphan preview sweep before capture that kills only `basler-pylon-bridge.ps1 -Action operator-preview-mjpeg-stream` processes, plus the prior tracked child process tree kill, before Basler warm capture opens the camera.
+- Patch also lets browser live lighting start a bridge session automatically when the station is still on `start_new_card`/`safe_off_end_session`, so Mark does not need to use `Start Grading` to make live tuning command the light.
+
+### Patch Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `29` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `178` tests.
+- `git diff --check` -> pass with line-ending warnings only.
