@@ -23616,3 +23616,30 @@ By enabling Rip It Live, I confirm:
 ## 2026-07-06T10:04:53Z - PR60 production image report fix
 - Planned: fix AI Grader production report image publishing/rendering so production reports show captured evidence images, then validate and deploy PR #60 if checks are clean.
 - Guardrails: no hardware capture, no migrations, no production DB writes outside normal deploy path, no env changes, no secrets printed.
+
+### Observed Result
+- Root cause confirmed: production publish was carrying report metadata and local Windows image paths, but not uploading the generated Basler/report image files as public storage assets. The public report viewer therefore had no production-safe image URLs to render.
+- Fix committed on PR #60 as `c2500333e36f3731c5038533f4accd8a455ec78a`:
+  - local bridge report bundle can include referenced report image bodies only when production publish explicitly requests them;
+  - station publish fetches an enriched local bridge report bundle before calling hosted production publish;
+  - production publish uploads report image bodies as `report_asset` artifacts and writes sanitized `assets`/`publicAssets` URLs into `report-bundle.json`;
+  - public report viewer renders the uploaded evidence images and still strips local paths/base64 bodies from public output.
+- Local validation before merge:
+  - `pnpm --filter @tenkings/database test` -> pass, `46` tests.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `30` tests.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `179` tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing/new `<img>` lint warnings only.
+  - `git diff --check` -> pass with line-ending warnings only.
+- PR #60 checks after the image fix passed: Install & Build, Vercel preview, Vercel Preview Comments, and Docker image jobs for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
+- PR #60 merge state was `CLEAN`; merged at `2026-07-06T10:26:42Z` with merge commit `4b47fa1b56151533577d2c99ef32c88a439689e9`.
+- Vercel Production deployment for merge commit `4b47fa1b56151533577d2c99ef32c88a439689e9` completed successfully at `2026-07-06T10:27:59Z`.
+- GitHub main CI for merge commit `4b47fa1b56151533577d2c99ef32c88a439689e9` completed successfully at `2026-07-06T10:32:10Z`.
+- Production route verification:
+  - `GET https://collect.tenkings.co/ai-grader/station` -> `200`.
+  - `GET https://collect.tenkings.co/ai-grader/reports/sample-final-v0` -> `200`, with `Published Evidence Images` and `image-grid` present in the deployed HTML.
+  - `GET https://collect.tenkings.co/api/admin/ai-grader/production/status` -> `200`, `enabled=true`, `publicReportDbReadsEnabled=true`, `noHardwareControls=true`.
+- No hardware capture, migration, manual production DB write, Vercel env change, credential rotation, or secret-printing action was run.
+- DigitalOcean managed Postgres credential rotation remains deferred by Mark.
