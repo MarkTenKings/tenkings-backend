@@ -23811,3 +23811,9 @@ By enabling Rip It Live, I confirm:
   - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
   - `git diff --check` -> pass with line-ending warnings only.
 - No hardware capture, migration, production DB write, Vercel env change, credential rotation, deploy, forced publish, or secret-printing action was run.
+
+### Merge / Deploy Plan
+- PR #63 checks passed and merge state was `CLEAN` for head `6e6c228f14fc5640431fc5a221b4c68c358cd403`.
+- Planned action: merge PR #63 after this handoff-log update, confirm Vercel Production deployment succeeds, pull latest `main` locally on the Dell, rebuild/restart the Dell local bridge from merged `main`, and confirm bridge health.
+- After PR #63 deploy/restart, diagnose the blocked existing report `ai-grader-browser-station-session-2026-07-06T182257920Z-report` / `TK-AIG-73C38B7F` before any new hardware capture.
+- Guardrails remain: no migrations, DB schema changes, Vercel env changes, credential rotation, destructive operations, secret printing, unsupervised hardware capture, or forced publish of insufficient-evidence reports.
