@@ -23843,3 +23843,93 @@ By enabling Rip It Live, I confirm:
   - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
   - `git diff --check` -> pass with line-ending warnings only.
 - No hardware capture, production publish, migration, DB schema change, Vercel env change, credential rotation, destructive operation, or secret-printing action was run.
+
+### Merge / Deploy / Restart Result
+- PR #63 merged to `main` as `29724275cd569f6d7be467e5236fa17f4f17e237` at `2026-07-06T19:50:02Z`.
+- GitHub main CI for merge commit `29724275cd569f6d7be467e5236fa17f4f17e237` completed successfully.
+- Vercel status for merge commit `29724275cd569f6d7be467e5236fa17f4f17e237` completed successfully with target `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/CshhAP34Q3iSvusXZaHhkK5AhAAi`.
+- Local Dell repo was already up to date on merged `main`; `git pull --ff-only` reported `Already up to date`.
+- Rebuilt `@tenkings/ai-grader-capture-helper` from merged `main` successfully.
+- Stopped the prior Dell local bridge process with `stop-local-station-bridge.ps1 -KillProcess`; restart via `start-local-station-bridge.ps1 -Real` timed out at the command wrapper but the bridge came up successfully.
+- Redacted bridge status after restart: config present, token configured with fingerprint only, `bridgeRunning=true`, health `ok=true`, `mode=real`, `localOnly=true`, `tokenRequired=true`, `hardwareActionsEnabled=true`, allowed origin `https://collect.tenkings.co`.
+- Token-gated bridge status after restart: `bridgeVersion=ai-grader-local-station-bridge-v0.4`, `currentStep=start_new_card`, `warmRunnerStatus=idle`, latest report `ai-grader-browser-station-session-2026-07-06T182257920Z-report`.
+- Latest old report note: persisted old `report-bundle.json` was generated before the PR #63 gate-table change, so `history_report_bundle_path` has no provisional gate metadata. The station's current `/reports/:reportId/bundle?includeAssetBodies=1` path rebuilds from the old report directory and now exposes `gateCount=8`, `failedGates=clipping`, `imageAssetCount=72`, and `imageBodies=72`. It still remains `insufficient_evidence` because its saved `analysis.json` was generated before the clipping-policy fix.
+- No fresh hardware smoke, production publish, migration, DB schema change, Vercel env change, credential rotation, destructive operation, or secret-printing action was run.
+
+### Supervised Smoke Attempt / Recovery Plan
+- Planned action: after Mark-approved supervised production station smoke attempt `ai-grader-browser-station-session-2026-07-06T222556750Z-session` failed before front evidence was marked captured and the local bridge listener stopped responding during explicit safe-off cleanup, restart the Dell local bridge from merged `main` commit `29724275cd569f6d7be467e5236fa17f4f17e237` and confirm bridge/light safe idle state.
+- Guardrails: no second hardware capture without explicit Mark approval, no forced publish, no migrations, DB schema changes, Vercel env changes, credential rotation, destructive operations, or secret printing.
+
+### Supervised Smoke Attempt / Recovery Result
+- Preflight: local repo and `origin/main` were both at merged PR #63 commit `29724275cd569f6d7be467e5236fa17f4f17e237`; only `docs/handoffs/SESSION_LOG.md` was dirty. The production station URL was opened in the local browser. Public bridge health was OK, token-gated status reported `executionPath=warm_full_forensic_runner` and `fallbackUsed=false`, embedded preview was live with `cameraOwnership=preview_stream`, and Leimac status was `off`.
+- Mark-approved smoke session started as `ai-grader-browser-station-session-2026-07-06T222556750Z-session` / `ai-grader-browser-station-session-2026-07-06T222556750Z-report`. The bridge recorded light-idle/off and fixture/ruler confirmations, then attempted front capture.
+- Result: front capture failed before any front evidence was marked captured. No back capture, diagnostics, report bundle, final grade, gate table, cert, label, publish, or public report verification was produced for this session. The bridge in-memory status after failure showed `frontCaptured=false`, `backCaptured=false`, `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, `warmRunnerStatus=failed`, and safe-off cleanup completed after the front warm capture failure. The on-disk session manifest was last written before the capture attempt, so it does not include the thrown 400 body.
+- Safety cleanup evidence: bridge progress showed browser preview released before front capture and watchdog safe-off completed after the failed front capture. An explicit safe-off attempt then caused the bridge listener to stop responding, so the bridge was restarted from merged `main`.
+- Restart result: `stop-local-station-bridge.ps1 -KillProcess` completed, `start-local-station-bridge.ps1 -Real` hit the command wrapper timeout but the background listener came up. Public `/health` returned OK. Token-gated status after restart showed `currentStep=start_new_card`, `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, and `hardwareActionsEnabled=true`. Lighting status after restart showed `status=off`, `applied.enabled=false`, `applied.dutyPercent=0`, and preview status showed `not_started` / `cameraOwnership=idle`.
+- Remaining blocker: the approved smoke did not reach front/back evidence or report generation. A second hardware attempt should not be run without explicit Mark approval; if approved, run through the visible production station UI and capture the HTTP 400 body/log output if front capture fails again.
+- No migration, DB schema change, Vercel env change, credential rotation, destructive operation, forced publish, public publish, or secret-printing action was run.
+
+### Supervised Smoke Publish Verification / Recovery Plan
+- Planned action: after the Mark-supervised session `ai-grader-browser-station-session-2026-07-06T223658063Z-session` completed front/back capture and local grade/label generation, verify hosted public report publication and then recover the local bridge because the `end-session` safe-off request closed the bridge listener connection.
+- Guardrails: no additional capture, no forced publish, no migrations, DB schema changes, Vercel env changes, credential rotation, destructive operations, or secret printing.
+
+### Supervised Smoke Publish Verification / Recovery Result
+- Mark-approved fresh production station run completed front and back evidence capture without the Basler controlled-by-another-application error:
+  - `sessionId=ai-grader-browser-station-session-2026-07-06T223658063Z-session`
+  - `reportId=ai-grader-browser-station-session-2026-07-06T223658063Z-report`
+  - `executionPath=warm_full_forensic_runner`
+  - `fallbackUsed=false`
+  - front evidence complete and back evidence complete
+- Local diagnostics, bundle export, final-grade calculation, finalization, and label data generation completed:
+  - `reportStatus=final_ai_grader_report_v0`
+  - `finalGradeComputed=true`
+  - final grade `8.5`
+  - cert/report ID `TK-AIG-79D935C9`
+  - label QR payload `https://collect.tenkings.co/ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report`
+  - local bundle had `77` assets and `72` image bodies through `includeAssetBodies=1`
+- Local gate table:
+  - `ruler_calibration=accepted_warning`
+  - `repeatability=pass`
+  - `framing_overlay=pass`
+  - `front_evidence=pass`
+  - `back_evidence=pass`
+  - `surface_intelligence=pass`
+  - `clipping=pass`
+  - `focus=pass`
+- Mark confirmed the inline local View Report showed the full report. Mark then clicked `Publish to Ten Kings`, but no usable public URL was surfaced in the station UI.
+- Public verification failed for the expected customer URL:
+  - Expected public report URL: `https://collect.tenkings.co/ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report`
+  - Public API `GET /api/ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report` returned `404 Published AI Grader report not found`.
+  - Public report page route returned HTTP `200`, but rendered the static/sample fallback report (`sample-pr45`) with no attached image assets, not Mark's report.
+  - Label route returned HTTP `200`, but rendered static/sample fallback label data (`sample-final-v0` / `TK-AIG-F6FCC6F4`), not Mark's label/QR data.
+  - No local Dell paths, bridge URLs/tokens, station token text, or `data:image` bodies were observed in the fetched public page/label shell, but the customer route is not trustworthy because it falls back to sample content for an unpublished/missing report.
+- End-session safe-off request closed the bridge listener connection. Recovery restart was performed from merged `main`; public `/health` is OK and token-gated status after restart showed `currentStep=start_new_card`, `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, preview `not_started`, `cameraOwnership=idle`, Leimac `status=off`, `applied.enabled=false`, and `applied.dutyPercent=0`.
+- Remaining blocker: hosted publish/public report is still broken after local grading succeeds. The station publish click either did not persist the report or persisted under a different ID not surfaced to the operator, and public report/label routes still render sample fallback instead of failing closed for unknown/unpublished IDs.
+- No migration, DB schema change, Vercel env change, credential rotation, destructive operation, extra capture, forced publish, eBay comps run, or secret-printing action was run.
+
+### AI Grader Canonical Publish / Report / Label Fix
+- Timestamp: `2026-07-06T19:12:53-04:00`
+- Branch: `fix/ai-grader-canonical-publish-report-label`
+- Planned action: fix the hosted publish/report/label path so generated AI Grader report IDs never silently render sample data, station publish success is based on verified DB/storage readback, and public/label links are shown only after hosted publish succeeds.
+- Diagnosis from latest successful local report `ai-grader-browser-station-session-2026-07-06T223658063Z-report` / `TK-AIG-79D935C9`:
+  - Local capture, local bundle, final-grade calculation, and local full report were valid.
+  - Public API returned `404 Published AI Grader report not found` for the expected generated report ID.
+  - Public report and label pages rendered explicit sample fallback content for missing generated IDs, masking the missing DB/storage publish.
+  - Station publish readiness derived public/label URLs before hosted publish completed, so local readiness could look like public success.
+- Fix implemented:
+  - Explicit sample fixture fallback is limited to named sample IDs (`sample-pr45`, `sample-final-v0`).
+  - Generated/real report IDs now return persisted DB/storage data or a not-found/not-published state; they do not render sample report or sample label data.
+  - Station no longer exposes public report, label, or QR links from local readiness; those links are shown only from successful production publish response.
+  - Station publish now verifies the read-only public report API after publish, requires storage-backed image assets, and fails visibly instead of showing success links if readback is missing or unsafe.
+  - Production publish API rejects `published` requests without report image asset bodies and tells the operator to refetch the bridge bundle with `includeAssetBodies=1`.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>`, Browserslist/baseline-browser-mapping, and Tailwind glob warnings.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `40` tests.
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database exec node --test tests/aiGraderService.test.js tests/aiGraderProductionService.test.js` -> pass, `46` tests.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `180` tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+  - `git diff --check` -> pass with line-ending warnings only.
+- No hardware capture, production publish, migration, DB schema change, Vercel env change, credential rotation, destructive operation, forced publish, eBay comps run, or secret-printing action was run.

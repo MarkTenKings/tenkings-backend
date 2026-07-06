@@ -77,12 +77,14 @@ export function buildAiGraderPublishReadiness(input: {
   const release = releaseFrom(input.bundle, input.productionRelease);
   const reportId = trim(release?.reportId) || trim(input.bundle?.reportId);
   const certId = trim(release?.label?.certId);
-  const publicReportUrl =
+  const plannedPublicReportUrl =
     trim(release?.publication?.publicReportUrl) ||
     trim(release?.label?.publicReportUrl) ||
     (reportId ? buildAiGraderPublicReportUrl(reportId, input.publicBaseUrl) : undefined);
-  const qrPayloadUrl = trim(release?.label?.qrPayloadUrl) || trim(release?.publication?.qrPayloadUrl) || publicReportUrl;
-  const labelPreviewUrl = reportId ? buildAiGraderLabelPreviewUrl(reportId, input.publicBaseUrl) : undefined;
+  const plannedQrPayloadUrl = trim(release?.label?.qrPayloadUrl) || trim(release?.publication?.qrPayloadUrl) || plannedPublicReportUrl;
+  const publishedPublicReportUrl = input.published === true ? plannedPublicReportUrl : undefined;
+  const publishedQrPayloadUrl = input.published === true ? plannedQrPayloadUrl : undefined;
+  const publishedLabelPreviewUrl = input.published === true && reportId ? buildAiGraderLabelPreviewUrl(reportId, input.publicBaseUrl) : undefined;
   const releaseFailedGates = (release?.gates ?? [])
     .filter((gate) => gate.status === "fail")
     .map((gate) => ({
@@ -118,9 +120,9 @@ export function buildAiGraderPublishReadiness(input: {
       message: "Published to Ten Kings storage and public report routes.",
       reportId,
       certId,
-      publicReportUrl,
-      labelPreviewUrl,
-      qrPayloadUrl,
+      publicReportUrl: publishedPublicReportUrl,
+      labelPreviewUrl: publishedLabelPreviewUrl,
+      qrPayloadUrl: publishedQrPayloadUrl,
       failedGates,
     };
   }
@@ -137,9 +139,6 @@ export function buildAiGraderPublishReadiness(input: {
       message: "Report has insufficient evidence; review the failed or blocked gates before publishing.",
       reportId,
       certId,
-      publicReportUrl,
-      labelPreviewUrl,
-      qrPayloadUrl,
       failedGates,
     };
   }
@@ -153,14 +152,11 @@ export function buildAiGraderPublishReadiness(input: {
       message: "Final AI-Grader grade has not been computed yet.",
       reportId,
       certId,
-      publicReportUrl,
-      labelPreviewUrl,
-      qrPayloadUrl,
       failedGates,
     };
   }
 
-  const labelReady = release?.label?.status === "label_data_ready" && Boolean(qrPayloadUrl);
+  const labelReady = release?.label?.status === "label_data_ready" && Boolean(plannedQrPayloadUrl);
   if (!labelReady) {
     return {
       status: "not_ready_missing_label",
@@ -169,9 +165,6 @@ export function buildAiGraderPublishReadiness(input: {
       message: "Label and QR data are not ready yet.",
       reportId,
       certId,
-      publicReportUrl,
-      labelPreviewUrl,
-      qrPayloadUrl,
       failedGates,
     };
   }
@@ -183,9 +176,6 @@ export function buildAiGraderPublishReadiness(input: {
     message: "Ready to publish to Ten Kings storage and generate the public report/label links.",
     reportId,
     certId,
-    publicReportUrl,
-    labelPreviewUrl,
-    qrPayloadUrl,
     failedGates,
   };
 }
