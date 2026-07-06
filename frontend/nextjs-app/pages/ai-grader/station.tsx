@@ -23,6 +23,7 @@ import {
   fetchAiGraderStationReportHtml,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
+  stopAiGraderStationPreview,
 } from "../../lib/aiGraderStationBridgeClient";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
@@ -451,6 +452,30 @@ export default function AiGraderStationPage() {
     return next;
   };
 
+  const waitForPreviewReleaseBeforeCapture = async (reason: string) => {
+    if (!canUseBridge) throw new Error("Connect the Dell local station bridge before starting capture.");
+    setPreviewStatus((currentStatus) => ({
+      ...currentStatus,
+      status: "paused_for_capture",
+      cameraOwnership: "capture_action",
+      lastStopReason: reason,
+    }));
+    const stopped = await stopAiGraderStationPreview({ baseUrl: bridgeUrl, stationToken, reason });
+    setPreviewStatus(stopped);
+    const releaseStates = new Set(["released", "idle"]);
+    if (releaseStates.has(stopped.cameraOwnership)) return;
+
+    const deadline = Date.now() + 7000;
+    let latest = stopped;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      latest = await fetchAiGraderStationPreviewStatus({ baseUrl: bridgeUrl, stationToken });
+      setPreviewStatus(latest);
+      if (releaseStates.has(latest.cameraOwnership)) return;
+    }
+    throw new Error(`AI Grader preview did not release the Basler camera before capture. Current preview owner: ${latest.cameraOwnership}.`);
+  };
+
   const startNewCard = async () => {
     setBusy("start");
     setError(null);
@@ -473,6 +498,7 @@ export default function AiGraderStationPage() {
       latest = await runAction("confirm-light-idle-off", actionBody({ lightIdleOff: true }, latest, false));
       latest = await runAction("confirm-fixture-rulers", actionBody({ fixtureRulersVisible: true }, latest, false));
       latest = await runAction("accept-profile", actionBody({}, latest, true));
+      await waitForPreviewReleaseBeforeCapture("operator starting front full forensic capture");
       await runAction("capture-front", actionBody({}, latest, false));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Start grading failed.");
@@ -486,6 +512,7 @@ export default function AiGraderStationPage() {
     setError(null);
     try {
       await runAction("confirm-flip", { confirmations: { flipComplete: true } });
+      await waitForPreviewReleaseBeforeCapture("operator starting back full forensic capture");
       await runAction("capture-back", { confirmations: { flipComplete: true, lightIdleOff: true, fixtureRulersVisible: true } });
       await runAction("run-diagnostics");
       await runAction("export-report-bundle");

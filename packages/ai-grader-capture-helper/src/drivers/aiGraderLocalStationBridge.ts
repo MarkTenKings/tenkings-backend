@@ -43,6 +43,8 @@ import {
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.4";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
+const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
+const PREVIEW_CAMERA_SETTLE_MS = 350;
 
 export type AiGraderLocalStationBridgeMode = "mock" | "real";
 
@@ -376,7 +378,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     isCalibrated: false;
   };
   bridgeContract: {
-    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream"; hardwareAccess: boolean; description: string }>;
+    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "preview-stop"; hardwareAccess: boolean; description: string }>;
     realHardwarePending: string[];
   };
   publicViewerRoute: string;
@@ -530,6 +532,38 @@ export interface StartedAiGraderLocalStationBridge {
 
 type JsonBody = Record<string, unknown>;
 const PREVIEW_MJPEG_BOUNDARY = "tenkings-ai-grader-preview";
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function childProcessHasExited(child: ChildProcessWithoutNullStreams) {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForChildProcessClose(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
+  if (childProcessHasExited(child)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (closed: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      child.off("close", onClose);
+      child.off("exit", onExit);
+      child.off("error", onError);
+      resolve(closed);
+    };
+    const onClose = () => finish(true);
+    const onExit = () => finish(true);
+    const onError = () => finish(true);
+    timer = setTimeout(() => finish(false), timeoutMs);
+    child.once("close", onClose);
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+}
 
 function mockPreviewSvg(frameIndex: number, generatedAt: string): Buffer {
   const pulse = 28 + frameIndex % 44;
@@ -1073,10 +1107,11 @@ function reportRoute(reportId: string | undefined) {
 }
 
 function bridgeEndpoints() {
-  const actions: Array<{ method: "GET" | "POST"; action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream"; hardwareAccess: boolean; description: string; path?: string }> = [
+    const actions: Array<{ method: "GET" | "POST"; action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "preview-stop"; hardwareAccess: boolean; description: string; path?: string }> = [
     { method: "GET", action: "status", hardwareAccess: false, description: "Read current local station bridge status." },
     { method: "GET", action: "preview-status", path: "/preview/status", hardwareAccess: false, description: "Read embedded browser preview stream status." },
     { method: "GET", action: "preview-stream", path: "/preview/stream", hardwareAccess: true, description: "Open token-gated local MJPEG browser preview stream." },
+    { method: "POST", action: "preview-stop", path: "/preview/stop", hardwareAccess: true, description: "Stop embedded browser preview and wait for Basler camera release before capture." },
     { method: "POST", action: "start-session", hardwareAccess: false, description: "Create a local station session folder and manifest." },
     { method: "POST", action: "confirm-light-idle-off", hardwareAccess: false, description: "Record operator light-idle/off confirmation." },
     { method: "POST", action: "confirm-fixture-rulers", hardwareAccess: false, description: "Record operator fixture/ruler visibility confirmation." },
@@ -1525,23 +1560,59 @@ export class AiGraderLocalStationBridgeService {
     });
   }
 
-  private stopPreviewStream(reason: string) {
+  private async stopPreviewStream(
+    reason: string,
+    options: { waitForRelease?: boolean; requireRelease?: boolean; settleMs?: number; captureOwner?: boolean } = {}
+  ) {
+    const child = this.previewProcess;
+    const captureOwner = options.captureOwner === true;
     this.previewStop?.(reason);
     this.previewStop = undefined;
-    if (this.previewProcess && !this.previewProcess.killed) {
-      try { this.previewProcess.kill(); } catch {}
+    if (child && !child.killed) {
+      try { child.kill(); } catch {}
+    }
+    if (options.waitForRelease && child) {
+      this.updatePreviewStatus({
+        status: captureOwner ? "paused_for_capture" : "stopped",
+        cameraOwnership: captureOwner ? "capture_action" : "preview_stream",
+        lastStopReason: `${reason}; waiting for Basler preview process to release camera.`,
+      });
+      const released = await waitForChildProcessClose(child, PREVIEW_RELEASE_TIMEOUT_MS);
+      if (!released) {
+        const message = `AI Grader preview stream did not release the Basler camera within ${PREVIEW_RELEASE_TIMEOUT_MS} ms. Close the preview or restart the local bridge before capture.`;
+        this.updatePreviewStatus({
+          status: "error",
+          cameraOwnership: "preview_stream",
+          lastError: message,
+          lastStopReason: reason,
+        });
+        if (options.requireRelease) throw new Error(message);
+      }
+      await delay(options.settleMs ?? PREVIEW_CAMERA_SETTLE_MS);
     }
     this.previewProcess = undefined;
     this.updatePreviewStatus({
-      status: reason.includes("capture") ? "paused_for_capture" : "stopped",
-      cameraOwnership: reason.includes("capture") ? "capture_action" : "released",
+      status: captureOwner ? "paused_for_capture" : "stopped",
+      cameraOwnership: captureOwner ? "capture_action" : "released",
       lastStopReason: reason,
     });
   }
 
-  private stopPreviewForHardwareAction(action: string) {
+  async stopPreviewForOperator(reason = "operator requested preview stop"): Promise<AiGraderLocalStationPreviewStatus> {
+    await this.stopPreviewStream(reason, { waitForRelease: true, settleMs: PREVIEW_CAMERA_SETTLE_MS });
+    this.manifest.progressLog.push(`${new Date().toISOString()} Browser preview stream stopped: ${reason}.`);
+    await writeSessionManifest(this.manifest);
+    return this.previewStatus();
+  }
+
+  private async stopPreviewForHardwareAction(action: string) {
     if (this.manifest.previewStatus.cameraOwnership === "preview_stream" || this.previewProcess || this.previewStop) {
-      this.stopPreviewStream(`preview released before ${action} capture action`);
+      await this.stopPreviewStream(`preview released before ${action} capture action`, {
+        waitForRelease: true,
+        requireRelease: true,
+        settleMs: PREVIEW_CAMERA_SETTLE_MS,
+        captureOwner: true,
+      });
       this.manifest.warmRunnerStatus.previewPolicy.lastPausedAt = new Date().toISOString();
       this.manifest.progressLog.push(`${new Date().toISOString()} Browser preview stream paused/released before ${action}.`);
     }
@@ -1731,18 +1802,19 @@ export class AiGraderLocalStationBridgeService {
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
     this.setExecutionPath("cold_command_fallback", reason);
     this.acquireCaptureLock(owner);
-    this.stopPreviewForHardwareAction(side);
-    this.updateEvidenceRoles(side, "active");
-    const phase = this.markWarmPhase({
-      id: phaseId,
-      label,
-      status: "active",
-      side,
-      backend: "cold_command_fallback",
-      executionPath: "cold_command_fallback",
-      detail: "Emergency/debug cold fallback preserves dark_control, all_on, accepted_profile, and Leimac channels 1-8.",
-    });
+    let phase: AiGraderWarmRunnerPhase | undefined;
     try {
+      await this.stopPreviewForHardwareAction(side);
+      this.updateEvidenceRoles(side, "active");
+      phase = this.markWarmPhase({
+        id: phaseId,
+        label,
+        status: "active",
+        side,
+        backend: "cold_command_fallback",
+        executionPath: "cold_command_fallback",
+        detail: "Emergency/debug cold fallback preserves dark_control, all_on, accepted_profile, and Leimac channels 1-8.",
+      });
       const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, stepId));
       result.payload = {
         ...(result.payload ?? {}),
@@ -1758,7 +1830,7 @@ export class AiGraderLocalStationBridgeService {
           label,
           status: "failed",
           side,
-          startedAt: phase.startedAt,
+          startedAt: phase?.startedAt,
           backend: "cold_command_fallback",
           executionPath: "cold_command_fallback",
           detail: result.error ?? "Cold fallback evidence package failed.",
@@ -1771,7 +1843,7 @@ export class AiGraderLocalStationBridgeService {
         label,
         status: "completed",
         side,
-        startedAt: phase.startedAt,
+        startedAt: phase?.startedAt,
         backend: "cold_command_fallback",
         executionPath: "cold_command_fallback",
         detail: "Full forensic side stack captured through emergency/debug cold fallback.",
@@ -1806,20 +1878,21 @@ export class AiGraderLocalStationBridgeService {
       return this.runColdFallbackSideCapture(side, "Warm runner disabled by explicit debug flag.");
     }
     this.acquireCaptureLock(owner);
-    this.stopPreviewForHardwareAction(side);
-    this.setExecutionPath("warm_full_forensic_runner");
-    this.updateEvidenceRoles(side, "active");
     const captureStartedAtMs = Date.now();
-    const phase = this.markWarmPhase({
-      id: phaseId,
-      label,
-      status: "active",
-      side,
-      backend: "warm_full_forensic_runner",
-      executionPath: "warm_full_forensic_runner",
-      detail: "dark_control, all_on, accepted_profile, and Leimac channels 1-8 remain required.",
-    });
+    let phase: AiGraderWarmRunnerPhase | undefined;
     try {
+      await this.stopPreviewForHardwareAction(side);
+      this.setExecutionPath("warm_full_forensic_runner");
+      this.updateEvidenceRoles(side, "active");
+      phase = this.markWarmPhase({
+        id: phaseId,
+        label,
+        status: "active",
+        side,
+        backend: "warm_full_forensic_runner",
+        executionPath: "warm_full_forensic_runner",
+        detail: "dark_control, all_on, accepted_profile, and Leimac channels 1-8 remain required.",
+      });
       if (this.config.mode === "mock") {
         const finishedAtMs = Date.now();
         const mockPackageDir = path.join(this.manifest.outputs.sessionDir ?? this.config.outputDir, `mock-${stepId}`);
@@ -1844,7 +1917,7 @@ export class AiGraderLocalStationBridgeService {
           label,
           status: "completed",
           side,
-          startedAt: phase.startedAt,
+          startedAt: phase?.startedAt,
           backend: "warm_full_forensic_runner",
           executionPath: "warm_full_forensic_runner",
           detail: "Mock warm full forensic side stack captured for UI/test flow.",
@@ -1886,7 +1959,7 @@ export class AiGraderLocalStationBridgeService {
         label,
         status: "completed",
         side,
-        startedAt: phase.startedAt,
+        startedAt: phase?.startedAt,
         backend: "warm_full_forensic_runner",
         executionPath: "warm_full_forensic_runner",
         detail: "Full forensic side stack captured through warm Basler/Leimac side batch.",
@@ -2009,7 +2082,7 @@ export class AiGraderLocalStationBridgeService {
     return result;
   }
 
-  streamPreview(req: http.IncomingMessage, res: http.ServerResponse, origin: string | undefined): Promise<void> {
+  async streamPreview(req: http.IncomingMessage, res: http.ServerResponse, origin: string | undefined): Promise<void> {
     if (this.captureLock) {
       this.updatePreviewStatus({
         status: "paused_for_capture",
@@ -2030,7 +2103,7 @@ export class AiGraderLocalStationBridgeService {
       );
       return Promise.resolve();
     }
-    this.stopPreviewStream("new preview stream requested");
+    await this.stopPreviewStream("new preview stream requested", { waitForRelease: true, settleMs: 100 });
     this.updatePreviewStatus({
       status: "starting",
       implementationType: this.config.mode === "real" ? "mjpeg_fetch_stream" : "mock_mjpeg_stream",
@@ -2479,7 +2552,7 @@ export class AiGraderLocalStationBridgeService {
 
     if (action === "launch-preview") {
       assertFixtureVisible(this.manifest);
-      this.stopPreviewForHardwareAction("native-preview");
+      await this.stopPreviewForHardwareAction("native-preview");
       const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, "operator_preview"));
       this.manifest.commandResults.push(result);
       if (!result.ok) throw new Error(result.error ?? "Basler live preview failed.");
@@ -2772,6 +2845,14 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for /preview/status." }, origin, config);
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         return sendJson(res, 200, { ok: true, operation: "preview-status", result: service.previewStatus() }, origin, config);
+      }
+
+      if (url.pathname === "/preview/stop") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for /preview/stop." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        const reason = typeof body?.reason === "string" && body.reason.trim() ? body.reason.trim() : "operator requested preview stop";
+        return sendJson(res, 200, { ok: true, operation: "preview-stop", result: await service.stopPreviewForOperator(reason) }, origin, config);
       }
 
       if (url.pathname === "/preview/stream") {

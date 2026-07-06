@@ -33,6 +33,7 @@ import {
   normalizeAiGraderStationBridgeUrl,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
+  stopAiGraderStationPreview,
 } from "../lib/aiGraderStationBridgeClient";
 
 type MockResponse = NextApiResponse & {
@@ -1017,6 +1018,36 @@ test("browser station bridge preview status and stream use local station token o
         },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
+    if (String(input).endsWith("/preview/stop")) {
+      assert.equal(init?.method, "POST");
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          status: "stopped",
+          implementationType: "mjpeg_fetch_stream",
+          browserEmbedded: true,
+          localOnly: true,
+          tokenRequired: true,
+          streamPath: "/preview/stream",
+          statusPath: "/preview/status",
+          portraitOrientation: true,
+          cameraOwnership: "released",
+          frameSource: "basler_pylon_continuous_grab",
+          frameCount: 3,
+          lastStopReason: "operator starting front full forensic capture",
+          safety: {
+            publicRouteExposed: false,
+            requiresStationToken: true,
+            bindsLoopbackOnly: true,
+            productionServiceTokenUsed: false,
+            lightingCommanded: false,
+            persistentBaslerSaved: false,
+            persistentLeimacSaved: false,
+          },
+          note: "test",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     assert.equal(String(input), "http://127.0.0.1:47652/preview/stream");
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -1038,6 +1069,13 @@ test("browser station bridge preview status and stream use local station token o
   }, fetchImpl);
   assert.equal(previewStatus.localOnly, true);
   assert.equal(previewStatus.frameCount, 3);
+
+  const stoppedPreview = await stopAiGraderStationPreview({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    reason: "operator starting front full forensic capture",
+  }, fetchImpl);
+  assert.equal(stoppedPreview.cameraOwnership, "released");
 
   const frames: Array<{ frameIndex?: number; contentType: string; byteLength: number }> = [];
   await openAiGraderStationPreviewStream(

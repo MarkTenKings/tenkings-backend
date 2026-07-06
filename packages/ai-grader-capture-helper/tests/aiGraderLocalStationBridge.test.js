@@ -273,6 +273,14 @@ test("station bridge preview status and stream are token-gated and local-only", 
     assert.equal(unauthorizedStream.status, 401);
     await unauthorizedStream.text();
 
+    const unauthorizedStop = await fetch(`${started.url}/preview/stop`, {
+      method: "POST",
+      headers: { Origin: "https://collect.tenkings.co", "content-type": "application/json" },
+      body: JSON.stringify({ reason: "test unauthorized stop" }),
+    });
+    assert.equal(unauthorizedStop.status, 401);
+    await unauthorizedStop.text();
+
     const streamChunk = await new Promise((resolve, reject) => {
       let settled = false;
       const req = http.request(`${started.url}/preview/stream`, {
@@ -300,6 +308,39 @@ test("station bridge preview status and stream are token-gated and local-only", 
     });
     assert.match(streamChunk.toString("utf8"), /tenkings-ai-grader-preview/);
     await new Promise((resolve) => setTimeout(resolve, 25));
+
+    let activeReq;
+    const activeStreamClosed = new Promise((resolve, reject) => {
+      let sawFrame = false;
+      activeReq = http.request(`${started.url}/preview/stream`, {
+        headers: { Origin: "https://collect.tenkings.co", "x-ai-grader-station-token": "local-station-token-456" },
+      }, (res) => {
+        assert.equal(res.statusCode, 200);
+        res.once("data", () => {
+          sawFrame = true;
+        });
+        res.once("close", () => {
+          if (!sawFrame) reject(new Error("Preview stop closed stream before any frame was observed."));
+          else resolve();
+        });
+      });
+      activeReq.on("error", (error) => {
+        if (!sawFrame) reject(error);
+      });
+      activeReq.end();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const stop = await fetch(`${started.url}/preview/stop`, {
+      method: "POST",
+      headers: { Origin: "https://collect.tenkings.co", "x-ai-grader-station-token": "local-station-token-456", "content-type": "application/json" },
+      body: JSON.stringify({ reason: "operator starting front full forensic capture" }),
+    });
+    assert.equal(stop.status, 200);
+    const stopBody = await stop.json();
+    assert.equal(stopBody.operation, "preview-stop");
+    assert.equal(stopBody.result.cameraOwnership, "released");
+    await activeStreamClosed;
+    activeReq.destroy();
   } finally {
     if (typeof started.server.closeAllConnections === "function") {
       started.server.closeAllConnections();

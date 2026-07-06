@@ -23512,3 +23512,34 @@ By enabling Rip It Live, I confirm:
 ### Follow-Up
 - PR #58 was not merged.
 - The PR is hardware-smoke validated for the actual warm execution path. A final hands-on UI run with a normal operator flip, rather than a chat-mediated flip/report trigger, would give a cleaner end-user wall-clock number before declaring stretch-target acceptance.
+
+## 2026-07-06 - AI Grader production station preview/capture ownership hotfix
+
+### Planned Action
+- Investigate Mark's production station test failure after PR #58 deployment without running another hardware capture.
+- Reported symptom: embedded Basler preview worked after `Start New Card`, then `Start Grading` failed at capture with Basler device-controlled-by-another-application error for `Basler a2A2448-23gmBAS`.
+- Guardrails: no new hardware capture from Codex, no migration, no production DB write, no Vercel env change, no credential rotation, no secret printing.
+
+### Observed Result
+- Root cause in code: the browser UI suspended preview with React state, and the bridge called `stopPreviewStream()` before capture, but the bridge did not wait for the preview PowerShell/Basler child process to close and release the GigE camera before starting warm capture.
+- Added bridge-level preview release waiting:
+  - `POST /preview/stop` is now a token-gated local bridge endpoint.
+  - Capture paths await preview process close before Basler capture starts.
+  - Capture paths add a short camera-release settle window after preview exit.
+  - If preview does not release within the timeout, capture fails before opening Basler with a clear preview-release error instead of racing into a device-controlled exception.
+- Updated station browser flow:
+  - `Start Grading` explicitly calls `/preview/stop` and polls `/preview/status` for released/idle ownership before `capture-front`.
+  - Back-side continuation does the same before `capture-back`.
+- Updated tests for local station preview stop token gating, preview stream closure, browser client stop behavior, and local-station no-service-token behavior.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper exec node --test tests/aiGraderLocalStationBridge.test.js` -> pass, `13` tests.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `29` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist, baseline-browser-mapping, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `175` tests.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Not Run
+- No hardware capture, Leimac command, Basler capture, migration, production DB write, Vercel env change, credential rotation, or secret-printing action was run for this hotfix.
+- Lighting-control behavior during embedded preview remains unchanged: the embedded preview does not command Leimac lighting; capture profile changes apply to subsequent capture unless a future supervised live-lighting preview feature is implemented.
