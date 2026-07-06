@@ -23753,3 +23753,93 @@ By enabling Rip It Live, I confirm:
   - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
   - `git diff --check` -> pass with line-ending warnings only.
 - No hardware capture, migration, production DB write, Vercel env change, credential rotation, deploy, or secret-printing action was run.
+
+### Merge / Deploy Plan
+- Mark approved PR #62 for merge once checks pass.
+- Planned steps: wait for GitHub/Vercel checks, confirm PR #62 merge state `CLEAN`, merge PR #62, verify Vercel Production deployment, pull latest `main` on the Dell, rebuild/update/restart the local Dell bridge from merged `main`, and confirm bridge health.
+- Planned verification uses the latest existing local session/report when possible: open production station, confirm View Report uses inline Local Operator Report without popup, confirm local images render, publish the latest local report only if it can be done without a new capture, then verify the customer public report URL shows storage-backed images and no local Dell paths, bridge URLs/tokens, data bodies, or secrets.
+- Guardrails: no migrations, Vercel env changes, credential rotation, destructive operations, secret printing, or hardware capture without explicit Mark approval.
+
+### Merge / Deploy / Restart Result
+- PR #62 merged to `main` as `1c54e827b3f86bf1dbb6517d9025f52cdc655fc0` (`Merge pull request #62 from MarkTenKings/fix/ai-grader-report-view-images-no-popup`).
+- Vercel Production deployment for merge commit `1c54e827b3f86bf1dbb6517d9025f52cdc655fc0` completed successfully at `2026-07-06T17:57:38Z`.
+- Local Dell repo was updated to merged `main` at `1c54e827b3f86bf1dbb6517d9025f52cdc655fc0`.
+- Rebuilt `@tenkings/ai-grader-capture-helper` from merged `main` successfully.
+- Stopped the previous Dell local bridge process and restarted the bridge hidden in real/local-only mode with the existing config.
+- Bridge status after restart: `bridgeVersion=ai-grader-local-station-bridge-v0.4`, `mode=real`, `localOnly=true`, `hardwareActionsEnabled=true`, `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, latest report `ai-grader-browser-station-session-2026-07-06T171328519Z-report`.
+
+### Report Verification Result
+- Latest local report bundle fetched through the restarted bridge using `/reports/:reportId/bundle?includeAssetBodies=1`.
+- Local bridge bundle source was `history_generated_with_asset_bodies`.
+- Local bundle verification: `assetCount=77`, `imageAssetCount=72`, `imageBodies=72`, front evidence present, back evidence present, ROI crop evidence present, `windowsPathsInPublicUrl=0`, `localSourcePaths=0`.
+- Production station was opened at `https://collect.tenkings.co/ai-grader/station` for Mark to click View Report and visually confirm the inline Local Operator Report. Automated browser verification was not available because Playwright is not installed in this app.
+- The latest local report was not published during this pass. Public API polling for `ai-grader-browser-station-session-2026-07-06T171328519Z-report` remained `404 Published AI Grader report not found`.
+- Local terminal has no AI Grader publish service-token config beyond the bridge config and no relevant AI Grader publish env var names. Publish therefore remains an authenticated station UI action for Mark.
+- Additional readiness check: the latest local bundle is useful for local image-render verification, but is not publish-ready as a customer report. The bundle reports `reportStatus=insufficient_evidence`, `finalStatus=insufficient_evidence`, `finalGradeComputed=false`, `provisionalGrade.overall=null`, `labelStatus=blocked_insufficient_evidence`, and `publicationStatus=blocked_insufficient_evidence`.
+- Non-hardware bridge final/label actions could not be rerun after the bridge restart because there is no active station session loaded for the historical report (`Start a station session before running AI Grader station actions.`). A new Mark-approved station run/finalization is required before customer public image verification can be completed.
+- Public API method check for the unpublished report: `GET=404`, `POST=405`, `PUT=405`, `DELETE=405`, confirming the public report API remains GET-only/read-only for customer routes.
+- Public route shell checks for the unpublished report and label route showed no local Dell paths, bridge URLs, station tokens, embedded image bodies, or `data:image` bodies in the HTML. Public image verification is blocked until the report is published.
+- No hardware capture, migration, DB schema change, Vercel env change, credential rotation, destructive operation, or secret-printing action was run.
+
+## 2026-07-06 - AI Grader PR #63 guided publish/report/label UX
+
+### Planned Action
+- Created branch `fix/ai-grader-guided-publish-report-label-ux` from latest merged `main` at `1c54e827b3f86bf1dbb6517d9025f52cdc655fc0`.
+- Goal: simplify the operator station after grading so internal finalization/publish steps are hidden behind one guided publish workflow, local View Report shows the full AI Grader report instead of only photos, publish success exposes public report/label/QR/cert outputs, and label/QR/comps states are clear.
+- Guardrails: no migrations, DB schema changes, Vercel env changes, credential rotation, destructive operations, secret printing, hardware capture without Mark approval, or forced publish of insufficient-evidence reports.
+
+### Diagnosis
+- Latest local production-test report inspected through the paired Dell bridge: `ai-grader-browser-station-session-2026-07-06T182257920Z-report`.
+- Local bridge/bundle evidence: `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, front evidence present, back evidence present, Vision Lab artifacts present, `77` assets, `72` image assets, and `72` image bodies when requesting `includeAssetBodies=1`.
+- The report was not published: hosted public API for `https://collect.tenkings.co/ai-grader/reports/ai-grader-browser-station-session-2026-07-06T182257920Z-report` returned `404 Published AI Grader report not found`.
+- Latest local report state: `reportStatus=insufficient_evidence`, `finalStatus=insufficient_evidence`, `finalGradeComputed=false`, `provisionalGrade.overall=null`, `confidenceScore=0`, `certId=TK-AIG-73C38B7F`, `labelStatus=blocked_insufficient_evidence`, `publicationStatus=blocked_insufficient_evidence`, and QR/public URL target `https://collect.tenkings.co/ai-grader/reports/ai-grader-browser-station-session-2026-07-06T182257920Z-report`.
+- Root cause of operator confusion: the station exposed internal pipeline actions (`Calculate Final Grade`, `Finalize / Publish`, `Generate Label Data`, and a separate hosted publish button), did not surface publish outputs clearly after the hosted step, and the inline local viewer from PR #62 was image-focused rather than a full AI Grader diagnostic report.
+
+### Fix / Validation
+- Added shared operator workflow helpers for publish readiness, public report URL, label preview URL, QR URL, cert/report IDs, operator step copy, and eBay comps readiness.
+- Station now auto-runs local non-hardware final grade/finalize/label steps after report generation when gates allow it, hides developer pipeline buttons from normal operator flow, and exposes one primary `Publish to Ten Kings` action when the report is ready.
+- Station View Report now renders a fuller inline operator report: grade/status, element diagnostics, grade story/why-not-10, Vision Lab/heatmap/light-sweep details, evidence images, gates/warnings, and publish readiness.
+- Hosted publish now fails closed for blocked or incomplete reports before upload/persist and returns `publicReportUrl`, `qrPayloadUrl`, `labelPreviewUrl`, `certId`, and evidence asset counts on success.
+- Label preview route now renders a print-friendly slab label with Ten Kings identity, cert/report IDs, grade/card identity, and a QR code whose payload is the public customer report URL.
+- eBay comps readiness now reports missing final grade or card identity before calling the KingsReview/SerpAPI comps path and keeps the action behind the final-grade/card-identity requirement.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>`, Browserslist/baseline-browser-mapping, and Tailwind glob warnings.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `37` tests.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `180` tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+  - `git diff --check` -> pass with line-ending warnings only.
+- No hardware capture, migration, production DB write, Vercel env change, credential rotation, deploy, forced publish, or secret-printing action was run.
+
+### Merge / Deploy Plan
+- PR #63 checks passed and merge state was `CLEAN` for head `6e6c228f14fc5640431fc5a221b4c68c358cd403`.
+- Planned action: merge PR #63 after this handoff-log update, confirm Vercel Production deployment succeeds, pull latest `main` locally on the Dell, rebuild/restart the Dell local bridge from merged `main`, and confirm bridge health.
+- After PR #63 deploy/restart, diagnose the blocked existing report `ai-grader-browser-station-session-2026-07-06T182257920Z-report` / `TK-AIG-73C38B7F` before any new hardware capture.
+- Guardrails remain: no migrations, DB schema changes, Vercel env changes, credential rotation, destructive operations, secret printing, unsupervised hardware capture, or forced publish of insufficient-evidence reports.
+
+### Insufficient-Evidence Gate Diagnosis / Fix
+- Existing blocked session inspected through the paired local bridge and local report files: `ai-grader-browser-station-session-2026-07-06T182257920Z-report`, cert/report ID `TK-AIG-73C38B7F`.
+- Root cause: `packages/ai-grader-capture-helper/src/drivers/fixedRigProvisionalGradeStory.ts` hard-failed the `clipping` gate when `max(frontStats.clippedPixelFraction, backStats.clippedPixelFraction) > 0.4`. The unified report supplied those stats from `sideAllOnStats(front/back)` in `packages/ai-grader-capture-helper/src/drivers/baslerFixedRigV1.ts`.
+- Actual gate table from the blocked report:
+  - `ruler_calibration`: expected fixed-ruler calibration pass; actual `pass`; evidence present.
+  - `repeatability`: expected pass or accepted warning; actual `accepted_warning`; non-blocking.
+  - `framing_overlay`: expected framing and overlay pass; actual `pass`; evidence present.
+  - `front_evidence_complete`: expected diagnostics plus Surface Intelligence; actual `pass`; front package/evidence refs present.
+  - `back_evidence_complete`: expected diagnostics plus Surface Intelligence; actual `pass`; back package/evidence refs present.
+  - `surface_intelligence_complete`: expected front/back computed; actual `pass`; Vision Lab/surface assets present.
+  - `clipping`: expected <= `0.02` soft target or accepted warning; actual `fail` at `0.460642`; this set `provisionalGradeStory.status=insufficient_evidence`, `provisionalOverallGrade=null`, and blocked final grade/label/publish.
+  - `focus_sharpness`: expected >= `60`; actual `pass` at `750.2521` minimum sharpness.
+- Evidence was not missing: local bundle had `77` assets, `72` image assets, `72` image bodies with `includeAssetBodies=1`, front/back evidence refs, and Vision Lab artifacts.
+- Policy fix: clipping above the soft target is now an accepted V0 confidence warning when finite and below near-total saturation (`0.95`); missing clipping stats or near-total saturation can still hard-fail. Missing front/back/surface/framing/ruler/focus gates still fail closed.
+- In-memory recompute against the existing front/back package manifests after the fix, without writing files or running hardware, produced `status=provisional_diagnostic_grade`, `provisionalGradeComputed=true`, `provisionalOverallGrade=6.32`, `confidence=low/0.125`, `clipping=accepted_warning`, and no blockers.
+- Report UX fix: report bundles now preserve `provisionalGrade.gates`; station and public report viewers render the provisional gate table even when no production release exists; publish readiness includes failed provisional gates.
+- Validation after fix:
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>`, Browserslist/baseline-browser-mapping, and Tailwind glob warnings.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `38` tests.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `180` tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+  - `git diff --check` -> pass with line-ending warnings only.
+- No hardware capture, production publish, migration, DB schema change, Vercel env change, credential rotation, destructive operation, or secret-printing action was run.

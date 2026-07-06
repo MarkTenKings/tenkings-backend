@@ -61,6 +61,9 @@ const {
   buildFixedRigProvisionalGradeStory,
 } = require("../dist/drivers/fixedRigProvisionalGradeStory");
 const {
+  buildAiGraderReportBundle,
+} = require("../dist/drivers/aiGraderReportBundle");
+const {
   BASLER_LEIMAC_POLARITY_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_IMAGE_STAT_SYNC_SMOKE_CONFIRMATION,
   BASLER_LEIMAC_SYNC_SMOKE_CONFIRMATION,
@@ -1042,6 +1045,39 @@ test("Provisional Grade Story Engine computes only with passing or accepted-warn
   assert.ok(story.gradeImpactCandidates.length > 0);
   assert.ok(story.story.claims.every((claim) => Array.isArray(claim.evidenceRefs) && claim.evidenceRefs.length > 0));
 
+  const highFiniteClipping = buildFixedRigProvisionalGradeStory({
+    frontDiagnostic,
+    backDiagnostic,
+    frontSurface: frontAnalysis.front.surfaceAnalysis,
+    backSurface: backAnalysis.back.surfaceAnalysis,
+    frontStats: { ...frontAnalysis.front.allOn, clippedPixelFraction: 0.10767 },
+    backStats: { ...backAnalysis.back.allOn, clippedPixelFraction: 0.460642 },
+    fixtureProfile: passingDiagnosticProfile,
+    activeLightingProfile: frontAnalysis.activeLightingProfile,
+    allowAcceptedWarnings: true,
+  });
+  assert.equal(highFiniteClipping.status, "provisional_diagnostic_grade");
+  assert.equal(highFiniteClipping.provisionalGradeComputed, true);
+  assert.equal(
+    highFiniteClipping.gates.results.some((gate) => gate.gate === "clipping" && gate.status === "accepted_warning"),
+    true
+  );
+
+  const saturated = buildFixedRigProvisionalGradeStory({
+    frontDiagnostic,
+    backDiagnostic,
+    frontSurface: frontAnalysis.front.surfaceAnalysis,
+    backSurface: backAnalysis.back.surfaceAnalysis,
+    frontStats: { ...frontAnalysis.front.allOn, clippedPixelFraction: 0.99 },
+    backStats: { ...backAnalysis.back.allOn, clippedPixelFraction: 0.99 },
+    fixtureProfile: passingDiagnosticProfile,
+    activeLightingProfile: frontAnalysis.activeLightingProfile,
+    allowAcceptedWarnings: true,
+  });
+  assert.equal(saturated.status, "insufficient_evidence");
+  assert.equal(saturated.provisionalGradeComputed, false);
+  assert.ok(saturated.gates.blockers.some((blocker) => blocker.includes("clipping")));
+
   const failingProfile = {
     ...passingDiagnosticProfile,
     referenceType: "unknown",
@@ -1079,7 +1115,7 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   const root = path.join(os.tmpdir(), "fixed-rig-unified-card-report-test");
   fs.rmSync(root, { recursive: true, force: true });
   const frontDir = await writeFakeFixedRigEvidencePackage(root, "front", 0.107932, { withImages: true });
-  const backDir = await writeFakeFixedRigEvidencePackage(root, "back", 0.337672, { withImages: true });
+  const backDir = await writeFakeFixedRigEvidencePackage(root, "back", 0.460642, { withImages: true });
   const outputDir = path.join(root, "fixed-rig-v1");
 
   const result = await runCli([
@@ -1097,6 +1133,13 @@ test("Unified fixed-rig card report combines front and back provisional diagnost
   assert.equal(result.stdout.safety.hardwareAccessed, false);
   assert.equal(result.stdout.safety.leimacContacted, false);
   const reportHtml = fs.readFileSync(result.stdout.report.reportPath, "utf-8");
+  const bundled = await buildAiGraderReportBundle({
+    reportDir: path.dirname(result.stdout.report.reportPath),
+    reportId: "high-clipping-warm-runner-report",
+  });
+  assert.equal(bundled.reportStatus, "provisional_diagnostic_ready");
+  assert.equal(bundled.provisionalGrade?.gates?.results?.some((gate) => gate.gate === "clipping" && gate.status === "accepted_warning"), true);
+  assert.equal(typeof bundled.provisionalGrade?.overall, "number");
   assert.match(reportHtml, /Ten Kings/);
   assert.match(reportHtml, /Provisional Diagnostic Grade/);
   assert.match(reportHtml, /Grade Story Engine/);

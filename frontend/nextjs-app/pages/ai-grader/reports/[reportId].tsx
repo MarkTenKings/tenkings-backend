@@ -33,6 +33,7 @@ export default function AiGraderReportViewerPage() {
   const story = bundle.provisionalGrade;
   const productionRelease = bundle.productionRelease;
   const finalGrade = productionRelease?.finalGrade;
+  const provisionalGateRows = story?.gates?.results ?? [];
   const noClaims = hasNoCertifiedClaim(bundle);
   const noFinalClaims = hasNoFinalCertifiedClaims(bundle);
   const primaryCandidate = story?.gradeImpactCandidates?.[0];
@@ -259,6 +260,26 @@ export default function AiGraderReportViewerPage() {
             <p>{impactCandidate ? `${impactCandidate.id}: ${impactCandidate.explanation}` : "No anomaly candidate available."}</p>
           </article>
         </section>
+
+        {provisionalGateRows.length ? (
+          <section className="production">
+            <div className="section-head">
+              <p className="eyebrow">Evidence Gates</p>
+              <h2>Publish and grade readiness</h2>
+              <p>Failed gates explain why a provisional or final report is blocked. Accepted warnings reduce confidence.</p>
+            </div>
+            <div className="gate-list">
+              {provisionalGateRows.map((gate, index) => (
+                <article key={gate.gate ?? `gate-${index}`} className={gate.status ?? "unknown"}>
+                  <span>{String(gate.status ?? "unknown").replace("_", " ")}</span>
+                  <strong>{gate.gate ?? `Gate ${index + 1}`}</strong>
+                  <p>{gate.summary ?? "No gate summary recorded."}</p>
+                  {gate.evidenceRefs?.length ? <small>{gate.evidenceRefs.join(", ")}</small> : null}
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="vision-lab">
           <div className="section-head">

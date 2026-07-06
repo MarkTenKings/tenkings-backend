@@ -55,6 +55,7 @@ export interface AiGraderReportBundle {
     overall?: number;
     elementScores?: JsonRecord;
     confidence?: JsonRecord;
+    gates?: JsonRecord;
     gradeStory?: JsonRecord;
     whyNot10?: JsonRecord[];
     gradeImpactCandidates?: JsonRecord[];
@@ -402,6 +403,7 @@ export async function buildAiGraderReportBundle(input: {
           overall: typeof story.provisionalOverallGrade === "number" ? story.provisionalOverallGrade : undefined,
           elementScores: firstRecord(story.elementScores),
           confidence: firstRecord(story.confidence),
+          gates: firstRecord(story.gates),
           gradeStory: firstRecord(story.story),
           whyNot10: Array.isArray(story.whyNot10) ? story.whyNot10 : [],
           gradeImpactCandidates: candidates,

@@ -55,6 +55,12 @@ export type AiGraderReportBundle = {
     overall?: number;
     elementScores?: Partial<Record<AiGraderReportElementKey, { score?: number; confidence?: string; status?: string; explanation?: string }>>;
     confidence?: { band?: string; score?: number; warnings?: string[] };
+    gates?: {
+      requiredGatesPassed?: boolean;
+      results?: Array<{ gate?: string; status?: string; summary?: string; evidenceRefs?: string[] }>;
+      blockers?: string[];
+      acceptedWarnings?: string[];
+    };
     gradeStory?: { summary?: string; strongestPositiveFinding?: string; strongestWarning?: string; claims?: Array<{ claim: string; evidenceRefs: string[] }> };
     whyNot10?: Array<{ id: string; title: string; explanation: string; evidenceRefs: string[] }>;
     gradeImpactCandidates?: AiGraderGradeImpactCandidate[];
