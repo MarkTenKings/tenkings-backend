@@ -220,7 +220,7 @@ export type AiGraderLocalStationStatus = {
     certificateGenerated: false;
   };
   bridgeContract: {
-    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderStationAction | "preview-status" | "preview-stream"; hardwareAccess: boolean; description: string }>;
+    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderStationAction | "preview-status" | "preview-stream" | "preview-stop"; hardwareAccess: boolean; description: string }>;
     realHardwarePending: string[];
   };
   previewStatus: AiGraderLocalStationPreviewStatus;
@@ -448,10 +448,11 @@ function actionLabel(action: AiGraderStationAction) {
 }
 
 function bridgeEndpoints() {
-  const actions: Array<{ method: "GET" | "POST"; action: AiGraderStationAction | "preview-status" | "preview-stream"; description: string; path?: string }> = [
+  const actions: Array<{ method: "GET" | "POST"; action: AiGraderStationAction | "preview-status" | "preview-stream" | "preview-stop"; description: string; path?: string }> = [
     { method: "GET", action: "status", description: "Read current local station status." },
     { method: "GET", action: "preview-status", path: "/preview/status", description: "Read embedded browser preview status." },
     { method: "GET", action: "preview-stream", path: "/preview/stream", description: "Open local token-gated embedded preview stream." },
+    { method: "POST", action: "preview-stop", path: "/preview/stop", description: "Stop embedded browser preview and release the Basler camera before capture." },
     { method: "POST", action: "start-session", description: "Start a local station session in mock/contract mode." },
     { method: "POST", action: "confirm-light-idle-off", description: "Record operator confirmation that the physical ring light is idle/off." },
     { method: "POST", action: "confirm-fixture-rulers", description: "Record operator confirmation that the fixture/rulers are visible." },

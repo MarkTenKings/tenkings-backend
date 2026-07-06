@@ -166,6 +166,30 @@ export async function fetchAiGraderStationPreviewStatus(input: {
   }, fetchImpl);
 }
 
+export async function stopAiGraderStationPreview(input: {
+  baseUrl: string;
+  stationToken: string;
+  reason?: string;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLocalStationPreviewStatus> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  if (!input.stationToken.trim()) {
+    throw new Error("AI Grader station bridge token is required.");
+  }
+  const response = await fetchImpl(`${baseUrl}/preview/stop`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-ai-grader-station-token": input.stationToken,
+    },
+    body: JSON.stringify({ reason: input.reason ?? "operator requested preview stop" }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok !== true) {
+    throw new Error(payload.message ?? payload.error?.message ?? "AI Grader preview stream could not be stopped.");
+  }
+  return payload.result as AiGraderLocalStationPreviewStatus;
+}
+
 function concatBytes(left: Uint8Array, right: Uint8Array) {
   const joined = new Uint8Array(left.length + right.length);
   joined.set(left, 0);
