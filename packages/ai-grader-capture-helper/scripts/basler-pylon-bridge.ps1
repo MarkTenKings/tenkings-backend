@@ -1,12 +1,14 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("readiness", "list-cameras", "capture-still", "operator-preview-window", "operator-preview-mjpeg-stream", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
+  [ValidateSet("readiness", "list-cameras", "capture-still", "fixed-rig-side-batch", "operator-preview-window", "operator-preview-mjpeg-stream", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
   [string]$Action,
 
   [string]$PylonRoot,
   [string]$OutputDir,
   [string]$Label,
+  [ValidateSet("front", "back")]
+  [string]$Side = "front",
   [int]$CameraIndex = 0,
   [ValidateSet("png", "tiff", "jpg")]
   [string]$Format = "png",
@@ -17,12 +19,14 @@ param(
   [ValidateSet("true", "false")]
   [string]$IdleUserOutputValue = "false",
   [int]$ExposureUs = 0,
+  [double]$Gain = -1,
   [int]$RefreshIntervalMs = 500,
   [int]$JpegQuality = 72,
   [string]$LeimacHost,
   [int]$LeimacPort = 1000,
   [int]$LeimacUnit = 1,
   [int]$PreviewDutyTenthsPercent = 12,
+  [string]$SelectedChannels = "1,2,3,4,5,6,7,8",
   [switch]$Apply
 )
 
@@ -861,6 +865,467 @@ function Invoke-LeimacPreviewApply {
   $responses += Send-LeimacFrame (New-LeimacFrame "11" $dutyData)
   $responses += Send-LeimacFrame (New-LeimacFrame "86" $onData)
   return $responses
+}
+
+function Parse-SelectedLeimacChannels {
+  param([string]$Raw)
+  $channels = @()
+  foreach ($part in ($Raw -split ",")) {
+    $trimmed = $part.Trim()
+    if ($trimmed.Length -eq 0) { continue }
+    $channel = [int]$trimmed
+    if ($channel -lt 1 -or $channel -gt 8) {
+      throw "SelectedChannels must contain only channels 1 through 8."
+    }
+    if ($channels -notcontains $channel) {
+      $channels += $channel
+    }
+  }
+  if ($channels.Count -eq 0) {
+    throw "SelectedChannels must include at least one channel."
+  }
+  return $channels | Sort-Object
+}
+
+function New-WarmLeimacFrameObject {
+  param(
+    [string]$Name,
+    [string]$CommandNumber,
+    [int[]]$EnabledChannels,
+    [string]$EnabledValue,
+    [string]$DisabledValue,
+    [string]$Meaning
+  )
+  $targetDesignation = "{0:D2}" -f $LeimacUnit
+  $channelValues = @()
+  $data = ""
+  for ($channel = 1; $channel -le 8; $channel += 1) {
+    $value = $(if ($EnabledChannels -contains $channel) { $EnabledValue } else { $DisabledValue })
+    $channelValues += [ordered]@{
+      channel = $channel
+      value = $value
+      meaning = $(if ($value -eq $EnabledValue) { $Meaning } else { "Off / disabled" })
+    }
+    $data += ("{0:D2}{1}" -f $channel, $value)
+  }
+  $requestFrame = "W$CommandNumber$targetDesignation$data"
+  return [ordered]@{
+    name = $Name
+    commandNumber = $CommandNumber
+    description = $Name
+    targetDesignation = $targetDesignation
+    channelValues = $channelValues
+    requestAscii = $requestFrame
+    requestFrame = $requestFrame
+    terminator = ""
+    allowlisted = $true
+  }
+}
+
+function New-WarmLeimacSafeOffFrames {
+  $none = @()
+  return @(
+    (New-WarmLeimacFrameObject -Name "lightingOutput" -CommandNumber "86" -EnabledChannels $none -EnabledValue "0000" -DisabledValue "0000" -Meaning "Lighting output OFF"),
+    (New-WarmLeimacFrameObject -Name "asynchronousOutput" -CommandNumber "85" -EnabledChannels $none -EnabledValue "0000" -DisabledValue "0000" -Meaning "Asynchronous output OFF"),
+    (New-WarmLeimacFrameObject -Name "lightingOutputValue" -CommandNumber "11" -EnabledChannels $none -EnabledValue "0000" -DisabledValue "0000" -Meaning "PWM duty 0 steps for safe-off")
+  )
+}
+
+function New-WarmLeimacTriggerSetupFrames {
+  $all = @(1, 2, 3, 4, 5, 6, 7, 8)
+  return @(
+    (New-WarmLeimacFrameObject -Name "triggerActivation" -CommandNumber "09" -EnabledChannels $all -EnabledValue "0002" -DisabledValue "0002" -Meaning "LevelLow"),
+    (New-WarmLeimacFrameObject -Name "triggerSource" -CommandNumber "65" -EnabledChannels $all -EnabledValue "0000" -DisabledValue "0000" -Meaning "TRG IN1"),
+    (New-WarmLeimacFrameObject -Name "triggerSynchronizationMode" -CommandNumber "84" -EnabledChannels $all -EnabledValue "0000" -DisabledValue "0000" -Meaning "Synchronous"),
+    (New-WarmLeimacFrameObject -Name "lightingOutputDelay" -CommandNumber "13" -EnabledChannels $all -EnabledValue "0000" -DisabledValue "0000" -Meaning "0 microseconds"),
+    (New-WarmLeimacFrameObject -Name "asynchronousOutput" -CommandNumber "85" -EnabledChannels $all -EnabledValue "0000" -DisabledValue "0000" -Meaning "Asynchronous output OFF")
+  )
+}
+
+function New-WarmLeimacLightFrames {
+  param([int[]]$Channels, [int]$DutyTenthsPercent)
+  if ($DutyTenthsPercent -lt 0 -or $DutyTenthsPercent -gt 50) {
+    throw "Warm capture duty must be from 0.0% to 5.0%."
+  }
+  $dutyValue = "{0:D4}" -f $DutyTenthsPercent
+  return @(
+    (New-WarmLeimacFrameObject -Name "lightingOutputValue" -CommandNumber "11" -EnabledChannels $Channels -EnabledValue $dutyValue -DisabledValue "0000" -Meaning "PWM duty $($DutyTenthsPercent / 10)%"),
+    (New-WarmLeimacFrameObject -Name "lightingOutput" -CommandNumber "86" -EnabledChannels $Channels -EnabledValue "0001" -DisabledValue "0000" -Meaning "Lighting output enabled for trigger-controlled capture")
+  )
+}
+
+function New-WarmLeimacSession {
+  if (-not $LeimacHost -or $LeimacHost.Trim().Length -eq 0) {
+    return [ordered]@{
+      enabled = $false
+      client = $null
+      stream = $null
+      reconnectCount = 0
+      persistentConnectionUsed = $false
+    }
+  }
+  $session = [ordered]@{
+    enabled = $true
+    client = $null
+    stream = $null
+    reconnectCount = 0
+    persistentConnectionUsed = $false
+  }
+  Open-WarmLeimacSession $session
+  return $session
+}
+
+function Open-WarmLeimacSession {
+  param([System.Collections.IDictionary]$Session)
+  if (-not $Session.enabled) { return }
+  try { if ($null -ne $Session.stream) { $Session.stream.Dispose() } } catch {}
+  try { if ($null -ne $Session.client) { $Session.client.Dispose() } } catch {}
+  $client = [System.Net.Sockets.TcpClient]::new()
+  $connectTask = $client.ConnectAsync($LeimacHost, $LeimacPort)
+  if (-not $connectTask.Wait(1500)) {
+    try { $client.Dispose() } catch {}
+    throw "Timed out connecting to Leimac $LeimacHost`:$LeimacPort"
+  }
+  $stream = $client.GetStream()
+  $stream.ReadTimeout = 1500
+  $stream.WriteTimeout = 1500
+  $Session.client = $client
+  $Session.stream = $stream
+  $Session.persistentConnectionUsed = $true
+}
+
+function Close-WarmLeimacSession {
+  param([System.Collections.IDictionary]$Session)
+  if ($null -eq $Session) { return }
+  try { if ($null -ne $Session.stream) { $Session.stream.Dispose() } } catch {}
+  try { if ($null -ne $Session.client) { $Session.client.Dispose() } } catch {}
+  $Session.stream = $null
+  $Session.client = $null
+}
+
+function Send-WarmLeimacFrameObject {
+  param([System.Collections.IDictionary]$Session, [System.Collections.IDictionary]$Frame)
+  $started = (Get-Date).ToUniversalTime()
+  $watch = [System.Diagnostics.Stopwatch]::StartNew()
+  if (-not $Session.enabled) {
+    return [ordered]@{
+      ok = $true
+      host = ""
+      port = $LeimacPort
+      timeoutMs = 1500
+      startedAt = $started.ToString("o")
+      finishedAt = (Get-Date).ToUniversalTime().ToString("o")
+      durationMs = 0
+      frame = $Frame
+      rawResponse = "DISABLED"
+      responseKind = "ack"
+    }
+  }
+  $attempts = 0
+  while ($attempts -lt 2) {
+    $attempts += 1
+    try {
+      if ($null -eq $Session.stream) {
+        Open-WarmLeimacSession $Session
+        $Session.reconnectCount = [int]$Session.reconnectCount + 1
+      }
+      $bytes = [System.Text.Encoding]::ASCII.GetBytes([string]$Frame.requestFrame)
+      $Session.stream.Write($bytes, 0, $bytes.Length)
+      $buffer = New-Object byte[] 256
+      $read = $Session.stream.Read($buffer, 0, $buffer.Length)
+      $raw = $(if ($read -gt 0) { [System.Text.Encoding]::ASCII.GetString($buffer, 0, $read) } else { "" })
+      $responseKind = $(if ($raw -match "NAK") { "nak" } elseif ($raw -match "ACK|^A|OK" -or $raw.Length -gt 0) { "ack" } else { "unknown" })
+      $watch.Stop()
+      return [ordered]@{
+        ok = ($responseKind -ne "nak")
+        host = $LeimacHost
+        port = $LeimacPort
+        timeoutMs = 1500
+        startedAt = $started.ToString("o")
+        finishedAt = (Get-Date).ToUniversalTime().ToString("o")
+        durationMs = [Math]::Round($watch.Elapsed.TotalMilliseconds, 1)
+        frame = $Frame
+        rawResponse = $raw
+        responseKind = $responseKind
+      }
+    } catch {
+      Close-WarmLeimacSession $Session
+      if ($attempts -ge 2) {
+        $watch.Stop()
+        return [ordered]@{
+          ok = $false
+          host = $LeimacHost
+          port = $LeimacPort
+          timeoutMs = 1500
+          startedAt = $started.ToString("o")
+          finishedAt = (Get-Date).ToUniversalTime().ToString("o")
+          durationMs = [Math]::Round($watch.Elapsed.TotalMilliseconds, 1)
+          frame = $Frame
+          responseKind = "unknown"
+          error = $_.Exception.Message
+        }
+      }
+      $Session.reconnectCount = [int]$Session.reconnectCount + 1
+    }
+  }
+}
+
+function Apply-WarmLeimacFrames {
+  param([System.Collections.IDictionary]$Session, [object[]]$Frames)
+  $writes = @()
+  foreach ($frame in $Frames) {
+    $write = Send-WarmLeimacFrameObject -Session $Session -Frame $frame
+    $writes += $write
+    if (-not $write.ok) {
+      throw "Leimac warm write failed for $($frame.name): $($write.error)"
+    }
+  }
+  return $writes
+}
+
+function Configure-WarmBatchCamera {
+  param([object]$Camera)
+  try { Set-EnumParameterByName $Camera @([Basler.Pylon.PLCamera]::TriggerSelector, "TriggerSelector") "FrameStart" } catch {}
+  try { Set-EnumParameterByName $Camera @([Basler.Pylon.PLCamera]::TriggerMode, "TriggerMode") "Off" } catch {}
+  try { Set-EnumParameterByName $Camera @([Basler.Pylon.PLCamera]::ExposureAuto, "ExposureAuto") "Off" } catch {}
+  try { Set-EnumParameterByName $Camera @([Basler.Pylon.PLCamera]::GainAuto, "GainAuto") "Off" } catch {}
+  if ($ExposureUs -gt 0) {
+    [void](Set-FloatParameterByName $Camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs, "ExposureTime") ([double]$ExposureUs))
+  }
+  if ($Gain -ge 0) {
+    try { [void](Set-FloatParameterByName $Camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw, "Gain") ([double]$Gain)) } catch {}
+  }
+  Set-EnumParameterByName $Camera @([Basler.Pylon.PLCamera]::LineSelector, "LineSelector") "Line2"
+  Set-EnumParameterByName $Camera @([Basler.Pylon.PLCamera]::LineMode, "LineMode") "Output"
+  Set-BoolParameterByName $Camera @([Basler.Pylon.PLCamera]::LineInverter, "LineInverter") $true
+  Set-EnumParameterByName $Camera @([Basler.Pylon.PLCamera]::LineSource, "LineSource") "ExposureActive"
+}
+
+function Capture-WarmStill {
+  param(
+    [object]$Camera,
+    [System.Collections.IDictionary]$Install,
+    [System.Collections.IDictionary]$CameraMetadata,
+    [string]$CaptureLabel,
+    [string]$ConfiguredPixelFormat,
+    [object]$ExposureTime,
+    [object]$ConfiguredGain
+  )
+  $timestampUtc = (Get-Date).ToUniversalTime()
+  $timestamp = $timestampUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ")
+  $stamp = $timestampUtc.ToString("yyyyMMddTHHmmssfffZ")
+  $safeLabel = New-SafeLabel $CaptureLabel
+  $extension = Get-FileExtension $Format
+  $outputFilePath = Join-Path $OutputDir "basler-$safeLabel-$stamp.$extension"
+  $imageFileFormat = Get-ImageFileFormat $Format
+  $streamStarted = $false
+  $grabResult = $null
+  $timing = [ordered]@{
+    startedAt = (Get-Date).ToUniversalTime().ToString("o")
+    open = [ordered]@{ durationMs = 0; reusedWarmCamera = $true }
+    configure = [ordered]@{ durationMs = 0; reusedWarmCamera = $true }
+  }
+  try {
+    $phase = [System.Diagnostics.Stopwatch]::StartNew()
+    [void]$Camera.StreamGrabber.Start(1)
+    $streamStarted = $true
+    $grabResult = $Camera.StreamGrabber.RetrieveResult(10000, [Basler.Pylon.TimeoutHandling]::ThrowException)
+    if (-not $grabResult.GrabSucceeded) {
+      throw "Basler warm grab failed: $($grabResult.ErrorCode) $($grabResult.ErrorDescription)"
+    }
+    $sourcePixelFormat = "$($grabResult.PixelTypeValue)"
+    if (-not $sourcePixelFormat -or $sourcePixelFormat.Length -eq 0) {
+      $sourcePixelFormat = "$ConfiguredPixelFormat"
+    }
+    $imageWidth = [int]$grabResult.Width
+    $imageHeight = [int]$grabResult.Height
+    $phase.Stop()
+    $timing.grab = [ordered]@{ durationMs = [Math]::Round($phase.Elapsed.TotalMilliseconds, 1) }
+
+    $phase.Restart()
+    [Basler.Pylon.ImagePersistence]::Save($imageFileFormat, $outputFilePath, $grabResult)
+    $phase.Stop()
+    $timing.save = [ordered]@{ durationMs = [Math]::Round($phase.Elapsed.TotalMilliseconds, 1) }
+
+    $phase.Restart()
+    $file = Get-Item -LiteralPath $outputFilePath
+    $sha256 = (Get-FileHash -LiteralPath $outputFilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $phase.Stop()
+    $timing.hash = [ordered]@{ durationMs = [Math]::Round($phase.Elapsed.TotalMilliseconds, 1) }
+    $timing.finishedBeforeCloseAt = (Get-Date).ToUniversalTime().ToString("o")
+
+    return [ordered]@{
+      outputFilePath = $outputFilePath
+      sha256 = $sha256
+      byteSize = $file.Length
+      mimeType = Get-MimeType $Format
+      timestamp = $timestamp
+      camera = $CameraMetadata
+      imageWidth = $imageWidth
+      imageHeight = $imageHeight
+      sourcePixelFormat = $sourcePixelFormat
+      savedImageFormat = Get-SavedImageFormatName $Format
+      exposureTime = $ExposureTime
+      gain = $ConfiguredGain
+      transport = "GigE"
+      pylon = $Install
+      calibration = [ordered]@{
+        isCalibrated = $false
+        calibrationProfileId = $null
+        lensModel = $(if ($LensModel -and $LensModel.Trim().Length -gt 0) { $LensModel.Trim() } else { $null })
+        cameraRole = "macro_overview"
+        evidenceClass = "macro_raw_smoke"
+        coordinateFrame = "basler_sensor_pixels"
+      }
+      timing = $timing
+      note = "Warm full-forensic side-batch capture. Raw Basler evidence remains unchanged; camera ownership is bridge-scoped for this side batch."
+    }
+  } finally {
+    if ($null -ne $grabResult) {
+      try { $grabResult.Dispose() } catch {}
+    }
+    if ($streamStarted) {
+      try { [void]$Camera.StreamGrabber.Stop() } catch {}
+    }
+    $timing.closeDispose = [ordered]@{ durationMs = 0; deferredToWarmBatchEnd = $true }
+  }
+}
+
+function Capture-FixedRigSideBatch {
+  param([System.Collections.IDictionary]$Install)
+
+  if (-not $OutputDir -or $OutputDir.Trim().Length -eq 0) {
+    throw "OutputDir is required."
+  }
+  if ($PreviewDutyTenthsPercent -lt 0 -or $PreviewDutyTenthsPercent -gt 50) {
+    throw "PreviewDutyTenthsPercent must be from 0 to 50."
+  }
+
+  New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+  $selected = @(Parse-SelectedLeimacChannels $SelectedChannels)
+  $devices = [Basler.Pylon.CameraFinder]::Enumerate([Basler.Pylon.DeviceType]::GigE)
+  if ($devices.Count -eq 0) {
+    throw "No Basler GigE cameras were detected."
+  }
+  if ($CameraIndex -lt 0 -or $CameraIndex -ge $devices.Count) {
+    throw "CameraIndex $CameraIndex is out of range for $($devices.Count) detected camera(s)."
+  }
+
+  $cameraInfo = $devices[$CameraIndex]
+  $cameraMetadata = Convert-CameraInfo $cameraInfo $CameraIndex
+  $camera = [Basler.Pylon.Camera]::new($cameraInfo)
+  $leimacSession = $null
+  $openedAt = (Get-Date).ToUniversalTime().ToString("o")
+  $openWatch = [System.Diagnostics.Stopwatch]::StartNew()
+  $safeOffStartWrites = @()
+  $safeOffEndWrites = @()
+  $capturesStarted = $false
+  try {
+    [void]$camera.Open()
+    Configure-WarmBatchCamera $camera
+    $configuredPixelFormat = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::PixelFormat)
+    $exposureTime = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs)
+    $configuredGain = Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw)
+    $line2 = [ordered]@{
+      lineSelector = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineSelector, "LineSelector")
+      lineMode = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineMode, "LineMode")
+      lineSource = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineSource, "LineSource")
+      lineInverter = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineInverter, "LineInverter")
+    }
+    $openWatch.Stop()
+
+    $leimacSession = New-WarmLeimacSession
+    $safeOffFrames = @(New-WarmLeimacSafeOffFrames)
+    $safeOffStartWrites = @(Apply-WarmLeimacFrames -Session $leimacSession -Frames $safeOffFrames)
+    $darkCapture = Capture-WarmStill -Camera $camera -Install $Install -CameraMetadata $cameraMetadata -CaptureLabel "$Side-dark-control" -ConfiguredPixelFormat $configuredPixelFormat -ExposureTime $exposureTime -ConfiguredGain $configuredGain
+    $capturesStarted = $true
+
+    $setupFrames = @(New-WarmLeimacTriggerSetupFrames)
+    $setupWrites = @(Apply-WarmLeimacFrames -Session $leimacSession -Frames $setupFrames)
+
+    function Capture-WarmLitRole {
+      param([string]$Role, [string]$CaptureLabel, [object]$ChannelSpec, [int[]]$Channels)
+      $frames = @(New-WarmLeimacLightFrames -Channels $Channels -DutyTenthsPercent $PreviewDutyTenthsPercent)
+      $writes = @(Apply-WarmLeimacFrames -Session $leimacSession -Frames $frames)
+      $capture = Capture-WarmStill -Camera $camera -Install $Install -CameraMetadata $cameraMetadata -CaptureLabel $CaptureLabel -ConfiguredPixelFormat $configuredPixelFormat -ExposureTime $exposureTime -ConfiguredGain $configuredGain
+      return [ordered]@{
+        role = $Role
+        label = $CaptureLabel
+        channel = $ChannelSpec
+        frames = $frames
+        writes = $writes
+        capture = $capture
+      }
+    }
+
+    $all = @(1, 2, 3, 4, 5, 6, 7, 8)
+    $allOn = Capture-WarmLitRole -Role "all_on" -CaptureLabel "$Side-all-on" -ChannelSpec "all" -Channels $all
+    $accepted = Capture-WarmLitRole -Role "accepted_profile" -CaptureLabel "$Side-accepted-lighting-profile" -ChannelSpec $selected -Channels $selected
+    $channels = @()
+    for ($channel = 1; $channel -le 8; $channel += 1) {
+      $channels += Capture-WarmLitRole -Role "channel_$channel" -CaptureLabel "$Side-channel-$channel" -ChannelSpec $channel -Channels @($channel)
+    }
+
+    $safeOffEndWrites = @(Apply-WarmLeimacFrames -Session $leimacSession -Frames $safeOffFrames)
+    return [ordered]@{
+      executionPath = "warm_full_forensic_runner"
+      fallbackUsed = $false
+      side = $Side
+      outputDir = $OutputDir
+      cameraIndex = $CameraIndex
+      openedAt = $openedAt
+      finishedAt = (Get-Date).ToUniversalTime().ToString("o")
+      persistentBaslerSession = $true
+      persistentLeimacSession = [bool]$leimacSession.persistentConnectionUsed
+      selectedChannels = $selected
+      dutyTenthsPercent = $PreviewDutyTenthsPercent
+      line2 = $line2
+      capturesStarted = $capturesStarted
+      leimac = [ordered]@{
+        safeOffStart = [ordered]@{ ok = $true; frames = $safeOffFrames; writes = $safeOffStartWrites }
+        triggerSetup = [ordered]@{ frames = $setupFrames; writes = $setupWrites }
+        safeOffEnd = [ordered]@{ ok = $true; frames = $safeOffFrames; writes = $safeOffEndWrites }
+        reconnectCount = [int]$leimacSession.reconnectCount
+        persistentConnectionUsed = [bool]$leimacSession.persistentConnectionUsed
+      }
+      captures = [ordered]@{
+        darkControl = [ordered]@{ role = "dark_control"; label = "$Side-dark-control"; capture = $darkCapture }
+        allOn = $allOn
+        acceptedProfile = $accepted
+        channels = $channels
+      }
+      timing = [ordered]@{
+        warmCameraOpenConfigure = [ordered]@{ durationMs = [Math]::Round($openWatch.Elapsed.TotalMilliseconds, 1); startedAt = $openedAt }
+        baslerOpenSavedPerImage = $true
+        baslerCloseDisposeDeferred = $true
+      }
+      safety = [ordered]@{
+        localOnly = $true
+        safeOffBefore = $true
+        safeOffAfter = $true
+        persistentBaslerSaved = $false
+        persistentLeimacSaved = $false
+        finalLightOffAttempted = $true
+      }
+      note = "Warm full-forensic side batch captured dark control, all-on, accepted profile, and Leimac channels 1-8 with one Basler camera owner for the side."
+    }
+  } catch {
+    $failureMessage = $_.Exception.Message
+    if ($null -ne $leimacSession) {
+      try { $safeOffEndWrites = @(Apply-WarmLeimacFrames -Session $leimacSession -Frames @(New-WarmLeimacSafeOffFrames)) } catch {}
+    } else {
+      try { $safeOffEndWrites = @(Invoke-LeimacPreviewSafeOff) } catch {}
+    }
+    throw $failureMessage
+  } finally {
+    if ($null -ne $leimacSession) {
+      try { Close-WarmLeimacSession $leimacSession } catch {}
+    }
+    if ($camera.IsOpen) {
+      try { [void]$camera.Close() } catch {}
+    }
+    try { $camera.Dispose() } catch {}
+  }
 }
 
 function Convert-GrabResultToBitmap {
@@ -2065,7 +2530,7 @@ try {
   $install = Resolve-PylonInstall
 
   if (-not $install.installed) {
-    if ($Action -eq "capture-still" -or $Action -eq "operator-preview-window" -or $Action -eq "operator-preview-mjpeg-stream") {
+    if ($Action -eq "capture-still" -or $Action -eq "fixed-rig-side-batch" -or $Action -eq "operator-preview-window" -or $Action -eq "operator-preview-mjpeg-stream") {
       throw "Basler pylon is not installed or Basler.Pylon.dll was not found."
     }
     $result = New-ReadinessResult $install @()
@@ -2117,6 +2582,12 @@ try {
 
   if ($Action -eq "operator-preview-mjpeg-stream") {
     Start-OperatorPreviewMjpegStream $install
+    exit 0
+  }
+
+  if ($Action -eq "fixed-rig-side-batch") {
+    $result = Capture-FixedRigSideBatch $install
+    Write-BridgeJson ([ordered]@{ ok = $true; result = $result })
     exit 0
   }
 

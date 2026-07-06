@@ -85,11 +85,57 @@ test("local station contract exposes workflow status with no login, DB, or hardw
   assert.equal(status.safety.finalGradeComputed, false);
   assert.equal(status.safety.certifiedClaim, false);
   assert.equal(status.bridgeContract.endpoints.some((endpoint) => endpoint.path === "/api/ai-grader/station/capture-front"), true);
+  assert.equal(status.bridgeContract.endpoints.every((endpoint) => endpoint.hardwareAccess === false), true);
   assert.equal(status.previewStatus.browserEmbedded, true);
   assert.equal(status.previewStatus.localOnly, true);
   assert.equal(status.previewStatus.safety.productionServiceTokenUsed, false);
   assert.equal(status.previewStatus.safety.publicRouteExposed, false);
+  assert.equal(status.warmRunnerStatus.mode, "full_forensic");
+  assert.equal(status.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.fallbackUsed, false);
+  assert.equal(status.warmRunnerStatus.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.warmRunnerStatus.backend, "warm_full_forensic_runner");
+  assert.equal(status.warmRunnerStatus.fallbackUsed, false);
+  assert.equal(status.warmRunnerStatus.fallback.active, false);
+  assert.equal(status.timingSummary?.executionPath, "warm_full_forensic_runner");
+  assert.equal(status.timingSummary?.fallbackUsed, false);
+  assert.equal(status.warmRunnerStatus.evidencePlan.defaultFullForensic, true);
+  assert.deepEqual(status.warmRunnerStatus.evidencePlan.rolesBySide.front.map((role) => role.role), [
+    "dark_control",
+    "all_on",
+    "accepted_profile",
+    "channel_1",
+    "channel_2",
+    "channel_3",
+    "channel_4",
+    "channel_5",
+    "channel_6",
+    "channel_7",
+    "channel_8",
+  ]);
+  assert.deepEqual(status.warmRunnerStatus.evidencePlan.rolesBySide.back.map((role) => role.role), [
+    "dark_control",
+    "all_on",
+    "accepted_profile",
+    "channel_1",
+    "channel_2",
+    "channel_3",
+    "channel_4",
+    "channel_5",
+    "channel_6",
+    "channel_7",
+    "channel_8",
+  ]);
+  assert.equal(status.warmRunnerStatus.fallback.available, true);
+  assert.equal(status.warmRunnerStatus.safety.captureLock, true);
+  assert.equal(status.warmRunnerStatus.safety.watchdogSafeOff, true);
+  assert.equal(status.warmRunnerStatus.safety.safeOffOnFailure, true);
+  assert.equal(status.warmRunnerStatus.safety.safeOffOnCancellation, true);
+  assert.equal(status.warmRunnerStatus.safety.safeOffOnSessionEnd, true);
+  assert.equal(status.warmRunnerStatus.safety.publicRouteExposed, false);
+  assert.equal(status.warmRunnerStatus.safety.productionServiceTokenUsed, false);
   assert.equal(status.latestReport.publicViewerRoute, "/ai-grader/reports/[reportId]");
+  assert.equal(status.latestReport.publicViewerRoute.includes("station"), false);
 });
 
 test("local station action parser accepts known actions and rejects unknown actions", () => {
@@ -99,6 +145,7 @@ test("local station action parser accepts known actions and rejects unknown acti
   assert.equal(parseAiGraderStationAction(["finalize-report"]), "finalize-report");
   assert.equal(parseAiGraderStationAction(["generate-label-data"]), "generate-label-data");
   assert.equal(parseAiGraderStationAction(["confirm-fixture-rulers"]), "confirm-fixture-rulers");
+  assert.equal(parseAiGraderStationAction(["cancel-session"]), "cancel-session");
   assert.equal(parseAiGraderStationAction(undefined), "status");
   assert.equal(parseAiGraderStationAction(["delete-all"]), null);
 });

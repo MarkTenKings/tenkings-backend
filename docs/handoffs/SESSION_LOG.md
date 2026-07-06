@@ -23352,3 +23352,163 @@ By enabling Rip It Live, I confirm:
 - No shell tracing was used.
 - Public report routes remain read-only and hardware-control-free.
 - DigitalOcean Postgres credential rotation remains deferred by Mark.
+
+## 2026-07-06 - AI Grader PR #57 merge/deploy and PR #58 warm runner start
+
+### Planned Action
+- Resume after the Dell reboot/crash.
+- Verify local branch/HEAD, GitHub PR #56/#57 status, latest `main`, and PR #57 checks before merging.
+- If PR #57 remains open, clean, and passing, merge it and verify Vercel Production deployment, then pull latest `main`.
+- Start PR #58 from latest `main` for a warm full forensic runner that speeds the workflow by keeping forensic evidence intact while reducing cold starts and repeated hardware setup.
+- Guardrails: no secrets printed, no credential rotation, no migrations, no production DB writes, no Vercel env changes, no hardware capture without Mark approval, public report routes remain read-only/hardware-free, and the production service-account token is not used for local bridge or preview.
+
+### PR #57 Observed Result
+- Pre-merge local state: branch `feature/ai-grader-browser-preview-timing` at `c1fb1d22d217f63bb1b582a19538033407efe80f`, clean before this session-log entry.
+- PR #56 was already merged at `2026-07-05T22:59:09Z` with merge commit `3a1ba066aa9f17f767fc387f215d50d2056d7a17`.
+- PR #57 was open, non-draft, `mergeStateStatus=CLEAN`, and all PR checks/Vercel preview were successful before merge.
+- PR #57 merged at `2026-07-06T00:17:13Z` with merge commit `ae0c75a9c8c902e4d85948f44788482c4db10543`.
+- Vercel Production status for merge commit `ae0c75a9c8c902e4d85948f44788482c4db10543` completed successfully at target `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/6MgAJ7Ceq9VXvbWYFu7TmUFoAknp`.
+- Main push checks for the merge commit completed successfully: Install & Build plus Docker image builds for frontend, wallet-service, vault-service, marketplace-service, pricing-service, pack-service, ingestion-service, and vending-gw.
+- No hardware capture, Leimac lighting command, Basler capture, migration, production DB write, Vercel env change, credential rotation, or secret-printing action was run during the merge/deploy verification.
+
+### PR #58 Observed Result
+- Created branch `feature/ai-grader-warm-forensic-runner` from latest `main` at `ae0c75a9c8c902e4d85948f44788482c4db10543`.
+- Added a bridge-owned warm-runner session contract to the Dell local station bridge.
+- Warm runner tracks `full_forensic` mode, session id, active side, capture lock ownership, preview pause/resume policy, capture/processing/report queues, warm phases, baseline/target timing, fallback state, and safety guarantees.
+- Full forensic evidence remains the default for both sides: `dark_control`, `all_on`, `accepted_profile`, and Leimac `channel_1` through `channel_8`.
+- The bridge now serializes capture ownership with one capture lock, rejects preview stream requests with `AI_GRADER_CAPTURE_LOCK_HELD` while capture owns the camera, pauses preview before capture, and marks preview resume readiness after capture releases.
+- Front/back capture actions run through the warm-runner orchestration and currently use the existing full `ai-grader-fixed-rig-v1-evidence-package` command as the safe `cold_command_fallback` backend until persistent in-process Basler/Leimac execution is validated on the Dell.
+- Report generation runs through a warm report queue and preserves the unified report, Surface Intelligence, Vision Lab, ROI/display crops, front evidence, and back evidence outputs.
+- Added guarded safe-off cleanup for capture failure, report failure, operator safe-off, cancellation, and session end in real mode. The cancellation action is `cancel-session`.
+- Station UI now shows warm-runner status, backend, capture lock, capture/processing/report queue state, front/back evidence role progress by channel, latest warm phases, and PR #57 timing fields.
+- Public report routes remain read-only and hardware-control-free; local bridge/preview use only the browser-local station token, not the production service-account token.
+
+### PR #58 Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `29` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `174` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, browserslist/baseline, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### PR #58 Not Run
+- No supervised Dell hardware smoke was run.
+- No hardware capture, Leimac lighting command, Basler image capture, migration, production DB write, Vercel env change, credential rotation, production deploy, or secret-printing action was run.
+
+### PR #58 Remaining Risk
+- Real timing improvement is not measured in this PR because hardware smoke was not approved.
+- The persistent in-process Basler/Leimac backend is staged behind the warm-runner contract; the safe cold command fallback preserves evidence and behavior until the Dell can validate persistent hardware ownership.
+
+## 2026-07-06 - AI Grader PR #58 actual warm execution path
+
+### Planned Action
+- Continue PR #58 without merging.
+- Replace the normal `cold_command_fallback` execution path with actual `warm_full_forensic_runner` execution.
+- Keep cold fallback only for explicit debug disable or safe pre-capture warm failure recovery.
+- Preserve full forensic evidence: dark control, all-on, accepted profile, Leimac channels `1-8`, front/back evidence, ROI/display crops, Surface Intelligence, Vision Lab, unified report, and safe-off cleanup.
+- Guardrails: no secrets printed, no credential rotation, no migrations, no production DB writes, no Vercel env changes, no hardware capture without Mark approval, public report routes remain read-only/hardware-free.
+
+### Observed Result
+- Added Basler bridge action `fixed-rig-side-batch`.
+- Warm side batch opens/configures the Basler camera once per side batch, reuses exposure/gain/Line2 state, captures the full side stack (`dark`, `all-on`, `accepted profile`, channels `1-8`), and defers close/dispose until the side completes.
+- Added state-aware warm Leimac helpers in the bridge script: one session attempts persistent TCP ownership, reconnects safely if needed, writes trigger setup once, applies tight per-role channel changes, and always attempts safe-off on batch end/failure.
+- Added TypeScript Basler client method `captureFixedRigSideBatch`.
+- Added warm evidence-package builder that converts the warm side batch into report-compatible `manifest.json`, `analysis.json`, preview report, channel display images, ROI crops, Surface Intelligence inputs, Vision Lab inputs, and unified report inputs.
+- Local station bridge now defaults to `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`.
+- Cold fallback remains available only through explicit `warmRunnerDisabled` / `AI_GRADER_WARM_RUNNER_DISABLED` / `--disable-warm-runner`, or a warm failure object that explicitly reports `safeToFallback=true` and `capturesStarted=false`.
+- UI now shows current execution path, fallback-used state, and fallback reason.
+- Session manifest and timing summary now record `executionPath`, `fallbackUsed`, and `fallbackReason` when present.
+- Front artifact processing starts in the background after front capture so it can run during the operator flip window; report generation waits for queued front/back processing before building the unified report.
+- Tests now assert warm runner is default, cold fallback is not default, fallback requires explicit disable, execution path/fallback metadata persists, preview/capture lock still blocks collisions, safe-off runs on failure/cancel/end, and public routes expose no hardware controls.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, browserslist/baseline, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `29` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- PowerShell parser check for `packages/ai-grader-capture-helper/scripts/basler-pylon-bridge.ps1` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper exec node --test tests/aiGraderLocalStationBridge.test.js` -> pass, `13` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `175` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Not Run
+- No supervised Dell hardware smoke was run.
+- No hardware capture, Leimac lighting command, Basler image capture, migration, production DB write, Vercel env change, credential rotation, production deploy, or secret-printing action was run.
+
+### Remaining Risk
+- Actual speed target is not accepted yet because no supervised Dell smoke/timing was run.
+- Warm runner implementation is code-validated and test-validated, but real persistent Basler/Leimac behavior still needs Mark-approved Dell hardware validation before claiming measured 60-150 second production timing.
+
+## 2026-07-06 - AI Grader PR #58 supervised warm-runner Dell smoke
+
+### Planned Action
+- Run one Mark-supervised Dell smoke for PR #58 without merging the PR.
+- Confirm branch `feature/ai-grader-warm-forensic-runner` at `e90c6f8672eb7590cbace37a8abfdae6974e61b4` or newer, clean status, PR checks passing, bridge/station running, Mark present, Leimac physically off/idle, fixture/card/rulers ready, and embedded browser preview working before capture.
+- Use the default `warm_full_forensic_runner` path only. Do not set `AI_GRADER_WARM_RUNNER_DISABLED`, do not pass `--disable-warm-runner`, and do not count `cold_command_fallback` as speed success.
+- Preserve full forensic evidence: dark control, all-on, accepted profile, Leimac channels `1-8`, front/back evidence, ROI/display crops, Surface Intelligence, Vision Lab, unified report, and safe-off cleanup.
+- Guardrails held: no secrets printed, no credential rotation, no migration, no production DB write, no Vercel env change, no production deploy, no public hardware controls.
+
+### Pre-Run State
+- Branch: `feature/ai-grader-warm-forensic-runner`.
+- HEAD: `e90c6f8672eb7590cbace37a8abfdae6974e61b4`.
+- Worktree: clean before the smoke.
+- PR #58: open, non-draft, `mergeStateStatus=CLEAN`, checks/Vercel preview passing before smoke.
+- Local bridge/station: running at the paired loopback bridge for `https://collect.tenkings.co/ai-grader/station`; bridge status reported `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, hardware actions enabled, local-only/token-required mode.
+- Embedded preview verification: token-gated MJPEG stream returned bytes; `/preview/status` reported `frameCount=33`, `fps=4.2`, `lastError=null`, and preview first-frame time `1764 ms`.
+- Mark confirmed the physical preconditions before capture: Mark present, Leimac/ring light physically off/idle, card/fixture/rulers ready.
+
+### Smoke Output
+- Report/session id: `pr58-warm-smoke-20260706T051208Z`.
+- Station session folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-browser-station-session-2026-07-06T051208634Z`.
+- Station manifest: `C:\TenKings\capture-data\ai-grader-station\ai-grader-browser-station-session-2026-07-06T051208634Z\station-session.json`.
+- Front evidence folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-06T051208742Z`.
+- Back evidence folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-evidence-package-2026-07-06T051420124Z`.
+- Unified report folder: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-06T051505763Z`.
+- Unified report HTML: `C:\TenKings\capture-data\ai-grader-station\ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-06T051505763Z\provisional-diagnostic-report.html`.
+- The token-gated local bridge report endpoint `GET /reports/pr58-warm-smoke-20260706T051208Z/html` returned `200`; HTML size matched the local report file at `610234` bytes; the report opened locally.
+
+### Execution Result
+- `executionPath=warm_full_forensic_runner`.
+- `fallbackUsed=false`.
+- `fallbackReason=null`.
+- No fallback or reconnect was observed in bridge status or package manifests.
+- Capture lock was released after front capture, after back capture, and after safe-off.
+- Front artifact processing ran during the operator flip window: `process_front_artifacts` started at front capture completion and completed in `4229 ms` before back capture began.
+- Back artifact processing completed in `3611 ms` before unified report generation.
+- Report generation preserved unified report, Surface Intelligence, Vision Lab, ROI/display crops, and report-compatible artifacts.
+
+### Evidence Completeness
+- Front package: `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, `persistentBaslerSession=true`, `persistentLeimacSession=true`, selected channels `1,2,3,4,5,6,7,8`.
+- Front package counts: 1 dark control, 1 all-on, 1 accepted profile, 8 raw channel PNGs, 8 channel display images, 12 ROI definitions, 12 ROI crops, Surface Intelligence present, diagnostic grading present.
+- Back package: `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`, `persistentBaslerSession=true`, `persistentLeimacSession=true`, selected channels `1,2,3,4,5,6,7,8`.
+- Back package counts: 1 dark control, 1 all-on, 1 accepted profile, 8 raw channel PNGs, 8 channel display images, 12 ROI definitions, 12 ROI crops, Surface Intelligence present, diagnostic grading present.
+- Both side manifests record `safeOffBefore=true`, `safeOffAfter=true`, and `finalLightOffAttempted=true`.
+
+### Timing
+- Baseline comparison target: previous full workflow about `461 s` / `7 min 41 sec`.
+- Preview ready: `1764 ms`.
+- Front capture command: `9442 ms`.
+- Front processing queue: `4229 ms`, overlapped with operator flip.
+- Back capture command: `9243 ms`.
+- Back processing queue: `3611 ms`.
+- Unified report command: `14867 ms`.
+- First safe-off command: `1441 ms`.
+- Second confirmation safe-off command: `1493 ms`; this was run after Mark's physical `off` confirmation to persist `finalLightOff=true` in the session manifest and is not counted as report-ready time.
+- Report-ready bridge timing summary observed immediately after report generation and before cleanup: `74944 ms`, within the 60-150 second target.
+- Actual chat-supervised wall clock from first front capture start to report-ready finish: `191786 ms`. This includes about `117711 ms` of operator/chat flip wait and about `32683 ms` of Codex/operator delay before invoking report generation, so it is not a representative hands-on UI-speed wall-clock measurement.
+- Measured active phase sum including capture, front/back processing, and report generation was `41392 ms`; critical path with front processing overlapped during flip was about `37163 ms`.
+- Basler timing summary: warm camera open/configure `454.3 ms` front and `454.4 ms` back; aggregate frame grab `3156.2 ms`; image save `11517.3 ms`; image hash `161.1 ms`; per-image open was saved and close/dispose was deferred for each side batch.
+- Leimac timing summary: capture write/ack aggregate before cleanup `614.1 ms`; first safe-off completed in `1441 ms`; final confirmation safe-off completed in `1493 ms`; final physical ring light state was confirmed off by Mark.
+
+### Acceptance
+- Warm hardware execution path was validated on the Dell.
+- Full forensic evidence was preserved.
+- Report opened successfully.
+- Final light-off was confirmed physically by Mark and recorded in the session manifest with `finalLightOff=true`.
+- Timing materially improved versus the `~461 s` baseline. The bridge report-ready accounting (`74.944 s`) is inside the 60-150 second target; the active measured runner phases are lower, while the chat-supervised wall clock was inflated by human/Codex pauses.
+
+### Follow-Up
+- PR #58 was not merged.
+- The PR is hardware-smoke validated for the actual warm execution path. A final hands-on UI run with a normal operator flip, rather than a chat-mediated flip/report trigger, would give a cleaner end-user wall-clock number before declaring stretch-target acceptance.

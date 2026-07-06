@@ -6,6 +6,7 @@ export type BaslerPylonAction =
   | "readiness"
   | "list-cameras"
   | "capture-still"
+  | "fixed-rig-side-batch"
   | "operator-preview-window"
   | "operator-preview-mjpeg-stream"
   | "line2-exposure-active"
@@ -206,6 +207,50 @@ export interface BaslerCaptureStillResult {
   note: string;
 }
 
+export type BaslerFixedRigSideBatchExecutionPath = "warm_full_forensic_runner";
+export type BaslerFixedRigSideBatchSide = "front" | "back";
+
+export interface BaslerFixedRigSideBatchRoleCapture {
+  role: "dark_control" | "all_on" | "accepted_profile" | `channel_${number}`;
+  label: string;
+  channel?: number | "all" | number[];
+  frames?: unknown[];
+  writes?: unknown[];
+  capture: BaslerCaptureStillResult;
+}
+
+export interface BaslerFixedRigSideBatchResult {
+  executionPath: BaslerFixedRigSideBatchExecutionPath;
+  fallbackUsed: false;
+  side: BaslerFixedRigSideBatchSide;
+  outputDir: string;
+  cameraIndex: number;
+  openedAt?: string;
+  finishedAt?: string;
+  persistentBaslerSession: true;
+  persistentLeimacSession: boolean;
+  selectedChannels: number[];
+  dutyTenthsPercent: number;
+  line2?: unknown;
+  capturesStarted?: boolean;
+  leimac?: {
+    safeOffStart?: unknown;
+    triggerSetup?: unknown;
+    safeOffEnd?: unknown;
+    reconnectCount?: number;
+    persistentConnectionUsed?: boolean;
+  };
+  captures: {
+    darkControl: BaslerFixedRigSideBatchRoleCapture;
+    allOn: BaslerFixedRigSideBatchRoleCapture;
+    acceptedProfile: BaslerFixedRigSideBatchRoleCapture;
+    channels: BaslerFixedRigSideBatchRoleCapture[];
+  };
+  timing?: unknown;
+  safety?: unknown;
+  note: string;
+}
+
 export interface BaslerOperatorPreviewWindowMetrics {
   mean: number;
   max: number;
@@ -297,6 +342,22 @@ export interface BaslerCaptureStillOptions {
   savedFormat?: BaslerSavedImageFormat;
   lensModel?: string;
   exposureUs?: number;
+  gain?: number;
+}
+
+export interface BaslerFixedRigSideBatchOptions {
+  outputDir: string;
+  side: BaslerFixedRigSideBatchSide;
+  selectedChannels?: number[];
+  cameraIndex?: number;
+  savedFormat?: BaslerSavedImageFormat;
+  lensModel?: string;
+  exposureUs?: number;
+  gain?: number;
+  leimacHost?: string;
+  leimacPort?: number;
+  leimacUnit?: number;
+  dutyPercent?: number;
 }
 
 export interface BaslerOperatorPreviewWindowOptions {
@@ -572,7 +633,48 @@ export class BaslerPylonClient {
       "-Format",
       normalizeBaslerSavedImageFormat(options.savedFormat),
       ...(options.exposureUs ? ["-ExposureUs", String(options.exposureUs)] : []),
+      ...(options.gain != null ? ["-Gain", String(options.gain)] : []),
       ...(options.lensModel ? ["-LensModel", options.lensModel] : []),
+    ]);
+  }
+
+  async captureFixedRigSideBatch(options: BaslerFixedRigSideBatchOptions): Promise<BaslerFixedRigSideBatchResult> {
+    const outputDir = assertBaslerCaptureOutputDirAllowed(options.outputDir);
+    const cameraIndex = options.cameraIndex ?? 0;
+    if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
+      throw new BaslerPylonClientError("BASLER_CAMERA_INDEX_INVALID", "--camera-index must be a non-negative integer.");
+    }
+    const selectedChannels = options.selectedChannels?.length ? options.selectedChannels : [1, 2, 3, 4, 5, 6, 7, 8];
+    if (
+      selectedChannels.some((channel) => !Number.isInteger(channel) || channel < 1 || channel > 8) ||
+      new Set(selectedChannels).size !== selectedChannels.length
+    ) {
+      throw new BaslerPylonClientError("BASLER_FIXED_RIG_CHANNELS_INVALID", "Warm fixed-rig side batch selected channels must be unique integers from 1 to 8.");
+    }
+    const dutyPercent = options.dutyPercent ?? 1.2;
+    if (!Number.isFinite(dutyPercent) || dutyPercent < 0 || dutyPercent > 5) {
+      throw new BaslerPylonClientError("BASLER_FIXED_RIG_DUTY_INVALID", "Warm fixed-rig side batch duty must be from 0 to 5 percent.");
+    }
+
+    return this.runBridge<BaslerFixedRigSideBatchResult>("fixed-rig-side-batch", [
+      "-OutputDir",
+      outputDir,
+      "-Side",
+      options.side,
+      "-CameraIndex",
+      String(cameraIndex),
+      "-Format",
+      normalizeBaslerSavedImageFormat(options.savedFormat),
+      "-SelectedChannels",
+      selectedChannels.join(","),
+      "-PreviewDutyTenthsPercent",
+      String(Math.round(dutyPercent * 10)),
+      ...(options.exposureUs ? ["-ExposureUs", String(options.exposureUs)] : []),
+      ...(options.gain != null ? ["-Gain", String(options.gain)] : []),
+      ...(options.lensModel ? ["-LensModel", options.lensModel] : []),
+      ...(options.leimacHost ? ["-LeimacHost", options.leimacHost] : []),
+      ...(options.leimacPort ? ["-LeimacPort", String(options.leimacPort)] : []),
+      ...(options.leimacUnit ? ["-LeimacUnit", String(options.leimacUnit)] : []),
     ]);
   }
 

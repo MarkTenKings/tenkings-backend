@@ -6,6 +6,7 @@ import {
   AI_GRADER_STATION_STEPS,
   buildAiGraderLocalStationStatus,
   buildSampleAiGraderReportHistory,
+  type AiGraderWarmRunnerPhase,
   type AiGraderLocalReportHistory,
   type AiGraderLocalReportHistoryItem,
   type AiGraderLocalStationStatus,
@@ -74,6 +75,31 @@ function formatMs(ms?: number) {
   if (typeof ms !== "number") return "pending";
   if (ms < 1000) return `${Math.round(ms)} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function formatStationValue(value?: string) {
+  if (!value) return "Pending";
+  return value
+    .split(/[_-]/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function roleLabel(role: string) {
+  if (role === "dark_control") return "Dark";
+  if (role === "all_on") return "All";
+  if (role === "accepted_profile") return "Profile";
+  return role.replace("channel_", "Ch ");
+}
+
+function queueSummary(phases: AiGraderWarmRunnerPhase[]) {
+  if (!phases.length) return "Pending";
+  const active = phases.filter((phase) => phase.status === "active").length;
+  const completed = phases.filter((phase) => phase.status === "completed").length;
+  const failed = phases.filter((phase) => phase.status === "failed").length;
+  if (failed) return `${failed} failed`;
+  if (active) return `${active} active`;
+  return `${completed}/${phases.length} complete`;
 }
 
 function reportUrlFor(item: AiGraderLocalReportHistoryItem) {
@@ -209,7 +235,14 @@ export default function AiGraderStationPage() {
   }, []);
 
   useEffect(() => {
-    const previewSuspendedForStationAction = busy === "start-grading" || busy === "back" || busy === "capture-front" || busy === "capture-back" || busy === "safe-off";
+    const previewSuspendedForStationAction =
+      busy === "start-grading" ||
+      busy === "back" ||
+      busy === "capture-front" ||
+      busy === "capture-back" ||
+      busy === "safe-off" ||
+      status.warmRunnerStatus.captureLock.held ||
+      status.warmRunnerStatus.status === "capturing";
     if (!bridgeConnected || !stationToken.trim() || previewSuspendedForStationAction) {
       if (previewFrameUrlRef.current) {
         window.URL.revokeObjectURL(previewFrameUrlRef.current);
@@ -293,7 +326,7 @@ export default function AiGraderStationPage() {
       }
       setPreviewFrameUrl(null);
     };
-  }, [bridgeConnected, bridgeUrl, busy, stationToken]);
+  }, [bridgeConnected, bridgeUrl, busy, stationToken, status.warmRunnerStatus.captureLock.held, status.warmRunnerStatus.status]);
 
   const currentStep = useMemo(
     () => AI_GRADER_STATION_STEPS.find((step) => step.id === status.currentStep) ?? AI_GRADER_STATION_STEPS[0],
@@ -317,6 +350,14 @@ export default function AiGraderStationPage() {
   const labelReady = status.safety.labelGenerated || Boolean(status.outputs?.labelDataPath);
   const showFlipScrim = status.currentStep === "prompt_flip_card";
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
+  const warmRunner = status.warmRunnerStatus;
+  const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held || busy === "start-grading" || busy === "back";
+  const warmEvidenceCounts = {
+    front: warmRunner.evidencePlan.rolesBySide.front.filter((role) => role.status === "completed").length,
+    back: warmRunner.evidencePlan.rolesBySide.back.filter((role) => role.status === "completed").length,
+    total: warmRunner.evidencePlan.rolesBySide.front.length,
+  };
+  const latestWarmPhases = [...warmRunner.phases].slice(-4).reverse();
 
   const productionAuthHeaders = async (extra: Record<string, string> = {}) => {
     const activeSession = await ensureSession();
@@ -746,7 +787,9 @@ export default function AiGraderStationPage() {
             ? "Checking the local Dell bridge at 127.0.0.1."
             : "The local Dell bridge could not be reached with the saved browser pairing.";
   const previewStatusLabel =
-    previewStatus.status === "live"
+    warmRunnerCapturing
+      ? "Full Forensic Capture"
+      : previewStatus.status === "live"
       ? "Preview Live"
       : busy === "start-grading" || busy === "back"
         ? "Capturing"
@@ -760,7 +803,9 @@ export default function AiGraderStationPage() {
                 ? "Report Ready"
                 : "Preview Standby";
   const previewStatusDetail =
-    previewStatus.status === "live"
+    warmRunnerCapturing
+      ? `${formatStationValue(warmRunner.activeSide)} side; ${formatStationValue(warmRunner.status)}.`
+      : previewStatus.status === "live"
       ? `${previewStatus.implementationType}; ${previewStatus.frameCount || 0} frame(s) displayed${previewStatus.fps ? `, ${previewStatus.fps} FPS` : ""}.`
       : previewStatus.status === "paused_for_capture"
         ? "The preview stream released the Basler camera for capture."
@@ -973,6 +1018,88 @@ export default function AiGraderStationPage() {
             </p>
           </section>
 
+          <section className="warm-runner">
+            <div className="warm-head">
+              <div>
+                <p className="eyebrow">Warm Runner</p>
+                <h3>Full Forensic Capture</h3>
+              </div>
+              <strong>{formatStationValue(warmRunner.status)}</strong>
+            </div>
+            <div className="warm-grid">
+              <div>
+                <span>Execution Path</span>
+                <strong>{warmRunner.executionPath === "cold_command_fallback" ? "Cold Fallback" : "Warm Runner"}</strong>
+              </div>
+              <div>
+                <span>Fallback</span>
+                <strong>{warmRunner.fallbackUsed || warmRunner.fallback.active ? "Used" : "No"}</strong>
+              </div>
+              <div>
+                <span>Capture Lock</span>
+                <strong>{warmRunner.captureLock.held ? "Held" : "Idle"}</strong>
+              </div>
+              <div>
+                <span>Capture Queue</span>
+                <strong>{queueSummary(warmRunner.queues.capture)}</strong>
+              </div>
+              <div>
+                <span>Processing</span>
+                <strong>{queueSummary(warmRunner.queues.processing)}</strong>
+              </div>
+              <div>
+                <span>Report Queue</span>
+                <strong>{queueSummary(warmRunner.queues.report)}</strong>
+              </div>
+              <div>
+                <span>Target</span>
+                <strong>{formatMs(warmRunner.timing.targetTotalMinMs)}-{formatMs(warmRunner.timing.targetTotalMaxMs)}</strong>
+              </div>
+            </div>
+            {(warmRunner.fallbackUsed || warmRunner.fallback.active) && (
+              <p className="status-note">{warmRunner.fallbackReason ?? warmRunner.fallback.reason ?? "Cold fallback was used; this run does not count for speed acceptance."}</p>
+            )}
+            <div className="evidence-side">
+              <div>
+                <span>Front Evidence</span>
+                <strong>{warmEvidenceCounts.front}/{warmEvidenceCounts.total}</strong>
+              </div>
+              <div className="role-strip">
+                {warmRunner.evidencePlan.rolesBySide.front.map((role) => (
+                  <span key={role.role} className={`role ${role.status}`}>{roleLabel(role.role)}</span>
+                ))}
+              </div>
+            </div>
+            <div className="evidence-side">
+              <div>
+                <span>Back Evidence</span>
+                <strong>{warmEvidenceCounts.back}/{warmEvidenceCounts.total}</strong>
+              </div>
+              <div className="role-strip">
+                {warmRunner.evidencePlan.rolesBySide.back.map((role) => (
+                  <span key={role.role} className={`role ${role.status}`}>{roleLabel(role.role)}</span>
+                ))}
+              </div>
+            </div>
+            <div className="phase-list">
+              {latestWarmPhases.length ? (
+                latestWarmPhases.map((phase) => (
+                  <div key={phase.id}>
+                    <span>{formatStationValue(phase.status)}</span>
+                    <strong>{phase.label}</strong>
+                    <em>{formatMs(phase.durationMs)}</em>
+                  </div>
+                ))
+              ) : (
+                <div>
+                  <span>Pending</span>
+                  <strong>Warm session setup</strong>
+                  <em>{formatMs(status.timingSummary?.phaseBreakdown?.warmSessionSetupMs)}</em>
+                </div>
+              )}
+            </div>
+          </section>
+
           <div className="action-row">
             <button type="button" onClick={() => void openReport()} disabled={!reportReady || busy !== null}>
               {busy === "open-report" ? "Opening Report" : "View Report"}
@@ -1061,6 +1188,14 @@ export default function AiGraderStationPage() {
               <dd>{formatMs(status.timingSummary?.phaseBreakdown?.frontPackageMs)}</dd>
               <dt>Back package</dt>
               <dd>{formatMs(status.timingSummary?.phaseBreakdown?.backPackageMs)}</dd>
+              <dt>Warm setup</dt>
+              <dd>{formatMs(status.timingSummary?.phaseBreakdown?.warmSessionSetupMs)}</dd>
+              <dt>Front processing</dt>
+              <dd>{formatMs(status.timingSummary?.phaseBreakdown?.frontProcessingQueuedMs)}</dd>
+              <dt>Back processing</dt>
+              <dd>{formatMs(status.timingSummary?.phaseBreakdown?.backProcessingQueuedMs)}</dd>
+              <dt>Report queue</dt>
+              <dd>{formatMs(status.timingSummary?.phaseBreakdown?.reportQueueMs)}</dd>
               <dt>Detailed fields</dt>
               <dd>{status.timingSummary?.detailedEntries?.length ?? 0}</dd>
             </dl>
@@ -1390,6 +1525,7 @@ export default function AiGraderStationPage() {
         .profile,
         .card-linkage,
         .status,
+        .warm-runner,
         .production-status,
         .slabbed-photos,
         .paths,
@@ -1482,6 +1618,116 @@ export default function AiGraderStationPage() {
           font-size: 12px;
           line-height: 1.45;
           overflow-wrap: anywhere;
+        }
+        .warm-runner {
+          display: grid;
+          gap: 12px;
+        }
+        .warm-head {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .warm-head h3 {
+          margin: 4px 0 0;
+          font-size: 16px;
+        }
+        .warm-head > strong {
+          color: #f7e4b4;
+          font-size: 13px;
+          text-align: right;
+          text-transform: uppercase;
+        }
+        .warm-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .warm-grid span,
+        .evidence-side > div:first-child span,
+        .phase-list span {
+          display: block;
+          color: #9d9688;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+        }
+        .warm-grid strong,
+        .evidence-side strong {
+          display: block;
+          margin-top: 4px;
+          font-size: 14px;
+          overflow-wrap: anywhere;
+        }
+        .evidence-side {
+          display: grid;
+          gap: 8px;
+        }
+        .evidence-side > div:first-child {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+        }
+        .role-strip {
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 5px;
+        }
+        .role {
+          min-width: 0;
+          min-height: 24px;
+          border: 1px solid rgba(255, 255, 255, 0.13);
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.05);
+          color: #bdb5a8;
+          display: grid;
+          place-items: center;
+          font-size: 10px;
+          font-weight: 900;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .role.active {
+          border-color: rgba(228, 191, 105, 0.76);
+          background: rgba(228, 191, 105, 0.14);
+          color: #f7e4b4;
+        }
+        .role.completed {
+          border-color: rgba(87, 215, 132, 0.46);
+          background: rgba(87, 215, 132, 0.12);
+          color: #bff1cc;
+        }
+        .role.failed,
+        .role.cancelled {
+          border-color: rgba(255, 92, 92, 0.5);
+          background: rgba(105, 19, 23, 0.28);
+          color: #ffd7d7;
+        }
+        .phase-list {
+          display: grid;
+          gap: 6px;
+        }
+        .phase-list div {
+          display: grid;
+          grid-template-columns: 72px 1fr auto;
+          gap: 8px;
+          align-items: center;
+          min-height: 28px;
+          color: #dcd5ca;
+          font-size: 12px;
+        }
+        .phase-list strong {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .phase-list em {
+          color: #bdb5a8;
+          font-style: normal;
         }
         .production-status {
           display: grid;

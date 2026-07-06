@@ -36,6 +36,7 @@ export type AiGraderStationAction =
   | "publish-report"
   | "generate-label-data"
   | "safe-off"
+  | "cancel-session"
   | "latest-report"
   | "session-manifest"
   | "end-session";
@@ -50,6 +51,117 @@ export type AiGraderStationStep = {
 
 export type AiGraderLocalStationBridgeMode = "mock_dev" | "contract_only" | "future_hardware_bridge" | "mock" | "real";
 
+export type AiGraderWarmRunnerSide = "front" | "back";
+export type AiGraderWarmRunnerPhaseStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
+export type AiGraderWarmRunnerExecutionPath = "warm_full_forensic_runner" | "cold_command_fallback";
+export type AiGraderWarmRunnerStatusName =
+  | "idle"
+  | "warming"
+  | "capturing"
+  | "processing"
+  | "reporting"
+  | "safe_off"
+  | "complete"
+  | "failed"
+  | "cancelled";
+
+export type AiGraderWarmRunnerEvidenceRole = {
+  role:
+    | "dark_control"
+    | "all_on"
+    | "accepted_profile"
+    | "channel_1"
+    | "channel_2"
+    | "channel_3"
+    | "channel_4"
+    | "channel_5"
+    | "channel_6"
+    | "channel_7"
+    | "channel_8";
+  label: string;
+  required: true;
+  status: AiGraderWarmRunnerPhaseStatus;
+};
+
+export type AiGraderWarmRunnerPhase = {
+  id: string;
+  label: string;
+  status: AiGraderWarmRunnerPhaseStatus;
+  side?: AiGraderWarmRunnerSide;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  backend?: AiGraderWarmRunnerExecutionPath;
+  executionPath?: AiGraderWarmRunnerExecutionPath;
+  detail?: string;
+};
+
+export type AiGraderWarmRunnerStatus = {
+  enabled: true;
+  mode: "full_forensic";
+  backend: AiGraderWarmRunnerExecutionPath;
+  executionPath: AiGraderWarmRunnerExecutionPath;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
+  status: AiGraderWarmRunnerStatusName;
+  sessionId?: string;
+  activeSide?: AiGraderWarmRunnerSide;
+  captureLock: {
+    held: boolean;
+    owner?: string;
+    acquiredAt?: string;
+  };
+  previewPolicy: {
+    pauseDuringCapture: true;
+    resumeAfterSafeIdle: true;
+    lastPausedAt?: string;
+    lastResumeReadyAt?: string;
+  };
+  evidencePlan: {
+    defaultFullForensic: true;
+    rolesBySide: Record<AiGraderWarmRunnerSide, AiGraderWarmRunnerEvidenceRole[]>;
+    preservedOutputs: Array<
+      | "front_evidence"
+      | "back_evidence"
+      | "roi_display_crops"
+      | "surface_intelligence"
+      | "vision_lab"
+      | "unified_report"
+    >;
+  };
+  queues: {
+    capture: AiGraderWarmRunnerPhase[];
+    processing: AiGraderWarmRunnerPhase[];
+    report: AiGraderWarmRunnerPhase[];
+  };
+  phases: AiGraderWarmRunnerPhase[];
+  timing: {
+    baselineTotalMs: number;
+    targetTotalMinMs: number;
+    targetTotalMaxMs: number;
+    stretchTargetMs: number;
+    measuredTotalMs?: number;
+  };
+  fallback: {
+    available: true;
+    active: boolean;
+    reason?: string;
+  };
+  safety: {
+    captureLock: true;
+    watchdogSafeOff: true;
+    safeOffOnFailure: true;
+    safeOffOnCancellation: true;
+    safeOffOnSessionEnd: true;
+    fallbackToColdPath: true;
+    publicRouteExposed: false;
+    productionServiceTokenUsed: false;
+    persistentBaslerSaved: false;
+    persistentLeimacSaved: false;
+  };
+  note: string;
+};
+
 export type AiGraderLocalStationStatus = {
   bridgeVersion: typeof AI_GRADER_LOCAL_STATION_BRIDGE_VERSION;
   stationId: string;
@@ -60,6 +172,9 @@ export type AiGraderLocalStationStatus = {
   currentStep: AiGraderStationStepId;
   nextAction: AiGraderStationAction;
   nextActionLabel: string;
+  executionPath: AiGraderWarmRunnerExecutionPath;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
   acceptedProfile: {
     dutyPercent: number;
     exposureUs: number;
@@ -109,6 +224,7 @@ export type AiGraderLocalStationStatus = {
     realHardwarePending: string[];
   };
   previewStatus: AiGraderLocalStationPreviewStatus;
+  warmRunnerStatus: AiGraderWarmRunnerStatus;
   reportBundle?: AiGraderReportBundle;
   stationUrl?: string;
   bridgeSecurity?: {
@@ -142,6 +258,9 @@ export type AiGraderLocalStationStatus = {
 
 export type AiGraderLocalStationTimingSummary = {
   totalCommandMs: number;
+  executionPath: AiGraderWarmRunnerExecutionPath;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
   bridgeActionOverheadMs: number;
   captureCommandMs: number;
   reportGenerationMs: number;
@@ -155,7 +274,7 @@ export type AiGraderLocalStationTimingSummary = {
     durationMs: number;
     startedAt?: string;
     finishedAt?: string;
-    category?: "bridge" | "preview" | "capture" | "processing" | "report" | "safe_off" | "publish";
+    category?: "bridge" | "preview" | "capture" | "processing" | "report" | "safe_off" | "publish" | "warm_runner";
     label?: string;
     detail?: string;
   }>;
@@ -164,7 +283,7 @@ export type AiGraderLocalStationTimingSummary = {
     durationMs: number;
     startedAt?: string;
     finishedAt?: string;
-    category?: "bridge" | "preview" | "capture" | "processing" | "report" | "safe_off" | "publish";
+    category?: "bridge" | "preview" | "capture" | "processing" | "report" | "safe_off" | "publish" | "warm_runner";
     label?: string;
     detail?: string;
   }>;
@@ -186,6 +305,11 @@ export type AiGraderLocalStationTimingSummary = {
     unifiedReportHtmlGenerationMs?: number;
     localReportOpenMs?: number;
     publishUploadMs?: number;
+    warmSessionSetupMs?: number;
+    frontProcessingQueuedMs?: number;
+    backProcessingQueuedMs?: number;
+    reportQueueMs?: number;
+    safeCleanupMs?: number;
   };
   targetInterCaptureNote: string;
 };
@@ -293,6 +417,7 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "publish-report": "finalize_publish_report",
   "generate-label-data": "label_data_ready",
   "safe-off": "safe_off_end_session",
+  "cancel-session": "safe_off_end_session",
   "latest-report": "view_unified_report",
   "session-manifest": "view_unified_report",
   "end-session": "safe_off_end_session",
@@ -342,14 +467,96 @@ function bridgeEndpoints() {
     { method: "POST", action: "publish-report", description: "Prepare local publication manifest and public URL data." },
     { method: "POST", action: "generate-label-data", description: "Generate label-ready JSON and QR payload URL data." },
     { method: "POST", action: "safe-off", description: "Contract endpoint for Leimac safe-off." },
+    { method: "POST", action: "cancel-session", description: "Cancel a local station session with safe-off cleanup." },
     { method: "GET", action: "latest-report", description: "Read latest report location." },
     { method: "GET", action: "session-manifest", description: "Read station session manifest." },
+    { method: "POST", action: "end-session", description: "End the local station session." },
   ];
   return actions.map((endpoint) => ({
     ...endpoint,
     path: endpoint.path ?? `/api/ai-grader/station/${endpoint.action}`,
     hardwareAccess: false,
   }));
+}
+
+function fullForensicEvidenceRoles(status: AiGraderWarmRunnerPhaseStatus = "pending"): AiGraderWarmRunnerEvidenceRole[] {
+  return [
+    { role: "dark_control", label: "Dark control", required: true, status },
+    { role: "all_on", label: "All-on", required: true, status },
+    { role: "accepted_profile", label: "Accepted profile", required: true, status },
+    ...Array.from({ length: 8 }, (_, index) => {
+      const channel = index + 1;
+      return {
+        role: `channel_${channel}` as AiGraderWarmRunnerEvidenceRole["role"],
+        label: `Leimac channel ${channel}`,
+        required: true as const,
+        status,
+      };
+    }),
+  ];
+}
+
+function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
+  return {
+    enabled: true,
+    mode: "full_forensic",
+    backend: "warm_full_forensic_runner",
+    executionPath: "warm_full_forensic_runner",
+    fallbackUsed: false,
+    status: "idle",
+    captureLock: {
+      held: false,
+    },
+    previewPolicy: {
+      pauseDuringCapture: true,
+      resumeAfterSafeIdle: true,
+    },
+    evidencePlan: {
+      defaultFullForensic: true,
+      rolesBySide: {
+        front: fullForensicEvidenceRoles(),
+        back: fullForensicEvidenceRoles(),
+      },
+      preservedOutputs: [
+        "front_evidence",
+        "back_evidence",
+        "roi_display_crops",
+        "surface_intelligence",
+        "vision_lab",
+        "unified_report",
+      ],
+    },
+    queues: {
+      capture: [],
+      processing: [],
+      report: [],
+    },
+    phases: [],
+    timing: {
+      baselineTotalMs: 461000,
+      targetTotalMinMs: 60000,
+      targetTotalMaxMs: 150000,
+      stretchTargetMs: 60000,
+    },
+    fallback: {
+      available: true,
+      active: false,
+    },
+    safety: {
+      captureLock: true,
+      watchdogSafeOff: true,
+      safeOffOnFailure: true,
+      safeOffOnCancellation: true,
+      safeOffOnSessionEnd: true,
+      fallbackToColdPath: true,
+      publicRouteExposed: false,
+      productionServiceTokenUsed: false,
+      persistentBaslerSaved: false,
+      persistentLeimacSaved: false,
+    },
+    note:
+      "Full forensic evidence remains the default. The local Dell bridge owns warm capture, lock, queue, timing, and safe cleanup state.",
+  };
 }
 
 function defaultPreviewStatus(): AiGraderLocalStationPreviewStatus {
@@ -403,6 +610,8 @@ export function buildAiGraderLocalStationStatus(input: {
     currentStep,
     nextAction,
     nextActionLabel: actionLabel(nextAction),
+    executionPath: "warm_full_forensic_runner",
+    fallbackUsed: false,
     acceptedProfile: {
       dutyPercent: 1.3,
       exposureUs: 45000,
@@ -463,6 +672,7 @@ export function buildAiGraderLocalStationStatus(input: {
       ],
     },
     previewStatus: defaultPreviewStatus(),
+    warmRunnerStatus: defaultWarmRunnerStatus(),
     reportBundle,
     outputs: {
       productionReleasePath: finalComputed ? "sample-production-release.json" : undefined,
@@ -472,6 +682,8 @@ export function buildAiGraderLocalStationStatus(input: {
     },
     timingSummary: {
       totalCommandMs: 0,
+      executionPath: "warm_full_forensic_runner",
+      fallbackUsed: false,
       bridgeActionOverheadMs: 0,
       captureCommandMs: 0,
       reportGenerationMs: 0,
@@ -543,6 +755,7 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "publish-report",
     "generate-label-data",
     "safe-off",
+    "cancel-session",
     "latest-report",
     "session-manifest",
     "end-session",
