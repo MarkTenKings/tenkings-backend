@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import aiGraderLocalStationHandler from "../pages/api/ai-grader/station/[...action]";
@@ -32,7 +34,7 @@ import {
   fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
-  fetchAiGraderStationReportHtml,
+  fetchAiGraderStationReportBundle,
   heartbeatAiGraderLiveLighting,
   normalizeAiGraderStationBridgeUrl,
   openAiGraderStationPreviewStream,
@@ -40,6 +42,7 @@ import {
   safeOffAiGraderLiveLighting,
   stopAiGraderStationPreview,
 } from "../lib/aiGraderStationBridgeClient";
+import { reportImageAssets } from "../lib/aiGraderReportImages";
 
 type MockResponse = NextApiResponse & {
   statusCodeValue: number | null;
@@ -610,6 +613,13 @@ test("production publication API uploads AI Grader evidence images from report b
   assert.equal(imageUpload?.bodyEncoding, "base64");
   assert.equal(imageUpload?.bodyText, "front-image");
   assert.match(imageUpload?.storageKey ?? "", /assets\/001-front-all-on-portrait-display\.png/);
+  const reportBundleUpload = uploaded.find((upload) => upload.storageKey.endsWith("/report-bundle.json"));
+  assert.ok(reportBundleUpload);
+  const storedBundle = JSON.parse(reportBundleUpload.bodyText);
+  assert.equal(storedBundle.assets[0].publicUrl, "https://cdn.tenkings.test/ai-grader/reports/sample-final-v0/assets/001-front-all-on-portrait-display.png");
+  assert.equal(storedBundle.assets[0].bodyBase64, undefined);
+  assert.equal(JSON.stringify(storedBundle).includes("C:\\TenKings"), false);
+  assert.equal(reportImageAssets(storedBundle).length, 1);
   const body = res.jsonBody as { ok: boolean; result: { uploadedAssetCount: number } };
   assert.equal(body.result.uploadedAssetCount, 8);
 });
@@ -981,6 +991,54 @@ test("local station sample history aggregates report stats without certified cla
   assert.equal(hasNoFinalCertifiedClaims(SAMPLE_AI_GRADER_REPORT_BUNDLE), true);
 });
 
+test("AI Grader report image resolver keeps public URLs storage-backed and local bodies operator-only", () => {
+  const bodyBase64 = Buffer.from("front-image").toString("base64");
+  const bundle = {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    assets: [
+      {
+        id: "front/front-all-on-portrait-display.png",
+        kind: "image",
+        fileName: "front-all-on-portrait-display.png",
+        contentType: "image/png",
+        publicUrl: "C:\\TenKings\\capture-data\\front.png",
+        bodyEncoding: "base64",
+        bodyBase64,
+      },
+      {
+        id: "back/back-all-on-portrait-display.png",
+        kind: "image",
+        fileName: "back-all-on-portrait-display.png",
+        contentType: "image/png",
+        publicUrl: "https://cdn.tenkings.test/back.png",
+      },
+    ],
+  };
+
+  const publicImages = reportImageAssets(bundle);
+  assert.equal(publicImages.length, 1);
+  assert.equal(publicImages[0].renderUrl, "https://cdn.tenkings.test/back.png");
+  assert.equal(publicImages[0].renderSource, "public_url");
+
+  const localImages = reportImageAssets(bundle, { allowEmbeddedBodies: true });
+  assert.equal(localImages.length, 2);
+  assert.equal(localImages.some((image) => image.renderUrl === `data:image/png;base64,${bodyBase64}`), true);
+  assert.equal(localImages.some((image) => image.renderUrl.includes("C:\\TenKings")), false);
+});
+
+test("AI Grader station source opens reports inline without popup dependency", () => {
+  const stationPath =
+    [path.join(process.cwd(), "pages", "ai-grader", "station.tsx"), path.join(process.cwd(), "frontend", "nextjs-app", "pages", "ai-grader", "station.tsx")]
+      .find((candidate) => fs.existsSync(candidate));
+  assert.ok(stationPath);
+  const stationSource = fs.readFileSync(stationPath, "utf8");
+  assert.equal(stationSource.includes("window.open("), false);
+  assert.equal(stationSource.includes("Allow pop-ups"), false);
+  assert.equal(stationSource.includes("fetchAiGraderStationReportBundle"), true);
+  assert.equal(stationSource.includes("includeAssetBodies: true"), true);
+  assert.equal(stationSource.includes("Local Operator Report"), true);
+});
+
 test("browser station bridge client accepts only loopback bridge URLs", () => {
   assert.equal(normalizeAiGraderStationBridgeUrl(""), DEFAULT_AI_GRADER_STATION_BRIDGE_URL);
   assert.equal(normalizeAiGraderStationBridgeUrl("http://localhost:47652/path?x=1"), "http://localhost:47652");
@@ -1043,26 +1101,47 @@ test("browser station bridge pairing exchanges a local pairing code for browser-
   assert.equal(paired.tokenStorage, "browser_localStorage_only");
 });
 
-test("browser station bridge client opens local report HTML with station token only", async () => {
+test("browser station bridge client fetches local report bundle bodies with station token only", async () => {
+  const imageBody = Buffer.from("front-image").toString("base64");
   const fetchImpl: typeof fetch = async (input, init) => {
-    assert.equal(String(input), "http://127.0.0.1:47652/reports/report-123/html");
+    assert.equal(String(input), "http://127.0.0.1:47652/reports/report-123/bundle?includeAssetBodies=1");
     assert.equal(init?.method, "GET");
     const headers = init?.headers as Record<string, string>;
     assert.equal(headers["x-ai-grader-station-token"], "browser-local-station-token");
     assert.equal(headers["x-ai-grader-service-token"], undefined);
-    return new Response("<!doctype html><title>Local report</title>", { status: 200, headers: { "content-type": "text/html" } });
+    return new Response(JSON.stringify({
+      ok: true,
+      result: {
+        reportId: "report-123",
+        source: "history_generated_with_asset_bodies",
+        bundle: {
+          ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+          reportId: "report-123",
+          assets: [
+            {
+              id: "front/front-all-on-portrait-display.png",
+              kind: "image",
+              fileName: "front-all-on-portrait-display.png",
+              contentType: "image/png",
+              bodyEncoding: "base64",
+              bodyBase64: imageBody,
+            },
+          ],
+        },
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } });
   };
 
-  const html = await fetchAiGraderStationReportHtml(
-    {
-      baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
-      stationToken: "browser-local-station-token",
-      reportId: "report-123",
-    },
-    fetchImpl
-  );
+  const bundle = await fetchAiGraderStationReportBundle({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    reportId: "report-123",
+    includeAssetBodies: true,
+  }, fetchImpl);
 
-  assert.match(html, /Local report/);
+  const image = bundle.assets?.find((asset) => asset.fileName === "front-all-on-portrait-display.png");
+  assert.equal(image?.bodyEncoding, "base64");
+  assert.equal(Buffer.from(image?.bodyBase64 ?? "", "base64").toString("utf8"), "front-image");
 });
 
 test("browser station bridge preview status and stream use local station token only", async () => {
