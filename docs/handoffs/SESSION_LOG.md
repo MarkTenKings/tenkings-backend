@@ -23594,5 +23594,6 @@ By enabling Rip It Live, I confirm:
 - Run Mark-supervised PR #60 browser live Leimac lighting smoke from branch `feature/ai-grader-browser-live-lighting-tuning`.
 - Use the PR #60 local station UI, not production main, so the live-lighting panel is present before merge.
 - Rebuild/restart the Dell local bridge from the PR #60 branch in real/local-only mode with local station origins allowed.
+- Rotate only the local Dell bridge pairing code if the previous pairing code is expired, then open the PR #60 local station URL with the pairing hash without printing the code.
 - Verify bridge health, embedded Basler MJPEG preview, live Leimac channel/duty tuning, profile acceptance, capture transition safe-off, warm capture using the accepted live-tuned profile, report open, and final physical light off.
 - Guardrails: no migrations, no production DB writes, no Vercel env changes, no credential rotation, no secret printing, no public hardware controls.
