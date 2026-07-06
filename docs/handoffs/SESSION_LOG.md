@@ -23817,3 +23817,29 @@ By enabling Rip It Live, I confirm:
 - Planned action: merge PR #63 after this handoff-log update, confirm Vercel Production deployment succeeds, pull latest `main` locally on the Dell, rebuild/restart the Dell local bridge from merged `main`, and confirm bridge health.
 - After PR #63 deploy/restart, diagnose the blocked existing report `ai-grader-browser-station-session-2026-07-06T182257920Z-report` / `TK-AIG-73C38B7F` before any new hardware capture.
 - Guardrails remain: no migrations, DB schema changes, Vercel env changes, credential rotation, destructive operations, secret printing, unsupervised hardware capture, or forced publish of insufficient-evidence reports.
+
+### Insufficient-Evidence Gate Diagnosis / Fix
+- Existing blocked session inspected through the paired local bridge and local report files: `ai-grader-browser-station-session-2026-07-06T182257920Z-report`, cert/report ID `TK-AIG-73C38B7F`.
+- Root cause: `packages/ai-grader-capture-helper/src/drivers/fixedRigProvisionalGradeStory.ts` hard-failed the `clipping` gate when `max(frontStats.clippedPixelFraction, backStats.clippedPixelFraction) > 0.4`. The unified report supplied those stats from `sideAllOnStats(front/back)` in `packages/ai-grader-capture-helper/src/drivers/baslerFixedRigV1.ts`.
+- Actual gate table from the blocked report:
+  - `ruler_calibration`: expected fixed-ruler calibration pass; actual `pass`; evidence present.
+  - `repeatability`: expected pass or accepted warning; actual `accepted_warning`; non-blocking.
+  - `framing_overlay`: expected framing and overlay pass; actual `pass`; evidence present.
+  - `front_evidence_complete`: expected diagnostics plus Surface Intelligence; actual `pass`; front package/evidence refs present.
+  - `back_evidence_complete`: expected diagnostics plus Surface Intelligence; actual `pass`; back package/evidence refs present.
+  - `surface_intelligence_complete`: expected front/back computed; actual `pass`; Vision Lab/surface assets present.
+  - `clipping`: expected <= `0.02` soft target or accepted warning; actual `fail` at `0.460642`; this set `provisionalGradeStory.status=insufficient_evidence`, `provisionalOverallGrade=null`, and blocked final grade/label/publish.
+  - `focus_sharpness`: expected >= `60`; actual `pass` at `750.2521` minimum sharpness.
+- Evidence was not missing: local bundle had `77` assets, `72` image assets, `72` image bodies with `includeAssetBodies=1`, front/back evidence refs, and Vision Lab artifacts.
+- Policy fix: clipping above the soft target is now an accepted V0 confidence warning when finite and below near-total saturation (`0.95`); missing clipping stats or near-total saturation can still hard-fail. Missing front/back/surface/framing/ruler/focus gates still fail closed.
+- In-memory recompute against the existing front/back package manifests after the fix, without writing files or running hardware, produced `status=provisional_diagnostic_grade`, `provisionalGradeComputed=true`, `provisionalOverallGrade=6.32`, `confidence=low/0.125`, `clipping=accepted_warning`, and no blockers.
+- Report UX fix: report bundles now preserve `provisionalGrade.gates`; station and public report viewers render the provisional gate table even when no production release exists; publish readiness includes failed provisional gates.
+- Validation after fix:
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>`, Browserslist/baseline-browser-mapping, and Tailwind glob warnings.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `38` tests.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `180` tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+  - `git diff --check` -> pass with line-ending warnings only.
+- No hardware capture, production publish, migration, DB schema change, Vercel env change, credential rotation, destructive operation, or secret-printing action was run.

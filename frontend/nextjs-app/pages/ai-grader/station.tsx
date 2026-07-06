@@ -499,6 +499,21 @@ export default function AiGraderStationPage() {
   const localReportRelease = localReport.bundle?.productionRelease;
   const localReportFinalGrade = localReportRelease?.finalGrade;
   const localReportStory = localReport.bundle?.provisionalGrade;
+  const localReportGateRows = localReportRelease?.gates.length
+    ? localReportRelease.gates.map((gate) => ({
+        key: gate.id,
+        status: gate.status,
+        label: gate.label,
+        reason: gate.reason,
+        evidenceRefs: gate.evidenceRefs,
+      }))
+    : (localReportStory?.gates?.results ?? []).map((gate, index) => ({
+        key: gate.gate ?? `gate-${index}`,
+        status: gate.status ?? "unknown",
+        label: gate.gate ?? `Gate ${index + 1}`,
+        reason: gate.summary ?? "No gate summary recorded.",
+        evidenceRefs: gate.evidenceRefs ?? [],
+      }));
   const showFlipScrim = status.currentStep === "prompt_flip_card";
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
   const warmRunner = status.warmRunnerStatus;
@@ -1443,15 +1458,16 @@ export default function AiGraderStationPage() {
                   ) : (
                     <div className="report-error">No renderable local report images were returned by the paired bridge.</div>
                   )}
-                  {localReportRelease ? (
+                  {localReportGateRows.length ? (
                     <section className="report-section">
                       <p className="eyebrow">Warnings and Gates</p>
                       <div className="gate-grid">
-                        {localReportRelease.gates.map((gate) => (
-                          <article key={gate.id} className={gate.status}>
+                        {localReportGateRows.map((gate) => (
+                          <article key={gate.key} className={gate.status}>
                             <span>{formatStationValue(gate.status)}</span>
                             <strong>{gate.label}</strong>
                             <p>{gate.reason}</p>
+                            {gate.evidenceRefs.length ? <small>{gate.evidenceRefs.join(", ")}</small> : null}
                           </article>
                         ))}
                       </div>

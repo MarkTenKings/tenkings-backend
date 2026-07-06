@@ -296,6 +296,19 @@ test("insufficient evidence AI Grader reports cannot be published", () => {
     provisionalGrade: {
       ...SAMPLE_AI_GRADER_REPORT_BUNDLE.provisionalGrade,
       overall: undefined,
+      gates: {
+        requiredGatesPassed: false,
+        results: [
+          {
+            gate: "clipping",
+            status: "fail",
+            summary: "Maximum clipped fraction is 0.99; soft target is 0.02.",
+            evidenceRefs: ["analysis.back.allOn.clippedPixelFraction"],
+          },
+        ],
+        blockers: ["clipping: Maximum clipped fraction is 0.99; soft target is 0.02."],
+        acceptedWarnings: [],
+      },
     },
   };
   const readiness = buildAiGraderPublishReadiness({ bundle: blockedBundle });
@@ -303,6 +316,8 @@ test("insufficient evidence AI Grader reports cannot be published", () => {
   assert.equal(readiness.ready, false);
   assert.equal(readiness.status, "not_ready_insufficient_evidence");
   assert.match(readiness.message, /insufficient evidence/i);
+  assert.equal(readiness.failedGates[0]?.id, "clipping");
+  assert.match(readiness.failedGates[0]?.reason ?? "", /0\.99/);
 });
 
 test("AI Grader comps readiness requires final grade and card identity", () => {
@@ -1185,10 +1200,24 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("Element Diagnostics"), true);
   assert.equal(stationSource.includes("Vision Lab"), true);
   assert.equal(stationSource.includes("Warnings and Gates"), true);
+  assert.equal(stationSource.includes("localReportStory?.gates?.results"), true);
   assert.equal(stationSource.includes("Publish Readiness"), true);
   assert.equal(stationSource.includes("Calculate Final Grade\""), false);
   assert.equal(stationSource.includes("Finalize / Publish"), false);
   assert.equal(stationSource.includes("Publish to Ten Kings System"), false);
+});
+
+test("AI Grader public report source renders provisional evidence gates", () => {
+  const reportPath =
+    [
+      path.join(process.cwd(), "pages", "ai-grader", "reports", "[reportId].tsx"),
+      path.join(process.cwd(), "frontend", "nextjs-app", "pages", "ai-grader", "reports", "[reportId].tsx"),
+    ].find((candidate) => fs.existsSync(candidate));
+  assert.ok(reportPath);
+  const reportSource = fs.readFileSync(reportPath, "utf8");
+  assert.equal(reportSource.includes("Evidence Gates"), true);
+  assert.equal(reportSource.includes("provisionalGateRows"), true);
+  assert.equal(reportSource.includes("Failed gates explain why"), true);
 });
 
 test("browser station bridge client accepts only loopback bridge URLs", () => {

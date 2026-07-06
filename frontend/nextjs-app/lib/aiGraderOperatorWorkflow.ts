@@ -83,13 +83,21 @@ export function buildAiGraderPublishReadiness(input: {
     (reportId ? buildAiGraderPublicReportUrl(reportId, input.publicBaseUrl) : undefined);
   const qrPayloadUrl = trim(release?.label?.qrPayloadUrl) || trim(release?.publication?.qrPayloadUrl) || publicReportUrl;
   const labelPreviewUrl = reportId ? buildAiGraderLabelPreviewUrl(reportId, input.publicBaseUrl) : undefined;
-  const failedGates = (release?.gates ?? [])
+  const releaseFailedGates = (release?.gates ?? [])
     .filter((gate) => gate.status === "fail")
     .map((gate) => ({
       id: gate.id,
       label: gate.label,
       reason: gate.reason,
     }));
+  const provisionalFailedGates = (input.bundle?.provisionalGrade?.gates?.results ?? [])
+    .filter((gate) => gate.status === "fail")
+    .map((gate) => ({
+      id: trim(gate.gate) || "provisional_gate",
+      label: trim(gate.gate) || "Provisional evidence gate",
+      reason: trim(gate.summary) || "Provisional evidence gate failed.",
+    }));
+  const failedGates = [...releaseFailedGates, ...provisionalFailedGates];
   const published = input.published === true;
 
   if (!input.bundle && !release) {

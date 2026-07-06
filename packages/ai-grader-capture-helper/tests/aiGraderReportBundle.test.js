@@ -57,6 +57,19 @@ function fixtureReportDir() {
           status: "provisional_diagnostic_grade",
           provisionalOverallGrade: 8.5,
           confidence: { band: "low", score: 0.361, warnings: ["clipping accepted as warning"] },
+          gates: {
+            requiredGatesPassed: true,
+            results: [
+              {
+                gate: "clipping",
+                status: "accepted_warning",
+                summary: "Clipping exceeded the soft target but was accepted as a V0 confidence warning.",
+                evidenceRefs: ["analysis.front.allOn.clippedPixelFraction", "analysis.back.allOn.clippedPixelFraction"],
+              },
+            ],
+            blockers: [],
+            acceptedWarnings: ["clipping: accepted warning"],
+          },
           elementScores: {
             centering: { score: 10 },
             corners: { score: 8.97 },
@@ -110,6 +123,8 @@ test("report bundle exports web-ready provisional contract without final/certifi
   assert.equal(bundle.reportId, "fixture-report");
   assert.equal(bundle.reportStatus, "provisional_diagnostic_ready");
   assert.equal(bundle.provisionalGrade?.overall, 8.5);
+  assert.equal(bundle.provisionalGrade?.gates?.results?.[0]?.gate, "clipping");
+  assert.equal(bundle.provisionalGrade?.gates?.results?.[0]?.status, "accepted_warning");
   assert.equal(bundle.visionLab.available, true);
   assert.equal(bundle.visionLab.candidateCount, 1);
   assert.equal(bundle.assets.some((asset) => asset.kind === "image" && asset.fileName === "front-all-on-portrait-display.png"), true);

@@ -93,6 +93,7 @@ export interface FixedRigProvisionalGradeStoryResult {
   formulas: {
     weights: { centering: number; corners: number; edges: number; surface: number };
     clippingSoftThreshold: number;
+    clippingHardBlockThreshold: number;
     sharpnessSoftThreshold: number;
     capRules: string[];
     note: string;
@@ -129,7 +130,7 @@ export interface BuildFixedRigProvisionalGradeStoryInput {
 
 const WEIGHTS = { centering: 0.3, corners: 0.25, edges: 0.25, surface: 0.2 };
 const CLIPPING_SOFT_THRESHOLD = 0.02;
-const CLIPPING_ACCEPTED_WARNING_CEILING = 0.4;
+const CLIPPING_HARD_BLOCK_THRESHOLD = 0.95;
 const SHARPNESS_SOFT_THRESHOLD = 60;
 
 function finiteNumber(value: unknown): value is number {
@@ -412,7 +413,11 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
     finiteNumber(input.backStats?.clippedPixelFraction) ? input.backStats.clippedPixelFraction : Number.POSITIVE_INFINITY
   );
   const clippingPass = maxClipped <= CLIPPING_SOFT_THRESHOLD;
-  const clippingAccepted = allowAcceptedWarnings && Number.isFinite(maxClipped) && maxClipped <= CLIPPING_ACCEPTED_WARNING_CEILING;
+  const clippingHardBlock = Number.isFinite(maxClipped) && maxClipped >= CLIPPING_HARD_BLOCK_THRESHOLD;
+  const clippingAccepted = allowAcceptedWarnings && Number.isFinite(maxClipped) && !clippingHardBlock;
+  const clippingSummary = Number.isFinite(maxClipped)
+    ? `Maximum clipped fraction is ${maxClipped}; soft target is ${CLIPPING_SOFT_THRESHOLD}. Clipping below ${CLIPPING_HARD_BLOCK_THRESHOLD} is treated as a V0 confidence warning when required evidence is otherwise present.`
+    : `Maximum clipped fraction is missing; soft target is ${CLIPPING_SOFT_THRESHOLD}.`;
   const minSharpness = Math.min(
     finiteNumber(input.frontStats?.sharpnessScore) ? input.frontStats.sharpnessScore : Number.POSITIVE_INFINITY,
     finiteNumber(input.backStats?.sharpnessScore) ? input.backStats.sharpnessScore : Number.POSITIVE_INFINITY
@@ -433,7 +438,7 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
     gate("front_evidence_complete", frontEvidencePass, false, "Front evidence package must include diagnostics and surface intelligence.", ["analysis.front"]),
     gate("back_evidence_complete", backEvidencePass, false, "Back evidence package must include diagnostics and surface intelligence.", ["analysis.back"]),
     gate("surface_intelligence_complete", surfacePass, false, "Front/back Surface Intelligence V0 must be computed.", ["analysis.surfaceIntelligence"]),
-    gate("clipping", clippingPass, clippingAccepted, `Maximum clipped fraction is ${Number.isFinite(maxClipped) ? maxClipped : "missing"}; soft target is ${CLIPPING_SOFT_THRESHOLD}.`, [
+    gate("clipping", clippingPass, clippingAccepted, clippingSummary, [
       "analysis.front.allOn.clippedPixelFraction",
       "analysis.back.allOn.clippedPixelFraction",
     ]),
@@ -629,10 +634,12 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
     formulas: {
       weights: WEIGHTS,
       clippingSoftThreshold: CLIPPING_SOFT_THRESHOLD,
+      clippingHardBlockThreshold: CLIPPING_HARD_BLOCK_THRESHOLD,
       sharpnessSoftThreshold: SHARPNESS_SOFT_THRESHOLD,
       capRules: [
         "Any failed required gate refuses the provisional grade.",
         "Accepted-warning gates reduce confidence but do not become certified passes.",
+        "Finite clipping above the soft target is an accepted warning for V0 unless the image is near-total saturation.",
         "High-severity surface candidates cap the provisional overall grade at 8.5.",
         "Clipping above the soft target reduces confidence and appears in Why Not 10.",
       ],
