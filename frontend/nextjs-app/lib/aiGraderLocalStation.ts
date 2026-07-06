@@ -1,7 +1,7 @@
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE, type AiGraderReportBundle } from "./aiGraderReportBundle";
 import type { AiGraderProductionRelease } from "./aiGraderProductionRelease";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.1";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.4";
 
 export type AiGraderStationStepId =
   | "start_new_card"
@@ -105,9 +105,10 @@ export type AiGraderLocalStationStatus = {
     certificateGenerated: false;
   };
   bridgeContract: {
-    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderStationAction; hardwareAccess: boolean; description: string }>;
+    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderStationAction | "preview-status" | "preview-stream"; hardwareAccess: boolean; description: string }>;
     realHardwarePending: string[];
   };
+  previewStatus: AiGraderLocalStationPreviewStatus;
   reportBundle?: AiGraderReportBundle;
   stationUrl?: string;
   bridgeSecurity?: {
@@ -145,13 +146,78 @@ export type AiGraderLocalStationTimingSummary = {
   captureCommandMs: number;
   reportGenerationMs: number;
   safeOffMs: number;
+  previewStartMs?: number;
+  previewFirstFrameMs?: number;
+  localReportOpenMs?: number;
+  publishUploadMs?: number;
   entries: Array<{
     stepId: string;
     durationMs: number;
     startedAt?: string;
     finishedAt?: string;
+    category?: "bridge" | "preview" | "capture" | "processing" | "report" | "safe_off" | "publish";
+    label?: string;
+    detail?: string;
   }>;
+  detailedEntries: Array<{
+    stepId: string;
+    durationMs: number;
+    startedAt?: string;
+    finishedAt?: string;
+    category?: "bridge" | "preview" | "capture" | "processing" | "report" | "safe_off" | "publish";
+    label?: string;
+    detail?: string;
+  }>;
+  phaseBreakdown: {
+    bridgeStartupMs?: number;
+    previewStartMs?: number;
+    previewFirstFrameMs?: number;
+    baslerOpenMs?: number;
+    baslerCaptureMs?: number;
+    imageSaveMs?: number;
+    hashMs?: number;
+    cameraCloseDisposeMs?: number;
+    leimacWriteAckMs?: number;
+    leimacSafeOffMs?: number;
+    frontPackageMs?: number;
+    backPackageMs?: number;
+    roiDisplayGenerationMs?: number;
+    surfaceIntelligenceVisionLabMs?: number;
+    unifiedReportHtmlGenerationMs?: number;
+    localReportOpenMs?: number;
+    publishUploadMs?: number;
+  };
   targetInterCaptureNote: string;
+};
+
+export type AiGraderLocalStationPreviewStatus = {
+  status: "not_started" | "starting" | "live" | "paused_for_capture" | "stopped" | "unavailable" | "error";
+  implementationType: "mjpeg_fetch_stream" | "mock_mjpeg_stream" | "native_preview_only";
+  browserEmbedded: true;
+  localOnly: true;
+  tokenRequired: true;
+  streamPath: "/preview/stream";
+  statusPath: "/preview/status";
+  portraitOrientation: true;
+  cameraOwnership: "idle" | "preview_stream" | "capture_action" | "released";
+  frameSource: "basler_pylon_continuous_grab" | "mock_station_preview" | "native_pylon_window";
+  frameCount: number;
+  fps?: number;
+  startedAt?: string;
+  firstFrameAt?: string;
+  lastFrameAt?: string;
+  lastError?: string;
+  lastStopReason?: string;
+  safety: {
+    publicRouteExposed: false;
+    requiresStationToken: true;
+    bindsLoopbackOnly: true;
+    productionServiceTokenUsed: false;
+    lightingCommanded: false;
+    persistentBaslerSaved: false;
+    persistentLeimacSaved: false;
+  };
+  note: string;
 };
 
 export type AiGraderLocalReportHistoryItem = {
@@ -257,8 +323,10 @@ function actionLabel(action: AiGraderStationAction) {
 }
 
 function bridgeEndpoints() {
-  const actions: Array<{ method: "GET" | "POST"; action: AiGraderStationAction; description: string }> = [
+  const actions: Array<{ method: "GET" | "POST"; action: AiGraderStationAction | "preview-status" | "preview-stream"; description: string; path?: string }> = [
     { method: "GET", action: "status", description: "Read current local station status." },
+    { method: "GET", action: "preview-status", path: "/preview/status", description: "Read embedded browser preview status." },
+    { method: "GET", action: "preview-stream", path: "/preview/stream", description: "Open local token-gated embedded preview stream." },
     { method: "POST", action: "start-session", description: "Start a local station session in mock/contract mode." },
     { method: "POST", action: "confirm-light-idle-off", description: "Record operator confirmation that the physical ring light is idle/off." },
     { method: "POST", action: "confirm-fixture-rulers", description: "Record operator confirmation that the fixture/rulers are visible." },
@@ -279,9 +347,35 @@ function bridgeEndpoints() {
   ];
   return actions.map((endpoint) => ({
     ...endpoint,
-    path: `/api/ai-grader/station/${endpoint.action}`,
+    path: endpoint.path ?? `/api/ai-grader/station/${endpoint.action}`,
     hardwareAccess: false,
   }));
+}
+
+function defaultPreviewStatus(): AiGraderLocalStationPreviewStatus {
+  return {
+    status: "not_started",
+    implementationType: "mock_mjpeg_stream",
+    browserEmbedded: true,
+    localOnly: true,
+    tokenRequired: true,
+    streamPath: "/preview/stream",
+    statusPath: "/preview/status",
+    portraitOrientation: true,
+    cameraOwnership: "idle",
+    frameSource: "mock_station_preview",
+    frameCount: 0,
+    safety: {
+      publicRouteExposed: false,
+      requiresStationToken: true,
+      bindsLoopbackOnly: true,
+      productionServiceTokenUsed: false,
+      lightingCommanded: false,
+      persistentBaslerSaved: false,
+      persistentLeimacSaved: false,
+    },
+    note: "Contract preview status only. Real embedded preview is supplied by the token-gated local Dell bridge.",
+  };
 }
 
 export function buildAiGraderLocalStationStatus(input: {
@@ -368,6 +462,7 @@ export function buildAiGraderLocalStationStatus(input: {
         "Run Leimac safe-off from the page only after Mark is present and explicit apply flags are supplied.",
       ],
     },
+    previewStatus: defaultPreviewStatus(),
     reportBundle,
     outputs: {
       productionReleasePath: finalComputed ? "sample-production-release.json" : undefined,
@@ -382,6 +477,8 @@ export function buildAiGraderLocalStationStatus(input: {
       reportGenerationMs: 0,
       safeOffMs: 0,
       entries: [],
+      detailedEntries: [],
+      phaseBreakdown: {},
       targetInterCaptureNote: "Contract preview uses fixture data; real timing appears when connected to the local bridge.",
     },
   };

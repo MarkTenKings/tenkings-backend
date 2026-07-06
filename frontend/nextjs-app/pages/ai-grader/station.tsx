@@ -1,5 +1,5 @@
 import Head from "next/head";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
@@ -17,8 +17,10 @@ import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   callAiGraderStationBridge,
   fetchAiGraderStationBridgeHealth,
+  fetchAiGraderStationPreviewStatus,
   fetchAiGraderStationReportHistory,
   fetchAiGraderStationReportHtml,
+  openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
 } from "../../lib/aiGraderStationBridgeClient";
 
@@ -101,6 +103,9 @@ export default function AiGraderStationPage() {
   const [stationToken, setStationToken] = useState("");
   const [bridgeConnected, setBridgeConnected] = useState(false);
   const [bridgeConnectionState, setBridgeConnectionState] = useState<BridgeConnectionState>("checking");
+  const [previewStatus, setPreviewStatus] = useState(status.previewStatus);
+  const [previewFrameUrl, setPreviewFrameUrl] = useState<string | null>(null);
+  const previewFrameUrlRef = useRef<string | null>(null);
   const [manualPairingCode, setManualPairingCode] = useState("");
   const [advancedConnectOpen, setAdvancedConnectOpen] = useState(false);
   const [contractPreviewEnabled, setContractPreviewEnabled] = useState(false);
@@ -134,6 +139,7 @@ export default function AiGraderStationPage() {
     setBridgeUrl(targetBridgeUrl);
     setStationToken(targetStationToken);
     setStatus(next);
+    setPreviewStatus(next.previewStatus);
     setBridgeConnected(true);
     setBridgeConnectionState("connected");
     setProfileDraft({
@@ -144,6 +150,10 @@ export default function AiGraderStationPage() {
     setHistory(await fetchAiGraderStationReportHistory({ baseUrl: targetBridgeUrl, stationToken: targetStationToken }));
     return next;
   };
+
+  useEffect(() => {
+    setPreviewStatus(status.previewStatus);
+  }, [status.previewStatus]);
 
   useEffect(() => {
     let cancelled = false;
@@ -197,6 +207,93 @@ export default function AiGraderStationPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const previewSuspendedForStationAction = busy === "start-grading" || busy === "back" || busy === "capture-front" || busy === "capture-back" || busy === "safe-off";
+    if (!bridgeConnected || !stationToken.trim() || previewSuspendedForStationAction) {
+      if (previewFrameUrlRef.current) {
+        window.URL.revokeObjectURL(previewFrameUrlRef.current);
+        previewFrameUrlRef.current = null;
+      }
+      setPreviewFrameUrl(null);
+      if (previewSuspendedForStationAction) {
+        setPreviewStatus((currentStatus) => ({
+          ...currentStatus,
+          status: "paused_for_capture",
+          cameraOwnership: "capture_action",
+          lastStopReason: "Preview suspended while station action is running.",
+        }));
+      }
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    const startPreview = async () => {
+      try {
+        const current = await fetchAiGraderStationPreviewStatus({ baseUrl: bridgeUrl, stationToken });
+        if (cancelled) return;
+        setPreviewStatus({ ...current, status: current.status === "live" ? "live" : "starting" });
+        await openAiGraderStationPreviewStream(
+          { baseUrl: bridgeUrl, stationToken },
+          {
+            signal: controller.signal,
+            onOpen() {
+              if (cancelled) return;
+              setPreviewStatus((currentStatus) => ({
+                ...currentStatus,
+                status: "starting",
+                implementationType: "mjpeg_fetch_stream",
+              }));
+            },
+            onFrame(frame) {
+              if (cancelled) return;
+              const objectUrl = window.URL.createObjectURL(frame.blob);
+              if (previewFrameUrlRef.current) window.URL.revokeObjectURL(previewFrameUrlRef.current);
+              previewFrameUrlRef.current = objectUrl;
+              setPreviewFrameUrl(objectUrl);
+              setPreviewStatus((currentStatus) => ({
+                ...currentStatus,
+                status: "live",
+                frameCount: frame.frameIndex ?? currentStatus.frameCount + 1,
+                firstFrameAt: currentStatus.firstFrameAt ?? frame.capturedAt ?? new Date().toISOString(),
+                lastFrameAt: frame.capturedAt ?? new Date().toISOString(),
+                cameraOwnership: "preview_stream",
+              }));
+            },
+            onError(streamError) {
+              if (cancelled) return;
+              setPreviewStatus((currentStatus) => ({
+                ...currentStatus,
+                status: "error",
+                lastError: streamError.message,
+                cameraOwnership: "released",
+              }));
+            },
+          }
+        );
+      } catch (requestError) {
+        if (cancelled || controller.signal.aborted) return;
+        setPreviewStatus((currentStatus) => ({
+          ...currentStatus,
+          status: "error",
+          lastError: requestError instanceof Error ? requestError.message : "AI Grader preview stream is unavailable.",
+          cameraOwnership: "released",
+        }));
+      }
+    };
+    void startPreview();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (previewFrameUrlRef.current) {
+        window.URL.revokeObjectURL(previewFrameUrlRef.current);
+        previewFrameUrlRef.current = null;
+      }
+      setPreviewFrameUrl(null);
+    };
+  }, [bridgeConnected, bridgeUrl, busy, stationToken]);
 
   const currentStep = useMemo(
     () => AI_GRADER_STATION_STEPS.find((step) => step.id === status.currentStep) ?? AI_GRADER_STATION_STEPS[0],
@@ -304,6 +401,7 @@ export default function AiGraderStationPage() {
             throw new Error("Connect the Dell local station bridge before running station actions.");
           })();
     setStatus(next);
+    setPreviewStatus(next.previewStatus);
     setProfileDraft({
       dutyPercent: next.acceptedProfile.dutyPercent,
       exposureUs: next.acceptedProfile.exposureUs,
@@ -333,10 +431,7 @@ export default function AiGraderStationPage() {
       if (latest.currentStep === "start_new_card") latest = await runAction("start-session");
       latest = await runAction("confirm-light-idle-off", actionBody({ lightIdleOff: true }, latest, false));
       latest = await runAction("confirm-fixture-rulers", actionBody({ fixtureRulersVisible: true }, latest, false));
-      if (latest.currentStep === "verify_fixture_rulers" || latest.currentStep === "live_preview_focus_framing" || latest.currentStep === "start_new_card") {
-        latest = await runAction("launch-preview", actionBody({}, latest, false));
-      }
-      latest = await runAction("accept-profile", actionBody({}, latest, false));
+      latest = await runAction("accept-profile", actionBody({}, latest, true));
       await runAction("capture-front", actionBody({}, latest, false));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Start grading failed.");
@@ -650,6 +745,28 @@ export default function AiGraderStationPage() {
           : bridgeConnectionState === "checking"
             ? "Checking the local Dell bridge at 127.0.0.1."
             : "The local Dell bridge could not be reached with the saved browser pairing.";
+  const previewStatusLabel =
+    previewStatus.status === "live"
+      ? "Preview Live"
+      : busy === "start-grading" || busy === "back"
+        ? "Capturing"
+        : previewStatus.status === "starting"
+          ? "Preview Starting"
+          : previewStatus.status === "paused_for_capture"
+            ? "Preview Paused"
+            : previewStatus.status === "error"
+              ? "Preview Unavailable"
+              : reportReady
+                ? "Report Ready"
+                : "Preview Standby";
+  const previewStatusDetail =
+    previewStatus.status === "live"
+      ? `${previewStatus.implementationType}; ${previewStatus.frameCount || 0} frame(s) displayed${previewStatus.fps ? `, ${previewStatus.fps} FPS` : ""}.`
+      : previewStatus.status === "paused_for_capture"
+        ? "The preview stream released the Basler camera for capture."
+        : previewStatus.status === "error"
+          ? previewStatus.lastError ?? "The local preview stream is not available."
+          : "The local Dell bridge will stream Basler preview frames here when connected.";
 
   return (
     <>
@@ -660,16 +777,20 @@ export default function AiGraderStationPage() {
       <main className="station">
         <section className="viewer" aria-label="AI Grader camera cockpit">
           <div className="camera-frame">
+            {previewFrameUrl ? (
+              <img className="preview-image" src={previewFrameUrl} alt="Live AI Grader Basler preview" />
+            ) : (
+              <div className="preview-placeholder">
+                <span>{previewStatusLabel}</span>
+              </div>
+            )}
             <div className="guide-card" />
             <div className="crosshair horizontal" />
             <div className="crosshair vertical" />
             <div className="camera-status">
               <span>{bridgeStatusLabel}</span>
-              <strong>{currentStep.label}</strong>
-              <p>
-                Embedded browser Basler streaming is pending. The real low-latency pylon preview opens in the native Windows
-                preview window from this cockpit.
-              </p>
+              <strong>{previewStatusLabel}</strong>
+              <p>{previewStatusDetail}</p>
             </div>
           </div>
 
@@ -827,6 +948,10 @@ export default function AiGraderStationPage() {
 
           <section className="status">
             <div>
+              <span>Preview</span>
+              <strong>{previewStatusLabel}</strong>
+            </div>
+            <div>
               <span>Report</span>
               <strong>{reportReady ? "Ready" : "Pending"}</strong>
             </div>
@@ -842,6 +967,10 @@ export default function AiGraderStationPage() {
               <span>Bridge</span>
               <strong>{status.mode}</strong>
             </div>
+            <p className="status-note">
+              {previewStatus.frameCount ? `${previewStatus.frameCount} frame(s)` : "No frames yet"}
+              {previewStatus.fps ? ` / ${previewStatus.fps} FPS` : ""} / camera {previewStatus.cameraOwnership}
+            </p>
           </section>
 
           <div className="action-row">
@@ -928,6 +1057,12 @@ export default function AiGraderStationPage() {
               <dd>{formatMs(status.timingSummary?.reportGenerationMs)}</dd>
               <dt>Safe off</dt>
               <dd>{formatMs(status.timingSummary?.safeOffMs)}</dd>
+              <dt>Front package</dt>
+              <dd>{formatMs(status.timingSummary?.phaseBreakdown?.frontPackageMs)}</dd>
+              <dt>Back package</dt>
+              <dd>{formatMs(status.timingSummary?.phaseBreakdown?.backPackageMs)}</dd>
+              <dt>Detailed fields</dt>
+              <dd>{status.timingSummary?.detailedEntries?.length ?? 0}</dd>
             </dl>
           </section>
         </aside>
@@ -1017,8 +1152,34 @@ export default function AiGraderStationPage() {
           overflow: hidden;
           box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.46);
         }
+        .preview-image,
+        .preview-placeholder {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+        }
+        .preview-image {
+          object-fit: contain;
+          background: #050605;
+        }
+        .preview-placeholder {
+          display: grid;
+          place-items: center;
+          color: rgba(247, 239, 225, 0.76);
+          background:
+            linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px),
+            linear-gradient(0deg, rgba(255,255,255,0.035) 1px, transparent 1px),
+            #171916;
+          background-size: 64px 64px;
+          font-size: 12px;
+          font-weight: 900;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+        }
         .guide-card {
           position: absolute;
+          z-index: 2;
           left: 50%;
           top: 50%;
           width: min(36vw, 330px);
@@ -1040,6 +1201,7 @@ export default function AiGraderStationPage() {
         }
         .crosshair {
           position: absolute;
+          z-index: 2;
           background: rgba(237, 219, 174, 0.38);
         }
         .crosshair.horizontal {
@@ -1056,6 +1218,7 @@ export default function AiGraderStationPage() {
         }
         .camera-status {
           position: absolute;
+          z-index: 3;
           left: 26px;
           bottom: 24px;
           max-width: 520px;
@@ -1312,6 +1475,13 @@ export default function AiGraderStationPage() {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
           gap: 10px;
+        }
+        .status-note {
+          grid-column: 1 / -1;
+          color: #bdb5a8;
+          font-size: 12px;
+          line-height: 1.45;
+          overflow-wrap: anywhere;
         }
         .production-status {
           display: grid;

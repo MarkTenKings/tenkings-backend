@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -21,6 +22,7 @@ import {
   type AiGraderStationCommandStep,
   type AiGraderStationRealWorkflowInput,
 } from "./aiGraderStationWorkflow";
+import { BaslerPylonClient } from "./baslerPylonClient";
 import {
   buildAiGraderReportBundle,
   writeAiGraderReportBundle,
@@ -31,7 +33,7 @@ import {
   type AiGraderProductionRelease,
 } from "./aiGraderProductionRelease";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.3";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.4";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 
@@ -211,6 +213,7 @@ export interface AiGraderLocalStationBridgeManifest {
     qrGenerated: boolean;
     certificateGenerated: false;
   };
+  previewStatus: AiGraderLocalStationPreviewStatus;
   commandResults: AiGraderStationCommandResult[];
   progressLog: string[];
   warnings: string[];
@@ -248,7 +251,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     isCalibrated: false;
   };
   bridgeContract: {
-    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderLocalStationBridgeAction; hardwareAccess: boolean; description: string }>;
+    endpoints: Array<{ method: "GET" | "POST"; path: string; action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream"; hardwareAccess: boolean; description: string }>;
     realHardwarePending: string[];
   };
   publicViewerRoute: string;
@@ -267,6 +270,9 @@ export interface AiGraderLocalStationTimingEntry {
   durationMs: number;
   startedAt?: string;
   finishedAt?: string;
+  category?: "bridge" | "preview" | "capture" | "processing" | "report" | "safe_off" | "publish";
+  label?: string;
+  detail?: string;
 }
 
 export interface AiGraderLocalStationTimingSummary {
@@ -275,8 +281,62 @@ export interface AiGraderLocalStationTimingSummary {
   captureCommandMs: number;
   reportGenerationMs: number;
   safeOffMs: number;
+  previewStartMs?: number;
+  previewFirstFrameMs?: number;
+  localReportOpenMs?: number;
+  publishUploadMs?: number;
   entries: AiGraderLocalStationTimingEntry[];
+  detailedEntries: AiGraderLocalStationTimingEntry[];
+  phaseBreakdown: {
+    bridgeStartupMs?: number;
+    previewStartMs?: number;
+    previewFirstFrameMs?: number;
+    baslerOpenMs?: number;
+    baslerCaptureMs?: number;
+    imageSaveMs?: number;
+    hashMs?: number;
+    cameraCloseDisposeMs?: number;
+    leimacWriteAckMs?: number;
+    leimacSafeOffMs?: number;
+    frontPackageMs?: number;
+    backPackageMs?: number;
+    roiDisplayGenerationMs?: number;
+    surfaceIntelligenceVisionLabMs?: number;
+    unifiedReportHtmlGenerationMs?: number;
+    localReportOpenMs?: number;
+    publishUploadMs?: number;
+  };
   targetInterCaptureNote: string;
+}
+
+export interface AiGraderLocalStationPreviewStatus {
+  status: "not_started" | "starting" | "live" | "paused_for_capture" | "stopped" | "unavailable" | "error";
+  implementationType: "mjpeg_fetch_stream" | "mock_mjpeg_stream" | "native_preview_only";
+  browserEmbedded: true;
+  localOnly: true;
+  tokenRequired: true;
+  streamPath: "/preview/stream";
+  statusPath: "/preview/status";
+  portraitOrientation: true;
+  cameraOwnership: "idle" | "preview_stream" | "capture_action" | "released";
+  frameSource: "basler_pylon_continuous_grab" | "mock_station_preview" | "native_pylon_window";
+  frameCount: number;
+  fps?: number;
+  startedAt?: string;
+  firstFrameAt?: string;
+  lastFrameAt?: string;
+  lastError?: string;
+  lastStopReason?: string;
+  safety: {
+    publicRouteExposed: false;
+    requiresStationToken: true;
+    bindsLoopbackOnly: true;
+    productionServiceTokenUsed: false;
+    lightingCommanded: false;
+    persistentBaslerSaved: false;
+    persistentLeimacSaved: false;
+  };
+  note: string;
 }
 
 export interface AiGraderLocalStationReportHistoryItem {
@@ -336,6 +396,33 @@ export interface StartedAiGraderLocalStationBridge {
 }
 
 type JsonBody = Record<string, unknown>;
+const PREVIEW_MJPEG_BOUNDARY = "tenkings-ai-grader-preview";
+
+function mockPreviewSvg(frameIndex: number, generatedAt: string): Buffer {
+  const pulse = 28 + frameIndex % 44;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1260" viewBox="0 0 900 1260"><rect width="900" height="1260" fill="#141713"/><rect x="198" y="214" width="504" height="705" rx="16" fill="#20261e" stroke="#5bff9d" stroke-width="8"/><g stroke="#ead58c" stroke-opacity=".42" stroke-width="2">${Array.from({ length: 8 }, (_, index) => `<line x1="${100 + index * 100}" y1="0" x2="${100 + index * 100}" y2="1260"/>`).join("")}${Array.from({ length: 11 }, (_, index) => `<line x1="0" y1="${105 + index * 105}" x2="900" y2="${105 + index * 105}"/>`).join("")}</g><circle cx="450" cy="560" r="${pulse}" fill="none" stroke="#5bff9d" stroke-width="5" opacity=".75"/><text x="450" y="1020" text-anchor="middle" font-family="Arial" font-size="42" fill="#f6efd8">AI Grader Preview</text><text x="450" y="1078" text-anchor="middle" font-family="Arial" font-size="24" fill="#c9a85f">mock local stream frame ${frameIndex}</text><text x="450" y="1118" text-anchor="middle" font-family="Arial" font-size="20" fill="#bdb5a8">${generatedAt}</text></svg>`;
+  return Buffer.from(svg, "utf-8");
+}
+
+function writeMjpegFrame(res: http.ServerResponse, contentType: string, bytes: Buffer, frameIndex: number) {
+  res.write(`--${PREVIEW_MJPEG_BOUNDARY}\r\n`);
+  res.write(`Content-Type: ${contentType}\r\n`);
+  res.write(`Content-Length: ${bytes.length}\r\n`);
+  res.write(`X-AI-Grader-Frame-Index: ${frameIndex}\r\n`);
+  res.write(`X-AI-Grader-Captured-At: ${new Date().toISOString()}\r\n\r\n`);
+  res.write(bytes);
+  res.write("\r\n");
+}
+
+function setMjpegHeaders(res: http.ServerResponse, origin: string | undefined, config: AiGraderLocalStationBridgeConfig) {
+  setCors(res, origin, config);
+  res.writeHead(200, {
+    "Content-Type": `multipart/x-mixed-replace; boundary=${PREVIEW_MJPEG_BOUNDARY}`,
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+    "Connection": "close",
+    "X-AI-Grader-Preview": "local-token-gated",
+  });
+}
 
 const NEXT_ACTION_BY_STEP: Record<AiGraderLocalStationStepId, AiGraderLocalStationBridgeAction> = {
   start_new_card: "start-session",
@@ -542,6 +629,7 @@ function newManifest(config: AiGraderLocalStationBridgeConfig): AiGraderLocalSta
       qrGenerated: false,
       certificateGenerated: false,
     },
+    previewStatus: defaultPreviewStatus(config),
     commandResults: [],
     progressLog: ["Station bridge initialized. No hardware action has run."],
     warnings: [
@@ -550,6 +638,35 @@ function newManifest(config: AiGraderLocalStationBridgeConfig): AiGraderLocalSta
         ? "Real bridge mode is enabled, but each hardware action still requires local token and staged operator confirmations."
         : "Mock bridge mode is active; hardware success is not claimed.",
     ],
+  };
+}
+
+function defaultPreviewStatus(config: AiGraderLocalStationBridgeConfig): AiGraderLocalStationPreviewStatus {
+  return {
+    status: "not_started",
+    implementationType: config.mode === "real" ? "mjpeg_fetch_stream" : "mock_mjpeg_stream",
+    browserEmbedded: true,
+    localOnly: true,
+    tokenRequired: true,
+    streamPath: "/preview/stream",
+    statusPath: "/preview/status",
+    portraitOrientation: true,
+    cameraOwnership: "idle",
+    frameSource: config.mode === "real" ? "basler_pylon_continuous_grab" : "mock_station_preview",
+    frameCount: 0,
+    safety: {
+      publicRouteExposed: false,
+      requiresStationToken: true,
+      bindsLoopbackOnly: true,
+      productionServiceTokenUsed: false,
+      lightingCommanded: false,
+      persistentBaslerSaved: false,
+      persistentLeimacSaved: false,
+    },
+    note:
+      config.mode === "real"
+        ? "Embedded browser preview uses a token-gated loopback MJPEG fetch stream. Capture actions pause/release the preview stream before taking camera ownership."
+        : "Mock bridge preview uses a local MJPEG-compatible stream for UI/testing only and does not open hardware.",
   };
 }
 
@@ -729,8 +846,10 @@ function reportRoute(reportId: string | undefined) {
 }
 
 function bridgeEndpoints() {
-  const actions: Array<{ method: "GET" | "POST"; action: AiGraderLocalStationBridgeAction; hardwareAccess: boolean; description: string }> = [
+  const actions: Array<{ method: "GET" | "POST"; action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream"; hardwareAccess: boolean; description: string; path?: string }> = [
     { method: "GET", action: "status", hardwareAccess: false, description: "Read current local station bridge status." },
+    { method: "GET", action: "preview-status", path: "/preview/status", hardwareAccess: false, description: "Read embedded browser preview stream status." },
+    { method: "GET", action: "preview-stream", path: "/preview/stream", hardwareAccess: true, description: "Open token-gated local MJPEG browser preview stream." },
     { method: "POST", action: "start-session", hardwareAccess: false, description: "Create a local station session folder and manifest." },
     { method: "POST", action: "confirm-light-idle-off", hardwareAccess: false, description: "Record operator light-idle/off confirmation." },
     { method: "POST", action: "confirm-fixture-rulers", hardwareAccess: false, description: "Record operator fixture/ruler visibility confirmation." },
@@ -752,7 +871,7 @@ function bridgeEndpoints() {
   ];
   return actions.map((endpoint) => ({
     ...endpoint,
-    path: endpoint.method === "GET" ? `/${endpoint.action}` : `/actions/${endpoint.action}`,
+    path: endpoint.path ?? (endpoint.method === "GET" ? `/${endpoint.action}` : `/actions/${endpoint.action}`),
   }));
 }
 
@@ -789,22 +908,116 @@ function timingSummary(results: AiGraderStationCommandResult[]): AiGraderLocalSt
       durationMs: result.durationMs ?? 0,
       startedAt: result.startedAt,
       finishedAt: result.finishedAt,
+      category: timingCategory(result.stepId),
+      label: timingLabel(result.stepId),
     }));
   const durationFor = (stepIds: string[]) =>
     entries
       .filter((entry) => stepIds.includes(entry.stepId))
       .reduce((sum, entry) => sum + entry.durationMs, 0);
   const totalCommandMs = entries.reduce((sum, entry) => sum + entry.durationMs, 0);
+  const detailedEntries = [
+    ...entries,
+    ...results.flatMap((result) => extractDetailedTimingEntries(result)),
+  ];
+  const frontPackageMs = durationFor(["capture_front"]);
+  const backPackageMs = durationFor(["capture_back"]);
+  const reportGenerationMs = durationFor(["unified_report"]);
+  const safeOffMs = durationFor(["safe_off"]);
+  const phaseBreakdown = {
+    frontPackageMs: frontPackageMs || undefined,
+    backPackageMs: backPackageMs || undefined,
+    unifiedReportHtmlGenerationMs: reportGenerationMs || undefined,
+    leimacSafeOffMs: safeOffMs || undefined,
+    baslerOpenMs: sumDetailed(detailedEntries, "basler.open"),
+    baslerCaptureMs: sumDetailed(detailedEntries, "basler.grab"),
+    imageSaveMs: sumDetailed(detailedEntries, "image.save"),
+    hashMs: sumDetailed(detailedEntries, "image.hash"),
+    cameraCloseDisposeMs: sumDetailed(detailedEntries, "basler.close_dispose"),
+    leimacWriteAckMs: sumDetailed(detailedEntries, "leimac.write_ack"),
+    roiDisplayGenerationMs: sumDetailed(detailedEntries, "processing.roi_display"),
+    surfaceIntelligenceVisionLabMs: sumDetailed(detailedEntries, "report.surface_vision_lab"),
+  };
   return {
     totalCommandMs,
     bridgeActionOverheadMs: 0,
     captureCommandMs: durationFor(["operator_preview", "capture_front", "capture_back"]),
-    reportGenerationMs: durationFor(["unified_report"]),
-    safeOffMs: durationFor(["safe_off"]),
+    reportGenerationMs,
+    safeOffMs,
     entries,
+    detailedEntries,
+    phaseBreakdown,
     targetInterCaptureNote:
-      "PR #46 records command-level timing. The current bridge still delegates to existing capture-helper commands; eliminating per-image process startup requires a later warm-session capture runner.",
+      "PR #57 records command-level and available nested cold-path timing. The current bridge still delegates to existing capture-helper commands; eliminating per-image process startup requires a later warm-session capture runner.",
   };
+}
+
+function timingCategory(stepId: string): AiGraderLocalStationTimingEntry["category"] {
+  if (stepId === "operator_preview") return "preview";
+  if (stepId === "capture_front" || stepId === "capture_back") return "capture";
+  if (stepId === "unified_report") return "report";
+  if (stepId === "safe_off") return "safe_off";
+  return "bridge";
+}
+
+function timingLabel(stepId: string): string {
+  switch (stepId) {
+    case "operator_preview":
+      return "Operator preview command";
+    case "capture_front":
+      return "Front full forensic evidence package";
+    case "capture_back":
+      return "Back full forensic evidence package";
+    case "unified_report":
+      return "Unified report / Vision Lab generation";
+    case "safe_off":
+      return "Leimac safe-off";
+    default:
+      return stepId;
+  }
+}
+
+function sumDetailed(entries: AiGraderLocalStationTimingEntry[], stepId: string): number | undefined {
+  const sum = entries
+    .filter((entry) => entry.stepId === stepId && typeof entry.durationMs === "number")
+    .reduce((total, entry) => total + entry.durationMs, 0);
+  return sum || undefined;
+}
+
+function extractDetailedTimingEntries(result: AiGraderStationCommandResult): AiGraderLocalStationTimingEntry[] {
+  const entries: AiGraderLocalStationTimingEntry[] = [];
+  const addTiming = (stepId: string, label: string, timing: any, category: AiGraderLocalStationTimingEntry["category"]) => {
+    if (!timing || typeof timing.durationMs !== "number") return;
+    entries.push({
+      stepId,
+      label,
+      category,
+      durationMs: timing.durationMs,
+      startedAt: typeof timing.startedAt === "string" ? timing.startedAt : undefined,
+      finishedAt: typeof timing.finishedAt === "string" ? timing.finishedAt : undefined,
+      detail: result.stepId,
+    });
+  };
+  const visit = (value: any) => {
+    if (!value || typeof value !== "object") return;
+    const timing = value.timing;
+    if (timing) {
+      addTiming("basler.open", "Basler camera open/configure", timing.open, "capture");
+      addTiming("basler.grab", "Basler frame grab", timing.grab, "capture");
+      addTiming("image.save", "Image save", timing.save, "capture");
+      addTiming("image.hash", "Image hash", timing.hash, "capture");
+      addTiming("basler.close_dispose", "Basler camera close/dispose", timing.closeDispose, "capture");
+    }
+    if (typeof value.durationMs === "number" && value.frame?.requestFrame) {
+      addTiming("leimac.write_ack", `Leimac ${value.frame.name} write/ack`, value, "capture");
+    }
+    for (const child of Object.values(value)) {
+      if (Array.isArray(child)) child.forEach(visit);
+      else if (child && typeof child === "object") visit(child);
+    }
+  };
+  visit(result.payload);
+  return entries;
 }
 
 function gradeBucket(grade: number | undefined): string | undefined {
@@ -945,6 +1158,8 @@ export class AiGraderLocalStationBridgeService {
   readonly runner: AiGraderStationCommandRunner;
   readonly stationUrl: string;
   private manifest: AiGraderLocalStationBridgeManifest;
+  private previewProcess?: ChildProcessWithoutNullStreams;
+  private previewStop?: (reason: string) => void;
 
   constructor(config: AiGraderLocalStationBridgeConfig, runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner()) {
     this.config = config;
@@ -1003,6 +1218,183 @@ export class AiGraderLocalStationBridgeService {
       timingSummary: timingSummary(this.manifest.commandResults),
       ...this.manifest,
     };
+  }
+
+  previewStatus(): AiGraderLocalStationPreviewStatus {
+    return this.manifest.previewStatus;
+  }
+
+  private updatePreviewStatus(update: Partial<AiGraderLocalStationPreviewStatus>) {
+    this.manifest.previewStatus = {
+      ...this.manifest.previewStatus,
+      ...update,
+      safety: {
+        ...this.manifest.previewStatus.safety,
+        ...(update.safety ?? {}),
+      },
+    };
+  }
+
+  private notePreviewFrame(frameCount: number) {
+    const now = new Date().toISOString();
+    const current = this.manifest.previewStatus;
+    const startedMs = current.startedAt ? Date.parse(current.startedAt) : Date.now();
+    const elapsedSeconds = Math.max(0.001, (Date.now() - startedMs) / 1000);
+    this.updatePreviewStatus({
+      status: "live",
+      cameraOwnership: "preview_stream",
+      frameCount,
+      firstFrameAt: current.firstFrameAt ?? now,
+      lastFrameAt: now,
+      fps: Math.round((frameCount / elapsedSeconds) * 10) / 10,
+    });
+  }
+
+  private stopPreviewStream(reason: string) {
+    this.previewStop?.(reason);
+    this.previewStop = undefined;
+    if (this.previewProcess && !this.previewProcess.killed) {
+      try { this.previewProcess.kill(); } catch {}
+    }
+    this.previewProcess = undefined;
+    this.updatePreviewStatus({
+      status: reason.includes("capture") ? "paused_for_capture" : "stopped",
+      cameraOwnership: reason.includes("capture") ? "capture_action" : "released",
+      lastStopReason: reason,
+    });
+  }
+
+  private stopPreviewForHardwareAction(action: string) {
+    if (this.manifest.previewStatus.cameraOwnership === "preview_stream" || this.previewProcess || this.previewStop) {
+      this.stopPreviewStream(`preview released before ${action} capture action`);
+      this.manifest.progressLog.push(`${new Date().toISOString()} Browser preview stream paused/released before ${action}.`);
+    }
+  }
+
+  streamPreview(req: http.IncomingMessage, res: http.ServerResponse, origin: string | undefined): Promise<void> {
+    this.stopPreviewStream("new preview stream requested");
+    this.updatePreviewStatus({
+      status: "starting",
+      implementationType: this.config.mode === "real" ? "mjpeg_fetch_stream" : "mock_mjpeg_stream",
+      browserEmbedded: true,
+      localOnly: true,
+      tokenRequired: true,
+      streamPath: "/preview/stream",
+      statusPath: "/preview/status",
+      portraitOrientation: true,
+      cameraOwnership: this.config.mode === "real" ? "preview_stream" : "idle",
+      frameSource: this.config.mode === "real" ? "basler_pylon_continuous_grab" : "mock_station_preview",
+      frameCount: 0,
+      fps: undefined,
+      startedAt: new Date().toISOString(),
+      firstFrameAt: undefined,
+      lastFrameAt: undefined,
+      lastError: undefined,
+      lastStopReason: undefined,
+    });
+    setMjpegHeaders(res, origin, this.config);
+
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      let mockPreviewTimer: ReturnType<typeof setInterval> | undefined;
+      const finish = (reason: string) => {
+        if (settled) return;
+        settled = true;
+        if (mockPreviewTimer) {
+          clearInterval(mockPreviewTimer);
+          mockPreviewTimer = undefined;
+        }
+        this.previewStop = undefined;
+        if (this.previewProcess && !this.previewProcess.killed) {
+          try { this.previewProcess.kill(); } catch {}
+        }
+        this.previewProcess = undefined;
+        this.updatePreviewStatus({
+          status: reason.includes("error") ? "error" : "stopped",
+          cameraOwnership: "released",
+          lastStopReason: reason,
+        });
+        try {
+          if (!res.destroyed) res.end();
+        } catch {}
+        resolve();
+      };
+      this.previewStop = finish;
+      req.on("close", () => finish("browser preview client disconnected"));
+      res.on("close", () => finish("browser preview response closed"));
+
+      if (this.config.mode === "mock") {
+        let frameCount = 0;
+        const send = () => {
+          if (settled || res.destroyed) return;
+          frameCount += 1;
+          const generatedAt = new Date().toISOString();
+          writeMjpegFrame(res, "image/svg+xml", mockPreviewSvg(frameCount, generatedAt), frameCount);
+          this.notePreviewFrame(frameCount);
+        };
+        send();
+        mockPreviewTimer = setInterval(send, 250);
+        this.previewStop = (reason: string) => {
+          finish(reason);
+        };
+        return;
+      }
+
+      try {
+        const client = new BaslerPylonClient({
+          pylonRoot: this.config.pylonRoot,
+          bridgeScriptPath: this.config.baslerBridgeScript,
+          timeoutMs: this.config.pylonTimeoutMs ?? 1800000,
+        });
+        const child = client.startOperatorPreviewMjpegStream({
+          cameraIndex: this.config.cameraIndex,
+          exposureUs: this.manifest.acceptedProfile.exposureUs,
+          refreshIntervalMs: 100,
+          jpegQuality: 72,
+        });
+        this.previewProcess = child;
+        let frameCount = 0;
+        child.stdout.on("data", (chunk: Buffer) => {
+          if (settled || res.destroyed) return;
+          const text = chunk.toString("latin1");
+          const boundaryHits = text.split(`--${PREVIEW_MJPEG_BOUNDARY}`).length - 1;
+          if (boundaryHits > 0) {
+            frameCount += boundaryHits;
+            this.notePreviewFrame(frameCount);
+          }
+          res.write(chunk);
+        });
+        child.stderr.on("data", (chunk: Buffer) => {
+          const text = chunk.toString("utf-8").trim();
+          if (text) this.updatePreviewStatus({ lastError: text.slice(0, 500) });
+        });
+        child.on("error", (error) => {
+          this.updatePreviewStatus({ status: "error", lastError: error.message, cameraOwnership: "released" });
+          finish("preview process error");
+        });
+        child.on("close", (code) => {
+          if (code && code !== 0) {
+            this.updatePreviewStatus({ status: "error", lastError: this.manifest.previewStatus.lastError ?? `Preview stream exited ${code}.` });
+            finish("preview process error");
+            return;
+          }
+          finish("preview process stopped");
+        });
+        this.previewStop = (reason: string) => {
+          if (!child.killed) {
+            try { child.kill(); } catch {}
+          }
+          finish(reason);
+        };
+      } catch (error) {
+        this.updatePreviewStatus({
+          status: "error",
+          cameraOwnership: "released",
+          lastError: error instanceof Error ? error.message : "Preview stream failed to start.",
+        });
+        finish("preview start error");
+      }
+    });
   }
 
   async reportBundle(reportId: string | undefined): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
@@ -1279,6 +1671,7 @@ export class AiGraderLocalStationBridgeService {
 
     if (action === "launch-preview") {
       assertFixtureVisible(this.manifest);
+      this.stopPreviewForHardwareAction("native-preview");
       const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, "operator_preview"));
       this.manifest.commandResults.push(result);
       if (!result.ok) throw new Error(result.error ?? "Basler live preview failed.");
@@ -1301,6 +1694,7 @@ export class AiGraderLocalStationBridgeService {
 
     if (action === "capture-front") {
       assertFixtureVisible(this.manifest);
+      this.stopPreviewForHardwareAction("front");
       const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, "capture_front"));
       this.manifest.commandResults.push(result);
       if (!result.ok) throw new Error(result.error ?? "Front evidence capture failed.");
@@ -1314,6 +1708,7 @@ export class AiGraderLocalStationBridgeService {
     if (action === "capture-back") {
       assertFixtureVisible(this.manifest);
       assertFlipComplete(this.manifest);
+      this.stopPreviewForHardwareAction("back");
       const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, "capture_back"));
       this.manifest.commandResults.push(result);
       if (!result.ok) throw new Error(result.error ?? "Back evidence capture failed.");
@@ -1584,6 +1979,18 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for /report-history." }, origin, config);
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         return sendJson(res, 200, { ok: true, operation: "report-history", result: await service.reportHistory() }, origin, config);
+      }
+
+      if (url.pathname === "/preview/status") {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for /preview/status." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        return sendJson(res, 200, { ok: true, operation: "preview-status", result: service.previewStatus() }, origin, config);
+      }
+
+      if (url.pathname === "/preview/stream") {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for /preview/stream." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        return service.streamPreview(req, res, origin);
       }
 
       const reportBundleMatch = url.pathname.match(/^\/reports\/([^/]+)\/bundle$/);

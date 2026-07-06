@@ -7,6 +7,7 @@ export type BaslerPylonAction =
   | "list-cameras"
   | "capture-still"
   | "operator-preview-window"
+  | "operator-preview-mjpeg-stream"
   | "line2-exposure-active"
   | "line2-user-output-pulse"
   | "line2-status";
@@ -309,6 +310,13 @@ export interface BaslerOperatorPreviewWindowOptions {
   previewDutyPercent?: number;
 }
 
+export interface BaslerOperatorPreviewMjpegStreamOptions {
+  cameraIndex?: number;
+  exposureUs?: number;
+  refreshIntervalMs?: number;
+  jpegQuality?: number;
+}
+
 export interface BaslerLine2ExposureActiveOptions {
   apply?: boolean;
   confirmation?: string;
@@ -590,6 +598,47 @@ export class BaslerPylonClient {
       ...(options.leimacUnit ? ["-LeimacUnit", String(options.leimacUnit)] : []),
       ...(options.previewDutyPercent != null ? ["-PreviewDutyTenthsPercent", String(Math.round(options.previewDutyPercent * 10))] : []),
     ]);
+  }
+
+  startOperatorPreviewMjpegStream(options: BaslerOperatorPreviewMjpegStreamOptions = {}): ChildProcessWithoutNullStreams {
+    const cameraIndex = options.cameraIndex ?? 0;
+    if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
+      throw new BaslerPylonClientError("BASLER_CAMERA_INDEX_INVALID", "--camera-index must be a non-negative integer.");
+    }
+    const refreshIntervalMs = options.refreshIntervalMs ?? 100;
+    if (!Number.isInteger(refreshIntervalMs) || refreshIntervalMs < 50 || refreshIntervalMs > 2000) {
+      throw new BaslerPylonClientError("BASLER_PREVIEW_REFRESH_INVALID", "--preview-refresh-ms must be an integer from 50 to 2000.");
+    }
+    const jpegQuality = options.jpegQuality ?? 72;
+    if (!Number.isInteger(jpegQuality) || jpegQuality < 35 || jpegQuality > 95) {
+      throw new BaslerPylonClientError("BASLER_PREVIEW_JPEG_QUALITY_INVALID", "Preview JPEG quality must be an integer from 35 to 95.");
+    }
+    const scriptPath = this.config.bridgeScriptPath ?? defaultBaslerPylonBridgeScriptPath();
+    if (!existsSync(scriptPath)) {
+      throw new BaslerPylonClientError("BASLER_BRIDGE_SCRIPT_MISSING", `Basler pylon bridge script is missing: ${scriptPath}`);
+    }
+    const pylonRoot = this.config.pylonRoot ?? defaultBaslerPylonRoot(this.config.env ?? process.env);
+    const args = [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      scriptPath,
+      "-Action",
+      "operator-preview-mjpeg-stream",
+      ...(pylonRoot ? ["-PylonRoot", pylonRoot] : []),
+      "-CameraIndex",
+      String(cameraIndex),
+      "-RefreshIntervalMs",
+      String(refreshIntervalMs),
+      "-JpegQuality",
+      String(jpegQuality),
+      ...(options.exposureUs ? ["-ExposureUs", String(options.exposureUs)] : []),
+    ];
+    return spawn(this.config.powershellPath, args, {
+      stdio: "pipe",
+      windowsHide: true,
+    }) as ChildProcessWithoutNullStreams;
   }
 
   private async runBridge<T>(action: BaslerPylonAction, extraArgs: string[] = []): Promise<T> {

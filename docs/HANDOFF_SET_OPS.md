@@ -12610,3 +12610,14 @@ Build Set Ops UI flow with:
   - Merge/deploy the public-report missing-data hardening PR before relying on unknown report URLs.
   - Run a fresh authenticated production publish through the real API/UI path to verify storage-backed report bundles, label/QR, slabbed photos, card/item linkage, history, and one live eBay comps request.
   - Rotate the previously exposed production Postgres credential after rollout, per Mark's deferred-rotation decision.
+
+## Session Update (2026-07-05 UTC, PR #57 browser preview and timing foundation)
+- Branch `feature/ai-grader-browser-preview-timing` implements the first browser-embedded Dell station preview foundation without changing production auth or reducing forensic capture.
+- The local bridge exposes loopback-only, token-gated `GET /preview/status` and `GET /preview/stream`; real mode streams Basler pylon continuous-grab frames as portrait MJPEG to the station browser.
+- Preview uses the local station token only. It does not use the production AI Grader service-account token, does not command Leimac lighting, does not save persistent Basler/Leimac settings, and is not exposed by public report routes.
+- Station capture actions explicitly pause/release the preview stream before the existing full evidence commands own the Basler camera, then reconnect preview when the workflow returns to idle.
+- Full forensic workflow remains intact: front/back dark control, all-on, accepted profile, channels `1-8`, ROI/display artifacts, Surface Intelligence, Vision Lab, and unified report generation.
+- Timing summary now records command-level and nested cold-path timings for preview start/first frame, Basler open/configure/grab/save/hash/close-dispose, Leimac write/ack/safe-off, front/back package totals, report generation, local report open, publish/upload placeholders, detailed entries, and phase breakdown.
+- Validation passed for Next station tests/build, capture-helper build/tests, shared tests, simulator tests, and PowerShell parse. No supervised Dell preview smoke or hardware capture was run.
+- Next speed work should be a staged warm-session runner PR; do not optimize by removing forensic evidence.
+- DigitalOcean Postgres credential rotation remains deferred by Mark.

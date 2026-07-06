@@ -1,5 +1,6 @@
 import type {
   AiGraderLocalReportHistory,
+  AiGraderLocalStationPreviewStatus,
   AiGraderLocalStationStatus,
   AiGraderStationAction,
 } from "./aiGraderLocalStation";
@@ -34,6 +35,21 @@ export type AiGraderStationBridgePairingResult = {
   localOnly: true;
   tokenStorage: "browser_localStorage_only";
   hardwareActionsEnabled: boolean;
+};
+
+export type AiGraderStationPreviewFrame = {
+  blob: Blob;
+  contentType: string;
+  byteLength: number;
+  frameIndex?: number;
+  capturedAt?: string;
+};
+
+export type AiGraderStationPreviewStreamHandlers = {
+  signal?: AbortSignal;
+  onOpen?: (contentType: string) => void;
+  onFrame?: (frame: AiGraderStationPreviewFrame) => void;
+  onError?: (error: Error) => void;
 };
 
 export function normalizeAiGraderStationBridgeUrl(input: string) {
@@ -118,12 +134,15 @@ export async function callAiGraderStationBridge(input: AiGraderStationBridgeCall
   return payload.result as AiGraderLocalStationStatus;
 }
 
-async function bridgeGetJson<T>(input: { baseUrl: string; stationToken: string; path: string }): Promise<T> {
+async function bridgeGetJson<T>(
+  input: { baseUrl: string; stationToken: string; path: string },
+  fetchImpl: typeof fetch = fetch
+): Promise<T> {
   const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
   if (!input.stationToken.trim()) {
     throw new Error("AI Grader station bridge token is required.");
   }
-  const response = await fetch(`${baseUrl}${input.path}`, {
+  const response = await fetchImpl(`${baseUrl}${input.path}`, {
     method: "GET",
     headers: {
       "x-ai-grader-station-token": input.stationToken,
@@ -134,6 +153,147 @@ async function bridgeGetJson<T>(input: { baseUrl: string; stationToken: string; 
     throw new Error(payload.message ?? payload.error?.message ?? "AI Grader local station bridge request failed.");
   }
   return payload.result as T;
+}
+
+export async function fetchAiGraderStationPreviewStatus(input: {
+  baseUrl: string;
+  stationToken: string;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLocalStationPreviewStatus> {
+  return bridgeGetJson<AiGraderLocalStationPreviewStatus>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: "/preview/status",
+  }, fetchImpl);
+}
+
+function concatBytes(left: Uint8Array, right: Uint8Array) {
+  const joined = new Uint8Array(left.length + right.length);
+  joined.set(left, 0);
+  joined.set(right, left.length);
+  return joined;
+}
+
+function indexOfBytes(buffer: Uint8Array, target: Uint8Array, from = 0) {
+  if (!target.length) return -1;
+  for (let index = Math.max(0, from); index <= buffer.length - target.length; index += 1) {
+    let matched = true;
+    for (let offset = 0; offset < target.length; offset += 1) {
+      if (buffer[index + offset] !== target[offset]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return index;
+  }
+  return -1;
+}
+
+function headerValue(headerText: string, name: string) {
+  const pattern = new RegExp(`^${name}:\\s*(.+)$`, "im");
+  return headerText.match(pattern)?.[1]?.trim();
+}
+
+function boundaryFromContentType(contentType: string) {
+  return contentType.match(/boundary="?([^";]+)"?/i)?.[1] ?? "tenkings-ai-grader-preview";
+}
+
+export async function openAiGraderStationPreviewStream(
+  input: {
+    baseUrl: string;
+    stationToken: string;
+  },
+  handlers: AiGraderStationPreviewStreamHandlers = {},
+  fetchImpl: typeof fetch = fetch
+): Promise<void> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  if (!input.stationToken.trim()) {
+    throw new Error("AI Grader station bridge token is required.");
+  }
+  const response = await fetchImpl(`${baseUrl}/preview/stream`, {
+    method: "GET",
+    headers: {
+      "x-ai-grader-station-token": input.stationToken,
+    },
+    signal: handlers.signal,
+  });
+  if (!response.ok || !response.body) {
+    const text = await response.text().catch(() => "");
+    let message = "AI Grader preview stream could not be opened.";
+    try {
+      const payload = JSON.parse(text);
+      message = payload.message ?? payload.error?.message ?? message;
+    } catch {
+      if (text.trim()) message = text.trim();
+    }
+    throw new Error(message);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  handlers.onOpen?.(contentType);
+  const boundaryBytes = new TextEncoder().encode(`--${boundaryFromContentType(contentType)}`);
+  const headerEndBytes = new TextEncoder().encode("\r\n\r\n");
+  const crlfBytes = new TextEncoder().encode("\r\n");
+  const decoder = new TextDecoder("ascii");
+  const reader = response.body.getReader();
+  let buffer = new Uint8Array();
+  let expectedLength: number | null = null;
+  let currentContentType = "image/jpeg";
+  let currentFrameIndex: number | undefined;
+  let currentCapturedAt: string | undefined;
+
+  const parseAvailableFrames = () => {
+    while (true) {
+      if (expectedLength === null) {
+        const boundaryIndex = indexOfBytes(buffer, boundaryBytes);
+        if (boundaryIndex < 0) {
+          if (buffer.length > boundaryBytes.length) buffer = buffer.slice(buffer.length - boundaryBytes.length);
+          return;
+        }
+        if (boundaryIndex > 0) buffer = buffer.slice(boundaryIndex);
+        const headerEndIndex = indexOfBytes(buffer, headerEndBytes);
+        if (headerEndIndex < 0) return;
+        const headerText = decoder.decode(buffer.slice(0, headerEndIndex));
+        const lengthValue = Number(headerValue(headerText, "Content-Length"));
+        if (!Number.isInteger(lengthValue) || lengthValue <= 0) {
+          buffer = buffer.slice(headerEndIndex + headerEndBytes.length);
+          continue;
+        }
+        currentContentType = headerValue(headerText, "Content-Type") ?? "image/jpeg";
+        const frameIndexValue = Number(headerValue(headerText, "X-AI-Grader-Frame-Index"));
+        currentFrameIndex = Number.isFinite(frameIndexValue) ? frameIndexValue : undefined;
+        currentCapturedAt = headerValue(headerText, "X-AI-Grader-Captured-At");
+        expectedLength = lengthValue;
+        buffer = buffer.slice(headerEndIndex + headerEndBytes.length);
+      }
+      if (buffer.length < expectedLength) return;
+      const frameBytes = buffer.slice(0, expectedLength);
+      buffer = buffer.slice(expectedLength);
+      if (indexOfBytes(buffer, crlfBytes) === 0) buffer = buffer.slice(crlfBytes.length);
+      handlers.onFrame?.({
+        blob: new Blob([frameBytes], { type: currentContentType }),
+        contentType: currentContentType,
+        byteLength: frameBytes.length,
+        frameIndex: currentFrameIndex,
+        capturedAt: currentCapturedAt,
+      });
+      expectedLength = null;
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        buffer = concatBytes(buffer, value);
+        parseAvailableFrames();
+      }
+    }
+  } catch (error) {
+    const normalized = error instanceof Error ? error : new Error("AI Grader preview stream failed.");
+    if (normalized.name !== "AbortError") handlers.onError?.(normalized);
+    if (normalized.name !== "AbortError") throw normalized;
+  }
 }
 
 export async function fetchAiGraderStationReportBundle(input: {

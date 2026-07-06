@@ -28,8 +28,10 @@ import {
 import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   fetchAiGraderStationBridgeHealth,
+  fetchAiGraderStationPreviewStatus,
   fetchAiGraderStationReportHtml,
   normalizeAiGraderStationBridgeUrl,
+  openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
 } from "../lib/aiGraderStationBridgeClient";
 
@@ -83,6 +85,10 @@ test("local station contract exposes workflow status with no login, DB, or hardw
   assert.equal(status.safety.finalGradeComputed, false);
   assert.equal(status.safety.certifiedClaim, false);
   assert.equal(status.bridgeContract.endpoints.some((endpoint) => endpoint.path === "/api/ai-grader/station/capture-front"), true);
+  assert.equal(status.previewStatus.browserEmbedded, true);
+  assert.equal(status.previewStatus.localOnly, true);
+  assert.equal(status.previewStatus.safety.productionServiceTokenUsed, false);
+  assert.equal(status.previewStatus.safety.publicRouteExposed, false);
   assert.equal(status.latestReport.publicViewerRoute, "/ai-grader/reports/[reportId]");
 });
 
@@ -928,6 +934,82 @@ test("browser station bridge client opens local report HTML with station token o
   );
 
   assert.match(html, /Local report/);
+});
+
+test("browser station bridge preview status and stream use local station token only", async () => {
+  const frameBytes = new TextEncoder().encode("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const headers = init?.headers as Record<string, string>;
+    assert.equal(headers["x-ai-grader-station-token"], "browser-local-station-token");
+    assert.equal(headers["x-ai-grader-service-token"], undefined);
+    if (String(input).endsWith("/preview/status")) {
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          status: "live",
+          implementationType: "mjpeg_fetch_stream",
+          browserEmbedded: true,
+          localOnly: true,
+          tokenRequired: true,
+          streamPath: "/preview/stream",
+          statusPath: "/preview/status",
+          portraitOrientation: true,
+          cameraOwnership: "preview_stream",
+          frameSource: "basler_pylon_continuous_grab",
+          frameCount: 3,
+          safety: {
+            publicRouteExposed: false,
+            requiresStationToken: true,
+            bindsLoopbackOnly: true,
+            productionServiceTokenUsed: false,
+            lightingCommanded: false,
+            persistentBaslerSaved: false,
+            persistentLeimacSaved: false,
+          },
+          note: "test",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    assert.equal(String(input), "http://127.0.0.1:47652/preview/stream");
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`--tenkings-ai-grader-preview\r\nContent-Type: image/svg+xml\r\nContent-Length: ${frameBytes.length}\r\nX-AI-Grader-Frame-Index: 7\r\nX-AI-Grader-Captured-At: 2026-07-05T00:00:00.000Z\r\n\r\n`));
+        controller.enqueue(frameBytes);
+        controller.enqueue(new TextEncoder().encode("\r\n"));
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: { "content-type": "multipart/x-mixed-replace; boundary=tenkings-ai-grader-preview" },
+    });
+  };
+
+  const previewStatus = await fetchAiGraderStationPreviewStatus({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+  }, fetchImpl);
+  assert.equal(previewStatus.localOnly, true);
+  assert.equal(previewStatus.frameCount, 3);
+
+  const frames: Array<{ frameIndex?: number; contentType: string; byteLength: number }> = [];
+  await openAiGraderStationPreviewStream(
+    { baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL, stationToken: "browser-local-station-token" },
+    {
+      onFrame(frame) {
+        frames.push({ frameIndex: frame.frameIndex, contentType: frame.contentType, byteLength: frame.byteLength });
+      },
+    },
+    fetchImpl
+  );
+  assert.deepEqual(frames, [{ frameIndex: 7, contentType: "image/svg+xml", byteLength: frameBytes.length }]);
+});
+
+test("public AI Grader report surfaces do not expose preview endpoints or hardware controls", () => {
+  const publicBundleText = JSON.stringify(getAiGraderReportBundle("sample-final-v0"));
+  assert.equal(publicBundleText.includes("/preview/stream"), false);
+  assert.equal(publicBundleText.includes("x-ai-grader-station-token"), false);
+  assert.equal(publicBundleText.includes("hardware controls"), false);
 });
 
 test("browser station bridge client reports missing bridge and missing pairing code cleanly", async () => {
