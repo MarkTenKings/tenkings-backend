@@ -874,15 +874,18 @@ test("warm runner runs safe-off cleanup on failure, cancellation, and session en
   assert.equal(endStatus.warmRunnerStatus.phases.some((phase) => phase.id === "warm_safe_cleanup" && phase.status === "completed"), true);
 });
 
-test("fresh bridge status exposes latest generated report from local history", () => {
+test("fresh bridge status exposes latest generated report from local history", async () => {
   const dir = outputDir(`history-latest-${Date.now()}`);
   const sessionDir = path.join(dir, "ai-grader-browser-station-session-2026-07-02T035658313Z");
   const reportDir = path.join(dir, "ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-02T041413536Z");
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.mkdirSync(reportDir, { recursive: true });
+  fs.mkdirSync(path.join(reportDir, "front"), { recursive: true });
+  const frontImagePath = path.join(reportDir, "front", "front-all-on-portrait-display.png");
+  fs.writeFileSync(frontImagePath, Buffer.from("front-image"));
   const reportHtmlPath = path.join(reportDir, "provisional-diagnostic-report.html");
-  fs.writeFileSync(reportHtmlPath, "<html><body>generated report</body></html>");
+  fs.writeFileSync(reportHtmlPath, `<html><body>generated report<img src="${frontImagePath}" alt="front"></body></html>`);
   fs.writeFileSync(path.join(sessionDir, "station-session.json"), JSON.stringify({
     reportId: "ai-grader-browser-station-session-2026-07-02T035658313Z-report",
     sessionId: "ai-grader-browser-station-session-2026-07-02T035658313Z-session",
@@ -897,6 +900,12 @@ test("fresh bridge status exposes latest generated report from local history", (
   assert.equal(status.latestReport.reportId, "ai-grader-browser-station-session-2026-07-02T035658313Z-report");
   assert.equal(status.latestReport.localHtmlPath, reportHtmlPath);
   assert.equal(status.latestReport.localViewerPath, "/ai-grader/reports/ai-grader-browser-station-session-2026-07-02T035658313Z-report");
+
+  const resolved = await service.reportBundle(status.latestReport.reportId, { includeAssetBodies: true });
+  const imageAsset = resolved.bundle.assets.find((asset) => asset.kind === "image" && asset.fileName === "front-all-on-portrait-display.png");
+  assert.equal(resolved.source, "history_generated_with_asset_bodies");
+  assert.equal(imageAsset?.bodyEncoding, "base64");
+  assert.equal(Buffer.from(imageAsset?.bodyBase64 ?? "", "base64").toString("utf8"), "front-image");
 });
 
 test("station bridge CLI help exposes local bridge command and flags", async () => {

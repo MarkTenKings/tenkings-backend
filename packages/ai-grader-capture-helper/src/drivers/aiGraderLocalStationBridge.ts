@@ -2813,12 +2813,23 @@ export class AiGraderLocalStationBridgeService {
 
     for (const item of await this.reportHistoryItems()) {
       if (item.reportId !== expectedReportId) continue;
+      const reportDirFromHtml = dirnameIfFile(item.localHtmlPath);
+      if (options.includeAssetBodies && reportDirFromHtml) {
+        const generated = await buildAiGraderReportBundle({
+          reportDir: reportDirFromHtml,
+          outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+          reportId: expectedReportId,
+          publicBasePath: this.config.publicBasePath,
+          includeAssetBodies: true,
+        });
+        const release = await readProductionReleaseFromPath(item.productionReleasePath);
+        return { reportId: expectedReportId, bundle: bundleWithProductionRelease(generated, release), source: "history_generated_with_asset_bodies" };
+      }
       const bundle = await readBundleFromPath(item.reportBundlePath);
       if (bundle) {
         const release = await readProductionReleaseFromPath(item.productionReleasePath);
         return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, release), source: "history_report_bundle_path" };
       }
-      const reportDirFromHtml = dirnameIfFile(item.localHtmlPath);
       if (reportDirFromHtml) {
         const generated = await buildAiGraderReportBundle({
           reportDir: reportDirFromHtml,

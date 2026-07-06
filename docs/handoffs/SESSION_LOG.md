@@ -23640,6 +23640,29 @@ By enabling Rip It Live, I confirm:
 - Production route verification:
   - `GET https://collect.tenkings.co/ai-grader/station` -> `200`.
   - `GET https://collect.tenkings.co/ai-grader/reports/sample-final-v0` -> `200`, with `Published Evidence Images` and `image-grid` present in the deployed HTML.
-  - `GET https://collect.tenkings.co/api/admin/ai-grader/production/status` -> `200`, `enabled=true`, `publicReportDbReadsEnabled=true`, `noHardwareControls=true`.
+- `GET https://collect.tenkings.co/api/admin/ai-grader/production/status` -> `200`, `enabled=true`, `publicReportDbReadsEnabled=true`, `noHardwareControls=true`.
 - No hardware capture, migration, manual production DB write, Vercel env change, credential rotation, or secret-printing action was run.
 - DigitalOcean managed Postgres credential rotation remains deferred by Mark.
+
+### Local Dell Bridge Update Plan
+- Planned after PR #60 production deploy: restart/update the local Dell AI Grader bridge from final `main` so the new bridge-side `includeAssetBodies` report bundle path is active for production publishes.
+- Guardrails: no hardware capture, no Leimac lighting command, no migration, no production DB write, no Vercel env change, no credential rotation, no secret printing.
+
+### Local Dell Bridge Update Result
+- Initial bridge restart from deployed `main` succeeded in real/local-only mode, but a read-only check against the latest local report showed `imageAssetCount=72` and `imageAssetsWithBodies=0`.
+- Root cause: after a bridge restart, `/reports/:reportId/bundle?includeAssetBodies=1` resolved reports from local history but did not pass the `includeAssetBodies` flag into the history-generated report bundle rebuild.
+- Hotfix added on `main`: history-resolved report bundles now rebuild from the report HTML directory with `includeAssetBodies=true` before falling back to the existing JSON bundle.
+- Regression coverage added to the local station bridge test for the restart/history report path.
+- Validation after hotfix:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `179` tests.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `30` tests.
+  - `git diff --check` -> pass with line-ending warnings only.
+- Dell bridge was rebuilt/restarted from the hotfixed dist in real/local-only mode.
+- Read-only bridge verification after restart:
+  - latest local report `ai-grader-browser-station-session-2026-07-06T063323956Z-report`;
+  - `assetCount=77`;
+  - `imageAssetCount=72`;
+  - `imageAssetsWithBodies=72`;
+  - source `history_generated_with_asset_bodies`.
+- No hardware capture, Leimac lighting command, migration, manual production DB write, Vercel env change, credential rotation, or secret-printing action was run.
