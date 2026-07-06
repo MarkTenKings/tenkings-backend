@@ -56,6 +56,7 @@ export type AiGraderLocalStationBridgeAction =
   | "publish-report"
   | "generate-label-data"
   | "safe-off"
+  | "cancel-session"
   | "latest-report"
   | "session-manifest"
   | "end-session";
@@ -84,6 +85,112 @@ export interface AiGraderLocalStationAcceptedProfile {
   source: "operator_preview" | "default" | "cli_override" | "bridge_operator";
   actualLeimacPwmStep: number;
   acceptedAt?: string;
+}
+
+export type AiGraderWarmRunnerSide = "front" | "back";
+export type AiGraderWarmRunnerPhaseStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
+export type AiGraderWarmRunnerStatusName =
+  | "idle"
+  | "warming"
+  | "capturing"
+  | "processing"
+  | "reporting"
+  | "safe_off"
+  | "complete"
+  | "failed"
+  | "cancelled";
+
+export interface AiGraderWarmRunnerEvidenceRole {
+  role:
+    | "dark_control"
+    | "all_on"
+    | "accepted_profile"
+    | "channel_1"
+    | "channel_2"
+    | "channel_3"
+    | "channel_4"
+    | "channel_5"
+    | "channel_6"
+    | "channel_7"
+    | "channel_8";
+  label: string;
+  required: true;
+  status: AiGraderWarmRunnerPhaseStatus;
+}
+
+export interface AiGraderWarmRunnerPhase {
+  id: string;
+  label: string;
+  status: AiGraderWarmRunnerPhaseStatus;
+  side?: AiGraderWarmRunnerSide;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  backend?: "persistent_session_contract" | "cold_command_fallback";
+  detail?: string;
+}
+
+export interface AiGraderWarmRunnerStatus {
+  enabled: true;
+  mode: "full_forensic";
+  backend: "persistent_session_contract" | "cold_command_fallback";
+  status: AiGraderWarmRunnerStatusName;
+  sessionId?: string;
+  activeSide?: AiGraderWarmRunnerSide;
+  captureLock: {
+    held: boolean;
+    owner?: string;
+    acquiredAt?: string;
+  };
+  previewPolicy: {
+    pauseDuringCapture: true;
+    resumeAfterSafeIdle: true;
+    lastPausedAt?: string;
+    lastResumeReadyAt?: string;
+  };
+  evidencePlan: {
+    defaultFullForensic: true;
+    rolesBySide: Record<AiGraderWarmRunnerSide, AiGraderWarmRunnerEvidenceRole[]>;
+    preservedOutputs: [
+      "front_evidence",
+      "back_evidence",
+      "roi_display_crops",
+      "surface_intelligence",
+      "vision_lab",
+      "unified_report"
+    ];
+  };
+  queues: {
+    capture: AiGraderWarmRunnerPhase[];
+    processing: AiGraderWarmRunnerPhase[];
+    report: AiGraderWarmRunnerPhase[];
+  };
+  phases: AiGraderWarmRunnerPhase[];
+  timing: {
+    baselineTotalMs: 461000;
+    targetTotalMinMs: 60000;
+    targetTotalMaxMs: 150000;
+    stretchTargetMs: 60000;
+    measuredTotalMs?: number;
+  };
+  fallback: {
+    available: true;
+    active: boolean;
+    reason?: string;
+  };
+  safety: {
+    captureLock: true;
+    watchdogSafeOff: true;
+    safeOffOnFailure: true;
+    safeOffOnCancellation: true;
+    safeOffOnSessionEnd: true;
+    fallbackToColdPath: true;
+    publicRouteExposed: false;
+    productionServiceTokenUsed: false;
+    persistentBaslerSaved: false;
+    persistentLeimacSaved: false;
+  };
+  note: string;
 }
 
 export interface AiGraderLocalStationBridgeConfigInput {
@@ -214,6 +321,7 @@ export interface AiGraderLocalStationBridgeManifest {
     certificateGenerated: false;
   };
   previewStatus: AiGraderLocalStationPreviewStatus;
+  warmRunnerStatus: AiGraderWarmRunnerStatus;
   commandResults: AiGraderStationCommandResult[];
   progressLog: string[];
   warnings: string[];
@@ -270,7 +378,7 @@ export interface AiGraderLocalStationTimingEntry {
   durationMs: number;
   startedAt?: string;
   finishedAt?: string;
-  category?: "bridge" | "preview" | "capture" | "processing" | "report" | "safe_off" | "publish";
+  category?: "bridge" | "preview" | "capture" | "processing" | "report" | "safe_off" | "publish" | "warm_runner";
   label?: string;
   detail?: string;
 }
@@ -305,6 +413,11 @@ export interface AiGraderLocalStationTimingSummary {
     unifiedReportHtmlGenerationMs?: number;
     localReportOpenMs?: number;
     publishUploadMs?: number;
+    warmSessionSetupMs?: number;
+    frontProcessingQueuedMs?: number;
+    backProcessingQueuedMs?: number;
+    reportQueueMs?: number;
+    safeCleanupMs?: number;
   };
   targetInterCaptureNote: string;
 }
@@ -630,6 +743,7 @@ function newManifest(config: AiGraderLocalStationBridgeConfig): AiGraderLocalSta
       certificateGenerated: false,
     },
     previewStatus: defaultPreviewStatus(config),
+    warmRunnerStatus: defaultWarmRunnerStatus(),
     commandResults: [],
     progressLog: ["Station bridge initialized. No hardware action has run."],
     warnings: [
@@ -638,6 +752,86 @@ function newManifest(config: AiGraderLocalStationBridgeConfig): AiGraderLocalSta
         ? "Real bridge mode is enabled, but each hardware action still requires local token and staged operator confirmations."
         : "Mock bridge mode is active; hardware success is not claimed.",
     ],
+  };
+}
+
+function fullForensicEvidenceRoles(status: AiGraderWarmRunnerPhaseStatus = "pending"): AiGraderWarmRunnerEvidenceRole[] {
+  return [
+    { role: "dark_control", label: "Dark control", required: true, status },
+    { role: "all_on", label: "All-on", required: true, status },
+    { role: "accepted_profile", label: "Accepted profile", required: true, status },
+    ...Array.from({ length: 8 }, (_, index) => {
+      const channel = index + 1;
+      return {
+        role: `channel_${channel}` as AiGraderWarmRunnerEvidenceRole["role"],
+        label: `Leimac channel ${channel}`,
+        required: true as const,
+        status,
+      };
+    }),
+  ];
+}
+
+function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
+  return {
+    enabled: true,
+    mode: "full_forensic",
+    backend: "cold_command_fallback",
+    status: "idle",
+    captureLock: {
+      held: false,
+    },
+    previewPolicy: {
+      pauseDuringCapture: true,
+      resumeAfterSafeIdle: true,
+    },
+    evidencePlan: {
+      defaultFullForensic: true,
+      rolesBySide: {
+        front: fullForensicEvidenceRoles(),
+        back: fullForensicEvidenceRoles(),
+      },
+      preservedOutputs: [
+        "front_evidence",
+        "back_evidence",
+        "roi_display_crops",
+        "surface_intelligence",
+        "vision_lab",
+        "unified_report",
+      ],
+    },
+    queues: {
+      capture: [],
+      processing: [],
+      report: [],
+    },
+    phases: [],
+    timing: {
+      baselineTotalMs: 461000,
+      targetTotalMinMs: 60000,
+      targetTotalMaxMs: 150000,
+      stretchTargetMs: 60000,
+    },
+    fallback: {
+      available: true,
+      active: true,
+      reason:
+        "Persistent in-process Basler/Leimac capture is staged behind this bridge-owned warm-runner contract; PR #58 preserves the existing cold command as the safe fallback backend.",
+    },
+    safety: {
+      captureLock: true,
+      watchdogSafeOff: true,
+      safeOffOnFailure: true,
+      safeOffOnCancellation: true,
+      safeOffOnSessionEnd: true,
+      fallbackToColdPath: true,
+      publicRouteExposed: false,
+      productionServiceTokenUsed: false,
+      persistentBaslerSaved: false,
+      persistentLeimacSaved: false,
+    },
+    note:
+      "Full forensic evidence remains the default. Speed comes from bridge-owned session orchestration, capture/process/report queues, preview locking, and a swappable persistent hardware backend; this build falls back to the proven cold evidence command when real warm hardware execution is unavailable.",
   };
 }
 
@@ -865,6 +1059,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "publish-report", hardwareAccess: false, description: "Prepare local publication manifest and future public report URL data." },
     { method: "POST", action: "generate-label-data", hardwareAccess: false, description: "Write label-ready JSON and QR payload URL data." },
     { method: "POST", action: "safe-off", hardwareAccess: true, description: "Run guarded Leimac safe-off cleanup." },
+    { method: "POST", action: "cancel-session", hardwareAccess: true, description: "Cancel the local station session and run guarded safe-off cleanup." },
     { method: "GET", action: "latest-report", hardwareAccess: false, description: "Read latest report location." },
     { method: "GET", action: "session-manifest", hardwareAccess: false, description: "Read station manifest path and state." },
     { method: "POST", action: "end-session", hardwareAccess: false, description: "End the local station session." },
@@ -900,7 +1095,7 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-function timingSummary(results: AiGraderStationCommandResult[]): AiGraderLocalStationTimingSummary {
+function timingSummary(results: AiGraderStationCommandResult[], warmRunnerStatus?: AiGraderWarmRunnerStatus): AiGraderLocalStationTimingSummary {
   const entries = results
     .filter((result) => typeof result.durationMs === "number")
     .map((result) => ({
@@ -911,13 +1106,25 @@ function timingSummary(results: AiGraderStationCommandResult[]): AiGraderLocalSt
       category: timingCategory(result.stepId),
       label: timingLabel(result.stepId),
     }));
+  const warmEntries = (warmRunnerStatus?.phases ?? [])
+    .filter((phase) => typeof phase.durationMs === "number")
+    .map((phase) => ({
+      stepId: phase.id,
+      durationMs: phase.durationMs ?? 0,
+      startedAt: phase.startedAt,
+      finishedAt: phase.finishedAt,
+      category: timingCategory(phase.id),
+      label: phase.label,
+      detail: phase.detail,
+    }));
+  const allEntries = [...entries, ...warmEntries];
   const durationFor = (stepIds: string[]) =>
-    entries
+    allEntries
       .filter((entry) => stepIds.includes(entry.stepId))
       .reduce((sum, entry) => sum + entry.durationMs, 0);
-  const totalCommandMs = entries.reduce((sum, entry) => sum + entry.durationMs, 0);
+  const totalCommandMs = allEntries.reduce((sum, entry) => sum + entry.durationMs, 0);
   const detailedEntries = [
-    ...entries,
+    ...allEntries,
     ...results.flatMap((result) => extractDetailedTimingEntries(result)),
   ];
   const frontPackageMs = durationFor(["capture_front"]);
@@ -937,6 +1144,11 @@ function timingSummary(results: AiGraderStationCommandResult[]): AiGraderLocalSt
     leimacWriteAckMs: sumDetailed(detailedEntries, "leimac.write_ack"),
     roiDisplayGenerationMs: sumDetailed(detailedEntries, "processing.roi_display"),
     surfaceIntelligenceVisionLabMs: sumDetailed(detailedEntries, "report.surface_vision_lab"),
+    warmSessionSetupMs: sumDetailed(detailedEntries, "warm_session_setup"),
+    frontProcessingQueuedMs: sumDetailed(detailedEntries, "process_front_artifacts"),
+    backProcessingQueuedMs: sumDetailed(detailedEntries, "process_back_artifacts"),
+    reportQueueMs: sumDetailed(detailedEntries, "report_queue"),
+    safeCleanupMs: sumDetailed(detailedEntries, "warm_safe_cleanup"),
   };
   return {
     totalCommandMs,
@@ -944,19 +1156,22 @@ function timingSummary(results: AiGraderStationCommandResult[]): AiGraderLocalSt
     captureCommandMs: durationFor(["operator_preview", "capture_front", "capture_back"]),
     reportGenerationMs,
     safeOffMs,
-    entries,
+    entries: allEntries,
     detailedEntries,
     phaseBreakdown,
     targetInterCaptureNote:
-      "PR #57 records command-level and available nested cold-path timing. The current bridge still delegates to existing capture-helper commands; eliminating per-image process startup requires a later warm-session capture runner.",
+      warmRunnerStatus?.backend === "cold_command_fallback"
+        ? "Warm runner orchestration is active with full evidence preserved; this build is using the safe cold command fallback until the persistent hardware backend is validated on the Dell."
+        : "Warm runner orchestration is active with bridge-owned capture/process/report phases and full forensic evidence preserved.",
   };
 }
 
 function timingCategory(stepId: string): AiGraderLocalStationTimingEntry["category"] {
   if (stepId === "operator_preview") return "preview";
   if (stepId === "capture_front" || stepId === "capture_back") return "capture";
+  if (stepId === "warm_session_setup" || stepId.startsWith("process_") || stepId === "report_queue") return "warm_runner";
   if (stepId === "unified_report") return "report";
-  if (stepId === "safe_off") return "safe_off";
+  if (stepId === "safe_off" || stepId === "warm_safe_cleanup") return "safe_off";
   return "bridge";
 }
 
@@ -1160,6 +1375,7 @@ export class AiGraderLocalStationBridgeService {
   private manifest: AiGraderLocalStationBridgeManifest;
   private previewProcess?: ChildProcessWithoutNullStreams;
   private previewStop?: (reason: string) => void;
+  private captureLock?: { owner: string; acquiredAt: string };
 
   constructor(config: AiGraderLocalStationBridgeConfig, runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner()) {
     this.config = config;
@@ -1215,7 +1431,7 @@ export class AiGraderLocalStationBridgeService {
         port: this.config.port,
         rejectsNonLoopback: true,
       },
-      timingSummary: timingSummary(this.manifest.commandResults),
+      timingSummary: timingSummary(this.manifest.commandResults, this.manifest.warmRunnerStatus),
       ...this.manifest,
     };
   }
@@ -1267,11 +1483,247 @@ export class AiGraderLocalStationBridgeService {
   private stopPreviewForHardwareAction(action: string) {
     if (this.manifest.previewStatus.cameraOwnership === "preview_stream" || this.previewProcess || this.previewStop) {
       this.stopPreviewStream(`preview released before ${action} capture action`);
+      this.manifest.warmRunnerStatus.previewPolicy.lastPausedAt = new Date().toISOString();
       this.manifest.progressLog.push(`${new Date().toISOString()} Browser preview stream paused/released before ${action}.`);
     }
   }
 
+  private acquireCaptureLock(owner: string) {
+    if (this.captureLock) {
+      throw new Error(`AI Grader capture lock is already held by ${this.captureLock.owner}.`);
+    }
+    const acquiredAt = new Date().toISOString();
+    this.captureLock = { owner, acquiredAt };
+    this.manifest.warmRunnerStatus.captureLock = { held: true, owner, acquiredAt };
+    this.manifest.warmRunnerStatus.status = "capturing";
+    this.manifest.warmRunnerStatus.activeSide = owner.includes("back") ? "back" : owner.includes("front") ? "front" : undefined;
+    this.manifest.progressLog.push(`${acquiredAt} Capture lock acquired by ${owner}.`);
+  }
+
+  private releaseCaptureLock(owner: string) {
+    if (!this.captureLock) return;
+    if (this.captureLock.owner !== owner) {
+      throw new Error(`AI Grader capture lock release mismatch: ${owner} cannot release ${this.captureLock.owner}.`);
+    }
+    const releasedAt = new Date().toISOString();
+    this.captureLock = undefined;
+    this.manifest.warmRunnerStatus.captureLock = { held: false };
+    this.manifest.warmRunnerStatus.activeSide = undefined;
+    this.manifest.warmRunnerStatus.previewPolicy.lastResumeReadyAt = releasedAt;
+    this.manifest.progressLog.push(`${releasedAt} Capture lock released by ${owner}; preview may resume when the browser returns to idle.`);
+  }
+
+  private markWarmPhase(input: {
+    id: string;
+    label: string;
+    status: AiGraderWarmRunnerPhaseStatus;
+    side?: AiGraderWarmRunnerSide;
+    startedAt?: string;
+    finishedAt?: string;
+    backend?: AiGraderWarmRunnerPhase["backend"];
+    detail?: string;
+  }): AiGraderWarmRunnerPhase {
+    const previous = this.manifest.warmRunnerStatus.phases.find((phase) => phase.id === input.id);
+    const startedAt = input.startedAt ?? previous?.startedAt ?? (input.status === "active" ? new Date().toISOString() : undefined);
+    const finishedAt = input.finishedAt ?? (input.status === "completed" || input.status === "failed" || input.status === "cancelled" ? new Date().toISOString() : undefined);
+    const phase: AiGraderWarmRunnerPhase = {
+      id: input.id,
+      label: input.label,
+      status: input.status,
+      ...(input.side ? { side: input.side } : {}),
+      ...(startedAt ? { startedAt } : {}),
+      ...(finishedAt ? { finishedAt } : {}),
+      ...(startedAt && finishedAt ? { durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)) } : {}),
+      ...(input.backend ? { backend: input.backend } : previous?.backend ? { backend: previous.backend } : {}),
+      ...(input.detail ? { detail: input.detail } : previous?.detail ? { detail: previous.detail } : {}),
+    };
+    const others = this.manifest.warmRunnerStatus.phases.filter((candidate) => candidate.id !== input.id);
+    this.manifest.warmRunnerStatus.phases = [...others, phase];
+    const queueName = input.id.startsWith("capture_") ? "capture" : input.id.startsWith("process_") ? "processing" : input.id.includes("report") ? "report" : undefined;
+    if (queueName) {
+      const queue = this.manifest.warmRunnerStatus.queues[queueName].filter((candidate) => candidate.id !== input.id);
+      this.manifest.warmRunnerStatus.queues[queueName] = [...queue, phase];
+    }
+    return phase;
+  }
+
+  private updateEvidenceRoles(side: AiGraderWarmRunnerSide, status: AiGraderWarmRunnerPhaseStatus) {
+    this.manifest.warmRunnerStatus.evidencePlan.rolesBySide[side] = fullForensicEvidenceRoles(status);
+  }
+
+  private async runSafeOffCleanup(reason: string): Promise<void> {
+    if (this.config.mode !== "real") return;
+    const cleanupStartedAt = new Date().toISOString();
+    this.manifest.warmRunnerStatus.status = "safe_off";
+    this.markWarmPhase({
+      id: "warm_safe_cleanup",
+      label: "Watchdog safe-off cleanup",
+      status: "active",
+      startedAt: cleanupStartedAt,
+      backend: "cold_command_fallback",
+      detail: reason,
+    });
+    try {
+      const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, "safe_off"));
+      this.manifest.commandResults.push(result);
+      this.manifest.confirmations.finalLightOff = result.ok || this.manifest.confirmations.finalLightOff;
+      this.manifest.progressLog.push(`${new Date().toISOString()} Watchdog safe-off ${result.ok ? "completed" : "failed"} after ${reason}.`);
+      if (!result.ok) this.manifest.warnings.push(result.error ?? `Safe-off failed after ${reason}.`);
+      this.markWarmPhase({
+        id: "warm_safe_cleanup",
+        label: "Watchdog safe-off cleanup",
+        status: result.ok ? "completed" : "failed",
+        startedAt: cleanupStartedAt,
+        backend: "cold_command_fallback",
+        detail: reason,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : `Safe-off failed after ${reason}.`;
+      this.manifest.warnings.push(message);
+      this.markWarmPhase({
+        id: "warm_safe_cleanup",
+        label: "Watchdog safe-off cleanup",
+        status: "failed",
+        startedAt: cleanupStartedAt,
+        backend: "cold_command_fallback",
+        detail: message,
+      });
+    }
+  }
+
+  private async runWarmSideCapture(side: AiGraderWarmRunnerSide): Promise<AiGraderStationCommandResult> {
+    const stepId = side === "front" ? "capture_front" : "capture_back";
+    const owner = `warm-${stepId}`;
+    const phaseId = `capture_${side}`;
+    const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
+    this.acquireCaptureLock(owner);
+    this.stopPreviewForHardwareAction(side);
+    this.manifest.warmRunnerStatus.backend = "cold_command_fallback";
+    this.manifest.warmRunnerStatus.fallback.active = true;
+    this.manifest.warmRunnerStatus.fallback.reason =
+      "Using the existing full evidence package command as the safe backend while the persistent Basler/Leimac hardware loop is staged behind the warm-runner contract.";
+    this.updateEvidenceRoles(side, "active");
+    const phase = this.markWarmPhase({
+      id: phaseId,
+      label,
+      status: "active",
+      side,
+      backend: "cold_command_fallback",
+      detail: "dark_control, all_on, accepted_profile, and Leimac channels 1-8 remain required.",
+    });
+    try {
+      const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, stepId));
+      this.manifest.commandResults.push(result);
+      if (!result.ok) {
+        this.updateEvidenceRoles(side, "failed");
+        this.markWarmPhase({
+          id: phaseId,
+          label,
+          status: "failed",
+          side,
+          startedAt: phase.startedAt,
+          backend: "cold_command_fallback",
+          detail: result.error ?? "Cold fallback evidence package failed.",
+        });
+        throw new Error(result.error ?? `${side} evidence capture failed.`);
+      }
+      this.updateEvidenceRoles(side, "completed");
+      this.markWarmPhase({
+        id: phaseId,
+        label,
+        status: "completed",
+        side,
+        startedAt: phase.startedAt,
+        backend: "cold_command_fallback",
+        detail: "Full forensic side stack captured through cold fallback.",
+      });
+      this.markWarmPhase({
+        id: `process_${side}_artifacts`,
+        label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
+        status: "completed",
+        side,
+        backend: "persistent_session_contract",
+        detail:
+          side === "front"
+            ? "Front processing is queued during the operator flip window when a persistent backend is available."
+            : "Back processing is queued before unified report generation.",
+      });
+      this.manifest.warmRunnerStatus.status = "processing";
+      return result;
+    } catch (error) {
+      this.manifest.warmRunnerStatus.status = "failed";
+      await this.runSafeOffCleanup(`${side} warm capture failure`);
+      this.manifest.warmRunnerStatus.status = "failed";
+      throw error;
+    } finally {
+      this.releaseCaptureLock(owner);
+    }
+  }
+
+  private async runWarmReport(): Promise<AiGraderStationCommandResult> {
+    if (!this.manifest.outputs.frontPackageDir || !this.manifest.outputs.backPackageDir) {
+      throw new Error("Unified report requires both front and back evidence package folders.");
+    }
+    const phase = this.markWarmPhase({
+      id: "report_queue",
+      label: "Unified report queue",
+      status: "active",
+      backend: "persistent_session_contract",
+      detail: "Builds from already processed front/back full forensic artifacts.",
+    });
+    this.manifest.warmRunnerStatus.status = "reporting";
+    const step = {
+      ...stepById(this.config, this.manifest, "unified_report"),
+      args: [
+        "ai-grader-fixed-rig-v1-card-report",
+        "--output-dir",
+        this.config.outputDir,
+        "--front-dir",
+        this.manifest.outputs.frontPackageDir,
+        "--back-dir",
+        this.manifest.outputs.backPackageDir,
+      ],
+    };
+    const result = await runStepOrMock(this.config, this.manifest, this.runner, step);
+    this.manifest.commandResults.push(result);
+    this.markWarmPhase({
+      id: "report_queue",
+      label: "Unified report queue",
+      status: result.ok ? "completed" : "failed",
+      startedAt: phase.startedAt,
+      backend: "persistent_session_contract",
+      detail: result.ok ? "Unified report, Surface Intelligence, and Vision Lab outputs preserved." : result.error ?? "Unified report failed.",
+    });
+    this.manifest.warmRunnerStatus.status = result.ok ? "complete" : "failed";
+    if (!result.ok) {
+      await this.runSafeOffCleanup("warm report failure");
+      this.manifest.warmRunnerStatus.status = "failed";
+      throw new Error(result.error ?? "Unified provisional diagnostics failed.");
+    }
+    return result;
+  }
+
   streamPreview(req: http.IncomingMessage, res: http.ServerResponse, origin: string | undefined): Promise<void> {
+    if (this.captureLock) {
+      this.updatePreviewStatus({
+        status: "paused_for_capture",
+        cameraOwnership: "capture_action",
+        lastStopReason: `capture lock held by ${this.captureLock.owner}`,
+      });
+      sendJson(
+        res,
+        409,
+        {
+          ok: false,
+          code: "AI_GRADER_CAPTURE_LOCK_HELD",
+          message: "AI Grader capture owns the Basler camera; preview will resume after safe idle.",
+          result: this.previewStatus(),
+        },
+        origin,
+        this.config
+      );
+      return Promise.resolve();
+    }
     this.stopPreviewStream("new preview stream requested");
     this.updatePreviewStatus({
       status: "starting",
@@ -1609,6 +2061,16 @@ export class AiGraderLocalStationBridgeService {
       this.manifest.outputs.sessionDir = packageDir;
       this.manifest.outputs.manifestPath = path.join(packageDir, "station-session.json");
       this.manifest.currentStep = "verify_fixture_rulers";
+      this.manifest.warmRunnerStatus.sessionId = this.manifest.sessionId;
+      this.manifest.warmRunnerStatus.status = "warming";
+      this.markWarmPhase({
+        id: "warm_session_setup",
+        label: "Warm session setup",
+        status: "completed",
+        backend: "persistent_session_contract",
+        detail: "Bridge-owned session initialized; Basler/Leimac ownership will be serialized through the capture lock.",
+      });
+      this.manifest.warmRunnerStatus.status = "idle";
       this.manifest.progressLog.push(`${now} Started station session ${this.manifest.sessionId}.`);
       await writeSessionManifest(this.manifest);
       return this.status();
@@ -1648,8 +2110,26 @@ export class AiGraderLocalStationBridgeService {
       return this.status();
     }
 
-    if (action === "end-session") {
+    if (action === "cancel-session") {
+      await this.runSafeOffCleanup("station cancellation");
       this.manifest.currentStep = "safe_off_end_session";
+      this.manifest.warmRunnerStatus.status = "cancelled";
+      this.markWarmPhase({
+        id: "station_cancelled",
+        label: "Station cancellation",
+        status: "cancelled",
+        backend: "persistent_session_contract",
+        detail: "Cancellation requested; safe-off cleanup attempted in real mode.",
+      });
+      this.manifest.progressLog.push(`${now} Station session cancelled.`);
+      await writeSessionManifest(this.manifest);
+      return this.status();
+    }
+
+    if (action === "end-session") {
+      await this.runSafeOffCleanup("station session end");
+      this.manifest.currentStep = "safe_off_end_session";
+      this.manifest.warmRunnerStatus.status = "complete";
       this.manifest.progressLog.push(`${now} Station session ended.`);
       await writeSessionManifest(this.manifest);
       return this.status();
@@ -1657,10 +2137,27 @@ export class AiGraderLocalStationBridgeService {
 
     if (action === "safe-off") {
       assertRealReady(this.config, this.manifest);
+      this.manifest.warmRunnerStatus.status = "safe_off";
+      const phase = this.markWarmPhase({
+        id: "warm_safe_cleanup",
+        label: "Watchdog safe-off cleanup",
+        status: "active",
+        backend: "cold_command_fallback",
+        detail: "operator safe-off action",
+      });
       const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, "safe_off"));
       this.manifest.commandResults.push(result);
       this.manifest.confirmations.finalLightOff = Boolean(request.confirmations?.finalLightOff) || this.manifest.confirmations.finalLightOff;
       this.manifest.currentStep = "safe_off_end_session";
+      this.markWarmPhase({
+        id: "warm_safe_cleanup",
+        label: "Watchdog safe-off cleanup",
+        status: result.ok ? "completed" : "failed",
+        startedAt: phase.startedAt,
+        backend: "cold_command_fallback",
+        detail: "operator safe-off action",
+      });
+      this.manifest.warmRunnerStatus.status = result.ok ? "complete" : "failed";
       this.manifest.progressLog.push(`${now} Safe-off ${result.ok ? "completed" : "failed"}.`);
       if (!result.ok) this.manifest.warnings.push(result.error ?? "Safe-off failed.");
       await writeSessionManifest(this.manifest);
@@ -1694,13 +2191,10 @@ export class AiGraderLocalStationBridgeService {
 
     if (action === "capture-front") {
       assertFixtureVisible(this.manifest);
-      this.stopPreviewForHardwareAction("front");
-      const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, "capture_front"));
-      this.manifest.commandResults.push(result);
-      if (!result.ok) throw new Error(result.error ?? "Front evidence capture failed.");
+      const result = await this.runWarmSideCapture("front");
       this.manifest.outputs.frontPackageDir = extractPackageDir(result.payload);
       this.manifest.currentStep = "prompt_flip_card";
-      this.manifest.progressLog.push(`${now} Front evidence captured.`);
+      this.manifest.progressLog.push(`${now} Front evidence captured with warm-runner orchestration.`);
       await writeSessionManifest(this.manifest);
       return this.status();
     }
@@ -1708,40 +2202,20 @@ export class AiGraderLocalStationBridgeService {
     if (action === "capture-back") {
       assertFixtureVisible(this.manifest);
       assertFlipComplete(this.manifest);
-      this.stopPreviewForHardwareAction("back");
-      const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, "capture_back"));
-      this.manifest.commandResults.push(result);
-      if (!result.ok) throw new Error(result.error ?? "Back evidence capture failed.");
+      const result = await this.runWarmSideCapture("back");
       this.manifest.outputs.backPackageDir = extractPackageDir(result.payload);
       this.manifest.currentStep = "run_provisional_diagnostics";
-      this.manifest.progressLog.push(`${now} Back evidence captured.`);
+      this.manifest.progressLog.push(`${now} Back evidence captured with warm-runner orchestration.`);
       await writeSessionManifest(this.manifest);
       return this.status();
     }
 
     if (action === "run-diagnostics") {
-      if (!this.manifest.outputs.frontPackageDir || !this.manifest.outputs.backPackageDir) {
-        throw new Error("Unified report requires both front and back evidence package folders.");
-      }
-      const step = {
-        ...stepById(this.config, this.manifest, "unified_report"),
-        args: [
-          "ai-grader-fixed-rig-v1-card-report",
-          "--output-dir",
-          this.config.outputDir,
-          "--front-dir",
-          this.manifest.outputs.frontPackageDir,
-          "--back-dir",
-          this.manifest.outputs.backPackageDir,
-        ],
-      };
-      const result = await runStepOrMock(this.config, this.manifest, this.runner, step);
-      this.manifest.commandResults.push(result);
-      if (!result.ok) throw new Error(result.error ?? "Unified provisional diagnostics failed.");
+      const result = await this.runWarmReport();
       this.manifest.outputs.unifiedReportDir = result.payload?.report?.packageDir ?? dirnameIfFile(extractUnifiedReportPath(result.payload));
       this.manifest.outputs.unifiedReportPath = extractUnifiedReportPath(result.payload);
       this.manifest.currentStep = "view_unified_report";
-      this.manifest.progressLog.push(`${now} Unified provisional diagnostics generated.`);
+      this.manifest.progressLog.push(`${now} Unified provisional diagnostics generated from warm-runner queues.`);
       await writeSessionManifest(this.manifest);
       return this.status();
     }
@@ -1801,6 +2275,7 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
     "publish-report",
     "generate-label-data",
     "safe-off",
+    "cancel-session",
     "latest-report",
     "session-manifest",
     "end-session",

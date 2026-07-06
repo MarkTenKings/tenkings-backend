@@ -23352,3 +23352,50 @@ By enabling Rip It Live, I confirm:
 - No shell tracing was used.
 - Public report routes remain read-only and hardware-control-free.
 - DigitalOcean Postgres credential rotation remains deferred by Mark.
+
+## 2026-07-06 - AI Grader PR #57 merge/deploy and PR #58 warm runner start
+
+### Planned Action
+- Resume after the Dell reboot/crash.
+- Verify local branch/HEAD, GitHub PR #56/#57 status, latest `main`, and PR #57 checks before merging.
+- If PR #57 remains open, clean, and passing, merge it and verify Vercel Production deployment, then pull latest `main`.
+- Start PR #58 from latest `main` for a warm full forensic runner that speeds the workflow by keeping forensic evidence intact while reducing cold starts and repeated hardware setup.
+- Guardrails: no secrets printed, no credential rotation, no migrations, no production DB writes, no Vercel env changes, no hardware capture without Mark approval, public report routes remain read-only/hardware-free, and the production service-account token is not used for local bridge or preview.
+
+### PR #57 Observed Result
+- Pre-merge local state: branch `feature/ai-grader-browser-preview-timing` at `c1fb1d22d217f63bb1b582a19538033407efe80f`, clean before this session-log entry.
+- PR #56 was already merged at `2026-07-05T22:59:09Z` with merge commit `3a1ba066aa9f17f767fc387f215d50d2056d7a17`.
+- PR #57 was open, non-draft, `mergeStateStatus=CLEAN`, and all PR checks/Vercel preview were successful before merge.
+- PR #57 merged at `2026-07-06T00:17:13Z` with merge commit `ae0c75a9c8c902e4d85948f44788482c4db10543`.
+- Vercel Production status for merge commit `ae0c75a9c8c902e4d85948f44788482c4db10543` completed successfully at target `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/6MgAJ7Ceq9VXvbWYFu7TmUFoAknp`.
+- Main push checks for the merge commit completed successfully: Install & Build plus Docker image builds for frontend, wallet-service, vault-service, marketplace-service, pricing-service, pack-service, ingestion-service, and vending-gw.
+- No hardware capture, Leimac lighting command, Basler capture, migration, production DB write, Vercel env change, credential rotation, or secret-printing action was run during the merge/deploy verification.
+
+### PR #58 Observed Result
+- Created branch `feature/ai-grader-warm-forensic-runner` from latest `main` at `ae0c75a9c8c902e4d85948f44788482c4db10543`.
+- Added a bridge-owned warm-runner session contract to the Dell local station bridge.
+- Warm runner tracks `full_forensic` mode, session id, active side, capture lock ownership, preview pause/resume policy, capture/processing/report queues, warm phases, baseline/target timing, fallback state, and safety guarantees.
+- Full forensic evidence remains the default for both sides: `dark_control`, `all_on`, `accepted_profile`, and Leimac `channel_1` through `channel_8`.
+- The bridge now serializes capture ownership with one capture lock, rejects preview stream requests with `AI_GRADER_CAPTURE_LOCK_HELD` while capture owns the camera, pauses preview before capture, and marks preview resume readiness after capture releases.
+- Front/back capture actions run through the warm-runner orchestration and currently use the existing full `ai-grader-fixed-rig-v1-evidence-package` command as the safe `cold_command_fallback` backend until persistent in-process Basler/Leimac execution is validated on the Dell.
+- Report generation runs through a warm report queue and preserves the unified report, Surface Intelligence, Vision Lab, ROI/display crops, front evidence, and back evidence outputs.
+- Added guarded safe-off cleanup for capture failure, report failure, operator safe-off, cancellation, and session end in real mode. The cancellation action is `cancel-session`.
+- Station UI now shows warm-runner status, backend, capture lock, capture/processing/report queue state, front/back evidence role progress by channel, latest warm phases, and PR #57 timing fields.
+- Public report routes remain read-only and hardware-control-free; local bridge/preview use only the browser-local station token, not the production service-account token.
+
+### PR #58 Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `29` tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `174` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, browserslist/baseline, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### PR #58 Not Run
+- No supervised Dell hardware smoke was run.
+- No hardware capture, Leimac lighting command, Basler image capture, migration, production DB write, Vercel env change, credential rotation, production deploy, or secret-printing action was run.
+
+### PR #58 Remaining Risk
+- Real timing improvement is not measured in this PR because hardware smoke was not approved.
+- The persistent in-process Basler/Leimac backend is staged behind the warm-runner contract; the safe cold command fallback preserves evidence and behavior until the Dell can validate persistent hardware ownership.
