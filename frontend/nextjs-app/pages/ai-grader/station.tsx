@@ -32,15 +32,25 @@ import {
 } from "../../lib/aiGraderStationBridgeClient";
 import type { AiGraderReportBundle } from "../../lib/aiGraderReportBundle";
 import { findReportImage, reportImageAssets } from "../../lib/aiGraderReportImages";
+import {
+  aiGraderOperatorStepCopy,
+  buildAiGraderCompsReadiness,
+  buildAiGraderLabelPreviewUrl,
+  buildAiGraderPublishReadiness,
+} from "../../lib/aiGraderOperatorWorkflow";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
   message: string;
+  reportId?: string;
+  certId?: string;
   publicReportUrl?: string;
+  labelPreviewUrl?: string;
   qrPayloadUrl?: string;
   uploadedAssetCount?: number;
+  evidenceAssetCount?: number;
 };
 
 type CardSelectionState = {
@@ -90,6 +100,11 @@ function formatMs(ms?: number) {
   if (typeof ms !== "number") return "pending";
   if (ms < 1000) return `${Math.round(ms)} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function scoreText(score?: number) {
+  if (typeof score !== "number" || !Number.isFinite(score)) return "Pending";
+  return score.toFixed(score % 1 === 0 ? 0 : 2);
 }
 
 function formatStationValue(value?: string) {
@@ -416,6 +431,8 @@ export default function AiGraderStationPage() {
     () => AI_GRADER_STATION_STEPS.find((step) => step.id === status.currentStep) ?? AI_GRADER_STATION_STEPS[0],
     [status.currentStep]
   );
+  const operatorStepCopy = aiGraderOperatorStepCopy(status.currentStep);
+  const displayedStep = operatorStepCopy ? { ...currentStep, ...operatorStepCopy } : currentStep;
 
   const sortedHistory = useMemo(() => sortHistory(history.items, historySort), [history.items, historySort]);
   const selectedCardIdentity = useMemo(() => {
@@ -431,7 +448,23 @@ export default function AiGraderStationPage() {
   }, [selectedCard]);
   const reportReady = status.latestReport.exists && Boolean(status.latestReport.reportId);
   const finalReady = status.safety.finalGradeComputed || Boolean(status.productionRelease?.finalGradeComputed);
-  const labelReady = status.safety.labelGenerated || Boolean(status.outputs?.labelDataPath);
+  const labelReady = status.safety.labelGenerated || Boolean(status.outputs?.labelDataPath) || status.productionRelease?.label.status === "label_data_ready";
+  const publishReadiness = buildAiGraderPublishReadiness({
+    bundle: status.reportBundle,
+    productionRelease: status.productionRelease,
+    published: productionPublish.status === "published",
+  });
+  const compsReadiness = buildAiGraderCompsReadiness({
+    bundle: status.reportBundle,
+    productionRelease: status.productionRelease,
+    selectedCard,
+  });
+  const reportIdForLinks = publishReadiness.reportId ?? status.latestReport.reportId;
+  const labelPreviewUrl = productionPublish.labelPreviewUrl ?? publishReadiness.labelPreviewUrl ?? (reportIdForLinks ? buildAiGraderLabelPreviewUrl(reportIdForLinks) : undefined);
+  const publicReportUrl = productionPublish.publicReportUrl ?? publishReadiness.publicReportUrl;
+  const qrPayloadUrl = productionPublish.qrPayloadUrl ?? publishReadiness.qrPayloadUrl;
+  const certId = productionPublish.certId ?? publishReadiness.certId;
+  const canPublishToTenKings = publishReadiness.ready && productionPublish.status !== "published";
   const localReportImages = useMemo(
     () => (localReport.bundle ? reportImageAssets(localReport.bundle, { allowEmbeddedBodies: true }) : []),
     [localReport.bundle]
@@ -459,6 +492,13 @@ export default function AiGraderStationPage() {
       return haystack.includes("surface") || haystack.includes("heatmap") || haystack.includes("confidence") || haystack.includes("normal");
     }).length,
   };
+  const localReportReadiness = buildAiGraderPublishReadiness({
+    bundle: localReport.bundle,
+    productionRelease: localReport.bundle?.productionRelease,
+  });
+  const localReportRelease = localReport.bundle?.productionRelease;
+  const localReportFinalGrade = localReportRelease?.finalGrade;
+  const localReportStory = localReport.bundle?.provisionalGrade;
   const showFlipScrim = status.currentStep === "prompt_flip_card";
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
   const warmRunner = status.warmRunnerStatus;
@@ -757,6 +797,7 @@ export default function AiGraderStationPage() {
       await runAction("capture-back", { confirmations: { flipComplete: true, lightIdleOff: true, fixtureRulersVisible: true } });
       await runAction("run-diagnostics");
       await runAction("export-report-bundle");
+      await prepareLocalProductionRelease();
       await refreshHistory();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Back capture or report generation failed.");
@@ -765,24 +806,20 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const runProductionAction = async (action: "calculate-final-grade" | "finalize-report" | "publish-report" | "generate-label-data") => {
-    setBusy(action);
-    setError(null);
-    try {
-      const next = await runAction(action, {
-        operatorId: "local-browser-operator",
-        warningsAccepted: true,
-        overrideReason: "Operator accepted Production Release V0 warning gates from the browser station.",
-      });
-      if (action !== "generate-label-data") {
-        setStatus(next);
-      }
-      await refreshHistory();
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Production release action failed.");
-    } finally {
-      setBusy(null);
+  const productionReleaseBody = () => ({
+    operatorId: "local-browser-operator",
+    warningsAccepted: true,
+    overrideReason: "Operator accepted Production Release V0 warning gates from the browser station.",
+  });
+
+  const prepareLocalProductionRelease = async () => {
+    let next = await runAction("calculate-final-grade", productionReleaseBody());
+    if (next.productionRelease?.finalGradeComputed === true) {
+      next = await runAction("finalize-report", productionReleaseBody());
+      next = await runAction("generate-label-data", productionReleaseBody());
     }
+    await refreshHistory();
+    return next;
   };
 
   const buildReportBundleForProduction = (baseBundle: AiGraderReportBundle | undefined = status.reportBundle) => {
@@ -841,9 +878,14 @@ export default function AiGraderStationPage() {
   const publishToTenKingsSystem = async () => {
     setBusy("ten-kings-publish");
     setError(null);
+    setProductionPublish((current) => ({ ...current, status: "pending", message: "Publishing report bundle, evidence assets, label data, and QR payload." }));
     try {
-      let sourceBundle = status.reportBundle;
-      const reportId = status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      let latestStatus = status;
+      if (!latestStatus.productionRelease?.finalGradeComputed && reportReady) {
+        latestStatus = await prepareLocalProductionRelease();
+      }
+      let sourceBundle = latestStatus.reportBundle;
+      const reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
       if (bridgeConnected && stationToken.trim() && reportId) {
         sourceBundle = await fetchAiGraderStationReportBundle({
           baseUrl: bridgeUrl,
@@ -853,8 +895,16 @@ export default function AiGraderStationPage() {
         });
       }
       const reportBundle = buildReportBundleForProduction(sourceBundle);
-      if (!reportBundle || !status.productionRelease) {
+      const productionRelease = latestStatus.productionRelease ?? sourceBundle?.productionRelease;
+      const readiness = buildAiGraderPublishReadiness({
+        bundle: reportBundle,
+        productionRelease,
+      });
+      if (!reportBundle || !productionRelease) {
         throw new Error("A finalized production release and report bundle are required before Ten Kings publish.");
+      }
+      if (!readiness.ready) {
+        throw new Error(readiness.message);
       }
       const response = await fetch("/api/admin/ai-grader/production/publish", {
         method: "POST",
@@ -862,7 +912,7 @@ export default function AiGraderStationPage() {
         body: JSON.stringify({
           publicationStatus: "published",
           reportBundle,
-          productionRelease: status.productionRelease,
+          productionRelease,
           cardAssetId: selectedCard?.cardAssetId ?? reportBundle.cardIdentity.cardAssetId,
           itemId: selectedCard?.itemId ?? reportBundle.cardIdentity.itemId,
         }),
@@ -877,11 +927,16 @@ export default function AiGraderStationPage() {
       }
       setProductionPublish({
         status: "published",
-        message: "Report bundle/assets were uploaded through the configured storage mode and persistence returned successfully.",
+        message: "Published. Public report, printable label, and QR payload are ready.",
+        reportId: payload.result.reportId,
+        certId: payload.result.certId ?? productionRelease.label?.certId,
         publicReportUrl: payload.result.publicReportUrl,
+        labelPreviewUrl: payload.result.labelPreviewUrl ?? (payload.result.reportId ? buildAiGraderLabelPreviewUrl(payload.result.reportId) : undefined),
         qrPayloadUrl: payload.result.qrPayloadUrl,
         uploadedAssetCount: payload.result.uploadedAssetCount,
+        evidenceAssetCount: payload.result.evidenceAssetCount,
       });
+      await refreshHistory();
     } catch (requestError) {
       setProductionPublish({
         status: "error",
@@ -954,6 +1009,15 @@ export default function AiGraderStationPage() {
       if (!reportBundle || !status.productionRelease) {
         throw new Error("A finalized production release and selected report bundle are required before comps.");
       }
+      const readiness = buildAiGraderCompsReadiness({
+        bundle: reportBundle,
+        productionRelease: status.productionRelease,
+        selectedCard,
+      });
+      if (!readiness.ready) {
+        setCompsState({ status: readiness.status, message: readiness.message });
+        return;
+      }
       const response = await fetch("/api/admin/ai-grader/production/run-comps", {
         method: "POST",
         headers: await productionAuthHeaders({ "content-type": "application/json" }),
@@ -1006,11 +1070,6 @@ export default function AiGraderStationPage() {
     const reportId = status.latestReport.reportId;
     if (!reportReady || !reportId) {
       setError("No generated report is ready yet.");
-      return;
-    }
-    const publishedUrl = productionPublish.status === "published" ? productionPublish.publicReportUrl ?? "" : "";
-    if (publishedUrl) {
-      window.location.assign(publishedUrl);
       return;
     }
     if (!bridgeConnected || !stationToken.trim()) {
@@ -1106,6 +1165,15 @@ export default function AiGraderStationPage() {
       await refreshHistory();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not load local AI Grader report history.");
+    }
+  };
+
+  const copyLink = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setProductionPublish((current) => ({ ...current, message: `${label} copied.` }));
+    } catch {
+      setProductionPublish((current) => ({ ...current, message: `${label}: ${value}` }));
     }
   };
 
@@ -1278,6 +1346,10 @@ export default function AiGraderStationPage() {
                     <div className="report-facts">
                       <span>Report ID</span>
                       <strong>{localReport.bundle.reportId}</strong>
+                      <span>Status</span>
+                      <strong>{formatStationValue(localReport.bundle.reportStatus)}</strong>
+                      <span>Grade</span>
+                      <strong>{scoreText(localReportFinalGrade?.overall ?? localReportStory?.overall)}</strong>
                       <span>Images</span>
                       <strong>{localReportImages.length}</strong>
                       <span>Front / Back</span>
@@ -1286,18 +1358,115 @@ export default function AiGraderStationPage() {
                       <strong>{localReportCounts.roi} / {localReportCounts.channel} / {localReportCounts.vision}</strong>
                     </div>
                   </div>
-                  {localReportGallery.length ? (
-                    <div className="report-grid">
-                      {localReportGallery.map((asset) => (
-                        <figure key={asset.renderUrl}>
-                          <img src={asset.renderUrl} alt={asset.fileName ?? asset.id ?? "AI Grader evidence image"} loading="lazy" />
-                          <figcaption>{asset.fileName ?? asset.id ?? "evidence image"}</figcaption>
-                        </figure>
-                      ))}
+                  <div className="report-section-grid">
+                    <section>
+                      <p className="eyebrow">Grade Story</p>
+                      <h3>{localReportFinalGrade?.finalGradeComputed ? "Final AI-Grader Grade V0" : "Diagnostic Report"}</h3>
+                      <p>{localReportStory?.gradeStory?.summary ?? "This report did not compute a final grade. Review the evidence gates and warnings below."}</p>
+                      <dl>
+                        <dt>Confidence</dt>
+                        <dd>{localReportFinalGrade?.confidence.band ?? localReportStory?.confidence?.band ?? "pending"}</dd>
+                        <dt>Strongest positive</dt>
+                        <dd>{localReportStory?.gradeStory?.strongestPositiveFinding ?? "Not computed"}</dd>
+                        <dt>Strongest warning</dt>
+                        <dd>{localReportStory?.gradeStory?.strongestWarning ?? localReport.bundle.warnings[0] ?? "No warning recorded"}</dd>
+                      </dl>
+                    </section>
+                    <section>
+                      <p className="eyebrow">Publish Readiness</p>
+                      <h3>{formatStationValue(localReportReadiness.status)}</h3>
+                      <p>{localReportReadiness.message}</p>
+                      <dl>
+                        <dt>Cert / Report ID</dt>
+                        <dd>{localReportReadiness.certId ?? "pending"}</dd>
+                        <dt>QR Payload</dt>
+                        <dd>{localReportReadiness.qrPayloadUrl ?? "pending"}</dd>
+                      </dl>
+                    </section>
+                  </div>
+                  <section className="report-section">
+                    <p className="eyebrow">Element Diagnostics</p>
+                    <div className="element-mini-grid">
+                      {(["centering", "corners", "edges", "surface"] as const).map((element) => {
+                        const finalElement = localReportFinalGrade?.elements[element];
+                        const provisionalElement = localReportStory?.elementScores?.[element];
+                        return (
+                          <article key={element}>
+                            <span>{element}</span>
+                            <strong>{scoreText(finalElement?.score ?? provisionalElement?.score)}</strong>
+                            <p>{finalElement?.explanation ?? provisionalElement?.explanation ?? "Insufficient evidence."}</p>
+                          </article>
+                        );
+                      })}
                     </div>
+                  </section>
+                  <div className="report-section-grid">
+                    <section>
+                      <p className="eyebrow">Why Not 10</p>
+                      {(localReportFinalGrade?.whyNot10.length ? localReportFinalGrade.whyNot10 : localReportStory?.whyNot10 ?? []).length ? (
+                        (localReportFinalGrade?.whyNot10.length ? localReportFinalGrade.whyNot10 : localReportStory?.whyNot10 ?? []).map((reason) => (
+                          <article key={reason.id} className="compact-finding">
+                            <strong>{reason.title}</strong>
+                            <p>{reason.explanation}</p>
+                          </article>
+                        ))
+                      ) : (
+                        <p>No grade-impact story was computed.</p>
+                      )}
+                    </section>
+                    <section>
+                      <p className="eyebrow">Vision Lab</p>
+                      <dl>
+                        <dt>Available</dt>
+                        <dd>{localReport.bundle.visionLab.available ? "Yes" : "No"}</dd>
+                        <dt>Surface candidates</dt>
+                        <dd>{localReport.bundle.visionLab.candidateCount}</dd>
+                        <dt>Heatmaps</dt>
+                        <dd>{localReport.bundle.visionLab.heatmapRefs.join(", ") || "none"}</dd>
+                        <dt>Light sweep</dt>
+                        <dd>{localReport.bundle.visionLab.channelImageRefs.join(", ") || "none"}</dd>
+                      </dl>
+                    </section>
+                  </div>
+                  {localReportGallery.length ? (
+                    <section className="report-section">
+                      <p className="eyebrow">Evidence Images</p>
+                      <div className="report-grid">
+                        {localReportGallery.map((asset) => (
+                          <figure key={asset.renderUrl}>
+                            <img src={asset.renderUrl} alt={asset.fileName ?? asset.id ?? "AI Grader evidence image"} loading="lazy" />
+                            <figcaption>{asset.fileName ?? asset.id ?? "evidence image"}</figcaption>
+                          </figure>
+                        ))}
+                      </div>
+                    </section>
                   ) : (
                     <div className="report-error">No renderable local report images were returned by the paired bridge.</div>
                   )}
+                  {localReportRelease ? (
+                    <section className="report-section">
+                      <p className="eyebrow">Warnings and Gates</p>
+                      <div className="gate-grid">
+                        {localReportRelease.gates.map((gate) => (
+                          <article key={gate.id} className={gate.status}>
+                            <span>{formatStationValue(gate.status)}</span>
+                            <strong>{gate.label}</strong>
+                            <p>{gate.reason}</p>
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+                  {localReport.bundle.warnings.length ? (
+                    <section className="report-section">
+                      <p className="eyebrow">Diagnostics</p>
+                      <ul className="warning-list">
+                        {localReport.bundle.warnings.slice(0, 12).map((warning) => (
+                          <li key={warning}>{warning}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
                 </>
               ) : null}
             </section>
@@ -1314,8 +1483,8 @@ export default function AiGraderStationPage() {
 
           <section className="next-card">
             <p className="eyebrow">Current Step</p>
-            <h2>{currentStep.label}</h2>
-            <p>{currentStep.operatorAction}</p>
+            <h2>{displayedStep.label}</h2>
+            <p>{displayedStep.operatorAction}</p>
             <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
               {busy === "start" ? "Starting" : "Start New Card"}
             </button>
@@ -1576,50 +1745,88 @@ export default function AiGraderStationPage() {
             </div>
           </section>
 
-          <div className="action-row">
-            <button type="button" onClick={() => void openReport()} disabled={!reportReady || busy !== null}>
-              {busy === "open-report" ? "Opening Report" : "View Report"}
-            </button>
-            <button type="button" onClick={() => runProductionAction("calculate-final-grade")} disabled={!reportReady || busy !== null}>
-              {busy === "calculate-final-grade" ? "Calculating" : "Calculate Final Grade"}
-            </button>
-            <button type="button" onClick={() => runProductionAction("finalize-report")} disabled={!reportReady || busy !== null}>
-              {busy === "finalize-report" ? "Finalizing" : "Finalize / Publish"}
-            </button>
-            <button type="button" onClick={() => runProductionAction("generate-label-data")} disabled={!finalReady || busy !== null}>
-              {busy === "generate-label-data" ? "Generating" : "Generate Label Data"}
-            </button>
-            <button type="button" onClick={publishToTenKingsSystem} disabled={!status.productionRelease || busy !== null}>
-              {busy === "ten-kings-publish" ? "Publishing" : "Publish to Ten Kings System"}
-            </button>
-            <button type="button" onClick={runEbayComps} disabled={!status.productionRelease || busy !== null}>
-              {busy === "run-comps" ? "Running Comps" : "Run eBay Comps"}
-            </button>
-            <button type="button" onClick={openHistory}>
-              Card History Reports
-            </button>
-          </div>
+          <section className="operator-workflow">
+            <p className="eyebrow">Operator Workflow</p>
+            <h3>{productionPublish.status === "published" ? "Published Outputs Ready" : "Review and Publish"}</h3>
+            <p>{publishReadiness.message}</p>
+            <div className="action-row">
+              <button type="button" onClick={() => void openReport()} disabled={!reportReady || busy !== null}>
+                {busy === "open-report" ? "Opening Report" : "Review Report"}
+              </button>
+              <button type="button" className="primary" onClick={publishToTenKingsSystem} disabled={!canPublishToTenKings || busy !== null}>
+                {busy === "ten-kings-publish" ? "Publishing" : "Publish to Ten Kings"}
+              </button>
+              {productionPublish.status === "published" && publicReportUrl ? (
+                <a href={publicReportUrl} target="_blank" rel="noreferrer">View Public Report</a>
+              ) : null}
+              {productionPublish.status === "published" && labelPreviewUrl ? (
+                <a href={labelPreviewUrl} target="_blank" rel="noreferrer">Print Label</a>
+              ) : null}
+              <button type="button" onClick={runEbayComps} disabled={!compsReadiness.ready || busy !== null}>
+                {busy === "run-comps" ? "Running Comps" : compsState.status === "completed" ? "Refresh Comps" : "Run eBay Comps"}
+              </button>
+              <button type="button" onClick={openHistory}>
+                Card History Reports
+              </button>
+            </div>
+            {!canPublishToTenKings && productionPublish.status !== "published" ? (
+              <div className="readiness-warning">
+                <strong>Publish not ready</strong>
+                <p>{publishReadiness.message}</p>
+                {publishReadiness.failedGates.length ? (
+                  <ul>
+                    {publishReadiness.failedGates.map((gate) => (
+                      <li key={gate.id}>{gate.label}: {gate.reason}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
 
           <section className="production-status">
-            <p className="eyebrow">Production Publish</p>
+            <p className="eyebrow">Public Report / Label</p>
             <div>
-              <span>DB persistence</span>
-              <strong>{productionPublish.status === "published" ? "Complete" : productionPublish.status === "disabled" ? "Disabled" : "Pending"}</strong>
+              <span>Publication</span>
+              <strong>{productionPublish.status === "published" ? "Published" : formatStationValue(publishReadiness.status)}</strong>
+            </div>
+            <div>
+              <span>Report ID</span>
+              <strong>{reportIdForLinks ?? "pending"}</strong>
+            </div>
+            <div>
+              <span>Cert / Report ID</span>
+              <strong>{certId ?? "pending"}</strong>
             </div>
             <div>
               <span>Storage upload</span>
               <strong>{productionPublish.uploadedAssetCount ? `${productionPublish.uploadedAssetCount} assets` : "Pending"}</strong>
             </div>
-            <div>
-              <span>Publication</span>
-              <strong>{productionPublish.status}</strong>
-            </div>
             <p>{productionPublish.message}</p>
-            {productionPublish.publicReportUrl ? <p>Public URL: {productionPublish.publicReportUrl}</p> : null}
-            {productionPublish.qrPayloadUrl ? <p>QR URL: {productionPublish.qrPayloadUrl}</p> : null}
+            {publicReportUrl ? (
+              <p className="link-line">
+                <span>Public report</span>
+                <a href={publicReportUrl} target="_blank" rel="noreferrer">{publicReportUrl}</a>
+                <button type="button" onClick={() => void copyLink(publicReportUrl, "Public report URL")}>Copy</button>
+              </p>
+            ) : null}
+            {labelPreviewUrl ? (
+              <p className="link-line">
+                <span>Label preview</span>
+                <a href={labelPreviewUrl} target="_blank" rel="noreferrer">{labelPreviewUrl}</a>
+                <button type="button" onClick={() => void copyLink(labelPreviewUrl, "Label preview URL")}>Copy</button>
+              </p>
+            ) : null}
+            {qrPayloadUrl ? (
+              <p className="link-line">
+                <span>QR payload</span>
+                <a href={qrPayloadUrl} target="_blank" rel="noreferrer">{qrPayloadUrl}</a>
+                <button type="button" onClick={() => void copyLink(qrPayloadUrl, "QR payload URL")}>Copy</button>
+              </p>
+            ) : null}
             <p>Label: {labelReady ? "label data ready" : "pending"}</p>
             <p>Card linkage: {selectedCard?.cardAssetId ?? selectedCard?.itemId ?? status.reportBundle?.cardIdentity.cardAssetId ?? "manual draft / not linked"}</p>
-            <p>Comps: {compsState.status} - {compsState.message}</p>
+            <p>Comps: {compsState.status === "idle" ? compsReadiness.status : compsState.status} - {compsState.status === "idle" ? compsReadiness.message : compsState.message}</p>
             {compsState.searchQuery ? <p>Comps query: {compsState.searchQuery}</p> : null}
           </section>
 
@@ -1851,6 +2058,90 @@ export default function AiGraderStationPage() {
         .report-facts strong {
           color: #f7f0dc;
           overflow-wrap: anywhere;
+        }
+        .report-section,
+        .report-section-grid section {
+          border: 1px solid rgba(225, 205, 155, 0.18);
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.05);
+          padding: 14px;
+        }
+        .report-section h3,
+        .report-section-grid h3 {
+          margin: 0 0 8px;
+          font-size: 18px;
+        }
+        .report-section p,
+        .report-section-grid p,
+        .report-section dd,
+        .report-section-grid dd,
+        .warning-list {
+          color: #d5c8a7;
+          line-height: 1.5;
+        }
+        .report-section-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px;
+        }
+        .report-section dl,
+        .report-section-grid dl {
+          display: grid;
+          grid-template-columns: 130px minmax(0, 1fr);
+          gap: 7px 10px;
+          margin: 12px 0 0;
+          font-size: 12px;
+        }
+        .report-section dt,
+        .report-section-grid dt {
+          color: #a89976;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+        .report-section dd,
+        .report-section-grid dd {
+          margin: 0;
+          overflow-wrap: anywhere;
+        }
+        .element-mini-grid,
+        .gate-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+          gap: 10px;
+        }
+        .element-mini-grid article,
+        .gate-grid article,
+        .compact-finding {
+          border: 1px solid rgba(225, 205, 155, 0.14);
+          border-radius: 8px;
+          background: rgba(0, 0, 0, 0.16);
+          padding: 12px;
+        }
+        .element-mini-grid span,
+        .gate-grid span {
+          color: #a89976;
+          font-size: 10px;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+        .element-mini-grid strong {
+          display: block;
+          margin: 6px 0;
+          color: #f7f0dc;
+          font-size: 28px;
+        }
+        .gate-grid article.pass {
+          border-color: rgba(91, 255, 157, 0.3);
+        }
+        .gate-grid article.fail {
+          border-color: rgba(224, 109, 91, 0.42);
+        }
+        .gate-grid article.accepted_warning {
+          border-color: rgba(240, 191, 96, 0.42);
+        }
+        .warning-list {
+          margin: 0;
+          padding-left: 18px;
         }
         .report-grid {
           display: grid;
@@ -2114,6 +2405,7 @@ export default function AiGraderStationPage() {
         .card-linkage,
         .status,
         .warm-runner,
+        .operator-workflow,
         .production-status,
         .slabbed-photos,
         .paths,
@@ -2410,6 +2702,49 @@ export default function AiGraderStationPage() {
           color: #bdb5a8;
           font-style: normal;
         }
+        .operator-workflow h3 {
+          margin: 0 0 8px;
+          font-size: 17px;
+        }
+        .operator-workflow p {
+          color: #bdb5a8;
+          font-size: 12px;
+          line-height: 1.5;
+        }
+        .operator-workflow .action-row {
+          margin-top: 12px;
+        }
+        .operator-workflow .action-row a {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 42px;
+          border: 1px solid rgba(225, 205, 155, 0.24);
+          border-radius: 8px;
+          padding: 10px 12px;
+          color: #f3db92;
+          text-decoration: none;
+          font-size: 12px;
+          font-weight: 900;
+          text-transform: uppercase;
+          overflow-wrap: anywhere;
+        }
+        .readiness-warning {
+          margin-top: 12px;
+          border: 1px solid rgba(240, 191, 96, 0.32);
+          border-radius: 8px;
+          background: rgba(240, 191, 96, 0.08);
+          padding: 12px;
+        }
+        .readiness-warning strong {
+          color: #f7e3aa;
+        }
+        .readiness-warning ul {
+          margin: 8px 0 0;
+          padding-left: 18px;
+          color: #d5c8a7;
+          font-size: 12px;
+        }
         .production-status {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
@@ -2437,6 +2772,26 @@ export default function AiGraderStationPage() {
           display: block;
           margin-top: 5px;
           font-size: 16px;
+        }
+        .production-status .link-line {
+          display: grid;
+          grid-template-columns: 82px minmax(0, 1fr) 70px;
+          gap: 8px;
+          align-items: center;
+        }
+        .production-status .link-line a {
+          min-height: 34px;
+          border: 1px solid rgba(225, 205, 155, 0.18);
+          border-radius: 8px;
+          padding: 8px;
+          color: #f3db92;
+          text-decoration: none;
+          overflow-wrap: anywhere;
+        }
+        .production-status .link-line button {
+          min-height: 34px;
+          padding: 7px 8px;
+          letter-spacing: 0.06em;
         }
         .action-row {
           display: grid;

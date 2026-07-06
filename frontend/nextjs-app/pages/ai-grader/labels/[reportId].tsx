@@ -1,6 +1,7 @@
 import Head from "next/head";
 import { useRouter } from "next/router";
-import { useEffect, useState } from "react";
+import QRCode from "qrcode";
+import { useEffect, useRef, useState } from "react";
 import { getAiGraderReportBundle, type AiGraderReportBundle } from "../../../lib/aiGraderReportBundle";
 
 export default function AiGraderLabelPreviewPage() {
@@ -14,6 +15,7 @@ export default function AiGraderLabelPreviewPage() {
   const reportId = label?.reportId ?? bundle.reportId;
   const qrPayloadUrl = label?.qrPayloadUrl ?? `/ai-grader/reports/${reportId}`;
   const certId = label?.certId ?? reportId;
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -29,6 +31,18 @@ export default function AiGraderLabelPreviewPage() {
       .catch(() => undefined);
   }, [router.isReady, router.query.reportId]);
 
+  useEffect(() => {
+    if (!canvasRef.current || !qrPayloadUrl) return;
+    QRCode.toCanvas(canvasRef.current, qrPayloadUrl, {
+      margin: 1,
+      width: 116,
+      color: {
+        dark: "#111111",
+        light: "#fffaf0",
+      },
+    }).catch(() => undefined);
+  }, [qrPayloadUrl]);
+
   return (
     <>
       <Head>
@@ -37,16 +51,19 @@ export default function AiGraderLabelPreviewPage() {
       </Head>
       <main className="page">
         <section className="label" aria-label="Ten Kings AI Grader label preview">
-          <div className="brand">Ten Kings AI Grader</div>
-          <div className="grade">{gradeText}</div>
-          <dl>
-            <dt>Report ID</dt>
-            <dd>{reportId}</dd>
-            <dt>Cert/Report ID</dt>
-            <dd>{certId}</dd>
-            <dt>QR URL</dt>
-            <dd>{qrPayloadUrl}</dd>
-          </dl>
+          <div className="label-copy">
+            <div className="brand">Ten Kings AI Grader</div>
+            <div className="grade">{gradeText}</div>
+            <dl>
+              <dt>Report ID</dt>
+              <dd>{reportId}</dd>
+              <dt>Cert/Report ID</dt>
+              <dd>{certId}</dd>
+              <dt>QR URL</dt>
+              <dd>{qrPayloadUrl}</dd>
+            </dl>
+          </div>
+          <canvas ref={canvasRef} width={116} height={116} aria-label="AI Grader public report QR code" />
           <p>AI-Grader Report V0. Certification claim disabled until approved.</p>
         </section>
         <aside>
@@ -56,6 +73,10 @@ export default function AiGraderLabelPreviewPage() {
             certificate, or certified grading claim.
           </p>
           <p>{persistedBundle ? "Loaded from persisted report data." : "Using local fixture/report fallback until persisted data is available."}</p>
+          <div className="actions">
+            <a href={qrPayloadUrl} target="_blank" rel="noreferrer">Open Public Report</a>
+            <button type="button" onClick={() => window.print()}>Print Label</button>
+          </div>
         </aside>
       </main>
       <style jsx>{`
@@ -79,6 +100,10 @@ export default function AiGraderLabelPreviewPage() {
           background: #fffaf0;
           border-radius: 8px;
           box-shadow: 0 28px 80px rgba(40, 32, 18, 0.16);
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 1.18in;
+          gap: 0.12in;
+          align-items: start;
         }
         .brand {
           color: #8b6c2d;
@@ -92,6 +117,12 @@ export default function AiGraderLabelPreviewPage() {
           font-size: 54px;
           line-height: 0.95;
           font-weight: 950;
+        }
+        canvas {
+          width: 1.18in;
+          height: 1.18in;
+          border: 1px solid #171512;
+          background: #fffaf0;
         }
         dl {
           display: grid;
@@ -110,6 +141,7 @@ export default function AiGraderLabelPreviewPage() {
           overflow-wrap: anywhere;
         }
         .label p {
+          grid-column: 1 / -1;
           margin: 12px 0 0;
           padding-top: 8px;
           border-top: 1px solid #ddd0af;
@@ -132,6 +164,24 @@ export default function AiGraderLabelPreviewPage() {
           color: #5c574f;
           line-height: 1.55;
         }
+        .actions {
+          display: flex;
+          gap: 10px;
+          margin-top: 18px;
+          flex-wrap: wrap;
+        }
+        .actions a,
+        .actions button {
+          border: 1px solid #171512;
+          border-radius: 8px;
+          background: #171512;
+          color: #fffaf0;
+          padding: 11px 14px;
+          font: inherit;
+          font-weight: 900;
+          text-decoration: none;
+          cursor: pointer;
+        }
         @media (max-width: 820px) {
           .page {
             grid-template-columns: 1fr;
@@ -139,6 +189,22 @@ export default function AiGraderLabelPreviewPage() {
           }
           .label {
             width: min(3.5in, 100%);
+          }
+        }
+        @media print {
+          .page {
+            min-height: auto;
+            display: block;
+            padding: 0;
+            background: white;
+          }
+          aside {
+            display: none;
+          }
+          .label {
+            box-shadow: none;
+            border-radius: 0;
+            page-break-inside: avoid;
           }
         }
       `}</style>

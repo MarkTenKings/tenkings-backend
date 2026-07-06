@@ -19,6 +19,7 @@ import {
 } from "@tenkings/database";
 import type { AdminSession } from "./admin";
 import type { UserSession } from "./session";
+import { buildAiGraderLabelPreviewUrl } from "../aiGraderOperatorWorkflow";
 import {
   aiGraderProductionAuthStatus,
   requireAiGraderProductionActor,
@@ -577,6 +578,19 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         });
       }
       const input = parsePublishBody(req.body);
+      const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
+      const releaseBlocked =
+        input.publicationStatus === "published" &&
+        (input.productionRelease.finalGradeComputed !== true ||
+          stringValue(input.productionRelease.reportStatus, "") === "insufficient_evidence" ||
+          stringValue(releaseLabel.status, "") === "blocked_insufficient_evidence");
+      if (releaseBlocked) {
+        return res.status(400).json({
+          ok: false,
+          code: "AI_GRADER_REPORT_NOT_PUBLISH_READY",
+          message: "AI Grader report is not publish-ready. Final grade, label data, and QR payload are required before publishing.",
+        });
+      }
       const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
       const initialPlan = buildAiGraderProductionStoragePlan({
         reportBundle: input.reportBundle,
@@ -603,8 +617,10 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         result: {
           reportId: result.reportId,
           gradingSessionId: result.gradingSessionId,
+          certId: stringValue(input.productionRelease.label?.certId, result.reportId),
           publicationStatus: result.publicationStatus,
           publicReportUrl: result.storagePlan.publicReportUrl,
+          labelPreviewUrl: buildAiGraderLabelPreviewUrl(result.reportId),
           qrPayloadUrl: result.storagePlan.qrPayloadUrl,
           uploadedAssetCount: result.storagePlan.artifacts.length,
           evidenceAssetCount: result.evidenceAssetCount,

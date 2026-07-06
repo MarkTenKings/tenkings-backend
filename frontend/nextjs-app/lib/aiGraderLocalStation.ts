@@ -467,9 +467,9 @@ export const AI_GRADER_STATION_STEPS: AiGraderStationStep[] = [
   { id: "capture_back", label: "Capture Back", operatorAction: "Capture back fixed-rig evidence after flip confirmation.", primaryAction: "capture-back", hardwareCapable: true },
   { id: "run_provisional_diagnostics", label: "Run Provisional Diagnostics", operatorAction: "Generate the unified provisional diagnostic report.", primaryAction: "run-diagnostics", hardwareCapable: false },
   { id: "view_unified_report", label: "View Unified Report", operatorAction: "Open the local report and review Vision Lab.", primaryAction: "latest-report", hardwareCapable: false },
-  { id: "calculate_final_grade", label: "Calculate Final Grade", operatorAction: "Compute Final AI-Grader Grade V0 from accepted evidence and gates.", primaryAction: "calculate-final-grade", hardwareCapable: false },
-  { id: "finalize_publish_report", label: "Finalize / Publish Report", operatorAction: "Write production-release and publication artifacts.", primaryAction: "finalize-report", hardwareCapable: false },
-  { id: "label_data_ready", label: "Label Data Ready", operatorAction: "Review label-ready JSON and QR payload URL.", primaryAction: "generate-label-data", hardwareCapable: false },
+  { id: "calculate_final_grade", label: "Review Report", operatorAction: "Review the generated diagnostic report and publish readiness.", primaryAction: "calculate-final-grade", hardwareCapable: false },
+  { id: "finalize_publish_report", label: "Ready to Publish", operatorAction: "Publish to Ten Kings when the report is ready.", primaryAction: "finalize-report", hardwareCapable: false },
+  { id: "label_data_ready", label: "Label / QR Ready", operatorAction: "Public report and printable label data are ready after publish.", primaryAction: "generate-label-data", hardwareCapable: false },
   { id: "safe_off_end_session", label: "Safe Off / End Session", operatorAction: "Run safe-off and end the station session.", primaryAction: "safe-off", hardwareCapable: true },
 ];
 
