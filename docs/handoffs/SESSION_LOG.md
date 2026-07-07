@@ -24598,3 +24598,22 @@ By enabling Rip It Live, I confirm:
 - DB rows persisted in this session: none.
 - Storage objects written in this session: none.
 - Remaining blocker: patch must be committed, pushed, reviewed/merged, deployed, then Mark must retry station SMS sign-in and resume the known-good report production smoke.
+
+## 2026-07-07 - PR #69 production merge planned action
+
+### Planned Action
+- Merge PR #69 (`https://github.com/MarkTenKings/tenkings-backend/pull/69`) from `fix/ai-grader-fresh-sign-in-flow` into `main`.
+- Purpose: deploy the AI Grader station fresh SMS sign-in path so stale cached `tenkings.session` state cannot dead-end the operator at Confirm Card.
+- Verified before planned action:
+  - PR state: open, non-draft.
+  - PR HEAD before this planned-action docs commit: `3a68be95aab12d8ed0228834fd7c85b2516c88a2`.
+  - GitHub PR checks: passing after run `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28889621214`.
+  - Vercel preview: passing at `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/6hbFpiSLVqwyMa69yNjwJoywGrwB`.
+- After merge, monitor GitHub main checks and Vercel Production deployment for the merge commit.
+
+### Guardrails For This Planned Action
+- No hardware capture.
+- No migrations.
+- No env var changes.
+- No credential rotation or secret printing.
+- No destructive operations.
