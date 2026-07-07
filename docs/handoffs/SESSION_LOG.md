@@ -1,5 +1,55 @@
 # Session Log (Append Only)
 
+## 2026-07-07 - PR #71 AI Grader inventory owner source corrected to OPERATOR_USER_ID
+
+### Branch And HEAD
+- Branch: `fix/ai-grader-confirm-card-house-owner`.
+- Starting HEAD: `fc2b2f592a810d0c40546d466a32e0c9e3d28935`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/71`.
+
+### Production Evidence / Correction
+- New production evidence from Mark: Vercel Production does not have `TEN_KINGS_HOUSE_USER_ID`; existing production has `OPERATOR_USER_ID` and `OPERATOR_USER_PHONE`.
+- PR #71 was patched to use `OPERATOR_USER_ID` as the configured inventory owner `User.id` for AI Grader-created Items.
+- The earlier unmerged PR #71 session entry that referenced `TEN_KINGS_HOUSE_USER_ID` is superseded by this correction.
+
+### Files Changed
+- `frontend/nextjs-app/lib/server/inventoryReadyArtifacts.ts`.
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`.
+- `docs/handoffs/SESSION_LOG.md`.
+
+### Architecture Change Summary
+- AI Grader/inventory-ready owner resolution now validates `OPERATOR_USER_ID` and looks up `User.id`.
+- Created `Item.ownerId` and `ItemOwnership.ownerId` use the configured `OPERATOR_USER_ID`.
+- The signed-in AI Grader operator/admin remains the actor/audit user for CardBatch upload, CardPhoto creation, AiGraderSession operator linkage, and QR/label actor fields.
+- Email owner fallback remains removed from the AI Grader Confirm Card / inventory-ready path.
+- `create-card-from-report` remains transactional and fails before CardBatch/CardAsset/CardPhoto rows when the configured inventory owner is missing or invalid.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `59` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist, baseline-browser-mapping, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database exec node --test tests/aiGraderProductionService.test.js` -> pass, `10` tests.
+- Server-code scan for `PACK_INVENTORY_SELLER_EMAIL`, `HOUSE_USER_EMAIL`, `TEN_KINGS_HOUSE_USER_ID`, and email owner lookup in the AI Grader/inventory-ready server path -> no matches.
+- `git diff --check` -> pass with CRLF conversion warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+- Known-good report publish result: not attempted in this PR.
+- Public report URL: not applicable.
+- Label URL: not applicable.
+- DB rows persisted: none; tests are local/mocked only.
+- Storage prefix used: none; no storage upload attempted.
+
+### Remaining Blockers / Next Steps
+- Run validation, push updated PR #71, and wait for PR checks.
+- Do not merge until reviewed.
+- After merge/deploy, retry Dell AI Grader Confirm Card; expected result is no second sign-in, no owner picker, no email requirement, and automatic CardAsset/Item creation with the configured inventory owner.
+
 ## 2026-07-07 - AI Grader Confirm Card house owner resolution fix
 
 ### Branch And HEAD

@@ -1291,9 +1291,9 @@ test("production card search is admin-gated and returns existing card/item candi
 
 type ConfirmCardDbCall = { delegate: string; method: string; args?: any };
 
-function createConfirmCardRuntimeDb(options: { houseUserFound?: boolean } = {}) {
+function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } = {}) {
   const calls: ConfirmCardDbCall[] = [];
-  const houseUserFound = options.houseUserFound ?? true;
+  const inventoryOwnerFound = options.inventoryOwnerFound ?? true;
   let createdCard: any = null;
   let createdItem: any = null;
   const cardQr = {
@@ -1335,8 +1335,8 @@ function createConfirmCardRuntimeDb(options: { houseUserFound?: boolean } = {}) 
     user: {
       async findUnique(args: any) {
         record("user", "findUnique", args);
-        if (args?.where?.id === "house-user-1" && houseUserFound) {
-          return { id: "house-user-1" };
+        if (args?.where?.id === "operator-owner-1" && inventoryOwnerFound) {
+          return { id: "operator-owner-1" };
         }
         return null;
       },
@@ -1511,7 +1511,7 @@ function storagePlanForConfirmCardRuntime() {
   };
 }
 
-test("create-card-from-report runtime creates a house-owned Item without email owner env", async () => {
+test("create-card-from-report runtime creates an operator-owned inventory Item without email owner env", async () => {
   const { db, calls } = createConfirmCardRuntimeDb();
   const { reportBundle, productionRelease, storagePlan } = storagePlanForConfirmCardRuntime();
 
@@ -1532,7 +1532,7 @@ test("create-card-from-report runtime creates a house-owned Item without email o
     },
     dbClient: db,
     env: {
-      TEN_KINGS_HOUSE_USER_ID: "house-user-1",
+      OPERATOR_USER_ID: "operator-owner-1",
       PACK_INVENTORY_SELLER_EMAIL: undefined,
       HOUSE_USER_EMAIL: undefined,
     },
@@ -1541,13 +1541,13 @@ test("create-card-from-report runtime creates a house-owned Item without email o
   assert.equal(result.cardAssetId, "card-asset-1");
   assert.equal(result.itemId, "item-1");
   const ownerLookup = calls.find((call) => call.delegate === "user" && call.method === "findUnique");
-  assert.deepEqual(ownerLookup?.args.where, { id: "house-user-1" });
+  assert.deepEqual(ownerLookup?.args.where, { id: "operator-owner-1" });
   assert.equal("email" in (ownerLookup?.args.where ?? {}), false);
   const itemCreate = calls.find((call) => call.delegate === "item" && call.method === "create");
-  assert.equal(itemCreate?.args.data.ownerId, "house-user-1");
+  assert.equal(itemCreate?.args.data.ownerId, "operator-owner-1");
   assert.equal(itemCreate?.args.data.number, "card-asset-1");
   const itemOwnershipCreate = calls.find((call) => call.delegate === "itemOwnership" && call.method === "create");
-  assert.equal(itemOwnershipCreate?.args.data.ownerId, "house-user-1");
+  assert.equal(itemOwnershipCreate?.args.data.ownerId, "operator-owner-1");
   const batchCreate = calls.find((call) => call.delegate === "cardBatch" && call.method === "create");
   assert.equal(batchCreate?.args.data.uploadedById, "operator-user-1");
   const photoCreate = calls.find((call) => call.delegate === "cardPhoto" && call.method === "create");
@@ -1557,7 +1557,7 @@ test("create-card-from-report runtime creates a house-owned Item without email o
   assert.equal(calls.some((call) => call.delegate === "$transaction" && call.method === "$transaction"), true);
 });
 
-test("create-card-from-report runtime fails before card rows when TEN_KINGS_HOUSE_USER_ID is missing", async () => {
+test("create-card-from-report runtime fails before card rows when OPERATOR_USER_ID is missing", async () => {
   const { db, calls } = createConfirmCardRuntimeDb();
   const { reportBundle, productionRelease, storagePlan } = storagePlanForConfirmCardRuntime();
 
@@ -1573,7 +1573,7 @@ test("create-card-from-report runtime fails before card rows when TEN_KINGS_HOUS
         dbClient: db,
         env: {},
       }),
-    /TEN_KINGS_HOUSE_USER_ID must be configured for AI Grader inventory ownership/
+    /OPERATOR_USER_ID must be configured for AI Grader inventory ownership/
   );
 
   assert.equal(calls.some((call) => call.delegate === "cardBatch" && call.method === "create"), false);
@@ -1581,8 +1581,8 @@ test("create-card-from-report runtime fails before card rows when TEN_KINGS_HOUS
   assert.equal(calls.some((call) => call.delegate === "cardPhoto" && call.method === "create"), false);
 });
 
-test("create-card-from-report runtime fails before card rows when configured house user is missing", async () => {
-  const { db, calls } = createConfirmCardRuntimeDb({ houseUserFound: false });
+test("create-card-from-report runtime fails before card rows when configured operator owner user is missing", async () => {
+  const { db, calls } = createConfirmCardRuntimeDb({ inventoryOwnerFound: false });
   const { reportBundle, productionRelease, storagePlan } = storagePlanForConfirmCardRuntime();
 
   await assert.rejects(
@@ -1595,9 +1595,9 @@ test("create-card-from-report runtime fails before card rows when configured hou
         identity: validConfirmedSportIdentity(),
         operatorUserId: "operator-user-1",
         dbClient: db,
-        env: { TEN_KINGS_HOUSE_USER_ID: "house-user-1" },
+        env: { OPERATOR_USER_ID: "operator-owner-1" },
       }),
-    /Configured TEN_KINGS_HOUSE_USER_ID user was not found/
+    /Configured OPERATOR_USER_ID user was not found/
   );
 
   assert.equal(calls.some((call) => call.delegate === "cardBatch" && call.method === "create"), false);

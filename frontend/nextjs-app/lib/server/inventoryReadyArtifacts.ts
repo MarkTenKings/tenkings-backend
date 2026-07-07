@@ -4,7 +4,7 @@ import { ensureLabelPairForItemTx } from "./qrCodes";
 
 export const PRICE_REQUIRED_MESSAGE =
   "Price valuation field must be complete before moving a card to inventory ready.";
-export const TEN_KINGS_HOUSE_USER_ID_ENV = "TEN_KINGS_HOUSE_USER_ID";
+export const AI_GRADER_INVENTORY_OWNER_USER_ID_ENV = "OPERATOR_USER_ID";
 
 type EnvLike = Record<string, string | undefined>;
 type InventoryReadyOwner = { id: string };
@@ -55,18 +55,18 @@ export const resolveInventoryReadyOwner = async (
   db: Pick<Prisma.TransactionClient, "user">,
   env: EnvLike = process.env
 ): Promise<InventoryReadyOwner> => {
-  const houseUserId = env[TEN_KINGS_HOUSE_USER_ID_ENV]?.trim();
+  const inventoryOwnerUserId = env[AI_GRADER_INVENTORY_OWNER_USER_ID_ENV]?.trim();
 
-  if (!houseUserId) {
-    throw new Error("TEN_KINGS_HOUSE_USER_ID must be configured for AI Grader inventory ownership.");
+  if (!inventoryOwnerUserId) {
+    throw new Error("OPERATOR_USER_ID must be configured for AI Grader inventory ownership.");
   }
 
-  const houseUser = await db.user.findUnique({ where: { id: houseUserId }, select: { id: true } });
-  if (!houseUser) {
-    throw new Error("Configured TEN_KINGS_HOUSE_USER_ID user was not found.");
+  const inventoryOwner = await db.user.findUnique({ where: { id: inventoryOwnerUserId }, select: { id: true } });
+  if (!inventoryOwner) {
+    throw new Error("Configured OPERATOR_USER_ID user was not found.");
   }
 
-  return houseUser;
+  return inventoryOwner;
 };
 
 export const ensureInventoryReadyArtifactsTx = async (
