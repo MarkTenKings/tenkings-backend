@@ -23933,3 +23933,17 @@ By enabling Rip It Live, I confirm:
   - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
   - `git diff --check` -> pass with line-ending warnings only.
 - No hardware capture, production publish, migration, DB schema change, Vercel env change, credential rotation, destructive operation, forced publish, eBay comps run, or secret-printing action was run.
+
+### PR #65 Production Direct Storage Publish Merge / Deploy Plan
+- Timestamp: `2026-07-07T00:25:37-04:00`
+- Planned action: merge PR #65 (`fix/ai-grader-canonical-per-report-publish-package`) into `main`, push the merge to production, monitor GitHub checks and Vercel Production deployment, then update/rebuild/restart the Dell bridge from merged `main` before publishing the known-good report.
+- Pre-merge evidence:
+  - PR #65 HEAD confirmed as `9d1c6a371fe734e766021089d072bcac4af80c8e`.
+  - PR #65 target branch `main`, source branch `fix/ai-grader-canonical-per-report-publish-package`.
+  - PR #65 mergeable state reported `clean`.
+  - PR #65 checks were passing: Install & Build, Vercel, Vercel Preview Comments, and all Docker image builds.
+- Production publish follow-up target after deploy:
+  - Known-good report: `ai-grader-browser-station-session-2026-07-06T223658063Z-report`.
+  - Cert: `TK-AIG-79D935C9`.
+  - Expected grade: `8.5`.
+- Guardrails: no hardware capture, migrations, env var changes, credential rotation, secret printing, destructive operations, forced publish, or eBay comps run in this merge/deploy step.
