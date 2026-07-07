@@ -112,7 +112,7 @@ export type AiGraderCompsRunResult = {
 };
 
 export type AiGraderConfirmedCardIdentity = {
-  category: "sport" | "tcg" | "comics" | "unknown";
+  category: "sport" | "tcg" | "comics";
   playerName?: string | null;
   cardName?: string | null;
   teamName?: string | null;
@@ -182,6 +182,14 @@ export type AiGraderAddToInventoryResult = {
   itemId: string;
   reviewStage: string;
   labelPairId?: string | null;
+};
+
+export type AiGraderMarkLabelPrintedResult = {
+  reportId: string;
+  labelId: string;
+  certId: string;
+  physicalPrintStatus: "printed";
+  printedAt: string;
 };
 
 export type AiGraderProductionApiDependencies = {
@@ -281,6 +289,12 @@ export type AiGraderProductionApiDependencies = {
     operatorUserId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderAddToInventoryResult>;
+  markLabelPrinted?(input: {
+    tenantId: string;
+    reportId: string;
+    operatorUserId?: string | null;
+    actorAudit?: AiGraderProductionActorAudit | null;
+  }): Promise<AiGraderMarkLabelPrintedResult>;
 };
 
 export type AiGraderProductionHistoryItem = {
@@ -656,8 +670,10 @@ function booleanValue(value: unknown, fallback = false) {
 function parseConfirmedCardIdentity(value: unknown): AiGraderConfirmedCardIdentity {
   if (!isRecord(value)) throw new Error("identity is required.");
   const categoryRaw = stringValue(value.category, "sport").toLowerCase();
-  const category =
-    categoryRaw === "tcg" || categoryRaw === "comics" || categoryRaw === "unknown" ? categoryRaw : "sport";
+  if (categoryRaw !== "sport" && categoryRaw !== "tcg" && categoryRaw !== "comics") {
+    throw new Error("identity.category must be sport, tcg, or comics.");
+  }
+  const category = categoryRaw;
   const identity: AiGraderConfirmedCardIdentity = {
     category,
     playerName: optionalString(value.playerName),
@@ -677,10 +693,28 @@ function parseConfirmedCardIdentity(value: unknown): AiGraderConfirmedCardIdenti
     autograph: booleanValue(value.autograph, false),
     memorabilia: booleanValue(value.memorabilia, false),
   };
-  if (identity.category === "sport" && !identity.playerName) throw new Error("playerName is required for sports cards.");
-  if (identity.category === "tcg" && !identity.cardName) throw new Error("cardName is required for TCG cards.");
-  if (!identity.year) throw new Error("year is required.");
-  if (!identity.manufacturer) throw new Error("manufacturer is required.");
+  const missing: string[] = [];
+  if (!identity.year) missing.push("year");
+  if (!identity.manufacturer) missing.push("manufacturer");
+  if (!identity.productSet) missing.push("productSet");
+  if (!identity.cardNumber) missing.push("cardNumber");
+  if (identity.category === "sport") {
+    if (!identity.playerName) missing.push("playerName");
+    if (!identity.sport) missing.push("sport");
+  }
+  if (identity.category === "tcg") {
+    if (!identity.cardName) missing.push("cardName");
+    if (!identity.game) missing.push("game");
+  }
+  if (identity.category === "comics" && !identity.cardName) {
+    missing.push("cardName");
+  }
+  if (missing.length) {
+    const error = new Error(`Confirmed card identity is incomplete: ${Array.from(new Set(missing)).join(", ")} required.`);
+    (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+    (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_INCOMPLETE_CARD_IDENTITY";
+    throw error;
+  }
   return identity;
 }
 
@@ -754,6 +788,15 @@ function parseSelectedCompsBody(body: unknown) {
 
 function parseAddToInventoryBody(body: unknown) {
   assertSmallJsonPayload(body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader add-to-inventory request");
+  assertNoUnsafePublishPayload(body);
+  if (!isRecord(body)) throw new Error("JSON object body is required.");
+  const reportId = stringValue(body.reportId, "");
+  if (!reportId) throw new Error("reportId is required.");
+  return { reportId };
+}
+
+function parseMarkLabelPrintedBody(body: unknown) {
+  assertSmallJsonPayload(body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader label print request");
   assertNoUnsafePublishPayload(body);
   if (!isRecord(body)) throw new Error("JSON object body is required.");
   const reportId = stringValue(body.reportId, "");
@@ -849,6 +892,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           "upload-slab-photo",
           "run-comps",
           "save-comps-selection",
+          "mark-label-printed",
           "add-to-inventory",
         ],
         auth: aiGraderProductionAuthStatus(env),
@@ -875,6 +919,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       "upload-slab-photo",
       "run-comps",
       "save-comps-selection",
+      "mark-label-printed",
       "add-to-inventory",
     ];
     if (!allowedActions.includes(key)) {
@@ -903,6 +948,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         key === "publish-init" ||
         key === "publish-finalize" ||
         key === "create-card-from-report" ||
+        key === "mark-label-printed" ||
         key === "add-to-inventory"
           ? "publish"
           : key === "slabbed-photo-init" || key === "slabbed-photo-finalize" || key === "upload-slab-photo"
@@ -1123,6 +1169,23 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           ok: true,
           enabled: true,
           operation: "aiGraderSelectedCompsSave",
+          result,
+        });
+      }
+      if (key === "mark-label-printed") {
+        if (!deps.markLabelPrinted) throw new Error("AI Grader label print persistence is not configured.");
+        const input = parseMarkLabelPrintedBody(req.body);
+        const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const result = await deps.markLabelPrinted({
+          tenantId,
+          reportId: input.reportId,
+          operatorUserId: actorOperatorUserId(authorizedActor),
+          actorAudit: authorizedActor.audit,
+        });
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderMarkLabelPrinted",
           result,
         });
       }
@@ -2013,6 +2076,7 @@ async function findAiGraderReportForStationAction(db: any, reportId: string) {
       tenantId: true,
       sessionId: true,
       reportId: true,
+      publicationStatus: true,
       cardAssetId: true,
       itemId: true,
     },
@@ -2028,6 +2092,152 @@ function mergeJsonDetails(existing: unknown, patch: Record<string, unknown>): Pr
     ...(isRecord(existing) ? existing : {}),
     ...patch,
   } as Prisma.InputJsonValue;
+}
+
+function aiGraderInventoryGateError(message: string, code: string) {
+  const error = new Error(message);
+  (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+  (error as Error & { statusCode?: number; code?: string }).code = code;
+  return error;
+}
+
+function hasPersistedSlabbedSide(asset: unknown, side: "front" | "back") {
+  if (!isRecord(asset)) return false;
+  if (optionalString(asset.side) !== side) return false;
+  const storageKey = optionalString(asset.storageKey);
+  const publicUrl = optionalString(asset.publicUrl);
+  const byteSize = numericValue(asset.byteSize, 0);
+  return Boolean(storageKey && publicUrl && byteSize > 0);
+}
+
+export async function validateAiGraderInventoryReadiness(db: any, reportId: string) {
+  const report = await findAiGraderReportForStationAction(db, reportId);
+  if (stringValue(report.publicationStatus, "") !== "published") {
+    throw aiGraderInventoryGateError("AI Grader report must be published before inventory transition.", "AI_GRADER_REPORT_NOT_PUBLISHED");
+  }
+  const cardAssetId = optionalString(report.cardAssetId);
+  const itemId = optionalString(report.itemId);
+  if (!cardAssetId || !itemId) {
+    throw aiGraderInventoryGateError(
+      "AI Grader report must be linked to a CardAsset and Item before inventory transition.",
+      "AI_GRADER_CARD_ITEM_LINK_REQUIRED"
+    );
+  }
+
+  const label = await db.aiGraderLabel?.findFirst?.({
+    where: { reportId: report.id },
+    select: {
+      id: true,
+      physicalPrintStatus: true,
+    },
+  });
+  if (!isRecord(label) || optionalString(label.physicalPrintStatus) !== "printed") {
+    throw aiGraderInventoryGateError("AI Grader label must be marked printed before inventory transition.", "AI_GRADER_LABEL_PRINT_REQUIRED");
+  }
+
+  const slabbedAssets = await db.aiGraderEvidenceAsset?.findMany?.({
+    where: {
+      reportId: report.id,
+      artifactClass: "slabbed_photo",
+    },
+    select: {
+      id: true,
+      side: true,
+      storageKey: true,
+      publicUrl: true,
+      byteSize: true,
+    },
+  });
+  const assets = Array.isArray(slabbedAssets) ? slabbedAssets : [];
+  if (!assets.some((asset) => hasPersistedSlabbedSide(asset, "front")) || !assets.some((asset) => hasPersistedSlabbedSide(asset, "back"))) {
+    throw aiGraderInventoryGateError(
+      "AI Grader slabbed front and back photos must be persisted before inventory transition.",
+      "AI_GRADER_SLABBED_PHOTOS_REQUIRED"
+    );
+  }
+
+  const valuation = await db.aiGraderValuation?.findFirst?.({
+    where: {
+      reportId: report.id,
+      status: "completed",
+    },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      status: true,
+      valuationMinor: true,
+    },
+  });
+  const valuationMinor = isRecord(valuation) && typeof valuation.valuationMinor === "number" ? valuation.valuationMinor : null;
+  if (valuationMinor == null || !Number.isFinite(valuationMinor) || valuationMinor <= 0) {
+    throw aiGraderInventoryGateError(
+      "AI Grader selected comps and completed valuation are required before inventory transition.",
+      "AI_GRADER_COMPLETED_VALUATION_REQUIRED"
+    );
+  }
+
+  return {
+    report,
+    cardAssetId,
+    itemId,
+    label,
+    slabbedAssetCount: assets.length,
+    valuation,
+    valuationMinor,
+  };
+}
+
+export async function markAiGraderLabelPrintedRuntime(input: {
+  tenantId: string;
+  reportId: string;
+  operatorUserId?: string | null;
+  actorAudit?: AiGraderProductionActorAudit | null;
+}): Promise<AiGraderMarkLabelPrintedResult> {
+  if (!input.operatorUserId) {
+    const error = new Error("A human operator session is required to mark an AI Grader label printed.");
+    (error as Error & { statusCode?: number }).statusCode = 403;
+    throw error;
+  }
+  const { prisma } = await import("@tenkings/database");
+  const db = prisma as any;
+  const report = await findAiGraderReportForStationAction(db, input.reportId);
+  const label = await db.aiGraderLabel?.findFirst?.({
+    where: {
+      reportId: report.id,
+      tenantId: input.tenantId,
+    },
+    select: {
+      id: true,
+      certId: true,
+      payload: true,
+    },
+  });
+  if (!isRecord(label)) {
+    throw aiGraderInventoryGateError("AI Grader label was not found for this report.", "AI_GRADER_LABEL_NOT_FOUND");
+  }
+  const printedAt = new Date();
+  await db.aiGraderLabel.update({
+    where: { id: label.id },
+    data: {
+      physicalPrintStatus: "printed",
+      payload: mergeJsonDetails(label.payload, {
+        physicalPrint: {
+          status: "printed",
+          printedAt: printedAt.toISOString(),
+          operatorUserId: input.operatorUserId,
+          actorAudit: input.actorAudit ?? null,
+        },
+      }),
+      updatedAt: printedAt,
+    },
+  });
+  return {
+    reportId: input.reportId,
+    labelId: stringValue(label.id, ""),
+    certId: stringValue(label.certId, ""),
+    physicalPrintStatus: "printed",
+    printedAt: printedAt.toISOString(),
+  };
 }
 
 export async function persistAiGraderSelectedCompsRuntime(input: {
@@ -2200,18 +2410,15 @@ export async function addAiGraderCardToInventoryRuntime(input: {
   }
   const { prisma } = await import("@tenkings/database");
   const db = prisma as any;
-  const report = await findAiGraderReportForStationAction(db, input.reportId);
-  const cardAssetId = optionalString(report.cardAssetId);
-  const itemId = optionalString(report.itemId);
-  if (!cardAssetId || !itemId) {
-    throw new Error("AI Grader report must be linked to a CardAsset and Item before inventory transition.");
-  }
+  const readiness = await validateAiGraderInventoryReadiness(db, input.reportId);
+  const report = readiness.report;
+  const cardAssetId = readiness.cardAssetId;
   const card = await db.cardAsset.findUnique({
     where: { id: cardAssetId },
     select: { id: true, valuationMinor: true },
   });
   if (!isRecord(card)) throw new Error("Linked CardAsset was not found.");
-  const valuationMinor = typeof card.valuationMinor === "number" ? card.valuationMinor : null;
+  const valuationMinor = typeof card.valuationMinor === "number" ? card.valuationMinor : readiness.valuationMinor;
   if (valuationMinor == null || !Number.isFinite(valuationMinor) || valuationMinor <= 0) {
     const error = new Error(PRICE_REQUIRED_MESSAGE);
     (error as Error & { statusCode?: number }).statusCode = 400;

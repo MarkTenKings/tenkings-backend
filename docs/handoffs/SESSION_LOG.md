@@ -24178,3 +24178,54 @@ By enabling Rip It Live, I confirm:
   - After review/merge/deploy, update/rebuild/restart the Dell bridge from merged `main`.
   - Publish known-good report `ai-grader-browser-station-session-2026-07-06T223658063Z-report` / `TK-AIG-79D935C9`.
   - Verify production DB rows, storage objects, public report, label, QR, storage-backed images, selected comps/valuation, inventory transition, and absence of local/base64/token leaks.
+
+## 2026-07-07 - AI Grader PR #66 completion-gate patch
+
+### Summary
+- Branch: `feature/ai-grader-new-card-intake-pipeline`.
+- HEAD before this patch commit: `abf745966f70b498a352d8e2fe8f7bb80f0033c0`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/66`.
+- Scope: patch PR #66 before merge without changing the direct-storage publish architecture.
+
+### Files Changed
+- `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`
+- `frontend/nextjs-app/pages/api/admin/ai-grader/production/[...action].ts`
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Architecture Change Summary
+- Added `mark-label-printed` production action. It receives small JSON only, finds the persisted AI Grader report/label, updates `AiGraderLabel.physicalPrintStatus` to `printed`, and stores printed timestamp/operator audit in the existing label payload JSON.
+- Station `Mark Label Printed` now calls the production API instead of setting browser-only React state.
+- `addAiGraderCardToInventoryRuntime` now blocks on persisted server-side readiness before moving a card to `INVENTORY_READY_FOR_SALE`: report must be `published`, linked `cardAssetId` and `itemId` must exist, label must be printed in DB, slabbed front/back evidence assets must be persisted with storage URLs, and completed valuation must have `valuationMinor > 0`.
+- eBay comps no longer auto-select the first three results. Station defaults `selectedIds` to `[]`; saving remains disabled until the operator selects at least one comp.
+- Confirmed card identity now rejects `unknown` category and requires practical identity fields before `create-card-from-report`: sport requires player/name, year, manufacturer, sport, product set, and card number; TCG requires card name, game, year, manufacturer, product set, and card number; comics requires card name plus year/manufacturer/product set/card number.
+- Vercel route body parser remains `1mb`; no image/report/slabbed bytes are sent through Vercel request or response bodies.
+
+### Validation Commands And Results
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `53` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass. Existing unrelated warnings: `next/no-img-element`, stale Browserslist/baseline data, and Tailwind glob warning.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database exec node --test tests/aiGraderProductionService.test.js` -> pass, `10` focused AI Grader DB/service tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `182` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Known Good Report Status
+- Known good report publish result: not attempted in this patch session.
+- Exact blocker: this patch is pre-merge/pre-production-deploy; the known-good production smoke requires PR #66 merged, Vercel production deployed, Dell bridge pulled/rebuilt/restarted from merged `main`, then publishing `ai-grader-browser-station-session-2026-07-06T223658063Z-report` / `TK-AIG-79D935C9` through the production station pipeline.
+- Public report URL if successful: not available; smoke not attempted.
+- Label URL if successful: not available; smoke not attempted.
+- DB rows persisted in this session: none.
+- Storage prefix used in this session: none written. Planned known-good prefix remains `ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report/`.
+- Remaining blockers: commit/push this patch to PR #66, wait for checks, merge/deploy, restart Dell bridge from merged `main`, then run and verify the known-good production smoke.

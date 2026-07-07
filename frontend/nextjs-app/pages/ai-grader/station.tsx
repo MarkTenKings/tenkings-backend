@@ -66,7 +66,7 @@ type CardSelectionState = {
 };
 
 type IdentityDraftState = {
-  category: "sport" | "tcg" | "comics" | "unknown";
+  category: "sport" | "tcg" | "comics";
   playerName: string;
   cardName: string;
   teamName: string;
@@ -326,6 +326,24 @@ const defaultIdentityDraft: IdentityDraftState = {
   autograph: false,
   memorabilia: false,
 };
+
+function identityDraftMissingFields(draft: IdentityDraftState) {
+  const missing: string[] = [];
+  if (!draft.year.trim()) missing.push("year");
+  if (!draft.manufacturer.trim()) missing.push("manufacturer");
+  if (!draft.productSet.trim()) missing.push("product set");
+  if (!draft.cardNumber.trim()) missing.push("card number");
+  if (draft.category === "sport") {
+    if (!draft.playerName.trim()) missing.push("player/name");
+    if (!draft.sport.trim()) missing.push("sport");
+  } else if (draft.category === "tcg") {
+    if (!draft.cardName.trim()) missing.push("card name");
+    if (!draft.game.trim()) missing.push("game");
+  } else if (!draft.cardName.trim()) {
+    missing.push("card name");
+  }
+  return missing;
+}
 
 export default function AiGraderStationPage() {
   const { ensureSession } = useSession();
@@ -664,7 +682,9 @@ export default function AiGraderStationPage() {
   const publicReportUrl = productionPublished ? productionPublish.publicReportUrl : undefined;
   const qrPayloadUrl = productionPublished ? productionPublish.qrPayloadUrl : undefined;
   const certId = productionPublish.certId ?? publishReadiness.certId;
-  const canCreateCardFromReport = finalReady && reportReady && !linkedCardReady && identityStatus.status !== "pending";
+  const identityDraftMissing = identityDraftMissingFields(identityDraft);
+  const identityDraftComplete = identityDraftMissing.length === 0;
+  const canCreateCardFromReport = finalReady && reportReady && identityDraftComplete && !linkedCardReady && identityStatus.status !== "pending";
   const canPublishToTenKings = linkedCardReady && publishReadiness.ready && productionPublish.status !== "published" && productionPublish.status !== "pending";
   const canSaveSelectedComps =
     productionPublished &&
@@ -1621,7 +1641,7 @@ export default function AiGraderStationPage() {
         searchUrl: result.searchUrl,
         count: compsRefs.length,
         compsRefs,
-        selectedIds: compsRefs.slice(0, 3).map((comp: CompsCandidate) => comp.id).filter((id: string | undefined): id is string => Boolean(id)),
+        selectedIds: [],
         saved: false,
       });
     } catch (requestError) {
@@ -1686,11 +1706,37 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const markLabelPrinted = () => {
+  const markLabelPrinted = async () => {
+    setBusy("mark-label-printed");
+    setError(null);
     setLabelPrintState({
-      status: "completed",
-      message: "Operator marked the label print action complete.",
+      status: "pending",
+      message: "Persisting label print confirmation.",
     });
+    try {
+      const reportId = productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      if (!reportId) throw new Error("A published report ID is required before marking the label printed.");
+      const response = await fetch("/api/admin/ai-grader/production/mark-label-printed", {
+        method: "POST",
+        headers: await productionAuthHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ reportId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true) {
+        throw new Error(payload.message ?? "Marking the label printed failed.");
+      }
+      setLabelPrintState({
+        status: "completed",
+        message: `Printed label persisted for cert ${payload.result?.certId ?? certId ?? "AI Grader label"}.`,
+      });
+    } catch (requestError) {
+      setLabelPrintState({
+        status: "failed",
+        message: requestError instanceof Error ? requestError.message : "Marking the label printed failed.",
+      });
+    } finally {
+      setBusy(null);
+    }
   };
 
   const addToInventory = async () => {
@@ -2289,7 +2335,6 @@ export default function AiGraderStationPage() {
                   <option value="sport">Sport</option>
                   <option value="tcg">TCG</option>
                   <option value="comics">Comics</option>
-                  <option value="unknown">Unknown</option>
                 </select>
               </label>
               <label>
@@ -2352,6 +2397,7 @@ export default function AiGraderStationPage() {
             <button type="button" className="primary" onClick={createCardFromConfirmedIdentity} disabled={!canCreateCardFromReport || busy !== null}>
               {busy === "create-card-from-report" ? "Creating Card" : linkedCardReady ? "Card Created" : "Confirm + Create Card"}
             </button>
+            {!identityDraftComplete && !linkedCardReady ? <p className="status-note">Required before create: {identityDraftMissing.join(", ")}.</p> : null}
             {linkedCardReady ? <p className="status-note">CardAsset {selectedCard?.cardAssetId} / Item {selectedCard?.itemId}</p> : null}
             <label>
               Existing Card Search
@@ -2516,7 +2562,7 @@ export default function AiGraderStationPage() {
                 <a href={labelPreviewUrl} target="_blank" rel="noreferrer">Print Label</a>
               ) : null}
               <button type="button" onClick={markLabelPrinted} disabled={!productionPublished || labelPrinted || busy !== null}>
-                {labelPrinted ? "Label Printed" : "Mark Label Printed"}
+                {busy === "mark-label-printed" ? "Marking Printed" : labelPrinted ? "Label Printed" : "Mark Label Printed"}
               </button>
               <button type="button" onClick={runEbayComps} disabled={!productionPublished || !labelPrinted || !slabbedPhotosReady || !compsReadiness.ready || busy !== null}>
                 {busy === "run-comps" ? "Running Comps" : compsState.status === "completed" ? "Refresh Comps" : "Run eBay Comps"}

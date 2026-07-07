@@ -8,6 +8,7 @@ import {
   createAiGraderCardFromReportRuntime,
   finalizeAiGraderSlabbedPhotoUploadRuntime,
   listProductionReportHistoryRuntime,
+  markAiGraderLabelPrintedRuntime,
   persistAiGraderSelectedCompsRuntime,
   persistProductionReleaseRuntime,
   runAiGraderEbayCompsRuntime,
@@ -59,6 +60,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     finalizeSlabbedPhotoUpload: finalizeAiGraderSlabbedPhotoUploadRuntime,
     runComps: runAiGraderEbayCompsRuntime,
     persistSelectedComps: persistAiGraderSelectedCompsRuntime,
+    markLabelPrinted: markAiGraderLabelPrintedRuntime,
     addToInventory: addAiGraderCardToInventoryRuntime,
   });
   return runtime(req, res);

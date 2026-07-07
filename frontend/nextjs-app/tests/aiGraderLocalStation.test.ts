@@ -27,6 +27,7 @@ import {
   buildAiGraderProductionHistoryResult,
   createAiGraderProductionApiHandler,
   createAiGraderPublicReportApiHandler,
+  validateAiGraderInventoryReadiness,
 } from "../lib/server/aiGraderProductionApi";
 import {
   AI_GRADER_OPERATOR_USER_IDS_ENV,
@@ -136,6 +137,83 @@ function uploadManifestFromPlan(artifacts: Array<{ artifactId: string; storageKe
       contentType: artifact.contentType,
       uploadedAt: "2026-07-06T23:00:00.000Z",
     })),
+  };
+}
+
+function inventoryReadinessDb(overrides: {
+  report?: Record<string, unknown> | null;
+  label?: Record<string, unknown> | null;
+  slabbedAssets?: Array<Record<string, unknown>>;
+  valuation?: Record<string, unknown> | null;
+} = {}) {
+  const report =
+    overrides.report === null
+      ? null
+      : {
+          id: "report-row-1",
+          tenantId: "tenant-1",
+          sessionId: "session-row-1",
+          reportId: "sample-final-v0",
+          publicationStatus: "published",
+          cardAssetId: "card-asset-1",
+          itemId: "item-1",
+          ...(overrides.report ?? {}),
+        };
+  const label =
+    overrides.label === null
+      ? null
+      : {
+          id: "label-1",
+          physicalPrintStatus: "printed",
+          ...(overrides.label ?? {}),
+        };
+  const slabbedAssets =
+    overrides.slabbedAssets ?? [
+      {
+        id: "front-photo",
+        side: "front",
+        storageKey: "ai-grader/reports/sample-final-v0/slabbed/front.png",
+        publicUrl: "https://cdn.tenkings.test/ai-grader/reports/sample-final-v0/slabbed/front.png",
+        byteSize: 12,
+      },
+      {
+        id: "back-photo",
+        side: "back",
+        storageKey: "ai-grader/reports/sample-final-v0/slabbed/back.png",
+        publicUrl: "https://cdn.tenkings.test/ai-grader/reports/sample-final-v0/slabbed/back.png",
+        byteSize: 12,
+      },
+    ];
+  const valuation =
+    overrides.valuation === null
+      ? null
+      : {
+          id: "valuation-1",
+          status: "completed",
+          valuationMinor: 10000,
+          ...(overrides.valuation ?? {}),
+        };
+  return {
+    aiGraderReport: {
+      async findUnique() {
+        return report;
+      },
+    },
+    aiGraderLabel: {
+      async findFirst() {
+        return label;
+      },
+    },
+    aiGraderEvidenceAsset: {
+      async findMany() {
+        return slabbedAssets;
+      },
+    },
+    aiGraderValuation: {
+      async findFirst() {
+        return valuation;
+      },
+    },
   };
 }
 
@@ -1259,6 +1337,57 @@ test("create-card-from-report action sends small storage-backed metadata and ret
   assert.equal(createCalled, true);
 });
 
+test("create-card-from-report action rejects incomplete confirmed identity", async () => {
+  const reportBundle = sampleStorageReadyReportBundle();
+  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  let createCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+    },
+    async requireAdminSession() {
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async presignUpload() {
+      throw new Error("create-card should not presign uploads");
+    },
+    async persist() {
+      throw new Error("create-card should not finalize production publish");
+    },
+    async createCardFromReport() {
+      createCalled = true;
+      throw new Error("incomplete identity should be rejected before runtime");
+    },
+  });
+
+  const req = mockRequest("POST", ["create-card-from-report"]);
+  req.body = {
+    publicationStatus: "published",
+    reportBundle,
+    productionRelease,
+    identity: {
+      category: "sport",
+      playerName: "Michael Jordan",
+      year: "1996",
+      manufacturer: "Fleer",
+      autograph: false,
+      memorabilia: false,
+    },
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 400);
+  const body = res.jsonBody as { ok: boolean; code?: string; message: string };
+  assert.equal(body.ok, false);
+  assert.equal(body.code, "AI_GRADER_INCOMPLETE_CARD_IDENTITY");
+  assert.match(body.message, /sport|required|productSet|cardNumber/);
+  assert.equal(createCalled, false);
+});
+
 test("legacy slabbed photo body upload is rejected by the production API", async () => {
   const handler = createAiGraderProductionApiHandler({
     env: {
@@ -1531,6 +1660,53 @@ test("eBay comps action returns candidates and selected comps persist separately
   assert.equal(selectedPersisted, true);
 });
 
+test("mark-label-printed action persists printed status through the production API", async () => {
+  let markCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async presignUpload() {
+      throw new Error("mark-label-printed should not upload");
+    },
+    async persist() {
+      throw new Error("mark-label-printed should not publish-finalize");
+    },
+    async markLabelPrinted(input) {
+      markCalled = true;
+      assert.equal(input.tenantId, "tenant-1");
+      assert.equal(input.reportId, "sample-final-v0");
+      assert.equal(input.operatorUserId, "admin-1");
+      assert.equal(input.actorAudit?.action, "publish");
+      return {
+        reportId: input.reportId,
+        labelId: "label-1",
+        certId: "TK-AIG-TEST",
+        physicalPrintStatus: "printed",
+        printedAt: "2026-07-07T12:00:00.000Z",
+      };
+    },
+  });
+  const req = mockRequest("POST", ["mark-label-printed"]);
+  req.body = { reportId: "sample-final-v0" };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 200);
+  const body = res.jsonBody as { ok: boolean; result: { physicalPrintStatus: string; certId: string } };
+  assert.equal(body.ok, true);
+  assert.equal(body.result.physicalPrintStatus, "printed");
+  assert.equal(body.result.certId, "TK-AIG-TEST");
+  assert.equal(markCalled, true);
+});
+
 test("add-to-inventory action is publish-scoped and returns inventory-ready linkage", async () => {
   let addCalled = false;
   const handler = createAiGraderProductionApiHandler({
@@ -1576,6 +1752,53 @@ test("add-to-inventory action is publish-scoped and returns inventory-ready link
   assert.equal(body.result.reviewStage, "INVENTORY_READY_FOR_SALE");
   assert.equal(body.result.itemId, "item-1");
   assert.equal(addCalled, true);
+});
+
+test("add-to-inventory rejects missing printed label in persisted readiness", async () => {
+  await assert.rejects(
+    () =>
+      validateAiGraderInventoryReadiness(
+        inventoryReadinessDb({
+          label: { id: "label-1", physicalPrintStatus: "not_printed" },
+        }),
+        "sample-final-v0"
+      ),
+    (error: any) => error?.code === "AI_GRADER_LABEL_PRINT_REQUIRED" && /label must be marked printed/i.test(error.message)
+  );
+});
+
+test("add-to-inventory rejects missing slabbed front/back persisted photos", async () => {
+  await assert.rejects(
+    () =>
+      validateAiGraderInventoryReadiness(
+        inventoryReadinessDb({
+          slabbedAssets: [
+            {
+              id: "front-photo",
+              side: "front",
+              storageKey: "ai-grader/reports/sample-final-v0/slabbed/front.png",
+              publicUrl: "https://cdn.tenkings.test/ai-grader/reports/sample-final-v0/slabbed/front.png",
+              byteSize: 12,
+            },
+          ],
+        }),
+        "sample-final-v0"
+      ),
+    (error: any) => error?.code === "AI_GRADER_SLABBED_PHOTOS_REQUIRED" && /slabbed front and back photos/i.test(error.message)
+  );
+});
+
+test("add-to-inventory rejects missing completed valuation", async () => {
+  await assert.rejects(
+    () =>
+      validateAiGraderInventoryReadiness(
+        inventoryReadinessDb({
+          valuation: { id: "valuation-1", status: "completed", valuationMinor: 0 },
+        }),
+        "sample-final-v0"
+      ),
+    (error: any) => error?.code === "AI_GRADER_COMPLETED_VALUATION_REQUIRED" && /completed valuation/i.test(error.message)
+  );
 });
 
 test("public report API is read-only and disabled unless explicitly configured", async () => {
@@ -1701,10 +1924,13 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish-finalize"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/slabbed-photo-init"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/slabbed-photo-finalize"), true);
+  assert.equal(stationSource.includes("/api/admin/ai-grader/production/mark-label-printed"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/save-comps-selection"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/add-to-inventory"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/upload-slab-photo"), false);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish\""), false);
+  assert.equal(stationSource.includes("selectedIds: []"), true);
+  assert.equal(stationSource.includes('<option value="unknown">Unknown</option>'), false);
   const publishFunctionSource = stationSource.slice(
     stationSource.indexOf("const publishToTenKingsSystem"),
     stationSource.indexOf("const uploadSlabbedPhoto")
