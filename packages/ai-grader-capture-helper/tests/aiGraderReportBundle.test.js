@@ -136,7 +136,7 @@ test("report bundle exports web-ready provisional contract without final/certifi
   assert.match(bundle.limitations.join(" "), /No QR Certificate Yet/);
 });
 
-test("report bundle can include base64 image bodies for production publish", async () => {
+test("report bundle can include base64 image bodies for local operator viewer export", async () => {
   const reportDir = fixtureReportDir();
   const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "fixture-report", includeAssetBodies: true });
 

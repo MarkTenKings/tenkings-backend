@@ -388,7 +388,7 @@ export function buildAiGraderProductionRelease(input: {
     storageKeyPrefix,
     reportBundlePath: input.reportBundlePath,
     requiredFutureProductionSteps: [
-      "Upload report-bundle.json, production-release.json, label-data.json, and referenced assets through existing storage helpers.",
+      "Initialize production publish with small manifest JSON, then upload report-bundle.json, production-release.json, label-data.json, manifests, and referenced assets directly to storage using presigned URLs.",
       "Apply the reviewed AI Grader production-release migration through the approved runbook.",
       "Persist AiGraderSession, AiGraderReport, AiGraderEvidenceAsset, AiGraderGrade, AiGraderLabel, AiGraderPublication, and AiGraderValuation through the env-gated admin API.",
       "Bind slabbed front/back color photos after physical encapsulation.",
@@ -448,14 +448,14 @@ export function buildAiGraderProductionRelease(input: {
       recommendedPersistPath: [
         "Run reviewed migration only through the approved deploy/migration runbook.",
         "Enable AI_GRADER_PRODUCTION_PUBLISH_ENABLED=true only after migration and storage are ready.",
-        "POST /api/admin/ai-grader/production/publish with report-bundle and production-release payloads.",
+        "POST small manifest JSON to /api/admin/ai-grader/production/publish-init, upload artifacts directly to storage, then POST small upload manifest JSON to /api/admin/ai-grader/production/publish-finalize.",
       ],
     },
     storageIntegration: {
       mode: "local_bundle_only",
       uploadPerformed: false,
       storageKeyPrefix,
-      recommendedUploadPath: "Reuse frontend/nextjs-app/lib/server/storage.ts uploadBuffer/presign helpers when production credentials are available.",
+      recommendedUploadPath: "Reuse frontend/nextjs-app/lib/server/storage.ts presign helpers so image bytes never pass through Vercel request or response bodies.",
     },
     warnings: [
       ...input.bundle.warnings,

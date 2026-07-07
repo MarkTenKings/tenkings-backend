@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { publicUrlFor, uploadBuffer } from "../../../../../lib/server/storage";
+import { getS3ObjectAcl, headStorageObject, presignUploadUrl, publicUrlFor } from "../../../../../lib/server/storage";
 import { requireAdminSession } from "../../../../../lib/server/admin";
 import { requireUserSession } from "../../../../../lib/server/session";
 import {
@@ -15,7 +15,7 @@ import {
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: "300mb",
+      sizeLimit: "1mb",
     },
   },
 };
@@ -25,10 +25,31 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     requireAdminSession,
     requireUserSession,
     publicUrlFor,
-    uploadArtifact: async ({ storageKey, body, bodyEncoding, contentType }) => ({
+    presignUpload: async ({ storageKey, contentType, checksumSha256 }) => ({
       storageKey,
-      publicUrl: await uploadBuffer(storageKey, Buffer.from(body, bodyEncoding === "base64" ? "base64" : "utf8"), contentType),
+      uploadUrl: await presignUploadUrl(storageKey, contentType, { metadata: { sha256: checksumSha256 } }),
+      uploadMethod: "PUT",
+      uploadHeaders: {
+        "Content-Type": contentType,
+        "x-amz-meta-sha256": checksumSha256,
+        ...(getS3ObjectAcl() ? { "x-amz-acl": String(getS3ObjectAcl()) } : {}),
+      },
+      publicUrl: publicUrlFor(storageKey),
     }),
+    verifyUploadedArtifact: async ({ storageKey, byteSize, checksumSha256 }) => {
+      const head = await headStorageObject(storageKey);
+      const storedChecksum = head.metadata?.sha256 ?? head.metadata?.["x-amz-meta-sha256"] ?? null;
+      return {
+        ok: true,
+        byteSize: typeof head.byteSize === "number" ? head.byteSize : undefined,
+        contentType: head.contentType,
+        checksumSha256: storedChecksum ?? checksumSha256,
+        message:
+          typeof head.byteSize === "number" && head.byteSize !== byteSize
+            ? `Storage byte size mismatch for ${storageKey}.`
+            : undefined,
+      };
+    },
     persist: persistProductionReleaseRuntime,
     listHistory: listProductionReportHistoryRuntime,
     searchCards: searchAiGraderCardItemsRuntime,

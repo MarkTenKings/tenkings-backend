@@ -1054,6 +1054,102 @@ test("fresh bridge status exposes latest generated report from local history", a
   assert.equal(Buffer.from(imageAsset?.bodyBase64 ?? "", "base64").toString("utf8"), "front-image");
 });
 
+test("station bridge ignores stale shared bundle paths for requested history report", async () => {
+  const dir = outputDir(`history-stale-bundle-${Date.now()}`);
+  const sessionDir = path.join(dir, "ai-grader-browser-station-session-2026-07-06T223658063Z");
+  const reportDir = path.join(dir, "ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-06T223840015Z");
+  const sharedBundleDir = path.join(dir, "ai-grader-report-bundles");
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.mkdirSync(sharedBundleDir, { recursive: true });
+  fs.mkdirSync(path.join(reportDir, "front"), { recursive: true });
+  const frontImagePath = path.join(reportDir, "front", "front-all-on-portrait-display.png");
+  fs.writeFileSync(frontImagePath, Buffer.from("front-image"));
+  const reportHtmlPath = path.join(reportDir, "provisional-diagnostic-report.html");
+  fs.writeFileSync(reportHtmlPath, `<html><body>generated report<img src="${frontImagePath}" alt="front"></body></html>`);
+  const staleBundlePath = path.join(sharedBundleDir, "report-bundle.json");
+  fs.writeFileSync(staleBundlePath, JSON.stringify({
+    schemaVersion: "ten-kings-ai-grader-report-bundle-v0",
+    generatedAt: "2026-07-07T00:03:18.271Z",
+    gradingSessionId: "stale-session",
+    reportId: "ai-grader-browser-station-session-2026-07-07T000318271Z-report",
+    reportStatus: "final_ai_grader_report_v0",
+    cardIdentity: { title: "Stale report" },
+    evidenceReferences: {},
+    provisionalGrade: {},
+    assets: [],
+    warnings: [],
+  }));
+  fs.writeFileSync(path.join(sessionDir, "station-session.json"), JSON.stringify({
+    reportId: "ai-grader-browser-station-session-2026-07-06T223658063Z-report",
+    sessionId: "ai-grader-browser-station-session-2026-07-06T223658063Z-session",
+    createdAt: "2026-07-06T22:36:58.063Z",
+    updatedAt: "2026-07-06T22:38:55.517Z",
+    outputs: {
+      unifiedReportPath: reportHtmlPath,
+      unifiedReportDir: reportDir,
+      reportBundlePath: staleBundlePath,
+    },
+  }));
+
+  const service = new AiGraderLocalStationBridgeService(mockConfig({ outputDir: dir }));
+  const resolved = await service.reportBundle("ai-grader-browser-station-session-2026-07-06T223658063Z-report");
+  assert.equal(resolved.source, "history_generated_from_report_dir");
+  assert.equal(resolved.bundle.reportId, "ai-grader-browser-station-session-2026-07-06T223658063Z-report");
+  assert.equal(resolved.bundle.assets.some((asset) => asset.fileName === "front-all-on-portrait-display.png"), true);
+});
+
+test("station bridge serves one local report asset for direct storage upload", async () => {
+  const dir = outputDir(`report-asset-${Date.now()}`);
+  const sessionDir = path.join(dir, "ai-grader-browser-station-session-2026-07-02T035658313Z");
+  const reportDir = path.join(dir, "ai-grader-fixed-rig-v1-unified-diagnostic-report-2026-07-02T041413536Z");
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.mkdirSync(path.join(reportDir, "front"), { recursive: true });
+  const frontImagePath = path.join(reportDir, "front", "front-all-on-portrait-display.png");
+  fs.writeFileSync(frontImagePath, Buffer.from("front-image"));
+  const reportHtmlPath = path.join(reportDir, "provisional-diagnostic-report.html");
+  fs.writeFileSync(reportHtmlPath, `<html><body>generated report<img src="${frontImagePath}" alt="front"></body></html>`);
+  fs.writeFileSync(path.join(sessionDir, "station-session.json"), JSON.stringify({
+    reportId: "ai-grader-browser-station-session-2026-07-02T035658313Z-report",
+    sessionId: "ai-grader-browser-station-session-2026-07-02T035658313Z-session",
+    createdAt: "2026-07-02T03:56:58.313Z",
+    updatedAt: "2026-07-02T04:14:13.536Z",
+    outputs: { unifiedReportPath: reportHtmlPath, unifiedReportDir: reportDir },
+  }));
+
+  const token = "local-station-token-report-asset";
+  const started = await startAiGraderLocalStationBridgeHttpServer({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 0,
+    stationToken: token,
+    allowedOrigins: ["https://collect.tenkings.co"],
+    outputDir: dir,
+  });
+  try {
+    const reportId = "ai-grader-browser-station-session-2026-07-02T035658313Z-report";
+    const assetId = "report/front/front-all-on-portrait-display.png";
+    const unauthorized = await fetch(`${started.url}/reports/${encodeURIComponent(reportId)}/asset?assetId=${encodeURIComponent(assetId)}`, {
+      headers: { Origin: "https://collect.tenkings.co" },
+    });
+    assert.equal(unauthorized.status, 401);
+    await unauthorized.text();
+
+    const response = await fetch(`${started.url}/reports/${encodeURIComponent(reportId)}/asset?assetId=${encodeURIComponent(assetId)}`, {
+      headers: { Origin: "https://collect.tenkings.co", "x-ai-grader-station-token": token },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    assert.equal(response.headers.get("x-ai-grader-asset-id"), assetId);
+    assert.equal(response.headers.get("x-ai-grader-sha256"), "635c727b41c225c9496e646413781d7c3aa11874287dd7a9d584911839f42999");
+    assert.equal(Buffer.from(await response.arrayBuffer()).toString("utf8"), "front-image");
+  } finally {
+    await closeServer(started.server);
+  }
+});
+
 test("station bridge CLI help exposes local bridge command and flags", async () => {
   let stdout = "";
   const code = await runCaptureHelperCli(["help"], {

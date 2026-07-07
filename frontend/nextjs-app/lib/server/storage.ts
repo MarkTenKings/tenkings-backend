@@ -1,6 +1,6 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { GetObjectCommand, ObjectCannedACL, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, ObjectCannedACL, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const DEFAULT_MODE = "local";
@@ -47,6 +47,10 @@ export interface StoragePlan {
 
 export interface UploadBufferOptions {
   cacheControl?: string;
+}
+
+export interface PresignUploadOptions {
+  metadata?: Record<string, string>;
 }
 
 export function getStorageMode(): StorageMode {
@@ -175,15 +179,43 @@ export function publicUrlFor(storageKey: string) {
   return `${publicPrefix}/${cleanedKey}`;
 }
 
-export async function presignUploadUrl(storageKey: string, contentType: string) {
+export async function presignUploadUrl(storageKey: string, contentType: string, options: PresignUploadOptions = {}) {
   const client = getS3Client();
   const command = new PutObjectCommand({
     Bucket: s3Bucket,
     Key: storageKey,
     ContentType: contentType,
     ACL: s3ObjectAcl,
+    Metadata: options.metadata,
   });
   return getSignedUrl(client as any, command as any, { expiresIn: 60 * 10 });
+}
+
+export async function headStorageObject(storageKey: string) {
+  const mode = getStorageMode();
+  if (mode !== "s3") {
+    const filePath = getLocalFilePath(storageKey);
+    const stats = await fs.stat(filePath);
+    return {
+      storageKey,
+      byteSize: stats.size,
+      contentType: undefined as string | undefined,
+      metadata: {} as Record<string, string>,
+    };
+  }
+  const client = getS3Client();
+  const response = await client.send(
+    new HeadObjectCommand({
+      Bucket: s3Bucket,
+      Key: storageKey,
+    })
+  );
+  return {
+    storageKey,
+    byteSize: response.ContentLength,
+    contentType: response.ContentType,
+    metadata: response.Metadata ?? {},
+  };
 }
 
 export async function presignReadUrl(storageKey: string, expiresInSeconds = 60 * 10) {

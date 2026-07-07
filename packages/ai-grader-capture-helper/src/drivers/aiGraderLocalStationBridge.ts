@@ -2950,7 +2950,7 @@ export class AiGraderLocalStationBridgeService {
         return { reportId: expectedReportId, bundle: bundleWithProductionRelease(generated, release), source: "history_generated_with_asset_bodies" };
       }
       const bundle = await readBundleFromPath(item.reportBundlePath);
-      if (bundle) {
+      if (bundle?.reportId === expectedReportId) {
         const release = await readProductionReleaseFromPath(item.productionReleasePath);
         return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, release), source: "history_report_bundle_path" };
       }
@@ -3434,6 +3434,25 @@ function sendText(
   res.end(body);
 }
 
+function sendBinary(
+  res: http.ServerResponse,
+  statusCode: number,
+  body: Buffer,
+  origin: string | undefined,
+  config: AiGraderLocalStationBridgeConfig,
+  contentType = "application/octet-stream",
+  extraHeaders: Record<string, string> = {}
+) {
+  setCors(res, origin, config);
+  res.writeHead(statusCode, {
+    "Content-Type": contentType,
+    "Content-Length": String(body.length),
+    "Cache-Control": "no-store",
+    ...extraHeaders,
+  });
+  res.end(body);
+}
+
 async function readJsonBody(req: http.IncomingMessage): Promise<JsonBody> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -3623,6 +3642,34 @@ export function createAiGraderLocalStationBridgeHttpServer(
           },
           origin,
           config
+        );
+      }
+
+      const reportAssetMatch = url.pathname.match(/^\/reports\/([^/]+)\/asset$/);
+      if (reportAssetMatch) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for report assets." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const reportId = decodeURIComponent(reportAssetMatch[1]);
+        const assetId = url.searchParams.get("assetId") ?? "";
+        if (!assetId.trim()) throw new Error("assetId is required.");
+        const resolved = await service.reportBundle(reportId);
+        const asset = resolved.bundle.assets.find((candidate) => candidate.id === assetId);
+        if (!asset?.localPath || asset.kind !== "image") {
+          throw new Error(`AI Grader report asset ${assetId} is not available as a local image file.`);
+        }
+        const bytes = await readFile(asset.localPath);
+        const checksum = crypto.createHash("sha256").update(bytes).digest("hex");
+        return sendBinary(
+          res,
+          200,
+          bytes,
+          origin,
+          config,
+          asset.contentType ?? "application/octet-stream",
+          {
+            "X-AI-Grader-Asset-Id": asset.id,
+            "X-AI-Grader-SHA256": checksum,
+          }
         );
       }
 

@@ -85,16 +85,18 @@ export type AiGraderProductionArtifactPlan = {
     | "publication_manifest"
     | "integration_contract"
     | "asset_manifest"
+    | "checksums"
     | "label_preview"
     | "report_asset";
   kind: string;
   storageKey: string;
   contentType: string;
-  body: string;
+  body?: string;
   bodyEncoding?: "utf8" | "base64";
   checksumSha256: string;
   byteSize: number;
   publicUrl?: string;
+  sourceAssetId?: string;
 };
 
 export type AiGraderProductionStoragePlan = {
@@ -229,6 +231,11 @@ function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function positiveIntegerValue(value: unknown) {
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(numeric) && numeric > 0 ? Math.round(numeric) : undefined;
+}
+
 function dateValue(value: string | Date | undefined, fallback = new Date()) {
   if (value instanceof Date) return value;
   if (typeof value === "string" && value.trim()) {
@@ -301,6 +308,16 @@ function fileExtensionForContentType(contentType: string) {
   return ".bin";
 }
 
+function checksumValue(value: unknown) {
+  const text = stringValue(value, "").trim().toLowerCase();
+  return /^[a-f0-9]{64}$/.test(text) ? text : "";
+}
+
+function isImageAssetRecord(asset: JsonRecord) {
+  const haystack = `${asset.contentType ?? ""} ${asset.fileName ?? ""} ${asset.id ?? ""} ${asset.kind ?? ""}`.toLowerCase();
+  return haystack.includes("image") || /\.(png|jpe?g|webp)$/i.test(String(asset.fileName ?? asset.storageKey ?? asset.id ?? ""));
+}
+
 function looksLikeLocalPathOrLoopback(value: string) {
   return /^[a-z]:\\/i.test(value) || value.includes("\\TenKings\\") || /https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|::1)/i.test(value);
 }
@@ -366,37 +383,43 @@ function reportAssetArtifacts(input: {
   storageKeyPrefix: string;
   reportBundle: AiGraderProductionReportBundleLike;
   publicUrlFor: (storageKey: string) => string;
-}) {
+}): AiGraderProductionArtifactPlan[] {
   const rawAssets = Array.isArray(input.reportBundle.assets) ? input.reportBundle.assets : [];
   const seenStorageKeys = new Set<string>();
-  return rawAssets
-    .filter(isRecord)
-    .map((asset, index) => {
-      const bodyBase64 = stringValue(asset.bodyBase64, "");
-      if (!bodyBase64) return null;
-      const contentType = stringValue(asset.contentType, "application/octet-stream");
-      if (!contentType.toLowerCase().startsWith("image/")) return null;
-      const id = stringValue(asset.id, `image-${index + 1}`);
-      const fileName = safeAssetFileName(
-        stringValue(asset.fileName ?? asset.localPath, ""),
-        `${safeSegment(id)}${fileExtensionForContentType(contentType)}`
-      );
-      const uniqueName = `${String(index + 1).padStart(3, "0")}-${fileName}`;
-      const storageKey = `${input.storageKeyPrefix}assets/${uniqueName}`;
-      if (seenStorageKeys.has(storageKey)) return null;
-      seenStorageKeys.add(storageKey);
-      return artifact({
+  const artifacts: AiGraderProductionArtifactPlan[] = [];
+  rawAssets.filter(isRecord).forEach((asset, index) => {
+    const bodyBase64 = stringValue(asset.bodyBase64, "");
+    const contentType = stringValue(asset.contentType, "application/octet-stream");
+    if (!contentType.toLowerCase().startsWith("image/")) return;
+    if (!isImageAssetRecord(asset)) return;
+    const id = stringValue(asset.id, `image-${index + 1}`);
+    const checksumSha256 = bodyBase64
+      ? aiGraderSha256(Buffer.from(bodyBase64, "base64"))
+      : checksumValue(asset.checksumSha256 ?? asset.sha256);
+    const byteSize = bodyBase64 ? Buffer.from(bodyBase64, "base64").length : positiveIntegerValue(asset.byteSize);
+    if (!checksumSha256 || !byteSize) return;
+    const fileName = safeAssetFileName(
+      stringValue(asset.fileName ?? asset.storageKey ?? id, ""),
+      `${safeSegment(id)}${fileExtensionForContentType(contentType)}`
+    );
+    const uniqueName = `${String(index + 1).padStart(3, "0")}-${fileName}`;
+    const storageKey = `${input.storageKeyPrefix}assets/${uniqueName}`;
+    if (seenStorageKeys.has(storageKey)) return;
+    seenStorageKeys.add(storageKey);
+    artifacts.push({
         artifactId: `${input.reportId}:report-asset:${safeSegment(id)}:${index + 1}`,
         artifactClass: "report_asset",
         kind: "report-image",
         storageKey,
         contentType,
-        body: bodyBase64,
-        bodyEncoding: "base64",
+        ...(bodyBase64 ? { body: bodyBase64, bodyEncoding: "base64" as const } : {}),
+        checksumSha256,
+        byteSize,
         publicUrl: input.publicUrlFor(storageKey),
-      });
-    })
-    .filter((entry): entry is AiGraderProductionArtifactPlan => Boolean(entry));
+        sourceAssetId: id,
+    });
+  });
+  return artifacts;
 }
 
 export function buildAiGraderLabelPreviewHtml(productionRelease: AiGraderProductionReleaseLike) {
@@ -442,6 +465,7 @@ export function buildAiGraderProductionStoragePlan(input: {
   const reportId = stringValue(input.productionRelease.reportId ?? input.reportBundle.reportId, "pending-report");
   const storageKeyPrefix = (input.storageKeyPrefix ?? `ai-grader/reports/${safeSegment(reportId)}/`).replace(/^\/+/, "").replace(/\/?$/, "/");
   const base = publicBase(input.publicReportBaseUrl);
+  const generatedAt = stringValue(input.productionRelease.generatedAt ?? input.reportBundle.generatedAt, new Date().toISOString());
   const publicReportUrl = `${base}/ai-grader/reports/${encodeURIComponent(reportId)}`;
   const qrPayloadUrl = publicReportUrl;
   const publicUrlFor = input.publicUrlFor ?? ((storageKey: string) => `${base}/storage/${storageKey}`);
@@ -493,7 +517,7 @@ export function buildAiGraderProductionStoragePlan(input: {
     publicReportUrl,
     qrPayloadUrl,
     storageKeyPrefix,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     certificationClaim: false,
   });
   const integrationContract = sanitizeAiGraderPublicJson({
@@ -508,7 +532,7 @@ export function buildAiGraderProductionStoragePlan(input: {
     cardInventoryLinkage: input.productionRelease.cardInventoryLinkage,
     noLocalDellPaths: true,
   });
-  const artifacts = [
+  const artifacts: AiGraderProductionArtifactPlan[] = [
     artifact({
       artifactId: `${reportId}:report-bundle`,
       artifactClass: "report_bundle",
@@ -575,7 +599,31 @@ export function buildAiGraderProductionStoragePlan(input: {
     contentType: "application/json",
     body: stableJson({ reportId, assets: assetManifest }),
   });
-  const allArtifacts = [...artifacts, assetManifestArtifact].map((entry) => ({
+  const checksumsArtifact = artifact({
+    artifactId: `${reportId}:checksums`,
+    artifactClass: "checksums",
+    kind: "checksums.json",
+    storageKey: `${storageKeyPrefix}checksums.json`,
+    contentType: "application/json",
+    body: stableJson({
+      reportId,
+      checksums: [...assetManifest, {
+        artifactId: assetManifestArtifact.artifactId,
+        kind: assetManifestArtifact.kind,
+        storageKey: assetManifestArtifact.storageKey,
+        checksumSha256: assetManifestArtifact.checksumSha256,
+        byteSize: assetManifestArtifact.byteSize,
+        publicUrl: publicUrlFor(assetManifestArtifact.storageKey),
+      }].map((entry) => ({
+        artifactId: entry.artifactId,
+        kind: entry.kind,
+        storageKey: entry.storageKey,
+        checksumSha256: entry.checksumSha256,
+        byteSize: entry.byteSize,
+      })),
+    }),
+  });
+  const allArtifacts = [...artifacts, assetManifestArtifact, checksumsArtifact].map((entry) => ({
     ...entry,
     publicUrl: publicUrlFor(entry.storageKey),
   }));
