@@ -23996,3 +23996,62 @@ By enabling Rip It Live, I confirm:
   - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
   - `git diff --check` -> pass with line-ending warnings only.
 - No hardware capture, production publish, migration, DB schema change, Vercel env change, credential rotation, destructive operation, forced publish, eBay comps run, or secret-printing action was run.
+
+### PR #65 Production-Scale Direct Storage Publish Rewrite
+- Timestamp: `2026-07-06T23:15:16-04:00`
+- Branch and implementation HEAD: `fix/ai-grader-canonical-per-report-publish-package` at `83b6ba223acd7a7446b4f3f94b2fa8508175882a`.
+- Files changed:
+  - `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`
+  - `frontend/nextjs-app/pages/api/admin/ai-grader/production/[...action].ts`
+  - `frontend/nextjs-app/pages/ai-grader/station.tsx`
+  - `frontend/nextjs-app/lib/server/storage.ts`
+  - `frontend/nextjs-app/lib/aiGraderStationBridgeClient.ts`
+  - `frontend/nextjs-app/lib/aiGraderReportBundle.ts`
+  - `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+  - `packages/database/src/aiGraderProductionService.ts`
+  - `packages/database/tests/aiGraderProductionService.test.js`
+  - `packages/ai-grader-capture-helper/src/drivers/aiGraderLocalStationBridge.ts`
+  - `packages/ai-grader-capture-helper/src/drivers/aiGraderProductionRelease.ts`
+  - `packages/ai-grader-capture-helper/tests/aiGraderLocalStationBridge.test.js`
+  - `packages/ai-grader-capture-helper/tests/aiGraderReportBundle.test.js`
+  - `docs/ai-grader-capture-helper.md`
+  - `tk-ai-grader-codex-spec-v5.md`
+- Architecture change summary:
+  - Rejected the PR #65 large-body Vercel publish architecture. The legacy `/api/admin/ai-grader/production/publish` action now returns `410 AI_GRADER_LEGACY_PUBLISH_REJECTED`.
+  - Production publish is now `publish-init` -> direct presigned storage uploads -> `publish-finalize`.
+  - Vercel request bodies are capped at `1mb`; `publish-init` response is checked against the `4.5 MB` Vercel payload ceiling; image bytes/base64 bodies are rejected from publish init/finalize payloads.
+  - `publish-init` accepts sanitized manifest JSON only, builds canonical storage keys under `ai-grader/reports/[safeReportId]/...`, returns presigned PUT URLs, and includes small JSON artifact bodies only for non-image artifacts.
+  - The station fetches the local report bundle without `includeAssetBodies`, strips local paths/tokens/data URLs/bodyBase64, uploads JSON artifacts from the init response directly to storage, fetches each image file one-at-a-time from the token-gated Dell bridge `/reports/:reportId/asset?assetId=...`, uploads it directly to storage, and then calls `publish-finalize`.
+  - `publish-finalize` accepts a small upload manifest, verifies storage keys/checksums/byte sizes/public URLs against the planned artifacts, HEAD-checks storage, strips any bodies from the persisted plan, and persists the existing `AiGraderSession`, `AiGraderReport`, `AiGraderEvidenceAsset`, `AiGraderGrade`, `AiGraderLabel`, `AiGraderPublication`, and `AiGraderValuation` rows through the existing database service.
+  - Optional `cardAssetId`/`itemId` still updates existing `CardAsset`/`Item` linkage through the current DB service; missing identity publishes unlinked with `needs_card_linkage` status rather than inventing a match.
+  - The local bridge now ignores stale shared bundle paths whose embedded `reportId` does not match the requested history report, then rebuilds from the report HTML directory and serves individual local image assets for direct upload.
+- Validation commands and results:
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>`, Browserslist/baseline-browser-mapping, and Tailwind glob warnings.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `45` tests.
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database exec node --test tests/aiGraderProductionService.test.js` -> pass, `10` tests.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `182` tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+  - `git diff --check` -> pass with line-ending warnings only.
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars or credentials changed: no.
+- Production publish was attempted: no.
+- Exact production publish blocker:
+  - The shell environment has no production DB/storage/public-report env present: `DATABASE_URL`, `CARD_STORAGE_MODE`, `CARD_STORAGE_BUCKET`, `CARD_STORAGE_REGION`, `CARD_STORAGE_PUBLIC_BASE_URL`, `CARD_STORAGE_ACCESS_KEY_ID`, `CARD_STORAGE_SECRET_ACCESS_KEY`, `AI_GRADER_PRODUCTION_PUBLISH_ENABLED`, `AI_GRADER_PUBLIC_REPORT_DB_ENABLED`, `AI_GRADER_PRODUCTION_TENANT_ID`, and `AI_GRADER_PUBLIC_REPORT_BASE_URL` were all absent in redacted presence checks.
+  - No local `.env` or Next `.env.local` with production credentials exists in the workspace, only `.env.example` files.
+  - The rewritten `publish-init`/`publish-finalize` endpoints have not been deployed to production in this session, so hosted `collect.tenkings.co` cannot run this new transport yet.
+- Known good report publish result:
+  - Known good report `ai-grader-browser-station-session-2026-07-06T223658063Z-report` was not production-published because of the blocker above.
+  - Local bridge/package verification after the stale-bundle fix resolved the report from history as `history_generated_from_report_dir` with the correct report ID, `77` assets, `72` image assets, `0` embedded image bodies, `72` image metadata records, and local image paths available for one-at-a-time direct upload.
+  - Local release artifacts for the report confirmed cert `TK-AIG-79D935C9`, grade `8.5`, `finalGradeComputed=true`, and `reportStatus=final_ai_grader_report_v0`.
+- Public report URL if successful: not available; smoke blocked before production upload/finalize.
+- Label URL if successful: not available; smoke blocked before production upload/finalize.
+- DB rows persisted: none in this session.
+- Storage prefix used: none written in this session; planned canonical prefix is `ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report/`.
+- Remaining blockers:
+  - Deploy or otherwise run the rewritten PR #65 code in an approved production-capable runtime with production DB/storage env.
+  - Then publish the known good report through `publish-init`, direct storage uploads, and `publish-finalize`; verify persisted DB rows, public report URL, label URL, QR URL, and public storage-backed images.
+  - Continue not to run hardware, migrations, env changes, credential rotation, destructive operations, or secret-printing without explicit approval.
