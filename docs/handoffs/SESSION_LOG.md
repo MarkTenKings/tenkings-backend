@@ -24704,3 +24704,22 @@ By enabling Rip It Live, I confirm:
 - Expected behavior: the shortcut opens Google Chrome using `C:\TenKings\chrome-ai-grader-profile`, injects the fresh hidden local bridge pairing URL, and uses that same profile for Ten Kings SMS sign-in.
 - First use in this dedicated profile requires SMS sign-in; after that, the profile should retain both Ten Kings session state and local bridge pairing state.
 - Continue the known-good report smoke after station sign-in and bridge pairing are both verified.
+
+## 2026-07-07 - PR #70 production merge planned action
+
+### Planned Action
+- Merge PR #70 (`https://github.com/MarkTenKings/tenkings-backend/pull/70`) from `fix/ai-grader-chrome-launcher-profile` into `main`.
+- Purpose: deploy the Dell AI Grader desktop shortcut launcher fix so the station always opens Google Chrome with the stable AI Grader profile instead of relying on Windows default browser/profile selection.
+- Verified before planned action:
+  - PR state: open, non-draft.
+  - PR HEAD before this planned-action docs commit: `838e21f50d6fbecd938652ff652357e58403efe1`.
+  - GitHub PR checks: passing after run `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28900548296`.
+  - Vercel preview: passing at `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/6ZUzgzuvt4u4XYBLWaiu9XTE4mSz`.
+- After merge, monitor GitHub main checks and Vercel Production deployment for the merge commit.
+
+### Guardrails For This Planned Action
+- No hardware capture.
+- No migrations.
+- No env var changes.
+- No credential rotation or secret printing.
+- No destructive operations.
