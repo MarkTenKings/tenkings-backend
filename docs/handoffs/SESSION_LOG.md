@@ -24369,3 +24369,22 @@ By enabling Rip It Live, I confirm:
 - Label URL if successful: not available in this patch.
 - DB rows persisted in this session: none.
 - Storage objects written in this session: none.
+
+## 2026-07-07 - PR #67 production merge planned action
+
+### Planned Action
+- Merge PR #67 (`https://github.com/MarkTenKings/tenkings-backend/pull/67`) from `fix/ai-grader-station-auth-gate` into `main`.
+- Purpose: deploy the AI Grader station production sign-in panel so operators can sign in directly from `/ai-grader/station` and the `Confirm + Create Card` action can authenticate visibly before card creation.
+- Verified before planned action:
+  - PR state: open, non-draft.
+  - PR merge state: `CLEAN`.
+  - PR HEAD before this planned-action docs commit: `2ec9cd9945728c913525b50d652dcdd2d985546e`.
+  - GitHub CI and Vercel preview checks: passing.
+- After merge, monitor GitHub main checks and Vercel Production deployment for the merge commit.
+- Then Mark should hard-refresh `https://collect.tenkings.co/ai-grader/station`, use the new `Production Sign-In` panel, and retry `Sign In + Create Card`.
+- Guardrails for this planned action:
+  - No hardware capture.
+  - No migrations.
+  - No env var changes.
+  - No credential rotation or secret printing.
+  - No destructive operations.
