@@ -24055,3 +24055,32 @@ By enabling Rip It Live, I confirm:
   - Deploy or otherwise run the rewritten PR #65 code in an approved production-capable runtime with production DB/storage env.
   - Then publish the known good report through `publish-init`, direct storage uploads, and `publish-finalize`; verify persisted DB rows, public report URL, label URL, QR URL, and public storage-backed images.
   - Continue not to run hardware, migrations, env changes, credential rotation, destructive operations, or secret-printing without explicit approval.
+
+### PR #65 Item Linkage Details Merge Guard
+- Timestamp: `2026-07-06T23:44:13-04:00`
+- Branch and pre-commit HEAD: `fix/ai-grader-canonical-per-report-publish-package` at `029cdbb8df8a1527849f646b469da244f52a7e67`.
+- Files changed:
+  - `packages/database/src/aiGraderProductionService.ts`
+  - `packages/database/tests/aiGraderProductionService.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Architecture change summary:
+  - Confirmed the `itemId` linkage path could replace the entire `Item.detailsJson` object during production finalize.
+  - Patched production persistence to read existing `Item.detailsJson` and merge it with the new AI Grader linkage fields, preserving unrelated item details while updating the AI Grader keys.
+  - Left the `CardAsset` update as-is because it writes dedicated AI grade/linkage fields and does not replace a shared details JSON object.
+- Validation commands and results:
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database exec node --test tests/aiGraderProductionService.test.js` -> pass, `10` tests.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `45` tests.
+  - `git diff --check` -> pass with line-ending warnings only on the two touched database files.
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars or credentials changed: no.
+- Production publish was attempted: no.
+- Known good report publish result: not attempted in this pre-merge persistence check.
+- Public report URL if successful: not available.
+- Label URL if successful: not available.
+- DB rows persisted: none in this session.
+- Storage prefix used: none written in this session.
+- Remaining blockers:
+  - Commit/push this pre-merge fix to PR #65.
+  - Merge PR #65, wait for Vercel production deploy, pull/rebuild/restart the Dell bridge on merged main, then publish and verify the known-good report end-to-end.

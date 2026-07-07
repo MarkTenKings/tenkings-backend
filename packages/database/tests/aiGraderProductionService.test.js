@@ -155,6 +155,16 @@ function createMockDelegate(name, calls, id) {
           itemId: "item-1",
         };
       }
+      if (name === "item") {
+        return {
+          id: "item-1",
+          detailsJson: {
+            existingItemDetail: "keep-me",
+            nestedItemDetail: { preserved: true },
+            aiGraderReportId: "old-report",
+          },
+        };
+      }
       return null;
     },
     async updateMany(args) {
@@ -340,6 +350,9 @@ test("production release persistence upserts durable records and optional card l
   assert.equal(cardUpdate.args.data.aiGradeFinal, 8.6);
   assert.equal(cardUpdate.args.data.aiGradeLabel, "8.6");
   const itemUpdate = calls.find((call) => call.delegate === "item" && call.method === "updateMany");
+  assert.equal(calls.some((call) => call.delegate === "item" && call.method === "findUnique"), true);
+  assert.equal(itemUpdate.args.data.detailsJson.existingItemDetail, "keep-me");
+  assert.deepEqual(itemUpdate.args.data.detailsJson.nestedItemDetail, { preserved: true });
   assert.equal(itemUpdate.args.data.detailsJson.aiGraderReportId, "report-1");
 });
 

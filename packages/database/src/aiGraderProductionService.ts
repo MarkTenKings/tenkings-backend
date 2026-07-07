@@ -35,7 +35,7 @@ export type AiGraderProductionTransactionClient = {
   aiGraderPublication: AiGraderProductionDbDelegate;
   aiGraderValuation: AiGraderProductionDbDelegate;
   cardAsset?: Pick<AiGraderProductionDbDelegate, "updateMany">;
-  item?: Pick<AiGraderProductionDbDelegate, "updateMany">;
+  item?: Pick<AiGraderProductionDbDelegate, "findUnique" | "updateMany">;
 };
 
 export type AiGraderProductionPrismaClient = AiGraderProductionTransactionClient & {
@@ -1015,10 +1015,16 @@ export async function persistAiGraderProductionRelease(
     let itemUpdatedCount = 0;
     const itemId = input.itemId ?? stringValue(input.reportBundle.cardIdentity?.itemId, "");
     if (itemId && tx.item?.updateMany) {
+      const existingItem = await tx.item.findUnique?.({
+        where: { id: itemId },
+        select: { detailsJson: true },
+      });
+      const existingDetails = isRecord(existingItem) && isRecord(existingItem.detailsJson) ? existingItem.detailsJson : {};
       const update = await tx.item.updateMany({
         where: { id: itemId },
         data: {
           detailsJson: json({
+            ...existingDetails,
             aiGraderReportId: reportId,
             aiGraderPublicReportUrl: input.storagePlan.publicReportUrl,
             aiGraderFinalGrade: finalOverallGrade(input.productionRelease) ?? null,
