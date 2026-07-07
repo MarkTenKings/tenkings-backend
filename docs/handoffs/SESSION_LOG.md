@@ -24507,3 +24507,21 @@ By enabling Rip It Live, I confirm:
 - DB rows persisted in this session: none.
 - Storage objects written in this session: none.
 - Remaining blocker: patch must be committed, pushed, merged, and deployed before Mark's production station page can use server-verified AI Grader production auth.
+
+## 2026-07-07 - PR #68 production merge planned action
+
+### Planned Action
+- Merge PR #68 (`https://github.com/MarkTenKings/tenkings-backend/pull/68`) from `fix/ai-grader-production-auth-check` into `main`.
+- Purpose: deploy the server-verified AI Grader production auth check so the station no longer treats a cached local session as production authorization.
+- Verified before planned action:
+  - PR state: open, non-draft.
+  - PR HEAD before this planned-action docs commit: `1535b8f9bef1fac548be0005cfa02e5d10adfe1a`.
+  - GitHub PR checks: passing after run `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28881405936`.
+  - Vercel preview: passing.
+- After merge, monitor GitHub main checks and Vercel Production deployment for the merge commit.
+- Guardrails for this planned action:
+  - No hardware capture.
+  - No migrations.
+  - No env var changes.
+  - No credential rotation or secret printing.
+  - No destructive operations.
