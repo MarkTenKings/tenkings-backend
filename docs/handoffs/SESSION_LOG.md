@@ -24229,3 +24229,27 @@ By enabling Rip It Live, I confirm:
 - DB rows persisted in this session: none.
 - Storage prefix used in this session: none written. Planned known-good prefix remains `ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report/`.
 - Remaining blockers: commit/push this patch to PR #66, wait for checks, merge/deploy, restart Dell bridge from merged `main`, then run and verify the known-good production smoke.
+
+## 2026-07-07 - PR #66 production merge and known-good smoke planned action
+
+### Planned Action
+- Merge PR #66 (`https://github.com/MarkTenKings/tenkings-backend/pull/66`) from `feature/ai-grader-new-card-intake-pipeline` into `main`.
+- Verified before planned action:
+  - PR state: open, non-draft.
+  - PR merge state: `CLEAN`.
+  - PR HEAD: `92c6d9a81d1b1f10b27eb3119cc5c36cc0454748`.
+  - GitHub CI and Vercel preview checks: passing.
+- After merge, monitor GitHub main checks and Vercel Production deployment for the merge commit.
+- Then pull/rebuild/restart the Dell AI Grader local bridge from merged `main`.
+- Then run the known-good report production smoke without new hardware capture:
+  - `reportId`: `ai-grader-browser-station-session-2026-07-06T223658063Z-report`
+  - `certId`: `TK-AIG-79D935C9`
+  - Expected grade: `8.5`
+  - Expected execution path: `warm_full_forensic_runner`
+  - Expected fallback: `false`
+- Guardrails for this planned action:
+  - No new hardware capture.
+  - No migrations.
+  - No env var changes.
+  - No credential rotation or secret printing.
+  - No destructive operations.
