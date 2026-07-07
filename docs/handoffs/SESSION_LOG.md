@@ -24253,3 +24253,119 @@ By enabling Rip It Live, I confirm:
   - No env var changes.
   - No credential rotation or secret printing.
   - No destructive operations.
+
+## 2026-07-07 - PR #66 production merge, Dell bridge restart, and smoke blocker
+
+### Summary
+- Branch: `main`.
+- Main HEAD / merge commit: `5f680e39e4dd63ce3bcfedac9ba7f8c02666ba90`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/66`.
+- PR status: merged at `2026-07-07T07:02:27Z`.
+- PR branch HEAD merged: `67ff9b8e64c5afb60eb5e06db8c06eb09aaa8b06`.
+
+### Files Changed
+- `docs/handoffs/SESSION_LOG.md`
+
+### Architecture Change Summary
+- No code architecture changes in this entry.
+- Production remains on PR #66 direct-storage AI Grader intake flow: small production API JSON requests, presigned direct storage uploads, DB-backed public report/label, gated card identity/label/slab/comps/inventory pipeline.
+- Vercel AI Grader production route body parser remains `1mb`; image/report/slabbed bytes are not transported through Vercel request/response bodies.
+
+### Merge / Deploy / Restart Evidence
+- `gh pr merge 66 --merge` completed.
+- GitHub main run `28847925964` for `5f680e39e4dd63ce3bcfedac9ba7f8c02666ba90` completed successfully.
+- Vercel Production deployment status: `success`, description `Deployment has completed`.
+- Vercel deployment id: `5340927915`.
+- Vercel dashboard URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/2AMYqqy11jNfYJBvPguP6GHUxRpZ`.
+- Deployed production URL: `https://tenkings-backend-nextjs-r1yvht8c6-ten-kings.vercel.app`.
+- Local main fast-forwarded to `5f680e39e4dd63ce3bcfedac9ba7f8c02666ba90`.
+- Dell bridge rebuilt with `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- Dell bridge restarted from merged main:
+  - Stop script result: `{"ok":true,"scheduledTaskStopped":false,"processKillRequested":true}`.
+  - Restarted via `scripts/ai-grader/start-local-station-bridge.ps1 -Real`.
+  - Health after restart: `ok=true`, mode `real`, localOnly `true`, tokenRequired `true`, allowed origin `https://collect.tenkings.co`.
+  - Token-gated status after restart: bridge version `ai-grader-local-station-bridge-v0.4`, latest execution path `warm_full_forensic_runner`, fallback `false`, warm runner idle.
+
+### Known Good Report Smoke Evidence
+- Target report: `ai-grader-browser-station-session-2026-07-06T223658063Z-report`.
+- Target cert: `TK-AIG-79D935C9`.
+- Local production release evidence:
+  - `finalGradeComputed=true`.
+  - `finalGrade.overall=8.5`.
+  - `label.status=label_data_ready`.
+  - QR payload URL points to `https://collect.tenkings.co/ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report`.
+  - Planned storage prefix: `ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report/`.
+- Local bridge package evidence:
+  - Bridge bundle source: `history_generated_from_report_dir`.
+  - Report asset records: `77`.
+  - Image asset records: `72`.
+  - Storage-ready image assets with SHA-256 and byte size: `72`.
+  - No embedded image bodies required.
+- Current public production state:
+  - `GET https://collect.tenkings.co/api/ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report` -> `404`.
+  - Public report shell route returned `200` but page content indicates not found/not published and does not include cert `TK-AIG-79D935C9`.
+  - Label shell route returned `200` but page content indicates not found/not published and does not include cert `TK-AIG-79D935C9`.
+  - Page content check found no `data:image`, local paths, localhost/loopback URL, station token marker, or `x-ai-grader` marker.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Blocker
+- Exact blocker: the known-good historical report cannot be completed end-to-end by Codex from this shell because no production operator Bearer session, `OPERATOR_API_KEY`, or `AI_GRADER_SERVICE_ACCOUNT_TOKEN` is available locally, and the human-required actions (`mark-label-printed`, `add-to-inventory`) require a human operator session by design.
+- Additional required operator inputs are missing for the full PR #66 pipeline:
+  - The historical station session has no confirmed `cardIdentity` / `selectedCard`.
+  - No slabbed front/back photo files are present for this report locally.
+  - `create-card-from-report` will reject this report until a real card identity is confirmed with the required sport/TCG identity fields.
+  - Inventory transition will reject until label print is persisted, slabbed front/back photos are uploaded to storage, selected comps/valuation are saved, and CardAsset/Item linkage exists.
+- Public report URL if successful: not available; report is not published in DB yet.
+- Label URL if successful: not available; label is not published in DB yet.
+- DB rows persisted in this session: none.
+- Storage objects written in this session: none.
+- Remaining blocker resolution: open the production station with a logged-in AI Grader operator session, confirm card identity for the known-good report, publish through PR #66 direct-storage flow, mark label printed, upload slabbed front/back photos, run/select/save comps, then add to inventory.
+
+## 2026-07-07 - AI Grader station production sign-in UX patch
+
+### Summary
+- Branch: `fix/ai-grader-station-auth-gate`.
+- Base HEAD: `5f680e39e4dd63ce3bcfedac9ba7f8c02666ba90`.
+- Trigger: Mark reported that the station appeared to have no sign-in path and `Confirm + Create Card` appeared stuck/no-op after entering identity fields.
+
+### Files Changed
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Architecture Change Summary
+- No backend/auth architecture change.
+- AI Grader production actions still require the existing Ten Kings human operator/admin bearer session.
+- Station now surfaces production sign-in as a visible gated state instead of only invoking login as a side effect of a production action.
+- Added a dedicated `Production Sign-In` panel with current signed-in state and an explicit `Sign In` / `Refresh Sign-In` button.
+- `Confirm + Create Card` now authenticates before entering the `Creating Card` busy state, so auth cancellation or failure reports a visible error instead of looking stuck.
+- Create-card blockers now show missing generated report/final grade/identity fields, not only identity fields.
+- When signed out, the create-card button reads `Sign In + Create Card` and the card linkage panel explicitly notes production sign-in is required.
+
+### Validation Commands And Results
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `53` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass. Existing unrelated warnings: `next/no-img-element`, stale Browserslist/baseline data, and Tailwind glob warning.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Known Good Report Status
+- Known good report publish result: not attempted in this patch session.
+- Exact blocker: this patch only fixes the station auth UX. Full production smoke still requires a logged-in AI Grader operator/admin in the Dell browser plus confirmed card identity, slabbed front/back photos, selected comps/valuation, and inventory transition.
+- Public report URL if successful: not available in this patch.
+- Label URL if successful: not available in this patch.
+- DB rows persisted in this session: none.
+- Storage objects written in this session: none.

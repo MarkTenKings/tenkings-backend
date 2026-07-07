@@ -346,7 +346,7 @@ function identityDraftMissingFields(draft: IdentityDraftState) {
 }
 
 export default function AiGraderStationPage() {
-  const { ensureSession } = useSession();
+  const { session, loading: sessionLoading, ensureSession } = useSession();
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -378,6 +378,10 @@ export default function AiGraderStationPage() {
   const [identityStatus, setIdentityStatus] = useState<StepState>({
     status: "idle",
     message: "Card identity has not been confirmed.",
+  });
+  const [productionAuthState, setProductionAuthState] = useState<StepState>({
+    status: "idle",
+    message: "Sign in is required before production card creation, publish, label, comps, and inventory steps.",
   });
   const [slabUploads, setSlabUploads] = useState<SlabUploadState>({});
   const [compsState, setCompsState] = useState<CompsState>({
@@ -684,6 +688,13 @@ export default function AiGraderStationPage() {
   const certId = productionPublish.certId ?? publishReadiness.certId;
   const identityDraftMissing = identityDraftMissingFields(identityDraft);
   const identityDraftComplete = identityDraftMissing.length === 0;
+  const productionSignedIn = Boolean(session?.token);
+  const productionOperatorLabel = session?.user.displayName || session?.user.phone || "Ten Kings operator";
+  const createCardBlockers = [
+    !reportReady ? "generated report" : "",
+    !finalReady ? "final grade" : "",
+    ...identityDraftMissing,
+  ].filter(Boolean);
   const canCreateCardFromReport = finalReady && reportReady && identityDraftComplete && !linkedCardReady && identityStatus.status !== "pending";
   const canPublishToTenKings = linkedCardReady && publishReadiness.ready && productionPublish.status !== "published" && productionPublish.status !== "pending";
   const canSaveSelectedComps =
@@ -807,9 +818,44 @@ export default function AiGraderStationPage() {
   };
   const latestWarmPhases = [...warmRunner.phases].slice(-4).reverse();
 
-  const productionAuthHeaders = async (extra: Record<string, string> = {}) => {
-    const activeSession = await ensureSession();
+  const requireProductionSession = async (actionLabel: string) => {
+    setProductionAuthState({
+      status: "pending",
+      message: `Sign in to Ten Kings to ${actionLabel}.`,
+    });
+    try {
+      const activeSession = await ensureSession();
+      const displayName = activeSession.user.displayName || activeSession.user.phone || "Ten Kings operator";
+      setProductionAuthState({
+        status: "completed",
+        message: `Signed in as ${displayName}.`,
+      });
+      return activeSession;
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error && requestError.message !== "Authentication cancelled"
+          ? requestError.message
+          : `Sign in is required to ${actionLabel}.`;
+      setProductionAuthState({
+        status: "failed",
+        message,
+      });
+      throw new Error(message);
+    }
+  };
+
+  const productionAuthHeaders = async (extra: Record<string, string> = {}, actionLabel = "continue the AI Grader production workflow") => {
+    const activeSession = await requireProductionSession(actionLabel);
     return buildAdminHeaders(activeSession.token, extra);
+  };
+
+  const signInForProduction = async () => {
+    setError(null);
+    try {
+      await requireProductionSession("continue the AI Grader production workflow");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Ten Kings sign-in failed.");
+    }
   };
 
   const refreshHistory = async () => {
@@ -1165,8 +1211,17 @@ export default function AiGraderStationPage() {
       .join(" ") || "AI Grader Card";
 
   const createCardFromConfirmedIdentity = async () => {
-    setBusy("create-card-from-report");
     setError(null);
+    let authHeaders: Record<string, string>;
+    try {
+      authHeaders = await productionAuthHeaders({ "content-type": "application/json" }, "create the Ten Kings card/item");
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Ten Kings sign-in is required before card creation.";
+      setIdentityStatus({ status: "failed", message });
+      setError(message);
+      return;
+    }
+    setBusy("create-card-from-report");
     setIdentityStatus({ status: "pending", message: "Creating Ten Kings CardAsset and Item from confirmed AI Grader identity." });
     try {
       let latestStatus = status;
@@ -1209,7 +1264,7 @@ export default function AiGraderStationPage() {
       const sanitizedRelease = sanitizeProductionReleaseForProduction(productionRelease, sanitizedBundle, null);
       const response = await fetch("/api/admin/ai-grader/production/create-card-from-report", {
         method: "POST",
-        headers: await productionAuthHeaders({ "content-type": "application/json" }),
+        headers: authHeaders,
         body: JSON.stringify({
           publicationStatus: "published",
           reportId: sanitizedRelease?.reportId ?? sanitizedBundle.reportId,
@@ -2220,6 +2275,21 @@ export default function AiGraderStationPage() {
             </button>
           </section>
 
+          <section className={productionSignedIn ? "production-auth signed-in" : "production-auth"}>
+            <div>
+              <p className="eyebrow">Production Sign-In</p>
+              <h3>{productionSignedIn ? "Signed In" : "Sign In Required"}</h3>
+              <p>
+                {productionSignedIn
+                  ? `Production actions will run as ${productionOperatorLabel}.`
+                  : productionAuthState.message}
+              </p>
+            </div>
+            <button type="button" onClick={signInForProduction} disabled={sessionLoading || busy !== null || productionAuthState.status === "pending"}>
+              {productionAuthState.status === "pending" ? "Opening Sign-In" : productionSignedIn ? "Refresh Sign-In" : "Sign In"}
+            </button>
+          </section>
+
           <section className="live-lighting">
             <div className="lighting-head">
               <div>
@@ -2327,7 +2397,9 @@ export default function AiGraderStationPage() {
           <section className="card-linkage">
             <p className="eyebrow">Confirm Card</p>
             <h3>{selectedCard?.displayTitle ?? "Create From AI Grader"}</h3>
-            <p>{identityStatus.status === "idle" ? selectedCard?.subtitle ?? cardSearchMessage : identityStatus.message}</p>
+            <p className={identityStatus.status === "failed" ? "step-message failed" : "step-message"}>
+              {identityStatus.status === "idle" ? selectedCard?.subtitle ?? cardSearchMessage : identityStatus.message}
+            </p>
             <div className="identity-grid">
               <label>
                 Category
@@ -2395,9 +2467,16 @@ export default function AiGraderStationPage() {
               <label><input type="checkbox" checked={identityDraft.memorabilia} onChange={(event) => updateIdentityDraft("memorabilia", event.target.checked)} /> Mem</label>
             </div>
             <button type="button" className="primary" onClick={createCardFromConfirmedIdentity} disabled={!canCreateCardFromReport || busy !== null}>
-              {busy === "create-card-from-report" ? "Creating Card" : linkedCardReady ? "Card Created" : "Confirm + Create Card"}
+              {busy === "create-card-from-report"
+                ? "Creating Card"
+                : linkedCardReady
+                  ? "Card Created"
+                  : productionSignedIn
+                    ? "Confirm + Create Card"
+                    : "Sign In + Create Card"}
             </button>
-            {!identityDraftComplete && !linkedCardReady ? <p className="status-note">Required before create: {identityDraftMissing.join(", ")}.</p> : null}
+            {!linkedCardReady && createCardBlockers.length ? <p className="status-note">Required before create: {createCardBlockers.join(", ")}.</p> : null}
+            {!productionSignedIn && !linkedCardReady ? <p className="status-note">Production sign-in is required before the CardAsset/Item can be created.</p> : null}
             {linkedCardReady ? <p className="status-note">CardAsset {selectedCard?.cardAssetId} / Item {selectedCard?.itemId}</p> : null}
             <label>
               Existing Card Search
@@ -3230,6 +3309,7 @@ export default function AiGraderStationPage() {
           line-height: 1.4;
         }
         .next-card,
+        .production-auth,
         .profile,
         .live-lighting,
         .card-linkage,
@@ -3250,6 +3330,30 @@ export default function AiGraderStationPage() {
           margin-top: 8px;
           color: #bdb5a8;
           line-height: 1.45;
+        }
+        .production-auth {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 12px;
+        }
+        .production-auth h3 {
+          margin: 4px 0 0;
+          font-size: 16px;
+        }
+        .production-auth p {
+          margin: 8px 0 0;
+          color: #bdb5a8;
+          font-size: 12px;
+          line-height: 1.45;
+          overflow-wrap: anywhere;
+        }
+        .production-auth button {
+          min-width: 112px;
+        }
+        .production-auth.signed-in {
+          border-color: rgba(91, 255, 157, 0.28);
+          background: rgba(91, 255, 157, 0.07);
         }
         .pipeline-steps {
           display: grid;
@@ -3409,6 +3513,13 @@ export default function AiGraderStationPage() {
           font-size: 12px;
           line-height: 1.45;
           overflow-wrap: anywhere;
+        }
+        .card-linkage .step-message.failed {
+          border: 1px solid rgba(255, 82, 82, 0.3);
+          border-radius: 8px;
+          background: rgba(95, 12, 18, 0.26);
+          color: #ffd6d6;
+          padding: 8px;
         }
         .identity-grid {
           display: grid;
