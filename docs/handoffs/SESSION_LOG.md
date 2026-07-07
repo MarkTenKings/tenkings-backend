@@ -24388,3 +24388,140 @@ By enabling Rip It Live, I confirm:
   - No env var changes.
   - No credential rotation or secret printing.
   - No destructive operations.
+
+## 2026-07-07 - PR #67 production merge observed result
+
+### Merge And Deploy Evidence
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/67`.
+- PR merge status: merged.
+- PR branch HEAD merged: `79b7defa469d933cea40a7ad68a3727add80fa5b`.
+- Merge commit / main HEAD: `064c54fb30766e32e10c70873e9154c799565f71`.
+- GitHub Actions main run: `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28851889326` -> completed successfully at `2026-07-07T08:22:50Z`.
+- Vercel production deployment status: success, deployment completed at `2026-07-07T08:18:35Z`.
+- Vercel production deployment URL: `https://tenkings-backend-nextjs-7usj60m95-ten-kings.vercel.app`.
+- Vercel evidence URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/82eNh8z4m3WfHpnctL4a7FiP2zah`.
+- Live route verification: `https://collect.tenkings.co/ai-grader/station` returned HTTP `200` and production HTML contains `Production Sign-In` plus `Sign In + Create Card`.
+
+### Files Changed By PR #67
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Current Operator Path
+- Mark should hard-refresh `https://collect.tenkings.co/ai-grader/station`, use the `Production Sign-In` panel on the station page, then retry `Sign In + Create Card`.
+- If the station remains signed out after using the panel, the remaining blocker is production auth/session recognition for the operator account/browser, not missing PR #67 deployment.
+
+## 2026-07-07 - Dell local bridge restart planned action for PR #67
+
+### Planned Action
+- Pull merged `main` locally and rebuild/restart the Dell AI Grader local bridge from merge commit `064c54fb30766e32e10c70873e9154c799565f71`.
+- Purpose: make the local station/bridge runtime match the deployed PR #67 station auth UX before Mark retries the known-good report workflow.
+- Planned commands:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`
+  - `scripts/ai-grader/stop-local-station-bridge.ps1 -KillProcess`
+  - `scripts/ai-grader/start-local-station-bridge.ps1 -Real`
+  - `scripts/ai-grader/status-local-station-bridge.ps1`
+- Guardrails:
+  - Hardware capture will not be run.
+  - Migrations will not be run.
+  - Env vars will not be changed.
+  - Credentials will not be rotated or printed.
+  - Destructive operations will not be run.
+
+## 2026-07-07 - Dell local bridge restart observed result for PR #67
+
+### Restart Evidence
+- Local branch: `main`.
+- Local main HEAD: `064c54fb30766e32e10c70873e9154c799565f71`.
+- Build: `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- Stop: `scripts/ai-grader/stop-local-station-bridge.ps1 -KillProcess` -> pass after elevated Windows process query.
+- Start: `scripts/ai-grader/start-local-station-bridge.ps1 -Real -SkipBuild` launched in a hidden background PowerShell process.
+- Public bridge health after restart: HTTP `200`, `ok=true`, `mode=real`, `localOnly=true`, `tokenRequired=true`, `hardwareActionsEnabled=true`, allowed origin `https://collect.tenkings.co`.
+- Token-gated bridge status after restart: `ok=true`, `bridgeVersion=ai-grader-local-station-bridge-v0.4`, `currentStep=start_new_card`, warm runner `status=idle`, `executionPath=warm_full_forensic_runner`, `fallbackUsed=false`.
+- Latest local report visible after restart: `ai-grader-browser-station-session-2026-07-07T072458965Z-report`; no production publish attempted in this restart.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Next Operator Action
+- Hard-refresh `https://collect.tenkings.co/ai-grader/station`.
+- Use the station page `Production Sign-In` panel, then retry the create-card step from the gated pipeline.
+
+## 2026-07-07 - AI Grader production auth root-cause patch
+
+### Summary
+- Branch at investigation start: `main`.
+- Base HEAD: `064c54fb30766e32e10c70873e9154c799565f71`.
+- Trigger: Mark reported the station page showed `Signed In`, but the workflow remained blocked at `Confirm Card`, and `Refresh Sign-In` appeared to do nothing.
+
+### Root Cause
+- The station UI treated any cached `tenkings.session` token as production-ready with `productionSignedIn = Boolean(session?.token)`.
+- `Refresh Sign-In` called `ensureSession()`, which immediately returns the cached session when one exists. It did not force a login, validate the token against production, or verify the AI Grader operator/admin role.
+- The actual production create-card API uses the AI Grader production actor gate, which requires the bearer session to resolve through server auth and match AI Grader operator/admin allowlists or global admin allowlists.
+- Result: the UI could show `Signed In` while `create-card-from-report` was still rejected by production auth with `Session not found`, `Session expired`, or `AI Grader operator role required`.
+
+### Files Changed
+- `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Architecture Change Summary
+- Added small `GET /api/admin/ai-grader/production/auth-check` action.
+- `auth-check` uses the same production actor resolver and `publish` action gate as `create-card-from-report`, but performs no storage, DB, hardware, or publish work.
+- Station `Production Sign-In` now verifies the cached bearer token with `auth-check` before showing the operator as production-signed-in.
+- `Refresh Sign-In` now performs a real production authorization check instead of returning the local cached session.
+- If production auth returns `401` or `403`, the station clears the local session so the next click opens the SMS sign-in modal and lets the operator sign in with the correct account.
+- `Confirm + Create Card` failures now surface in the main station error banner as well as the card identity panel.
+
+### Validation Commands And Results
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `54` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass. Existing unrelated warnings remain for `<img>`, stale Browserslist/baseline data, and Tailwind glob syntax.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Known Good Report Status
+- Known good report publish result: not attempted by this auth patch.
+- Public report URL if successful: not available in this patch.
+- Label URL if successful: not available in this patch.
+- DB rows persisted in this session: none.
+- Storage objects written in this session: none.
+- Remaining blocker: patch must be committed, pushed, merged, and deployed before Mark's production station page can use server-verified AI Grader production auth.
+
+## 2026-07-07 - PR #68 production merge planned action
+
+### Planned Action
+- Merge PR #68 (`https://github.com/MarkTenKings/tenkings-backend/pull/68`) from `fix/ai-grader-production-auth-check` into `main`.
+- Purpose: deploy the server-verified AI Grader production auth check so the station no longer treats a cached local session as production authorization.
+- Verified before planned action:
+  - PR state: open, non-draft.
+  - PR HEAD before this planned-action docs commit: `1535b8f9bef1fac548be0005cfa02e5d10adfe1a`.
+  - GitHub PR checks: passing after run `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28881405936`.
+  - Vercel preview: passing.
+- After merge, monitor GitHub main checks and Vercel Production deployment for the merge commit.
+- Guardrails for this planned action:
+  - No hardware capture.
+  - No migrations.
+  - No env var changes.
+  - No credential rotation or secret printing.
+  - No destructive operations.
