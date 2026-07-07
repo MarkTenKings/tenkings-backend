@@ -114,6 +114,12 @@ type StepState = {
   status: "idle" | "pending" | "completed" | "failed";
   message: string;
 };
+type ProductionAuthActor = {
+  actorType: string;
+  role: string;
+  displayName: string;
+};
+type ProductionAuthActorState = ProductionAuthActor | null;
 type BridgeConnectionState = "checking" | "connected" | "not_running" | "pairing_required" | "error";
 type LocalReportState = {
   open: boolean;
@@ -346,7 +352,7 @@ function identityDraftMissingFields(draft: IdentityDraftState) {
 }
 
 export default function AiGraderStationPage() {
-  const { session, loading: sessionLoading, ensureSession } = useSession();
+  const { session, loading: sessionLoading, ensureSession, logout } = useSession();
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -383,6 +389,7 @@ export default function AiGraderStationPage() {
     status: "idle",
     message: "Sign in is required before production card creation, publish, label, comps, and inventory steps.",
   });
+  const [productionAuthActor, setProductionAuthActor] = useState<ProductionAuthActorState>(null);
   const [slabUploads, setSlabUploads] = useState<SlabUploadState>({});
   const [compsState, setCompsState] = useState<CompsState>({
     status: "idle",
@@ -688,8 +695,9 @@ export default function AiGraderStationPage() {
   const certId = productionPublish.certId ?? publishReadiness.certId;
   const identityDraftMissing = identityDraftMissingFields(identityDraft);
   const identityDraftComplete = identityDraftMissing.length === 0;
-  const productionSignedIn = Boolean(session?.token);
-  const productionOperatorLabel = session?.user.displayName || session?.user.phone || "Ten Kings operator";
+  const productionSignedIn = Boolean(session?.token && productionAuthState.status === "completed" && productionAuthActor);
+  const productionOperatorLabel =
+    productionAuthActor?.displayName || session?.user.displayName || session?.user.phone || "Ten Kings operator";
   const createCardBlockers = [
     !reportReady ? "generated report" : "",
     !finalReady ? "final grade" : "",
@@ -818,24 +826,61 @@ export default function AiGraderStationPage() {
   };
   const latestWarmPhases = [...warmRunner.phases].slice(-4).reverse();
 
+  const verifyProductionSession = async (token: string): Promise<ProductionAuthActor> => {
+    const response = await fetch("/api/admin/ai-grader/production/auth-check", {
+      method: "GET",
+      headers: buildAdminHeaders(token),
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok !== true) {
+      const message =
+        typeof payload.message === "string"
+          ? payload.message
+          : `AI Grader production sign-in check failed with HTTP ${response.status}.`;
+      throw Object.assign(new Error(message), { statusCode: response.status });
+    }
+    const result = payload.result ?? {};
+    return {
+      actorType: typeof result.actorType === "string" ? result.actorType : "human_operator",
+      role: typeof result.role === "string" ? result.role : "ai_grader_operator",
+      displayName:
+        typeof result.displayName === "string" && result.displayName.trim()
+          ? result.displayName.trim()
+          : "Ten Kings operator",
+    };
+  };
+
   const requireProductionSession = async (actionLabel: string) => {
     setProductionAuthState({
       status: "pending",
-      message: `Sign in to Ten Kings to ${actionLabel}.`,
+      message: `Verifying Ten Kings production access to ${actionLabel}.`,
     });
     try {
       const activeSession = await ensureSession();
-      const displayName = activeSession.user.displayName || activeSession.user.phone || "Ten Kings operator";
+      const actor = await verifyProductionSession(activeSession.token);
+      setProductionAuthActor(actor);
       setProductionAuthState({
         status: "completed",
-        message: `Signed in as ${displayName}.`,
+        message: `Production sign-in verified as ${actor.displayName} (${actor.role}).`,
       });
       return activeSession;
     } catch (requestError) {
-      const message =
+      const statusCode = typeof (requestError as { statusCode?: unknown })?.statusCode === "number"
+        ? (requestError as { statusCode: number }).statusCode
+        : null;
+      if (statusCode === 401 || statusCode === 403) {
+        logout();
+      }
+      const rawMessage =
         requestError instanceof Error && requestError.message !== "Authentication cancelled"
           ? requestError.message
           : `Sign in is required to ${actionLabel}.`;
+      const message =
+        rawMessage === "AI Grader operator role required"
+          ? "AI Grader operator role required. Sign in with an AI Grader operator/admin account."
+          : rawMessage;
+      setProductionAuthActor(null);
       setProductionAuthState({
         status: "failed",
         message,
@@ -1313,10 +1358,12 @@ export default function AiGraderStationPage() {
           : current.reportBundle,
       }));
     } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Card creation failed.";
       setIdentityStatus({
         status: "failed",
-        message: requestError instanceof Error ? requestError.message : "Card creation failed.",
+        message,
       });
+      setError(message);
     } finally {
       setBusy(null);
     }

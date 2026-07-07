@@ -825,6 +825,48 @@ test("production publish finalize verifies upload manifest and persists DB recor
   assert.equal(body.result.storageKeyPrefix, "ai-grader/reports/sample-final-v0/");
 });
 
+test("production auth-check verifies current bearer session against AI Grader operator gate", async () => {
+  let adminCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      [AI_GRADER_OPERATOR_USER_IDS_ENV]: "operator-1",
+    },
+    async requireAdminSession() {
+      adminCalled = true;
+      throw new Error("operator bearer auth should not use generic admin auth");
+    },
+    async requireUserSession() {
+      return {
+        id: "session-operator-1",
+        tokenHash: "session-token-hash",
+        user: { id: "operator-1", phone: "+15551234567", displayName: "Station Operator", avatarUrl: null },
+      };
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async presignUpload() {
+      throw new Error("auth-check should not upload");
+    },
+    async persist() {
+      throw new Error("auth-check should not persist");
+    },
+  });
+
+  const req = mockRequest("GET", ["auth-check"]);
+  req.headers.authorization = "Bearer harmless-test-session";
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 200);
+  assert.equal(adminCalled, false);
+  assert.deepEqual((res.jsonBody as { result?: unknown }).result, {
+    actorType: "human_operator",
+    role: "ai_grader_operator",
+    displayName: "Station Operator",
+    action: "publish",
+  });
+});
+
 test("production API rejects bearer users outside AI Grader and global admin allowlists", async () => {
   let historyCalled = false;
   const handler = createAiGraderProductionApiHandler({
@@ -1919,6 +1961,7 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("Allow pop-ups"), false);
   assert.equal(stationSource.includes("fetchAiGraderStationReportBundle"), true);
   assert.equal(stationSource.includes("fetchAiGraderStationReportAsset"), true);
+  assert.equal(stationSource.includes("/api/admin/ai-grader/production/auth-check"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/create-card-from-report"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish-init"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish-finalize"), true);
@@ -1940,6 +1983,9 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("dataUrl"), false);
   assert.equal(stationSource.includes("Confirm + Create Card"), true);
   assert.equal(stationSource.includes("Production Sign-In"), true);
+  assert.equal(stationSource.includes("Production sign-in verified as"), true);
+  assert.equal(stationSource.includes("productionAuthState.status === \"completed\""), true);
+  assert.equal(stationSource.includes("const productionSignedIn = Boolean(session?.token);"), false);
   assert.equal(stationSource.includes("Sign In + Create Card"), true);
   assert.equal(stationSource.includes("Production sign-in is required before the CardAsset/Item can be created."), true);
   assert.equal(stationSource.includes("Mark Label Printed"), true);

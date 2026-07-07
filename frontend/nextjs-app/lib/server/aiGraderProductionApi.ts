@@ -882,6 +882,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         publicReportDbReadsEnabled: isEnabled(env, AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV),
         liveEbayCompsEnabled: isEnabled(env, AI_GRADER_EBAY_COMPS_ENABLED_ENV),
         actions: [
+          "auth-check",
           "publish-init",
           "publish-finalize",
           "create-card-from-report",
@@ -909,6 +910,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
     }
 
     const allowedActions = [
+      "auth-check",
       "publish-init",
       "publish-finalize",
       "create-card-from-report",
@@ -925,7 +927,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
     if (!allowedActions.includes(key)) {
       return res.status(404).json({ ok: false, message: "AI Grader production API route not found" });
     }
-    const allow = key === "history" || key === "card-search" ? "GET" : "POST";
+    const allow = key === "auth-check" || key === "history" || key === "card-search" ? "GET" : "POST";
     if (req.method !== allow) {
       res.setHeader("Allow", allow);
       return res.status(405).json({ ok: false, message: "Method not allowed" });
@@ -945,6 +947,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         assertNoUnsafePublishPayload(req.body);
       }
       const authAction: AiGraderProductionAction =
+        key === "auth-check" ||
         key === "publish-init" ||
         key === "publish-finalize" ||
         key === "create-card-from-report" ||
@@ -965,6 +968,23 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         });
       const authorizedActor = await actor;
       const admin = adminSessionForActor(authorizedActor);
+      if (key === "auth-check") {
+        const displayName =
+          authorizedActor.type === "human_operator"
+            ? authorizedActor.user.displayName || authorizedActor.user.phone || "Ten Kings operator"
+            : authorizedActor.serviceAccountId;
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderProductionAuthCheck",
+          result: {
+            actorType: authorizedActor.type,
+            role: authorizedActor.role,
+            displayName,
+            action: authorizedActor.audit.action,
+          },
+        });
+      }
       if (key === "history") {
         const result = deps.listHistory ? await deps.listHistory() : { status: "not_implemented", items: [] };
         return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderProductionHistory", result });
