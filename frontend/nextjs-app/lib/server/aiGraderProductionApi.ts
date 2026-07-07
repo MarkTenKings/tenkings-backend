@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import type {
   AiGraderCardItemSelection,
+  AiGraderProductionArtifactPlan,
   AiGraderProductionPersistResult,
   AiGraderProductionReleaseLike,
   AiGraderProductionReportBundleLike,
@@ -32,6 +33,8 @@ export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PU
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
 export const AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV = "AI_GRADER_PUBLIC_REPORT_DB_ENABLED";
 export const AI_GRADER_EBAY_COMPS_ENABLED_ENV = "AI_GRADER_EBAY_COMPS_ENABLED";
+export const AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES = 1024 * 1024;
+export const AI_GRADER_PRODUCTION_VERCEL_PAYLOAD_LIMIT_BYTES = 4.5 * 1024 * 1024;
 
 type JsonRecord = Record<string, unknown>;
 type EnvLike = Record<string, string | undefined>;
@@ -39,6 +42,36 @@ type EnvLike = Record<string, string | undefined>;
 export type AiGraderProductionUploadResult = {
   storageKey: string;
   publicUrl: string;
+};
+
+export type AiGraderProductionPresignedUpload = {
+  storageKey: string;
+  uploadUrl: string;
+  uploadMethod: "PUT";
+  uploadHeaders: Record<string, string>;
+  publicUrl: string;
+};
+
+export type AiGraderProductionUploadPlanArtifact = Omit<AiGraderProductionArtifactPlan, "body" | "bodyEncoding"> & {
+  uploadUrl: string;
+  uploadMethod: "PUT";
+  uploadHeaders: Record<string, string>;
+  body?: string;
+  bodyEncoding?: "utf8";
+};
+
+export type AiGraderProductionUploadManifestArtifact = {
+  artifactId: string;
+  storageKey: string;
+  publicUrl?: string;
+  checksumSha256: string;
+  byteSize: number;
+  contentType?: string;
+  uploadedAt?: string;
+};
+
+export type AiGraderProductionUploadManifest = {
+  artifacts: AiGraderProductionUploadManifestArtifact[];
 };
 
 export type AiGraderCardItemSearchResult = AiGraderCardItemSelection & {
@@ -77,12 +110,18 @@ export type AiGraderProductionApiDependencies = {
     env: EnvLike
   ): Promise<AiGraderProductionActor>;
   publicUrlFor(storageKey: string): string;
-  uploadArtifact(input: {
+  presignUpload?(input: {
     storageKey: string;
-    body: string;
-    bodyEncoding?: "utf8" | "base64";
     contentType: string;
-  }): Promise<AiGraderProductionUploadResult>;
+    checksumSha256: string;
+  }): Promise<AiGraderProductionPresignedUpload>;
+  verifyUploadedArtifact?(input: AiGraderProductionUploadManifestArtifact): Promise<{
+    ok: boolean;
+    byteSize?: number;
+    contentType?: string;
+    checksumSha256?: string | null;
+    message?: string;
+  }>;
   persist(input: {
     tenantId: string;
     reportBundle: AiGraderProductionReportBundleLike;
@@ -205,6 +244,62 @@ function errorStatus(error: unknown, fallback = 400) {
   return fallback;
 }
 
+function jsonByteLength(value: unknown) {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+function assertSmallJsonPayload(value: unknown, limitBytes: number, label: string) {
+  const byteLength = jsonByteLength(value);
+  if (byteLength > limitBytes) {
+    const error = new Error(`${label} must be ${Math.floor(limitBytes / 1024 / 1024)} MB or smaller.`);
+    (error as Error & { statusCode?: number }).statusCode = 413;
+    throw error;
+  }
+  return byteLength;
+}
+
+function unsafePublishString(value: string) {
+  return (
+    /^data:image/i.test(value) ||
+    /^[a-z]:\\/i.test(value) ||
+    value.includes("\\TenKings\\") ||
+    /https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|::1)/i.test(value) ||
+    /x-ai-grader-station-token|stationToken|service-token|DATABASE_URL/i.test(value)
+  );
+}
+
+function assertNoUnsafePublishPayload(value: unknown, path = "body") {
+  if (typeof value === "string") {
+    if (unsafePublishString(value)) {
+      const error = new Error(`Unsafe AI Grader publish payload field rejected at ${path}.`);
+      (error as Error & { statusCode?: number }).statusCode = 400;
+      throw error;
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertNoUnsafePublishPayload(entry, `${path}[${index}]`));
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const [key, entry] of Object.entries(value)) {
+    const lowerKey = key.toLowerCase();
+    if (
+      lowerKey === "bodybase64" ||
+      lowerKey === "dataurl" ||
+      lowerKey === "localpath" ||
+      lowerKey.endsWith("localpath") ||
+      lowerKey.includes("stationtoken") ||
+      lowerKey.includes("bridgetoken")
+    ) {
+      const error = new Error(`Unsafe AI Grader publish payload field rejected at ${path}.${key}.`);
+      (error as Error & { statusCode?: number }).statusCode = 400;
+      throw error;
+    }
+    assertNoUnsafePublishPayload(entry, `${path}.${key}`);
+  }
+}
+
 function actorOperatorUserId(actor: AiGraderProductionActor) {
   return actor.type === "human_operator" ? actor.user.id : null;
 }
@@ -238,6 +333,172 @@ function parsePublishBody(body: unknown) {
     cardAssetId: typeof body.cardAssetId === "string" ? body.cardAssetId : undefined,
     itemId: typeof body.itemId === "string" ? body.itemId : undefined,
   };
+}
+
+function parseProductionPublishSmallBody(body: unknown) {
+  assertSmallJsonPayload(body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader publish request");
+  assertNoUnsafePublishPayload(body);
+  const parsed = parsePublishBody(body);
+  const source = body as JsonRecord;
+  const reportId = stringValue(source.reportId ?? parsed.productionRelease.reportId ?? parsed.reportBundle.reportId, "");
+  if (!reportId) throw new Error("reportId is required.");
+  return {
+    ...parsed,
+    reportId,
+    certId: optionalString(source.certId ?? parsed.productionRelease.label?.certId),
+    gradingSessionId: optionalString(source.gradingSessionId ?? parsed.productionRelease.gradingSessionId ?? parsed.reportBundle.gradingSessionId),
+    assetManifest: source.assetManifest,
+    checksums: source.checksums,
+  };
+}
+
+function parseUploadManifest(value: unknown): AiGraderProductionUploadManifest {
+  const manifest = isRecord(value) ? value : {};
+  const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
+  if (!artifacts.length) throw new Error("uploadManifest.artifacts is required.");
+  return {
+    artifacts: artifacts.map((entry, index) => {
+      if (!isRecord(entry)) throw new Error(`uploadManifest.artifacts[${index}] must be an object.`);
+      const artifactId = stringValue(entry.artifactId, "");
+      const storageKey = stringValue(entry.storageKey, "");
+      const checksumSha256 = stringValue(entry.checksumSha256, "");
+      const byteSize = numericValue(entry.byteSize, 0);
+      if (!artifactId) throw new Error(`uploadManifest.artifacts[${index}].artifactId is required.`);
+      if (!storageKey) throw new Error(`uploadManifest.artifacts[${index}].storageKey is required.`);
+      if (!/^[a-f0-9]{64}$/i.test(checksumSha256)) {
+        throw new Error(`uploadManifest.artifacts[${index}].checksumSha256 must be a SHA-256 hex digest.`);
+      }
+      if (!Number.isFinite(byteSize) || byteSize <= 0) {
+        throw new Error(`uploadManifest.artifacts[${index}].byteSize must be positive.`);
+      }
+      return {
+        artifactId,
+        storageKey,
+        publicUrl: optionalString(entry.publicUrl),
+        checksumSha256: checksumSha256.toLowerCase(),
+        byteSize: Math.round(byteSize),
+        contentType: optionalString(entry.contentType),
+        uploadedAt: optionalString(entry.uploadedAt),
+      };
+    }),
+  };
+}
+
+function publishSessionIdForPlan(reportId: string, plan: AiGraderProductionStoragePlan) {
+  const basis = {
+    reportId,
+    storageKeyPrefix: plan.storageKeyPrefix,
+    artifacts: plan.assetManifest.map((artifact) => ({
+      artifactId: artifact.artifactId,
+      storageKey: artifact.storageKey,
+      checksumSha256: artifact.checksumSha256,
+      byteSize: artifact.byteSize,
+    })),
+  };
+  return `aigpub_${aiGraderSha256(stableStringify(basis)).slice(0, 32)}`;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((entry) => stableStringify(entry)).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function artifactForResponse(artifact: AiGraderProductionArtifactPlan, presigned: AiGraderProductionPresignedUpload): AiGraderProductionUploadPlanArtifact {
+  return {
+    artifactId: artifact.artifactId,
+    artifactClass: artifact.artifactClass,
+    kind: artifact.kind,
+    storageKey: artifact.storageKey,
+    contentType: artifact.contentType,
+    checksumSha256: artifact.checksumSha256,
+    byteSize: artifact.byteSize,
+    publicUrl: artifact.publicUrl ?? presigned.publicUrl,
+    sourceAssetId: artifact.sourceAssetId,
+    uploadUrl: presigned.uploadUrl,
+    uploadMethod: presigned.uploadMethod,
+    uploadHeaders: presigned.uploadHeaders,
+    ...(artifact.artifactClass !== "report_asset" && typeof artifact.body === "string"
+      ? { body: artifact.body, bodyEncoding: "utf8" as const }
+      : {}),
+  };
+}
+
+function planWithoutBodies(plan: AiGraderProductionStoragePlan): AiGraderProductionStoragePlan {
+  return {
+    ...plan,
+    artifacts: plan.artifacts.map(({ body: _body, bodyEncoding: _bodyEncoding, ...artifact }) => artifact),
+  };
+}
+
+function assertPublishedReleaseReady(input: {
+  publicationStatus: "draft" | "finalized" | "published" | "unpublished" | "revoked" | "error";
+  productionRelease: AiGraderProductionReleaseLike;
+}) {
+  const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
+  const releaseBlocked =
+    input.publicationStatus === "published" &&
+    (input.productionRelease.finalGradeComputed !== true ||
+      stringValue(input.productionRelease.reportStatus, "") === "insufficient_evidence" ||
+      stringValue(releaseLabel.status, "") === "blocked_insufficient_evidence");
+  if (releaseBlocked) {
+    const error = new Error("AI Grader report is not publish-ready. Final grade, label data, and QR payload are required before publishing.");
+    (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+    (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_REPORT_NOT_PUBLISH_READY";
+    throw error;
+  }
+}
+
+function assertStorageReadyPlan(plan: AiGraderProductionStoragePlan, publicationStatus: string) {
+  const reportImageAssetCount = plan.artifacts.filter((artifact) => artifact.artifactClass === "report_asset").length;
+  if (publicationStatus === "published" && reportImageAssetCount < 1) {
+    const error = new Error("AI Grader publish requires storage-ready report image asset metadata with checksum and byte size.");
+    (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+    (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_REPORT_IMAGES_REQUIRED";
+    throw error;
+  }
+}
+
+function assertUploadManifestMatchesPlan(manifest: AiGraderProductionUploadManifest, plan: AiGraderProductionStoragePlan) {
+  const byId = new Map(manifest.artifacts.map((artifact) => [artifact.artifactId, artifact]));
+  for (const artifact of plan.artifacts) {
+    const uploaded = byId.get(artifact.artifactId);
+    if (!uploaded) throw new Error(`Upload manifest is missing ${artifact.kind}.`);
+    if (uploaded.storageKey !== artifact.storageKey) throw new Error(`Upload manifest storage key mismatch for ${artifact.kind}.`);
+    if (uploaded.checksumSha256.toLowerCase() !== artifact.checksumSha256.toLowerCase()) {
+      throw new Error(`Upload manifest checksum mismatch for ${artifact.kind}.`);
+    }
+    if (uploaded.byteSize !== artifact.byteSize) throw new Error(`Upload manifest byte size mismatch for ${artifact.kind}.`);
+    if (uploaded.publicUrl && artifact.publicUrl && uploaded.publicUrl !== artifact.publicUrl) {
+      throw new Error(`Upload manifest public URL mismatch for ${artifact.kind}.`);
+    }
+  }
+}
+
+async function verifyUploadedArtifacts(
+  deps: AiGraderProductionApiDependencies,
+  manifest: AiGraderProductionUploadManifest
+) {
+  if (!deps.verifyUploadedArtifact) return;
+  for (const artifact of manifest.artifacts) {
+    const verified = await deps.verifyUploadedArtifact(artifact);
+    if (!verified.ok) throw new Error(verified.message ?? `Uploaded artifact ${artifact.artifactId} was not found in storage.`);
+    if (typeof verified.byteSize === "number" && verified.byteSize !== artifact.byteSize) {
+      throw new Error(`Storage byte size mismatch for ${artifact.artifactId}.`);
+    }
+    if (
+      typeof verified.checksumSha256 === "string" &&
+      verified.checksumSha256 &&
+      verified.checksumSha256.toLowerCase() !== artifact.checksumSha256.toLowerCase()
+    ) {
+      throw new Error(`Storage checksum metadata mismatch for ${artifact.artifactId}.`);
+    }
+  }
 }
 
 function parseCardSearchQuery(req: NextApiRequest) {
@@ -361,37 +622,6 @@ export function buildAiGraderProductionHistoryResult(rows: unknown[]): AiGraderP
   };
 }
 
-async function uploadPlanArtifacts(
-  deps: AiGraderProductionApiDependencies,
-  plan: AiGraderProductionStoragePlan
-): Promise<AiGraderProductionStoragePlan> {
-  const uploaded = [];
-  for (const artifact of plan.artifacts) {
-    const result = await deps.uploadArtifact({
-      storageKey: artifact.storageKey,
-      body: artifact.body,
-      bodyEncoding: artifact.bodyEncoding,
-      contentType: artifact.contentType,
-    });
-    uploaded.push({
-      ...artifact,
-      publicUrl: result.publicUrl,
-    });
-  }
-  return {
-    ...plan,
-    artifacts: uploaded,
-    assetManifest: uploaded.map((artifact) => ({
-      artifactId: artifact.artifactId,
-      kind: artifact.kind,
-      storageKey: artifact.storageKey,
-      checksumSha256: artifact.checksumSha256,
-      byteSize: artifact.byteSize,
-      publicUrl: artifact.publicUrl,
-    })),
-  };
-}
-
 export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDependencies) {
   const env = deps.env ?? process.env;
   return async function aiGraderProductionApiHandler(req: NextApiRequest, res: NextApiResponse) {
@@ -408,13 +638,21 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         writesRequireEnv: AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
         publicReportDbReadsEnabled: isEnabled(env, AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV),
         liveEbayCompsEnabled: isEnabled(env, AI_GRADER_EBAY_COMPS_ENABLED_ENV),
-        actions: ["publish", "history", "card-search", "upload-slab-photo", "run-comps"],
+        actions: ["publish-init", "publish-finalize", "history", "card-search", "upload-slab-photo", "run-comps"],
         auth: aiGraderProductionAuthStatus(env),
         noHardwareControls: true,
       });
     }
 
-    const allowedActions = ["publish", "history", "card-search", "upload-slab-photo", "run-comps"];
+    if (key === "publish") {
+      return res.status(410).json({
+        ok: false,
+        code: "AI_GRADER_LEGACY_PUBLISH_REJECTED",
+        message: "Use publish-init, direct storage uploads, and publish-finalize. AI Grader image/base64 bundles are not accepted by Vercel.",
+      });
+    }
+
+    const allowedActions = ["publish-init", "publish-finalize", "history", "card-search", "upload-slab-photo", "run-comps"];
     if (!allowedActions.includes(key)) {
       return res.status(404).json({ ok: false, message: "AI Grader production API route not found" });
     }
@@ -433,9 +671,13 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
     }
 
     try {
+      if (key === "publish-init" || key === "publish-finalize") {
+        assertSmallJsonPayload(req.body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader production publish request");
+        assertNoUnsafePublishPayload(req.body);
+      }
       const actor =
-        deps.requireProductionActor?.(req, key as AiGraderProductionAction, env) ??
-        requireAiGraderProductionActor(req, key as AiGraderProductionAction, {
+        deps.requireProductionActor?.(req, (key === "publish-init" || key === "publish-finalize" ? "publish" : key) as AiGraderProductionAction, env) ??
+        requireAiGraderProductionActor(req, (key === "publish-init" || key === "publish-finalize" ? "publish" : key) as AiGraderProductionAction, {
           env,
           requireUserSession: deps.requireUserSession,
           requireAdminSession: deps.requireAdminSession,
@@ -577,36 +819,83 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           } satisfies AiGraderCompsRunResult,
         });
       }
-      const input = parsePublishBody(req.body);
-      const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
-      const releaseBlocked =
-        input.publicationStatus === "published" &&
-        (input.productionRelease.finalGradeComputed !== true ||
-          stringValue(input.productionRelease.reportStatus, "") === "insufficient_evidence" ||
-          stringValue(releaseLabel.status, "") === "blocked_insufficient_evidence");
-      if (releaseBlocked) {
-        return res.status(400).json({
-          ok: false,
-          code: "AI_GRADER_REPORT_NOT_PUBLISH_READY",
-          message: "AI Grader report is not publish-ready. Final grade, label data, and QR payload are required before publishing.",
-        });
-      }
+      const input = parseProductionPublishSmallBody(req.body);
+      assertPublishedReleaseReady(input);
       const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
-      const initialPlan = buildAiGraderProductionStoragePlan({
+      const plan = buildAiGraderProductionStoragePlan({
         reportBundle: input.reportBundle,
         productionRelease: input.productionRelease,
         publicReportBaseUrl: "https://collect.tenkings.co",
         publicUrlFor: deps.publicUrlFor,
       });
-      const reportImageAssetCount = initialPlan.artifacts.filter((artifact) => artifact.artifactClass === "report_asset").length;
-      if (input.publicationStatus === "published" && reportImageAssetCount < 1) {
-        return res.status(400).json({
-          ok: false,
-          code: "AI_GRADER_REPORT_IMAGES_REQUIRED",
-          message: "AI Grader publish requires storage-backed report image assets. Refetch the local bundle with includeAssetBodies=1 before publishing.",
+      assertStorageReadyPlan(plan, input.publicationStatus);
+      const publishSessionId = publishSessionIdForPlan(input.reportId, plan);
+
+      if (key === "publish-init") {
+        if (!deps.presignUpload) throw new Error("AI Grader presigned upload planning is not configured.");
+        const artifacts: AiGraderProductionUploadPlanArtifact[] = [];
+        for (const artifact of plan.artifacts) {
+          const presigned = await deps.presignUpload({
+            storageKey: artifact.storageKey,
+            contentType: artifact.contentType,
+            checksumSha256: artifact.checksumSha256,
+          });
+          artifacts.push(artifactForResponse(artifact, presigned));
+        }
+        const result = {
+          reportId: input.reportId,
+          certId: input.certId ?? stringValue(input.productionRelease.label?.certId, input.reportId),
+          gradingSessionId: input.gradingSessionId,
+          publishSessionId,
+          storageKeyPrefix: plan.storageKeyPrefix,
+          publicReportUrl: plan.publicReportUrl,
+          labelPreviewUrl: buildAiGraderLabelPreviewUrl(input.reportId),
+          qrPayloadUrl: plan.qrPayloadUrl,
+          uploadPlan: {
+            storageMode: "direct_presigned_upload",
+            maxVercelPayloadBytes: AI_GRADER_PRODUCTION_VERCEL_PAYLOAD_LIMIT_BYTES,
+            artifacts,
+          },
+          finalizeManifestShape: {
+            reportId: input.reportId,
+            publishSessionId,
+            uploadManifest: {
+              artifacts: plan.artifacts.map((artifact) => ({
+                artifactId: artifact.artifactId,
+                storageKey: artifact.storageKey,
+                publicUrl: artifact.publicUrl,
+                checksumSha256: artifact.checksumSha256,
+                byteSize: artifact.byteSize,
+                contentType: artifact.contentType,
+              })),
+            },
+          },
+        };
+        assertSmallJsonPayload(result, AI_GRADER_PRODUCTION_VERCEL_PAYLOAD_LIMIT_BYTES, "AI Grader publish-init response");
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderProductionPublishInit",
+          result,
         });
       }
-      const uploadedPlan = await uploadPlanArtifacts(deps, initialPlan);
+
+      if (key !== "publish-finalize") {
+        return res.status(404).json({ ok: false, message: "AI Grader production API route not found" });
+      }
+      const body = req.body as JsonRecord;
+      const suppliedPublishSessionId = stringValue(body.publishSessionId, "");
+      if (!suppliedPublishSessionId || suppliedPublishSessionId !== publishSessionId) {
+        return res.status(409).json({
+          ok: false,
+          code: "AI_GRADER_PUBLISH_SESSION_MISMATCH",
+          message: "Publish finalize does not match the upload plan from publish-init.",
+        });
+      }
+      const uploadManifest = parseUploadManifest(body.uploadManifest);
+      assertUploadManifestMatchesPlan(uploadManifest, plan);
+      await verifyUploadedArtifacts(deps, uploadManifest);
+      const uploadedPlan = planWithoutBodies(plan);
       const result = await deps.persist({
         tenantId,
         reportBundle: input.reportBundle,
@@ -621,7 +910,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       return res.status(200).json({
         ok: true,
         enabled: true,
-        operation: "aiGraderProductionPublish",
+        operation: "aiGraderProductionPublishFinalize",
         result: {
           reportId: result.reportId,
           gradingSessionId: result.gradingSessionId,
@@ -634,11 +923,14 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           evidenceAssetCount: result.evidenceAssetCount,
           cardAssetUpdatedCount: result.cardAssetUpdatedCount,
           itemUpdatedCount: result.itemUpdatedCount,
+          storageKeyPrefix: result.storagePlan.storageKeyPrefix,
         },
       });
     } catch (error) {
+      const code = isRecord(error) && typeof error.code === "string" ? error.code : undefined;
       return res.status(errorStatus(error)).json({
         ok: false,
+        ...(code ? { code } : {}),
         message: error instanceof Error ? error.message : "AI Grader production publish failed.",
       });
     }

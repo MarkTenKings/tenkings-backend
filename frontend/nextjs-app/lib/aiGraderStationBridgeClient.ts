@@ -441,6 +441,45 @@ export async function fetchAiGraderStationReportBundle(input: {
   return result.bundle;
 }
 
+export async function fetchAiGraderStationReportAsset(input: {
+  baseUrl: string;
+  stationToken: string;
+  reportId: string;
+  assetId: string;
+}, fetchImpl: typeof fetch = fetch): Promise<{ bytes: ArrayBuffer; contentType: string; byteSize: number; checksumSha256?: string }> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  if (!input.stationToken.trim()) {
+    throw new Error("AI Grader station bridge token is required.");
+  }
+  const response = await fetchImpl(
+    `${baseUrl}/reports/${encodeURIComponent(input.reportId)}/asset?assetId=${encodeURIComponent(input.assetId)}`,
+    {
+      method: "GET",
+      headers: {
+        "x-ai-grader-station-token": input.stationToken,
+      },
+    }
+  );
+  if (!response.ok) {
+    let message = `AI Grader local station asset fetch failed with HTTP ${response.status}.`;
+    try {
+      const payload = await response.json();
+      message = payload.message ?? message;
+    } catch {
+      const text = await response.text().catch(() => "");
+      if (text.trim()) message = text.trim();
+    }
+    throw new Error(message);
+  }
+  const bytes = await response.arrayBuffer();
+  return {
+    bytes,
+    contentType: response.headers.get("content-type") ?? "application/octet-stream",
+    byteSize: bytes.byteLength,
+    checksumSha256: response.headers.get("x-ai-grader-sha256") ?? undefined,
+  };
+}
+
 export async function fetchAiGraderStationReportHtml(
   input: {
     baseUrl: string;

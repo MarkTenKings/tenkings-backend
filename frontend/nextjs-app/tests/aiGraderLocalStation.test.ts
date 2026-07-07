@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import aiGraderLocalStationHandler from "../pages/api/ai-grader/station/[...action]";
+import { config as aiGraderProductionRouteConfig } from "../pages/api/admin/ai-grader/production/[...action]";
 import {
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
   buildSampleAiGraderReportHistory,
@@ -40,6 +41,7 @@ import {
   fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
+  fetchAiGraderStationReportAsset,
   fetchAiGraderStationReportBundle,
   heartbeatAiGraderLiveLighting,
   normalizeAiGraderStationBridgeUrl,
@@ -85,8 +87,56 @@ function mockResponse(): MockResponse {
   } as MockResponse;
 }
 
-function sha256Hex(value: string) {
+function sha256Hex(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function sampleStorageReadyReportBundle(overrides: Partial<typeof SAMPLE_AI_GRADER_REPORT_BUNDLE> = {}) {
+  const imageBytes = Buffer.from("front-image");
+  return {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    reportId: "sample-final-v0",
+    finalGradeComputed: true,
+    assets: [
+      {
+        id: "front/front-all-on-portrait-display.png",
+        kind: "image",
+        fileName: "front-all-on-portrait-display.png",
+        contentType: "image/png",
+        checksumSha256: sha256Hex(imageBytes),
+        sha256: sha256Hex(imageBytes),
+        byteSize: imageBytes.length,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function presignForTest(input: { storageKey: string; contentType: string; checksumSha256: string }) {
+  return {
+    storageKey: input.storageKey,
+    uploadUrl: `https://uploads.tenkings.test/${encodeURIComponent(input.storageKey)}`,
+    uploadMethod: "PUT" as const,
+    uploadHeaders: {
+      "Content-Type": input.contentType,
+      "x-amz-meta-sha256": input.checksumSha256,
+    },
+    publicUrl: `https://cdn.tenkings.test/${input.storageKey}`,
+  };
+}
+
+function uploadManifestFromPlan(artifacts: Array<{ artifactId: string; storageKey: string; publicUrl?: string; checksumSha256: string; byteSize: number; contentType: string }>) {
+  return {
+    artifacts: artifacts.map((artifact) => ({
+      artifactId: artifact.artifactId,
+      storageKey: artifact.storageKey,
+      publicUrl: artifact.publicUrl,
+      checksumSha256: artifact.checksumSha256,
+      byteSize: artifact.byteSize,
+      contentType: artifact.contentType,
+      uploadedAt: "2026-07-06T23:00:00.000Z",
+    })),
+  };
 }
 
 test("local station contract exposes workflow status with no login, DB, or hardware actions", () => {
@@ -367,7 +417,7 @@ test("production publication API is disabled by default and does not require DB 
       throw new Error("admin should not be loaded while disabled");
     },
     publicUrlFor: (storageKey) => `/uploads/cards/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       throw new Error("upload should not run while disabled");
     },
     async persist() {
@@ -381,9 +431,13 @@ test("production publication API is disabled by default and does not require DB 
   assert.equal((statusRes.jsonBody as { enabled: boolean }).enabled, false);
 
   const publishRes = mockResponse();
-  await handler(mockRequest("POST", ["publish"]), publishRes);
+  await handler(mockRequest("POST", ["publish-init"]), publishRes);
   assert.equal(publishRes.statusCodeValue, 503);
   assert.equal(adminCalled, false);
+});
+
+test("production publication API route keeps Vercel request bodies platform-safe", () => {
+  assert.equal(aiGraderProductionRouteConfig.api.bodyParser.sizeLimit, "1mb");
 });
 
 test("production publication API rejects insufficient evidence reports before upload", async () => {
@@ -413,7 +467,7 @@ test("production publication API rejects insufficient evidence reports before up
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       uploadCalled = true;
       throw new Error("blocked report should not upload");
     },
@@ -423,7 +477,7 @@ test("production publication API rejects insufficient evidence reports before up
     },
   });
 
-  const req = mockRequest("POST", ["publish"]);
+  const req = mockRequest("POST", ["publish-init"]);
   req.body = {
     publicationStatus: "published",
     reportBundle: {
@@ -448,23 +502,156 @@ test("production publication API rejects insufficient evidence reports before up
   });
 });
 
-test("production publish accepts a bearer user session in the AI Grader operator allowlist", async () => {
-  let adminCalled = false;
-  let persistedActorAudit: unknown = null;
-  const imageBody = Buffer.from("front-image").toString("base64");
-  const reportBundle = {
-    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+test("legacy production publish action is rejected instead of accepting image bodies through Vercel", async () => {
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+    },
+    async requireAdminSession() {
+      throw new Error("legacy publish should reject before auth");
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async persist() {
+      throw new Error("legacy publish should not persist");
+    },
+  });
+
+  const req = mockRequest("POST", ["publish"]);
+  req.body = {
+    publicationStatus: "published",
+    reportBundle: {
+      ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+      assets: [{ bodyBase64: Buffer.from("front-image").toString("base64") }],
+    },
+    productionRelease: buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE),
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 410);
+  const body = res.jsonBody as { ok: boolean; code?: string; message?: string };
+  assert.equal(body.ok, false);
+  assert.equal(body.code, "AI_GRADER_LEGACY_PUBLISH_REJECTED");
+  assert.match(body.message ?? "", /publish-init/);
+});
+
+test("production publish init creates direct storage upload plan without embedded bodies", async () => {
+  const calls: string[] = [];
+  const reportBundle = sampleStorageReadyReportBundle();
+  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      calls.push("admin");
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async presignUpload(input) {
+      calls.push(`presign:${input.storageKey}`);
+      return presignForTest(input);
+    },
+    async persist() {
+      throw new Error("publish-init should not persist");
+    },
+  });
+
+  const req = mockRequest("POST", ["publish-init"]);
+  req.body = {
+    publicationStatus: "published",
+    reportId: reportBundle.reportId,
+    certId: productionRelease.label.certId,
+    gradingSessionId: reportBundle.gradingSessionId,
+    reportBundle,
+    productionRelease,
+    assetManifest: { assets: reportBundle.assets },
+    checksums: {
+      checksums: reportBundle.assets?.map((asset) => ({
+        id: asset.id,
+        checksumSha256: asset.checksumSha256,
+        byteSize: asset.byteSize,
+      })),
+    },
+    cardAssetId: "card-asset-1",
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 200);
+  const body = res.jsonBody as {
+    ok: boolean;
+    result: {
+      publishSessionId: string;
+      storageKeyPrefix: string;
+      uploadPlan: { artifacts: Array<{ kind: string; artifactClass: string; body?: string; bodyBase64?: string; sourceAssetId?: string; uploadUrl: string }> };
+      finalizeManifestShape: { uploadManifest: { artifacts: unknown[] } };
+    };
+  };
+  assert.equal(body.ok, true);
+  assert.match(body.result.publishSessionId, /^aigpub_/);
+  assert.equal(body.result.storageKeyPrefix, "ai-grader/reports/sample-final-v0/");
+  assert.equal(body.result.uploadPlan.artifacts.some((artifact) => artifact.artifactClass === "report_asset" && artifact.sourceAssetId), true);
+  assert.equal(JSON.stringify(body).includes("bodyBase64"), false);
+  assert.equal(JSON.stringify(body).includes("data:image"), false);
+  assert.equal(JSON.stringify(body).includes("C:\\TenKings"), false);
+  assert.ok(calls.some((call) => call.startsWith("presign:ai-grader/reports/sample-final-v0/report-bundle.json")));
+  assert.ok(body.result.finalizeManifestShape.uploadManifest.artifacts.length >= 8);
+});
+
+test("production publish init rejects bodyBase64, data URLs, local paths, bridge URLs, and token markers", async () => {
+  const reportBundle = sampleStorageReadyReportBundle({
     assets: [
       {
         id: "front/front-all-on-portrait-display.png",
         kind: "image",
         fileName: "front-all-on-portrait-display.png",
         contentType: "image/png",
-        bodyEncoding: "base64",
-        bodyBase64: imageBody,
-      },
+        checksumSha256: sha256Hex(Buffer.from("front-image")),
+        byteSize: Buffer.byteLength("front-image"),
+        bodyBase64: Buffer.from("front-image").toString("base64"),
+      } as any,
     ],
+  });
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+    },
+    async requireAdminSession() {
+      throw new Error("unsafe payload should reject before auth");
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async persist() {
+      throw new Error("unsafe payload should not persist");
+    },
+  });
+
+  const req = mockRequest("POST", ["publish-init"]);
+  req.body = {
+    publicationStatus: "published",
+    reportBundle,
+    productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
+    stationToken: "must-not-send",
+    bridgeUrl: "http://127.0.0.1:47652",
+    preview: "data:image/png;base64,abc",
   };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 400);
+  assert.match((res.jsonBody as { message?: string }).message ?? "", /Unsafe AI Grader publish payload/);
+});
+
+test("production publish finalize verifies upload manifest and persists DB records", async () => {
+  let adminCalled = false;
+  let persistedActorAudit: unknown = null;
+  const reportBundle = sampleStorageReadyReportBundle();
+  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  let uploadManifest: ReturnType<typeof uploadManifestFromPlan> | null = null;
+  let publishSessionId = "";
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
@@ -483,8 +670,16 @@ test("production publish accepts a bearer user session in the AI Grader operator
       };
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact(input) {
-      return { storageKey: input.storageKey, publicUrl: `https://cdn.tenkings.test/${input.storageKey}` };
+    async presignUpload(input) {
+      return presignForTest(input);
+    },
+    async verifyUploadedArtifact(input) {
+      return {
+        ok: true,
+        byteSize: input.byteSize,
+        contentType: input.contentType,
+        checksumSha256: input.checksumSha256,
+      };
     },
     async persist(input) {
       persistedActorAudit = input.actorAudit;
@@ -500,11 +695,29 @@ test("production publish accepts a bearer user session in the AI Grader operator
     },
   });
 
-  const req = mockRequest("POST", ["publish"]);
-  req.body = {
+  const initReq = mockRequest("POST", ["publish-init"]);
+  initReq.body = {
     publicationStatus: "published",
     reportBundle,
-    productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
+    productionRelease,
+  };
+  initReq.headers.authorization = "Bearer harmless-test-session";
+  const initRes = mockResponse();
+  await handler(initReq, initRes);
+  assert.equal(initRes.statusCodeValue, 200);
+  const initBody = initRes.jsonBody as { result: { publishSessionId: string; uploadPlan: { artifacts: Array<{ artifactId: string; storageKey: string; publicUrl?: string; checksumSha256: string; byteSize: number; contentType: string }> } } };
+  publishSessionId = initBody.result.publishSessionId;
+  uploadManifest = uploadManifestFromPlan(initBody.result.uploadPlan.artifacts);
+
+  const req = mockRequest("POST", ["publish-finalize"]);
+  req.body = {
+    publicationStatus: "published",
+    reportId: reportBundle.reportId,
+    publishSessionId,
+    uploadManifest,
+    reportBundle,
+    productionRelease,
+    cardAssetId: "card-asset-1",
   };
   req.headers.authorization = "Bearer harmless-test-session";
   const res = mockResponse();
@@ -527,6 +740,11 @@ test("production publish accepts a bearer user session in the AI Grader operator
     }
   );
   assert.match((persistedActorAudit as any)?.requestedAt, /^\d{4}-\d{2}-\d{2}T/);
+  const body = res.jsonBody as { ok: boolean; result: { uploadedAssetCount: number; evidenceAssetCount: number; storageKeyPrefix: string } };
+  assert.equal(body.ok, true);
+  assert.equal(body.result.uploadedAssetCount, uploadManifest?.artifacts.length);
+  assert.equal(body.result.evidenceAssetCount, uploadManifest?.artifacts.length);
+  assert.equal(body.result.storageKeyPrefix, "ai-grader/reports/sample-final-v0/");
 });
 
 test("production API rejects bearer users outside AI Grader and global admin allowlists", async () => {
@@ -547,7 +765,7 @@ test("production API rejects bearer users outside AI Grader and global admin all
       };
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       throw new Error("history should not upload");
     },
     async persist() {
@@ -587,7 +805,7 @@ test("production API accepts a scoped service account token hash", async () => {
       throw new Error("service account should not use bearer user auth");
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       throw new Error("history should not upload");
     },
     async persist() {
@@ -626,7 +844,7 @@ test("production API rejects an incorrect service account token with 401", async
       throw new Error("wrong service token should not fall through to bearer user auth");
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       throw new Error("history should not upload");
     },
     async persist() {
@@ -664,7 +882,7 @@ test("production API rejects a service account token missing the requested scope
       throw new Error("scope denied service token should not fall through to bearer user auth");
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       throw new Error("card search should not upload");
     },
     async persist() {
@@ -686,22 +904,9 @@ test("production API rejects a service account token missing the requested scope
   assert.equal(userSessionCalled, false);
 });
 
-test("production publication API uploads artifacts and persists only when env-gated and admin-authenticated", async () => {
+test("production publish finalize updates CardAsset linkage when identity is present", async () => {
   const calls: string[] = [];
-  const imageBody = Buffer.from("front-image").toString("base64");
-  const reportBundle = {
-    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
-    assets: [
-      {
-        id: "front/front-all-on-portrait-display.png",
-        kind: "image",
-        fileName: "front-all-on-portrait-display.png",
-        contentType: "image/png",
-        bodyEncoding: "base64",
-        bodyBase64: imageBody,
-      },
-    ],
-  };
+  const reportBundle = sampleStorageReadyReportBundle();
   const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
   const handler = createAiGraderProductionApiHandler({
     env: {
@@ -715,9 +920,13 @@ test("production publication API uploads artifacts and persists only when env-ga
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact(input) {
-      calls.push(`upload:${input.storageKey}`);
-      return { storageKey: input.storageKey, publicUrl: `https://cdn.tenkings.test/${input.storageKey}` };
+    async presignUpload(input) {
+      calls.push(`presign:${input.storageKey}`);
+      return presignForTest(input);
+    },
+    async verifyUploadedArtifact(input) {
+      calls.push(`verify:${input.storageKey}`);
+      return { ok: true, byteSize: input.byteSize, checksumSha256: input.checksumSha256 };
     },
     async persist(input) {
       calls.push("persist");
@@ -733,9 +942,24 @@ test("production publication API uploads artifacts and persists only when env-ga
     },
   });
 
-  const req = mockRequest("POST", ["publish"]);
+  const initReq = mockRequest("POST", ["publish-init"]);
+  initReq.body = {
+    publicationStatus: "published",
+    reportBundle,
+    productionRelease,
+    cardAssetId: "card-asset-1",
+  };
+  const initRes = mockResponse();
+  await handler(initReq, initRes);
+  assert.equal(initRes.statusCodeValue, 200);
+  const initBody = initRes.jsonBody as { result: { publishSessionId: string; uploadPlan: { artifacts: Array<{ artifactId: string; storageKey: string; publicUrl?: string; checksumSha256: string; byteSize: number; contentType: string }> } } };
+
+  const req = mockRequest("POST", ["publish-finalize"]);
   req.body = {
     publicationStatus: "published",
+    reportId: reportBundle.reportId,
+    publishSessionId: initBody.result.publishSessionId,
+    uploadManifest: uploadManifestFromPlan(initBody.result.uploadPlan.artifacts),
     reportBundle,
     productionRelease,
     cardAssetId: "card-asset-1",
@@ -749,13 +973,14 @@ test("production publication API uploads artifacts and persists only when env-ga
   assert.equal(body.result.certId, productionRelease.label.certId);
   assert.equal(body.result.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/sample-final-v0");
   assert.equal(body.result.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/sample-final-v0");
-  assert.equal(body.result.uploadedAssetCount, 8);
+  assert.equal(body.result.uploadedAssetCount, 9);
   assert.equal(calls[0], "admin");
   assert.equal(calls.at(-1), "persist");
-  assert.ok(calls.some((call) => call.startsWith("upload:ai-grader/reports/sample-final-v0/report-bundle.json")));
+  assert.ok(calls.some((call) => call.startsWith("presign:ai-grader/reports/sample-final-v0/report-bundle.json")));
+  assert.ok(calls.some((call) => call.startsWith("verify:ai-grader/reports/sample-final-v0/report-bundle.json")));
 });
 
-test("production publication API rejects published reports without image asset bodies", async () => {
+test("production publish init rejects published reports without image asset metadata", async () => {
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
@@ -767,15 +992,15 @@ test("production publication API rejects published reports without image asset b
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
-      throw new Error("publish without image bodies should not upload");
+    async presignUpload() {
+      throw new Error("publish without image metadata should not presign");
     },
     async persist() {
-      throw new Error("publish without image bodies should not persist");
+      throw new Error("publish without image metadata should not persist");
     },
   });
 
-  const req = mockRequest("POST", ["publish"]);
+  const req = mockRequest("POST", ["publish-init"]);
   req.body = {
     publicationStatus: "published",
     reportBundle: SAMPLE_AI_GRADER_REPORT_BUNDLE,
@@ -788,26 +1013,12 @@ test("production publication API rejects published reports without image asset b
   const body = res.jsonBody as { ok: boolean; code?: string; message?: string };
   assert.equal(body.ok, false);
   assert.equal(body.code, "AI_GRADER_REPORT_IMAGES_REQUIRED");
-  assert.match(body.message ?? "", /includeAssetBodies=1/);
+  assert.match(body.message ?? "", /checksum and byte size/);
 });
 
-test("production publication API uploads AI Grader evidence images from report bundle bodies", async () => {
-  const uploaded: Array<{ storageKey: string; contentType: string; bodyEncoding?: string; bodyText: string }> = [];
-  const imageBody = Buffer.from("front-image").toString("base64");
-  const reportBundle = {
-    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
-    assets: [
-      {
-        id: "front/front-all-on-portrait-display.png",
-        kind: "image",
-        fileName: "front-all-on-portrait-display.png",
-        localPath: "C:\\TenKings\\capture-data\\front\\front-all-on-portrait-display.png",
-        contentType: "image/png",
-        bodyEncoding: "base64",
-        bodyBase64: imageBody,
-      },
-    ],
-  };
+test("production publish init returns storage-backed public report bundle body only", async () => {
+  const reportBundle = sampleStorageReadyReportBundle();
+  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
@@ -819,51 +1030,35 @@ test("production publication API uploads AI Grader evidence images from report b
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact(input) {
-      uploaded.push({
-        storageKey: input.storageKey,
-        contentType: input.contentType,
-        bodyEncoding: input.bodyEncoding,
-        bodyText: Buffer.from(input.body, input.bodyEncoding === "base64" ? "base64" : "utf8").toString("utf8"),
-      });
-      return { storageKey: input.storageKey, publicUrl: `https://cdn.tenkings.test/${input.storageKey}` };
+    async presignUpload(input) {
+      return presignForTest(input);
     },
     async persist(input) {
-      return {
-        gradingSessionId: input.reportBundle.gradingSessionId,
-        reportId: input.productionRelease.reportId,
-        publicationStatus: input.publicationStatus,
-        storagePlan: input.storagePlan,
-        evidenceAssetCount: input.storagePlan.artifacts.length,
-        cardAssetUpdatedCount: 0,
-        itemUpdatedCount: 0,
-      } as any;
+      throw new Error("publish-init should not persist");
     },
   });
 
-  const req = mockRequest("POST", ["publish"]);
+  const req = mockRequest("POST", ["publish-init"]);
   req.body = {
     publicationStatus: "published",
     reportBundle,
-    productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
+    productionRelease,
   };
   const res = mockResponse();
   await handler(req, res);
 
   assert.equal(res.statusCodeValue, 200);
-  const imageUpload = uploaded.find((upload) => upload.contentType === "image/png");
-  assert.equal(imageUpload?.bodyEncoding, "base64");
-  assert.equal(imageUpload?.bodyText, "front-image");
-  assert.match(imageUpload?.storageKey ?? "", /assets\/001-front-all-on-portrait-display\.png/);
-  const reportBundleUpload = uploaded.find((upload) => upload.storageKey.endsWith("/report-bundle.json"));
-  assert.ok(reportBundleUpload);
-  const storedBundle = JSON.parse(reportBundleUpload.bodyText);
+  const body = res.jsonBody as { ok: boolean; result: { uploadPlan: { artifacts: Array<{ kind: string; body?: string; artifactClass: string }> } } };
+  const reportBundleArtifact = body.result.uploadPlan.artifacts.find((artifact) => artifact.kind === "report-bundle.json");
+  assert.ok(reportBundleArtifact?.body);
+  const storedBundle = JSON.parse(reportBundleArtifact.body);
   assert.equal(storedBundle.assets[0].publicUrl, "https://cdn.tenkings.test/ai-grader/reports/sample-final-v0/assets/001-front-all-on-portrait-display.png");
   assert.equal(storedBundle.assets[0].bodyBase64, undefined);
   assert.equal(JSON.stringify(storedBundle).includes("C:\\TenKings"), false);
+  assert.equal(JSON.stringify(storedBundle).includes("127.0.0.1"), false);
   assert.equal(reportImageAssets(storedBundle).length, 1);
-  const body = res.jsonBody as { ok: boolean; result: { uploadedAssetCount: number } };
-  assert.equal(body.result.uploadedAssetCount, 8);
+  const imageArtifact = body.result.uploadPlan.artifacts.find((artifact) => artifact.artifactClass === "report_asset");
+  assert.equal(imageArtifact?.body, undefined);
 });
 
 test("production history API returns persisted report stats when env-gated", async () => {
@@ -879,7 +1074,7 @@ test("production history API returns persisted report stats when env-gated", asy
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       throw new Error("history should not upload");
     },
     async persist() {
@@ -931,7 +1126,7 @@ test("production card search is admin-gated and returns existing card/item candi
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       throw new Error("card search should not upload");
     },
     async persist() {
@@ -984,7 +1179,7 @@ test("slabbed photo upload action persists through the env-gated production API"
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       throw new Error("slab upload should not use release artifact upload");
     },
     async persist() {
@@ -1052,7 +1247,7 @@ test("eBay comps action reports ready without live execution when env is disable
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       throw new Error("comps should not upload release artifacts");
     },
     async persist() {
@@ -1100,7 +1295,7 @@ test("eBay comps action can run and persist through mocked operator-triggered de
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
-    async uploadArtifact() {
+    async presignUpload() {
       throw new Error("comps should not upload release artifacts");
     },
     async persist() {
@@ -1277,7 +1472,15 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("window.open("), false);
   assert.equal(stationSource.includes("Allow pop-ups"), false);
   assert.equal(stationSource.includes("fetchAiGraderStationReportBundle"), true);
-  assert.equal(stationSource.includes("includeAssetBodies: true"), true);
+  assert.equal(stationSource.includes("fetchAiGraderStationReportAsset"), true);
+  assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish-init"), true);
+  assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish-finalize"), true);
+  assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish\""), false);
+  const publishFunctionSource = stationSource.slice(
+    stationSource.indexOf("const publishToTenKingsSystem"),
+    stationSource.indexOf("const uploadSlabbedPhoto")
+  );
+  assert.equal(publishFunctionSource.includes("includeAssetBodies"), false);
   assert.equal(stationSource.includes("Local Operator Report"), true);
   assert.equal(stationSource.includes("Grade Story"), true);
   assert.equal(stationSource.includes("Element Diagnostics"), true);
@@ -1406,6 +1609,35 @@ test("browser station bridge client fetches local report bundle bodies with stat
   const image = bundle.assets?.find((asset) => asset.fileName === "front-all-on-portrait-display.png");
   assert.equal(image?.bodyEncoding, "base64");
   assert.equal(Buffer.from(image?.bodyBase64 ?? "", "base64").toString("utf8"), "front-image");
+});
+
+test("browser station bridge client fetches one local asset for direct storage upload", async () => {
+  const fetchImpl: typeof fetch = async (input, init) => {
+    assert.equal(String(input), "http://127.0.0.1:47652/reports/report-123/asset?assetId=front%2Ffront-all-on-portrait-display.png");
+    assert.equal(init?.method, "GET");
+    const headers = init?.headers as Record<string, string>;
+    assert.equal(headers["x-ai-grader-station-token"], "browser-local-station-token");
+    assert.equal(headers["x-ai-grader-service-token"], undefined);
+    return new Response(Buffer.from("front-image"), {
+      status: 200,
+      headers: {
+        "content-type": "image/png",
+        "x-ai-grader-sha256": sha256Hex(Buffer.from("front-image")),
+      },
+    });
+  };
+
+  const asset = await fetchAiGraderStationReportAsset({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    reportId: "report-123",
+    assetId: "front/front-all-on-portrait-display.png",
+  }, fetchImpl);
+
+  assert.equal(Buffer.from(asset.bytes).toString("utf8"), "front-image");
+  assert.equal(asset.contentType, "image/png");
+  assert.equal(asset.byteSize, Buffer.byteLength("front-image"));
+  assert.equal(asset.checksumSha256, sha256Hex(Buffer.from("front-image")));
 });
 
 test("browser station bridge preview status and stream use local station token only", async () => {

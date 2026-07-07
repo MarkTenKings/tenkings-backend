@@ -17,7 +17,9 @@ export type AiGraderReportPublicAsset = {
   contentType?: string;
   storageKey?: string;
   publicUrl?: string;
+  localPath?: string;
   byteSize?: number;
+  sha256?: string;
   checksumSha256?: string;
   side?: "front" | "back" | string;
   bodyEncoding?: "base64" | string;

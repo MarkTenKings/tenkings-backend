@@ -22,6 +22,7 @@ import {
   fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
+  fetchAiGraderStationReportAsset,
   fetchAiGraderStationReportBundle,
   fetchAiGraderStationReportHistory,
   heartbeatAiGraderLiveLighting,
@@ -85,6 +86,33 @@ type LocalReportState = {
   bundle?: AiGraderReportBundle;
 };
 
+type PublishUploadPlanArtifact = {
+  artifactId: string;
+  artifactClass: string;
+  kind: string;
+  storageKey: string;
+  contentType: string;
+  checksumSha256: string;
+  byteSize: number;
+  publicUrl?: string;
+  sourceAssetId?: string;
+  uploadUrl: string;
+  uploadMethod: "PUT";
+  uploadHeaders: Record<string, string>;
+  body?: string;
+  bodyEncoding?: "utf8";
+};
+
+type PublishUploadedArtifact = {
+  artifactId: string;
+  storageKey: string;
+  publicUrl?: string;
+  checksumSha256: string;
+  byteSize: number;
+  contentType: string;
+  uploadedAt: string;
+};
+
 async function callStationContract(action: AiGraderStationAction): Promise<AiGraderLocalStationStatus> {
   const method = action === "status" || action === "latest-report" || action === "session-manifest" ? "GET" : "POST";
   const response = await fetch(`/api/ai-grader/station/${action}`, { method });
@@ -143,6 +171,105 @@ function sortHistory(items: AiGraderLocalReportHistoryItem[], sort: HistorySort)
     return sorted.sort((a, b) => String(a.category ?? "Unknown").localeCompare(String(b.category ?? "Unknown")));
   }
   return sorted.sort((a, b) => String(b.generatedAt ?? "").localeCompare(String(a.generatedAt ?? "")));
+}
+
+function unsafePublishString(value: string) {
+  return (
+    /^data:image/i.test(value) ||
+    /^[a-z]:\\/i.test(value) ||
+    value.includes("\\TenKings\\") ||
+    /https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|::1)/i.test(value) ||
+    /stationToken|x-ai-grader-station-token|service-token|DATABASE_URL/i.test(value)
+  );
+}
+
+function sanitizePublishJson<T>(value: T): T {
+  const visit = (current: unknown, key = ""): unknown => {
+    const lowerKey = key.toLowerCase();
+    if (
+      lowerKey === "bodybase64" ||
+      lowerKey === "bodyencoding" ||
+      lowerKey === "dataurl" ||
+      lowerKey === "localpath" ||
+      lowerKey.endsWith("localpath") ||
+      lowerKey.includes("stationtoken") ||
+      lowerKey.includes("bridgetoken")
+    ) {
+      return undefined;
+    }
+    if (typeof current === "string") {
+      return unsafePublishString(current) ? undefined : current;
+    }
+    if (Array.isArray(current)) {
+      return current.map((entry) => visit(entry)).filter((entry) => entry !== undefined);
+    }
+    if (current && typeof current === "object") {
+      const next: Record<string, unknown> = {};
+      for (const [entryKey, entryValue] of Object.entries(current)) {
+        const cleaned = visit(entryValue, entryKey);
+        if (cleaned !== undefined) next[entryKey] = cleaned;
+      }
+      return next;
+    }
+    return current;
+  };
+  return visit(value) as T;
+}
+
+function productionAssetManifest(bundle: AiGraderReportBundle | null) {
+  return (bundle?.assets ?? [])
+    .filter((asset) => {
+      const haystack = `${asset.contentType ?? ""} ${asset.fileName ?? ""} ${asset.id ?? ""} ${asset.kind ?? ""}`.toLowerCase();
+      return haystack.includes("image") || /\.(png|jpe?g|webp)$/i.test(asset.fileName ?? asset.id ?? "");
+    })
+    .map((asset) => ({
+      id: asset.id,
+      kind: asset.kind,
+      fileName: asset.fileName,
+      contentType: asset.contentType,
+      checksumSha256: asset.checksumSha256 ?? asset.sha256,
+      byteSize: asset.byteSize,
+      side: asset.side,
+      required: true,
+    }))
+    .filter((asset) => typeof asset.checksumSha256 === "string" && /^[a-f0-9]{64}$/i.test(asset.checksumSha256) && typeof asset.byteSize === "number" && asset.byteSize > 0);
+}
+
+function sanitizeReportBundleForProduction(bundle: AiGraderReportBundle): AiGraderReportBundle {
+  const sanitized = sanitizePublishJson(bundle) as AiGraderReportBundle;
+  return {
+    ...sanitized,
+    assets: productionAssetManifest(bundle) as AiGraderReportBundle["assets"],
+    publicAssets: (sanitized.publicAssets ?? []).map((asset) => sanitizePublishJson(asset)),
+  };
+}
+
+function sanitizeProductionReleaseForProduction(release: AiGraderReportBundle["productionRelease"], bundle: AiGraderReportBundle, selectedCard: CardSelectionState | null) {
+  if (!release) return release;
+  const linked = Boolean(selectedCard?.cardAssetId || selectedCard?.itemId || bundle.cardIdentity.cardAssetId || bundle.cardIdentity.itemId);
+  return sanitizePublishJson({
+    ...release,
+    cardInventoryLinkage: {
+      ...(release.cardInventoryLinkage ?? {}),
+      status: linked ? "linked" : "needs_card_linkage",
+      cardAssetId: selectedCard?.cardAssetId ?? bundle.cardIdentity.cardAssetId,
+      itemId: selectedCard?.itemId ?? bundle.cardIdentity.itemId,
+      note: linked
+        ? "AI Grader report is linked to an existing Ten Kings card or item identity."
+        : "Published AI Grader report is unlinked and needs card linkage before inventory automation.",
+    },
+  });
+}
+
+async function sha256Hex(bytes: ArrayBuffer) {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function utf8Bytes(value: string) {
+  return new TextEncoder().encode(value).buffer;
 }
 
 export default function AiGraderStationPage() {
@@ -930,7 +1057,7 @@ export default function AiGraderStationPage() {
   const publishToTenKingsSystem = async () => {
     setBusy("ten-kings-publish");
     setError(null);
-    setProductionPublish((current) => ({ ...current, status: "pending", message: "Publishing report bundle, evidence assets, label data, and QR payload." }));
+    setProductionPublish((current) => ({ ...current, status: "pending", message: "Preparing canonical local publish package." }));
     try {
       let latestStatus = status;
       if (!latestStatus.productionRelease?.finalGradeComputed && reportReady) {
@@ -939,59 +1066,172 @@ export default function AiGraderStationPage() {
       let sourceBundle = latestStatus.reportBundle;
       const reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
       if (bridgeConnected && stationToken.trim() && reportId) {
+        setProductionPublish((current) => ({ ...current, status: "pending", message: "Reading local package manifest from the paired Dell bridge." }));
         sourceBundle = await fetchAiGraderStationReportBundle({
           baseUrl: bridgeUrl,
           stationToken,
           reportId,
-          includeAssetBodies: true,
         });
       }
-      const reportBundle = buildReportBundleForProduction(sourceBundle);
+      const reportBundleWithIdentity = buildReportBundleForProduction(sourceBundle);
       const productionRelease = latestStatus.productionRelease ?? sourceBundle?.productionRelease;
       const readiness = buildAiGraderPublishReadiness({
-        bundle: reportBundle,
+        bundle: reportBundleWithIdentity,
         productionRelease,
       });
-      if (!reportBundle || !productionRelease) {
+      if (!reportBundleWithIdentity || !productionRelease) {
         throw new Error("A finalized production release and report bundle are required before Ten Kings publish.");
       }
       if (!readiness.ready) {
         throw new Error(readiness.message);
       }
-      const response = await fetch("/api/admin/ai-grader/production/publish", {
+      const localAssetManifest = productionAssetManifest(reportBundleWithIdentity);
+      if (localAssetManifest.length < 1) {
+        throw new Error("Publish package is missing storage-ready image asset metadata with SHA-256 checksums and byte sizes.");
+      }
+      const sanitizedBundle = sanitizeReportBundleForProduction(reportBundleWithIdentity);
+      const sanitizedRelease = sanitizeProductionReleaseForProduction(productionRelease, sanitizedBundle, selectedCard);
+      setProductionPublish((current) => ({ ...current, status: "pending", message: "Initializing publish and requesting direct storage upload URLs." }));
+      const initResponse = await fetch("/api/admin/ai-grader/production/publish-init", {
         method: "POST",
         headers: await productionAuthHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           publicationStatus: "published",
-          reportBundle,
-          productionRelease,
-          cardAssetId: selectedCard?.cardAssetId ?? reportBundle.cardIdentity.cardAssetId,
-          itemId: selectedCard?.itemId ?? reportBundle.cardIdentity.itemId,
+          reportId: sanitizedRelease?.reportId ?? sanitizedBundle.reportId,
+          certId: sanitizedRelease?.label?.certId,
+          gradingSessionId: sanitizedRelease?.gradingSessionId ?? sanitizedBundle.gradingSessionId,
+          reportBundle: sanitizedBundle,
+          productionRelease: sanitizedRelease,
+          assetManifest: { assets: localAssetManifest },
+          checksums: {
+            checksums: localAssetManifest.map((asset) => ({
+              id: asset.id,
+              checksumSha256: asset.checksumSha256,
+              byteSize: asset.byteSize,
+            })),
+          },
+          cardAssetId: selectedCard?.cardAssetId ?? sanitizedBundle.cardIdentity.cardAssetId,
+          itemId: selectedCard?.itemId ?? sanitizedBundle.cardIdentity.itemId,
         }),
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload.ok !== true) {
+      const initText = await initResponse.text();
+      let initPayload: any = {};
+      try {
+        initPayload = initText ? JSON.parse(initText) : {};
+      } catch {
+        initPayload = {};
+      }
+      if (!initResponse.ok || initPayload.ok !== true) {
         setProductionPublish({
-          status: payload.code === "AI_GRADER_PRODUCTION_PUBLISH_DISABLED" ? "disabled" : "error",
-          message: payload.message ?? "Ten Kings publish failed.",
+          status: initPayload.code === "AI_GRADER_PRODUCTION_PUBLISH_DISABLED" ? "disabled" : "error",
+          message: initPayload.message ?? (initText.slice(0, 240) || `Publish init failed with HTTP ${initResponse.status}.`),
         });
         return;
       }
-      const publishedReportId = payload.result.reportId;
-      if (!publishedReportId || !payload.result.publicReportUrl || !payload.result.labelPreviewUrl) {
-        throw new Error("Ten Kings publish response did not include reportId, publicReportUrl, and labelPreviewUrl.");
+      const uploadArtifacts = (initPayload.result?.uploadPlan?.artifacts ?? []) as PublishUploadPlanArtifact[];
+      if (!uploadArtifacts.length || !initPayload.result?.publishSessionId) {
+        throw new Error("Publish init did not return upload artifacts and publishSessionId.");
       }
+      const uploadedArtifacts: PublishUploadedArtifact[] = [];
+      for (let index = 0; index < uploadArtifacts.length; index += 1) {
+        const artifact = uploadArtifacts[index];
+        setProductionPublish((current) => ({
+          ...current,
+          status: "pending",
+          message: `Uploading artifact ${index + 1}/${uploadArtifacts.length}: ${artifact.kind}.`,
+        }));
+        let bytes: ArrayBuffer;
+        let contentType = artifact.contentType || "application/octet-stream";
+        if (typeof artifact.body === "string") {
+          bytes = utf8Bytes(artifact.body);
+        } else if (artifact.sourceAssetId) {
+          if (!bridgeConnected || !stationToken.trim()) {
+            throw new Error(`Local bridge connection is required to upload ${artifact.kind}.`);
+          }
+          const localAsset = await fetchAiGraderStationReportAsset({
+            baseUrl: bridgeUrl,
+            stationToken,
+            reportId: reportBundleWithIdentity.reportId,
+            assetId: artifact.sourceAssetId,
+          });
+          bytes = localAsset.bytes;
+          contentType = localAsset.contentType || contentType;
+        } else {
+          throw new Error(`Publish artifact ${artifact.kind} has no upload body or local asset source.`);
+        }
+        const checksumSha256 = await sha256Hex(bytes);
+        if (checksumSha256.toLowerCase() !== artifact.checksumSha256.toLowerCase()) {
+          throw new Error(`Checksum mismatch before upload for ${artifact.kind}.`);
+        }
+        if (bytes.byteLength !== artifact.byteSize) {
+          throw new Error(`Byte size mismatch before upload for ${artifact.kind}.`);
+        }
+        const uploadResponse = await fetch(artifact.uploadUrl, {
+          method: artifact.uploadMethod ?? "PUT",
+          headers: {
+            ...artifact.uploadHeaders,
+            "Content-Type": contentType,
+          },
+          body: bytes,
+        });
+        if (!uploadResponse.ok) {
+          throw new Error(`Direct storage upload failed for ${artifact.kind} with HTTP ${uploadResponse.status}.`);
+        }
+        uploadedArtifacts.push({
+          artifactId: artifact.artifactId,
+          storageKey: artifact.storageKey,
+          publicUrl: artifact.publicUrl,
+          checksumSha256,
+          byteSize: bytes.byteLength,
+          contentType,
+          uploadedAt: new Date().toISOString(),
+        });
+      }
+      setProductionPublish((current) => ({ ...current, status: "pending", message: "Finalizing production DB records." }));
+      const finalizeResponse = await fetch("/api/admin/ai-grader/production/publish-finalize", {
+        method: "POST",
+        headers: await productionAuthHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          publicationStatus: "published",
+          reportId: initPayload.result.reportId,
+          publishSessionId: initPayload.result.publishSessionId,
+          reportBundle: sanitizedBundle,
+          productionRelease: sanitizedRelease,
+          uploadManifest: { artifacts: uploadedArtifacts },
+          cardAssetId: selectedCard?.cardAssetId ?? sanitizedBundle.cardIdentity.cardAssetId,
+          itemId: selectedCard?.itemId ?? sanitizedBundle.cardIdentity.itemId,
+        }),
+      });
+      const finalizeText = await finalizeResponse.text();
+      let finalizePayload: any = {};
+      try {
+        finalizePayload = finalizeText ? JSON.parse(finalizeText) : {};
+      } catch {
+        finalizePayload = {};
+      }
+      if (!finalizeResponse.ok || finalizePayload.ok !== true) {
+        setProductionPublish({
+          status: finalizePayload.code === "AI_GRADER_PRODUCTION_PUBLISH_DISABLED" ? "disabled" : "error",
+          message: finalizePayload.message ?? (finalizeText.slice(0, 240) || `Publish finalize failed with HTTP ${finalizeResponse.status}.`),
+        });
+        return;
+      }
+      const publishedReportId = finalizePayload.result.reportId;
+      if (!publishedReportId || !finalizePayload.result.publicReportUrl || !finalizePayload.result.labelPreviewUrl) {
+        throw new Error("Publish finalize response did not include reportId, publicReportUrl, and labelPreviewUrl.");
+      }
+      setProductionPublish((current) => ({ ...current, status: "pending", message: "Verifying public report route and storage-backed images." }));
       const publicVerification = await verifyPublishedReportRoute(publishedReportId);
       setProductionPublish({
         status: "published",
         message: `Published and verified. Public report, printable label, QR payload, and ${publicVerification.imageCount} storage-backed image(s) are ready.`,
         reportId: publishedReportId,
-        certId: payload.result.certId ?? productionRelease.label?.certId,
-        publicReportUrl: payload.result.publicReportUrl,
-        labelPreviewUrl: payload.result.labelPreviewUrl,
-        qrPayloadUrl: payload.result.qrPayloadUrl,
-        uploadedAssetCount: payload.result.uploadedAssetCount,
-        evidenceAssetCount: payload.result.evidenceAssetCount,
+        certId: finalizePayload.result.certId ?? productionRelease.label?.certId,
+        publicReportUrl: finalizePayload.result.publicReportUrl,
+        labelPreviewUrl: finalizePayload.result.labelPreviewUrl,
+        qrPayloadUrl: finalizePayload.result.qrPayloadUrl,
+        uploadedAssetCount: finalizePayload.result.uploadedAssetCount,
+        evidenceAssetCount: finalizePayload.result.evidenceAssetCount,
       });
       await refreshHistory();
     } catch (requestError) {
