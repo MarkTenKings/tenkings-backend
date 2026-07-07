@@ -24525,3 +24525,95 @@ By enabling Rip It Live, I confirm:
   - No env var changes.
   - No credential rotation or secret printing.
   - No destructive operations.
+
+## 2026-07-07 - PR #68 production merge observed result
+
+### Merge And Deploy Evidence
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/68`.
+- PR merge status: merged.
+- PR branch HEAD merged: `7a393bad2188a9844412f6ca76079296190b4aa4`.
+- Merge commit / main HEAD: `7828387faaa01af7933cf1ec96d4ef63fde55ff3`.
+- GitHub Actions main run: `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28882146262` -> completed successfully at `2026-07-07T16:35:08Z`.
+- Vercel production deployment status: success, deployment completed at `2026-07-07T16:30:19Z`.
+- Vercel production deployment URL: `https://tenkings-backend-nextjs-by7pfiy75-ten-kings.vercel.app`.
+- Vercel evidence URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/6wXHB2wJk1MUNurvZ49fL2iC1VVq`.
+- Live endpoint verification: `GET https://collect.tenkings.co/api/admin/ai-grader/production/auth-check` without bearer auth returned HTTP `401`, proving the deployed route exists and is auth-gated.
+
+### Files Changed By PR #68
+- `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Current Operator Path
+- Mark should hard-refresh `https://collect.tenkings.co/ai-grader/station`.
+- The `Production Sign-In` panel should no longer show signed-in merely because a local token exists. It should show production-signed-in only after `auth-check` succeeds.
+- If Mark's account is not in the AI Grader operator/admin allowlist, the station should now show `AI Grader operator role required. Sign in with an AI Grader operator/admin account.` instead of looking stuck at `Confirm Card`.
+
+## 2026-07-07 - AI Grader fresh sign-in flow fix
+
+### Branch And HEAD
+- Branch: `fix/ai-grader-fresh-sign-in-flow`.
+- Base HEAD before this fix commit: `7828387faaa01af7933cf1ec96d4ef63fde55ff3`.
+
+### Files Changed
+- `frontend/nextjs-app/hooks/useSession.tsx`
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Architecture Change Summary
+- Kept AI Grader production auth protected by server-side `auth-check`; no public or bypass path was added.
+- Added a shared `ensureSession({ force: true, message })` path that clears stale cached `tenkings.session` state and immediately opens the shared SMS auth modal.
+- Split station handling between Ten Kings sign-in state and AI Grader operator/admin authorization:
+  - `401` from `auth-check` is treated as an expired/invalid cached session, clears local session state, opens SMS sign-in, and reruns `auth-check` after successful sign-in.
+  - non-`401` authorization failures do not reopen sign-in; they surface a clear signed-in-but-not-authorized message.
+- `Sign In` / `Refresh Sign-In` now either opens SMS sign-in, verifies access, or shows a terminal authorization message instead of dead-ending on stale cache.
+
+### Validation Commands And Results
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `55` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass. Existing unrelated warnings remain for `<img>`, stale Browserslist/baseline data, and Tailwind glob syntax.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Known Good Report Status
+- Known good report publish result: not attempted by this auth UI patch.
+- Public report URL if successful: not available in this patch.
+- Label URL if successful: not available in this patch.
+- DB rows persisted in this session: none.
+- Storage objects written in this session: none.
+- Remaining blocker: patch must be committed, pushed, reviewed/merged, deployed, then Mark must retry station SMS sign-in and resume the known-good report production smoke.
+
+## 2026-07-07 - PR #69 production merge planned action
+
+### Planned Action
+- Merge PR #69 (`https://github.com/MarkTenKings/tenkings-backend/pull/69`) from `fix/ai-grader-fresh-sign-in-flow` into `main`.
+- Purpose: deploy the AI Grader station fresh SMS sign-in path so stale cached `tenkings.session` state cannot dead-end the operator at Confirm Card.
+- Verified before planned action:
+  - PR state: open, non-draft.
+  - PR HEAD before this planned-action docs commit: `3a68be95aab12d8ed0228834fd7c85b2516c88a2`.
+  - GitHub PR checks: passing after run `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28889621214`.
+  - Vercel preview: passing at `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/6hbFpiSLVqwyMa69yNjwJoywGrwB`.
+- After merge, monitor GitHub main checks and Vercel Production deployment for the merge commit.
+
+### Guardrails For This Planned Action
+- No hardware capture.
+- No migrations.
+- No env var changes.
+- No credential rotation or secret printing.
+- No destructive operations.
