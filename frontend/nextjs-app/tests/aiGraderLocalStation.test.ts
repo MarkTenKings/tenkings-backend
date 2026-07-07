@@ -1939,6 +1939,9 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("readAsDataURL"), false);
   assert.equal(stationSource.includes("dataUrl"), false);
   assert.equal(stationSource.includes("Confirm + Create Card"), true);
+  assert.equal(stationSource.includes("Production Sign-In"), true);
+  assert.equal(stationSource.includes("Sign In + Create Card"), true);
+  assert.equal(stationSource.includes("Production sign-in is required before the CardAsset/Item can be created."), true);
   assert.equal(stationSource.includes("Mark Label Printed"), true);
   assert.equal(stationSource.includes("Save Selected Comps"), true);
   assert.equal(stationSource.includes("Add To Inventory"), true);
