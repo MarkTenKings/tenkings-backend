@@ -24098,3 +24098,158 @@ By enabling Rip It Live, I confirm:
   - Cert: `TK-AIG-79D935C9`.
   - Expected grade: `8.5`.
 - Guardrails: no hardware capture, migrations, env var changes, credential rotation, secret printing, destructive operations, forced publish, or eBay comps run in this merge/deploy step.
+
+### PR #65 Production Direct Storage Publish Merge / Deploy Result
+- Timestamp: `2026-07-07T00:34:06-04:00`
+- PR merge status:
+  - PR #65 is closed and merged.
+  - PR URL: `https://github.com/MarkTenKings/tenkings-backend/pull/65`.
+  - PR head merged: `9d1c6a371fe734e766021089d072bcac4af80c8e`.
+  - Merge commit / main HEAD: `845553ea34ae1e8d690717351060aec7e608d7a5`.
+  - Merge commit parents: `3308710ed1d728af8436dd9e4471c974ca8f11f5` and `9d1c6a371fe734e766021089d072bcac4af80c8e`.
+- GitHub checks:
+  - Main CI run `28841540401` completed successfully for `845553ea34ae1e8d690717351060aec7e608d7a5`.
+  - `Install & Build` passed.
+  - Docker image builds passed for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
+- Vercel Production deployment:
+  - Commit status context `Vercel` returned `success` with description `Deployment has completed`.
+  - Vercel deployment dashboard URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/GRhSqXDZ8GGs9VMFmhmbjfToqQ4G`.
+  - GitHub deployment id `5339622220`, environment `Production`, state `success`.
+  - Production target URL: `https://tenkings-backend-nextjs-d1qp99g81-ten-kings.vercel.app`.
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars or credentials changed: no.
+- Production publish was attempted: no.
+- DB rows persisted: none in this merge/deploy step.
+- Storage prefix used: none written in this merge/deploy step.
+- Remaining next step:
+  - Pull merged `main` on the Dell, rebuild/restart the local bridge from `845553ea34ae1e8d690717351060aec7e608d7a5`, then publish known-good report `ai-grader-browser-station-session-2026-07-06T223658063Z-report` / `TK-AIG-79D935C9` and verify DB rows, storage objects, public report, label, QR, storage-backed images, and no local/base64/token leaks.
+
+### AI Grader New Card Intake Pipeline Build
+- Timestamp: `2026-07-07T01:52:00-04:00`
+- Branch and HEAD:
+  - Branch: `feature/ai-grader-new-card-intake-pipeline`.
+  - Base/current HEAD before commit: `845553ea34ae1e8d690717351060aec7e608d7a5`.
+- Files changed:
+  - `frontend/nextjs-app/lib/server/inventoryReadyArtifacts.ts`
+  - `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`
+  - `frontend/nextjs-app/pages/api/admin/ai-grader/production/[...action].ts`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+  - `frontend/nextjs-app/pages/ai-grader/station.tsx`
+  - `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+  - `docs/handoffs/SESSION_LOG.md`
+- Architecture change summary:
+  - Added the AI Grader new-card intake path on top of the PR #65 direct-storage publish architecture.
+  - Added `create-card-from-report` production action: small JSON only, confirmed card identity plus storage-ready manifest, creates/links a Ten Kings `CardBatch`, `CardAsset`, useful `CardPhoto` rows, `Item`, `ItemOwnership`, and existing QR/label artifacts through the reusable inventory helper.
+  - Extracted `ensureInventoryReadyArtifacts` from the admin card route into `frontend/nextjs-app/lib/server/inventoryReadyArtifacts.ts`; it preserves `Item.number = CardAsset.id` and merges existing `Item.detailsJson` instead of replacing it.
+  - Removed the server-side slabbed-photo image body upload runtime/parser from the production API. Added `slabbed-photo-init` and `slabbed-photo-finalize` so slabbed front/back photos upload directly to storage by presigned URL.
+  - Split eBay comps into candidate generation and operator-selected persistence. `run-comps` returns candidates; `save-comps-selection` persists selected comps to `CardEvidenceItem`, `AiGraderValuation`, CardAsset valuation fields, and merged Item valuation details.
+  - Added `add-to-inventory` action that enforces valuation, reuses inventory-ready artifacts, and moves the linked CardAsset to `INVENTORY_READY_FOR_SALE`.
+  - Updated the station UI into a gated operator pipeline: Grade, Confirm Card, Publish + Print Label, Mark Slabbed, eBay Evaluate, Add To Inventory. The normal path no longer treats `manual_draft` / `needs_card_linkage` as success.
+  - New publish/storage naming keeps PR #65 canonical prefix: `ai-grader/reports/[safeReportId]/...`; slabbed photos use `ai-grader/reports/[safeReportId]/slabbed/[side]-[timestamp]-[safeFileName]`.
+  - Vercel request bodies remain small JSON with the existing `1mb` route body parser. Image/report bytes go through direct storage upload, not Vercel request/response bodies.
+- Validation commands and results:
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass. Existing warnings only: `next/no-img-element`, stale browser data, and existing Tailwind glob warning.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `48` tests.
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `node --test packages/database/tests/aiGraderProductionService.test.js` -> blocked before test execution with `spawn EPERM` in this sandbox.
+  - `node packages/database/tests/aiGraderProductionService.test.js` -> pass, `10` focused AI Grader DB/service tests.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `182` tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+  - `git diff --check` -> pass with Windows line-ending warnings only.
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars or credentials changed: no.
+- Credentials rotated or printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+- Known good report publish result:
+  - Not attempted in this feature branch session.
+  - Exact blocker: this workspace is not the deployed production runtime and was not using production DB/storage env or a restarted Dell bridge on this feature branch. Publishing the known-good report requires merging/deploying this PR, pulling/rebuilding/restarting the Dell bridge from the merged code, then running the existing known-good report through the new create-card/direct-storage/publish-finalize station pipeline.
+- Public report URL if successful: not available; publish smoke not attempted.
+- Label URL if successful: not available; publish smoke not attempted.
+- DB rows persisted in this session: none.
+- Storage prefix used in this session: none written. Planned/report prefix remains `ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report/`.
+- Public image verification: code/test verification only. Public report storage-backed image assertions pass in `tests/aiGraderLocalStation.test.ts`; no live production public image was published in this session.
+- Remaining blockers:
+  - Commit/push this branch and open the PR.
+  - After review/merge/deploy, update/rebuild/restart the Dell bridge from merged `main`.
+  - Publish known-good report `ai-grader-browser-station-session-2026-07-06T223658063Z-report` / `TK-AIG-79D935C9`.
+  - Verify production DB rows, storage objects, public report, label, QR, storage-backed images, selected comps/valuation, inventory transition, and absence of local/base64/token leaks.
+
+## 2026-07-07 - AI Grader PR #66 completion-gate patch
+
+### Summary
+- Branch: `feature/ai-grader-new-card-intake-pipeline`.
+- HEAD before this patch commit: `abf745966f70b498a352d8e2fe8f7bb80f0033c0`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/66`.
+- Scope: patch PR #66 before merge without changing the direct-storage publish architecture.
+
+### Files Changed
+- `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`
+- `frontend/nextjs-app/pages/api/admin/ai-grader/production/[...action].ts`
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Architecture Change Summary
+- Added `mark-label-printed` production action. It receives small JSON only, finds the persisted AI Grader report/label, updates `AiGraderLabel.physicalPrintStatus` to `printed`, and stores printed timestamp/operator audit in the existing label payload JSON.
+- Station `Mark Label Printed` now calls the production API instead of setting browser-only React state.
+- `addAiGraderCardToInventoryRuntime` now blocks on persisted server-side readiness before moving a card to `INVENTORY_READY_FOR_SALE`: report must be `published`, linked `cardAssetId` and `itemId` must exist, label must be printed in DB, slabbed front/back evidence assets must be persisted with storage URLs, and completed valuation must have `valuationMinor > 0`.
+- eBay comps no longer auto-select the first three results. Station defaults `selectedIds` to `[]`; saving remains disabled until the operator selects at least one comp.
+- Confirmed card identity now rejects `unknown` category and requires practical identity fields before `create-card-from-report`: sport requires player/name, year, manufacturer, sport, product set, and card number; TCG requires card name, game, year, manufacturer, product set, and card number; comics requires card name plus year/manufacturer/product set/card number.
+- Vercel route body parser remains `1mb`; no image/report/slabbed bytes are sent through Vercel request or response bodies.
+
+### Validation Commands And Results
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `53` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass. Existing unrelated warnings: `next/no-img-element`, stale Browserslist/baseline data, and Tailwind glob warning.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database exec node --test tests/aiGraderProductionService.test.js` -> pass, `10` focused AI Grader DB/service tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, `182` tests.
+- `pnpm --filter @tenkings/shared test` -> pass, `105` tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, `6` tests.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Known Good Report Status
+- Known good report publish result: not attempted in this patch session.
+- Exact blocker: this patch is pre-merge/pre-production-deploy; the known-good production smoke requires PR #66 merged, Vercel production deployed, Dell bridge pulled/rebuilt/restarted from merged `main`, then publishing `ai-grader-browser-station-session-2026-07-06T223658063Z-report` / `TK-AIG-79D935C9` through the production station pipeline.
+- Public report URL if successful: not available; smoke not attempted.
+- Label URL if successful: not available; smoke not attempted.
+- DB rows persisted in this session: none.
+- Storage prefix used in this session: none written. Planned known-good prefix remains `ai-grader/reports/ai-grader-browser-station-session-2026-07-06T223658063Z-report/`.
+- Remaining blockers: commit/push this patch to PR #66, wait for checks, merge/deploy, restart Dell bridge from merged `main`, then run and verify the known-good production smoke.
+
+## 2026-07-07 - PR #66 production merge and known-good smoke planned action
+
+### Planned Action
+- Merge PR #66 (`https://github.com/MarkTenKings/tenkings-backend/pull/66`) from `feature/ai-grader-new-card-intake-pipeline` into `main`.
+- Verified before planned action:
+  - PR state: open, non-draft.
+  - PR merge state: `CLEAN`.
+  - PR HEAD: `92c6d9a81d1b1f10b27eb3119cc5c36cc0454748`.
+  - GitHub CI and Vercel preview checks: passing.
+- After merge, monitor GitHub main checks and Vercel Production deployment for the merge commit.
+- Then pull/rebuild/restart the Dell AI Grader local bridge from merged `main`.
+- Then run the known-good report production smoke without new hardware capture:
+  - `reportId`: `ai-grader-browser-station-session-2026-07-06T223658063Z-report`
+  - `certId`: `TK-AIG-79D935C9`
+  - Expected grade: `8.5`
+  - Expected execution path: `warm_full_forensic_runner`
+  - Expected fallback: `false`
+- Guardrails for this planned action:
+  - No new hardware capture.
+  - No migrations.
+  - No env var changes.
+  - No credential rotation or secret printing.
+  - No destructive operations.

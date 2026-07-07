@@ -65,17 +65,54 @@ type CardSelectionState = {
   subtitle?: string;
 };
 
+type IdentityDraftState = {
+  category: "sport" | "tcg" | "comics";
+  playerName: string;
+  cardName: string;
+  teamName: string;
+  year: string;
+  manufacturer: string;
+  sport: string;
+  game: string;
+  productSet: string;
+  cardNumber: string;
+  insert: string;
+  parallel: string;
+  numbered: string;
+  autograph: boolean;
+  memorabilia: boolean;
+};
+
 type SlabUploadState = {
   front?: { status: string; publicUrl?: string; message?: string };
   back?: { status: string; publicUrl?: string; message?: string };
 };
 
+type CompsCandidate = {
+  id?: string;
+  title?: string;
+  url?: string;
+  price?: string;
+  soldDate?: string;
+  listingImageUrl?: string;
+  screenshotUrl?: string;
+};
+
 type CompsState = {
-  status: "idle" | "ready" | "running" | "completed" | "not_ready_missing_grade" | "not_ready_missing_identity" | "failed";
+  status: "idle" | "ready" | "running" | "completed" | "saved" | "not_ready_missing_grade" | "not_ready_missing_identity" | "failed";
   message: string;
   searchQuery?: string;
   searchUrl?: string;
   count?: number;
+  compsRefs?: CompsCandidate[];
+  selectedIds?: string[];
+  valuationMinor?: number | null;
+  saved?: boolean;
+};
+
+type StepState = {
+  status: "idle" | "pending" | "completed" | "failed";
+  message: string;
 };
 type BridgeConnectionState = "checking" | "connected" | "not_running" | "pairing_required" | "error";
 type LocalReportState = {
@@ -272,6 +309,42 @@ function utf8Bytes(value: string) {
   return new TextEncoder().encode(value).buffer;
 }
 
+const defaultIdentityDraft: IdentityDraftState = {
+  category: "sport",
+  playerName: "",
+  cardName: "",
+  teamName: "",
+  year: "",
+  manufacturer: "",
+  sport: "",
+  game: "",
+  productSet: "",
+  cardNumber: "",
+  insert: "",
+  parallel: "",
+  numbered: "",
+  autograph: false,
+  memorabilia: false,
+};
+
+function identityDraftMissingFields(draft: IdentityDraftState) {
+  const missing: string[] = [];
+  if (!draft.year.trim()) missing.push("year");
+  if (!draft.manufacturer.trim()) missing.push("manufacturer");
+  if (!draft.productSet.trim()) missing.push("product set");
+  if (!draft.cardNumber.trim()) missing.push("card number");
+  if (draft.category === "sport") {
+    if (!draft.playerName.trim()) missing.push("player/name");
+    if (!draft.sport.trim()) missing.push("sport");
+  } else if (draft.category === "tcg") {
+    if (!draft.cardName.trim()) missing.push("card name");
+    if (!draft.game.trim()) missing.push("game");
+  } else if (!draft.cardName.trim()) {
+    missing.push("card name");
+  }
+  return missing;
+}
+
 export default function AiGraderStationPage() {
   const { ensureSession } = useSession();
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
@@ -299,12 +372,25 @@ export default function AiGraderStationPage() {
   });
   const [cardSearchQuery, setCardSearchQuery] = useState("");
   const [cardSearchResults, setCardSearchResults] = useState<CardSelectionState[]>([]);
-  const [cardSearchMessage, setCardSearchMessage] = useState("Select an existing card/item or enter a draft identity before final publish.");
+  const [cardSearchMessage, setCardSearchMessage] = useState("Confirm the card identity to create a Ten Kings CardAsset/Item before publish.");
   const [selectedCard, setSelectedCard] = useState<CardSelectionState | null>(null);
+  const [identityDraft, setIdentityDraft] = useState<IdentityDraftState>(defaultIdentityDraft);
+  const [identityStatus, setIdentityStatus] = useState<StepState>({
+    status: "idle",
+    message: "Card identity has not been confirmed.",
+  });
   const [slabUploads, setSlabUploads] = useState<SlabUploadState>({});
   const [compsState, setCompsState] = useState<CompsState>({
     status: "idle",
     message: "Comps have not been run.",
+  });
+  const [labelPrintState, setLabelPrintState] = useState<StepState>({
+    status: "idle",
+    message: "Label has not been marked printed.",
+  });
+  const [inventoryState, setInventoryState] = useState<StepState>({
+    status: "idle",
+    message: "Card has not been added to inventory.",
   });
   const [localReport, setLocalReport] = useState<LocalReportState>({
     open: false,
@@ -575,6 +661,11 @@ export default function AiGraderStationPage() {
   const reportReady = status.latestReport.exists && Boolean(status.latestReport.reportId);
   const finalReady = status.safety.finalGradeComputed || Boolean(status.productionRelease?.finalGradeComputed);
   const labelReady = status.safety.labelGenerated || Boolean(status.outputs?.labelDataPath) || status.productionRelease?.label.status === "label_data_ready";
+  const linkedCardReady = Boolean((selectedCard?.cardAssetId || selectedCard?.itemId) && selectedCard.source !== "manual_draft");
+  const labelPrinted = labelPrintState.status === "completed";
+  const slabbedPhotosReady = slabUploads.front?.status === "uploaded" && slabUploads.back?.status === "uploaded";
+  const compsSaved = compsState.saved === true || compsState.status === "saved";
+  const inventoryComplete = inventoryState.status === "completed";
   const publishReadiness = buildAiGraderPublishReadiness({
     bundle: status.reportBundle,
     productionRelease: status.productionRelease,
@@ -591,7 +682,55 @@ export default function AiGraderStationPage() {
   const publicReportUrl = productionPublished ? productionPublish.publicReportUrl : undefined;
   const qrPayloadUrl = productionPublished ? productionPublish.qrPayloadUrl : undefined;
   const certId = productionPublish.certId ?? publishReadiness.certId;
-  const canPublishToTenKings = publishReadiness.ready && productionPublish.status !== "published" && productionPublish.status !== "pending";
+  const identityDraftMissing = identityDraftMissingFields(identityDraft);
+  const identityDraftComplete = identityDraftMissing.length === 0;
+  const canCreateCardFromReport = finalReady && reportReady && identityDraftComplete && !linkedCardReady && identityStatus.status !== "pending";
+  const canPublishToTenKings = linkedCardReady && publishReadiness.ready && productionPublish.status !== "published" && productionPublish.status !== "pending";
+  const canSaveSelectedComps =
+    productionPublished &&
+    Array.isArray(compsState.compsRefs) &&
+    (compsState.selectedIds?.length ?? 0) > 0 &&
+    compsState.status === "completed";
+  const canAddToInventory = productionPublished && labelPrinted && slabbedPhotosReady && compsSaved && linkedCardReady && inventoryState.status !== "completed";
+  const pipelineSteps = [
+    {
+      id: "grade",
+      label: "Grade",
+      done: finalReady,
+      action: finalReady ? "Final grade exists." : "Run capture and final grading.",
+    },
+    {
+      id: "confirm",
+      label: "Confirm Card",
+      done: linkedCardReady,
+      action: linkedCardReady ? "CardAsset and Item are linked." : "Confirm identity and create the Ten Kings card/item.",
+    },
+    {
+      id: "publish",
+      label: "Publish + Print Label",
+      done: productionPublished && labelPrinted,
+      action: productionPublished ? (labelPrinted ? "Public report and print action are complete." : "Print the label and mark it printed.") : "Publish to Ten Kings DB/storage.",
+    },
+    {
+      id: "slab",
+      label: "Mark Slabbed",
+      done: slabbedPhotosReady,
+      action: slabbedPhotosReady ? "Slabbed front/back photos are attached." : "Upload slabbed front and back photos.",
+    },
+    {
+      id: "comps",
+      label: "eBay Evaluate",
+      done: compsSaved,
+      action: compsSaved ? "Selected comps and valuation are saved." : "Run eBay comps, select matches, and save value.",
+    },
+    {
+      id: "inventory",
+      label: "Add To Inventory",
+      done: inventoryComplete,
+      action: inventoryComplete ? "Inventory-ready transition complete." : "Move the card into the inventory flow.",
+    },
+  ];
+  const activePipelineStep = pipelineSteps.find((step) => !step.done) ?? pipelineSteps[pipelineSteps.length - 1];
   const publicationStatusLabel =
     productionPublish.status === "idle" ? formatStationValue(publishReadiness.status) : formatStationValue(productionPublish.status);
   const localReportImages = useMemo(
@@ -905,6 +1044,14 @@ export default function AiGraderStationPage() {
     setBusy("start");
     setError(null);
     try {
+      setSelectedCard(null);
+      setIdentityDraft(defaultIdentityDraft);
+      setIdentityStatus({ status: "idle", message: "Card identity has not been confirmed." });
+      setProductionPublish({ status: "idle", message: "Ten Kings DB/storage publish has not been run." });
+      setSlabUploads({});
+      setCompsState({ status: "idle", message: "Comps have not been run." });
+      setLabelPrintState({ status: "idle", message: "Label has not been marked printed." });
+      setInventoryState({ status: "idle", message: "Card has not been added to inventory." });
       await runAction("start-session");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.");
@@ -981,6 +1128,145 @@ export default function AiGraderStationPage() {
     };
   };
 
+  const updateIdentityDraft = <K extends keyof IdentityDraftState>(key: K, value: IdentityDraftState[K]) => {
+    setIdentityDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const identityDraftPayload = () => ({
+    category: identityDraft.category,
+    playerName: identityDraft.playerName.trim() || null,
+    cardName: identityDraft.cardName.trim() || null,
+    teamName: identityDraft.teamName.trim() || null,
+    year: identityDraft.year.trim() || null,
+    manufacturer: identityDraft.manufacturer.trim() || null,
+    sport: identityDraft.sport.trim() || null,
+    game: identityDraft.game.trim() || null,
+    productSet: identityDraft.productSet.trim() || null,
+    productLine: identityDraft.productSet.trim() || null,
+    insert: identityDraft.insert.trim() || null,
+    insertSet: identityDraft.insert.trim() || null,
+    parallel: identityDraft.parallel.trim() || null,
+    cardNumber: identityDraft.cardNumber.trim() || null,
+    numbered: identityDraft.numbered.trim() || null,
+    autograph: identityDraft.autograph,
+    memorabilia: identityDraft.memorabilia,
+  });
+
+  const identityDraftTitle = () =>
+    [
+      identityDraft.year.trim(),
+      identityDraft.manufacturer.trim(),
+      identityDraft.productSet.trim(),
+      identityDraft.category === "sport" ? identityDraft.playerName.trim() : identityDraft.cardName.trim(),
+      identityDraft.cardNumber.trim() ? `#${identityDraft.cardNumber.trim()}` : "",
+      identityDraft.parallel.trim(),
+    ]
+      .filter(Boolean)
+      .join(" ") || "AI Grader Card";
+
+  const createCardFromConfirmedIdentity = async () => {
+    setBusy("create-card-from-report");
+    setError(null);
+    setIdentityStatus({ status: "pending", message: "Creating Ten Kings CardAsset and Item from confirmed AI Grader identity." });
+    try {
+      let latestStatus = status;
+      if (!latestStatus.productionRelease?.finalGradeComputed && reportReady) {
+        latestStatus = await prepareLocalProductionRelease();
+      }
+      const reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
+      let sourceBundle = latestStatus.reportBundle;
+      if (bridgeConnected && stationToken.trim() && reportId) {
+        sourceBundle = await fetchAiGraderStationReportBundle({
+          baseUrl: bridgeUrl,
+          stationToken,
+          reportId,
+        });
+      }
+      const productionRelease = latestStatus.productionRelease ?? sourceBundle?.productionRelease;
+      if (!sourceBundle || !productionRelease) {
+        throw new Error("A finalized production release and report bundle are required before card creation.");
+      }
+      const draftIdentity = identityDraftPayload();
+      const draftTitle = identityDraftTitle();
+      const reportBundleWithIdentity: AiGraderReportBundle = {
+        ...sourceBundle,
+        cardIdentity: {
+          ...sourceBundle.cardIdentity,
+          title: draftTitle,
+          set: identityDraft.productSet.trim() || undefined,
+          cardNumber: identityDraft.cardNumber.trim() || undefined,
+          source: "confirmed_identity",
+          sideCount: 2,
+          futureSlabbedPhotoRefsReserved: true,
+          futureEbayCompsRefsReserved: true,
+        },
+      };
+      const localAssetManifest = productionAssetManifest(reportBundleWithIdentity);
+      if (localAssetManifest.length < 1) {
+        throw new Error("Card creation requires storage-ready image asset metadata with SHA-256 checksums and byte sizes.");
+      }
+      const sanitizedBundle = sanitizeReportBundleForProduction(reportBundleWithIdentity);
+      const sanitizedRelease = sanitizeProductionReleaseForProduction(productionRelease, sanitizedBundle, null);
+      const response = await fetch("/api/admin/ai-grader/production/create-card-from-report", {
+        method: "POST",
+        headers: await productionAuthHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          publicationStatus: "published",
+          reportId: sanitizedRelease?.reportId ?? sanitizedBundle.reportId,
+          certId: sanitizedRelease?.label?.certId,
+          gradingSessionId: sanitizedRelease?.gradingSessionId ?? sanitizedBundle.gradingSessionId,
+          reportBundle: sanitizedBundle,
+          productionRelease: sanitizedRelease,
+          assetManifest: { assets: localAssetManifest },
+          checksums: {
+            checksums: localAssetManifest.map((asset) => ({
+              id: asset.id,
+              checksumSha256: asset.checksumSha256,
+              byteSize: asset.byteSize,
+            })),
+          },
+          identity: draftIdentity,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true) {
+        throw new Error(payload.message ?? "Card creation from AI Grader report failed.");
+      }
+      const result = payload.result ?? {};
+      const nextCard = result.cardIdentity as CardSelectionState;
+      setSelectedCard(nextCard);
+      setCardSearchMessage("Confirmed identity created and linked a Ten Kings CardAsset/Item.");
+      setIdentityStatus({
+        status: "completed",
+        message: `Created CardAsset ${result.cardAssetId} and Item ${result.itemId}.`,
+      });
+      setStatus((current) => ({
+        ...current,
+        productionRelease: result.productionRelease ?? current.productionRelease,
+        reportBundle: current.reportBundle
+          ? {
+              ...current.reportBundle,
+              cardIdentity: {
+                ...current.reportBundle.cardIdentity,
+                ...nextCard,
+                source: "card_asset",
+                sideCount: 2,
+                futureSlabbedPhotoRefsReserved: true,
+                futureEbayCompsRefsReserved: true,
+              },
+            }
+          : current.reportBundle,
+      }));
+    } catch (requestError) {
+      setIdentityStatus({
+        status: "failed",
+        message: requestError instanceof Error ? requestError.message : "Card creation failed.",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const searchCardItems = async () => {
     setBusy("card-search");
     setError(null);
@@ -1006,17 +1292,6 @@ export default function AiGraderStationPage() {
     } finally {
       setBusy(null);
     }
-  };
-
-  const useManualDraftIdentity = () => {
-    const title = cardSearchQuery.trim() || status.reportBundle?.cardIdentity.title || "Draft AI Grader Card";
-    setSelectedCard({
-      source: "manual_draft",
-      title,
-      displayTitle: title,
-      subtitle: "Manual draft identity; no CardAsset/Item linked yet.",
-    });
-    setCardSearchMessage("Manual draft identity selected. Publish will clearly show card linkage as draft/manual.");
   };
 
   const verifyPublishedReportRoute = async (reportId: string) => {
@@ -1250,37 +1525,59 @@ export default function AiGraderStationPage() {
     setError(null);
     setSlabUploads((current) => ({
       ...current,
-      [side]: { status: "uploading", message: `Uploading slabbed ${side} color photo.` },
+      [side]: { status: "uploading", message: `Preparing direct storage upload for slabbed ${side} photo.` },
     }));
     try {
       const reportId = status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
       if (!reportId) throw new Error("A report ID is required before uploading slabbed photos.");
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result ?? ""));
-        reader.onerror = () => reject(new Error("Could not read selected file."));
-        reader.readAsDataURL(file);
-      });
-      const response = await fetch("/api/admin/ai-grader/production/upload-slab-photo", {
+      const bytes = await file.arrayBuffer();
+      const checksumSha256 = await sha256Hex(bytes);
+      const initResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-init", {
         method: "POST",
         headers: await productionAuthHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           reportId,
           side,
           fileName: file.name,
-          mimeType: file.type,
-          dataUrl,
+          mimeType: file.type || "image/jpeg",
+          byteSize: bytes.byteLength,
+          checksumSha256,
         }),
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload.ok !== true) {
-        throw new Error(payload.message ?? `Slabbed ${side} photo upload failed.`);
+      const initPayload = await initResponse.json().catch(() => ({}));
+      if (!initResponse.ok || initPayload.ok !== true) {
+        throw new Error(initPayload.message ?? `Slabbed ${side} photo upload init failed.`);
+      }
+      const plan = initPayload.result;
+      setSlabUploads((current) => ({
+        ...current,
+        [side]: { status: "uploading", message: `Uploading slabbed ${side} photo directly to storage.` },
+      }));
+      const uploadResponse = await fetch(plan.uploadUrl, {
+        method: plan.uploadMethod ?? "PUT",
+        headers: {
+          ...(plan.uploadHeaders ?? {}),
+          "Content-Type": file.type || "image/jpeg",
+        },
+        body: bytes,
+      });
+      if (!uploadResponse.ok) {
+        throw new Error(`Direct slabbed ${side} photo upload failed with HTTP ${uploadResponse.status}.`);
+      }
+      const finalizeResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-finalize", {
+        method: "POST",
+        headers: await productionAuthHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify(plan.requiredFinalizeManifest),
+      });
+      const finalizePayload = await finalizeResponse.json().catch(() => ({}));
+      if (!finalizeResponse.ok || finalizePayload.ok !== true) {
+        throw new Error(finalizePayload.message ?? `Slabbed ${side} photo finalize failed.`);
       }
       setSlabUploads((current) => ({
         ...current,
         [side]: {
           status: "uploaded",
-          publicUrl: payload.result.publicUrl,
+          publicUrl: finalizePayload.result.publicUrl,
           message: `Slabbed ${side} photo uploaded and attached.`,
         },
       }));
@@ -1331,17 +1628,141 @@ export default function AiGraderStationPage() {
         throw new Error(payload.message ?? "eBay comps action failed.");
       }
       const result = payload.result ?? {};
+      const compsRefs = Array.isArray(result.compsRefs)
+        ? result.compsRefs.map((entry: CompsCandidate, index: number) => ({
+            ...entry,
+            id: entry.id ?? `comp-${index + 1}`,
+          }))
+        : [];
       setCompsState({
         status: result.status ?? "failed",
         message: result.message ?? (result.status === "completed" ? "Comps completed." : "Comps status updated."),
         searchQuery: result.searchQuery,
         searchUrl: result.searchUrl,
-        count: Array.isArray(result.compsRefs) ? result.compsRefs.length : undefined,
+        count: compsRefs.length,
+        compsRefs,
+        selectedIds: [],
+        saved: false,
       });
     } catch (requestError) {
       setCompsState({
         status: "failed",
         message: requestError instanceof Error ? requestError.message : "eBay comps action failed.",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const toggleSelectedComp = (compId: string) => {
+    setCompsState((current) => {
+      const selected = new Set(current.selectedIds ?? []);
+      if (selected.has(compId)) selected.delete(compId);
+      else selected.add(compId);
+      return { ...current, selectedIds: Array.from(selected), saved: false };
+    });
+  };
+
+  const saveSelectedComps = async () => {
+    setBusy("save-comps");
+    setError(null);
+    try {
+      const reportId = productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      if (!reportId) throw new Error("A published report ID is required before saving comps.");
+      const selectedIds = new Set(compsState.selectedIds ?? []);
+      const selectedComps = (compsState.compsRefs ?? []).filter((comp) => comp.id && selectedIds.has(comp.id));
+      if (!selectedComps.length) throw new Error("Select at least one sold comp before saving valuation.");
+      const response = await fetch("/api/admin/ai-grader/production/save-comps-selection", {
+        method: "POST",
+        headers: await productionAuthHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          reportId,
+          selectedComps,
+          searchQuery: compsState.searchQuery,
+          searchUrl: compsState.searchUrl,
+          valuationCurrency: "USD",
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true) {
+        throw new Error(payload.message ?? "Saving selected comps failed.");
+      }
+      setCompsState((current) => ({
+        ...current,
+        status: "saved",
+        saved: true,
+        valuationMinor: payload.result?.valuationMinor ?? null,
+        message: `Saved ${payload.result?.evidenceItemCount ?? selectedComps.length} selected comp(s) and valuation.`,
+      }));
+    } catch (requestError) {
+      setCompsState((current) => ({
+        ...current,
+        status: "failed",
+        saved: false,
+        message: requestError instanceof Error ? requestError.message : "Saving selected comps failed.",
+      }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const markLabelPrinted = async () => {
+    setBusy("mark-label-printed");
+    setError(null);
+    setLabelPrintState({
+      status: "pending",
+      message: "Persisting label print confirmation.",
+    });
+    try {
+      const reportId = productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      if (!reportId) throw new Error("A published report ID is required before marking the label printed.");
+      const response = await fetch("/api/admin/ai-grader/production/mark-label-printed", {
+        method: "POST",
+        headers: await productionAuthHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ reportId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true) {
+        throw new Error(payload.message ?? "Marking the label printed failed.");
+      }
+      setLabelPrintState({
+        status: "completed",
+        message: `Printed label persisted for cert ${payload.result?.certId ?? certId ?? "AI Grader label"}.`,
+      });
+    } catch (requestError) {
+      setLabelPrintState({
+        status: "failed",
+        message: requestError instanceof Error ? requestError.message : "Marking the label printed failed.",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const addToInventory = async () => {
+    setBusy("add-to-inventory");
+    setError(null);
+    setInventoryState({ status: "pending", message: "Moving card to inventory-ready flow." });
+    try {
+      const reportId = productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      if (!reportId) throw new Error("A published report ID is required before adding to inventory.");
+      const response = await fetch("/api/admin/ai-grader/production/add-to-inventory", {
+        method: "POST",
+        headers: await productionAuthHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ reportId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true) {
+        throw new Error(payload.message ?? "Add To Inventory failed.");
+      }
+      setInventoryState({
+        status: "completed",
+        message: `Inventory-ready transition complete for Item ${payload.result?.itemId ?? selectedCard?.itemId ?? "linked item"}.`,
+      });
+    } catch (requestError) {
+      setInventoryState({
+        status: "failed",
+        message: requestError instanceof Error ? requestError.message : "Add To Inventory failed.",
       });
     } finally {
       setBusy(null);
@@ -1781,8 +2202,16 @@ export default function AiGraderStationPage() {
 
           <section className="next-card">
             <p className="eyebrow">Current Step</p>
-            <h2>{displayedStep.label}</h2>
-            <p>{displayedStep.operatorAction}</p>
+            <h2>{activePipelineStep.label}</h2>
+            <p>{activePipelineStep.action}</p>
+            <ol className="pipeline-steps">
+              {pipelineSteps.map((step) => (
+                <li key={step.id} className={step.done ? "done" : step.id === activePipelineStep.id ? "active" : ""}>
+                  <span>{step.done ? "Done" : step.id === activePipelineStep.id ? "Now" : "Next"}</span>
+                  <strong>{step.label}</strong>
+                </li>
+              ))}
+            </ol>
             <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
               {busy === "start" ? "Starting" : "Start New Card"}
             </button>
@@ -1896,11 +2325,82 @@ export default function AiGraderStationPage() {
           </section>
 
           <section className="card-linkage">
-            <p className="eyebrow">Card / Item Linkage</p>
-            <h3>{selectedCard?.displayTitle ?? "No card selected"}</h3>
-            <p>{selectedCard?.subtitle ?? cardSearchMessage}</p>
+            <p className="eyebrow">Confirm Card</p>
+            <h3>{selectedCard?.displayTitle ?? "Create From AI Grader"}</h3>
+            <p>{identityStatus.status === "idle" ? selectedCard?.subtitle ?? cardSearchMessage : identityStatus.message}</p>
+            <div className="identity-grid">
+              <label>
+                Category
+                <select value={identityDraft.category} onChange={(event) => updateIdentityDraft("category", event.target.value as IdentityDraftState["category"])}>
+                  <option value="sport">Sport</option>
+                  <option value="tcg">TCG</option>
+                  <option value="comics">Comics</option>
+                </select>
+              </label>
+              <label>
+                {identityDraft.category === "sport" ? "Player / Name" : "Card Name"}
+                <input
+                  value={identityDraft.category === "sport" ? identityDraft.playerName : identityDraft.cardName}
+                  onChange={(event) =>
+                    identityDraft.category === "sport"
+                      ? updateIdentityDraft("playerName", event.target.value)
+                      : updateIdentityDraft("cardName", event.target.value)
+                  }
+                  placeholder={status.reportBundle?.cardIdentity.title ?? "Card identity"}
+                />
+              </label>
+              <label>
+                Year
+                <input value={identityDraft.year} onChange={(event) => updateIdentityDraft("year", event.target.value)} placeholder="2020" />
+              </label>
+              <label>
+                Manufacturer
+                <input value={identityDraft.manufacturer} onChange={(event) => updateIdentityDraft("manufacturer", event.target.value)} placeholder="Panini, Topps" />
+              </label>
+              <label>
+                {identityDraft.category === "tcg" ? "Game" : "Sport / Game"}
+                <input
+                  value={identityDraft.category === "tcg" ? identityDraft.game : identityDraft.sport}
+                  onChange={(event) =>
+                    identityDraft.category === "tcg"
+                      ? updateIdentityDraft("game", event.target.value)
+                      : updateIdentityDraft("sport", event.target.value)
+                  }
+                  placeholder={identityDraft.category === "tcg" ? "Pokemon" : "Basketball"}
+                />
+              </label>
+              <label>
+                Product Set
+                <input value={identityDraft.productSet} onChange={(event) => updateIdentityDraft("productSet", event.target.value)} placeholder="Prizm, Select" />
+              </label>
+              <label>
+                Card #
+                <input value={identityDraft.cardNumber} onChange={(event) => updateIdentityDraft("cardNumber", event.target.value)} />
+              </label>
+              <label>
+                Insert
+                <input value={identityDraft.insert} onChange={(event) => updateIdentityDraft("insert", event.target.value)} />
+              </label>
+              <label>
+                Parallel
+                <input value={identityDraft.parallel} onChange={(event) => updateIdentityDraft("parallel", event.target.value)} />
+              </label>
+              <label>
+                Numbered
+                <input value={identityDraft.numbered} onChange={(event) => updateIdentityDraft("numbered", event.target.value)} placeholder="12/99" />
+              </label>
+            </div>
+            <div className="check-row">
+              <label><input type="checkbox" checked={identityDraft.autograph} onChange={(event) => updateIdentityDraft("autograph", event.target.checked)} /> Auto</label>
+              <label><input type="checkbox" checked={identityDraft.memorabilia} onChange={(event) => updateIdentityDraft("memorabilia", event.target.checked)} /> Mem</label>
+            </div>
+            <button type="button" className="primary" onClick={createCardFromConfirmedIdentity} disabled={!canCreateCardFromReport || busy !== null}>
+              {busy === "create-card-from-report" ? "Creating Card" : linkedCardReady ? "Card Created" : "Confirm + Create Card"}
+            </button>
+            {!identityDraftComplete && !linkedCardReady ? <p className="status-note">Required before create: {identityDraftMissing.join(", ")}.</p> : null}
+            {linkedCardReady ? <p className="status-note">CardAsset {selectedCard?.cardAssetId} / Item {selectedCard?.itemId}</p> : null}
             <label>
-              Search or Draft Title
+              Existing Card Search
               <input
                 value={cardSearchQuery}
                 onChange={(event) => setCardSearchQuery(event.target.value)}
@@ -1910,9 +2410,6 @@ export default function AiGraderStationPage() {
             <div className="mini-actions">
               <button type="button" onClick={searchCardItems} disabled={busy !== null}>
                 {busy === "card-search" ? "Searching" : "Search"}
-              </button>
-              <button type="button" onClick={useManualDraftIdentity} disabled={busy !== null}>
-                Use Draft
               </button>
             </div>
             {cardSearchResults.length ? (
@@ -1924,6 +2421,10 @@ export default function AiGraderStationPage() {
                     onClick={() => {
                       setSelectedCard(result);
                       setCardSearchMessage("Existing Ten Kings card/item selected.");
+                      setIdentityStatus({
+                        status: "completed",
+                        message: "Existing Ten Kings CardAsset/Item selected for this AI Grader report.",
+                      });
                     }}
                   >
                     <strong>{result.displayTitle}</strong>
@@ -2060,13 +2561,41 @@ export default function AiGraderStationPage() {
               {productionPublish.status === "published" && labelPreviewUrl ? (
                 <a href={labelPreviewUrl} target="_blank" rel="noreferrer">Print Label</a>
               ) : null}
-              <button type="button" onClick={runEbayComps} disabled={!compsReadiness.ready || busy !== null}>
+              <button type="button" onClick={markLabelPrinted} disabled={!productionPublished || labelPrinted || busy !== null}>
+                {busy === "mark-label-printed" ? "Marking Printed" : labelPrinted ? "Label Printed" : "Mark Label Printed"}
+              </button>
+              <button type="button" onClick={runEbayComps} disabled={!productionPublished || !labelPrinted || !slabbedPhotosReady || !compsReadiness.ready || busy !== null}>
                 {busy === "run-comps" ? "Running Comps" : compsState.status === "completed" ? "Refresh Comps" : "Run eBay Comps"}
+              </button>
+              <button type="button" onClick={saveSelectedComps} disabled={!canSaveSelectedComps || busy !== null}>
+                {busy === "save-comps" ? "Saving Comps" : compsSaved ? "Comps Saved" : "Save Selected Comps"}
+              </button>
+              <button type="button" className="primary" onClick={addToInventory} disabled={!canAddToInventory || busy !== null}>
+                {busy === "add-to-inventory" ? "Adding" : inventoryComplete ? "In Inventory Flow" : "Add To Inventory"}
               </button>
               <button type="button" onClick={openHistory}>
                 Card History Reports
               </button>
             </div>
+            {Array.isArray(compsState.compsRefs) && compsState.compsRefs.length ? (
+              <div className="comps-select">
+                {compsState.compsRefs.map((comp, index) => {
+                  const compId = comp.id ?? `comp-${index + 1}`;
+                  return (
+                    <label key={compId}>
+                      <input
+                        type="checkbox"
+                        checked={(compsState.selectedIds ?? []).includes(compId)}
+                        onChange={() => toggleSelectedComp(compId)}
+                        disabled={busy !== null || compsSaved}
+                      />
+                      <span>{comp.title ?? "Sold comp"}</span>
+                      <strong>{comp.price ?? "price n/a"}</strong>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : null}
             {!canPublishToTenKings && productionPublish.status !== "published" ? (
               <div className="readiness-warning">
                 <strong>Publish not ready</strong>
@@ -2123,8 +2652,11 @@ export default function AiGraderStationPage() {
               </p>
             ) : null}
             <p>Label: {labelReady ? "label data ready" : "pending"}</p>
-            <p>Card linkage: {selectedCard?.cardAssetId ?? selectedCard?.itemId ?? status.reportBundle?.cardIdentity.cardAssetId ?? "manual draft / not linked"}</p>
+            <p>Print action: {labelPrintState.message}</p>
+            <p>Card linkage: {linkedCardReady ? selectedCard?.cardAssetId ?? selectedCard?.itemId : "not linked"}</p>
+            <p>Slabbed photos: {slabbedPhotosReady ? "front/back attached" : "pending"}</p>
             <p>Comps: {compsState.status === "idle" ? compsReadiness.status : compsState.status} - {compsState.status === "idle" ? compsReadiness.message : compsState.message}</p>
+            <p>Inventory: {inventoryState.message}</p>
             {compsState.searchQuery ? <p>Comps query: {compsState.searchQuery}</p> : null}
           </section>
 
@@ -2133,12 +2665,12 @@ export default function AiGraderStationPage() {
             <p>Attach post-slab color photos. These are separate from Basler monochrome evidence.</p>
             <label>
               Front color photo
-              <input type="file" accept="image/*" onChange={(event) => uploadSlabbedPhoto("front", event.target.files?.[0] ?? null)} />
+              <input type="file" accept="image/*" disabled={!productionPublished || !labelPrinted || busy !== null} onChange={(event) => uploadSlabbedPhoto("front", event.target.files?.[0] ?? null)} />
             </label>
             <p>{slabUploads.front?.message ?? "Front photo not uploaded."}</p>
             <label>
               Back color photo
-              <input type="file" accept="image/*" onChange={(event) => uploadSlabbedPhoto("back", event.target.files?.[0] ?? null)} />
+              <input type="file" accept="image/*" disabled={!productionPublished || !labelPrinted || busy !== null} onChange={(event) => uploadSlabbedPhoto("back", event.target.files?.[0] ?? null)} />
             </label>
             <p>{slabUploads.back?.message ?? "Back photo not uploaded."}</p>
           </section>
@@ -2719,6 +3251,46 @@ export default function AiGraderStationPage() {
           color: #bdb5a8;
           line-height: 1.45;
         }
+        .pipeline-steps {
+          display: grid;
+          gap: 6px;
+          margin: 12px 0 4px;
+          padding: 0;
+          list-style: none;
+        }
+        .pipeline-steps li {
+          display: grid;
+          grid-template-columns: 42px minmax(0, 1fr);
+          align-items: center;
+          gap: 8px;
+          min-height: 32px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          padding: 6px 8px;
+          background: rgba(255, 255, 255, 0.04);
+        }
+        .pipeline-steps li.active {
+          border-color: rgba(228, 191, 105, 0.54);
+          background: rgba(228, 191, 105, 0.1);
+        }
+        .pipeline-steps li.done {
+          border-color: rgba(91, 255, 157, 0.28);
+          background: rgba(91, 255, 157, 0.08);
+        }
+        .pipeline-steps span {
+          color: #9d9688;
+          font-size: 10px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .pipeline-steps strong {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 13px;
+        }
         .primary {
           width: 100%;
           margin-top: 14px;
@@ -2837,6 +3409,42 @@ export default function AiGraderStationPage() {
           font-size: 12px;
           line-height: 1.45;
           overflow-wrap: anywhere;
+        }
+        .identity-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+        .identity-grid label {
+          margin-top: 0;
+        }
+        .identity-grid label:nth-child(2),
+        .identity-grid label:nth-child(6) {
+          grid-column: 1 / -1;
+        }
+        .identity-grid input,
+        .identity-grid select {
+          min-width: 0;
+        }
+        .check-row {
+          display: flex;
+          gap: 14px;
+          align-items: center;
+          margin-top: 10px;
+          color: #d6cec0;
+          font-size: 12px;
+          font-weight: 800;
+        }
+        .check-row label {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          margin: 0;
+        }
+        .check-row input {
+          width: 16px;
+          height: 16px;
+          margin: 0;
         }
         .mini-actions {
           display: grid;
@@ -3026,6 +3634,39 @@ export default function AiGraderStationPage() {
           font-weight: 900;
           text-transform: uppercase;
           overflow-wrap: anywhere;
+        }
+        .comps-select {
+          display: grid;
+          gap: 8px;
+          margin-top: 12px;
+        }
+        .comps-select label {
+          display: grid;
+          grid-template-columns: 18px minmax(0, 1fr) auto;
+          gap: 8px;
+          align-items: center;
+          margin: 0;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          padding: 8px;
+          background: rgba(255, 255, 255, 0.04);
+        }
+        .comps-select input {
+          width: 16px;
+          height: 16px;
+          margin: 0;
+        }
+        .comps-select span {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: #e4ddd2;
+          font-size: 12px;
+        }
+        .comps-select strong {
+          color: #f3db92;
+          font-size: 12px;
         }
         .readiness-warning {
           margin-top: 12px;
