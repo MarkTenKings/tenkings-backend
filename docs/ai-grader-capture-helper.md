@@ -1252,12 +1252,15 @@ The production Dell operator workflow uses installed local station software. The
 
 Normal operator use after install:
 
-1. Open the `Ten Kings AI Grader Station` desktop shortcut, or browse to `https://collect.tenkings.co/ai-grader/station`.
-2. Log into Ten Kings with an approved AI Grader operator/admin account.
-3. The page checks `http://127.0.0.1:47652/health`.
-4. If this browser is already paired, it auto-connects with the locally saved browser token.
-5. If pairing is needed, the desktop shortcut opens the station with a short local pairing code in the URL fragment; the page exchanges that code with `POST http://127.0.0.1:47652/pair` and stores the returned local bridge token in this Dell/browser `localStorage`.
-6. Start New Card from the station UI.
+1. Open the `Ten Kings AI Grader Station` desktop shortcut.
+2. The shortcut starts/restarts the local Dell bridge, generates a short local pairing code, and opens Google Chrome directly with the dedicated AI Grader profile at `C:\TenKings\chrome-ai-grader-profile`.
+3. First use in that dedicated Chrome profile requires the normal Ten Kings SMS sign-in with an approved AI Grader operator/admin account.
+4. The page checks `http://127.0.0.1:47652/health`.
+5. If this dedicated Chrome profile is already paired, it auto-connects with the locally saved browser token.
+6. If pairing is needed, the desktop shortcut opens the station with the short local pairing code in the URL fragment; the page exchanges that code with `POST http://127.0.0.1:47652/pair` and stores the returned local bridge token in this Dell/browser `localStorage`.
+7. Start New Card from the station UI.
+
+Browsing directly to `https://collect.tenkings.co/ai-grader/station` is useful for checking production sign-in, but it may not use the same local bridge pairing state. The desktop shortcut is the normal operator entry point because it keeps Ten Kings sign-in and Dell bridge pairing in one stable Chrome profile. The shortcut must not print the pairing code, local station token, or production session token.
 
 The local bridge config is stored outside git:
 
