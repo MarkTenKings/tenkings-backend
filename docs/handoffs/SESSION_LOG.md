@@ -24617,3 +24617,90 @@ By enabling Rip It Live, I confirm:
 - No env var changes.
 - No credential rotation or secret printing.
 - No destructive operations.
+
+## 2026-07-07 - PR #69 production merge observed result
+
+### Merge And Deploy Evidence
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/69`.
+- PR merge status: merged.
+- PR branch HEAD merged: `6c438cf26b627996c79d6563d42141bbf64f0a8a`.
+- PR merge commit / main HEAD after merge: `1b2d2c3d351c89b9a74f95f0a8ee91287155ec4d`.
+- GitHub Actions main run: `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28890517162` -> completed successfully at `2026-07-07T18:54:14Z`.
+- Vercel production deployment status: success, deployment completed for commit `1b2d2c3d351c89b9a74f95f0a8ee91287155ec4d`.
+- Vercel evidence URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/rwH4k5ubYqkkwWAhvfhTaqbYkSFA`.
+- Live station page check: `GET https://collect.tenkings.co/ai-grader/station` returned HTTP `200`.
+
+### Exact Sign-In Fix Summary
+- Shared session provider now supports `ensureSession({ force: true, message })`, which clears stale cached `tenkings.session` state and immediately opens the shared SMS auth modal.
+- AI Grader station now separates Ten Kings sign-in from AI Grader operator/admin authorization.
+- If production `auth-check` rejects a cached session with `401`, station clears the cached session, opens SMS sign-in, and reruns `auth-check` after successful sign-in.
+- If the user is signed in but not AI-Grader-authorized, station shows a terminal not-authorized message and does not loop sign-in.
+- No auth bypass, public/no-auth station path, browser service token, local token field, or permission loosening was introduced.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Remaining AI Grader Production Smoke Steps
+- Mark should hard-refresh `https://collect.tenkings.co/ai-grader/station`.
+- Click `Sign In` / `Refresh Sign-In`; if the cached session is stale, the SMS sign-in modal should open immediately.
+- Complete SMS sign-in with an AI Grader operator/admin-authorized account.
+- Confirm card identity for the known-good report and continue the gated pipeline:
+  - create/link CardAsset + Item
+  - publish report through direct storage upload + finalize
+  - verify public report and label
+  - print/mark label
+  - upload slabbed front/back photos
+  - run eBay comps, select comps, and save valuation
+  - add to inventory
+- Verify public output has storage-backed images only and no local paths, bridge URLs, station tokens, base64 bodies, or hardware controls.
+
+## 2026-07-07 - AI Grader Chrome launcher profile fix
+
+### Branch And HEAD
+- Branch: `fix/ai-grader-chrome-launcher-profile`.
+- Base HEAD before this fix commit: `1b2d2c3d351c89b9a74f95f0a8ee91287155ec4d`.
+
+### Files Changed
+- `scripts/ai-grader/open-local-station.ps1`
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+- `docs/ai-grader-capture-helper.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Architecture Change Summary
+- Kept the existing local bridge startup/restart and hidden `#aiGraderBridgePair=...` pairing flow.
+- Changed the desktop launcher path from Windows default browser/profile selection to explicit Google Chrome launch.
+- Added a stable dedicated AI Grader Chrome profile directory: `C:\TenKings\chrome-ai-grader-profile`.
+- Chrome discovery order:
+  - `%ProgramFiles%\Google\Chrome\Application\chrome.exe`
+  - `%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe`
+  - `%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe`
+  - `chrome.exe` on PATH
+- Launcher now opens Chrome with `--user-data-dir=...`, `--new-window`, and the generated hidden pairing URL.
+- The launcher output still redacts the pairing code and does not print local station token or production session token.
+- Production sign-in and AI Grader operator/admin auth remain unchanged and protected.
+
+### Validation Commands And Results
+- PowerShell syntax parse for `scripts/ai-grader/open-local-station.ps1` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `56` tests.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\ai-grader\status-local-station-bridge.ps1` -> pass; bridge running and `bridgeHealth.ok=true`. Output contained redacted fingerprints only, not raw tokens.
+
+### Guardrails
+- Hardware was run: no.
+- Browser launcher was run: no, to avoid opening Chrome/rotating pairing code in Mark's active desktop session.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Remaining AI Grader Production Smoke Steps
+- Mark should click the `Ten Kings AI Grader Station` desktop shortcut after this patch is available on the Dell working tree.
+- Expected behavior: the shortcut opens Google Chrome using `C:\TenKings\chrome-ai-grader-profile`, injects the fresh hidden local bridge pairing URL, and uses that same profile for Ten Kings SMS sign-in.
+- First use in this dedicated profile requires SMS sign-in; after that, the profile should retain both Ten Kings session state and local bridge pairing state.
+- Continue the known-good report smoke after station sign-in and bridge pairing are both verified.

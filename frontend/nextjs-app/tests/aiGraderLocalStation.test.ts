@@ -2097,6 +2097,27 @@ test("browser station bridge pairing exchanges a local pairing code for browser-
   assert.equal(paired.tokenStorage, "browser_localStorage_only");
 });
 
+test("Dell station launcher opens pairing URL in a stable Chrome profile", () => {
+  const launcherPath =
+    [
+      path.join(process.cwd(), "..", "..", "scripts", "ai-grader", "open-local-station.ps1"),
+      path.join(process.cwd(), "scripts", "ai-grader", "open-local-station.ps1"),
+    ].find((candidate) => fs.existsSync(candidate));
+  assert.ok(launcherPath);
+  const launcherSource = fs.readFileSync(launcherPath, "utf8");
+  assert.equal(launcherSource.includes('ChromeUserDataDir = "C:\\TenKings\\chrome-ai-grader-profile"'), true);
+  assert.equal(launcherSource.includes("Get-AiGraderChromePath"), true);
+  assert.equal(launcherSource.includes("$env:ProgramFiles"), true);
+  assert.equal(launcherSource.includes("${env:ProgramFiles(x86)}"), true);
+  assert.equal(launcherSource.includes("Google\\Chrome\\Application\\chrome.exe"), true);
+  assert.equal(launcherSource.includes('Get-Command "chrome.exe"'), true);
+  assert.equal(launcherSource.includes('"--user-data-dir=$UserDataDir"'), true);
+  assert.equal(launcherSource.includes('"--new-window"'), true);
+  assert.equal(launcherSource.includes("Start-Process -FilePath $chromePath"), true);
+  assert.equal(launcherSource.includes("Start-Process (Get-AiGraderBridgePairingUrl -Config $config)"), false);
+  assert.equal(launcherSource.includes("pairingCodeRedacted = $true"), true);
+});
+
 test("browser station bridge client fetches local report bundle bodies with station token only", async () => {
   const imageBody = Buffer.from("front-image").toString("base64");
   const fetchImpl: typeof fetch = async (input, init) => {
