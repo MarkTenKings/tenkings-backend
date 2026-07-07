@@ -3,13 +3,15 @@ import { getS3ObjectAcl, headStorageObject, presignUploadUrl, publicUrlFor } fro
 import { requireAdminSession } from "../../../../../lib/server/admin";
 import { requireUserSession } from "../../../../../lib/server/session";
 import {
+  addAiGraderCardToInventoryRuntime,
   createAiGraderProductionApiHandler,
+  createAiGraderCardFromReportRuntime,
+  finalizeAiGraderSlabbedPhotoUploadRuntime,
   listProductionReportHistoryRuntime,
+  persistAiGraderSelectedCompsRuntime,
   persistProductionReleaseRuntime,
-  persistAiGraderCompsRuntime,
   runAiGraderEbayCompsRuntime,
   searchAiGraderCardItemsRuntime,
-  uploadAiGraderSlabbedPhotoRuntime,
 } from "../../../../../lib/server/aiGraderProductionApi";
 
 export const config = {
@@ -53,9 +55,11 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     persist: persistProductionReleaseRuntime,
     listHistory: listProductionReportHistoryRuntime,
     searchCards: searchAiGraderCardItemsRuntime,
-    uploadSlabbedPhoto: uploadAiGraderSlabbedPhotoRuntime,
+    createCardFromReport: createAiGraderCardFromReportRuntime,
+    finalizeSlabbedPhotoUpload: finalizeAiGraderSlabbedPhotoUploadRuntime,
     runComps: runAiGraderEbayCompsRuntime,
-    persistComps: persistAiGraderCompsRuntime,
+    persistSelectedComps: persistAiGraderSelectedCompsRuntime,
+    addToInventory: addAiGraderCardToInventoryRuntime,
   });
   return runtime(req, res);
 }
