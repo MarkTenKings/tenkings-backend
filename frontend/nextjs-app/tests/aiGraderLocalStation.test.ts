@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
+import { buildAiGraderProductionStoragePlan } from "@tenkings/database";
 import aiGraderLocalStationHandler from "../pages/api/ai-grader/station/[...action]";
 import { config as aiGraderProductionRouteConfig } from "../pages/api/admin/ai-grader/production/[...action]";
 import {
@@ -26,6 +27,7 @@ import {
   AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV,
   buildAiGraderProductionHistoryResult,
   createAiGraderProductionApiHandler,
+  createAiGraderCardFromReportRuntime,
   createAiGraderPublicReportApiHandler,
   validateAiGraderInventoryReadiness,
 } from "../lib/server/aiGraderProductionApi";
@@ -1285,6 +1287,322 @@ test("production card search is admin-gated and returns existing card/item candi
   assert.equal(body.result.items.length, 2);
   assert.equal(body.result.items[0].cardAssetId, "card-asset-1");
   assert.equal(body.result.items[1].itemId, "item-1");
+});
+
+type ConfirmCardDbCall = { delegate: string; method: string; args?: any };
+
+function createConfirmCardRuntimeDb(options: { houseUserFound?: boolean } = {}) {
+  const calls: ConfirmCardDbCall[] = [];
+  const houseUserFound = options.houseUserFound ?? true;
+  let createdCard: any = null;
+  let createdItem: any = null;
+  const cardQr = {
+    id: "qr-card-1",
+    code: "tkc_testcard",
+    serial: "TKTEST-CARD",
+    type: "CARD",
+    state: "BOUND",
+    payloadUrl: "https://collect.tenkings.co/claim/card/tkc_testcard",
+    metadata: { pairId: "TKTEST", role: "CARD" },
+  };
+  const packQr = {
+    id: "qr-pack-1",
+    code: "tkp_testpack",
+    serial: "TKTEST-PACK",
+    type: "PACK",
+    state: "AVAILABLE",
+    payloadUrl: "https://collect.tenkings.co/kiosk/start/tkp_testpack",
+    metadata: { pairId: "TKTEST", role: "PACK" },
+  };
+  const label = {
+    id: "label-1",
+    pairId: "TKTEST",
+    status: "RESERVED",
+    locationId: null,
+    batchId: null,
+    itemId: null,
+    packInstanceId: null,
+    cardQrCodeId: cardQr.id,
+    packQrCodeId: packQr.id,
+    cardQrCode: cardQr,
+    packQrCode: packQr,
+  };
+  const record = (delegate: string, method: string, args?: any) => {
+    calls.push({ delegate, method, args });
+  };
+
+  const tx: any = {
+    user: {
+      async findUnique(args: any) {
+        record("user", "findUnique", args);
+        if (args?.where?.id === "house-user-1" && houseUserFound) {
+          return { id: "house-user-1" };
+        }
+        return null;
+      },
+    },
+    aiGraderSession: {
+      async findUnique(args: any) {
+        record("aiGraderSession", "findUnique", args);
+        return null;
+      },
+      async upsert(args: any) {
+        record("aiGraderSession", "upsert", args);
+        return { id: "session-1", ...args.create };
+      },
+      async updateMany(args: any) {
+        record("aiGraderSession", "updateMany", args);
+        return { count: 1 };
+      },
+    },
+    aiGraderReport: {
+      async findUnique(args: any) {
+        record("aiGraderReport", "findUnique", args);
+        return null;
+      },
+      async updateMany(args: any) {
+        record("aiGraderReport", "updateMany", args);
+        return { count: 1 };
+      },
+    },
+    cardBatch: {
+      async create(args: any) {
+        record("cardBatch", "create", args);
+        return { id: "batch-1", ...args.data };
+      },
+    },
+    cardAsset: {
+      async create(args: any) {
+        record("cardAsset", "create", args);
+        createdCard = { id: "card-asset-1", ...args.data };
+        return createdCard;
+      },
+      async findUnique(args: any) {
+        record("cardAsset", "findUnique", args);
+        if (!createdCard || args?.where?.id !== createdCard.id) return null;
+        return {
+          id: createdCard.id,
+          fileName: createdCard.fileName,
+          imageUrl: createdCard.imageUrl,
+          thumbnailUrl: createdCard.thumbnailUrl,
+          cdnHdUrl: createdCard.cdnHdUrl,
+          cdnThumbUrl: createdCard.cdnThumbUrl,
+          customTitle: createdCard.customTitle,
+          resolvedPlayerName: createdCard.resolvedPlayerName,
+          classificationJson: createdCard.classificationJson,
+          ocrJson: null,
+          valuationMinor: null,
+        };
+      },
+    },
+    cardPhoto: {
+      async create(args: any) {
+        record("cardPhoto", "create", args);
+        return { id: `photo-${calls.filter((call) => call.delegate === "cardPhoto").length}`, ...args.data };
+      },
+    },
+    item: {
+      async findFirst(args: any) {
+        record("item", "findFirst", args);
+        return null;
+      },
+      async create(args: any) {
+        record("item", "create", args);
+        createdItem = { id: "item-1", cardQrCodeId: null, ...args.data };
+        return createdItem;
+      },
+      async findUnique(args: any) {
+        record("item", "findUnique", args);
+        if (args?.where?.id === "item-1") {
+          return { id: "item-1", cardQrCodeId: createdItem?.cardQrCodeId ?? null };
+        }
+        return null;
+      },
+      async update(args: any) {
+        record("item", "update", args);
+        createdItem = { ...(createdItem ?? { id: args.where.id }), ...args.data };
+        return createdItem;
+      },
+    },
+    itemOwnership: {
+      async create(args: any) {
+        record("itemOwnership", "create", args);
+        return { id: "ownership-1", ...args.data };
+      },
+    },
+    qrCode: {
+      async create(args: any) {
+        record("qrCode", "create", args);
+        if (args?.data?.type === "CARD") {
+          return { ...cardQr, ...args.data };
+        }
+        return { ...packQr, ...args.data };
+      },
+      async update(args: any) {
+        record("qrCode", "update", args);
+        if (args?.where?.id === cardQr.id) {
+          Object.assign(cardQr, args.data);
+          return cardQr;
+        }
+        Object.assign(packQr, args.data);
+        return packQr;
+      },
+    },
+    packLabel: {
+      async create(args: any) {
+        record("packLabel", "create", args);
+        Object.assign(label, args.data);
+        return label;
+      },
+      async update(args: any) {
+        record("packLabel", "update", args);
+        Object.assign(label, args.data);
+        return label;
+      },
+      async findFirst(args: any) {
+        record("packLabel", "findFirst", args);
+        return null;
+      },
+      async findUnique(args: any) {
+        record("packLabel", "findUnique", args);
+        if (args?.where?.id !== label.id) return null;
+        return label;
+      },
+    },
+  };
+
+  const db = {
+    ...tx,
+    async $transaction(callback: (tx: any) => Promise<unknown>) {
+      record("$transaction", "$transaction");
+      return callback(tx);
+    },
+  };
+
+  return { db, calls };
+}
+
+function validConfirmedSportIdentity() {
+  return {
+    category: "sport" as const,
+    playerName: "Michael Jordan",
+    year: "1996",
+    manufacturer: "Fleer",
+    sport: "Basketball",
+    productSet: "Fleer",
+    cardNumber: "23",
+    autograph: false,
+    memorabilia: false,
+  };
+}
+
+function storagePlanForConfirmCardRuntime() {
+  const reportBundle = sampleStorageReadyReportBundle();
+  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  return {
+    reportBundle,
+    productionRelease,
+    storagePlan: buildAiGraderProductionStoragePlan({
+      reportBundle,
+      productionRelease,
+      publicReportBaseUrl: "https://collect.tenkings.co",
+      publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    }),
+  };
+}
+
+test("create-card-from-report runtime creates a house-owned Item without email owner env", async () => {
+  const { db, calls } = createConfirmCardRuntimeDb();
+  const { reportBundle, productionRelease, storagePlan } = storagePlanForConfirmCardRuntime();
+
+  const result = await createAiGraderCardFromReportRuntime({
+    tenantId: "tenant-1",
+    reportBundle,
+    productionRelease,
+    storagePlan,
+    identity: validConfirmedSportIdentity(),
+    operatorUserId: "operator-user-1",
+    actorAudit: {
+      actorType: "human",
+      action: "create-card-from-report",
+      requestedAt: "2026-07-07T12:00:00.000Z",
+      userId: "operator-user-1",
+      serviceAccountId: null,
+      role: "ai_grader_operator",
+    },
+    dbClient: db,
+    env: {
+      TEN_KINGS_HOUSE_USER_ID: "house-user-1",
+      PACK_INVENTORY_SELLER_EMAIL: undefined,
+      HOUSE_USER_EMAIL: undefined,
+    },
+  });
+
+  assert.equal(result.cardAssetId, "card-asset-1");
+  assert.equal(result.itemId, "item-1");
+  const ownerLookup = calls.find((call) => call.delegate === "user" && call.method === "findUnique");
+  assert.deepEqual(ownerLookup?.args.where, { id: "house-user-1" });
+  assert.equal("email" in (ownerLookup?.args.where ?? {}), false);
+  const itemCreate = calls.find((call) => call.delegate === "item" && call.method === "create");
+  assert.equal(itemCreate?.args.data.ownerId, "house-user-1");
+  assert.equal(itemCreate?.args.data.number, "card-asset-1");
+  const itemOwnershipCreate = calls.find((call) => call.delegate === "itemOwnership" && call.method === "create");
+  assert.equal(itemOwnershipCreate?.args.data.ownerId, "house-user-1");
+  const batchCreate = calls.find((call) => call.delegate === "cardBatch" && call.method === "create");
+  assert.equal(batchCreate?.args.data.uploadedById, "operator-user-1");
+  const photoCreate = calls.find((call) => call.delegate === "cardPhoto" && call.method === "create");
+  assert.equal(photoCreate?.args.data.createdById, "operator-user-1");
+  const sessionUpsert = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "upsert");
+  assert.equal(sessionUpsert?.args.create.operatorUserId, "operator-user-1");
+  assert.equal(calls.some((call) => call.delegate === "$transaction" && call.method === "$transaction"), true);
+});
+
+test("create-card-from-report runtime fails before card rows when TEN_KINGS_HOUSE_USER_ID is missing", async () => {
+  const { db, calls } = createConfirmCardRuntimeDb();
+  const { reportBundle, productionRelease, storagePlan } = storagePlanForConfirmCardRuntime();
+
+  await assert.rejects(
+    () =>
+      createAiGraderCardFromReportRuntime({
+        tenantId: "tenant-1",
+        reportBundle,
+        productionRelease,
+        storagePlan,
+        identity: validConfirmedSportIdentity(),
+        operatorUserId: "operator-user-1",
+        dbClient: db,
+        env: {},
+      }),
+    /TEN_KINGS_HOUSE_USER_ID must be configured for AI Grader inventory ownership/
+  );
+
+  assert.equal(calls.some((call) => call.delegate === "cardBatch" && call.method === "create"), false);
+  assert.equal(calls.some((call) => call.delegate === "cardAsset" && call.method === "create"), false);
+  assert.equal(calls.some((call) => call.delegate === "cardPhoto" && call.method === "create"), false);
+});
+
+test("create-card-from-report runtime fails before card rows when configured house user is missing", async () => {
+  const { db, calls } = createConfirmCardRuntimeDb({ houseUserFound: false });
+  const { reportBundle, productionRelease, storagePlan } = storagePlanForConfirmCardRuntime();
+
+  await assert.rejects(
+    () =>
+      createAiGraderCardFromReportRuntime({
+        tenantId: "tenant-1",
+        reportBundle,
+        productionRelease,
+        storagePlan,
+        identity: validConfirmedSportIdentity(),
+        operatorUserId: "operator-user-1",
+        dbClient: db,
+        env: { TEN_KINGS_HOUSE_USER_ID: "house-user-1" },
+      }),
+    /Configured TEN_KINGS_HOUSE_USER_ID user was not found/
+  );
+
+  assert.equal(calls.some((call) => call.delegate === "cardBatch" && call.method === "create"), false);
+  assert.equal(calls.some((call) => call.delegate === "cardAsset" && call.method === "create"), false);
+  assert.equal(calls.some((call) => call.delegate === "cardPhoto" && call.method === "create"), false);
 });
 
 test("create-card-from-report action sends small storage-backed metadata and returns linked card identity", async () => {

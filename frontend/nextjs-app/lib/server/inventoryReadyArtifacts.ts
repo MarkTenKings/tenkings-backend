@@ -1,9 +1,13 @@
 import { prisma, type Prisma } from "@tenkings/database";
 import { parseClassificationPayload } from "@tenkings/shared";
-import { ensureLabelPairForItem } from "./qrCodes";
+import { ensureLabelPairForItemTx } from "./qrCodes";
 
 export const PRICE_REQUIRED_MESSAGE =
   "Price valuation field must be complete before moving a card to inventory ready.";
+export const TEN_KINGS_HOUSE_USER_ID_ENV = "TEN_KINGS_HOUSE_USER_ID";
+
+type EnvLike = Record<string, string | undefined>;
+type InventoryReadyOwner = { id: string };
 
 function jsonObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -47,24 +51,32 @@ const resolveItemSet = (card: { classificationJson: unknown }) => {
   );
 };
 
-const resolveInventoryReadyOwner = async () => {
-  const sellerEmail = process.env.PACK_INVENTORY_SELLER_EMAIL ?? process.env.HOUSE_USER_EMAIL;
-  const normalizedSellerEmail = sellerEmail?.trim();
+export const resolveInventoryReadyOwner = async (
+  db: Pick<Prisma.TransactionClient, "user">,
+  env: EnvLike = process.env
+): Promise<InventoryReadyOwner> => {
+  const houseUserId = env[TEN_KINGS_HOUSE_USER_ID_ENV]?.trim();
 
-  if (!normalizedSellerEmail) {
-    throw new Error("PACK_INVENTORY_SELLER_EMAIL or HOUSE_USER_EMAIL must be configured");
+  if (!houseUserId) {
+    throw new Error("TEN_KINGS_HOUSE_USER_ID must be configured for AI Grader inventory ownership.");
   }
 
-  const sellerUser = await prisma.user.findUnique({ where: { email: normalizedSellerEmail } });
-  if (!sellerUser) {
-    throw new Error(`House account not found for email: ${normalizedSellerEmail}`);
+  const houseUser = await db.user.findUnique({ where: { id: houseUserId }, select: { id: true } });
+  if (!houseUser) {
+    throw new Error("Configured TEN_KINGS_HOUSE_USER_ID user was not found.");
   }
 
-  return sellerUser;
+  return houseUser;
 };
 
-export const ensureInventoryReadyArtifacts = async (cardId: string, createdById: string) => {
-  const card = await prisma.cardAsset.findUnique({
+export const ensureInventoryReadyArtifactsTx = async (
+  db: Prisma.TransactionClient,
+  cardId: string,
+  createdById: string,
+  options: { env?: EnvLike; owner?: InventoryReadyOwner } = {}
+) => {
+  const owner = options.owner ?? (await resolveInventoryReadyOwner(db, options.env ?? process.env));
+  const card = await db.cardAsset.findUnique({
     where: { id: cardId },
     select: {
       id: true,
@@ -85,9 +97,7 @@ export const ensureInventoryReadyArtifacts = async (cardId: string, createdById:
     throw new Error("Card not found");
   }
 
-  const owner = await resolveInventoryReadyOwner();
-
-  let item = await prisma.item.findFirst({ where: { number: card.id } });
+  let item = await db.item.findFirst({ where: { number: card.id } });
   if (!item) {
     const name = resolveItemName(card);
     const set = resolveItemSet(card);
@@ -96,7 +106,7 @@ export const ensureInventoryReadyArtifacts = async (cardId: string, createdById:
       (card.ocrJson as Prisma.InputJsonValue | null) ??
       undefined;
 
-    item = await prisma.item.create({
+    item = await db.item.create({
       data: {
         name,
         set,
@@ -113,7 +123,7 @@ export const ensureInventoryReadyArtifacts = async (cardId: string, createdById:
       },
     });
 
-    await prisma.itemOwnership.create({
+    await db.itemOwnership.create({
       data: {
         itemId: item.id,
         ownerId: owner.id,
@@ -142,14 +152,14 @@ export const ensureInventoryReadyArtifacts = async (cardId: string, createdById:
     }
 
     if (Object.keys(updates).length > 0) {
-      item = await prisma.item.update({
+      item = await db.item.update({
         where: { id: item.id },
         data: updates,
       });
     }
   }
 
-  const labelPair = await ensureLabelPairForItem({
+  const labelPair = await ensureLabelPairForItemTx(db, {
     itemId: item.id,
     createdById,
     locationId: null,
@@ -161,3 +171,6 @@ export const ensureInventoryReadyArtifacts = async (cardId: string, createdById:
     labelPair,
   };
 };
+
+export const ensureInventoryReadyArtifacts = async (cardId: string, createdById: string) =>
+  prisma.$transaction((tx) => ensureInventoryReadyArtifactsTx(tx, cardId, createdById));

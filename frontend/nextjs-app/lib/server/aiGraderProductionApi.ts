@@ -31,7 +31,12 @@ import {
 import type { AdminSession } from "./admin";
 import type { UserSession } from "./session";
 import { buildAiGraderLabelPreviewUrl } from "../aiGraderOperatorWorkflow";
-import { ensureInventoryReadyArtifacts, PRICE_REQUIRED_MESSAGE } from "./inventoryReadyArtifacts";
+import {
+  ensureInventoryReadyArtifacts,
+  ensureInventoryReadyArtifactsTx,
+  PRICE_REQUIRED_MESSAGE,
+  resolveInventoryReadyOwner,
+} from "./inventoryReadyArtifacts";
 import {
   aiGraderProductionAuthStatus,
   requireAiGraderProductionActor,
@@ -1802,12 +1807,15 @@ export async function createAiGraderCardFromReportRuntime(input: {
   identity: AiGraderConfirmedCardIdentity;
   operatorUserId?: string | null;
   actorAudit?: AiGraderProductionActorAudit | null;
+  dbClient?: any;
+  env?: EnvLike;
 }): Promise<AiGraderCreateCardFromReportResult> {
   if (!input.operatorUserId) {
     const error = new Error("A human operator session is required to create a CardAsset/Item from an AI Grader report.");
     (error as Error & { statusCode?: number }).statusCode = 403;
     throw error;
   }
+  const operatorUserId = input.operatorUserId;
   const reportId = stringValue(input.productionRelease.reportId ?? input.reportBundle.reportId, "");
   const gradingSessionId = optionalString(input.productionRelease.gradingSessionId ?? input.reportBundle.gradingSessionId);
   if (!reportId) throw new Error("reportId is required.");
@@ -1819,7 +1827,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
   }
 
   const { prisma } = await import("@tenkings/database");
-  const db = prisma as any;
+  const db = input.dbClient ?? (prisma as any);
   const existing = await existingAiGraderCreatedCardResult({
     db,
     tenantId: input.tenantId,
@@ -1827,166 +1835,172 @@ export async function createAiGraderCardFromReportRuntime(input: {
     gradingSessionId,
     productionRelease: input.productionRelease,
     identity: input.identity,
-    operatorUserId: input.operatorUserId,
+    operatorUserId,
   });
   if (existing) return existing;
 
-  const now = new Date();
-  const classification = classificationFromIdentity(input.identity);
-  const title = identityTitle(input.identity) || stringValue(input.reportBundle.cardIdentity?.title, `AI Grader ${reportId}`);
-  const set = identitySet(input.identity);
-  const category = collectibleCategoryFromIdentity(input.identity);
-  const finalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
-  const label = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
-  const finalOverallGrade = firstNumber(finalGrade.overall, (input.reportBundle as JsonRecord).finalOverallGrade);
-  const labelGrade = optionalString(label.labelGradeText) ?? (finalOverallGrade != null ? finalOverallGrade.toFixed(1) : null);
-  const gradeJson = {
-    source: "ai_grader_new_card_intake_v0",
-    reportId,
-    certId: optionalString(label.certId),
-    finalGrade,
-    label,
-    actorAudit: input.actorAudit ?? null,
-  };
+  return db.$transaction(async (tx: any) => {
+    const owner = await resolveInventoryReadyOwner(tx, input.env ?? process.env);
+    const now = new Date();
+    const classification = classificationFromIdentity(input.identity);
+    const title = identityTitle(input.identity) || stringValue(input.reportBundle.cardIdentity?.title, `AI Grader ${reportId}`);
+    const set = identitySet(input.identity);
+    const category = collectibleCategoryFromIdentity(input.identity);
+    const finalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
+    const label = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
+    const finalOverallGrade = firstNumber(finalGrade.overall, (input.reportBundle as JsonRecord).finalOverallGrade);
+    const labelGrade = optionalString(label.labelGradeText) ?? (finalOverallGrade != null ? finalOverallGrade.toFixed(1) : null);
+    const gradeJson = {
+      source: "ai_grader_new_card_intake_v0",
+      reportId,
+      certId: optionalString(label.certId),
+      finalGrade,
+      label,
+      actorAudit: input.actorAudit ?? null,
+    };
 
-  const batch = await db.cardBatch.create({
-    data: {
-      label: `AI Grader ${optionalString(label.certId) ?? reportId}`,
-      notes: `Created from AI Grader report ${reportId}`,
-      uploadedById: input.operatorUserId,
-      totalCount: 1,
-      processedCount: 1,
-      status: "READY",
-      stage: "INVENTORY_READY",
-      tags: ["ai-grader", "new-card-intake"],
-      stageChangedAt: now,
-    },
-  });
-
-  const card = await db.cardAsset.create({
-    data: {
-      batchId: batch.id,
-      storageKey: primary.storageKey,
-      fileName: fileNameFromStorageKey(primary.storageKey, "ai-grader-report-image"),
-      fileSize: primary.byteSize,
-      mimeType: primary.contentType,
-      imageUrl: publicImageUrl,
-      thumbnailUrl: publicImageUrl,
-      cdnHdUrl: publicImageUrl,
-      cdnThumbUrl: publicImageUrl,
-      status: CardAssetStatus.READY,
-      classificationJson: jsonInput(classification),
-      classificationSourcesJson: jsonInput({
-        source: "ai_grader_confirmed_identity",
-        reportId,
-        confirmedAt: now.toISOString(),
-      }),
-      customTitle: title,
-      resolvedPlayerName: input.identity.playerName ?? input.identity.cardName ?? null,
-      resolvedTeamName: input.identity.teamName ?? null,
-      aiGradingJson: jsonInput(gradeJson),
-      aiGradeFinal: finalOverallGrade,
-      aiGradeLabel: labelGrade,
-      aiGradeGeneratedAt: now,
-      reviewStage: CardReviewStage.REVIEW_COMPLETE,
-      reviewStageUpdatedAt: now,
-      category: category ?? undefined,
-      subCategory: input.identity.sport ?? input.identity.game ?? null,
-    },
-  });
-
-  const seenPhotoKinds = new Set<string>();
-  for (const artifact of reportImageArtifacts(input.storagePlan)) {
-    const kind = photoKindForArtifact(artifact);
-    const imageUrl = firstArtifactUrl(input.storagePlan, artifact);
-    if (!kind || !imageUrl || seenPhotoKinds.has(kind)) continue;
-    seenPhotoKinds.add(kind);
-    await db.cardPhoto.create({
+    const batch = await tx.cardBatch.create({
       data: {
-        cardAssetId: card.id,
-        kind,
-        storageKey: artifact.storageKey,
-        fileName: fileNameFromStorageKey(artifact.storageKey, `${kind.toLowerCase()}-ai-grader-report-image`),
-        fileSize: artifact.byteSize,
-        mimeType: artifact.contentType,
-        imageUrl,
-        thumbnailUrl: imageUrl,
-        cdnHdUrl: imageUrl,
-        cdnThumbUrl: imageUrl,
-        createdById: input.operatorUserId,
+        label: `AI Grader ${optionalString(label.certId) ?? reportId}`,
+        notes: `Created from AI Grader report ${reportId}`,
+        uploadedById: operatorUserId,
+        totalCount: 1,
+        processedCount: 1,
+        status: "READY",
+        stage: "INVENTORY_READY",
+        tags: ["ai-grader", "new-card-intake"],
+        stageChangedAt: now,
       },
     });
-  }
 
-  const inventory = await ensureInventoryReadyArtifacts(card.id, input.operatorUserId);
-  const cardIdentity = cardIdentityResult({
-    cardAssetId: card.id,
-    itemId: inventory.itemId,
-    title,
-    set,
-    identity: input.identity,
-    details: classification,
-    imageUrl: publicImageUrl,
-  });
-  const linkedRelease = linkedProductionRelease(input.productionRelease, card.id, inventory.itemId, cardIdentity);
-  const linkedIdentity = {
-    ...input.identity,
-    ...cardIdentity,
-    source: "card_asset",
-    status: "linked",
-    itemNumberConvention: "Item.number = CardAsset.id",
-  };
+    const card = await tx.cardAsset.create({
+      data: {
+        batchId: batch.id,
+        storageKey: primary.storageKey,
+        fileName: fileNameFromStorageKey(primary.storageKey, "ai-grader-report-image"),
+        fileSize: primary.byteSize,
+        mimeType: primary.contentType,
+        imageUrl: publicImageUrl,
+        thumbnailUrl: publicImageUrl,
+        cdnHdUrl: publicImageUrl,
+        cdnThumbUrl: publicImageUrl,
+        status: CardAssetStatus.READY,
+        classificationJson: jsonInput(classification),
+        classificationSourcesJson: jsonInput({
+          source: "ai_grader_confirmed_identity",
+          reportId,
+          confirmedAt: now.toISOString(),
+        }),
+        customTitle: title,
+        resolvedPlayerName: input.identity.playerName ?? input.identity.cardName ?? null,
+        resolvedTeamName: input.identity.teamName ?? null,
+        aiGradingJson: jsonInput(gradeJson),
+        aiGradeFinal: finalOverallGrade,
+        aiGradeLabel: labelGrade,
+        aiGradeGeneratedAt: now,
+        reviewStage: CardReviewStage.REVIEW_COMPLETE,
+        reviewStageUpdatedAt: now,
+        category: category ?? undefined,
+        subCategory: input.identity.sport ?? input.identity.game ?? null,
+      },
+    });
 
-  await db.aiGraderSession.upsert({
-    where: { gradingSessionId },
-    update: {
-      tenantId: input.tenantId,
-      reportId,
-      operatorUserId: input.operatorUserId,
+    const seenPhotoKinds = new Set<string>();
+    for (const artifact of reportImageArtifacts(input.storagePlan)) {
+      const kind = photoKindForArtifact(artifact);
+      const imageUrl = firstArtifactUrl(input.storagePlan, artifact);
+      if (!kind || !imageUrl || seenPhotoKinds.has(kind)) continue;
+      seenPhotoKinds.add(kind);
+      await tx.cardPhoto.create({
+        data: {
+          cardAssetId: card.id,
+          kind,
+          storageKey: artifact.storageKey,
+          fileName: fileNameFromStorageKey(artifact.storageKey, `${kind.toLowerCase()}-ai-grader-report-image`),
+          fileSize: artifact.byteSize,
+          mimeType: artifact.contentType,
+          imageUrl,
+          thumbnailUrl: imageUrl,
+          cdnHdUrl: imageUrl,
+          cdnThumbUrl: imageUrl,
+          createdById: operatorUserId,
+        },
+      });
+    }
+
+    const inventory = await ensureInventoryReadyArtifactsTx(tx, card.id, operatorUserId, {
+      env: input.env ?? process.env,
+      owner,
+    });
+    const cardIdentity = cardIdentityResult({
       cardAssetId: card.id,
       itemId: inventory.itemId,
-      status: "card_created",
-      cardIdentity: jsonInput(linkedIdentity),
-      updatedAt: now,
-    },
-    create: {
-      tenantId: input.tenantId,
-      gradingSessionId,
-      reportId,
-      operatorUserId: input.operatorUserId,
-      cardAssetId: card.id,
-      itemId: inventory.itemId,
-      status: "card_created",
-      source: "browser_station",
-      cardIdentity: jsonInput(linkedIdentity),
-      createdAt: now,
-      updatedAt: now,
-    },
-  });
-  await db.aiGraderReport.updateMany({
-    where: { reportId },
-    data: {
-      cardAssetId: card.id,
-      itemId: inventory.itemId,
-      updatedAt: now,
-    },
-  });
-
-  return {
-    reportId,
-    cardAssetId: card.id,
-    itemId: inventory.itemId,
-    batchId: batch.id,
-    title,
-    set,
-    publicImageUrl,
-    cardIdentity,
-    productionRelease: linkedRelease,
-    inventoryReady: {
+      title,
+      set,
+      identity: input.identity,
+      details: classification,
+      imageUrl: publicImageUrl,
+    });
+    const linkedRelease = linkedProductionRelease(input.productionRelease, card.id, inventory.itemId, cardIdentity);
+    const linkedIdentity = {
+      ...input.identity,
+      ...cardIdentity,
+      source: "card_asset",
+      status: "linked",
       itemNumberConvention: "Item.number = CardAsset.id",
-      labelPairId: inventory.labelPair?.pairId ?? null,
-    },
-  };
+    };
+
+    await tx.aiGraderSession.upsert({
+      where: { gradingSessionId },
+      update: {
+        tenantId: input.tenantId,
+        reportId,
+        operatorUserId,
+        cardAssetId: card.id,
+        itemId: inventory.itemId,
+        status: "card_created",
+        cardIdentity: jsonInput(linkedIdentity),
+        updatedAt: now,
+      },
+      create: {
+        tenantId: input.tenantId,
+        gradingSessionId,
+        reportId,
+        operatorUserId,
+        cardAssetId: card.id,
+        itemId: inventory.itemId,
+        status: "card_created",
+        source: "browser_station",
+        cardIdentity: jsonInput(linkedIdentity),
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    await tx.aiGraderReport.updateMany({
+      where: { reportId },
+      data: {
+        cardAssetId: card.id,
+        itemId: inventory.itemId,
+        updatedAt: now,
+      },
+    });
+
+    return {
+      reportId,
+      cardAssetId: card.id,
+      itemId: inventory.itemId,
+      batchId: batch.id,
+      title,
+      set,
+      publicImageUrl,
+      cardIdentity,
+      productionRelease: linkedRelease,
+      inventoryReady: {
+        itemNumberConvention: "Item.number = CardAsset.id",
+        labelPairId: inventory.labelPair?.pairId ?? null,
+      },
+    };
+  });
 }
 
 export async function finalizeAiGraderSlabbedPhotoUploadRuntime(input: {
