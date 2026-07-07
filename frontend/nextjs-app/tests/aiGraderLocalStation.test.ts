@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import aiGraderLocalStationHandler from "../pages/api/ai-grader/station/[...action]";
+import { config as aiGraderProductionRouteConfig } from "../pages/api/admin/ai-grader/production/[...action]";
 import {
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
   buildSampleAiGraderReportHistory,
@@ -384,6 +385,10 @@ test("production publication API is disabled by default and does not require DB 
   await handler(mockRequest("POST", ["publish"]), publishRes);
   assert.equal(publishRes.statusCodeValue, 503);
   assert.equal(adminCalled, false);
+});
+
+test("production publication API route accepts large AI Grader publish packages", () => {
+  assert.equal(aiGraderProductionRouteConfig.api.bodyParser.sizeLimit, "300mb");
 });
 
 test("production publication API rejects insufficient evidence reports before upload", async () => {

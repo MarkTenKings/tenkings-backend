@@ -331,6 +331,7 @@ export interface AiGraderLocalStationBridgeManifest {
     unifiedReportDir?: string;
     unifiedReportPath?: string;
     reportBundlePath?: string;
+    publishPackageDir?: string;
     assetManifestPath?: string;
     checksumsPath?: string;
     productionReleasePath?: string;
@@ -1223,6 +1224,24 @@ function extractUnifiedReportPath(payload: any): string | undefined {
 function dirnameIfFile(filePath: string | undefined) {
   if (!filePath) return undefined;
   return path.dirname(filePath);
+}
+
+function safeReportPackageSegment(reportId: string) {
+  const sanitized = reportId.trim().replace(/[^A-Za-z0-9._-]/g, "_");
+  if (!sanitized) throw new Error("AI Grader report ID is required for the publish package directory.");
+  return sanitized;
+}
+
+function reportBundleRootDir(config: AiGraderLocalStationBridgeConfig) {
+  return config.reportBundleOutputDir ?? path.join(config.outputDir, "report-bundles");
+}
+
+function publishPackageDir(config: AiGraderLocalStationBridgeConfig, reportId: string) {
+  return path.join(reportBundleRootDir(config), safeReportPackageSegment(reportId));
+}
+
+function publishPackagePath(config: AiGraderLocalStationBridgeConfig, reportId: string, fileName: string) {
+  return path.join(publishPackageDir(config, reportId), fileName);
 }
 
 function commandInput(config: AiGraderLocalStationBridgeConfig, manifest: AiGraderLocalStationBridgeManifest): AiGraderStationRealWorkflowInput {
@@ -2869,18 +2888,28 @@ export class AiGraderLocalStationBridgeService {
   ): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
     const expectedReportId = reportId?.trim() || this.manifest.reportId;
     if (!expectedReportId) throw new Error("No AI Grader report ID is available yet.");
+    const packageDir = publishPackageDir(this.config, expectedReportId);
+    const canonicalBundlePath = publishPackagePath(this.config, expectedReportId, "report-bundle.json");
+    const canonicalProductionReleasePath = publishPackagePath(this.config, expectedReportId, "production-release.json");
     if (options.includeAssetBodies) {
       const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
       if (reportDir && this.manifest.reportId === expectedReportId) {
         const bundle = await buildAiGraderReportBundle({
           reportDir,
-          outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+          outputDir: packageDir,
           reportId: expectedReportId,
           publicBasePath: this.config.publicBasePath,
           includeAssetBodies: true,
         });
         return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, this.manifest.productionRelease), source: "active_manifest_generated_with_asset_bodies" };
       }
+    }
+    const canonicalBundle = await readBundleFromPath(canonicalBundlePath);
+    if (canonicalBundle?.reportId === expectedReportId) {
+      const productionRelease = await readProductionReleaseFromPath(canonicalProductionReleasePath)
+        ?? this.manifest.productionRelease
+        ?? await readProductionReleaseFromPath(this.manifest.outputs.productionReleasePath);
+      return { reportId: expectedReportId, bundle: bundleWithProductionRelease(canonicalBundle, productionRelease), source: "canonical_publish_package" };
     }
     if (this.manifest.reportBundle?.reportId === expectedReportId) {
       return { reportId: expectedReportId, bundle: bundleWithProductionRelease(this.manifest.reportBundle, this.manifest.productionRelease), source: "active_manifest_memory" };
@@ -2898,7 +2927,7 @@ export class AiGraderLocalStationBridgeService {
     if (reportDir && this.manifest.reportId === expectedReportId) {
       const bundle = await buildAiGraderReportBundle({
         reportDir,
-        outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+        outputDir: packageDir,
         reportId: expectedReportId,
         publicBasePath: this.config.publicBasePath,
       });
@@ -2912,7 +2941,7 @@ export class AiGraderLocalStationBridgeService {
       if (options.includeAssetBodies && reportDirFromHtml) {
         const generated = await buildAiGraderReportBundle({
           reportDir: reportDirFromHtml,
-          outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+          outputDir: publishPackageDir(this.config, expectedReportId),
           reportId: expectedReportId,
           publicBasePath: this.config.publicBasePath,
           includeAssetBodies: true,
@@ -2928,7 +2957,7 @@ export class AiGraderLocalStationBridgeService {
       if (reportDirFromHtml) {
         const generated = await buildAiGraderReportBundle({
           reportDir: reportDirFromHtml,
-          outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+          outputDir: publishPackageDir(this.config, expectedReportId),
           reportId: expectedReportId,
           publicBasePath: this.config.publicBasePath,
         });
@@ -2958,7 +2987,7 @@ export class AiGraderLocalStationBridgeService {
     if (!this.manifest.outputs.reportBundlePath) {
       throw new Error("Production release requires an exported report-bundle.json.");
     }
-    const outputDir = path.join(this.config.outputDir, "production-releases", reportId);
+    const outputDir = publishPackageDir(this.config, reportId);
     const result = await writeAiGraderProductionRelease({
       reportBundlePath: this.manifest.outputs.reportBundlePath,
       outputDir,
@@ -2972,6 +3001,7 @@ export class AiGraderLocalStationBridgeService {
     this.manifest.outputs.labelDataPath = result.labelDataPath;
     this.manifest.outputs.publicationManifestPath = result.publicationManifestPath;
     this.manifest.outputs.integrationContractPath = result.integrationContractPath;
+    this.manifest.outputs.publishPackageDir = result.outputDir;
     this.manifest.productionRelease = result.productionRelease;
     this.manifest.safety.finalGradeComputed = result.productionRelease.finalGradeComputed;
     this.manifest.safety.labelGenerated = result.productionRelease.labelDataGenerated;
@@ -3033,14 +3063,23 @@ export class AiGraderLocalStationBridgeService {
       if (!(await exists(stationManifestPath))) continue;
       const stationManifest = await readJsonFile(stationManifestPath) as AiGraderLocalStationBridgeManifest | undefined;
       if (!stationManifest?.reportId) continue;
-      const bundle = await readBundleFromPath(stationManifest.outputs?.reportBundlePath);
-      const productionRelease = await readProductionReleaseFromPath(stationManifest.outputs?.productionReleasePath);
+      const canonicalBundlePath = publishPackagePath(this.config, stationManifest.reportId, "report-bundle.json");
+      const canonicalProductionReleasePath = publishPackagePath(this.config, stationManifest.reportId, "production-release.json");
+      const canonicalBundle = await readBundleFromPath(canonicalBundlePath);
+      const bundleFromManifestPath = await readBundleFromPath(stationManifest.outputs?.reportBundlePath);
+      const bundle = canonicalBundle?.reportId === stationManifest.reportId
+        ? canonicalBundle
+        : bundleFromManifestPath?.reportId === stationManifest.reportId
+          ? bundleFromManifestPath
+          : undefined;
+      const productionRelease = await readProductionReleaseFromPath(canonicalProductionReleasePath)
+        ?? await readProductionReleaseFromPath(stationManifest.outputs?.productionReleasePath);
       if (bundle) {
         items.push(historyItemFromBundle({
           bundle,
           productionRelease,
-          reportBundlePath: stationManifest.outputs.reportBundlePath,
-          productionReleasePath: stationManifest.outputs.productionReleasePath,
+          reportBundlePath: canonicalBundle?.reportId === stationManifest.reportId ? canonicalBundlePath : stationManifest.outputs.reportBundlePath,
+          productionReleasePath: productionRelease ? (await exists(canonicalProductionReleasePath) ? canonicalProductionReleasePath : stationManifest.outputs.productionReleasePath) : stationManifest.outputs.productionReleasePath,
           sessionDir,
         }));
         continue;
@@ -3050,7 +3089,7 @@ export class AiGraderLocalStationBridgeService {
         try {
           const generated = await buildAiGraderReportBundle({
             reportDir,
-            outputDir: this.config.reportBundleOutputDir ?? this.config.outputDir,
+            outputDir: publishPackageDir(this.config, stationManifest.reportId),
             reportId: stationManifest.reportId,
             publicBasePath: this.config.publicBasePath,
           });
@@ -3278,7 +3317,7 @@ export class AiGraderLocalStationBridgeService {
     if (action === "export-report-bundle") {
       const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
       if (!reportDir) throw new Error("Report bundle export requires a generated unified report folder.");
-      const outputDir = this.config.reportBundleOutputDir ?? path.join(this.config.outputDir, "report-bundles", this.manifest.reportId ?? "local-report");
+      const outputDir = publishPackageDir(this.config, this.manifest.reportId ?? "local-report");
       const bundle = await writeAiGraderReportBundle({
         reportDir,
         outputDir,
@@ -3286,6 +3325,7 @@ export class AiGraderLocalStationBridgeService {
         publicBasePath: this.config.publicBasePath,
       });
       this.manifest.outputs.reportBundlePath = bundle.bundlePath;
+      this.manifest.outputs.publishPackageDir = bundle.outputDir;
       this.manifest.outputs.assetManifestPath = bundle.assetManifestPath;
       this.manifest.outputs.checksumsPath = bundle.checksumsPath;
       this.manifest.reportBundle = bundle.bundle;

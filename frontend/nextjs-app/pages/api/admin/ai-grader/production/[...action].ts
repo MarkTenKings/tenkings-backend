@@ -12,6 +12,14 @@ import {
   uploadAiGraderSlabbedPhotoRuntime,
 } from "../../../../../lib/server/aiGraderProductionApi";
 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "300mb",
+    },
+  },
+};
+
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const runtime = createAiGraderProductionApiHandler({
     requireAdminSession,

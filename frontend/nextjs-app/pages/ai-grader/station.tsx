@@ -958,6 +958,10 @@ export default function AiGraderStationPage() {
       if (!readiness.ready) {
         throw new Error(readiness.message);
       }
+      const imageBodyCount = reportImageAssets(reportBundle, { allowEmbeddedBodies: true }).filter((asset) => asset.renderSource === "embedded_body").length;
+      if (imageBodyCount < 1) {
+        throw new Error("Publish package is missing local image bodies. Reopen the local report or reconnect the bridge so the station can fetch includeAssetBodies=1 before publishing.");
+      }
       const response = await fetch("/api/admin/ai-grader/production/publish", {
         method: "POST",
         headers: await productionAuthHeaders({ "content-type": "application/json" }),
@@ -969,11 +973,17 @@ export default function AiGraderStationPage() {
           itemId: selectedCard?.itemId ?? reportBundle.cardIdentity.itemId,
         }),
       });
-      const payload = await response.json().catch(() => ({}));
+      const responseText = await response.text();
+      let payload: any = {};
+      try {
+        payload = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        payload = {};
+      }
       if (!response.ok || payload.ok !== true) {
         setProductionPublish({
           status: payload.code === "AI_GRADER_PRODUCTION_PUBLISH_DISABLED" ? "disabled" : "error",
-          message: payload.message ?? "Ten Kings publish failed.",
+          message: payload.message ?? (responseText.slice(0, 240) || `Ten Kings publish failed with HTTP ${response.status}.`),
         });
         return;
       }

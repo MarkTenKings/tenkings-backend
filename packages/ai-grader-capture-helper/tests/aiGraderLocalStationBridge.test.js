@@ -495,7 +495,8 @@ test("real station command plan still uses full forensic front/back evidence pac
 });
 
 test("mock station bridge runs staged workflow without claiming hardware", async () => {
-  const service = new AiGraderLocalStationBridgeService(mockConfig());
+  const bundleRoot = outputDir(`canonical-report-bundles-${Date.now()}`);
+  const service = new AiGraderLocalStationBridgeService(mockConfig({ reportBundleOutputDir: bundleRoot }));
 
   let status = service.status();
   assert.equal(status.bridgeVersion, AI_GRADER_LOCAL_STATION_BRIDGE_VERSION);
@@ -577,6 +578,14 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(history.stats.allTime >= 1, true);
   status = await service.action("export-report-bundle");
   assert.ok(status.outputs.reportBundlePath);
+  const reportId = status.latestReport.reportId;
+  const publishPackageDir = path.join(bundleRoot, reportId);
+  assert.equal(status.outputs.publishPackageDir, publishPackageDir);
+  assert.equal(status.outputs.reportBundlePath, path.join(publishPackageDir, "report-bundle.json"));
+  assert.equal(status.outputs.assetManifestPath, path.join(publishPackageDir, "asset-manifest.json"));
+  assert.equal(status.outputs.checksumsPath, path.join(publishPackageDir, "checksums.json"));
+  assert.equal(fs.existsSync(status.outputs.reportBundlePath), true);
+  assert.equal(fs.existsSync(path.join(bundleRoot, "report-bundle.json")), false);
   assert.equal(status.safety.finalGradeComputed, false);
   assert.equal(status.safety.certifiedClaim, false);
   status = await service.action("calculate-final-grade", {
@@ -586,6 +595,15 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   });
   assert.ok(status.outputs.productionReleasePath);
   assert.ok(status.outputs.labelDataPath);
+  assert.equal(path.dirname(status.outputs.productionReleasePath), publishPackageDir);
+  assert.equal(status.outputs.labelDataPath, path.join(publishPackageDir, "label-data.json"));
+  assert.equal(fs.existsSync(path.join(publishPackageDir, "production-release.json")), true);
+  assert.equal(fs.existsSync(path.join(publishPackageDir, "label-data.json")), true);
+  const canonicalResolved = await service.reportBundle(reportId);
+  assert.equal(canonicalResolved.source, "canonical_publish_package");
+  assert.equal(canonicalResolved.bundle.reportId, reportId);
+  assert.equal(canonicalResolved.bundle.productionRelease?.reportId, reportId);
+  assert.ok(canonicalResolved.bundle.productionRelease?.label?.status);
   assert.equal(status.safety.certifiedClaim, false);
   assert.equal(status.safety.certificateGenerated, false);
   const release = JSON.parse(fs.readFileSync(status.outputs.productionReleasePath, "utf8"));
