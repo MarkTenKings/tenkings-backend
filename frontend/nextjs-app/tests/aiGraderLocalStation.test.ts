@@ -1986,6 +1986,12 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("Production sign-in verified as"), true);
   assert.equal(stationSource.includes("productionAuthState.status === \"completed\""), true);
   assert.equal(stationSource.includes("const productionSignedIn = Boolean(session?.token);"), false);
+  assert.equal(stationSource.includes("statusCode !== 401"), true);
+  assert.equal(stationSource.includes("ensureSession({"), true);
+  assert.equal(stationSource.includes("force: true"), true);
+  assert.equal(stationSource.includes("Your saved sign-in expired"), true);
+  assert.equal(stationSource.includes("You are signed in, but not authorized for AI Grader"), true);
+  assert.equal(stationSource.includes("AI Grader operator role required. Sign in with an AI Grader operator/admin account."), false);
   assert.equal(stationSource.includes("Sign In + Create Card"), true);
   assert.equal(stationSource.includes("Production sign-in is required before the CardAsset/Item can be created."), true);
   assert.equal(stationSource.includes("Mark Label Printed"), true);
@@ -2001,6 +2007,19 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("Calculate Final Grade\""), false);
   assert.equal(stationSource.includes("Finalize / Publish"), false);
   assert.equal(stationSource.includes("Publish to Ten Kings System"), false);
+});
+
+test("shared session provider exposes a force sign-in path for stale cached sessions", () => {
+  const sessionPath =
+    [path.join(process.cwd(), "hooks", "useSession.tsx"), path.join(process.cwd(), "frontend", "nextjs-app", "hooks", "useSession.tsx")]
+      .find((candidate) => fs.existsSync(candidate));
+  assert.ok(sessionPath);
+  const sessionSource = fs.readFileSync(sessionPath, "utf8");
+  assert.equal(sessionSource.includes("ensureSession: (options?: { force?: boolean"), true);
+  assert.equal(sessionSource.includes("const openAuthModal"), true);
+  assert.equal(sessionSource.includes("if (options.force)"), true);
+  assert.equal(sessionSource.includes("clearSession();"), true);
+  assert.equal(sessionSource.includes("open: true"), true);
 });
 
 test("AI Grader public report source renders provisional evidence gates", () => {

@@ -1,6 +1,6 @@
 import Head from "next/head";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSession } from "../../hooks/useSession";
+import { useSession, type SessionPayload } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   AI_GRADER_STATION_STEPS,
@@ -851,14 +851,62 @@ export default function AiGraderStationPage() {
     };
   };
 
-  const requireProductionSession = async (actionLabel: string) => {
+  const authStatusCode = (error: unknown) =>
+    typeof (error as { statusCode?: unknown })?.statusCode === "number" ? (error as { statusCode: number }).statusCode : null;
+
+  const authFailureMessage = (error: unknown, actionLabel: string) => {
+    const rawMessage =
+      error instanceof Error && error.message !== "Authentication cancelled"
+        ? error.message
+        : `Sign in is required to ${actionLabel}.`;
+    if (rawMessage === "AI Grader operator role required") {
+      return "You are signed in, but not authorized for AI Grader. Use an AI Grader operator/admin account.";
+    }
+    return rawMessage;
+  };
+
+  const setProductionAuthFailure = (error: unknown, actionLabel: string): never => {
+    const message = authFailureMessage(error, actionLabel);
+    setProductionAuthActor(null);
+    setProductionAuthState({
+      status: "failed",
+      message,
+    });
+    throw new Error(message);
+  };
+
+  const requireProductionSession = async (actionLabel: string): Promise<SessionPayload> => {
     setProductionAuthState({
       status: "pending",
       message: `Verifying Ten Kings production access to ${actionLabel}.`,
     });
     try {
       const activeSession = await ensureSession();
-      const actor = await verifyProductionSession(activeSession.token);
+      let actor: ProductionAuthActor;
+      try {
+        actor = await verifyProductionSession(activeSession.token);
+      } catch (authError) {
+        const statusCode = authStatusCode(authError);
+        if (statusCode !== 401) {
+          setProductionAuthFailure(authError, actionLabel);
+        }
+        setProductionAuthActor(null);
+        setProductionAuthState({
+          status: "pending",
+          message: "Your saved Ten Kings sign-in expired. Sign in again to continue.",
+        });
+        const freshSession = await ensureSession({
+          force: true,
+          message: "Your saved sign-in expired. Enter your mobile number to continue.",
+        });
+        actor = await verifyProductionSession(freshSession.token);
+        setProductionAuthActor(actor);
+        setProductionAuthState({
+          status: "completed",
+          message: `Production sign-in verified as ${actor.displayName} (${actor.role}).`,
+        });
+        return freshSession;
+      }
       setProductionAuthActor(actor);
       setProductionAuthState({
         status: "completed",
@@ -866,26 +914,10 @@ export default function AiGraderStationPage() {
       });
       return activeSession;
     } catch (requestError) {
-      const statusCode = typeof (requestError as { statusCode?: unknown })?.statusCode === "number"
-        ? (requestError as { statusCode: number }).statusCode
-        : null;
-      if (statusCode === 401 || statusCode === 403) {
+      if (authStatusCode(requestError) === 401) {
         logout();
       }
-      const rawMessage =
-        requestError instanceof Error && requestError.message !== "Authentication cancelled"
-          ? requestError.message
-          : `Sign in is required to ${actionLabel}.`;
-      const message =
-        rawMessage === "AI Grader operator role required"
-          ? "AI Grader operator role required. Sign in with an AI Grader operator/admin account."
-          : rawMessage;
-      setProductionAuthActor(null);
-      setProductionAuthState({
-        status: "failed",
-        message,
-      });
-      throw new Error(message);
+      return setProductionAuthFailure(requestError, actionLabel);
     }
   };
 

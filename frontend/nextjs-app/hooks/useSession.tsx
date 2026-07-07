@@ -20,7 +20,7 @@ export interface SessionPayload {
 interface SessionContextValue {
   session: SessionPayload | null;
   loading: boolean;
-  ensureSession: () => Promise<SessionPayload>;
+  ensureSession: (options?: { force?: boolean; message?: string | null }) => Promise<SessionPayload>;
   logout: () => void;
   updateWalletBalance: (balance: number) => void;
   updateProfile: (changes: { displayName?: string | null; avatarUrl?: string | null }) => void;
@@ -347,17 +347,33 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, [session?.user.id, session?.wallet.balance, tryHydrateWallet]);
 
-  const ensureSession = () => {
-    if (session) {
+  const openAuthModal = (message?: string | null) => {
+    if (resolverRef.current) {
+      resolverRef.current.reject(new Error("Authentication restarted"));
+      resolverRef.current = null;
+    }
+    setAuthState({
+      ...initialAuthState,
+      open: true,
+      step: "phone",
+      message: message ?? null,
+    });
+    return new Promise<SessionPayload>((resolve, reject) => {
+      resolverRef.current = { resolve, reject };
+    });
+  };
+
+  const ensureSession = (options: { force?: boolean; message?: string | null } = {}) => {
+    if (!options.force && session) {
       if (!profileRefreshRef.current) {
         refreshProfile().catch(() => undefined);
       }
       return Promise.resolve(session);
     }
-    setAuthState((prev) => ({ ...prev, open: true, step: "phone", error: null, message: null }));
-    return new Promise<SessionPayload>((resolve, reject) => {
-      resolverRef.current = { resolve, reject };
-    });
+    if (options.force) {
+      clearSession();
+    }
+    return openAuthModal(options.message);
   };
 
   const handleCloseModal = () => {
