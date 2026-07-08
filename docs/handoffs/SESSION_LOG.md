@@ -1,5 +1,34 @@
 # Session Log (Append Only)
 
+## 2026-07-08 - AI Grader live preview guide 0.97 sizing pass
+
+### Branch And HEAD
+- Branch at edit time: `fix/ai-grader-preview-guide-097`.
+- Starting point: `main` after PR #76, commit `2c756d5fc719477c340ee59fae9f9b6710030dd4`.
+
+### Change Summary
+- Increased the AI Grader Basler live preview report-style card guide height ratio from `0.92` to `0.97`.
+- Preserved the existing `2.5 / 3.5` card aspect ratio.
+- Preserved the existing contained-image-frame alignment path so the guide remains positioned against the actual `object-fit: contain` preview image bounds.
+- Kept the change UI-only. Raw capture, report generation, production publication, storage/auth, bridge pairing, and hardware commands were not changed.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `67` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist/baseline-browser-mapping, and Tailwind glob warnings.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+
+### Planned Production Action
+- Mark approved merging/deploying this guide sizing adjustment to production after validation.
+- Plan: push a branch, open a PR to `main`, merge after checks are clean, then wait for GitHub main CI and Vercel production deployment before live route verification.
+
+### Planned Production Guardrails
+- No hardware capture.
+- No migrations.
+- No env var changes.
+- No credential rotation or secret printing.
+- No destructive operations.
+- No shell-initiated production publish.
+
 ## 2026-07-08 - AI Grader Dell preview overlay and report UI polish
 
 ### Branch And HEAD

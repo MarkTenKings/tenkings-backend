@@ -2683,7 +2683,7 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("Production sign-in is required before the CardAsset/Item can be created."), true);
   assert.equal(stationSource.includes("guide-card"), false);
   assert.equal(stationSource.includes("crosshair horizontal"), false);
-  assert.equal(stationSource.includes("REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.92"), true);
+  assert.equal(stationSource.includes("REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.97"), true);
   assert.equal(stationSource.includes("REPORT_OVERLAY_CARD_ASPECT_RATIO = 2.5 / 3.5"), true);
   assert.equal(stationSource.includes("report-framing-overlay"), true);
   assert.equal(stationSource.includes("reportOverlayTemplateRect"), true);
