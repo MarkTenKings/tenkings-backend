@@ -26,6 +26,7 @@ import {
   AI_GRADER_EBAY_COMPS_ENABLED_ENV,
   AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
   AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV,
+  buildAiGraderFinishCardsQueueResult,
   buildAiGraderProductionHistoryResult,
   createAiGraderProductionApiHandler,
   createAiGraderCardFromReportRuntime,
@@ -1342,6 +1343,217 @@ test("production history API returns persisted report stats when env-gated", asy
   assert.equal(body.result.stats.warningCount, 1);
 });
 
+test("Finish Cards queue derives persisted finishing status and deterministic publish order", () => {
+  const queue = buildAiGraderFinishCardsQueueResult([
+    {
+      reportId: "report-needs-inventory",
+      finalOverallGrade: 8,
+      cardAssetId: "card-3",
+      itemId: "item-3",
+      publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/report-needs-inventory",
+      publishedAt: new Date("2026-07-08T12:03:00.000Z"),
+      labels: [{ certId: "TK-AIG-3", labelPreviewUrl: "https://collect.tenkings.co/ai-grader/labels/report-needs-inventory", physicalPrintStatus: "printed" }],
+      evidenceAssets: [
+        { side: "front", storageKey: "front.png", publicUrl: "https://cdn.tenkings.test/front.png", byteSize: 10 },
+        { side: "back", storageKey: "back.png", publicUrl: "https://cdn.tenkings.test/back.png", byteSize: 11 },
+      ],
+      valuations: [{ status: "completed", valuationMinor: 10000, valuationCurrency: "USD" }],
+      cardAsset: { id: "card-3", reviewStage: "REVIEW_COMPLETE", customTitle: "1996 Fleer Michael Jordan" },
+      item: { id: "item-3", name: "Michael Jordan", set: "1996 Fleer", number: "23" },
+    },
+    {
+      reportId: "report-needs-slab",
+      finalOverallGrade: 8.5,
+      cardAssetId: "card-1",
+      itemId: "item-1",
+      publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/report-needs-slab",
+      publishedAt: new Date("2026-07-08T12:01:00.000Z"),
+      labels: [{ certId: "TK-AIG-1", physicalPrintStatus: "printed" }],
+      evidenceAssets: [{ side: "front", storageKey: "front.png", publicUrl: "https://cdn.tenkings.test/front.png", byteSize: 10 }],
+      valuations: [],
+      cardAsset: { id: "card-1", reviewStage: "REVIEW_COMPLETE", customTitle: "2026 Topps Chrome Victor Wembanyama" },
+    },
+    {
+      reportId: "report-complete",
+      finalOverallGrade: 9,
+      cardAssetId: "card-4",
+      itemId: "item-4",
+      publishedAt: new Date("2026-07-08T12:04:00.000Z"),
+      labels: [{ certId: "TK-AIG-4", physicalPrintStatus: "printed" }],
+      evidenceAssets: [
+        { side: "front", storageKey: "front.png", publicUrl: "https://cdn.tenkings.test/front.png", byteSize: 10 },
+        { side: "back", storageKey: "back.png", publicUrl: "https://cdn.tenkings.test/back.png", byteSize: 11 },
+      ],
+      valuations: [{ status: "completed", valuationMinor: 12000, valuationCurrency: "USD" }],
+      cardAsset: { id: "card-4", reviewStage: "INVENTORY_READY_FOR_SALE", customTitle: "Complete Card" },
+    },
+    {
+      reportId: "report-needs-ebay",
+      finalOverallGrade: 9,
+      cardAssetId: "card-2",
+      itemId: "item-2",
+      publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/report-needs-ebay",
+      publishedAt: new Date("2026-07-08T12:02:00.000Z"),
+      labels: [{ certId: "TK-AIG-2", physicalPrintStatus: "printed" }],
+      evidenceAssets: [
+        { side: "front", storageKey: "front.png", publicUrl: "https://cdn.tenkings.test/front.png", byteSize: 10 },
+        { side: "back", storageKey: "back.png", publicUrl: "https://cdn.tenkings.test/back.png", byteSize: 11 },
+      ],
+      valuations: [{ status: "ready", valuationMinor: null, valuationCurrency: "USD" }],
+      cardAsset: { id: "card-2", reviewStage: "REVIEW_COMPLETE", customTitle: "2024 Panini Prizm Caitlin Clark" },
+    },
+  ]);
+
+  assert.deepEqual(queue.items.map((item) => item.reportId), [
+    "report-needs-slab",
+    "report-needs-ebay",
+    "report-needs-inventory",
+  ]);
+  assert.equal(queue.items[0].statusText, "Needs Slab Photos");
+  assert.equal(queue.items[0].slabPhotos.frontUploaded, true);
+  assert.equal(queue.items[0].slabPhotos.backUploaded, false);
+  assert.equal(queue.items[1].statusText, "Needs eBay Evaluate");
+  assert.equal(queue.items[1].slabPhotos.complete, true);
+  assert.equal(queue.items[1].valuation.complete, false);
+  assert.equal(queue.items[2].statusText, "Needs Inventory");
+  assert.equal(queue.items[2].valuation.complete, true);
+  assert.equal(queue.items[2].inventory.canAddToInventory, true);
+  assert.equal(queue.items.some((item) => item.reportId === "report-complete"), false);
+  assert.equal(queue.stats.total, 3);
+  assert.equal(queue.stats.needsSlabPhotos, 1);
+  assert.equal(queue.stats.needsEbayEvaluate, 1);
+  assert.equal(queue.stats.needsInventory, 1);
+  assert.equal(queue.stats.complete, 1);
+});
+
+test("Finish Cards queue applies active limit after excluding completed cards", () => {
+  const completedRows = Array.from({ length: 120 }, (_, index) => ({
+    reportId: `report-complete-${index + 1}`,
+    finalOverallGrade: 9,
+    cardAssetId: `complete-card-${index + 1}`,
+    itemId: `complete-item-${index + 1}`,
+    publishedAt: new Date(Date.UTC(2026, 6, 8, 10, index)).toISOString(),
+    labels: [{ certId: `TK-AIG-C-${index + 1}`, physicalPrintStatus: "printed" }],
+    evidenceAssets: [
+      { side: "front", storageKey: "front.png", publicUrl: "https://cdn.tenkings.test/front.png", byteSize: 10 },
+      { side: "back", storageKey: "back.png", publicUrl: "https://cdn.tenkings.test/back.png", byteSize: 11 },
+    ],
+    valuations: [{ status: "completed", valuationMinor: 12000, valuationCurrency: "USD" }],
+    cardAsset: { id: `complete-card-${index + 1}`, reviewStage: "INVENTORY_READY_FOR_SALE", customTitle: `Complete Card ${index + 1}` },
+    session: { status: "inventory_ready" },
+  }));
+  const queue = buildAiGraderFinishCardsQueueResult(
+    [
+      ...completedRows,
+      {
+        reportId: "report-waiting",
+        finalOverallGrade: 8.5,
+        cardAssetId: "card-waiting",
+        itemId: "item-waiting",
+        publishedAt: new Date("2026-07-08T13:00:00.000Z"),
+        labels: [{ certId: "TK-AIG-W", physicalPrintStatus: "printed" }],
+        evidenceAssets: [],
+        valuations: [],
+        cardAsset: { id: "card-waiting", reviewStage: "REVIEW_COMPLETE", customTitle: "Waiting Card" },
+        session: { status: "published" },
+      },
+    ],
+    { activeLimit: 1 }
+  );
+
+  assert.deepEqual(queue.items.map((item) => item.reportId), ["report-waiting"]);
+  assert.equal(queue.items[0].statusText, "Needs Slab Photos");
+  assert.equal(queue.stats.total, 1);
+  assert.equal(queue.stats.complete, 120);
+});
+
+test("Finish Cards queue requires positive completed valuation before inventory readiness", () => {
+  const baseRow = {
+    finalOverallGrade: 9,
+    cardAssetId: "card-valuation",
+    itemId: "item-valuation",
+    publishedAt: new Date("2026-07-08T12:10:00.000Z"),
+    labels: [{ certId: "TK-AIG-V", physicalPrintStatus: "printed" }],
+    evidenceAssets: [
+      { side: "front", storageKey: "front.png", publicUrl: "https://cdn.tenkings.test/front.png", byteSize: 10 },
+      { side: "back", storageKey: "back.png", publicUrl: "https://cdn.tenkings.test/back.png", byteSize: 11 },
+    ],
+    cardAsset: { id: "card-valuation", reviewStage: "REVIEW_COMPLETE", customTitle: "Valuation Gate Card" },
+  };
+  const queue = buildAiGraderFinishCardsQueueResult([
+    {
+      ...baseRow,
+      reportId: "report-null-valuation",
+      valuations: [{ status: "completed", valuationMinor: null, valuationCurrency: "USD" }],
+    },
+    {
+      ...baseRow,
+      reportId: "report-zero-valuation",
+      cardAssetId: "card-valuation-zero",
+      itemId: "item-valuation-zero",
+      valuations: [{ status: "completed", valuationMinor: 0, valuationCurrency: "USD" }],
+    },
+  ]);
+
+  assert.deepEqual(queue.items.map((item) => item.reportId), ["report-null-valuation", "report-zero-valuation"]);
+  assert.equal(queue.items[0].statusText, "Needs eBay Evaluate");
+  assert.equal(queue.items[0].valuation.complete, false);
+  assert.equal(queue.items[0].inventory.canAddToInventory, false);
+  assert.equal(queue.items[1].statusText, "Needs eBay Evaluate");
+  assert.equal(queue.items[1].valuation.complete, false);
+  assert.equal(queue.items[1].inventory.canAddToInventory, false);
+  assert.equal(queue.stats.needsEbayEvaluate, 2);
+  assert.equal(queue.stats.needsInventory, 0);
+});
+
+test("Finish Cards queue API is history-scoped and returns persisted queue data", async () => {
+  let finishQueueCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+    },
+    async requireAdminSession() {
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async presignUpload() {
+      throw new Error("finish queue should not upload");
+    },
+    async persist() {
+      throw new Error("finish queue should not persist");
+    },
+    async listFinishQueue() {
+      finishQueueCalled = true;
+      return buildAiGraderFinishCardsQueueResult([
+        {
+          reportId: "finish-report-1",
+          finalOverallGrade: 8.5,
+          cardAssetId: "card-1",
+          itemId: "item-1",
+          publishedAt: new Date("2026-07-08T12:00:00.000Z"),
+          labels: [{ certId: "TK-AIG-1", physicalPrintStatus: "printed" }],
+          evidenceAssets: [],
+          valuations: [],
+          cardAsset: { id: "card-1", reviewStage: "REVIEW_COMPLETE", customTitle: "Finish Queue Card" },
+        },
+      ]);
+    },
+  });
+
+  const res = mockResponse();
+  await handler(mockRequest("GET", ["finish-queue"]), res);
+
+  assert.equal(res.statusCodeValue, 200);
+  const body = res.jsonBody as { ok: boolean; operation: string; result: { items: Array<{ reportId: string; statusText: string }> } };
+  assert.equal(body.ok, true);
+  assert.equal(body.operation, "aiGraderFinishCardsQueue");
+  assert.equal(body.result.items[0].reportId, "finish-report-1");
+  assert.equal(body.result.items[0].statusText, "Needs Slab Photos");
+  assert.equal(finishQueueCalled, true);
+});
+
 test("production card search is admin-gated and returns existing card/item candidates", async () => {
   let adminCalled = false;
   const handler = createAiGraderProductionApiHandler({
@@ -2481,6 +2693,21 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("Mark Label Printed"), true);
   assert.equal(stationSource.includes("Save Selected Comps"), true);
   assert.equal(stationSource.includes("Add To Inventory"), true);
+  assert.equal(stationSource.includes("Finish Cards"), true);
+  assert.equal(stationSource.includes("Finish This Card"), true);
+  assert.equal(stationSource.includes("Start Next Grade"), true);
+  assert.equal(stationSource.includes("/api/admin/ai-grader/production/finish-queue"), true);
+  assert.equal(stationSource.includes("gradePipelineSteps"), true);
+  assert.equal(stationSource.includes("finishPipelineSteps"), true);
+  assert.equal(stationSource.includes("Upload Slab Photos"), true);
+  assert.equal(stationSource.includes("Mark Slabbed"), false);
+  assert.equal(stationSource.includes("backPositioningActive"), true);
+  assert.equal(stationSource.includes('busy === "back"'), false);
+  assert.equal(stationSource.includes('busy === "capture-back"'), true);
+  assert.equal(stationSource.includes("Live Preview Is Active"), true);
+  assert.equal(stationSource.includes("Capture Back"), true);
+  assert.equal(stationSource.includes("selectedFinishItem.slabPhotos.frontUploaded"), true);
+  assert.equal(stationSource.includes("setSlabUploads({"), true);
   assert.equal(stationSource.includes("Local Operator Report"), true);
   assert.equal(stationSource.includes("Grade Story"), true);
   assert.equal(stationSource.includes("Element Diagnostics"), true);
@@ -2517,6 +2744,31 @@ test("AI Grader public report source renders provisional evidence gates", () => 
   assert.equal(reportSource.includes("Evidence Gates"), true);
   assert.equal(reportSource.includes("provisionalGateRows"), true);
   assert.equal(reportSource.includes("Failed gates explain why"), true);
+  assert.equal(reportSource.includes("selectedLabMode"), true);
+  assert.equal(reportSource.includes("setSelectedLabMode(mode)"), true);
+  assert.equal(reportSource.includes("selectedLabSide"), true);
+  assert.equal(reportSource.includes("setSelectedLabSide(\"front\")"), true);
+  assert.equal(reportSource.includes("setSelectedLabSide(\"back\")"), true);
+  assert.equal(reportSource.includes("disabled={!labImageForMode"), true);
+  assert.equal(reportSource.includes("labImageForMode(images, mode, selectedLabSide, impactCandidate)"), true);
+  assert.equal(reportSource.includes("data:image"), false);
+  assert.equal(reportSource.includes("stationToken"), false);
+  assert.equal(reportSource.includes("presigned"), false);
+});
+
+test("AI Grader bridge releases preview hold for back-side positioning before capture", () => {
+  const bridgePath =
+    [
+      path.join(process.cwd(), "packages", "ai-grader-capture-helper", "src", "drivers", "aiGraderLocalStationBridge.ts"),
+      path.join(process.cwd(), "..", "packages", "ai-grader-capture-helper", "src", "drivers", "aiGraderLocalStationBridge.ts"),
+      path.join(process.cwd(), "..", "..", "packages", "ai-grader-capture-helper", "src", "drivers", "aiGraderLocalStationBridge.ts"),
+    ].find((candidate) => fs.existsSync(candidate));
+  assert.ok(bridgePath);
+  const bridgeSource = fs.readFileSync(bridgePath, "utf8");
+  assert.equal(bridgeSource.includes('this.manifest.currentStep = "prompt_flip_card";'), true);
+  assert.equal(bridgeSource.includes('this.releaseFullForensicPreviewHold("front capture complete; operator can position back with live preview")'), true);
+  assert.equal(bridgeSource.includes('this.activateFullForensicPreviewHold(`${side} warm full forensic capture starting`)'), true);
+  assert.equal(bridgeSource.includes("this.acquireCaptureLock(owner);"), true);
 });
 
 test("browser station bridge client accepts only loopback bridge URLs", () => {

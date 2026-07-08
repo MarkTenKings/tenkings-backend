@@ -1,5 +1,64 @@
 # Session Log (Append Only)
 
+## 2026-07-08 - PR #73 production merge observed result
+
+### Merge And Deploy Evidence
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/73`.
+- PR merge status: merged.
+- PR branch HEAD merged: `49bd303acd6c07ecd0088ad017419f6af6e9a2a9`.
+- PR merge commit / main HEAD after merge: `a91a3318ff815d9bb6e39d5a3dd514270d323f96`.
+- Vercel production deployment status: success, deployment completed for commit `a91a3318ff815d9bb6e39d5a3dd514270d323f96`.
+- Vercel evidence URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/2yZTwf7co6hYTkdM8ZV9nBGnpmj3`.
+- Live production route check: `GET https://collect.tenkings.co/ai-grader/station` returned HTTP `200`.
+- Live production status check: `GET https://collect.tenkings.co/api/admin/ai-grader/production/status` returned HTTP `200`, `ok=true`, `enabled=true`, `publicReportDbReadsEnabled=true`, `liveEbayCompsEnabled=true`, `humanOperatorRolesConfigured=true`, `humanAdminRolesConfigured=true`, `serviceAccountConfigured=true`, `serviceAccountScopeCount=5`, and `noHardwareControls=true`.
+
+### Exact Storage Upload Fix Summary
+- AI Grader publish/slabbed-photo direct browser uploads no longer include the AI-Grader-only `x-amz-meta-sha256` request header.
+- AI Grader publish/slabbed-photo presign calls no longer pass `{ metadata: { sha256 } }` into `presignUploadUrl`.
+- Browser-side pre-upload validation still computes SHA-256 locally and checks byte size against the source artifact manifest.
+- `publish-finalize` still receives `checksumSha256`, `byteSize`, and `contentType` in `uploadManifest`.
+- Server-side finalization still verifies uploaded storage objects by HEAD byte size and content type. Checksum metadata is optional only; the persisted checksum is the locally verified source-manifest checksum unless storage metadata exists.
+- Direct storage PUTs explicitly use `mode: "cors"`.
+- Station publish errors now identify `publish-init`, local package/asset read, direct storage upload including artifact index/kind/storage key, `publish-finalize`, or public report verification; storage reachability `TypeError` failures call out likely storage CORS/preflight.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted by Codex: no.
+- No large artifacts/images were routed through Vercel; request body limits were not increased.
+
+### Remaining Production Smoke Steps
+- Mark can test from the Dell `Ten Kings AI Grader Station` shortcut after production route checks above.
+- Open the station shortcut, sign in once if prompted, use the current graded report/card, and click `Publish To Ten Kings`.
+- Expected result: `publish-init` succeeds, artifacts upload directly to storage, `publish-finalize` persists DB records, public report URL loads, label/QR loads, images are storage URLs, and no local paths/base64/tokens leak.
+- If publish still fails, do not guess. Ask Mark to open Chrome DevTools Network and identify whether the failed request is an `OPTIONS` or `PUT` to storage. Do not ask Mark to share tokens, presigned URLs, or secrets.
+
+## 2026-07-08 - Planned PR #73 production merge/deploy
+
+### Planned Action
+- Merge PR #73 (`fix/ai-grader-publish-storage-cors-errors`) into `main` after confirming the PR is open, not draft, merge state is `CLEAN`, GitHub CI checks pass, and Vercel preview deployment passes.
+- PR #73 head before merge: `49bd303acd6c07ecd0088ad017419f6af6e9a2a9`.
+- After merge, monitor GitHub/main status and Vercel Production deployment for `collect.tenkings.co`.
+- After production deploy completes, verify:
+  - `https://collect.tenkings.co/ai-grader/station` returns HTTP `200`.
+  - `https://collect.tenkings.co/api/admin/ai-grader/production/status` returns HTTP `200` with AI Grader publish enabled.
+
+### Expected Production Behavior
+- AI Grader publish keeps the small-JSON plus direct-storage-upload path.
+- Browser direct uploads no longer include the AI-Grader-only `x-amz-meta-sha256` header.
+- Station publish errors identify whether failure is `publish-init`, local asset read, direct storage upload/CORS, `publish-finalize`, or public report verification.
+
+### Guardrails
+- Do not run hardware capture.
+- Do not run migrations.
+- Do not change env vars.
+- Do not rotate or print credentials.
+- Do not run destructive commands.
+- Do not attempt production publish from shell or by bypassing the Dell operator session.
+
 ## 2026-07-08 - AI Grader publish direct-storage CORS/header blocker fix
 
 ### Branch And HEAD
@@ -24866,6 +24925,83 @@ By enabling Rip It Live, I confirm:
 - No env var changes.
 - No credential rotation or secret printing.
 - No destructive operations.
+
+## 2026-07-08 - AI Grader Finish Cards workflow PR
+
+### Branch And Scope
+- Branch: `feature/ai-grader-finish-cards-workflow`.
+- Base: `origin/main` after PR #73 merge.
+- Scope kept to the requested AI Grader production workflow PR:
+  - back-side live preview during positioning
+  - interactive public report forensic buttons
+  - one-station `Finish Cards` queue for steps 4-6
+
+### Files Changed
+- `packages/ai-grader-capture-helper/src/drivers/aiGraderLocalStationBridge.ts`
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`
+- `frontend/nextjs-app/pages/ai-grader/reports/[reportId].tsx`
+- `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`
+- `frontend/nextjs-app/pages/api/admin/ai-grader/production/[...action].ts`
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Summary
+- Released the full-forensic preview hold after front capture completes so the operator can position the back side with live preview active; back capture still reacquires the capture lock only during actual capture.
+- Added a `Finish Cards` work area inside `/ai-grader/station`, with a `Back to Grading` return path and a persisted queue ordered by publish/create time.
+- The queue is hydrated from published AI Grader reports, label rows, persisted `AiGraderEvidenceAsset` slabbed photos, `AiGraderValuation`, and linked `CardAsset` / `Item` status.
+- Finish queue statuses are `Needs Slab Photos`, `Needs eBay Evaluate`, `Needs Inventory`, and `Complete`.
+- After publish succeeds, the card/report is refreshed into the finish queue and the station offers `Start Next Grade` / `Finish This Card` once label print is marked complete.
+- Slab photo upload remains direct browser-to-storage via the existing AI Grader slabbed-photo init/finalize contract; no image bodies are sent through Vercel.
+- Public report forensic buttons now use React state for selected mode and side, disable unavailable modes, and render only report-image-resolver URLs.
+- Finish Cards slab photos can be uploaded without requiring the old label-printed UI gate; final Add To Inventory still uses the persisted server readiness gate, including printed label, slab photos, and completed valuation.
+
+### Validation Commands And Results
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `65` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` and stale browser-data/Tailwind glob warnings.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Remaining Review / Smoke
+- Open PR and wait for GitHub/Vercel preview checks.
+- After merge/deploy, smoke on the Dell:
+  - Grade Card through publish/label.
+  - Confirm back-side live preview is visible during positioning.
+  - Open the public report and toggle forensic modes/sides.
+  - Open `Finish Cards`, upload slabbed front/back photos, run/save eBay comps, and Add To Inventory.
+  - Verify public outputs contain storage URLs only and no local paths, bridge URLs, station tokens, presigned URLs, or data URLs.
+
+### PR #74 Review Patch
+- Patched the Finish Cards queue to behave as an active work queue by default.
+- Completed cards are excluded from `items` when `CardAsset.reviewStage === INVENTORY_READY_FOR_SALE` or the AI Grader session status is `inventory_ready`.
+- The production queue runtime no longer relies on one historical `take: 100`; it pages through published candidates, excludes `inventory_ready` sessions in the DB query, hydrates CardAsset state, and stops after collecting the active queue limit.
+- Completed rows are counted in queue stats from scanned candidates but do not consume operator queue slots.
+- Queue valuation readiness now matches the Add To Inventory server gate: `valuation.status === "completed"` is not enough unless `valuationMinor > 0`.
+- Added regression tests for completed-card exclusion, active limit behavior behind completed rows, and null/zero valuation amounts staying in `Needs eBay Evaluate`.
+
+### PR #74 Patch Validation
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `67` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` and stale browser-data/Tailwind glob warnings.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+
+### PR #74 Patch Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+- PR was merged: no.
 
 ## 2026-07-08 - PR #72 production merge observed result
 

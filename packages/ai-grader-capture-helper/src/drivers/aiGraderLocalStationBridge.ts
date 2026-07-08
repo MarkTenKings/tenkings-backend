@@ -3288,6 +3288,7 @@ export class AiGraderLocalStationBridgeService {
       const result = await this.runWarmSideCapture("front");
       this.manifest.outputs.frontPackageDir = extractPackageDir(result.payload);
       this.manifest.currentStep = "prompt_flip_card";
+      this.releaseFullForensicPreviewHold("front capture complete; operator can position back with live preview");
       this.manifest.progressLog.push(`${now} Front evidence captured with warm-runner orchestration.`);
       await writeSessionManifest(this.manifest);
       return this.status();

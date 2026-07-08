@@ -42,6 +42,7 @@ import { formatAiGraderPublishStageError } from "../../lib/aiGraderPublishErrors
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
+type StationWorkArea = "grade" | "finish";
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
   message: string;
@@ -128,6 +129,58 @@ type LocalReportState = {
   message: string;
   reportId?: string;
   bundle?: AiGraderReportBundle;
+};
+
+type FinishQueueStatus = "needs_slab_photos" | "needs_ebay_evaluate" | "needs_inventory" | "complete";
+type FinishQueueItem = {
+  reportId: string;
+  certId?: string | null;
+  cardTitle: string;
+  grade?: number | null;
+  cardAssetId?: string | null;
+  itemId?: string | null;
+  publicReportUrl?: string | null;
+  labelPreviewUrl?: string | null;
+  qrPayloadUrl?: string | null;
+  publishedAt?: string | null;
+  createdAt?: string | null;
+  queueStatus: FinishQueueStatus;
+  statusText: string;
+  needs: string[];
+  label: {
+    printed: boolean;
+    physicalPrintStatus?: string | null;
+  };
+  slabPhotos: {
+    frontUploaded: boolean;
+    backUploaded: boolean;
+    complete: boolean;
+    frontUrl?: string | null;
+    backUrl?: string | null;
+  };
+  valuation: {
+    complete: boolean;
+    status?: string | null;
+    valuationMinor?: number | null;
+    valuationCurrency?: string | null;
+  };
+  inventory: {
+    complete: boolean;
+    reviewStage?: string | null;
+    canAddToInventory: boolean;
+  };
+};
+type FinishQueueResult = {
+  source: "persisted_records";
+  orderedBy: string;
+  items: FinishQueueItem[];
+  stats: {
+    total: number;
+    needsSlabPhotos: number;
+    needsEbayEvaluate: number;
+    needsInventory: number;
+    complete: number;
+  };
 };
 
 type PublishUploadPlanArtifact = {
@@ -388,6 +441,19 @@ const defaultIdentityDraft: IdentityDraftState = {
   memorabilia: false,
 };
 
+const emptyFinishQueue: FinishQueueResult = {
+  source: "persisted_records",
+  orderedBy: "publishedAt_asc_createdAt_asc",
+  items: [],
+  stats: {
+    total: 0,
+    needsSlabPhotos: 0,
+    needsEbayEvaluate: 0,
+    needsInventory: 0,
+    complete: 0,
+  },
+};
+
 function identityDraftMissingFields(draft: IdentityDraftState) {
   const missing: string[] = [];
   if (!draft.year.trim()) missing.push("year");
@@ -409,6 +475,7 @@ function identityDraftMissingFields(draft: IdentityDraftState) {
 export default function AiGraderStationPage() {
   const { session, loading: sessionLoading, ensureSession, logout } = useSession();
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
+  const [workArea, setWorkArea] = useState<StationWorkArea>("grade");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [bridgeUrl, setBridgeUrl] = useState(DEFAULT_AI_GRADER_STATION_BRIDGE_URL);
@@ -466,6 +533,13 @@ export default function AiGraderStationPage() {
     status: "idle",
     message: "No local report is open.",
   });
+  const [finishQueue, setFinishQueue] = useState<FinishQueueResult>(emptyFinishQueue);
+  const [finishQueueState, setFinishQueueState] = useState<StepState>({
+    status: "idle",
+    message: "Finish Cards queue has not been loaded.",
+  });
+  const [selectedFinishReportId, setSelectedFinishReportId] = useState<string | null>(null);
+  const [finishReportCache, setFinishReportCache] = useState<Record<string, AiGraderReportBundle>>({});
   const [profileDraft, setProfileDraft] = useState({
     dutyPercent: status.acceptedProfile.dutyPercent,
     exposureUs: status.acceptedProfile.exposureUs,
@@ -625,11 +699,11 @@ export default function AiGraderStationPage() {
   }, [bridgeConnected, bridgeUrl, liveLighting.applied.enabled, stationToken]);
 
   useEffect(() => {
-    const previewHeldForFullForensicRun = status.warmRunnerStatus.previewPolicy.holdActive === true;
+    const backPositioningActive = status.currentStep === "prompt_flip_card" && busy !== "capture-back";
+    const previewHeldForFullForensicRun = status.warmRunnerStatus.previewPolicy.holdActive === true && !backPositioningActive;
     const previewSuspendedForStationAction =
       previewHeldForFullForensicRun ||
       busy === "start-grading" ||
-      busy === "back" ||
       busy === "capture-front" ||
       busy === "capture-back" ||
       busy === "safe-off" ||
@@ -727,6 +801,7 @@ export default function AiGraderStationPage() {
     status.warmRunnerStatus.previewPolicy.holdActive,
     status.warmRunnerStatus.previewPolicy.holdReason,
     status.warmRunnerStatus.status,
+    status.currentStep,
   ]);
 
   const currentStep = useMemo(
@@ -761,11 +836,6 @@ export default function AiGraderStationPage() {
     productionRelease: status.productionRelease,
     published: productionPublish.status === "published",
   });
-  const compsReadiness = buildAiGraderCompsReadiness({
-    bundle: status.reportBundle,
-    productionRelease: status.productionRelease,
-    selectedCard,
-  });
   const productionPublished = productionPublish.status === "published";
   const reportIdForLinks = productionPublish.reportId ?? publishReadiness.reportId ?? status.latestReport.reportId;
   const labelPreviewUrl = productionPublished ? productionPublish.labelPreviewUrl : undefined;
@@ -784,13 +854,23 @@ export default function AiGraderStationPage() {
   ].filter(Boolean);
   const canCreateCardFromReport = finalReady && reportReady && identityDraftComplete && !linkedCardReady && identityStatus.status !== "pending";
   const canPublishToTenKings = linkedCardReady && publishReadiness.ready && productionPublish.status !== "published" && productionPublish.status !== "pending";
+  const selectedFinishItem = finishQueue.items.find((item) => item.reportId === selectedFinishReportId) ?? finishQueue.items[0] ?? null;
+  const selectedFinishReportIdForActions = selectedFinishItem?.reportId ?? null;
+  const selectedFinishSlabReady = Boolean(selectedFinishItem?.slabPhotos.complete) || slabbedPhotosReady;
+  const selectedFinishCompsSaved = Boolean(selectedFinishItem?.valuation.complete) || compsSaved;
+  const selectedFinishInventoryComplete = Boolean(selectedFinishItem?.inventory.complete) || inventoryComplete;
   const canSaveSelectedComps =
-    productionPublished &&
+    (productionPublished || Boolean(selectedFinishItem)) &&
     Array.isArray(compsState.compsRefs) &&
     (compsState.selectedIds?.length ?? 0) > 0 &&
     compsState.status === "completed";
-  const canAddToInventory = productionPublished && labelPrinted && slabbedPhotosReady && compsSaved && linkedCardReady && inventoryState.status !== "completed";
-  const pipelineSteps = [
+  const canAddSelectedFinishToInventory =
+    Boolean(selectedFinishItem) &&
+    selectedFinishSlabReady &&
+    selectedFinishCompsSaved &&
+    !selectedFinishInventoryComplete &&
+    Boolean(selectedFinishItem?.inventory.canAddToInventory || selectedFinishItem?.label.printed);
+  const gradePipelineSteps = [
     {
       id: "grade",
       label: "Grade",
@@ -809,28 +889,65 @@ export default function AiGraderStationPage() {
       done: productionPublished && labelPrinted,
       action: productionPublished ? (labelPrinted ? "Public report and print action are complete." : "Print the label and mark it printed.") : "Publish to Ten Kings DB/storage.",
     },
+  ];
+  const finishPipelineSteps = [
     {
       id: "slab",
-      label: "Mark Slabbed",
-      done: slabbedPhotosReady,
-      action: slabbedPhotosReady ? "Slabbed front/back photos are attached." : "Upload slabbed front and back photos.",
+      label: "Upload Slab Photos",
+      done: selectedFinishSlabReady,
+      action: selectedFinishSlabReady ? "Slabbed front/back photos are attached." : "Upload slabbed front and back photos.",
     },
     {
       id: "comps",
       label: "eBay Evaluate",
-      done: compsSaved,
-      action: compsSaved ? "Selected comps and valuation are saved." : "Run eBay comps, select matches, and save value.",
+      done: selectedFinishCompsSaved,
+      action: selectedFinishCompsSaved ? "Selected comps and valuation are saved." : "Run eBay comps, select matches, and save value.",
     },
     {
       id: "inventory",
       label: "Add To Inventory",
-      done: inventoryComplete,
-      action: inventoryComplete ? "Inventory-ready transition complete." : "Move the card into the inventory flow.",
+      done: selectedFinishInventoryComplete,
+      action: selectedFinishInventoryComplete ? "Inventory-ready transition complete." : "Move the card into the inventory flow.",
     },
   ];
-  const activePipelineStep = pipelineSteps.find((step) => !step.done) ?? pipelineSteps[pipelineSteps.length - 1];
+  const activePipelineStep = gradePipelineSteps.find((step) => !step.done) ?? gradePipelineSteps[gradePipelineSteps.length - 1];
   const publicationStatusLabel =
     productionPublish.status === "idle" ? formatStationValue(publishReadiness.status) : formatStationValue(productionPublish.status);
+
+  useEffect(() => {
+    if (workArea !== "finish" || !selectedFinishItem) return;
+    setSlabUploads({
+      front: selectedFinishItem.slabPhotos.frontUploaded
+        ? {
+            status: "uploaded",
+            publicUrl: selectedFinishItem.slabPhotos.frontUrl ?? undefined,
+            message: "Persisted front slab photo is attached.",
+          }
+        : undefined,
+      back: selectedFinishItem.slabPhotos.backUploaded
+        ? {
+            status: "uploaded",
+            publicUrl: selectedFinishItem.slabPhotos.backUrl ?? undefined,
+            message: "Persisted back slab photo is attached.",
+          }
+        : undefined,
+    });
+    setCompsState({
+      status: selectedFinishItem.valuation.complete ? "saved" : "idle",
+      saved: selectedFinishItem.valuation.complete,
+      valuationMinor: selectedFinishItem.valuation.valuationMinor,
+      message: selectedFinishItem.valuation.complete ? "Persisted eBay valuation is complete." : "Comps have not been saved for this card.",
+    });
+    setInventoryState({
+      status: selectedFinishItem.inventory.complete ? "completed" : "idle",
+      message: selectedFinishItem.inventory.complete
+        ? "Inventory-ready transition is complete."
+        : selectedFinishItem.inventory.canAddToInventory
+          ? "Ready to add to inventory."
+          : "Finish slab photos and eBay valuation before inventory.",
+    });
+  }, [selectedFinishItem, workArea]);
+
   const localReportImages = useMemo(
     () => (localReport.bundle ? reportImageAssets(localReport.bundle, { allowEmbeddedBodies: true }) : []),
     [localReport.bundle]
@@ -895,7 +1012,7 @@ export default function AiGraderStationPage() {
     : undefined;
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
   const warmRunner = status.warmRunnerStatus;
-  const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held || busy === "start-grading" || busy === "back";
+  const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held || busy === "start-grading" || busy === "capture-back";
   const liveLightingAvailable =
     bridgeConnected &&
     liveLighting.controlsEnabled &&
@@ -1033,6 +1150,47 @@ export default function AiGraderStationPage() {
     }
     const nextHistory = await fetchAiGraderStationReportHistory({ baseUrl: bridgeUrl, stationToken });
     setHistory(nextHistory);
+  };
+
+  const refreshFinishQueue = async (preferredReportId?: string | null) => {
+    setFinishQueueState({ status: "pending", message: "Loading Finish Cards queue." });
+    try {
+      const response = await fetch("/api/admin/ai-grader/production/finish-queue", {
+        method: "GET",
+        headers: await productionAuthHeaders({}, "load the Finish Cards queue"),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok !== true) {
+        throw new Error(payload.message ?? "Finish Cards queue failed to load.");
+      }
+      const result = (payload.result ?? emptyFinishQueue) as FinishQueueResult;
+      setFinishQueue(result);
+      const nextSelected =
+        (preferredReportId && result.items.find((item) => item.reportId === preferredReportId)?.reportId) ||
+        (selectedFinishReportId && result.items.find((item) => item.reportId === selectedFinishReportId)?.reportId) ||
+        result.items[0]?.reportId ||
+        null;
+      setSelectedFinishReportId(nextSelected);
+      setFinishQueueState({
+        status: "completed",
+        message: result.items.length ? `${result.items.length} card(s) in Finish Cards queue.` : "No cards are waiting in Finish Cards.",
+      });
+      return result;
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Finish Cards queue failed to load.";
+      setFinishQueueState({ status: "failed", message });
+      throw requestError;
+    }
+  };
+
+  const openFinishCards = async (preferredReportId?: string | null) => {
+    setError(null);
+    setWorkArea("finish");
+    try {
+      await refreshFinishQueue(preferredReportId ?? selectedFinishReportId);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Finish Cards queue failed to load.");
+    }
   };
 
   const connectBridge = async () => {
@@ -1294,7 +1452,7 @@ export default function AiGraderStationPage() {
   };
 
   const confirmFlipAndContinue = async () => {
-    setBusy("back");
+    setBusy("capture-back");
     setError(null);
     try {
       await runAction("confirm-flip", { confirmations: { flipComplete: true } });
@@ -1784,6 +1942,7 @@ export default function AiGraderStationPage() {
         evidenceAssetCount: finalizePayload.result.evidenceAssetCount,
       });
       await refreshHistory();
+      await refreshFinishQueue(publishedReportId).catch(() => undefined);
     } catch (requestError) {
       setProductionPublish({
         status: "error",
@@ -1794,7 +1953,23 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const uploadSlabbedPhoto = async (side: "front" | "back", file: File | null) => {
+  const loadFinishReportBundle = async (reportId: string) => {
+    if (finishReportCache[reportId]) return finishReportCache[reportId];
+    const response = await fetch(`/api/ai-grader/reports/${encodeURIComponent(reportId)}`, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok !== true || !payload.bundle) {
+      throw new Error(payload.message ?? "Published report bundle could not be loaded for finishing.");
+    }
+    const bundle = payload.bundle as AiGraderReportBundle;
+    setFinishReportCache((current) => ({ ...current, [reportId]: bundle }));
+    return bundle;
+  };
+
+  const uploadSlabbedPhoto = async (side: "front" | "back", file: File | null, targetReportId?: string | null) => {
     if (!file) return;
     setBusy(`slab-${side}`);
     setError(null);
@@ -1803,7 +1978,7 @@ export default function AiGraderStationPage() {
       [side]: { status: "uploading", message: `Preparing direct storage upload for slabbed ${side} photo.` },
     }));
     try {
-      const reportId = status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      const reportId = targetReportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
       if (!reportId) throw new Error("A report ID is required before uploading slabbed photos.");
       const bytes = await file.arrayBuffer();
       const checksumSha256 = await sha256Hex(bytes);
@@ -1890,6 +2065,7 @@ export default function AiGraderStationPage() {
           message: `Slabbed ${side} photo uploaded and attached.`,
         },
       }));
+      await refreshFinishQueue(reportId).catch(() => undefined);
     } catch (requestError) {
       setSlabUploads((current) => ({
         ...current,
@@ -1903,19 +2079,32 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const runEbayComps = async () => {
+  const runEbayComps = async (targetItem?: FinishQueueItem | null) => {
     setBusy("run-comps");
     setError(null);
     setCompsState({ status: "running", message: "Preparing operator-triggered eBay comps." });
     try {
-      const reportBundle = buildReportBundleForProduction();
-      if (!reportBundle || !status.productionRelease) {
+      const reportBundle = targetItem ? await loadFinishReportBundle(targetItem.reportId) : buildReportBundleForProduction();
+      if (!reportBundle) {
         throw new Error("A finalized production release and selected report bundle are required before comps.");
       }
+      const productionRelease = targetItem ? reportBundle.productionRelease : status.productionRelease;
+      if (!productionRelease) {
+        throw new Error("A finalized production release and selected report bundle are required before comps.");
+      }
+      const targetSelection = targetItem
+        ? {
+            source: "card_asset" as const,
+            cardAssetId: targetItem.cardAssetId ?? undefined,
+            itemId: targetItem.itemId ?? undefined,
+            title: targetItem.cardTitle,
+            displayTitle: targetItem.cardTitle,
+          }
+        : selectedCard;
       const readiness = buildAiGraderCompsReadiness({
         bundle: reportBundle,
-        productionRelease: status.productionRelease,
-        selectedCard,
+        productionRelease,
+        selectedCard: targetSelection,
       });
       if (!readiness.ready) {
         setCompsState({ status: readiness.status, message: readiness.message });
@@ -1925,10 +2114,16 @@ export default function AiGraderStationPage() {
         method: "POST",
         headers: await productionAuthHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
-          reportId: status.productionRelease.reportId,
+          reportId: targetItem?.reportId ?? productionRelease.reportId,
           reportBundle,
-          productionRelease: status.productionRelease,
-          selection: selectedCardIdentity,
+          productionRelease,
+          selection: targetItem
+            ? {
+                cardAssetId: targetItem.cardAssetId,
+                itemId: targetItem.itemId,
+                title: targetItem.cardTitle,
+              }
+            : selectedCardIdentity,
           limit: 10,
         }),
       });
@@ -1972,11 +2167,11 @@ export default function AiGraderStationPage() {
     });
   };
 
-  const saveSelectedComps = async () => {
+  const saveSelectedComps = async (targetReportId?: string | null) => {
     setBusy("save-comps");
     setError(null);
     try {
-      const reportId = productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      const reportId = targetReportId ?? productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
       if (!reportId) throw new Error("A published report ID is required before saving comps.");
       const selectedIds = new Set(compsState.selectedIds ?? []);
       const selectedComps = (compsState.compsRefs ?? []).filter((comp) => comp.id && selectedIds.has(comp.id));
@@ -2003,6 +2198,7 @@ export default function AiGraderStationPage() {
         valuationMinor: payload.result?.valuationMinor ?? null,
         message: `Saved ${payload.result?.evidenceItemCount ?? selectedComps.length} selected comp(s) and valuation.`,
       }));
+      await refreshFinishQueue(reportId).catch(() => undefined);
     } catch (requestError) {
       setCompsState((current) => ({
         ...current,
@@ -2038,6 +2234,7 @@ export default function AiGraderStationPage() {
         status: "completed",
         message: `Printed label persisted for cert ${payload.result?.certId ?? certId ?? "AI Grader label"}.`,
       });
+      await refreshFinishQueue(reportId).catch(() => undefined);
     } catch (requestError) {
       setLabelPrintState({
         status: "failed",
@@ -2048,12 +2245,12 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const addToInventory = async () => {
+  const addToInventory = async (targetReportId?: string | null) => {
     setBusy("add-to-inventory");
     setError(null);
     setInventoryState({ status: "pending", message: "Moving card to inventory-ready flow." });
     try {
-      const reportId = productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      const reportId = targetReportId ?? productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
       if (!reportId) throw new Error("A published report ID is required before adding to inventory.");
       const response = await fetch("/api/admin/ai-grader/production/add-to-inventory", {
         method: "POST",
@@ -2068,6 +2265,7 @@ export default function AiGraderStationPage() {
         status: "completed",
         message: `Inventory-ready transition complete for Item ${payload.result?.itemId ?? selectedCard?.itemId ?? "linked item"}.`,
       });
+      await refreshFinishQueue(reportId).catch(() => undefined);
     } catch (requestError) {
       setInventoryState({
         status: "failed",
@@ -2229,7 +2427,7 @@ export default function AiGraderStationPage() {
       ? "Full Forensic Capture"
       : previewStatus.status === "live"
       ? "Preview Live"
-      : busy === "start-grading" || busy === "back"
+      : busy === "start-grading" || busy === "capture-back"
         ? "Capturing"
         : previewStatus.status === "starting"
           ? "Preview Starting"
@@ -2252,6 +2450,456 @@ export default function AiGraderStationPage() {
         : previewStatus.status === "error"
           ? previewStatus.lastError ?? "The local preview stream is not available."
           : "The local Dell bridge will stream Basler preview frames here when connected.";
+
+  if (workArea === "finish") {
+    const finishFrontReady = Boolean(selectedFinishItem?.slabPhotos.frontUploaded || slabUploads.front?.status === "uploaded");
+    const finishBackReady = Boolean(selectedFinishItem?.slabPhotos.backUploaded || slabUploads.back?.status === "uploaded");
+    const finishSlabReady = finishFrontReady && finishBackReady;
+    const finishCompsReady = Boolean(selectedFinishItem?.valuation.complete || compsSaved);
+    const finishInventoryReady = Boolean(selectedFinishItem?.inventory.complete || inventoryComplete);
+
+    return (
+      <>
+        <Head>
+          <title>Ten Kings AI Grader Finish Cards</title>
+          <meta name="robots" content="noindex" />
+        </Head>
+        <main className="finish-station">
+          <header className="finish-topbar">
+            <div>
+              <p className="eyebrow">Ten Kings AI Grader</p>
+              <h1>Finish Cards</h1>
+              <p>{finishQueueState.message}</p>
+            </div>
+            <div className="finish-top-actions">
+              <button type="button" onClick={() => setWorkArea("grade")} disabled={busy !== null}>
+                Back to Grading
+              </button>
+              <button type="button" onClick={() => void refreshFinishQueue(selectedFinishReportId)} disabled={busy !== null || finishQueueState.status === "pending"}>
+                {finishQueueState.status === "pending" ? "Refreshing" : "Refresh Queue"}
+              </button>
+            </div>
+          </header>
+
+          {error ? <div className="finish-error">{error}</div> : null}
+
+          <section className={productionSignedIn ? "finish-auth signed-in" : "finish-auth"}>
+            <div>
+              <p className="eyebrow">Production Sign-In</p>
+              <h2>{productionSignedIn ? "Signed In" : "Sign In Required"}</h2>
+              <p>{productionSignedIn ? `Production actions will run as ${productionOperatorLabel}.` : productionAuthState.message}</p>
+            </div>
+            <button type="button" onClick={signInForProduction} disabled={sessionLoading || busy !== null || productionAuthState.status === "pending"}>
+              {productionAuthState.status === "pending" ? "Opening Sign-In" : productionSignedIn ? "Refresh Sign-In" : "Sign In"}
+            </button>
+          </section>
+
+          <div className="finish-layout">
+            <section className="finish-queue">
+              <div className="finish-stats">
+                <article><span>Total</span><strong>{finishQueue.stats.total}</strong></article>
+                <article><span>Slab</span><strong>{finishQueue.stats.needsSlabPhotos}</strong></article>
+                <article><span>eBay</span><strong>{finishQueue.stats.needsEbayEvaluate}</strong></article>
+                <article><span>Inventory</span><strong>{finishQueue.stats.needsInventory}</strong></article>
+              </div>
+              <div className="finish-list">
+                {finishQueue.items.length ? (
+                  finishQueue.items.map((item, index) => (
+                    <button
+                      type="button"
+                      key={item.reportId}
+                      className={item.reportId === selectedFinishItem?.reportId ? "selected" : ""}
+                      onClick={() => setSelectedFinishReportId(item.reportId)}
+                    >
+                      <span>#{index + 1}</span>
+                      <strong>{item.cardTitle}</strong>
+                      <em>{item.grade ? `Grade ${scoreText(item.grade)}` : "Grade pending"}</em>
+                      <small>{item.statusText}</small>
+                    </button>
+                  ))
+                ) : (
+                  <div className="finish-empty">No published cards are waiting for finishing.</div>
+                )}
+              </div>
+            </section>
+
+            <section className="finish-panel">
+              {selectedFinishItem ? (
+                <>
+                  <div className="finish-panel-head">
+                    <div>
+                      <p className="eyebrow">Selected Card</p>
+                      <h2>{selectedFinishItem.cardTitle}</h2>
+                      <p>
+                        {selectedFinishItem.certId ?? selectedFinishItem.reportId}
+                        {selectedFinishItem.publishedAt ? ` / published ${new Date(selectedFinishItem.publishedAt).toLocaleString()}` : ""}
+                      </p>
+                    </div>
+                    <strong>{selectedFinishItem.statusText}</strong>
+                  </div>
+
+                  <ol className="finish-steps">
+                    {finishPipelineSteps.map((step) => (
+                      <li key={step.id} className={step.done ? "done" : "active"}>
+                        <span>{step.done ? "Done" : "Now"}</span>
+                        <strong>{step.label}</strong>
+                        <p>{step.action}</p>
+                      </li>
+                    ))}
+                  </ol>
+
+                  <div className="finish-links">
+                    {selectedFinishItem.publicReportUrl ? <a href={selectedFinishItem.publicReportUrl} target="_blank" rel="noreferrer">Public Report</a> : null}
+                    {selectedFinishItem.labelPreviewUrl ? <a href={selectedFinishItem.labelPreviewUrl} target="_blank" rel="noreferrer">Label Preview</a> : null}
+                    {selectedFinishItem.cardAssetId ? <span>CardAsset {selectedFinishItem.cardAssetId}</span> : null}
+                    {selectedFinishItem.itemId ? <span>Item {selectedFinishItem.itemId}</span> : null}
+                  </div>
+
+                  <section className="finish-card-section">
+                    <p className="eyebrow">Upload Slab Photos</p>
+                    <div className="finish-upload-grid">
+                      <label>
+                        Front slab photo
+                        <input
+                          type="file"
+                          accept="image/*"
+                          disabled={busy !== null}
+                          onChange={(event) => uploadSlabbedPhoto("front", event.target.files?.[0] ?? null, selectedFinishReportIdForActions)}
+                        />
+                      </label>
+                      <label>
+                        Back slab photo
+                        <input
+                          type="file"
+                          accept="image/*"
+                          disabled={busy !== null}
+                          onChange={(event) => uploadSlabbedPhoto("back", event.target.files?.[0] ?? null, selectedFinishReportIdForActions)}
+                        />
+                      </label>
+                    </div>
+                    <p>Front: {finishFrontReady ? "attached" : slabUploads.front?.message ?? "needed"} / Back: {finishBackReady ? "attached" : slabUploads.back?.message ?? "needed"}</p>
+                    {!selectedFinishItem.label.printed ? <p className="finish-warning">Inventory still requires the printed label to be marked from Grade Card.</p> : null}
+                  </section>
+
+                  <section className="finish-card-section">
+                    <p className="eyebrow">eBay Evaluate</p>
+                    <div className="finish-actions">
+                      <button type="button" onClick={() => void runEbayComps(selectedFinishItem)} disabled={!finishSlabReady || busy !== null || finishCompsReady}>
+                        {busy === "run-comps" ? "Running" : finishCompsReady ? "Valuation Saved" : "Run eBay Comps"}
+                      </button>
+                      <button type="button" onClick={() => void saveSelectedComps(selectedFinishReportIdForActions)} disabled={!canSaveSelectedComps || busy !== null || finishCompsReady}>
+                        {busy === "save-comps" ? "Saving" : "Save Selected Comps"}
+                      </button>
+                    </div>
+                    <p>{compsState.message}</p>
+                    {Array.isArray(compsState.compsRefs) && compsState.compsRefs.length ? (
+                      <div className="finish-comps">
+                        {compsState.compsRefs.map((comp, index) => {
+                          const compId = comp.id ?? `comp-${index + 1}`;
+                          return (
+                            <label key={compId}>
+                              <input
+                                type="checkbox"
+                                checked={(compsState.selectedIds ?? []).includes(compId)}
+                                onChange={() => toggleSelectedComp(compId)}
+                                disabled={busy !== null || finishCompsReady}
+                              />
+                              <span>{comp.title ?? "Sold comp"}</span>
+                              <strong>{comp.price ?? "price n/a"}</strong>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </section>
+
+                  <section className="finish-card-section">
+                    <p className="eyebrow">Add To Inventory</p>
+                    <button type="button" className="finish-primary" onClick={() => void addToInventory(selectedFinishReportIdForActions)} disabled={!canAddSelectedFinishToInventory || busy !== null || finishInventoryReady}>
+                      {busy === "add-to-inventory" ? "Adding" : finishInventoryReady ? "In Inventory" : "Add To Inventory"}
+                    </button>
+                    <p>{inventoryState.message}</p>
+                  </section>
+                </>
+              ) : (
+                <div className="finish-empty">Select a card from the Finish Cards queue.</div>
+              )}
+            </section>
+          </div>
+        </main>
+        <style jsx>{`
+          .finish-station {
+            min-height: 100vh;
+            background: #10110f;
+            color: #f7efe1;
+            padding: 24px;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          }
+          .finish-topbar,
+          .finish-auth,
+          .finish-layout,
+          .finish-error {
+            max-width: 1280px;
+            margin: 0 auto 16px;
+          }
+          .finish-topbar,
+          .finish-auth {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: flex-start;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.045);
+            padding: 18px;
+          }
+          .finish-topbar h1,
+          .finish-auth h2,
+          .finish-panel h2,
+          p {
+            margin: 0;
+            letter-spacing: 0;
+          }
+          .finish-topbar p,
+          .finish-auth p,
+          .finish-card-section p,
+          .finish-panel-head p {
+            margin-top: 8px;
+            color: #c8beac;
+            line-height: 1.45;
+          }
+          .eyebrow {
+            margin: 0 0 6px;
+            color: #c9a85f;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+          }
+          .finish-top-actions,
+          .finish-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+          }
+          button,
+          a {
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            min-height: 42px;
+            padding: 10px 13px;
+            color: #f7efe1;
+            background: rgba(255, 255, 255, 0.06);
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            text-decoration: none;
+            cursor: pointer;
+          }
+          button:disabled,
+          input:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+          }
+          .finish-auth.signed-in {
+            border-color: rgba(91, 255, 157, 0.28);
+            background: rgba(91, 255, 157, 0.07);
+          }
+          .finish-error,
+          .finish-warning {
+            border: 1px solid rgba(255, 82, 82, 0.34);
+            background: rgba(95, 12, 18, 0.34);
+            color: #ffd6d6;
+            border-radius: 8px;
+            padding: 12px;
+          }
+          .finish-layout {
+            display: grid;
+            grid-template-columns: 360px minmax(0, 1fr);
+            gap: 16px;
+          }
+          .finish-queue,
+          .finish-panel,
+          .finish-card-section {
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.045);
+            padding: 16px;
+          }
+          .finish-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+          }
+          .finish-stats article {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 10px;
+          }
+          .finish-stats span,
+          .finish-list span,
+          .finish-steps span {
+            color: #a99f8f;
+            font-size: 10px;
+            font-weight: 900;
+            text-transform: uppercase;
+          }
+          .finish-stats strong {
+            display: block;
+            margin-top: 4px;
+            font-size: 24px;
+          }
+          .finish-list {
+            display: grid;
+            gap: 8px;
+          }
+          .finish-list button {
+            display: grid;
+            grid-template-columns: 34px minmax(0, 1fr);
+            gap: 3px 8px;
+            min-height: 84px;
+            text-align: left;
+            letter-spacing: 0;
+            text-transform: none;
+          }
+          .finish-list button.selected {
+            border-color: rgba(91, 255, 157, 0.5);
+            background: rgba(91, 255, 157, 0.12);
+          }
+          .finish-list strong,
+          .finish-list em,
+          .finish-list small {
+            min-width: 0;
+            overflow-wrap: anywhere;
+            grid-column: 2;
+          }
+          .finish-list em,
+          .finish-list small {
+            color: #c8beac;
+            font-style: normal;
+          }
+          .finish-panel-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 14px;
+          }
+          .finish-panel-head > strong {
+            align-self: start;
+            border: 1px solid rgba(228, 191, 105, 0.5);
+            border-radius: 999px;
+            padding: 8px 10px;
+            color: #f7e4b4;
+            white-space: nowrap;
+          }
+          .finish-steps {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin: 0 0 14px;
+            padding: 0;
+            list-style: none;
+          }
+          .finish-steps li {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 12px;
+          }
+          .finish-steps li.done {
+            border-color: rgba(91, 255, 157, 0.28);
+            background: rgba(91, 255, 157, 0.08);
+          }
+          .finish-steps p {
+            margin-top: 7px;
+            color: #c8beac;
+            font-size: 12px;
+            line-height: 1.4;
+          }
+          .finish-links,
+          .finish-upload-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 14px;
+          }
+          .finish-links span {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 10px;
+            color: #c8beac;
+            overflow-wrap: anywhere;
+          }
+          .finish-card-section {
+            margin-top: 12px;
+          }
+          label {
+            display: block;
+            color: #ded6c8;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+          }
+          input {
+            width: 100%;
+            box-sizing: border-box;
+            margin-top: 7px;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            background: rgba(0, 0, 0, 0.3);
+            color: #f8f0e0;
+            border-radius: 8px;
+            padding: 10px;
+          }
+          .finish-primary {
+            width: 100%;
+            border-color: rgba(91, 255, 157, 0.64);
+            background: rgba(91, 255, 157, 0.14);
+          }
+          .finish-comps {
+            display: grid;
+            gap: 8px;
+            margin-top: 12px;
+          }
+          .finish-comps label {
+            display: grid;
+            grid-template-columns: 24px minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 10px;
+            letter-spacing: 0;
+            text-transform: none;
+          }
+          .finish-comps input {
+            width: 16px;
+            margin: 0;
+          }
+          .finish-empty {
+            border: 1px dashed rgba(255, 255, 255, 0.16);
+            border-radius: 8px;
+            padding: 18px;
+            color: #c8beac;
+          }
+          @media (max-width: 920px) {
+            .finish-layout,
+            .finish-steps,
+            .finish-links,
+            .finish-upload-grid {
+              grid-template-columns: 1fr;
+            }
+            .finish-topbar,
+            .finish-auth,
+            .finish-panel-head {
+              flex-direction: column;
+            }
+          }
+        `}</style>
+      </>
+    );
+  }
 
   return (
     <>
@@ -2381,10 +3029,11 @@ export default function AiGraderStationPage() {
           {showFlipScrim ? (
             <div className="flip-scrim">
               <div>
-                <h2>Flip Card to Back</h2>
-                <p>Seat the card in the fixture, then continue. The system will capture the back and generate the report.</p>
+                <p className="eyebrow">Position Back</p>
+                <h2>Live Preview Is Active</h2>
+                <p>Flip the card, seat the back in the fixture, then capture when the framing is right.</p>
                 <button type="button" onClick={confirmFlipAndContinue} disabled={busy !== null}>
-                  {busy === "back" ? "Capturing Back" : "Confirm Back Is Ready"}
+                  {busy === "capture-back" ? "Capturing Back" : "Capture Back"}
                 </button>
               </div>
             </div>
@@ -2559,8 +3208,13 @@ export default function AiGraderStationPage() {
 
         <aside className="sidebar">
           <div className="brand">
-            <span>Ten Kings</span>
-            <strong>AI Grader Station</strong>
+            <div>
+              <span>Ten Kings</span>
+              <strong>AI Grader Station</strong>
+            </div>
+            <button type="button" onClick={() => void openFinishCards(productionPublish.reportId)} disabled={busy !== null}>
+              Finish Cards
+            </button>
           </div>
 
           {error ? <div className="error">{error}</div> : null}
@@ -2570,7 +3224,7 @@ export default function AiGraderStationPage() {
             <h2>{activePipelineStep.label}</h2>
             <p>{activePipelineStep.action}</p>
             <ol className="pipeline-steps">
-              {pipelineSteps.map((step) => (
+              {gradePipelineSteps.map((step) => (
                 <li key={step.id} className={step.done ? "done" : step.id === activePipelineStep.id ? "active" : ""}>
                   <span>{step.done ? "Done" : step.id === activePipelineStep.id ? "Now" : "Next"}</span>
                   <strong>{step.label}</strong>
@@ -2953,38 +3607,20 @@ export default function AiGraderStationPage() {
               <button type="button" onClick={markLabelPrinted} disabled={!productionPublished || labelPrinted || busy !== null}>
                 {busy === "mark-label-printed" ? "Marking Printed" : labelPrinted ? "Label Printed" : "Mark Label Printed"}
               </button>
-              <button type="button" onClick={runEbayComps} disabled={!productionPublished || !labelPrinted || !slabbedPhotosReady || !compsReadiness.ready || busy !== null}>
-                {busy === "run-comps" ? "Running Comps" : compsState.status === "completed" ? "Refresh Comps" : "Run eBay Comps"}
-              </button>
-              <button type="button" onClick={saveSelectedComps} disabled={!canSaveSelectedComps || busy !== null}>
-                {busy === "save-comps" ? "Saving Comps" : compsSaved ? "Comps Saved" : "Save Selected Comps"}
-              </button>
-              <button type="button" className="primary" onClick={addToInventory} disabled={!canAddToInventory || busy !== null}>
-                {busy === "add-to-inventory" ? "Adding" : inventoryComplete ? "In Inventory Flow" : "Add To Inventory"}
-              </button>
+              {productionPublished && labelPrinted ? (
+                <>
+                  <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
+                    {busy === "start" ? "Starting" : "Start Next Grade"}
+                  </button>
+                  <button type="button" onClick={() => void openFinishCards(productionPublish.reportId)} disabled={busy !== null}>
+                    Finish This Card
+                  </button>
+                </>
+              ) : null}
               <button type="button" onClick={openHistory}>
                 Card History Reports
               </button>
             </div>
-            {Array.isArray(compsState.compsRefs) && compsState.compsRefs.length ? (
-              <div className="comps-select">
-                {compsState.compsRefs.map((comp, index) => {
-                  const compId = comp.id ?? `comp-${index + 1}`;
-                  return (
-                    <label key={compId}>
-                      <input
-                        type="checkbox"
-                        checked={(compsState.selectedIds ?? []).includes(compId)}
-                        onChange={() => toggleSelectedComp(compId)}
-                        disabled={busy !== null || compsSaved}
-                      />
-                      <span>{comp.title ?? "Sold comp"}</span>
-                      <strong>{comp.price ?? "price n/a"}</strong>
-                    </label>
-                  );
-                })}
-              </div>
-            ) : null}
             {!canPublishToTenKings && productionPublish.status !== "published" ? (
               <div className="readiness-warning">
                 <strong>Publish not ready</strong>
@@ -3043,25 +3679,7 @@ export default function AiGraderStationPage() {
             <p>Label: {labelReady ? "label data ready" : "pending"}</p>
             <p>Print action: {labelPrintState.message}</p>
             <p>Card linkage: {linkedCardReady ? selectedCard?.cardAssetId ?? selectedCard?.itemId : "not linked"}</p>
-            <p>Slabbed photos: {slabbedPhotosReady ? "front/back attached" : "pending"}</p>
-            <p>Comps: {compsState.status === "idle" ? compsReadiness.status : compsState.status} - {compsState.status === "idle" ? compsReadiness.message : compsState.message}</p>
-            <p>Inventory: {inventoryState.message}</p>
-            {compsState.searchQuery ? <p>Comps query: {compsState.searchQuery}</p> : null}
-          </section>
-
-          <section className="slabbed-photos">
-            <p className="eyebrow">Slabbed Color Photos</p>
-            <p>Attach post-slab color photos. These are separate from Basler monochrome evidence.</p>
-            <label>
-              Front color photo
-              <input type="file" accept="image/*" disabled={!productionPublished || !labelPrinted || busy !== null} onChange={(event) => uploadSlabbedPhoto("front", event.target.files?.[0] ?? null)} />
-            </label>
-            <p>{slabUploads.front?.message ?? "Front photo not uploaded."}</p>
-            <label>
-              Back color photo
-              <input type="file" accept="image/*" disabled={!productionPublished || !labelPrinted || busy !== null} onChange={(event) => uploadSlabbedPhoto("back", event.target.files?.[0] ?? null)} />
-            </label>
-            <p>{slabUploads.back?.message ?? "Back photo not uploaded."}</p>
+            <p>Finish queue: {productionPublished ? "available for slab photos and eBay evaluate" : "available after publish"}</p>
           </section>
 
           <button type="button" className="safe" onClick={safeOff} disabled={busy !== null}>
@@ -3501,7 +4119,14 @@ export default function AiGraderStationPage() {
           box-shadow: 0 30px 90px rgba(0, 0, 0, 0.35);
         }
         .flip-scrim {
-          background: rgba(115, 14, 20, 0.48);
+          place-items: end start;
+          background: linear-gradient(0deg, rgba(5, 6, 5, 0.72), transparent 55%);
+          backdrop-filter: none;
+          pointer-events: none;
+        }
+        .flip-scrim > div {
+          width: min(430px, 92vw);
+          pointer-events: auto;
         }
         h1,
         h2,
@@ -3600,9 +4225,16 @@ export default function AiGraderStationPage() {
           padding: 22px;
         }
         .brand {
-          display: grid;
-          gap: 4px;
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 12px;
           margin-bottom: 20px;
+        }
+        .brand button {
+          min-height: 36px;
+          padding: 8px 10px;
+          white-space: nowrap;
         }
         .brand span {
           color: #c9a85f;
