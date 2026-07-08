@@ -24979,6 +24979,30 @@ By enabling Rip It Live, I confirm:
   - Open `Finish Cards`, upload slabbed front/back photos, run/save eBay comps, and Add To Inventory.
   - Verify public outputs contain storage URLs only and no local paths, bridge URLs, station tokens, presigned URLs, or data URLs.
 
+### PR #74 Review Patch
+- Patched the Finish Cards queue to behave as an active work queue by default.
+- Completed cards are excluded from `items` when `CardAsset.reviewStage === INVENTORY_READY_FOR_SALE` or the AI Grader session status is `inventory_ready`.
+- The production queue runtime no longer relies on one historical `take: 100`; it pages through published candidates, excludes `inventory_ready` sessions in the DB query, hydrates CardAsset state, and stops after collecting the active queue limit.
+- Completed rows are counted in queue stats from scanned candidates but do not consume operator queue slots.
+- Queue valuation readiness now matches the Add To Inventory server gate: `valuation.status === "completed"` is not enough unless `valuationMinor > 0`.
+- Added regression tests for completed-card exclusion, active limit behavior behind completed rows, and null/zero valuation amounts staying in `Needs eBay Evaluate`.
+
+### PR #74 Patch Validation
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `67` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` and stale browser-data/Tailwind glob warnings.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+
+### PR #74 Patch Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+- PR was merged: no.
+
 ## 2026-07-08 - PR #72 production merge observed result
 
 ### Merge And Deploy Evidence

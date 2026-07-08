@@ -390,6 +390,11 @@ export type AiGraderFinishCardsQueueResult = {
   };
 };
 
+type AiGraderFinishCardsQueueBuildOptions = {
+  activeLimit?: number;
+  includeCompleted?: boolean;
+};
+
 export type AiGraderPublicReportApiDependencies = {
   env?: EnvLike;
   readPublishedBundle(reportId: string): Promise<AiGraderProductionReportBundleLike | null>;
@@ -975,19 +980,21 @@ function finishStatusText(status: AiGraderFinishCardsQueueStatus): AiGraderFinis
   return "Complete";
 }
 
-export function buildAiGraderFinishCardsQueueResult(rows: unknown[]): AiGraderFinishCardsQueueResult {
-  const items = rows.filter(isRecord).map((row): AiGraderFinishCardsQueueItem => {
+export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: AiGraderFinishCardsQueueBuildOptions = {}): AiGraderFinishCardsQueueResult {
+  const allItems = rows.filter(isRecord).map((row): AiGraderFinishCardsQueueItem => {
     const label = firstRecord(row.labels) ?? firstRecord(row.label);
     const valuation = firstRecord(row.valuations) ?? firstRecord(row.valuation);
     const cardAsset = firstRecord(row.cardAsset);
+    const session = firstRecord(row.session);
     const assets = Array.isArray(row.evidenceAssets) ? row.evidenceAssets : [];
     const frontAsset = assets.find((asset) => hasQueueSlabbedSide(asset, "front"));
     const backAsset = assets.find((asset) => hasQueueSlabbedSide(asset, "back"));
     const slabComplete = Boolean(frontAsset && backAsset);
     const valuationStatus = optionalString(valuation?.status);
-    const valuationComplete = valuationStatus === "completed";
+    const valuationMinor = numberOrNull(valuation?.valuationMinor);
+    const valuationComplete = valuationStatus === "completed" && valuationMinor != null && valuationMinor > 0;
     const reviewStage = optionalString(cardAsset?.reviewStage);
-    const inventoryComplete = reviewStage === CardReviewStage.INVENTORY_READY_FOR_SALE;
+    const inventoryComplete = reviewStage === CardReviewStage.INVENTORY_READY_FOR_SALE || optionalString(session?.status) === "inventory_ready";
     const labelPrinted = optionalString(label?.physicalPrintStatus) === "printed";
     const queueStatus: AiGraderFinishCardsQueueStatus = !slabComplete
       ? "needs_slab_photos"
@@ -1030,7 +1037,7 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[]): AiGraderFi
       valuation: {
         complete: valuationComplete,
         status: valuationStatus ?? null,
-        valuationMinor: numberOrNull(valuation?.valuationMinor),
+        valuationMinor,
         valuationCurrency: optionalString(valuation?.valuationCurrency) ?? "USD",
       },
       inventory: {
@@ -1040,6 +1047,15 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[]): AiGraderFi
       },
     };
   });
+  allItems.sort((left, right) => {
+    const leftTime = left.publishedAt ?? left.createdAt ?? "";
+    const rightTime = right.publishedAt ?? right.createdAt ?? "";
+    const timeOrder = leftTime.localeCompare(rightTime);
+    return timeOrder || left.reportId.localeCompare(right.reportId);
+  });
+  const activeItems = options.includeCompleted ? allItems : allItems.filter((item) => item.queueStatus !== "complete");
+  const activeLimit = options.activeLimit ?? 100;
+  const items = activeLimit > 0 ? activeItems.slice(0, activeLimit) : activeItems;
   items.sort((left, right) => {
     const leftTime = left.publishedAt ?? left.createdAt ?? "";
     const rightTime = right.publishedAt ?? right.createdAt ?? "";
@@ -1055,7 +1071,7 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[]): AiGraderFi
       needsSlabPhotos: items.filter((item) => item.queueStatus === "needs_slab_photos").length,
       needsEbayEvaluate: items.filter((item) => item.queueStatus === "needs_ebay_evaluate").length,
       needsInventory: items.filter((item) => item.queueStatus === "needs_inventory").length,
-      complete: items.filter((item) => item.queueStatus === "complete").length,
+      complete: allItems.filter((item) => item.queueStatus === "complete").length,
     },
   };
 }
@@ -2725,62 +2741,11 @@ export async function listProductionReportHistoryRuntime(): Promise<AiGraderProd
   return buildAiGraderProductionHistoryResult(Array.isArray(rows) ? rows : []);
 }
 
-export async function listAiGraderFinishCardsQueueRuntime(): Promise<AiGraderFinishCardsQueueResult> {
-  const { prisma } = await import("@tenkings/database");
-  const db = prisma as any;
-  const rows = await db.aiGraderReport?.findMany?.({
-    where: {
-      publicationStatus: "published",
-      OR: [{ cardAssetId: { not: null } }, { itemId: { not: null } }],
-    },
-    orderBy: [{ publishedAt: "asc" }, { createdAt: "asc" }],
-    take: 100,
-    select: {
-      id: true,
-      reportId: true,
-      publicationStatus: true,
-      publicReportUrl: true,
-      qrPayloadUrl: true,
-      finalOverallGrade: true,
-      cardAssetId: true,
-      itemId: true,
-      createdAt: true,
-      publishedAt: true,
-      labels: {
-        orderBy: { updatedAt: "desc" },
-        take: 1,
-        select: {
-          certId: true,
-          labelPreviewUrl: true,
-          qrPayloadUrl: true,
-          physicalPrintStatus: true,
-        },
-      },
-      evidenceAssets: {
-        where: { artifactClass: "slabbed_photo" },
-        select: {
-          side: true,
-          storageKey: true,
-          publicUrl: true,
-          byteSize: true,
-          mimeType: true,
-          createdAt: true,
-        },
-      },
-      valuations: {
-        orderBy: { updatedAt: "desc" },
-        take: 1,
-        select: {
-          status: true,
-          valuationMinor: true,
-          valuationCurrency: true,
-          updatedAt: true,
-          completedAt: true,
-        },
-      },
-    },
-  });
-  const reports = Array.isArray(rows) ? rows : [];
+const AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT = 100;
+const AI_GRADER_FINISH_QUEUE_PAGE_SIZE = 100;
+
+async function hydrateAiGraderFinishCardsQueueRows(db: any, reportRows: unknown[]) {
+  const reports = reportRows.filter(isRecord);
   const cardAssetIds = Array.from(new Set(reports.map((row) => optionalString(row.cardAssetId)).filter((id): id is string => Boolean(id))));
   const itemIds = Array.from(new Set(reports.map((row) => optionalString(row.itemId)).filter((id): id is string => Boolean(id))));
   const cards = cardAssetIds.length
@@ -2814,11 +2779,92 @@ export async function listAiGraderFinishCardsQueueRuntime(): Promise<AiGraderFin
     : [];
   const cardById = new Map((Array.isArray(cards) ? cards : []).filter(isRecord).map((card) => [optionalString(card.id), card] as const));
   const itemById = new Map((Array.isArray(items) ? items : []).filter(isRecord).map((item) => [optionalString(item.id), item] as const));
-  return buildAiGraderFinishCardsQueueResult(
-    reports.map((row) => ({
-      ...row,
-      cardAsset: cardById.get(optionalString(row.cardAssetId)),
-      item: itemById.get(optionalString(row.itemId)),
-    }))
-  );
+  return reports.map((row) => ({
+    ...row,
+    cardAsset: cardById.get(optionalString(row.cardAssetId)),
+    item: itemById.get(optionalString(row.itemId)),
+  }));
+}
+
+export async function listAiGraderFinishCardsQueueRuntime(): Promise<AiGraderFinishCardsQueueResult> {
+  const { prisma } = await import("@tenkings/database");
+  const db = prisma as any;
+  const hydratedRows: unknown[] = [];
+  let skip = 0;
+
+  while (true) {
+    const rows = await db.aiGraderReport?.findMany?.({
+      where: {
+        publicationStatus: "published",
+        OR: [{ cardAssetId: { not: null } }, { itemId: { not: null } }],
+        session: { is: { status: { not: "inventory_ready" } } },
+      },
+      orderBy: [{ publishedAt: "asc" }, { createdAt: "asc" }],
+      skip,
+      take: AI_GRADER_FINISH_QUEUE_PAGE_SIZE,
+      select: {
+        id: true,
+        reportId: true,
+        publicationStatus: true,
+        publicReportUrl: true,
+        qrPayloadUrl: true,
+        finalOverallGrade: true,
+        cardAssetId: true,
+        itemId: true,
+        createdAt: true,
+        publishedAt: true,
+        session: {
+          select: {
+            status: true,
+            gradingSessionId: true,
+          },
+        },
+        labels: {
+          orderBy: { updatedAt: "desc" },
+          take: 1,
+          select: {
+            certId: true,
+            labelPreviewUrl: true,
+            qrPayloadUrl: true,
+            physicalPrintStatus: true,
+          },
+        },
+        evidenceAssets: {
+          where: { artifactClass: "slabbed_photo" },
+          select: {
+            side: true,
+            storageKey: true,
+            publicUrl: true,
+            byteSize: true,
+            mimeType: true,
+            createdAt: true,
+          },
+        },
+        valuations: {
+          orderBy: { updatedAt: "desc" },
+          take: 1,
+          select: {
+            status: true,
+            valuationMinor: true,
+            valuationCurrency: true,
+            updatedAt: true,
+            completedAt: true,
+          },
+        },
+      },
+    });
+    const reports = Array.isArray(rows) ? rows : [];
+    if (!reports.length) break;
+
+    hydratedRows.push(...(await hydrateAiGraderFinishCardsQueueRows(db, reports)));
+    const activeCount = buildAiGraderFinishCardsQueueResult(hydratedRows, {
+      activeLimit: AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT,
+    }).items.length;
+    if (activeCount >= AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT || reports.length < AI_GRADER_FINISH_QUEUE_PAGE_SIZE) break;
+    skip += reports.length;
+  }
+
+  return buildAiGraderFinishCardsQueueResult(hydratedRows, {
+    activeLimit: AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT,
+  });
 }

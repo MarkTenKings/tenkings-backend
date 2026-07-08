@@ -1408,7 +1408,6 @@ test("Finish Cards queue derives persisted finishing status and deterministic pu
     "report-needs-slab",
     "report-needs-ebay",
     "report-needs-inventory",
-    "report-complete",
   ]);
   assert.equal(queue.items[0].statusText, "Needs Slab Photos");
   assert.equal(queue.items[0].slabPhotos.frontUploaded, true);
@@ -1419,11 +1418,92 @@ test("Finish Cards queue derives persisted finishing status and deterministic pu
   assert.equal(queue.items[2].statusText, "Needs Inventory");
   assert.equal(queue.items[2].valuation.complete, true);
   assert.equal(queue.items[2].inventory.canAddToInventory, true);
-  assert.equal(queue.items[3].statusText, "Complete");
+  assert.equal(queue.items.some((item) => item.reportId === "report-complete"), false);
+  assert.equal(queue.stats.total, 3);
   assert.equal(queue.stats.needsSlabPhotos, 1);
   assert.equal(queue.stats.needsEbayEvaluate, 1);
   assert.equal(queue.stats.needsInventory, 1);
   assert.equal(queue.stats.complete, 1);
+});
+
+test("Finish Cards queue applies active limit after excluding completed cards", () => {
+  const completedRows = Array.from({ length: 120 }, (_, index) => ({
+    reportId: `report-complete-${index + 1}`,
+    finalOverallGrade: 9,
+    cardAssetId: `complete-card-${index + 1}`,
+    itemId: `complete-item-${index + 1}`,
+    publishedAt: new Date(Date.UTC(2026, 6, 8, 10, index)).toISOString(),
+    labels: [{ certId: `TK-AIG-C-${index + 1}`, physicalPrintStatus: "printed" }],
+    evidenceAssets: [
+      { side: "front", storageKey: "front.png", publicUrl: "https://cdn.tenkings.test/front.png", byteSize: 10 },
+      { side: "back", storageKey: "back.png", publicUrl: "https://cdn.tenkings.test/back.png", byteSize: 11 },
+    ],
+    valuations: [{ status: "completed", valuationMinor: 12000, valuationCurrency: "USD" }],
+    cardAsset: { id: `complete-card-${index + 1}`, reviewStage: "INVENTORY_READY_FOR_SALE", customTitle: `Complete Card ${index + 1}` },
+    session: { status: "inventory_ready" },
+  }));
+  const queue = buildAiGraderFinishCardsQueueResult(
+    [
+      ...completedRows,
+      {
+        reportId: "report-waiting",
+        finalOverallGrade: 8.5,
+        cardAssetId: "card-waiting",
+        itemId: "item-waiting",
+        publishedAt: new Date("2026-07-08T13:00:00.000Z"),
+        labels: [{ certId: "TK-AIG-W", physicalPrintStatus: "printed" }],
+        evidenceAssets: [],
+        valuations: [],
+        cardAsset: { id: "card-waiting", reviewStage: "REVIEW_COMPLETE", customTitle: "Waiting Card" },
+        session: { status: "published" },
+      },
+    ],
+    { activeLimit: 1 }
+  );
+
+  assert.deepEqual(queue.items.map((item) => item.reportId), ["report-waiting"]);
+  assert.equal(queue.items[0].statusText, "Needs Slab Photos");
+  assert.equal(queue.stats.total, 1);
+  assert.equal(queue.stats.complete, 120);
+});
+
+test("Finish Cards queue requires positive completed valuation before inventory readiness", () => {
+  const baseRow = {
+    finalOverallGrade: 9,
+    cardAssetId: "card-valuation",
+    itemId: "item-valuation",
+    publishedAt: new Date("2026-07-08T12:10:00.000Z"),
+    labels: [{ certId: "TK-AIG-V", physicalPrintStatus: "printed" }],
+    evidenceAssets: [
+      { side: "front", storageKey: "front.png", publicUrl: "https://cdn.tenkings.test/front.png", byteSize: 10 },
+      { side: "back", storageKey: "back.png", publicUrl: "https://cdn.tenkings.test/back.png", byteSize: 11 },
+    ],
+    cardAsset: { id: "card-valuation", reviewStage: "REVIEW_COMPLETE", customTitle: "Valuation Gate Card" },
+  };
+  const queue = buildAiGraderFinishCardsQueueResult([
+    {
+      ...baseRow,
+      reportId: "report-null-valuation",
+      valuations: [{ status: "completed", valuationMinor: null, valuationCurrency: "USD" }],
+    },
+    {
+      ...baseRow,
+      reportId: "report-zero-valuation",
+      cardAssetId: "card-valuation-zero",
+      itemId: "item-valuation-zero",
+      valuations: [{ status: "completed", valuationMinor: 0, valuationCurrency: "USD" }],
+    },
+  ]);
+
+  assert.deepEqual(queue.items.map((item) => item.reportId), ["report-null-valuation", "report-zero-valuation"]);
+  assert.equal(queue.items[0].statusText, "Needs eBay Evaluate");
+  assert.equal(queue.items[0].valuation.complete, false);
+  assert.equal(queue.items[0].inventory.canAddToInventory, false);
+  assert.equal(queue.items[1].statusText, "Needs eBay Evaluate");
+  assert.equal(queue.items[1].valuation.complete, false);
+  assert.equal(queue.items[1].inventory.canAddToInventory, false);
+  assert.equal(queue.stats.needsEbayEvaluate, 2);
+  assert.equal(queue.stats.needsInventory, 0);
 });
 
 test("Finish Cards queue API is history-scoped and returns persisted queue data", async () => {
