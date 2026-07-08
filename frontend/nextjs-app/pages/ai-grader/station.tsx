@@ -372,7 +372,7 @@ function utf8Bytes(value: string) {
 type PreviewFrameSize = { width: number; height: number };
 
 const REPORT_OVERLAY_DEFAULT_FRAME_SIZE: PreviewFrameSize = { width: 1200, height: 1680 };
-const REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.82;
+const REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.92;
 const REPORT_OVERLAY_CARD_ASPECT_RATIO = 2.5 / 3.5;
 const REPORT_OVERLAY_ROI_RATIOS = [
   { id: "top-left-corner", type: "corner", x: 0, y: 0, width: 0.18, height: 0.18 },
