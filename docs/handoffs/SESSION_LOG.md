@@ -1,5 +1,97 @@
 # Session Log (Append Only)
 
+## 2026-07-08 - Planned AI Grader report-overlay preview production merge/deploy
+
+### Planned Action
+- Commit and push branch `fix/ai-grader-report-overlay-preview`.
+- Open and merge a PR into `main` so Vercel deploys the AI Grader live preview overlay update to production.
+- Purpose: replace the station live-preview-only green alignment overlay with the report-style fixed-rig overlay before Mark tests from the Dell production station shortcut.
+- After merge, monitor GitHub checks and Vercel Production deployment for the merge commit.
+
+### Guardrails
+- Hardware capture/run: no.
+- Migrations: no.
+- Env vars: no changes.
+- Credentials/secrets: no changes, no printing.
+- Destructive operations: no.
+
+## 2026-07-08 - AI Grader live preview uses report-style overlay
+
+### Branch And HEAD
+- Branch: `main`.
+- HEAD: `4554428311d39dea8219214a421d6b8242225977`.
+
+### Files Changed
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`.
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`.
+- `docs/handoffs/SESSION_LOG.md`.
+
+### Architecture Change Summary
+- Replaced the station live-preview-only green `.guide-card` and separate CSS crosshair with a report-style SVG overlay.
+- The preview overlay now uses the same fixed-rig report template geometry: full-card guide height `0.82` of the displayed evidence frame and card aspect `2.5 / 3.5`.
+- The overlay is positioned over the actual `object-fit: contain` preview image bounds, so letterboxed preview frames keep the report guide aligned to image pixels rather than the outer panel.
+- Report-style guide colors are used in station preview: yellow card template, cyan dashed centerlines, orange corner ROI guides, pink edge ROI guides, and lime surface ROI guides.
+- Raw preview frames remain unmodified; the overlay is browser-rendered only and is not baked into captured evidence.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `59` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist, baseline-browser-mapping, and Tailwind glob warnings.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Remaining Follow-Up
+- Operator should verify visually on the Dell station that the live preview report-style overlay lines up with the physical card framing before capture.
+- No hardware capture was run in this implementation session.
+
+## 2026-07-07 - PR #71 production merge observed result
+
+### Merge And Deploy Evidence
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/71`.
+- PR merge status: merged.
+- PR branch HEAD merged: `e30873cc6220d545a3c3dc6debbb2ab59b8ee5ba`.
+- PR merge commit / main HEAD after merge: `4554428311d39dea8219214a421d6b8242225977`.
+- GitHub Actions main run: `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28907817535` -> completed successfully for `4554428311d39dea8219214a421d6b8242225977`.
+- Vercel production deployment status: success, deployment completed for commit `4554428311d39dea8219214a421d6b8242225977`.
+- Vercel evidence URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/2Tvkvk5wb3DShoCkwWEWeUhdxbbw`.
+- Vercel production target URL: `https://tenkings-backend-nextjs-4hr4gy9xt-ten-kings.vercel.app`.
+- Live production API check: `GET https://collect.tenkings.co/api/admin/ai-grader/production/status` returned HTTP `200`.
+- Live station page check: `GET https://collect.tenkings.co/ai-grader/station` returned HTTP `200`.
+
+### Exact Confirm Card Fix Summary
+- AI Grader Confirm Card / inventory-ready owner resolution now uses configured `OPERATOR_USER_ID` as the initial inventory owner `User.id`.
+- Created `Item.ownerId` and `ItemOwnership.ownerId` use `OPERATOR_USER_ID`.
+- The signed-in AI Grader station operator/admin remains the actor/audit user for upload, createdBy, operator linkage, QR/label binding, and related audit fields.
+- The AI Grader Confirm Card path no longer uses `PACK_INVENTORY_SELLER_EMAIL`, `HOUSE_USER_EMAIL`, `TEN_KINGS_HOUSE_USER_ID`, or `User.email` lookup.
+- `create-card-from-report` remains transactional so missing/invalid owner configuration fails before partial CardBatch/CardAsset/CardPhoto rows are created.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+
+### Confirm Card Production Smoke
+- Full Confirm Card click-through smoke was not executed from this shell because it requires Mark's authenticated Ten Kings station browser session and the Dell local station/report context. No browser session token was requested, printed, copied, or bypassed.
+- Production readiness checks that can be done without auth passed: Vercel production deployment succeeded, main CI passed, production AI Grader status route returned HTTP `200`, and the station route returned HTTP `200`.
+- Exact next operator smoke: open the Dell `Ten Kings AI Grader Station` shortcut, sign in once by SMS in the dedicated AI Grader Chrome profile if prompted, load the known-good report, click `Confirm + Create Card`, and verify it creates CardAsset/Item using `OPERATOR_USER_ID` with no second sign-in, owner picker, or email requirement.
+
+### Remaining AI Grader Production Smoke Steps
+- Confirm Card creates/links CardAsset + Item from the known-good report.
+- Publish report through direct storage upload + finalize.
+- Verify public report and label load from DB/storage.
+- Print/mark label.
+- Upload slabbed front/back photos.
+- Run eBay comps, select comps, and save valuation.
+- Add to inventory.
+- Verify public output has storage-backed images only and no local paths, bridge URLs, station tokens, base64 bodies, or hardware controls.
+
 ## 2026-07-07 - Planned PR #71 production merge/deploy
 
 ### Planned Action
