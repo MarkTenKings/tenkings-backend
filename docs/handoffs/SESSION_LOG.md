@@ -1,5 +1,43 @@
 # Session Log (Append Only)
 
+## 2026-07-08 - AI Grader publish direct-storage CORS/header blocker fix
+
+### Branch And HEAD
+- Branch: `fix/ai-grader-publish-storage-cors-errors`.
+- Base HEAD: `9fac82be5d5b464fee8f62b2bdaa54db38bbb5e9` (`origin/main`, PR #72 merge).
+
+### Files Changed
+- `frontend/nextjs-app/pages/api/admin/ai-grader/production/[...action].ts`.
+- `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`.
+- `frontend/nextjs-app/lib/aiGraderPublishErrors.ts`.
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`.
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`.
+- `docs/handoffs/SESSION_LOG.md`.
+
+### Architecture Change Summary
+- Kept the PR #65/#66 scalable publish path: `publish-init` small JSON, browser direct storage uploads, `publish-finalize` small JSON, then DB/storage-backed public report.
+- Removed the AI-Grader-only `x-amz-meta-sha256` browser upload header and stopped passing checksum metadata into `presignUploadUrl` for AI Grader publish/slabbed-photo uploads.
+- Kept local browser checksum and byte-size validation before upload, and kept `checksumSha256`, `byteSize`, and `contentType` in the `uploadManifest` sent to `publish-finalize`.
+- Server finalization still HEAD-verifies storage byte size and content type. Storage checksum metadata is now treated as optional only; absent metadata does not pretend server-side checksum verification happened.
+- Direct storage PUTs now set `mode: "cors"` explicitly.
+- Station publish errors now identify the failing stage: `publish-init`, local package/asset read, direct storage upload including artifact index/kind/storage key, `publish-finalize`, and public report verification. Storage fetch `TypeError` failures now call out likely storage CORS/preflight.
+- Slabbed-photo direct upload init/upload/finalize uses the same corrected upload contract and staged error messages.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `62` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist, baseline-browser-mapping, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `git diff --check` -> pass with CRLF conversion warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted by Codex: no.
+- No large artifacts/images were routed through Vercel; request body limits were not increased.
+
 ## 2026-07-08 - Planned AI Grader report-overlay preview production merge/deploy
 
 ### Planned Action
@@ -24828,6 +24866,38 @@ By enabling Rip It Live, I confirm:
 - No env var changes.
 - No credential rotation or secret printing.
 - No destructive operations.
+
+## 2026-07-08 - PR #72 production merge observed result
+
+### Merge And Deploy Evidence
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/72`.
+- PR merge status: merged.
+- PR branch HEAD merged: `72620b4faa674f12346823731f9312c931c6fc68`.
+- PR merge commit / main HEAD after merge: `9fac82be5d5b464fee8f62b2bdaa54db38bbb5e9`.
+- GitHub Actions main run: `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28911021352` -> completed successfully at `2026-07-08T01:39:55Z`.
+- Vercel production deployment status: success, deployment completed for commit `9fac82be5d5b464fee8f62b2bdaa54db38bbb5e9`.
+- Vercel evidence URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/HoYVtQSwkeryyszBnwhtD18AywKE`.
+- Vercel production target URL: `https://tenkings-backend-nextjs-3qzm0c9c2-ten-kings.vercel.app`.
+- Runtime evidence: Mark confirmed the updated AI Grader station overlay is live in production.
+
+### Overlay Fix Summary
+- AI Grader live preview no longer uses the old green card guide and crosshair overlay.
+- The preview now renders the report-style framing overlay in the browser over the contained live image frame.
+- The overlay includes the same report-style card frame, centerlines, and ROI guide families for corners, edges, and surface alignment.
+- The change affects preview UI only; raw capture frames, report publishing, storage, auth, and bridge pairing were not changed.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted by Codex: no.
+
+### Remaining Production Smoke Steps
+- Mark should continue testing from the Dell AI Grader Station desktop shortcut.
+- Confirm the live preview overlay matches the report framing guide well enough to position cards before grading.
+- Continue the existing AI Grader production workflow smoke as needed: grade, confirm card, publish/print label, upload slabbed photos, save comps/valuation, and add to inventory.
 
 ## 2026-07-07 - PR #70 production merge observed result
 
