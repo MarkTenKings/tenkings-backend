@@ -53,6 +53,19 @@
 - No destructive operations.
 - No shell-initiated production publish.
 
+### Observed Production Result
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/75`.
+- PR merge status: merged on `2026-07-08T10:07:30Z`.
+- PR branch HEAD merged: `b10521a6fb2961282a6a3a009720645c69ec0402`.
+- PR merge commit / main HEAD after merge: `55ed883b8379f1860556ae6ec38c42e4714a2944`.
+- GitHub main CI: success, `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28934617024`.
+- Vercel production deployment status: success, deployment completed for commit `55ed883b8379f1860556ae6ec38c42e4714a2944`.
+- Vercel evidence URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/7VDWGPkkhNBnd453KCycHjMjzvwK`.
+- Live production route check: `GET https://collect.tenkings.co/ai-grader/station` returned HTTP `200`.
+- Live production report route check: `GET https://collect.tenkings.co/ai-grader/reports/ai-grader-prod-smoke-20260703T212555` returned HTTP `200`.
+- Live production status check: `GET https://collect.tenkings.co/api/admin/ai-grader/production/status` returned HTTP `200`, `ok=true`, `enabled=true`, `publicReportDbReadsEnabled=true`, `liveEbayCompsEnabled=true`, and `noHardwareControls=true`.
+- Post-deploy guardrails observed: no hardware capture, no migrations, no env var changes, no credential rotation or secret printing, no destructive operations, and no shell-initiated production publish.
+
 ## 2026-07-08 - PR #73 production merge observed result
 
 ### Merge And Deploy Evidence
