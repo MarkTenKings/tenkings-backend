@@ -1,5 +1,27 @@
 # Session Log (Append Only)
 
+## 2026-07-07 - Planned PR #71 production merge/deploy
+
+### Planned Action
+- Merge PR #71 (`fix/ai-grader-confirm-card-house-owner`) into `main` after confirming the PR is open, clean, and all checks/Vercel preview are passing.
+- PR #71 current reviewed head before this planning entry: `061eaa09f80a7a26d4bf56372f74e9acfa8233ff`.
+- After merge, monitor GitHub main checks and Vercel Production deployment for `collect.tenkings.co`.
+- After production deploy completes, attempt the AI Grader Confirm Card production smoke without running hardware.
+
+### Expected Production Behavior
+- Operator signs in once by SMS.
+- Confirm Card creates the Ten Kings CardAsset/Item automatically.
+- AI Grader-created `Item.ownerId` and `ItemOwnership.ownerId` use configured `OPERATOR_USER_ID`.
+- The signed-in station operator remains the actor/audit user.
+- No second sign-in, owner picker, email requirement, `PACK_INVENTORY_SELLER_EMAIL`, `HOUSE_USER_EMAIL`, or `User.email` lookup is used in the AI Grader Confirm Card path.
+
+### Guardrails
+- Do not run hardware capture.
+- Do not run migrations.
+- Do not change env vars.
+- Do not change, rotate, request, or print credentials/secrets.
+- Do not run destructive operations.
+
 ## 2026-07-07 - PR #71 AI Grader inventory owner source corrected to OPERATOR_USER_ID
 
 ### Branch And HEAD
