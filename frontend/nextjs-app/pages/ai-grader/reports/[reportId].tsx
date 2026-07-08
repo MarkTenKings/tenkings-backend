@@ -173,20 +173,70 @@ export default function AiGraderReportViewerPage() {
                 : "This is a controlled provisional diagnostic output. It is not a certified Ten Kings grade and it does not create a label, QR certificate, or final certificate."}
             </p>
           </div>
-          <div className="card-stage" aria-label="front card visual placeholder">
-            {frontTrueView?.renderUrl ? (
-              <img className="card-photo" src={frontTrueView.renderUrl} alt="Front true view evidence" />
-            ) : (
-              <div className="card-visual">
-                <span>Front True View</span>
-                <em>Basler analysis imagery unavailable</em>
-              </div>
-            )}
-            <div className="callout c1">Centering {scoreText(finalGrade?.elements.centering?.score ?? story?.elementScores?.centering?.score)}</div>
-            <div className="callout c2">Corners {scoreText(finalGrade?.elements.corners?.score ?? story?.elementScores?.corners?.score)}</div>
-            <div className="callout c3">Edges {scoreText(finalGrade?.elements.edges?.score ?? story?.elementScores?.edges?.score)}</div>
-            <div className="callout c4">Surface {scoreText(finalGrade?.elements.surface?.score ?? story?.elementScores?.surface?.score)}</div>
+          <section className="vision-lab hero-lab">
+            <div className="section-head">
+            <p className="eyebrow">Ten Kings Vision Lab</p>
+            <h2>Interactive forensic inspection shell</h2>
+            <p>V0 renders report-bundle data and gracefully handles missing public assets. Every visual claim links back to evidence references.</p>
           </div>
+          <div className="lab-layout">
+            <aside>
+              {LAB_MODES.map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={mode === selectedLabMode ? "active" : ""}
+                  disabled={!labImageForMode(images, mode, selectedLabSide, impactCandidate)?.renderUrl}
+                  onClick={() => setSelectedLabMode(mode)}
+                >
+                  {mode}
+                </button>
+              ))}
+              <div className="side-switch" aria-label="Vision Lab side selector">
+                <button type="button" className={selectedLabSide === "front" ? "active" : ""} onClick={() => setSelectedLabSide("front")}>
+                  Front
+                </button>
+                <button type="button" className={selectedLabSide === "back" ? "active" : ""} onClick={() => setSelectedLabSide("back")}>
+                  Back
+                </button>
+              </div>
+            </aside>
+            <div className="lab-canvas">
+              {selectedLabAsset?.renderUrl ? (
+                <img className="lab-image selected" src={selectedLabAsset.renderUrl} alt={`Vision Lab ${selectedLabSide} ${selectedLabMode}`} />
+              ) : (
+                <div className="viewer-card">
+                  <span>{selectedLabMode}</span>
+                  <strong>{selectedLabModeAvailable ? "Evidence referenced" : "Mode unavailable"}</strong>
+                </div>
+              )}
+              {impactCandidate ? <div className="marker">{selectedLabMode === "Evidence Replay" ? "Replay candidate" : "Surface candidate"}</div> : null}
+            </div>
+            <aside className="evidence">
+              <h3>{selectedLabMode}</h3>
+              <dl>
+                <dt>Side</dt>
+                <dd>{selectedLabSide}</dd>
+                <dt>Image</dt>
+                <dd>{selectedLabAsset?.fileName ?? selectedLabAsset?.id ?? "unavailable"}</dd>
+              </dl>
+              {impactCandidate ? (
+                <dl>
+                  <dt>Candidate</dt>
+                  <dd>{impactCandidate.id}</dd>
+                  <dt>Severity</dt>
+                  <dd>{impactCandidate.severity}</dd>
+                  <dt>Source channels</dt>
+                  <dd>{sourceChannelsText(impactCandidate)}</dd>
+                  <dt>Evidence</dt>
+                  <dd>{impactCandidate.evidenceRefs.join(", ")}</dd>
+                </dl>
+              ) : (
+                <p>No candidate details available.</p>
+              )}
+            </aside>
+            </div>
+          </section>
         </section>
 
         <section className="evidence-gallery">
@@ -218,7 +268,11 @@ export default function AiGraderReportViewerPage() {
             <div className="production-grid">
               <article>
                 <span>Public Report URL</span>
-                <strong>{productionRelease.publication.publicReportUrl}</strong>
+                <strong>
+                  <a href={productionRelease.publication.publicReportUrl} target="_blank" rel="noreferrer">
+                    Open public report
+                  </a>
+                </strong>
               </article>
               <article>
                 <span>Cert / Report ID</span>
@@ -267,7 +321,13 @@ export default function AiGraderReportViewerPage() {
                     <article key={`${record.side ?? "photo"}-${index}`}>
                       <span>{String(record.side ?? "photo")}</span>
                       <strong>{String(record.kind ?? "slabbed color photo")}</strong>
-                      {typeof record.publicUrl === "string" ? <p>{record.publicUrl}</p> : null}
+                      {typeof record.publicUrl === "string" ? (
+                        <p>
+                          <a href={record.publicUrl} target="_blank" rel="noreferrer">
+                            Open storage-backed image
+                          </a>
+                        </p>
+                      ) : null}
                     </article>
                   );
                 })
@@ -334,71 +394,6 @@ export default function AiGraderReportViewerPage() {
             </div>
           </section>
         ) : null}
-
-        <section className="vision-lab">
-          <div className="section-head">
-            <p className="eyebrow">Ten Kings Vision Lab</p>
-            <h2>Interactive forensic inspection shell</h2>
-            <p>V0 renders report-bundle data and gracefully handles missing public assets. Every visual claim links back to evidence references.</p>
-          </div>
-          <div className="lab-layout">
-            <aside>
-              {LAB_MODES.map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  className={mode === selectedLabMode ? "active" : ""}
-                  disabled={!labImageForMode(images, mode, selectedLabSide, impactCandidate)?.renderUrl}
-                  onClick={() => setSelectedLabMode(mode)}
-                >
-                  {mode}
-                </button>
-              ))}
-              <div className="side-switch" aria-label="Vision Lab side selector">
-                <button type="button" className={selectedLabSide === "front" ? "active" : ""} onClick={() => setSelectedLabSide("front")}>
-                  Front
-                </button>
-                <button type="button" className={selectedLabSide === "back" ? "active" : ""} onClick={() => setSelectedLabSide("back")}>
-                  Back
-                </button>
-              </div>
-            </aside>
-            <div className="lab-canvas">
-              {selectedLabAsset?.renderUrl ? (
-                <img className="lab-image selected" src={selectedLabAsset.renderUrl} alt={`Vision Lab ${selectedLabSide} ${selectedLabMode}`} />
-              ) : (
-                <div className="viewer-card">
-                  <span>{selectedLabMode}</span>
-                  <strong>{selectedLabModeAvailable ? "Evidence referenced" : "Mode unavailable"}</strong>
-                </div>
-              )}
-              {impactCandidate ? <div className="marker">{selectedLabMode === "Evidence Replay" ? "Replay candidate" : "Surface candidate"}</div> : null}
-            </div>
-            <aside className="evidence">
-              <h3>{selectedLabMode}</h3>
-              <dl>
-                <dt>Side</dt>
-                <dd>{selectedLabSide}</dd>
-                <dt>Image</dt>
-                <dd>{selectedLabAsset?.fileName ?? selectedLabAsset?.id ?? "unavailable"}</dd>
-              </dl>
-              {impactCandidate ? (
-                <dl>
-                  <dt>Candidate</dt>
-                  <dd>{impactCandidate.id}</dd>
-                  <dt>Severity</dt>
-                  <dd>{impactCandidate.severity}</dd>
-                  <dt>Source channels</dt>
-                  <dd>{sourceChannelsText(impactCandidate)}</dd>
-                  <dt>Evidence</dt>
-                  <dd>{impactCandidate.evidenceRefs.join(", ")}</dd>
-                </dl>
-              ) : (
-                <p>No candidate details available.</p>
-              )}
-            </aside>
-          </div>
-        </section>
 
         <section className="elements">
           <div className="section-head">
@@ -551,9 +546,9 @@ export default function AiGraderReportViewerPage() {
         }
         .hero {
           display: grid;
-          grid-template-columns: 340px minmax(0, 1fr);
+          grid-template-columns: 320px minmax(0, 1fr);
           gap: 20px;
-          min-height: 520px;
+          min-height: 620px;
         }
         .grade-panel,
         .card-stage,
@@ -660,15 +655,19 @@ export default function AiGraderReportViewerPage() {
         }
         .image-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+          grid-template-columns: repeat(6, minmax(0, 1fr));
           gap: 14px;
         }
         .image-grid figure {
+          grid-column: span 2;
           margin: 0;
           border: 1px solid rgba(26, 24, 20, 0.1);
           border-radius: 8px;
           overflow: hidden;
           background: #171614;
+        }
+        .image-grid figure:nth-child(-n + 2) {
+          grid-column: span 3;
         }
         .image-grid img {
           display: block;
@@ -676,6 +675,10 @@ export default function AiGraderReportViewerPage() {
           aspect-ratio: 4 / 3;
           object-fit: contain;
           background: #111;
+        }
+        .image-grid figure:nth-child(-n + 2) img {
+          aspect-ratio: 2.5 / 3.5;
+          max-height: 680px;
         }
         .image-grid figcaption {
           min-height: 38px;
@@ -724,6 +727,12 @@ export default function AiGraderReportViewerPage() {
           display: block;
           margin-top: 8px;
         }
+        .production-grid a {
+          color: #5f4516;
+          text-decoration-thickness: 2px;
+          text-underline-offset: 3px;
+          overflow-wrap: anywhere;
+        }
         .gate-list {
           grid-template-columns: repeat(4, minmax(0, 1fr));
         }
@@ -765,6 +774,20 @@ export default function AiGraderReportViewerPage() {
         .why,
         .appendix {
           padding: 24px;
+        }
+        .hero-lab {
+          max-width: none;
+          min-width: 0;
+          margin: 0;
+          padding: 20px;
+        }
+        .hero-lab .section-head {
+          margin-bottom: 14px;
+        }
+        .hero-lab .lab-layout {
+          grid-template-columns: 150px minmax(0, 1fr) 210px;
+          gap: 12px;
+          min-height: 430px;
         }
         .section-head {
           margin-bottom: 18px;
@@ -979,6 +1002,13 @@ export default function AiGraderReportViewerPage() {
             width: 100%;
             height: auto;
             margin-bottom: 12px;
+          }
+          .image-grid {
+            grid-template-columns: 1fr;
+          }
+          .image-grid figure,
+          .image-grid figure:nth-child(-n + 2) {
+            grid-column: span 1;
           }
         }
       `}</style>

@@ -1,5 +1,58 @@
 # Session Log (Append Only)
 
+## 2026-07-08 - AI Grader Dell preview overlay and report UI polish
+
+### Branch And HEAD
+- Branch at edit time: `feature/ai-grader-finish-cards-workflow`.
+- Working tree already had prior `docs/handoffs/SESSION_LOG.md` modifications before this UI pass; they were preserved.
+
+### Visual Evidence And Root Cause
+- Mark provided a Dell station screenshot showing the report-style live preview guide centered over the Basler frame but still sized at the old report-template scale.
+- The station was using `REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.82`, leaving about 9% image margin above and below the card guide. On the Dell preview this made the guide feel too small for production positioning and encouraged moving the Basler farther from the card.
+
+### Files Changed
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`.
+- `frontend/nextjs-app/pages/ai-grader/reports/[reportId].tsx`.
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`.
+- `docs/handoffs/SESSION_LOG.md`.
+
+### Change Summary
+- Increased the live Basler report-style card guide height ratio from `0.82` to `0.92`.
+- Preserved the correct `2.5 / 3.5` card aspect ratio and the contained-image-frame positioning logic so the overlay remains aligned to the actual `object-fit: contain` preview image, not the outer panel.
+- Moved the public report `Interactive forensic inspection shell` / Vision Lab into the top hero area beside the grade, so forensic inspection is visible at the top of the report.
+- Made front/back report evidence images larger in the first evidence gallery while keeping secondary artifacts as smaller tiles.
+- Replaced long public report/storage URL text blocks with clean links for `Open public report` and `Open storage-backed image`.
+- Kept the changes UI-only. Raw captures, report generation, publish/storage/auth, bridge pairing, and hardware commands were not changed.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `67` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist/baseline-browser-mapping, and Tailwind glob warnings.
+- `git diff --check` -> pass with Windows line-ending warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted by Codex: no.
+
+### Planned Production Action
+- Mark approved merging/deploying this UI work to production after validation.
+- Plan: commit and push a branch with the overlay/report UI changes, open a PR to `main`, merge after checks are clean, then wait for GitHub main CI and Vercel production deployment before final verification.
+- Production verification targets after deploy:
+  - `https://collect.tenkings.co/ai-grader/station` returns HTTP `200`.
+  - `https://collect.tenkings.co/api/admin/ai-grader/production/status` returns HTTP `200` and keeps `noHardwareControls=true`.
+  - AI Grader public report route loads from production.
+
+### Planned Production Guardrails
+- No hardware capture.
+- No migrations.
+- No env var changes.
+- No credential rotation or secret printing.
+- No destructive operations.
+- No shell-initiated production publish.
+
 ## 2026-07-08 - PR #73 production merge observed result
 
 ### Merge And Deploy Evidence
@@ -25002,6 +25055,71 @@ By enabling Rip It Live, I confirm:
 - Destructive operations run: no.
 - Production publish was attempted: no.
 - PR was merged: no.
+
+## 2026-07-08 - PR #74 production merge planned action
+
+### Planned Action
+- Merge PR #74 (`https://github.com/MarkTenKings/tenkings-backend/pull/74`) from `feature/ai-grader-finish-cards-workflow` into `main`.
+- Purpose: deploy the AI Grader workflow PR with back-side live preview positioning, interactive public forensic report buttons, and the persisted `Finish Cards` active work queue.
+- Verified before merge:
+  - PR state: open, non-draft.
+  - PR head before merge: `faa58d49d1136bf002f6dbe7aa2f0489a401028a`.
+  - Merge state: `CLEAN`.
+  - GitHub PR checks: passing.
+  - Vercel preview: passing.
+- After merge, monitor GitHub main CI and Vercel production deployment, then verify live production routes.
+
+### Guardrails For This Planned Action
+- No hardware capture.
+- No migrations.
+- No env var changes.
+- No credential rotation or secret printing.
+- No destructive operations.
+- No shell-initiated production publish.
+
+## 2026-07-08 - PR #74 production merge observed result
+
+### Merge And Deploy Evidence
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/74`.
+- PR merge status: merged at `2026-07-08T09:34:20Z`.
+- PR branch HEAD merged: `faa58d49d1136bf002f6dbe7aa2f0489a401028a`.
+- PR merge commit / main HEAD after merge: `b07f10672c71bab23ce5e65b547f0267c7f0eaa7`.
+- GitHub Actions main run: `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28932648683` -> completed successfully for `b07f10672c71bab23ce5e65b547f0267c7f0eaa7`.
+- Vercel production deployment status: success, `Deployment has completed`.
+- Vercel production deployment URL: `https://tenkings-backend-nextjs-2oymyiry4-ten-kings.vercel.app`.
+- Vercel evidence URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/6PUeCK6TVVe7mu1NX5fbQHnK77wL`.
+- Live station check: `GET https://collect.tenkings.co/ai-grader/station` returned HTTP `200`.
+- Production status check: `GET https://collect.tenkings.co/api/admin/ai-grader/production/status` returned HTTP `200`, `enabled=true`, `noHardwareControls=true`.
+
+### Deployed Fix Summary
+- Back-side positioning keeps live preview active before the operator clicks `Capture Back`.
+- Public AI Grader report forensic mode and side buttons are interactive and only render report-image-resolver URLs.
+- `/ai-grader/station` now has `Grade Card` and `Finish Cards` work areas in one station.
+- `Finish Cards` queue is persisted from production AI Grader report/session/label/slab/valuation/CardAsset/Item state.
+- Queue now defaults to active work: completed inventory-ready cards are excluded from operator queue items and cannot consume the active queue limit.
+- Queue valuation readiness now matches Add To Inventory: `valuation.status=completed` must also have `valuationMinor > 0`.
+- Slab photos remain direct browser-to-storage uploads; large image bodies are not routed through Vercel.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted by Codex: no.
+
+### Remaining Dell Smoke Steps
+- Mark should open the Ten Kings AI Grader Station shortcut on the Dell and hard-refresh if needed.
+- Confirm the station loads from production and sign in once if prompted.
+- Run a Grade Card flow through:
+  - Grade
+  - Confirm Card
+  - Publish + Print Label
+- During back-side positioning, confirm live preview is visible until `Capture Back` is clicked.
+- Open the public report and toggle forensic modes/sides.
+- Click `Finish Cards` and confirm the published card appears in the active queue.
+- Upload slabbed front/back photos, run/save eBay comps, and Add To Inventory.
+- Verify public outputs contain storage URLs only and no local paths, bridge URLs, station tokens, presigned URLs, base64, or `data:image` bodies.
 
 ## 2026-07-08 - PR #72 production merge observed result
 

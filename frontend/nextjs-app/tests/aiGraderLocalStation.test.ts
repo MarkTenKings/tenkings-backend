@@ -2683,7 +2683,7 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("Production sign-in is required before the CardAsset/Item can be created."), true);
   assert.equal(stationSource.includes("guide-card"), false);
   assert.equal(stationSource.includes("crosshair horizontal"), false);
-  assert.equal(stationSource.includes("REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.82"), true);
+  assert.equal(stationSource.includes("REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.92"), true);
   assert.equal(stationSource.includes("REPORT_OVERLAY_CARD_ASPECT_RATIO = 2.5 / 3.5"), true);
   assert.equal(stationSource.includes("report-framing-overlay"), true);
   assert.equal(stationSource.includes("reportOverlayTemplateRect"), true);
@@ -2751,6 +2751,15 @@ test("AI Grader public report source renders provisional evidence gates", () => 
   assert.equal(reportSource.includes("setSelectedLabSide(\"back\")"), true);
   assert.equal(reportSource.includes("disabled={!labImageForMode"), true);
   assert.equal(reportSource.includes("labImageForMode(images, mode, selectedLabSide, impactCandidate)"), true);
+  assert.equal(reportSource.includes("vision-lab hero-lab"), true);
+  assert.equal(reportSource.includes("Open public report"), true);
+  assert.equal(reportSource.includes("Open storage-backed image"), true);
+  const gradeIndex = reportSource.indexOf("Provisional Diagnostic Grade");
+  const labIndex = reportSource.indexOf("Interactive forensic inspection shell");
+  const galleryIndex = reportSource.indexOf("Published Evidence Images");
+  assert.ok(gradeIndex >= 0);
+  assert.ok(labIndex > gradeIndex);
+  assert.ok(galleryIndex > labIndex);
   assert.equal(reportSource.includes("data:image"), false);
   assert.equal(reportSource.includes("stationToken"), false);
   assert.equal(reportSource.includes("presigned"), false);
