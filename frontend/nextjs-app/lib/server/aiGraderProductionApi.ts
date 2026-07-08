@@ -231,6 +231,7 @@ export type AiGraderProductionApiDependencies = {
     actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderProductionPersistResult>;
   listHistory?(): Promise<AiGraderProductionHistoryResult>;
+  listFinishQueue?(): Promise<AiGraderFinishCardsQueueResult>;
   searchCards?(input: {
     query: string;
     limit: number;
@@ -332,6 +333,60 @@ export type AiGraderProductionHistoryResult = {
     averageFinalGrade: number | null;
     gradeDistribution: Record<string, number>;
     warningCount: number;
+  };
+};
+
+export type AiGraderFinishCardsQueueStatus = "needs_slab_photos" | "needs_ebay_evaluate" | "needs_inventory" | "complete";
+
+export type AiGraderFinishCardsQueueItem = {
+  reportId: string;
+  certId?: string | null;
+  cardTitle: string;
+  grade?: number | null;
+  cardAssetId?: string | null;
+  itemId?: string | null;
+  publicReportUrl?: string | null;
+  labelPreviewUrl?: string | null;
+  qrPayloadUrl?: string | null;
+  publishedAt?: string | null;
+  createdAt?: string | null;
+  queueStatus: AiGraderFinishCardsQueueStatus;
+  statusText: "Needs Slab Photos" | "Needs eBay Evaluate" | "Needs Inventory" | "Complete";
+  needs: Array<"Slab Photos" | "eBay Evaluate" | "Add To Inventory">;
+  label: {
+    printed: boolean;
+    physicalPrintStatus?: string | null;
+  };
+  slabPhotos: {
+    frontUploaded: boolean;
+    backUploaded: boolean;
+    complete: boolean;
+    frontUrl?: string | null;
+    backUrl?: string | null;
+  };
+  valuation: {
+    complete: boolean;
+    status?: string | null;
+    valuationMinor?: number | null;
+    valuationCurrency?: string | null;
+  };
+  inventory: {
+    complete: boolean;
+    reviewStage?: string | null;
+    canAddToInventory: boolean;
+  };
+};
+
+export type AiGraderFinishCardsQueueResult = {
+  source: "persisted_records";
+  orderedBy: "publishedAt_asc_createdAt_asc";
+  items: AiGraderFinishCardsQueueItem[];
+  stats: {
+    total: number;
+    needsSlabPhotos: number;
+    needsEbayEvaluate: number;
+    needsInventory: number;
+    complete: number;
   };
 };
 
@@ -882,6 +937,129 @@ export function buildAiGraderProductionHistoryResult(rows: unknown[]): AiGraderP
   };
 }
 
+function firstRecord(value: unknown) {
+  if (Array.isArray(value)) return value.find(isRecord) ?? null;
+  return isRecord(value) ? value : null;
+}
+
+function numberOrNull(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function hasQueueSlabbedSide(asset: unknown, side: "front" | "back") {
+  if (!isRecord(asset)) return false;
+  if (optionalString(asset.side) !== side) return false;
+  return Boolean(optionalString(asset.storageKey) && optionalString(asset.publicUrl) && numericValue(asset.byteSize, 0) > 0);
+}
+
+function queueCardTitle(row: JsonRecord) {
+  const item = firstRecord(row.item);
+  const cardAsset = firstRecord(row.cardAsset);
+  const itemName = optionalString(item?.name);
+  const itemSet = optionalString(item?.set);
+  const itemNumber = optionalString(item?.number);
+  if (itemName) return [itemSet, itemName, itemNumber ? `#${itemNumber}` : ""].filter(Boolean).join(" ");
+  const customTitle = optionalString(cardAsset?.customTitle);
+  if (customTitle) return customTitle;
+  const resolvedPlayer = optionalString(cardAsset?.resolvedPlayerName);
+  if (resolvedPlayer) return resolvedPlayer;
+  const fileName = optionalString(cardAsset?.fileName);
+  if (fileName) return fileName.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " ");
+  return optionalString(row.reportId) ?? "AI Grader card";
+}
+
+function finishStatusText(status: AiGraderFinishCardsQueueStatus): AiGraderFinishCardsQueueItem["statusText"] {
+  if (status === "needs_slab_photos") return "Needs Slab Photos";
+  if (status === "needs_ebay_evaluate") return "Needs eBay Evaluate";
+  if (status === "needs_inventory") return "Needs Inventory";
+  return "Complete";
+}
+
+export function buildAiGraderFinishCardsQueueResult(rows: unknown[]): AiGraderFinishCardsQueueResult {
+  const items = rows.filter(isRecord).map((row): AiGraderFinishCardsQueueItem => {
+    const label = firstRecord(row.labels) ?? firstRecord(row.label);
+    const valuation = firstRecord(row.valuations) ?? firstRecord(row.valuation);
+    const cardAsset = firstRecord(row.cardAsset);
+    const assets = Array.isArray(row.evidenceAssets) ? row.evidenceAssets : [];
+    const frontAsset = assets.find((asset) => hasQueueSlabbedSide(asset, "front"));
+    const backAsset = assets.find((asset) => hasQueueSlabbedSide(asset, "back"));
+    const slabComplete = Boolean(frontAsset && backAsset);
+    const valuationStatus = optionalString(valuation?.status);
+    const valuationComplete = valuationStatus === "completed";
+    const reviewStage = optionalString(cardAsset?.reviewStage);
+    const inventoryComplete = reviewStage === CardReviewStage.INVENTORY_READY_FOR_SALE;
+    const labelPrinted = optionalString(label?.physicalPrintStatus) === "printed";
+    const queueStatus: AiGraderFinishCardsQueueStatus = !slabComplete
+      ? "needs_slab_photos"
+      : !valuationComplete
+        ? "needs_ebay_evaluate"
+        : inventoryComplete
+          ? "complete"
+          : "needs_inventory";
+    const needs: AiGraderFinishCardsQueueItem["needs"] = [];
+    if (!slabComplete) needs.push("Slab Photos");
+    if (slabComplete && !valuationComplete) needs.push("eBay Evaluate");
+    if (slabComplete && valuationComplete && !inventoryComplete) needs.push("Add To Inventory");
+
+    return {
+      reportId: stringValue(row.reportId, "unknown-report"),
+      certId: optionalString(label?.certId),
+      cardTitle: queueCardTitle(row),
+      grade: numberOrNull(row.finalOverallGrade),
+      cardAssetId: optionalString(row.cardAssetId),
+      itemId: optionalString(row.itemId),
+      publicReportUrl: optionalString(row.publicReportUrl),
+      labelPreviewUrl: optionalString(label?.labelPreviewUrl) ?? buildAiGraderLabelPreviewUrl(stringValue(row.reportId, "unknown-report")),
+      qrPayloadUrl: optionalString(row.qrPayloadUrl) ?? optionalString(label?.qrPayloadUrl),
+      publishedAt: dateString(row.publishedAt),
+      createdAt: dateString(row.createdAt),
+      queueStatus,
+      statusText: finishStatusText(queueStatus),
+      needs,
+      label: {
+        printed: labelPrinted,
+        physicalPrintStatus: optionalString(label?.physicalPrintStatus),
+      },
+      slabPhotos: {
+        frontUploaded: Boolean(frontAsset),
+        backUploaded: Boolean(backAsset),
+        complete: slabComplete,
+        frontUrl: isRecord(frontAsset) ? optionalString(frontAsset.publicUrl) : null,
+        backUrl: isRecord(backAsset) ? optionalString(backAsset.publicUrl) : null,
+      },
+      valuation: {
+        complete: valuationComplete,
+        status: valuationStatus ?? null,
+        valuationMinor: numberOrNull(valuation?.valuationMinor),
+        valuationCurrency: optionalString(valuation?.valuationCurrency) ?? "USD",
+      },
+      inventory: {
+        complete: inventoryComplete,
+        reviewStage: reviewStage ?? null,
+        canAddToInventory: labelPrinted && slabComplete && valuationComplete && !inventoryComplete,
+      },
+    };
+  });
+  items.sort((left, right) => {
+    const leftTime = left.publishedAt ?? left.createdAt ?? "";
+    const rightTime = right.publishedAt ?? right.createdAt ?? "";
+    const timeOrder = leftTime.localeCompare(rightTime);
+    return timeOrder || left.reportId.localeCompare(right.reportId);
+  });
+  return {
+    source: "persisted_records",
+    orderedBy: "publishedAt_asc_createdAt_asc",
+    items,
+    stats: {
+      total: items.length,
+      needsSlabPhotos: items.filter((item) => item.queueStatus === "needs_slab_photos").length,
+      needsEbayEvaluate: items.filter((item) => item.queueStatus === "needs_ebay_evaluate").length,
+      needsInventory: items.filter((item) => item.queueStatus === "needs_inventory").length,
+      complete: items.filter((item) => item.queueStatus === "complete").length,
+    },
+  };
+}
+
 export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDependencies) {
   const env = deps.env ?? process.env;
   return async function aiGraderProductionApiHandler(req: NextApiRequest, res: NextApiResponse) {
@@ -904,6 +1082,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           "publish-finalize",
           "create-card-from-report",
           "history",
+          "finish-queue",
           "card-search",
           "slabbed-photo-init",
           "slabbed-photo-finalize",
@@ -932,6 +1111,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       "publish-finalize",
       "create-card-from-report",
       "history",
+      "finish-queue",
       "card-search",
       "slabbed-photo-init",
       "slabbed-photo-finalize",
@@ -944,7 +1124,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
     if (!allowedActions.includes(key)) {
       return res.status(404).json({ ok: false, message: "AI Grader production API route not found" });
     }
-    const allow = key === "auth-check" || key === "history" || key === "card-search" ? "GET" : "POST";
+    const allow = key === "auth-check" || key === "history" || key === "finish-queue" || key === "card-search" ? "GET" : "POST";
     if (req.method !== allow) {
       res.setHeader("Allow", allow);
       return res.status(405).json({ ok: false, message: "Method not allowed" });
@@ -971,7 +1151,9 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         key === "mark-label-printed" ||
         key === "add-to-inventory"
           ? "publish"
-          : key === "slabbed-photo-init" || key === "slabbed-photo-finalize" || key === "upload-slab-photo"
+          : key === "finish-queue"
+            ? "history"
+            : key === "slabbed-photo-init" || key === "slabbed-photo-finalize" || key === "upload-slab-photo"
             ? "upload-slab-photo"
             : key === "save-comps-selection"
               ? "run-comps"
@@ -1005,6 +1187,10 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       if (key === "history") {
         const result = deps.listHistory ? await deps.listHistory() : { status: "not_implemented", items: [] };
         return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderProductionHistory", result });
+      }
+      if (key === "finish-queue") {
+        const result = deps.listFinishQueue ? await deps.listFinishQueue() : buildAiGraderFinishCardsQueueResult([]);
+        return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderFinishCardsQueue", result });
       }
       if (key === "card-search") {
         if (!deps.searchCards) throw new Error("AI Grader card/item search is not configured.");
@@ -2537,4 +2723,102 @@ export async function listProductionReportHistoryRuntime(): Promise<AiGraderProd
     },
   });
   return buildAiGraderProductionHistoryResult(Array.isArray(rows) ? rows : []);
+}
+
+export async function listAiGraderFinishCardsQueueRuntime(): Promise<AiGraderFinishCardsQueueResult> {
+  const { prisma } = await import("@tenkings/database");
+  const db = prisma as any;
+  const rows = await db.aiGraderReport?.findMany?.({
+    where: {
+      publicationStatus: "published",
+      OR: [{ cardAssetId: { not: null } }, { itemId: { not: null } }],
+    },
+    orderBy: [{ publishedAt: "asc" }, { createdAt: "asc" }],
+    take: 100,
+    select: {
+      id: true,
+      reportId: true,
+      publicationStatus: true,
+      publicReportUrl: true,
+      qrPayloadUrl: true,
+      finalOverallGrade: true,
+      cardAssetId: true,
+      itemId: true,
+      createdAt: true,
+      publishedAt: true,
+      labels: {
+        orderBy: { updatedAt: "desc" },
+        take: 1,
+        select: {
+          certId: true,
+          labelPreviewUrl: true,
+          qrPayloadUrl: true,
+          physicalPrintStatus: true,
+        },
+      },
+      evidenceAssets: {
+        where: { artifactClass: "slabbed_photo" },
+        select: {
+          side: true,
+          storageKey: true,
+          publicUrl: true,
+          byteSize: true,
+          mimeType: true,
+          createdAt: true,
+        },
+      },
+      valuations: {
+        orderBy: { updatedAt: "desc" },
+        take: 1,
+        select: {
+          status: true,
+          valuationMinor: true,
+          valuationCurrency: true,
+          updatedAt: true,
+          completedAt: true,
+        },
+      },
+    },
+  });
+  const reports = Array.isArray(rows) ? rows : [];
+  const cardAssetIds = Array.from(new Set(reports.map((row) => optionalString(row.cardAssetId)).filter((id): id is string => Boolean(id))));
+  const itemIds = Array.from(new Set(reports.map((row) => optionalString(row.itemId)).filter((id): id is string => Boolean(id))));
+  const cards = cardAssetIds.length
+    ? await db.cardAsset?.findMany?.({
+        where: { id: { in: cardAssetIds } },
+        select: {
+          id: true,
+          fileName: true,
+          customTitle: true,
+          resolvedPlayerName: true,
+          reviewStage: true,
+          valuationMinor: true,
+          valuationCurrency: true,
+          aiGradeFinal: true,
+          aiGradeLabel: true,
+        },
+      })
+    : [];
+  const items = itemIds.length
+    ? await db.item?.findMany?.({
+        where: { id: { in: itemIds } },
+        select: {
+          id: true,
+          name: true,
+          set: true,
+          number: true,
+          estimatedValue: true,
+          detailsJson: true,
+        },
+      })
+    : [];
+  const cardById = new Map((Array.isArray(cards) ? cards : []).filter(isRecord).map((card) => [optionalString(card.id), card] as const));
+  const itemById = new Map((Array.isArray(items) ? items : []).filter(isRecord).map((item) => [optionalString(item.id), item] as const));
+  return buildAiGraderFinishCardsQueueResult(
+    reports.map((row) => ({
+      ...row,
+      cardAsset: cardById.get(optionalString(row.cardAssetId)),
+      item: itemById.get(optionalString(row.itemId)),
+    }))
+  );
 }

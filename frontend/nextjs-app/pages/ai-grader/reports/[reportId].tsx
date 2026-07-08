@@ -11,7 +11,9 @@ import {
 import { findReportImage, reportImageAssets, type AiGraderRenderableReportImage } from "../../../lib/aiGraderReportImages";
 
 const ELEMENT_LABELS = ["centering", "corners", "edges", "surface"] as const;
-const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Confidence", "Evidence Replay"];
+const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Confidence", "Evidence Replay"] as const;
+type LabMode = (typeof LAB_MODES)[number];
+type LabSide = "front" | "back";
 
 function scoreText(score?: number) {
   return typeof score === "number" ? score.toFixed(score % 1 === 0 ? 0 : 2) : "Pending";
@@ -25,11 +27,48 @@ function sourceChannelsText(candidate: unknown) {
   return channels.length ? channels.map(String).join(", ") : "see evidence refs";
 }
 
+function labImageForMode(
+  images: AiGraderRenderableReportImage[],
+  mode: LabMode,
+  side: LabSide,
+  candidate: unknown
+) {
+  if (mode === "True View") {
+    return (
+      findReportImage(images, [side, "all-on", "portrait"]) ??
+      findReportImage(images, [side, "accepted"]) ??
+      findReportImage(images, [side])
+    );
+  }
+  if (mode === "Surface Vision") {
+    return findReportImage(images, [side, "surface", "vision"]) ?? findReportImage(images, [side, "surface"]);
+  }
+  if (mode === "Heatmap") {
+    return findReportImage(images, [side, "heatmap"]) ?? findReportImage(images, [side, "anomaly"]);
+  }
+  if (mode === "Light Sweep") {
+    return findReportImage(images, [side, "channel"]) ?? findReportImage(images, [side, "light"]);
+  }
+  if (mode === "Measurement") {
+    return findReportImage(images, [side, "overlay"]) ?? findReportImage(images, [side, "roi"]) ?? findReportImage(images, [side, "measurement"]);
+  }
+  if (mode === "Confidence") {
+    return findReportImage(images, [side, "confidence"]) ?? findReportImage(images, [side, "normal"]);
+  }
+  const refs =
+    typeof candidate === "object" && candidate !== null && "evidenceRefs" in candidate && Array.isArray(candidate.evidenceRefs)
+      ? candidate.evidenceRefs.map(String)
+      : [];
+  return refs.map((ref) => findReportImage(images, [side, ref])).find(Boolean) ?? findReportImage(images, [side]);
+}
+
 export default function AiGraderReportViewerPage() {
   const router = useRouter();
   const fallbackBundle = getAiGraderReportBundle(router.query.reportId);
   const [persistedBundle, setPersistedBundle] = useState<AiGraderReportBundle | null>(null);
   const [publicLookupError, setPublicLookupError] = useState<string | null>(null);
+  const [selectedLabMode, setSelectedLabMode] = useState<LabMode>("True View");
+  const [selectedLabSide, setSelectedLabSide] = useState<LabSide>("front");
   const bundle = persistedBundle ?? fallbackBundle;
   const story = bundle.provisionalGrade;
   const productionRelease = bundle.productionRelease;
@@ -64,6 +103,8 @@ export default function AiGraderReportViewerPage() {
     backTrueView,
     ...images.filter((asset) => asset.renderUrl !== frontTrueView?.renderUrl && asset.renderUrl !== backTrueView?.renderUrl),
   ].filter((asset): asset is AiGraderRenderableReportImage => Boolean(asset)).slice(0, 36);
+  const selectedLabAsset = labImageForMode(images, selectedLabMode, selectedLabSide, impactCandidate);
+  const selectedLabModeAvailable = Boolean(selectedLabAsset?.renderUrl);
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -303,24 +344,44 @@ export default function AiGraderReportViewerPage() {
           <div className="lab-layout">
             <aside>
               {LAB_MODES.map((mode) => (
-                <button key={mode} type="button" className={mode === "True View" ? "active" : ""}>
+                <button
+                  key={mode}
+                  type="button"
+                  className={mode === selectedLabMode ? "active" : ""}
+                  disabled={!labImageForMode(images, mode, selectedLabSide, impactCandidate)?.renderUrl}
+                  onClick={() => setSelectedLabMode(mode)}
+                >
                   {mode}
                 </button>
               ))}
+              <div className="side-switch" aria-label="Vision Lab side selector">
+                <button type="button" className={selectedLabSide === "front" ? "active" : ""} onClick={() => setSelectedLabSide("front")}>
+                  Front
+                </button>
+                <button type="button" className={selectedLabSide === "back" ? "active" : ""} onClick={() => setSelectedLabSide("back")}>
+                  Back
+                </button>
+              </div>
             </aside>
             <div className="lab-canvas">
-              {frontTrueView?.renderUrl ? <img className="lab-image" src={frontTrueView.renderUrl} alt="Vision Lab front true view" /> : null}
-              {backTrueView?.renderUrl ? <img className="lab-image back" src={backTrueView.renderUrl} alt="Vision Lab back true view" /> : null}
-              {!frontTrueView?.renderUrl && !backTrueView?.renderUrl ? (
+              {selectedLabAsset?.renderUrl ? (
+                <img className="lab-image selected" src={selectedLabAsset.renderUrl} alt={`Vision Lab ${selectedLabSide} ${selectedLabMode}`} />
+              ) : (
                 <div className="viewer-card">
-                  <span>True View</span>
-                  <strong>{bundle.visionLab.trueViewRefs.length ? "Front/back imagery referenced" : "True View unavailable"}</strong>
+                  <span>{selectedLabMode}</span>
+                  <strong>{selectedLabModeAvailable ? "Evidence referenced" : "Mode unavailable"}</strong>
                 </div>
-              ) : null}
-              <div className="marker">Surface candidate</div>
+              )}
+              {impactCandidate ? <div className="marker">{selectedLabMode === "Evidence Replay" ? "Replay candidate" : "Surface candidate"}</div> : null}
             </div>
             <aside className="evidence">
-              <h3>Evidence Replay</h3>
+              <h3>{selectedLabMode}</h3>
+              <dl>
+                <dt>Side</dt>
+                <dd>{selectedLabSide}</dd>
+                <dt>Image</dt>
+                <dd>{selectedLabAsset?.fileName ?? selectedLabAsset?.id ?? "unavailable"}</dd>
+              </dl>
               {impactCandidate ? (
                 <dl>
                   <dt>Candidate</dt>
@@ -736,6 +797,19 @@ export default function AiGraderReportViewerPage() {
           background: #d7b86f;
           color: #111;
         }
+        .lab-layout button:disabled {
+          cursor: not-allowed;
+          opacity: 0.46;
+        }
+        .side-switch {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+          margin-top: 10px;
+        }
+        .side-switch button {
+          text-align: center;
+        }
         .lab-canvas,
         .lab-layout aside {
           border-radius: 8px;
@@ -757,6 +831,11 @@ export default function AiGraderReportViewerPage() {
           border: 1px solid rgba(255, 255, 255, 0.14);
           border-radius: 8px;
           background: #10100f;
+        }
+        .lab-image.selected {
+          position: static;
+          width: min(92%, 720px);
+          height: calc(100% - 48px);
         }
         .lab-image.back {
           left: auto;
