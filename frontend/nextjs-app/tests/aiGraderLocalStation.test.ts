@@ -21,6 +21,7 @@ import {
   buildAiGraderLabelPreviewUrl,
   buildAiGraderPublishReadiness,
 } from "../lib/aiGraderOperatorWorkflow";
+import { formatAiGraderPublishStageError } from "../lib/aiGraderPublishErrors";
 import {
   AI_GRADER_EBAY_COMPS_ENABLED_ENV,
   AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
@@ -122,7 +123,6 @@ function presignForTest(input: { storageKey: string; contentType: string; checks
     uploadMethod: "PUT" as const,
     uploadHeaders: {
       "Content-Type": input.contentType,
-      "x-amz-meta-sha256": input.checksumSha256,
     },
     publicUrl: `https://cdn.tenkings.test/${input.storageKey}`,
   };
@@ -520,6 +520,21 @@ test("production publication API route keeps Vercel request bodies platform-safe
   assert.equal(aiGraderProductionRouteConfig.api.bodyParser.sizeLimit, "1mb");
 });
 
+test("production AI Grader route uses direct storage upload headers without checksum metadata", () => {
+  const routePath =
+    [
+      path.join(process.cwd(), "pages", "api", "admin", "ai-grader", "production", "[...action].ts"),
+      path.join(process.cwd(), "frontend", "nextjs-app", "pages", "api", "admin", "ai-grader", "production", "[...action].ts"),
+    ].find((candidate) => fs.existsSync(candidate));
+  assert.ok(routePath);
+  const routeSource = fs.readFileSync(routePath, "utf8");
+  assert.equal(routeSource.includes("presignUploadUrl(storageKey, contentType)"), true);
+  assert.equal(routeSource.includes("metadata: { sha256"), false);
+  assert.equal(routeSource.includes("x-amz-meta-sha256"), false);
+  assert.equal(routeSource.includes('"Content-Type": contentType'), true);
+  assert.equal(routeSource.includes('"x-amz-acl"'), true);
+});
+
 test("production publication API rejects insufficient evidence reports before upload", async () => {
   const release = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
   const blockedRelease = {
@@ -632,6 +647,7 @@ test("production publish init creates direct storage upload plan without embedde
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
     async presignUpload(input) {
+      assert.equal(Object.prototype.hasOwnProperty.call(input as Record<string, unknown>, "metadata"), false);
       calls.push(`presign:${input.storageKey}`);
       return presignForTest(input);
     },
@@ -667,7 +683,20 @@ test("production publish init creates direct storage upload plan without embedde
     result: {
       publishSessionId: string;
       storageKeyPrefix: string;
-      uploadPlan: { artifacts: Array<{ kind: string; artifactClass: string; body?: string; bodyBase64?: string; sourceAssetId?: string; uploadUrl: string }> };
+      uploadPlan: {
+        artifacts: Array<{
+          kind: string;
+          artifactClass: string;
+          body?: string;
+          bodyBase64?: string;
+          sourceAssetId?: string;
+          uploadUrl: string;
+          uploadHeaders: Record<string, string>;
+          contentType: string;
+          checksumSha256: string;
+          byteSize: number;
+        }>;
+      };
       finalizeManifestShape: { uploadManifest: { artifacts: unknown[] } };
     };
   };
@@ -675,6 +704,12 @@ test("production publish init creates direct storage upload plan without embedde
   assert.match(body.result.publishSessionId, /^aigpub_/);
   assert.equal(body.result.storageKeyPrefix, "ai-grader/reports/sample-final-v0/");
   assert.equal(body.result.uploadPlan.artifacts.some((artifact) => artifact.artifactClass === "report_asset" && artifact.sourceAssetId), true);
+  for (const artifact of body.result.uploadPlan.artifacts) {
+    assert.equal(artifact.uploadHeaders["Content-Type"], artifact.contentType);
+    assert.equal(Object.prototype.hasOwnProperty.call(artifact.uploadHeaders, "x-amz-meta-sha256"), false);
+    assert.match(artifact.checksumSha256, /^[a-f0-9]{64}$/);
+    assert.equal(Number.isInteger(artifact.byteSize) && artifact.byteSize > 0, true);
+  }
   assert.equal(JSON.stringify(body).includes("bodyBase64"), false);
   assert.equal(JSON.stringify(body).includes("data:image"), false);
   assert.equal(JSON.stringify(body).includes("C:\\TenKings"), false);
@@ -732,6 +767,7 @@ test("production publish finalize verifies upload manifest and persists DB recor
   const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
   let uploadManifest: ReturnType<typeof uploadManifestFromPlan> | null = null;
   let publishSessionId = "";
+  const verifiedArtifacts: Array<{ checksumSha256: string; byteSize: number; contentType?: string }> = [];
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
@@ -754,6 +790,11 @@ test("production publish finalize verifies upload manifest and persists DB recor
       return presignForTest(input);
     },
     async verifyUploadedArtifact(input) {
+      verifiedArtifacts.push({
+        checksumSha256: input.checksumSha256,
+        byteSize: input.byteSize,
+        contentType: input.contentType,
+      });
       return {
         ok: true,
         byteSize: input.byteSize,
@@ -825,6 +866,72 @@ test("production publish finalize verifies upload manifest and persists DB recor
   assert.equal(body.result.uploadedAssetCount, uploadManifest?.artifacts.length);
   assert.equal(body.result.evidenceAssetCount, uploadManifest?.artifacts.length);
   assert.equal(body.result.storageKeyPrefix, "ai-grader/reports/sample-final-v0/");
+  assert.equal(verifiedArtifacts.length, uploadManifest?.artifacts.length);
+  assert.equal(verifiedArtifacts.every((artifact) => /^[a-f0-9]{64}$/.test(artifact.checksumSha256)), true);
+  assert.equal(verifiedArtifacts.every((artifact) => artifact.byteSize > 0), true);
+  assert.equal(verifiedArtifacts.every((artifact) => typeof artifact.contentType === "string" && artifact.contentType.length > 0), true);
+});
+
+test("production publish finalize rejects storage content type mismatch", async () => {
+  const reportBundle = sampleStorageReadyReportBundle();
+  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async presignUpload(input) {
+      return presignForTest(input);
+    },
+    async verifyUploadedArtifact(input) {
+      return {
+        ok: true,
+        byteSize: input.byteSize,
+        contentType: "text/plain",
+        checksumSha256: input.checksumSha256,
+      };
+    },
+    async persist() {
+      throw new Error("publish-finalize should not persist when storage HEAD content type mismatches");
+    },
+  });
+
+  const initReq = mockRequest("POST", ["publish-init"]);
+  initReq.body = {
+    publicationStatus: "published",
+    reportBundle,
+    productionRelease,
+  };
+  const initRes = mockResponse();
+  await handler(initReq, initRes);
+  assert.equal(initRes.statusCodeValue, 200);
+  const initBody = initRes.jsonBody as {
+    result: {
+      publishSessionId: string;
+      uploadPlan: { artifacts: Array<{ artifactId: string; storageKey: string; publicUrl?: string; checksumSha256: string; byteSize: number; contentType: string }> };
+    };
+  };
+
+  const req = mockRequest("POST", ["publish-finalize"]);
+  req.body = {
+    publicationStatus: "published",
+    reportId: reportBundle.reportId,
+    publishSessionId: initBody.result.publishSessionId,
+    uploadManifest: uploadManifestFromPlan(initBody.result.uploadPlan.artifacts),
+    reportBundle,
+    productionRelease,
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 400);
+  assert.match((res.jsonBody as { message?: string }).message ?? "", /Storage content type mismatch/);
 });
 
 test("production auth-check verifies current bearer session against AI Grader operator gate", async () => {
@@ -1798,6 +1905,7 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
     async presignUpload(input) {
+      assert.equal(Object.prototype.hasOwnProperty.call(input as Record<string, unknown>, "metadata"), false);
       assert.match(input.storageKey, /^ai-grader\/reports\/sample-final-v0\/slabbed\/front-/);
       assert.equal(input.contentType, "image/png");
       assert.equal(input.checksumSha256, imageChecksum);
@@ -1860,8 +1968,13 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
   await handler(initReq, initRes);
 
   assert.equal(initRes.statusCodeValue, 200);
-  const initBody = initRes.jsonBody as { ok: boolean; result: { requiredFinalizeManifest: Record<string, unknown> } };
+  const initBody = initRes.jsonBody as {
+    ok: boolean;
+    result: { uploadHeaders: Record<string, string>; requiredFinalizeManifest: Record<string, unknown> };
+  };
   assert.equal(initBody.ok, true);
+  assert.equal(initBody.result.uploadHeaders["Content-Type"], "image/png");
+  assert.equal(Object.prototype.hasOwnProperty.call(initBody.result.uploadHeaders, "x-amz-meta-sha256"), false);
 
   const finalizeReq = mockRequest("POST", ["slabbed-photo-finalize"]);
   finalizeReq.body = initBody.result.requiredFinalizeManifest;
@@ -2269,6 +2382,42 @@ test("AI Grader report image resolver keeps public URLs storage-backed and local
   assert.equal(localImages.some((image) => image.renderUrl.includes("C:\\TenKings")), false);
 });
 
+test("AI Grader publish stage errors distinguish storage CORS reachability from HTTP responses", () => {
+  const corsMessage = formatAiGraderPublishStageError({
+    stage: "direct-storage-upload",
+    error: new TypeError("Failed to fetch"),
+    artifact: {
+      index: 2,
+      total: 9,
+      kind: "front/front-all-on-portrait-display.png",
+      storageKey: "ai-grader/reports/sample-final-v0/assets/front.png",
+    },
+  });
+  assert.match(corsMessage, /Direct storage upload could not reach storage; likely storage CORS\/preflight/);
+  assert.match(corsMessage, /artifact 3\/9/);
+  assert.match(corsMessage, /front\/front-all-on-portrait-display\.png/);
+  assert.match(corsMessage, /ai-grader\/reports\/sample-final-v0\/assets\/front\.png/);
+
+  const httpMessage = formatAiGraderPublishStageError({
+    stage: "direct-storage-upload",
+    error: new Error("HTTP 403"),
+    artifact: {
+      index: 0,
+      total: 9,
+      kind: "report-bundle.json",
+      storageKey: "ai-grader/reports/sample-final-v0/report-bundle.json",
+    },
+  });
+  assert.match(httpMessage, /Direct storage upload failed for artifact 1\/9 report-bundle\.json/);
+  assert.match(httpMessage, /HTTP 403/);
+  assert.doesNotMatch(httpMessage, /CORS\/preflight/);
+
+  assert.match(formatAiGraderPublishStageError({ stage: "publish-init", error: new TypeError("Failed to fetch") }), /publish-init failed/);
+  assert.match(formatAiGraderPublishStageError({ stage: "local-asset-read", error: new TypeError("Failed to fetch") }), /Local asset read failed/);
+  assert.match(formatAiGraderPublishStageError({ stage: "publish-finalize", error: new TypeError("Failed to fetch") }), /publish-finalize failed/);
+  assert.match(formatAiGraderPublishStageError({ stage: "public-report-verification", error: new TypeError("Failed to fetch") }), /public report verification failed/);
+});
+
 test("AI Grader station source opens reports inline without popup dependency", () => {
   const stationPath =
     [path.join(process.cwd(), "pages", "ai-grader", "station.tsx"), path.join(process.cwd(), "frontend", "nextjs-app", "pages", "ai-grader", "station.tsx")]
@@ -2296,7 +2445,15 @@ test("AI Grader station source opens reports inline without popup dependency", (
     stationSource.indexOf("const publishToTenKingsSystem"),
     stationSource.indexOf("const uploadSlabbedPhoto")
   );
+  const slabbedUploadSource = stationSource.slice(
+    stationSource.indexOf("const uploadSlabbedPhoto"),
+    stationSource.indexOf("const runEbayComps")
+  );
   assert.equal(publishFunctionSource.includes("includeAssetBodies"), false);
+  assert.equal(publishFunctionSource.includes("formatAiGraderPublishStageError"), true);
+  assert.equal(publishFunctionSource.includes('mode: "cors"'), true);
+  assert.equal(slabbedUploadSource.includes("formatAiGraderPublishStageError"), true);
+  assert.equal(slabbedUploadSource.includes('mode: "cors"'), true);
   assert.equal(stationSource.includes("readAsDataURL"), false);
   assert.equal(stationSource.includes("dataUrl"), false);
   assert.equal(stationSource.includes("Confirm + Create Card"), true);

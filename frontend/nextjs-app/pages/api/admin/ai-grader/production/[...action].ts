@@ -28,25 +28,24 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     requireAdminSession,
     requireUserSession,
     publicUrlFor,
-    presignUpload: async ({ storageKey, contentType, checksumSha256 }) => ({
+    presignUpload: async ({ storageKey, contentType }) => ({
       storageKey,
-      uploadUrl: await presignUploadUrl(storageKey, contentType, { metadata: { sha256: checksumSha256 } }),
+      uploadUrl: await presignUploadUrl(storageKey, contentType),
       uploadMethod: "PUT",
       uploadHeaders: {
         "Content-Type": contentType,
-        "x-amz-meta-sha256": checksumSha256,
         ...(getS3ObjectAcl() ? { "x-amz-acl": String(getS3ObjectAcl()) } : {}),
       },
       publicUrl: publicUrlFor(storageKey),
     }),
     verifyUploadedArtifact: async ({ storageKey, byteSize, checksumSha256 }) => {
       const head = await headStorageObject(storageKey);
-      const storedChecksum = head.metadata?.sha256 ?? head.metadata?.["x-amz-meta-sha256"] ?? null;
+      const storedChecksum = head.metadata?.sha256 ?? null;
       return {
         ok: true,
         byteSize: typeof head.byteSize === "number" ? head.byteSize : undefined,
         contentType: head.contentType,
-        checksumSha256: storedChecksum ?? checksumSha256,
+        checksumSha256: storedChecksum,
         message:
           typeof head.byteSize === "number" && head.byteSize !== byteSize
             ? `Storage byte size mismatch for ${storageKey}.`

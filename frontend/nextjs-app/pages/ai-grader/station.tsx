@@ -38,6 +38,7 @@ import {
   buildAiGraderCompsReadiness,
   buildAiGraderPublishReadiness,
 } from "../../lib/aiGraderOperatorWorkflow";
+import { formatAiGraderPublishStageError } from "../../lib/aiGraderPublishErrors";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
@@ -1524,11 +1525,16 @@ export default function AiGraderStationPage() {
       if (attempt > 0) {
         await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
       }
-      const response = await fetch(`/api/ai-grader/reports/${encodeURIComponent(reportId)}`, {
-        method: "GET",
-        headers: { accept: "application/json" },
-        cache: "no-store",
-      });
+      let response: Response;
+      try {
+        response = await fetch(`/api/ai-grader/reports/${encodeURIComponent(reportId)}`, {
+          method: "GET",
+          headers: { accept: "application/json" },
+          cache: "no-store",
+        });
+      } catch (error) {
+        throw new Error(formatAiGraderPublishStageError({ stage: "public-report-verification", error }));
+      }
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload.ok !== true || !payload.bundle) {
         lastMessage = payload.message ?? `Public report verification returned HTTP ${response.status}.`;
@@ -1550,7 +1556,7 @@ export default function AiGraderStationPage() {
       }
       return { imageCount: publicImages.length };
     }
-    throw new Error(lastMessage);
+    throw new Error(formatAiGraderPublishStageError({ stage: "public-report-verification", error: new Error(lastMessage) }));
   };
 
   const publishToTenKingsSystem = async () => {
@@ -1566,11 +1572,15 @@ export default function AiGraderStationPage() {
       const reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
       if (bridgeConnected && stationToken.trim() && reportId) {
         setProductionPublish((current) => ({ ...current, status: "pending", message: "Reading local package manifest from the paired Dell bridge." }));
-        sourceBundle = await fetchAiGraderStationReportBundle({
-          baseUrl: bridgeUrl,
-          stationToken,
-          reportId,
-        });
+        try {
+          sourceBundle = await fetchAiGraderStationReportBundle({
+            baseUrl: bridgeUrl,
+            stationToken,
+            reportId,
+          });
+        } catch (error) {
+          throw new Error(formatAiGraderPublishStageError({ stage: "local-package-read", error }));
+        }
       }
       const reportBundleWithIdentity = buildReportBundleForProduction(sourceBundle);
       const productionRelease = latestStatus.productionRelease ?? sourceBundle?.productionRelease;
@@ -1591,28 +1601,33 @@ export default function AiGraderStationPage() {
       const sanitizedBundle = sanitizeReportBundleForProduction(reportBundleWithIdentity);
       const sanitizedRelease = sanitizeProductionReleaseForProduction(productionRelease, sanitizedBundle, selectedCard);
       setProductionPublish((current) => ({ ...current, status: "pending", message: "Initializing publish and requesting direct storage upload URLs." }));
-      const initResponse = await fetch("/api/admin/ai-grader/production/publish-init", {
-        method: "POST",
-        headers: await productionAuthHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({
-          publicationStatus: "published",
-          reportId: sanitizedRelease?.reportId ?? sanitizedBundle.reportId,
-          certId: sanitizedRelease?.label?.certId,
-          gradingSessionId: sanitizedRelease?.gradingSessionId ?? sanitizedBundle.gradingSessionId,
-          reportBundle: sanitizedBundle,
-          productionRelease: sanitizedRelease,
-          assetManifest: { assets: localAssetManifest },
-          checksums: {
-            checksums: localAssetManifest.map((asset) => ({
-              id: asset.id,
-              checksumSha256: asset.checksumSha256,
-              byteSize: asset.byteSize,
-            })),
-          },
-          cardAssetId: selectedCard?.cardAssetId ?? sanitizedBundle.cardIdentity.cardAssetId,
-          itemId: selectedCard?.itemId ?? sanitizedBundle.cardIdentity.itemId,
-        }),
-      });
+      let initResponse: Response;
+      try {
+        initResponse = await fetch("/api/admin/ai-grader/production/publish-init", {
+          method: "POST",
+          headers: await productionAuthHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            publicationStatus: "published",
+            reportId: sanitizedRelease?.reportId ?? sanitizedBundle.reportId,
+            certId: sanitizedRelease?.label?.certId,
+            gradingSessionId: sanitizedRelease?.gradingSessionId ?? sanitizedBundle.gradingSessionId,
+            reportBundle: sanitizedBundle,
+            productionRelease: sanitizedRelease,
+            assetManifest: { assets: localAssetManifest },
+            checksums: {
+              checksums: localAssetManifest.map((asset) => ({
+                id: asset.id,
+                checksumSha256: asset.checksumSha256,
+                byteSize: asset.byteSize,
+              })),
+            },
+            cardAssetId: selectedCard?.cardAssetId ?? sanitizedBundle.cardIdentity.cardAssetId,
+            itemId: selectedCard?.itemId ?? sanitizedBundle.cardIdentity.itemId,
+          }),
+        });
+      } catch (error) {
+        throw new Error(formatAiGraderPublishStageError({ stage: "publish-init", error }));
+      }
       const initText = await initResponse.text();
       let initPayload: any = {};
       try {
@@ -1621,9 +1636,10 @@ export default function AiGraderStationPage() {
         initPayload = {};
       }
       if (!initResponse.ok || initPayload.ok !== true) {
+        const message = initPayload.message ?? (initText.slice(0, 240) || `HTTP ${initResponse.status}`);
         setProductionPublish({
           status: initPayload.code === "AI_GRADER_PRODUCTION_PUBLISH_DISABLED" ? "disabled" : "error",
-          message: initPayload.message ?? (initText.slice(0, 240) || `Publish init failed with HTTP ${initResponse.status}.`),
+          message: formatAiGraderPublishStageError({ stage: "publish-init", error: new Error(message) }),
         });
         return;
       }
@@ -1647,12 +1663,23 @@ export default function AiGraderStationPage() {
           if (!bridgeConnected || !stationToken.trim()) {
             throw new Error(`Local bridge connection is required to upload ${artifact.kind}.`);
           }
-          const localAsset = await fetchAiGraderStationReportAsset({
-            baseUrl: bridgeUrl,
-            stationToken,
-            reportId: reportBundleWithIdentity.reportId,
-            assetId: artifact.sourceAssetId,
-          });
+          let localAsset: Awaited<ReturnType<typeof fetchAiGraderStationReportAsset>>;
+          try {
+            localAsset = await fetchAiGraderStationReportAsset({
+              baseUrl: bridgeUrl,
+              stationToken,
+              reportId: reportBundleWithIdentity.reportId,
+              assetId: artifact.sourceAssetId,
+            });
+          } catch (error) {
+            throw new Error(
+              formatAiGraderPublishStageError({
+                stage: "local-asset-read",
+                error,
+                artifact: { index, total: uploadArtifacts.length, kind: artifact.kind, storageKey: artifact.storageKey },
+              })
+            );
+          }
           bytes = localAsset.bytes;
           contentType = localAsset.contentType || contentType;
         } else {
@@ -1665,16 +1692,34 @@ export default function AiGraderStationPage() {
         if (bytes.byteLength !== artifact.byteSize) {
           throw new Error(`Byte size mismatch before upload for ${artifact.kind}.`);
         }
-        const uploadResponse = await fetch(artifact.uploadUrl, {
-          method: artifact.uploadMethod ?? "PUT",
-          headers: {
-            ...artifact.uploadHeaders,
-            "Content-Type": contentType,
-          },
-          body: bytes,
-        });
+        let uploadResponse: Response;
+        try {
+          uploadResponse = await fetch(artifact.uploadUrl, {
+            method: artifact.uploadMethod ?? "PUT",
+            mode: "cors",
+            headers: {
+              ...artifact.uploadHeaders,
+              "Content-Type": contentType,
+            },
+            body: bytes,
+          });
+        } catch (error) {
+          throw new Error(
+            formatAiGraderPublishStageError({
+              stage: "direct-storage-upload",
+              error,
+              artifact: { index, total: uploadArtifacts.length, kind: artifact.kind, storageKey: artifact.storageKey },
+            })
+          );
+        }
         if (!uploadResponse.ok) {
-          throw new Error(`Direct storage upload failed for ${artifact.kind} with HTTP ${uploadResponse.status}.`);
+          throw new Error(
+            formatAiGraderPublishStageError({
+              stage: "direct-storage-upload",
+              error: new Error(`HTTP ${uploadResponse.status}`),
+              artifact: { index, total: uploadArtifacts.length, kind: artifact.kind, storageKey: artifact.storageKey },
+            })
+          );
         }
         uploadedArtifacts.push({
           artifactId: artifact.artifactId,
@@ -1687,20 +1732,25 @@ export default function AiGraderStationPage() {
         });
       }
       setProductionPublish((current) => ({ ...current, status: "pending", message: "Finalizing production DB records." }));
-      const finalizeResponse = await fetch("/api/admin/ai-grader/production/publish-finalize", {
-        method: "POST",
-        headers: await productionAuthHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({
-          publicationStatus: "published",
-          reportId: initPayload.result.reportId,
-          publishSessionId: initPayload.result.publishSessionId,
-          reportBundle: sanitizedBundle,
-          productionRelease: sanitizedRelease,
-          uploadManifest: { artifacts: uploadedArtifacts },
-          cardAssetId: selectedCard?.cardAssetId ?? sanitizedBundle.cardIdentity.cardAssetId,
-          itemId: selectedCard?.itemId ?? sanitizedBundle.cardIdentity.itemId,
-        }),
-      });
+      let finalizeResponse: Response;
+      try {
+        finalizeResponse = await fetch("/api/admin/ai-grader/production/publish-finalize", {
+          method: "POST",
+          headers: await productionAuthHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            publicationStatus: "published",
+            reportId: initPayload.result.reportId,
+            publishSessionId: initPayload.result.publishSessionId,
+            reportBundle: sanitizedBundle,
+            productionRelease: sanitizedRelease,
+            uploadManifest: { artifacts: uploadedArtifacts },
+            cardAssetId: selectedCard?.cardAssetId ?? sanitizedBundle.cardIdentity.cardAssetId,
+            itemId: selectedCard?.itemId ?? sanitizedBundle.cardIdentity.itemId,
+          }),
+        });
+      } catch (error) {
+        throw new Error(formatAiGraderPublishStageError({ stage: "publish-finalize", error }));
+      }
       const finalizeText = await finalizeResponse.text();
       let finalizePayload: any = {};
       try {
@@ -1709,9 +1759,10 @@ export default function AiGraderStationPage() {
         finalizePayload = {};
       }
       if (!finalizeResponse.ok || finalizePayload.ok !== true) {
+        const message = finalizePayload.message ?? (finalizeText.slice(0, 240) || `HTTP ${finalizeResponse.status}`);
         setProductionPublish({
           status: finalizePayload.code === "AI_GRADER_PRODUCTION_PUBLISH_DISABLED" ? "disabled" : "error",
-          message: finalizePayload.message ?? (finalizeText.slice(0, 240) || `Publish finalize failed with HTTP ${finalizeResponse.status}.`),
+          message: formatAiGraderPublishStageError({ stage: "publish-finalize", error: new Error(message) }),
         });
         return;
       }
@@ -1756,46 +1807,80 @@ export default function AiGraderStationPage() {
       if (!reportId) throw new Error("A report ID is required before uploading slabbed photos.");
       const bytes = await file.arrayBuffer();
       const checksumSha256 = await sha256Hex(bytes);
-      const initResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-init", {
-        method: "POST",
-        headers: await productionAuthHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({
-          reportId,
-          side,
-          fileName: file.name,
-          mimeType: file.type || "image/jpeg",
-          byteSize: bytes.byteLength,
-          checksumSha256,
-        }),
-      });
+      let initResponse: Response;
+      try {
+        initResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-init", {
+          method: "POST",
+          headers: await productionAuthHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            reportId,
+            side,
+            fileName: file.name,
+            mimeType: file.type || "image/jpeg",
+            byteSize: bytes.byteLength,
+            checksumSha256,
+          }),
+        });
+      } catch (error) {
+        throw new Error(formatAiGraderPublishStageError({ stage: "slabbed-photo-init", error, side }));
+      }
       const initPayload = await initResponse.json().catch(() => ({}));
       if (!initResponse.ok || initPayload.ok !== true) {
-        throw new Error(initPayload.message ?? `Slabbed ${side} photo upload init failed.`);
+        throw new Error(
+          formatAiGraderPublishStageError({
+            stage: "slabbed-photo-init",
+            error: new Error(initPayload.message ?? `HTTP ${initResponse.status}`),
+            side,
+          })
+        );
       }
       const plan = initPayload.result;
       setSlabUploads((current) => ({
         ...current,
         [side]: { status: "uploading", message: `Uploading slabbed ${side} photo directly to storage.` },
       }));
-      const uploadResponse = await fetch(plan.uploadUrl, {
-        method: plan.uploadMethod ?? "PUT",
-        headers: {
-          ...(plan.uploadHeaders ?? {}),
-          "Content-Type": file.type || "image/jpeg",
-        },
-        body: bytes,
-      });
-      if (!uploadResponse.ok) {
-        throw new Error(`Direct slabbed ${side} photo upload failed with HTTP ${uploadResponse.status}.`);
+      let uploadResponse: Response;
+      try {
+        uploadResponse = await fetch(plan.uploadUrl, {
+          method: plan.uploadMethod ?? "PUT",
+          mode: "cors",
+          headers: {
+            ...(plan.uploadHeaders ?? {}),
+            "Content-Type": file.type || "image/jpeg",
+          },
+          body: bytes,
+        });
+      } catch (error) {
+        throw new Error(formatAiGraderPublishStageError({ stage: "slabbed-photo-upload", error, side }));
       }
-      const finalizeResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-finalize", {
-        method: "POST",
-        headers: await productionAuthHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify(plan.requiredFinalizeManifest),
-      });
+      if (!uploadResponse.ok) {
+        throw new Error(
+          formatAiGraderPublishStageError({
+            stage: "slabbed-photo-upload",
+            error: new Error(`HTTP ${uploadResponse.status}`),
+            side,
+          })
+        );
+      }
+      let finalizeResponse: Response;
+      try {
+        finalizeResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-finalize", {
+          method: "POST",
+          headers: await productionAuthHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify(plan.requiredFinalizeManifest),
+        });
+      } catch (error) {
+        throw new Error(formatAiGraderPublishStageError({ stage: "slabbed-photo-finalize", error, side }));
+      }
       const finalizePayload = await finalizeResponse.json().catch(() => ({}));
       if (!finalizeResponse.ok || finalizePayload.ok !== true) {
-        throw new Error(finalizePayload.message ?? `Slabbed ${side} photo finalize failed.`);
+        throw new Error(
+          formatAiGraderPublishStageError({
+            stage: "slabbed-photo-finalize",
+            error: new Error(finalizePayload.message ?? `HTTP ${finalizeResponse.status}`),
+            side,
+          })
+        );
       }
       setSlabUploads((current) => ({
         ...current,

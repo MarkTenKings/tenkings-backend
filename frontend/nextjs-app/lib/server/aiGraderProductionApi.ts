@@ -611,6 +611,15 @@ function assertUploadManifestMatchesPlan(manifest: AiGraderProductionUploadManif
   }
 }
 
+function normalizedContentType(value: string | undefined) {
+  return value?.split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
+function storageContentTypeMatches(actual: string | undefined, expected: string | undefined) {
+  if (!actual || !expected) return true;
+  return normalizedContentType(actual) === normalizedContentType(expected);
+}
+
 async function verifyUploadedArtifacts(
   deps: AiGraderProductionApiDependencies,
   manifest: AiGraderProductionUploadManifest
@@ -621,6 +630,9 @@ async function verifyUploadedArtifacts(
     if (!verified.ok) throw new Error(verified.message ?? `Uploaded artifact ${artifact.artifactId} was not found in storage.`);
     if (typeof verified.byteSize === "number" && verified.byteSize !== artifact.byteSize) {
       throw new Error(`Storage byte size mismatch for ${artifact.artifactId}.`);
+    }
+    if (!storageContentTypeMatches(verified.contentType, artifact.contentType)) {
+      throw new Error(`Storage content type mismatch for ${artifact.artifactId}.`);
     }
     if (
       typeof verified.checksumSha256 === "string" &&
@@ -1068,6 +1080,9 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           if (!verified.ok) throw new Error(verified.message ?? `Uploaded slabbed ${input.side} photo was not found in storage.`);
           if (typeof verified.byteSize === "number" && verified.byteSize !== input.byteSize) {
             throw new Error(`Storage byte size mismatch for slabbed ${input.side} photo.`);
+          }
+          if (!storageContentTypeMatches(verified.contentType, input.mimeType)) {
+            throw new Error(`Storage content type mismatch for slabbed ${input.side} photo.`);
           }
           if (
             typeof verified.checksumSha256 === "string" &&
