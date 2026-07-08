@@ -1,5 +1,124 @@
 # Session Log (Append Only)
 
+## 2026-07-07 - Planned PR #71 production merge/deploy
+
+### Planned Action
+- Merge PR #71 (`fix/ai-grader-confirm-card-house-owner`) into `main` after confirming the PR is open, clean, and all checks/Vercel preview are passing.
+- PR #71 current reviewed head before this planning entry: `061eaa09f80a7a26d4bf56372f74e9acfa8233ff`.
+- After merge, monitor GitHub main checks and Vercel Production deployment for `collect.tenkings.co`.
+- After production deploy completes, attempt the AI Grader Confirm Card production smoke without running hardware.
+
+### Expected Production Behavior
+- Operator signs in once by SMS.
+- Confirm Card creates the Ten Kings CardAsset/Item automatically.
+- AI Grader-created `Item.ownerId` and `ItemOwnership.ownerId` use configured `OPERATOR_USER_ID`.
+- The signed-in station operator remains the actor/audit user.
+- No second sign-in, owner picker, email requirement, `PACK_INVENTORY_SELLER_EMAIL`, `HOUSE_USER_EMAIL`, or `User.email` lookup is used in the AI Grader Confirm Card path.
+
+### Guardrails
+- Do not run hardware capture.
+- Do not run migrations.
+- Do not change env vars.
+- Do not change, rotate, request, or print credentials/secrets.
+- Do not run destructive operations.
+
+## 2026-07-07 - PR #71 AI Grader inventory owner source corrected to OPERATOR_USER_ID
+
+### Branch And HEAD
+- Branch: `fix/ai-grader-confirm-card-house-owner`.
+- Starting HEAD: `fc2b2f592a810d0c40546d466a32e0c9e3d28935`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/71`.
+
+### Production Evidence / Correction
+- New production evidence from Mark: Vercel Production does not have `TEN_KINGS_HOUSE_USER_ID`; existing production has `OPERATOR_USER_ID` and `OPERATOR_USER_PHONE`.
+- PR #71 was patched to use `OPERATOR_USER_ID` as the configured inventory owner `User.id` for AI Grader-created Items.
+- The earlier unmerged PR #71 session entry that referenced `TEN_KINGS_HOUSE_USER_ID` is superseded by this correction.
+
+### Files Changed
+- `frontend/nextjs-app/lib/server/inventoryReadyArtifacts.ts`.
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`.
+- `docs/handoffs/SESSION_LOG.md`.
+
+### Architecture Change Summary
+- AI Grader/inventory-ready owner resolution now validates `OPERATOR_USER_ID` and looks up `User.id`.
+- Created `Item.ownerId` and `ItemOwnership.ownerId` use the configured `OPERATOR_USER_ID`.
+- The signed-in AI Grader operator/admin remains the actor/audit user for CardBatch upload, CardPhoto creation, AiGraderSession operator linkage, and QR/label actor fields.
+- Email owner fallback remains removed from the AI Grader Confirm Card / inventory-ready path.
+- `create-card-from-report` remains transactional and fails before CardBatch/CardAsset/CardPhoto rows when the configured inventory owner is missing or invalid.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `59` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist, baseline-browser-mapping, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database exec node --test tests/aiGraderProductionService.test.js` -> pass, `10` tests.
+- Server-code scan for `PACK_INVENTORY_SELLER_EMAIL`, `HOUSE_USER_EMAIL`, `TEN_KINGS_HOUSE_USER_ID`, and email owner lookup in the AI Grader/inventory-ready server path -> no matches.
+- `git diff --check` -> pass with CRLF conversion warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+- Known-good report publish result: not attempted in this PR.
+- Public report URL: not applicable.
+- Label URL: not applicable.
+- DB rows persisted: none; tests are local/mocked only.
+- Storage prefix used: none; no storage upload attempted.
+
+### Remaining Blockers / Next Steps
+- Run validation, push updated PR #71, and wait for PR checks.
+- Do not merge until reviewed.
+- After merge/deploy, retry Dell AI Grader Confirm Card; expected result is no second sign-in, no owner picker, no email requirement, and automatic CardAsset/Item creation with the configured inventory owner.
+
+## 2026-07-07 - AI Grader Confirm Card house owner resolution fix
+
+### Branch And HEAD
+- Branch: `fix/ai-grader-confirm-card-house-owner`.
+- Base/current HEAD before commit: `1077494ad12b4a2ef40eaecda7a9fc98e14101f8`.
+- Work started from latest `origin/main` after PR #70 merge.
+
+### Files Changed
+- `frontend/nextjs-app/lib/server/inventoryReadyArtifacts.ts`.
+- `frontend/nextjs-app/lib/server/qrCodes.ts`.
+- `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`.
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`.
+- `docs/handoffs/SESSION_LOG.md`.
+
+### Architecture Change Summary
+- Replaced AI Grader/inventory-ready owner resolution with `TEN_KINGS_HOUSE_USER_ID` looked up by `User.id`.
+- Removed `PACK_INVENTORY_SELLER_EMAIL` / `HOUSE_USER_EMAIL` fallback from the inventory-ready artifact helper path.
+- Kept the signed-in AI Grader operator/admin as the actor/audit user for `CardBatch.uploadedById`, `CardPhoto.createdById`, AI Grader session linkage, and QR/label binding.
+- Added transaction-aware inventory-ready and label-pair helpers.
+- Updated `create-card-from-report` so CardBatch/CardAsset/CardPhoto, Item, ItemOwnership, QR/label binding, and AI Grader session/report linkage run in one transaction.
+- Confirm Card now fails before creating CardBatch/CardAsset/CardPhoto rows if `TEN_KINGS_HOUSE_USER_ID` is missing or does not resolve to a user.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, `59` tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated `<img>`, Browserslist, baseline-browser-mapping, and Tailwind glob warnings.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database exec node --test tests/aiGraderProductionService.test.js` -> pass, `10` tests.
+- `git diff --check` -> pass with CRLF conversion warnings only.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+- Known-good report publish result: not attempted in this PR.
+- Public report URL: not applicable.
+- Label URL: not applicable.
+- DB rows persisted: none; tests used mocks only.
+- Storage prefix used: none; no storage upload attempted.
+
+### Remaining Blockers / Next Steps
+- Open PR for review and do not merge until reviewed.
+- After merge/deploy, Mark should retest the Dell AI Grader shortcut flow: sign in once by SMS, grade, Confirm Card, and verify the Step 2 email-owner error is gone.
+- Production smoke remains: publish known-good report, print/mark label, upload slabbed front/back photos, save selected comps/valuation, add to inventory, and verify public report/label/QR/storage-backed images with no local/base64/token leaks.
+
 ## 2026-07-03 - AI Grader final production smoke and public-output security fix
 
 ### Planned Action
@@ -24617,6 +24736,56 @@ By enabling Rip It Live, I confirm:
 - No env var changes.
 - No credential rotation or secret printing.
 - No destructive operations.
+
+## 2026-07-07 - PR #70 production merge observed result
+
+### Merge And Deploy Evidence
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/70`.
+- PR merge status: merged.
+- PR branch HEAD merged: `2c2bfae60ddf1de82596958e6d8656c5d3071175`.
+- PR merge commit / main HEAD after merge: `1077494ad12b4a2ef40eaecda7a9fc98e14101f8`.
+- GitHub Actions main run: `https://github.com/MarkTenKings/tenkings-backend/actions/runs/28901264068` -> completed successfully at `2026-07-07T21:58:49Z`.
+- Vercel production deployment status: success, deployment completed for commit `1077494ad12b4a2ef40eaecda7a9fc98e14101f8`.
+- Vercel evidence URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/6Mj2BsjvU8YKNmLAzbYN7DuKtFpR`.
+- Live station page check: `GET https://collect.tenkings.co/ai-grader/station` returned HTTP `200`.
+
+### Chrome Launcher Fix Summary
+- The Dell station launcher now opens the generated hidden bridge pairing URL in Google Chrome directly.
+- The launcher uses a stable dedicated AI Grader Chrome profile directory: `C:\TenKings\chrome-ai-grader-profile`.
+- Chrome discovery order is `%ProgramFiles%`, `%ProgramFiles(x86)%`, `%LOCALAPPDATA%`, then `chrome.exe` from PATH.
+- The existing local bridge startup/restart behavior and hidden `#aiGraderBridgePair=...` pairing flow remain in place.
+- The launcher output still redacts pairing code information and does not print local station token or production session token.
+- Production Ten Kings SMS sign-in and AI Grader operator/admin auth remain unchanged.
+
+### Dell Shortcut Expected Behavior
+- Mark clicks the `Ten Kings AI Grader Station` desktop shortcut on the Dell/PC.
+- The shortcut starts/restarts the local Dell bridge, rotates a fresh local pairing code, and opens Chrome with `--user-data-dir=C:\TenKings\chrome-ai-grader-profile --new-window`.
+- First use in that dedicated profile should show the normal Ten Kings SMS sign-in flow.
+- After sign-in, that same dedicated Chrome profile should keep both production sign-in state and local bridge pairing state, avoiding the split Chrome/Edge or default-profile state.
+- The station itself remains private/operator-only; public report/label pages remain the shareable production output after publish.
+
+### Guardrails
+- Hardware was run: no.
+- Migrations were run: no.
+- Env vars changed: no.
+- Credentials changed/rotated/printed: no.
+- Destructive operations run: no.
+- Production publish was attempted: no.
+
+### Remaining Production Smoke Steps
+- Mark should open the Dell station from the desktop shortcut after pulling/rebuilding/restarting from merged `main` as needed.
+- In the dedicated AI Grader Chrome profile, complete Ten Kings SMS sign-in if prompted.
+- Verify the bridge connects without `Pairing Required`.
+- Continue the known-good report smoke:
+  - confirm card identity
+  - create/link CardAsset + Item
+  - publish via direct storage upload + finalize
+  - verify public report and label
+  - print/mark label
+  - upload slabbed front/back photos
+  - run eBay comps, select comps, and save valuation
+  - add to inventory
+- Verify public output has storage-backed images only and no local paths, bridge URLs, station tokens, base64 bodies, or hardware controls.
 
 ## 2026-07-07 - PR #69 production merge observed result
 
