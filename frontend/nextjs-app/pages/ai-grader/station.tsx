@@ -315,6 +315,60 @@ function utf8Bytes(value: string) {
   return new TextEncoder().encode(value).buffer;
 }
 
+type PreviewFrameSize = { width: number; height: number };
+
+const REPORT_OVERLAY_DEFAULT_FRAME_SIZE: PreviewFrameSize = { width: 1200, height: 1680 };
+const REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.82;
+const REPORT_OVERLAY_CARD_ASPECT_RATIO = 2.5 / 3.5;
+const REPORT_OVERLAY_ROI_RATIOS = [
+  { id: "top-left-corner", type: "corner", x: 0, y: 0, width: 0.18, height: 0.18 },
+  { id: "top-right-corner", type: "corner", x: 0.82, y: 0, width: 0.18, height: 0.18 },
+  { id: "bottom-right-corner", type: "corner", x: 0.82, y: 0.82, width: 0.18, height: 0.18 },
+  { id: "bottom-left-corner", type: "corner", x: 0, y: 0.82, width: 0.18, height: 0.18 },
+  { id: "top-edge", type: "edge", x: 0.18, y: 0, width: 0.64, height: 0.12 },
+  { id: "right-edge", type: "edge", x: 0.88, y: 0.18, width: 0.12, height: 0.64 },
+  { id: "bottom-edge", type: "edge", x: 0.18, y: 0.88, width: 0.64, height: 0.12 },
+  { id: "left-edge", type: "edge", x: 0, y: 0.18, width: 0.12, height: 0.64 },
+  { id: "center-surface", type: "surface", x: 0.35, y: 0.35, width: 0.3, height: 0.3 },
+  { id: "upper-surface", type: "surface", x: 0.3, y: 0.18, width: 0.4, height: 0.22 },
+  { id: "lower-surface", type: "surface", x: 0.3, y: 0.6, width: 0.4, height: 0.22 },
+] as const;
+
+function reportOverlayTemplateRect(width: number, height: number) {
+  const guideHeight = Math.round(height * REPORT_OVERLAY_CARD_HEIGHT_RATIO);
+  const guideWidth = Math.round(guideHeight * REPORT_OVERLAY_CARD_ASPECT_RATIO);
+  return {
+    x: Math.round((width - guideWidth) / 2),
+    y: Math.round((height - guideHeight) / 2),
+    width: guideWidth,
+    height: guideHeight,
+  };
+}
+
+function reportOverlayRoiRects(template: ReturnType<typeof reportOverlayTemplateRect>) {
+  return REPORT_OVERLAY_ROI_RATIOS.map((roi) => ({
+    ...roi,
+    x: Math.round(template.x + template.width * roi.x),
+    y: Math.round(template.y + template.height * roi.y),
+    width: Math.round(template.width * roi.width),
+    height: Math.round(template.height * roi.height),
+  }));
+}
+
+function containedImageFrame(container: PreviewFrameSize, image: PreviewFrameSize) {
+  if (container.width <= 0 || container.height <= 0 || image.width <= 0 || image.height <= 0) return null;
+  const containerAspect = container.width / container.height;
+  const imageAspect = image.width / image.height;
+  const width = imageAspect >= containerAspect ? container.width : container.height * imageAspect;
+  const height = imageAspect >= containerAspect ? container.width / imageAspect : container.height;
+  return {
+    left: (container.width - width) / 2,
+    top: (container.height - height) / 2,
+    width,
+    height,
+  };
+}
+
 const defaultIdentityDraft: IdentityDraftState = {
   category: "sport",
   playerName: "",
@@ -363,6 +417,9 @@ export default function AiGraderStationPage() {
   const [previewStatus, setPreviewStatus] = useState(status.previewStatus);
   const [previewFrameUrl, setPreviewFrameUrl] = useState<string | null>(null);
   const previewFrameUrlRef = useRef<string | null>(null);
+  const cameraFrameRef = useRef<HTMLDivElement | null>(null);
+  const [cameraFrameSize, setCameraFrameSize] = useState<PreviewFrameSize>({ width: 0, height: 0 });
+  const [previewImageSize, setPreviewImageSize] = useState<PreviewFrameSize | null>(null);
   const [liveLighting, setLiveLighting] = useState(status.liveLighting);
   const liveLightingApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [manualPairingCode, setManualPairingCode] = useState("");
@@ -448,6 +505,26 @@ export default function AiGraderStationPage() {
     setPreviewStatus(status.previewStatus);
     setLiveLighting(status.liveLighting);
   }, [status.previewStatus, status.liveLighting]);
+
+  useEffect(() => {
+    const frame = cameraFrameRef.current;
+    if (!frame || typeof window === "undefined") return;
+    const updateFrameSize = () => {
+      const rect = frame.getBoundingClientRect();
+      setCameraFrameSize({
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    };
+    updateFrameSize();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateFrameSize);
+      return () => window.removeEventListener("resize", updateFrameSize);
+    }
+    const observer = new ResizeObserver(updateFrameSize);
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -563,6 +640,7 @@ export default function AiGraderStationPage() {
         previewFrameUrlRef.current = null;
       }
       setPreviewFrameUrl(null);
+      setPreviewImageSize(null);
       return;
     }
     if (previewSuspendedForStationAction) {
@@ -802,6 +880,18 @@ export default function AiGraderStationPage() {
         evidenceRefs: gate.evidenceRefs ?? [],
       }));
   const showFlipScrim = status.currentStep === "prompt_flip_card";
+  const reportOverlayFrameSize = previewImageSize ?? REPORT_OVERLAY_DEFAULT_FRAME_SIZE;
+  const reportOverlayTemplate = reportOverlayTemplateRect(reportOverlayFrameSize.width, reportOverlayFrameSize.height);
+  const reportOverlayRois = reportOverlayRoiRects(reportOverlayTemplate);
+  const reportOverlayContainedFrame = containedImageFrame(cameraFrameSize, reportOverlayFrameSize);
+  const reportOverlayStageStyle = reportOverlayContainedFrame
+    ? {
+        left: `${reportOverlayContainedFrame.left}px`,
+        top: `${reportOverlayContainedFrame.top}px`,
+        width: `${reportOverlayContainedFrame.width}px`,
+        height: `${reportOverlayContainedFrame.height}px`,
+      }
+    : undefined;
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
   const warmRunner = status.warmRunnerStatus;
   const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held || busy === "start-grading" || busy === "back";
@@ -2086,17 +2176,73 @@ export default function AiGraderStationPage() {
       </Head>
       <main className="station">
         <section className="viewer" aria-label="AI Grader camera cockpit">
-          <div className="camera-frame">
+          <div className="camera-frame" ref={cameraFrameRef}>
             {previewFrameUrl ? (
-              <img className="preview-image" src={previewFrameUrl} alt="Live AI Grader Basler preview" />
+              <img
+                className="preview-image"
+                src={previewFrameUrl}
+                alt="Live AI Grader Basler preview"
+                onLoad={(event) => {
+                  const { naturalWidth, naturalHeight } = event.currentTarget;
+                  if (naturalWidth <= 0 || naturalHeight <= 0) return;
+                  setPreviewImageSize((current) =>
+                    current?.width === naturalWidth && current.height === naturalHeight
+                      ? current
+                      : { width: naturalWidth, height: naturalHeight }
+                  );
+                }}
+              />
             ) : (
               <div className="preview-placeholder">
                 <span>{previewStatusLabel}</span>
               </div>
             )}
-            <div className="guide-card" />
-            <div className="crosshair horizontal" />
-            <div className="crosshair vertical" />
+            <div className="report-overlay-stage" style={reportOverlayStageStyle} aria-hidden="true">
+              <svg
+                className="report-framing-overlay"
+                viewBox={`0 0 ${reportOverlayFrameSize.width} ${reportOverlayFrameSize.height}`}
+                focusable="false"
+              >
+                <rect
+                  className="report-overlay-frame-border"
+                  x="0"
+                  y="0"
+                  width={reportOverlayFrameSize.width}
+                  height={reportOverlayFrameSize.height}
+                />
+                <rect
+                  className="report-overlay-card-template"
+                  x={reportOverlayTemplate.x}
+                  y={reportOverlayTemplate.y}
+                  width={reportOverlayTemplate.width}
+                  height={reportOverlayTemplate.height}
+                />
+                <line
+                  className="report-overlay-centerline"
+                  x1={Math.round(reportOverlayFrameSize.width / 2)}
+                  y1="0"
+                  x2={Math.round(reportOverlayFrameSize.width / 2)}
+                  y2={reportOverlayFrameSize.height}
+                />
+                <line
+                  className="report-overlay-centerline"
+                  x1="0"
+                  y1={Math.round(reportOverlayFrameSize.height / 2)}
+                  x2={reportOverlayFrameSize.width}
+                  y2={Math.round(reportOverlayFrameSize.height / 2)}
+                />
+                {reportOverlayRois.map((roi) => (
+                  <rect
+                    key={roi.id}
+                    className={`report-overlay-roi ${roi.type}`}
+                    x={roi.x}
+                    y={roi.y}
+                    width={Math.max(1, roi.width)}
+                    height={Math.max(1, roi.height)}
+                  />
+                ))}
+              </svg>
+            </div>
             <div className="camera-status">
               <span>{bridgeStatusLabel}</span>
               <strong>{previewStatusLabel}</strong>
@@ -3178,44 +3324,49 @@ export default function AiGraderStationPage() {
           letter-spacing: 0.14em;
           text-transform: uppercase;
         }
-        .guide-card {
+        .report-overlay-stage {
           position: absolute;
           z-index: 2;
-          left: 50%;
-          top: 50%;
-          width: min(36vw, 330px);
-          aspect-ratio: 2.5 / 3.5;
-          transform: translate(-50%, -50%);
-          border: 2px solid rgba(89, 255, 166, 0.78);
-          border-radius: 8px;
-          box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.16), 0 0 40px rgba(89, 255, 166, 0.12);
+          inset: 0;
+          pointer-events: none;
         }
-        .guide-card:before,
-        .guide-card:after {
-          content: "";
-          position: absolute;
-          inset: 12%;
-          border: 1px solid rgba(89, 255, 166, 0.28);
+        .report-framing-overlay {
+          display: block;
+          width: 100%;
+          height: 100%;
+          opacity: 0.9;
+          mix-blend-mode: screen;
+          filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.72));
         }
-        .guide-card:after {
-          inset: 28% 18%;
+        .report-overlay-frame-border,
+        .report-overlay-card-template,
+        .report-overlay-roi {
+          fill: none;
         }
-        .crosshair {
-          position: absolute;
-          z-index: 2;
-          background: rgba(237, 219, 174, 0.38);
+        .report-overlay-frame-border {
+          stroke: rgba(255, 255, 255, 0.82);
+          stroke-width: 2;
         }
-        .crosshair.horizontal {
-          top: 50%;
-          left: 24px;
-          right: 24px;
-          height: 1px;
+        .report-overlay-card-template {
+          stroke: #ffd400;
+          stroke-width: 6;
         }
-        .crosshair.vertical {
-          left: 50%;
-          top: 24px;
-          bottom: 24px;
-          width: 1px;
+        .report-overlay-centerline {
+          stroke: #00e5ff;
+          stroke-width: 3;
+          stroke-dasharray: 18 16;
+        }
+        .report-overlay-roi {
+          stroke-width: 3;
+        }
+        .report-overlay-roi.corner {
+          stroke: #ff7a00;
+        }
+        .report-overlay-roi.edge {
+          stroke: #ff4fd8;
+        }
+        .report-overlay-roi.surface {
+          stroke: #8cff00;
         }
         .camera-status {
           position: absolute;
