@@ -44,6 +44,22 @@ export interface BuildPreliminarySurfaceIntelligenceInput {
   roiCrops?: Array<{ roiId?: string; outputFilePath?: string; displayRect?: { x: number; y: number; width: number; height: number } }>;
   quality?: Partial<FixedRigQualityMetrics>;
   inheritedWarnings?: string[];
+  normalizedCardProjection?: SurfaceIntelligenceNormalizedCardProjection;
+}
+
+export interface SurfaceIntelligenceNormalizedCardProjection {
+  sourceSha256: string;
+  normalizedArtifactSha256: string;
+  sourceImageWidth: number;
+  sourceImageHeight: number;
+  displayTransform: FixedRigDisplayTransform;
+  rotationDegrees: number;
+  corners: {
+    topLeft: { x: number; y: number };
+    topRight: { x: number; y: number };
+    bottomRight: { x: number; y: number };
+    bottomLeft: { x: number; y: number };
+  };
 }
 
 interface LoadedImage {
@@ -63,6 +79,110 @@ interface Rect {
   y: number;
   width: number;
   height: number;
+}
+
+function inverseDisplayPoint(
+  point: { x: number; y: number },
+  projection: SurfaceIntelligenceNormalizedCardProjection,
+) {
+  const { sourceImageWidth: width, sourceImageHeight: height, displayTransform } = projection;
+  if (displayTransform === "none") return { ...point };
+  if (displayTransform === "rotate180") return { x: width - point.x, y: height - point.y };
+  if (displayTransform === "rotate90ccw") return { x: width - point.y, y: point.x };
+  return { x: point.y, y: height - point.x };
+}
+
+function rotatedImageDimensions(width: number, height: number, degrees: number) {
+  const radians = (degrees * Math.PI) / 180;
+  const cosine = Math.abs(Math.cos(radians));
+  const sine = Math.abs(Math.sin(radians));
+  return {
+    width: Math.max(1, Math.round(width * cosine + height * sine)),
+    height: Math.max(1, Math.round(width * sine + height * cosine)),
+  };
+}
+
+function rotatePoint(
+  point: { x: number; y: number },
+  sourceWidth: number,
+  sourceHeight: number,
+  outputWidth: number,
+  outputHeight: number,
+  degrees: number,
+) {
+  const radians = (degrees * Math.PI) / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  const dx = point.x - sourceWidth / 2;
+  const dy = point.y - sourceHeight / 2;
+  return {
+    x: outputWidth / 2 + cosine * dx - sine * dy,
+    y: outputHeight / 2 + sine * dx + cosine * dy,
+  };
+}
+
+export function projectFixedRigDisplayRectToNormalizedCardGeometry(
+  rect: Rect,
+  projection: SurfaceIntelligenceNormalizedCardProjection,
+): FixedRigSurfaceAnomalyCandidate["analysisGeometry"] | undefined {
+  if (
+    ![rect.x, rect.y, rect.width, rect.height, projection.sourceImageWidth, projection.sourceImageHeight, projection.rotationDegrees]
+      .every(Number.isFinite) ||
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    projection.sourceImageWidth <= 0 ||
+    projection.sourceImageHeight <= 0 ||
+    !/^[a-f0-9]{64}$/i.test(projection.sourceSha256) ||
+    !/^[a-f0-9]{64}$/i.test(projection.normalizedArtifactSha256)
+  ) return undefined;
+  const cardPoints = [
+    projection.corners.topLeft,
+    projection.corners.topRight,
+    projection.corners.bottomRight,
+    projection.corners.bottomLeft,
+  ];
+  if (cardPoints.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return undefined;
+  const deskewDegrees = -projection.rotationDegrees;
+  const rotatedImage = rotatedImageDimensions(
+    projection.sourceImageWidth,
+    projection.sourceImageHeight,
+    deskewDegrees,
+  );
+  const rotateSourcePoint = (point: { x: number; y: number }) => rotatePoint(
+    point,
+    projection.sourceImageWidth,
+    projection.sourceImageHeight,
+    rotatedImage.width,
+    rotatedImage.height,
+    deskewDegrees,
+  );
+  const rotatedCard = cardPoints.map(rotateSourcePoint);
+  const left = clamp(Math.floor(Math.min(...rotatedCard.map((point) => point.x))), 0, rotatedImage.width - 1);
+  const top = clamp(Math.floor(Math.min(...rotatedCard.map((point) => point.y))), 0, rotatedImage.height - 1);
+  const right = clamp(Math.ceil(Math.max(...rotatedCard.map((point) => point.x))), left + 1, rotatedImage.width);
+  const bottom = clamp(Math.ceil(Math.max(...rotatedCard.map((point) => point.y))), top + 1, rotatedImage.height);
+  const width = right - left;
+  const height = bottom - top;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined;
+  const displayPoints = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y + rect.height },
+    { x: rect.x, y: rect.y + rect.height },
+  ];
+  const points = displayPoints.map((point) => {
+    const sourcePoint = inverseDisplayPoint(point, projection);
+    const rotated = rotateSourcePoint(sourcePoint);
+    return { x: roundMetric((rotated.x - left) / width, 6), y: roundMetric((rotated.y - top) / height, 6) };
+  });
+  if (points.some((point) => point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1)) return undefined;
+  return {
+    coordinateFrame: "normalized_card",
+    units: "fraction",
+    sourceSha256: projection.sourceSha256.toLowerCase(),
+    normalizedArtifactSha256: projection.normalizedArtifactSha256.toLowerCase(),
+    shape: { type: "polygon", points },
+  };
 }
 
 interface CandidateCell {
@@ -442,6 +562,7 @@ function buildCandidateCells(input: {
 function candidatesFromCells(input: {
   side: FixedRigCardSide;
   cells: CandidateCell[];
+  normalizedCardProjection?: SurfaceIntelligenceNormalizedCardProjection;
   confidenceScore: number;
   heatmap?: FixedRigDisplayArtifact;
   surfaceVision?: FixedRigDisplayArtifact;
@@ -456,10 +577,14 @@ function candidatesFromCells(input: {
       .map((channel) => input.channelInputs.find((entry) => entry.channel === channel))
       .filter((entry): entry is SurfaceIntelligenceChannelInput => Boolean(entry?.displayImage?.outputFilePath))
       .map((entry) => ({ channel: entry.channel, outputFilePath: entry.displayImage?.outputFilePath }));
+    const analysisGeometry = input.normalizedCardProjection
+      ? projectFixedRigDisplayRectToNormalizedCardGeometry(cell.rect, input.normalizedCardProjection)
+      : undefined;
     return {
       candidateId: `${input.side}-surface-intelligence-v0-${String(index + 1).padStart(3, "0")}`,
       side: input.side,
       category: "surface",
+      ...(analysisGeometry ? { analysisGeometry } : {}),
       displayRect: cell.rect,
       sourceChannels,
       strongestChannel: cell.strongestChannel,
@@ -691,6 +816,7 @@ export async function buildPreliminarySurfaceIntelligenceV0(
   const candidates = candidatesFromCells({
     side: input.side,
     cells,
+    normalizedCardProjection: input.normalizedCardProjection,
     confidenceScore,
     heatmap,
     surfaceVision,

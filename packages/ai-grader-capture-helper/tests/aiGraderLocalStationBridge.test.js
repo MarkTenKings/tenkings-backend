@@ -14,6 +14,11 @@ const {
 } = require("../dist/drivers/aiGraderLocalStationBridge");
 const { buildAiGraderStationRealCommandPlan } = require("../dist/drivers/aiGraderStationWorkflow");
 const { runCaptureHelperCli } = require("../dist/cli");
+const PNG_BYTES = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+const PNG_SHA256 = require("node:crypto").createHash("sha256").update(PNG_BYTES).digest("hex");
 
 function outputDir(label) {
   return path.join(os.tmpdir(), `tenkings-ai-grader-station-bridge-${label}`);
@@ -1774,7 +1779,7 @@ test("fresh bridge status exposes latest generated report from local history", a
   fs.mkdirSync(reportDir, { recursive: true });
   fs.mkdirSync(path.join(reportDir, "front"), { recursive: true });
   const frontImagePath = path.join(reportDir, "front", "front-all-on-portrait-display.png");
-  fs.writeFileSync(frontImagePath, Buffer.from("front-image"));
+  fs.writeFileSync(frontImagePath, PNG_BYTES);
   const reportHtmlPath = path.join(reportDir, "provisional-diagnostic-report.html");
   fs.writeFileSync(reportHtmlPath, `<html><body>generated report<img src="${frontImagePath}" alt="front"></body></html>`);
   fs.writeFileSync(path.join(sessionDir, "station-session.json"), JSON.stringify({
@@ -1796,7 +1801,7 @@ test("fresh bridge status exposes latest generated report from local history", a
   const imageAsset = resolved.bundle.assets.find((asset) => asset.kind === "image" && asset.fileName === "front-all-on-portrait-display.png");
   assert.equal(resolved.source, "history_generated_with_asset_bodies");
   assert.equal(imageAsset?.bodyEncoding, "base64");
-  assert.equal(Buffer.from(imageAsset?.bodyBase64 ?? "", "base64").toString("utf8"), "front-image");
+  assert.deepEqual(Buffer.from(imageAsset?.bodyBase64 ?? "", "base64"), PNG_BYTES);
 });
 
 test("station bridge ignores stale shared bundle paths for requested history report", async () => {
@@ -1809,7 +1814,7 @@ test("station bridge ignores stale shared bundle paths for requested history rep
   fs.mkdirSync(sharedBundleDir, { recursive: true });
   fs.mkdirSync(path.join(reportDir, "front"), { recursive: true });
   const frontImagePath = path.join(reportDir, "front", "front-all-on-portrait-display.png");
-  fs.writeFileSync(frontImagePath, Buffer.from("front-image"));
+  fs.writeFileSync(frontImagePath, PNG_BYTES);
   const reportHtmlPath = path.join(reportDir, "provisional-diagnostic-report.html");
   fs.writeFileSync(reportHtmlPath, `<html><body>generated report<img src="${frontImagePath}" alt="front"></body></html>`);
   const staleBundlePath = path.join(sharedBundleDir, "report-bundle.json");
@@ -1852,7 +1857,7 @@ test("station bridge serves one local report asset for direct storage upload", a
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.mkdirSync(path.join(reportDir, "front"), { recursive: true });
   const frontImagePath = path.join(reportDir, "front", "front-all-on-portrait-display.png");
-  fs.writeFileSync(frontImagePath, Buffer.from("front-image"));
+  fs.writeFileSync(frontImagePath, PNG_BYTES);
   const reportHtmlPath = path.join(reportDir, "provisional-diagnostic-report.html");
   fs.writeFileSync(reportHtmlPath, `<html><body>generated report<img src="${frontImagePath}" alt="front"></body></html>`);
   fs.writeFileSync(path.join(sessionDir, "station-session.json"), JSON.stringify({
@@ -1888,8 +1893,8 @@ test("station bridge serves one local report asset for direct storage upload", a
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), "image/png");
     assert.equal(response.headers.get("x-ai-grader-asset-id"), assetId);
-    assert.equal(response.headers.get("x-ai-grader-sha256"), "635c727b41c225c9496e646413781d7c3aa11874287dd7a9d584911839f42999");
-    assert.equal(Buffer.from(await response.arrayBuffer()).toString("utf8"), "front-image");
+    assert.equal(response.headers.get("x-ai-grader-sha256"), PNG_SHA256);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), PNG_BYTES);
   } finally {
     await closeServer(started.server);
   }

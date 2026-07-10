@@ -1366,6 +1366,20 @@ test("Surface Intelligence V0 generates heatmap, Surface Vision, masks, and cons
         source: "approximate_detected_boundary",
       },
     ],
+    normalizedCardProjection: {
+      sourceSha256: "a".repeat(64),
+      normalizedArtifactSha256: "b".repeat(64),
+      sourceImageWidth: width,
+      sourceImageHeight: height,
+      displayTransform: "none",
+      rotationDegrees: 0,
+      corners: {
+        topLeft: { x: 12, y: 14 },
+        topRight: { x: 168, y: 14 },
+        bottomRight: { x: 168, y: 244 },
+        bottomLeft: { x: 12, y: 244 },
+      },
+    },
     roiCrops: [{ roiId: "center-surface", outputFilePath: path.join(imageDir, "center-surface.png"), displayRect: { x: 50, y: 70, width: 80, height: 90 } }],
     inheritedWarnings: ["fixture warning carried through"],
   });
@@ -1383,6 +1397,15 @@ test("Surface Intelligence V0 generates heatmap, Surface Vision, masks, and cons
   assert.ok(result.confidence.score > 0);
   assert.ok(result.candidates.length > 0);
   assert.equal(result.candidates[0].category, "surface");
+  assert.equal(result.candidates[0].analysisGeometry.coordinateFrame, "normalized_card");
+  assert.equal(result.candidates[0].analysisGeometry.units, "fraction");
+  assert.equal(result.candidates[0].analysisGeometry.sourceSha256, "a".repeat(64));
+  assert.equal(result.candidates[0].analysisGeometry.normalizedArtifactSha256, "b".repeat(64));
+  const normalizedShape = result.candidates[0].analysisGeometry.shape;
+  assert.equal(normalizedShape.type, "polygon");
+  assert.equal(normalizedShape.points.length, 4);
+  assert.ok(normalizedShape.points.every((point) => point.x >= 0 && point.x <= 1));
+  assert.ok(normalizedShape.points.every((point) => point.y >= 0 && point.y <= 1));
   assert.ok(result.candidates[0].sourceChannels.length > 0);
   assert.ok(result.candidates[0].strongestChannel >= 1);
   assert.equal(result.candidates[0].physicalDirectionMappingStatus, "pending");
@@ -1390,6 +1413,39 @@ test("Surface Intelligence V0 generates heatmap, Surface Vision, masks, and cons
   assert.match(JSON.stringify(result.candidates[0].evidenceRefs), /surface-vision-v0|surface-intelligence-v0-heatmap/);
   assert.match(result.warnings.join(" "), /provisional_diagnostic/);
   assert.doesNotMatch(JSON.stringify(result).toLowerCase(), /finalgradecomputed":true|certifiedclaim":true/);
+
+  const unprojected = await buildPreliminarySurfaceIntelligenceV0({
+    side: "front",
+    outputDir: path.join(root, "analysis-without-normalized-transform"),
+    trueView: {
+      outputFilePath: trueView,
+      imageWidth: width,
+      imageHeight: height,
+      rawSourceFilePath: trueView,
+      displayTransform: "none",
+    },
+    allOn: {
+      outputFilePath: trueView,
+      imageWidth: width,
+      imageHeight: height,
+      rawSourceFilePath: trueView,
+      displayTransform: "none",
+    },
+    channelImages,
+    roiDefinitions: [
+      {
+        id: "full-card",
+        label: "Full card",
+        type: "surface",
+        status: "computed",
+        rect: { x: 12, y: 14, width: 156, height: 230 },
+        displayRect: { x: 12, y: 14, width: 156, height: 230 },
+        source: "approximate_detected_boundary",
+      },
+    ],
+  });
+  assert.ok(unprojected.candidates.length > 0);
+  assert.equal(unprojected.candidates.every((candidate) => candidate.analysisGeometry === undefined), true);
 
   const missing = await buildPreliminarySurfaceIntelligenceV0({
     side: "back",

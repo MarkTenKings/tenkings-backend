@@ -62,11 +62,13 @@ export {
   PRELIMINARY_SURFACE_INTELLIGENCE_VERSION,
   buildPreliminarySurfaceIntelligenceV0,
   mergeSurfaceAnalysisWithSurfaceIntelligence,
+  projectFixedRigDisplayRectToNormalizedCardGeometry,
 } from "./fixedRigSurfaceIntelligence";
 export type {
   BuildPreliminarySurfaceIntelligenceInput,
   SurfaceIntelligenceChannelInput,
   SurfaceIntelligenceImageInput,
+  SurfaceIntelligenceNormalizedCardProjection,
 } from "./fixedRigSurfaceIntelligence";
 export {
   LIGHT_DIRECTION_CALIBRATION_PROFILE_VERSION,
@@ -85,6 +87,15 @@ export {
   writeAiGraderReportBundle,
 } from "./aiGraderReportBundle";
 export {
+  createStableAiGraderDefectFindingId,
+  extractAiGraderDefectFindingsV1,
+} from "./aiGraderDefectFindings";
+export type {
+  AiGraderApprovedDefectEvidence,
+  AiGraderDefectFindingExtractionResult,
+  ExtractAiGraderDefectFindingsOptions,
+} from "./aiGraderDefectFindings";
+export {
   AI_GRADER_PRODUCTION_RELEASE_VERSION,
   buildAiGraderProductionRelease,
   writeAiGraderProductionRelease,
@@ -92,6 +103,7 @@ export {
 export type {
   AiGraderReportBundle,
   AiGraderReportBundleAsset,
+  AiGraderReportBundleEvidenceRole,
   AiGraderReportBundleWriteResult,
 } from "./aiGraderReportBundle";
 export type {

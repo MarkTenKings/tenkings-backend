@@ -11,7 +11,34 @@ const {
   persistAiGraderValuationResult,
   normalizeAiGraderPublicGeometryCaptureDecisions,
   sanitizeAiGraderPublicJson,
+  sanitizeAiGraderPublicReportBundleForRead,
 } = require("../dist/database/src/aiGraderProductionService");
+
+function sampleDefectFinding(overrides = {}) {
+  return {
+    schemaVersion: "ai-grader-defect-finding-v1",
+    findingId: "dfv1_1234567890abcdef12345678",
+    side: "back",
+    category: "surface_anomaly",
+    detector: { id: "preliminary_surface_intelligence_v0", version: "preliminary_surface_intelligence_v0" },
+    severity: { score: 72.5, band: "high" },
+    confidence: 0.78,
+    review: { status: "unreviewed" },
+    geometry: {
+      coordinateFrame: "normalized_card",
+      units: "fraction",
+      shape: { type: "box", x: 0.1, y: 0.2, width: 0.25, height: 0.125 },
+    },
+    evidence: {
+      trueViewAssetId: "report/back/back-normalized-card.png",
+      heatmapAssetId: "report/back/back-heatmap.png",
+      channelAssetIds: [],
+      roiAssetIds: [],
+    },
+    explanation: "AI-detected provisional surface finding. Review the linked evidence before relying on this finding.",
+    ...overrides,
+  };
+}
 
 function sampleBundle(overrides = {}) {
   return {
@@ -405,10 +432,269 @@ test("production storage plan uploads AI Grader evidence image assets with publi
   const reportBundleArtifact = plan.artifacts.find((artifact) => artifact.kind === "report-bundle.json");
   const publicBundle = JSON.parse(reportBundleArtifact?.body ?? "{}");
   assert.equal(publicBundle.publicAssets[0].publicUrl, imageArtifact?.publicUrl);
+  assert.equal(publicBundle.publicAssets[0].id, "front/front-all-on-portrait-display.png");
   assert.equal(publicBundle.assets[0].contentType, "image/png");
   assert.equal(publicBundle.assets[0].bodyBase64, undefined);
   assert.equal(publicBundle.assets[0].localPath, undefined);
   assert.doesNotMatch(reportBundleArtifact?.body ?? "", /C:\\TenKings/);
+});
+
+test("production storage plan preserves exact finding asset IDs and strips detector internals", () => {
+  const normalizedBytes = Buffer.from("normalized-card");
+  const heatmapBytes = Buffer.from("heatmap");
+  const finding = sampleDefectFinding({
+    rawRect: { x: 100, y: 200, width: 40, height: 50 },
+    evidenceRefs: { localPath: "C:\\TenKings\\capture-data\\private.png" },
+    privateDetectorState: { threshold: 0.341, stationToken: "must-not-survive" },
+  });
+  const release = sampleRelease();
+  release.finalGrade.gradeImpactReasons[0].findingIds = [finding.findingId];
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle({
+      provisionalGrade: {
+        gradeImpactCandidates: [{ id: "surface-1", findingIds: [finding.findingId] }],
+      },
+      visionLab: { defectFindings: [finding] },
+      assets: [
+        {
+          id: "report/back/back-normalized-card.png",
+          kind: "image",
+          fileName: "back-normalized-card.png",
+          contentType: "image/png",
+          checksumSha256: aiGraderSha256(normalizedBytes),
+          byteSize: normalizedBytes.length,
+          side: "back",
+          evidenceRole: "normalized_card",
+        },
+        {
+          id: "report/back/back-heatmap.png",
+          kind: "image",
+          fileName: "back-heatmap.png",
+          contentType: "image/png",
+          checksumSha256: aiGraderSha256(heatmapBytes),
+          byteSize: heatmapBytes.length,
+          side: "back",
+          evidenceRole: "surface_heatmap",
+        },
+      ],
+    }),
+    productionRelease: release,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+
+  const artifact = plan.artifacts.find((entry) => entry.kind === "report-bundle.json");
+  const publicBundle = JSON.parse(artifact?.body ?? "{}");
+  assert.deepEqual(publicBundle.publicAssets.map((asset) => asset.id), [
+    "report/back/back-normalized-card.png",
+    "report/back/back-heatmap.png",
+  ]);
+  assert.equal(publicBundle.visionLab.defectFindings[0].findingId, finding.findingId);
+  assert.equal(publicBundle.visionLab.defectFindings[0].evidence.trueViewAssetId, "report/back/back-normalized-card.png");
+  assert.equal(publicBundle.visionLab.defectFindings[0].rawRect, undefined);
+  assert.equal(publicBundle.visionLab.defectFindings[0].privateDetectorState, undefined);
+  assert.equal(publicBundle.visionLab.defectFindings[0].review.status, "unreviewed");
+  assert.doesNotMatch(artifact?.body ?? "", /capture-data|stationToken|must-not-survive|rawRect|privateDetectorState/);
+});
+
+test("production storage plan rejects dangling findings and unsafe or duplicate asset IDs", () => {
+  const bytes = Buffer.from("image");
+  const baseAsset = {
+    kind: "image",
+    fileName: "image.png",
+    contentType: "image/png",
+    checksumSha256: aiGraderSha256(bytes),
+    byteSize: bytes.length,
+  };
+  assert.throws(
+    () => buildAiGraderProductionStoragePlan({
+      reportBundle: sampleBundle({
+        visionLab: { defectFindings: [sampleDefectFinding()] },
+        assets: [{ ...baseAsset, id: "report/back/back-normalized-card.png", side: "back", evidenceRole: "normalized_card" }],
+      }),
+      productionRelease: sampleRelease(),
+    }),
+    /invalid public defect findings/,
+  );
+  assert.throws(
+    () => buildAiGraderProductionStoragePlan({
+      reportBundle: sampleBundle({ assets: [{ ...baseAsset, id: "C:\\capture\\image.png" }] }),
+      productionRelease: sampleRelease(),
+    }),
+    /unsafe public image asset ID/,
+  );
+  assert.throws(
+    () => buildAiGraderProductionStoragePlan({
+      reportBundle: sampleBundle({
+        assets: [
+          { ...baseAsset, id: "report/back/image.png" },
+          { ...baseAsset, id: "REPORT/BACK/IMAGE.PNG" },
+        ],
+      }),
+      productionRelease: sampleRelease(),
+    }),
+    /duplicate public image asset IDs/,
+  );
+  assert.throws(
+    () => buildAiGraderProductionStoragePlan({
+      reportBundle: sampleBundle({
+        assets: [{ ...baseAsset, id: "report/back/active.svg", contentType: "image/svg+xml" }],
+      }),
+      productionRelease: sampleRelease(),
+    }),
+    /approved raster image type/,
+  );
+});
+
+test("public report read sanitizer revalidates findings and drops dangling or private fields", () => {
+  const bytes = Buffer.from("image");
+  const checksumSha256 = aiGraderSha256(bytes);
+  const valid = sampleDefectFinding({ rawRect: { x: 1, y: 2, width: 3, height: 4 }, detectorSecret: "private" });
+  const dangling = sampleDefectFinding({
+    findingId: "dfv1_abcdef1234567890abcdef12",
+    evidence: {
+      trueViewAssetId: "report/back/missing.png",
+      channelAssetIds: [],
+      roiAssetIds: [],
+    },
+  });
+  const sanitized = sanitizeAiGraderPublicReportBundleForRead({
+    reportId: "report-1",
+    assets: [
+      {
+        id: "report/back/back-normalized-card.png",
+        contentType: "image/png",
+        checksumSha256,
+        byteSize: bytes.length,
+        storageKey: "ai-grader/reports/report-1/assets/001-back-normalized-card.png",
+        publicUrl: "https://cdn.tenkings.test/ai-grader/reports/report-1/assets/001-back-normalized-card.png",
+        side: "back",
+        evidenceRole: "normalized_card",
+      },
+      {
+        id: "report/back/back-heatmap.png",
+        contentType: "image/png",
+        checksumSha256,
+        byteSize: bytes.length,
+        storageKey: "ai-grader/reports/report-1/assets/002-back-heatmap.png",
+        publicUrl: "https://cdn.tenkings.test/ai-grader/reports/report-1/assets/002-back-heatmap.png",
+        side: "back",
+        evidenceRole: "surface_heatmap",
+      },
+    ],
+    provisionalGrade: {
+      gradeImpactCandidates: [
+        { id: "valid-reference", findingIds: [valid.findingId, "dfv1_ffffffffffffffffffffffff"] },
+        { id: "malformed-reference", findingIds: valid.findingId },
+      ],
+    },
+    productionRelease: {
+      finalGrade: { gradeImpactReasons: [{ id: "malformed-final-reference", findingIds: { id: valid.findingId } }] },
+    },
+    visionLab: { defectFindings: [valid, dangling] },
+  });
+
+  assert.equal(sanitized?.visionLab.defectFindings.length, 1);
+  assert.equal(sanitized?.visionLab.defectFindings[0].findingId, valid.findingId);
+  assert.equal(sanitized?.visionLab.defectFindings[0].rawRect, undefined);
+  assert.equal(sanitized?.visionLab.defectFindings[0].detectorSecret, undefined);
+  assert.equal(sanitized?.visionLab.defectFindings[0].review.status, "unreviewed");
+  assert.deepEqual(sanitized?.provisionalGrade.gradeImpactCandidates[0].findingIds, [valid.findingId]);
+  assert.equal(sanitized?.provisionalGrade.gradeImpactCandidates[1].findingIds, undefined);
+  assert.equal(sanitized?.productionRelease.finalGrade.gradeImpactReasons[0].findingIds, undefined);
+});
+
+test("finding publication enforces evidence side and role and cannot forge human review", () => {
+  const bytes = Buffer.from("image");
+  const asset = {
+    id: "report/back/back-normalized-card.png",
+    kind: "image",
+    fileName: "back-normalized-card.png",
+    contentType: "image/png",
+    checksumSha256: aiGraderSha256(bytes),
+    byteSize: bytes.length,
+    side: "back",
+    evidenceRole: "normalized_card",
+  };
+  const confirmed = sampleDefectFinding({
+    review: { status: "confirmed", reviewedAt: "2026-07-10T12:00:00.000Z" },
+    evidence: {
+      trueViewAssetId: "report/back/back-normalized-card.png",
+      channelAssetIds: [],
+      roiAssetIds: [],
+    },
+  });
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle({ visionLab: { defectFindings: [confirmed] }, assets: [asset] }),
+    productionRelease: sampleRelease(),
+  });
+  const artifact = plan.artifacts.find((entry) => entry.kind === "report-bundle.json");
+  const publicBundle = JSON.parse(artifact?.body ?? "{}");
+  assert.deepEqual(publicBundle.visionLab.defectFindings[0].review, { status: "unreviewed" });
+
+  assert.throws(
+    () => buildAiGraderProductionStoragePlan({
+      reportBundle: sampleBundle({
+        visionLab: { defectFindings: [{ ...confirmed, review: { status: "unreviewed" } }] },
+        assets: [{ ...asset, side: "front" }],
+      }),
+      productionRelease: sampleRelease(),
+    }),
+    /invalid public defect findings/,
+  );
+  assert.throws(
+    () => buildAiGraderProductionStoragePlan({
+      reportBundle: sampleBundle({
+        visionLab: { defectFindings: [{ ...confirmed, review: { status: "unreviewed" } }] },
+        assets: [{ ...asset, evidenceRole: "surface_heatmap" }],
+      }),
+      productionRelease: sampleRelease(),
+    }),
+    /invalid public defect findings/,
+  );
+});
+
+test("public report read sanitizer returns only integrity-checked storage assets with narrow legacy support", () => {
+  const bytes = Buffer.from("image");
+  const checksumSha256 = aiGraderSha256(bytes);
+  const base = {
+    contentType: "image/png",
+    checksumSha256,
+    byteSize: bytes.length,
+    storageKey: "ai-grader/reports/report-1/assets/001-image.png",
+    publicUrl: "https://cdn.tenkings.test/ai-grader/reports/report-1/assets/001-image.png",
+  };
+  const sanitized = sanitizeAiGraderPublicReportBundleForRead({
+    reportId: "report-1",
+    assets: [
+      { ...base, id: "front-image:1" },
+      { ...base, id: "C:\\capture\\image.png" },
+      { ...base, id: "safe-but-wrong-url.png", publicUrl: "https://tracker.example.test/pixel.png" },
+      {
+        ...base,
+        id: "reconstructed-url.png",
+        storageKey: "ai-grader/reports/report-1/assets/002-image.png",
+        publicUrl: "https://tracker.example.test/ai-grader/reports/report-1/assets/002-image.png",
+      },
+      {
+        ...base,
+        id: "cross-report.png",
+        storageKey: "ai-grader/reports/report-2/assets/001-image.png",
+        publicUrl: "https://cdn.tenkings.test/ai-grader/reports/report-2/assets/001-image.png",
+      },
+      { ...base, id: "missing-integrity.png", checksumSha256: undefined },
+    ],
+    visionLab: {},
+  });
+  assert.deepEqual(sanitized?.publicAssets.map((asset) => asset.id), ["front-image:1", "reconstructed-url.png"]);
+  assert.equal(sanitized?.publicAssets[1].publicUrl, "/storage/ai-grader/reports/report-1/assets/002-image.png");
+  assert.deepEqual(sanitized?.assets, sanitized?.publicAssets);
+  assert.equal(
+    sanitizeAiGraderPublicReportBundleForRead(
+      { reportId: "report-2", assets: [], visionLab: {} },
+      { expectedReportId: "report-1" },
+    ),
+    undefined,
+  );
 });
 
 test("production storage plan cannot publish caller-forged hardware timing or OCR mutation claims", () => {

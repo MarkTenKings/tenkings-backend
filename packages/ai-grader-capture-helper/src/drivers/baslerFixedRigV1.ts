@@ -15,6 +15,7 @@ import {
   PRELIMINARY_SURFACE_INTELLIGENCE_VERSION,
   buildPreliminarySurfaceIntelligenceV0,
   mergeSurfaceAnalysisWithSurfaceIntelligence,
+  type SurfaceIntelligenceNormalizedCardProjection,
 } from "./fixedRigSurfaceIntelligence";
 import {
   LIGHT_DIRECTION_CALIBRATION_PROFILE_VERSION,
@@ -460,6 +461,15 @@ export interface FixedRigSurfaceAnomalyCandidate {
   candidateId: string;
   side: FixedRigCardSide;
   category?: "surface";
+  analysisGeometry?: {
+    coordinateFrame: "normalized_card";
+    units: "fraction";
+    sourceSha256: string;
+    normalizedArtifactSha256: string;
+    shape:
+      | { type: "box"; x: number; y: number; width: number; height: number }
+      | { type: "polygon"; points: Array<{ x: number; y: number }> };
+  };
   displayRect?: { x: number; y: number; width: number; height: number };
   rawRect?: { x: number; y: number; width: number; height: number };
   sourceChannels: number[];
@@ -3919,6 +3929,7 @@ function normalizeCandidate(candidate: FixedRigEvidencePackageJson, side: FixedR
     confidence: candidate.confidenceBand ?? candidate.confidence ?? "low",
     anomalyProxyScore: candidate.anomalyProxyScore ?? candidate.severityProxy ?? 0,
     severityProxy: candidate.severityProxy ?? candidate.anomalyProxyScore ?? 0,
+    analysisGeometry: candidate.analysisGeometry,
     displayRect: candidate.displayRect,
     rawRect: candidate.rawRect,
     sourceChannels: Array.isArray(candidate.sourceChannels) ? candidate.sourceChannels : [],
@@ -4857,6 +4868,43 @@ function surfaceIntelligenceChannels(side: FixedRigEvidencePackageJson | undefin
   });
 }
 
+function surfaceIntelligenceNormalizedCardProjection(
+  side: FixedRigEvidencePackageJson | undefined,
+): SurfaceIntelligenceNormalizedCardProjection | undefined {
+  const geometry = side?.normalizedCard?.geometry;
+  const artifact = side?.normalizedCard?.normalizedArtifact;
+  const corners = geometry?.corners;
+  const image = geometry?.image;
+  const displayTransform = side?.displayImage?.displayTransform;
+  const normalizedSourceSha256 = artifact?.sourceSha256;
+  const normalizedArtifactSha256 = artifact?.sha256;
+  const displaySourceSha256 = side?.displayImage?.rawSourceSha256;
+  if (
+    !artifact?.localOutputPath ||
+    !corners ||
+    !image ||
+    !Number.isFinite(image.width) ||
+    !Number.isFinite(image.height) ||
+    !Number.isFinite(geometry?.rotationDegrees) ||
+    !["none", "rotate90cw", "rotate90ccw", "rotate180"].includes(displayTransform) ||
+    !/^[a-f0-9]{64}$/i.test(normalizedSourceSha256 ?? "") ||
+    !/^[a-f0-9]{64}$/i.test(normalizedArtifactSha256 ?? "") ||
+    normalizedSourceSha256 !== displaySourceSha256
+  ) return undefined;
+  const expectedDisplayWidth = displayTransform === "rotate90cw" || displayTransform === "rotate90ccw" ? image.height : image.width;
+  const expectedDisplayHeight = displayTransform === "rotate90cw" || displayTransform === "rotate90ccw" ? image.width : image.height;
+  if (side?.displayImage?.imageWidth !== expectedDisplayWidth || side?.displayImage?.imageHeight !== expectedDisplayHeight) return undefined;
+  return {
+    sourceSha256: normalizedSourceSha256,
+    normalizedArtifactSha256,
+    sourceImageWidth: image.width,
+    sourceImageHeight: image.height,
+    displayTransform,
+    rotationDegrees: geometry.rotationDegrees,
+    corners,
+  };
+}
+
 function withSurfaceAnalysisForSide(
   analysis: FixedRigEvidencePackageJson,
   side: FixedRigCardSide,
@@ -4929,6 +4977,7 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
         roiCrops: front.roiCrops,
         quality: frontStats,
         inheritedWarnings: baseWarnings,
+        normalizedCardProjection: surfaceIntelligenceNormalizedCardProjection(front),
       })
     : undefined;
   const backSurfaceIntelligence = back
@@ -4943,6 +4992,7 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
         roiCrops: back.roiCrops,
         quality: backStats,
         inheritedWarnings: baseWarnings,
+        normalizedCardProjection: surfaceIntelligenceNormalizedCardProjection(back),
       })
     : undefined;
   const enhancedFrontSurface = frontSurfaceIntelligence ? mergeSurfaceAnalysisWithSurfaceIntelligence(frontSurface, frontSurfaceIntelligence) : frontSurface;
