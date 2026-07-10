@@ -25410,3 +25410,24 @@ By enabling Rip It Live, I confirm:
 - No env var changes.
 - No credential rotation or secret printing.
 - No destructive operations.
+
+## 2026-07-09 - PR #79 production merge planned action
+
+### Planned Action
+- Merge PR #79 (`https://github.com/MarkTenKings/tenkings-backend/pull/79`) from `feature/ai-grader-throughput-workflow` into `main` using the repository merge-commit strategy.
+- Purpose: deploy the two-person AI Grader throughput workflow, including the hardware-independent Finish Cards and Label Sheets pages, migration-free sheet assignment, automatic existing-pipeline comps, direct-storage slab photos, and gated inventory completion.
+- Verified before planned action:
+  - Local branch: `feature/ai-grader-throughput-workflow`.
+  - PR HEAD: `2bea70cc32056dd7f0128f47bfbb574c1a059dc7`.
+  - PR state: open, non-draft, merge state `CLEAN`.
+  - GitHub PR Install & Build and all Docker image checks: passed.
+  - Vercel preview deployment and preview comments: passed.
+- After merge, monitor the merge commit's GitHub Actions run and Vercel Production deployment to terminal status, then perform read-only HTTP checks for `/ai-grader/station`, `/ai-grader/finish`, and `/ai-grader/labels/sheets`.
+- Do not run the Dell bridge, Basler camera, lighting controls, capture workflow, migrations, production smoke actions, or any env/credential mutation. Mark will run the browser/Dell production smoke.
+
+### Guardrails For This Planned Action
+- Hardware run: no.
+- Migrations run: no.
+- Env vars changed: no.
+- Credentials changed, rotated, or printed: no.
+- Destructive operations: none.
