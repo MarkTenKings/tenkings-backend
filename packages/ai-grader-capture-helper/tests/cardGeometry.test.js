@@ -7,25 +7,32 @@ const sharp = require("sharp");
 const {
   detectAndNormalizeCardImage,
   detectCardGeometry,
+  detectCardGeometryFromBuffer,
+  NORMALIZED_CARD_HEIGHT_PIXELS,
+  NORMALIZED_CARD_WIDTH_PIXELS,
+  normalizeCardImageWithGeometry,
 } = require("../dist/drivers");
 
 async function writeSyntheticCard(filePath, options = {}) {
   const width = options.width ?? 800;
   const height = options.height ?? 1000;
-  const cardWidth = options.cardWidth ?? 350;
-  const cardHeight = options.cardHeight ?? 490;
+  const cardWidth = options.cardWidth ?? 440;
+  const cardHeight = options.cardHeight ?? 616;
   const centerX = width / 2 + (options.offsetX ?? 0);
   const centerY = height / 2 + (options.offsetY ?? 0);
   const angle = options.angle ?? 0;
   const background = options.background ?? "#17191d";
   const card = options.card ?? "#f2f0e9";
+  const details = options.details === false
+    ? ""
+    : `<rect x="${-cardWidth / 2 + 24}" y="${-cardHeight / 2 + 28}" width="${cardWidth - 48}" height="${cardHeight - 56}" rx="4" fill="${options.detailOne ?? "#c7b36a"}"/>
+       <rect x="${-cardWidth / 2 + 44}" y="${-cardHeight / 2 + 52}" width="${cardWidth - 88}" height="${cardHeight - 104}" rx="3" fill="${options.detailTwo ?? "#465b73"}"/>`;
   const svg = Buffer.from(`
     <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
       <rect width="100%" height="100%" fill="${background}"/>
       <g transform="translate(${centerX} ${centerY}) rotate(${angle})">
         <rect x="${-cardWidth / 2}" y="${-cardHeight / 2}" width="${cardWidth}" height="${cardHeight}" rx="5" fill="${card}"/>
-        <rect x="${-cardWidth / 2 + 24}" y="${-cardHeight / 2 + 28}" width="${cardWidth - 48}" height="${cardHeight - 56}" rx="4" fill="#c7b36a"/>
-        <rect x="${-cardWidth / 2 + 44}" y="${-cardHeight / 2 + 52}" width="${cardWidth - 88}" height="${cardHeight - 104}" rx="3" fill="#465b73"/>
+        ${details}
       </g>
     </svg>
   `);
@@ -38,6 +45,11 @@ async function writeBlank(filePath) {
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-card-geometry-"));
+}
+
+async function imageRegionStats(filePath, rect) {
+  const region = await sharp(filePath).extract(rect).png().toBuffer();
+  return sharp(region).stats();
 }
 
 test("detects four front corners within close-enough offset and +10 degree skew, then writes a portrait lossless normalized PNG", async () => {
@@ -58,6 +70,7 @@ test("detects four front corners within close-enough offset and +10 degree skew,
 
   assert.equal(result.geometry.side, "front");
   assert.equal(result.geometry.placementState, "ready");
+  assert.equal(result.geometry.adjustmentReason, null);
   assert.equal(result.geometry.geometrySource, "detected");
   assert.equal(result.geometry.captureMode, "automatic_detection");
   assert.equal(result.geometry.confidenceBasis, "automatic_detection");
@@ -81,7 +94,10 @@ test("detects four front corners within close-enough offset and +10 degree skew,
   assert.equal(fs.existsSync(normalizedPath), true);
   const normalizedMetadata = await sharp(normalizedPath).metadata();
   assert.ok(normalizedMetadata.height > normalizedMetadata.width);
-  assert.ok(Math.abs(normalizedMetadata.height / normalizedMetadata.width - 1.4) < 0.08);
+  assert.equal(normalizedMetadata.width, NORMALIZED_CARD_WIDTH_PIXELS);
+  assert.equal(normalizedMetadata.height, NORMALIZED_CARD_HEIGHT_PIXELS);
+  assert.equal(result.normalizedArtifact.encodingLossless, true);
+  assert.equal(typeof result.normalizedArtifact.geometricResamplingApplied, "boolean");
 });
 
 test("detects back geometry at negative skew and reports ready", async () => {
@@ -111,8 +127,8 @@ test("accepts a correctly oriented raw landscape card while retaining its right-
   await writeSyntheticCard(rawPath, {
     width: 1000,
     height: 800,
-    cardWidth: 490,
-    cardHeight: 350,
+    cardWidth: 700,
+    cardHeight: 500,
   });
 
   const result = await detectAndNormalizeCardImage({
@@ -129,10 +145,43 @@ test("accepts a correctly oriented raw landscape card while retaining its right-
   assert.ok(result.normalizedArtifact.imageWidth < result.normalizedArtifact.imageHeight);
 });
 
-test("does not treat a sideways card in a portrait frame as zero-skew placement", async () => {
+test("Dell landscape normalization follows the clockwise operator preview and preserves printed top", async () => {
+  const dir = tempDir();
+  for (const angle of [-12, 0, 12]) {
+    const rawPath = path.join(dir, `dell-landscape-${angle}.png`);
+    const normalizedPath = path.join(dir, `dell-landscape-${angle}-normalized.png`);
+    const svg = Buffer.from(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="800">
+        <rect width="1000" height="800" fill="#101214"/>
+        <g transform="translate(500 400) rotate(${angle})">
+          <rect x="-350" y="-250" width="700" height="500" rx="5" fill="#f3f1e9"/>
+          <rect x="-305" y="-150" width="135" height="300" fill="#e21d32"/>
+          <rect x="170" y="-150" width="135" height="300" fill="#154bd8"/>
+        </g>
+      </svg>
+    `);
+    await sharp(svg).png().toFile(rawPath);
+
+    const result = await detectAndNormalizeCardImage({
+      sourceImagePath: rawPath,
+      normalizedOutputPath: normalizedPath,
+      side: "front",
+    });
+    const [topStats, bottomStats] = await Promise.all([
+      imageRegionStats(normalizedPath, { left: 350, top: 180, width: 500, height: 260 }),
+      imageRegionStats(normalizedPath, { left: 350, top: 1240, width: 500, height: 260 }),
+    ]);
+
+    assert.equal(result.geometry.placementState, "ready", `raw landscape angle ${angle} should be Ready`);
+    assert.ok(topStats.channels[0].mean > topStats.channels[2].mean, `angle ${angle} should keep operator-top red at canonical top`);
+    assert.ok(bottomStats.channels[2].mean > bottomStats.channels[0].mean, `angle ${angle} should keep operator-bottom blue at canonical bottom`);
+  }
+});
+
+test("requires adjustment when a card is sideways instead of silently guessing semantic orientation", async () => {
   const dir = tempDir();
   const rawPath = path.join(dir, "portrait-frame-sideways-card.png");
-  await writeSyntheticCard(rawPath, { cardWidth: 490, cardHeight: 350 });
+  await writeSyntheticCard(rawPath, { cardWidth: 616, cardHeight: 440 });
 
   const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "front" });
 
@@ -140,9 +189,12 @@ test("does not treat a sideways card in a portrait frame as zero-skew placement"
   assert.ok(Math.abs(Math.abs(geometry.rotationDegrees) - 90) < 1.5);
   assert.ok(geometry.skewDegrees > 88);
   assert.equal(geometry.placement.withinSkewTolerance, false);
+  assert.equal(geometry.placement.withinNormalizationSkewTolerance, false);
+  assert.equal(geometry.semanticOrientation.basis, "operator_top_toward_preview_top");
+  assert.equal(geometry.semanticOrientation.contentUprightVerified, false);
 });
 
-test("returns adjust_card for excessive skew or center offset while retaining detected geometry", async () => {
+test("center offset and ordinary in-plane rotation remain diagnostic and do not block safe normalization", async () => {
   const dir = tempDir();
   const skewedPath = path.join(dir, "skewed.png");
   const offsetPath = path.join(dir, "offset.png");
@@ -157,14 +209,338 @@ test("returns adjust_card for excessive skew or center offset while retaining de
     thresholds: { maxSkewDegrees: 15 },
   });
 
-  assert.equal(skewed.placementState, "adjust_card");
+  assert.equal(skewed.placementState, "ready");
   assert.equal(skewed.placement.withinSkewTolerance, false);
+  assert.equal(skewed.placement.withinNormalizationSkewTolerance, true);
   assert.ok(skewed.detectedCorners);
-  assert.equal(offset.placementState, "adjust_card");
+  assert.equal(offset.placementState, "ready");
   assert.equal(offset.placement.withinCenterTolerance, false);
   assert.ok(offset.detectedCorners);
   assert.equal(relaxed.placementState, "ready");
   assert.equal(relaxed.placement.maxSkewDegrees, 15);
+});
+
+test("detects solid cards on both matte black and matte white base plates", async () => {
+  const dir = tempDir();
+  const cases = [
+    { name: "black-plate", background: "#050607", card: "#f4f2ed" },
+    { name: "white-plate", background: "#f5f4f1", card: "#14171b" },
+  ];
+  for (const entry of cases) {
+    const rawPath = path.join(dir, `${entry.name}.png`);
+    await writeSyntheticCard(rawPath, { ...entry, details: false, angle: 7, offsetX: 55 });
+    const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "front" });
+    assert.equal(geometry.placementState, "ready", `${entry.name} should be Ready`);
+    assert.equal(geometry.geometrySource, "detected");
+    assert.equal(geometry.detection.method, "solid_plate_color_component_pca_v2");
+    assert.ok(geometry.confidence >= geometry.placement.minReadyConfidence);
+    assert.ok(geometry.detectedCorners);
+  }
+});
+
+test("a card sized to the production 97%-height portrait guide remains inside the Ready scale envelope", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "production-guide-scale.png");
+  const frameWidth = 1000;
+  const frameHeight = 1200;
+  const cardHeight = frameHeight * 0.97;
+  const cardWidth = cardHeight * (2.5 / 3.5);
+  await writeSyntheticCard(rawPath, {
+    width: frameWidth,
+    height: frameHeight,
+    cardWidth,
+    cardHeight,
+    details: false,
+  });
+
+  const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "front" });
+
+  assert.ok(geometry.placement.cardCoverage > 0.8);
+  assert.equal(geometry.placement.withinCoverageTolerance, true);
+  assert.equal(geometry.placement.withinFrame, true);
+  assert.equal(geometry.placementState, "ready");
+});
+
+test("synthetic outer-corner localization stays close to known rotated-card ground truth", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "known-corners.png");
+  const width = 800;
+  const height = 1000;
+  const cardWidth = 440;
+  const cardHeight = 616;
+  const offsetX = 37;
+  const offsetY = -29;
+  const angle = 11;
+  await writeSyntheticCard(rawPath, { width, height, cardWidth, cardHeight, offsetX, offsetY, angle, details: false });
+
+  const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "front" });
+  const radians = angle * Math.PI / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  const centerX = width / 2 + offsetX;
+  const centerY = height / 2 + offsetY;
+  const transform = (x, y) => ({
+    x: centerX + x * cosine - y * sine,
+    y: centerY + x * sine + y * cosine,
+  });
+  const expected = {
+    topLeft: transform(-cardWidth / 2, -cardHeight / 2),
+    topRight: transform(cardWidth / 2, -cardHeight / 2),
+    bottomRight: transform(cardWidth / 2, cardHeight / 2),
+    bottomLeft: transform(-cardWidth / 2, cardHeight / 2),
+  };
+
+  assert.equal(geometry.placementState, "ready");
+  for (const key of ["topLeft", "topRight", "bottomRight", "bottomLeft"]) {
+    const actual = geometry.detectedCorners[key];
+    const error = Math.hypot(actual.x - expected[key].x, actual.y - expected[key].y);
+    assert.ok(error < 8, `${key} error ${error.toFixed(2)} px exceeded synthetic tolerance`);
+  }
+});
+
+test("fixed-rig scale envelope rejects a tiny card or same-color outer border instead of locking inner artwork Ready", async () => {
+  const dir = tempDir();
+  const tinyPath = path.join(dir, "tiny-card.png");
+  const matchingBorderPath = path.join(dir, "matching-border.png");
+  await writeSyntheticCard(tinyPath, { cardWidth: 300, cardHeight: 420, details: false });
+  const matchingBorderSvg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000">
+      <rect width="800" height="1000" fill="#f5f5f3"/>
+      <rect x="180" y="192" width="440" height="616" rx="5" fill="#f5f5f3"/>
+      <rect x="260" y="304" width="280" height="392" fill="#24364f"/>
+    </svg>
+  `);
+  await sharp(matchingBorderSvg).png().toFile(matchingBorderPath);
+
+  const tiny = await detectCardGeometry({ sourceImagePath: tinyPath, side: "front" });
+  const matchingBorder = await detectCardGeometry({ sourceImagePath: matchingBorderPath, side: "front" });
+
+  assert.equal(tiny.placementState, "adjust_card");
+  assert.equal(tiny.adjustmentReason, "unsafe_scale");
+  assert.equal(tiny.placement.withinCoverageTolerance, false);
+  assert.notEqual(matchingBorder.placementState, "ready");
+  assert.equal(matchingBorder.placement.withinCoverageTolerance, false);
+});
+
+test("color-aware plate subtraction detects a low-luma-contrast card", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "similar-color-card.png");
+  await writeSyntheticCard(rawPath, {
+    background: "#17191d",
+    card: "#20242c",
+    details: false,
+    angle: -6,
+    offsetY: 38,
+  });
+
+  const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "back" });
+
+  assert.equal(geometry.placementState, "ready");
+  assert.equal(geometry.geometrySource, "detected");
+  assert.ok(geometry.detectedCorners);
+  assert.ok((geometry.detection.backgroundColor?.r ?? 255) < 40);
+});
+
+test("a fully visible card beyond the placement guides is Ready, while a clipped card is Adjust Card", async () => {
+  const dir = tempDir();
+  const flexiblePath = path.join(dir, "flexible-placement.png");
+  const clippedPath = path.join(dir, "clipped-placement.png");
+  await writeSyntheticCard(flexiblePath, { angle: 17, offsetX: 90 });
+  await writeSyntheticCard(clippedPath, { angle: 0, offsetX: -227 });
+
+  const flexible = await detectCardGeometry({ sourceImagePath: flexiblePath, side: "front" });
+  const clipped = await detectCardGeometry({ sourceImagePath: clippedPath, side: "front" });
+
+  assert.equal(flexible.placementState, "ready");
+  assert.equal(flexible.placement.withinCenterTolerance, false);
+  assert.equal(flexible.placement.withinSkewTolerance, false);
+  assert.equal(flexible.placement.withinNormalizationSkewTolerance, true);
+  assert.equal(flexible.placement.withinFrame, true);
+  assert.equal(clipped.geometrySource, "detected");
+  assert.equal(clipped.placementState, "adjust_card");
+  assert.equal(clipped.adjustmentReason, "outside_frame");
+  assert.equal(clipped.placement.withinFrame, false);
+});
+
+test("the broad rotation envelope allows close-enough placement but fails closed beyond safe normalization", async () => {
+  const dir = tempDir();
+  const withinPath = path.join(dir, "rotation-within-envelope.png");
+  const beyondPath = path.join(dir, "rotation-beyond-envelope.png");
+  await writeSyntheticCard(withinPath, { angle: 34, offsetX: 24 });
+  await writeSyntheticCard(beyondPath, { angle: 40 });
+
+  const within = await detectCardGeometry({ sourceImagePath: withinPath, side: "front" });
+  const beyond = await detectCardGeometry({ sourceImagePath: beyondPath, side: "front" });
+
+  assert.equal(within.placementState, "ready");
+  assert.equal(within.placement.withinSkewTolerance, false);
+  assert.equal(within.placement.withinNormalizationSkewTolerance, true);
+  assert.equal(within.placement.maxNormalizationSkewDegrees, 35);
+  assert.equal(beyond.placementState, "adjust_card");
+  assert.equal(beyond.adjustmentReason, "rotate_top_up");
+  assert.equal(beyond.geometrySource, "detected");
+  assert.equal(beyond.placement.withinNormalizationSkewTolerance, false);
+  assert.match(beyond.warnings.join(" "), /outside the safe automatic-normalization envelope/i);
+});
+
+test("normalization keeps an operator-top marker at the canonical top for allowed rotation", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "semantic-top-raw.png");
+  const normalizedPath = path.join(dir, "semantic-top-normalized.png");
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000">
+      <rect width="800" height="1000" fill="#101214"/>
+      <g transform="translate(400 500) rotate(24)">
+        <rect x="-220" y="-308" width="440" height="616" rx="5" fill="#f3f1e9"/>
+        <rect x="-135" y="-258" width="270" height="120" fill="#e21d32"/>
+        <rect x="-135" y="138" width="270" height="120" fill="#154bd8"/>
+      </g>
+    </svg>
+  `);
+  await sharp(svg).png().toFile(rawPath);
+
+  const result = await detectAndNormalizeCardImage({
+    sourceImagePath: rawPath,
+    normalizedOutputPath: normalizedPath,
+    side: "front",
+  });
+  const [topStats, bottomStats] = await Promise.all([
+    imageRegionStats(normalizedPath, { left: 300, top: 200, width: 600, height: 200 }),
+    imageRegionStats(normalizedPath, { left: 300, top: 1300, width: 600, height: 200 }),
+  ]);
+
+  assert.equal(result.geometry.placementState, "ready");
+  assert.equal(result.geometry.semanticOrientation.contentUprightVerified, false);
+  assert.ok(topStats.channels[0].mean > topStats.channels[2].mean, "operator-top region should retain the red top marker");
+  assert.ok(bottomStats.channels[2].mean > bottomStats.channels[0].mean, "canonical bottom should retain the blue bottom marker");
+});
+
+test("normalization emits the fixed 1200x1680 coordinate space and records interpolation without changing raw bytes", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "small-raw.png");
+  const normalizedPath = path.join(dir, "small-normalized.png");
+  await writeSyntheticCard(rawPath, {
+    width: 240,
+    height: 320,
+    cardWidth: 140,
+    cardHeight: 196,
+    details: false,
+    angle: 4,
+  });
+  const rawBefore = fs.readFileSync(rawPath);
+
+  const result = await detectAndNormalizeCardImage({
+    sourceImagePath: rawPath,
+    normalizedOutputPath: normalizedPath,
+    side: "front",
+  });
+  const metadata = await sharp(normalizedPath).metadata();
+
+  assert.ok(result.normalizedArtifact);
+  assert.equal(metadata.width, NORMALIZED_CARD_WIDTH_PIXELS);
+  assert.equal(metadata.height, NORMALIZED_CARD_HEIGHT_PIXELS);
+  assert.equal(result.normalizedArtifact.upscaled, true);
+  assert.equal(result.normalizedArtifact.geometricResamplingApplied, true);
+  assert.ok(result.normalizedArtifact.sourceCropWidth <= 144);
+  assert.ok(result.normalizedArtifact.sourceCropHeight <= 200);
+  assert.ok(result.normalizedArtifact.scaleX > 1);
+  assert.ok(result.normalizedArtifact.scaleY > 1);
+  assert.equal(result.rawEvidencePreserved, true);
+  assert.deepEqual(fs.readFileSync(rawPath), rawBefore);
+});
+
+test("reuses one Ready geometry transform on another same-dimension forensic frame", async () => {
+  const dir = tempDir();
+  const geometryPath = path.join(dir, "all-on.png");
+  const channelPath = path.join(dir, "channel-1.png");
+  const mismatchPath = path.join(dir, "mismatch.png");
+  const normalizedPath = path.join(dir, "channel-1-normalized.png");
+  await writeSyntheticCard(geometryPath, { angle: 16, offsetX: 80 });
+  await writeSyntheticCard(channelPath, {
+    angle: 16,
+    offsetX: 80,
+    card: "#d8e5f4",
+    detailOne: "#5f7b9d",
+    detailTwo: "#1c2c44",
+  });
+  await writeSyntheticCard(mismatchPath, { width: 810, height: 1000 });
+  const channelRawBefore = fs.readFileSync(channelPath);
+  const geometry = await detectCardGeometry({ sourceImagePath: geometryPath, side: "front" });
+
+  const result = await normalizeCardImageWithGeometry({
+    sourceImagePath: channelPath,
+    normalizedOutputPath: normalizedPath,
+    geometry,
+  });
+  const metadata = await sharp(normalizedPath).metadata();
+
+  assert.equal(result.rawEvidencePreserved, true);
+  assert.deepEqual(fs.readFileSync(channelPath), channelRawBefore);
+  assert.equal(result.normalizedArtifact.sourceSha256, result.rawArtifact.sha256);
+  assert.equal(metadata.width, NORMALIZED_CARD_WIDTH_PIXELS);
+  assert.equal(metadata.height, NORMALIZED_CARD_HEIGHT_PIXELS);
+  await assert.rejects(
+    normalizeCardImageWithGeometry({
+      sourceImagePath: mismatchPath,
+      normalizedOutputPath: path.join(dir, "must-not-normalize.png"),
+      geometry,
+    }),
+    /dimensions must exactly match/,
+  );
+});
+
+test("preview-buffer geometry stays within a practical software latency budget", async () => {
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1680">
+      <rect width="1200" height="1680" fill="#08090a"/>
+      <g transform="translate(650 820) rotate(12)">
+        <rect x="-350" y="-490" width="700" height="980" rx="12" fill="#eeeae0"/>
+        <rect x="-290" y="-420" width="580" height="840" fill="#315079"/>
+      </g>
+    </svg>
+  `);
+  const previewJpeg = await sharp(svg).jpeg({ quality: 72 }).toBuffer();
+  await detectCardGeometryFromBuffer({
+    imageBuffer: previewJpeg,
+    side: "front",
+    thresholds: { analysisMaxDimension: 768 },
+  });
+  const startedAt = performance.now();
+  const results = [];
+  for (let index = 0; index < 3; index += 1) {
+    results.push(await detectCardGeometryFromBuffer({
+      imageBuffer: previewJpeg,
+      side: "front",
+      sourceFrameId: `latency-${index}`,
+      thresholds: { analysisMaxDimension: 768 },
+    }));
+  }
+  const elapsedMs = performance.now() - startedAt;
+
+  assert.ok(results.every((geometry) => geometry.placementState === "ready"));
+  assert.ok(elapsedMs < 1500, `three preview detections took ${elapsedMs.toFixed(1)} ms`);
+});
+
+test("empty black, white, and gently shaded solid plates remain fail-closed Not Detected", async () => {
+  const dir = tempDir();
+  const blackPath = path.join(dir, "empty-black.png");
+  const whitePath = path.join(dir, "empty-white.png");
+  const shadedPath = path.join(dir, "empty-shaded.png");
+  await sharp({ create: { width: 800, height: 1000, channels: 3, background: "#070809" } }).png().toFile(blackPath);
+  await sharp({ create: { width: 800, height: 1000, channels: 3, background: "#f5f5f3" } }).png().toFile(whitePath);
+  await sharp(Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000">
+      <defs><radialGradient id="plate"><stop offset="0" stop-color="#202226"/><stop offset="1" stop-color="#17191d"/></radialGradient></defs>
+      <rect width="800" height="1000" fill="url(#plate)"/>
+    </svg>
+  `)).png().toFile(shadedPath);
+
+  for (const sourceImagePath of [blackPath, whitePath, shadedPath]) {
+    const geometry = await detectCardGeometry({ sourceImagePath, side: "front" });
+    assert.equal(geometry.placementState, "not_detected");
+    assert.equal(geometry.geometrySource, "none");
+    assert.equal(geometry.detectionUsed, false);
+  }
 });
 
 test("returns not_detected without emitting a normalized artifact or honoring legacy automatic fallback input", async () => {
@@ -221,9 +597,43 @@ test("requires an explicit manual_capture override and saves an artifact without
   assert.ok(result.geometry.corners);
   assert.deepEqual(result.geometry.boundingBox, { x: 225, y: 255, width: 350, height: 490 });
   assert.ok(result.normalizedArtifact);
-  assert.equal(result.normalizedArtifact.imageWidth, 350);
-  assert.equal(result.normalizedArtifact.imageHeight, 490);
+  assert.equal(result.normalizedArtifact.imageWidth, NORMALIZED_CARD_WIDTH_PIXELS);
+  assert.equal(result.normalizedArtifact.imageHeight, NORMALIZED_CARD_HEIGHT_PIXELS);
   assert.equal(result.rawEvidencePreserved, true);
+});
+
+test("reuses coherent explicit manual geometry without converting it into automatic detection", async () => {
+  const dir = tempDir();
+  const sourcePath = path.join(dir, "manual-geometry-source.png");
+  const channelPath = path.join(dir, "manual-channel.png");
+  const firstNormalizedPath = path.join(dir, "manual-source-normalized.png");
+  const reusedNormalizedPath = path.join(dir, "manual-channel-normalized.png");
+  await writeBlank(sourcePath);
+  await sharp({ create: { width: 800, height: 1000, channels: 3, background: "#4d6075" } }).png().toFile(channelPath);
+  const manual = await detectAndNormalizeCardImage({
+    sourceImagePath: sourcePath,
+    normalizedOutputPath: firstNormalizedPath,
+    side: "front",
+    manualOverride: {
+      action: "manual_capture",
+      confirmed: true,
+      rect: { x: 225, y: 255, width: 350, height: 490 },
+    },
+  });
+
+  const reused = await normalizeCardImageWithGeometry({
+    sourceImagePath: channelPath,
+    normalizedOutputPath: reusedNormalizedPath,
+    geometry: manual.geometry,
+  });
+
+  assert.equal(reused.geometry.geometrySource, "manual_override");
+  assert.equal(reused.geometry.captureMode, "manual_capture");
+  assert.equal(reused.geometry.detectionUsed, false);
+  assert.equal(reused.geometry.manualOverrideUsed, true);
+  assert.equal(reused.geometry.placementState, "not_detected");
+  assert.equal(reused.rawEvidencePreserved, true);
+  assert.ok(reused.normalizedArtifact);
 });
 
 test("manual landscape override records a right-angle rotation and writes a portrait artifact", async () => {
@@ -247,8 +657,8 @@ test("manual landscape override records a right-angle rotation and writes a port
   assert.equal(result.geometry.skewDegrees, 0);
   assert.ok(result.normalizedArtifact);
   assert.ok(result.normalizedArtifact.imageWidth < result.normalizedArtifact.imageHeight);
-  assert.equal(result.normalizedArtifact.imageWidth, 350);
-  assert.equal(result.normalizedArtifact.imageHeight, 490);
+  assert.equal(result.normalizedArtifact.imageWidth, NORMALIZED_CARD_WIDTH_PIXELS);
+  assert.equal(result.normalizedArtifact.imageHeight, NORMALIZED_CARD_HEIGHT_PIXELS);
 });
 
 test("rejects a manual rectangle that is not an explicitly confirmed manual_capture action", async () => {

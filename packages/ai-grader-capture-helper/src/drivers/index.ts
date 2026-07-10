@@ -72,6 +72,7 @@ export {
   LIGHT_DIRECTION_CALIBRATION_PROFILE_VERSION,
   PRELIMINARY_NORMAL_RELIEF_PROXY_VERSION,
   buildLightDirectionCalibrationArtifacts,
+  mapApproximateLeimacChannelDirection,
   mergeSurfaceAnalysisWithLightDirection,
 } from "./fixedRigLightDirectionCalibration";
 export {
@@ -113,14 +114,18 @@ export type {
 } from "./fixedRigProvisionalGradeStory";
 export type {
   BuildLightDirectionCalibrationInput,
+  AuthoritativeCardDeskewLightVectorTransform,
   ChannelPhysicalDirectionStatus,
   FixedRigLightDirectionCalibrationResult,
   LeimacChannelDirectionMetadata,
   LeimacLightDirectionCalibrationProfile,
+  LightDirectionAuxiliaryImageRegistration,
   LightDirectionCalibrationChannelInput,
   LightDirectionCalibrationImageInput,
   LightDirectionChannelBalance,
   LightDirectionProfileStatus,
+  LightVectorCoordinateFrame,
+  LightVectorCoordinateTransformRecord,
 } from "./fixedRigLightDirectionCalibration";
 export type {
   FixedRigCardBoundary,

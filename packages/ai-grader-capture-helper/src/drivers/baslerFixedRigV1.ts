@@ -30,7 +30,10 @@ import {
 } from "./fixedRigProvisionalGradeStory";
 import {
   detectAndNormalizeCardImage,
+  normalizeCardImageWithGeometry,
+  type CardGeometryMetadata,
   type CardGeometryManualOverride,
+  type CardGeometryNormalizedArtifact,
   type CardGeometryNormalizationResult,
 } from "./cardGeometry";
 import {
@@ -181,7 +184,7 @@ export interface FixedRigFixtureCalibrationProfile {
   verticalEndPx?: { x: number; y: number };
   verticalPixelDistance?: number;
   calibrationImagePath?: string;
-  rawCoordinateFrame: "basler_sensor_pixels";
+  rawCoordinateFrame: "basler_sensor_pixels" | "normalized_card_portrait_pixels";
   displayTransform: FixedRigDisplayTransform;
   displayCoordinateFrame: "ai_grader_card_portrait_display";
   pixelPerMmX?: number;
@@ -259,6 +262,12 @@ export interface FixedRigCardBoundary {
   height?: number;
   coverage?: number;
   confidence: number;
+  source?: "image_analysis" | "normalized_from_detected_geometry" | "normalized_from_manual_geometry";
+  confidenceBasis?: CardGeometryMetadata["confidenceBasis"];
+  detectionUsed?: boolean;
+  manualOverrideUsed?: boolean;
+  sourcePlacementState?: CardGeometryMetadata["placementState"];
+  sourceWarnings?: string[];
   reason?: string;
 }
 
@@ -284,7 +293,8 @@ export interface FixedRigRoiDefinition {
   displayRect?: { x: number; y: number; width: number; height: number };
   rawCoordinateFrame?: "basler_sensor_pixels";
   displayCoordinateFrame?: "ai_grader_card_portrait_display";
-  source: "approximate_detected_boundary" | "not_computed";
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
+  source: "approximate_detected_boundary" | "normalized_card_boundary" | "not_computed";
 }
 
 export interface FixedRigQualityMetrics extends BaslerLeimacImageStats {
@@ -315,6 +325,7 @@ export interface FixedRigOverlayArtifact {
   imageWidth: number;
   imageHeight: number;
   rawCoordinateFrame?: "basler_sensor_pixels";
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
   displayTransform?: FixedRigDisplayTransform;
   displayCoordinateFrame?: "ai_grader_card_portrait_display";
   rawEvidenceUnmodified: true;
@@ -342,10 +353,12 @@ export interface FixedRigDisplayArtifact {
   rawSourceFilePath: string;
   rawSourceSha256?: string;
   rawCoordinateFrame: "basler_sensor_pixels";
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
   displayTransform: FixedRigDisplayTransform;
   displayCoordinateFrame: "ai_grader_card_portrait_display";
   roiId?: FixedRigRoiDefinition["id"];
   rawRect?: { x: number; y: number; width: number; height: number };
+  analysisRect?: { x: number; y: number; width: number; height: number };
   displayRect?: { x: number; y: number; width: number; height: number };
   rawEvidenceUnmodified: true;
   artifactRole?:
@@ -462,6 +475,8 @@ export interface FixedRigSurfaceAnomalyCandidate {
   category?: "surface";
   displayRect?: { x: number; y: number; width: number; height: number };
   rawRect?: { x: number; y: number; width: number; height: number };
+  analysisRect?: { x: number; y: number; width: number; height: number };
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
   sourceChannels: number[];
   strongestChannel?: number;
   physicalDirectionMappingStatus?: "pending" | "inferred" | "confirmed";
@@ -480,7 +495,7 @@ export interface FixedRigSurfaceAnalysis {
   status: "not_computed" | "computed_diagnostic" | "insufficient_evidence";
   version?: typeof PRELIMINARY_SURFACE_INTELLIGENCE_VERSION;
   registration: {
-    status: "assumed_fixed_rig" | "not_computed";
+    status: "assumed_fixed_rig" | "normalized_geometry_transform" | "not_computed";
     note: string;
   };
   perChannelStats: Array<{
@@ -1488,6 +1503,7 @@ export function buildFixedRigSurfaceAnalysis(input: {
   channels?: Array<{ channel: number; stats?: FixedRigQualityMetrics; displayImage?: FixedRigDisplayArtifact }>;
   roiDefinitions?: FixedRigRoiDefinition[];
   warnings?: string[];
+  registrationStatus?: "assumed_fixed_rig" | "normalized_geometry_transform";
 }): FixedRigSurfaceAnalysis {
   const perChannelStats = (input.channels ?? []).map((channel) => ({
     channel: channel.channel,
@@ -1517,7 +1533,9 @@ export function buildFixedRigSurfaceAnalysis(input: {
     return channel.anomalyProxyMetric >= medianAnomaly * 1.12 || (channel.clippedPixelFraction ?? 0) > 0.02;
   });
   const centerSurface = input.roiDefinitions?.find((roi) => roi.id === "center-surface" && roi.status === "computed");
-  const centerSurfaceRawRect = centerSurface?.rawRect ?? centerSurface?.rect;
+  const centerSurfaceUsesNormalizedCoordinates = centerSurface?.analysisCoordinateFrame === "normalized_card_portrait_pixels";
+  const centerSurfaceRawRect = centerSurfaceUsesNormalizedCoordinates ? undefined : centerSurface?.rawRect ?? centerSurface?.rect;
+  const centerSurfaceAnalysisRect = centerSurfaceUsesNormalizedCoordinates ? centerSurface?.rect : undefined;
   const maxCandidateScore = candidateChannels.length ? Math.max(...candidateChannels.map((channel) => channel.anomalyProxyMetric ?? 0)) : 0;
   const candidateScore = medianAnomaly !== undefined ? roundMetric(Math.max(0, maxCandidateScore - medianAnomaly), 4) : 0;
   const severityBand: FixedRigSurfaceAnomalyCandidate["severityBand"] =
@@ -1530,6 +1548,12 @@ export function buildFixedRigSurfaceAnalysis(input: {
             side: input.side,
             ...(centerSurface?.displayRect ? { displayRect: centerSurface.displayRect } : {}),
             ...(centerSurfaceRawRect ? { rawRect: centerSurfaceRawRect } : {}),
+            ...(centerSurfaceAnalysisRect
+              ? {
+                  analysisRect: centerSurfaceAnalysisRect,
+                  analysisCoordinateFrame: "normalized_card_portrait_pixels" as const,
+                }
+              : {}),
             sourceChannels: candidateChannels.map((channel) => channel.channel),
             anomalyProxyScore: candidateScore,
             severityProxy: candidateScore,
@@ -1544,8 +1568,11 @@ export function buildFixedRigSurfaceAnalysis(input: {
     detectorId: "preliminary_surface_anomaly_detector_v0",
     status,
     registration: {
-      status: "assumed_fixed_rig",
-      note: "Per-channel images are assumed aligned by the fixed fixture; no explicit registration or homography is computed in this provisional diagnostic workflow.",
+      status: input.registrationStatus ?? "assumed_fixed_rig",
+      note:
+        input.registrationStatus === "normalized_geometry_transform"
+          ? "All card-visible channels reuse the authoritative full-resolution all-on card transform in normalized_card_portrait_pixels."
+          : "Per-channel images are assumed aligned by the fixed fixture; no explicit registration or homography is computed in this provisional diagnostic workflow.",
     },
     perChannelStats,
     candidates,
@@ -1566,6 +1593,7 @@ export function buildFixedRigDiagnosticGradingResult(input: {
   fixtureCalibrationProfile?: FixedRigFixtureCalibrationProfile;
   repeatabilitySummary?: FixedRigRepeatabilitySummary;
   surfaceAnalysis?: FixedRigSurfaceAnalysis;
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
 }): FixedRigDiagnosticGradingResult {
   const warnings = [
     "Diagnostic-only fixed-rig analysis. No final grade, certificate, or certified grading claim is made.",
@@ -1602,7 +1630,11 @@ export function buildFixedRigDiagnosticGradingResult(input: {
       ? roundMetric(Math.max(0, Math.min(10, ((horizontalCenteringPercent + verticalCenteringPercent) / 100) * 10)), 2)
       : undefined;
   const centering =
-    boundary?.status === "detected" && lrTotal && tbTotal && fixedRulerScaleReady && framingReady
+    input.analysisCoordinateFrame === "normalized_card_portrait_pixels"
+      ? diagnosticElementNotComputed(
+          "Printed-design centering is not yet computed in normalized card coordinates; camera-frame placement offset is intentionally excluded from grading.",
+        )
+      : boundary?.status === "detected" && lrTotal && tbTotal && fixedRulerScaleReady && framingReady
       ? {
           status: "computed_diagnostic" as const,
           score: centeringScore,
@@ -2194,10 +2226,12 @@ function roisForDisplayOverlay(rois: FixedRigRoiDefinition[] | undefined): Fixed
 
 export async function createFixedRigDisplayImage(input: {
   sourceImagePath: string;
+  rawSourceImagePath?: string;
   outputDir: string;
   filePrefix: string;
   transform?: FixedRigDisplayTransform;
   rawSourceSha256?: string;
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
 }): Promise<FixedRigDisplayArtifact> {
   await mkdir(input.outputDir, { recursive: true });
   const metadata = await sharp(input.sourceImagePath).metadata();
@@ -2219,9 +2253,10 @@ export async function createFixedRigDisplayImage(input: {
     mimeType: "image/png",
     imageWidth: displayMeta.width ?? (transform === "none" || transform === "rotate180" ? rawWidth : rawHeight),
     imageHeight: displayMeta.height ?? (transform === "none" || transform === "rotate180" ? rawHeight : rawWidth),
-    rawSourceFilePath: input.sourceImagePath,
+    rawSourceFilePath: input.rawSourceImagePath ?? input.sourceImagePath,
     ...(input.rawSourceSha256 ? { rawSourceSha256: input.rawSourceSha256 } : {}),
     rawCoordinateFrame: "basler_sensor_pixels",
+    ...(input.analysisCoordinateFrame ? { analysisCoordinateFrame: input.analysisCoordinateFrame } : {}),
     displayTransform: transform,
     displayCoordinateFrame: "ai_grader_card_portrait_display",
     rawEvidenceUnmodified: true,
@@ -2237,6 +2272,7 @@ export async function createFixedRigRoiCrops(input: {
   displayTransform: FixedRigDisplayTransform;
   rawSourceSha256?: string;
   filePrefix: string;
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
 }): Promise<FixedRigDisplayArtifact[]> {
   await mkdir(input.outputDir, { recursive: true });
   const crops: FixedRigDisplayArtifact[] = [];
@@ -2271,10 +2307,13 @@ export async function createFixedRigRoiCrops(input: {
       rawSourceFilePath: input.rawSourceImagePath,
       ...(input.rawSourceSha256 ? { rawSourceSha256: input.rawSourceSha256 } : {}),
       rawCoordinateFrame: "basler_sensor_pixels",
+      ...(input.analysisCoordinateFrame ? { analysisCoordinateFrame: input.analysisCoordinateFrame } : {}),
       displayTransform: input.displayTransform,
       displayCoordinateFrame: "ai_grader_card_portrait_display",
       roiId: roi.id,
-      rawRect: roi.rawRect ?? roi.rect,
+      ...(input.analysisCoordinateFrame
+        ? { analysisRect: roi.displayRect }
+        : { rawRect: roi.rawRect ?? roi.rect }),
       displayRect: roi.displayRect,
       rawEvidenceUnmodified: true,
       note: "Derived portrait ROI crop for report/debug only; raw evidence remains clean.",
@@ -2292,6 +2331,7 @@ export async function createFixedRigOverlayPreview(input: {
   fixtureCalibrationProfile?: FixedRigFixtureCalibrationProfile;
   title?: string;
   displayTransform?: FixedRigDisplayTransform;
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
 }): Promise<FixedRigOverlayArtifact> {
   await mkdir(input.outputDir, { recursive: true });
   const metadata = await sharp(input.sourceImagePath).metadata();
@@ -2340,6 +2380,7 @@ export async function createFixedRigOverlayPreview(input: {
     imageWidth,
     imageHeight,
     rawCoordinateFrame: "basler_sensor_pixels",
+    ...(input.analysisCoordinateFrame ? { analysisCoordinateFrame: input.analysisCoordinateFrame } : {}),
     displayTransform: input.displayTransform ?? "none",
     displayCoordinateFrame: "ai_grader_card_portrait_display",
     rawEvidenceUnmodified: true,
@@ -3236,6 +3277,233 @@ export async function captureFixedRigWarmSideBatch(input: FixedRigWarmEvidencePa
   };
 }
 
+const FIXED_RIG_NORMALIZED_PROCESSING_CONCURRENCY = 2;
+const FIXED_RIG_MIN_NORMALIZATION_SOURCE_WIDTH_PIXELS = 1000;
+const FIXED_RIG_MIN_NORMALIZATION_SOURCE_HEIGHT_PIXELS = 1400;
+const FIXED_RIG_MAX_NORMALIZATION_UPSCALE = 1.2;
+const FIXED_RIG_SEMANTIC_ORIENTATION_WARNING =
+  "Rectangle geometry normalizes card shape and in-plane rotation, but cannot determine printed top versus a 180-degree reversal; the operator must keep the printed top toward the top of the preview.";
+
+function uniqueWarnings(warnings: Array<string | undefined>): string[] {
+  return [...new Set(warnings.filter((warning): warning is string => Boolean(warning?.trim())))];
+}
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  operation: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (!items.length) return [];
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(Math.floor(concurrency), items.length));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await operation(items[index]!, index);
+      }
+    }),
+  );
+  return results;
+}
+
+function applyFixedRigNormalizedCardBoundary(
+  quality: FixedRigQualityMetrics,
+  geometry: CardGeometryMetadata,
+): FixedRigQualityMetrics {
+  const normalizedGeometrySource =
+    geometry.geometrySource === "manual_override"
+      ? "normalized_from_manual_geometry"
+      : "normalized_from_detected_geometry";
+  const sourceDescription =
+    geometry.geometrySource === "manual_override"
+      ? "explicit operator-confirmed manual geometry"
+      : "automatic detected geometry";
+  const sourceWarnings = uniqueWarnings([
+    ...geometry.warnings,
+    FIXED_RIG_SEMANTIC_ORIENTATION_WARNING,
+  ]);
+  const normalizedOutcomeNote =
+    `Canonical full-card boundary in normalized_card_portrait_pixels derived from ${sourceDescription}; ` +
+    `source confidence ${geometry.confidence} (${geometry.confidenceBasis}) and placement state ${geometry.placementState} are preserved, not recomputed as perfect detection.`;
+  const cardBoundary: FixedRigCardBoundary = {
+    status: "detected",
+    x: 0,
+    y: 0,
+    width: quality.width,
+    height: quality.height,
+    coverage: 1,
+    confidence: geometry.confidence,
+    source: normalizedGeometrySource,
+    confidenceBasis: geometry.confidenceBasis,
+    detectionUsed: geometry.detectionUsed,
+    manualOverrideUsed: geometry.manualOverrideUsed,
+    sourcePlacementState: geometry.placementState,
+    sourceWarnings,
+    reason: normalizedOutcomeNote,
+  };
+  const expectedAspectRatio = roundMetric(FIXED_RIG_DEFAULT_CARD_WIDTH_MM / FIXED_RIG_DEFAULT_CARD_HEIGHT_MM, 6);
+  const overlayAlignment: FixedRigOverlayAlignmentMetrics = {
+    templateRect: { x: 0, y: 0, width: quality.width, height: quality.height },
+    detectedBoundaryRect: { x: 0, y: 0, width: quality.width, height: quality.height },
+    centerOffsetPx: { x: 0, y: 0 },
+    centerOffsetMm: { x: 0, y: 0 },
+    marginLeft: 0,
+    marginRight: 0,
+    marginTop: 0,
+    marginBottom: 0,
+    detectedAspectRatio: roundMetric(quality.width / Math.max(1, quality.height), 6),
+    expectedAspectRatio,
+    orientationUsed: "raw_portrait",
+    overlayAlignmentStatus: "pass",
+    warnings: uniqueWarnings([
+      "Normalized coordinate alignment passed because the derived card artifact fills the canonical frame; this is not a source detection-confidence result.",
+      ...sourceWarnings,
+    ]),
+  };
+  return {
+    ...quality,
+    cardBoundary,
+    framing: {
+      status: "acceptable_for_smoke",
+      cardCoverageEstimate: 1,
+      warnings: uniqueWarnings([
+        "Canonical output framing is complete after normalization; source placement quality remains recorded separately.",
+        ...sourceWarnings,
+      ]),
+    },
+    overlayAlignment,
+    warnings: uniqueWarnings([
+      ...quality.warnings,
+      normalizedOutcomeNote,
+      ...sourceWarnings,
+    ]),
+  };
+}
+
+function normalizedCardRoiDefinitions(
+  width: number,
+  height: number,
+  geometry: CardGeometryMetadata,
+): FixedRigRoiDefinition[] {
+  const sourceDescription =
+    geometry.geometrySource === "manual_override"
+      ? "explicit operator-confirmed manual geometry"
+      : "automatic detected geometry";
+  const boundary: FixedRigCardBoundary = {
+    status: "detected",
+    x: 0,
+    y: 0,
+    width,
+    height,
+    coverage: 1,
+    confidence: geometry.confidence,
+    source:
+      geometry.geometrySource === "manual_override"
+        ? "normalized_from_manual_geometry"
+        : "normalized_from_detected_geometry",
+    confidenceBasis: geometry.confidenceBasis,
+    detectionUsed: geometry.detectionUsed,
+    manualOverrideUsed: geometry.manualOverrideUsed,
+    sourcePlacementState: geometry.placementState,
+    sourceWarnings: uniqueWarnings([...geometry.warnings, FIXED_RIG_SEMANTIC_ORIENTATION_WARNING]),
+    reason:
+      `Canonical full-card ROI boundary derived from ${sourceDescription}; source confidence ` +
+      `${geometry.confidence} (${geometry.confidenceBasis}) is preserved.`,
+  };
+  return buildFixedRigRoiDefinitions(boundary).map((roi) => {
+    if (roi.status !== "computed" || !roi.rect) return roi;
+    const { rawCoordinateFrame: _rawCoordinateFrame, ...safe } = roi;
+    return {
+      ...safe,
+      source: "normalized_card_boundary",
+      displayRect: { ...roi.rect },
+      analysisCoordinateFrame: "normalized_card_portrait_pixels",
+      displayCoordinateFrame: "ai_grader_card_portrait_display",
+    };
+  });
+}
+
+function normalizedArtifactAsDisplay(
+  artifact: CardGeometryNormalizedArtifact,
+  rawCapture: BaslerCaptureStillResult,
+  kind: "portrait_display_image" | "normalized_channel_image",
+): FixedRigDisplayArtifact {
+  return {
+    kind,
+    outputFilePath: artifact.localOutputPath,
+    sha256: artifact.sha256,
+    byteSize: artifact.byteSize,
+    mimeType: "image/png",
+    imageWidth: artifact.imageWidth,
+    imageHeight: artifact.imageHeight,
+    rawSourceFilePath: rawCapture.outputFilePath,
+    rawSourceSha256: rawCapture.sha256,
+    rawCoordinateFrame: "basler_sensor_pixels",
+    analysisCoordinateFrame: "normalized_card_portrait_pixels",
+    displayTransform: "none",
+    displayCoordinateFrame: "ai_grader_card_portrait_display",
+    rawEvidenceUnmodified: true,
+    ...(kind === "normalized_channel_image" ? { artifactRole: "normalized_channel" as const } : { artifactRole: "true_view" as const }),
+    note:
+      "Existing lossless normalized card artifact reused directly for display/analysis; no duplicate image encode was performed. Raw Basler evidence remains unchanged.",
+  };
+}
+
+function assertFullResolutionNormalizationUsable(
+  normalizedCard: CardGeometryNormalizationResult,
+  manualGeometryOverride: CardGeometryManualOverride | undefined,
+  side: FixedRigCardSide,
+): asserts normalizedCard is CardGeometryNormalizationResult & { normalizedArtifact: CardGeometryNormalizedArtifact } {
+  if (!normalizedCard.rawEvidencePreserved) {
+    throw new Error(`AI Grader ${side} full-resolution normalization detected a raw evidence integrity change; processing stopped.`);
+  }
+  if (!normalizedCard.normalizedArtifact) {
+    throw new Error(`AI Grader ${side} full-resolution geometry did not produce a normalized card artifact; reposition the card and retry.`);
+  }
+  const artifact = normalizedCard.normalizedArtifact;
+  if (
+    artifact.sourceCropWidth < FIXED_RIG_MIN_NORMALIZATION_SOURCE_WIDTH_PIXELS ||
+    artifact.sourceCropHeight < FIXED_RIG_MIN_NORMALIZATION_SOURCE_HEIGHT_PIXELS ||
+    artifact.scaleX > FIXED_RIG_MAX_NORMALIZATION_UPSCALE ||
+    artifact.scaleY > FIXED_RIG_MAX_NORMALIZATION_UPSCALE
+  ) {
+    throw new Error(
+      `AI Grader ${side} full-resolution geometry failed the grading-resolution gate ` +
+      `(source crop ${artifact.sourceCropWidth}x${artifact.sourceCropHeight}, scale ${artifact.scaleX}x${artifact.scaleY}; ` +
+      `requires at least ${FIXED_RIG_MIN_NORMALIZATION_SOURCE_WIDTH_PIXELS}x${FIXED_RIG_MIN_NORMALIZATION_SOURCE_HEIGHT_PIXELS} ` +
+      `and no more than ${FIXED_RIG_MAX_NORMALIZATION_UPSCALE}x upscaling). Move the card to the fixed plate position and retry.`,
+    );
+  }
+  const geometry = normalizedCard.geometry;
+  if (manualGeometryOverride) {
+    if (geometry.geometrySource !== "manual_override" || geometry.captureMode !== "manual_capture" || geometry.manualOverrideUsed !== true || geometry.detectionUsed !== false) {
+      throw new Error(`AI Grader ${side} explicit manual capture did not produce coherent full-resolution manual geometry; processing stopped.`);
+    }
+    return;
+  }
+  if (geometry.geometrySource !== "detected" || geometry.captureMode !== "automatic_detection" || geometry.detectionUsed !== true || geometry.manualOverrideUsed === true || geometry.placementState !== "ready") {
+    throw new Error(
+      `AI Grader ${side} full-resolution detected geometry is not normalization-ready (state=${geometry.placementState}, source=${geometry.geometrySource}); reposition the card and retry.`,
+    );
+  }
+}
+
+async function verifyRawCaptureIntegrity(
+  captures: Array<{ role: string; capture: BaslerCaptureStillResult }>,
+): Promise<{ verified: true; coordinateFrame: "basler_sensor_pixels"; roles: Array<{ role: string; sha256: string; byteSize: number; preserved: true }> }> {
+  const roles = await Promise.all(captures.map(async ({ role, capture }) => {
+    const current = await fileMetadata(capture.outputFilePath);
+    if (current.sha256 !== capture.sha256 || current.byteSize !== capture.byteSize) {
+      throw new Error(`AI Grader raw evidence integrity verification failed for ${role}; processing stopped.`);
+    }
+    return { role, sha256: current.sha256, byteSize: current.byteSize, preserved: true as const };
+  }));
+  return { verified: true, coordinateFrame: "basler_sensor_pixels", roles };
+}
+
 export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSideCaptureBatch): Promise<FixedRigWarmEvidencePackageResult> {
   const processingStartedAtMs = Date.now();
   const processingStartedAt = new Date(processingStartedAtMs).toISOString();
@@ -3313,73 +3581,116 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
     hardwareMeasurement: hardwareMeasurement === true,
     hardwareMeasurementRequired: hardwareMeasurement !== true,
   };
-  const applyBoundary = (quality: FixedRigQualityMetrics) =>
-    manualGeometryOverride
-      ? applyFixedRigCardBoundaryOverride(quality, manualGeometryOverride.rect)
-      : quality;
   const darkControlCapture = batch.captures.darkControl.capture;
-  const analyzeRole = async (role: BaslerFixedRigSideBatchResult["captures"]["allOn"]) => {
-    const analyzedStats = await analyzeFixedRigMacroQuality(role.capture.outputFilePath);
-    const stats = applyBoundary(analyzedStats);
-    const quadrantBrightness = await analyzeFixedRigQuadrants(role.capture.outputFilePath);
+  const orderedChannelRoles = batch.captures.channels
+    .slice()
+    .sort((a, b) => Number(a.channel ?? 0) - Number(b.channel ?? 0));
+  const normalizedCard = await timed("cropDeskew", () =>
+    detectAndNormalizeCardImage({
+      sourceImagePath: batch.captures.allOn.capture.outputFilePath,
+      normalizedOutputPath: path.join(sideDir, "normalized", `${side}-normalized-card.png`),
+      side,
+      sourceImageId: `${packageId}-${side}-all-on`,
+      sourceFrameId: `${side}-all-on-${String(batch.captures.allOn.capture.sha256).slice(0, 16)}`,
+      timestamp: batch.captures.allOn.capture.timestamp,
+      ...(manualGeometryOverride ? { manualOverride: manualGeometryOverride } : {}),
+    })
+  );
+  assertFullResolutionNormalizationUsable(normalizedCard, manualGeometryOverride, side);
+  const authoritativeGeometry: CardGeometryMetadata = normalizedCard.geometry;
+  const normalizeVisibleRole = async (
+    role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
+    fileLabel: string,
+  ) => {
+    const registration = await normalizeCardImageWithGeometry({
+      sourceImagePath: role.capture.outputFilePath,
+      normalizedOutputPath: path.join(sideDir, "normalized", `${side}-${fileLabel}-normalized.png`),
+      geometry: authoritativeGeometry,
+    });
+    if (!registration.rawEvidencePreserved || !registration.normalizedArtifact) {
+      throw new Error(`AI Grader ${side} ${fileLabel} normalization did not preserve raw evidence or produce an artifact; processing stopped.`);
+    }
+    return { ...registration, normalizedArtifact: registration.normalizedArtifact };
+  };
+  const visibleRoleNormalizationInputs = [
+    { role: batch.captures.acceptedProfile, fileLabel: "accepted-profile" },
+    ...orderedChannelRoles.map((role) => ({ role, fileLabel: `channel-${Number(role.channel)}` })),
+  ];
+  const visibleRoleRegistrations = await timed("registeredRoleNormalization", () =>
+    mapWithConcurrency(
+      visibleRoleNormalizationInputs,
+      FIXED_RIG_NORMALIZED_PROCESSING_CONCURRENCY,
+      ({ role, fileLabel }) => normalizeVisibleRole(role, fileLabel),
+    )
+  );
+  const acceptedRegistration = visibleRoleRegistrations[0]!;
+  const channelRegistrations = visibleRoleRegistrations.slice(1);
+  const analyzeNormalizedRole = async (
+    role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
+    analysisArtifact: CardGeometryNormalizedArtifact,
+  ) => {
+    const stats = applyFixedRigNormalizedCardBoundary(
+      await analyzeFixedRigMacroQuality(analysisArtifact.localOutputPath),
+      authoritativeGeometry,
+    );
+    const quadrantBrightness = await analyzeFixedRigQuadrants(analysisArtifact.localOutputPath);
     return {
       label: role.label,
       channel: role.channel,
       frames: role.frames ?? [],
       writes: role.writes ?? [],
       capture: role.capture,
+      analysisArtifact,
+      analysisCoordinateFrame: "normalized_card_portrait_pixels" as const,
       stats,
       quadrantBrightness,
     };
   };
-  const [darkStats, allOn, acceptedProfile, channels] = await timed("imageAnalysis", async () =>
+  const [darkStats, acquisitionPlacementQuality] = await timed("rawImageAnalysis", () =>
     Promise.all([
-      analyzeFixedRigMacroQuality(darkControlCapture.outputFilePath).then(applyBoundary),
-      analyzeRole(batch.captures.allOn),
-      analyzeRole(batch.captures.acceptedProfile),
-      Promise.all(
-        batch.captures.channels
-          .slice()
-          .sort((a, b) => Number(a.channel ?? 0) - Number(b.channel ?? 0))
-          .map(async (role) => ({
-            ...(await analyzeRole(role)),
-            channel: Number(role.channel),
-          }))
-      ),
+      analyzeFixedRigMacroQuality(darkControlCapture.outputFilePath),
+      analyzeFixedRigMacroQuality(batch.captures.allOn.capture.outputFilePath),
     ])
   );
-  const normalizedCard = await timed("cropDeskew", () =>
-    detectAndNormalizeCardImage({
-      sourceImagePath: allOn.capture.outputFilePath,
-      normalizedOutputPath: path.join(sideDir, "normalized", `${side}-normalized-card.png`),
-      side,
-      sourceImageId: `${packageId}-${side}-all-on`,
-      sourceFrameId: `${side}-all-on-${String(allOn.capture.sha256).slice(0, 16)}`,
-      timestamp: allOn.capture.timestamp,
-      ...(manualGeometryOverride ? { manualOverride: manualGeometryOverride } : {}),
-    })
+  const normalizedRoleAnalysisInputs = [
+    { role: batch.captures.allOn, artifact: normalizedCard.normalizedArtifact },
+    { role: batch.captures.acceptedProfile, artifact: acceptedRegistration.normalizedArtifact },
+    ...orderedChannelRoles.map((role, index) => ({
+      role,
+      artifact: channelRegistrations[index]!.normalizedArtifact,
+    })),
+  ];
+  const normalizedRoleAnalyses = await timed("normalizedImageAnalysis", () =>
+    mapWithConcurrency(
+      normalizedRoleAnalysisInputs,
+      FIXED_RIG_NORMALIZED_PROCESSING_CONCURRENCY,
+      ({ role, artifact }) => analyzeNormalizedRole(role, artifact),
+    )
   );
-  const channelDisplayImages: Array<{ channel: number; displayImage: Awaited<ReturnType<typeof createFixedRigDisplayImage>> }> =
-    await timed("channelDisplayGeneration", async () =>
-      Promise.all(
-        channels.map(async (channelCapture) => ({
-          channel: channelCapture.channel,
-          displayImage: await createFixedRigDisplayImage({
-            sourceImagePath: channelCapture.capture.outputFilePath,
-            outputDir: sideDir,
-            filePrefix: `${side}-channel-${channelCapture.channel}`,
-            rawSourceSha256: channelCapture.capture.sha256,
-          }),
-        }))
-      )
-    );
-  const roiDefinitions = addFixedRigDisplayRects(buildFixedRigRoiDefinitions(allOn.stats.cardBoundary), allOn.stats.width, allOn.stats.height);
-  const displayImage = await timed("portraitDisplayGeneration", () => createFixedRigDisplayImage({
-      sourceImagePath: allOn.capture.outputFilePath,
-      outputDir: sideDir,
-      filePrefix: `${side}-all-on`,
-      rawSourceSha256: allOn.capture.sha256,
-    }));
+  const allOn = normalizedRoleAnalyses[0]!;
+  const acceptedProfile = normalizedRoleAnalyses[1]!;
+  const channels = normalizedRoleAnalyses.slice(2).map((channelAnalysis, index) => ({
+    ...channelAnalysis,
+    channel: Number(orderedChannelRoles[index]!.channel),
+  }));
+  const channelDisplayImages: Array<{ channel: number; displayImage: FixedRigDisplayArtifact }> = channels.map((channelCapture) => ({
+    channel: channelCapture.channel,
+    displayImage: normalizedArtifactAsDisplay(
+      channelCapture.analysisArtifact,
+      channelCapture.capture,
+      "normalized_channel_image",
+    ),
+  }));
+  const roiDefinitions = normalizedCardRoiDefinitions(
+    allOn.stats.width,
+    allOn.stats.height,
+    authoritativeGeometry,
+  );
+  const displayImage = normalizedArtifactAsDisplay(
+    normalizedCard.normalizedArtifact,
+    allOn.capture,
+    "portrait_display_image",
+  );
   const [overlayPreview, roiCrops] = await timed("roiDisplayGeneration", async () => Promise.all([
     createFixedRigOverlayPreview({
       sourceImagePath: displayImage.outputFilePath,
@@ -3389,6 +3700,7 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
       roiDefinitions: roiDefinitions.map((roi) => (roi.displayRect ? { ...roi, rect: roi.displayRect } : roi)),
       title: `${side} evidence overlay`,
       displayTransform: displayImage.displayTransform,
+      analysisCoordinateFrame: "normalized_card_portrait_pixels",
     }),
     createFixedRigRoiCrops({
       sourceDisplayImagePath: displayImage.outputFilePath,
@@ -3398,6 +3710,7 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
       displayTransform: displayImage.displayTransform,
       rawSourceSha256: allOn.capture.sha256,
       filePrefix: side,
+      analysisCoordinateFrame: "normalized_card_portrait_pixels",
     }),
   ]));
   const surfaceAnalysis = buildFixedRigSurfaceAnalysis({
@@ -3409,8 +3722,9 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
     })),
     roiDefinitions,
     warnings: allOn.stats.warnings,
+    registrationStatus: "normalized_geometry_transform",
   });
-  const fixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
+  const acquisitionFixtureCalibrationProfile = buildFixedRigFixtureCalibrationProfile({
     profileId: `${packageId}-${side}-rough-fixture-profile`,
     fixtureLabel: fixtureLabel ?? "operator-built-fixed-position-v1-fixture",
     fixtureId,
@@ -3424,9 +3738,9 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
     verticalStartPx,
     verticalEndPx,
     calibrationImagePath: allOn.capture.outputFilePath,
-    rawImageWidth: allOn.stats.width,
-    rawImageHeight: allOn.stats.height,
-    cardBoundary: allOn.stats.cardBoundary,
+    rawImageWidth: acquisitionPlacementQuality.width,
+    rawImageHeight: acquisitionPlacementQuality.height,
+    cardBoundary: acquisitionPlacementQuality.cardBoundary,
     activeLightingProfile,
     exposureUs,
     gain,
@@ -3436,13 +3750,210 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
         ? "Generated from warm fixed-rig V1 evidence package using operator-supplied fixed-ruler spans; still uncalibrated and diagnostic only."
         : "Generated from warm fixed-rig V1 evidence package; rough reference uses standard card dimensions.",
   });
+  const normalizedProfileBase = buildFixedRigFixtureCalibrationProfile({
+    profileId: `${packageId}-${side}-normalized-analysis-profile`,
+    fixtureLabel: fixtureLabel ?? "operator-built-fixed-position-v1-fixture",
+    fixtureId,
+    referenceType: "card_dimensions",
+    referencePhysicalWidthMm: FIXED_RIG_DEFAULT_CARD_WIDTH_MM,
+    referencePhysicalHeightMm: FIXED_RIG_DEFAULT_CARD_HEIGHT_MM,
+    rawImageWidth: allOn.stats.width,
+    rawImageHeight: allOn.stats.height,
+    cardBoundary: allOn.stats.cardBoundary,
+    displayTransform: "none",
+    activeLightingProfile,
+    exposureUs,
+    gain,
+    operatorAccepted: true,
+    operatorNotes:
+      "Canonical 1200x1680 normalized card analysis uses standard 63.5x88.9 mm card dimensions. Raw ruler points and camera-frame placement remain only in acquisitionFixtureCalibrationProfile.",
+  });
+  const acquisitionReadiness = acquisitionFixtureCalibrationProfile.productionReadiness;
+  const normalizedBaseReadiness = normalizedProfileBase.productionReadiness;
+  const sourceGeometryReadinessNote =
+    authoritativeGeometry.geometrySource === "manual_override"
+      ? "Canonical framing came from explicit operator-confirmed manual geometry; automatic detection was not used and detector confidence remains 0."
+      : `Canonical framing came from automatic geometry with source confidence ${authoritativeGeometry.confidence} (${authoritativeGeometry.confidenceBasis}) and placement state ${authoritativeGeometry.placementState}.`;
+  const normalizedReadinessBlockers = uniqueWarnings([
+    ...(normalizedBaseReadiness?.blockers ?? []).filter(
+      (blocker) => !/framing|overlay alignment/i.test(blocker),
+    ),
+    authoritativeGeometry.geometrySource === "manual_override"
+      ? "Automatic card geometry was not used; normalization used explicit operator-confirmed manual geometry."
+      : undefined,
+  ]);
+  const normalizedProductionReadiness: FixedRigProductionReadinessSummary = {
+    status: normalizedBaseReadiness?.status ?? "rejected",
+    gates: {
+      rulerCalibration: "fail",
+      framing: "pass",
+      overlayAlignment: "pass",
+      repeatability: acquisitionReadiness?.gates.repeatability ?? "not_checked",
+      lightingProfile: normalizedBaseReadiness?.gates.lightingProfile ?? "pass",
+      finalSafeOff: acquisitionReadiness?.gates.finalSafeOff ?? "not_confirmed",
+    },
+    blockers: normalizedReadinessBlockers,
+    diagnosticOnlyAllowedWithOperatorAcceptance:
+      normalizedBaseReadiness?.diagnosticOnlyAllowedWithOperatorAcceptance ?? true,
+    note:
+      `Canonical output framing and acquisition geometry quality are separate. ${sourceGeometryReadinessNote} ` +
+      "Grade inputs use normalized_card_portrait_pixels and do not use camera-frame offset.",
+  };
+  const fixtureCalibrationProfile: FixedRigFixtureCalibrationProfile & {
+    analysisCoordinateFrame: "normalized_card_portrait_pixels";
+    acquisitionPlacementExcludedFromGrade: true;
+    acquisitionProfileId: string;
+    normalizedCoordinateOutcome: {
+      framingStatus: "pass";
+      overlayAlignmentStatus: "pass";
+      boundaryFillsCanonicalFrame: true;
+      sourceGeometryQualityPreservedSeparately: true;
+    };
+    sourceGeometry: {
+      geometrySource: CardGeometryMetadata["geometrySource"];
+      captureMode: CardGeometryMetadata["captureMode"];
+      detectionUsed: boolean;
+      manualOverrideUsed: boolean;
+      confidence: number;
+      confidenceBasis: CardGeometryMetadata["confidenceBasis"];
+      placementState: CardGeometryMetadata["placementState"];
+      warnings: string[];
+    };
+    semanticOrientation: {
+      status: "not_resolved_from_rectangle_geometry";
+      operatorRequirement: string;
+      limitation: string;
+    };
+  } = {
+    ...normalizedProfileBase,
+    rawCoordinateFrame: "normalized_card_portrait_pixels",
+    detectedCardRectPx: { x: 0, y: 0, width: allOn.stats.width, height: allOn.stats.height },
+    alignmentDeltaPx: { x: 0, y: 0 },
+    alignmentDeltaMm: { x: 0, y: 0 },
+    framingGate: {
+      status: "pass" as const,
+      marginLeftPx: 0,
+      marginRightPx: 0,
+      marginTopPx: 0,
+      marginBottomPx: 0,
+      centerOffsetPx: { x: 0, y: 0 },
+      centerOffsetMm: { x: 0, y: 0 },
+      aspectRatioError: 0,
+      overlayAlignmentStatus: "pass" as const,
+      warnings: uniqueWarnings([
+        `Canonical-frame pass is a derived-coordinate outcome, not source detection perfection; source confidence remains ${authoritativeGeometry.confidence} (${authoritativeGeometry.confidenceBasis}) with placement state ${authoritativeGeometry.placementState}.`,
+        ...authoritativeGeometry.warnings,
+        FIXED_RIG_SEMANTIC_ORIENTATION_WARNING,
+      ]),
+    },
+    productionReadiness: normalizedProductionReadiness,
+    analysisCoordinateFrame: "normalized_card_portrait_pixels" as const,
+    acquisitionPlacementExcludedFromGrade: true as const,
+    acquisitionProfileId: acquisitionFixtureCalibrationProfile.profileId,
+    normalizedCoordinateOutcome: {
+      framingStatus: "pass" as const,
+      overlayAlignmentStatus: "pass" as const,
+      boundaryFillsCanonicalFrame: true as const,
+      sourceGeometryQualityPreservedSeparately: true as const,
+    },
+    sourceGeometry: {
+      geometrySource: authoritativeGeometry.geometrySource,
+      captureMode: authoritativeGeometry.captureMode,
+      detectionUsed: authoritativeGeometry.detectionUsed,
+      manualOverrideUsed: authoritativeGeometry.manualOverrideUsed,
+      confidence: authoritativeGeometry.confidence,
+      confidenceBasis: authoritativeGeometry.confidenceBasis,
+      placementState: authoritativeGeometry.placementState,
+      warnings: [...authoritativeGeometry.warnings],
+    },
+    semanticOrientation: {
+      status: "not_resolved_from_rectangle_geometry" as const,
+      operatorRequirement: "Keep the printed top of the card toward the top of the live preview before capture.",
+      limitation: FIXED_RIG_SEMANTIC_ORIENTATION_WARNING,
+    },
+    operatorNotes:
+      `Grade inputs use canonical 1200x1680 normalized card coordinates and standard card dimensions. ${sourceGeometryReadinessNote} ` +
+      "Camera-frame placement and raw ruler coordinates are retained only in acquisition diagnostics and excluded from grading.",
+  };
   const diagnosticGrading = buildFixedRigDiagnosticGradingResult({
     side,
     quality: allOn.stats,
     roiDefinitions,
     fixtureCalibrationProfile,
     surfaceAnalysis,
+    analysisCoordinateFrame: "normalized_card_portrait_pixels",
   });
+  const rawEvidenceIntegrity = await timed("rawEvidenceIntegrity", () => verifyRawCaptureIntegrity([
+    { role: "dark_control", capture: batch.captures.darkControl.capture },
+    { role: "all_on", capture: batch.captures.allOn.capture },
+    { role: "accepted_profile", capture: batch.captures.acceptedProfile.capture },
+    ...orderedChannelRoles.map((role) => ({ role: `channel_${Number(role.channel)}`, capture: role.capture })),
+  ]));
+  const analysisCoordinateSystem = {
+    version: "fixed-rig-normalized-card-analysis-v1",
+    coordinateFrame: "normalized_card_portrait_pixels" as const,
+    authoritativeGeometryRole: "all_on" as const,
+    authoritativeGeometrySource: authoritativeGeometry.geometrySource,
+    fullResolutionGeometryRequired: manualGeometryOverride ? "explicit_manual_capture" : "detected_ready",
+    transformReusedForRoles: ["accepted_profile", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)],
+    acquisitionPlacementExcludedFromGrade: true,
+    rawCoordinateFrame: "basler_sensor_pixels" as const,
+    rawEvidenceIntegrityVerified: rawEvidenceIntegrity.verified,
+    normalizedCoordinateOutcome: {
+      framingStatus: "pass" as const,
+      overlayAlignmentStatus: "pass" as const,
+      boundaryFillsCanonicalFrame: true,
+      note: "This describes the derived canonical image only and does not replace or upgrade source geometry confidence.",
+    },
+    sourceGeometry: {
+      geometrySource: authoritativeGeometry.geometrySource,
+      captureMode: authoritativeGeometry.captureMode,
+      detectionUsed: authoritativeGeometry.detectionUsed,
+      manualOverrideUsed: authoritativeGeometry.manualOverrideUsed,
+      confidence: authoritativeGeometry.confidence,
+      confidenceBasis: authoritativeGeometry.confidenceBasis,
+      placementState: authoritativeGeometry.placementState,
+      warnings: [...authoritativeGeometry.warnings],
+    },
+    semanticOrientation: {
+      status: "not_resolved_from_rectangle_geometry" as const,
+      operatorRequirement: "Keep the printed top of the card toward the top of the live preview before capture.",
+      limitation: FIXED_RIG_SEMANTIC_ORIENTATION_WARNING,
+    },
+    processingConcurrency: {
+      normalizedRoleNormalization: FIXED_RIG_NORMALIZED_PROCESSING_CONCURRENCY,
+      normalizedImageAnalysis: FIXED_RIG_NORMALIZED_PROCESSING_CONCURRENCY,
+      note: "Lossless normalized image operations are bounded to reduce Sharp worker and memory contention with live preview/back positioning.",
+    },
+    transform: {
+      method: "authoritative_all_on_geometry_rotation_crop_canonical_resize_v1",
+      geometryVersion: authoritativeGeometry.version,
+      corners: authoritativeGeometry.corners,
+      rotationDegrees: authoritativeGeometry.rotationDegrees,
+      sourceImage: { ...authoritativeGeometry.image },
+      outputImage: {
+        width: normalizedCard.normalizedArtifact.imageWidth,
+        height: normalizedCard.normalizedArtifact.imageHeight,
+      },
+      deskewAppliedDegrees: normalizedCard.normalizedArtifact.deskewAppliedDegrees,
+      geometricResamplingApplied: normalizedCard.normalizedArtifact.geometricResamplingApplied,
+      encodingLossless: normalizedCard.normalizedArtifact.encodingLossless,
+      sourceCropWidth: normalizedCard.normalizedArtifact.sourceCropWidth,
+      sourceCropHeight: normalizedCard.normalizedArtifact.sourceCropHeight,
+      scaleX: normalizedCard.normalizedArtifact.scaleX,
+      scaleY: normalizedCard.normalizedArtifact.scaleY,
+      sourceResolutionGate: {
+        status: "pass" as const,
+        minimumSourceWidthPixels: FIXED_RIG_MIN_NORMALIZATION_SOURCE_WIDTH_PIXELS,
+        minimumSourceHeightPixels: FIXED_RIG_MIN_NORMALIZATION_SOURCE_HEIGHT_PIXELS,
+        maximumUpscale: FIXED_RIG_MAX_NORMALIZATION_UPSCALE,
+        observedSourceWidthPixels: normalizedCard.normalizedArtifact.sourceCropWidth,
+        observedSourceHeightPixels: normalizedCard.normalizedArtifact.sourceCropHeight,
+        observedScaleX: normalizedCard.normalizedArtifact.scaleX,
+        observedScaleY: normalizedCard.normalizedArtifact.scaleY,
+      },
+    },
+  };
   const sideEvidence = {
     side,
     safeOffBeforeDark: batch.leimac?.safeOffStart,
@@ -3456,7 +3967,16 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
     overlayPreview,
     roiCrops,
     normalizedCard,
+    analysisCoordinateSystem,
+    acquisitionPlacementDiagnostics: {
+      coordinateFrame: "basler_sensor_pixels",
+      quality: acquisitionPlacementQuality,
+      geometry: authoritativeGeometry,
+      excludedFromGrade: true,
+    },
+    acquisitionFixtureCalibrationProfile,
     fixtureCalibrationProfile,
+    rawEvidenceIntegrity,
     surfaceAnalysis,
     diagnosticGrading,
   };
@@ -3487,12 +4007,18 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
       legacyCardBoundaryRectIgnored: Boolean(cardBoundaryRect && !manualGeometryOverride),
       normalizedArtifactCreated: Boolean(normalizedCard.normalizedArtifact),
     },
+    analysisCoordinateSystem,
+    rawEvidenceIntegrity,
     captureTiming,
     processingTiming: {
       startedAt: processingStartedAt,
       phases: processingTiming,
       totalDurationMs: Math.max(0, Date.now() - processingStartedAtMs),
       frontProcessingMayOverlapFlip: side === "front",
+      concurrencyLimits: {
+        normalizedRoleNormalization: FIXED_RIG_NORMALIZED_PROCESSING_CONCURRENCY,
+        normalizedImageAnalysis: FIXED_RIG_NORMALIZED_PROCESSING_CONCURRENCY,
+      },
     },
     executionPath: "warm_full_forensic_runner",
     activeLightingProfile,
@@ -3534,6 +4060,9 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
       acceptedProfile: acceptedProfile.stats,
       geometry: normalizedCard.geometry,
       normalizedCard,
+      analysisCoordinateSystem,
+      acquisitionPlacementDiagnostics: sideEvidence.acquisitionPlacementDiagnostics,
+      rawEvidenceIntegrity,
       fixtureCalibrationProfile,
       surfaceAnalysis,
       diagnosticGrading,
@@ -4567,6 +5096,8 @@ function renderUnifiedFixedRigCardReport(input: {
       frontStats,
       backStats,
       fixtureProfile,
+      frontFixtureProfile: front?.fixtureCalibrationProfile,
+      backFixtureProfile: back?.fixtureCalibrationProfile,
       activeLightingProfile: activeProfile,
       warnings: [...clippingWarnings, ...input.warnings],
       allowAcceptedWarnings: true,
@@ -4929,6 +5460,10 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
         roiCrops: front.roiCrops,
         quality: frontStats,
         inheritedWarnings: baseWarnings,
+        registrationStatus:
+          front.analysisCoordinateSystem?.coordinateFrame === "normalized_card_portrait_pixels"
+            ? "normalized_geometry_transform"
+            : "assumed_fixed_rig",
       })
     : undefined;
   const backSurfaceIntelligence = back
@@ -4943,6 +5478,10 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
         roiCrops: back.roiCrops,
         quality: backStats,
         inheritedWarnings: baseWarnings,
+        registrationStatus:
+          back.analysisCoordinateSystem?.coordinateFrame === "normalized_card_portrait_pixels"
+            ? "normalized_geometry_transform"
+            : "assumed_fixed_rig",
       })
     : undefined;
   const enhancedFrontSurface = frontSurfaceIntelligence ? mergeSurfaceAnalysisWithSurfaceIntelligence(frontSurface, frontSurfaceIntelligence) : frontSurface;
@@ -4960,6 +5499,17 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
         fixtureId: fixtureCalibrationProfile?.fixtureId ?? fixtureCalibrationProfile?.fixtureLabel,
         leimacModel: "IDMU-P8B-24",
         cameraModel: front.allOn?.capture?.camera?.modelName ?? front.displayImage?.camera?.modelName,
+        ...(front.analysisCoordinateSystem?.coordinateFrame === "normalized_card_portrait_pixels" &&
+        Number.isFinite(front.normalizedCard?.normalizedArtifact?.deskewAppliedDegrees)
+          ? {
+              lightVectorCoordinateTransform: {
+                sourceCoordinateFrame: "basler_sensor_pixels" as const,
+                targetCoordinateFrame: "normalized_card_portrait_pixels" as const,
+                clockwiseRotationDegrees: front.normalizedCard.normalizedArtifact.deskewAppliedDegrees,
+                source: "authoritative_card_normalization" as const,
+              },
+            }
+          : {}),
       })
     : undefined;
   const backLightDirection = back
@@ -4975,6 +5525,17 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
         fixtureId: fixtureCalibrationProfile?.fixtureId ?? fixtureCalibrationProfile?.fixtureLabel,
         leimacModel: "IDMU-P8B-24",
         cameraModel: back.allOn?.capture?.camera?.modelName ?? back.displayImage?.camera?.modelName,
+        ...(back.analysisCoordinateSystem?.coordinateFrame === "normalized_card_portrait_pixels" &&
+        Number.isFinite(back.normalizedCard?.normalizedArtifact?.deskewAppliedDegrees)
+          ? {
+              lightVectorCoordinateTransform: {
+                sourceCoordinateFrame: "basler_sensor_pixels" as const,
+                targetCoordinateFrame: "normalized_card_portrait_pixels" as const,
+                clockwiseRotationDegrees: back.normalizedCard.normalizedArtifact.deskewAppliedDegrees,
+                source: "authoritative_card_normalization" as const,
+              },
+            }
+          : {}),
       })
     : undefined;
   const enhancedFrontSurfaceWithLight = frontLightDirection ? mergeSurfaceAnalysisWithLightDirection(enhancedFrontSurface, frontLightDirection) : enhancedFrontSurface;
@@ -4998,6 +5559,8 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     frontStats,
     backStats,
     fixtureProfile: fixtureCalibrationProfile,
+    frontFixtureProfile: front?.fixtureCalibrationProfile,
+    backFixtureProfile: back?.fixtureCalibrationProfile,
     activeLightingProfile,
     warnings,
     allowAcceptedWarnings: true,
@@ -5062,7 +5625,13 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     normalizedArtifacts: {
       front: front?.normalizedCard?.normalizedArtifact,
       back: back?.normalizedCard?.normalizedArtifact,
-      rawEvidencePreserved: front?.normalizedCard?.rawEvidencePreserved === true && back?.normalizedCard?.rawEvidencePreserved === true,
+      rawEvidencePreserved:
+        (front?.rawEvidenceIntegrity?.verified ?? front?.normalizedCard?.rawEvidencePreserved) === true &&
+        (back?.rawEvidenceIntegrity?.verified ?? back?.normalizedCard?.rawEvidencePreserved) === true,
+      rawEvidenceIntegrity: {
+        front: front?.rawEvidenceIntegrity,
+        back: back?.rawEvidenceIntegrity,
+      },
     },
     captureTiming: {
       front: frontManifest.captureTiming,

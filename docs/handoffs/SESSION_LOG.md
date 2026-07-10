@@ -25673,3 +25673,65 @@ By enabling Rip It Live, I confirm:
 - Five-seconds-per-side proof remains false. No Dell/Basler/Leimac command was run; no hardware timing was fabricated.
 - Planned authorized action: commit and push the patch to PR #80, wait for all GitHub/Vercel checks on the new HEAD, then merge PR #80 only if the patched SHA is green. The merge is expected to trigger the normal Vercel production deployment for `collect.tenkings.co`.
 - Explicitly out of scope for this action: no migration, env-var change, secret/credential access or rotation, production database/storage mutation, hardware capture/preview/lighting command, Dell bridge restart/install, droplet sync/restart, or manual deploy command.
+
+## 2026-07-10 - PR #80 production merge and deployment observed result
+
+- PR #80 merged into `main` at `2026-07-10T08:50:25Z`; merge commit `2fc221b3e1c86db6124d6d7539f4f46148b0eeb5` contains validated patch HEAD `e4d5aab45ac9759c8f88272eb8d07bf9869f91ee`.
+- Patched-HEAD PR checks passed before merge: Install & Build, all eight Docker image builds, Vercel, and Vercel Preview Comments.
+- Post-merge main CI run `29081059753` completed successfully at the merge commit, including Install & Build and all eight Docker image jobs.
+- Vercel production status for the merge commit reported `success` / `Deployment has completed`. A read-only request to `https://collect.tenkings.co/ai-grader/station` returned HTTP `200`, final URI unchanged, non-empty HTML (`72898` bytes), and the expected `AI Grader Station` title.
+- Remote parity: `origin/main` resolved to the merge commit after fetch.
+- No hardware capture/preview/lighting command, Dell bridge install/restart, migration, environment change, credential access/rotation/printing, production database/storage mutation, droplet sync/restart, or manual deploy command was performed. Dell five-seconds-per-side proof remains unproven pending Mark's supervised A/B test.
+
+## 2026-07-10 - PR #80 live Start New Card incident: bridge restart planned
+
+- Mark reported that production `Start New Card` stopped with `Unknown station action.` before a card session could begin.
+- Read-only evidence identified a version-skewed in-memory Dell bridge process: the running Node process began on 2026-07-08, while the locally built PR #80 helper from 2026-07-10 contains the new `configure-rapid-capture` action that the production station sends before `start-session`.
+- Planned authorized recovery: stop only the loopback AI Grader bridge process and start it again from the already-built PR #80 helper, preserving the existing local config and station token. Verify loopback health and the non-hardware action contract after restart.
+- Guardrails: do not run capture, preview, camera, lighting, safe-off, migration, environment changes, credential rotation/printing, production database/storage writes, or any destructive operation.
+
+## 2026-07-10 - PR #80 live Start New Card incident: bridge restart observed result
+
+- Stopped the stale loopback bridge processes and started the existing real-mode bridge launcher from the current PR #80 build. The prior Node listener dated 2026-07-08 was replaced by fresh processes on 2026-07-10.
+- Loopback `GET /health` returned HTTP 200-equivalent JSON with `ok=true`, `mode=real`, `localOnly=true`, `tokenRequired=true`, and only the expected production origin. The current compiled helper contains both `configure-rapid-capture` and the explicit-profile `start-session` handler.
+- No browser action was invoked during verification. No capture, preview, Basler camera, Leimac lighting, or safe-off command ran. No migration, environment change, credential rotation/printing, production database/storage write, deploy, or destructive operation ran.
+- Follow-up hardening is needed because the bridge version constant stayed at v0.4 across the contract change and the launcher can reuse an existing compiled `dist`; future version skew should produce an explicit update/restart-required error instead of `Unknown station action.`
+
+## 2026-07-10 - AI Grader normalized-analysis provenance and concurrency hardening
+
+- Canonical `1200x1680` analysis metadata now keeps the authoritative full-resolution geometry source, capture mode, detector/manual flags, confidence basis/value, placement state, and warnings. A normalized boundary no longer replaces source confidence with `1`; explicit manual geometry remains confidence `0` with `detectionUsed=false`.
+- Canonical framing and overlay pass states are explicitly labeled as derived-coordinate outcomes, not proof of perfect source detection. The fixture profile and analysis-coordinate metadata separately retain acquisition geometry uncertainty and state that rectangle geometry cannot determine printed top versus a 180-degree reversal; the operator must keep the printed top toward the top of the preview.
+- Lossless normalization for the accepted profile and channels `1-8`, plus normalized image analysis, is bounded to concurrency `2`. The limits are persisted in processing/analysis metadata to reduce Sharp worker and memory contention while the front side can process during flip/back positioning.
+- Raw evidence handling was unchanged and remains hash-verified/immutable.
+- Validation: `pnpm --filter @tenkings/ai-grader-capture-helper build` passed; focused warm-processing tests passed `4/4`; focused `git diff --check` passed with line-ending notices only.
+- No hardware capture/preview/lighting command, migration, env/credential change, deploy, database/storage write, or network call was performed.
+
+## 2026-07-10 - AI Grader close-enough edge readiness and normalized grading patch completed
+
+- Reworked the solid-plate detector and station gate so a fresh, confident four-edge result can be `Ready` while the card is off-center or rotated within the safe `35°` normalization envelope. Center offset and the preferred `10°` guide no longer block Start Grading. Full visibility, edge clearance, confidence, plausible aspect, and the fixed-rig `30%-85%` coverage envelope remain fail-closed safety gates.
+- The detected outline is now the dominant live overlay with dynamic corner brackets, edge midpoints, and center cues. The fixed template remains as a faded guide/manual option. Stale or failed detection clears Ready; explicit manual capture remains separately confirmed and recorded with `detectionUsed=false`, confidence `0`, and no hidden fixture fallback.
+- Automatic capture reproduces geometry on the full-resolution all-on image, preserves and re-hashes all 11 raw evidence roles, and creates canonical `1200x1680` front/back artifacts for grading, ROIs, directional channels, and reports. The transform records crop, rotation, resampling, scale/upscale, and source provenance; camera placement is excluded from grade signals and printed-design centering remains uncomputed.
+- Bridge contract advanced to `ai-grader-local-station-bridge-v0.5`; browser and helper fail closed on version skew with an update/restart instruction. Preview analysis is latest-only at a 125 ms cadence, carries camera capture time/frame ID, and validates the operator click against the last fresh Ready frame. Normal startup rebuilds the helper unless a developer explicitly selects `-SkipBuild`.
+- Warm processing failure remains terminal: the manifest records the exact `warm_processing` failure, safe shutdown/ownership cleanup completes, back capture is blocked, and the operator must start a new attempt. The cold command path remains explicit debug-only and cannot prove `production_fast` or five-second timing.
+- Normalized Grade Story V0.2 validates front and back geometry provenance, keeps centering visibly insufficient, applies a confidence penalty and a `9.0` cap, and redistributes only the absent centering weight across computed corners/edges/surface. Leimac vectors are transformed into normalized-card coordinates; missing/mixed transform provenance suppresses directional output rather than mixing coordinate systems.
+- Validation passed: capture-helper build; capture-helper full suite `233/233`; geometry `23/23`; bridge `33/33`; normalized warm/light focused `11/11`; Next.js station `82/82`; label/OCR/rapid frontend regressions `20/20`; Next.js production build with `64/64` static pages; database build and AI Grader service regressions `52/52`; final `git diff --check` (line-ending notices only).
+- Dell real-time accuracy, production latency, and five-seconds-per-side remain explicitly unproven. No Basler/Leimac/preview/capture command, hardware restart, migration, environment or secret change, production data/storage write, merge, deploy, or external runtime mutation was performed. Next action is code review/PR checks; after merge, Mark must update/restart the Dell bridge before production testing and separately approve any hardware A/B run.
+
+## 2026-07-10 - AI Grader normalized-card light-vector coordinate correction
+
+- Directional channel images are now paired with the authoritative card-normalization deskew in the unified report path. The unvalidated even-ring Leimac vectors are rotated by that same clockwise deskew from `basler_sensor_pixels` into `normalized_card_portrait_pixels` before preliminary normal/relief math.
+- Light-direction profile/result metadata persists the source vector, mapped vector, source/target coordinate frames, signed deskew angle, transform source, and whether the transform was applied. Zero rotation preserves the legacy raw-sensor vectors exactly.
+- The model fails closed when normalized channel inputs lack a coherent authoritative deskew or mix coordinate frames: intensity-balanced channel evidence remains available, but directional normal/relief/confidence artifacts are not emitted and the profile records `rejected` plus the exact reason.
+- Raw dark-control input is not subtracted from normalized-card images unless coordinate frame and dimensions match. Flat-field input is coordinate-validated and can be recorded as reference-ready, but V0 does not claim or apply pixelwise flat-field correction. Registration state and the explicit current-channel intensity-balancing reason are persisted.
+- Validation: capture-helper TypeScript compile passed; focused light-coordinate tests passed `4/4`; Basler/Leimac regression tests passed `35/35`; normalized warm/unified tests with final light-vector/dark-control provenance assertions passed `7/7`.
+- No hardware capture/preview/lighting command, migration, env/credential change, deploy, database/storage write, or network call was performed.
+
+## 2026-07-10 - AI Grader normalized evidence provisional-grade continuity
+
+- Corrected the normalized front/back report path so it no longer becomes `insufficient_evidence` merely because canonical analysis intentionally excludes camera-frame margins from printed-design centering.
+- Grade Story Engine/rules V0.2 recognizes the explicit `normalized_card_portrait_pixels` evidence basis instead of requiring acquisition ruler coordinates for canonical corner, edge, and surface diagnostics. The legacy fixed-metric-ruler path remains unchanged.
+- Printed-design centering remains visibly `insufficient_evidence`; camera placement is never substituted. For normalized evidence only, completed corner/edge/surface weights are redistributed, confidence is reduced by `0.18`, and the provisional overall grade is capped at `9.0` until a validated printed-design centering detector exists. Applied weights, the cap, the confidence penalty, provenance gates, and limitations are persisted in the grade story.
+- Added a front-plus-back warm-processing-to-unified-report regression proving a numeric provisional grade and HTML report are generated while both side centering diagnostics remain `not_computed` and acquisition placement is marked excluded from grade inputs.
+- Unified grading evaluates both front and back fixture/geometry provenance. A coherent explicit manual side remains visibly recorded as an accepted warning and adds the existing `0.08` accepted-warning confidence penalty; any incoherent side fails the provenance gate. Mixed automatic-front/manual-back and contradictory-back regressions cover both outcomes.
+- Validation: capture-helper build passed; focused normalized warm/unified processing tests passed `7/7`; combined focused normalized and legacy Basler/Leimac/provisional-story tests passed `42/42`.
+- No hardware capture/preview/lighting command, migration, env/credential change, deploy, database/storage write, or network call was performed.

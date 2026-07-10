@@ -1,5 +1,5 @@
-export const PROVISIONAL_GRADE_RULES_VERSION = "provisional_grade_rules_v0.1";
-export const PROVISIONAL_GRADE_STORY_ENGINE_VERSION = "ten-kings-grade-story-engine-v0.1";
+export const PROVISIONAL_GRADE_RULES_VERSION = "provisional_grade_rules_v0.2";
+export const PROVISIONAL_GRADE_STORY_ENGINE_VERSION = "ten-kings-grade-story-engine-v0.2";
 
 type JsonObject = Record<string, any>;
 type GradeSide = "front" | "back" | "both";
@@ -92,6 +92,8 @@ export interface FixedRigProvisionalGradeStoryResult {
   };
   formulas: {
     weights: { centering: number; corners: number; edges: number; surface: number };
+    appliedWeights: { centering: number; corners: number; edges: number; surface: number };
+    missingElementPolicy: string;
     clippingSoftThreshold: number;
     clippingHardBlockThreshold: number;
     sharpnessSoftThreshold: number;
@@ -123,12 +125,17 @@ export interface BuildFixedRigProvisionalGradeStoryInput {
   frontStats?: JsonObject;
   backStats?: JsonObject;
   fixtureProfile?: JsonObject;
+  frontFixtureProfile?: JsonObject;
+  backFixtureProfile?: JsonObject;
   activeLightingProfile?: JsonObject;
   warnings?: string[];
   allowAcceptedWarnings?: boolean;
 }
 
 const WEIGHTS = { centering: 0.3, corners: 0.25, edges: 0.25, surface: 0.2 };
+const NORMALIZED_MISSING_CENTERING_GRADE_CAP = 9;
+const NORMALIZED_MISSING_CENTERING_CONFIDENCE_PENALTY = 0.18;
+const ACCEPTED_WARNING_CONFIDENCE_PENALTY = 0.08;
 const CLIPPING_SOFT_THRESHOLD = 0.02;
 const CLIPPING_HARD_BLOCK_THRESHOLD = 0.95;
 const SHARPNESS_SOFT_THRESHOLD = 60;
@@ -229,6 +236,45 @@ function allSideEvidenceComplete(diagnostic: JsonObject | undefined, surface: Js
       diagnostic?.edges &&
       diagnostic?.surface &&
       (surface?.status === "computed_diagnostic" || diagnostic?.surface?.status === "computed_diagnostic")
+  );
+}
+
+function usesNormalizedCardAnalysis(profile: JsonObject | undefined): boolean {
+  return profile?.analysisCoordinateFrame === "normalized_card_portrait_pixels";
+}
+
+function normalizedCardAnalysisBasisPasses(profile: JsonObject | undefined): boolean {
+  return Boolean(
+    usesNormalizedCardAnalysis(profile) &&
+      profile?.acquisitionPlacementExcludedFromGrade === true &&
+      profile?.normalizedCoordinateOutcome?.boundaryFillsCanonicalFrame === true &&
+      profile?.normalizedCoordinateOutcome?.framingStatus === "pass" &&
+      profile?.normalizedCoordinateOutcome?.overlayAlignmentStatus === "pass"
+  );
+}
+
+function normalizedDetectedGeometryPasses(profile: JsonObject | undefined): boolean {
+  const geometry = profile?.sourceGeometry;
+  return Boolean(
+    usesNormalizedCardAnalysis(profile) &&
+      geometry?.geometrySource === "detected" &&
+      geometry?.captureMode === "automatic_detection" &&
+      geometry?.detectionUsed === true &&
+      geometry?.manualOverrideUsed === false &&
+      geometry?.placementState === "ready" &&
+      finiteNumber(geometry?.confidence)
+  );
+}
+
+function normalizedManualGeometryIsExplicit(profile: JsonObject | undefined): boolean {
+  const geometry = profile?.sourceGeometry;
+  return Boolean(
+    usesNormalizedCardAnalysis(profile) &&
+      geometry?.geometrySource === "manual_override" &&
+      geometry?.captureMode === "manual_capture" &&
+      geometry?.detectionUsed === false &&
+      geometry?.manualOverrideUsed === true &&
+      geometry?.confidence === 0
   );
 }
 
@@ -389,22 +435,44 @@ function insufficientElement(category: Exclude<GradeCategory, "confidence">, rea
 
 export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvisionalGradeStoryInput): FixedRigProvisionalGradeStoryResult {
   const allowAcceptedWarnings = input.allowAcceptedWarnings ?? true;
-  const productionReadiness = input.fixtureProfile?.productionReadiness;
-  const productionGates = productionReadiness?.gates ?? {};
-  const diagnosticAccepted = allowAcceptedWarnings && productionReadiness?.diagnosticOnlyAllowedWithOperatorAcceptance === true;
-  const rulerPass =
-    input.fixtureProfile?.referenceType === "fixed_metric_rulers" &&
-    input.fixtureProfile?.pixelToMmConsistency?.status === "pass" &&
-    finiteNumber(input.fixtureProfile?.mmPerPixelX) &&
-    finiteNumber(input.fixtureProfile?.mmPerPixelY);
-  const repeatabilityPass =
-    productionGates.repeatability === "pass" ||
-    input.fixtureProfile?.status === "repeatability_checked" ||
-    input.fixtureProfile?.status === "production_candidate";
-  const framingPass = input.fixtureProfile?.framingGate?.status === "pass";
-  const overlayPass =
-    input.fixtureProfile?.framingGate?.overlayAlignmentStatus === "pass" ||
-    input.fixtureProfile?.productionReadiness?.gates?.overlayAlignment === "pass";
+  const frontFixtureProfile = input.frontFixtureProfile ?? input.fixtureProfile;
+  const backFixtureProfile = input.backFixtureProfile ?? input.fixtureProfile;
+  const sideFixtureProfiles = [frontFixtureProfile, backFixtureProfile];
+  const productionReadiness = sideFixtureProfiles.map((profile) => profile?.productionReadiness);
+  const productionGates = productionReadiness.map((readiness) => readiness?.gates ?? {});
+  const diagnosticAccepted =
+    allowAcceptedWarnings &&
+    productionReadiness.every((readiness) => readiness?.diagnosticOnlyAllowedWithOperatorAcceptance === true);
+  const rulerPass = sideFixtureProfiles.every(
+    (profile) =>
+      profile?.referenceType === "fixed_metric_rulers" &&
+      profile?.pixelToMmConsistency?.status === "pass" &&
+      finiteNumber(profile?.mmPerPixelX) &&
+      finiteNumber(profile?.mmPerPixelY)
+  );
+  const normalizedAnalysisRequested = sideFixtureProfiles.some(usesNormalizedCardAnalysis);
+  const normalizedAnalysis = sideFixtureProfiles.every(usesNormalizedCardAnalysis);
+  const normalizedAnalysisBasisPass = normalizedAnalysis && sideFixtureProfiles.every(normalizedCardAnalysisBasisPasses);
+  const normalizedDetectedGeometryPass = normalizedAnalysis && sideFixtureProfiles.every(normalizedDetectedGeometryPasses);
+  const normalizedManualSides = sideFixtureProfiles
+    .map((profile, index) => (normalizedManualGeometryIsExplicit(profile) ? (index === 0 ? "front" : "back") : undefined))
+    .filter((side): side is "front" | "back" => Boolean(side));
+  const normalizedManualGeometryAccepted =
+    normalizedAnalysis &&
+    normalizedManualSides.length > 0 &&
+    sideFixtureProfiles.every((profile) => normalizedDetectedGeometryPasses(profile) || normalizedManualGeometryIsExplicit(profile));
+  const repeatabilityPass = sideFixtureProfiles.every(
+    (profile, index) =>
+      productionGates[index]?.repeatability === "pass" ||
+      profile?.status === "repeatability_checked" ||
+      profile?.status === "production_candidate"
+  );
+  const framingPass = sideFixtureProfiles.every((profile) => profile?.framingGate?.status === "pass");
+  const overlayPass = sideFixtureProfiles.every(
+    (profile, index) =>
+      profile?.framingGate?.overlayAlignmentStatus === "pass" ||
+      productionGates[index]?.overlayAlignment === "pass"
+  );
   const frontEvidencePass = allSideEvidenceComplete(input.frontDiagnostic, input.frontSurface);
   const backEvidencePass = allSideEvidenceComplete(input.backDiagnostic, input.backSurface);
   const surfacePass = input.frontSurface?.status === "computed_diagnostic" && input.backSurface?.status === "computed_diagnostic";
@@ -425,14 +493,43 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
   const focusPass = minSharpness >= SHARPNESS_SOFT_THRESHOLD;
   const focusAccepted = allowAcceptedWarnings && Number.isFinite(minSharpness) && minSharpness >= SHARPNESS_SOFT_THRESHOLD * 0.65;
   const gateResults = [
-    gate("ruler_calibration", rulerPass, diagnosticAccepted && productionGates.rulerCalibration === "warn", "Ruler calibration must pass using fixed metric rulers.", [
-      "analysis.visionLab.measurementOverlay",
-      "analysis.fixtureCalibrationProfile.pixelToMmConsistency",
-    ]),
-    gate("repeatability", repeatabilityPass, diagnosticAccepted && productionGates.repeatability !== "fail", "Remove/re-seat repeatability must pass or be accepted as diagnostic warning.", [
+    normalizedAnalysisRequested
+      ? gate(
+          "normalized_coordinate_basis",
+          normalizedAnalysisBasisPass,
+          false,
+          "Canonical normalized-card framing must be explicit, complete, and separated from acquisition placement before region-relative diagnostics can be scored.",
+          [
+            "analysis.fixtureCalibrationProfile.analysisCoordinateFrame",
+            "analysis.fixtureCalibrationProfile.normalizedCoordinateOutcome",
+            "analysis.fixtureCalibrationProfile.acquisitionPlacementExcludedFromGrade",
+          ]
+        )
+      : gate("ruler_calibration", rulerPass, diagnosticAccepted && productionGates.every((gates) => gates.rulerCalibration === "pass" || gates.rulerCalibration === "warn"), "Ruler calibration must pass using fixed metric rulers.", [
+          "analysis.visionLab.measurementOverlay",
+          "analysis.fixtureCalibrationProfile.pixelToMmConsistency",
+        ]),
+    ...(normalizedAnalysisRequested
+      ? [
+          gate(
+            "normalized_geometry_provenance",
+            normalizedDetectedGeometryPass,
+            allowAcceptedWarnings && normalizedManualGeometryAccepted,
+            normalizedManualGeometryAccepted
+              ? `Canonical normalization used explicit operator-confirmed manual capture on ${normalizedManualSides.join(" and ")}; automatic detection was not used on ${normalizedManualSides.length === 2 ? "either side" : "that side"}.`
+              : "Both front and back canonical normalizations must retain coherent Ready automatic geometry provenance, or an explicit operator-confirmed manual capture on each non-detected side.",
+            [
+              "analysis.fixtureCalibrationProfile.sourceGeometry",
+              "analysis.front.normalizedCard.geometry",
+              "analysis.back.normalizedCard.geometry",
+            ]
+          ),
+        ]
+      : []),
+    gate("repeatability", repeatabilityPass, diagnosticAccepted && productionGates.every((gates) => gates.repeatability !== "fail"), "Remove/re-seat repeatability must pass or be accepted as diagnostic warning.", [
       "analysis.fixtureCalibrationProfile.productionReadiness.gates.repeatability",
     ]),
-    gate("framing_overlay", framingPass && overlayPass, diagnosticAccepted && (productionGates.framing === "warn" || productionGates.overlayAlignment === "warn"), "Framing and overlay alignment gates must pass.", [
+    gate("framing_overlay", framingPass && overlayPass, diagnosticAccepted && productionGates.every((gates) => gates.framing !== "fail" && gates.overlayAlignment !== "fail"), "Front/back framing and overlay alignment gates must pass.", [
       "analysis.fixtureCalibrationProfile.framingGate",
     ]),
     gate("front_evidence_complete", frontEvidencePass, false, "Front evidence package must include diagnostics and surface intelligence.", ["analysis.front"]),
@@ -447,9 +544,8 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
       "analysis.back.allOn.sharpnessScore",
     ]),
   ];
-  const blockers = gateResults.filter((result) => result.status === "fail").map((result) => `${result.gate}: ${result.summary}`);
-  const acceptedWarnings = gateResults.filter((result) => result.status === "accepted_warning").map((result) => `${result.gate}: ${result.summary}`);
-  const requiredGatesPassed = blockers.length === 0;
+  const evidenceGateBlockers = gateResults.filter((result) => result.status === "fail").map((result) => `${result.gate}: ${result.summary}`);
+  const evidenceGatesPassed = evidenceGateBlockers.length === 0;
   const centeringRaw = scoreFromDiagnostics([input.frontDiagnostic?.centering, input.backDiagnostic?.centering]);
   const cornerEntries = [
     { label: "front top-left corner", element: input.frontDiagnostic?.corners?.topLeft },
@@ -476,7 +572,11 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
   const surfaceRaw = surfaceScore(input.frontSurface, input.backSurface);
   const weakestCorner = weakestNamedScore(cornerEntries);
   const weakestEdge = weakestNamedScore(edgeEntries);
-  const elementScores = requiredGatesPassed
+  const normalizedCenteringExcluded = normalizedAnalysis && !finiteNumber(centeringRaw.score);
+  const centeringExplanation = normalizedCenteringExcluded
+    ? "Printed-design centering is not computed from canonical card-boundary geometry; camera-frame placement margins are intentionally excluded from grading."
+    : "Centering uses ruler-calibrated printed-border measurements from front/back portrait geometry.";
+  const elementScores = evidenceGatesPassed
     ? {
         centering: elementResult({
           category: "centering",
@@ -485,7 +585,7 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
           metrics: centeringRaw.metrics,
           warnings: centeringRaw.warnings,
           evidenceRefs: ["analysis.front.diagnosticGrading.centering", "analysis.back.diagnosticGrading.centering"],
-          explanation: "Centering uses ruler-calibrated margin and centering measurements from front/back portrait geometry.",
+          explanation: centeringExplanation,
         }),
         corners: elementResult({
           category: "corner",
@@ -525,24 +625,89 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
         surface: insufficientElement("surface", "Required grading gates failed; surface score is not computed.", ["analysis.provisionalGradeStory.gates"]),
       };
   const scoreValues = elementScores;
-  const weighted =
+  const normalizedPartialScoreReady =
+    normalizedCenteringExcluded &&
+    finiteNumber(scoreValues.corners.score) &&
+    finiteNumber(scoreValues.edges.score) &&
+    finiteNumber(scoreValues.surface.score);
+  const completeFourElementScoreReady =
     finiteNumber(scoreValues.centering.score) &&
     finiteNumber(scoreValues.corners.score) &&
     finiteNumber(scoreValues.edges.score) &&
-    finiteNumber(scoreValues.surface.score)
-      ? scoreValues.centering.score * WEIGHTS.centering + scoreValues.corners.score * WEIGHTS.corners + scoreValues.edges.score * WEIGHTS.edges + scoreValues.surface.score * WEIGHTS.surface
-      : undefined;
+    finiteNumber(scoreValues.surface.score);
+  const scoreCoveragePass = completeFourElementScoreReady || normalizedPartialScoreReady;
+  const evaluatedGateResults = [
+    ...gateResults,
+    gate(
+      "element_score_coverage",
+      scoreCoveragePass,
+      false,
+      normalizedPartialScoreReady
+        ? "Corner, edge, and surface diagnostics are complete. Printed-design centering is visibly unavailable, so its weight is redistributed and the provisional grade is confidence-penalized and capped."
+        : "A complete legacy score requires centering, corner, edge, and surface diagnostics; normalized-card scoring may omit only printed-design centering when corner, edge, and surface diagnostics are complete.",
+      [
+        "analysis.provisionalGradeStory.elementScores",
+        "analysis.front.diagnosticGrading",
+        "analysis.back.diagnosticGrading",
+      ]
+    ),
+  ];
+  const blockers = evaluatedGateResults.filter((result) => result.status === "fail").map((result) => `${result.gate}: ${result.summary}`);
+  const acceptedWarnings = evaluatedGateResults.filter((result) => result.status === "accepted_warning").map((result) => `${result.gate}: ${result.summary}`);
+  const requiredGatesPassed = blockers.length === 0;
+  const normalizedAvailableWeight = WEIGHTS.corners + WEIGHTS.edges + WEIGHTS.surface;
+  const appliedWeights = normalizedPartialScoreReady
+    ? {
+        centering: 0,
+        corners: roundMetric(WEIGHTS.corners / normalizedAvailableWeight, 6),
+        edges: roundMetric(WEIGHTS.edges / normalizedAvailableWeight, 6),
+        surface: roundMetric(WEIGHTS.surface / normalizedAvailableWeight, 6),
+      }
+    : { ...WEIGHTS };
+  const weighted = scoreCoveragePass
+    ? (finiteNumber(scoreValues.centering.score) ? scoreValues.centering.score * appliedWeights.centering : 0) +
+      Number(scoreValues.corners.score) * appliedWeights.corners +
+      Number(scoreValues.edges.score) * appliedWeights.edges +
+      Number(scoreValues.surface.score) * appliedWeights.surface
+    : undefined;
   const surfaceHighCandidates = [...surfaceCandidates(input.frontSurface), ...surfaceCandidates(input.backSurface)].filter((candidate) => candidate.severityBand === "high");
-  const cap = surfaceHighCandidates.length ? 8.5 : 10;
+  const cap = Math.min(
+    surfaceHighCandidates.length ? 8.5 : 10,
+    normalizedPartialScoreReady ? NORMALIZED_MISSING_CENTERING_GRADE_CAP : 10
+  );
   const provisionalOverallGrade = requiredGatesPassed && finiteNumber(weighted) ? roundMetric(Math.min(weighted, cap), 2) : undefined;
-  const gatePenalty = gateResults.filter((result) => result.status === "accepted_warning").length * 0.08;
+  const gatePenalty = gateResults.filter((result) => result.status === "accepted_warning").length * ACCEPTED_WARNING_CONFIDENCE_PENALTY;
   const clippingPenalty = finiteNumber(maxClipped) && maxClipped > CLIPPING_SOFT_THRESHOLD ? clamp(maxClipped * 0.5, 0.02, 0.2) : 0;
-  const elementConfidence = Object.values(elementScores).map((element) => element.confidence).filter(finiteNumber);
+  const missingCenteringPenalty = normalizedPartialScoreReady ? NORMALIZED_MISSING_CENTERING_CONFIDENCE_PENALTY : 0;
+  const elementConfidence = Object.values(elementScores)
+    .filter((element) => element.status === "provisional_diagnostic")
+    .map((element) => element.confidence)
+    .filter(finiteNumber);
   const confidenceScore = requiredGatesPassed
-    ? roundMetric(clamp(elementConfidence.reduce((sum, value) => sum + value, 0) / Math.max(1, elementConfidence.length) - gatePenalty - clippingPenalty, 0, 1), 3)
+    ? roundMetric(
+        clamp(
+          elementConfidence.reduce((sum, value) => sum + value, 0) / Math.max(1, elementConfidence.length) -
+            gatePenalty -
+            clippingPenalty -
+            missingCenteringPenalty,
+          0,
+          1
+        ),
+        3
+      )
     : 0;
   const confidenceWarnings = [
     ...acceptedWarnings,
+    ...(normalizedManualGeometryAccepted
+      ? [
+          `Explicit manual geometry on ${normalizedManualSides.join(" and ")} is retained as an accepted warning and reduces confidence by ${ACCEPTED_WARNING_CONFIDENCE_PENALTY}; it is not represented as automatic detection.`,
+        ]
+      : []),
+    ...(normalizedPartialScoreReady
+      ? [
+          `Printed-design centering is unavailable in normalized card coordinates; camera placement was excluded, confidence was reduced by ${NORMALIZED_MISSING_CENTERING_CONFIDENCE_PENALTY}, and the provisional overall grade was capped at ${NORMALIZED_MISSING_CENTERING_GRADE_CAP}.`,
+        ]
+      : []),
     ...(finiteNumber(maxClipped) && maxClipped > CLIPPING_SOFT_THRESHOLD ? [`Clipping above soft target reduces confidence; max clipped fraction ${maxClipped}.`] : []),
     ...(input.warnings ?? []),
   ];
@@ -552,8 +717,28 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
     backSurface: input.backSurface,
     frontStats: input.frontStats,
     backStats: input.backStats,
-    gateResults,
+    gateResults: evaluatedGateResults,
   });
+  if (normalizedPartialScoreReady) {
+    preliminaryCandidates.push({
+      id: "centering-not-computed-normalized-card",
+      category: "centering",
+      side: "both",
+      severity: "medium",
+      confidence: 0,
+      confidenceBand: "low",
+      provisionalGradeImpact: 1,
+      evidenceRefs: [
+        "analysis.front.diagnosticGrading.centering",
+        "analysis.back.diagnosticGrading.centering",
+        "analysis.fixtureCalibrationProfile.acquisitionPlacementExcludedFromGrade",
+      ],
+      recommendedFollowUp: "Human review of printed-design centering is required until a validated normalized-card centering detector is available.",
+      explanation:
+        "Printed-design centering was not computed; acquisition placement margins were not substituted, so the provisional grade is capped and confidence-reduced.",
+    });
+    preliminaryCandidates.sort((a, b) => b.provisionalGradeImpact - a.provisionalGradeImpact);
+  }
   const whyNot10: FixedRigWhyNot10Reason[] = requiredGatesPassed
     ? preliminaryCandidates.slice(0, 5).map((candidate, index) => ({
         id: `why-not-10-${String(index + 1).padStart(2, "0")}`,
@@ -572,6 +757,8 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
   const strongestPositiveFinding =
     requiredGatesPassed && elementScores.centering.status === "provisional_diagnostic"
       ? "Centering is supported by fixed-ruler scale and front/back border-balance diagnostics."
+      : requiredGatesPassed && normalizedPartialScoreReady
+        ? "Canonical normalized-card corner, edge, and surface diagnostics are complete; printed-design centering remains visibly uncomputed."
       : "The report identifies the exact gates that block a provisional diagnostic grade.";
   const strongestWarning =
     blockers[0] ?? acceptedWarnings[0] ?? preliminaryCandidates[0]?.explanation ?? confidenceWarnings[0] ?? "No major provisional warning emitted by Grade Story Engine V0.";
@@ -579,7 +766,9 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
     ? `Provisional diagnostic grade ${provisionalOverallGrade} / 10`
     : "Insufficient evidence for a provisional diagnostic grade";
   const summary = requiredGatesPassed
-    ? `Grade Story Engine V0 combined centering, corner, edge, and surface diagnostics into a provisional diagnostic grade. This is not certified and finalGradeComputed=false.`
+    ? normalizedPartialScoreReady
+      ? `Grade Story Engine V0 combined normalized-card corner, edge, and surface diagnostics into a capped provisional diagnostic grade. Printed-design centering was not computed, camera placement was excluded, and finalGradeComputed=false.`
+      : `Grade Story Engine V0 combined centering, corner, edge, and surface diagnostics into a provisional diagnostic grade. This is not certified and finalGradeComputed=false.`
     : `Grade Story Engine V0 refused to compute a provisional grade because required evidence gates failed.`;
   const claims: FixedRigGradeStoryClaim[] = [
     {
@@ -627,12 +816,16 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
     gates: {
       requiredGatesPassed,
       allowAcceptedWarnings,
-      results: gateResults,
+      results: evaluatedGateResults,
       blockers,
       acceptedWarnings,
     },
     formulas: {
       weights: WEIGHTS,
+      appliedWeights,
+      missingElementPolicy: normalizedPartialScoreReady
+        ? `Printed-design centering is not computed. Its ${WEIGHTS.centering} base weight is redistributed proportionally across computed corner, edge, and surface diagnostics; camera placement margins are excluded, confidence is reduced by ${NORMALIZED_MISSING_CENTERING_CONFIDENCE_PENALTY}, and the grade is capped at ${NORMALIZED_MISSING_CENTERING_GRADE_CAP}.`
+        : "All four base element weights apply. Missing legacy centering, corner, edge, or surface scores prevent a provisional overall grade.",
       clippingSoftThreshold: CLIPPING_SOFT_THRESHOLD,
       clippingHardBlockThreshold: CLIPPING_HARD_BLOCK_THRESHOLD,
       sharpnessSoftThreshold: SHARPNESS_SOFT_THRESHOLD,
@@ -641,6 +834,7 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
         "Accepted-warning gates reduce confidence but do not become certified passes.",
         "Finite clipping above the soft target is an accepted warning for V0 unless the image is near-total saturation.",
         "High-severity surface candidates cap the provisional overall grade at 8.5.",
+        `When normalized-card printed-design centering is unavailable, camera placement is excluded, the remaining weights are redistributed, confidence is reduced by ${NORMALIZED_MISSING_CENTERING_CONFIDENCE_PENALTY}, and the provisional grade is capped at ${NORMALIZED_MISSING_CENTERING_GRADE_CAP}.`,
         "Clipping above the soft target reduces confidence and appears in Why Not 10.",
       ],
       note: "Rules are provisional_diagnostic only. They do not generate a certified/final Ten Kings grade.",
@@ -669,6 +863,12 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
       "This is a provisional diagnostic grade only.",
       "certificationStatus=not_certified; finalGradeComputed=false; certifiedClaim=false.",
       "No label, QR certificate, or certified report is generated.",
+      ...(normalizedPartialScoreReady
+        ? [
+            "Printed-design centering is not computed from normalized card-boundary geometry; acquisition placement margins are intentionally excluded.",
+            `The provisional overall grade uses only computed corner, edge, and surface diagnostics, is confidence-penalized, and cannot exceed ${NORMALIZED_MISSING_CENTERING_GRADE_CAP} until validated printed-design centering exists.`,
+          ]
+        : []),
       "Surface Intelligence V0 and light-direction proxy maps are preliminary until physical light vectors and calibration gates are certified.",
     ],
   };

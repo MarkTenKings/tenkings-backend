@@ -6,7 +6,10 @@ import type {
   AiGraderLocalStationStatus,
   AiGraderStationAction,
 } from "./aiGraderLocalStation";
-import { sanitizeAiGraderLocalStationStatusForDisplay } from "./aiGraderLocalStation";
+import {
+  AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+  sanitizeAiGraderLocalStationStatusForDisplay,
+} from "./aiGraderLocalStation";
 import type { AiGraderReportBundle } from "./aiGraderReportBundle";
 
 export const DEFAULT_AI_GRADER_STATION_BRIDGE_URL = "http://127.0.0.1:47652";
@@ -166,6 +169,14 @@ export async function fetchAiGraderStationBridgeHealth(
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || payload.ok !== true) {
     throw new Error(payload.message ?? payload.error?.message ?? "AI Grader local station bridge health check failed.");
+  }
+  if (payload.bridgeVersion !== AI_GRADER_LOCAL_STATION_BRIDGE_VERSION) {
+    const runningVersion = typeof payload.bridgeVersion === "string" && payload.bridgeVersion.trim()
+      ? payload.bridgeVersion.trim()
+      : "unknown";
+    throw new Error(
+      `Dell local bridge update/restart required. Production expects ${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}; the running bridge is ${runningVersion}. Launch the Ten Kings AI Grader Station desktop shortcut to load the current helper.`,
+    );
   }
   return payload as AiGraderStationBridgeHealth;
 }

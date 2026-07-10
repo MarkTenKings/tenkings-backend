@@ -1,7 +1,7 @@
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE, type AiGraderReportBundle } from "./aiGraderReportBundle";
 import type { AiGraderProductionRelease } from "./aiGraderProductionRelease";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.4";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.5";
 
 export type AiGraderStationStepId =
   | "start_new_card"
@@ -380,7 +380,7 @@ export type AiGraderLocalStationStatus = {
   warmRunnerStatus: AiGraderWarmRunnerStatus;
   captureFailure?: {
     side: AiGraderWarmRunnerSide;
-    stage: "warm_capture";
+    stage: "warm_capture" | "warm_processing";
     message: string;
     at: string;
     retryRequired: true;
@@ -941,6 +941,7 @@ export type AiGraderPreviewCardGeometrySummary = {
   version?: "ten-kings-card-geometry-v1";
   side: AiGraderPreviewGeometrySide;
   placementState: AiGraderCardPlacementState;
+  adjustmentReason?: "not_detected" | "outside_frame" | "unsafe_scale" | "rotate_top_up" | "wrong_aspect" | "low_confidence" | "manual_capture_selected";
   geometrySource: "detected" | "manual_override" | "none";
   captureMode: "automatic_detection" | "manual_capture" | "none";
   confidenceBasis: "automatic_detection" | "operator_confirmation" | "none";
@@ -1033,6 +1034,17 @@ export function sanitizeAiGraderPreviewCardGeometry(
     value.placementState === "ready" || value.placementState === "adjust_card" || value.placementState === "not_detected"
       ? value.placementState
       : "not_detected";
+  const adjustmentReason = new Set([
+    "not_detected",
+    "outside_frame",
+    "unsafe_scale",
+    "rotate_top_up",
+    "wrong_aspect",
+    "low_confidence",
+    "manual_capture_selected",
+  ]).has(String(value.adjustmentReason))
+    ? value.adjustmentReason as AiGraderPreviewCardGeometrySummary["adjustmentReason"]
+    : undefined;
   const geometrySource =
     value.geometrySource === "detected" || value.geometrySource === "manual_override" || value.geometrySource === "none"
       ? value.geometrySource
@@ -1071,6 +1083,7 @@ export function sanitizeAiGraderPreviewCardGeometry(
     ...(value.version === "ten-kings-card-geometry-v1" ? { version: value.version } : {}),
     side,
     placementState,
+    ...(adjustmentReason ? { adjustmentReason } : {}),
     geometrySource,
     captureMode,
     confidenceBasis,

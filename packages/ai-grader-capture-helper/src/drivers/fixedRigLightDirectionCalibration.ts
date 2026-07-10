@@ -24,12 +24,49 @@ export type LightDirectionProfileStatus =
 
 export type ChannelPhysicalDirectionStatus = "unknown" | "approximate_directional_model" | "calibrated";
 
+export type LightVectorCoordinateFrame = "basler_sensor_pixels" | "normalized_card_portrait_pixels";
+
+export interface AuthoritativeCardDeskewLightVectorTransform {
+  sourceCoordinateFrame: "basler_sensor_pixels";
+  targetCoordinateFrame: "normalized_card_portrait_pixels";
+  clockwiseRotationDegrees: number;
+  source: "authoritative_card_normalization";
+}
+
+export interface LightVectorCoordinateTransformRecord {
+  status:
+    | "not_applied_legacy_sensor_coordinates"
+    | "applied_authoritative_card_deskew"
+    | "rejected_coordinate_mismatch"
+    | "rejected_missing_authoritative_card_deskew";
+  sourceCoordinateFrame: "basler_sensor_pixels";
+  targetCoordinateFrame: LightVectorCoordinateFrame;
+  clockwiseRotationDegrees: number | null;
+  source: "legacy_raw_sensor_coordinates" | "authoritative_card_normalization" | "unavailable";
+}
+
+export interface LightDirectionAuxiliaryImageRegistration {
+  status:
+    | "registered_same_coordinate_frame"
+    | "not_applied_image_unavailable"
+    | "not_applied_dimension_mismatch"
+    | "not_applied_coordinate_mismatch";
+  inputCoordinateFrame: LightVectorCoordinateFrame;
+  targetCoordinateFrame: LightVectorCoordinateFrame;
+  geometricallyRegistered: boolean;
+  note: string;
+}
+
 export interface LeimacChannelDirectionMetadata {
   channelNumber: number;
   label: string;
   physicalDirectionStatus: ChannelPhysicalDirectionStatus;
   approximateAngleDegrees?: number;
   lightVector?: { x: number; y: number; z: number };
+  sourceApproximateAngleDegrees: number;
+  sourceLightVector: { x: number; y: number; z: number };
+  lightVectorCoordinateFrame: LightVectorCoordinateFrame;
+  coordinateTransformAppliedDegrees: number | null;
   intensityScale: number;
   calibrationSource: "unknown" | "synthetic_even_8_channel_ring_model_unvalidated" | "flat_field_reference" | "operator_review";
   notes: string;
@@ -43,6 +80,8 @@ export interface LeimacLightDirectionCalibrationProfile {
   cameraModel?: string;
   channelCount: number;
   channelMetadata: LeimacChannelDirectionMetadata[];
+  lightVectorCoordinateFrame: LightVectorCoordinateFrame;
+  lightVectorCoordinateTransform: LightVectorCoordinateTransformRecord;
   physicalDirectionMappingStatus: LightDirectionProfileStatus;
   intensityBalancingStatus: LightDirectionProfileStatus;
   flatFieldStatus: LightDirectionProfileStatus;
@@ -72,6 +111,7 @@ export interface LightDirectionCalibrationImageInput {
   rawSourceSha256?: string;
   imageWidth?: number;
   imageHeight?: number;
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
 }
 
 export interface LightDirectionCalibrationChannelInput {
@@ -93,6 +133,7 @@ export interface BuildLightDirectionCalibrationInput {
   leimacModel?: string;
   cameraModel?: string;
   flatReferenceImage?: LightDirectionCalibrationImageInput;
+  lightVectorCoordinateTransform?: AuthoritativeCardDeskewLightVectorTransform;
 }
 
 export interface FixedRigLightDirectionCalibrationResult {
@@ -113,8 +154,13 @@ export interface FixedRigLightDirectionCalibrationResult {
     darkSubtraction: boolean;
     flatFieldCorrection: boolean;
     fallbackNormalization: boolean;
+    fallbackNormalizationReason: string | null;
     cardRect: Rect;
-    coordinateFrame: "ai_grader_card_portrait_display";
+    coordinateFrame: "ai_grader_card_portrait_display" | "normalized_card_portrait_pixels";
+    lightVectorCoordinateFrame: LightVectorCoordinateFrame;
+    lightVectorCoordinateTransform: LightVectorCoordinateTransformRecord;
+    darkControlRegistration: LightDirectionAuxiliaryImageRegistration;
+    flatFieldRegistration: LightDirectionAuxiliaryImageRegistration;
   };
   confidence: { score: number; band: "low" | "medium" | "high"; warnings: string[] };
   warnings: string[];
@@ -203,7 +249,7 @@ function rectContains(rect: Rect, x: number, y: number): boolean {
   return x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height;
 }
 
-function directionVectorForChannel(channel: number): { angleDegrees: number; vector: { x: number; y: number; z: number } } {
+function sourceDirectionVectorForChannel(channel: number): { angleDegrees: number; vector: { x: number; y: number; z: number } } {
   const angleDegrees = (channel - 1) * 45;
   const radians = (angleDegrees / 180) * Math.PI;
   const x = Math.cos(radians);
@@ -217,6 +263,211 @@ function directionVectorForChannel(channel: number): { angleDegrees: number; vec
       y: roundMetric(y / length, 6),
       z: roundMetric(z / length, 6),
     },
+  };
+}
+
+function normalizeAngleDegrees(value: number): number {
+  const normalized = value % 360;
+  return roundMetric(normalized < 0 ? normalized + 360 : normalized, 6);
+}
+
+/**
+ * Maps the unvalidated even-ring Leimac vector from Basler sensor coordinates
+ * into the image coordinate frame produced by the same clockwise card deskew.
+ * With no rotation this intentionally returns the legacy raw-sensor vector.
+ */
+export function mapApproximateLeimacChannelDirection(
+  channel: number,
+  clockwiseRotationDegrees = 0,
+): { angleDegrees: number; vector: { x: number; y: number; z: number } } {
+  if (!Number.isInteger(channel) || channel < 1 || channel > 8) {
+    throw new Error(`Leimac channel must be an integer from 1 through 8; received ${channel}.`);
+  }
+  if (!Number.isFinite(clockwiseRotationDegrees)) {
+    throw new Error("Light-vector coordinate rotation must be a finite number of degrees.");
+  }
+  const source = sourceDirectionVectorForChannel(channel);
+  if (clockwiseRotationDegrees === 0) return source;
+  const radians = (clockwiseRotationDegrees / 180) * Math.PI;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  return {
+    angleDegrees: normalizeAngleDegrees(source.angleDegrees + clockwiseRotationDegrees),
+    vector: {
+      x: roundMetric(cosine * source.vector.x - sine * source.vector.y, 6),
+      y: roundMetric(sine * source.vector.x + cosine * source.vector.y, 6),
+      z: source.vector.z,
+    },
+  };
+}
+
+interface ResolvedLightVectorCoordinates {
+  usable: boolean;
+  imageCoordinateFrame: "ai_grader_card_portrait_display" | "normalized_card_portrait_pixels";
+  lightVectorCoordinateFrame: LightVectorCoordinateFrame;
+  clockwiseRotationDegrees: number;
+  record: LightVectorCoordinateTransformRecord;
+  warnings: string[];
+}
+
+function resolveLightVectorCoordinates(input: BuildLightDirectionCalibrationInput): ResolvedLightVectorCoordinates {
+  const directionalImages = [
+    input.trueView,
+    input.allOn,
+    ...input.channelImages.map((entry) => entry.displayImage),
+  ].filter((entry): entry is LightDirectionCalibrationImageInput => Boolean(entry));
+  const normalizedImageCount = directionalImages.filter(
+    (entry) => entry.analysisCoordinateFrame === "normalized_card_portrait_pixels",
+  ).length;
+  const usesNormalizedCardCoordinates = normalizedImageCount > 0;
+  const mixesCoordinateFrames = normalizedImageCount > 0 && normalizedImageCount < directionalImages.length;
+  const transform = input.lightVectorCoordinateTransform;
+
+  if (mixesCoordinateFrames) {
+    return {
+      usable: false,
+      imageCoordinateFrame: "normalized_card_portrait_pixels",
+      lightVectorCoordinateFrame: "basler_sensor_pixels",
+      clockwiseRotationDegrees: 0,
+      record: {
+        status: "rejected_coordinate_mismatch",
+        sourceCoordinateFrame: "basler_sensor_pixels",
+        targetCoordinateFrame: "normalized_card_portrait_pixels",
+        clockwiseRotationDegrees: null,
+        source: "unavailable",
+      },
+      warnings: [
+        "Directional normal/relief output was suppressed because channel evidence mixed Basler sensor and normalized-card coordinate frames.",
+      ],
+    };
+  }
+
+  if (usesNormalizedCardCoordinates) {
+    const transformIsUsable =
+      transform?.sourceCoordinateFrame === "basler_sensor_pixels" &&
+      transform.targetCoordinateFrame === "normalized_card_portrait_pixels" &&
+      transform.source === "authoritative_card_normalization" &&
+      Number.isFinite(transform.clockwiseRotationDegrees);
+    if (!transformIsUsable) {
+      return {
+        usable: false,
+        imageCoordinateFrame: "normalized_card_portrait_pixels",
+        lightVectorCoordinateFrame: "basler_sensor_pixels",
+        clockwiseRotationDegrees: 0,
+        record: {
+          status: "rejected_missing_authoritative_card_deskew",
+          sourceCoordinateFrame: "basler_sensor_pixels",
+          targetCoordinateFrame: "normalized_card_portrait_pixels",
+          clockwiseRotationDegrees: null,
+          source: "unavailable",
+        },
+        warnings: [
+          "Directional normal/relief output was suppressed because normalized-card channel images did not include the authoritative card deskew rotation needed to map sensor-coordinate light vectors.",
+        ],
+      };
+    }
+    return {
+      usable: true,
+      imageCoordinateFrame: "normalized_card_portrait_pixels",
+      lightVectorCoordinateFrame: "normalized_card_portrait_pixels",
+      clockwiseRotationDegrees: transform.clockwiseRotationDegrees,
+      record: {
+        status: "applied_authoritative_card_deskew",
+        sourceCoordinateFrame: "basler_sensor_pixels",
+        targetCoordinateFrame: "normalized_card_portrait_pixels",
+        clockwiseRotationDegrees: roundMetric(transform.clockwiseRotationDegrees, 6),
+        source: "authoritative_card_normalization",
+      },
+      warnings: [
+        `Approximate channel vectors were rotated ${roundMetric(transform.clockwiseRotationDegrees, 3)} degrees clockwise from basler_sensor_pixels into normalized_card_portrait_pixels using the authoritative card normalization deskew. Physical Leimac channel direction mapping remains unvalidated.`,
+      ],
+    };
+  }
+
+  if (transform) {
+    return {
+      usable: false,
+      imageCoordinateFrame: "ai_grader_card_portrait_display",
+      lightVectorCoordinateFrame: "basler_sensor_pixels",
+      clockwiseRotationDegrees: 0,
+      record: {
+        status: "rejected_coordinate_mismatch",
+        sourceCoordinateFrame: "basler_sensor_pixels",
+        targetCoordinateFrame: "basler_sensor_pixels",
+        clockwiseRotationDegrees: null,
+        source: "unavailable",
+      },
+      warnings: [
+        "Directional normal/relief output was suppressed because a normalized-card light-vector transform was supplied for legacy sensor-coordinate channel images.",
+      ],
+    };
+  }
+
+  return {
+    usable: true,
+    imageCoordinateFrame: "ai_grader_card_portrait_display",
+    lightVectorCoordinateFrame: "basler_sensor_pixels",
+    clockwiseRotationDegrees: 0,
+    record: {
+      status: "not_applied_legacy_sensor_coordinates",
+      sourceCoordinateFrame: "basler_sensor_pixels",
+      targetCoordinateFrame: "basler_sensor_pixels",
+      clockwiseRotationDegrees: 0,
+      source: "legacy_raw_sensor_coordinates",
+    },
+    warnings: [],
+  };
+}
+
+function imageInputCoordinateFrame(
+  image: LightDirectionCalibrationImageInput | undefined,
+): LightVectorCoordinateFrame {
+  return image?.analysisCoordinateFrame === "normalized_card_portrait_pixels"
+    ? "normalized_card_portrait_pixels"
+    : "basler_sensor_pixels";
+}
+
+function auxiliaryImageRegistration(input: {
+  label: "Dark control" | "Flat-field reference";
+  image?: LightDirectionCalibrationImageInput;
+  targetCoordinateFrame: LightVectorCoordinateFrame;
+  fileAvailable: boolean;
+  dimensionsMatch: boolean;
+}): LightDirectionAuxiliaryImageRegistration {
+  const inputCoordinateFrame = imageInputCoordinateFrame(input.image);
+  const base = {
+    inputCoordinateFrame,
+    targetCoordinateFrame: input.targetCoordinateFrame,
+  };
+  if (!input.fileAvailable) {
+    return {
+      ...base,
+      status: "not_applied_image_unavailable",
+      geometricallyRegistered: false,
+      note: `${input.label} was not applied because its image was unavailable.`,
+    };
+  }
+  if (inputCoordinateFrame !== input.targetCoordinateFrame) {
+    return {
+      ...base,
+      status: "not_applied_coordinate_mismatch",
+      geometricallyRegistered: false,
+      note: `${input.label} was not applied because ${inputCoordinateFrame} evidence was not geometrically registered into ${input.targetCoordinateFrame}.`,
+    };
+  }
+  if (!input.dimensionsMatch) {
+    return {
+      ...base,
+      status: "not_applied_dimension_mismatch",
+      geometricallyRegistered: false,
+      note: `${input.label} was not applied because its dimensions did not match the analysis images.`,
+    };
+  }
+  return {
+    ...base,
+      status: "registered_same_coordinate_frame",
+      geometricallyRegistered: true,
+      note: `${input.label} is registered in ${input.targetCoordinateFrame} without a coordinate-frame mismatch.`,
   };
 }
 
@@ -241,6 +492,7 @@ async function writeArtifact(input: {
   rawSourceFilePath: string;
   rawSourceSha256?: string;
   displayTransform?: FixedRigDisplayTransform;
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
   sourceInputPaths: string[];
   note: string;
   buffer: Uint8Array | Buffer;
@@ -267,6 +519,7 @@ async function writeArtifact(input: {
     rawSourceFilePath: input.rawSourceFilePath,
     ...(input.rawSourceSha256 ? { rawSourceSha256: input.rawSourceSha256 } : {}),
     rawCoordinateFrame: "basler_sensor_pixels",
+    ...(input.analysisCoordinateFrame ? { analysisCoordinateFrame: input.analysisCoordinateFrame } : {}),
     displayTransform: input.displayTransform ?? "none",
     displayCoordinateFrame: "ai_grader_card_portrait_display",
     rawEvidenceUnmodified: true,
@@ -358,6 +611,7 @@ function buildProxyBuffers(input: {
   width: number;
   height: number;
   cardRect: Rect;
+  lightVectorClockwiseRotationDegrees: number;
 }): {
   normal: Uint8Array;
   gradient: Uint8Array;
@@ -385,7 +639,10 @@ function buildProxyBuffers(input: {
     let localY = 0;
     values.forEach((value, entryIndex) => {
       const channel = input.normalizedChannels[entryIndex]?.channel ?? entryIndex + 1;
-      const { vector } = directionVectorForChannel(channel);
+      const { vector } = mapApproximateLeimacChannelDirection(
+        channel,
+        input.lightVectorClockwiseRotationDegrees,
+      );
       const centered = value - mean;
       localX += centered * vector.x;
       localY += centered * vector.y;
@@ -466,6 +723,7 @@ function buildProfile(input: {
   leimacModel?: string;
   cameraModel?: string;
   computedProxy: boolean;
+  lightVectorCoordinates: ResolvedLightVectorCoordinates;
 }): LeimacLightDirectionCalibrationProfile {
   const byChannel = new Map(input.balance.map((entry) => [entry.channel, entry]));
   return {
@@ -477,23 +735,50 @@ function buildProfile(input: {
     channelCount: 8,
     channelMetadata: Array.from({ length: 8 }, (_, index) => {
       const channelNumber = index + 1;
-      const direction = directionVectorForChannel(channelNumber);
+      const sourceDirection = sourceDirectionVectorForChannel(channelNumber);
+      const direction = input.lightVectorCoordinates.usable
+        ? mapApproximateLeimacChannelDirection(
+            channelNumber,
+            input.lightVectorCoordinates.clockwiseRotationDegrees,
+          )
+        : undefined;
       return {
         channelNumber,
         label: `Channel ${channelNumber}`,
-        physicalDirectionStatus: "approximate_directional_model",
-        approximateAngleDegrees: direction.angleDegrees,
-        lightVector: direction.vector,
+        physicalDirectionStatus: input.lightVectorCoordinates.usable
+          ? "approximate_directional_model"
+          : "unknown",
+        ...(direction
+          ? {
+              approximateAngleDegrees: direction.angleDegrees,
+              lightVector: direction.vector,
+            }
+          : {}),
+        sourceApproximateAngleDegrees: sourceDirection.angleDegrees,
+        sourceLightVector: sourceDirection.vector,
+        lightVectorCoordinateFrame: input.lightVectorCoordinates.lightVectorCoordinateFrame,
+        coordinateTransformAppliedDegrees: input.lightVectorCoordinates.usable
+          ? roundMetric(input.lightVectorCoordinates.clockwiseRotationDegrees, 6)
+          : null,
         intensityScale: byChannel.get(channelNumber)?.recommendedIntensityScale ?? 1,
         calibrationSource: "synthetic_even_8_channel_ring_model_unvalidated",
-        notes:
-          "Approximate even-ring model for preliminary normal/relief proxy only. Physical Leimac channel direction mapping is not certified.",
+        notes: input.lightVectorCoordinates.usable
+          ? "Approximate even-ring model for preliminary normal/relief proxy only. The vector is expressed in the persisted lightVectorCoordinateFrame; physical Leimac channel direction mapping is not certified."
+          : "Approximate sensor-coordinate vector could not be mapped coherently to the channel image coordinate frame; directional output is suppressed.",
       };
     }),
-    physicalDirectionMappingStatus: "approximate_directional_model",
+    lightVectorCoordinateFrame: input.lightVectorCoordinates.lightVectorCoordinateFrame,
+    lightVectorCoordinateTransform: input.lightVectorCoordinates.record,
+    physicalDirectionMappingStatus: input.lightVectorCoordinates.usable
+      ? "approximate_directional_model"
+      : "rejected",
     intensityBalancingStatus: input.balance.length ? "intensity_balanced" : "unknown",
     flatFieldStatus: "unknown",
-    normalMapStatus: input.computedProxy ? "preliminary_normal_proxy" : "unknown",
+    normalMapStatus: input.computedProxy
+      ? "preliminary_normal_proxy"
+      : input.lightVectorCoordinates.usable
+        ? "unknown"
+        : "rejected",
     createdAt: input.createdAt,
     sourceEvidenceRefs: input.sourceEvidenceRefs,
     warnings: input.warnings,
@@ -510,10 +795,30 @@ export async function buildLightDirectionCalibrationArtifacts(
   const profilePath = path.join(input.outputDir, `${input.side}-light-direction-profile.json`);
   const resultPath = path.join(input.outputDir, `${input.side}-normal-relief-proxy-v0.json`);
   const createdAt = new Date().toISOString();
+  const lightVectorCoordinates = resolveLightVectorCoordinates(input);
+  const analysisTargetCoordinateFrame: LightVectorCoordinateFrame =
+    lightVectorCoordinates.imageCoordinateFrame === "normalized_card_portrait_pixels"
+      ? "normalized_card_portrait_pixels"
+      : "basler_sensor_pixels";
   if (!firstPath || !(await fileExists(firstPath))) {
+    const darkControlRegistration = auxiliaryImageRegistration({
+      label: "Dark control",
+      image: input.darkControl,
+      targetCoordinateFrame: analysisTargetCoordinateFrame,
+      fileAvailable: false,
+      dimensionsMatch: false,
+    });
+    const flatFieldRegistration = auxiliaryImageRegistration({
+      label: "Flat-field reference",
+      image: input.flatReferenceImage,
+      targetCoordinateFrame: analysisTargetCoordinateFrame,
+      fileAvailable: false,
+      dimensionsMatch: false,
+    });
     const warnings = [
       "Light direction calibration status is insufficient_evidence because channel image files were unavailable.",
       "No certified photometric stereo claim is made.",
+      ...lightVectorCoordinates.warnings,
       ...(input.inheritedWarnings ?? []),
     ];
     const profile = buildProfile({
@@ -526,6 +831,7 @@ export async function buildLightDirectionCalibrationArtifacts(
       leimacModel: input.leimacModel,
       cameraModel: input.cameraModel,
       computedProxy: false,
+      lightVectorCoordinates,
     });
     const result: FixedRigLightDirectionCalibrationResult = {
       version: PRELIMINARY_NORMAL_RELIEF_PROXY_VERSION,
@@ -541,8 +847,13 @@ export async function buildLightDirectionCalibrationArtifacts(
         darkSubtraction: false,
         flatFieldCorrection: false,
         fallbackNormalization: true,
+        fallbackNormalizationReason: flatFieldRegistration.note,
         cardRect: { x: 0, y: 0, width: 0, height: 0 },
-        coordinateFrame: "ai_grader_card_portrait_display",
+        coordinateFrame: lightVectorCoordinates.imageCoordinateFrame,
+        lightVectorCoordinateFrame: lightVectorCoordinates.lightVectorCoordinateFrame,
+        lightVectorCoordinateTransform: lightVectorCoordinates.record,
+        darkControlRegistration,
+        flatFieldRegistration,
       },
       confidence: { score: 0, band: "low", warnings },
       warnings,
@@ -560,16 +871,31 @@ export async function buildLightDirectionCalibrationArtifacts(
     const loaded = await loadGrayscale(filePath as string, { width: base.width, height: base.height });
     channels.push({ ...loaded, channel: entry.channel, stats: entry.stats });
   }
-  const dark =
-    (await fileExists(input.darkControl?.outputFilePath)) && input.darkControl?.imageWidth === base.width && input.darkControl?.imageHeight === base.height
-      ? await loadGrayscale(input.darkControl.outputFilePath as string, { width: base.width, height: base.height })
-      : undefined;
-  const flatReference =
-    (await fileExists(input.flatReferenceImage?.outputFilePath)) &&
+  const darkFileAvailable = await fileExists(input.darkControl?.outputFilePath);
+  const darkDimensionsMatch =
+    input.darkControl?.imageWidth === base.width && input.darkControl?.imageHeight === base.height;
+  const darkControlRegistration = auxiliaryImageRegistration({
+    label: "Dark control",
+    image: input.darkControl,
+    targetCoordinateFrame: analysisTargetCoordinateFrame,
+    fileAvailable: darkFileAvailable,
+    dimensionsMatch: darkDimensionsMatch,
+  });
+  const dark = darkControlRegistration.status === "registered_same_coordinate_frame"
+    ? await loadGrayscale(input.darkControl?.outputFilePath as string, { width: base.width, height: base.height })
+    : undefined;
+  const flatFileAvailable = await fileExists(input.flatReferenceImage?.outputFilePath);
+  const flatDimensionsMatch =
     input.flatReferenceImage?.imageWidth === base.width &&
-    input.flatReferenceImage?.imageHeight === base.height
-      ? await loadGrayscale(input.flatReferenceImage.outputFilePath as string, { width: base.width, height: base.height })
-      : undefined;
+    input.flatReferenceImage?.imageHeight === base.height;
+  const flatFieldRegistration = auxiliaryImageRegistration({
+    label: "Flat-field reference",
+    image: input.flatReferenceImage,
+    targetCoordinateFrame: analysisTargetCoordinateFrame,
+    fileAvailable: flatFileAvailable,
+    dimensionsMatch: flatDimensionsMatch,
+  });
+  const flatReferenceReady = flatFieldRegistration.status === "registered_same_coordinate_frame";
   const cardRect = cardRectForAnalysis(base.width, base.height, input.roiDefinitions);
   const sourceInputPaths = channels.map((entry) => entry.filePath);
   const transform = input.trueView?.displayTransform ?? orderedInputs.find((entry) => entry.displayImage?.displayTransform)?.displayImage?.displayTransform ?? "none";
@@ -589,6 +915,9 @@ export async function buildLightDirectionCalibrationArtifacts(
         rawSourceFilePath: trueViewPath,
         rawSourceSha256: input.trueView?.rawSourceSha256,
         displayTransform: transform,
+        ...(lightVectorCoordinates.imageCoordinateFrame === "normalized_card_portrait_pixels"
+          ? { analysisCoordinateFrame: "normalized_card_portrait_pixels" as const }
+          : {}),
         sourceInputPaths,
         note:
           "Intensity-balanced normalized Leimac channel image for preliminary light-direction calibration. This is derived evidence and not a raw capture.",
@@ -604,19 +933,25 @@ export async function buildLightDirectionCalibrationArtifacts(
   const warnings = [
     "Light-direction profile uses an approximate unvalidated even-ring model; physical Leimac channel directions are not certified.",
     "Preliminary normal/relief proxy is not certified photometric stereo and is not a final surface grade.",
-    ...(dark ? [] : ["Dark subtraction input was unavailable in matching portrait coordinates; fallback channel/card statistics were used."]),
-    ...(flatReference ? [] : ["Flat-field reference is unavailable; fallback normalization from current evidence was used."]),
+    ...lightVectorCoordinates.warnings,
+    ...(dark
+      ? []
+      : [`Dark subtraction input was unavailable in matching analysis coordinates. ${darkControlRegistration.note} Current channel/card statistics were retained without dark subtraction.`]),
+    ...(flatReferenceReady
+      ? ["Flat-field reference is registered and reference-ready, but the V0 model does not apply pixelwise flat-field correction; current channel intensity balancing remains in use."]
+      : [`Flat-field reference is unavailable in matching analysis coordinates. ${flatFieldRegistration.note} Intensity balancing used current channel evidence without flat-field correction.`]),
     ...(channels.length < 8 ? ["Complete 8-channel evidence is preferred for light-direction calibration prep."] : []),
     ...channelBalance.flatMap((entry) => entry.warnings),
     ...(input.inheritedWarnings ?? []),
   ];
-  const computedProxy = channels.length >= 4;
+  const computedProxy = channels.length >= 4 && lightVectorCoordinates.usable;
   const proxy = computedProxy
     ? buildProxyBuffers({
         normalizedChannels: normalizedData,
         width: base.width,
         height: base.height,
         cardRect,
+        lightVectorClockwiseRotationDegrees: lightVectorCoordinates.clockwiseRotationDegrees,
       })
     : undefined;
   const normalProxy = proxy
@@ -629,8 +964,11 @@ export async function buildLightDirectionCalibrationArtifacts(
         rawSourceFilePath: trueViewPath,
         rawSourceSha256: input.trueView?.rawSourceSha256,
         displayTransform: transform,
+        ...(lightVectorCoordinates.imageCoordinateFrame === "normalized_card_portrait_pixels"
+          ? { analysisCoordinateFrame: "normalized_card_portrait_pixels" as const }
+          : {}),
         sourceInputPaths,
-        note: "Preliminary normal/relief proxy - approximate directional model. Not certified photometric stereo.",
+        note: `Preliminary normal/relief proxy - approximate directional model in ${lightVectorCoordinates.lightVectorCoordinateFrame}. Not certified photometric stereo.`,
         buffer: proxy.normal,
         channels: 3,
       })
@@ -645,6 +983,9 @@ export async function buildLightDirectionCalibrationArtifacts(
         rawSourceFilePath: trueViewPath,
         rawSourceSha256: input.trueView?.rawSourceSha256,
         displayTransform: transform,
+        ...(lightVectorCoordinates.imageCoordinateFrame === "normalized_card_portrait_pixels"
+          ? { analysisCoordinateFrame: "normalized_card_portrait_pixels" as const }
+          : {}),
         sourceInputPaths,
         note: "Directional gradient magnitude proxy from normalized 8-channel evidence. Diagnostic only.",
         buffer: proxy.gradient,
@@ -661,8 +1002,11 @@ export async function buildLightDirectionCalibrationArtifacts(
         rawSourceFilePath: trueViewPath,
         rawSourceSha256: input.trueView?.rawSourceSha256,
         displayTransform: transform,
+        ...(lightVectorCoordinates.imageCoordinateFrame === "normalized_card_portrait_pixels"
+          ? { analysisCoordinateFrame: "normalized_card_portrait_pixels" as const }
+          : {}),
         sourceInputPaths,
-        note: "Preliminary relief proxy from approximate directional model. Not a certified depth/normal map.",
+        note: `Preliminary relief proxy from approximate directional model in ${lightVectorCoordinates.lightVectorCoordinateFrame}. Not a certified depth/normal map.`,
         buffer: proxy.relief,
         channels: 3,
       })
@@ -677,6 +1021,9 @@ export async function buildLightDirectionCalibrationArtifacts(
         rawSourceFilePath: trueViewPath,
         rawSourceSha256: input.trueView?.rawSourceSha256,
         displayTransform: transform,
+        ...(lightVectorCoordinates.imageCoordinateFrame === "normalized_card_portrait_pixels"
+          ? { analysisCoordinateFrame: "normalized_card_portrait_pixels" as const }
+          : {}),
         sourceInputPaths,
         note: "Confidence map for preliminary normal/relief proxy. It highlights evidence-strength risk, not a defect by itself.",
         buffer: proxy.confidence,
@@ -686,7 +1033,7 @@ export async function buildLightDirectionCalibrationArtifacts(
   const clippingPenalty = (proxy?.clippingFraction ?? 0) > 0.1 ? 0.28 : (proxy?.clippingFraction ?? 0) > 0.02 ? 0.14 : 0;
   const darkPenalty = (proxy?.darkFraction ?? 0) > 0.35 ? 0.14 : 0;
   const channelPenalty = channels.length < 8 ? 0.18 : 0;
-  const fallbackPenalty = flatReference ? 0 : 0.1;
+  const fallbackPenalty = 0.1;
   const score = computedProxy ? clamp(0.8 - clippingPenalty - darkPenalty - channelPenalty - fallbackPenalty, 0.08, 0.88) : 0;
   const profile = buildProfile({
     side: input.side,
@@ -698,8 +1045,9 @@ export async function buildLightDirectionCalibrationArtifacts(
     leimacModel: input.leimacModel,
     cameraModel: input.cameraModel,
     computedProxy,
+    lightVectorCoordinates,
   });
-  profile.flatFieldStatus = flatReference ? "flat_field_reference_ready" : "unknown";
+  profile.flatFieldStatus = flatReferenceReady ? "flat_field_reference_ready" : "unknown";
   const result: FixedRigLightDirectionCalibrationResult = {
     version: PRELIMINARY_NORMAL_RELIEF_PROXY_VERSION,
     status: computedProxy ? "computed_diagnostic" : "insufficient_evidence",
@@ -716,15 +1064,22 @@ export async function buildLightDirectionCalibrationArtifacts(
     normalization: {
       method: "dark_subtracted_flat_field_optional_intensity_balanced_v0",
       darkSubtraction: Boolean(dark),
-      flatFieldCorrection: Boolean(flatReference),
-      fallbackNormalization: !flatReference,
+      flatFieldCorrection: false,
+      fallbackNormalization: true,
+      fallbackNormalizationReason: flatReferenceReady
+        ? "Flat-field reference is registered and reference-ready, but V0 does not apply pixelwise flat-field correction."
+        : flatFieldRegistration.note,
       cardRect,
-      coordinateFrame: "ai_grader_card_portrait_display",
+      coordinateFrame: lightVectorCoordinates.imageCoordinateFrame,
+      lightVectorCoordinateFrame: lightVectorCoordinates.lightVectorCoordinateFrame,
+      lightVectorCoordinateTransform: lightVectorCoordinates.record,
+      darkControlRegistration,
+      flatFieldRegistration,
     },
     confidence: {
       score: roundMetric(score, 3),
       band: confidenceBand(score),
-      warnings: warnings.filter((warning) => /clipping|underlit|flat-field|fallback|Complete 8-channel|certified/i.test(warning)),
+      warnings: warnings.filter((warning) => /clipping|underlit|flat-field|fallback|Complete 8-channel|certified|coordinate|deskew|suppressed/i.test(warning)),
     },
     warnings,
   };

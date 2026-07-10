@@ -378,6 +378,7 @@ test("preview geometry exposes exact operator states and strips local/private me
     back: {
       side: "back",
       placementState: "adjust_card",
+      adjustmentReason: "manual_capture_selected",
       geometrySource: "manual_override",
       captureMode: "manual_capture",
       confidenceBasis: "operator_confirmation",
@@ -394,6 +395,7 @@ test("preview geometry exposes exact operator states and strips local/private me
 
   assert.equal(safe?.front?.placementState, "ready");
   assert.equal(safe?.back?.placementState, "adjust_card");
+  assert.equal(safe?.back?.adjustmentReason, "manual_capture_selected");
   assert.equal(safe?.back?.geometrySource, "manual_override");
   assert.equal(safe?.back?.manualOverrideUsed, true);
   assert.equal(safe?.front?.sourceFrameId, undefined);
@@ -3536,7 +3538,7 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("card-geometry-badge"), true);
   assert.equal(stationSource.includes("aiGraderCardPlacementLabel"), true);
   assert.equal(stationSource.includes("sanitizeAiGraderPreviewCardGeometryBySide"), true);
-  assert.equal(stationSource.includes("window.setInterval(() => void refreshGeometry(), 600)"), true);
+  assert.equal(stationSource.includes("window.setInterval(() => void refreshGeometry(), PREVIEW_GEOMETRY_STATUS_POLL_MS)"), true);
   assert.equal(stationSource.includes("reportOverlayTemplateRect"), true);
   assert.equal(stationSource.includes("containedImageFrame(cameraFrameSize, reportOverlayFrameSize)"), true);
   assert.equal(stationSource.includes("#ffd400"), true);
@@ -3679,7 +3681,7 @@ test("browser station bridge client checks local bridge health without station o
     assert.equal((init?.headers as Record<string, string> | undefined)?.["x-ai-grader-station-token"], undefined);
     return new Response(JSON.stringify({
       ok: true,
-      bridgeVersion: "ai-grader-local-station-bridge-v0.2",
+      bridgeVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
       mode: "real",
       localOnly: true,
       tokenRequired: true,
@@ -3694,6 +3696,23 @@ test("browser station bridge client checks local bridge health without station o
   assert.equal(health.localOnly, true);
   assert.equal(health.pairingAvailable, true);
   assert.equal(health.allowedOrigins.includes("https://collect.tenkings.co"), true);
+});
+
+test("browser station bridge health fails explicitly when the running helper contract is stale", async () => {
+  const staleFetch: typeof fetch = async () => new Response(JSON.stringify({
+    ok: true,
+    bridgeVersion: "ai-grader-local-station-bridge-v0.4",
+    mode: "real",
+    localOnly: true,
+    tokenRequired: true,
+    hardwareActionsEnabled: true,
+    allowedOrigins: ["https://collect.tenkings.co"],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  await assert.rejects(
+    () => fetchAiGraderStationBridgeHealth({ baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL }, staleFetch),
+    new RegExp(`update/restart required.*${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}.*v0\\.4`, "i"),
+  );
 });
 
 test("browser station bridge pairing exchanges a local pairing code for browser-local station token only", async () => {
@@ -3747,7 +3766,7 @@ test("Dell station launcher opens pairing URL in a stable Chrome profile", () =>
   assert.equal(launcherSource.includes("pairingCodeRedacted = $true"), true);
 });
 
-test("station UI keeps automatic capture on Ready detected geometry and requires explicit manual overlay confirmation", () => {
+test("station UI makes detected geometry the live guide while keeping Ready and manual capture explicit", () => {
   const stationPath = [
     path.join(process.cwd(), "pages", "ai-grader", "station.tsx"),
     path.join(process.cwd(), "frontend", "nextjs-app", "pages", "ai-grader", "station.tsx"),
@@ -3756,16 +3775,51 @@ test("station UI keeps automatic capture on Ready detected geometry and requires
   const source = fs.readFileSync(stationPath, "utf8");
   assert.match(source, /geometrySource === "detected"/);
   assert.match(source, /detectionUsed === true/);
+  assert.match(source, /cardPlacementState === "ready"/);
+  const readyGateSource = source.slice(
+    source.indexOf("const detectedGeometryReady"),
+    source.indexOf("const manualOverlayAvailable"),
+  );
+  assert.doesNotMatch(readyGateSource, /center|withinCenter|withinSkew|maxSkew/i);
+  assert.match(source, /!detectedGeometryReady/);
   assert.match(source, /buildAiGraderDetectedGeometryCaptureRequest/);
   assert.match(source, /buildAiGraderManualGeometryCaptureRequest/);
   assert.match(source, /coordinateFrame: "portrait_preview_pixels"/);
+  assert.match(source, /report-framing-overlay\$\{detectedGeometryDominant \? " geometry-dominant"/);
+  assert.match(source, /card-geometry-corner-bracket/);
+  assert.match(source, /card-geometry-edge-midpoint/);
+  assert.match(source, /card-geometry-center-axis/);
+  assert.match(source, /Edges found\. \$\{cardAdjustmentGuidance\}/);
+  assert.match(source, /detected card size is outside the grading-safe camera range/);
+  assert.match(source, /base-plate color with the strongest contrast/);
+  assert.match(source, /Edges locked\. Off-center placement and ordinary rotation will be corrected/);
+  assert.match(source, /printed top roughly toward the top/);
   assert.match(source, /Confirm Manual Capture/);
   assert.match(source, /Automatic geometry will not be claimed/);
   assert.match(source, /manualCaptureConfirmation\.side/);
   assert.match(source, /const canStartGrading =\s*!status\.captureFailure &&/);
+  assert.match(source, /const detectedGeometryFresh =/);
+  assert.match(source, /activeGeometryAgeMs <= PREVIEW_GEOMETRY_MAX_AGE_MS/);
   assert.match(source, /This capture session is terminal; select Start New Card to retry\./);
   assert.doesNotMatch(source, /Full Forensic is the fallback/);
   assert.doesNotMatch(source, /Cold Fallback/);
+});
+
+test("station geometry status polling targets 200 ms without overlapping loopback requests", () => {
+  const stationPath = [
+    path.join(process.cwd(), "pages", "ai-grader", "station.tsx"),
+    path.join(process.cwd(), "frontend", "nextjs-app", "pages", "ai-grader", "station.tsx"),
+  ].find((candidate) => fs.existsSync(candidate));
+  assert.ok(stationPath);
+  const source = fs.readFileSync(stationPath, "utf8");
+  assert.match(source, /const PREVIEW_GEOMETRY_STATUS_POLL_MS = 200;/);
+  assert.match(source, /if \(requestPending\) return;/);
+  assert.match(source, /requestPending = true;/);
+  assert.match(source, /requestPending = false;/);
+  assert.match(source, /setInterval\(\(\) => void refreshGeometry\(\), PREVIEW_GEOMETRY_STATUS_POLL_MS\)/);
+  assert.match(source, /A successful bridge poll is authoritative/);
+  assert.match(source, /return sanitized;/);
+  assert.doesNotMatch(source, /front: sanitized\.front \?\? current\?\.front/);
 });
 
 test("browser station client sends explicit profile, geometry, and rapid queue action bodies", async () => {

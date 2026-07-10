@@ -24,6 +24,7 @@ export interface SurfaceIntelligenceImageInput {
   rawSourceSha256?: string;
   imageWidth?: number;
   imageHeight?: number;
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
 }
 
 export interface SurfaceIntelligenceChannelInput {
@@ -44,6 +45,7 @@ export interface BuildPreliminarySurfaceIntelligenceInput {
   roiCrops?: Array<{ roiId?: string; outputFilePath?: string; displayRect?: { x: number; y: number; width: number; height: number } }>;
   quality?: Partial<FixedRigQualityMetrics>;
   inheritedWarnings?: string[];
+  registrationStatus?: "assumed_fixed_rig" | "normalized_geometry_transform";
 }
 
 interface LoadedImage {
@@ -731,6 +733,9 @@ export async function buildPreliminarySurfaceIntelligenceV0(
             imageHeight: entry.displayImage.imageHeight ?? base.height,
             rawSourceFilePath: entry.displayImage.rawSourceFilePath ?? entry.displayImage.outputFilePath,
             rawCoordinateFrame: "basler_sensor_pixels" as const,
+            ...(entry.displayImage.analysisCoordinateFrame
+              ? { analysisCoordinateFrame: entry.displayImage.analysisCoordinateFrame }
+              : {}),
             displayTransform: entry.displayImage.displayTransform ?? "none",
             displayCoordinateFrame: "ai_grader_card_portrait_display" as const,
             rawEvidenceUnmodified: true as const,
@@ -744,9 +749,11 @@ export async function buildPreliminarySurfaceIntelligenceV0(
     version: PRELIMINARY_SURFACE_INTELLIGENCE_VERSION,
     status: validChannels.length >= 2 ? "computed_diagnostic" : "insufficient_evidence",
     registration: {
-      status: "assumed_fixed_rig",
+      status: input.registrationStatus ?? "assumed_fixed_rig",
       note:
-        "Per-channel portrait images are assumed aligned by the fixed fixture; V0 does not compute calibrated photometric light directions or homography.",
+        input.registrationStatus === "normalized_geometry_transform"
+          ? "All channel images share the authoritative full-resolution all-on geometry transform in normalized_card_portrait_pixels."
+          : "Per-channel portrait images are assumed aligned by the fixed fixture; V0 does not compute calibrated photometric light directions or homography.",
     },
     perChannelStats,
     heatmap,

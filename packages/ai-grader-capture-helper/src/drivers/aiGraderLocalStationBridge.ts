@@ -64,14 +64,20 @@ import {
   type AiGraderCaptureTriggerMode,
 } from "./aiGraderCaptureTiming";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.4";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.5";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
 const PREVIEW_CAMERA_SETTLE_MS = 350;
 const LIVE_LIGHTING_WATCHDOG_MS = 15000;
-const PREVIEW_GEOMETRY_THROTTLE_MS = 500;
+// The Basler preview runs at roughly 4-5 fps on the Dell. Geometry analysis is
+// latest-frame-only, so a 125 ms cadence can inspect every delivered frame
+// without building a queue while avoiding the former fixed half-second lag.
+const PREVIEW_GEOMETRY_THROTTLE_MS = 125;
+const PREVIEW_GEOMETRY_MAX_AGE_MS = 2000;
+const CAPTURE_TRIGGER_MAX_ACTION_DELAY_MS = 10_000;
 const PREVIEW_JPEG_BUFFER_LIMIT_BYTES = 12 * 1024 * 1024;
+const PREVIEW_MJPEG_HEADER_BUFFER_LIMIT_BYTES = 8 * 1024;
 
 export type AiGraderLocalStationBridgeMode = "mock" | "real";
 
@@ -454,7 +460,7 @@ export interface AiGraderLocalStationBridgeManifest {
   }>;
   captureFailure?: {
     side: AiGraderWarmRunnerSide;
-    stage: "warm_capture";
+    stage: "warm_capture" | "warm_processing";
     message: string;
     at: string;
     retryRequired: true;
@@ -631,11 +637,14 @@ export interface AiGraderLocalStationPreviewStatus {
       latestFramePending: boolean;
       framesAnalyzed: number;
       framesDroppedAsStale: number;
+      lastDurationMs?: number;
+      lastFrameCapturedAt?: string;
+      lastFrameTimestampSource?: "preview_capture_header" | "bridge_received";
       lastStartedAt?: string;
       lastCompletedAt?: string;
       lastError?: string;
     };
-    manualOverlayFallbackAvailable: true;
+    explicitManualOverlayAvailable: true;
     previewFramesPersisted: false;
   };
   safety: {
@@ -973,7 +982,7 @@ function defaultPreviewGeometryStatus(config: Pick<AiGraderLocalStationBridgeCon
       framesAnalyzed: 0,
       framesDroppedAsStale: 0,
     },
-    manualOverlayFallbackAvailable: true,
+    explicitManualOverlayAvailable: true,
     previewFramesPersisted: false,
   };
 }
@@ -999,6 +1008,7 @@ function mockPreviewGeometry(side: CardGeometrySide, frameIndex: number, timesta
     version: "ten-kings-card-geometry-v1",
     side,
     placementState,
+    adjustmentReason: placementState === "ready" ? null : placementState === "adjust_card" ? "outside_frame" : "not_detected",
     geometrySource: detected ? "detected" : "none",
     captureMode: detected ? "automatic_detection" : "none",
     confidenceBasis: detected ? "automatic_detection" : "none",
@@ -1014,6 +1024,11 @@ function mockPreviewGeometry(side: CardGeometrySide, frameIndex: number, timesta
     sourceFrameId: `preview-${side}-${frameIndex}`,
     timestamp,
     image: { width: 900, height: 1260, coordinateFrame: "source_image_pixels" },
+    semanticOrientation: {
+      canonicalOrientation: "portrait",
+      basis: "operator_top_toward_preview_top",
+      contentUprightVerified: false,
+    },
     placement: {
       ...(detected ? {
         centerOffsetPixels: ready
@@ -1026,9 +1041,11 @@ function mockPreviewGeometry(side: CardGeometrySide, frameIndex: number, timesta
       } : {}),
       maxCenterOffsetInches: 0.5,
       maxSkewDegrees: 10,
+      maxNormalizationSkewDegrees: 35,
       minReadyConfidence: 0.72,
       withinCenterTolerance: ready,
       withinSkewTolerance: detected,
+      withinNormalizationSkewTolerance: detected,
       withinAspectTolerance: detected,
       withinFrame: ready,
       confidenceReady: detected,
@@ -1047,27 +1064,63 @@ function mockPreviewGeometry(side: CardGeometrySide, frameIndex: number, timesta
     warnings: placementState === "not_detected"
       ? ["Mock preview has no card candidate yet."]
       : placementState === "adjust_card"
-        ? ["Mock card is outside the configured close-enough center tolerance."]
+        ? ["Mock card is outside the safe visible-frame boundary."]
         : [],
   };
 }
 
+export interface AiGraderPreviewJpegFrame {
+  bytes: Buffer;
+  capturedAt?: string;
+  receivedAt: string;
+  frameIndex?: number;
+  timestampSource: "preview_capture_header" | "bridge_received";
+}
+
 export class AiGraderPreviewJpegFrameAssembler {
   private buffered = Buffer.alloc(0);
+  private pendingFrameMetadata?: Omit<AiGraderPreviewJpegFrame, "bytes">;
 
   get bufferedByteLength() {
     return this.buffered.length;
   }
 
   push(chunk: Buffer): Buffer[] {
+    return this.pushWithMetadata(chunk).map((frame) => frame.bytes);
+  }
+
+  pushWithMetadata(chunk: Buffer): AiGraderPreviewJpegFrame[] {
     if (!chunk.length) return [];
     this.buffered = this.buffered.length ? Buffer.concat([this.buffered, chunk]) : Buffer.from(chunk);
-    const frames: Buffer[] = [];
+    const frames: AiGraderPreviewJpegFrame[] = [];
     while (this.buffered.length) {
       const start = this.buffered.indexOf(Buffer.from([0xff, 0xd8]));
       if (start < 0) {
-        this.buffered = this.buffered.at(-1) === 0xff ? this.buffered.subarray(-1) : Buffer.alloc(0);
+        const text = this.buffered.toString("latin1");
+        const looksLikeMultipartHeader = text.includes("--") || /(?:Content-|X-AI-Grader-)/i.test(text);
+        this.buffered = looksLikeMultipartHeader
+          ? this.buffered.subarray(-PREVIEW_MJPEG_HEADER_BUFFER_LIMIT_BYTES)
+          : this.buffered.at(-1) === 0xff
+            ? this.buffered.subarray(-1)
+            : Buffer.alloc(0);
         break;
+      }
+      if (!this.pendingFrameMetadata) {
+        const header = start > 0 ? this.buffered.subarray(0, start).toString("latin1") : "";
+        const capturedAtValues = [...header.matchAll(/(?:^|\r?\n)X-AI-Grader-Captured-At:\s*([^\r\n]+)/gi)];
+        const frameIndexValues = [...header.matchAll(/(?:^|\r?\n)X-AI-Grader-Frame-Index:\s*(\d+)/gi)];
+        const capturedAtCandidate = capturedAtValues.at(-1)?.[1]?.trim();
+        const frameIndexCandidate = Number(frameIndexValues.at(-1)?.[1]);
+        const receivedAt = new Date().toISOString();
+        this.pendingFrameMetadata = {
+          receivedAt,
+          ...(capturedAtCandidate && Number.isFinite(Date.parse(capturedAtCandidate))
+            ? { capturedAt: capturedAtCandidate, timestampSource: "preview_capture_header" as const }
+            : { timestampSource: "bridge_received" as const }),
+          ...(Number.isSafeInteger(frameIndexCandidate) && frameIndexCandidate >= 0
+            ? { frameIndex: frameIndexCandidate }
+            : {}),
+        };
       }
       if (start > 0) this.buffered = this.buffered.subarray(start);
       const end = this.buffered.indexOf(Buffer.from([0xff, 0xd9]), 2);
@@ -1077,12 +1130,24 @@ export class AiGraderPreviewJpegFrameAssembler {
           this.buffered = nextStart > 0 && this.buffered.length - nextStart <= PREVIEW_JPEG_BUFFER_LIMIT_BYTES
             ? this.buffered.subarray(nextStart)
             : this.buffered.subarray(-1);
+          this.pendingFrameMetadata = this.buffered.length > 1
+            ? { receivedAt: new Date().toISOString(), timestampSource: "bridge_received" }
+            : undefined;
         }
         break;
       }
       const frameEnd = end + 2;
-      if (frameEnd <= PREVIEW_JPEG_BUFFER_LIMIT_BYTES) frames.push(Buffer.from(this.buffered.subarray(0, frameEnd)));
+      if (frameEnd <= PREVIEW_JPEG_BUFFER_LIMIT_BYTES) {
+        frames.push({
+          bytes: Buffer.from(this.buffered.subarray(0, frameEnd)),
+          ...(this.pendingFrameMetadata ?? {
+            receivedAt: new Date().toISOString(),
+            timestampSource: "bridge_received" as const,
+          }),
+        });
+      }
       this.buffered = this.buffered.subarray(frameEnd);
+      this.pendingFrameMetadata = undefined;
     }
     return frames;
   }
@@ -1154,7 +1219,7 @@ function validatedCaptureTriggerAt(value: string | undefined, actionReceivedAt: 
   if (typeof value !== "string" || !Number.isFinite(receivedMs)) return actionReceivedAt;
   const suppliedMs = Date.parse(value);
   if (!Number.isFinite(suppliedMs)) return actionReceivedAt;
-  if (suppliedMs < receivedMs - 60_000 || suppliedMs > receivedMs) return actionReceivedAt;
+  if (suppliedMs < receivedMs - CAPTURE_TRIGGER_MAX_ACTION_DELAY_MS || suppliedMs > receivedMs) return actionReceivedAt;
   if (new Date(suppliedMs).toISOString().slice(0, 10) !== new Date(receivedMs).toISOString().slice(0, 10)) return actionReceivedAt;
   return new Date(suppliedMs).toISOString();
 }
@@ -2230,7 +2295,15 @@ export class AiGraderLocalStationBridgeService {
   private reportWorker: Promise<void> = Promise.resolve();
   private queueWriteChain: Promise<void> = Promise.resolve();
   private activeQueueItemId?: string;
-  private previewGeometryPending?: { frame: Buffer; frameIndex: number; side: CardGeometrySide; sessionId?: string; epoch: number };
+  private previewGeometryPending?: {
+    frame: Buffer;
+    frameIndex: number;
+    frameCapturedAt: string;
+    frameTimestampSource: "preview_capture_header" | "bridge_received";
+    side: CardGeometrySide;
+    sessionId?: string;
+    epoch: number;
+  };
   private previewGeometryAnalysisInFlight = false;
   private previewGeometryTimer?: ReturnType<typeof setTimeout>;
   private previewGeometryLastStartedAtMs = 0;
@@ -2426,10 +2499,19 @@ export class AiGraderLocalStationBridgeService {
     const detectedPoints = detectedCorners
       ? [detectedCorners.topLeft, detectedCorners.topRight, detectedCorners.bottomRight, detectedCorners.bottomLeft]
       : [];
+    const decisionAtMs = Date.parse(timestamp);
+    const geometryAtMs = Date.parse(geometry?.timestamp ?? "");
+    const geometryAgeMs = decisionAtMs - geometryAtMs;
+    const geometryFresh = Number.isFinite(geometryAtMs)
+      && Number.isFinite(decisionAtMs)
+      && geometryAgeMs >= -250
+      && geometryAgeMs <= PREVIEW_GEOMETRY_MAX_AGE_MS;
     const validDetectedGeometry = placementState === "ready"
+      && geometry?.side === side
       && geometry?.geometrySource === "detected"
       && geometry.detectionUsed === true
       && geometry.manualOverrideUsed !== true
+      && geometryFresh
       && detectedPoints.length === 4
       && detectedPoints.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
       && Boolean(geometry.boundingBox)
@@ -2443,7 +2525,10 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("AI Grader auto-capture cannot use manual_capture; wait for a Ready detected-geometry state.");
     }
     if (requestedMode === "detected_geometry" && !validDetectedGeometry) {
-      throw new Error(`AI Grader ${side} capture requires a valid Ready detected-geometry state; current state is ${placementState}. Use an explicit operator manual_capture action with a confirmed overlay boundary.`);
+      const freshnessDetail = geometry && !geometryFresh
+        ? ` The latest detected frame is stale (${Number.isFinite(geometryAgeMs) ? Math.max(0, Math.round(geometryAgeMs)) : "unknown"} ms old); wait for a fresh live outline.`
+        : "";
+      throw new Error(`AI Grader ${side} capture requires a fresh, valid Ready detected-geometry state; current state is ${placementState}.${freshnessDetail} Use an explicit operator manual_capture action with a confirmed overlay boundary.`);
     }
     if (requestedMode === "manual_capture" && triggerMode !== "operator") {
       throw new Error("AI Grader manual_capture requires an explicit operator capture action.");
@@ -2554,13 +2639,20 @@ export class AiGraderLocalStationBridgeService {
     }
   }
 
-  private queuePreviewGeometryAnalysis(frame: Buffer, frameIndex: number) {
+  private queuePreviewGeometryAnalysis(
+    frame: Buffer,
+    frameIndex: number,
+    frameCapturedAt: string,
+    frameTimestampSource: "preview_capture_header" | "bridge_received"
+  ) {
     const side = activePreviewGeometrySide(this.manifest.currentStep);
     const current = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
     const stalePending = Boolean(this.previewGeometryPending);
     this.previewGeometryPending = {
       frame,
       frameIndex,
+      frameCapturedAt,
+      frameTimestampSource,
       side,
       sessionId: this.manifest.sessionId,
       epoch: this.previewGeometryEpoch,
@@ -2611,9 +2703,10 @@ export class AiGraderLocalStationBridgeService {
       side: pending.side,
       sourceImageId: `preview-${pending.side}`,
       sourceFrameId: `preview-${pending.side}-${pending.frameIndex}`,
-      timestamp: startedAt,
+      timestamp: pending.frameCapturedAt,
     }).then((geometry) => {
       if (pending.epoch !== this.previewGeometryEpoch || pending.sessionId !== this.manifest.sessionId) return;
+      const completedAtMs = Date.now();
       const latest = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
       this.manifest.previewStatus.cardGeometry = {
         ...latest,
@@ -2623,7 +2716,10 @@ export class AiGraderLocalStationBridgeService {
           ...latest.analysis,
           inFlight: false,
           framesAnalyzed: latest.analysis.framesAnalyzed + 1,
-          lastCompletedAt: new Date().toISOString(),
+          lastDurationMs: Math.max(0, completedAtMs - this.previewGeometryLastStartedAtMs),
+          lastFrameCapturedAt: pending.frameCapturedAt,
+          lastFrameTimestampSource: pending.frameTimestampSource,
+          lastCompletedAt: new Date(completedAtMs).toISOString(),
           lastError: undefined,
         },
       };
@@ -2636,13 +2732,18 @@ export class AiGraderLocalStationBridgeService {
       }
     }).catch(() => {
       if (pending.epoch !== this.previewGeometryEpoch || pending.sessionId !== this.manifest.sessionId) return;
+      const completedAtMs = Date.now();
       const latest = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
+      // Never retain a prior Ready outline after a decoder/detector failure.
+      // The operator must see a fresh analyzed frame before capture can pass.
+      delete latest[pending.side];
       this.manifest.previewStatus.cardGeometry = {
         ...latest,
         analysis: {
           ...latest.analysis,
           inFlight: false,
-          lastCompletedAt: new Date().toISOString(),
+          lastDurationMs: Math.max(0, completedAtMs - this.previewGeometryLastStartedAtMs),
+          lastCompletedAt: new Date(completedAtMs).toISOString(),
           lastError: "Preview geometry analysis could not analyze the latest encoded frame.",
         },
       };
@@ -3850,6 +3951,7 @@ export class AiGraderLocalStationBridgeService {
         return processed;
       }).catch(async (error) => {
         const message = error instanceof Error ? error.message : `${side} warm artifact processing failed.`;
+        const failedAt = new Date().toISOString();
         this.markWarmPhase({
           id: `process_${side}_artifacts`,
           label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
@@ -3861,6 +3963,14 @@ export class AiGraderLocalStationBridgeService {
           detail: message,
         }, sessionManifest);
         sessionManifest.warmRunnerStatus.status = "failed";
+        sessionManifest.captureFailure = {
+          side,
+          stage: "warm_processing",
+          message,
+          at: failedAt,
+          retryRequired: true,
+          automaticColdFallbackAttempted: false,
+        };
         if (!sessionManifest.warnings.includes(message)) sessionManifest.warnings.push(message);
         this.transitionRapidWorkflow(sessionManifest, "failed", message);
         await writeSessionManifest(sessionManifest);
@@ -4151,10 +4261,15 @@ export class AiGraderLocalStationBridgeService {
           // Forward bytes immediately. JPEG assembly and Sharp analysis happen
           // afterward and are never awaited from the stream callback.
           res.write(chunk);
-          for (const frame of jpegFrames.push(chunk)) {
+          for (const frame of jpegFrames.pushWithMetadata(chunk)) {
             frameCount += 1;
             this.notePreviewFrame(frameCount);
-            this.queuePreviewGeometryAnalysis(frame, frameCount);
+            this.queuePreviewGeometryAnalysis(
+              frame.bytes,
+              frame.frameIndex ?? frameCount,
+              frame.capturedAt ?? frame.receivedAt,
+              frame.timestampSource
+            );
           }
         });
         child.stderr.on("data", (chunk: Buffer) => {
@@ -4619,12 +4734,13 @@ export class AiGraderLocalStationBridgeService {
 
     if (action === "capture-front") {
       assertFixtureVisible(this.manifest);
-      this.recordGeometryCaptureDecision(this.manifest, "front", request, now);
+      const captureTriggerAt = validatedCaptureTriggerAt(request.captureTriggerAt, now);
+      this.recordGeometryCaptureDecision(this.manifest, "front", request, captureTriggerAt);
       this.recordCaptureTimingEvent(this.manifest, {
         id: "capture_trigger",
         side: "front",
         triggerMode: parseCaptureTriggerMode(request.captureTriggerMode),
-        at: validatedCaptureTriggerAt(request.captureTriggerAt, now),
+        at: captureTriggerAt,
       });
       const result = await this.runWarmSideCapture("front");
       this.manifest.outputs.frontPackageDir = extractPackageDir(result.payload);
@@ -4648,12 +4764,13 @@ export class AiGraderLocalStationBridgeService {
     if (action === "capture-back") {
       assertFixtureVisible(this.manifest);
       assertFlipComplete(this.manifest);
-      this.recordGeometryCaptureDecision(this.manifest, "back", request, now);
+      const captureTriggerAt = validatedCaptureTriggerAt(request.captureTriggerAt, now);
+      this.recordGeometryCaptureDecision(this.manifest, "back", request, captureTriggerAt);
       this.recordCaptureTimingEvent(this.manifest, {
         id: "capture_trigger",
         side: "back",
         triggerMode: parseCaptureTriggerMode(request.captureTriggerMode),
-        at: validatedCaptureTriggerAt(request.captureTriggerAt, now),
+        at: captureTriggerAt,
       });
       const result = await this.runWarmSideCapture("back");
       this.manifest.outputs.backPackageDir = extractPackageDir(result.payload);

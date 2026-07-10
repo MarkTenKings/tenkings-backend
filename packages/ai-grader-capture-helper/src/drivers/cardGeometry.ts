@@ -6,9 +6,19 @@ import sharp from "sharp";
 export const CARD_GEOMETRY_VERSION = "ten-kings-card-geometry-v1";
 export const STANDARD_CARD_WIDTH_INCHES = 2.5;
 export const STANDARD_CARD_HEIGHT_INCHES = 3.5;
+export const NORMALIZED_CARD_WIDTH_PIXELS = 1200;
+export const NORMALIZED_CARD_HEIGHT_PIXELS = 1680;
 
 export type CardGeometrySide = "front" | "back";
 export type CardPlacementState = "not_detected" | "adjust_card" | "ready";
+export type CardGeometryAdjustmentReason =
+  | "not_detected"
+  | "outside_frame"
+  | "unsafe_scale"
+  | "rotate_top_up"
+  | "wrong_aspect"
+  | "low_confidence"
+  | "manual_capture_selected";
 export type CardGeometrySource = "detected" | "manual_override" | "none";
 export type CardGeometryCaptureMode = "automatic_detection" | "manual_capture" | "none";
 
@@ -33,7 +43,10 @@ export interface CardGeometryBoundingBox {
 
 export interface CardGeometryThresholds {
   maxCenterOffsetInches: number;
+  /** Preferred placement guide. Rotation beyond this may still be normalization-safe. */
   maxSkewDegrees: number;
+  /** Hard automatic-capture envelope for in-plane rotation correction. */
+  maxNormalizationSkewDegrees: number;
   minReadyConfidence: number;
   minDetectionConfidence: number;
   expectedAspectRatio: number;
@@ -45,12 +58,16 @@ export interface CardGeometryThresholds {
 }
 
 export interface CardGeometryDetectionDiagnostics {
-  method: "adaptive_border_contrast_connected_component_pca_v1";
+  method: "adaptive_border_contrast_connected_component_pca_v1" | "solid_plate_color_component_pca_v2";
   backgroundLuma: number;
+  backgroundColor?: { r: number; g: number; b: number };
+  backgroundNoise?: number;
   contrastRange: number;
   foregroundThreshold: number;
   foregroundPixelFraction: number;
+  morphologyRadius?: number;
   componentPixelFraction?: number;
+  rectangularFill?: number;
   measuredAspectRatio?: number;
   expectedAspectRatio: number;
   relativeAspectError?: number;
@@ -74,12 +91,16 @@ export interface CardGeometryPlacementEvaluation {
   estimatedPixelsPerInch?: number;
   maxCenterOffsetInches: number;
   maxSkewDegrees: number;
+  maxNormalizationSkewDegrees: number;
   minReadyConfidence: number;
   withinCenterTolerance: boolean;
   withinSkewTolerance: boolean;
+  withinNormalizationSkewTolerance: boolean;
   withinAspectTolerance: boolean;
+  withinCoverageTolerance?: boolean;
   withinFrame: boolean;
   confidenceReady: boolean;
+  cardCoverage?: number;
 }
 
 /**
@@ -90,6 +111,7 @@ export interface CardGeometryMetadata {
   version: typeof CARD_GEOMETRY_VERSION;
   side: CardGeometrySide;
   placementState: CardPlacementState;
+  adjustmentReason: CardGeometryAdjustmentReason | null;
   geometrySource: CardGeometrySource;
   captureMode: CardGeometryCaptureMode;
   /** Describes what the numeric confidence represents. */
@@ -110,6 +132,16 @@ export interface CardGeometryMetadata {
     width: number;
     height: number;
     coordinateFrame: "source_image_pixels";
+  };
+  /**
+   * Geometry can normalize portrait shape and in-plane rotation, but it cannot
+   * infer printed top versus bottom. The fixed-rig operator owns that semantic
+   * orientation before capture.
+   */
+  semanticOrientation: {
+    canonicalOrientation: "portrait";
+    basis: "operator_top_toward_preview_top";
+    contentUprightVerified: false;
   };
   placement: CardGeometryPlacementEvaluation;
   detection: CardGeometryDetectionDiagnostics;
@@ -148,7 +180,15 @@ export interface CardGeometryArtifactMetadata {
 
 export interface CardGeometryNormalizedArtifact extends CardGeometryArtifactMetadata {
   localOutputPath: string;
+  /** PNG compression is lossless; geometric normalization may still resample pixels. */
   lossless: true;
+  encodingLossless: true;
+  geometricResamplingApplied: boolean;
+  upscaled: boolean;
+  sourceCropWidth: number;
+  sourceCropHeight: number;
+  scaleX: number;
+  scaleY: number;
   coordinateFrame: "normalized_card_portrait_pixels";
   sourceSha256: string;
   deskewAppliedDegrees: number;
@@ -166,8 +206,14 @@ export interface DetectAndNormalizeCardImageInput extends DetectCardGeometryInpu
   pngCompressionLevel?: number;
 }
 
+export interface NormalizeCardImageWithGeometryInput {
+  sourceImagePath: string;
+  normalizedOutputPath: string;
+  geometry: CardGeometryMetadata;
+  pngCompressionLevel?: number;
+}
+
 interface PreparedImage {
-  orientedPng: Buffer;
   orientedWidth: number;
   orientedHeight: number;
   rawArtifact: CardGeometryArtifactMetadata;
@@ -207,12 +253,18 @@ interface DetectionAttempt {
 const DEFAULT_THRESHOLDS: CardGeometryThresholds = {
   maxCenterOffsetInches: 0.5,
   maxSkewDegrees: 10,
+  maxNormalizationSkewDegrees: 35,
   minReadyConfidence: 0.72,
   minDetectionConfidence: 0.35,
   expectedAspectRatio: STANDARD_CARD_HEIGHT_INCHES / STANDARD_CARD_WIDTH_INCHES,
   maxRelativeAspectError: 0.18,
-  minCardCoverage: 0.08,
-  maxCardCoverage: 0.9,
+  // The configured Dell fixture keeps a standard card near one-half of the
+  // fixed frame. This expected-scale envelope rejects inner artwork rectangles
+  // and tiny cards
+  // that would require grading-unsafe upscaling while still allowing the
+  // requested close-enough translation and rotation.
+  minCardCoverage: 0.3,
+  maxCardCoverage: 0.85,
   minEdgeClearanceRatio: 0.01,
   analysisMaxDimension: 1024,
 };
@@ -239,6 +291,7 @@ function normalizeThresholds(input?: Partial<CardGeometryThresholds>): CardGeome
   const merged = { ...DEFAULT_THRESHOLDS, ...input };
   finitePositive(merged.maxCenterOffsetInches, "maxCenterOffsetInches");
   finitePositive(merged.maxSkewDegrees, "maxSkewDegrees");
+  finitePositive(merged.maxNormalizationSkewDegrees, "maxNormalizationSkewDegrees");
   finitePositive(merged.expectedAspectRatio, "expectedAspectRatio");
   finitePositive(merged.maxRelativeAspectError, "maxRelativeAspectError");
   finitePositive(merged.analysisMaxDimension, "analysisMaxDimension");
@@ -253,6 +306,9 @@ function normalizeThresholds(input?: Partial<CardGeometryThresholds>): CardGeome
   }
   if (merged.minDetectionConfidence > merged.minReadyConfidence) {
     throw new Error("minDetectionConfidence cannot exceed minReadyConfidence.");
+  }
+  if (merged.maxNormalizationSkewDegrees < merged.maxSkewDegrees || merged.maxNormalizationSkewDegrees >= 90) {
+    throw new Error("maxNormalizationSkewDegrees must be at least maxSkewDegrees and lower than 90 degrees.");
   }
   if (merged.minCardCoverage >= merged.maxCardCoverage) {
     throw new Error("minCardCoverage must be lower than maxCardCoverage.");
@@ -284,19 +340,20 @@ function mimeTypeForFormat(format: string | undefined): CardGeometryArtifactMeta
 
 async function prepareImageBytes(rawBytes: Buffer, fileName: string): Promise<PreparedImage> {
   const rawMetadata = await sharp(rawBytes).metadata();
-  const oriented = await sharp(rawBytes).autoOrient().png().toBuffer({ resolveWithObject: true });
+  const orientedWidth = rawMetadata.autoOrient?.width ?? rawMetadata.width;
+  const orientedHeight = rawMetadata.autoOrient?.height ?? rawMetadata.height;
+  if (!orientedWidth || !orientedHeight) throw new Error("Card geometry source image dimensions are unavailable.");
   return {
     rawBytes,
-    orientedPng: oriented.data,
-    orientedWidth: oriented.info.width,
-    orientedHeight: oriented.info.height,
+    orientedWidth,
+    orientedHeight,
     rawArtifact: {
       fileName,
       sha256: createHash("sha256").update(rawBytes).digest("hex"),
       byteSize: rawBytes.length,
       mimeType: mimeTypeForFormat(rawMetadata.format),
-      imageWidth: rawMetadata.width ?? oriented.info.width,
-      imageHeight: rawMetadata.height ?? oriented.info.height,
+      imageWidth: rawMetadata.width ?? orientedWidth,
+      imageHeight: rawMetadata.height ?? orientedHeight,
     },
   };
 }
@@ -317,6 +374,87 @@ function histogramPercentile(histogram: Uint32Array, total: number, percentile: 
 
 function medianFromHistogram(histogram: Uint32Array, total: number): number {
   return histogramPercentile(histogram, total, 0.5);
+}
+
+function squareNeighborhoodCounts(mask: Uint8Array, width: number, height: number): Int32Array {
+  const stride = width + 1;
+  const integral = new Int32Array(stride * (height + 1));
+  for (let y = 0; y < height; y += 1) {
+    let rowSum = 0;
+    for (let x = 0; x < width; x += 1) {
+      rowSum += mask[y * width + x] ?? 0;
+      integral[(y + 1) * stride + x + 1] = (integral[y * stride + x + 1] ?? 0) + rowSum;
+    }
+  }
+  return integral;
+}
+
+function morphologyPass(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  radius: number,
+  mode: "dilate" | "erode",
+): Uint8Array {
+  if (radius <= 0) return mask.slice();
+  const integral = squareNeighborhoodCounts(mask, width, height);
+  const stride = width + 1;
+  const output = new Uint8Array(mask.length);
+  for (let y = 0; y < height; y += 1) {
+    const top = Math.max(0, y - radius);
+    const bottom = Math.min(height - 1, y + radius);
+    for (let x = 0; x < width; x += 1) {
+      const left = Math.max(0, x - radius);
+      const right = Math.min(width - 1, x + radius);
+      const sum =
+        (integral[(bottom + 1) * stride + right + 1] ?? 0) -
+        (integral[top * stride + right + 1] ?? 0) -
+        (integral[(bottom + 1) * stride + left] ?? 0) +
+        (integral[top * stride + left] ?? 0);
+      const area = (right - left + 1) * (bottom - top + 1);
+      output[y * width + x] = mode === "dilate" ? (sum > 0 ? 1 : 0) : (sum === area ? 1 : 0);
+    }
+  }
+  return output;
+}
+
+function closeForegroundMask(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  return morphologyPass(morphologyPass(mask, width, height, radius, "dilate"), width, height, radius, "erode");
+}
+
+/** Fill only background regions enclosed by foreground. Border-connected plate pixels stay background. */
+function fillForegroundHoles(mask: Uint8Array, width: number, height: number): Uint8Array {
+  const borderBackground = new Uint8Array(mask.length);
+  const queue = new Int32Array(mask.length);
+  let head = 0;
+  let tail = 0;
+  const enqueue = (index: number) => {
+    if (index < 0 || index >= mask.length || mask[index] !== 0 || borderBackground[index] !== 0) return;
+    borderBackground[index] = 1;
+    queue[tail++] = index;
+  };
+  for (let x = 0; x < width; x += 1) {
+    enqueue(x);
+    enqueue((height - 1) * width + x);
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    enqueue(y * width);
+    enqueue(y * width + width - 1);
+  }
+  while (head < tail) {
+    const index = queue[head++] ?? 0;
+    const x = index % width;
+    const y = Math.floor(index / width);
+    if (x > 0) enqueue(index - 1);
+    if (x + 1 < width) enqueue(index + 1);
+    if (y > 0) enqueue(index - width);
+    if (y + 1 < height) enqueue(index + width);
+  }
+  const output = mask.slice();
+  for (let index = 0; index < output.length; index += 1) {
+    if (output[index] === 0 && borderBackground[index] === 0) output[index] = 1;
+  }
+  return output;
 }
 
 function labelForegroundComponents(mask: Uint8Array, differences: Uint8Array, width: number, height: number): {
@@ -418,58 +556,129 @@ async function attemptDetection(prepared: PreparedImage, thresholds: CardGeometr
   const scale = Math.min(1, thresholds.analysisMaxDimension / Math.max(prepared.orientedWidth, prepared.orientedHeight));
   const analysisWidth = Math.max(32, Math.round(prepared.orientedWidth * scale));
   const analysisHeight = Math.max(32, Math.round(prepared.orientedHeight * scale));
-  const { data } = await sharp(prepared.orientedPng)
+  const { data, info } = await sharp(prepared.rawBytes)
+    .autoOrient()
     .resize(analysisWidth, analysisHeight, { fit: "fill" })
-    .greyscale()
+    .removeAlpha()
+    .toColourspace("srgb")
     .raw()
     .toBuffer({ resolveWithObject: true });
 
-  const borderHistogram = new Uint32Array(256);
+  const channels = info.channels;
+  const pixelCount = analysisWidth * analysisHeight;
+  const borderRedHistogram = new Uint32Array(256);
+  const borderGreenHistogram = new Uint32Array(256);
+  const borderBlueHistogram = new Uint32Array(256);
   const borderSize = Math.max(2, Math.round(Math.min(analysisWidth, analysisHeight) * 0.025));
   let borderCount = 0;
   for (let y = 0; y < analysisHeight; y += 1) {
     for (let x = 0; x < analysisWidth; x += 1) {
       if (x >= borderSize && x < analysisWidth - borderSize && y >= borderSize && y < analysisHeight - borderSize) continue;
-      const value = data[y * analysisWidth + x] ?? 0;
-      borderHistogram[value] = (borderHistogram[value] ?? 0) + 1;
+      const offset = (y * analysisWidth + x) * channels;
+      const red = data[offset] ?? 0;
+      const green = data[offset + Math.min(1, channels - 1)] ?? red;
+      const blue = data[offset + Math.min(2, channels - 1)] ?? red;
+      borderRedHistogram[red] = (borderRedHistogram[red] ?? 0) + 1;
+      borderGreenHistogram[green] = (borderGreenHistogram[green] ?? 0) + 1;
+      borderBlueHistogram[blue] = (borderBlueHistogram[blue] ?? 0) + 1;
       borderCount += 1;
     }
   }
-  const backgroundLuma = medianFromHistogram(borderHistogram, borderCount);
+  const backgroundColor = {
+    r: medianFromHistogram(borderRedHistogram, borderCount),
+    g: medianFromHistogram(borderGreenHistogram, borderCount),
+    b: medianFromHistogram(borderBlueHistogram, borderCount),
+  };
+  const backgroundLuma = Math.round(0.2126 * backgroundColor.r + 0.7152 * backgroundColor.g + 0.0722 * backgroundColor.b);
   const differenceHistogram = new Uint32Array(256);
-  const differences = new Uint8Array(data.length);
-  for (let index = 0; index < data.length; index += 1) {
-    const difference = Math.abs((data[index] ?? 0) - backgroundLuma);
+  const borderDifferenceHistogram = new Uint32Array(256);
+  const differences = new Uint8Array(pixelCount);
+  let borderDifferenceCount = 0;
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * channels;
+    const red = data[offset] ?? 0;
+    const green = data[offset + Math.min(1, channels - 1)] ?? red;
+    const blue = data[offset + Math.min(2, channels - 1)] ?? red;
+    const difference = Math.round(
+      Math.sqrt(
+        (red - backgroundColor.r) ** 2 +
+        (green - backgroundColor.g) ** 2 +
+        (blue - backgroundColor.b) ** 2,
+      ) / Math.sqrt(3),
+    );
     differences[index] = difference;
     differenceHistogram[difference] = (differenceHistogram[difference] ?? 0) + 1;
+    const x = index % analysisWidth;
+    const y = Math.floor(index / analysisWidth);
+    if (x < borderSize || x >= analysisWidth - borderSize || y < borderSize || y >= analysisHeight - borderSize) {
+      borderDifferenceHistogram[difference] = (borderDifferenceHistogram[difference] ?? 0) + 1;
+      borderDifferenceCount += 1;
+    }
   }
-  const contrastRange = histogramPercentile(differenceHistogram, data.length, 0.95);
-  const foregroundThreshold = Math.round(clamp(Math.max(12, contrastRange * 0.3), 12, 72));
+  const contrastRange = histogramPercentile(differenceHistogram, pixelCount, 0.95);
+  // A clipped/edge-adjacent card can occupy part of the border sample. The
+  // 80th percentile remains representative of a solid plate until a large
+  // fraction of the frame perimeter is obstructed, which must never be Ready.
+  const backgroundNoise = histogramPercentile(borderDifferenceHistogram, borderDifferenceCount, 0.8);
+  const foregroundThreshold = Math.round(clamp(Math.max(4, backgroundNoise * 2.5, contrastRange * 0.22), 4, 80));
+  const morphologyRadius = Math.round(clamp(Math.round(Math.min(analysisWidth, analysisHeight) * 0.003), 1, 4));
   const diagnosticsBase: CardGeometryDetectionDiagnostics = {
-    method: "adaptive_border_contrast_connected_component_pca_v1",
+    method: "solid_plate_color_component_pca_v2",
     backgroundLuma,
+    backgroundColor,
+    backgroundNoise,
     contrastRange,
     foregroundThreshold,
     foregroundPixelFraction: 0,
+    morphologyRadius,
     expectedAspectRatio: thresholds.expectedAspectRatio,
     analysisWidth,
     analysisHeight,
   };
-  if (contrastRange < 18) return { diagnostics: diagnosticsBase, reason: "Image contrast is too low to distinguish the card from the background." };
+  if (contrastRange < Math.max(4, backgroundNoise * 1.5)) {
+    return { diagnostics: diagnosticsBase, reason: "Image contrast is too low to distinguish the card from the solid base plate." };
+  }
 
-  const mask = new Uint8Array(data.length);
-  let foregroundCount = 0;
+  const initialMask = new Uint8Array(pixelCount);
   for (let index = 0; index < differences.length; index += 1) {
     if ((differences[index] ?? 0) < foregroundThreshold) continue;
-    mask[index] = 1;
-    foregroundCount += 1;
+    initialMask[index] = 1;
   }
-  diagnosticsBase.foregroundPixelFraction = round(foregroundCount / Math.max(1, data.length), 6);
+  const mask = fillForegroundHoles(
+    closeForegroundMask(initialMask, analysisWidth, analysisHeight, morphologyRadius),
+    analysisWidth,
+    analysisHeight,
+  );
+  let foregroundCount = 0;
+  for (const value of mask) foregroundCount += value;
+  diagnosticsBase.foregroundPixelFraction = round(foregroundCount / Math.max(1, pixelCount), 6);
   const { labels, components } = labelForegroundComponents(mask, differences, analysisWidth, analysisHeight);
-  const minimumComponentPixels = Math.max(64, Math.round(data.length * thresholds.minCardCoverage * 0.2));
+  const minimumComponentPixels = Math.max(64, Math.round(pixelCount * thresholds.minCardCoverage * 0.2));
+  const componentScore = (entry: ComponentStats) => {
+    const meanX = entry.sumX / entry.count;
+    const meanY = entry.sumY / entry.count;
+    const covarianceXX = Math.max(0, entry.sumXX / entry.count - meanX * meanX);
+    const covarianceYY = Math.max(0, entry.sumYY / entry.count - meanY * meanY);
+    const covarianceXY = entry.sumXY / entry.count - meanX * meanY;
+    const trace = covarianceXX + covarianceYY;
+    const root = Math.sqrt(Math.max(0, (covarianceXX - covarianceYY) ** 2 + 4 * covarianceXY ** 2));
+    const major = Math.max(0.000001, (trace + root) / 2);
+    const minor = Math.max(0.000001, (trace - root) / 2);
+    const estimatedAspect = Math.sqrt(major / minor);
+    const relativeAspectError = Math.abs(estimatedAspect - thresholds.expectedAspectRatio) / thresholds.expectedAspectRatio;
+    const aspectScore = clamp(1 - relativeAspectError / Math.max(0.01, thresholds.maxRelativeAspectError * 2), 0, 1);
+    const componentCoverage = entry.count / Math.max(1, pixelCount);
+    const coverageScore = componentCoverage < thresholds.minCardCoverage
+      ? clamp(componentCoverage / thresholds.minCardCoverage, 0, 1)
+      : componentCoverage > thresholds.maxCardCoverage
+        ? clamp((1 - componentCoverage) / Math.max(0.01, 1 - thresholds.maxCardCoverage), 0, 1)
+        : 1;
+    const contrastScore = clamp((entry.sumDifference / entry.count) / Math.max(1, foregroundThreshold * 2), 0, 1);
+    return 0.55 * aspectScore + 0.3 * coverageScore + 0.15 * contrastScore;
+  };
   const component = components
     .filter((entry) => entry.count >= minimumComponentPixels)
-    .sort((left, right) => right.count - left.count)[0];
+    .sort((left, right) => componentScore(right) - componentScore(left) || right.count - left.count)[0];
   if (!component) return { diagnostics: diagnosticsBase, reason: "No sufficiently large connected card candidate was found." };
 
   const meanX = component.sumX / component.count;
@@ -537,10 +746,22 @@ async function attemptDetection(prepared: PreparedImage, thresholds: CardGeometr
   const projectedArea = shortSide * longSide;
   const componentFill = component.count / Math.max(1, projectedArea);
   const cardCoverage = projectedArea / Math.max(1, analysisWidth * analysisHeight);
+  if (componentFill < 0.82) {
+    return {
+      diagnostics: {
+        ...diagnosticsBase,
+        componentPixelFraction: round(component.count / Math.max(1, pixelCount), 6),
+        rectangularFill: round(componentFill, 5),
+        measuredAspectRatio: round(measuredAspectRatio, 5),
+        relativeAspectError: round(relativeAspectError, 5),
+      },
+      reason: "The solid-plate foreground candidate does not have enough rectangular edge support to be a card.",
+    };
+  }
   const meanDifference = component.sumDifference / component.count;
   const aspectScore = clamp(1 - relativeAspectError / Math.max(0.01, thresholds.maxRelativeAspectError * 1.5), 0, 1);
   const fillScore = clamp((componentFill - 0.25) / 0.65, 0, 1);
-  const contrastScore = clamp((meanDifference - foregroundThreshold) / Math.max(20, contrastRange - foregroundThreshold), 0, 1);
+  const contrastScore = clamp((meanDifference - foregroundThreshold * 0.8) / Math.max(4, foregroundThreshold * 1.5), 0, 1);
   const coverageScore =
     cardCoverage < thresholds.minCardCoverage
       ? clamp(cardCoverage / thresholds.minCardCoverage, 0, 1)
@@ -551,7 +772,8 @@ async function attemptDetection(prepared: PreparedImage, thresholds: CardGeometr
   const rotationDegrees = round(normalizeRotationDegrees((Math.atan2(shortAxis.y, shortAxis.x) * 180) / Math.PI), 3);
   const diagnostics: CardGeometryDetectionDiagnostics = {
     ...diagnosticsBase,
-    componentPixelFraction: round(component.count / Math.max(1, data.length), 6),
+    componentPixelFraction: round(component.count / Math.max(1, pixelCount), 6),
+    rectangularFill: round(componentFill, 5),
     measuredAspectRatio: round(measuredAspectRatio, 5),
     relativeAspectError: round(relativeAspectError, 5),
   };
@@ -610,6 +832,7 @@ function placementEvaluation(input: {
   skewDegrees: number;
   confidence: number;
   relativeAspectError: number;
+  cardCoverage: number;
   imageWidth: number;
   imageHeight: number;
   thresholds: CardGeometryThresholds;
@@ -645,13 +868,19 @@ function placementEvaluation(input: {
     estimatedPixelsPerInch: round(pixelsPerInch, 4),
     maxCenterOffsetInches: input.thresholds.maxCenterOffsetInches,
     maxSkewDegrees: input.thresholds.maxSkewDegrees,
+    maxNormalizationSkewDegrees: input.thresholds.maxNormalizationSkewDegrees,
     minReadyConfidence: input.thresholds.minReadyConfidence,
     withinCenterTolerance: Math.max(Math.abs(inchX), Math.abs(inchY)) <= input.thresholds.maxCenterOffsetInches,
     withinSkewTolerance:
       Math.abs(input.skewDegrees) <= input.thresholds.maxSkewDegrees + SKEW_ESTIMATION_EPSILON_DEGREES,
+    withinNormalizationSkewTolerance:
+      Math.abs(input.skewDegrees) <= input.thresholds.maxNormalizationSkewDegrees + SKEW_ESTIMATION_EPSILON_DEGREES,
     withinAspectTolerance: input.relativeAspectError <= input.thresholds.maxRelativeAspectError,
+    withinCoverageTolerance:
+      input.cardCoverage >= input.thresholds.minCardCoverage && input.cardCoverage <= input.thresholds.maxCardCoverage,
     withinFrame,
     confidenceReady: input.confidence >= input.thresholds.minReadyConfidence,
+    cardCoverage: round(input.cardCoverage, 6),
   };
 }
 
@@ -659,23 +888,37 @@ function emptyPlacement(thresholds: CardGeometryThresholds): CardGeometryPlaceme
   return {
     maxCenterOffsetInches: thresholds.maxCenterOffsetInches,
     maxSkewDegrees: thresholds.maxSkewDegrees,
+    maxNormalizationSkewDegrees: thresholds.maxNormalizationSkewDegrees,
     minReadyConfidence: thresholds.minReadyConfidence,
     withinCenterTolerance: false,
     withinSkewTolerance: false,
+    withinNormalizationSkewTolerance: false,
     withinAspectTolerance: false,
+    withinCoverageTolerance: false,
     withinFrame: false,
     confidenceReady: false,
   };
 }
 
 function placementState(placement: CardGeometryPlacementEvaluation): CardPlacementState {
-  return placement.withinCenterTolerance &&
-    placement.withinSkewTolerance &&
-    placement.withinAspectTolerance &&
+  return placement.withinAspectTolerance &&
+    placement.withinCoverageTolerance &&
     placement.withinFrame &&
+    placement.withinNormalizationSkewTolerance &&
     placement.confidenceReady
     ? "ready"
     : "adjust_card";
+}
+
+function placementAdjustmentReason(
+  placement: CardGeometryPlacementEvaluation,
+): CardGeometryAdjustmentReason | null {
+  if (!placement.withinFrame) return "outside_frame";
+  if (!placement.withinCoverageTolerance) return "unsafe_scale";
+  if (!placement.withinNormalizationSkewTolerance) return "rotate_top_up";
+  if (!placement.withinAspectTolerance) return "wrong_aspect";
+  if (!placement.confidenceReady) return "low_confidence";
+  return null;
 }
 
 function placementWarnings(placement: CardGeometryPlacementEvaluation, source: CardGeometrySource): string[] {
@@ -683,9 +926,17 @@ function placementWarnings(placement: CardGeometryPlacementEvaluation, source: C
   if (source === "manual_override") {
     warnings.push("Automatic geometry was not used; an operator explicitly confirmed manual capture geometry.");
   }
-  if (!placement.withinCenterTolerance) warnings.push("Card center is outside the configured close-enough placement tolerance.");
-  if (!placement.withinSkewTolerance) warnings.push("Card rotation is outside the configured skew tolerance.");
+  if (!placement.withinCenterTolerance) {
+    warnings.push("Card is off center, but center offset is diagnostic only when detected geometry can be normalized safely.");
+  }
+  if (!placement.withinSkewTolerance) {
+    warnings.push("Card rotation exceeds the preferred placement guide; automatic normalization remains allowed only inside the hard rotation envelope.");
+  }
+  if (!placement.withinNormalizationSkewTolerance) {
+    warnings.push("Card rotation is outside the safe automatic-normalization envelope; rotate the printed top toward the top of the preview.");
+  }
   if (!placement.withinAspectTolerance) warnings.push("Detected card aspect ratio is outside tolerance.");
+  if (!placement.withinCoverageTolerance) warnings.push("Detected card coverage is outside the safe normalization range.");
   if (!placement.withinFrame) warnings.push("Card is too close to an image edge for safe normalization.");
   if (!placement.confidenceReady) warnings.push("Card detection confidence is below the Ready threshold.");
   return warnings;
@@ -707,6 +958,7 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
       skewDegrees,
       confidence: 0,
       relativeAspectError,
+      cardCoverage: (override.boundingBox.width * override.boundingBox.height) / Math.max(1, prepared.orientedWidth * prepared.orientedHeight),
       imageWidth: prepared.orientedWidth,
       imageHeight: prepared.orientedHeight,
       thresholds,
@@ -725,6 +977,7 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
         ),
         confidence: detection.candidate.confidence,
         relativeAspectError: detection.candidate.relativeAspectError,
+        cardCoverage: detection.candidate.cardCoverage,
         imageWidth: prepared.orientedWidth,
         imageHeight: prepared.orientedHeight,
         thresholds,
@@ -738,6 +991,7 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
       // may still normalize an operator-confirmed rectangle, but never claims
       // automatic placement readiness.
       placementState: automaticCandidateWasOutsideThresholds ? "adjust_card" : "not_detected",
+      adjustmentReason: "manual_capture_selected",
       geometrySource: "manual_override",
       captureMode: "manual_capture",
       confidenceBasis: "operator_confirmation",
@@ -753,6 +1007,11 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
       ...(sanitizeSourceId(input.sourceFrameId) ? { sourceFrameId: sanitizeSourceId(input.sourceFrameId) } : {}),
       timestamp,
       image: { width: prepared.orientedWidth, height: prepared.orientedHeight, coordinateFrame: "source_image_pixels" },
+      semanticOrientation: {
+        canonicalOrientation: "portrait",
+        basis: "operator_top_toward_preview_top",
+        contentUprightVerified: false,
+      },
       placement,
       detection: detection.diagnostics,
       warnings: placementWarnings(placement, "manual_override"),
@@ -765,6 +1024,7 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
       version: CARD_GEOMETRY_VERSION,
       side: input.side,
       placementState: "not_detected",
+      adjustmentReason: "not_detected",
       geometrySource: "none",
       captureMode: "none",
       confidenceBasis: "none",
@@ -780,6 +1040,11 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
       ...(sanitizeSourceId(input.sourceFrameId) ? { sourceFrameId: sanitizeSourceId(input.sourceFrameId) } : {}),
       timestamp,
       image: { width: prepared.orientedWidth, height: prepared.orientedHeight, coordinateFrame: "source_image_pixels" },
+      semanticOrientation: {
+        canonicalOrientation: "portrait",
+        basis: "operator_top_toward_preview_top",
+        contentUprightVerified: false,
+      },
       placement: emptyPlacement(thresholds),
       detection: detection.diagnostics,
       warnings: [detection.reason ?? "No reliable four-corner card geometry was detected."],
@@ -794,6 +1059,7 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
     skewDegrees: placementSkewDegrees(candidate.rotationDegrees, prepared.orientedWidth, prepared.orientedHeight),
     confidence: candidate.confidence,
     relativeAspectError: candidate.relativeAspectError,
+    cardCoverage: candidate.cardCoverage,
     imageWidth: prepared.orientedWidth,
     imageHeight: prepared.orientedHeight,
     thresholds,
@@ -802,6 +1068,7 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
     version: CARD_GEOMETRY_VERSION,
     side: input.side,
     placementState: placementState(placement),
+    adjustmentReason: placementAdjustmentReason(placement),
     geometrySource: "detected",
     captureMode: "automatic_detection",
     confidenceBasis: "automatic_detection",
@@ -820,6 +1087,11 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
     ...(sanitizeSourceId(input.sourceFrameId) ? { sourceFrameId: sanitizeSourceId(input.sourceFrameId) } : {}),
     timestamp,
     image: { width: prepared.orientedWidth, height: prepared.orientedHeight, coordinateFrame: "source_image_pixels" },
+    semanticOrientation: {
+      canonicalOrientation: "portrait",
+      basis: "operator_top_toward_preview_top",
+      contentUprightVerified: false,
+    },
     placement,
     detection: candidate.diagnostics,
     warnings: placementWarnings(placement, "detected"),
@@ -858,6 +1130,19 @@ function transformPointForRotation(
   };
 }
 
+function normalizationDeskewDegrees(
+  rotationDegrees: number,
+  sourceWidth: number,
+  sourceHeight: number,
+): number {
+  if (sourceWidth <= sourceHeight) return -rotationDegrees;
+  // Dell raw Basler evidence is landscape while the operator preview is the
+  // same frame rotated 90 degrees clockwise. PCA axis direction is modulo 180,
+  // so choose the equivalent deskew branch around +90 degrees; choosing -90
+  // for an aligned raw frame would make an operator-top card upside down.
+  return rotationDegrees >= 0 ? 180 - rotationDegrees : -rotationDegrees;
+}
+
 async function normalizePreparedImage(
   input: DetectAndNormalizeCardImageInput,
   prepared: PreparedImage,
@@ -870,10 +1155,19 @@ async function normalizePreparedImage(
     throw new Error("normalizedOutputPath must not overwrite the raw source image.");
   }
   await mkdir(path.dirname(outputResolved), { recursive: true });
-  const deskewDegrees = -geometry.rotationDegrees;
-  const background = geometry.detection.backgroundLuma;
-  const rotated = await sharp(prepared.orientedPng)
-    .rotate(deskewDegrees, { background: { r: background, g: background, b: background, alpha: 1 } })
+  const deskewDegrees = normalizationDeskewDegrees(
+    geometry.rotationDegrees,
+    prepared.orientedWidth,
+    prepared.orientedHeight,
+  );
+  const background = geometry.detection.backgroundColor ?? {
+    r: geometry.detection.backgroundLuma,
+    g: geometry.detection.backgroundLuma,
+    b: geometry.detection.backgroundLuma,
+  };
+  const rotated = await sharp(prepared.rawBytes)
+    .autoOrient()
+    .rotate(deskewDegrees, { background: { ...background, alpha: 1 } })
     .png()
     .toBuffer({ resolveWithObject: true });
   const transformed = [
@@ -895,9 +1189,17 @@ async function normalizePreparedImage(
   const top = clamp(Math.floor(Math.min(...transformed.map((point) => point.y))), 0, rotated.info.height - 1);
   const right = clamp(Math.ceil(Math.max(...transformed.map((point) => point.x))), left + 1, rotated.info.width);
   const bottom = clamp(Math.ceil(Math.max(...transformed.map((point) => point.y))), top + 1, rotated.info.height);
-  const compressionLevel = Math.round(clamp(input.pngCompressionLevel ?? 9, 0, 9));
+  const cropWidth = right - left;
+  const cropHeight = bottom - top;
+  if (cropWidth < 5 || cropHeight < 7) throw new Error("Detected card geometry is too small to create a 5:7 normalized artifact.");
+  const targetWidth = NORMALIZED_CARD_WIDTH_PIXELS;
+  const targetHeight = NORMALIZED_CARD_HEIGHT_PIXELS;
+  const geometricResamplingApplied = cropWidth !== targetWidth || cropHeight !== targetHeight;
+  const upscaled = targetWidth > cropWidth || targetHeight > cropHeight;
+  const compressionLevel = Math.round(clamp(input.pngCompressionLevel ?? 6, 0, 9));
   await sharp(rotated.data)
-    .extract({ left, top, width: right - left, height: bottom - top })
+    .extract({ left, top, width: cropWidth, height: cropHeight })
+    .resize(targetWidth, targetHeight, { fit: "fill", kernel: sharp.kernel.lanczos3 })
     .png({ compressionLevel, adaptiveFiltering: true })
     .toFile(outputResolved);
   const [bytes, outputStats, outputMetadata] = await Promise.all([
@@ -911,9 +1213,16 @@ async function normalizePreparedImage(
     sha256: createHash("sha256").update(bytes).digest("hex"),
     byteSize: outputStats.size,
     mimeType: "image/png",
-    imageWidth: outputMetadata.width ?? right - left,
-    imageHeight: outputMetadata.height ?? bottom - top,
+    imageWidth: outputMetadata.width ?? targetWidth,
+    imageHeight: outputMetadata.height ?? targetHeight,
     lossless: true,
+    encodingLossless: true,
+    geometricResamplingApplied,
+    upscaled,
+    sourceCropWidth: cropWidth,
+    sourceCropHeight: cropHeight,
+    scaleX: round(targetWidth / cropWidth, 6),
+    scaleY: round(targetHeight / cropHeight, 6),
     coordinateFrame: "normalized_card_portrait_pixels",
     sourceSha256: prepared.rawArtifact.sha256,
     deskewAppliedDegrees: round(deskewDegrees, 3),
@@ -932,6 +1241,79 @@ export async function detectAndNormalizeCardImage(
     geometry,
     rawArtifact: prepared.rawArtifact,
     ...(normalizedArtifact ? { normalizedArtifact } : {}),
+    rawEvidencePreserved: rawShaAfter === prepared.rawArtifact.sha256 && Buffer.compare(prepared.rawBytes, rawBytesAfter) === 0,
+  };
+}
+
+function assertReusableGeometry(geometry: CardGeometryMetadata, prepared: PreparedImage): void {
+  const coherentDetectedGeometry =
+    geometry.placementState === "ready" &&
+    geometry.geometrySource === "detected" &&
+    geometry.captureMode === "automatic_detection" &&
+    geometry.confidenceBasis === "automatic_detection" &&
+    geometry.detectionUsed === true &&
+    geometry.manualOverrideUsed === false;
+  const coherentManualGeometry =
+    geometry.placementState !== "ready" &&
+    geometry.geometrySource === "manual_override" &&
+    geometry.captureMode === "manual_capture" &&
+    geometry.confidenceBasis === "operator_confirmation" &&
+    geometry.detectionUsed === false &&
+    geometry.manualOverrideUsed === true;
+  if (
+    (!coherentDetectedGeometry && !coherentManualGeometry) ||
+    !geometry.corners ||
+    geometry.rotationDegrees == null ||
+    !Number.isFinite(geometry.rotationDegrees)
+  ) {
+    throw new Error("Reusable card geometry must be coherent Ready automatic detection or explicit operator-confirmed manual geometry.");
+  }
+  if (geometry.image.width !== prepared.orientedWidth || geometry.image.height !== prepared.orientedHeight) {
+    throw new Error("Reusable card geometry dimensions must exactly match the oriented forensic frame dimensions.");
+  }
+  const points = [geometry.corners.topLeft, geometry.corners.topRight, geometry.corners.bottomRight, geometry.corners.bottomLeft];
+  if (
+    points.some(
+      (point) =>
+        !Number.isFinite(point.x) ||
+        !Number.isFinite(point.y) ||
+        point.x < 0 ||
+        point.y < 0 ||
+        point.x > prepared.orientedWidth ||
+        point.y > prepared.orientedHeight,
+    )
+  ) {
+    throw new Error("Reusable card geometry corners must be finite and remain inside the forensic frame.");
+  }
+}
+
+/**
+ * Apply one side's coherent Ready detection or explicit operator-confirmed
+ * manual transform to another same-dimension forensic frame. The source bytes
+ * are re-hashed so callers can prove raw evidence was not replaced or modified.
+ */
+export async function normalizeCardImageWithGeometry(
+  input: NormalizeCardImageWithGeometryInput,
+): Promise<CardGeometryNormalizationResult> {
+  const prepared = await prepareImage(input.sourceImagePath);
+  assertReusableGeometry(input.geometry, prepared);
+  const normalizedArtifact = await normalizePreparedImage(
+    {
+      sourceImagePath: input.sourceImagePath,
+      normalizedOutputPath: input.normalizedOutputPath,
+      side: input.geometry.side,
+      pngCompressionLevel: input.pngCompressionLevel,
+    },
+    prepared,
+    input.geometry,
+  );
+  if (!normalizedArtifact) throw new Error("Reusable card geometry did not produce a normalized artifact.");
+  const rawBytesAfter = await readFile(input.sourceImagePath);
+  const rawShaAfter = createHash("sha256").update(rawBytesAfter).digest("hex");
+  return {
+    geometry: input.geometry,
+    rawArtifact: prepared.rawArtifact,
+    normalizedArtifact,
     rawEvidencePreserved: rawShaAfter === prepared.rawArtifact.sha256 && Buffer.compare(prepared.rawBytes, rawBytesAfter) === 0,
   };
 }
