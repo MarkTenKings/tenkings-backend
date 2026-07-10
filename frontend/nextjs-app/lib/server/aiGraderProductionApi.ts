@@ -491,6 +491,10 @@ function isEnabled(env: EnvLike | undefined, key: string) {
   return env?.[key] === "true";
 }
 
+export function aiGraderPublicReportDbReadsEnabled(env: EnvLike | undefined = process.env) {
+  return isEnabled(env, AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV);
+}
+
 function stringValue(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
@@ -2467,7 +2471,7 @@ export function createAiGraderPublicReportApiHandler(deps: AiGraderPublicReportA
       res.setHeader("Allow", "GET");
       return res.status(405).json({ ok: false, message: "Method not allowed" });
     }
-    if (!isEnabled(env, AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV)) {
+    if (!aiGraderPublicReportDbReadsEnabled(env)) {
       return res.status(503).json({
         ok: false,
         enabled: false,
