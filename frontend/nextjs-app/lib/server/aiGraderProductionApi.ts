@@ -18,6 +18,8 @@ import {
   CardPhotoKind,
   CardReviewStage,
   computeAiGraderValuationStatus,
+  normalizeAiGraderPublicCaptureTiming,
+  normalizeAiGraderPublicOcrPrefill,
   persistAiGraderSlabbedPhotoAsset,
   persistAiGraderProductionRelease,
   persistAiGraderValuationResult,
@@ -50,6 +52,11 @@ import {
   type AiGraderPreparedLabelSheetResult,
   type AiGraderPrintedLabelSheetResult,
 } from "./aiGraderLabelSheetRuntime";
+import type {
+  AiGraderOcrPrefillResult,
+  AiGraderOcrPrefillSide,
+  AiGraderOcrPrefillSourceImage,
+} from "./aiGraderOcrPrefill";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
@@ -180,6 +187,35 @@ export type AiGraderSlabbedPhotoUploadInitResult = {
   };
 };
 
+export type AiGraderOcrPrefillImageUpload = {
+  side: AiGraderOcrPrefillSide;
+  artifactRole: "normalized_card";
+  fileName: string;
+  mimeType: string;
+  checksumSha256: string;
+  byteSize: number;
+  storageKey: string;
+};
+
+export type AiGraderOcrPrefillUploadInitResult = {
+  reportId: string;
+  uploadSessionId: string;
+  humanConfirmationRequired: true;
+  uploadPlan: Array<
+    AiGraderOcrPrefillImageUpload & {
+      publicUrl: string;
+      uploadUrl: string;
+      uploadMethod: "PUT";
+      uploadHeaders: Record<string, string>;
+    }
+  >;
+  requiredFinalizeManifest: {
+    reportId: string;
+    uploadSessionId: string;
+    images: AiGraderOcrPrefillImageUpload[];
+  };
+};
+
 export type AiGraderSelectedCompsPersistResult = {
   reportId: string;
   cardAssetId: string;
@@ -261,6 +297,10 @@ export type AiGraderProductionApiDependencies = {
     operatorUserId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderSlabbedPhotoUploadResult>;
+  runOcrPrefill?(input: {
+    reportId: string;
+    images: AiGraderOcrPrefillSourceImage[];
+  }): Promise<AiGraderOcrPrefillResult>;
   runComps?(input: {
     reportId: string;
     searchQuery: string;
@@ -513,13 +553,110 @@ function assertSmallJsonPayload(value: unknown, limitBytes: number, label: strin
   return byteLength;
 }
 
-function unsafePublishString(value: string) {
+function unsafePublishUrlValue(value: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const ipv4 = host.split(".").map((part) => Number(part));
+  const isIpv4 = ipv4.length === 4 && ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
+  const privateIpv4 = isIpv4 && (
+    ipv4[0] === 0 ||
+    ipv4[0] === 10 ||
+    ipv4[0] === 127 ||
+    (ipv4[0] === 100 && ipv4[1] >= 64 && ipv4[1] <= 127) ||
+    (ipv4[0] === 169 && ipv4[1] === 254) ||
+    (ipv4[0] === 172 && ipv4[1] >= 16 && ipv4[1] <= 31) ||
+    (ipv4[0] === 192 && ipv4[1] === 168) ||
+    (ipv4[0] === 198 && (ipv4[1] === 18 || ipv4[1] === 19)) ||
+    ipv4[0] >= 224
+  );
+  const privateIpv6 =
+    host === "::" ||
+    host === "::1" ||
+    host.startsWith("::ffff:") ||
+    host.startsWith("fc") ||
+    host.startsWith("fd") ||
+    /^fe[89ab]/.test(host);
+  const queryKeys = Array.from(parsed.searchParams.keys()).map((key) => key.toLowerCase());
+  const signedQuery = queryKeys.some(
+    (key) =>
+      key === "sig" ||
+      key === "access_key" ||
+      key.includes("signature") ||
+      key.includes("credential") ||
+      key.includes("security-token") ||
+      key === "token" ||
+      key.endsWith("_token") ||
+      key.startsWith("x-amz-") ||
+      key.startsWith("x-goog-")
+  );
   return (
-    /^data:image/i.test(value) ||
-    /^[a-z]:\\/i.test(value) ||
-    value.includes("\\TenKings\\") ||
-    /https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|::1)/i.test(value) ||
-    /x-ai-grader-station-token|stationToken|service-token|DATABASE_URL/i.test(value)
+    parsed.protocol === "file:" ||
+    parsed.username.length > 0 ||
+    parsed.password.length > 0 ||
+    host === "localhost" ||
+    privateIpv4 ||
+    privateIpv6 ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal") ||
+    host.endsWith(".localhost") ||
+    (!isIpv4 && !host.includes(".") && !host.includes(":")) ||
+    signedQuery
+  );
+}
+
+function unsafePublishString(value: string) {
+  const embeddedUrls = value.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+  return (
+    /(^|[\s('"=:])(data|blob):/i.test(value) ||
+    /\bfile:\/\//i.test(value) ||
+    /\b[a-z]:[\\/]/i.test(value) ||
+    /\\TenKings\\/i.test(value) ||
+    /(^|\s)\\\\[^\\]+\\/i.test(value) ||
+    /(^|[\s('"=:])(\/Users\/|\/home\/|\/root\/|\/tmp\/|\/var\/tmp\/|\/app\/|\/workspace\/)/i.test(value) ||
+    embeddedUrls.some((url) => unsafePublishUrlValue(url)) ||
+    /x-ai-grader-station-token|stationToken\s*[=:]|service-token|DATABASE_URL|Authorization\s*:\s*Bearer|x-amz-(?:signature|credential|security-token)|x-goog-(?:signature|credential)/i.test(value) ||
+    /\b(?:localhost|[a-z0-9-]+\.(?:local|internal|localhost)|0\.0\.0\.0|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|169\.254(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|100\.(?:6[4-9]|[789]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}|198\.(?:18|19)(?:\.\d{1,3}){2})(?::\d{1,5})?\b/i.test(value) ||
+    /(^|[\s([])(?:\[?::1\]?|fc[0-9a-f:]+|fd[0-9a-f:]+|fe[89ab][0-9a-f:]+)(?::\d{1,5})?(?=$|[\s)\],;])/i.test(value)
+  );
+}
+
+function unsafePublishKey(key: string) {
+  const compact = key.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return (
+    compact === "bearer" ||
+    compact === "authorization" ||
+    compact.endsWith("token") ||
+    compact.endsWith("apikey") ||
+    compact.endsWith("accesskey") ||
+    compact.endsWith("accesskeyid") ||
+    compact.endsWith("secretkey") ||
+    compact.endsWith("privatekey") ||
+    compact.endsWith("password") ||
+    compact.endsWith("credential") ||
+    compact.endsWith("credentials") ||
+    compact.includes("secret") ||
+    new Set([
+      "bridgeurl",
+      "stationurl",
+      "leimachost",
+      "leimacport",
+      "baslerbridgescript",
+      "pylonroot",
+      "hardwarecontrol",
+      "hardwarecontrols",
+      "hardwareaction",
+      "hardwareactions",
+      "hardwareactionsenabled",
+      "cameracontrol",
+      "cameracontrols",
+      "lightingcontrol",
+      "lightingcontrols",
+    ]).has(compact)
   );
 }
 
@@ -540,6 +677,7 @@ function assertNoUnsafePublishPayload(value: unknown, path = "body") {
   for (const [key, entry] of Object.entries(value)) {
     const lowerKey = key.toLowerCase();
     if (
+      unsafePublishKey(key) ||
       lowerKey === "bodybase64" ||
       lowerKey === "dataurl" ||
       lowerKey === "localpath" ||
@@ -597,8 +735,14 @@ function parseProductionPublishSmallBody(body: unknown) {
   const source = body as JsonRecord;
   const reportId = stringValue(source.reportId ?? parsed.productionRelease.reportId ?? parsed.reportBundle.reportId, "");
   if (!reportId) throw new Error("reportId is required.");
+  const reportBundle: AiGraderProductionReportBundleLike = {
+    ...parsed.reportBundle,
+    captureTiming: normalizeAiGraderPublicCaptureTiming(parsed.reportBundle.captureTiming),
+    ocrPrefill: normalizeAiGraderPublicOcrPrefill(parsed.reportBundle.ocrPrefill),
+  };
   return {
     ...parsed,
+    reportBundle,
     reportId,
     certId: optionalString(source.certId ?? parsed.productionRelease.label?.certId),
     gradingSessionId: optionalString(source.gradingSessionId ?? parsed.productionRelease.gradingSessionId ?? parsed.reportBundle.gradingSessionId),
@@ -869,6 +1013,166 @@ function parseCreateCardFromReportBody(body: unknown) {
     ...parsed,
     identity,
   };
+}
+
+const AI_GRADER_OCR_PREFILL_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const AI_GRADER_OCR_PREFILL_MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+
+function assertNoOcrUploadBodyFields(entry: JsonRecord, path: string) {
+  for (const key of ["base64", "body", "bodyBase64", "dataUrl", "localPath", "publicUrl", "url", "uploadUrl"]) {
+    if (Object.prototype.hasOwnProperty.call(entry, key)) {
+      const error = new Error(`OCR prefill image bytes and URLs are not accepted at ${path}.${key}; use direct storage upload metadata.`);
+      (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+      (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_OCR_DIRECT_UPLOAD_REQUIRED";
+      throw error;
+    }
+  }
+}
+
+function parseOcrPrefillImageMetadata(value: unknown, index: number, allowStorageKey: boolean): AiGraderOcrPrefillImageUpload {
+  if (!isRecord(value)) throw new Error(`images[${index}] must be an object.`);
+  assertNoOcrUploadBodyFields(value, `images[${index}]`);
+  const side = stringValue(value.side, "") as AiGraderOcrPrefillSide;
+  const artifactRole = stringValue(value.artifactRole, "normalized_card");
+  const fileName = sanitizeUploadFileName(stringValue(value.fileName, `${side || "card"}-normalized.png`));
+  const mimeType = stringValue(value.mimeType, "image/png").toLowerCase();
+  const checksumSha256 = stringValue(value.checksumSha256, "").toLowerCase();
+  const byteSize = Math.round(numericValue(value.byteSize, 0));
+  const storageKey = allowStorageKey ? stringValue(value.storageKey, "") : "";
+  if (side !== "front" && side !== "back") throw new Error(`images[${index}].side must be front or back.`);
+  if (artifactRole !== "normalized_card") throw new Error(`images[${index}].artifactRole must be normalized_card.`);
+  if (!AI_GRADER_OCR_PREFILL_MIME_TYPES.has(mimeType)) {
+    throw new Error(`images[${index}].mimeType must be image/jpeg, image/png, or image/webp.`);
+  }
+  if (!/^[a-f0-9]{64}$/.test(checksumSha256)) {
+    throw new Error(`images[${index}].checksumSha256 must be a SHA-256 hex digest.`);
+  }
+  if (!Number.isFinite(byteSize) || byteSize <= 0 || byteSize > AI_GRADER_OCR_PREFILL_MAX_IMAGE_BYTES) {
+    throw new Error(`images[${index}].byteSize must be between 1 and ${AI_GRADER_OCR_PREFILL_MAX_IMAGE_BYTES}.`);
+  }
+  if (allowStorageKey && !storageKey) throw new Error(`images[${index}].storageKey is required.`);
+  return { side, artifactRole: "normalized_card", fileName, mimeType, checksumSha256, byteSize, storageKey };
+}
+
+function buildOcrPrefillStorageKey(reportId: string, image: Omit<AiGraderOcrPrefillImageUpload, "storageKey">) {
+  return `ai-grader/reports/${safeStorageSegment(reportId)}/ocr-prefill/${image.side}-normalized-${image.checksumSha256.slice(0, 16)}-${image.fileName}`;
+}
+
+function normalizeOcrPrefillImages(reportId: string, images: AiGraderOcrPrefillImageUpload[]) {
+  const sides = new Set(images.map((image) => image.side));
+  if (images.length !== 2 || sides.size !== 2 || !sides.has("front") || !sides.has("back")) {
+    throw new Error("OCR prefill requires exactly one normalized front image and one normalized back image.");
+  }
+  return [...images]
+    .map((image) => ({
+      ...image,
+      storageKey: buildOcrPrefillStorageKey(reportId, image),
+    }))
+    .sort((left, right) => (left.side === right.side ? 0 : left.side === "front" ? -1 : 1));
+}
+
+function ocrPrefillUploadSessionId(reportId: string, images: AiGraderOcrPrefillImageUpload[]) {
+  return `aigocr_${aiGraderSha256(
+    stableStringify({
+      reportId,
+      images: images.map(({ side, artifactRole, storageKey, checksumSha256, byteSize, mimeType }) => ({
+        side,
+        artifactRole,
+        storageKey,
+        checksumSha256,
+        byteSize,
+        mimeType,
+      })),
+    })
+  ).slice(0, 32)}`;
+}
+
+function parseOcrPrefillBody(body: unknown, finalize: boolean) {
+  assertSmallJsonPayload(body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader OCR prefill request");
+  assertNoUnsafePublishPayload(body);
+  if (!isRecord(body)) throw new Error("JSON object body is required.");
+  const reportId = stringValue(body.reportId, "");
+  if (!reportId || reportId.length > 200) throw new Error("reportId is required and must be 200 characters or fewer.");
+  const rawImages = Array.isArray(body.images) ? body.images : [];
+  const parsedImages = rawImages.map((image, index) => parseOcrPrefillImageMetadata(image, index, finalize));
+  const expectedImages = normalizeOcrPrefillImages(reportId, parsedImages);
+  if (finalize) {
+    for (const [index, image] of parsedImages
+      .sort((left, right) => (left.side === right.side ? 0 : left.side === "front" ? -1 : 1))
+      .entries()) {
+      if (image.storageKey !== expectedImages[index]?.storageKey) {
+        const error = new Error(`images[${index}].storageKey does not match the OCR prefill upload plan.`);
+        (error as Error & { statusCode?: number; code?: string }).statusCode = 409;
+        (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_OCR_UPLOAD_PLAN_MISMATCH";
+        throw error;
+      }
+    }
+  }
+  const uploadSessionId = ocrPrefillUploadSessionId(reportId, expectedImages);
+  if (finalize && stringValue(body.uploadSessionId, "") !== uploadSessionId) {
+    const error = new Error("OCR prefill finalize does not match the upload plan from OCR prefill init.");
+    (error as Error & { statusCode?: number; code?: string }).statusCode = 409;
+    (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_OCR_UPLOAD_SESSION_MISMATCH";
+    throw error;
+  }
+  return { reportId, images: expectedImages, uploadSessionId };
+}
+
+function isPrivateIpv4(hostname: string) {
+  const parts = hostname.split(".").map((entry) => Number(entry));
+  if (parts.length !== 4 || parts.some((entry) => !Number.isInteger(entry) || entry < 0 || entry > 255)) return false;
+  const [a, b] = parts;
+  return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+function safeOcrSourceUrl(value: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("OCR storage URL is invalid.");
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  const unsafeIpv6 = hostname === "::1" || hostname === "[::1]" || hostname.startsWith("fc") || hostname.startsWith("fd") || hostname.startsWith("fe8") || hostname.startsWith("fe9") || hostname.startsWith("fea") || hostname.startsWith("feb");
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    hostname === "localhost" ||
+    unsafeIpv6 ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".internal") ||
+    hostname.endsWith(".localhost") ||
+    isPrivateIpv4(hostname)
+  ) {
+    const error = new Error("OCR storage URL must be a public HTTPS object URL without credentials or query parameters.");
+    (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+    (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_OCR_UNSAFE_SOURCE_URL";
+    throw error;
+  }
+  return parsed.toString();
+}
+
+function assertOcrPrefillResultSafe(value: unknown, path = "result") {
+  if (typeof value === "string") {
+    if (/https?:\/\//i.test(value) || /^data:/i.test(value) || /^[a-z]:\\/i.test(value) || /x-amz-/i.test(value)) {
+      throw new Error(`Unsafe URL, local path, or signed-upload data rejected from OCR prefill output at ${path}.`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertOcrPrefillResultSafe(entry, `${path}[${index}]`));
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const [key, entry] of Object.entries(value)) {
+    if (/url|path|token|secret|base64|body/i.test(key)) {
+      throw new Error(`Unsafe OCR prefill output field rejected at ${path}.${key}.`);
+    }
+    assertOcrPrefillResultSafe(entry, `${path}.${key}`);
+  }
 }
 
 function parseSlabbedPhotoInitBody(body: unknown) {
@@ -1291,6 +1595,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           "auth-check",
           "publish-init",
           "publish-finalize",
+          "ocr-prefill-init",
+          "ocr-prefill-finalize",
           "create-card-from-report",
           "history",
           "finish-queue",
@@ -1330,6 +1636,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       "auth-check",
       "publish-init",
       "publish-finalize",
+      "ocr-prefill-init",
+      "ocr-prefill-finalize",
       "create-card-from-report",
       "history",
       "finish-queue",
@@ -1373,6 +1681,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         key === "auth-check" ||
         key === "publish-init" ||
         key === "publish-finalize" ||
+        key === "ocr-prefill-init" ||
+        key === "ocr-prefill-finalize" ||
         key === "create-card-from-report" ||
         key === "prepare-label-sheet-print" ||
         key === "mark-label-sheet-printed" ||
@@ -1442,6 +1752,101 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             manualDraftAllowed: false,
             createCardFromReportRequired: true,
           },
+        });
+      }
+      if (key === "ocr-prefill-init") {
+        if (!deps.presignUpload) throw new Error("AI Grader OCR prefill direct upload planning is not configured.");
+        const input = parseOcrPrefillBody(req.body, false);
+        const uploadPlan: AiGraderOcrPrefillUploadInitResult["uploadPlan"] = [];
+        for (const image of input.images) {
+          const presigned = await deps.presignUpload({
+            storageKey: image.storageKey,
+            contentType: image.mimeType,
+            checksumSha256: image.checksumSha256,
+          });
+          const publicUrl = safeOcrSourceUrl(deps.publicUrlFor(image.storageKey));
+          uploadPlan.push({
+            ...image,
+            publicUrl,
+            uploadUrl: presigned.uploadUrl,
+            uploadMethod: presigned.uploadMethod,
+            uploadHeaders: presigned.uploadHeaders,
+          });
+        }
+        const result: AiGraderOcrPrefillUploadInitResult = {
+          reportId: input.reportId,
+          uploadSessionId: input.uploadSessionId,
+          humanConfirmationRequired: true,
+          uploadPlan,
+          requiredFinalizeManifest: {
+            reportId: input.reportId,
+            uploadSessionId: input.uploadSessionId,
+            images: input.images,
+          },
+        };
+        assertSmallJsonPayload(result, AI_GRADER_PRODUCTION_VERCEL_PAYLOAD_LIMIT_BYTES, "AI Grader OCR prefill init response");
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderOcrPrefillInit",
+          result,
+        });
+      }
+      if (key === "ocr-prefill-finalize") {
+        if (!deps.verifyUploadedArtifact) throw new Error("AI Grader OCR prefill upload verification is not configured.");
+        if (!deps.runOcrPrefill) throw new Error("AI Grader OCR prefill runtime is not configured.");
+        const input = parseOcrPrefillBody(req.body, true);
+        for (const image of input.images) {
+          const verified = await deps.verifyUploadedArtifact({
+            artifactId: `ocr-prefill:${input.reportId}:${image.side}`,
+            storageKey: image.storageKey,
+            checksumSha256: image.checksumSha256,
+            byteSize: image.byteSize,
+            contentType: image.mimeType,
+          });
+          if (!verified.ok) throw new Error(`Uploaded normalized ${image.side} image was not found in storage.`);
+          if (typeof verified.byteSize === "number" && verified.byteSize !== image.byteSize) {
+            throw new Error(`Storage byte size mismatch for normalized ${image.side} image.`);
+          }
+          if (!storageContentTypeMatches(verified.contentType, image.mimeType)) {
+            throw new Error(`Storage content type mismatch for normalized ${image.side} image.`);
+          }
+          if (typeof verified.checksumSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(verified.checksumSha256)) {
+            throw new Error(`Storage-provided SHA-256 checksum is missing for normalized ${image.side} image.`);
+          }
+          if (verified.checksumSha256.toLowerCase() !== image.checksumSha256.toLowerCase()) {
+            throw new Error(`Storage-provided SHA-256 checksum mismatch for normalized ${image.side} image.`);
+          }
+        }
+        let result: AiGraderOcrPrefillResult;
+        try {
+          result = await deps.runOcrPrefill({
+            reportId: input.reportId,
+            images: input.images.map((image) => ({
+              side: image.side,
+              url: safeOcrSourceUrl(deps.publicUrlFor(image.storageKey)),
+            })),
+          });
+        } catch {
+          const error = new Error("AI Grader OCR prefill could not be completed; keep Confirm Card fields in review state and retry.");
+          (error as Error & { statusCode?: number; code?: string }).statusCode = 502;
+          (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_OCR_PREFILL_FAILED";
+          throw error;
+        }
+        const safeResult: AiGraderOcrPrefillResult = {
+          ...result,
+          reportId: input.reportId,
+          humanConfirmationRequired: true,
+          inventoryMutationPerformed: false,
+          publishMutationPerformed: false,
+        };
+        assertOcrPrefillResultSafe(safeResult);
+        assertSmallJsonPayload(safeResult, AI_GRADER_PRODUCTION_VERCEL_PAYLOAD_LIMIT_BYTES, "AI Grader OCR prefill result");
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderOcrPrefillFinalize",
+          result: safeResult,
         });
       }
       if (key === "upload-slab-photo") {

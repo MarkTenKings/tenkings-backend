@@ -8,10 +8,16 @@ import { buildAiGraderProductionStoragePlan } from "@tenkings/database";
 import aiGraderLocalStationHandler from "../pages/api/ai-grader/station/[...action]";
 import { config as aiGraderProductionRouteConfig } from "../pages/api/admin/ai-grader/production/[...action]";
 import {
+  AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION,
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+  aiGraderCardPlacementLabel,
   buildSampleAiGraderReportHistory,
   buildAiGraderLocalStationStatus,
   parseAiGraderStationAction,
+  parseAiGraderRapidCaptureWorkflowState,
+  sanitizeAiGraderCaptureTiming,
+  sanitizeAiGraderPreviewCardGeometryBySide,
+  sanitizeAiGraderLocalStationStatusForDisplay,
 } from "../lib/aiGraderLocalStation";
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE, getAiGraderReportBundle, hasNoCertifiedClaim, hasNoFinalCertifiedClaims } from "../lib/aiGraderReportBundle";
 import { buildSampleAiGraderProductionRelease } from "../lib/aiGraderProductionRelease";
@@ -45,6 +51,10 @@ import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   acceptAiGraderLiveLightingProfile,
   applyAiGraderLiveLighting,
+  buildAiGraderCaptureProfileRequest,
+  buildAiGraderRapidCaptureConfigurationRequest,
+  buildAiGraderRapidQueueActivationRequest,
+  callAiGraderStationBridge,
   fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
@@ -233,11 +243,16 @@ test("local station contract exposes workflow status with no login, DB, or hardw
   assert.equal(status.safety.finalGradeComputed, false);
   assert.equal(status.safety.certifiedClaim, false);
   assert.equal(status.bridgeContract.endpoints.some((endpoint) => endpoint.path === "/api/ai-grader/station/capture-front"), true);
+  assert.equal(status.bridgeContract.endpoints.some((endpoint) => endpoint.action === "configure-rapid-capture"), true);
+  assert.equal(status.bridgeContract.endpoints.some((endpoint) => endpoint.action === "queue-current-card"), true);
+  assert.equal(status.bridgeContract.endpoints.some((endpoint) => endpoint.action === "activate-queue-item"), true);
   assert.equal(status.bridgeContract.endpoints.every((endpoint) => endpoint.hardwareAccess === false), true);
   assert.equal(status.previewStatus.browserEmbedded, true);
   assert.equal(status.previewStatus.localOnly, true);
   assert.equal(status.previewStatus.safety.productionServiceTokenUsed, false);
   assert.equal(status.previewStatus.safety.publicRouteExposed, false);
+  assert.equal(status.previewStatus.cardGeometry?.front?.placementState, "not_detected");
+  assert.equal(status.previewStatus.cardGeometry?.back?.placementState, "not_detected");
   assert.equal(status.liveLighting.localOnly, true);
   assert.equal(status.liveLighting.tokenRequired, true);
   assert.equal(status.liveLighting.safety.publicRouteExposed, false);
@@ -256,6 +271,29 @@ test("local station contract exposes workflow status with no login, DB, or hardw
   assert.equal(status.timingSummary?.executionPath, "warm_full_forensic_runner");
   assert.equal(status.timingSummary?.fallbackUsed, false);
   assert.equal(status.warmRunnerStatus.evidencePlan.defaultFullForensic, true);
+  assert.equal(status.captureProfile, "full_forensic");
+  assert.equal(status.captureProfileGuard.stationSettingRequired, true);
+  assert.equal(status.captureProfileGuard.selectedExplicitly, false);
+  assert.equal(status.captureProfileGuard.fullForensicFallback, "full_forensic");
+  assert.equal(status.captureProfileGuard.fiveSecondTargetProven, false);
+  assert.equal(status.captureTiming.schemaVersion, AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION);
+  assert.equal(status.captureTiming.captureProfile, "full_forensic");
+  assert.equal(status.captureTiming.targetSideMs, 5000);
+  assert.equal(status.captureTiming.hardwareMeasurement, false);
+  assert.deepEqual(status.captureTiming.events, []);
+  assert.deepEqual(status.captureTiming.phases, []);
+  assert.equal(status.captureTiming.summary.frontProcessingOverlappedFlip, false);
+  assert.equal(status.captureTiming.target.fiveSecondsPerSideProven, false);
+  assert.equal(status.captureTiming.target.hardwareMeasurementRequired, true);
+  assert.equal(status.rapidCapture.enabled, false);
+  assert.equal(status.rapidCapture.humanConfirmationRequired, true);
+  assert.equal(status.rapidCapture.autoConfirm, false);
+  assert.equal(status.rapidCapture.autoPublish, false);
+  assert.deepEqual(status.rapidCapture.workflowHistory, []);
+  assert.equal(status.rapidCaptureQueue.enabled, false);
+  assert.equal(status.rapidCaptureQueue.persisted, true);
+  assert.equal(status.rapidCaptureQueue.reportWorkerSerialized, true);
+  assert.deepEqual(status.rapidCaptureQueue.items, []);
   assert.deepEqual(status.warmRunnerStatus.evidencePlan.rolesBySide.front.map((role) => role.role), [
     "dark_control",
     "all_on",
@@ -294,6 +332,270 @@ test("local station contract exposes workflow status with no login, DB, or hardw
   assert.equal(status.latestReport.publicViewerRoute.includes("station"), false);
 });
 
+test("preview geometry exposes exact operator states and strips local/private metadata", () => {
+  assert.deepEqual(
+    (["not_detected", "adjust_card", "ready"] as const).map(aiGraderCardPlacementLabel),
+    ["Not Detected", "Adjust Card", "Ready"]
+  );
+
+  const corners = {
+    topLeft: { x: 120, y: 80 },
+    topRight: { x: 1080, y: 100 },
+    bottomRight: { x: 1060, y: 1580 },
+    bottomLeft: { x: 140, y: 1560 },
+  };
+  const safe = sanitizeAiGraderPreviewCardGeometryBySide({
+    activeSide: "front",
+    front: {
+      version: "ten-kings-card-geometry-v1",
+      side: "front",
+      placementState: "ready",
+      geometrySource: "detected",
+      detectionUsed: true,
+      manualFallbackUsed: false,
+      corners,
+      detectedCorners: corners,
+      boundingBox: { x: 120, y: 80, width: 960, height: 1500 },
+      rotationDegrees: 1.2,
+      skewDegrees: 1.2,
+      confidence: 0.94,
+      sourceFrameId: "C:\\TenKings\\capture-data\\front.png",
+      timestamp: "2026-07-09T12:00:00.000Z",
+      image: { width: 1200, height: 1680, coordinateFrame: "source_image_pixels" },
+      localPath: "C:\\TenKings\\capture-data\\front.png",
+      bridgeUrl: "http://127.0.0.1:4317",
+      stationToken: "station-secret",
+      presignedUrl: "https://storage.example/object?X-Amz-Signature=secret",
+      dataImage: "data:image/png;base64,private",
+    },
+    back: {
+      side: "back",
+      placementState: "adjust_card",
+      geometrySource: "manual_fallback",
+      detectionUsed: false,
+      manualFallbackUsed: true,
+      corners,
+      detectedCorners: null,
+      boundingBox: { x: 120, y: 80, width: 960, height: 1500 },
+      rotationDegrees: 8,
+      skewDegrees: 8,
+      confidence: 0.7,
+    },
+  });
+
+  assert.equal(safe?.front?.placementState, "ready");
+  assert.equal(safe?.back?.placementState, "adjust_card");
+  assert.equal(safe?.front?.sourceFrameId, undefined);
+  assert.deepEqual(safe?.front?.corners, corners);
+  const displayedMetadata = JSON.stringify(safe);
+  assert.doesNotMatch(displayedMetadata, /C:\\TenKings|127\.0\.0\.1|stationToken|data:image|X-Amz|presignedUrl|localPath/i);
+});
+
+test("production_fast is explicit and rapid capture status stays display-safe", () => {
+  const workflowStates = [
+    "front_captured",
+    "front_processing",
+    "back_positioning",
+    "back_captured",
+    "finalizing",
+    "report_ready_needs_confirm",
+    "confirmed_needs_publish",
+    "published",
+    "failed",
+  ] as const;
+  for (const state of workflowStates) assert.equal(parseAiGraderRapidCaptureWorkflowState(state), state);
+  assert.equal(parseAiGraderRapidCaptureWorkflowState("auto_published"), null);
+
+  const fast = buildAiGraderLocalStationStatus({
+    action: "configure-rapid-capture",
+    captureProfile: "production_fast",
+    rapidCaptureEnabled: true,
+  });
+  assert.equal(fast.captureProfile, "production_fast");
+  assert.equal(fast.captureProfileGuard.selectedExplicitly, true);
+  assert.equal(fast.captureProfileGuard.stationSettingRequired, true);
+  assert.equal(fast.captureProfileGuard.fullForensicEvidencePreserved, true);
+  assert.equal(fast.captureProfileGuard.fiveSecondTargetProven, false);
+  assert.equal(fast.warmRunnerStatus.evidencePlan.rolesBySide.front.length, 11);
+  assert.equal(fast.warmRunnerStatus.evidencePlan.rolesBySide.back.length, 11);
+  assert.equal(fast.rapidCapture.enabled, true);
+  assert.equal(fast.rapidCaptureQueue.enabled, true);
+
+  const timestamp = "2026-07-09T12:00:00.000Z";
+  const unsafeStatus = {
+    ...fast,
+    rapidCapture: {
+      enabled: true,
+      queueItemId: "rapid-queue-1",
+      workflowState: "front_processing",
+      workflowHistory: [
+        { state: "front_captured", at: timestamp, detail: "Front evidence safely persisted.", manifestPath: "C:\\TenKings\\private\\manifest.json" },
+        { state: "front_processing", at: timestamp, detail: "Processing overlaps operator flip.", stationToken: "private-token" },
+      ],
+      safelyQueuedAt: timestamp,
+      humanConfirmationRequired: false,
+      autoConfirm: true,
+      autoPublish: true,
+      manifestPath: "C:\\TenKings\\private\\manifest.json",
+      stationToken: "private-token",
+    },
+    rapidCaptureQueue: {
+      enabled: true,
+      activeQueueItemId: "rapid-queue-1",
+      persisted: true,
+      reportWorkerSerialized: true,
+      manifestPath: "C:\\TenKings\\private\\rapid-capture-queue.json",
+      stationToken: "private-token",
+      items: [
+        {
+          queueItemId: "rapid-queue-1",
+          sessionId: "session-1",
+          reportId: "report-1",
+          state: "report_ready_needs_confirm",
+          queuedAt: timestamp,
+          updatedAt: timestamp,
+          history: [{ state: "finalizing", at: timestamp, detail: "Serialized report worker active." }],
+          humanConfirmationRequired: false,
+          autoConfirmed: true,
+          autoPublished: true,
+          manifestPath: "C:\\TenKings\\private\\manifest.json",
+          stationToken: "private-token",
+          error: "C:\\TenKings\\private\\runner.log",
+        },
+      ],
+    },
+  } as unknown as typeof fast;
+  const safeStatus = sanitizeAiGraderLocalStationStatusForDisplay(unsafeStatus);
+  assert.equal(safeStatus.rapidCapture.workflowState, "front_processing");
+  assert.deepEqual(safeStatus.rapidCapture.workflowHistory.map((event) => event.state), ["front_captured", "front_processing"]);
+  assert.equal(safeStatus.rapidCapture.humanConfirmationRequired, true);
+  assert.equal(safeStatus.rapidCapture.autoConfirm, false);
+  assert.equal(safeStatus.rapidCapture.autoPublish, false);
+  assert.equal(safeStatus.rapidCaptureQueue.items[0]?.state, "report_ready_needs_confirm");
+  assert.equal(safeStatus.rapidCaptureQueue.items[0]?.humanConfirmationRequired, true);
+  assert.equal(safeStatus.rapidCaptureQueue.items[0]?.autoConfirmed, false);
+  assert.equal(safeStatus.rapidCaptureQueue.items[0]?.autoPublished, false);
+  assert.equal(safeStatus.rapidCaptureQueue.items[0]?.error, undefined);
+  const displayedRapidStatus = JSON.stringify({ rapidCapture: safeStatus.rapidCapture, rapidCaptureQueue: safeStatus.rapidCaptureQueue });
+  assert.doesNotMatch(displayedRapidStatus, /C:\\TenKings|manifestPath|stationToken|private-token/i);
+
+  const unguardedFast = sanitizeAiGraderLocalStationStatusForDisplay({
+    ...fast,
+    captureProfileGuard: { ...fast.captureProfileGuard, selectedExplicitly: false },
+  });
+  assert.equal(unguardedFast.captureProfile, "full_forensic");
+  assert.equal(unguardedFast.captureProfileGuard.selectedExplicitly, false);
+});
+
+test("capture timing accepts only path-free V1 metadata and fails closed on five-second proof", () => {
+  const timestamp = "2026-07-10T12:00:00.000Z";
+  const rawTiming = {
+    schemaVersion: AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION,
+    captureProfile: "production_fast",
+    targetSideMs: 1,
+    hardwareMeasurement: true,
+    events: [
+      { id: "session_started", at: timestamp, localPath: "C:\\TenKings\\private\\session.json" },
+      { id: "capture_trigger", at: timestamp, side: "front", triggerMode: "auto", stationToken: "private-token" },
+      { id: "preview_ready", at: timestamp, side: "sideways", triggerMode: "machine", bridgeUrl: "http://127.0.0.1:47652" },
+      { id: "unknown_event", at: timestamp },
+      { id: "report_ready", at: "not-a-timestamp" },
+    ],
+    phases: [
+      {
+        id: "frame_capture",
+        side: "front",
+        durationMs: 1899.96,
+        startedAt: timestamp,
+        finishedAt: "2026-07-10T12:00:01.900Z",
+        manifestPath: "C:\\TenKings\\private\\manifest.json",
+      },
+      { id: "file_writes", side: "back", durationMs: 2100, presignedUrl: "https://storage.example/object?X-Amz-Signature=secret" },
+      { id: "crop_deskew", durationMs: -1 },
+      { id: "unknown_phase", durationMs: 10 },
+      { id: "report_generation", durationMs: Number.POSITIVE_INFINITY },
+    ],
+    summary: {
+      previewReadyMs: 240.04,
+      frontEdgeDetectionReadyMs: 410,
+      backEdgeDetectionReadyMs: 390,
+      totalFrontMs: 4800,
+      totalBackMs: 4900,
+      frontProcessingDuringFlipMs: 1300,
+      frontProcessingOverlappedFlip: true,
+      reportGenerationMs: -2,
+      backProcessingMs: Number.NaN,
+      totalCardMs: 5100,
+      reportReadyTotalMs: 12000,
+      localPath: "C:\\TenKings\\private\\timing.json",
+      stationToken: "private-token",
+    },
+    target: {
+      frontWithinTarget: true,
+      backWithinTarget: true,
+      fiveSecondsPerSideProven: true,
+      hardwareMeasurementRequired: true,
+      note: "See http://127.0.0.1:47652/private/timing and stationToken=private-token.",
+      manifestPath: "C:\\TenKings\\private\\manifest.json",
+    },
+    bridgeUrl: "http://127.0.0.1:47652",
+    stationToken: "private-token",
+  };
+
+  const safe = sanitizeAiGraderCaptureTiming(rawTiming);
+  assert.equal(safe.schemaVersion, AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION);
+  assert.equal(safe.captureProfile, "production_fast");
+  assert.equal(safe.targetSideMs, 5000);
+  assert.equal(safe.hardwareMeasurement, true);
+  assert.deepEqual(safe.events.map((event) => event.id), ["session_started", "capture_trigger", "preview_ready"]);
+  assert.equal(safe.events[1]?.side, "front");
+  assert.equal(safe.events[1]?.triggerMode, "auto");
+  assert.equal(safe.events[2]?.side, undefined);
+  assert.equal(safe.events[2]?.triggerMode, undefined);
+  assert.deepEqual(safe.phases.map((phase) => phase.id), ["frame_capture", "file_writes"]);
+  assert.equal(safe.phases[0]?.durationMs, 1900);
+  assert.equal(safe.summary.previewReadyMs, 240);
+  assert.equal(safe.summary.totalFrontMs, 4800);
+  assert.equal(safe.summary.totalBackMs, 4900);
+  assert.equal(safe.summary.reportGenerationMs, undefined);
+  assert.equal(safe.summary.backProcessingMs, undefined);
+  assert.equal(safe.summary.totalCardMs, 5100);
+  assert.equal(safe.summary.reportReadyTotalMs, 12000);
+  assert.equal(safe.summary.frontProcessingOverlappedFlip, true);
+  assert.equal(safe.target.frontWithinTarget, true);
+  assert.equal(safe.target.backWithinTarget, true);
+  assert.equal(safe.target.fiveSecondsPerSideProven, true);
+  assert.equal(safe.target.hardwareMeasurementRequired, false);
+  assert.match(safe.target.note, /recorded hardware run/i);
+  const displayedTiming = JSON.stringify(safe);
+  assert.doesNotMatch(displayedTiming, /C:\\TenKings|manifestPath|stationToken|private-token|127\.0\.0\.1|bridgeUrl|presignedUrl|X-Amz/i);
+
+  assert.equal(
+    sanitizeAiGraderCaptureTiming({ ...rawTiming, hardwareMeasurement: false }).target.fiveSecondsPerSideProven,
+    false
+  );
+  assert.equal(
+    sanitizeAiGraderCaptureTiming({ ...rawTiming, target: { ...rawTiming.target, frontWithinTarget: false } }).target.fiveSecondsPerSideProven,
+    false
+  );
+  assert.equal(
+    sanitizeAiGraderCaptureTiming({ ...rawTiming, target: { ...rawTiming.target, fiveSecondsPerSideProven: false } }).target.fiveSecondsPerSideProven,
+    false
+  );
+  const invalidSchema = sanitizeAiGraderCaptureTiming({ ...rawTiming, schemaVersion: "future-v2" });
+  assert.equal(invalidSchema.captureProfile, "full_forensic");
+  assert.equal(invalidSchema.hardwareMeasurement, false);
+  assert.equal(invalidSchema.target.fiveSecondsPerSideProven, false);
+
+  const fastStatus = buildAiGraderLocalStationStatus({ captureProfile: "production_fast" });
+  const sanitizedStatus = sanitizeAiGraderLocalStationStatusForDisplay({
+    ...fastStatus,
+    captureTiming: rawTiming as unknown as typeof fastStatus.captureTiming,
+  });
+  assert.equal(sanitizedStatus.captureTiming.captureProfile, "production_fast");
+  assert.equal(sanitizedStatus.captureTiming.target.fiveSecondsPerSideProven, true);
+});
+
 test("local station action parser accepts known actions and rejects unknown actions", () => {
   assert.equal(parseAiGraderStationAction(["capture-front"]), "capture-front");
   assert.equal(parseAiGraderStationAction(["export-report-bundle"]), "export-report-bundle");
@@ -302,6 +604,9 @@ test("local station action parser accepts known actions and rejects unknown acti
   assert.equal(parseAiGraderStationAction(["generate-label-data"]), "generate-label-data");
   assert.equal(parseAiGraderStationAction(["confirm-fixture-rulers"]), "confirm-fixture-rulers");
   assert.equal(parseAiGraderStationAction(["cancel-session"]), "cancel-session");
+  assert.equal(parseAiGraderStationAction(["configure-rapid-capture"]), "configure-rapid-capture");
+  assert.equal(parseAiGraderStationAction(["queue-current-card"]), "queue-current-card");
+  assert.equal(parseAiGraderStationAction(["activate-queue-item"]), "activate-queue-item");
   assert.equal(parseAiGraderStationAction(undefined), "status");
   assert.equal(parseAiGraderStationAction(["delete-all"]), null);
 });
@@ -523,7 +828,7 @@ test("production publication API route keeps Vercel request bodies platform-safe
   assert.equal(aiGraderProductionRouteConfig.api.bodyParser.sizeLimit, "1mb");
 });
 
-test("production AI Grader route uses direct storage upload headers without checksum metadata", () => {
+test("production AI Grader route binds direct uploads to the storage-provider SHA-256 checksum", () => {
   const routePath =
     [
       path.join(process.cwd(), "pages", "api", "admin", "ai-grader", "production", "[...action].ts"),
@@ -531,11 +836,25 @@ test("production AI Grader route uses direct storage upload headers without chec
     ].find((candidate) => fs.existsSync(candidate));
   assert.ok(routePath);
   const routeSource = fs.readFileSync(routePath, "utf8");
-  assert.equal(routeSource.includes("presignUploadUrl(storageKey, contentType)"), true);
-  assert.equal(routeSource.includes("metadata: { sha256"), false);
-  assert.equal(routeSource.includes("x-amz-meta-sha256"), false);
+  assert.equal(routeSource.includes("presignUploadUrl(storageKey, contentType, {"), true);
+  assert.equal(routeSource.includes("checksumSha256,"), true);
+  assert.equal(routeSource.includes('"x-amz-checksum-sha256": sha256HexToBase64(checksumSha256)'), true);
+  assert.equal(routeSource.includes("verifyStorageObjectIntegrity({"), true);
+  assert.equal(routeSource.includes("head.metadata"), false);
   assert.equal(routeSource.includes('"Content-Type": contentType'), true);
   assert.equal(routeSource.includes('"x-amz-acl"'), true);
+
+  const storagePath =
+    [
+      path.join(process.cwd(), "lib", "server", "storage.ts"),
+      path.join(process.cwd(), "frontend", "nextjs-app", "lib", "server", "storage.ts"),
+    ].find((candidate) => fs.existsSync(candidate));
+  assert.ok(storagePath);
+  const storageSource = fs.readFileSync(storagePath, "utf8");
+  assert.equal(storageSource.includes("ChecksumSHA256: options.checksumSha256"), true);
+  assert.equal(storageSource.includes('unhoistableHeaders: options.checksumSha256 ? new Set(["x-amz-checksum-sha256"])'), true);
+  assert.equal(storageSource.includes('ChecksumMode: "ENABLED"'), true);
+  assert.equal(storageSource.includes("sha256Base64ToHex(response.ChecksumSHA256)"), true);
 });
 
 test("production publication API rejects insufficient evidence reports before upload", async () => {
@@ -763,10 +1082,84 @@ test("production publish init rejects bodyBase64, data URLs, local paths, bridge
   assert.match((res.jsonBody as { message?: string }).message ?? "", /Unsafe AI Grader publish payload/);
 });
 
+test("production publish init rejects private endpoints, signed URLs, and local paths embedded in prose", async () => {
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+    },
+    async requireAdminSession() {
+      throw new Error("embedded unsafe payload should reject before auth");
+    },
+    publicUrlFor: (storageKey) => "https://cdn.tenkings.test/" + storageKey,
+    async persist() {
+      throw new Error("embedded unsafe payload should not persist");
+    },
+  });
+  const unsafeNotes = [
+    "Bridge failed at http://127.0.0.1:3020/status?token=must-not-survive.",
+    "Upload https://storage.example.test/object?X-Amz-Signature=must-not-survive failed.",
+    "Runner failed while reading C:\\TenKings\\capture-data\\private\\manifest.json.",
+    "Runner failed while reading /var/tmp/ai-grader/private.json.",
+    "Dell bridge 127.0.0.1:3020 did not answer.",
+    "Leimac 10.0.0.4:5000 did not answer.",
+    "Station grader.local:47652 did not answer.",
+  ];
+  for (const operatorNotes of unsafeNotes) {
+    const reportBundle = sampleStorageReadyReportBundle();
+    const res = mockResponse();
+    const req = mockRequest("POST", ["publish-init"]);
+    req.body = {
+      publicationStatus: "published",
+      reportBundle,
+      productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
+      operatorNotes,
+    };
+    await handler(req, res);
+    assert.equal(res.statusCodeValue, 400, operatorNotes);
+    assert.match((res.jsonBody as { message?: string }).message ?? "", /Unsafe AI Grader publish payload/);
+  }
+});
+
 test("production publish finalize verifies upload manifest and persists DB records", async () => {
   let adminCalled = false;
   let persistedActorAudit: unknown = null;
+  let persistedReportBundle: any = null;
   const reportBundle = sampleStorageReadyReportBundle();
+  (reportBundle as any).captureTiming = {
+    schemaVersion: "ten-kings-ai-grader-capture-timing-v1",
+    captureProfile: "production_fast",
+    targetSideMs: 5000,
+    hardwareMeasurement: true,
+    events: [],
+    phases: [],
+    summary: { totalFrontMs: 100, totalBackMs: 200, totalCardMs: 500, frontProcessingOverlappedFlip: true },
+    target: {
+      frontWithinTarget: true,
+      backWithinTarget: true,
+      fiveSecondsPerSideProven: true,
+      hardwareMeasurementRequired: false,
+      note: "caller-forged proof",
+    },
+  };
+  (reportBundle as any).ocrPrefill = {
+    reportId: reportBundle.reportId,
+    status: "prefill_ready",
+    humanConfirmationRequired: false,
+    inventoryMutationPerformed: true,
+    publishMutationPerformed: true,
+    sourceSides: ["front", "back"],
+    fields: {
+      playerName: { value: "Test Player", confidence: 0.99, reviewRequired: false, sources: ["front_ocr"] },
+    },
+    reviewFieldNames: [],
+    provenance: {
+      ocrEngine: "google_vision_document_text_detection",
+      attributeExtractor: "@tenkings/shared/extractCardAttributes",
+      setLookupUsed: true,
+      setIdentificationUsed: true,
+    },
+    warnings: [],
+  };
   const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
   let uploadManifest: ReturnType<typeof uploadManifestFromPlan> | null = null;
   let publishSessionId = "";
@@ -807,6 +1200,7 @@ test("production publish finalize verifies upload manifest and persists DB recor
     },
     async persist(input) {
       persistedActorAudit = input.actorAudit;
+      persistedReportBundle = input.reportBundle;
       return {
         gradingSessionId: input.reportBundle.gradingSessionId,
         reportId: input.productionRelease.reportId,
@@ -864,6 +1258,14 @@ test("production publish finalize verifies upload manifest and persists DB recor
     }
   );
   assert.match((persistedActorAudit as any)?.requestedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(persistedReportBundle?.captureTiming?.hardwareMeasurement, false);
+  assert.equal(persistedReportBundle?.captureTiming?.target?.fiveSecondsPerSideProven, false);
+  assert.equal(persistedReportBundle?.captureTiming?.target?.hardwareMeasurementRequired, true);
+  assert.equal(persistedReportBundle?.captureTiming?.summary?.totalFrontMs, 100);
+  assert.equal(persistedReportBundle?.ocrPrefill?.humanConfirmationRequired, true);
+  assert.equal(persistedReportBundle?.ocrPrefill?.inventoryMutationPerformed, false);
+  assert.equal(persistedReportBundle?.ocrPrefill?.publishMutationPerformed, false);
+  assert.equal(persistedReportBundle?.ocrPrefill?.fields?.playerName?.reviewRequired, true);
   const body = res.jsonBody as { ok: boolean; result: { uploadedAssetCount: number; evidenceAssetCount: number; storageKeyPrefix: string } };
   assert.equal(body.ok, true);
   assert.equal(body.result.uploadedAssetCount, uploadManifest?.artifacts.length);
@@ -3081,6 +3483,11 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.97"), true);
   assert.equal(stationSource.includes("REPORT_OVERLAY_CARD_ASPECT_RATIO = 2.5 / 3.5"), true);
   assert.equal(stationSource.includes("report-framing-overlay"), true);
+  assert.equal(stationSource.includes("card-geometry-overlay"), true);
+  assert.equal(stationSource.includes("card-geometry-badge"), true);
+  assert.equal(stationSource.includes("aiGraderCardPlacementLabel"), true);
+  assert.equal(stationSource.includes("sanitizeAiGraderPreviewCardGeometryBySide"), true);
+  assert.equal(stationSource.includes("window.setInterval(() => void refreshGeometry(), 600)"), true);
   assert.equal(stationSource.includes("reportOverlayTemplateRect"), true);
   assert.equal(stationSource.includes("containedImageFrame(cameraFrameSize, reportOverlayFrameSize)"), true);
   assert.equal(stationSource.includes("#ffd400"), true);
@@ -3289,6 +3696,58 @@ test("Dell station launcher opens pairing URL in a stable Chrome profile", () =>
   assert.equal(launcherSource.includes("Start-Process -FilePath $chromePath"), true);
   assert.equal(launcherSource.includes("Start-Process (Get-AiGraderBridgePairingUrl -Config $config)"), false);
   assert.equal(launcherSource.includes("pairingCodeRedacted = $true"), true);
+});
+
+test("browser station client sends explicit profile and rapid queue action bodies", async () => {
+  assert.deepEqual(buildAiGraderCaptureProfileRequest("production_fast"), { captureProfile: "production_fast" });
+  assert.deepEqual(buildAiGraderRapidCaptureConfigurationRequest(true), { rapidCaptureEnabled: true });
+  assert.deepEqual(buildAiGraderRapidQueueActivationRequest(" queue-1 "), { queueItemId: "queue-1" });
+  assert.throws(() => buildAiGraderRapidQueueActivationRequest("   "), /queue item ID is required/i);
+
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const result = buildAiGraderLocalStationStatus({ captureProfile: "production_fast", rapidCaptureEnabled: true });
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const headers = init?.headers as Record<string, string>;
+    assert.equal(init?.method, "POST");
+    assert.equal(headers["x-ai-grader-station-token"], "browser-local-station-token");
+    assert.equal(headers["x-ai-grader-service-token"], undefined);
+    calls.push({ url: String(input), body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown> });
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  await callAiGraderStationBridge({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    action: "start-session",
+    body: buildAiGraderCaptureProfileRequest("production_fast"),
+  }, fetchImpl);
+  await callAiGraderStationBridge({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    action: "configure-rapid-capture",
+    body: buildAiGraderRapidCaptureConfigurationRequest(true),
+  }, fetchImpl);
+  await callAiGraderStationBridge({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    action: "queue-current-card",
+  }, fetchImpl);
+  await callAiGraderStationBridge({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "browser-local-station-token",
+    action: "activate-queue-item",
+    body: buildAiGraderRapidQueueActivationRequest("queue-1"),
+  }, fetchImpl);
+
+  assert.deepEqual(calls, [
+    { url: "http://127.0.0.1:47652/actions/start-session", body: { captureProfile: "production_fast" } },
+    { url: "http://127.0.0.1:47652/actions/configure-rapid-capture", body: { rapidCaptureEnabled: true } },
+    { url: "http://127.0.0.1:47652/actions/queue-current-card", body: {} },
+    { url: "http://127.0.0.1:47652/actions/activate-queue-item", body: { queueItemId: "queue-1" } },
+  ]);
 });
 
 test("browser station bridge client fetches local report bundle bodies with station token only", async () => {

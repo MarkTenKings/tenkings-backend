@@ -104,6 +104,54 @@ function fixtureReportDir() {
   fs.mkdirSync(path.join(dir, "back"));
   fs.writeFileSync(path.join(dir, "front", "front-all-on-portrait-display.png"), Buffer.from("front-image"));
   fs.writeFileSync(path.join(dir, "back", "back-all-on-portrait-display.png"), Buffer.from("back-image"));
+  fs.writeFileSync(path.join(dir, "front", "front-normalized-card.png"), Buffer.from("front-normalized-image"));
+  fs.writeFileSync(path.join(dir, "back", "back-normalized-card.png"), Buffer.from("back-normalized-image"));
+  for (const side of ["front", "back"]) {
+    fs.writeFileSync(
+      path.join(dir, side, "manifest.json"),
+      JSON.stringify({
+        captureTiming: {
+          captureProfile: "production_fast",
+          totalSideMs: side === "front" ? 4700 : 4800,
+          fileWritesMs: side === "front" ? 2200 : 2300,
+        },
+        processingTiming: {
+          totalDurationMs: side === "front" ? 950 : 900,
+          frontProcessingMayOverlapFlip: side === "front",
+        },
+        [side]: {
+          normalizedCard: {
+            geometry: {
+              version: "ten-kings-card-geometry-v1",
+              side,
+              placementState: "ready",
+              geometrySource: "detected",
+              detectionUsed: true,
+              manualFallbackUsed: false,
+              corners: {
+                topLeft: { x: 10, y: 20 },
+                topRight: { x: 210, y: 20 },
+                bottomRight: { x: 210, y: 300 },
+                bottomLeft: { x: 10, y: 300 },
+              },
+              boundingBox: { x: 10, y: 20, width: 200, height: 280 },
+              rotationDegrees: side === "front" ? 4.2 : -3.1,
+              skewDegrees: side === "front" ? 4.2 : -3.1,
+              confidence: 0.94,
+              sourceImageId: `${side}-all-on-safe-id`,
+              sourceFrameId: `${side}-frame-safe-id`,
+              timestamp: "2026-07-09T12:00:00.000Z",
+            },
+            normalizedArtifact: {
+              localOutputPath: path.join(dir, side, `${side}-normalized-card.png`),
+              mimeType: "image/png",
+            },
+            rawEvidencePreserved: true,
+          },
+        },
+      })
+    );
+  }
   fs.writeFileSync(path.join(dir, "back-surface-intelligence-v0-heatmap.png"), Buffer.from("heatmap-image"));
   fs.writeFileSync(
     path.join(dir, "provisional-diagnostic-report.html"),
@@ -128,6 +176,12 @@ test("report bundle exports web-ready provisional contract without final/certifi
   assert.equal(bundle.visionLab.available, true);
   assert.equal(bundle.visionLab.candidateCount, 1);
   assert.equal(bundle.assets.some((asset) => asset.kind === "image" && asset.fileName === "front-all-on-portrait-display.png"), true);
+  assert.equal(bundle.assets.some((asset) => asset.kind === "image" && asset.fileName === "front-normalized-card.png"), true);
+  assert.equal(bundle.assets.some((asset) => asset.kind === "image" && asset.fileName === "back-normalized-card.png"), true);
+  assert.equal(bundle.geometry?.front?.placementState, "ready");
+  assert.equal(bundle.geometry?.back?.placementState, "ready");
+  assert.equal(bundle.captureTiming?.front?.captureProfile, "production_fast");
+  assert.equal(bundle.captureTiming?.frontProcessing?.frontProcessingMayOverlapFlip, true);
   assert.equal(bundle.finalGradeComputed, false);
   assert.equal(bundle.certifiedClaim, false);
   assert.equal(bundle.labelGenerated, false);

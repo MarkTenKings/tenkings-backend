@@ -3,6 +3,8 @@ export * from "./mockDrivers";
 export * from "./serialTransport";
 export * from "./arduinoLedController";
 export * from "./grblStage";
+export * from "./cardGeometry";
+export * from "./aiGraderCaptureTiming";
 export * from "./dinoliteBridgeClient";
 export type {
   LeimacIdmuClientConfig,

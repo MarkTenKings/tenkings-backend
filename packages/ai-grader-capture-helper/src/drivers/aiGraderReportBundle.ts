@@ -80,6 +80,12 @@ export interface AiGraderReportBundle {
   calibrationProfile?: JsonRecord;
   rulerCalibration?: JsonRecord;
   lightingProfile?: JsonRecord;
+  geometry?: {
+    front?: JsonRecord;
+    back?: JsonRecord;
+  };
+  captureTiming?: JsonRecord;
+  ocrPrefill?: JsonRecord;
   assets: AiGraderReportBundleAsset[];
   warnings: string[];
   limitations: string[];
@@ -121,6 +127,7 @@ function contentTypeForPath(filePath: string) {
   if (extension === ".png") return "image/png";
   if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
   if (extension === ".webp") return "image/webp";
+  if (extension === ".tif" || extension === ".tiff") return "image/tiff";
   if (extension === ".html") return "text/html; charset=utf-8";
   if (extension === ".json") return "application/json";
   return "application/octet-stream";
@@ -208,7 +215,7 @@ function unique(values: string[]) {
 }
 
 function isImagePath(value: string) {
-  return /\.(png|jpe?g|webp)$/i.test(value);
+  return /\.(png|jpe?g|webp|tiff?)$/i.test(value);
 }
 
 function normalizeReferencedPath(value: string, baseDir: string) {
@@ -308,6 +315,8 @@ export async function buildAiGraderReportBundle(input: {
   generatedAt?: string;
   publicBasePath?: string;
   includeAssetBodies?: boolean;
+  captureTiming?: JsonRecord;
+  ocrPrefill?: JsonRecord;
 }): Promise<AiGraderReportBundle> {
   const reportDir = normalizeLocalPath(input.reportDir);
   const outputDir = normalizeLocalPath(input.outputDir ?? reportDir);
@@ -332,9 +341,22 @@ export async function buildAiGraderReportBundle(input: {
   ]);
   const frontPackageDir = String(manifest?.frontPackageDir ?? manifest?.front?.packageDir ?? analysis?.frontPackageDir ?? "");
   const backPackageDir = String(manifest?.backPackageDir ?? manifest?.back?.packageDir ?? analysis?.backPackageDir ?? "");
+  const [frontPackageManifest, backPackageManifest] = await Promise.all([
+    frontPackageDir ? readJsonIfExists(path.join(frontPackageDir, "manifest.json")) : undefined,
+    backPackageDir ? readJsonIfExists(path.join(backPackageDir, "manifest.json")) : undefined,
+  ]);
+  const frontNormalized = firstRecord(frontPackageManifest?.front?.normalizedCard, frontPackageManifest?.normalizedCard);
+  const backNormalized = firstRecord(backPackageManifest?.back?.normalizedCard, backPackageManifest?.normalizedCard);
+  const frontGeometry = firstRecord(frontNormalized?.geometry, frontPackageManifest?.front?.geometry, frontPackageManifest?.geometry);
+  const backGeometry = firstRecord(backNormalized?.geometry, backPackageManifest?.back?.geometry, backPackageManifest?.geometry);
+  const normalizedImageRefs = [
+    typeof frontNormalized?.normalizedArtifact?.localOutputPath === "string" ? frontNormalized.normalizedArtifact.localOutputPath : "",
+    typeof backNormalized?.normalizedArtifact?.localOutputPath === "string" ? backNormalized.normalizedArtifact.localOutputPath : "",
+  ].filter(Boolean);
   const imageRefs = unique([
     ...(await imageRefsFromHtml(reportHtmlPath, reportDir)),
     ...visionRefs(analysis, ["true", "portrait", "overlay", "channel", "heatmap", "surface vision", "surface-vision", "confidence"]),
+    ...normalizedImageRefs,
   ])
     .map((ref) => normalizeReferencedPath(ref, reportDir))
     .filter((ref) => ref && isImagePath(ref));
@@ -431,6 +453,19 @@ export async function buildAiGraderReportBundle(input: {
     calibrationProfile: firstRecord(analysis?.calibrationProfile, manifest?.calibrationProfile),
     rulerCalibration: firstRecord(analysis?.rulerCalibration, manifest?.rulerCalibration, manifest?.fixedRigCalibrationProfile),
     lightingProfile: firstRecord(analysis?.acceptedLightingProfile, manifest?.acceptedLightingProfile),
+    geometry: {
+      ...(frontGeometry ? { front: frontGeometry } : {}),
+      ...(backGeometry ? { back: backGeometry } : {}),
+    },
+    captureTiming:
+      input.captureTiming ??
+      ({
+        front: firstRecord(frontPackageManifest?.captureTiming),
+        back: firstRecord(backPackageManifest?.captureTiming),
+        frontProcessing: firstRecord(frontPackageManifest?.processingTiming),
+        backProcessing: firstRecord(backPackageManifest?.processingTiming),
+      } as JsonRecord),
+    ...(input.ocrPrefill ? { ocrPrefill: input.ocrPrefill } : {}),
     assets,
     warnings,
     limitations: [
@@ -451,6 +486,8 @@ export async function writeAiGraderReportBundle(input: {
   reportId?: string;
   generatedAt?: string;
   publicBasePath?: string;
+  captureTiming?: JsonRecord;
+  ocrPrefill?: JsonRecord;
 }): Promise<AiGraderReportBundleWriteResult> {
   const outputDir = normalizeLocalPath(input.outputDir ?? input.reportDir);
   assertReportBundleOutputDirAllowed(outputDir);

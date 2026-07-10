@@ -1,10 +1,12 @@
 import type {
+  AiGraderCaptureProfile,
   AiGraderLiveLightingStatus,
   AiGraderLocalReportHistory,
   AiGraderLocalStationPreviewStatus,
   AiGraderLocalStationStatus,
   AiGraderStationAction,
 } from "./aiGraderLocalStation";
+import { sanitizeAiGraderLocalStationStatusForDisplay } from "./aiGraderLocalStation";
 import type { AiGraderReportBundle } from "./aiGraderReportBundle";
 
 export const DEFAULT_AI_GRADER_STATION_BRIDGE_URL = "http://127.0.0.1:47652";
@@ -15,8 +17,36 @@ export type AiGraderStationBridgeCallInput = {
   baseUrl: string;
   stationToken: string;
   action: AiGraderStationAction;
-  body?: Record<string, unknown>;
+  body?: AiGraderStationBridgeActionRequestBody | Record<string, unknown>;
 };
+
+export type AiGraderStationBridgeActionRequestBody = {
+  acceptedProfile?: Partial<AiGraderLocalStationStatus["acceptedProfile"]>;
+  confirmations?: Partial<NonNullable<AiGraderLocalStationStatus["confirmations"]>>;
+  reportId?: string;
+  operatorId?: string;
+  warningsAccepted?: boolean;
+  overrideReason?: string;
+  captureProfile?: AiGraderCaptureProfile;
+  captureTriggerAt?: string;
+  captureTriggerMode?: "operator" | "auto";
+  rapidCaptureEnabled?: boolean;
+  queueItemId?: string;
+};
+
+export function buildAiGraderCaptureProfileRequest(captureProfile: AiGraderCaptureProfile) {
+  return { captureProfile } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderRapidCaptureConfigurationRequest(rapidCaptureEnabled: boolean) {
+  return { rapidCaptureEnabled } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderRapidQueueActivationRequest(queueItemId: string) {
+  const normalized = queueItemId.trim();
+  if (!normalized) throw new Error("AI Grader rapid capture queue item ID is required.");
+  return { queueItemId: normalized } satisfies AiGraderStationBridgeActionRequestBody;
+}
 
 export type AiGraderStationBridgeHealth = {
   ok: boolean;
@@ -114,13 +144,16 @@ export async function pairAiGraderStationBridge(
   return result;
 }
 
-export async function callAiGraderStationBridge(input: AiGraderStationBridgeCallInput): Promise<AiGraderLocalStationStatus> {
+export async function callAiGraderStationBridge(
+  input: AiGraderStationBridgeCallInput,
+  fetchImpl: typeof fetch = fetch
+): Promise<AiGraderLocalStationStatus> {
   const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
   if (!input.stationToken.trim()) {
     throw new Error("AI Grader station bridge token is required.");
   }
   const method = input.action === "status" || input.action === "latest-report" || input.action === "session-manifest" ? "GET" : "POST";
-  const response = await fetch(`${baseUrl}${actionPath(input.action)}`, {
+  const response = await fetchImpl(`${baseUrl}${actionPath(input.action)}`, {
     method,
     headers: {
       "content-type": "application/json",
@@ -132,7 +165,7 @@ export async function callAiGraderStationBridge(input: AiGraderStationBridgeCall
   if (!response.ok || payload.ok !== true) {
     throw new Error(payload.message ?? payload.error?.message ?? "AI Grader local station bridge request failed.");
   }
-  return payload.result as AiGraderLocalStationStatus;
+  return sanitizeAiGraderLocalStationStatusForDisplay(payload.result as AiGraderLocalStationStatus);
 }
 
 async function bridgeGetJson<T>(

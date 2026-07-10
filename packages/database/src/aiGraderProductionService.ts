@@ -55,6 +55,9 @@ export type AiGraderProductionReportBundleLike = JsonRecord & {
   calibrationProfile?: JsonRecord;
   rulerCalibration?: JsonRecord;
   lightingProfile?: JsonRecord;
+  geometry?: JsonRecord;
+  captureTiming?: JsonRecord;
+  ocrPrefill?: JsonRecord;
   assets?: unknown[];
   publicAssets?: unknown[];
   warnings?: unknown[];
@@ -352,8 +355,102 @@ function isImageAssetRecord(asset: JsonRecord) {
   return haystack.includes("image") || /\.(png|jpe?g|webp)$/i.test(String(asset.fileName ?? asset.storageKey ?? asset.id ?? ""));
 }
 
+function unsafeAiGraderPublicUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    const ipv4 = host.split(".").map((part) => Number(part));
+    const isIpv4 = ipv4.length === 4 && ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
+    if (
+      host === "localhost" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host === "::" ||
+      host.startsWith("::ffff:") ||
+      host.startsWith("fc") ||
+      host.startsWith("fd") ||
+      /^fe[89ab]/.test(host) ||
+      host.endsWith(".local") ||
+      host.endsWith(".internal") ||
+      host.endsWith(".localhost") ||
+      (!isIpv4 && !host.includes(".") && !host.includes(":")) ||
+      (isIpv4 && (ipv4[0] === 0 || (ipv4[0] === 100 && ipv4[1] >= 64 && ipv4[1] <= 127))) ||
+      (isIpv4 && ipv4[0] === 198 && (ipv4[1] === 18 || ipv4[1] === 19)) ||
+      (isIpv4 && ipv4[0] >= 224) ||
+      host.startsWith("127.") ||
+      host.startsWith("10.") ||
+      host.startsWith("192.168.") ||
+      host.startsWith("169.254.") ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    ) return true;
+    const queryKeys = Array.from(parsed.searchParams.keys()).map((key) => key.toLowerCase());
+    if (
+      queryKeys.some(
+        (key) =>
+          key === "sig" ||
+          key === "access_key" ||
+          key.includes("signature") ||
+          key.includes("credential") ||
+          key.includes("security-token") ||
+          key === "token" ||
+          key.endsWith("_token") ||
+          key.startsWith("x-amz-") ||
+          key.startsWith("x-goog-")
+      )
+    ) return true;
+    if (parsed.username || parsed.password) return true;
+  } catch {}
+  return false;
+}
+
 function looksLikeLocalPathOrLoopback(value: string) {
-  return /^[a-z]:\\/i.test(value) || value.includes("\\TenKings\\") || /https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|::1)/i.test(value);
+  if (/\b[a-z]:[\\/]/i.test(value) || /\\TenKings\\/i.test(value) || /(^|\s)\\\\[^\\]+\\/i.test(value)) return true;
+  if (/(^|[\s('"=:])(\/Users\/|\/home\/|\/root\/|\/tmp\/|\/var\/tmp\/|\/app\/|\/workspace\/)/i.test(value)) return true;
+  if (/(^|[\s('"=:])(data|blob):/i.test(value) || /\bfile:\/\//i.test(value)) return true;
+  if (
+    /x-ai-grader-station-token|stationToken\s*[=:]|service-token|DATABASE_URL|Authorization\s*:\s*Bearer|x-amz-(?:signature|credential|security-token)|x-goog-(?:signature|credential)/i.test(value)
+  ) return true;
+  if (
+    /\b(?:localhost|[a-z0-9-]+\.(?:local|internal|localhost)|0\.0\.0\.0|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|169\.254(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|100\.(?:6[4-9]|[789]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}|198\.(?:18|19)(?:\.\d{1,3}){2})(?::\d{1,5})?\b/i.test(value) ||
+    /(^|[\s([])(?:\[?::1\]?|fc[0-9a-f:]+|fd[0-9a-f:]+|fe[89ab][0-9a-f:]+)(?::\d{1,5})?(?=$|[\s)\],;])/i.test(value)
+  ) return true;
+  const embeddedUrls = value.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+  return embeddedUrls.some((url) => unsafeAiGraderPublicUrl(url));
+}
+
+function unsafeAiGraderPublicKey(entryKey: string) {
+  const compact = entryKey.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const credentialKey =
+    compact === "bearer" ||
+    compact === "authorization" ||
+    compact.endsWith("token") ||
+    compact.endsWith("apikey") ||
+    compact.endsWith("accesskey") ||
+    compact.endsWith("accesskeyid") ||
+    compact.endsWith("secretkey") ||
+    compact.endsWith("privatekey") ||
+    compact.endsWith("password") ||
+    compact.endsWith("credential") ||
+    compact.endsWith("credentials") ||
+    compact.includes("secret");
+  const hardwareControlKey = new Set([
+    "bridgeurl",
+    "stationurl",
+    "leimachost",
+    "leimacport",
+    "baslerbridgescript",
+    "pylonroot",
+    "hardwarecontrol",
+    "hardwarecontrols",
+    "hardwareaction",
+    "hardwareactions",
+    "hardwareactionsenabled",
+    "cameracontrol",
+    "cameracontrols",
+    "lightingcontrol",
+    "lightingcontrols",
+  ]).has(compact);
+  return credentialKey || hardwareControlKey;
 }
 
 export function sanitizeAiGraderPublicJson<T>(value: T): T {
@@ -369,6 +466,18 @@ export function sanitizeAiGraderPublicJson<T>(value: T): T {
       const next: JsonRecord = {};
       for (const [entryKey, entryValue] of Object.entries(current)) {
         const lowerKey = entryKey.toLowerCase();
+        if (
+          unsafeAiGraderPublicKey(entryKey) ||
+          lowerKey.includes("stationtoken") ||
+          lowerKey.includes("bridgetoken") ||
+          lowerKey.includes("pairingcode") ||
+          lowerKey.includes("presigned") ||
+          lowerKey === "uploadurl" ||
+          lowerKey === "bodybase64" ||
+          lowerKey === "bodyencoding" ||
+          lowerKey.includes("secret") ||
+          lowerKey.includes("authorization")
+        ) continue;
         if (
           lowerKey.includes("local") ||
           lowerKey.endsWith("path") ||
@@ -387,6 +496,183 @@ export function sanitizeAiGraderPublicJson<T>(value: T): T {
     return current;
   }
   return visit(value) as T;
+}
+
+const PUBLIC_CAPTURE_TIMING_SUMMARY_KEYS = [
+  "previewReadyMs",
+  "frontEdgeDetectionReadyMs",
+  "backEdgeDetectionReadyMs",
+  "frontPositioningMs",
+  "backPositioningMs",
+  "totalFrontMs",
+  "totalBackMs",
+  "frontProcessingMs",
+  "backProcessingMs",
+  "frontProcessingDuringFlipMs",
+  "reportGenerationMs",
+  "totalCardMs",
+  "reportReadyTotalMs",
+  "safeQueueLatencyMs",
+] as const;
+const PUBLIC_CAPTURE_TIMING_EVENT_IDS = new Set([
+  "session_started",
+  "preview_stream_started",
+  "preview_ready",
+  "edge_detection_ready",
+  "capture_trigger",
+  "raw_capture_completed",
+  "side_processing_started",
+  "side_processing_completed",
+  "back_positioning_started",
+  "report_generation_started",
+  "report_ready",
+  "safely_queued",
+]);
+const PUBLIC_CAPTURE_TIMING_PHASE_IDS = new Set([
+  "lighting_profile",
+  "frame_capture",
+  "file_writes",
+  "file_hashes",
+  "crop_deskew",
+  "grading_forensic_runner",
+  "side_processing",
+  "report_generation",
+]);
+const PUBLIC_OCR_FIELD_NAMES = [
+  "category",
+  "playerName",
+  "cardName",
+  "year",
+  "manufacturer",
+  "productSet",
+  "cardNumber",
+  "parallel",
+  "insert",
+  "numbered",
+  "auto",
+  "mem",
+] as const;
+
+function boundedPublicDuration(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 24 * 60 * 60 * 1000
+    ? Math.round(value * 10) / 10
+    : undefined;
+}
+
+/**
+ * Browser publication input is not a hardware attestation. Preserve bounded
+ * diagnostic timing, but never allow a caller-provided proof boolean to become
+ * a public five-second claim.
+ */
+export function normalizeAiGraderPublicCaptureTiming(value: unknown): JsonRecord | undefined {
+  if (!isRecord(value) || value.schemaVersion !== "ten-kings-ai-grader-capture-timing-v1") return undefined;
+  const captureProfile = value.captureProfile === "production_fast" ? "production_fast" : "full_forensic";
+  const rawSummary = isRecord(value.summary) ? value.summary : {};
+  const summary: JsonRecord = {
+    frontProcessingOverlappedFlip: rawSummary.frontProcessingOverlappedFlip === true,
+  };
+  for (const key of PUBLIC_CAPTURE_TIMING_SUMMARY_KEYS) {
+    const duration = boundedPublicDuration(rawSummary[key]);
+    if (duration !== undefined) summary[key] = duration;
+  }
+  const events = (Array.isArray(value.events) ? value.events : [])
+    .filter(isRecord)
+    .slice(0, 100)
+    .flatMap((entry) => {
+      const id = stringValue(entry.id, "");
+      const at = stringValue(entry.at, "");
+      const side = entry.side === "front" || entry.side === "back" ? entry.side : undefined;
+      const triggerMode = entry.triggerMode === "operator" || entry.triggerMode === "auto" ? entry.triggerMode : undefined;
+      if (!PUBLIC_CAPTURE_TIMING_EVENT_IDS.has(id) || !Number.isFinite(Date.parse(at))) return [];
+      return [{ id, at: new Date(at).toISOString(), ...(side ? { side } : {}), ...(triggerMode ? { triggerMode } : {}) }];
+    });
+  const phases = (Array.isArray(value.phases) ? value.phases : [])
+    .filter(isRecord)
+    .slice(0, 100)
+    .flatMap((entry) => {
+      const id = stringValue(entry.id, "");
+      const durationMs = boundedPublicDuration(entry.durationMs);
+      const side = entry.side === "front" || entry.side === "back" ? entry.side : undefined;
+      if (!PUBLIC_CAPTURE_TIMING_PHASE_IDS.has(id) || durationMs === undefined) return [];
+      return [{ id, durationMs, ...(side ? { side } : {}) }];
+    });
+  const totalFrontMs = boundedPublicDuration(rawSummary.totalFrontMs);
+  const totalBackMs = boundedPublicDuration(rawSummary.totalBackMs);
+  return {
+    schemaVersion: "ten-kings-ai-grader-capture-timing-v1",
+    captureProfile,
+    targetSideMs: 5000,
+    hardwareMeasurement: false,
+    events,
+    phases,
+    summary,
+    target: {
+      ...(totalFrontMs !== undefined ? { frontWithinTarget: totalFrontMs <= 5000 } : {}),
+      ...(totalBackMs !== undefined ? { backWithinTarget: totalBackMs <= 5000 } : {}),
+      fiveSecondsPerSideProven: false,
+      hardwareMeasurementRequired: true,
+      note: "Published browser timing is diagnostic only; five seconds per side requires a trusted supervised Dell hardware attestation.",
+    },
+  };
+}
+
+/**
+ * OCR metadata may assist display, but it can never carry caller-controlled
+ * claims that confirmation, publication, or inventory mutation occurred.
+ */
+export function normalizeAiGraderPublicOcrPrefill(value: unknown): JsonRecord | undefined {
+  if (!isRecord(value)) return undefined;
+  const rawFields = isRecord(value.fields) ? value.fields : {};
+  const fields: JsonRecord = {};
+  for (const name of PUBLIC_OCR_FIELD_NAMES) {
+    const raw = rawFields[name];
+    if (!isRecord(raw)) continue;
+    const fieldValue =
+      typeof raw.value === "string"
+        ? raw.value.slice(0, 240)
+        : typeof raw.value === "boolean" || raw.value === null
+          ? raw.value
+          : null;
+    const confidence =
+      typeof raw.confidence === "number" && Number.isFinite(raw.confidence)
+        ? Math.max(0, Math.min(1, Math.round(raw.confidence * 1000) / 1000))
+        : 0;
+    fields[name] = {
+      value: fieldValue,
+      confidence,
+      reviewRequired: true,
+      sources: (Array.isArray(raw.sources) ? raw.sources : [])
+        .filter((source): source is string => typeof source === "string")
+        .slice(0, 10)
+        .map((source) => source.slice(0, 80)),
+    };
+  }
+  const provenance = isRecord(value.provenance) ? value.provenance : {};
+  return {
+    ...(typeof value.reportId === "string" ? { reportId: value.reportId.slice(0, 200) } : {}),
+    status: "prefill_ready",
+    humanConfirmationRequired: true,
+    inventoryMutationPerformed: false,
+    publishMutationPerformed: false,
+    sourceSides: (Array.isArray(value.sourceSides) ? value.sourceSides : []).filter(
+      (side) => side === "front" || side === "back"
+    ),
+    fields,
+    reviewFieldNames: Object.keys(fields),
+    provenance: {
+      ocrEngine: typeof provenance.ocrEngine === "string" ? provenance.ocrEngine.slice(0, 120) : "existing_ten_kings_ocr",
+      attributeExtractor:
+        typeof provenance.attributeExtractor === "string"
+          ? provenance.attributeExtractor.slice(0, 120)
+          : "@tenkings/shared/extractCardAttributes",
+      setLookupUsed: provenance.setLookupUsed === true,
+      setIdentificationUsed: provenance.setIdentificationUsed === true,
+    },
+    warnings: (Array.isArray(value.warnings) ? value.warnings : [])
+      .filter((warning): warning is string => typeof warning === "string")
+      .slice(0, 20)
+      .map((warning) => warning.slice(0, 500)),
+  };
 }
 
 function publicBase(publicReportBaseUrl?: string) {
@@ -504,6 +790,8 @@ export function buildAiGraderProductionStoragePlan(input: {
   const qrPayloadUrl = publicReportUrl;
   const publicUrlFor = input.publicUrlFor ?? ((storageKey: string) => `${base}/storage/${storageKey}`);
   const reportAssets = reportAssetArtifacts({ reportId, storageKeyPrefix, reportBundle: input.reportBundle, publicUrlFor });
+  const publicCaptureTiming = normalizeAiGraderPublicCaptureTiming(input.reportBundle.captureTiming);
+  const publicOcrPrefill = normalizeAiGraderPublicOcrPrefill(input.reportBundle.ocrPrefill);
   const publicAssets = reportAssets.map((entry) => ({
     id: entry.artifactId.replace(`${reportId}:report-asset:`, ""),
     kind: entry.kind,
@@ -517,6 +805,8 @@ export function buildAiGraderProductionStoragePlan(input: {
   const sanitizedBundle = sanitizeAiGraderPublicJson({
     ...input.reportBundle,
     reportId,
+    ...(publicCaptureTiming ? { captureTiming: publicCaptureTiming } : { captureTiming: undefined }),
+    ...(publicOcrPrefill ? { ocrPrefill: publicOcrPrefill } : { ocrPrefill: undefined }),
     assets: publicAssets,
     publicAssets,
     publicPathPlaceholders: {
@@ -750,7 +1040,12 @@ function sessionData(input: AiGraderProductionPersistInput, gradingSessionId: st
     cardIdentity: nullableJson(input.reportBundle.cardIdentity),
     acceptedProfile: nullableJson(input.reportBundle.lightingProfile),
     calibrationProfile: nullableJson(input.reportBundle.calibrationProfile ?? input.reportBundle.rulerCalibration),
-    captureSummary: nullableJson(input.reportBundle.evidenceReferences),
+    captureSummary: nullableJson({
+      evidenceReferences: input.reportBundle.evidenceReferences,
+      geometry: input.reportBundle.geometry,
+      captureTiming: normalizeAiGraderPublicCaptureTiming(input.reportBundle.captureTiming),
+      ocrPrefill: normalizeAiGraderPublicOcrPrefill(input.reportBundle.ocrPrefill),
+    }),
     safetySummary: nullableJson({
       finalGradeComputed: input.productionRelease.finalGradeComputed === true,
       certifiedClaim: false,

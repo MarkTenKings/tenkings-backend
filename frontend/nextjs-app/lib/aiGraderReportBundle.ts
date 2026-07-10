@@ -93,6 +93,12 @@ export type AiGraderReportBundle = {
   calibrationProfile?: Record<string, unknown>;
   rulerCalibration?: Record<string, unknown>;
   lightingProfile?: Record<string, unknown>;
+  geometry?: {
+    front?: Record<string, unknown>;
+    back?: Record<string, unknown>;
+  };
+  captureTiming?: Record<string, unknown>;
+  ocrPrefill?: Record<string, unknown>;
   assets?: AiGraderReportPublicAsset[];
   publicAssets?: AiGraderReportPublicAsset[];
   warnings: string[];

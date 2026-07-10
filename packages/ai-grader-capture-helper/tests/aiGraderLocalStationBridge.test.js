@@ -6,8 +6,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   AiGraderLocalStationBridgeService,
+  AiGraderPreviewJpegFrameAssembler,
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
   buildAiGraderLocalStationBridgeConfig,
+  retainAiGraderRapidCaptureQueueItems,
   startAiGraderLocalStationBridgeHttpServer,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
 const { buildAiGraderStationRealCommandPlan } = require("../dist/drivers/aiGraderStationWorkflow");
@@ -85,6 +87,7 @@ function makeFakeWarmRunner(options = {}) {
           packageDir: `${input.side}-package`,
           sideDir: `${input.side}-package/${input.side}`,
           side: input.side,
+          hardwareMeasurement: options.hardwareMeasurement === true,
           activeLightingProfile: input.activeLightingProfile,
           batch: {
             executionPath: "warm_full_forensic_runner",
@@ -105,7 +108,7 @@ function makeFakeWarmRunner(options = {}) {
       async processSide(batch) {
         calls.push({ type: "process", side: batch.side, batch });
         if (options.processDelay) await options.processDelay(batch);
-        if (options.processError) throw options.processError;
+        if (options.processError && (!options.processErrorSide || options.processErrorSide === batch.side)) throw options.processError;
         return {
           executionPath: "warm_full_forensic_runner",
           fallbackUsed: false,
@@ -118,12 +121,93 @@ function makeFakeWarmRunner(options = {}) {
             executionPath: "warm_full_forensic_runner",
             fallbackUsed: false,
             evidenceSide: batch.side,
+            captureTiming: {
+              hardwareMeasurement: options.processedHardwareMeasurement === true || options.hardwareMeasurement === true,
+              lightingProfileChanges: { write: { durationMs: 11 } },
+              frameCaptureMs: 120,
+              fileWritesMs: 230,
+              fileHashMs: 18,
+              gradingForensicRunnerMs: 430,
+            },
+            processingTiming: {
+              totalDurationMs: 75,
+              phases: { cropDeskew: { durationMs: 15 } },
+            },
           },
         };
       },
     },
   };
 }
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitFor(predicate, message, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = predicate();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(message);
+}
+
+async function waitForAsync(predicate, message, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await predicate();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(message);
+}
+
+test("preview JPEG assembler handles split multipart frames and bounds incomplete input", () => {
+  const first = Buffer.from([0xff, 0xd8, 1, 2, 3, 0xff, 0xd9]);
+  const second = Buffer.from([0xff, 0xd8, 4, 5, 6, 0xff, 0xd9]);
+  const multipart = Buffer.concat([
+    Buffer.from("--frame\r\nContent-Type: image/jpeg\r\n\r\n"),
+    first,
+    Buffer.from("\r\n--frame\r\nContent-Type: image/jpeg\r\n\r\n"),
+    second,
+    Buffer.from("\r\n"),
+  ]);
+  const assembler = new AiGraderPreviewJpegFrameAssembler();
+  const frames = [];
+  for (const split of [multipart.subarray(0, 3), multipart.subarray(3, 47), multipart.subarray(47, 56), multipart.subarray(56)]) {
+    frames.push(...assembler.push(split));
+  }
+  assert.deepEqual(frames, [first, second]);
+  assert.equal(assembler.bufferedByteLength <= 1, true);
+
+  const incomplete = new AiGraderPreviewJpegFrameAssembler();
+  incomplete.push(Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(12 * 1024 * 1024 + 100)]));
+  assert.equal(incomplete.bufferedByteLength <= 12 * 1024 * 1024, true);
+});
+
+test("rapid queue retention never evicts unreviewed backlog beyond the recent-item cap", () => {
+  const finalizing = Array.from({ length: 26 }, (_, index) => ({ queueItemId: `pending-${index}`, state: "finalizing" }));
+  const terminal = Array.from({ length: 8 }, (_, index) => ({ queueItemId: `published-${index}`, state: "published" }));
+  const retained = retainAiGraderRapidCaptureQueueItems([...finalizing, ...terminal]);
+  assert.equal(retained.filter((item) => item.state === "finalizing").length, 26);
+  assert.equal(retained.filter((item) => item.state === "published").length, 0);
+  assert.deepEqual(retained.map((item) => item.queueItemId), finalizing.map((item) => item.queueItemId));
+
+  const mixed = retainAiGraderRapidCaptureQueueItems([
+    ...Array.from({ length: 20 }, (_, index) => ({ queueItemId: `review-${index}`, state: "report_ready_needs_confirm" })),
+    ...terminal,
+  ]);
+  assert.equal(mixed.filter((item) => item.state === "report_ready_needs_confirm").length, 20);
+  assert.equal(mixed.filter((item) => item.state === "published").length, 5);
+});
 
 test("station bridge config is explicit, local-only, and real mode is gated", () => {
   assert.throws(
@@ -349,6 +433,103 @@ test("station bridge preview status and stream are token-gated and local-only", 
   }
 });
 
+test("mock live preview reports deterministic path-free front and back geometry states", async () => {
+  const dir = outputDir(`preview-geometry-${Date.now()}`);
+  const token = "local-station-token-preview-geometry";
+  const started = await startAiGraderLocalStationBridgeHttpServer({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 0,
+    stationToken: token,
+    allowedOrigins: ["https://collect.tenkings.co"],
+    outputDir: dir,
+  });
+  const headers = {
+    Origin: "https://collect.tenkings.co",
+    "x-ai-grader-station-token": token,
+    "content-type": "application/json",
+  };
+  const post = async (action, body = {}) => {
+    const response = await fetch(`${started.url}/actions/${action}`, { method: "POST", headers, body: JSON.stringify(body) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.message);
+    return payload.result;
+  };
+  const geometry = async () => {
+    const response = await fetch(`${started.url}/preview/status`, { headers });
+    return (await response.json()).result.cardGeometry;
+  };
+  const openStream = () => {
+    let sawFrame = false;
+    const req = http.request(`${started.url}/preview/stream`, { headers }, (res) => {
+      assert.equal(res.statusCode, 200);
+      res.once("data", () => { sawFrame = true; });
+    });
+    req.on("error", () => {});
+    req.end();
+    return req;
+  };
+  let frontStream;
+  let backStream;
+  try {
+    const startedSession = await post("start-session");
+    assert.equal(startedSession.previewStatus.cardGeometry.activeSide, "front");
+    assert.equal(startedSession.previewStatus.cardGeometry.front, undefined);
+    assert.equal(startedSession.previewStatus.cardGeometry.back, undefined);
+    await post("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+    await post("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+
+    frontStream = openStream();
+    const notDetectedFront = await waitForAsync(async () => {
+      const value = await geometry();
+      return value.front?.placementState === "not_detected" ? value : undefined;
+    }, "front preview never reported not_detected");
+    assert.equal(notDetectedFront.manualOverlayFallbackAvailable, true);
+    await waitForAsync(async () => (await geometry()).front?.placementState === "adjust_card", "front preview never reported adjust_card");
+    const readyFront = await waitForAsync(async () => {
+      const value = await geometry();
+      return value.front?.placementState === "ready" ? value : undefined;
+    }, "front preview never reported ready");
+    assert.equal(readyFront.front.side, "front");
+    assert.equal(readyFront.previewFramesPersisted, false);
+
+    const afterFront = await post("capture-front");
+    assert.equal(afterFront.previewStatus.cardGeometry.activeSide, "back");
+    assert.equal(afterFront.previewStatus.cardGeometry.front.placementState, "ready");
+    const frontManifest = JSON.parse(fs.readFileSync(afterFront.outputs.manifestPath, "utf8"));
+    assert.equal(frontManifest.previewStatus.cardGeometry.front.placementState, "ready");
+    assert.equal(frontManifest.previewStatus.cardGeometry.activeSide, "back");
+
+    backStream = openStream();
+    await waitForAsync(async () => (await geometry()).back?.placementState === "not_detected", "back preview never reported not_detected");
+    await waitForAsync(async () => (await geometry()).back?.placementState === "adjust_card", "back preview never reported adjust_card");
+    const readyBack = await waitForAsync(async () => {
+      const value = await geometry();
+      return value.back?.placementState === "ready" ? value : undefined;
+    }, "back preview never reported ready");
+    assert.equal(readyBack.activeSide, "back");
+    assert.equal(readyBack.front.placementState, "ready");
+    assert.equal(readyBack.back.side, "back");
+    assert.equal(readyBack.analysis.source, "mock_deterministic");
+
+    const geometryJson = JSON.stringify(readyBack);
+    assert.equal(geometryJson.includes(dir), false);
+    assert.equal(geometryJson.includes(token), false);
+    assert.equal(/data:image|presigned|127\.0\.0\.1|localhost/i.test(geometryJson), false);
+
+    const persistedBack = await post("confirm-flip", { confirmations: { flipComplete: true } });
+    const backManifest = JSON.parse(fs.readFileSync(persistedBack.outputs.manifestPath, "utf8"));
+    assert.equal(backManifest.previewStatus.cardGeometry.front.placementState, "ready");
+    assert.equal(backManifest.previewStatus.cardGeometry.back.placementState, "ready");
+  } finally {
+    frontStream?.destroy();
+    backStream?.destroy();
+    if (typeof started.server.closeAllConnections === "function") started.server.closeAllConnections();
+    await closeServer(started.server);
+  }
+});
+
 test("station bridge live lighting endpoints are token-gated and validate duty and channels", async () => {
   const token = "local-station-token-lighting";
   const started = await startAiGraderLocalStationBridgeHttpServer({
@@ -524,6 +705,8 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(status.currentStep, "verify_fixture_rulers");
   assert.ok(status.outputs.sessionDir);
   assert.equal(status.warmRunnerStatus.phases.some((phase) => phase.id === "warm_session_setup"), true);
+  assert.equal(status.captureTiming.hardwareMeasurement, false);
+  assert.equal(status.captureTiming.target.fiveSecondsPerSideProven, false);
 
   await assert.rejects(() => service.action("launch-preview"), /fixture\/rulers/);
 
@@ -543,22 +726,24 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   status = await service.action("capture-front");
   assert.equal(status.sessionManifest.frontCaptured, true);
   assert.equal(status.warmRunnerStatus.captureLock.held, false);
-  assert.equal(status.warmRunnerStatus.previewPolicy.holdActive, true);
+  assert.equal(status.warmRunnerStatus.previewPolicy.holdActive, false);
   assert.ok(status.warmRunnerStatus.previewPolicy.lastHoldStartedAt);
-  assert.equal(status.warmRunnerStatus.previewPolicy.lastResumeReadyAt, undefined);
+  assert.ok(status.warmRunnerStatus.previewPolicy.lastResumeReadyAt);
   assert.equal(status.warmRunnerStatus.evidencePlan.rolesBySide.front.every((role) => role.status === "completed"), true);
   assert.equal(status.warmRunnerStatus.evidencePlan.rolesBySide.back.every((role) => role.status === "pending"), true);
   assert.equal(status.warmRunnerStatus.queues.capture.some((phase) => phase.id === "capture_front" && phase.status === "completed"), true);
   assert.equal(status.warmRunnerStatus.queues.processing.some((phase) => phase.id === "process_front_artifacts" && phase.status === "completed"), true);
+  assert.equal(status.captureTiming.events.find((event) => event.id === "capture_trigger" && event.side === "front")?.triggerMode, "operator");
   await assert.rejects(() => service.action("capture-back"), /flip/);
 
   status = await service.action("confirm-flip", { confirmations: { flipComplete: true } });
   assert.equal(status.confirmations.flipComplete, true);
-  status = await service.action("capture-back");
+  status = await service.action("capture-back", { captureTriggerMode: "auto" });
   assert.equal(status.sessionManifest.backCaptured, true);
   assert.equal(status.warmRunnerStatus.previewPolicy.holdActive, true);
   assert.equal(status.warmRunnerStatus.evidencePlan.rolesBySide.back.every((role) => role.status === "completed"), true);
   assert.equal(status.warmRunnerStatus.queues.processing.some((phase) => phase.id === "process_back_artifacts" && phase.status === "completed"), true);
+  assert.equal(status.captureTiming.events.find((event) => event.id === "capture_trigger" && event.side === "back")?.triggerMode, "auto");
   status = await service.action("run-diagnostics");
   assert.equal(status.latestReport.exists, true);
   assert.equal(status.warmRunnerStatus.previewPolicy.holdActive, true);
@@ -567,6 +752,10 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(status.timingSummary.executionPath, "warm_full_forensic_runner");
   assert.equal(status.timingSummary.fallbackUsed, false);
   assert.match(status.timingSummary.targetInterCaptureNote, /full forensic evidence preserved/i);
+  assert.equal(status.captureTiming.summary.totalFrontMs >= 0, true);
+  assert.equal(status.captureTiming.summary.totalBackMs >= 0, true);
+  assert.equal(status.captureTiming.target.fiveSecondsPerSideProven, false);
+  assert.equal(status.captureProfileGuard.fiveSecondTargetProven, false);
   const warmSessionManifest = JSON.parse(fs.readFileSync(status.outputs.manifestPath, "utf8"));
   assert.equal(warmSessionManifest.executionPath, "warm_full_forensic_runner");
   assert.equal(warmSessionManifest.fallbackUsed, false);
@@ -578,6 +767,8 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(history.stats.allTime >= 1, true);
   status = await service.action("export-report-bundle");
   assert.ok(status.outputs.reportBundlePath);
+  assert.equal(status.reportBundle.captureTiming.schemaVersion, "ten-kings-ai-grader-capture-timing-v1");
+  assert.equal(status.reportBundle.captureTiming.hardwareMeasurement, false);
   const reportId = status.latestReport.reportId;
   const publishPackageDir = path.join(bundleRoot, reportId);
   assert.equal(status.outputs.publishPackageDir, publishPackageDir);
@@ -726,6 +917,371 @@ test("real station bridge uses warm full forensic runner by default with fake ru
   assert.equal(status.timingSummary.executionPath, "warm_full_forensic_runner");
   assert.equal(status.timingSummary.fallbackUsed, false);
   assert.equal(status.timingSummary.totalCommandMs >= 0, true);
+  assert.equal(status.captureTiming.hardwareMeasurement, false);
+  assert.equal(status.captureTiming.target.fiveSecondsPerSideProven, false);
+  assert.equal(status.captureProfileGuard.fiveSecondTargetProven, false);
+  assert.equal(status.captureTiming.phases.some((phase) => phase.id === "frame_capture" && phase.side === "front"), true);
+  assert.equal(status.captureTiming.phases.some((phase) => phase.id === "crop_deskew" && phase.side === "back"), true);
+});
+
+test("capture timing includes validated browser click-to-action delay", async () => {
+  const service = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`capture-trigger-at-${Date.now()}`),
+  }));
+  await service.action("start-session");
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  const captureTriggerAt = new Date(Date.now() - 1200).toISOString();
+  const status = await service.action("capture-front", { captureTriggerMode: "auto", captureTriggerAt });
+  const trigger = status.captureTiming.events.find((event) => event.id === "capture_trigger" && event.side === "front");
+  assert.equal(trigger.at, captureTriggerAt);
+  assert.equal(trigger.triggerMode, "auto");
+  assert.equal(status.captureTiming.summary.totalFrontMs >= 1100, true);
+  assert.equal(status.captureTiming.target.fiveSecondsPerSideProven, false);
+
+  const futureService = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`capture-trigger-future-${Date.now()}`),
+  }));
+  await futureService.action("start-session");
+  await futureService.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await futureService.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  const futureTriggerAt = new Date(Date.now() + 2000).toISOString();
+  const futureStatus = await futureService.action("capture-front", { captureTriggerAt: futureTriggerAt });
+  const clamped = futureStatus.captureTiming.events.find((event) => event.id === "capture_trigger" && event.side === "front");
+  assert.notEqual(clamped.at, futureTriggerAt);
+  assert.equal(Date.parse(clamped.at) <= Date.now(), true);
+});
+
+test("rapid capture overlaps front processing with back positioning and isolates the next card", async () => {
+  const dir = outputDir(`rapid-overlap-${Date.now()}`);
+  const frontProcessing = deferred();
+  const warm = makeFakeWarmRunner({
+    async processDelay(batch) {
+      if (batch.side === "front") await frontProcessing.promise;
+    },
+  });
+  const runner = {
+    async run(step) {
+      if (step.id === "unified_report") {
+        return {
+          stepId: step.id,
+          ok: true,
+          exitCode: 0,
+          payload: {
+            report: {
+              packageDir: path.join(dir, "unified-report"),
+              reportPath: path.join(dir, "unified-report", "provisional-diagnostic-report.html"),
+            },
+          },
+        };
+      }
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+    },
+  };
+  const config = realConfig({ outputDir: dir, reportBundleOutputDir: path.join(dir, "report-bundles") });
+  const service = new AiGraderLocalStationBridgeService(config, runner, warm.runner);
+
+  await service.action("configure-rapid-capture", { rapidCaptureEnabled: true });
+  let status = await service.action("start-session", { captureProfile: "full_forensic" });
+  const firstSessionId = status.sessionId;
+  const firstManifestPath = status.outputs.manifestPath;
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+
+  status = await service.action("capture-front");
+  assert.equal(status.rapidCapture.workflowState, "back_positioning");
+  assert.deepEqual(
+    status.rapidCapture.workflowHistory.slice(-3).map((event) => event.state),
+    ["front_captured", "front_processing", "back_positioning"]
+  );
+  assert.equal(warm.calls.some((call) => call.type === "process" && call.side === "front"), true);
+
+  await service.action("confirm-flip", { confirmations: { flipComplete: true } });
+  status = await service.action("capture-back", { captureTriggerMode: "auto" });
+  assert.equal(status.rapidCapture.workflowState, "back_captured");
+  assert.equal(status.sessionManifest.backCaptured, true);
+  assert.equal(status.warmRunnerStatus.queues.processing.find((phase) => phase.id === "process_front_artifacts")?.status, "active");
+
+  status = await service.action("queue-current-card");
+  assert.notEqual(status.sessionId, firstSessionId);
+  assert.equal(status.outputs.frontPackageDir, undefined);
+  assert.equal(status.outputs.backPackageDir, undefined);
+  assert.equal(status.outputs.unifiedReportPath, undefined);
+  assert.equal(status.confirmations.lightIdleOff, false);
+  assert.equal(status.confirmations.fixtureRulersVisible, false);
+  assert.equal(status.confirmations.flipComplete, false);
+  assert.deepEqual(status.commandResults, []);
+  assert.deepEqual(status.rapidCapture.workflowHistory, []);
+  assert.equal(status.rapidCaptureQueue.items.length, 1);
+  assert.equal(status.rapidCaptureQueue.items[0].state, "finalizing");
+  assert.equal(status.rapidCaptureQueue.items[0].manifestPath, undefined);
+  assert.equal(status.rapidCaptureQueue.items[0].humanConfirmationRequired, true);
+  assert.equal(status.rapidCaptureQueue.items[0].autoConfirmed, false);
+  assert.equal(status.rapidCaptureQueue.items[0].autoPublished, false);
+
+  const safelyQueuedManifest = JSON.parse(fs.readFileSync(firstManifestPath, "utf8"));
+  assert.equal(safelyQueuedManifest.sessionId, firstSessionId);
+  assert.ok(safelyQueuedManifest.outputs.frontPackageDir);
+  assert.ok(safelyQueuedManifest.outputs.backPackageDir);
+  assert.equal(safelyQueuedManifest.rapidCapture.workflowState, "finalizing");
+
+  frontProcessing.resolve();
+  const completed = await waitFor(
+    () => service.status().rapidCaptureQueue.items.find((item) => item.state === "report_ready_needs_confirm"),
+    "rapid queue item did not complete background finalization"
+  );
+  assert.equal(completed.sessionId, firstSessionId);
+  assert.equal(service.status().sessionId, status.sessionId);
+  assert.equal(service.status().outputs.frontPackageDir, undefined);
+
+  const completedManifest = await waitFor(() => {
+    try {
+      const persisted = JSON.parse(fs.readFileSync(firstManifestPath, "utf8"));
+      return typeof persisted.captureTiming?.summary?.reportReadyTotalMs === "number" ? persisted : undefined;
+    } catch {
+      return undefined;
+    }
+  }, "completed rapid manifest timing was not durably persisted");
+  assert.equal(completedManifest.captureTiming.schemaVersion, "ten-kings-ai-grader-capture-timing-v1");
+  assert.equal(completedManifest.captureTiming.events.find((event) => event.id === "capture_trigger" && event.side === "front")?.triggerMode, "operator");
+  assert.equal(completedManifest.captureTiming.events.find((event) => event.id === "capture_trigger" && event.side === "back")?.triggerMode, "auto");
+  assert.equal(completedManifest.captureTiming.summary.frontProcessingOverlappedFlip, true);
+  assert.equal(completedManifest.captureTiming.summary.totalCardMs <= completedManifest.captureTiming.summary.reportReadyTotalMs, true);
+  assert.equal(completedManifest.captureTiming.target.fiveSecondsPerSideProven, false);
+  assert.equal(completedManifest.captureProfileGuard.fiveSecondTargetProven, false);
+  assert.equal(completedManifest.captureTiming.phases.some((phase) => phase.id === "file_writes" && phase.side === "front"), true);
+  const rapidBundle = JSON.parse(fs.readFileSync(completedManifest.outputs.reportBundlePath, "utf8"));
+  assert.deepEqual(rapidBundle.captureTiming, completedManifest.captureTiming);
+  assert.doesNotMatch(JSON.stringify(rapidBundle.captureTiming), /C:\\|localhost|stationToken|x-amz|data:image/i);
+
+  const queuePath = path.join(dir, "rapid-capture-queue.json");
+  const persistedQueue = JSON.parse(fs.readFileSync(queuePath, "utf8"));
+  assert.equal(persistedQueue.items[0].state, "report_ready_needs_confirm");
+  assert.equal(persistedQueue.items[0].sessionId, firstSessionId);
+});
+
+test("persisted rapid queue activation still requires explicit human confirm and publish actions", async () => {
+  const dir = outputDir(`rapid-persistence-${Date.now()}`);
+  const warm = makeFakeWarmRunner();
+  const runner = {
+    async run(step) {
+      if (step.id === "unified_report") {
+        return {
+          stepId: step.id,
+          ok: true,
+          exitCode: 0,
+          payload: {
+            report: {
+              packageDir: path.join(dir, "unified-report"),
+              reportPath: path.join(dir, "unified-report", "provisional-diagnostic-report.html"),
+            },
+          },
+        };
+      }
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+    },
+  };
+  const config = realConfig({ outputDir: dir, reportBundleOutputDir: path.join(dir, "report-bundles") });
+  const producer = new AiGraderLocalStationBridgeService(config, runner, warm.runner);
+  await producer.action("configure-rapid-capture", { rapidCaptureEnabled: true });
+  await producer.action("start-session");
+  await producer.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await producer.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await producer.action("capture-front");
+  await producer.action("confirm-flip", { confirmations: { flipComplete: true } });
+  await producer.action("capture-back");
+  await producer.action("queue-current-card");
+  const completed = await waitFor(
+    () => producer.status().rapidCaptureQueue.items.find((item) => item.state === "report_ready_needs_confirm"),
+    "rapid queue item was not persisted as ready"
+  );
+
+  const activationToken = "rapid-preview-activation-token";
+  const activationServer = await startAiGraderLocalStationBridgeHttpServer({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 0,
+    stationToken: activationToken,
+    allowedOrigins: ["https://collect.tenkings.co"],
+    outputDir: dir,
+    reportBundleOutputDir: path.join(dir, "report-bundles"),
+  });
+  const activationHeaders = {
+    Origin: "https://collect.tenkings.co",
+    "x-ai-grader-station-token": activationToken,
+    "content-type": "application/json",
+  };
+  let previewRequest;
+  try {
+    previewRequest = http.request(`${activationServer.url}/preview/stream`, { headers: activationHeaders }, (response) => {
+      response.once("data", () => {});
+    });
+    previewRequest.on("error", () => {});
+    previewRequest.end();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const activatedResponse = await fetch(`${activationServer.url}/actions/activate-queue-item`, {
+      method: "POST",
+      headers: activationHeaders,
+      body: JSON.stringify({ queueItemId: completed.queueItemId }),
+    });
+    assert.equal(activatedResponse.status, 200);
+    const activatedBody = await activatedResponse.json();
+    assert.equal(activatedBody.result.reportId, completed.reportId);
+    assert.equal(activatedBody.result.rapidCaptureQueue.activeQueueItemId, completed.queueItemId);
+    const reopened = await fetch(`${activationServer.url}/preview/stream`, { headers: activationHeaders });
+    assert.equal(reopened.status, 409);
+    const reopenedBody = await reopened.json();
+    assert.equal(reopenedBody.code, "AI_GRADER_QUEUE_REVIEW_ACTIVE");
+    const rejectedCapture = await fetch(`${activationServer.url}/actions/capture-front`, {
+      method: "POST",
+      headers: activationHeaders,
+      body: "{}",
+    });
+    assert.equal(rejectedCapture.status, 400);
+    assert.match((await rejectedCapture.json()).message, /fresh station session/i);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const stable = await fetch(`${activationServer.url}/status`, { headers: activationHeaders }).then((response) => response.json());
+    assert.equal(stable.result.reportId, completed.reportId);
+    assert.deepEqual(stable.result.previewStatus.cardGeometry.front, activatedBody.result.previewStatus.cardGeometry.front);
+  } finally {
+    previewRequest?.destroy();
+    if (typeof activationServer.server.closeAllConnections === "function") activationServer.server.closeAllConnections();
+    await closeServer(activationServer.server);
+  }
+
+  const restarted = new AiGraderLocalStationBridgeService(config, runner, warm.runner);
+  let status = restarted.status();
+  const persisted = status.rapidCaptureQueue.items.find((item) => item.queueItemId === completed.queueItemId);
+  assert.ok(persisted);
+  assert.equal(persisted.state, "report_ready_needs_confirm");
+  assert.equal(persisted.autoConfirmed, false);
+  assert.equal(persisted.autoPublished, false);
+
+  status = await restarted.action("activate-queue-item", { queueItemId: completed.queueItemId });
+  assert.equal(status.reportId, completed.reportId);
+  assert.equal(status.rapidCapture.workflowState, "report_ready_needs_confirm");
+  assert.equal(status.rapidCaptureQueue.items.find((item) => item.queueItemId === completed.queueItemId).state, "report_ready_needs_confirm");
+
+  status = await restarted.action("calculate-final-grade", {
+    operatorId: "mark",
+    warningsAccepted: true,
+    overrideReason: "Explicit rapid queue confirmation test.",
+  });
+  assert.equal(status.rapidCapture.workflowState, "confirmed_needs_publish");
+  assert.equal(status.rapidCaptureQueue.items.find((item) => item.queueItemId === completed.queueItemId).state, "confirmed_needs_publish");
+
+  status = await restarted.action("publish-report", {
+    operatorId: "mark",
+    warningsAccepted: true,
+    overrideReason: "Explicit rapid queue publish test.",
+  });
+  assert.equal(status.rapidCapture.workflowState, "published");
+  assert.equal(status.rapidCaptureQueue.items.find((item) => item.queueItemId === completed.queueItemId).state, "published");
+});
+
+test("side processing failures are terminal and cannot be overwritten or queued", async () => {
+  const runner = { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } };
+  const prepare = async (service) => {
+    await service.action("configure-rapid-capture", { rapidCaptureEnabled: true });
+    await service.action("start-session");
+    await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+    await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  };
+
+  const immediateWarm = makeFakeWarmRunner({ processError: new Error("front processing failed"), processErrorSide: "front" });
+  const immediate = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir(`process-failure-immediate-${Date.now()}`) }),
+    runner,
+    immediateWarm.runner
+  );
+  await prepare(immediate);
+  await immediate.action("capture-front");
+  const immediateFailed = await waitFor(
+    () => immediate.status().rapidCapture.workflowState === "failed" ? immediate.status() : undefined,
+    "immediate processing failure did not become terminal"
+  );
+  assert.equal(immediateFailed.rapidCapture.workflowHistory.some((event) => event.state === "back_positioning"), false);
+  await assert.rejects(() => immediate.action("queue-current-card"), /failed processing state|front and back/i);
+  await assert.rejects(() => immediate.action("run-diagnostics"), /processing failed/i);
+
+  const delayedFailure = deferred();
+  const delayedWarm = makeFakeWarmRunner({
+    processError: new Error("delayed front processing failed"),
+    processErrorSide: "front",
+    async processDelay(batch) {
+      if (batch.side === "front") await delayedFailure.promise;
+    },
+  });
+  const delayed = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir(`process-failure-delayed-${Date.now()}`) }),
+    runner,
+    delayedWarm.runner
+  );
+  await prepare(delayed);
+  const positioned = await delayed.action("capture-front");
+  assert.equal(positioned.rapidCapture.workflowState, "back_positioning");
+  delayedFailure.resolve();
+  const delayedFailed = await waitFor(
+    () => delayed.status().rapidCapture.workflowState === "failed" ? delayed.status() : undefined,
+    "delayed processing failure did not become terminal"
+  );
+  assert.equal(delayedFailed.rapidCapture.workflowState, "failed");
+  await assert.rejects(() => delayed.action("queue-current-card"), /failed processing state|front and back/i);
+  await assert.rejects(() => delayed.action("run-diagnostics"), /processing failed/i);
+
+  const backWarm = makeFakeWarmRunner({ processError: new Error("back processing failed"), processErrorSide: "back" });
+  const back = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir(`process-failure-back-${Date.now()}`) }),
+    runner,
+    backWarm.runner
+  );
+  await prepare(back);
+  await back.action("capture-front");
+  await back.action("confirm-flip", { confirmations: { flipComplete: true } });
+  await back.action("capture-back");
+  const backFailed = await waitFor(
+    () => back.status().rapidCapture.workflowState === "failed" ? back.status() : undefined,
+    "back processing failure did not become terminal"
+  );
+  assert.equal(backFailed.rapidCapture.workflowHistory.some((event) => event.state === "back_captured"), false);
+  await assert.rejects(() => back.action("queue-current-card"), /failed processing state/i);
+});
+
+test("restart marks an interrupted rapid finalization as explicit retryable failure", async () => {
+  const dir = outputDir(`rapid-restart-finalizing-${Date.now()}`);
+  const processingGate = deferred();
+  const warm = makeFakeWarmRunner({
+    async processDelay(batch) {
+      if (batch.side === "front") await processingGate.promise;
+    },
+  });
+  const runner = {
+    async run(step) {
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+    },
+  };
+  const config = realConfig({ outputDir: dir, reportBundleOutputDir: path.join(dir, "report-bundles") });
+  const original = new AiGraderLocalStationBridgeService(config, runner, warm.runner);
+  await original.action("configure-rapid-capture", { rapidCaptureEnabled: true });
+  await original.action("start-session");
+  await original.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await original.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await original.action("capture-front");
+  await original.action("confirm-flip", { confirmations: { flipComplete: true } });
+  await original.action("capture-back");
+  const queued = await original.action("queue-current-card");
+  const queueItemId = queued.rapidCaptureQueue.items[0].queueItemId;
+  assert.equal(queued.rapidCaptureQueue.items[0].state, "finalizing");
+
+  const restarted = new AiGraderLocalStationBridgeService(config, runner, warm.runner);
+  const failed = await waitFor(
+    () => restarted.status().rapidCaptureQueue.items.find((item) => item.queueItemId === queueItemId && item.state === "failed"),
+    "restarted bridge did not mark interrupted finalization retryable"
+  );
+  assert.match(failed.error, /retryable.*restarted/i);
+  const persisted = JSON.parse(fs.readFileSync(path.join(dir, "rapid-capture-queue.json"), "utf8"));
+  assert.equal(persisted.items.find((item) => item.queueItemId === queueItemId).state, "failed");
 });
 
 test("cold command fallback requires explicit warm runner disable flag", async () => {
@@ -835,7 +1391,7 @@ test("warm runner capture lock blocks preview stream until capture releases", as
     releaseCapture();
     const captureStatus = await capturePromise;
     assert.equal(captureStatus.warmRunnerStatus.captureLock.held, false);
-    assert.equal(captureStatus.warmRunnerStatus.previewPolicy.holdActive, true);
+    assert.equal(captureStatus.warmRunnerStatus.previewPolicy.holdActive, false);
     assert.ok(captureStatus.warmRunnerStatus.previewPolicy.lastHoldStartedAt);
   } finally {
     releaseCapture();
@@ -846,7 +1402,7 @@ test("warm runner capture lock blocks preview stream until capture releases", as
   }
 });
 
-test("full forensic session holds preview stopped through flip and back capture", async () => {
+test("front capture releases preview for flip/back positioning while back capture reacquires the forensic hold", async () => {
   const token = "local-station-token-full-forensic-hold";
   const started = await startAiGraderLocalStationBridgeHttpServer({
     enabled: true,
@@ -925,22 +1481,16 @@ test("full forensic session holds preview stopped through flip and back capture"
 
     const frontStatus = await postAction("capture-front");
     assert.equal(frontStatus.currentStep, "prompt_flip_card");
-    assert.equal(frontStatus.warmRunnerStatus.previewPolicy.holdActive, true);
+    assert.equal(frontStatus.warmRunnerStatus.previewPolicy.holdActive, false);
     assert.equal(frontStatus.previewStatus.status, "paused_for_capture");
     assert.notEqual(frontStatus.previewStatus.cameraOwnership, "preview_stream");
     await activeStreamClosed;
     activeReq.destroy();
 
-    const blockedDuringFlip = await fetch(`${started.url}/preview/stream`, { headers });
-    assert.equal(blockedDuringFlip.status, 409);
-    const blockedDuringFlipBody = await blockedDuringFlip.json();
-    assert.equal(blockedDuringFlipBody.code, "AI_GRADER_PREVIEW_PAUSED_FOR_GRADING_SESSION");
-    assert.equal(blockedDuringFlipBody.result.cameraOwnership, "released");
+    await readOnePreviewFrame();
 
     await postAction("confirm-flip", { confirmations: { flipComplete: true } });
-    const blockedBeforeBack = await fetch(`${started.url}/preview/stream`, { headers });
-    assert.equal(blockedBeforeBack.status, 409);
-    await blockedBeforeBack.text();
+    await readOnePreviewFrame();
 
     const backStatus = await postAction("capture-back");
     assert.equal(backStatus.sessionManifest.backCaptured, true);
