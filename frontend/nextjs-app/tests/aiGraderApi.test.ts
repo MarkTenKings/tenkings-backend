@@ -40,19 +40,19 @@ function mockResponse(): MockResponse {
     statusCodeValue: null,
     headers: {},
     jsonBody: undefined,
-    setHeader(name: string, value: string | number | readonly string[]) {
+    setHeader(this: MockResponse, name: string, value: string | number | readonly string[]) {
       this.headers[name] = value;
       return this;
     },
-    status(statusCode: number) {
+    status(this: MockResponse, statusCode: number) {
       this.statusCodeValue = statusCode;
       return this;
     },
-    json(body: unknown) {
+    json(this: MockResponse, body: unknown) {
       this.jsonBody = body;
       return this;
     },
-  } as MockResponse;
+  } as unknown as MockResponse;
   return res;
 }
 

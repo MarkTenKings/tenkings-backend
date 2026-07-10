@@ -32,7 +32,6 @@ import type { AdminSession } from "./admin";
 import type { UserSession } from "./session";
 import { buildAiGraderLabelPreviewUrl } from "../aiGraderOperatorWorkflow";
 import {
-  ensureInventoryReadyArtifacts,
   ensureInventoryReadyArtifactsTx,
   PRICE_REQUIRED_MESSAGE,
   resolveInventoryReadyOwner,
@@ -44,6 +43,13 @@ import {
   type AiGraderProductionActor,
   type AiGraderProductionActorAudit,
 } from "./aiGraderProductionAuth";
+import type { AiGraderLabelSheetsResult } from "../aiGraderLabelSheets";
+import {
+  queueConfirmedAiGraderLabelTx,
+  type AiGraderConfirmedLabelQueueResult,
+  type AiGraderPreparedLabelSheetResult,
+  type AiGraderPrintedLabelSheetResult,
+} from "./aiGraderLabelSheetRuntime";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
@@ -114,6 +120,8 @@ export type AiGraderCompsRunResult = {
   resultSummary?: unknown;
   persisted: boolean;
   message?: string;
+  errorCode?: string | null;
+  retryable?: boolean;
 };
 
 export type AiGraderConfirmedCardIdentity = {
@@ -150,6 +158,7 @@ export type AiGraderCreateCardFromReportResult = {
     itemNumberConvention: "Item.number = CardAsset.id";
     labelPairId?: string | null;
   };
+  downstream?: AiGraderConfirmedLabelQueueResult;
 };
 
 export type AiGraderSlabbedPhotoUploadInitResult = {
@@ -189,14 +198,6 @@ export type AiGraderAddToInventoryResult = {
   labelPairId?: string | null;
 };
 
-export type AiGraderMarkLabelPrintedResult = {
-  reportId: string;
-  labelId: string;
-  certId: string;
-  physicalPrintStatus: "printed";
-  printedAt: string;
-};
-
 export type AiGraderProductionApiDependencies = {
   env?: EnvLike;
   requireAdminSession(req: NextApiRequest): Promise<AdminSession>;
@@ -231,7 +232,8 @@ export type AiGraderProductionApiDependencies = {
     actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderProductionPersistResult>;
   listHistory?(): Promise<AiGraderProductionHistoryResult>;
-  listFinishQueue?(): Promise<AiGraderFinishCardsQueueResult>;
+  listFinishQueue?(input: { tenantId: string }): Promise<AiGraderFinishCardsQueueResult>;
+  listLabelSheets?(input: { tenantId: string }): Promise<AiGraderLabelSheetsResult>;
   searchCards?(input: {
     query: string;
     limit: number;
@@ -277,6 +279,8 @@ export type AiGraderProductionApiDependencies = {
     resultSummary?: unknown;
     requestedByUserId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
+    errorCode?: string | null;
+    attemptId?: string | null;
   }): Promise<unknown>;
   persistSelectedComps?(input: {
     tenantId: string;
@@ -284,7 +288,6 @@ export type AiGraderProductionApiDependencies = {
     selectedComps: unknown[];
     searchQuery?: string | null;
     searchUrl?: string | null;
-    valuationMinor?: number | null;
     valuationCurrency?: string | null;
     requestedByUserId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
@@ -295,12 +298,20 @@ export type AiGraderProductionApiDependencies = {
     operatorUserId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderAddToInventoryResult>;
-  markLabelPrinted?(input: {
+  prepareLabelSheetPrint?(input: {
     tenantId: string;
-    reportId: string;
+    sheetId: string;
+    expectedRevision: string;
     operatorUserId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
-  }): Promise<AiGraderMarkLabelPrintedResult>;
+  }): Promise<AiGraderPreparedLabelSheetResult>;
+  markLabelSheetPrinted?(input: {
+    tenantId: string;
+    sheetId: string;
+    expectedRevision: string;
+    operatorUserId?: string | null;
+    actorAudit?: AiGraderProductionActorAudit | null;
+  }): Promise<AiGraderPrintedLabelSheetResult>;
 };
 
 export type AiGraderProductionHistoryItem = {
@@ -336,7 +347,11 @@ export type AiGraderProductionHistoryResult = {
   };
 };
 
-export type AiGraderFinishCardsQueueStatus = "needs_slab_photos" | "needs_ebay_evaluate" | "needs_inventory" | "complete";
+export type AiGraderFinishCardsQueueStatus =
+  | "needs_comps_review"
+  | "needs_slab_photos"
+  | "ready_for_inventory"
+  | "complete";
 
 export type AiGraderFinishCardsQueueItem = {
   reportId: string;
@@ -351,11 +366,13 @@ export type AiGraderFinishCardsQueueItem = {
   publishedAt?: string | null;
   createdAt?: string | null;
   queueStatus: AiGraderFinishCardsQueueStatus;
-  statusText: "Needs Slab Photos" | "Needs eBay Evaluate" | "Needs Inventory" | "Complete";
-  needs: Array<"Slab Photos" | "eBay Evaluate" | "Add To Inventory">;
+  statusText: "Needs Comps Review" | "Needs Slab Photos" | "Ready for Inventory" | "Complete";
+  needs: Array<"Comps Review" | "Slab Photos" | "Add To Inventory">;
   label: {
     printed: boolean;
     physicalPrintStatus?: string | null;
+    sheetNumber?: number | null;
+    slot?: number | null;
   };
   slabPhotos: {
     frontUploaded: boolean;
@@ -369,6 +386,12 @@ export type AiGraderFinishCardsQueueItem = {
     status?: string | null;
     valuationMinor?: number | null;
     valuationCurrency?: string | null;
+    searchQuery?: string | null;
+    searchUrl?: string | null;
+    compsRefs: unknown[];
+    errorCode?: string | null;
+    errorMessage?: string | null;
+    retryable: boolean;
   };
   inventory: {
     complete: boolean;
@@ -379,12 +402,16 @@ export type AiGraderFinishCardsQueueItem = {
 
 export type AiGraderFinishCardsQueueResult = {
   source: "persisted_records";
-  orderedBy: "publishedAt_asc_createdAt_asc";
+  orderedBy: "labelSheet_asc_slot_asc_createdAt_asc";
   items: AiGraderFinishCardsQueueItem[];
   stats: {
     total: number;
+    needsCompsReview: number;
     needsSlabPhotos: number;
+    readyForInventory: number;
+    /** @deprecated Use needsCompsReview. */
     needsEbayEvaluate: number;
+    /** @deprecated Use readyForInventory. */
     needsInventory: number;
     complete: number;
   };
@@ -393,6 +420,7 @@ export type AiGraderFinishCardsQueueResult = {
 type AiGraderFinishCardsQueueBuildOptions = {
   activeLimit?: number;
   includeCompleted?: boolean;
+  recentCompletedLimit?: number;
 };
 
 export type AiGraderPublicReportApiDependencies = {
@@ -433,6 +461,42 @@ function errorStatus(error: unknown, fallback = 400) {
     return Math.max(400, Math.min(599, Math.round(error.statusCode)));
   }
   return fallback;
+}
+
+function aiGraderCompsFailure(error: unknown) {
+  const statusCode = isRecord(error) && typeof error.statusCode === "number" ? error.statusCode : null;
+  const rawMessage = error instanceof Error ? error.message : stringValue(error, "eBay sold comps failed.");
+  const message =
+    rawMessage
+      .replace(/([?&](?:api[_-]?key|token|secret|signature)=)[^&\s]+/gi, "$1[redacted]")
+      .replace(/\b((?:api[_-]?key|token|secret|signature)\s*[=:]\s*)\S+/gi, "$1[redacted]")
+      .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[redacted]")
+      .replace(/\b((?:SERPAPI_KEY|DATABASE_URL|AI_GRADER_[A-Z0-9_]*TOKEN)\s*[=:]\s*)\S+/gi, "$1[redacted]")
+      .replace(/[a-z]:\\[^\r\n]*/gi, "[local path redacted]")
+      .replace(/(^|[\s"'(:])\/(?:var|root|tmp|home|app|workspace)\/[^\s"'<>)]*/gi, "$1[local path redacted]")
+      .replace(/https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?[^\s]*/gi, "[local endpoint redacted]")
+      .replace(/data:image\/[^\s]+/gi, "[embedded image redacted]")
+      .trim()
+      .slice(0, 1000) || "eBay sold comps failed.";
+  const retryable =
+    statusCode === 408 ||
+    statusCode === 425 ||
+    statusCode === 429 ||
+    (statusCode != null && statusCode >= 500) ||
+    /network|timeout|timed out|fetch|econn|socket|temporar|thrott|quota|capacity|rate.?limit|\b429\b|\b5\d\d\b/i.test(
+      message
+    );
+  const suppliedCode = isRecord(error) && typeof error.code === "string" ? error.code.trim() : "";
+  const errorCode = /^[A-Za-z0-9_.-]{1,80}$/.test(suppliedCode)
+    ? suppliedCode
+    : retryable
+      ? "AI_GRADER_EBAY_COMPS_RETRYABLE"
+      : "AI_GRADER_EBAY_COMPS_FAILED";
+  return {
+    errorCode,
+    message,
+    retryable,
+  };
 }
 
 function jsonByteLength(value: unknown) {
@@ -858,7 +922,6 @@ function parseSelectedCompsBody(body: unknown) {
     selectedComps,
     searchQuery: optionalString(body.searchQuery),
     searchUrl: optionalString(body.searchUrl),
-    valuationMinor: typeof body.valuationMinor === "number" && Number.isFinite(body.valuationMinor) ? Math.round(body.valuationMinor) : null,
     valuationCurrency: optionalString(body.valuationCurrency) ?? "USD",
   };
 }
@@ -872,13 +935,15 @@ function parseAddToInventoryBody(body: unknown) {
   return { reportId };
 }
 
-function parseMarkLabelPrintedBody(body: unknown) {
-  assertSmallJsonPayload(body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader label print request");
+function parseLabelSheetMutationBody(body: unknown) {
+  assertSmallJsonPayload(body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader label sheet request");
   assertNoUnsafePublishPayload(body);
   if (!isRecord(body)) throw new Error("JSON object body is required.");
-  const reportId = stringValue(body.reportId, "");
-  if (!reportId) throw new Error("reportId is required.");
-  return { reportId };
+  const sheetId = stringValue(body.sheetId, "");
+  const expectedRevision = stringValue(body.expectedRevision, "");
+  if (!sheetId) throw new Error("sheetId is required.");
+  if (!expectedRevision) throw new Error("expectedRevision is required.");
+  return { sheetId, expectedRevision };
 }
 
 function dateString(value: unknown) {
@@ -974,38 +1039,159 @@ function queueCardTitle(row: JsonRecord) {
 }
 
 function finishStatusText(status: AiGraderFinishCardsQueueStatus): AiGraderFinishCardsQueueItem["statusText"] {
+  if (status === "needs_comps_review") return "Needs Comps Review";
   if (status === "needs_slab_photos") return "Needs Slab Photos";
-  if (status === "needs_ebay_evaluate") return "Needs eBay Evaluate";
-  if (status === "needs_inventory") return "Needs Inventory";
+  if (status === "ready_for_inventory") return "Ready for Inventory";
   return "Complete";
+}
+
+function positiveQueueInteger(value: unknown) {
+  const parsed = numberOrNull(value);
+  return parsed != null && Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function queueLabelSheetPosition(label: JsonRecord | null) {
+  const payload = firstRecord(label?.payload);
+  const labelSheet = firstRecord(payload?.labelSheet);
+  return {
+    sheetNumber: positiveQueueInteger(labelSheet?.sheetNumber),
+    slot: positiveQueueInteger(labelSheet?.slot),
+  };
+}
+
+function safeAiGraderDownstreamUrl(value: unknown, options: { allowQuery?: boolean } = {}) {
+  const text = optionalString(value);
+  if (!text) return null;
+  try {
+    const url = new URL(text);
+    const hostname = url.hostname.toLowerCase();
+    const unwrappedHostname = hostname.replace(/^\[|\]$/g, "");
+    if (url.protocol !== "https:" || url.username || url.password) return null;
+    if (
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname === "::1" ||
+      unwrappedHostname.includes(":") ||
+      hostname.endsWith(".local") ||
+      hostname.endsWith(".internal") ||
+      /^0\./.test(hostname) ||
+      /^127\./.test(hostname) ||
+      /^10\./.test(hostname) ||
+      /^169\.254\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^172\.(?:1[6-9]|2\d|3[01])\./.test(hostname) ||
+      /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(hostname) ||
+      /^198\.1[89]\./.test(hostname) ||
+      /^(?:22[4-9]|23\d|24\d|25[0-5])\./.test(hostname)
+    ) {
+      return null;
+    }
+    for (const key of url.searchParams.keys()) {
+      if (/^(?:x-amz-|x-goog-|awsaccesskeyid$|signature$|sig$|credential$|security.?token$|access.?token$|api.?key$|token$|expires$|se$|sp$|sv$)/i.test(key)) {
+        return null;
+      }
+    }
+    if ((!options.allowQuery && url.search) || url.hash) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function safeQueueCompRefs(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry, index) => {
+    if (!isRecord(entry)) return [];
+    const url = safeAiGraderDownstreamUrl(entry.url ?? entry.href, { allowQuery: true });
+    if (!url) return [];
+    const listingImageUrl = safeAiGraderDownstreamUrl(entry.listingImageUrl ?? entry.thumbnail, { allowQuery: true });
+    const screenshotUrl = safeAiGraderDownstreamUrl(entry.screenshotUrl, { allowQuery: true });
+    return [
+      {
+        id: optionalString(entry.id) ?? `comp-${index + 1}`,
+        source: optionalString(entry.source) ?? "ebay_sold",
+        title: optionalString(entry.title) ?? null,
+        url,
+        price: optionalString(entry.price) ?? null,
+        soldDate: optionalString(entry.soldDate ?? entry.dateOfSale) ?? null,
+        matchScore: numberOrNull(entry.matchScore),
+        matchQuality: optionalString(entry.matchQuality) ?? null,
+        ...(listingImageUrl ? { listingImageUrl } : {}),
+        ...(screenshotUrl ? { screenshotUrl } : {}),
+      },
+    ];
+  });
+}
+
+function compareFinishQueueItems(left: AiGraderFinishCardsQueueItem, right: AiGraderFinishCardsQueueItem) {
+  const leftHasPosition = left.label.sheetNumber != null && left.label.slot != null;
+  const rightHasPosition = right.label.sheetNumber != null && right.label.slot != null;
+  if (leftHasPosition && rightHasPosition) {
+    const sheetOrder = Number(left.label.sheetNumber) - Number(right.label.sheetNumber);
+    if (sheetOrder) return sheetOrder;
+    const slotOrder = Number(left.label.slot) - Number(right.label.slot);
+    if (slotOrder) return slotOrder;
+  } else if (leftHasPosition !== rightHasPosition) {
+    return leftHasPosition ? -1 : 1;
+  }
+  const leftTime = left.createdAt ?? left.publishedAt ?? "";
+  const rightTime = right.createdAt ?? right.publishedAt ?? "";
+  const timeOrder = leftTime.localeCompare(rightTime);
+  return timeOrder || left.reportId.localeCompare(right.reportId);
 }
 
 export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: AiGraderFinishCardsQueueBuildOptions = {}): AiGraderFinishCardsQueueResult {
   const allItems = rows.filter(isRecord).map((row): AiGraderFinishCardsQueueItem => {
     const label = firstRecord(row.labels) ?? firstRecord(row.label);
     const valuation = firstRecord(row.valuations) ?? firstRecord(row.valuation);
+    const valuationSummary = firstRecord(valuation?.resultSummary);
+    const valuationError = firstRecord(valuationSummary?.error);
     const cardAsset = firstRecord(row.cardAsset);
     const session = firstRecord(row.session);
     const assets = Array.isArray(row.evidenceAssets) ? row.evidenceAssets : [];
     const frontAsset = assets.find((asset) => hasQueueSlabbedSide(asset, "front"));
     const backAsset = assets.find((asset) => hasQueueSlabbedSide(asset, "back"));
     const slabComplete = Boolean(frontAsset && backAsset);
-    const valuationStatus = optionalString(valuation?.status);
+    const persistedValuationStatus = optionalString(valuation?.status);
+    const valuationUpdatedAt = dateString(valuation?.updatedAt);
+    const valuationUpdatedTime = valuationUpdatedAt ? new Date(valuationUpdatedAt).getTime() : Number.NaN;
+    const staleRunning =
+      persistedValuationStatus === "running" &&
+      Number.isFinite(valuationUpdatedTime) &&
+      Date.now() - valuationUpdatedTime >= 5 * 60 * 1000;
+    const valuationStatus = staleRunning ? "failed" : persistedValuationStatus;
     const valuationMinor = numberOrNull(valuation?.valuationMinor);
     const valuationComplete = valuationStatus === "completed" && valuationMinor != null && valuationMinor > 0;
+    const compsRefs = safeQueueCompRefs(valuation?.compsRefs);
+    const errorCode =
+      optionalString(valuation?.errorCode) ??
+      optionalString(valuationSummary?.errorCode) ??
+      optionalString(valuationError?.code) ??
+      (staleRunning ? "AI_GRADER_COMPS_STALE_RUNNING" : null);
+    const persistedErrorMessage =
+      optionalString(valuationSummary?.errorMessage) ??
+      optionalString(valuationError?.message) ??
+      null;
+    const errorMessage = persistedErrorMessage
+      ? aiGraderCompsFailure(new Error(persistedErrorMessage)).message
+      : staleRunning
+        ? "The previous eBay sold comps attempt stopped before completing. Retry the lookup."
+        : null;
+    const retryable = staleRunning || booleanValue(valuationSummary?.retryable, booleanValue(valuationError?.retryable, false));
     const reviewStage = optionalString(cardAsset?.reviewStage);
     const inventoryComplete = reviewStage === CardReviewStage.INVENTORY_READY_FOR_SALE || optionalString(session?.status) === "inventory_ready";
     const labelPrinted = optionalString(label?.physicalPrintStatus) === "printed";
-    const queueStatus: AiGraderFinishCardsQueueStatus = !slabComplete
-      ? "needs_slab_photos"
-      : !valuationComplete
-        ? "needs_ebay_evaluate"
+    const labelSheetPosition = queueLabelSheetPosition(label);
+    const queueStatus: AiGraderFinishCardsQueueStatus = !valuationComplete
+      ? "needs_comps_review"
+      : !slabComplete
+        ? "needs_slab_photos"
         : inventoryComplete
           ? "complete"
-          : "needs_inventory";
+          : "ready_for_inventory";
     const needs: AiGraderFinishCardsQueueItem["needs"] = [];
+    if (!valuationComplete) needs.push("Comps Review");
     if (!slabComplete) needs.push("Slab Photos");
-    if (slabComplete && !valuationComplete) needs.push("eBay Evaluate");
     if (slabComplete && valuationComplete && !inventoryComplete) needs.push("Add To Inventory");
 
     return {
@@ -1015,9 +1201,11 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
       grade: numberOrNull(row.finalOverallGrade),
       cardAssetId: optionalString(row.cardAssetId),
       itemId: optionalString(row.itemId),
-      publicReportUrl: optionalString(row.publicReportUrl),
-      labelPreviewUrl: optionalString(label?.labelPreviewUrl) ?? buildAiGraderLabelPreviewUrl(stringValue(row.reportId, "unknown-report")),
-      qrPayloadUrl: optionalString(row.qrPayloadUrl) ?? optionalString(label?.qrPayloadUrl),
+      publicReportUrl: safeAiGraderDownstreamUrl(row.publicReportUrl),
+      labelPreviewUrl:
+        safeAiGraderDownstreamUrl(label?.labelPreviewUrl) ??
+        safeAiGraderDownstreamUrl(buildAiGraderLabelPreviewUrl(stringValue(row.reportId, "unknown-report"))),
+      qrPayloadUrl: safeAiGraderDownstreamUrl(row.qrPayloadUrl) ?? safeAiGraderDownstreamUrl(label?.qrPayloadUrl),
       publishedAt: dateString(row.publishedAt),
       createdAt: dateString(row.createdAt),
       queueStatus,
@@ -1026,19 +1214,27 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
       label: {
         printed: labelPrinted,
         physicalPrintStatus: optionalString(label?.physicalPrintStatus),
+        sheetNumber: labelSheetPosition.sheetNumber,
+        slot: labelSheetPosition.slot,
       },
       slabPhotos: {
         frontUploaded: Boolean(frontAsset),
         backUploaded: Boolean(backAsset),
         complete: slabComplete,
-        frontUrl: isRecord(frontAsset) ? optionalString(frontAsset.publicUrl) : null,
-        backUrl: isRecord(backAsset) ? optionalString(backAsset.publicUrl) : null,
+        frontUrl: isRecord(frontAsset) ? safeAiGraderDownstreamUrl(frontAsset.publicUrl) : null,
+        backUrl: isRecord(backAsset) ? safeAiGraderDownstreamUrl(backAsset.publicUrl) : null,
       },
       valuation: {
         complete: valuationComplete,
         status: valuationStatus ?? null,
         valuationMinor,
         valuationCurrency: optionalString(valuation?.valuationCurrency) ?? "USD",
+        searchQuery: optionalString(valuation?.searchQuery) ?? null,
+        searchUrl: safeAiGraderDownstreamUrl(valuationSummary?.searchUrl, { allowQuery: true }),
+        compsRefs,
+        errorCode,
+        errorMessage,
+        retryable,
       },
       inventory: {
         complete: inventoryComplete,
@@ -1047,30 +1243,29 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
       },
     };
   });
-  allItems.sort((left, right) => {
-    const leftTime = left.publishedAt ?? left.createdAt ?? "";
-    const rightTime = right.publishedAt ?? right.createdAt ?? "";
-    const timeOrder = leftTime.localeCompare(rightTime);
-    return timeOrder || left.reportId.localeCompare(right.reportId);
-  });
-  const activeItems = options.includeCompleted ? allItems : allItems.filter((item) => item.queueStatus !== "complete");
+  allItems.sort(compareFinishQueueItems);
+  const activeItems = allItems.filter((item) => item.queueStatus !== "complete");
+  const completedItems = allItems.filter((item) => item.queueStatus === "complete");
   const activeLimit = options.activeLimit ?? 100;
-  const items = activeLimit > 0 ? activeItems.slice(0, activeLimit) : activeItems;
-  items.sort((left, right) => {
-    const leftTime = left.publishedAt ?? left.createdAt ?? "";
-    const rightTime = right.publishedAt ?? right.createdAt ?? "";
-    const timeOrder = leftTime.localeCompare(rightTime);
-    return timeOrder || left.reportId.localeCompare(right.reportId);
-  });
+  const limitedActiveItems = activeLimit > 0 ? activeItems.slice(0, activeLimit) : activeItems;
+  const recentCompletedLimit = Math.max(0, Math.trunc(options.recentCompletedLimit ?? 0));
+  const includedCompletedItems = options.includeCompleted
+    ? completedItems
+    : recentCompletedLimit > 0
+      ? completedItems.slice(-recentCompletedLimit)
+      : [];
+  const items = [...limitedActiveItems, ...includedCompletedItems].sort(compareFinishQueueItems);
   return {
     source: "persisted_records",
-    orderedBy: "publishedAt_asc_createdAt_asc",
+    orderedBy: "labelSheet_asc_slot_asc_createdAt_asc",
     items,
     stats: {
       total: items.length,
+      needsCompsReview: items.filter((item) => item.queueStatus === "needs_comps_review").length,
       needsSlabPhotos: items.filter((item) => item.queueStatus === "needs_slab_photos").length,
-      needsEbayEvaluate: items.filter((item) => item.queueStatus === "needs_ebay_evaluate").length,
-      needsInventory: items.filter((item) => item.queueStatus === "needs_inventory").length,
+      readyForInventory: items.filter((item) => item.queueStatus === "ready_for_inventory").length,
+      needsEbayEvaluate: items.filter((item) => item.queueStatus === "needs_comps_review").length,
+      needsInventory: items.filter((item) => item.queueStatus === "ready_for_inventory").length,
       complete: allItems.filter((item) => item.queueStatus === "complete").length,
     },
   };
@@ -1099,13 +1294,15 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           "create-card-from-report",
           "history",
           "finish-queue",
+          "label-sheets",
+          "prepare-label-sheet-print",
+          "mark-label-sheet-printed",
           "card-search",
           "slabbed-photo-init",
           "slabbed-photo-finalize",
           "upload-slab-photo",
           "run-comps",
           "save-comps-selection",
-          "mark-label-printed",
           "add-to-inventory",
         ],
         auth: aiGraderProductionAuthStatus(env),
@@ -1121,6 +1318,14 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       });
     }
 
+    if (key === "mark-label-printed") {
+      return res.status(410).json({
+        ok: false,
+        code: "AI_GRADER_PER_LABEL_PRINT_RETIRED",
+        message: "Use the label sheets page to prepare a sheet and mark every label on that sheet printed together.",
+      });
+    }
+
     const allowedActions = [
       "auth-check",
       "publish-init",
@@ -1128,19 +1333,24 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       "create-card-from-report",
       "history",
       "finish-queue",
+      "label-sheets",
+      "prepare-label-sheet-print",
+      "mark-label-sheet-printed",
       "card-search",
       "slabbed-photo-init",
       "slabbed-photo-finalize",
       "upload-slab-photo",
       "run-comps",
       "save-comps-selection",
-      "mark-label-printed",
       "add-to-inventory",
     ];
     if (!allowedActions.includes(key)) {
       return res.status(404).json({ ok: false, message: "AI Grader production API route not found" });
     }
-    const allow = key === "auth-check" || key === "history" || key === "finish-queue" || key === "card-search" ? "GET" : "POST";
+    const allow =
+      key === "auth-check" || key === "history" || key === "finish-queue" || key === "label-sheets" || key === "card-search"
+        ? "GET"
+        : "POST";
     if (req.method !== allow) {
       res.setHeader("Allow", allow);
       return res.status(405).json({ ok: false, message: "Method not allowed" });
@@ -1164,10 +1374,11 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         key === "publish-init" ||
         key === "publish-finalize" ||
         key === "create-card-from-report" ||
-        key === "mark-label-printed" ||
+        key === "prepare-label-sheet-print" ||
+        key === "mark-label-sheet-printed" ||
         key === "add-to-inventory"
           ? "publish"
-          : key === "finish-queue"
+          : key === "finish-queue" || key === "label-sheets"
             ? "history"
             : key === "slabbed-photo-init" || key === "slabbed-photo-finalize" || key === "upload-slab-photo"
             ? "upload-slab-photo"
@@ -1205,8 +1416,17 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderProductionHistory", result });
       }
       if (key === "finish-queue") {
-        const result = deps.listFinishQueue ? await deps.listFinishQueue() : buildAiGraderFinishCardsQueueResult([]);
+        const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const result = deps.listFinishQueue
+          ? await deps.listFinishQueue({ tenantId })
+          : buildAiGraderFinishCardsQueueResult([]);
         return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderFinishCardsQueue", result });
+      }
+      if (key === "label-sheets") {
+        if (!deps.listLabelSheets) throw new Error("AI Grader label sheet listing is not configured.");
+        const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const result = await deps.listLabelSheets({ tenantId });
+        return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderLabelSheets", result });
       }
       if (key === "card-search") {
         if (!deps.searchCards) throw new Error("AI Grader card/item search is not configured.");
@@ -1367,44 +1587,142 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           });
         }
         if (!deps.runComps) throw new Error("AI Grader eBay comps runner is not configured.");
-        const comps = await deps.runComps({
+        if (!deps.persistComps) throw new Error("AI Grader eBay comps persistence is not configured.");
+        const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const requestedByUserId = actorOperatorUserId(authorizedActor);
+        const startedAt = new Date().toISOString();
+        const attemptId = `aigc_${aiGraderSha256(`${input.reportId}:${startedAt}:${Math.random()}`).slice(0, 24)}`;
+        await deps.persistComps({
+          tenantId,
           reportId: input.reportId,
+          status: "running",
           searchQuery: input.searchQuery,
-          reportBundle: input.reportBundle,
-          productionRelease: input.productionRelease,
-          limit: input.limit,
-          admin,
-          actor: authorizedActor,
+          compsRefs: [],
+          resultSummary: {
+            source: "ebay_sold",
+            lifecycleStatus: "running",
+            startedAt,
+            attemptId,
+          },
+          requestedByUserId,
+          actorAudit: authorizedActor.audit,
+          attemptId,
         });
-        return res.status(200).json({
-          ok: true,
-          enabled: true,
-          operation: "aiGraderEbayComps",
-          result: {
-            status: "completed",
-            liveExecutionEnabled: true,
+        try {
+          const comps = await deps.runComps({
+            reportId: input.reportId,
             searchQuery: input.searchQuery,
-            searchUrl: comps.searchUrl,
-            compsRefs: comps.compsRefs,
-            resultSummary: comps.resultSummary,
-            persisted: false,
-            message: "Comps completed. Review and save selected comps to persist valuation.",
-          } satisfies AiGraderCompsRunResult,
-        });
+            reportBundle: input.reportBundle,
+            productionRelease: input.productionRelease,
+            limit: input.limit,
+            admin,
+            actor: authorizedActor,
+          });
+          const safeCompsRefs = safeQueueCompRefs(comps.compsRefs);
+          const safeSearchUrl = safeAiGraderDownstreamUrl(comps.searchUrl, { allowQuery: true });
+          const providerSummary = isRecord(comps.resultSummary) ? comps.resultSummary : {};
+          const resultSummary = {
+            source: "ebay_sold",
+            lifecycleStatus: "ready",
+            searchUrl: safeSearchUrl,
+            candidateCount: safeCompsRefs.length,
+            valuationMinor: numberOrNull(providerSummary.valuationMinor),
+            valuationCurrency: optionalString(providerSummary.valuationCurrency) ?? "USD",
+            startedAt,
+            readyAt: new Date().toISOString(),
+            attemptId,
+          };
+          await deps.persistComps({
+            tenantId,
+            reportId: input.reportId,
+            status: "ready",
+            searchQuery: input.searchQuery,
+            compsRefs: safeCompsRefs,
+            resultSummary,
+            requestedByUserId,
+            actorAudit: authorizedActor.audit,
+            errorCode: null,
+            attemptId,
+          });
+          return res.status(200).json({
+            ok: true,
+            enabled: true,
+            operation: "aiGraderEbayComps",
+            result: {
+              status: "ready",
+              liveExecutionEnabled: true,
+              searchQuery: input.searchQuery,
+              searchUrl: safeSearchUrl ?? undefined,
+              compsRefs: safeCompsRefs,
+              resultSummary,
+              persisted: true,
+              message: "Comps are ready for review. Select the correct sold comps to set valuation.",
+            } satisfies AiGraderCompsRunResult,
+          });
+        } catch (error) {
+          const failure = aiGraderCompsFailure(error);
+          const failedAt = new Date().toISOString();
+          await deps.persistComps({
+            tenantId,
+            reportId: input.reportId,
+            status: "failed",
+            searchQuery: input.searchQuery,
+            compsRefs: [],
+            resultSummary: {
+              source: "ebay_sold",
+              lifecycleStatus: "failed",
+              startedAt,
+              failedAt,
+              errorCode: failure.errorCode,
+              errorMessage: failure.message,
+              retryable: failure.retryable,
+              error: {
+                code: failure.errorCode,
+                message: failure.message,
+                retryable: failure.retryable,
+              },
+              attemptId,
+            },
+            requestedByUserId,
+            actorAudit: authorizedActor.audit,
+            errorCode: failure.errorCode,
+            attemptId,
+          });
+          return res.status(200).json({
+            ok: true,
+            enabled: true,
+            operation: "aiGraderEbayComps",
+            result: {
+              status: "failed",
+              liveExecutionEnabled: true,
+              searchQuery: input.searchQuery,
+              compsRefs: [],
+              persisted: true,
+              errorCode: failure.errorCode,
+              retryable: failure.retryable,
+              message: failure.message,
+            } satisfies AiGraderCompsRunResult,
+          });
+        }
       }
       if (key === "save-comps-selection") {
         if (!deps.persistSelectedComps) throw new Error("AI Grader selected comps persistence is not configured.");
         const input = parseSelectedCompsBody(req.body);
         const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const requestedByUserId = actorOperatorUserId(authorizedActor);
+        if (!requestedByUserId) {
+          const error = new Error("A human operator session is required to review and select sold comps.");
+          (error as Error & { statusCode?: number }).statusCode = 403;
+          throw error;
+        }
         const result = await deps.persistSelectedComps({
           tenantId,
           reportId: input.reportId,
           selectedComps: input.selectedComps,
           searchQuery: input.searchQuery,
           searchUrl: input.searchUrl,
-          valuationMinor: input.valuationMinor,
           valuationCurrency: input.valuationCurrency,
-          requestedByUserId: actorOperatorUserId(authorizedActor),
+          requestedByUserId,
           actorAudit: authorizedActor.audit,
         });
         return res.status(200).json({
@@ -1414,20 +1732,32 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           result,
         });
       }
-      if (key === "mark-label-printed") {
-        if (!deps.markLabelPrinted) throw new Error("AI Grader label print persistence is not configured.");
-        const input = parseMarkLabelPrintedBody(req.body);
+      if (key === "prepare-label-sheet-print" || key === "mark-label-sheet-printed") {
+        const input = parseLabelSheetMutationBody(req.body);
         const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
-        const result = await deps.markLabelPrinted({
+        const common = {
           tenantId,
-          reportId: input.reportId,
+          sheetId: input.sheetId,
+          expectedRevision: input.expectedRevision,
           operatorUserId: actorOperatorUserId(authorizedActor),
           actorAudit: authorizedActor.audit,
-        });
+        };
+        if (key === "prepare-label-sheet-print") {
+          if (!deps.prepareLabelSheetPrint) throw new Error("AI Grader label sheet print preparation is not configured.");
+          const result = await deps.prepareLabelSheetPrint(common);
+          return res.status(200).json({
+            ok: true,
+            enabled: true,
+            operation: "aiGraderPrepareLabelSheetPrint",
+            result,
+          });
+        }
+        if (!deps.markLabelSheetPrinted) throw new Error("AI Grader label sheet print persistence is not configured.");
+        const result = await deps.markLabelSheetPrinted(common);
         return res.status(200).json({
           ok: true,
           enabled: true,
-          operation: "aiGraderMarkLabelPrinted",
+          operation: "aiGraderMarkLabelSheetPrinted",
           result,
         });
       }
@@ -1984,7 +2314,7 @@ async function existingAiGraderCreatedCardResult(input: {
     },
   });
   if (!isRecord(card)) return null;
-  const inventory = await ensureInventoryReadyArtifacts(cardAssetId, input.operatorUserId);
+  const inventory = await ensureInventoryReadyArtifactsTx(input.db, cardAssetId, input.operatorUserId);
   const itemId = optionalString((isRecord(session) ? session.itemId : null) ?? (isRecord(report) ? report.itemId : null)) ?? inventory.itemId;
   const fallbackTitle = identityTitle(input.identity) || optionalString(card.fileName) || cardAssetId;
   const title = optionalString(card.customTitle) ?? fallbackTitle;
@@ -2045,18 +2375,50 @@ export async function createAiGraderCardFromReportRuntime(input: {
 
   const { prisma } = await import("@tenkings/database");
   const db = input.dbClient ?? (prisma as any);
-  const existing = await existingAiGraderCreatedCardResult({
-    db,
-    tenantId: input.tenantId,
-    reportId,
-    gradingSessionId,
-    productionRelease: input.productionRelease,
-    identity: input.identity,
-    operatorUserId,
-  });
-  if (existing) return existing;
-
   return db.$transaction(async (tx: any) => {
+    if (typeof tx.$queryRaw !== "function") {
+      throw new Error("AI Grader report lifecycle transaction locking is unavailable.");
+    }
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${reportId}))`;
+    const existing = await existingAiGraderCreatedCardResult({
+      db: tx,
+      tenantId: input.tenantId,
+      reportId,
+      gradingSessionId,
+      productionRelease: input.productionRelease,
+      identity: input.identity,
+      operatorUserId,
+    });
+    if (existing) {
+      const [existingSession, existingReport] = await Promise.all([
+        tx.aiGraderSession?.findUnique?.({
+          where: { gradingSessionId },
+          select: { id: true },
+        }),
+        tx.aiGraderReport?.findUnique?.({
+          where: { reportId },
+          select: { sessionId: true },
+        }),
+      ]);
+      const sessionId = optionalString(existingSession?.id ?? existingReport?.sessionId);
+      if (!sessionId) throw new Error("AI Grader session could not be resolved for label sheet assignment.");
+      const downstream = await queueConfirmedAiGraderLabelTx({
+        tx,
+        tenantId: input.tenantId,
+        sessionId,
+        gradingSessionId,
+        reportId,
+        reportBundle: input.reportBundle,
+        productionRelease: existing.productionRelease,
+        storagePlan: input.storagePlan,
+        confirmedIdentity: input.identity,
+        cardAssetId: existing.cardAssetId,
+        itemId: existing.itemId,
+        operatorUserId,
+      });
+      return { ...existing, downstream };
+    }
+
     const owner = await resolveInventoryReadyOwner(tx, input.env ?? process.env);
     const now = new Date();
     const classification = classificationFromIdentity(input.identity);
@@ -2167,7 +2529,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
       itemNumberConvention: "Item.number = CardAsset.id",
     };
 
-    await tx.aiGraderSession.upsert({
+    const aiGraderSession = await tx.aiGraderSession.upsert({
       where: { gradingSessionId },
       update: {
         tenantId: input.tenantId,
@@ -2193,13 +2555,20 @@ export async function createAiGraderCardFromReportRuntime(input: {
         updatedAt: now,
       },
     });
-    await tx.aiGraderReport.updateMany({
-      where: { reportId },
-      data: {
-        cardAssetId: card.id,
-        itemId: inventory.itemId,
-        updatedAt: now,
-      },
+    const downstream = await queueConfirmedAiGraderLabelTx({
+      tx,
+      tenantId: input.tenantId,
+      sessionId: stringValue(aiGraderSession.id, ""),
+      gradingSessionId,
+      reportId,
+      reportBundle: input.reportBundle,
+      productionRelease: linkedRelease,
+      storagePlan: input.storagePlan,
+      confirmedIdentity: input.identity,
+      cardAssetId: card.id,
+      itemId: inventory.itemId,
+      operatorUserId,
+      now,
     });
 
     return {
@@ -2216,6 +2585,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
         itemNumberConvention: "Item.number = CardAsset.id",
         labelPairId: inventory.labelPair?.pairId ?? null,
       },
+      downstream,
     };
   });
 }
@@ -2438,87 +2808,106 @@ export async function validateAiGraderInventoryReadiness(db: any, reportId: stri
   };
 }
 
-export async function markAiGraderLabelPrintedRuntime(input: {
-  tenantId: string;
-  reportId: string;
-  operatorUserId?: string | null;
-  actorAudit?: AiGraderProductionActorAudit | null;
-}): Promise<AiGraderMarkLabelPrintedResult> {
-  if (!input.operatorUserId) {
-    const error = new Error("A human operator session is required to mark an AI Grader label printed.");
-    (error as Error & { statusCode?: number }).statusCode = 403;
-    throw error;
-  }
-  const { prisma } = await import("@tenkings/database");
-  const db = prisma as any;
-  const report = await findAiGraderReportForStationAction(db, input.reportId);
-  const label = await db.aiGraderLabel?.findFirst?.({
-    where: {
-      reportId: report.id,
-      tenantId: input.tenantId,
-    },
-    select: {
-      id: true,
-      certId: true,
-      payload: true,
-    },
-  });
-  if (!isRecord(label)) {
-    throw aiGraderInventoryGateError("AI Grader label was not found for this report.", "AI_GRADER_LABEL_NOT_FOUND");
-  }
-  const printedAt = new Date();
-  await db.aiGraderLabel.update({
-    where: { id: label.id },
-    data: {
-      physicalPrintStatus: "printed",
-      payload: mergeJsonDetails(label.payload, {
-        physicalPrint: {
-          status: "printed",
-          printedAt: printedAt.toISOString(),
-          operatorUserId: input.operatorUserId,
-          actorAudit: input.actorAudit ?? null,
-        },
-      }),
-      updatedAt: printedAt,
-    },
-  });
-  return {
-    reportId: input.reportId,
-    labelId: stringValue(label.id, ""),
-    certId: stringValue(label.certId, ""),
-    physicalPrintStatus: "printed",
-    printedAt: printedAt.toISOString(),
-  };
-}
-
 export async function persistAiGraderSelectedCompsRuntime(input: {
   tenantId: string;
   reportId: string;
   selectedComps: unknown[];
   searchQuery?: string | null;
   searchUrl?: string | null;
-  valuationMinor?: number | null;
   valuationCurrency?: string | null;
   requestedByUserId?: string | null;
   actorAudit?: AiGraderProductionActorAudit | null;
+  dbClient?: any;
 }): Promise<AiGraderSelectedCompsPersistResult> {
+  if (!input.requestedByUserId) {
+    const error = new Error("A human operator session is required to review and select sold comps.");
+    (error as Error & { statusCode?: number }).statusCode = 403;
+    throw error;
+  }
   const { prisma } = await import("@tenkings/database");
-  const db = prisma as any;
-  const report = await findAiGraderReportForStationAction(db, input.reportId);
+  const db = input.dbClient ?? (prisma as any);
+  return db.$transaction(async (tx: any) => {
+  if (typeof tx.$queryRaw !== "function") {
+    throw new Error("AI Grader selected comps transaction locking is unavailable.");
+  }
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${input.reportId}))`;
+  const report = await findAiGraderReportForStationAction(tx, input.reportId);
+  if (optionalString(report.tenantId) !== input.tenantId) {
+    const error = new Error("AI Grader report was not found for this tenant.");
+    (error as Error & { statusCode?: number }).statusCode = 404;
+    throw error;
+  }
   const cardAssetId = optionalString(report.cardAssetId);
   const itemId = optionalString(report.itemId);
   if (!cardAssetId) throw new Error("AI Grader report must be linked to a CardAsset before saving comps.");
-  const comps = input.selectedComps
+  const currentValuation = await tx.aiGraderValuation.findUnique({
+    where: { id: `ai-grader-valuation:${input.reportId}` },
+    select: {
+      status: true,
+      searchQuery: true,
+      compsRefs: true,
+      resultSummary: true,
+      valuationCurrency: true,
+    },
+  });
+  if (!isRecord(currentValuation) || !["ready", "completed"].includes(stringValue(currentValuation.status, ""))) {
+    throw aiGraderInventoryGateError(
+      "Persisted sold-comp candidates must be ready before selections can be saved.",
+      "AI_GRADER_COMPS_CANDIDATES_NOT_READY"
+    );
+  }
+  const currentValuationSummary = isRecord(currentValuation.resultSummary) ? currentValuation.resultSummary : {};
+  const persistedCandidates = (Array.isArray(currentValuation.compsRefs) ? currentValuation.compsRefs : [])
     .map((comp, index) => normalizeSelectedComp(comp, index))
-    .filter((comp): comp is NonNullable<ReturnType<typeof normalizeSelectedComp>> => Boolean(comp));
-  if (!comps.length) throw new Error("At least one selected comp with a URL is required.");
-  const prices = comps.map((comp) => parseCurrencyMinor(comp.price)).filter((value): value is number => value != null);
-  const valuationMinor = input.valuationMinor ?? (prices.length ? Math.round(prices.reduce((sum, value) => sum + value, 0) / prices.length) : null);
-  const valuationCurrency = input.valuationCurrency ?? "USD";
+    .filter((comp): comp is NonNullable<ReturnType<typeof normalizeSelectedComp>> => Boolean(comp))
+    .flatMap((comp) => {
+      const safeUrl = safeAiGraderDownstreamUrl(comp.url, { allowQuery: true });
+      return safeUrl ? [{ ...comp, url: safeUrl }] : [];
+    });
+  if (!persistedCandidates.length) {
+    throw aiGraderInventoryGateError(
+      "No persisted sold-comp candidates are available for review.",
+      "AI_GRADER_COMPS_CANDIDATES_MISSING"
+    );
+  }
+  const persistedByUrl = new Map(persistedCandidates.map((comp) => [comp.url, comp]));
+  const selectedByUrl = new Map<string, (typeof persistedCandidates)[number]>();
+  for (const [index, requestedValue] of input.selectedComps.entries()) {
+    const requested = normalizeSelectedComp(requestedValue, index);
+    const requestedUrl = safeAiGraderDownstreamUrl(requested?.url, { allowQuery: true });
+    const persisted = requestedUrl ? persistedByUrl.get(requestedUrl) : undefined;
+    if (!persisted) {
+      throw aiGraderInventoryGateError(
+        "Every selected sold comp must match a persisted candidate for this report.",
+        "AI_GRADER_SELECTED_COMP_NOT_PERSISTED"
+      );
+    }
+    selectedByUrl.set(persisted.url, persisted);
+  }
+  const comps = [...selectedByUrl.values()];
+  if (!comps.length) throw new Error("At least one persisted sold comp must be selected.");
+  const prices = comps
+    .map((comp) => parseCurrencyMinor(comp.price))
+    .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+  if (!prices.length || prices.length !== comps.length) {
+    throw aiGraderInventoryGateError(
+      "Every selected sold comp must have a positive parseable price before valuation can be saved.",
+      "AI_GRADER_SELECTED_COMP_PRICE_REQUIRED"
+    );
+  }
+  const automaticValuationMinor = Math.round(prices.reduce((sum, value) => sum + value, 0) / prices.length);
+  const valuationMinor = automaticValuationMinor;
+  if (!Number.isFinite(valuationMinor) || valuationMinor <= 0) {
+    throw aiGraderInventoryGateError(
+      "Selected comps valuation must be a positive amount.",
+      "AI_GRADER_SELECTED_COMP_VALUATION_INVALID"
+    );
+  }
+  const valuationCurrency = optionalString(currentValuation.valuationCurrency) ?? input.valuationCurrency ?? "USD";
 
   let evidenceItemCount = 0;
   for (const comp of comps) {
-    const existing = await db.cardEvidenceItem?.findFirst?.({
+    const existing = await tx.cardEvidenceItem?.findFirst?.({
       where: {
         cardAssetId,
         kind: CardEvidenceKind.SOLD_COMP,
@@ -2527,7 +2916,7 @@ export async function persistAiGraderSelectedCompsRuntime(input: {
       select: { id: true },
     });
     if (existing) continue;
-    await db.cardEvidenceItem.create({
+    await tx.cardEvidenceItem.create({
       data: {
         cardAssetId,
         kind: CardEvidenceKind.SOLD_COMP,
@@ -2550,7 +2939,7 @@ export async function persistAiGraderSelectedCompsRuntime(input: {
     evidenceItemCount += 1;
   }
 
-  await db.cardAsset.update({
+  await tx.cardAsset.update({
     where: { id: cardAssetId },
     data: {
       valuationMinor,
@@ -2563,12 +2952,12 @@ export async function persistAiGraderSelectedCompsRuntime(input: {
   });
 
   if (itemId) {
-    const item = await db.item.findUnique({
+    const item = await tx.item.findUnique({
       where: { id: itemId },
       select: { id: true, detailsJson: true },
     });
     if (isRecord(item)) {
-      await db.item.update({
+      await tx.item.update({
         where: { id: itemId },
         data: {
           estimatedValue: valuationMinor,
@@ -2587,17 +2976,18 @@ export async function persistAiGraderSelectedCompsRuntime(input: {
     }
   }
 
-  await persistAiGraderValuationResult(prisma as any, {
+  await persistAiGraderValuationResult(tx as any, {
     tenantId: input.tenantId,
     reportId: input.reportId,
     status: "completed",
     source: "ebay_sold",
-    searchQuery: input.searchQuery ?? null,
+    searchQuery: optionalString(currentValuation.searchQuery) ?? null,
     compsRefs: comps,
     resultSummary: {
       source: "ebay_sold",
-      searchUrl: input.searchUrl ?? null,
+      searchUrl: safeAiGraderDownstreamUrl(currentValuationSummary.searchUrl, { allowQuery: true }),
       selectedCompCount: comps.length,
+      automaticValuationMinor,
       valuationMinor,
       valuationCurrency,
       comps,
@@ -2618,6 +3008,7 @@ export async function persistAiGraderSelectedCompsRuntime(input: {
     valuationCurrency,
     valuationStatus: "completed",
   };
+  });
 }
 
 export async function persistAiGraderCompsRuntime(input: {
@@ -2629,22 +3020,74 @@ export async function persistAiGraderCompsRuntime(input: {
   resultSummary?: unknown;
   requestedByUserId?: string | null;
   actorAudit?: AiGraderProductionActorAudit | null;
+  errorCode?: string | null;
+  attemptId?: string | null;
+  dbClient?: any;
 }) {
   const { prisma } = await import("@tenkings/database");
+  const db = input.dbClient ?? (prisma as any);
   const resultSummary = isRecord(input.resultSummary) ? input.resultSummary : {};
-  return persistAiGraderValuationResult(prisma as any, {
-    tenantId: input.tenantId,
-    reportId: input.reportId,
-    status: input.status,
-    source: "ebay_sold",
-    searchQuery: input.searchQuery ?? null,
-    compsRefs: input.compsRefs,
-    resultSummary: input.resultSummary,
-    valuationMinor: typeof resultSummary.valuationMinor === "number" ? resultSummary.valuationMinor : null,
-    valuationCurrency: typeof resultSummary.valuationCurrency === "string" ? resultSummary.valuationCurrency : "USD",
-    requestedByUserId: input.requestedByUserId ?? null,
-    actorAudit: input.actorAudit ?? null,
-    completedAt: input.status === "completed" ? new Date() : null,
+  const conflict = (message: string, code: string) => {
+    const error = new Error(message) as Error & { statusCode?: number; code?: string };
+    error.statusCode = 409;
+    error.code = code;
+    return error;
+  };
+  return db.$transaction(async (tx: any) => {
+    if (typeof tx.$queryRaw !== "function") {
+      throw new Error("AI Grader comps transaction locking is unavailable.");
+    }
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${input.reportId}))`;
+    const valuationId = `ai-grader-valuation:${input.reportId}`;
+    const current = await tx.aiGraderValuation.findUnique({
+      where: { id: valuationId },
+      select: { status: true, resultSummary: true, updatedAt: true },
+    });
+    const currentStatus = optionalString(current?.status);
+    const currentSummary = isRecord(current?.resultSummary) ? current.resultSummary : {};
+    const currentAttemptId = optionalString(currentSummary.attemptId);
+    if (currentStatus === "completed") {
+      throw conflict(
+        "Selected sold comps and valuation are already complete. Start a manual valuation revision instead of rerunning comps.",
+        "AI_GRADER_COMPS_ALREADY_COMPLETED"
+      );
+    }
+    if (input.status === "running" && currentStatus === "running") {
+      const updatedAt = current?.updatedAt instanceof Date ? current.updatedAt : new Date(String(current?.updatedAt ?? ""));
+      const isRecent = Number.isFinite(updatedAt.getTime()) && Date.now() - updatedAt.getTime() < 5 * 60 * 1000;
+      if (isRecent) {
+        throw conflict("eBay sold comps are already running for this card.", "AI_GRADER_COMPS_ALREADY_RUNNING");
+      }
+    }
+    if (
+      input.status !== "running" &&
+      input.attemptId &&
+      currentAttemptId &&
+      currentAttemptId !== input.attemptId
+    ) {
+      throw conflict(
+        "This eBay sold comps result belongs to an older attempt and was not saved.",
+        "AI_GRADER_COMPS_STALE_ATTEMPT"
+      );
+    }
+    return persistAiGraderValuationResult(tx as any, {
+      tenantId: input.tenantId,
+      reportId: input.reportId,
+      status: input.status,
+      source: "ebay_sold",
+      searchQuery: input.searchQuery ?? null,
+      compsRefs: input.compsRefs,
+      resultSummary: {
+        ...resultSummary,
+        ...(input.attemptId ? { attemptId: input.attemptId } : {}),
+      },
+      valuationMinor: typeof resultSummary.valuationMinor === "number" ? resultSummary.valuationMinor : null,
+      valuationCurrency: typeof resultSummary.valuationCurrency === "string" ? resultSummary.valuationCurrency : "USD",
+      requestedByUserId: input.requestedByUserId ?? null,
+      actorAudit: input.actorAudit ?? null,
+      completedAt: input.status === "completed" ? new Date() : null,
+      errorCode: input.errorCode ?? null,
+    });
   });
 }
 
@@ -2659,54 +3102,68 @@ export async function addAiGraderCardToInventoryRuntime(input: {
     (error as Error & { statusCode?: number }).statusCode = 403;
     throw error;
   }
+  const operatorUserId = input.operatorUserId;
   const { prisma } = await import("@tenkings/database");
   const db = prisma as any;
-  const readiness = await validateAiGraderInventoryReadiness(db, input.reportId);
-  const report = readiness.report;
-  const cardAssetId = readiness.cardAssetId;
-  const card = await db.cardAsset.findUnique({
-    where: { id: cardAssetId },
-    select: { id: true, valuationMinor: true },
-  });
-  if (!isRecord(card)) throw new Error("Linked CardAsset was not found.");
-  const valuationMinor = typeof card.valuationMinor === "number" ? card.valuationMinor : readiness.valuationMinor;
-  if (valuationMinor == null || !Number.isFinite(valuationMinor) || valuationMinor <= 0) {
-    const error = new Error(PRICE_REQUIRED_MESSAGE);
-    (error as Error & { statusCode?: number }).statusCode = 400;
-    throw error;
-  }
-  const inventory = await ensureInventoryReadyArtifacts(cardAssetId, input.operatorUserId);
-  await db.cardAsset.update({
-    where: { id: cardAssetId },
-    data: {
+  return db.$transaction(async (tx: any) => {
+    if (typeof tx.$queryRaw !== "function") {
+      throw new Error("AI Grader inventory transaction locking is unavailable.");
+    }
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${input.reportId}))`;
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-label-sheets'), hashtext(${input.tenantId}))`;
+    const readiness = await validateAiGraderInventoryReadiness(tx, input.reportId);
+    const report = readiness.report;
+    if (optionalString(report.tenantId) !== input.tenantId) {
+      const error = new Error("AI Grader report was not found for this tenant.");
+      (error as Error & { statusCode?: number }).statusCode = 404;
+      throw error;
+    }
+    const cardAssetId = readiness.cardAssetId;
+    const card = await tx.cardAsset.findUnique({
+      where: { id: cardAssetId },
+      select: { id: true, valuationMinor: true },
+    });
+    if (!isRecord(card)) throw new Error("Linked CardAsset was not found.");
+    const valuationMinor = typeof card.valuationMinor === "number" ? card.valuationMinor : readiness.valuationMinor;
+    if (valuationMinor == null || !Number.isFinite(valuationMinor) || valuationMinor <= 0) {
+      const error = new Error(PRICE_REQUIRED_MESSAGE);
+      (error as Error & { statusCode?: number }).statusCode = 400;
+      throw error;
+    }
+    const inventory = await ensureInventoryReadyArtifactsTx(tx, cardAssetId, operatorUserId);
+    const now = new Date();
+    await tx.cardAsset.update({
+      where: { id: cardAssetId },
+      data: {
+        reviewStage: CardReviewStage.INVENTORY_READY_FOR_SALE,
+        reviewStageUpdatedAt: now,
+      },
+    });
+    await tx.aiGraderSession.updateMany({
+      where: { id: report.sessionId, tenantId: input.tenantId },
+      data: {
+        status: "inventory_ready",
+        cardAssetId,
+        itemId: inventory.itemId,
+        updatedAt: now,
+      },
+    });
+    await tx.aiGraderReport.updateMany({
+      where: { reportId: input.reportId, tenantId: input.tenantId },
+      data: {
+        cardAssetId,
+        itemId: inventory.itemId,
+        updatedAt: now,
+      },
+    });
+    return {
+      reportId: input.reportId,
+      cardAssetId,
+      itemId: inventory.itemId,
       reviewStage: CardReviewStage.INVENTORY_READY_FOR_SALE,
-      reviewStageUpdatedAt: new Date(),
-    },
+      labelPairId: inventory.labelPair?.pairId ?? null,
+    };
   });
-  await db.aiGraderSession.updateMany({
-    where: { id: report.sessionId },
-    data: {
-      status: "inventory_ready",
-      cardAssetId,
-      itemId: inventory.itemId,
-      updatedAt: new Date(),
-    },
-  });
-  await db.aiGraderReport.updateMany({
-    where: { reportId: input.reportId },
-    data: {
-      cardAssetId,
-      itemId: inventory.itemId,
-      updatedAt: new Date(),
-    },
-  });
-  return {
-    reportId: input.reportId,
-    cardAssetId,
-    itemId: inventory.itemId,
-    reviewStage: CardReviewStage.INVENTORY_READY_FOR_SALE,
-    labelPairId: inventory.labelPair?.pairId ?? null,
-  };
 }
 
 export async function listProductionReportHistoryRuntime(): Promise<AiGraderProductionHistoryResult> {
@@ -2743,6 +3200,7 @@ export async function listProductionReportHistoryRuntime(): Promise<AiGraderProd
 
 const AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT = 100;
 const AI_GRADER_FINISH_QUEUE_PAGE_SIZE = 100;
+const AI_GRADER_FINISH_QUEUE_RECENT_COMPLETED_LIMIT = 10;
 
 async function hydrateAiGraderFinishCardsQueueRows(db: any, reportRows: unknown[]) {
   const reports = reportRows.filter(isRecord);
@@ -2786,15 +3244,75 @@ async function hydrateAiGraderFinishCardsQueueRows(db: any, reportRows: unknown[
   }));
 }
 
-export async function listAiGraderFinishCardsQueueRuntime(): Promise<AiGraderFinishCardsQueueResult> {
+export async function listAiGraderFinishCardsQueueRuntime(input?: {
+  tenantId?: string;
+}): Promise<AiGraderFinishCardsQueueResult> {
   const { prisma } = await import("@tenkings/database");
   const db = prisma as any;
+  const tenantId = input?.tenantId ?? process.env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
   const hydratedRows: unknown[] = [];
+  const reportSelect = {
+    id: true,
+    reportId: true,
+    publicationStatus: true,
+    publicReportUrl: true,
+    qrPayloadUrl: true,
+    finalOverallGrade: true,
+    cardAssetId: true,
+    itemId: true,
+    createdAt: true,
+    publishedAt: true,
+    session: {
+      select: {
+        status: true,
+        gradingSessionId: true,
+      },
+    },
+    labels: {
+      orderBy: { updatedAt: "desc" },
+      take: 1,
+      select: {
+        certId: true,
+        labelPreviewUrl: true,
+        qrPayloadUrl: true,
+        physicalPrintStatus: true,
+        payload: true,
+      },
+    },
+    evidenceAssets: {
+      where: { artifactClass: "slabbed_photo" },
+      select: {
+        side: true,
+        storageKey: true,
+        publicUrl: true,
+        byteSize: true,
+        mimeType: true,
+        createdAt: true,
+      },
+    },
+    valuations: {
+      orderBy: { updatedAt: "desc" },
+      take: 1,
+      select: {
+        status: true,
+        searchQuery: true,
+        compsRefs: true,
+        resultSummary: true,
+        valuationMinor: true,
+        valuationCurrency: true,
+        errorCode: true,
+        requestedAt: true,
+        updatedAt: true,
+        completedAt: true,
+      },
+    },
+  } as const;
   let skip = 0;
 
   while (true) {
     const rows = await db.aiGraderReport?.findMany?.({
       where: {
+        tenantId,
         publicationStatus: "published",
         OR: [{ cardAssetId: { not: null } }, { itemId: { not: null } }],
         session: { is: { status: { not: "inventory_ready" } } },
@@ -2802,56 +3320,7 @@ export async function listAiGraderFinishCardsQueueRuntime(): Promise<AiGraderFin
       orderBy: [{ publishedAt: "asc" }, { createdAt: "asc" }],
       skip,
       take: AI_GRADER_FINISH_QUEUE_PAGE_SIZE,
-      select: {
-        id: true,
-        reportId: true,
-        publicationStatus: true,
-        publicReportUrl: true,
-        qrPayloadUrl: true,
-        finalOverallGrade: true,
-        cardAssetId: true,
-        itemId: true,
-        createdAt: true,
-        publishedAt: true,
-        session: {
-          select: {
-            status: true,
-            gradingSessionId: true,
-          },
-        },
-        labels: {
-          orderBy: { updatedAt: "desc" },
-          take: 1,
-          select: {
-            certId: true,
-            labelPreviewUrl: true,
-            qrPayloadUrl: true,
-            physicalPrintStatus: true,
-          },
-        },
-        evidenceAssets: {
-          where: { artifactClass: "slabbed_photo" },
-          select: {
-            side: true,
-            storageKey: true,
-            publicUrl: true,
-            byteSize: true,
-            mimeType: true,
-            createdAt: true,
-          },
-        },
-        valuations: {
-          orderBy: { updatedAt: "desc" },
-          take: 1,
-          select: {
-            status: true,
-            valuationMinor: true,
-            valuationCurrency: true,
-            updatedAt: true,
-            completedAt: true,
-          },
-        },
-      },
+      select: reportSelect,
     });
     const reports = Array.isArray(rows) ? rows : [];
     if (!reports.length) break;
@@ -2864,7 +3333,23 @@ export async function listAiGraderFinishCardsQueueRuntime(): Promise<AiGraderFin
     skip += reports.length;
   }
 
+  const recentCompletedRows = await db.aiGraderReport?.findMany?.({
+    where: {
+      tenantId,
+      publicationStatus: "published",
+      OR: [{ cardAssetId: { not: null } }, { itemId: { not: null } }],
+      session: { is: { status: "inventory_ready" } },
+    },
+    orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+    take: AI_GRADER_FINISH_QUEUE_RECENT_COMPLETED_LIMIT,
+    select: reportSelect,
+  });
+  if (Array.isArray(recentCompletedRows) && recentCompletedRows.length) {
+    hydratedRows.push(...(await hydrateAiGraderFinishCardsQueueRows(db, recentCompletedRows)));
+  }
+
   return buildAiGraderFinishCardsQueueResult(hydratedRows, {
     activeLimit: AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT,
+    recentCompletedLimit: AI_GRADER_FINISH_QUEUE_RECENT_COMPLETED_LIMIT,
   });
 }

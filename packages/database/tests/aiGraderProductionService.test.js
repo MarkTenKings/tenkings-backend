@@ -133,7 +133,7 @@ function sampleActorAudit(overrides = {}) {
   };
 }
 
-function createMockDelegate(name, calls, id) {
+function createMockDelegate(name, calls, id, findUniqueValue) {
   return {
     async upsert(args) {
       calls.push({ delegate: name, method: "upsert", args });
@@ -145,6 +145,9 @@ function createMockDelegate(name, calls, id) {
     },
     async findUnique(args) {
       calls.push({ delegate: name, method: "findUnique", args });
+      if (findUniqueValue !== undefined) {
+        return typeof findUniqueValue === "function" ? findUniqueValue(args) : findUniqueValue;
+      }
       if (name === "aiGraderReport") {
         return {
           id: "db-report-1",
@@ -167,6 +170,14 @@ function createMockDelegate(name, calls, id) {
       }
       return null;
     },
+    async findMany(args) {
+      calls.push({ delegate: name, method: "findMany", args });
+      if (name === "aiGraderLabel" && findUniqueValue !== undefined) {
+        const value = typeof findUniqueValue === "function" ? findUniqueValue(args) : findUniqueValue;
+        return value ? [value] : [];
+      }
+      return [];
+    },
     async updateMany(args) {
       calls.push({ delegate: name, method: "updateMany", args });
       return { count: 1 };
@@ -174,16 +185,20 @@ function createMockDelegate(name, calls, id) {
   };
 }
 
-function createMockProductionDb() {
+function createMockProductionDb(options = {}) {
   const calls = [];
   const tx = {
+    async $queryRaw() {
+      calls.push({ delegate: "$queryRaw", method: "$queryRaw" });
+      return [];
+    },
     aiGraderSession: createMockDelegate("aiGraderSession", calls, "db-session-1"),
     aiGraderReport: createMockDelegate("aiGraderReport", calls, "db-report-1"),
     aiGraderEvidenceAsset: createMockDelegate("aiGraderEvidenceAsset", calls, "db-evidence-1"),
     aiGraderGrade: createMockDelegate("aiGraderGrade", calls, "db-grade-1"),
-    aiGraderLabel: createMockDelegate("aiGraderLabel", calls, "db-label-1"),
+    aiGraderLabel: createMockDelegate("aiGraderLabel", calls, "db-label-1", options.existingLabel),
     aiGraderPublication: createMockDelegate("aiGraderPublication", calls, "db-publication-1"),
-    aiGraderValuation: createMockDelegate("aiGraderValuation", calls, "db-valuation-1"),
+    aiGraderValuation: createMockDelegate("aiGraderValuation", calls, "db-valuation-1", options.existingValuation),
     cardAsset: createMockDelegate("cardAsset", calls, "card-asset-1"),
     item: createMockDelegate("item", calls, "item-1"),
   };
@@ -333,15 +348,18 @@ test("production release persistence upserts durable records and optional card l
   assert.equal(result.cardAssetUpdatedCount, 1);
   assert.equal(result.itemUpdatedCount, 1);
   assert.deepEqual(
-    calls.map((call) => `${call.delegate}.${call.method}`).slice(0, 8),
+    calls.map((call) => `${call.delegate}.${call.method}`).slice(0, 11),
     [
       "$transaction.$transaction",
+      "$queryRaw.$queryRaw",
       "aiGraderSession.upsert",
       "aiGraderReport.upsert",
       "aiGraderGrade.upsert",
+      "$queryRaw.$queryRaw",
+      "aiGraderLabel.findMany",
+      "aiGraderLabel.findUnique",
       "aiGraderLabel.upsert",
       "aiGraderPublication.upsert",
-      "aiGraderEvidenceAsset.upsert",
       "aiGraderEvidenceAsset.upsert",
     ]
   );
@@ -354,6 +372,163 @@ test("production release persistence upserts durable records and optional card l
   assert.equal(itemUpdate.args.data.detailsJson.existingItemDetail, "keep-me");
   assert.deepEqual(itemUpdate.args.data.detailsJson.nestedItemDetail, { preserved: true });
   assert.equal(itemUpdate.args.data.detailsJson.aiGraderReportId, "report-1");
+});
+
+test("production publish preserves label sheet, print audit, and progressed runtime valuation", async () => {
+  const labelSheet = {
+    schemaVersion: "ai-grader-label-sheet-v1",
+    sheetId: "ai-grader-label-sheet-000012",
+    sheetNumber: 12,
+    slot: 4,
+    capacity: 16,
+    assignedAt: "2026-07-09T12:00:00.000Z",
+    assignedByUserId: "operator-1",
+  };
+  const physicalPrint = {
+    status: "printed",
+    printedAt: "2026-07-09T12:30:00.000Z",
+    operatorUserId: "operator-2",
+  };
+  const { db, calls } = createMockProductionDb({
+    existingLabel: {
+      payload: {
+        labelGradeText: "PENDING",
+        retainedOperationalDetail: "keep-me",
+        labelSheet,
+        physicalPrint,
+      },
+    },
+    existingValuation: {
+      status: "completed",
+      source: "ebay_sold",
+      searchQuery: "1996 Test Card sold",
+      valuationMinor: 12500,
+      valuationCurrency: "USD",
+      compsRefs: [{ id: "selected-comp-1", price: "$125.00" }],
+      resultSummary: { selectedCount: 1 },
+      requestedByUserId: "operator-2",
+      requestedAt: new Date("2026-07-09T12:10:00.000Z"),
+      completedAt: new Date("2026-07-09T12:20:00.000Z"),
+      errorCode: null,
+    },
+  });
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+
+  await persistAiGraderProductionRelease(db, {
+    tenantId: "tenant-1",
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    storagePlan: plan,
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    persistedAt: "2026-07-09T13:00:00.000Z",
+  });
+
+  const labelUpsert = calls.find((call) => call.delegate === "aiGraderLabel" && call.method === "upsert");
+  assert.deepEqual(labelUpsert.args.update.payload.labelSheet, labelSheet);
+  assert.deepEqual(labelUpsert.args.update.payload.physicalPrint, physicalPrint);
+  assert.equal(labelUpsert.args.update.payload.retainedOperationalDetail, "keep-me");
+  assert.equal(labelUpsert.args.update.payload.labelGradeText, "8.6");
+
+  const valuationUpsert = calls.find((call) => call.delegate === "aiGraderValuation" && call.method === "upsert");
+  assert.deepEqual(valuationUpsert.args.update, {
+    tenantId: "tenant-1",
+    sessionId: "db-session-1",
+  });
+  assert.equal(valuationUpsert.args.create.status, "ready");
+});
+
+test("production publish invalidates printed status when printable label content changes", async () => {
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const { db, calls } = createMockProductionDb({
+    existingLabel: {
+      physicalPrintStatus: "printed",
+      labelGradeText: "PENDING",
+      qrPayloadUrl: plan.qrPayloadUrl,
+      publicReportUrl: plan.publicReportUrl,
+      payload: {
+        labelSheet: {
+          schemaVersion: "ai-grader-label-sheet-v1",
+          sheetId: "ai-grader-label-sheet-000012",
+          sheetNumber: 12,
+          slot: 4,
+          capacity: 16,
+          assignedAt: "2026-07-09T12:00:00.000Z",
+          sealedAt: "2026-07-09T12:20:00.000Z",
+          printedAt: "2026-07-09T12:30:00.000Z",
+          printedByUserId: "operator-2",
+        },
+        physicalPrint: {
+          status: "printed",
+          printedAt: "2026-07-09T12:30:00.000Z",
+          operatorUserId: "operator-2",
+        },
+      },
+    },
+  });
+
+  await persistAiGraderProductionRelease(db, {
+    tenantId: "tenant-1",
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    storagePlan: plan,
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    persistedAt: "2026-07-09T13:00:00.000Z",
+  });
+
+  const labelUpsert = calls.find((call) => call.delegate === "aiGraderLabel" && call.method === "upsert");
+  assert.equal(labelUpsert.args.update.physicalPrintStatus, "not_printed");
+  assert.equal(labelUpsert.args.update.payload.labelSheet.sealedAt, "2026-07-09T12:20:00.000Z");
+  assert.equal(labelUpsert.args.update.payload.labelSheet.printedAt, undefined);
+  assert.equal(labelUpsert.args.update.payload.labelSheet.printedByUserId, undefined);
+  assert.equal(labelUpsert.args.update.payload.physicalPrint.status, "not_printed");
+  assert.equal(labelUpsert.args.update.payload.physicalPrint.reason, "printable_label_content_changed");
+});
+
+test("production publish preserves a queued ready valuation before background comps starts", async () => {
+  const { db, calls } = createMockProductionDb({
+    existingValuation: {
+      status: "ready",
+      source: "ebay_sold",
+      searchQuery: "confirmed identity query",
+      valuationMinor: null,
+      valuationCurrency: "USD",
+      compsRefs: null,
+      resultSummary: { workflowStatus: "queued", queuedAt: "2026-07-09T12:00:00.000Z" },
+      requestedByUserId: "operator-1",
+      requestedAt: new Date("2026-07-09T12:00:00.000Z"),
+      completedAt: null,
+      errorCode: null,
+    },
+  });
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+
+  await persistAiGraderProductionRelease(db, {
+    tenantId: "tenant-1",
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    storagePlan: plan,
+    persistedAt: "2026-07-09T12:01:00.000Z",
+  });
+
+  const valuationUpsert = calls.find((call) => call.delegate === "aiGraderValuation" && call.method === "upsert");
+  assert.deepEqual(valuationUpsert.args.update, {
+    tenantId: "tenant-1",
+    sessionId: "db-session-1",
+  });
 });
 
 test("production release persistence stores actor audit in existing JSON surfaces", async () => {

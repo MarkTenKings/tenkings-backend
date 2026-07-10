@@ -9,12 +9,17 @@ import {
   finalizeAiGraderSlabbedPhotoUploadRuntime,
   listAiGraderFinishCardsQueueRuntime,
   listProductionReportHistoryRuntime,
-  markAiGraderLabelPrintedRuntime,
+  persistAiGraderCompsRuntime,
   persistAiGraderSelectedCompsRuntime,
   persistProductionReleaseRuntime,
   runAiGraderEbayCompsRuntime,
   searchAiGraderCardItemsRuntime,
 } from "../../../../../lib/server/aiGraderProductionApi";
+import {
+  listAiGraderLabelSheetsRuntime,
+  markAiGraderLabelSheetPrintedRuntime,
+  prepareAiGraderLabelSheetPrintRuntime,
+} from "../../../../../lib/server/aiGraderLabelSheetRuntime";
 
 export const config = {
   api: {
@@ -55,13 +60,16 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     },
     persist: persistProductionReleaseRuntime,
     listHistory: listProductionReportHistoryRuntime,
-    listFinishQueue: listAiGraderFinishCardsQueueRuntime,
+    listFinishQueue: ({ tenantId }) => listAiGraderFinishCardsQueueRuntime({ tenantId }),
+    listLabelSheets: ({ tenantId }) => listAiGraderLabelSheetsRuntime({ tenantId }),
     searchCards: searchAiGraderCardItemsRuntime,
     createCardFromReport: createAiGraderCardFromReportRuntime,
     finalizeSlabbedPhotoUpload: finalizeAiGraderSlabbedPhotoUploadRuntime,
     runComps: runAiGraderEbayCompsRuntime,
+    persistComps: persistAiGraderCompsRuntime,
     persistSelectedComps: persistAiGraderSelectedCompsRuntime,
-    markLabelPrinted: markAiGraderLabelPrintedRuntime,
+    prepareLabelSheetPrint: prepareAiGraderLabelSheetPrintRuntime,
+    markLabelSheetPrinted: markAiGraderLabelSheetPrintedRuntime,
     addToInventory: addAiGraderCardToInventoryRuntime,
   });
   return runtime(req, res);

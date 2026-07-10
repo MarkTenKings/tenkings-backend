@@ -27,6 +27,7 @@ export type AiGraderProductionDbDelegate = {
 };
 
 export type AiGraderProductionTransactionClient = {
+  $queryRaw?: (...args: any[]) => Promise<unknown>;
   aiGraderSession: AiGraderProductionDbDelegate;
   aiGraderReport: AiGraderProductionDbDelegate;
   aiGraderEvidenceAsset: AiGraderProductionDbDelegate;
@@ -252,6 +253,39 @@ function json(value: unknown): Prisma.InputJsonValue {
 
 function nullableJson(value: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull {
   return value === undefined || value === null ? Prisma.JsonNull : (value as Prisma.InputJsonValue);
+}
+
+function mergePersistedLabelPayload(existing: unknown, canonical: JsonRecord): Prisma.InputJsonValue {
+  const existingPayload = isRecord(existing) ? existing : {};
+  return {
+    ...existingPayload,
+    ...canonical,
+    ...(existingPayload.labelSheet !== undefined ? { labelSheet: existingPayload.labelSheet } : {}),
+    ...(existingPayload.physicalPrint !== undefined ? { physicalPrint: existingPayload.physicalPrint } : {}),
+  } as Prisma.InputJsonValue;
+}
+
+function invalidatePersistedLabelPrint(payload: unknown, now: Date): Prisma.InputJsonValue {
+  const current = isRecord(payload) ? payload : {};
+  const labelSheet = isRecord(current.labelSheet) ? { ...current.labelSheet } : null;
+  if (labelSheet) {
+    delete labelSheet.printedAt;
+    delete labelSheet.printedByUserId;
+  }
+  return {
+    ...current,
+    ...(labelSheet ? { labelSheet } : {}),
+    physicalPrint: {
+      status: "not_printed",
+      invalidatedAt: now.toISOString(),
+      reason: "printable_label_content_changed",
+    },
+  } as Prisma.InputJsonValue;
+}
+
+function hasProgressedRuntimeValuation(value: unknown) {
+  if (!isRecord(value)) return false;
+  return ["ready", "running", "completed", "failed"].includes(stringValue(value.status, ""));
 }
 
 function actorAuditJson(value: AiGraderProductionActorAudit | null | undefined): JsonRecord | null {
@@ -777,6 +811,20 @@ async function runInTransaction<T>(db: AiGraderProductionPrismaClient, fn: (tx: 
   return fn(db);
 }
 
+async function acquireAiGraderLabelSheetLock(tx: AiGraderProductionTransactionClient, tenantId: string) {
+  if (typeof tx.$queryRaw !== "function") {
+    throw new Error("AI Grader label sheet transaction locking is unavailable.");
+  }
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-label-sheets'), hashtext(${tenantId}))`;
+}
+
+async function acquireAiGraderReportLifecycleLock(tx: AiGraderProductionTransactionClient, reportId: string) {
+  if (typeof tx.$queryRaw !== "function") {
+    throw new Error("AI Grader report lifecycle transaction locking is unavailable.");
+  }
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${reportId}))`;
+}
+
 export async function persistAiGraderProductionRelease(
   db: AiGraderProductionPrismaClient,
   input: AiGraderProductionPersistInput
@@ -790,6 +838,7 @@ export async function persistAiGraderProductionRelease(
   const publicationStatus = input.publicationStatus ?? "published";
 
   return runInTransaction(db, async (tx) => {
+    await acquireAiGraderReportLifecycleLock(tx, reportId);
     const baseSessionData = sessionData(input, gradingSessionId, reportId, now);
     const session = await tx.aiGraderSession.upsert({
       where: { gradingSessionId },
@@ -855,8 +904,60 @@ export async function persistAiGraderProductionRelease(
         updatedAt: now,
       },
     });
+    await acquireAiGraderLabelSheetLock(tx, input.tenantId);
     const label = labelData(input.productionRelease, reportId, input.storagePlan.publicReportUrl);
     const certId = stringValue(label.certId, reportId);
+    const nextLabelGradeText = stringValue(label.labelGradeText, "PENDING");
+    const reportLabels =
+      (await tx.aiGraderLabel.findMany?.({
+        where: { reportId: reportRowId },
+        take: 2,
+        select: {
+          id: true,
+          reportId: true,
+          certId: true,
+          payload: true,
+          physicalPrintStatus: true,
+          labelGradeText: true,
+          qrPayloadUrl: true,
+          publicReportUrl: true,
+        },
+      })) ?? [];
+    const reportLabel = reportLabels[0] as JsonRecord | undefined;
+    const certLabel = await tx.aiGraderLabel.findUnique?.({
+      where: { certId },
+      select: {
+        id: true,
+        reportId: true,
+        certId: true,
+        payload: true,
+        physicalPrintStatus: true,
+        labelGradeText: true,
+        qrPayloadUrl: true,
+        publicReportUrl: true,
+      },
+    });
+    if (reportLabel && stringValue(reportLabel.certId, "") && stringValue(reportLabel.certId, "") !== certId) {
+      throw new Error("AI Grader report already has a different cert ID; refusing to create a duplicate label row.");
+    }
+    if (isRecord(certLabel) && stringValue(certLabel.reportId, "") && stringValue(certLabel.reportId, "") !== reportRowId) {
+      throw new Error("AI Grader cert ID is already linked to another report.");
+    }
+    const existingLabel = reportLabel ?? certLabel;
+    const printableLabelChanged = Boolean(
+      isRecord(existingLabel) &&
+        existingLabel.physicalPrintStatus === "printed" &&
+        (existingLabel.labelGradeText !== nextLabelGradeText ||
+          existingLabel.qrPayloadUrl !== input.storagePlan.qrPayloadUrl ||
+          existingLabel.publicReportUrl !== input.storagePlan.publicReportUrl)
+    );
+    const mergedLabelPayload = mergePersistedLabelPayload(
+      isRecord(existingLabel) ? existingLabel.payload : undefined,
+      label
+    );
+    const persistedLabelPayload = printableLabelChanged
+      ? invalidatePersistedLabelPrint(mergedLabelPayload, now)
+      : mergedLabelPayload;
     const labelRow = await tx.aiGraderLabel.upsert({
       where: { certId },
       update: {
@@ -867,11 +968,12 @@ export async function persistAiGraderProductionRelease(
         certificateStatus: stringValue(label.certificateStatus, "report_id_issued_not_certified"),
         qrPayloadUrl: input.storagePlan.qrPayloadUrl,
         publicReportUrl: input.storagePlan.publicReportUrl,
-        labelGradeText: stringValue(label.labelGradeText, "PENDING"),
+        labelGradeText: nextLabelGradeText,
         labelDataStorageKey: `${input.storagePlan.storageKeyPrefix}label-data.json`,
         labelPreviewKey: `${input.storagePlan.storageKeyPrefix}label-preview.html`,
         labelPreviewUrl: input.storagePlan.assetManifest.find((asset) => asset.kind === "label-preview.html")?.publicUrl,
-        payload: json(label),
+        ...(printableLabelChanged ? { physicalPrintStatus: "not_printed" } : {}),
+        payload: persistedLabelPayload,
         updatedAt: now,
       },
       create: {
@@ -883,11 +985,11 @@ export async function persistAiGraderProductionRelease(
         certificateStatus: stringValue(label.certificateStatus, "report_id_issued_not_certified"),
         qrPayloadUrl: input.storagePlan.qrPayloadUrl,
         publicReportUrl: input.storagePlan.publicReportUrl,
-        labelGradeText: stringValue(label.labelGradeText, "PENDING"),
+        labelGradeText: nextLabelGradeText,
         labelDataStorageKey: `${input.storagePlan.storageKeyPrefix}label-data.json`,
         labelPreviewKey: `${input.storagePlan.storageKeyPrefix}label-preview.html`,
         labelPreviewUrl: input.storagePlan.assetManifest.find((asset) => asset.kind === "label-preview.html")?.publicUrl,
-        payload: json(label),
+        payload: persistedLabelPayload,
         createdAt: now,
         updatedAt: now,
       },
@@ -965,17 +1067,38 @@ export async function persistAiGraderProductionRelease(
     }
     const valuationStatus = computeAiGraderValuationStatus(input);
     const valuationId = `ai-grader-valuation:${reportId}`;
+    const existingValuation = await tx.aiGraderValuation.findUnique?.({
+      where: { id: valuationId },
+      select: {
+        status: true,
+        source: true,
+        searchQuery: true,
+        valuationMinor: true,
+        valuationCurrency: true,
+        compsRefs: true,
+        resultSummary: true,
+        requestedByUserId: true,
+        requestedAt: true,
+        completedAt: true,
+        errorCode: true,
+      },
+    });
+    const preserveRuntimeValuation = hasProgressedRuntimeValuation(existingValuation);
     const valuation = await tx.aiGraderValuation.upsert({
       where: { id: valuationId },
       update: {
         tenantId: input.tenantId,
         sessionId,
-        status: valuationStatus,
-        source: "ebay_sold",
-        searchQuery: stringValue(input.reportBundle.cardIdentity?.title, "") || null,
-        compsRefs: nullableJson(input.productionRelease.ebayCompsContract?.compsRefs),
-        resultSummary: nullableJson(withActorAudit(input.productionRelease.ebayCompsContract, input.actorAudit)),
-        updatedAt: now,
+        ...(!preserveRuntimeValuation
+          ? {
+              status: valuationStatus,
+              source: "ebay_sold",
+              searchQuery: stringValue(input.reportBundle.cardIdentity?.title, "") || null,
+              compsRefs: nullableJson(input.productionRelease.ebayCompsContract?.compsRefs),
+              resultSummary: nullableJson(withActorAudit(input.productionRelease.ebayCompsContract, input.actorAudit)),
+              updatedAt: now,
+            }
+          : {}),
       },
       create: {
         id: valuationId,
