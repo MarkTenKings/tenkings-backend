@@ -1,4 +1,5 @@
 import Head from "next/head";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSession, type SessionPayload } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
@@ -115,6 +116,18 @@ type CompsState = {
 type StepState = {
   status: "idle" | "pending" | "completed" | "failed";
   message: string;
+};
+type ConfirmedDownstreamState = {
+  reportId?: string;
+  labelSheet?: {
+    sheetNumber: number;
+    slot: number;
+    capacity: number;
+  };
+  comps: {
+    status: "idle" | "queued" | "running" | "ready" | "completed" | "failed";
+    message: string;
+  };
 };
 type ProductionAuthActor = {
   actorType: string;
@@ -510,6 +523,12 @@ export default function AiGraderStationPage() {
     status: "idle",
     message: "Card identity has not been confirmed.",
   });
+  const [confirmedDownstream, setConfirmedDownstream] = useState<ConfirmedDownstreamState>({
+    comps: {
+      status: "idle",
+      message: "Comps will queue after Confirm Card.",
+    },
+  });
   const [productionAuthState, setProductionAuthState] = useState<StepState>({
     status: "idle",
     message: "Sign in is required before production card creation, publish, label, comps, and inventory steps.",
@@ -519,10 +538,6 @@ export default function AiGraderStationPage() {
   const [compsState, setCompsState] = useState<CompsState>({
     status: "idle",
     message: "Comps have not been run.",
-  });
-  const [labelPrintState, setLabelPrintState] = useState<StepState>({
-    status: "idle",
-    message: "Label has not been marked printed.",
   });
   const [inventoryState, setInventoryState] = useState<StepState>({
     status: "idle",
@@ -827,7 +842,6 @@ export default function AiGraderStationPage() {
   const finalReady = status.safety.finalGradeComputed || Boolean(status.productionRelease?.finalGradeComputed);
   const labelReady = status.safety.labelGenerated || Boolean(status.outputs?.labelDataPath) || status.productionRelease?.label.status === "label_data_ready";
   const linkedCardReady = Boolean((selectedCard?.cardAssetId || selectedCard?.itemId) && selectedCard.source !== "manual_draft");
-  const labelPrinted = labelPrintState.status === "completed";
   const slabbedPhotosReady = slabUploads.front?.status === "uploaded" && slabUploads.back?.status === "uploaded";
   const compsSaved = compsState.saved === true || compsState.status === "saved";
   const inventoryComplete = inventoryState.status === "completed";
@@ -885,9 +899,9 @@ export default function AiGraderStationPage() {
     },
     {
       id: "publish",
-      label: "Publish + Print Label",
-      done: productionPublished && labelPrinted,
-      action: productionPublished ? (labelPrinted ? "Public report and print action are complete." : "Print the label and mark it printed.") : "Publish to Ten Kings DB/storage.",
+      label: "Publish + Queue Label",
+      done: productionPublished,
+      action: productionPublished ? "Public report is live and the label is queued by sheet/slot." : "Publish to Ten Kings DB/storage.",
     },
   ];
   const finishPipelineSteps = [
@@ -1419,10 +1433,15 @@ export default function AiGraderStationPage() {
       setSelectedCard(null);
       setIdentityDraft(defaultIdentityDraft);
       setIdentityStatus({ status: "idle", message: "Card identity has not been confirmed." });
+      setConfirmedDownstream({
+        comps: {
+          status: "idle",
+          message: "Comps will queue after Confirm Card.",
+        },
+      });
       setProductionPublish({ status: "idle", message: "Ten Kings DB/storage publish has not been run." });
       setSlabUploads({});
       setCompsState({ status: "idle", message: "Comps have not been run." });
-      setLabelPrintState({ status: "idle", message: "Label has not been marked printed." });
       setInventoryState({ status: "idle", message: "Card has not been added to inventory." });
       await runAction("start-session");
     } catch (requestError) {
@@ -1536,6 +1555,73 @@ export default function AiGraderStationPage() {
       .filter(Boolean)
       .join(" ") || "AI Grader Card";
 
+  const launchConfirmedCardComps = (input: {
+    reportId: string;
+    reportBundle: Record<string, unknown>;
+    productionRelease: Record<string, unknown>;
+    selection: CardSelectionState;
+    headers: Record<string, string>;
+  }) => {
+    setConfirmedDownstream((current) => ({
+      ...current,
+      reportId: input.reportId,
+      comps: {
+        status: "running",
+        message: "eBay sold comps are running in the background.",
+      },
+    }));
+    void fetch("/api/admin/ai-grader/production/run-comps", {
+      method: "POST",
+      headers: input.headers,
+      body: JSON.stringify({
+        reportId: input.reportId,
+        reportBundle: input.reportBundle,
+        productionRelease: input.productionRelease,
+        selection: input.selection,
+        limit: 10,
+      }),
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok !== true) {
+          throw new Error(payload.message ?? "eBay sold comps failed to start.");
+        }
+        const result = payload.result ?? {};
+        const nextStatus: ConfirmedDownstreamState["comps"]["status"] =
+          result.status === "ready" ? "ready" : result.status === "failed" ? "failed" : "queued";
+        setConfirmedDownstream((current) =>
+          current.reportId === input.reportId
+            ? {
+                ...current,
+                comps: {
+                  status: nextStatus,
+                  message:
+                    result.message ??
+                    (nextStatus === "ready"
+                      ? "eBay sold comps are ready for review on Finish Cards."
+                      : nextStatus === "failed"
+                        ? "eBay sold comps failed. Retry from Finish Cards."
+                        : "eBay sold comps are queued."),
+                },
+              }
+            : current
+        );
+      })
+      .catch((requestError) => {
+        setConfirmedDownstream((current) =>
+          current.reportId === input.reportId
+            ? {
+                ...current,
+                comps: {
+                  status: "failed",
+                  message: requestError instanceof Error ? requestError.message : "eBay sold comps failed to start.",
+                },
+              }
+            : current
+        );
+      });
+  };
+
   const createCardFromConfirmedIdentity = async () => {
     setError(null);
     let authHeaders: Record<string, string>;
@@ -1621,6 +1707,40 @@ export default function AiGraderStationPage() {
         status: "completed",
         message: `Created CardAsset ${result.cardAssetId} and Item ${result.itemId}.`,
       });
+      const downstream = result.downstream ?? {};
+      const downstreamComps = downstream.comps ?? {};
+      const downstreamCompsStatus: ConfirmedDownstreamState["comps"]["status"] =
+        downstreamComps.status === "running" ||
+        downstreamComps.status === "ready" ||
+        downstreamComps.status === "completed" ||
+        downstreamComps.status === "failed"
+          ? downstreamComps.status
+          : "queued";
+      const assignedSheet =
+        typeof downstream.sheetNumber === "number" && typeof downstream.slot === "number"
+          ? {
+              sheetNumber: downstream.sheetNumber,
+              slot: downstream.slot,
+              capacity: typeof downstream.capacity === "number" ? downstream.capacity : 16,
+            }
+          : undefined;
+      setConfirmedDownstream({
+        reportId: result.reportId,
+        labelSheet: assignedSheet,
+        comps: {
+          status: downstreamCompsStatus,
+          message:
+            downstreamCompsStatus === "completed"
+              ? "Selected eBay sold comps and valuation are already complete."
+              : downstreamCompsStatus === "ready"
+                ? "eBay sold comps are ready for review on Finish Cards."
+                : downstreamCompsStatus === "running"
+                  ? "eBay sold comps are already running in the background."
+                  : downstreamCompsStatus === "failed"
+                    ? "eBay sold comps failed previously. Retry from Finish Cards."
+                    : "eBay sold comps are queued.",
+        },
+      });
       setStatus((current) => ({
         ...current,
         productionRelease: result.productionRelease ?? current.productionRelease,
@@ -1638,6 +1758,39 @@ export default function AiGraderStationPage() {
             }
           : current.reportBundle,
       }));
+      const linkedRelease = (result.productionRelease ?? sanitizedRelease) as Record<string, unknown>;
+      const linkedFinalGrade =
+        linkedRelease.finalGrade && typeof linkedRelease.finalGrade === "object"
+          ? (linkedRelease.finalGrade as Record<string, unknown>)
+          : {};
+      if (downstreamComps.shouldStart === true) {
+        launchConfirmedCardComps({
+          reportId: result.reportId,
+          reportBundle: {
+            reportId: result.reportId,
+            gradingSessionId: sanitizedBundle.gradingSessionId,
+            cardIdentity: {
+              ...draftIdentity,
+              title: result.title ?? draftTitle,
+              set: result.set ?? identityDraft.productSet.trim(),
+              cardNumber: identityDraft.cardNumber.trim(),
+              cardAssetId: result.cardAssetId,
+              itemId: result.itemId,
+            },
+          },
+          productionRelease: {
+            reportId: result.reportId,
+            gradingSessionId: linkedRelease.gradingSessionId,
+            finalGradeComputed: linkedRelease.finalGradeComputed === true,
+            finalGrade: {
+              overall: linkedFinalGrade.overall,
+            },
+            ...(linkedRelease.label && typeof linkedRelease.label === "object" ? { label: linkedRelease.label } : {}),
+          },
+          selection: nextCard,
+          headers: authHeaders,
+        });
+      }
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Card creation failed.";
       setIdentityStatus({
@@ -2206,40 +2359,6 @@ export default function AiGraderStationPage() {
         saved: false,
         message: requestError instanceof Error ? requestError.message : "Saving selected comps failed.",
       }));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const markLabelPrinted = async () => {
-    setBusy("mark-label-printed");
-    setError(null);
-    setLabelPrintState({
-      status: "pending",
-      message: "Persisting label print confirmation.",
-    });
-    try {
-      const reportId = productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
-      if (!reportId) throw new Error("A published report ID is required before marking the label printed.");
-      const response = await fetch("/api/admin/ai-grader/production/mark-label-printed", {
-        method: "POST",
-        headers: await productionAuthHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ reportId }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload.ok !== true) {
-        throw new Error(payload.message ?? "Marking the label printed failed.");
-      }
-      setLabelPrintState({
-        status: "completed",
-        message: `Printed label persisted for cert ${payload.result?.certId ?? certId ?? "AI Grader label"}.`,
-      });
-      await refreshFinishQueue(reportId).catch(() => undefined);
-    } catch (requestError) {
-      setLabelPrintState({
-        status: "failed",
-        message: requestError instanceof Error ? requestError.message : "Marking the label printed failed.",
-      });
     } finally {
       setBusy(null);
     }
@@ -3212,9 +3331,7 @@ export default function AiGraderStationPage() {
               <span>Ten Kings</span>
               <strong>AI Grader Station</strong>
             </div>
-            <button type="button" onClick={() => void openFinishCards(productionPublish.reportId)} disabled={busy !== null}>
-              Finish Cards
-            </button>
+            <Link href="/ai-grader/finish">Finish Cards</Link>
           </div>
 
           {error ? <div className="error">{error}</div> : null}
@@ -3442,6 +3559,23 @@ export default function AiGraderStationPage() {
             {!linkedCardReady && createCardBlockers.length ? <p className="status-note">Required before create: {createCardBlockers.join(", ")}.</p> : null}
             {!productionSignedIn && !linkedCardReady ? <p className="status-note">Production sign-in is required before the CardAsset/Item can be created.</p> : null}
             {linkedCardReady ? <p className="status-note">CardAsset {selectedCard?.cardAssetId} / Item {selectedCard?.itemId}</p> : null}
+            {confirmedDownstream.reportId ? (
+              <div className="confirmed-downstream">
+                <div>
+                  <span>Label queue</span>
+                  <strong>
+                    {confirmedDownstream.labelSheet
+                      ? `Sheet ${confirmedDownstream.labelSheet.sheetNumber} / Slot ${confirmedDownstream.labelSheet.slot}`
+                      : "Assignment pending"}
+                  </strong>
+                </div>
+                <div>
+                  <span>eBay comps</span>
+                  <strong>{formatStationValue(confirmedDownstream.comps.status)}</strong>
+                  <small>{confirmedDownstream.comps.message}</small>
+                </div>
+              </div>
+            ) : null}
             <label>
               Existing Card Search
               <input
@@ -3601,20 +3735,13 @@ export default function AiGraderStationPage() {
               {productionPublish.status === "published" && publicReportUrl ? (
                 <a href={publicReportUrl} target="_blank" rel="noreferrer">View Public Report</a>
               ) : null}
-              {productionPublish.status === "published" && labelPreviewUrl ? (
-                <a href={labelPreviewUrl} target="_blank" rel="noreferrer">Print Label</a>
-              ) : null}
-              <button type="button" onClick={markLabelPrinted} disabled={!productionPublished || labelPrinted || busy !== null}>
-                {busy === "mark-label-printed" ? "Marking Printed" : labelPrinted ? "Label Printed" : "Mark Label Printed"}
-              </button>
-              {productionPublished && labelPrinted ? (
+              {productionPublished ? <Link href="/ai-grader/labels/sheets">Open Label Sheets</Link> : null}
+              {productionPublished ? (
                 <>
                   <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
                     {busy === "start" ? "Starting" : "Start Next Grade"}
                   </button>
-                  <button type="button" onClick={() => void openFinishCards(productionPublish.reportId)} disabled={busy !== null}>
-                    Finish This Card
-                  </button>
+                  <Link href="/ai-grader/finish">Finish Cards</Link>
                 </>
               ) : null}
               <button type="button" onClick={openHistory}>
@@ -3677,7 +3804,7 @@ export default function AiGraderStationPage() {
               </p>
             ) : null}
             <p>Label: {labelReady ? "label data ready" : "pending"}</p>
-            <p>Print action: {labelPrintState.message}</p>
+            <p>Print action: managed by label sheet.</p>
             <p>Card linkage: {linkedCardReady ? selectedCard?.cardAssetId ?? selectedCard?.itemId : "not linked"}</p>
             <p>Finish queue: {productionPublished ? "available for slab photos and eBay evaluate" : "available after publish"}</p>
           </section>
@@ -4231,10 +4358,22 @@ export default function AiGraderStationPage() {
           gap: 12px;
           margin-bottom: 20px;
         }
-        .brand button {
+        .brand button,
+        .brand > a {
           min-height: 36px;
           padding: 8px 10px;
           white-space: nowrap;
+        }
+        .brand > a {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          border-radius: 6px;
+          color: #f8f5ec;
+          font-size: 12px;
+          font-weight: 800;
+          text-decoration: none;
         }
         .brand span {
           color: #c9a85f;
@@ -4467,6 +4606,30 @@ export default function AiGraderStationPage() {
           background: rgba(95, 12, 18, 0.26);
           color: #ffd6d6;
           padding: 8px;
+        }
+        .confirmed-downstream {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+          margin: 10px 0;
+        }
+        .confirmed-downstream > div {
+          display: grid;
+          gap: 3px;
+          min-width: 0;
+          padding: 9px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.04);
+        }
+        .confirmed-downstream span,
+        .confirmed-downstream small {
+          color: #aaa69b;
+          font-size: 10px;
+        }
+        .confirmed-downstream strong {
+          font-size: 12px;
+          overflow-wrap: anywhere;
         }
         .identity-grid {
           display: grid;

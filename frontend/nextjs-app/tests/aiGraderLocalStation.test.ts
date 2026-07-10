@@ -31,6 +31,8 @@ import {
   createAiGraderProductionApiHandler,
   createAiGraderCardFromReportRuntime,
   createAiGraderPublicReportApiHandler,
+  persistAiGraderCompsRuntime,
+  persistAiGraderSelectedCompsRuntime,
   validateAiGraderInventoryReadiness,
 } from "../lib/server/aiGraderProductionApi";
 import {
@@ -77,19 +79,19 @@ function mockResponse(): MockResponse {
     statusCodeValue: null,
     headers: {},
     jsonBody: undefined,
-    setHeader(name: string, value: string | number | readonly string[]) {
+    setHeader(this: MockResponse, name: string, value: string | number | readonly string[]) {
       this.headers[name] = value;
       return this;
     },
-    status(statusCode: number) {
+    status(this: MockResponse, statusCode: number) {
       this.statusCodeValue = statusCode;
       return this;
     },
-    json(body: unknown) {
+    json(this: MockResponse, body: unknown) {
       this.jsonBody = body;
       return this;
     },
-  } as MockResponse;
+  } as unknown as MockResponse;
 }
 
 function sha256Hex(value: string | Buffer) {
@@ -1370,7 +1372,7 @@ test("Finish Cards queue derives persisted finishing status and deterministic pu
       publishedAt: new Date("2026-07-08T12:01:00.000Z"),
       labels: [{ certId: "TK-AIG-1", physicalPrintStatus: "printed" }],
       evidenceAssets: [{ side: "front", storageKey: "front.png", publicUrl: "https://cdn.tenkings.test/front.png", byteSize: 10 }],
-      valuations: [],
+      valuations: [{ status: "completed", valuationMinor: 8500, valuationCurrency: "USD" }],
       cardAsset: { id: "card-1", reviewStage: "REVIEW_COMPLETE", customTitle: "2026 Topps Chrome Victor Wembanyama" },
     },
     {
@@ -1412,17 +1414,17 @@ test("Finish Cards queue derives persisted finishing status and deterministic pu
   assert.equal(queue.items[0].statusText, "Needs Slab Photos");
   assert.equal(queue.items[0].slabPhotos.frontUploaded, true);
   assert.equal(queue.items[0].slabPhotos.backUploaded, false);
-  assert.equal(queue.items[1].statusText, "Needs eBay Evaluate");
+  assert.equal(queue.items[1].statusText, "Needs Comps Review");
   assert.equal(queue.items[1].slabPhotos.complete, true);
   assert.equal(queue.items[1].valuation.complete, false);
-  assert.equal(queue.items[2].statusText, "Needs Inventory");
+  assert.equal(queue.items[2].statusText, "Ready for Inventory");
   assert.equal(queue.items[2].valuation.complete, true);
   assert.equal(queue.items[2].inventory.canAddToInventory, true);
   assert.equal(queue.items.some((item) => item.reportId === "report-complete"), false);
   assert.equal(queue.stats.total, 3);
   assert.equal(queue.stats.needsSlabPhotos, 1);
-  assert.equal(queue.stats.needsEbayEvaluate, 1);
-  assert.equal(queue.stats.needsInventory, 1);
+  assert.equal(queue.stats.needsCompsReview, 1);
+  assert.equal(queue.stats.readyForInventory, 1);
   assert.equal(queue.stats.complete, 1);
 });
 
@@ -1462,9 +1464,59 @@ test("Finish Cards queue applies active limit after excluding completed cards", 
   );
 
   assert.deepEqual(queue.items.map((item) => item.reportId), ["report-waiting"]);
-  assert.equal(queue.items[0].statusText, "Needs Slab Photos");
+  assert.equal(queue.items[0].statusText, "Needs Comps Review");
   assert.equal(queue.stats.total, 1);
   assert.equal(queue.stats.complete, 120);
+});
+
+test("Finish Cards queue removes local, private, and presigned URLs from downstream output", () => {
+  const queue = buildAiGraderFinishCardsQueueResult([
+    {
+      reportId: "report-unsafe-urls",
+      publicReportUrl: "https://127.0.0.1/private-report",
+      qrPayloadUrl: "https://cdn.tenkings.test/report?X-Amz-Signature=secret",
+      labels: [
+        {
+          certId: "TK-AIG-UNSAFE",
+          labelPreviewUrl: "https://[fc00::1]/label",
+          qrPayloadUrl: "data:image/png;base64,secret",
+          physicalPrintStatus: "not_printed",
+        },
+      ],
+      evidenceAssets: [
+        { side: "front", storageKey: "front.png", publicUrl: "https://169.254.10.2/front.png", byteSize: 10 },
+        { side: "back", storageKey: "back.png", publicUrl: "https://cdn.tenkings.test/back.png", byteSize: 10 },
+      ],
+      valuations: [
+        {
+          status: "ready",
+          compsRefs: [
+            { id: "private", url: "https://192.168.1.5/listing", price: "$10.00" },
+            { id: "signed", url: "https://www.ebay.com/itm/1?sig=secret", price: "$11.00" },
+            { id: "safe", url: "https://www.ebay.com/itm/2?var=123", price: "$12.00" },
+          ],
+          resultSummary: { searchUrl: "https://www.ebay.com/sch/i.html?token=secret" },
+        },
+      ],
+      cardAsset: { id: "card-unsafe", reviewStage: "REVIEW_COMPLETE", customTitle: "Unsafe URL fixture" },
+    },
+  ]);
+
+  const item = queue.items[0];
+  assert.equal(item.publicReportUrl, null);
+  assert.equal(item.qrPayloadUrl, null);
+  assert.equal(item.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/report-unsafe-urls");
+  assert.equal(item.slabPhotos.frontUrl, null);
+  assert.equal(item.slabPhotos.backUrl, "https://cdn.tenkings.test/back.png");
+  assert.equal(item.valuation.searchUrl, null);
+  assert.deepEqual(
+    (item.valuation.compsRefs as Array<{ id: string }>).map((comp) => comp.id),
+    ["safe"]
+  );
+  assert.doesNotMatch(
+    JSON.stringify(queue),
+    /127\.0\.0\.1|192\.168\.1\.5|169\.254\.10\.2|X-Amz-Signature|data:image|sig=secret|token=secret/i
+  );
 });
 
 test("Finish Cards queue requires positive completed valuation before inventory readiness", () => {
@@ -1496,10 +1548,10 @@ test("Finish Cards queue requires positive completed valuation before inventory 
   ]);
 
   assert.deepEqual(queue.items.map((item) => item.reportId), ["report-null-valuation", "report-zero-valuation"]);
-  assert.equal(queue.items[0].statusText, "Needs eBay Evaluate");
+  assert.equal(queue.items[0].statusText, "Needs Comps Review");
   assert.equal(queue.items[0].valuation.complete, false);
   assert.equal(queue.items[0].inventory.canAddToInventory, false);
-  assert.equal(queue.items[1].statusText, "Needs eBay Evaluate");
+  assert.equal(queue.items[1].statusText, "Needs Comps Review");
   assert.equal(queue.items[1].valuation.complete, false);
   assert.equal(queue.items[1].inventory.canAddToInventory, false);
   assert.equal(queue.stats.needsEbayEvaluate, 2);
@@ -1511,6 +1563,7 @@ test("Finish Cards queue API is history-scoped and returns persisted queue data"
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-queue",
     },
     async requireAdminSession() {
       return {
@@ -1524,8 +1577,9 @@ test("Finish Cards queue API is history-scoped and returns persisted queue data"
     async persist() {
       throw new Error("finish queue should not persist");
     },
-    async listFinishQueue() {
+    async listFinishQueue(input) {
       finishQueueCalled = true;
+      assert.equal(input.tenantId, "tenant-queue");
       return buildAiGraderFinishCardsQueueResult([
         {
           reportId: "finish-report-1",
@@ -1550,8 +1604,83 @@ test("Finish Cards queue API is history-scoped and returns persisted queue data"
   assert.equal(body.ok, true);
   assert.equal(body.operation, "aiGraderFinishCardsQueue");
   assert.equal(body.result.items[0].reportId, "finish-report-1");
-  assert.equal(body.result.items[0].statusText, "Needs Slab Photos");
+  assert.equal(body.result.items[0].statusText, "Needs Comps Review");
   assert.equal(finishQueueCalled, true);
+});
+
+test("AI Grader label sheet APIs use history reads and human publish mutations", async () => {
+  const calls: string[] = [];
+  const sheet = {
+    sheetId: "ai-grader-label-sheet-000001",
+    sheetNumber: 1,
+    capacity: 16 as const,
+    status: "sealed" as const,
+    labelCount: 1,
+    openSlotCount: 15,
+    firstAssignedAt: "2026-07-09T12:00:00.000Z",
+    lastAssignedAt: "2026-07-09T12:00:00.000Z",
+    sealedAt: "2026-07-09T12:05:00.000Z",
+    revision: "aiglsr_test",
+    slotConflict: false,
+    labels: [],
+  };
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async persist() {
+      throw new Error("label sheet actions should not publish a release");
+    },
+    async listLabelSheets(input) {
+      calls.push("list");
+      assert.equal(input.tenantId, "tenant-1");
+      return {
+        source: "persisted_records",
+        orderedBy: "sheetNumber_asc_slot_asc",
+        sheets: [sheet],
+        openSheetId: undefined,
+        unassignedLabelCount: 0,
+        stats: { totalSheets: 1, openSheets: 0, sealedSheets: 1, printedSheets: 0, totalLabels: 1 },
+      };
+    },
+    async prepareLabelSheetPrint(input) {
+      calls.push("prepare");
+      assert.equal(input.tenantId, "tenant-1");
+      assert.equal(input.operatorUserId, "admin-1");
+      assert.equal(input.actorAudit?.action, "publish");
+      assert.equal(input.expectedRevision, sheet.revision);
+      return { sheet };
+    },
+    async markLabelSheetPrinted(input) {
+      calls.push("mark");
+      assert.equal(input.operatorUserId, "admin-1");
+      assert.equal(input.actorAudit?.action, "publish");
+      return { sheet: { ...sheet, status: "printed" }, printedLabelCount: 1, labelIds: ["label-1"] };
+    },
+  });
+
+  const listRes = mockResponse();
+  await handler(mockRequest("GET", ["label-sheets"]), listRes);
+  assert.equal(listRes.statusCodeValue, 200);
+  assert.equal((listRes.jsonBody as { operation: string }).operation, "aiGraderLabelSheets");
+
+  const prepareReq = mockRequest("POST", ["prepare-label-sheet-print"]);
+  prepareReq.body = { sheetId: sheet.sheetId, expectedRevision: sheet.revision };
+  const prepareRes = mockResponse();
+  await handler(prepareReq, prepareRes);
+  assert.equal(prepareRes.statusCodeValue, 200);
+
+  const markReq = mockRequest("POST", ["mark-label-sheet-printed"]);
+  markReq.body = { sheetId: sheet.sheetId, expectedRevision: sheet.revision };
+  const markRes = mockResponse();
+  await handler(markReq, markRes);
+  assert.equal(markRes.statusCodeValue, 200);
+  assert.deepEqual(calls, ["list", "prepare", "mark"]);
 });
 
 test("production card search is admin-gated and returns existing card/item candidates", async () => {
@@ -1651,6 +1780,10 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
   };
 
   const tx: any = {
+    async $queryRaw(...args: any[]) {
+      record("$queryRaw", "$queryRaw", args);
+      return [{ pg_advisory_xact_lock: null }];
+    },
     user: {
       async findUnique(args: any) {
         record("user", "findUnique", args);
@@ -1682,6 +1815,30 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
       async updateMany(args: any) {
         record("aiGraderReport", "updateMany", args);
         return { count: 1 };
+      },
+      async upsert(args: any) {
+        record("aiGraderReport", "upsert", args);
+        return { id: "report-row-1", ...args.create, ...args.update };
+      },
+    },
+    aiGraderLabel: {
+      async findMany(args: any) {
+        record("aiGraderLabel", "findMany", args);
+        return [];
+      },
+      async upsert(args: any) {
+        record("aiGraderLabel", "upsert", args);
+        return { id: "ai-grader-label-1", ...args.create, ...args.update };
+      },
+    },
+    aiGraderValuation: {
+      async findUnique(args: any) {
+        record("aiGraderValuation", "findUnique", args);
+        return null;
+      },
+      async create(args: any) {
+        record("aiGraderValuation", "create", args);
+        return { ...args.data };
       },
     },
     cardBatch: {
@@ -1842,8 +1999,8 @@ test("create-card-from-report runtime creates an operator-owned inventory Item w
     identity: validConfirmedSportIdentity(),
     operatorUserId: "operator-user-1",
     actorAudit: {
-      actorType: "human",
-      action: "create-card-from-report",
+      actorType: "human_operator",
+      action: "publish",
       requestedAt: "2026-07-07T12:00:00.000Z",
       userId: "operator-user-1",
       serviceAccountId: null,
@@ -1859,6 +2016,9 @@ test("create-card-from-report runtime creates an operator-owned inventory Item w
 
   assert.equal(result.cardAssetId, "card-asset-1");
   assert.equal(result.itemId, "item-1");
+  assert.equal(result.downstream?.sheetNumber, 1);
+  assert.equal(result.downstream?.slot, 1);
+  assert.equal(result.downstream?.comps.status, "queued");
   const ownerLookup = calls.find((call) => call.delegate === "user" && call.method === "findUnique");
   assert.deepEqual(ownerLookup?.args.where, { id: "operator-owner-1" });
   assert.equal("email" in (ownerLookup?.args.where ?? {}), false);
@@ -1873,6 +2033,9 @@ test("create-card-from-report runtime creates an operator-owned inventory Item w
   assert.equal(photoCreate?.args.data.createdById, "operator-user-1");
   const sessionUpsert = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "upsert");
   assert.equal(sessionUpsert?.args.create.operatorUserId, "operator-user-1");
+  assert.equal(calls.some((call) => call.delegate === "$queryRaw"), true);
+  assert.equal(calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "upsert"), true);
+  assert.equal(calls.some((call) => call.delegate === "aiGraderValuation" && call.method === "create"), true);
   assert.equal(calls.some((call) => call.delegate === "$transaction" && call.method === "$transaction"), true);
 });
 
@@ -2249,6 +2412,7 @@ test("eBay comps action reports ready without live execution when env is disable
 
 test("eBay comps action returns candidates and selected comps persist separately", async () => {
   let selectedPersisted = false;
+  const persistedCompsStatuses: string[] = [];
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
@@ -2272,9 +2436,22 @@ test("eBay comps action returns candidates and selected comps persist separately
       return {
         searchQuery: input.searchQuery,
         searchUrl: "https://www.ebay.com/sch/i.html?_nkw=Michael+Jordan",
-        compsRefs: [{ id: "comp-1", source: "ebay_sold", price: "$100.00" }],
+        compsRefs: [
+          {
+            id: "comp-1",
+            source: "ebay_sold",
+            title: "Michael Jordan sold listing",
+            url: "https://www.ebay.com/itm/1234567890",
+            price: "$100.00",
+          },
+        ],
         resultSummary: { valuationMinor: 10000, valuationCurrency: "USD" },
       };
+    },
+    async persistComps(input) {
+      persistedCompsStatuses.push(input.status);
+      assert.equal(input.reportId, "sample-final-v0");
+      return { status: input.status };
     },
     async persistSelectedComps(input) {
       selectedPersisted = true;
@@ -2323,9 +2500,10 @@ test("eBay comps action returns candidates and selected comps persist separately
   assert.equal(res.statusCodeValue, 200);
   const body = res.jsonBody as { ok: boolean; result: { status: string; persisted: boolean; compsRefs: unknown[] } };
   assert.equal(body.ok, true);
-  assert.equal(body.result.status, "completed");
-  assert.equal(body.result.persisted, false);
+  assert.equal(body.result.status, "ready");
+  assert.equal(body.result.persisted, true);
   assert.equal(body.result.compsRefs.length, 1);
+  assert.deepEqual(persistedCompsStatuses, ["running", "ready"]);
 
   const saveReq = mockRequest("POST", ["save-comps-selection"]);
   saveReq.body = {
@@ -2345,8 +2523,240 @@ test("eBay comps action returns candidates and selected comps persist separately
   assert.equal(selectedPersisted, true);
 });
 
-test("mark-label-printed action persists printed status through the production API", async () => {
-  let markCalled = false;
+test("comps persistence rejects completed reviews and overlapping live attempts", async () => {
+  for (const fixture of [
+    {
+      current: { status: "completed", resultSummary: {}, updatedAt: new Date() },
+      code: "AI_GRADER_COMPS_ALREADY_COMPLETED",
+    },
+    {
+      current: { status: "running", resultSummary: { attemptId: "existing-attempt" }, updatedAt: new Date() },
+      code: "AI_GRADER_COMPS_ALREADY_RUNNING",
+    },
+  ]) {
+    const tx = {
+      async $queryRaw() {
+        return [];
+      },
+      aiGraderValuation: {
+        async findUnique() {
+          return fixture.current;
+        },
+      },
+    };
+    const dbClient = {
+      async $transaction<T>(run: (client: typeof tx) => Promise<T>) {
+        return run(tx);
+      },
+    };
+    await assert.rejects(
+      () =>
+        persistAiGraderCompsRuntime({
+          tenantId: "tenant-1",
+          reportId: "sample-final-v0",
+          status: "running",
+          attemptId: "new-attempt",
+          dbClient,
+        }),
+      (error: any) => error?.code === fixture.code
+    );
+  }
+});
+
+test("selected comps are matched to persisted candidates and average persisted prices", async () => {
+  const evidenceWrites: Array<Record<string, any>> = [];
+  const cardUpdates: Array<Record<string, any>> = [];
+  const itemUpdates: Array<Record<string, any>> = [];
+  const valuationUpserts: Array<Record<string, any>> = [];
+  const report = {
+    id: "report-row-1",
+    tenantId: "tenant-1",
+    sessionId: "session-1",
+    reportId: "sample-final-v0",
+    publicationStatus: "published",
+    cardAssetId: "card-1",
+    itemId: "item-1",
+  };
+  const valuation = {
+    status: "ready",
+    searchQuery: "Michael Jordan sold",
+    valuationCurrency: "USD",
+    compsRefs: [
+      { id: "comp-1", url: "https://www.ebay.com/itm/1", title: "One", price: "$100.00" },
+      { id: "comp-2", url: "https://www.ebay.com/itm/2", title: "Two", price: "$300.00" },
+    ],
+    resultSummary: { searchUrl: "https://www.ebay.com/sch/i.html?_nkw=Michael+Jordan" },
+  };
+  const tx = {
+    async $queryRaw() {
+      return [];
+    },
+    aiGraderReport: {
+      async findUnique() {
+        return report;
+      },
+    },
+    aiGraderValuation: {
+      async findUnique() {
+        return valuation;
+      },
+      async upsert(input: Record<string, any>) {
+        valuationUpserts.push(input);
+        return { id: "valuation-1", ...input.update };
+      },
+    },
+    cardEvidenceItem: {
+      async findFirst() {
+        return null;
+      },
+      async create(input: Record<string, any>) {
+        evidenceWrites.push(input);
+        return { id: `evidence-${evidenceWrites.length}` };
+      },
+    },
+    cardAsset: {
+      async update(input: Record<string, any>) {
+        cardUpdates.push(input);
+        return { id: "card-1" };
+      },
+    },
+    item: {
+      async findUnique() {
+        return { id: "item-1", detailsJson: {} };
+      },
+      async update(input: Record<string, any>) {
+        itemUpdates.push(input);
+        return { id: "item-1" };
+      },
+    },
+  };
+  const dbClient = {
+    async $transaction<T>(run: (client: typeof tx) => Promise<T>) {
+      return run(tx);
+    },
+  };
+
+  const result = await persistAiGraderSelectedCompsRuntime({
+    tenantId: "tenant-1",
+    reportId: "sample-final-v0",
+    selectedComps: [
+      { id: "comp-1", url: "https://www.ebay.com/itm/1", price: "$1.00" },
+      { id: "comp-2", url: "https://www.ebay.com/itm/2", price: "$2.00" },
+    ],
+    requestedByUserId: "admin-1",
+    dbClient,
+  });
+
+  assert.equal(result.valuationMinor, 20000);
+  assert.deepEqual(evidenceWrites.map((write) => write.data.price), ["$100.00", "$300.00"]);
+  assert.equal(cardUpdates[0].data.valuationMinor, 20000);
+  assert.equal(itemUpdates[0].data.estimatedValue, 20000);
+  assert.equal(valuationUpserts[0].update.valuationMinor, 20000);
+
+  await assert.rejects(
+    () =>
+      persistAiGraderSelectedCompsRuntime({
+        tenantId: "tenant-1",
+        reportId: "sample-final-v0",
+        selectedComps: [{ id: "fake", url: "https://www.ebay.com/itm/not-persisted", price: "$9999.00" }],
+        requestedByUserId: "admin-1",
+        dbClient,
+      }),
+    (error: any) => error?.code === "AI_GRADER_SELECTED_COMP_NOT_PERSISTED"
+  );
+});
+
+test("service accounts cannot approve selected comps or valuation", async () => {
+  let persisted = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      [AI_GRADER_SERVICE_ACCOUNT_ID_ENV]: "ai-grader-comps-service",
+      [AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256_ENV]: sha256Hex("comps-service-token"),
+      [AI_GRADER_SERVICE_ACCOUNT_SCOPES_ENV]: "run-comps",
+    },
+    async requireAdminSession() {
+      throw new Error("service account should not use admin auth");
+    },
+    async requireUserSession() {
+      throw new Error("service account should not use bearer auth");
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async persist() {
+      throw new Error("selected comps should not publish a release");
+    },
+    async persistSelectedComps() {
+      persisted = true;
+      throw new Error("service account selection must not persist");
+    },
+  });
+  const req = mockRequest("POST", ["save-comps-selection"]);
+  req.headers["x-ai-grader-service-token"] = "comps-service-token";
+  req.body = {
+    reportId: "sample-final-v0",
+    selectedComps: [{ id: "comp-1", url: "https://www.ebay.com/itm/1", price: "$100.00" }],
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 403);
+  assert.match((res.jsonBody as { message: string }).message, /human operator session/i);
+  assert.equal(persisted, false);
+});
+
+test("eBay comps failures persist a sanitized retryable error for Finish Cards", async () => {
+  const persisted: Array<{ status: string; resultSummary?: unknown; errorCode?: string | null }> = [];
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      [AI_GRADER_EBAY_COMPS_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async persist() {
+      throw new Error("comps should not publish a release");
+    },
+    async persistComps(input) {
+      persisted.push({ status: input.status, resultSummary: input.resultSummary, errorCode: input.errorCode });
+      return { status: input.status };
+    },
+    async runComps() {
+      const error = new Error("SerpApi timeout at /var/task/private/worker.js api_key=do-not-leak") as Error & {
+        statusCode?: number;
+      };
+      error.statusCode = 503;
+      throw error;
+    },
+  });
+  const finalBundle = {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    reportId: "sample-final-v0",
+    cardIdentity: { ...SAMPLE_AI_GRADER_REPORT_BUNDLE.cardIdentity, title: "Michael Jordan Test Card" },
+  };
+  const req = mockRequest("POST", ["run-comps"]);
+  req.body = {
+    reportBundle: finalBundle,
+    productionRelease: buildSampleAiGraderProductionRelease(finalBundle),
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 200);
+  const body = res.jsonBody as { result: { status: string; persisted: boolean; retryable: boolean; message: string } };
+  assert.equal(body.result.status, "failed");
+  assert.equal(body.result.persisted, true);
+  assert.equal(body.result.retryable, true);
+  assert.match(body.result.message, /SerpApi timeout/);
+  assert.doesNotMatch(body.result.message, /do-not-leak/);
+  assert.doesNotMatch(body.result.message, /\/var\/task|worker\.js/);
+  assert.deepEqual(persisted.map((entry) => entry.status), ["running", "failed"]);
+  assert.equal(persisted[1].errorCode, "AI_GRADER_EBAY_COMPS_RETRYABLE");
+});
+
+test("legacy per-label print action is retired so sheet print state cannot be bypassed", async () => {
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
@@ -2364,32 +2774,17 @@ test("mark-label-printed action persists printed status through the production A
     async persist() {
       throw new Error("mark-label-printed should not publish-finalize");
     },
-    async markLabelPrinted(input) {
-      markCalled = true;
-      assert.equal(input.tenantId, "tenant-1");
-      assert.equal(input.reportId, "sample-final-v0");
-      assert.equal(input.operatorUserId, "admin-1");
-      assert.equal(input.actorAudit?.action, "publish");
-      return {
-        reportId: input.reportId,
-        labelId: "label-1",
-        certId: "TK-AIG-TEST",
-        physicalPrintStatus: "printed",
-        printedAt: "2026-07-07T12:00:00.000Z",
-      };
-    },
   });
   const req = mockRequest("POST", ["mark-label-printed"]);
   req.body = { reportId: "sample-final-v0" };
   const res = mockResponse();
   await handler(req, res);
 
-  assert.equal(res.statusCodeValue, 200);
-  const body = res.jsonBody as { ok: boolean; result: { physicalPrintStatus: string; certId: string } };
-  assert.equal(body.ok, true);
-  assert.equal(body.result.physicalPrintStatus, "printed");
-  assert.equal(body.result.certId, "TK-AIG-TEST");
-  assert.equal(markCalled, true);
+  assert.equal(res.statusCodeValue, 410);
+  const body = res.jsonBody as { ok: boolean; code: string; message: string };
+  assert.equal(body.ok, false);
+  assert.equal(body.code, "AI_GRADER_PER_LABEL_PRINT_RETIRED");
+  assert.match(body.message, /label sheets page/i);
 });
 
 test("add-to-inventory action is publish-scoped and returns inventory-ready linkage", async () => {
@@ -2646,7 +3041,7 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish-finalize"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/slabbed-photo-init"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/slabbed-photo-finalize"), true);
-  assert.equal(stationSource.includes("/api/admin/ai-grader/production/mark-label-printed"), true);
+  assert.equal(stationSource.includes("/api/admin/ai-grader/production/mark-label-printed"), false);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/save-comps-selection"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/add-to-inventory"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/upload-slab-photo"), false);
@@ -2690,11 +3085,16 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("containedImageFrame(cameraFrameSize, reportOverlayFrameSize)"), true);
   assert.equal(stationSource.includes("#ffd400"), true);
   assert.equal(stationSource.includes("#00e5ff"), true);
-  assert.equal(stationSource.includes("Mark Label Printed"), true);
+  assert.equal(stationSource.includes("Mark Label Printed"), false);
   assert.equal(stationSource.includes("Save Selected Comps"), true);
   assert.equal(stationSource.includes("Add To Inventory"), true);
   assert.equal(stationSource.includes("Finish Cards"), true);
-  assert.equal(stationSource.includes("Finish This Card"), true);
+  assert.equal(stationSource.includes("Finish This Card"), false);
+  assert.equal(stationSource.includes('href="/ai-grader/finish"'), true);
+  assert.equal(stationSource.includes('href="/ai-grader/labels/sheets"'), true);
+  assert.equal(stationSource.includes("Publish + Queue Label"), true);
+  assert.equal(stationSource.includes("launchConfirmedCardComps"), true);
+  assert.equal(stationSource.includes("Sheet ${confirmedDownstream.labelSheet.sheetNumber} / Slot"), true);
   assert.equal(stationSource.includes("Start Next Grade"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/finish-queue"), true);
   assert.equal(stationSource.includes("gradePipelineSteps"), true);
@@ -2718,6 +3118,34 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("Calculate Final Grade\""), false);
   assert.equal(stationSource.includes("Finalize / Publish"), false);
   assert.equal(stationSource.includes("Publish to Ten Kings System"), false);
+});
+
+test("standalone Finish Cards page uses production auth and no Dell bridge or hardware surface", () => {
+  const finishPath =
+    [path.join(process.cwd(), "pages", "ai-grader", "finish.tsx"), path.join(process.cwd(), "frontend", "nextjs-app", "pages", "ai-grader", "finish.tsx")]
+      .find((candidate) => fs.existsSync(candidate));
+  assert.ok(finishPath);
+  const source = fs.readFileSync(finishPath, "utf8");
+
+  assert.equal(source.includes("/api/admin/ai-grader/production/auth-check"), true);
+  assert.equal(source.includes("/api/admin/ai-grader/production/finish-queue?includeCompleted=true"), true);
+  assert.equal(source.includes("/api/admin/ai-grader/production/run-comps"), true);
+  assert.equal(source.includes("/api/admin/ai-grader/production/save-comps-selection"), true);
+  assert.equal(source.includes("/api/admin/ai-grader/production/slabbed-photo-init"), true);
+  assert.equal(source.includes("/api/admin/ai-grader/production/slabbed-photo-finalize"), true);
+  assert.equal(source.includes("/api/admin/ai-grader/production/add-to-inventory"), true);
+  assert.equal(source.includes('mode: "cors"'), true);
+  assert.equal(source.includes("valuationMinor:"), false);
+  assert.equal(source.includes("aiGraderStationBridgeClient"), false);
+  assert.equal(source.includes("/api/ai-grader/station"), false);
+  assert.equal(source.includes("stationToken"), false);
+  assert.equal(source.includes("127.0.0.1"), false);
+  assert.equal(source.includes("localhost"), false);
+  assert.equal(source.includes("data:image"), false);
+  assert.equal(source.includes("readAsDataURL"), false);
+  assert.equal(source.includes("Basler"), false);
+  assert.equal(source.includes("lighting"), false);
+  assert.equal(source.includes("camera"), false);
 });
 
 test("shared session provider exposes a force sign-in path for stale cached sessions", () => {

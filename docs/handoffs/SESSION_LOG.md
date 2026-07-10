@@ -25021,6 +25021,66 @@ By enabling Rip It Live, I confirm:
 - No credential rotation or secret printing.
 - No destructive operations.
 
+## 2026-07-09 - AI Grader two-person throughput workflow
+
+### Branch And Prerequisite
+- Branch: `feature/ai-grader-throughput-workflow`.
+- Base: `origin/main` at `ca7c066f5b2f0e94c45a965ea1465556d3f42883`.
+- PR #74 prerequisite was verified merged before work began; its merge commit is `b07f10672c71bab23ce5e65b547f0267c7f0eaa7`.
+- No production deploy, restart, migration, env mutation, hardware action, or destructive data operation was performed.
+
+### Architecture And Behavior
+- Added authenticated hardware-independent pages `/ai-grader/finish` and `/ai-grader/labels/sheets`; `/ai-grader/station` remains the Dell capture surface.
+- Confirm Card now assigns the label to the next open 16-slot sheet and returns sheet/slot plus the persisted comps lifecycle. It starts the existing KingsReview/SerpAPI lookup only for a new queued attempt, so retrying Confirm cannot overwrite a completed review.
+- Label sheets use existing `AiGraderLabel.payload` JSON for sheet, slot, confirmed identity, seal, print audit, and content revision. Partial sheets can print; marking a sheet printed atomically marks all its labels. The old per-label print mutation now returns `410` and cannot satisfy the inventory gate.
+- Finish Cards is comps-first and chronological by physical sheet/slot. Human selection is constrained to persisted candidates, server prices are averaged automatically, and evidence/value updates are atomic. Stale or failed comp runs expose a retry action and sanitized exact error.
+- Slab photos remain direct browser-to-storage uploads. Inventory completion is one transaction gated by published report, sheet-printed label, front/back slab photos, and positive completed valuation.
+- One common per-report lifecycle lock and one tenant label-sheet lock serialize Confirm, publish, comps, selection, print, and inventory writes. Cert drift is rejected rather than creating duplicate label rows/slot conflicts. Printable content changes invalidate prior print status.
+- Finish and label reads use the configured tenant. Downstream/provider URLs are sanitized before persistence/output; local/private hosts, signed URLs, embedded image bodies, secrets, local paths, and hardware/token data are excluded.
+
+### Files Changed
+- `frontend/nextjs-app/pages/ai-grader/finish.tsx`
+- `frontend/nextjs-app/pages/ai-grader/labels/sheets.tsx`
+- `frontend/nextjs-app/pages/ai-grader/station.tsx`
+- `frontend/nextjs-app/lib/aiGraderLabelSheets.ts`
+- `frontend/nextjs-app/lib/server/aiGraderLabelSheetRuntime.ts`
+- `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`
+- `frontend/nextjs-app/pages/api/admin/ai-grader/production/[...action].ts`
+- `frontend/nextjs-app/tests/aiGraderLocalStation.test.ts`
+- `frontend/nextjs-app/tests/aiGraderLabelSheets.test.ts`
+- `frontend/nextjs-app/tests/aiGraderApi.test.ts`
+- `packages/database/src/aiGraderProductionService.ts`
+- `packages/database/tests/aiGraderProductionService.test.js`
+- `docs/ai-grader-capture-helper.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` -> pass, 74/74.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLabelSheets.test.ts` -> pass, 5/5.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts` -> pass, 19/19.
+- `pnpm --filter @tenkings/database test` -> pass, 49/49 including production-service regressions.
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit --pretty false` -> pass.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass; existing `<img>`, Browserslist, baseline-data, and Tailwind glob warnings only.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- Focused ESLint on all changed frontend source/tests -> 0 errors; existing/intentional `<img>` warnings only.
+- `git diff --check` -> pass with Windows line-ending notices only.
+
+### Migration Decision
+- No migration is needed or proposed. Sheet assignment and print metadata fit the existing `AiGraderLabel.payload` JSON; existing report, valuation, evidence, card, and item tables support the remaining workflow.
+- No migration was run.
+
+### Production Test After Merge
+1. Wait for the merge commit's GitHub and Vercel Production checks to pass, then hard-refresh `https://collect.tenkings.co/ai-grader/station` on the Dell.
+2. Sign in with the normal Ten Kings SMS operator/admin account and pair the Dell bridge as usual. Grade one known card, complete Confirm Card, and verify the station shows `Sheet N / Slot M` plus comps queued/running/ready without waiting for comps.
+3. Publish that card through the existing direct-storage flow, click Start Next Grade immediately, and grade/confirm a second card to prove continuous Person 1 throughput and increasing slot order.
+4. On a separate normal computer with no bridge or station token, sign in at `https://collect.tenkings.co/ai-grader/finish`. Verify both cards appear in physical sheet/slot order and no camera, lighting, pairing, or local controls appear.
+5. Open `https://collect.tenkings.co/ai-grader/labels/sheets`, select the current partial sheet, click Print Sheet, print or cancel the system dialog for the smoke, then click Mark Sheet Printed. Refresh and verify every label on that sheet is Printed. Do not mark it printed unless the physical labels were actually printed in the real production run.
+6. In Finish Cards, wait for or retry sold comps, select at least two known correct priced candidates, save, and verify the displayed value equals their rounded arithmetic average without entering a duplicate price.
+7. Before all gates pass, verify Add To Inventory stays disabled. Upload front and back slab photos and confirm browser network traffic sends each image directly to storage, with only init/finalize JSON sent to the Ten Kings API.
+8. After comps, both slab photos, and the sheet print are complete, click Add To Inventory. Verify the card moves to Complete and its `CardAsset`/`Item` show the averaged value and selected sold-comp evidence.
+9. Inspect Finish/Labels API responses for the smoke report and confirm they contain no local paths, loopback/private URLs, bridge or station tokens, `data:image` bodies, presigned URLs, or hardware controls.
+
 ## 2026-07-08 - AI Grader Finish Cards workflow PR
 
 ### Branch And Scope
