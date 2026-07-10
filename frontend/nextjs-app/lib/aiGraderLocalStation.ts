@@ -39,7 +39,145 @@ export type AiGraderStationAction =
   | "cancel-session"
   | "latest-report"
   | "session-manifest"
-  | "end-session";
+  | "end-session"
+  | "configure-rapid-capture"
+  | "queue-current-card"
+  | "activate-queue-item";
+
+export type AiGraderCaptureProfile = "full_forensic" | "production_fast";
+
+export const AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION = "ten-kings-ai-grader-capture-timing-v1" as const;
+export type AiGraderCaptureTimingSide = "front" | "back";
+export type AiGraderCaptureTimingProfile = AiGraderCaptureProfile;
+export type AiGraderCaptureTriggerMode = "operator" | "auto";
+export type AiGraderCaptureTimingEventId =
+  | "session_started"
+  | "preview_stream_started"
+  | "preview_ready"
+  | "edge_detection_ready"
+  | "capture_trigger"
+  | "raw_capture_completed"
+  | "side_processing_started"
+  | "side_processing_completed"
+  | "back_positioning_started"
+  | "report_generation_started"
+  | "report_ready"
+  | "safely_queued";
+export type AiGraderCaptureTimingPhaseId =
+  | "lighting_profile"
+  | "frame_capture"
+  | "file_writes"
+  | "file_hashes"
+  | "crop_deskew"
+  | "grading_forensic_runner"
+  | "side_processing"
+  | "report_generation";
+export type AiGraderCaptureTimingEvent = {
+  id: AiGraderCaptureTimingEventId;
+  at: string;
+  side?: AiGraderCaptureTimingSide;
+  triggerMode?: AiGraderCaptureTriggerMode;
+};
+export type AiGraderCaptureTimingPhase = {
+  id: AiGraderCaptureTimingPhaseId;
+  durationMs: number;
+  side?: AiGraderCaptureTimingSide;
+  startedAt?: string;
+  finishedAt?: string;
+};
+export type AiGraderCaptureTimingSummary = {
+  previewReadyMs?: number;
+  frontEdgeDetectionReadyMs?: number;
+  backEdgeDetectionReadyMs?: number;
+  frontPositioningMs?: number;
+  backPositioningMs?: number;
+  totalFrontMs?: number;
+  totalBackMs?: number;
+  frontProcessingMs?: number;
+  backProcessingMs?: number;
+  frontProcessingDuringFlipMs?: number;
+  frontProcessingOverlappedFlip: boolean;
+  reportGenerationMs?: number;
+  totalCardMs?: number;
+  reportReadyTotalMs?: number;
+  safeQueueLatencyMs?: number;
+};
+export type AiGraderCaptureTimingMetadata = {
+  schemaVersion: typeof AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION;
+  captureProfile: AiGraderCaptureTimingProfile;
+  targetSideMs: 5000;
+  hardwareMeasurement: boolean;
+  events: AiGraderCaptureTimingEvent[];
+  phases: AiGraderCaptureTimingPhase[];
+  summary: AiGraderCaptureTimingSummary;
+  target: {
+    frontWithinTarget?: boolean;
+    backWithinTarget?: boolean;
+    fiveSecondsPerSideProven: boolean;
+    hardwareMeasurementRequired: boolean;
+    note: string;
+  };
+};
+
+export type AiGraderCaptureProfileGuard = {
+  stationSettingRequired: true;
+  selectionSource: "bridge_default" | "operator_setting" | "rapid_continuation";
+  productionFastOptIn: boolean;
+  fullForensicEvidencePreserved: true;
+  availableCaptureProfiles: ["full_forensic", "production_fast"];
+  previousStableProfile: "full_forensic";
+  fiveSecondTargetProven: boolean;
+};
+
+export type AiGraderRapidCaptureWorkflowState =
+  | "front_captured"
+  | "front_processing"
+  | "back_positioning"
+  | "back_captured"
+  | "finalizing"
+  | "report_ready_needs_confirm"
+  | "confirmed_needs_publish"
+  | "published"
+  | "failed";
+
+export type AiGraderRapidCaptureWorkflowEvent = {
+  state: AiGraderRapidCaptureWorkflowState;
+  at: string;
+  detail: string;
+};
+
+export type AiGraderRapidCaptureManifestStatus = {
+  enabled: boolean;
+  queueItemId?: string;
+  workflowState?: AiGraderRapidCaptureWorkflowState;
+  workflowHistory: AiGraderRapidCaptureWorkflowEvent[];
+  safelyQueuedAt?: string;
+  humanConfirmationRequired: true;
+  autoConfirm: false;
+  autoPublish: false;
+};
+
+export type AiGraderRapidCaptureQueueItem = {
+  queueItemId: string;
+  sessionId: string;
+  reportId: string;
+  state: AiGraderRapidCaptureWorkflowState;
+  queuedAt: string;
+  updatedAt: string;
+  history: AiGraderRapidCaptureWorkflowEvent[];
+  humanConfirmationRequired: true;
+  autoConfirmed: false;
+  autoPublished: false;
+  error?: string;
+};
+
+export type AiGraderRapidCaptureQueueStatus = {
+  enabled: boolean;
+  activeQueueItemId?: string;
+  persisted: true;
+  reportWorkerSerialized: true;
+  items: AiGraderRapidCaptureQueueItem[];
+};
 
 export type AiGraderStationStep = {
   id: AiGraderStationStepId;
@@ -101,8 +239,8 @@ export type AiGraderWarmRunnerStatus = {
   mode: "full_forensic";
   backend: AiGraderWarmRunnerExecutionPath;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   status: AiGraderWarmRunnerStatusName;
   sessionId?: string;
   activeSide?: AiGraderWarmRunnerSide;
@@ -147,8 +285,8 @@ export type AiGraderWarmRunnerStatus = {
     stretchTargetMs: number;
     measuredTotalMs?: number;
   };
-  fallback: {
-    available: true;
+  coldDebugMode: {
+    configured: boolean;
     active: boolean;
     reason?: string;
   };
@@ -158,7 +296,7 @@ export type AiGraderWarmRunnerStatus = {
     safeOffOnFailure: true;
     safeOffOnCancellation: true;
     safeOffOnSessionEnd: true;
-    fallbackToColdPath: true;
+    explicitColdDebugModeOnly: true;
     publicRouteExposed: false;
     productionServiceTokenUsed: false;
     persistentBaslerSaved: false;
@@ -178,8 +316,11 @@ export type AiGraderLocalStationStatus = {
   nextAction: AiGraderStationAction;
   nextActionLabel: string;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
+  captureProfile: AiGraderCaptureProfile;
+  captureProfileGuard: AiGraderCaptureProfileGuard;
+  captureTiming: AiGraderCaptureTimingMetadata;
   acceptedProfile: {
     dutyPercent: number;
     exposureUs: number;
@@ -237,6 +378,24 @@ export type AiGraderLocalStationStatus = {
   previewStatus: AiGraderLocalStationPreviewStatus;
   liveLighting: AiGraderLiveLightingStatus;
   warmRunnerStatus: AiGraderWarmRunnerStatus;
+  captureFailure?: {
+    side: AiGraderWarmRunnerSide;
+    stage: "warm_capture";
+    message: string;
+    at: string;
+    retryRequired: true;
+    automaticColdFallbackAttempted: false;
+  };
+  geometryCaptureDecisions: Partial<Record<AiGraderWarmRunnerSide, {
+    mode: "detected_geometry" | "manual_capture";
+    placementState: AiGraderCardPlacementState;
+    timestamp: string;
+    explicitOperatorAction: boolean;
+    detectionUsed: boolean;
+    manualOverrideUsed: boolean;
+    manualBoundaryRect?: AiGraderPreviewGeometryBoundingBox;
+    sourceFrameId?: string;
+  }>>;
   reportBundle?: AiGraderReportBundle;
   stationUrl?: string;
   bridgeSecurity?: {
@@ -266,13 +425,449 @@ export type AiGraderLocalStationStatus = {
   };
   timingSummary?: AiGraderLocalStationTimingSummary;
   productionRelease?: AiGraderProductionRelease;
+  rapidCapture: AiGraderRapidCaptureManifestStatus;
+  rapidCaptureQueue: AiGraderRapidCaptureQueueStatus;
 };
+
+const AI_GRADER_CAPTURE_TIMING_EVENT_IDS: AiGraderCaptureTimingEventId[] = [
+  "session_started",
+  "preview_stream_started",
+  "preview_ready",
+  "edge_detection_ready",
+  "capture_trigger",
+  "raw_capture_completed",
+  "side_processing_started",
+  "side_processing_completed",
+  "back_positioning_started",
+  "report_generation_started",
+  "report_ready",
+  "safely_queued",
+];
+
+const AI_GRADER_CAPTURE_TIMING_PHASE_IDS: AiGraderCaptureTimingPhaseId[] = [
+  "lighting_profile",
+  "frame_capture",
+  "file_writes",
+  "file_hashes",
+  "crop_deskew",
+  "grading_forensic_runner",
+  "side_processing",
+  "report_generation",
+];
+
+function captureTimingRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function captureTimingTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 64 || !Number.isFinite(Date.parse(value))) return undefined;
+  return new Date(value).toISOString();
+}
+
+function captureTimingDuration(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value * 10) / 10
+    : undefined;
+}
+
+function captureTimingTargetNote(hardwareMeasurement: boolean, fiveSecondsPerSideProven: boolean) {
+  if (fiveSecondsPerSideProven) {
+    return "Both sides met the five-second target in a recorded hardware run with the selected forensic profile.";
+  }
+  if (hardwareMeasurement) {
+    return "The hardware run did not prove five seconds for both sides; inspect file-write, frame-capture, and lighting/profile phases.";
+  }
+  return "Five seconds per side is unproven until both sides are measured on the Dell with complete forensic evidence preserved.";
+}
+
+export function buildDefaultAiGraderCaptureTiming(
+  captureProfile: AiGraderCaptureTimingProfile = "full_forensic"
+): AiGraderCaptureTimingMetadata {
+  return {
+    schemaVersion: AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION,
+    captureProfile,
+    targetSideMs: 5000,
+    hardwareMeasurement: false,
+    events: [],
+    phases: [],
+    summary: { frontProcessingOverlappedFlip: false },
+    target: {
+      fiveSecondsPerSideProven: false,
+      hardwareMeasurementRequired: true,
+      note: captureTimingTargetNote(false, false),
+    },
+  };
+}
+
+export function sanitizeAiGraderCaptureTiming(
+  value: unknown,
+  authoritativeProfile?: AiGraderCaptureTimingProfile
+): AiGraderCaptureTimingMetadata {
+  const record = captureTimingRecord(value) ? value : undefined;
+  if (!record || record.schemaVersion !== AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION) {
+    return buildDefaultAiGraderCaptureTiming(authoritativeProfile ?? "full_forensic");
+  }
+  const recordProfile = record?.captureProfile === "production_fast" || record?.captureProfile === "full_forensic"
+    ? record.captureProfile
+    : undefined;
+  const captureProfile = authoritativeProfile ?? recordProfile ?? "full_forensic";
+
+  const hardwareMeasurement = record.hardwareMeasurement === true;
+  const events = Array.isArray(record.events)
+    ? record.events
+        .map((entry): AiGraderCaptureTimingEvent | undefined => {
+          if (!captureTimingRecord(entry)) return undefined;
+          const id = typeof entry.id === "string" && AI_GRADER_CAPTURE_TIMING_EVENT_IDS.includes(entry.id as AiGraderCaptureTimingEventId)
+            ? (entry.id as AiGraderCaptureTimingEventId)
+            : undefined;
+          const at = captureTimingTimestamp(entry.at);
+          if (!id || !at) return undefined;
+          const side = entry.side === "front" || entry.side === "back" ? entry.side : undefined;
+          const triggerMode = entry.triggerMode === "operator" || entry.triggerMode === "auto" ? entry.triggerMode : undefined;
+          return { id, at, ...(side ? { side } : {}), ...(triggerMode ? { triggerMode } : {}) };
+        })
+        .filter((event): event is AiGraderCaptureTimingEvent => Boolean(event))
+        .slice(-250)
+    : [];
+  const phases = Array.isArray(record.phases)
+    ? record.phases
+        .map((entry): AiGraderCaptureTimingPhase | undefined => {
+          if (!captureTimingRecord(entry)) return undefined;
+          const id = typeof entry.id === "string" && AI_GRADER_CAPTURE_TIMING_PHASE_IDS.includes(entry.id as AiGraderCaptureTimingPhaseId)
+            ? (entry.id as AiGraderCaptureTimingPhaseId)
+            : undefined;
+          const durationMs = captureTimingDuration(entry.durationMs);
+          if (!id || durationMs === undefined) return undefined;
+          const side = entry.side === "front" || entry.side === "back" ? entry.side : undefined;
+          const startedAt = captureTimingTimestamp(entry.startedAt);
+          const finishedAt = captureTimingTimestamp(entry.finishedAt);
+          return {
+            id,
+            durationMs,
+            ...(side ? { side } : {}),
+            ...(startedAt ? { startedAt } : {}),
+            ...(finishedAt ? { finishedAt } : {}),
+          };
+        })
+        .filter((phase): phase is AiGraderCaptureTimingPhase => Boolean(phase))
+        .slice(-250)
+    : [];
+  const summaryRecord = captureTimingRecord(record.summary) ? record.summary : {};
+  const summary: AiGraderCaptureTimingSummary = {
+    ...(captureTimingDuration(summaryRecord.previewReadyMs) !== undefined ? { previewReadyMs: captureTimingDuration(summaryRecord.previewReadyMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.frontEdgeDetectionReadyMs) !== undefined ? { frontEdgeDetectionReadyMs: captureTimingDuration(summaryRecord.frontEdgeDetectionReadyMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.backEdgeDetectionReadyMs) !== undefined ? { backEdgeDetectionReadyMs: captureTimingDuration(summaryRecord.backEdgeDetectionReadyMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.frontPositioningMs) !== undefined ? { frontPositioningMs: captureTimingDuration(summaryRecord.frontPositioningMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.backPositioningMs) !== undefined ? { backPositioningMs: captureTimingDuration(summaryRecord.backPositioningMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.totalFrontMs) !== undefined ? { totalFrontMs: captureTimingDuration(summaryRecord.totalFrontMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.totalBackMs) !== undefined ? { totalBackMs: captureTimingDuration(summaryRecord.totalBackMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.frontProcessingMs) !== undefined ? { frontProcessingMs: captureTimingDuration(summaryRecord.frontProcessingMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.backProcessingMs) !== undefined ? { backProcessingMs: captureTimingDuration(summaryRecord.backProcessingMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.frontProcessingDuringFlipMs) !== undefined ? { frontProcessingDuringFlipMs: captureTimingDuration(summaryRecord.frontProcessingDuringFlipMs) } : {}),
+    frontProcessingOverlappedFlip: summaryRecord.frontProcessingOverlappedFlip === true,
+    ...(captureTimingDuration(summaryRecord.reportGenerationMs) !== undefined ? { reportGenerationMs: captureTimingDuration(summaryRecord.reportGenerationMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.totalCardMs) !== undefined ? { totalCardMs: captureTimingDuration(summaryRecord.totalCardMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.reportReadyTotalMs) !== undefined ? { reportReadyTotalMs: captureTimingDuration(summaryRecord.reportReadyTotalMs) } : {}),
+    ...(captureTimingDuration(summaryRecord.safeQueueLatencyMs) !== undefined ? { safeQueueLatencyMs: captureTimingDuration(summaryRecord.safeQueueLatencyMs) } : {}),
+  };
+  const targetRecord = captureTimingRecord(record.target) ? record.target : {};
+  const frontWithinTarget = typeof targetRecord.frontWithinTarget === "boolean" ? targetRecord.frontWithinTarget : undefined;
+  const backWithinTarget = typeof targetRecord.backWithinTarget === "boolean" ? targetRecord.backWithinTarget : undefined;
+  const fiveSecondsPerSideProven =
+    targetRecord.fiveSecondsPerSideProven === true &&
+    hardwareMeasurement &&
+    frontWithinTarget === true &&
+    backWithinTarget === true;
+  return {
+    schemaVersion: AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION,
+    captureProfile,
+    targetSideMs: 5000,
+    hardwareMeasurement,
+    events,
+    phases,
+    summary,
+    target: {
+      ...(frontWithinTarget !== undefined ? { frontWithinTarget } : {}),
+      ...(backWithinTarget !== undefined ? { backWithinTarget } : {}),
+      fiveSecondsPerSideProven,
+      hardwareMeasurementRequired: !hardwareMeasurement,
+      note: captureTimingTargetNote(hardwareMeasurement, fiveSecondsPerSideProven),
+    },
+  };
+}
+
+const AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES: AiGraderRapidCaptureWorkflowState[] = [
+  "front_captured",
+  "front_processing",
+  "back_positioning",
+  "back_captured",
+  "finalizing",
+  "report_ready_needs_confirm",
+  "confirmed_needs_publish",
+  "published",
+  "failed",
+];
+
+export function parseAiGraderRapidCaptureWorkflowState(value: unknown): AiGraderRapidCaptureWorkflowState | null {
+  return typeof value === "string" && AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES.includes(value as AiGraderRapidCaptureWorkflowState)
+    ? (value as AiGraderRapidCaptureWorkflowState)
+    : null;
+}
+
+function rapidCaptureRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function safeRapidCaptureId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(trimmed)) return undefined;
+  if (/token|secret|bearer|authorization|presign|x-amz|localhost/i.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+function safeRapidCaptureTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 64 || !Number.isFinite(Date.parse(value))) return undefined;
+  return new Date(value).toISOString();
+}
+
+function unsafeRapidCaptureText(value: string) {
+  return (
+    value.length > 500 ||
+    /^data:image/i.test(value) ||
+    /[a-z]:[\\/]/i.test(value) ||
+    /(?:^|\s)\/(?:users|home|tmp|var|etc|opt)\//i.test(value) ||
+    /https?:\/\/(?:127\.0\.0\.1|localhost|\[?::1\]?|10\.|192\.168\.|169\.254\.)/i.test(value) ||
+    /(?:station|bridge|service)[_-]?token|pairing[_-]?code|authorization|bearer\s|x-amz-|presigned/i.test(value)
+  );
+}
+
+function safeRapidCaptureText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed && !unsafeRapidCaptureText(trimmed) ? trimmed : undefined;
+}
+
+function sanitizeAiGraderRapidCaptureHistory(value: unknown): AiGraderRapidCaptureWorkflowEvent[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry): AiGraderRapidCaptureWorkflowEvent | undefined => {
+      if (!rapidCaptureRecord(entry)) return undefined;
+      const state = parseAiGraderRapidCaptureWorkflowState(entry.state);
+      const at = safeRapidCaptureTimestamp(entry.at);
+      if (!state || !at) return undefined;
+      return {
+        state,
+        at,
+        detail: safeRapidCaptureText(entry.detail) ?? "Rapid capture state updated.",
+      };
+    })
+    .filter((entry): entry is AiGraderRapidCaptureWorkflowEvent => Boolean(entry))
+    .slice(-100);
+}
+
+function sanitizeAiGraderRapidCaptureManifest(value: unknown): AiGraderRapidCaptureManifestStatus {
+  const record = rapidCaptureRecord(value) ? value : {};
+  const queueItemId = safeRapidCaptureId(record.queueItemId);
+  const workflowState = parseAiGraderRapidCaptureWorkflowState(record.workflowState);
+  const safelyQueuedAt = safeRapidCaptureTimestamp(record.safelyQueuedAt);
+  return {
+    enabled: record.enabled === true,
+    ...(queueItemId ? { queueItemId } : {}),
+    ...(workflowState ? { workflowState } : {}),
+    workflowHistory: sanitizeAiGraderRapidCaptureHistory(record.workflowHistory),
+    ...(safelyQueuedAt ? { safelyQueuedAt } : {}),
+    humanConfirmationRequired: true,
+    autoConfirm: false,
+    autoPublish: false,
+  };
+}
+
+function sanitizeAiGraderRapidCaptureQueueItem(value: unknown): AiGraderRapidCaptureQueueItem | undefined {
+  if (!rapidCaptureRecord(value)) return undefined;
+  const queueItemId = safeRapidCaptureId(value.queueItemId);
+  const sessionId = safeRapidCaptureId(value.sessionId);
+  const reportId = safeRapidCaptureId(value.reportId);
+  const state = parseAiGraderRapidCaptureWorkflowState(value.state);
+  const queuedAt = safeRapidCaptureTimestamp(value.queuedAt);
+  const updatedAt = safeRapidCaptureTimestamp(value.updatedAt);
+  if (!queueItemId || !sessionId || !reportId || !state || !queuedAt || !updatedAt) return undefined;
+  const error = safeRapidCaptureText(value.error);
+  return {
+    queueItemId,
+    sessionId,
+    reportId,
+    state,
+    queuedAt,
+    updatedAt,
+    history: sanitizeAiGraderRapidCaptureHistory(value.history),
+    humanConfirmationRequired: true,
+    autoConfirmed: false,
+    autoPublished: false,
+    ...(error ? { error } : {}),
+  };
+}
+
+export function sanitizeAiGraderRapidCaptureQueue(
+  value: unknown,
+  fallbackEnabled = false
+): AiGraderRapidCaptureQueueStatus {
+  const record = rapidCaptureRecord(value) ? value : {};
+  const activeQueueItemId = safeRapidCaptureId(record.activeQueueItemId);
+  const items = Array.isArray(record.items)
+    ? record.items
+        .map(sanitizeAiGraderRapidCaptureQueueItem)
+        .filter((item): item is AiGraderRapidCaptureQueueItem => Boolean(item))
+        .slice(0, 50)
+    : [];
+  return {
+    enabled: typeof record.enabled === "boolean" ? record.enabled : fallbackEnabled,
+    ...(activeQueueItemId ? { activeQueueItemId } : {}),
+    persisted: true,
+    reportWorkerSerialized: true,
+    items,
+  };
+}
+
+function sanitizeGeometryCaptureDecisions(value: unknown): AiGraderLocalStationStatus["geometryCaptureDecisions"] {
+  if (!rapidCaptureRecord(value)) return {};
+  const result: AiGraderLocalStationStatus["geometryCaptureDecisions"] = {};
+  for (const side of ["front", "back"] as const) {
+    const decision = value[side];
+    if (!rapidCaptureRecord(decision)) continue;
+    const mode = decision.mode === "detected_geometry" || decision.mode === "manual_capture" ? decision.mode : undefined;
+    const placementState =
+      decision.placementState === "ready" || decision.placementState === "adjust_card" || decision.placementState === "not_detected"
+        ? decision.placementState
+        : undefined;
+    const timestamp = safeRapidCaptureTimestamp(decision.timestamp);
+    if (!mode || !placementState || !timestamp) continue;
+    const sourceFrameId = sanitizePreviewGeometrySourceFrameId(decision.sourceFrameId);
+    const manualBoundaryRect = sanitizePreviewGeometryBoundingBox(decision.manualBoundaryRect);
+    const manual = mode === "manual_capture";
+    if (manual && (decision.explicitOperatorAction !== true || decision.manualOverrideUsed !== true || !manualBoundaryRect)) continue;
+    if (!manual && (decision.detectionUsed !== true || decision.manualOverrideUsed === true)) continue;
+    result[side] = {
+      mode,
+      placementState,
+      timestamp,
+      explicitOperatorAction: manual,
+      detectionUsed: !manual,
+      manualOverrideUsed: manual,
+      ...(manualBoundaryRect ? { manualBoundaryRect } : {}),
+      ...(sourceFrameId ? { sourceFrameId } : {}),
+    };
+  }
+  return result;
+}
+
+/** Keeps the local status useful to the station UI while allowlisting rapid
+ * queue fields and refusing an unguarded production_fast profile. */
+export function sanitizeAiGraderLocalStationStatusForDisplay(
+  status: AiGraderLocalStationStatus
+): AiGraderLocalStationStatus {
+  const rapidCapture = sanitizeAiGraderRapidCaptureManifest(status.rapidCapture);
+  const guardSource = status.captureProfileGuard?.selectionSource;
+  const selectionSource =
+    guardSource === "operator_setting" || guardSource === "rapid_continuation" || guardSource === "bridge_default"
+      ? guardSource
+      : "bridge_default";
+  const productionFastSelected =
+    status.captureProfile === "production_fast" &&
+    status.captureProfileGuard?.productionFastOptIn === true &&
+    (selectionSource === "operator_setting" || selectionSource === "rapid_continuation");
+  const captureProfile: AiGraderCaptureProfile = productionFastSelected ? "production_fast" : "full_forensic";
+  const sanitizedCaptureTiming = sanitizeAiGraderCaptureTiming(status.captureTiming, captureProfile);
+  const explicitColdDebugModeUsed =
+    status.executionPath === "cold_command_fallback" && status.explicitColdDebugModeUsed === true;
+  const unsafeStatus = status as AiGraderLocalStationStatus & Record<string, unknown>;
+  const {
+    fallbackUsed: _legacyFallbackUsed,
+    fallbackReason: _legacyFallbackReason,
+    warmRunnerStatus: unsafeWarmRunner,
+    timingSummary: unsafeTimingSummary,
+    ...statusWithoutLegacyFallback
+  } = unsafeStatus;
+  const {
+    fallbackUsed: _legacyWarmFallbackUsed,
+    fallbackReason: _legacyWarmFallbackReason,
+    fallback: _legacyWarmFallback,
+    ...warmRunnerWithoutLegacyFallback
+  } = unsafeWarmRunner as AiGraderWarmRunnerStatus & Record<string, unknown>;
+  const {
+    fallbackToColdPath: _legacyFallbackToColdPath,
+    ...warmSafetyWithoutLegacyFallback
+  } = unsafeWarmRunner.safety as AiGraderWarmRunnerStatus["safety"] & Record<string, unknown>;
+  const timingSummary = unsafeTimingSummary
+    ? (() => {
+        const {
+          fallbackUsed: _legacyTimingFallbackUsed,
+          fallbackReason: _legacyTimingFallbackReason,
+          ...timingWithoutLegacyFallback
+        } = unsafeTimingSummary as AiGraderLocalStationTimingSummary & Record<string, unknown>;
+        return {
+          ...timingWithoutLegacyFallback,
+          explicitColdDebugModeUsed:
+            unsafeTimingSummary.executionPath === "cold_command_fallback" &&
+            unsafeTimingSummary.explicitColdDebugModeUsed === true,
+          ...(safeRapidCaptureText(unsafeTimingSummary.explicitColdDebugReason)
+            ? { explicitColdDebugReason: safeRapidCaptureText(unsafeTimingSummary.explicitColdDebugReason) }
+            : {}),
+        } as AiGraderLocalStationTimingSummary;
+      })()
+    : undefined;
+  return {
+    ...statusWithoutLegacyFallback,
+    explicitColdDebugModeUsed,
+    ...(safeRapidCaptureText(status.explicitColdDebugReason)
+      ? { explicitColdDebugReason: safeRapidCaptureText(status.explicitColdDebugReason) }
+      : {}),
+    captureProfile,
+    captureProfileGuard: {
+      stationSettingRequired: true,
+      selectionSource,
+      productionFastOptIn: productionFastSelected,
+      fullForensicEvidencePreserved: true,
+      availableCaptureProfiles: ["full_forensic", "production_fast"],
+      previousStableProfile: "full_forensic",
+      fiveSecondTargetProven:
+        !explicitColdDebugModeUsed &&
+        status.executionPath === "warm_full_forensic_runner" &&
+        sanitizedCaptureTiming.target.fiveSecondsPerSideProven,
+    },
+    captureTiming: sanitizedCaptureTiming,
+    warmRunnerStatus: {
+      ...warmRunnerWithoutLegacyFallback,
+      explicitColdDebugModeUsed:
+        unsafeWarmRunner.executionPath === "cold_command_fallback" && unsafeWarmRunner.explicitColdDebugModeUsed === true,
+      ...(safeRapidCaptureText(unsafeWarmRunner.explicitColdDebugReason)
+        ? { explicitColdDebugReason: safeRapidCaptureText(unsafeWarmRunner.explicitColdDebugReason) }
+        : {}),
+      coldDebugMode: {
+        configured: unsafeWarmRunner.coldDebugMode?.configured === true,
+        active:
+          unsafeWarmRunner.executionPath === "cold_command_fallback" && unsafeWarmRunner.coldDebugMode?.active === true,
+        ...(safeRapidCaptureText(unsafeWarmRunner.coldDebugMode?.reason)
+          ? { reason: safeRapidCaptureText(unsafeWarmRunner.coldDebugMode?.reason) }
+          : {}),
+      },
+      safety: {
+        ...warmSafetyWithoutLegacyFallback,
+        explicitColdDebugModeOnly: true,
+      },
+    },
+    geometryCaptureDecisions: sanitizeGeometryCaptureDecisions(status.geometryCaptureDecisions),
+    ...(timingSummary ? { timingSummary } : {}),
+    rapidCapture,
+    rapidCaptureQueue: sanitizeAiGraderRapidCaptureQueue(status.rapidCaptureQueue, rapidCapture.enabled),
+  };
+}
 
 export type AiGraderLocalStationTimingSummary = {
   totalCommandMs: number;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   bridgeActionOverheadMs: number;
   captureCommandMs: number;
   reportGenerationMs: number;
@@ -326,6 +921,186 @@ export type AiGraderLocalStationTimingSummary = {
   targetInterCaptureNote: string;
 };
 
+export type AiGraderCardPlacementState = "not_detected" | "adjust_card" | "ready";
+export type AiGraderPreviewGeometrySide = "front" | "back";
+export type AiGraderPreviewGeometryPoint = { x: number; y: number };
+export type AiGraderPreviewGeometryCorners = {
+  topLeft: AiGraderPreviewGeometryPoint;
+  topRight: AiGraderPreviewGeometryPoint;
+  bottomRight: AiGraderPreviewGeometryPoint;
+  bottomLeft: AiGraderPreviewGeometryPoint;
+};
+export type AiGraderPreviewGeometryBoundingBox = { x: number; y: number; width: number; height: number };
+
+/**
+ * Path-free subset of capture-helper CardGeometryMetadata that is safe to
+ * display in the token-gated station UI. Raw/local artifact locations are
+ * deliberately not part of this contract.
+ */
+export type AiGraderPreviewCardGeometrySummary = {
+  version?: "ten-kings-card-geometry-v1";
+  side: AiGraderPreviewGeometrySide;
+  placementState: AiGraderCardPlacementState;
+  geometrySource: "detected" | "manual_override" | "none";
+  captureMode: "automatic_detection" | "manual_capture" | "none";
+  confidenceBasis: "automatic_detection" | "operator_confirmation" | "none";
+  detectionUsed: boolean;
+  manualOverrideUsed: boolean;
+  corners: AiGraderPreviewGeometryCorners | null;
+  detectedCorners: AiGraderPreviewGeometryCorners | null;
+  boundingBox: AiGraderPreviewGeometryBoundingBox | null;
+  rotationDegrees: number | null;
+  skewDegrees: number | null;
+  confidence: number;
+  sourceFrameId?: string;
+  timestamp?: string;
+  image?: {
+    width: number;
+    height: number;
+    coordinateFrame: "source_image_pixels";
+  };
+};
+
+export type AiGraderPreviewCardGeometryBySide = {
+  activeSide?: AiGraderPreviewGeometrySide;
+  front?: AiGraderPreviewCardGeometrySummary;
+  back?: AiGraderPreviewCardGeometrySummary;
+};
+
+export function aiGraderCardPlacementLabel(state: AiGraderCardPlacementState): "Not Detected" | "Adjust Card" | "Ready" {
+  if (state === "ready") return "Ready";
+  if (state === "adjust_card") return "Adjust Card";
+  return "Not Detected";
+}
+
+function previewGeometryRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function previewGeometryNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function sanitizePreviewGeometryPoint(value: unknown): AiGraderPreviewGeometryPoint | undefined {
+  if (!previewGeometryRecord(value)) return undefined;
+  const x = previewGeometryNumber(value.x);
+  const y = previewGeometryNumber(value.y);
+  return x === undefined || y === undefined ? undefined : { x, y };
+}
+
+function sanitizePreviewGeometryCorners(value: unknown): AiGraderPreviewGeometryCorners | null {
+  if (value === null) return null;
+  if (!previewGeometryRecord(value)) return null;
+  const topLeft = sanitizePreviewGeometryPoint(value.topLeft);
+  const topRight = sanitizePreviewGeometryPoint(value.topRight);
+  const bottomRight = sanitizePreviewGeometryPoint(value.bottomRight);
+  const bottomLeft = sanitizePreviewGeometryPoint(value.bottomLeft);
+  return topLeft && topRight && bottomRight && bottomLeft ? { topLeft, topRight, bottomRight, bottomLeft } : null;
+}
+
+function sanitizePreviewGeometryBoundingBox(value: unknown): AiGraderPreviewGeometryBoundingBox | null {
+  if (!previewGeometryRecord(value)) return null;
+  const x = previewGeometryNumber(value.x);
+  const y = previewGeometryNumber(value.y);
+  const width = previewGeometryNumber(value.width);
+  const height = previewGeometryNumber(value.height);
+  return x === undefined || y === undefined || width === undefined || height === undefined || width <= 0 || height <= 0
+    ? null
+    : { x, y, width, height };
+}
+
+function sanitizePreviewGeometrySourceFrameId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(trimmed)) return undefined;
+  if (/token|secret|bearer|presign|x-amz|localhost/i.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+function sanitizePreviewGeometryTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 64 || !Number.isFinite(Date.parse(value))) return undefined;
+  return new Date(value).toISOString();
+}
+
+export function sanitizeAiGraderPreviewCardGeometry(
+  value: unknown,
+  expectedSide?: AiGraderPreviewGeometrySide
+): AiGraderPreviewCardGeometrySummary | undefined {
+  if (!previewGeometryRecord(value)) return undefined;
+  const side = value.side === "front" || value.side === "back" ? value.side : expectedSide;
+  if (!side || (expectedSide && side !== expectedSide)) return undefined;
+  const placementState =
+    value.placementState === "ready" || value.placementState === "adjust_card" || value.placementState === "not_detected"
+      ? value.placementState
+      : "not_detected";
+  const geometrySource =
+    value.geometrySource === "detected" || value.geometrySource === "manual_override" || value.geometrySource === "none"
+      ? value.geometrySource
+      : "none";
+  const captureMode =
+    value.captureMode === "automatic_detection" || value.captureMode === "manual_capture" || value.captureMode === "none"
+      ? value.captureMode
+      : geometrySource === "detected"
+        ? "automatic_detection"
+        : geometrySource === "manual_override"
+          ? "manual_capture"
+          : "none";
+  const confidenceBasis =
+    value.confidenceBasis === "automatic_detection" || value.confidenceBasis === "operator_confirmation" || value.confidenceBasis === "none"
+      ? value.confidenceBasis
+      : captureMode === "automatic_detection"
+        ? "automatic_detection"
+        : captureMode === "manual_capture"
+          ? "operator_confirmation"
+          : "none";
+  const corners = sanitizePreviewGeometryCorners(value.corners);
+  const detectedCorners = sanitizePreviewGeometryCorners(value.detectedCorners);
+  const rotationDegrees = previewGeometryNumber(value.rotationDegrees) ?? null;
+  const skewDegrees = previewGeometryNumber(value.skewDegrees) ?? null;
+  const confidenceValue = previewGeometryNumber(value.confidence) ?? 0;
+  const sourceFrameId = sanitizePreviewGeometrySourceFrameId(value.sourceFrameId);
+  const timestamp = sanitizePreviewGeometryTimestamp(value.timestamp);
+  const imageRecord = previewGeometryRecord(value.image) ? value.image : undefined;
+  const imageWidth = imageRecord ? previewGeometryNumber(imageRecord.width) : undefined;
+  const imageHeight = imageRecord ? previewGeometryNumber(imageRecord.height) : undefined;
+  const image =
+    imageWidth !== undefined && imageHeight !== undefined && imageWidth > 0 && imageHeight > 0
+      ? { width: imageWidth, height: imageHeight, coordinateFrame: "source_image_pixels" as const }
+      : undefined;
+  return {
+    ...(value.version === "ten-kings-card-geometry-v1" ? { version: value.version } : {}),
+    side,
+    placementState,
+    geometrySource,
+    captureMode,
+    confidenceBasis,
+    detectionUsed: value.detectionUsed === true,
+    manualOverrideUsed: value.manualOverrideUsed === true,
+    corners,
+    detectedCorners,
+    boundingBox: sanitizePreviewGeometryBoundingBox(value.boundingBox),
+    rotationDegrees,
+    skewDegrees,
+    confidence: Math.max(0, Math.min(1, confidenceValue)),
+    ...(sourceFrameId ? { sourceFrameId } : {}),
+    ...(timestamp ? { timestamp } : {}),
+    ...(image ? { image } : {}),
+  };
+}
+
+export function sanitizeAiGraderPreviewCardGeometryBySide(value: unknown): AiGraderPreviewCardGeometryBySide | undefined {
+  if (!previewGeometryRecord(value)) return undefined;
+  const activeSide = value.activeSide === "front" || value.activeSide === "back" ? value.activeSide : undefined;
+  const front = sanitizeAiGraderPreviewCardGeometry(value.front, "front");
+  const back = sanitizeAiGraderPreviewCardGeometry(value.back, "back");
+  if (!activeSide && !front && !back) return undefined;
+  return {
+    ...(activeSide ? { activeSide } : {}),
+    ...(front ? { front } : {}),
+    ...(back ? { back } : {}),
+  };
+}
+
 export type AiGraderLocalStationPreviewStatus = {
   status: "not_started" | "starting" | "live" | "paused_for_capture" | "stopped" | "unavailable" | "error";
   implementationType: "mjpeg_fetch_stream" | "mock_mjpeg_stream" | "native_preview_only";
@@ -338,6 +1113,7 @@ export type AiGraderLocalStationPreviewStatus = {
   cameraOwnership: "idle" | "preview_stream" | "capture_action" | "released";
   frameSource: "basler_pylon_continuous_grab" | "mock_station_preview" | "native_pylon_window";
   frameCount: number;
+  cardGeometry?: AiGraderPreviewCardGeometryBySide;
   fps?: number;
   startedAt?: string;
   firstFrameAt?: string;
@@ -494,6 +1270,9 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "latest-report": "view_unified_report",
   "session-manifest": "view_unified_report",
   "end-session": "safe_off_end_session",
+  "configure-rapid-capture": "start_new_card",
+  "queue-current-card": "start_new_card",
+  "activate-queue-item": "calculate_final_grade",
 };
 
 const NEXT_ACTION_BY_STEP: Record<AiGraderStationStepId, AiGraderStationAction> = {
@@ -555,6 +1334,9 @@ function bridgeEndpoints() {
     { method: "GET", action: "latest-report", description: "Read latest report location." },
     { method: "GET", action: "session-manifest", description: "Read station session manifest." },
     { method: "POST", action: "end-session", description: "End the local station session." },
+    { method: "POST", action: "configure-rapid-capture", description: "Enable or disable persisted rapid capture mode without changing human confirmation or publish gates." },
+    { method: "POST", action: "queue-current-card", description: "Queue safely persisted front/back evidence for serialized background finalization and start a clean next card." },
+    { method: "POST", action: "activate-queue-item", description: "Open a completed queue item in the existing Confirm Card and Publish workflow." },
   ];
   return actions.map((endpoint) => ({
     ...endpoint,
@@ -586,7 +1368,7 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
     mode: "full_forensic",
     backend: "warm_full_forensic_runner",
     executionPath: "warm_full_forensic_runner",
-    fallbackUsed: false,
+    explicitColdDebugModeUsed: false,
     status: "idle",
     captureLock: {
       held: false,
@@ -624,8 +1406,8 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
       targetTotalMaxMs: 150000,
       stretchTargetMs: 60000,
     },
-    fallback: {
-      available: true,
+    coldDebugMode: {
+      configured: false,
       active: false,
     },
     safety: {
@@ -634,7 +1416,7 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
       safeOffOnFailure: true,
       safeOffOnCancellation: true,
       safeOffOnSessionEnd: true,
-      fallbackToColdPath: true,
+      explicitColdDebugModeOnly: true,
       publicRouteExposed: false,
       productionServiceTokenUsed: false,
       persistentBaslerSaved: false,
@@ -658,6 +1440,39 @@ function defaultPreviewStatus(): AiGraderLocalStationPreviewStatus {
     cameraOwnership: "idle",
     frameSource: "mock_station_preview",
     frameCount: 0,
+    cardGeometry: {
+      activeSide: "front",
+      front: {
+        side: "front",
+        placementState: "not_detected",
+        geometrySource: "none",
+        captureMode: "none",
+        confidenceBasis: "none",
+        detectionUsed: false,
+        manualOverrideUsed: false,
+        corners: null,
+        detectedCorners: null,
+        boundingBox: null,
+        rotationDegrees: null,
+        skewDegrees: null,
+        confidence: 0,
+      },
+      back: {
+        side: "back",
+        placementState: "not_detected",
+        geometrySource: "none",
+        captureMode: "none",
+        confidenceBasis: "none",
+        detectionUsed: false,
+        manualOverrideUsed: false,
+        corners: null,
+        detectedCorners: null,
+        boundingBox: null,
+        rotationDegrees: null,
+        skewDegrees: null,
+        confidence: 0,
+      },
+    },
     safety: {
       publicRouteExposed: false,
       requiresStationToken: true,
@@ -726,8 +1541,12 @@ export function buildAiGraderLocalStationStatus(input: {
   action?: AiGraderStationAction;
   mode?: AiGraderLocalStationBridgeMode;
   now?: string;
+  captureProfile?: AiGraderCaptureProfile;
+  rapidCaptureEnabled?: boolean;
 } = {}): AiGraderLocalStationStatus {
   const action = input.action ?? "status";
+  const captureProfile = input.captureProfile ?? "full_forensic";
+  const rapidCaptureEnabled = input.rapidCaptureEnabled === true;
   const currentStep = ACTION_TO_STEP[action] ?? "start_new_card";
   const nextAction = NEXT_ACTION_BY_STEP[currentStep];
   const reportBundle = SAMPLE_AI_GRADER_REPORT_BUNDLE;
@@ -748,7 +1567,18 @@ export function buildAiGraderLocalStationStatus(input: {
     nextAction,
     nextActionLabel: actionLabel(nextAction),
     executionPath: "warm_full_forensic_runner",
-    fallbackUsed: false,
+    explicitColdDebugModeUsed: false,
+    captureProfile,
+    captureProfileGuard: {
+      stationSettingRequired: true,
+      selectionSource: captureProfile === "production_fast" ? "operator_setting" : "bridge_default",
+      productionFastOptIn: captureProfile === "production_fast",
+      fullForensicEvidencePreserved: true,
+      availableCaptureProfiles: ["full_forensic", "production_fast"],
+      previousStableProfile: "full_forensic",
+      fiveSecondTargetProven: false,
+    },
+    captureTiming: buildDefaultAiGraderCaptureTiming(captureProfile),
     acceptedProfile: {
       dutyPercent: 1.3,
       exposureUs: 45000,
@@ -811,6 +1641,7 @@ export function buildAiGraderLocalStationStatus(input: {
     previewStatus: defaultPreviewStatus(),
     liveLighting: defaultLiveLightingStatus(),
     warmRunnerStatus: defaultWarmRunnerStatus(),
+    geometryCaptureDecisions: {},
     reportBundle,
     outputs: {
       productionReleasePath: finalComputed ? "sample-production-release.json" : undefined,
@@ -821,7 +1652,7 @@ export function buildAiGraderLocalStationStatus(input: {
     timingSummary: {
       totalCommandMs: 0,
       executionPath: "warm_full_forensic_runner",
-      fallbackUsed: false,
+      explicitColdDebugModeUsed: false,
       bridgeActionOverheadMs: 0,
       captureCommandMs: 0,
       reportGenerationMs: 0,
@@ -830,6 +1661,19 @@ export function buildAiGraderLocalStationStatus(input: {
       detailedEntries: [],
       phaseBreakdown: {},
       targetInterCaptureNote: "Contract preview uses fixture data; real timing appears when connected to the local bridge.",
+    },
+    rapidCapture: {
+      enabled: rapidCaptureEnabled,
+      workflowHistory: [],
+      humanConfirmationRequired: true,
+      autoConfirm: false,
+      autoPublish: false,
+    },
+    rapidCaptureQueue: {
+      enabled: rapidCaptureEnabled,
+      persisted: true,
+      reportWorkerSerialized: true,
+      items: [],
     },
   };
 }
@@ -897,6 +1741,9 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "latest-report",
     "session-manifest",
     "end-session",
+    "configure-rapid-capture",
+    "queue-current-card",
+    "activate-queue-item",
   ];
   return allowed.includes(raw as AiGraderStationAction) ? (raw as AiGraderStationAction) : null;
 }

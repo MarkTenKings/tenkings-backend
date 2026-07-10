@@ -4,7 +4,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import {
   assertFixedRigOutputDirAllowed,
   buildFixedRigActiveLightingProfile,
@@ -16,6 +16,7 @@ import {
   processFixedRigWarmSideBatch,
   type FixedRigActiveLightingProfile,
   type FixedRigCardSide,
+  type FixedRigCaptureProfile,
   type FixedRigReferenceType,
   type FixedRigWarmEvidencePackageInput,
   type FixedRigWarmEvidencePackageResult,
@@ -48,6 +49,20 @@ import {
   writeAiGraderProductionRelease,
   type AiGraderProductionRelease,
 } from "./aiGraderProductionRelease";
+import {
+  detectCardGeometryFromBuffer,
+  type CardGeometryMetadata,
+  type CardGeometrySide,
+  type CardPlacementState,
+} from "./cardGeometry";
+import {
+  cloneAiGraderCaptureTiming,
+  createAiGraderCaptureTimingMetadata,
+  recordAiGraderCaptureTimingEvent,
+  recordAiGraderCaptureTimingPhase,
+  type AiGraderCaptureTimingMetadata,
+  type AiGraderCaptureTriggerMode,
+} from "./aiGraderCaptureTiming";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.4";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
@@ -55,6 +70,8 @@ export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
 const PREVIEW_CAMERA_SETTLE_MS = 350;
 const LIVE_LIGHTING_WATCHDOG_MS = 15000;
+const PREVIEW_GEOMETRY_THROTTLE_MS = 500;
+const PREVIEW_JPEG_BUFFER_LIMIT_BYTES = 12 * 1024 * 1024;
 
 export type AiGraderLocalStationBridgeMode = "mock" | "real";
 
@@ -78,7 +95,52 @@ export type AiGraderLocalStationBridgeAction =
   | "cancel-session"
   | "latest-report"
   | "session-manifest"
-  | "end-session";
+  | "end-session"
+  | "configure-rapid-capture"
+  | "queue-current-card"
+  | "activate-queue-item";
+
+export type AiGraderRapidCaptureWorkflowState =
+  | "front_captured"
+  | "front_processing"
+  | "back_positioning"
+  | "back_captured"
+  | "finalizing"
+  | "report_ready_needs_confirm"
+  | "confirmed_needs_publish"
+  | "published"
+  | "failed";
+
+export interface AiGraderRapidCaptureWorkflowEvent {
+  state: AiGraderRapidCaptureWorkflowState;
+  at: string;
+  detail: string;
+}
+
+export interface AiGraderRapidCaptureQueueItem {
+  queueItemId: string;
+  sessionId: string;
+  reportId: string;
+  state: AiGraderRapidCaptureWorkflowState;
+  queuedAt: string;
+  updatedAt: string;
+  history: AiGraderRapidCaptureWorkflowEvent[];
+  humanConfirmationRequired: true;
+  autoConfirmed: false;
+  autoPublished: false;
+  error?: string;
+}
+
+interface PersistedAiGraderRapidCaptureQueueItem extends AiGraderRapidCaptureQueueItem {
+  manifestPath: string;
+}
+
+interface PersistedAiGraderRapidCaptureQueue {
+  schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1";
+  updatedAt: string;
+  rapidCaptureEnabled: boolean;
+  items: PersistedAiGraderRapidCaptureQueueItem[];
+}
 
 export type AiGraderLocalStationStepId =
   | "start_new_card"
@@ -107,6 +169,16 @@ export interface AiGraderLocalStationAcceptedProfile {
 }
 
 export type AiGraderWarmRunnerSide = "front" | "back";
+export type AiGraderGeometryCaptureMode = "detected_geometry" | "manual_capture";
+export interface AiGraderManualGeometryRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  imageWidth: number;
+  imageHeight: number;
+  coordinateFrame: "portrait_preview_pixels" | "basler_sensor_pixels";
+}
 export type AiGraderWarmRunnerPhaseStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
 export type AiGraderWarmRunnerExecutionPath = "warm_full_forensic_runner" | "cold_command_fallback";
 export type AiGraderWarmRunnerStatusName =
@@ -156,8 +228,8 @@ export interface AiGraderWarmRunnerStatus {
   mode: "full_forensic";
   backend: AiGraderWarmRunnerExecutionPath;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   status: AiGraderWarmRunnerStatusName;
   sessionId?: string;
   activeSide?: AiGraderWarmRunnerSide;
@@ -202,8 +274,8 @@ export interface AiGraderWarmRunnerStatus {
     stretchTargetMs: 60000;
     measuredTotalMs?: number;
   };
-  fallback: {
-    available: true;
+  coldDebugMode: {
+    configured: boolean;
     active: boolean;
     reason?: string;
   };
@@ -213,7 +285,7 @@ export interface AiGraderWarmRunnerStatus {
     safeOffOnFailure: true;
     safeOffOnCancellation: true;
     safeOffOnSessionEnd: true;
-    fallbackToColdPath: true;
+    explicitColdDebugModeOnly: true;
     publicRouteExposed: false;
     productionServiceTokenUsed: false;
     persistentBaslerSaved: false;
@@ -250,6 +322,7 @@ export interface AiGraderLocalStationBridgeConfigInput {
   gain?: number;
   duty?: number;
   warmRunnerDisabled?: boolean;
+  captureProfile?: FixedRigCaptureProfile;
   fixtureLabel?: string;
   fixtureId?: string;
   referenceType?: string;
@@ -291,6 +364,7 @@ export interface AiGraderLocalStationBridgeConfig {
   gain: number;
   duty: number;
   warmRunnerDisabled: boolean;
+  captureProfile: FixedRigCaptureProfile;
   fixtureLabel?: string;
   fixtureId?: string;
   referenceType?: string;
@@ -313,9 +387,19 @@ export interface AiGraderLocalStationBridgeManifest {
   createdAt?: string;
   updatedAt: string;
   acceptedProfile: AiGraderLocalStationAcceptedProfile;
+  captureProfile: FixedRigCaptureProfile;
+  captureProfileGuard: {
+    stationSettingRequired: true;
+    selectionSource: "bridge_default" | "operator_setting" | "rapid_continuation";
+    productionFastOptIn: boolean;
+    fullForensicEvidencePreserved: true;
+    availableCaptureProfiles: ["full_forensic", "production_fast"];
+    previousStableProfile: "full_forensic";
+    fiveSecondTargetProven: boolean;
+  };
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   confirmations: {
     lightIdleOff: boolean;
     fixtureRulersVisible: boolean;
@@ -363,6 +447,50 @@ export interface AiGraderLocalStationBridgeManifest {
   warnings: string[];
   reportBundle?: AiGraderReportBundle;
   productionRelease?: AiGraderProductionRelease;
+  captureTiming: AiGraderCaptureTimingMetadata;
+  captureTimingHardwareEvidence: Record<AiGraderWarmRunnerSide, {
+    captureBatch: boolean;
+    processedManifest: boolean;
+  }>;
+  captureFailure?: {
+    side: AiGraderWarmRunnerSide;
+    stage: "warm_capture";
+    message: string;
+    at: string;
+    retryRequired: true;
+    automaticColdFallbackAttempted: false;
+  };
+  geometryCaptureDecisions: Partial<Record<AiGraderWarmRunnerSide, {
+    mode: AiGraderGeometryCaptureMode;
+    placementState: CardPlacementState;
+    timestamp: string;
+    explicitOperatorAction: boolean;
+    detectionUsed: boolean;
+    manualOverrideUsed: boolean;
+    manualBoundaryRect?: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      coordinateFrame: "basler_sensor_pixels";
+    };
+    manualGeometrySource?: {
+      coordinateFrame: AiGraderManualGeometryRect["coordinateFrame"];
+      imageWidth: number;
+      imageHeight: number;
+    };
+    sourceFrameId?: string;
+  }>>;
+  rapidCapture: {
+    enabled: boolean;
+    queueItemId?: string;
+    workflowState?: AiGraderRapidCaptureWorkflowState;
+    workflowHistory: AiGraderRapidCaptureWorkflowEvent[];
+    safelyQueuedAt?: string;
+    humanConfirmationRequired: true;
+    autoConfirm: false;
+    autoPublish: false;
+  };
 }
 
 export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBridgeManifest {
@@ -413,6 +541,13 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     rejectsNonLoopback: true;
   };
   timingSummary: AiGraderLocalStationTimingSummary;
+  rapidCaptureQueue: {
+    enabled: boolean;
+    activeQueueItemId?: string;
+    persisted: true;
+    reportWorkerSerialized: true;
+    items: AiGraderRapidCaptureQueueItem[];
+  };
 }
 
 export interface AiGraderLocalStationTimingEntry {
@@ -428,8 +563,8 @@ export interface AiGraderLocalStationTimingEntry {
 export interface AiGraderLocalStationTimingSummary {
   totalCommandMs: number;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   bridgeActionOverheadMs: number;
   captureCommandMs: number;
   reportGenerationMs: number;
@@ -485,6 +620,24 @@ export interface AiGraderLocalStationPreviewStatus {
   lastFrameAt?: string;
   lastError?: string;
   lastStopReason?: string;
+  cardGeometry: {
+    activeSide: CardGeometrySide;
+    front?: CardGeometryMetadata;
+    back?: CardGeometryMetadata;
+    analysis: {
+      source: "real_mjpeg_jpeg" | "mock_deterministic";
+      throttleMs: number;
+      inFlight: boolean;
+      latestFramePending: boolean;
+      framesAnalyzed: number;
+      framesDroppedAsStale: number;
+      lastStartedAt?: string;
+      lastCompletedAt?: string;
+      lastError?: string;
+    };
+    manualOverlayFallbackAvailable: true;
+    previewFramesPersisted: false;
+  };
   safety: {
     publicRouteExposed: false;
     requiresStationToken: true;
@@ -496,6 +649,8 @@ export interface AiGraderLocalStationPreviewStatus {
   };
   note: string;
 }
+
+type AiGraderPreviewGeometryStatus = AiGraderLocalStationPreviewStatus["cardGeometry"];
 
 export interface AiGraderLiveLightingProfile {
   enabled: boolean;
@@ -608,6 +763,13 @@ export interface AiGraderLocalStationBridgeActionRequest {
   operatorId?: string;
   warningsAccepted?: boolean;
   overrideReason?: string;
+  captureProfile?: FixedRigCaptureProfile;
+  rapidCaptureEnabled?: boolean;
+  queueItemId?: string;
+  captureTriggerMode?: AiGraderCaptureTriggerMode;
+  captureTriggerAt?: string;
+  geometryCaptureMode?: AiGraderGeometryCaptureMode;
+  manualGeometryRect?: AiGraderManualGeometryRect;
 }
 
 export interface StartedAiGraderLocalStationBridge {
@@ -794,6 +956,209 @@ function parseMode(value: string | undefined): AiGraderLocalStationBridgeMode {
   throw new Error("AI Grader station bridge mode must be mock or real.");
 }
 
+function activePreviewGeometrySide(step: AiGraderLocalStationStepId): CardGeometrySide {
+  return step === "prompt_flip_card" || step === "capture_back" || step === "run_provisional_diagnostics"
+    ? "back"
+    : "front";
+}
+
+function defaultPreviewGeometryStatus(config: Pick<AiGraderLocalStationBridgeConfig, "mode">): AiGraderPreviewGeometryStatus {
+  return {
+    activeSide: "front",
+    analysis: {
+      source: config.mode === "real" ? "real_mjpeg_jpeg" : "mock_deterministic",
+      throttleMs: PREVIEW_GEOMETRY_THROTTLE_MS,
+      inFlight: false,
+      latestFramePending: false,
+      framesAnalyzed: 0,
+      framesDroppedAsStale: 0,
+    },
+    manualOverlayFallbackAvailable: true,
+    previewFramesPersisted: false,
+  };
+}
+
+function mockPreviewGeometry(side: CardGeometrySide, frameIndex: number, timestamp: string): CardGeometryMetadata {
+  const placementState: CardPlacementState = frameIndex === 1 ? "not_detected" : frameIndex === 2 ? "adjust_card" : "ready";
+  const detected = placementState !== "not_detected";
+  const ready = placementState === "ready";
+  const box = detected
+    ? ready
+      ? { x: 198, y: 277.5, width: 504, height: 705 }
+      : { x: 42, y: 277.5, width: 504, height: 705 }
+    : null;
+  const corners = box
+    ? {
+        topLeft: { x: box.x, y: box.y },
+        topRight: { x: box.x + box.width, y: box.y },
+        bottomRight: { x: box.x + box.width, y: box.y + box.height },
+        bottomLeft: { x: box.x, y: box.y + box.height },
+      }
+    : null;
+  return {
+    version: "ten-kings-card-geometry-v1",
+    side,
+    placementState,
+    geometrySource: detected ? "detected" : "none",
+    captureMode: detected ? "automatic_detection" : "none",
+    confidenceBasis: detected ? "automatic_detection" : "none",
+    detectionUsed: detected,
+    manualOverrideUsed: false,
+    corners,
+    detectedCorners: corners,
+    boundingBox: box,
+    rotationDegrees: detected ? 0 : null,
+    skewDegrees: detected ? 0 : null,
+    confidence: ready ? 0.96 : detected ? 0.82 : 0,
+    sourceImageId: `preview-${side}`,
+    sourceFrameId: `preview-${side}-${frameIndex}`,
+    timestamp,
+    image: { width: 900, height: 1260, coordinateFrame: "source_image_pixels" },
+    placement: {
+      ...(detected ? {
+        centerOffsetPixels: ready
+          ? { x: 0, y: 0, distance: 0, maxAxis: 0 }
+          : { x: -156, y: 0, distance: 156, maxAxis: 156 },
+        centerOffsetInches: ready
+          ? { x: 0, y: 0, distance: 0, maxAxis: 0 }
+          : { x: -0.7738, y: 0, distance: 0.7738, maxAxis: 0.7738 },
+        estimatedPixelsPerInch: 201.6,
+      } : {}),
+      maxCenterOffsetInches: 0.5,
+      maxSkewDegrees: 10,
+      minReadyConfidence: 0.72,
+      withinCenterTolerance: ready,
+      withinSkewTolerance: detected,
+      withinAspectTolerance: detected,
+      withinFrame: ready,
+      confidenceReady: detected,
+    },
+    detection: {
+      method: "adaptive_border_contrast_connected_component_pca_v1",
+      backgroundLuma: 20,
+      contrastRange: detected ? 180 : 0,
+      foregroundThreshold: detected ? 54 : 12,
+      foregroundPixelFraction: detected ? 0.3133 : 0,
+      ...(detected ? { componentPixelFraction: 0.3133, measuredAspectRatio: 1.3988, relativeAspectError: 0.0009 } : {}),
+      expectedAspectRatio: 1.4,
+      analysisWidth: 731,
+      analysisHeight: 1024,
+    },
+    warnings: placementState === "not_detected"
+      ? ["Mock preview has no card candidate yet."]
+      : placementState === "adjust_card"
+        ? ["Mock card is outside the configured close-enough center tolerance."]
+        : [],
+  };
+}
+
+export class AiGraderPreviewJpegFrameAssembler {
+  private buffered = Buffer.alloc(0);
+
+  get bufferedByteLength() {
+    return this.buffered.length;
+  }
+
+  push(chunk: Buffer): Buffer[] {
+    if (!chunk.length) return [];
+    this.buffered = this.buffered.length ? Buffer.concat([this.buffered, chunk]) : Buffer.from(chunk);
+    const frames: Buffer[] = [];
+    while (this.buffered.length) {
+      const start = this.buffered.indexOf(Buffer.from([0xff, 0xd8]));
+      if (start < 0) {
+        this.buffered = this.buffered.at(-1) === 0xff ? this.buffered.subarray(-1) : Buffer.alloc(0);
+        break;
+      }
+      if (start > 0) this.buffered = this.buffered.subarray(start);
+      const end = this.buffered.indexOf(Buffer.from([0xff, 0xd9]), 2);
+      if (end < 0) {
+        if (this.buffered.length > PREVIEW_JPEG_BUFFER_LIMIT_BYTES) {
+          const nextStart = this.buffered.lastIndexOf(Buffer.from([0xff, 0xd8]));
+          this.buffered = nextStart > 0 && this.buffered.length - nextStart <= PREVIEW_JPEG_BUFFER_LIMIT_BYTES
+            ? this.buffered.subarray(nextStart)
+            : this.buffered.subarray(-1);
+        }
+        break;
+      }
+      const frameEnd = end + 2;
+      if (frameEnd <= PREVIEW_JPEG_BUFFER_LIMIT_BYTES) frames.push(Buffer.from(this.buffered.subarray(0, frameEnd)));
+      this.buffered = this.buffered.subarray(frameEnd);
+    }
+    return frames;
+  }
+}
+
+function parseCaptureProfile(value: string | undefined): FixedRigCaptureProfile {
+  const normalized = (value ?? "full_forensic").trim().toLowerCase();
+  if (normalized === "full_forensic" || normalized === "production_fast") return normalized;
+  throw new Error("AI Grader capture profile must be full_forensic or production_fast.");
+}
+
+function parseCaptureTriggerMode(value: AiGraderCaptureTriggerMode | undefined): AiGraderCaptureTriggerMode {
+  if (value === undefined || value === "operator") return "operator";
+  if (value === "auto") return "auto";
+  throw new Error("AI Grader capture trigger mode must be operator or auto.");
+}
+
+function normalizeManualGeometryRect(input: AiGraderManualGeometryRect | undefined) {
+  if (!input || (
+    input.coordinateFrame !== "portrait_preview_pixels"
+    && input.coordinateFrame !== "basler_sensor_pixels"
+  )) {
+    throw new Error("AI Grader manual_capture requires manualGeometryRect with an explicit portrait_preview_pixels or basler_sensor_pixels coordinateFrame.");
+  }
+  const values = [input.x, input.y, input.width, input.height, input.imageWidth, input.imageHeight];
+  if (!values.every(Number.isFinite)
+    || input.x < 0
+    || input.y < 0
+    || input.width <= 0
+    || input.height <= 0
+    || input.imageWidth <= 0
+    || input.imageHeight <= 0
+    || input.x + input.width > input.imageWidth
+    || input.y + input.height > input.imageHeight) {
+    throw new Error("AI Grader manualGeometryRect must be a positive rectangle contained within its declared source image dimensions.");
+  }
+  const roundPixel = (value: number) => Math.round(value * 1000) / 1000;
+  const rawRect = input.coordinateFrame === "portrait_preview_pixels"
+    ? {
+        x: input.y,
+        y: input.imageWidth - input.x - input.width,
+        width: input.height,
+        height: input.width,
+      }
+    : {
+        x: input.x,
+        y: input.y,
+        width: input.width,
+        height: input.height,
+      };
+  return {
+    rawRect: {
+      x: roundPixel(rawRect.x),
+      y: roundPixel(rawRect.y),
+      width: roundPixel(rawRect.width),
+      height: roundPixel(rawRect.height),
+      coordinateFrame: "basler_sensor_pixels" as const,
+    },
+    source: {
+      coordinateFrame: input.coordinateFrame,
+      imageWidth: roundPixel(input.imageWidth),
+      imageHeight: roundPixel(input.imageHeight),
+    },
+  };
+}
+
+function validatedCaptureTriggerAt(value: string | undefined, actionReceivedAt: string): string {
+  const receivedMs = Date.parse(actionReceivedAt);
+  if (typeof value !== "string" || !Number.isFinite(receivedMs)) return actionReceivedAt;
+  const suppliedMs = Date.parse(value);
+  if (!Number.isFinite(suppliedMs)) return actionReceivedAt;
+  if (suppliedMs < receivedMs - 60_000 || suppliedMs > receivedMs) return actionReceivedAt;
+  if (new Date(suppliedMs).toISOString().slice(0, 10) !== new Date(receivedMs).toISOString().slice(0, 10)) return actionReceivedAt;
+  return new Date(suppliedMs).toISOString();
+}
+
 function parseAllowedOrigins(value: string | undefined, explicit: string[] | undefined): string[] {
   const fromEnv = value
     ? value
@@ -872,6 +1237,7 @@ export function buildAiGraderLocalStationBridgeConfig(
 ): AiGraderLocalStationBridgeConfig {
   const enabled = input.enabled ?? env.AI_GRADER_LOCAL_STATION_ENABLED === "true";
   const mode = input.mode ?? parseMode(env.AI_GRADER_STATION_BRIDGE_MODE);
+  const captureProfile = input.captureProfile ?? parseCaptureProfile(env.AI_GRADER_CAPTURE_PROFILE);
   const outputDir = firstNonEmpty(input.outputDir, env.AI_GRADER_STATION_OUTPUT_DIR) ?? "C:\\TenKings\\capture-data\\ai-grader-station";
   const stationToken = firstNonEmpty(input.stationToken, env.AI_GRADER_STATION_BRIDGE_TOKEN) ?? (mode === "mock" ? "local-dev-token" : "");
   const stationPairingCode = firstNonEmpty(input.stationPairingCode, env.AI_GRADER_STATION_PAIRING_CODE);
@@ -898,11 +1264,15 @@ export function buildAiGraderLocalStationBridgeConfig(
   const exposureUs = input.exposureUs ?? Number(env.AI_GRADER_STATION_EXPOSURE_US ?? FIXED_RIG_SELECTED_EXPOSURE_US);
   const gain = input.gain ?? Number(env.AI_GRADER_STATION_GAIN ?? FIXED_RIG_SELECTED_GAIN);
   const duty = input.duty ?? Number(env.AI_GRADER_STATION_DUTY_PERCENT ?? FIXED_RIG_SELECTED_LEIMAC_DUTY);
+  const warmRunnerDisabled = input.warmRunnerDisabled ?? debugFlagEnabled(env.AI_GRADER_WARM_RUNNER_DISABLED);
   if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
     throw new Error("AI Grader station bridge exposure must be an integer from 1 to 100000 us.");
   }
   if (!Number.isFinite(gain) || gain < 0) throw new Error("AI Grader station bridge gain must be non-negative.");
   if (!Number.isFinite(duty) || duty < 0 || duty > 5) throw new Error("AI Grader station bridge duty must be from 0 to 5 percent.");
+  if (warmRunnerDisabled && captureProfile === "production_fast") {
+    throw new Error("AI Grader production_fast cannot run with explicit cold debug mode; select full_forensic or enable the warm runner.");
+  }
   return {
     enabled,
     host: normalizeHost(firstNonEmpty(input.host, env.AI_GRADER_STATION_BRIDGE_HOST)),
@@ -931,7 +1301,8 @@ export function buildAiGraderLocalStationBridgeConfig(
     exposureUs,
     gain,
     duty,
-    warmRunnerDisabled: input.warmRunnerDisabled ?? debugFlagEnabled(env.AI_GRADER_WARM_RUNNER_DISABLED),
+    warmRunnerDisabled,
+    captureProfile,
     fixtureLabel: input.fixtureLabel,
     fixtureId: input.fixtureId,
     referenceType: input.referenceType,
@@ -945,17 +1316,28 @@ export function buildAiGraderLocalStationBridgeConfig(
   };
 }
 
-function newManifest(config: AiGraderLocalStationBridgeConfig): AiGraderLocalStationBridgeManifest {
+function newManifest(config: AiGraderLocalStationBridgeConfig, rapidCaptureEnabled = false, startedAt = new Date().toISOString()): AiGraderLocalStationBridgeManifest {
+  const captureProfile: FixedRigCaptureProfile = config.captureProfile;
   return {
     schemaVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
     stationId: "local-dell-ai-grader-station",
     currentStep: "start_new_card",
     mode: config.mode,
-    updatedAt: new Date().toISOString(),
+    updatedAt: startedAt,
     acceptedProfile: defaultProfile(config),
+    captureProfile,
+    captureProfileGuard: {
+      stationSettingRequired: true,
+      selectionSource: "bridge_default",
+      productionFastOptIn: captureProfile === "production_fast",
+      fullForensicEvidencePreserved: true,
+      availableCaptureProfiles: ["full_forensic", "production_fast"],
+      previousStableProfile: "full_forensic",
+      fiveSecondTargetProven: false,
+    },
     executionPath: config.warmRunnerDisabled ? "cold_command_fallback" : "warm_full_forensic_runner",
-    fallbackUsed: config.warmRunnerDisabled,
-    ...(config.warmRunnerDisabled ? { fallbackReason: "Warm runner disabled by explicit debug flag." } : {}),
+    explicitColdDebugModeUsed: config.warmRunnerDisabled,
+    ...(config.warmRunnerDisabled ? { explicitColdDebugReason: "Warm runner disabled by explicit debug flag before capture." } : {}),
     confirmations: {
       lightIdleOff: false,
       fixtureRulersVisible: false,
@@ -990,6 +1372,23 @@ function newManifest(config: AiGraderLocalStationBridgeConfig): AiGraderLocalSta
         ? "Real bridge mode is enabled, but each hardware action still requires local token and staged operator confirmations."
         : "Mock bridge mode is active; hardware success is not claimed.",
     ],
+    captureTiming: createAiGraderCaptureTimingMetadata({
+      captureProfile,
+      hardwareMeasurement: false,
+      startedAt,
+    }),
+    captureTimingHardwareEvidence: {
+      front: { captureBatch: false, processedManifest: false },
+      back: { captureBatch: false, processedManifest: false },
+    },
+    geometryCaptureDecisions: {},
+    rapidCapture: {
+      enabled: rapidCaptureEnabled,
+      workflowHistory: [],
+      humanConfirmationRequired: true,
+      autoConfirm: false,
+      autoPublish: false,
+    },
   };
 }
 
@@ -1011,14 +1410,14 @@ function fullForensicEvidenceRoles(status: AiGraderWarmRunnerPhaseStatus = "pend
 }
 
 function defaultWarmRunnerStatus(config?: Pick<AiGraderLocalStationBridgeConfig, "warmRunnerDisabled">): AiGraderWarmRunnerStatus {
-  const fallbackDisabled = config?.warmRunnerDisabled === true;
+  const coldDebugConfigured = config?.warmRunnerDisabled === true;
   return {
     enabled: true,
     mode: "full_forensic",
-    backend: fallbackDisabled ? "cold_command_fallback" : "warm_full_forensic_runner",
-    executionPath: fallbackDisabled ? "cold_command_fallback" : "warm_full_forensic_runner",
-    fallbackUsed: fallbackDisabled,
-    ...(fallbackDisabled ? { fallbackReason: "Warm runner disabled by explicit debug flag." } : {}),
+    backend: coldDebugConfigured ? "cold_command_fallback" : "warm_full_forensic_runner",
+    executionPath: coldDebugConfigured ? "cold_command_fallback" : "warm_full_forensic_runner",
+    explicitColdDebugModeUsed: coldDebugConfigured,
+    ...(coldDebugConfigured ? { explicitColdDebugReason: "Warm runner disabled by explicit debug flag before capture." } : {}),
     status: "idle",
     captureLock: {
       held: false,
@@ -1056,10 +1455,10 @@ function defaultWarmRunnerStatus(config?: Pick<AiGraderLocalStationBridgeConfig,
       targetTotalMaxMs: 150000,
       stretchTargetMs: 60000,
     },
-    fallback: {
-      available: true,
-      active: fallbackDisabled,
-      ...(fallbackDisabled ? { reason: "Warm runner disabled by explicit debug flag." } : {}),
+    coldDebugMode: {
+      configured: coldDebugConfigured,
+      active: coldDebugConfigured,
+      ...(coldDebugConfigured ? { reason: "Warm runner disabled by explicit debug flag." } : {}),
     },
     safety: {
       captureLock: true,
@@ -1067,15 +1466,15 @@ function defaultWarmRunnerStatus(config?: Pick<AiGraderLocalStationBridgeConfig,
       safeOffOnFailure: true,
       safeOffOnCancellation: true,
       safeOffOnSessionEnd: true,
-      fallbackToColdPath: true,
+      explicitColdDebugModeOnly: true,
       publicRouteExposed: false,
       productionServiceTokenUsed: false,
       persistentBaslerSaved: false,
       persistentLeimacSaved: false,
     },
     note:
-      fallbackDisabled
-        ? "Full forensic evidence remains the default, but this run is explicitly using the cold command fallback because the warm runner was disabled by debug flag."
+      coldDebugConfigured
+        ? "This debug-only run explicitly uses the cold command path because the warm runner was disabled. It cannot use production_fast or prove the five-second target."
         : "Full forensic evidence remains the default. Speed comes from the bridge-owned warm full forensic runner, persistent side-batch camera ownership, state-aware Leimac writes, capture/process/report queues, preview locking, and safe cleanup.",
   };
 }
@@ -1093,6 +1492,7 @@ function defaultPreviewStatus(config: AiGraderLocalStationBridgeConfig): AiGrade
     cameraOwnership: "idle",
     frameSource: config.mode === "real" ? "basler_pylon_continuous_grab" : "mock_station_preview",
     frameCount: 0,
+    cardGeometry: defaultPreviewGeometryStatus(config),
     safety: {
       publicRouteExposed: false,
       requiresStationToken: true,
@@ -1274,7 +1674,6 @@ function commandInput(config: AiGraderLocalStationBridgeConfig, manifest: AiGrad
     verticalSpanMm: config.verticalSpanMm,
     verticalStartPx: config.verticalStartPx,
     verticalEndPx: config.verticalEndPx,
-    cardBoundaryRect: config.cardBoundaryRect,
   };
 }
 
@@ -1303,12 +1702,32 @@ function assertFlipComplete(manifest: AiGraderLocalStationBridgeManifest) {
   if (!manifest.confirmations.flipComplete) throw new Error("Mark must confirm card flip is complete before back capture.");
 }
 
+const atomicJsonWriteChains = new Map<string, Promise<void>>();
+
+async function writeJsonAtomic(filePath: string, value: unknown) {
+  const serialized = `${JSON.stringify(value, null, 2)}\n`;
+  const previous = atomicJsonWriteChains.get(filePath) ?? Promise.resolve();
+  const write = previous
+    .catch(() => {})
+    .then(async () => {
+      await mkdir(path.dirname(filePath), { recursive: true });
+      const tempPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+      await writeFile(tempPath, serialized, "utf-8");
+      await rename(tempPath, filePath);
+    });
+  atomicJsonWriteChains.set(filePath, write);
+  try {
+    await write;
+  } finally {
+    if (atomicJsonWriteChains.get(filePath) === write) atomicJsonWriteChains.delete(filePath);
+  }
+}
+
 async function writeSessionManifest(manifest: AiGraderLocalStationBridgeManifest) {
   if (!manifest.outputs.sessionDir) return;
   const manifestPath = manifest.outputs.manifestPath ?? path.join(manifest.outputs.sessionDir, "station-session.json");
   manifest.outputs.manifestPath = manifestPath;
-  await mkdir(path.dirname(manifestPath), { recursive: true });
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
+  await writeJsonAtomic(manifestPath, manifest);
 }
 
 async function runStepOrMock(
@@ -1372,6 +1791,9 @@ function bridgeEndpoints() {
     { method: "POST", action: "lighting-accept", path: "/lighting/accept", hardwareAccess: false, description: "Accept current browser live lighting profile for warm capture." },
     { method: "POST", action: "lighting-heartbeat", path: "/lighting/heartbeat", hardwareAccess: false, description: "Keep browser live lighting watchdog alive while the operator page is connected." },
     { method: "POST", action: "start-session", hardwareAccess: false, description: "Create a local station session folder and manifest." },
+    { method: "POST", action: "configure-rapid-capture", hardwareAccess: false, description: "Enable or disable persisted rapid capture mode; human confirmation and publish remain required." },
+    { method: "POST", action: "queue-current-card", hardwareAccess: false, description: "Safely queue captured front/back packages for serialized background report finalization and start a clean next card." },
+    { method: "POST", action: "activate-queue-item", hardwareAccess: false, description: "Activate a completed rapid capture item in the existing Confirm Card and Publish workflow." },
     { method: "POST", action: "confirm-light-idle-off", hardwareAccess: false, description: "Record operator light-idle/off confirmation." },
     { method: "POST", action: "confirm-fixture-rulers", hardwareAccess: false, description: "Record operator fixture/ruler visibility confirmation." },
     { method: "POST", action: "launch-preview", hardwareAccess: true, description: "Run the existing Basler live preview/focus/framing command." },
@@ -1480,8 +1902,8 @@ function timingSummary(results: AiGraderStationCommandResult[], warmRunnerStatus
   return {
     totalCommandMs,
     executionPath: warmRunnerStatus?.executionPath ?? "warm_full_forensic_runner",
-    fallbackUsed: warmRunnerStatus?.fallbackUsed ?? false,
-    ...(warmRunnerStatus?.fallbackReason ? { fallbackReason: warmRunnerStatus.fallbackReason } : {}),
+    explicitColdDebugModeUsed: warmRunnerStatus?.explicitColdDebugModeUsed ?? false,
+    ...(warmRunnerStatus?.explicitColdDebugReason ? { explicitColdDebugReason: warmRunnerStatus.explicitColdDebugReason } : {}),
     bridgeActionOverheadMs: 0,
     captureCommandMs: durationFor(["operator_preview", "capture_front", "capture_back"]),
     reportGenerationMs,
@@ -1491,7 +1913,7 @@ function timingSummary(results: AiGraderStationCommandResult[], warmRunnerStatus
     phaseBreakdown,
     targetInterCaptureNote:
       warmRunnerStatus?.executionPath === "cold_command_fallback"
-        ? "Cold command fallback was used. This run preserves full evidence but does not count for warm-runner speed acceptance."
+        ? "Explicit cold debug mode was configured before capture. This run does not count for production_fast or five-second speed acceptance."
         : "Warm full forensic runner is active with bridge-owned capture/process/report phases and full forensic evidence preserved.",
   };
 }
@@ -1708,10 +2130,88 @@ const defaultWarmForensicRunner: AiGraderWarmForensicRunner = {
   processSide: processFixedRigWarmSideBatch,
 };
 
-function warmFailureAllowsColdFallback(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const candidate = error as { safeToFallback?: unknown; capturesStarted?: unknown };
-  return candidate.safeToFallback === true && candidate.capturesStarted === false;
+const RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
+const RAPID_CAPTURE_QUEUE_LIMIT = 25;
+
+export function retainAiGraderRapidCaptureQueueItems<T extends { state: AiGraderRapidCaptureWorkflowState }>(
+  items: T[],
+  limit = RAPID_CAPTURE_QUEUE_LIMIT
+): T[] {
+  const protectedItems = items.filter((item) => item.state !== "published" && item.state !== "failed");
+  const terminalAllowance = Math.max(0, limit - protectedItems.length);
+  const retainedTerminal = new Set(
+    items
+      .filter((item) => item.state === "published" || item.state === "failed")
+      .slice(0, terminalAllowance)
+  );
+  return items.filter((item) => item.state !== "published" && item.state !== "failed" || retainedTerminal.has(item));
+}
+
+function rapidCaptureQueuePath(config: AiGraderLocalStationBridgeConfig) {
+  return path.join(config.outputDir, "rapid-capture-queue.json");
+}
+
+function cloneManifest(manifest: AiGraderLocalStationBridgeManifest): AiGraderLocalStationBridgeManifest {
+  return structuredClone(manifest);
+}
+
+function timingRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function finiteTimingDuration(value: unknown): number | undefined {
+  const duration = typeof value === "number" ? value : Number.NaN;
+  return Number.isFinite(duration) && duration >= 0 ? duration : undefined;
+}
+
+function nestedTimingDuration(value: unknown, seen = new Set<object>()): number | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  if (seen.has(value)) return undefined;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    const durations = value.map((item) => nestedTimingDuration(item, seen)).filter((item): item is number => item !== undefined);
+    return durations.length ? durations.reduce((sum, item) => sum + item, 0) : undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const direct = finiteTimingDuration(record.durationMs);
+  if (direct !== undefined) return direct;
+  const durations = Object.values(record)
+    .map((item) => nestedTimingDuration(item, seen))
+    .filter((item): item is number => item !== undefined);
+  return durations.length ? durations.reduce((sum, item) => sum + item, 0) : undefined;
+}
+
+function readRapidCaptureQueueSync(config: AiGraderLocalStationBridgeConfig): PersistedAiGraderRapidCaptureQueue {
+  const empty = (): PersistedAiGraderRapidCaptureQueue => ({
+    schemaVersion: RAPID_CAPTURE_QUEUE_SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
+    rapidCaptureEnabled: false,
+    items: [],
+  });
+  try {
+    const parsed = JSON.parse(readFileSync(rapidCaptureQueuePath(config), "utf-8")) as Partial<PersistedAiGraderRapidCaptureQueue>;
+    if (parsed.schemaVersion !== RAPID_CAPTURE_QUEUE_SCHEMA_VERSION || !Array.isArray(parsed.items)) return empty();
+    return {
+      schemaVersion: RAPID_CAPTURE_QUEUE_SCHEMA_VERSION,
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+      rapidCaptureEnabled: parsed.rapidCaptureEnabled === true,
+      items: retainAiGraderRapidCaptureQueueItems(parsed.items
+        .filter((item): item is PersistedAiGraderRapidCaptureQueueItem => Boolean(
+          item
+          && typeof item.queueItemId === "string"
+          && typeof item.sessionId === "string"
+          && typeof item.reportId === "string"
+          && typeof item.manifestPath === "string"
+        ))),
+    };
+  } catch {
+    return empty();
+  }
+}
+
+function publicRapidCaptureQueueItem(item: PersistedAiGraderRapidCaptureQueueItem): AiGraderRapidCaptureQueueItem {
+  const { manifestPath: _manifestPath, ...publicItem } = item;
+  return publicItem;
 }
 
 export class AiGraderLocalStationBridgeService {
@@ -1723,7 +2223,18 @@ export class AiGraderLocalStationBridgeService {
   private previewProcess?: ChildProcessWithoutNullStreams;
   private previewStop?: (reason: string) => void;
   private captureLock?: { owner: string; acquiredAt: string };
-  private warmProcessingJobs: Partial<Record<AiGraderWarmRunnerSide, Promise<FixedRigWarmEvidencePackageResult>>> = {};
+  private warmProcessingJobs = new Map<string, Promise<FixedRigWarmEvidencePackageResult>>();
+  private rapidQueue: PersistedAiGraderRapidCaptureQueue;
+  private committedRapidQueue: PersistedAiGraderRapidCaptureQueue;
+  private queuedManifests = new Map<string, AiGraderLocalStationBridgeManifest>();
+  private reportWorker: Promise<void> = Promise.resolve();
+  private queueWriteChain: Promise<void> = Promise.resolve();
+  private activeQueueItemId?: string;
+  private previewGeometryPending?: { frame: Buffer; frameIndex: number; side: CardGeometrySide; sessionId?: string; epoch: number };
+  private previewGeometryAnalysisInFlight = false;
+  private previewGeometryTimer?: ReturnType<typeof setTimeout>;
+  private previewGeometryLastStartedAtMs = 0;
+  private previewGeometryEpoch = 0;
   private liveLightingWatchdog?: ReturnType<typeof setTimeout>;
   private leimacClient?: LeimacIdmuClient;
 
@@ -1736,10 +2247,14 @@ export class AiGraderLocalStationBridgeService {
     this.runner = runner;
     this.warmRunner = warmRunner;
     this.stationUrl = `http://${hostForUrl(config.host)}:${config.port}`;
-    this.manifest = newManifest(config);
+    this.rapidQueue = readRapidCaptureQueueSync(config);
+    this.committedRapidQueue = structuredClone(this.rapidQueue);
+    this.manifest = newManifest(config, this.rapidQueue.rapidCaptureEnabled);
+    void this.recoverPersistedRapidFinalization().catch(() => {});
   }
 
   status(): AiGraderLocalStationBridgeStatus {
+    this.refreshPreviewGeometryActiveSide();
     const nextAction = NEXT_ACTION_BY_STEP[this.manifest.currentStep];
     const reportId = this.manifest.reportId;
     const viewerRoute = reportRoute(reportId);
@@ -1787,16 +2302,660 @@ export class AiGraderLocalStationBridgeService {
         rejectsNonLoopback: true,
       },
       timingSummary: timingSummary(this.manifest.commandResults, this.manifest.warmRunnerStatus),
+      rapidCaptureQueue: {
+        enabled: this.committedRapidQueue.rapidCaptureEnabled,
+        ...(this.activeQueueItemId ? { activeQueueItemId: this.activeQueueItemId } : {}),
+        persisted: true,
+        reportWorkerSerialized: true,
+        items: this.committedRapidQueue.items.map(publicRapidCaptureQueueItem),
+      },
       ...this.manifest,
     };
   }
 
   previewStatus(): AiGraderLocalStationPreviewStatus {
+    this.refreshPreviewGeometryActiveSide();
     return this.manifest.previewStatus;
   }
 
   liveLightingStatus(): AiGraderLiveLightingStatus {
     return this.manifest.liveLighting;
+  }
+
+  private ensureCaptureTiming(manifest: AiGraderLocalStationBridgeManifest) {
+    const captureProfile: FixedRigCaptureProfile = manifest.captureProfile === "production_fast" ? "production_fast" : "full_forensic";
+    if (!manifest.captureTiming || manifest.captureTiming.schemaVersion !== "ten-kings-ai-grader-capture-timing-v1") {
+      manifest.captureTiming = createAiGraderCaptureTimingMetadata({
+        captureProfile,
+        hardwareMeasurement: false,
+        startedAt: manifest.createdAt ?? manifest.updatedAt,
+      });
+    }
+    manifest.captureTimingHardwareEvidence ??= {
+      front: { captureBatch: false, processedManifest: false },
+      back: { captureBatch: false, processedManifest: false },
+    };
+    manifest.captureTiming.captureProfile = captureProfile;
+    manifest.captureTiming.hardwareMeasurement = (["front", "back"] as const).every((side) =>
+      manifest.captureTimingHardwareEvidence[side].captureBatch
+      && manifest.captureTimingHardwareEvidence[side].processedManifest
+    );
+    manifest.captureTiming = cloneAiGraderCaptureTiming(manifest.captureTiming);
+    if (manifest.captureProfileGuard) {
+      manifest.captureProfileGuard.fiveSecondTargetProven = manifest.captureTiming.target.fiveSecondsPerSideProven;
+    }
+    return manifest.captureTiming;
+  }
+
+  private recordCaptureTimingEvent(
+    manifest: AiGraderLocalStationBridgeManifest,
+    input: Parameters<typeof recordAiGraderCaptureTimingEvent>[1]
+  ) {
+    const timing = this.ensureCaptureTiming(manifest);
+    recordAiGraderCaptureTimingEvent(timing, input);
+    this.ensureCaptureTiming(manifest);
+  }
+
+  private recordCaptureTimingPhase(
+    manifest: AiGraderLocalStationBridgeManifest,
+    input: Parameters<typeof recordAiGraderCaptureTimingPhase>[1]
+  ) {
+    const timing = this.ensureCaptureTiming(manifest);
+    recordAiGraderCaptureTimingPhase(timing, input);
+    this.ensureCaptureTiming(manifest);
+  }
+
+  private captureTimingSnapshot(manifest: AiGraderLocalStationBridgeManifest): Record<string, any> {
+    return cloneAiGraderCaptureTiming(this.ensureCaptureTiming(manifest)) as unknown as Record<string, any>;
+  }
+
+  private geometryCaptureDecisionSnapshot(manifest: AiGraderLocalStationBridgeManifest): Record<string, any> {
+    const snapshot: Record<string, any> = {};
+    for (const side of ["front", "back"] as const) {
+      const decision = manifest.geometryCaptureDecisions?.[side];
+      if (!decision) continue;
+      snapshot[side] = {
+        mode: decision.mode,
+        placementState: decision.placementState,
+        timestamp: decision.timestamp,
+        explicitOperatorAction: decision.explicitOperatorAction,
+        detectionUsed: decision.detectionUsed,
+        manualOverrideUsed: decision.manualOverrideUsed,
+        ...(decision.manualBoundaryRect ? { manualBoundaryRect: { ...decision.manualBoundaryRect } } : {}),
+        ...(decision.manualGeometrySource ? { manualGeometrySource: { ...decision.manualGeometrySource } } : {}),
+        ...(decision.sourceFrameId ? { sourceFrameId: decision.sourceFrameId } : {}),
+      };
+    }
+    return snapshot;
+  }
+
+  private async captureTimingSnapshotForReport(reportId: string, sessionDir?: string): Promise<Record<string, any> | undefined> {
+    if (this.manifest.reportId === reportId) return this.captureTimingSnapshot(this.manifest);
+    for (const queued of this.queuedManifests.values()) {
+      if (queued.reportId === reportId) return this.captureTimingSnapshot(queued);
+    }
+    if (!sessionDir) return undefined;
+    const persisted = await readJsonFile(path.join(sessionDir, "station-session.json")) as AiGraderLocalStationBridgeManifest | undefined;
+    return persisted?.reportId === reportId ? this.captureTimingSnapshot(persisted) : undefined;
+  }
+
+  private async geometryCaptureDecisionSnapshotForReport(reportId: string, sessionDir?: string): Promise<Record<string, any> | undefined> {
+    if (this.manifest.reportId === reportId) return this.geometryCaptureDecisionSnapshot(this.manifest);
+    for (const queued of this.queuedManifests.values()) {
+      if (queued.reportId === reportId) return this.geometryCaptureDecisionSnapshot(queued);
+    }
+    if (!sessionDir) return undefined;
+    const persisted = await readJsonFile(path.join(sessionDir, "station-session.json")) as AiGraderLocalStationBridgeManifest | undefined;
+    return persisted?.reportId === reportId ? this.geometryCaptureDecisionSnapshot(persisted) : undefined;
+  }
+
+  private recordGeometryCaptureDecision(
+    manifest: AiGraderLocalStationBridgeManifest,
+    side: AiGraderWarmRunnerSide,
+    request: Pick<AiGraderLocalStationBridgeActionRequest, "captureTriggerMode" | "geometryCaptureMode" | "manualGeometryRect">,
+    timestamp: string
+  ) {
+    const triggerMode = parseCaptureTriggerMode(request.captureTriggerMode);
+    const requestedMode = request.geometryCaptureMode ?? "detected_geometry";
+    if (requestedMode !== "detected_geometry" && requestedMode !== "manual_capture") {
+      throw new Error("AI Grader geometry capture mode must be detected_geometry or manual_capture.");
+    }
+    const geometry = manifest.previewStatus.cardGeometry[side];
+    const placementState = geometry?.placementState ?? "not_detected";
+    const detectedCorners = geometry?.detectedCorners ?? geometry?.corners;
+    const detectedPoints = detectedCorners
+      ? [detectedCorners.topLeft, detectedCorners.topRight, detectedCorners.bottomRight, detectedCorners.bottomLeft]
+      : [];
+    const validDetectedGeometry = placementState === "ready"
+      && geometry?.geometrySource === "detected"
+      && geometry.detectionUsed === true
+      && geometry.manualOverrideUsed !== true
+      && detectedPoints.length === 4
+      && detectedPoints.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+      && Boolean(geometry.boundingBox)
+      && Number.isFinite(geometry.boundingBox?.x)
+      && Number.isFinite(geometry.boundingBox?.y)
+      && Number.isFinite(geometry.boundingBox?.width)
+      && Number.isFinite(geometry.boundingBox?.height)
+      && Number(geometry.boundingBox?.width) > 0
+      && Number(geometry.boundingBox?.height) > 0;
+    if (triggerMode === "auto" && requestedMode === "manual_capture") {
+      throw new Error("AI Grader auto-capture cannot use manual_capture; wait for a Ready detected-geometry state.");
+    }
+    if (requestedMode === "detected_geometry" && !validDetectedGeometry) {
+      throw new Error(`AI Grader ${side} capture requires a valid Ready detected-geometry state; current state is ${placementState}. Use an explicit operator manual_capture action with a confirmed overlay boundary.`);
+    }
+    if (requestedMode === "manual_capture" && triggerMode !== "operator") {
+      throw new Error("AI Grader manual_capture requires an explicit operator capture action.");
+    }
+    const normalizedManualGeometry = requestedMode === "manual_capture"
+      ? normalizeManualGeometryRect(request.manualGeometryRect)
+      : undefined;
+    const sourceFrameId = typeof geometry?.sourceFrameId === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(geometry.sourceFrameId)
+      ? geometry.sourceFrameId
+      : undefined;
+    manifest.geometryCaptureDecisions[side] = {
+      mode: requestedMode,
+      placementState,
+      timestamp,
+      explicitOperatorAction: requestedMode === "manual_capture",
+      detectionUsed: requestedMode === "detected_geometry" && geometry?.detectionUsed === true,
+      manualOverrideUsed: requestedMode === "manual_capture",
+      ...(normalizedManualGeometry ? { manualBoundaryRect: normalizedManualGeometry.rawRect } : {}),
+      ...(normalizedManualGeometry ? { manualGeometrySource: normalizedManualGeometry.source } : {}),
+      ...(sourceFrameId ? { sourceFrameId } : {}),
+    };
+    manifest.progressLog.push(
+      `${timestamp} ${side} capture geometry decision: ${requestedMode} at ${placementState}${requestedMode === "manual_capture" ? "; explicit operator-confirmed overlay boundary will normalize this side" : ""}.`
+    );
+  }
+
+  private recordProcessedSideTiming(
+    manifest: AiGraderLocalStationBridgeManifest,
+    side: AiGraderWarmRunnerSide,
+    result: FixedRigWarmEvidencePackageResult,
+    completedAt = new Date().toISOString()
+  ) {
+    this.recordCaptureTimingEvent(manifest, { id: "side_processing_completed", side, at: completedAt });
+    const capture = timingRecord(result.manifest.captureTiming);
+    const processing = timingRecord(result.manifest.processingTiming);
+    manifest.captureTimingHardwareEvidence[side].processedManifest = capture?.hardwareMeasurement === true;
+    const processingPhases = timingRecord(processing?.phases);
+    const phaseValues: Array<[Parameters<typeof recordAiGraderCaptureTimingPhase>[1]["id"], number | undefined]> = [
+      ["lighting_profile", nestedTimingDuration(capture?.lightingProfileChanges)],
+      ["frame_capture", finiteTimingDuration(capture?.frameCaptureMs)],
+      ["file_writes", finiteTimingDuration(capture?.fileWritesMs)],
+      ["file_hashes", finiteTimingDuration(capture?.fileHashMs)],
+      ["crop_deskew", finiteTimingDuration(timingRecord(processingPhases?.cropDeskew)?.durationMs)],
+      ["grading_forensic_runner", finiteTimingDuration(capture?.gradingForensicRunnerMs)],
+      ["side_processing", finiteTimingDuration(processing?.totalDurationMs)],
+    ];
+    for (const [id, durationMs] of phaseValues) {
+      if (durationMs === undefined) continue;
+      this.recordCaptureTimingPhase(manifest, { id, side, durationMs });
+    }
+    if (finiteTimingDuration(processing?.totalDurationMs) === undefined) {
+      const startedAt = manifest.captureTiming.events.find((event) => event.id === "side_processing_started" && event.side === side)?.at;
+      const startedAtMs = startedAt ? Date.parse(startedAt) : Number.NaN;
+      const completedAtMs = Date.parse(completedAt);
+      if (Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs) && completedAtMs >= startedAtMs) {
+        this.recordCaptureTimingPhase(manifest, {
+          id: "side_processing",
+          side,
+          durationMs: completedAtMs - startedAtMs,
+          startedAt,
+          finishedAt: completedAt,
+        });
+      }
+    }
+  }
+
+  private refreshPreviewGeometryActiveSide() {
+    const geometry = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
+    const activeSide = activePreviewGeometrySide(this.manifest.currentStep);
+    if (geometry.activeSide === activeSide && this.manifest.previewStatus.cardGeometry) return;
+    this.manifest.previewStatus.cardGeometry = { ...geometry, activeSide };
+  }
+
+  private resetPreviewGeometryAnalysis() {
+    this.previewGeometryEpoch += 1;
+    this.previewGeometryPending = undefined;
+    if (this.previewGeometryTimer) clearTimeout(this.previewGeometryTimer);
+    this.previewGeometryTimer = undefined;
+    this.previewGeometryLastStartedAtMs = 0;
+    this.manifest.previewStatus.cardGeometry = {
+      ...defaultPreviewGeometryStatus(this.config),
+      activeSide: activePreviewGeometrySide(this.manifest.currentStep),
+    };
+  }
+
+  private noteMockPreviewGeometry(frameIndex: number) {
+    const side = activePreviewGeometrySide(this.manifest.currentStep);
+    const now = new Date().toISOString();
+    const current = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
+    const geometry = mockPreviewGeometry(side, frameIndex, now);
+    this.manifest.previewStatus.cardGeometry = {
+      ...current,
+      activeSide: side,
+      [side]: geometry,
+      analysis: {
+        ...current.analysis,
+        source: "mock_deterministic",
+        inFlight: false,
+        latestFramePending: false,
+        framesAnalyzed: current.analysis.framesAnalyzed + 1,
+        lastStartedAt: now,
+        lastCompletedAt: now,
+        lastError: undefined,
+      },
+    };
+    if (geometry.placementState === "ready") {
+      this.recordCaptureTimingEvent(this.manifest, { id: "edge_detection_ready", side, at: now });
+    }
+  }
+
+  private queuePreviewGeometryAnalysis(frame: Buffer, frameIndex: number) {
+    const side = activePreviewGeometrySide(this.manifest.currentStep);
+    const current = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
+    const stalePending = Boolean(this.previewGeometryPending);
+    this.previewGeometryPending = {
+      frame,
+      frameIndex,
+      side,
+      sessionId: this.manifest.sessionId,
+      epoch: this.previewGeometryEpoch,
+    };
+    this.manifest.previewStatus.cardGeometry = {
+      ...current,
+      activeSide: side,
+      analysis: {
+        ...current.analysis,
+        source: "real_mjpeg_jpeg",
+        latestFramePending: true,
+        framesDroppedAsStale: current.analysis.framesDroppedAsStale + (stalePending ? 1 : 0),
+      },
+    };
+    this.pumpPreviewGeometryAnalysis();
+  }
+
+  private pumpPreviewGeometryAnalysis() {
+    if (this.previewGeometryAnalysisInFlight || !this.previewGeometryPending) return;
+    const waitMs = Math.max(0, this.previewGeometryLastStartedAtMs + PREVIEW_GEOMETRY_THROTTLE_MS - Date.now());
+    if (waitMs > 0) {
+      if (!this.previewGeometryTimer) {
+        this.previewGeometryTimer = setTimeout(() => {
+          this.previewGeometryTimer = undefined;
+          this.pumpPreviewGeometryAnalysis();
+        }, waitMs);
+      }
+      return;
+    }
+    const pending = this.previewGeometryPending;
+    this.previewGeometryPending = undefined;
+    this.previewGeometryAnalysisInFlight = true;
+    this.previewGeometryLastStartedAtMs = Date.now();
+    const startedAt = new Date(this.previewGeometryLastStartedAtMs).toISOString();
+    const current = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
+    this.manifest.previewStatus.cardGeometry = {
+      ...current,
+      analysis: {
+        ...current.analysis,
+        inFlight: true,
+        latestFramePending: false,
+        lastStartedAt: startedAt,
+      },
+    };
+    void detectCardGeometryFromBuffer({
+      imageBuffer: pending.frame,
+      fileName: "preview-frame.jpg",
+      side: pending.side,
+      sourceImageId: `preview-${pending.side}`,
+      sourceFrameId: `preview-${pending.side}-${pending.frameIndex}`,
+      timestamp: startedAt,
+    }).then((geometry) => {
+      if (pending.epoch !== this.previewGeometryEpoch || pending.sessionId !== this.manifest.sessionId) return;
+      const latest = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
+      this.manifest.previewStatus.cardGeometry = {
+        ...latest,
+        activeSide: activePreviewGeometrySide(this.manifest.currentStep),
+        [pending.side]: geometry,
+        analysis: {
+          ...latest.analysis,
+          inFlight: false,
+          framesAnalyzed: latest.analysis.framesAnalyzed + 1,
+          lastCompletedAt: new Date().toISOString(),
+          lastError: undefined,
+        },
+      };
+      if (geometry.placementState === "ready") {
+        this.recordCaptureTimingEvent(this.manifest, {
+          id: "edge_detection_ready",
+          side: pending.side,
+          at: geometry.timestamp,
+        });
+      }
+    }).catch(() => {
+      if (pending.epoch !== this.previewGeometryEpoch || pending.sessionId !== this.manifest.sessionId) return;
+      const latest = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
+      this.manifest.previewStatus.cardGeometry = {
+        ...latest,
+        analysis: {
+          ...latest.analysis,
+          inFlight: false,
+          lastCompletedAt: new Date().toISOString(),
+          lastError: "Preview geometry analysis could not analyze the latest encoded frame.",
+        },
+      };
+    }).finally(() => {
+      this.previewGeometryAnalysisInFlight = false;
+      const latest = this.manifest.previewStatus.cardGeometry;
+      if (latest) {
+        latest.analysis.inFlight = false;
+        latest.analysis.latestFramePending = Boolean(this.previewGeometryPending);
+      }
+      this.pumpPreviewGeometryAnalysis();
+    });
+  }
+
+  private transitionRapidWorkflow(
+    manifest: AiGraderLocalStationBridgeManifest,
+    state: AiGraderRapidCaptureWorkflowState,
+    detail: string
+  ) {
+    if (manifest.rapidCapture.workflowState === "failed" && state !== "failed") {
+      manifest.progressLog.push(`${new Date().toISOString()} Ignored rapid workflow transition ${state}; failed is terminal for this card.`);
+      return;
+    }
+    const event: AiGraderRapidCaptureWorkflowEvent = {
+      state,
+      at: new Date().toISOString(),
+      detail,
+    };
+    manifest.rapidCapture.workflowState = state;
+    manifest.rapidCapture.workflowHistory = [...manifest.rapidCapture.workflowHistory, event].slice(-100);
+    manifest.updatedAt = event.at;
+    manifest.progressLog.push(`${event.at} Rapid capture workflow: ${state} - ${detail}`);
+    const queueItemId = manifest.rapidCapture.queueItemId;
+    if (!queueItemId) return;
+    const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item) return;
+    item.state = state;
+    item.updatedAt = event.at;
+    item.history = [...item.history, event].slice(-100);
+    if (state !== "failed") delete item.error;
+    this.queuedManifests.set(queueItemId, manifest);
+  }
+
+  private persistRapidQueue(): Promise<void> {
+    this.rapidQueue.updatedAt = new Date().toISOString();
+    const snapshot = structuredClone(this.rapidQueue);
+    this.queueWriteChain = this.queueWriteChain
+      .catch(() => {})
+      .then(async () => {
+        await writeJsonAtomic(rapidCaptureQueuePath(this.config), snapshot);
+        this.committedRapidQueue = structuredClone(snapshot);
+      });
+    return this.queueWriteChain;
+  }
+
+  private async syncQueuedManifest(manifest: AiGraderLocalStationBridgeManifest) {
+    const queueItemId = manifest.rapidCapture.queueItemId;
+    if (!queueItemId) return;
+    const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item) return;
+    item.state = manifest.rapidCapture.workflowState ?? item.state;
+    item.updatedAt = manifest.updatedAt;
+    item.history = [...manifest.rapidCapture.workflowHistory];
+    item.error = item.state === "failed" ? manifest.warnings.at(-1) ?? item.error : undefined;
+    this.queuedManifests.set(queueItemId, manifest);
+    await writeSessionManifest(manifest);
+    await this.persistRapidQueue();
+  }
+
+  private async createFreshSession(
+    request: { reportId?: string; captureProfile: FixedRigCaptureProfile },
+    now = new Date().toISOString(),
+    selectionSource: AiGraderLocalStationBridgeManifest["captureProfileGuard"]["selectionSource"] = "operator_setting"
+  ) {
+    if (this.captureLock) {
+      throw new Error(`Cannot start a new card while capture lock is held by ${this.captureLock.owner}.`);
+    }
+    if (this.config.warmRunnerDisabled && request.captureProfile === "production_fast") {
+      throw new Error("AI Grader production_fast cannot run with explicit cold debug mode; select full_forensic or enable the warm runner.");
+    }
+    const { packageId, packageDir } = await createFixedRigPackageDir(this.config.outputDir, "ai-grader-browser-station-session");
+    this.releaseFullForensicPreviewHold("new station session started");
+    this.clearLiveLightingWatchdog();
+    const manifest = newManifest(this.config, this.rapidQueue.rapidCaptureEnabled, now);
+    manifest.captureProfile = parseCaptureProfile(request.captureProfile);
+    manifest.captureProfileGuard.selectionSource = selectionSource;
+    manifest.captureProfileGuard.productionFastOptIn = request.captureProfile === "production_fast";
+    manifest.captureTiming = createAiGraderCaptureTimingMetadata({
+      captureProfile: manifest.captureProfile,
+      hardwareMeasurement: false,
+      startedAt: now,
+    });
+    manifest.sessionId = `${packageId}-session`;
+    manifest.reportId = request.reportId ?? `${packageId}-report`;
+    manifest.createdAt = now;
+    manifest.updatedAt = now;
+    manifest.outputs.sessionDir = packageDir;
+    manifest.outputs.manifestPath = path.join(packageDir, "station-session.json");
+    manifest.currentStep = "verify_fixture_rulers";
+    manifest.warmRunnerStatus.sessionId = manifest.sessionId;
+    manifest.warmRunnerStatus.status = "warming";
+    this.manifest = manifest;
+    this.activeQueueItemId = undefined;
+    this.resetPreviewGeometryAnalysis();
+    this.setExecutionPath(
+      this.config.warmRunnerDisabled ? "cold_command_fallback" : "warm_full_forensic_runner",
+      this.config.warmRunnerDisabled ? "Warm runner disabled by explicit debug flag." : undefined,
+      manifest
+    );
+    this.markWarmPhase({
+      id: "warm_session_setup",
+      label: "Warm session setup",
+      status: "completed",
+      backend: manifest.executionPath,
+      executionPath: manifest.executionPath,
+      detail: manifest.executionPath === "cold_command_fallback"
+        ? "Bridge-owned session initialized with the explicit cold debug command path."
+        : "Bridge-owned warm session initialized; Basler/Leimac ownership will be serialized through the capture lock.",
+    }, manifest);
+    manifest.warmRunnerStatus.status = "idle";
+    manifest.progressLog.push(`${now} Started station session ${manifest.sessionId} with clean per-card state.`);
+    await writeSessionManifest(manifest);
+  }
+
+  private enqueueRapidFinalization(queueItemId: string) {
+    this.reportWorker = this.reportWorker
+      .catch(() => {})
+      .then(async () => {
+        const manifest = this.queuedManifests.get(queueItemId);
+        const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+        if (!manifest || !item) throw new Error(`Rapid capture queue item ${queueItemId} is no longer available.`);
+        try {
+          const result = await this.runWarmReport(manifest);
+          manifest.outputs.unifiedReportDir = result.payload?.report?.packageDir ?? dirnameIfFile(extractUnifiedReportPath(result.payload));
+          manifest.outputs.unifiedReportPath = extractUnifiedReportPath(result.payload);
+          const reportDir = manifest.outputs.unifiedReportDir ?? dirnameIfFile(manifest.outputs.unifiedReportPath);
+          if (!reportDir) throw new Error("Rapid finalization did not produce a unified report folder.");
+          const bundle = await writeAiGraderReportBundle({
+            reportDir,
+            outputDir: publishPackageDir(this.config, manifest.reportId ?? "local-report"),
+            reportId: manifest.reportId,
+            publicBasePath: this.config.publicBasePath,
+            captureTiming: this.captureTimingSnapshot(manifest),
+            geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(manifest),
+          });
+          manifest.outputs.reportBundlePath = bundle.bundlePath;
+          manifest.outputs.publishPackageDir = bundle.outputDir;
+          manifest.outputs.assetManifestPath = bundle.assetManifestPath;
+          manifest.outputs.checksumsPath = bundle.checksumsPath;
+          manifest.reportBundle = bundle.bundle;
+          manifest.currentStep = "view_unified_report";
+          this.transitionRapidWorkflow(
+            manifest,
+            "report_ready_needs_confirm",
+            "Background diagnostics and report bundle are ready; human Confirm Card review is still required."
+          );
+          await this.syncQueuedManifest(manifest);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Rapid background finalization failed.";
+          manifest.warnings.push(message);
+          this.transitionRapidWorkflow(manifest, "failed", message);
+          const failedItem = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+          if (failedItem) failedItem.error = message;
+          await this.syncQueuedManifest(manifest);
+        }
+      });
+    void this.reportWorker.catch(() => {});
+  }
+
+  private async recoverPersistedRapidFinalization() {
+    const outputRoot = `${path.resolve(this.config.outputDir).toLowerCase()}${path.sep}`;
+    for (const item of this.rapidQueue.items.filter((candidate) => candidate.state === "finalizing")) {
+      const resolvedManifestPath = path.resolve(item.manifestPath);
+      if (!resolvedManifestPath.toLowerCase().startsWith(outputRoot) || path.basename(resolvedManifestPath) !== "station-session.json") {
+        item.state = "failed";
+        item.error = "Retryable rapid finalization recovery failed because the persisted manifest reference was invalid.";
+        item.updatedAt = new Date().toISOString();
+        continue;
+      }
+      const manifest = await readJsonFile(resolvedManifestPath) as AiGraderLocalStationBridgeManifest | undefined;
+      if (!manifest || manifest.sessionId !== item.sessionId || manifest.reportId !== item.reportId) {
+        item.state = "failed";
+        item.error = "Retryable rapid finalization recovery failed because the persisted session manifest did not match the queue item.";
+        item.updatedAt = new Date().toISOString();
+        continue;
+      }
+      manifest.rapidCapture.queueItemId = item.queueItemId;
+      this.ensureCaptureTiming(manifest);
+      this.queuedManifests.set(item.queueItemId, manifest);
+      const sideProcessingComplete = (["front", "back"] as const).every((side) =>
+        manifest.warmRunnerStatus?.phases?.some((phase) => phase.id === `process_${side}_artifacts` && phase.status === "completed")
+      );
+      if (sideProcessingComplete) {
+        this.enqueueRapidFinalization(item.queueItemId);
+        continue;
+      }
+      const message = "Retryable rapid finalization recovery stopped because the bridge restarted before both side-processing packages completed.";
+      manifest.warnings.push(message);
+      this.transitionRapidWorkflow(manifest, "failed", message);
+      item.error = message;
+      await writeSessionManifest(manifest);
+    }
+    await this.persistRapidQueue();
+  }
+
+  private async queueCurrentRapidCard() {
+    if (!this.rapidQueue.rapidCaptureEnabled || !this.manifest.rapidCapture.enabled) {
+      throw new Error("Enable rapid capture mode before queueing the current card.");
+    }
+    if (this.captureLock) {
+      throw new Error(`Cannot queue the current card while capture lock is held by ${this.captureLock.owner}.`);
+    }
+    const { sessionId, reportId } = this.manifest;
+    if (!sessionId || !reportId || !this.manifest.outputs.manifestPath) {
+      throw new Error("Rapid capture queueing requires an active station session and report ID.");
+    }
+    if (!this.manifest.outputs.frontPackageDir || !this.manifest.outputs.backPackageDir) {
+      throw new Error("Rapid capture queueing requires safely persisted front and back capture packages.");
+    }
+    if (this.manifest.rapidCapture.workflowState === "failed") {
+      throw new Error("The current card has a failed processing state and cannot be queued as ready.");
+    }
+    // Detach the complete per-card object before replacing the active manifest. All
+    // in-flight side jobs already close over this exact session object, so no later
+    // card can receive its outputs or phase updates.
+    const snapshot = this.manifest;
+    const queueItemId = `${sessionId}-rapid-card`;
+    snapshot.rapidCapture.queueItemId = queueItemId;
+    snapshot.rapidCapture.safelyQueuedAt = new Date().toISOString();
+    this.recordCaptureTimingEvent(snapshot, {
+      id: "safely_queued",
+      at: snapshot.rapidCapture.safelyQueuedAt,
+    });
+    this.transitionRapidWorkflow(
+      snapshot,
+      "finalizing",
+      "Both raw side packages are persisted, lighting is safe, and background report finalization is serialized."
+    );
+    const item: PersistedAiGraderRapidCaptureQueueItem = {
+      queueItemId,
+      sessionId,
+      reportId,
+      state: "finalizing",
+      queuedAt: snapshot.rapidCapture.safelyQueuedAt,
+      updatedAt: snapshot.updatedAt,
+      history: [...snapshot.rapidCapture.workflowHistory],
+      humanConfirmationRequired: true,
+      autoConfirmed: false,
+      autoPublished: false,
+      manifestPath: snapshot.outputs.manifestPath!,
+    };
+    this.rapidQueue.items = retainAiGraderRapidCaptureQueueItems([
+      item,
+      ...this.rapidQueue.items.filter((candidate) => candidate.queueItemId !== queueItemId),
+    ]);
+    this.queuedManifests.set(queueItemId, snapshot);
+    await writeSessionManifest(snapshot);
+    await this.persistRapidQueue();
+    this.enqueueRapidFinalization(queueItemId);
+    await this.createFreshSession({ captureProfile: snapshot.captureProfile }, new Date().toISOString(), "rapid_continuation");
+  }
+
+  private async activateRapidQueueItem(queueItemId: string) {
+    if (!queueItemId.trim()) throw new Error("Rapid capture queue item ID is required.");
+    if (this.captureLock) throw new Error(`Cannot activate a queued card while capture lock is held by ${this.captureLock.owner}.`);
+    if (
+      this.previewProcess
+      || this.previewStop
+      || this.manifest.previewStatus.status === "live"
+      || this.manifest.previewStatus.status === "starting"
+      || this.manifest.previewStatus.cameraOwnership === "preview_stream"
+    ) {
+      await this.stopPreviewStream("rapid queue item activation", {
+        waitForRelease: true,
+        requireRelease: true,
+        settleMs: PREVIEW_CAMERA_SETTLE_MS,
+      });
+    }
+    if (this.manifest.outputs.frontPackageDir || this.manifest.outputs.backPackageDir) {
+      throw new Error("Finish or queue the active card before activating a completed rapid capture item.");
+    }
+    const freshSessionProgressed = Boolean(this.manifest.sessionId) && (
+      this.manifest.currentStep !== "verify_fixture_rulers"
+      || this.manifest.confirmations.lightIdleOff
+      || this.manifest.confirmations.fixtureRulersVisible
+      || this.manifest.confirmations.flipComplete
+      || this.manifest.commandResults.length > 0
+      || this.manifest.rapidCapture.workflowHistory.length > 0
+    );
+    if (freshSessionProgressed) {
+      throw new Error("The next card has already started; finish or reset it before activating a completed rapid capture item.");
+    }
+    this.resetPreviewGeometryAnalysis();
+    const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item) throw new Error(`Rapid capture queue item ${queueItemId} was not found.`);
+    if (!new Set<AiGraderRapidCaptureWorkflowState>(["report_ready_needs_confirm", "confirmed_needs_publish", "published"]).has(item.state)) {
+      throw new Error(`Rapid capture queue item ${queueItemId} is not complete enough to activate (state ${item.state}).`);
+    }
+    let manifest = this.queuedManifests.get(queueItemId);
+    if (!manifest) {
+      manifest = await readJsonFile(item.manifestPath) as AiGraderLocalStationBridgeManifest | undefined;
+    }
+    if (!manifest || manifest.sessionId !== item.sessionId || manifest.reportId !== item.reportId) {
+      throw new Error(`Rapid capture queue item ${queueItemId} has no valid persisted session manifest.`);
+    }
+    this.manifest = cloneManifest(manifest);
+    this.releaseFullForensicPreviewHold("completed rapid queue item activated for human review");
+    this.manifest.rapidCapture.enabled = this.rapidQueue.rapidCaptureEnabled;
+    this.manifest.rapidCapture.queueItemId = queueItemId;
+    this.activeQueueItemId = queueItemId;
+    this.queuedManifests.set(queueItemId, this.manifest);
+    this.manifest.progressLog.push(`${new Date().toISOString()} Activated rapid queue item for existing Confirm Card / Publish workflow.`);
+    await writeSessionManifest(this.manifest);
   }
 
   private updatePreviewStatus(update: Partial<AiGraderLocalStationPreviewStatus>) {
@@ -1979,6 +3138,7 @@ export class AiGraderLocalStationBridgeService {
   }
 
   async applyLiveLighting(request: JsonBody = {}): Promise<AiGraderLiveLightingStatus> {
+    if (this.activeQueueItemId) throw new Error("Live lighting is disabled while a rapid queue item is under human review.");
     this.assertLiveLightingReady();
     if (!this.manifest.sessionId) throw new Error("Start a station session before browser live lighting tuning.");
     const profile = validateLiveLightingRequest(request, this.manifest.liveLighting);
@@ -2042,6 +3202,7 @@ export class AiGraderLocalStationBridgeService {
   }
 
   async heartbeatLiveLighting(reason = "browser live lighting heartbeat"): Promise<AiGraderLiveLightingStatus> {
+    if (this.activeQueueItemId) throw new Error("Live lighting is disabled while a rapid queue item is under human review.");
     if (this.manifest.liveLighting.applied.enabled) this.scheduleLiveLightingWatchdog(reason);
     else this.updateLiveLightingStatus({ watchdog: { enabled: true, timeoutMs: LIVE_LIGHTING_WATCHDOG_MS, lastHeartbeatAt: new Date().toISOString() } });
     this.recordLiveLightingEvent({ type: "heartbeat", reason, ok: true });
@@ -2050,6 +3211,7 @@ export class AiGraderLocalStationBridgeService {
   }
 
   async acceptLiveLightingForCapture(request: JsonBody = {}): Promise<AiGraderLiveLightingStatus> {
+    if (this.activeQueueItemId) throw new Error("Capture profile changes are disabled while a rapid queue item is under human review.");
     if (!this.manifest.sessionId) throw new Error("Start a station session before accepting a browser live lighting profile.");
     const profile = validateLiveLightingRequest({
       enabled: true,
@@ -2152,6 +3314,9 @@ export class AiGraderLocalStationBridgeService {
       lastFrameAt: now,
       fps: Math.round((frameCount / elapsedSeconds) * 10) / 10,
     });
+    if (frameCount === 1) {
+      this.recordCaptureTimingEvent(this.manifest, { id: "preview_ready", at: now });
+    }
   }
 
   private async stopPreviewStream(
@@ -2280,8 +3445,8 @@ export class AiGraderLocalStationBridgeService {
     backend?: AiGraderWarmRunnerPhase["backend"];
     executionPath?: AiGraderWarmRunnerPhase["executionPath"];
     detail?: string;
-  }): AiGraderWarmRunnerPhase {
-    const previous = this.manifest.warmRunnerStatus.phases.find((phase) => phase.id === input.id);
+  }, manifest: AiGraderLocalStationBridgeManifest = this.manifest): AiGraderWarmRunnerPhase {
+    const previous = manifest.warmRunnerStatus.phases.find((phase) => phase.id === input.id);
     const startedAt = input.startedAt ?? previous?.startedAt ?? (input.status === "active" ? new Date().toISOString() : undefined);
     const finishedAt = input.finishedAt ?? (input.status === "completed" || input.status === "failed" || input.status === "cancelled" ? new Date().toISOString() : undefined);
     const phase: AiGraderWarmRunnerPhase = {
@@ -2296,40 +3461,45 @@ export class AiGraderLocalStationBridgeService {
       ...(input.executionPath ? { executionPath: input.executionPath } : previous?.executionPath ? { executionPath: previous.executionPath } : {}),
       ...(input.detail ? { detail: input.detail } : previous?.detail ? { detail: previous.detail } : {}),
     };
-    const others = this.manifest.warmRunnerStatus.phases.filter((candidate) => candidate.id !== input.id);
-    this.manifest.warmRunnerStatus.phases = [...others, phase];
+    const others = manifest.warmRunnerStatus.phases.filter((candidate) => candidate.id !== input.id);
+    manifest.warmRunnerStatus.phases = [...others, phase];
     const queueName = input.id.startsWith("capture_") ? "capture" : input.id.startsWith("process_") ? "processing" : input.id.includes("report") ? "report" : undefined;
     if (queueName) {
-      const queue = this.manifest.warmRunnerStatus.queues[queueName].filter((candidate) => candidate.id !== input.id);
-      this.manifest.warmRunnerStatus.queues[queueName] = [...queue, phase];
+      const queue = manifest.warmRunnerStatus.queues[queueName].filter((candidate) => candidate.id !== input.id);
+      manifest.warmRunnerStatus.queues[queueName] = [...queue, phase];
     }
     return phase;
   }
 
-  private updateEvidenceRoles(side: AiGraderWarmRunnerSide, status: AiGraderWarmRunnerPhaseStatus) {
-    this.manifest.warmRunnerStatus.evidencePlan.rolesBySide[side] = fullForensicEvidenceRoles(status);
+  private updateEvidenceRoles(side: AiGraderWarmRunnerSide, status: AiGraderWarmRunnerPhaseStatus, manifest: AiGraderLocalStationBridgeManifest = this.manifest) {
+    manifest.warmRunnerStatus.evidencePlan.rolesBySide[side] = fullForensicEvidenceRoles(status);
   }
 
-  private setExecutionPath(pathName: AiGraderWarmRunnerExecutionPath, fallbackReason?: string) {
-    this.manifest.executionPath = pathName;
-    this.manifest.fallbackUsed = pathName === "cold_command_fallback";
-    if (fallbackReason) this.manifest.fallbackReason = fallbackReason;
-    else delete this.manifest.fallbackReason;
-    this.manifest.warmRunnerStatus.backend = pathName;
-    this.manifest.warmRunnerStatus.executionPath = pathName;
-    this.manifest.warmRunnerStatus.fallbackUsed = pathName === "cold_command_fallback";
-    if (fallbackReason) this.manifest.warmRunnerStatus.fallbackReason = fallbackReason;
-    else delete this.manifest.warmRunnerStatus.fallbackReason;
-    this.manifest.warmRunnerStatus.fallback.active = pathName === "cold_command_fallback";
-    if (fallbackReason) this.manifest.warmRunnerStatus.fallback.reason = fallbackReason;
-    else delete this.manifest.warmRunnerStatus.fallback.reason;
+  private setExecutionPath(pathName: AiGraderWarmRunnerExecutionPath, coldDebugReason?: string, manifest: AiGraderLocalStationBridgeManifest = this.manifest) {
+    manifest.executionPath = pathName;
+    manifest.explicitColdDebugModeUsed = pathName === "cold_command_fallback";
+    if (coldDebugReason) manifest.explicitColdDebugReason = coldDebugReason;
+    else delete manifest.explicitColdDebugReason;
+    manifest.warmRunnerStatus.backend = pathName;
+    manifest.warmRunnerStatus.executionPath = pathName;
+    manifest.warmRunnerStatus.explicitColdDebugModeUsed = pathName === "cold_command_fallback";
+    if (coldDebugReason) manifest.warmRunnerStatus.explicitColdDebugReason = coldDebugReason;
+    else delete manifest.warmRunnerStatus.explicitColdDebugReason;
+    manifest.warmRunnerStatus.coldDebugMode.configured = this.config.warmRunnerDisabled;
+    manifest.warmRunnerStatus.coldDebugMode.active = pathName === "cold_command_fallback";
+    if (coldDebugReason) manifest.warmRunnerStatus.coldDebugMode.reason = coldDebugReason;
+    else delete manifest.warmRunnerStatus.coldDebugMode.reason;
   }
 
-  private buildWarmEvidenceInput(side: AiGraderWarmRunnerSide): FixedRigWarmEvidencePackageInput {
+  private buildWarmEvidenceInput(side: AiGraderWarmRunnerSide, manifest: AiGraderLocalStationBridgeManifest = this.manifest): FixedRigWarmEvidencePackageInput {
+    const manualBoundaryRect = manifest.geometryCaptureDecisions?.[side]?.mode === "manual_capture"
+      ? manifest.geometryCaptureDecisions[side]?.manualBoundaryRect
+      : undefined;
     return {
       outputDir: this.config.outputDir,
       side: side as FixedRigCardSide,
-      activeLightingProfile: buildFixedRigProfile(this.manifest.acceptedProfile),
+      captureProfile: manifest.captureProfile,
+      activeLightingProfile: buildFixedRigProfile(manifest.acceptedProfile),
       pylonRoot: this.config.pylonRoot,
       pylonTimeoutMs: this.config.pylonTimeoutMs,
       baslerBridgeScript: this.config.baslerBridgeScript,
@@ -2337,8 +3507,8 @@ export class AiGraderLocalStationBridgeService {
       leimacPort: this.config.leimacPort,
       leimacUnit: this.config.leimacUnit,
       cameraIndex: this.config.cameraIndex,
-      exposureUs: this.manifest.acceptedProfile.exposureUs,
-      gain: this.manifest.acceptedProfile.gain,
+      exposureUs: manifest.acceptedProfile.exposureUs,
+      gain: manifest.acceptedProfile.gain,
       fixtureLabel: this.config.fixtureLabel,
       fixtureId: this.config.fixtureId,
       referenceType: this.config.referenceType as FixedRigReferenceType | undefined,
@@ -2348,7 +3518,18 @@ export class AiGraderLocalStationBridgeService {
       verticalSpanMm: this.config.verticalSpanMm,
       verticalStartPx: this.config.verticalStartPx,
       verticalEndPx: this.config.verticalEndPx,
-      cardBoundaryRect: this.config.cardBoundaryRect,
+      ...(manualBoundaryRect ? {
+        manualGeometryOverride: {
+          action: "manual_capture",
+          confirmed: true,
+          rect: {
+            x: manualBoundaryRect.x,
+            y: manualBoundaryRect.y,
+            width: manualBoundaryRect.width,
+            height: manualBoundaryRect.height,
+          },
+        },
+      } : {}),
     };
   }
 
@@ -2364,7 +3545,8 @@ export class AiGraderLocalStationBridgeService {
       payload: {
         ok: true,
         executionPath: "warm_full_forensic_runner",
-        fallbackUsed: false,
+        explicitColdDebugModeUsed: false,
+        captureProfile: this.manifest.captureProfile,
         packageDir,
         manifestPath: result.manifestPath,
         analysisPath: result.analysisPath,
@@ -2374,24 +3556,32 @@ export class AiGraderLocalStationBridgeService {
     };
   }
 
-  private async awaitWarmProcessing(side: AiGraderWarmRunnerSide): Promise<FixedRigWarmEvidencePackageResult | undefined> {
-    const job = this.warmProcessingJobs[side];
+  private warmProcessingKey(manifest: AiGraderLocalStationBridgeManifest, side: AiGraderWarmRunnerSide) {
+    if (!manifest.sessionId) throw new Error("Warm processing requires a session ID.");
+    return `${manifest.sessionId}:${side}`;
+  }
+
+  private async awaitWarmProcessing(manifest: AiGraderLocalStationBridgeManifest, side: AiGraderWarmRunnerSide): Promise<FixedRigWarmEvidencePackageResult | undefined> {
+    const key = this.warmProcessingKey(manifest, side);
+    const job = this.warmProcessingJobs.get(key);
     if (!job) return undefined;
     const result = await job;
-    delete this.warmProcessingJobs[side];
+    this.warmProcessingJobs.delete(key);
     return result;
   }
 
   private async runSafeOffCleanup(reason: string): Promise<void> {
     if (this.config.mode !== "real") return;
     const cleanupStartedAt = new Date().toISOString();
+    const cleanupExecutionPath = this.manifest.executionPath;
     this.manifest.warmRunnerStatus.status = "safe_off";
     this.markWarmPhase({
       id: "warm_safe_cleanup",
       label: "Watchdog safe-off cleanup",
       status: "active",
       startedAt: cleanupStartedAt,
-      backend: "cold_command_fallback",
+      backend: cleanupExecutionPath,
+      executionPath: cleanupExecutionPath,
       detail: reason,
     });
     try {
@@ -2405,7 +3595,8 @@ export class AiGraderLocalStationBridgeService {
         label: "Watchdog safe-off cleanup",
         status: result.ok ? "completed" : "failed",
         startedAt: cleanupStartedAt,
-        backend: "cold_command_fallback",
+        backend: cleanupExecutionPath,
+        executionPath: cleanupExecutionPath,
         detail: reason,
       });
     } catch (error) {
@@ -2416,18 +3607,19 @@ export class AiGraderLocalStationBridgeService {
         label: "Watchdog safe-off cleanup",
         status: "failed",
         startedAt: cleanupStartedAt,
-        backend: "cold_command_fallback",
+        backend: cleanupExecutionPath,
+        executionPath: cleanupExecutionPath,
         detail: message,
       });
     }
   }
 
-  private async runColdFallbackSideCapture(side: AiGraderWarmRunnerSide, reason: string): Promise<AiGraderStationCommandResult> {
+  private async runExplicitColdDebugSideCapture(side: AiGraderWarmRunnerSide, reason: string): Promise<AiGraderStationCommandResult> {
     const stepId = side === "front" ? "capture_front" : "capture_back";
-    const owner = `cold-fallback-${stepId}`;
+    const owner = `cold-debug-${stepId}`;
     const phaseId = `capture_${side}`;
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
-    this.activateFullForensicPreviewHold(`${side} cold fallback full forensic capture starting`);
+    this.activateFullForensicPreviewHold(`${side} explicit cold debug full forensic capture starting`);
     this.setExecutionPath("cold_command_fallback", reason);
     this.acquireCaptureLock(owner);
     let phase: AiGraderWarmRunnerPhase | undefined;
@@ -2441,14 +3633,14 @@ export class AiGraderLocalStationBridgeService {
         side,
         backend: "cold_command_fallback",
         executionPath: "cold_command_fallback",
-        detail: "Emergency/debug cold fallback preserves dark_control, all_on, accepted_profile, and Leimac channels 1-8.",
+        detail: "Explicit cold debug mode preserves dark_control, all_on, accepted_profile, and Leimac channels 1-8.",
       });
       const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, stepId));
       result.payload = {
         ...(result.payload ?? {}),
         executionPath: "cold_command_fallback",
-        fallbackUsed: true,
-        fallbackReason: reason,
+        explicitColdDebugModeUsed: true,
+        explicitColdDebugReason: reason,
       };
       this.manifest.commandResults.push(result);
       if (!result.ok) {
@@ -2461,10 +3653,21 @@ export class AiGraderLocalStationBridgeService {
           startedAt: phase?.startedAt,
           backend: "cold_command_fallback",
           executionPath: "cold_command_fallback",
-          detail: result.error ?? "Cold fallback evidence package failed.",
+          detail: result.error ?? "Explicit cold debug evidence package failed.",
         });
         throw new Error(result.error ?? `${side} evidence capture failed.`);
       }
+      const completedAt = result.finishedAt ?? new Date().toISOString();
+      this.recordCaptureTimingEvent(this.manifest, { id: "raw_capture_completed", side, at: completedAt });
+      this.recordCaptureTimingEvent(this.manifest, { id: "side_processing_started", side, at: completedAt });
+      this.recordCaptureTimingEvent(this.manifest, { id: "side_processing_completed", side, at: completedAt });
+      this.recordCaptureTimingPhase(this.manifest, {
+        id: "side_processing",
+        side,
+        durationMs: 0,
+        startedAt: completedAt,
+        finishedAt: completedAt,
+      });
       this.updateEvidenceRoles(side, "completed");
       this.markWarmPhase({
         id: phaseId,
@@ -2474,7 +3677,7 @@ export class AiGraderLocalStationBridgeService {
         startedAt: phase?.startedAt,
         backend: "cold_command_fallback",
         executionPath: "cold_command_fallback",
-        detail: "Full forensic side stack captured through emergency/debug cold fallback.",
+        detail: "Full forensic side stack captured through the explicit cold debug command path.",
       });
       this.markWarmPhase({
         id: `process_${side}_artifacts`,
@@ -2489,9 +3692,9 @@ export class AiGraderLocalStationBridgeService {
       return result;
     } catch (error) {
       this.manifest.warmRunnerStatus.status = "failed";
-      await this.runSafeOffCleanup(`${side} cold fallback capture failure`);
+      await this.runSafeOffCleanup(`${side} explicit cold debug capture failure`);
       this.manifest.warmRunnerStatus.status = "failed";
-      this.releaseFullForensicPreviewHold(`${side} cold fallback capture failed after safe-off cleanup`);
+      this.releaseFullForensicPreviewHold(`${side} explicit cold debug capture failed after safe-off cleanup`);
       throw error;
     } finally {
       this.releaseCaptureLock(owner);
@@ -2499,21 +3702,22 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private async runWarmSideCapture(side: AiGraderWarmRunnerSide): Promise<AiGraderStationCommandResult> {
+    const sessionManifest = this.manifest;
     const stepId = side === "front" ? "capture_front" : "capture_back";
     const owner = `warm-${stepId}`;
     const phaseId = `capture_${side}`;
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
     this.activateFullForensicPreviewHold(`${side} warm full forensic capture starting`);
     if (this.config.warmRunnerDisabled) {
-      return this.runColdFallbackSideCapture(side, "Warm runner disabled by explicit debug flag.");
+      return this.runExplicitColdDebugSideCapture(side, "Warm runner disabled by explicit debug flag.");
     }
     this.acquireCaptureLock(owner);
     const captureStartedAtMs = Date.now();
     let phase: AiGraderWarmRunnerPhase | undefined;
     try {
       await this.stopPreviewForHardwareAction(side);
-      this.setExecutionPath("warm_full_forensic_runner");
-      this.updateEvidenceRoles(side, "active");
+      this.setExecutionPath("warm_full_forensic_runner", undefined, sessionManifest);
+      this.updateEvidenceRoles(side, "active", sessionManifest);
       phase = this.markWarmPhase({
         id: phaseId,
         label,
@@ -2525,7 +3729,7 @@ export class AiGraderLocalStationBridgeService {
       });
       if (this.config.mode === "mock") {
         const finishedAtMs = Date.now();
-        const mockPackageDir = path.join(this.manifest.outputs.sessionDir ?? this.config.outputDir, `mock-${stepId}`);
+        const mockPackageDir = path.join(sessionManifest.outputs.sessionDir ?? this.config.outputDir, `mock-${stepId}`);
         const result: AiGraderStationCommandResult = {
           stepId,
           ok: true,
@@ -2536,12 +3740,25 @@ export class AiGraderLocalStationBridgeService {
           payload: {
             ok: true,
             executionPath: "warm_full_forensic_runner",
-            fallbackUsed: false,
+            explicitColdDebugModeUsed: false,
+            captureProfile: sessionManifest.captureProfile,
+            rawEvidenceFormat: sessionManifest.captureProfile === "production_fast" ? "tiff" : "png",
             packageDir: mockPackageDir,
           },
         };
-        this.manifest.commandResults.push(result);
-        this.updateEvidenceRoles(side, "completed");
+        const mockCompletedAt = result.finishedAt ?? new Date().toISOString();
+        this.recordCaptureTimingEvent(sessionManifest, { id: "raw_capture_completed", side, at: mockCompletedAt });
+        this.recordCaptureTimingEvent(sessionManifest, { id: "side_processing_started", side, at: mockCompletedAt });
+        this.recordCaptureTimingEvent(sessionManifest, { id: "side_processing_completed", side, at: mockCompletedAt });
+        this.recordCaptureTimingPhase(sessionManifest, {
+          id: "side_processing",
+          side,
+          durationMs: 0,
+          startedAt: mockCompletedAt,
+          finishedAt: mockCompletedAt,
+        });
+        sessionManifest.commandResults.push(result);
+        this.updateEvidenceRoles(side, "completed", sessionManifest);
         this.markWarmPhase({
           id: phaseId,
           label,
@@ -2551,7 +3768,7 @@ export class AiGraderLocalStationBridgeService {
           backend: "warm_full_forensic_runner",
           executionPath: "warm_full_forensic_runner",
           detail: "Mock warm full forensic side stack captured for UI/test flow.",
-        });
+        }, sessionManifest);
         this.markWarmPhase({
           id: `process_${side}_artifacts`,
           label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
@@ -2560,12 +3777,14 @@ export class AiGraderLocalStationBridgeService {
           backend: "warm_full_forensic_runner",
           executionPath: "warm_full_forensic_runner",
           detail: "Mock processing completed; real mode processes captured artifacts in this queue.",
-        });
-        this.manifest.warmRunnerStatus.status = "processing";
+        }, sessionManifest);
+        sessionManifest.warmRunnerStatus.status = "processing";
         return result;
       }
 
-      const batch = await this.warmRunner.captureSide(this.buildWarmEvidenceInput(side));
+      const batch = await this.warmRunner.captureSide(this.buildWarmEvidenceInput(side, sessionManifest));
+      sessionManifest.captureTimingHardwareEvidence[side].captureBatch = batch.hardwareMeasurement === true;
+      this.ensureCaptureTiming(sessionManifest);
       const finishedAtMs = Date.now();
       const result: AiGraderStationCommandResult = {
         stepId,
@@ -2577,13 +3796,19 @@ export class AiGraderLocalStationBridgeService {
         payload: {
           ok: true,
           executionPath: "warm_full_forensic_runner",
-          fallbackUsed: false,
+          explicitColdDebugModeUsed: false,
+          captureProfile: sessionManifest.captureProfile,
+          rawEvidenceFormat: batch.rawEvidenceFormat,
           packageDir: batch.packageDir,
           warmBatch: batch.batch,
         },
       };
-      this.manifest.commandResults.push(result);
-      this.updateEvidenceRoles(side, "completed");
+      const rawCompletedAt = result.finishedAt ?? new Date().toISOString();
+      this.recordCaptureTimingEvent(sessionManifest, { id: "raw_capture_completed", side, at: rawCompletedAt });
+      const processingStartedAt = new Date().toISOString();
+      this.recordCaptureTimingEvent(sessionManifest, { id: "side_processing_started", side, at: processingStartedAt });
+      sessionManifest.commandResults.push(result);
+      this.updateEvidenceRoles(side, "completed", sessionManifest);
       this.markWarmPhase({
         id: phaseId,
         label,
@@ -2593,7 +3818,7 @@ export class AiGraderLocalStationBridgeService {
         backend: "warm_full_forensic_runner",
         executionPath: "warm_full_forensic_runner",
         detail: "Full forensic side stack captured through warm Basler/Leimac side batch.",
-      });
+      }, sessionManifest);
       const processingPhase = this.markWarmPhase({
         id: `process_${side}_artifacts`,
         label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
@@ -2605,8 +3830,10 @@ export class AiGraderLocalStationBridgeService {
           side === "front"
             ? "Front artifact processing is running during the operator flip window."
             : "Back artifact processing is running before unified report generation.",
-      });
-      this.warmProcessingJobs[side] = this.warmRunner.processSide(batch).then((processed) => {
+      }, sessionManifest);
+      const processingKey = this.warmProcessingKey(sessionManifest, side);
+      const processingJob = this.warmRunner.processSide(batch).then(async (processed) => {
+        this.recordProcessedSideTiming(sessionManifest, side, processed);
         this.markWarmPhase({
           id: `process_${side}_artifacts`,
           label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
@@ -2616,9 +3843,12 @@ export class AiGraderLocalStationBridgeService {
           backend: "warm_full_forensic_runner",
           executionPath: "warm_full_forensic_runner",
           detail: "Warm captured artifacts processed; report-compatible manifest, ROI/display crops, Surface Intelligence inputs, and Vision Lab inputs are ready.",
-        });
+        }, sessionManifest);
+        sessionManifest.updatedAt = new Date().toISOString();
+        await writeSessionManifest(sessionManifest);
+        await this.syncQueuedManifest(sessionManifest);
         return processed;
-      }).catch((error) => {
+      }).catch(async (error) => {
         const message = error instanceof Error ? error.message : `${side} warm artifact processing failed.`;
         this.markWarmPhase({
           id: `process_${side}_artifacts`,
@@ -2629,11 +3859,16 @@ export class AiGraderLocalStationBridgeService {
           backend: "warm_full_forensic_runner",
           executionPath: "warm_full_forensic_runner",
           detail: message,
-        });
-        this.manifest.warmRunnerStatus.status = "failed";
+        }, sessionManifest);
+        sessionManifest.warmRunnerStatus.status = "failed";
+        if (!sessionManifest.warnings.includes(message)) sessionManifest.warnings.push(message);
+        this.transitionRapidWorkflow(sessionManifest, "failed", message);
+        await writeSessionManifest(sessionManifest);
+        await this.syncQueuedManifest(sessionManifest);
         throw error;
       });
-      void this.warmProcessingJobs[side]?.catch(() => {});
+      this.warmProcessingJobs.set(processingKey, processingJob);
+      void processingJob.catch(() => {});
       this.markWarmPhase({
         id: `process_${side}_artifacts_started`,
         label: `${side === "front" ? "Front" : "Back"} processing started`,
@@ -2642,79 +3877,145 @@ export class AiGraderLocalStationBridgeService {
         backend: "warm_full_forensic_runner",
         executionPath: "warm_full_forensic_runner",
         detail: "Background processing queue accepted the warm side batch.",
-      });
-      this.manifest.warmRunnerStatus.status = "processing";
+      }, sessionManifest);
+      sessionManifest.warmRunnerStatus.status = "processing";
+      // Yield only through the immediate promise chain so synchronous process
+      // rejection becomes terminal before the capture handler advances state.
+      // Long-running processing is still fully backgrounded.
+      await Promise.resolve();
+      await Promise.resolve();
       return result;
     } catch (error) {
-      this.manifest.warmRunnerStatus.status = "failed";
-      const allowFallback = warmFailureAllowsColdFallback(error);
+      const failedAt = new Date().toISOString();
+      const message = error instanceof Error ? error.message : `${side} warm capture failed.`;
+      sessionManifest.warmRunnerStatus.status = "failed";
+      this.updateEvidenceRoles(side, "failed", sessionManifest);
+      this.markWarmPhase({
+        id: phaseId,
+        label,
+        status: "failed",
+        side,
+        startedAt: phase?.startedAt,
+        backend: "warm_full_forensic_runner",
+        executionPath: "warm_full_forensic_runner",
+        detail: message,
+      }, sessionManifest);
+      sessionManifest.captureFailure = {
+        side,
+        stage: "warm_capture",
+        message,
+        at: failedAt,
+        retryRequired: true,
+        automaticColdFallbackAttempted: false,
+      };
+      sessionManifest.captureTimingHardwareEvidence[side] = { captureBatch: false, processedManifest: false };
+      this.ensureCaptureTiming(sessionManifest);
+      sessionManifest.captureProfileGuard.fiveSecondTargetProven = false;
+      if (!sessionManifest.warnings.includes(message)) sessionManifest.warnings.push(message);
+      sessionManifest.progressLog.push(`${failedAt} ${side} warm capture failed; safe-off is required and an operator retry is required. No automatic cold debug capture was attempted.`);
+      this.transitionRapidWorkflow(sessionManifest, "failed", message);
       await this.runSafeOffCleanup(`${side} warm capture failure`);
-      if (allowFallback) {
-        const reason = `${side} warm runner failed before capture started and reported safe fallback eligibility.`;
-        this.releaseCaptureLock(owner);
-        return this.runColdFallbackSideCapture(side, reason);
-      }
-      this.manifest.warmRunnerStatus.status = "failed";
+      sessionManifest.warmRunnerStatus.status = "failed";
       this.releaseFullForensicPreviewHold(`${side} warm capture failed after safe-off cleanup`);
+      this.updatePreviewStatus({
+        status: "error",
+        cameraOwnership: "released",
+        lastError: message,
+        lastStopReason: `${side} warm capture failed after safe-off cleanup; retry required.`,
+      });
+      if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+      sessionManifest.updatedAt = new Date().toISOString();
+      await writeSessionManifest(sessionManifest);
+      await this.syncQueuedManifest(sessionManifest);
       throw error;
     } finally {
       if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
     }
   }
 
-  private async runWarmReport(): Promise<AiGraderStationCommandResult> {
-    if (!this.manifest.outputs.frontPackageDir || !this.manifest.outputs.backPackageDir) {
+  private async runWarmReport(manifest: AiGraderLocalStationBridgeManifest = this.manifest): Promise<AiGraderStationCommandResult> {
+    if (!manifest.outputs.frontPackageDir || !manifest.outputs.backPackageDir) {
       throw new Error("Unified report requires both front and back evidence package folders.");
     }
     const phase = this.markWarmPhase({
       id: "report_queue",
       label: "Unified report queue",
       status: "active",
-      backend: this.manifest.executionPath,
-      executionPath: this.manifest.executionPath,
+      backend: manifest.executionPath,
+      executionPath: manifest.executionPath,
       detail: "Builds from already processed front/back full forensic artifacts.",
-    });
-    this.manifest.warmRunnerStatus.status = "reporting";
-    await Promise.all([this.awaitWarmProcessing("front"), this.awaitWarmProcessing("back")]);
+    }, manifest);
+    manifest.warmRunnerStatus.status = "reporting";
+    await Promise.all([this.awaitWarmProcessing(manifest, "front"), this.awaitWarmProcessing(manifest, "back")]);
+    const reportStartedAt = new Date().toISOString();
+    this.recordCaptureTimingEvent(manifest, { id: "report_generation_started", at: reportStartedAt });
     const step = {
-      ...stepById(this.config, this.manifest, "unified_report"),
+      ...stepById(this.config, manifest, "unified_report"),
       args: [
         "ai-grader-fixed-rig-v1-card-report",
         "--output-dir",
         this.config.outputDir,
         "--front-dir",
-        this.manifest.outputs.frontPackageDir,
+        manifest.outputs.frontPackageDir,
         "--back-dir",
-        this.manifest.outputs.backPackageDir,
+        manifest.outputs.backPackageDir,
       ],
     };
-    const result = await runStepOrMock(this.config, this.manifest, this.runner, step);
+    const result = await runStepOrMock(this.config, manifest, this.runner, step);
+    const reportFinishedAt = result.finishedAt ?? new Date().toISOString();
+    this.recordCaptureTimingPhase(manifest, {
+      id: "report_generation",
+      durationMs: result.durationMs ?? Math.max(0, Date.parse(reportFinishedAt) - Date.parse(reportStartedAt)),
+      startedAt: result.startedAt ?? reportStartedAt,
+      finishedAt: reportFinishedAt,
+    });
     result.payload = {
       ...(result.payload ?? {}),
-      executionPath: this.manifest.executionPath,
-      fallbackUsed: this.manifest.fallbackUsed,
-      ...(this.manifest.fallbackReason ? { fallbackReason: this.manifest.fallbackReason } : {}),
+      executionPath: manifest.executionPath,
+      explicitColdDebugModeUsed: manifest.explicitColdDebugModeUsed,
+      ...(manifest.explicitColdDebugReason ? { explicitColdDebugReason: manifest.explicitColdDebugReason } : {}),
     };
-    this.manifest.commandResults.push(result);
+    manifest.commandResults.push(result);
     this.markWarmPhase({
       id: "report_queue",
       label: "Unified report queue",
       status: result.ok ? "completed" : "failed",
       startedAt: phase.startedAt,
-      backend: this.manifest.executionPath,
-      executionPath: this.manifest.executionPath,
+      backend: manifest.executionPath,
+      executionPath: manifest.executionPath,
       detail: result.ok ? "Unified report, Surface Intelligence, and Vision Lab outputs preserved." : result.error ?? "Unified report failed.",
-    });
-    this.manifest.warmRunnerStatus.status = result.ok ? "complete" : "failed";
+    }, manifest);
+    manifest.warmRunnerStatus.status = result.ok ? "complete" : "failed";
     if (!result.ok) {
-      await this.runSafeOffCleanup("warm report failure");
-      this.manifest.warmRunnerStatus.status = "failed";
+      if (manifest === this.manifest) await this.runSafeOffCleanup("warm report failure");
+      manifest.warmRunnerStatus.status = "failed";
       throw new Error(result.error ?? "Unified provisional diagnostics failed.");
     }
+    this.recordCaptureTimingEvent(manifest, { id: "report_ready", at: reportFinishedAt });
     return result;
   }
 
   async streamPreview(req: http.IncomingMessage, res: http.ServerResponse, origin: string | undefined): Promise<void> {
+    if (this.activeQueueItemId) {
+      this.updatePreviewStatus({
+        status: "stopped",
+        cameraOwnership: "released",
+        lastStopReason: "Rapid queue item is active for human Confirm Card / Publish review.",
+      });
+      sendJson(
+        res,
+        409,
+        {
+          ok: false,
+          code: "AI_GRADER_QUEUE_REVIEW_ACTIVE",
+          message: "Preview remains paused while the activated rapid queue item is under human review.",
+          result: this.previewStatus(),
+        },
+        origin,
+        this.config
+      );
+      return Promise.resolve();
+    }
     if (this.captureLock) {
       this.updatePreviewStatus({
         status: "paused_for_capture",
@@ -2762,6 +4063,7 @@ export class AiGraderLocalStationBridgeService {
       return Promise.resolve();
     }
     await this.stopPreviewStream("new preview stream requested", { waitForRelease: true, settleMs: 100 });
+    const previewStartedAt = new Date().toISOString();
     this.updatePreviewStatus({
       status: "starting",
       implementationType: this.config.mode === "real" ? "mjpeg_fetch_stream" : "mock_mjpeg_stream",
@@ -2775,12 +4077,13 @@ export class AiGraderLocalStationBridgeService {
       frameSource: this.config.mode === "real" ? "basler_pylon_continuous_grab" : "mock_station_preview",
       frameCount: 0,
       fps: undefined,
-      startedAt: new Date().toISOString(),
+      startedAt: previewStartedAt,
       firstFrameAt: undefined,
       lastFrameAt: undefined,
       lastError: undefined,
       lastStopReason: undefined,
     });
+    this.recordCaptureTimingEvent(this.manifest, { id: "preview_stream_started", at: previewStartedAt });
     setMjpegHeaders(res, origin, this.config);
 
     return new Promise<void>((resolve) => {
@@ -2818,6 +4121,7 @@ export class AiGraderLocalStationBridgeService {
           const generatedAt = new Date().toISOString();
           writeMjpegFrame(res, "image/svg+xml", mockPreviewSvg(frameCount, generatedAt), frameCount);
           this.notePreviewFrame(frameCount);
+          this.noteMockPreviewGeometry(frameCount);
         };
         send();
         mockPreviewTimer = setInterval(send, 250);
@@ -2841,15 +4145,17 @@ export class AiGraderLocalStationBridgeService {
         });
         this.previewProcess = child;
         let frameCount = 0;
+        const jpegFrames = new AiGraderPreviewJpegFrameAssembler();
         child.stdout.on("data", (chunk: Buffer) => {
           if (settled || res.destroyed) return;
-          const text = chunk.toString("latin1");
-          const boundaryHits = text.split(`--${PREVIEW_MJPEG_BOUNDARY}`).length - 1;
-          if (boundaryHits > 0) {
-            frameCount += boundaryHits;
-            this.notePreviewFrame(frameCount);
-          }
+          // Forward bytes immediately. JPEG assembly and Sharp analysis happen
+          // afterward and are never awaited from the stream callback.
           res.write(chunk);
+          for (const frame of jpegFrames.push(chunk)) {
+            frameCount += 1;
+            this.notePreviewFrame(frameCount);
+            this.queuePreviewGeometryAnalysis(frame, frameCount);
+          }
         });
         child.stderr.on("data", (chunk: Buffer) => {
           const text = chunk.toString("utf-8").trim();
@@ -2900,6 +4206,8 @@ export class AiGraderLocalStationBridgeService {
           reportId: expectedReportId,
           publicBasePath: this.config.publicBasePath,
           includeAssetBodies: true,
+          captureTiming: this.captureTimingSnapshot(this.manifest),
+          geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
         });
         return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, this.manifest.productionRelease), source: "active_manifest_generated_with_asset_bodies" };
       }
@@ -2930,6 +4238,8 @@ export class AiGraderLocalStationBridgeService {
         outputDir: packageDir,
         reportId: expectedReportId,
         publicBasePath: this.config.publicBasePath,
+        captureTiming: this.captureTimingSnapshot(this.manifest),
+        geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
       });
       this.manifest.reportBundle = bundle;
       return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, this.manifest.productionRelease), source: "active_manifest_generated_from_report_dir" };
@@ -2945,6 +4255,8 @@ export class AiGraderLocalStationBridgeService {
           reportId: expectedReportId,
           publicBasePath: this.config.publicBasePath,
           includeAssetBodies: true,
+          captureTiming: await this.captureTimingSnapshotForReport(expectedReportId, item.sessionDir),
+          geometryCaptureDecisions: await this.geometryCaptureDecisionSnapshotForReport(expectedReportId, item.sessionDir),
         });
         const release = await readProductionReleaseFromPath(item.productionReleasePath);
         return { reportId: expectedReportId, bundle: bundleWithProductionRelease(generated, release), source: "history_generated_with_asset_bodies" };
@@ -2960,6 +4272,8 @@ export class AiGraderLocalStationBridgeService {
           outputDir: publishPackageDir(this.config, expectedReportId),
           reportId: expectedReportId,
           publicBasePath: this.config.publicBasePath,
+          captureTiming: await this.captureTimingSnapshotForReport(expectedReportId, item.sessionDir),
+          geometryCaptureDecisions: await this.geometryCaptureDecisionSnapshotForReport(expectedReportId, item.sessionDir),
         });
         return { reportId: expectedReportId, bundle: generated, source: "history_generated_from_report_dir" };
       }
@@ -3092,6 +4406,8 @@ export class AiGraderLocalStationBridgeService {
             outputDir: publishPackageDir(this.config, stationManifest.reportId),
             reportId: stationManifest.reportId,
             publicBasePath: this.config.publicBasePath,
+            captureTiming: this.captureTimingSnapshot(stationManifest),
+            geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(stationManifest),
           });
           items.push(historyItemFromBundle({
             bundle: generated,
@@ -3133,38 +4449,50 @@ export class AiGraderLocalStationBridgeService {
       return this.status();
     }
 
-    if (action === "start-session") {
-      const { packageId, packageDir } = await createFixedRigPackageDir(this.config.outputDir, "ai-grader-browser-station-session");
-      this.releaseFullForensicPreviewHold("new station session started");
-      this.manifest.sessionId = `${packageId}-session`;
-      this.manifest.reportId = request.reportId ?? `${packageId}-report`;
-      this.manifest.createdAt = now;
-      this.manifest.outputs.sessionDir = packageDir;
-      this.manifest.outputs.manifestPath = path.join(packageDir, "station-session.json");
-      this.manifest.currentStep = "verify_fixture_rulers";
-      this.clearLiveLightingWatchdog();
-      this.manifest.liveLighting = defaultLiveLightingStatus(this.config);
-      this.setExecutionPath(this.config.warmRunnerDisabled ? "cold_command_fallback" : "warm_full_forensic_runner", this.config.warmRunnerDisabled ? "Warm runner disabled by explicit debug flag." : undefined);
-      this.manifest.warmRunnerStatus.sessionId = this.manifest.sessionId;
-      this.manifest.warmRunnerStatus.status = "warming";
-      this.markWarmPhase({
-        id: "warm_session_setup",
-        label: "Warm session setup",
-        status: "completed",
-        backend: this.manifest.executionPath,
-        executionPath: this.manifest.executionPath,
-        detail: this.manifest.executionPath === "cold_command_fallback"
-          ? "Bridge-owned session initialized with cold fallback explicitly selected by debug flag."
-          : "Bridge-owned warm session initialized; Basler/Leimac ownership will be serialized through the capture lock.",
-      });
-      this.manifest.warmRunnerStatus.status = "idle";
-      this.manifest.progressLog.push(`${now} Started station session ${this.manifest.sessionId}.`);
+    if (action === "configure-rapid-capture") {
+      if (typeof request.rapidCaptureEnabled !== "boolean") {
+        throw new Error("Rapid capture configuration requires rapidCaptureEnabled true or false.");
+      }
+      this.rapidQueue.rapidCaptureEnabled = request.rapidCaptureEnabled;
+      this.manifest.rapidCapture.enabled = request.rapidCaptureEnabled;
+      this.manifest.progressLog.push(`${now} Rapid capture mode ${request.rapidCaptureEnabled ? "enabled" : "disabled"}; human confirmation and publish remain required.`);
       await writeSessionManifest(this.manifest);
+      await this.persistRapidQueue();
       return this.status();
+    }
+
+    if (action === "activate-queue-item") {
+      await this.activateRapidQueueItem(request.queueItemId ?? "");
+      return this.status();
+    }
+
+    if (action === "start-session") {
+      if (!request.captureProfile) {
+        throw new Error("AI Grader start-session requires an explicit captureProfile of full_forensic or production_fast.");
+      }
+      await this.createFreshSession({ reportId: request.reportId, captureProfile: request.captureProfile }, now);
+      return this.status();
+    }
+
+    if (this.activeQueueItemId && new Set<AiGraderLocalStationBridgeAction>([
+      "confirm-light-idle-off",
+      "confirm-fixture-rulers",
+      "launch-preview",
+      "accept-profile",
+      "capture-front",
+      "confirm-flip",
+      "capture-back",
+      "run-diagnostics",
+    ]).has(action)) {
+      throw new Error("Start a fresh station session before running capture actions while a rapid queue item is under human review.");
     }
 
     if (!this.manifest.sessionId && action !== "safe-off" && action !== "end-session") {
       throw new Error("Start a station session before running AI Grader station actions.");
+    }
+
+    if (this.manifest.captureFailure && (action === "capture-front" || action === "capture-back")) {
+      throw new Error(`The ${this.manifest.captureFailure.side} capture failed and requires a new start-session retry before any further capture.`);
     }
 
     if (action === "confirm-light-idle-off") {
@@ -3192,8 +4520,14 @@ export class AiGraderLocalStationBridgeService {
     if (action === "confirm-flip") {
       this.manifest.confirmations.flipComplete = true;
       this.manifest.currentStep = "capture_back";
+      this.refreshPreviewGeometryActiveSide();
       this.manifest.progressLog.push(`${now} Operator confirmed card flip complete.`);
       await writeSessionManifest(this.manifest);
+      return this.status();
+    }
+
+    if (action === "queue-current-card") {
+      await this.queueCurrentRapidCard();
       return this.status();
     }
 
@@ -3285,10 +4619,27 @@ export class AiGraderLocalStationBridgeService {
 
     if (action === "capture-front") {
       assertFixtureVisible(this.manifest);
+      this.recordGeometryCaptureDecision(this.manifest, "front", request, now);
+      this.recordCaptureTimingEvent(this.manifest, {
+        id: "capture_trigger",
+        side: "front",
+        triggerMode: parseCaptureTriggerMode(request.captureTriggerMode),
+        at: validatedCaptureTriggerAt(request.captureTriggerAt, now),
+      });
       const result = await this.runWarmSideCapture("front");
       this.manifest.outputs.frontPackageDir = extractPackageDir(result.payload);
+      if (this.manifest.rapidCapture.workflowState === "failed") {
+        this.manifest.progressLog.push(`${new Date().toISOString()} Front raw capture completed, but processing failed; back positioning was not started.`);
+        await writeSessionManifest(this.manifest);
+        return this.status();
+      }
       this.manifest.currentStep = "prompt_flip_card";
+      this.refreshPreviewGeometryActiveSide();
       this.releaseFullForensicPreviewHold("front capture complete; operator can position back with live preview");
+      this.transitionRapidWorkflow(this.manifest, "front_captured", "Front raw evidence package is safely persisted.");
+      this.transitionRapidWorkflow(this.manifest, "front_processing", "Front artifact processing started while the operator flips the card.");
+      this.transitionRapidWorkflow(this.manifest, "back_positioning", "Back preview and positioning may proceed while front processing continues.");
+      this.recordCaptureTimingEvent(this.manifest, { id: "back_positioning_started", side: "back" });
       this.manifest.progressLog.push(`${now} Front evidence captured with warm-runner orchestration.`);
       await writeSessionManifest(this.manifest);
       return this.status();
@@ -3297,19 +4648,38 @@ export class AiGraderLocalStationBridgeService {
     if (action === "capture-back") {
       assertFixtureVisible(this.manifest);
       assertFlipComplete(this.manifest);
+      this.recordGeometryCaptureDecision(this.manifest, "back", request, now);
+      this.recordCaptureTimingEvent(this.manifest, {
+        id: "capture_trigger",
+        side: "back",
+        triggerMode: parseCaptureTriggerMode(request.captureTriggerMode),
+        at: validatedCaptureTriggerAt(request.captureTriggerAt, now),
+      });
       const result = await this.runWarmSideCapture("back");
       this.manifest.outputs.backPackageDir = extractPackageDir(result.payload);
+      if (this.manifest.rapidCapture.workflowState === "failed") {
+        this.manifest.progressLog.push(`${new Date().toISOString()} Back raw capture completed, but processing failed; report finalization was not started.`);
+        await writeSessionManifest(this.manifest);
+        return this.status();
+      }
       this.manifest.currentStep = "run_provisional_diagnostics";
+      this.refreshPreviewGeometryActiveSide();
+      this.transitionRapidWorkflow(this.manifest, "back_captured", "Back raw evidence package is safely persisted and the global capture lock is released.");
       this.manifest.progressLog.push(`${now} Back evidence captured with warm-runner orchestration.`);
       await writeSessionManifest(this.manifest);
       return this.status();
     }
 
     if (action === "run-diagnostics") {
+      if (this.manifest.rapidCapture.workflowState === "failed") {
+        throw new Error("Cannot finalize diagnostics because side processing failed for this card.");
+      }
+      this.transitionRapidWorkflow(this.manifest, "finalizing", "Front/back processing and unified report generation are finalizing.");
       const result = await this.runWarmReport();
       this.manifest.outputs.unifiedReportDir = result.payload?.report?.packageDir ?? dirnameIfFile(extractUnifiedReportPath(result.payload));
       this.manifest.outputs.unifiedReportPath = extractUnifiedReportPath(result.payload);
       this.manifest.currentStep = "view_unified_report";
+      this.transitionRapidWorkflow(this.manifest, "report_ready_needs_confirm", "Report is ready; human Confirm Card review is required before publish.");
       this.manifest.progressLog.push(`${now} Unified provisional diagnostics generated from warm-runner queues.`);
       await writeSessionManifest(this.manifest);
       return this.status();
@@ -3324,6 +4694,8 @@ export class AiGraderLocalStationBridgeService {
         outputDir,
         reportId: this.manifest.reportId,
         publicBasePath: this.config.publicBasePath,
+        captureTiming: this.captureTimingSnapshot(this.manifest),
+        geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
       });
       this.manifest.outputs.reportBundlePath = bundle.bundlePath;
       this.manifest.outputs.publishPackageDir = bundle.outputDir;
@@ -3345,6 +4717,13 @@ export class AiGraderLocalStationBridgeService {
         this.manifest.currentStep = "label_data_ready";
       }
       this.manifest.progressLog.push(`${now} ${actionLabel(action)} completed with status ${release.reportStatus}.`);
+      if (this.activeQueueItemId && (action === "calculate-final-grade" || action === "finalize-report")) {
+        this.transitionRapidWorkflow(this.manifest, "confirmed_needs_publish", "A human explicitly completed confirmation/finalization; publish is still required.");
+        await this.syncQueuedManifest(this.manifest);
+      } else if (this.activeQueueItemId && action === "publish-report") {
+        this.transitionRapidWorkflow(this.manifest, "published", "A human explicitly invoked the existing publish action.");
+        await this.syncQueuedManifest(this.manifest);
+      }
       await writeSessionManifest(this.manifest);
       return this.status();
     }
@@ -3375,6 +4754,9 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
     "latest-report",
     "session-manifest",
     "end-session",
+    "configure-rapid-capture",
+    "queue-current-card",
+    "activate-queue-item",
   ].includes(value);
 }
 

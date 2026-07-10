@@ -12651,3 +12651,72 @@ Build Set Ops UI flow with:
 - Hardware timing aggregates: warm Basler open/configure `454.3 ms` front and `454.4 ms` back; aggregate Basler grab `3156.2 ms`; image save `11517.3 ms`; image hash `161.1 ms`; per-image Basler open was saved and close/dispose deferred for each side batch. Leimac capture write/ack before cleanup totaled `614.1 ms`; no fallback/reconnect was observed in status/manifests.
 - Acceptance state: actual warm hardware execution is validated, full evidence is preserved, report opens, final light is physically off, and the speed target is met by bridge report-ready accounting. A final normal-speed hands-on UI run can still produce a cleaner end-user wall-clock number because this smoke used chat-mediated flip/report triggers.
 - Guardrails held: no secrets printed, no migration, no production DB write, no Vercel env change, no credential rotation, no production deploy, and no public report route exposed hardware controls.
+
+## Session Update (2026-07-10 UTC, post-PR #79 capture-speed/geometry/rapid/OCR implementation)
+
+- Working branch: feature/ai-grader-capture-speed-rapid-ocr, based on merged PR #79/main commit f83d81095ca011be1b763c2730d31ec70d167011.
+- Existing architecture preserved:
+  - Part 1 remains /ai-grader/station for capture, Grade, human Confirm Card, and Publish.
+  - Part 2 remains /ai-grader/finish for comps, slab photos, and inventory.
+  - /ai-grader/labels/sheets remains the 16-label sheet workflow.
+  - Existing auth, direct browser-to-storage uploads, and public read-only report boundaries remain in place.
+- All ten requested software work areas were implemented:
+  - token-gated front/back live four-corner geometry with Not Detected, Adjust Card, and Ready states;
+  - close-enough placement using approximately 0.5 inch center offset, 10 degree skew, confidence/aspect/frame thresholds, plus an explicit operator-confirmed manual-capture rectangle when automatic detection is not Ready;
+  - derived lossless front/back normalized crop/deskew PNGs while preserving and re-hashing raw evidence;
+  - path-free geometry metadata in side/unified/report packages;
+  - explicit opt-in production_fast station profile using lossless TIFF raw encoding while preserving dark control, all-on, accepted profile, and channels 1-8; full_forensic PNG remains the previous stable/current default selection, not an automatic fallback;
+  - canonical preview/edge/trigger/lighting/frame/write/hash/crop/processing/report/queue/card timing;
+  - front artifact processing overlaps flip/back positioning with capture ownership and per-session race guards;
+  - optional rapid mode with automatic stable-Ready capture, atomically persisted background queue, non-evicting unreviewed backlog, restart/error recovery, and explicit Activate/Review;
+  - Confirm Card OCR prefill reusing Google Vision OCR, shared extractCardAttributes, set identification, and set lookup, with direct-storage checksum-bound front/back uploads and mandatory human confirmation;
+  - fail-closed five-second proof plus exact supervised Dell A/B smoke instructions.
+- Queue integrity:
+  - Public rapid status exposes only the last atomically committed queue snapshot.
+  - In-progress/unreviewed cards are never pruned by the 25-item recent-history cap.
+  - Activated cards block preview, lighting, and capture actions until a fresh session, preventing evidence overwrite.
+- Public/security integrity:
+  - Direct PUTs are bound to storage-provided SHA-256 plus exact size; mutable metadata is not trusted as the byte checksum.
+  - Published browser timing is diagnostic only and cannot self-assert hardware proof.
+  - OCR publication metadata cannot claim auto-confirm, publish, or inventory mutation.
+  - Embedded private/signed URLs, scheme-less private hosts, local paths, tokens, image bodies, and hardware controls are rejected or removed from public output.
+- Timing truth:
+  - No Dell/Basler/Leimac run was authorized or performed for this branch.
+  - Edge detection and crop/deskew are validated only in software/mock/synthetic front/back tests, not on the Dell.
+  - Five seconds per side is not proven. The latest supervised control remains PR #58: front 9442 ms, back 9243 ms, front processing 4229 ms during flip, back processing 3611 ms, unified report 14867 ms, and aggregate image writes 11517.3 ms.
+  - Image writing alone averaged about 5.76 seconds per side in that control, so the exact next action is Mark approval for a same-card Full Forensic versus Production Fast Dell A/B run, followed by the documented 10-pair median/p95 quality check.
+- Final validation for this branch:
+  - pnpm --filter @tenkings/nextjs-app build -> pass, with existing unrelated image, browser-data, and Tailwind warnings.
+  - pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts -> pass, 79/79.
+  - pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLabelSheets.test.ts -> pass, 5/5.
+  - Focused OCR/auto tests -> pass, 15/15.
+  - pnpm --filter @tenkings/database build -> pass.
+  - Production database service tests -> pass, 15/15.
+  - pnpm --filter @tenkings/ai-grader-capture-helper build -> pass.
+  - pnpm --filter @tenkings/ai-grader-capture-helper test -> pass, 199/199.
+  - git diff --check -> pass with line-ending notices only.
+- Guardrails:
+  - Hardware capture/preview/lighting command: not run.
+  - Migration or destructive database action: not run.
+  - Environment variable or credential change/rotation/printing: none.
+  - Production deploy, publish, database write, storage write, OCR network call, or external production mutation: none.
+
+## Session Update (2026-07-10 UTC, PR #80 no-hidden-fallback pre-merge patch)
+
+- Warm-runner failure is terminal for the current card session. The bridge persists the exact error with `retryRequired=true` and `automaticColdFallbackAttempted=false`, safe-offs once, releases preview/camera/capture ownership, and requires an explicit Start New Card / `start-session` retry. It never starts the cold command path after a production capture error.
+- `cold_command_fallback` remains available only when `AI_GRADER_WARM_RUNNER_DISABLED` (or the equivalent explicit bridge config) disabled the warm runner before the session. This debug mode rejects `production_fast`, uses explicit cold-debug status fields, and cannot contribute to five-seconds-per-side proof.
+- Automatic geometry capture requires a coherent detected Ready result. Not Detected or Adjust Card cannot silently use the configured fixture rectangle. Manual capture is a separate operator-confirmed action; it persists `manual_capture` / `manual_override`, `detectionUsed=false`, `confidence=0`, a raw-sensor rectangle, and a non-Ready placement state.
+- Portrait-preview manual rectangles are converted to Basler sensor coordinates before processing. Raw landscape orientation now keeps its approximately 90-degree transform rotation while measuring placement skew relative to the expected frame orientation, so correct Dell placement evaluates near zero skew and produces a portrait normalized artifact.
+- `full_forensic` and `production_fast` are explicit profiles. Full Forensic is the previous stable/current default selection, not an automatic fallback. Production Fast is opt-in until a later Mark-approved Dell A/B quality/timing run.
+- Rapid capture still feeds human Confirm Card and Publish, then the existing label-sheet, comps, slab-photo, and inventory gates. OCR remains draft-only and always requires human confirmation. Raw evidence is retained unchanged; normalized artifacts are derived additions.
+- Public/persisted geometry decisions use an explicit allowlist. Local paths, bridge URLs/tokens, embedded image bodies, signed URLs, credentials, and hardware controls are absent from public report JSON and `AiGraderSession.captureSummary`.
+- Dell timing remains unproven for this branch. No hardware run was authorized or performed. The latest supervised control is still about `9442 ms` front and `9243 ms` back; the next proof action remains a Mark-approved same-card Full Forensic versus Production Fast Dell A/B.
+- Final local validation:
+  - `pnpm --filter @tenkings/nextjs-app build` passed with existing unrelated `<img>` warnings.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` passed `80/80`.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLabelSheets.test.ts` passed `5/5`.
+  - Focused OCR/rapid tests passed `15/15`.
+  - `pnpm --filter @tenkings/database build` passed; database AI Grader production/service tests passed `52/52`.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` passed; its full test suite passed `207/207`.
+  - `git diff --check` passed with Windows line-ending notices only.
+- Guardrails held during the patch: no hardware commands, migration, environment change, credential access/rotation/printing, database/storage write, OCR network call, Dell bridge restart, droplet restart, or deploy.

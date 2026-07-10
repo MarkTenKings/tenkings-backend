@@ -29,6 +29,11 @@ import {
   type FixedRigProvisionalGradeStoryResult,
 } from "./fixedRigProvisionalGradeStory";
 import {
+  detectAndNormalizeCardImage,
+  type CardGeometryManualOverride,
+  type CardGeometryNormalizationResult,
+} from "./cardGeometry";
+import {
   LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
   buildLeimacIdmuSafeOffFrames,
   composeLeimacIdmuChannelWriteFrame,
@@ -58,6 +63,29 @@ export const FIXED_RIG_SELECTED_GAIN = 0;
 export const FIXED_RIG_SELECTED_LEIMAC_DUTY = 1.2;
 export const FIXED_RIG_ACTIVE_LIGHTING_PROFILE_FILENAME = "fixed-rig-active-lighting-profile.json";
 export const FIXED_RIG_DEFAULT_CHANNELS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+
+export type FixedRigCaptureProfile = "full_forensic" | "production_fast";
+
+export const FIXED_RIG_CAPTURE_PROFILES: Record<
+  FixedRigCaptureProfile,
+  {
+    rawFormat: "png" | "tiff";
+    evidenceRoles: "full_forensic";
+    note: string;
+  }
+> = {
+  full_forensic: {
+    rawFormat: "png",
+    evidenceRoles: "full_forensic",
+    note: "Lossless PNG raw evidence with dark control, all-on, accepted profile, and channels 1-8.",
+  },
+  production_fast: {
+    rawFormat: "tiff",
+    evidenceRoles: "full_forensic",
+    note:
+      "Lossless TIFF raw evidence reduces PNG encoding work while preserving dark control, all-on, accepted profile, and channels 1-8. Dell timing acceptance is still required.",
+  },
+};
 
 export type FixedRigDisplayTransform = "none" | "rotate90cw" | "rotate90ccw" | "rotate180";
 export type FixedRigOrientationUsed = "raw_landscape_rotated_to_portrait" | "raw_portrait";
@@ -670,6 +698,7 @@ export interface FixedRigV1LocalManifest {
 export interface FixedRigWarmEvidencePackageInput {
   outputDir: string;
   side: FixedRigCardSide;
+  captureProfile?: FixedRigCaptureProfile;
   activeLightingProfile?: FixedRigActiveLightingProfile;
   pylonRoot?: string;
   pylonTimeoutMs?: number;
@@ -693,16 +722,25 @@ export interface FixedRigWarmEvidencePackageInput {
   verticalSpanMm?: number;
   verticalStartPx?: { x: number; y: number };
   verticalEndPx?: { x: number; y: number };
+  /**
+   * Legacy fixture hint retained for bridge compatibility. It never overrides
+   * automatic geometry or creates a normalized artifact.
+   */
   cardBoundaryRect?: { x: number; y: number; width: number; height: number };
+  /** Explicit operator action required to use manual card geometry. */
+  manualGeometryOverride?: CardGeometryManualOverride;
 }
 
 export interface FixedRigWarmSideCaptureBatch {
   executionPath: "warm_full_forensic_runner";
-  fallbackUsed: false;
   packageId: string;
   packageDir: string;
   sideDir: string;
   side: FixedRigCardSide;
+  captureProfile: FixedRigCaptureProfile;
+  rawEvidenceFormat: "png" | "tiff";
+  /** True only when captureFixedRigWarmSideBatch actually completed against the rig. */
+  hardwareMeasurement?: boolean;
   activeLightingProfile: FixedRigActiveLightingProfile;
   batch: BaslerFixedRigSideBatchResult;
   exposureUs: number;
@@ -720,11 +758,11 @@ export interface FixedRigWarmSideCaptureBatch {
   verticalStartPx?: { x: number; y: number };
   verticalEndPx?: { x: number; y: number };
   cardBoundaryRect?: { x: number; y: number; width: number; height: number };
+  manualGeometryOverride?: CardGeometryManualOverride;
 }
 
 export interface FixedRigWarmEvidencePackageResult {
   executionPath: "warm_full_forensic_runner";
-  fallbackUsed: false;
   packageId: string;
   packageDir: string;
   manifestPath: string;
@@ -3145,6 +3183,8 @@ export async function captureFixedRigWarmSideBatch(input: FixedRigWarmEvidencePa
     });
   const exposureUs = input.exposureUs ?? FIXED_RIG_SELECTED_EXPOSURE_US;
   const gain = input.gain ?? FIXED_RIG_SELECTED_GAIN;
+  const captureProfile = input.captureProfile ?? "full_forensic";
+  const captureProfilePlan = FIXED_RIG_CAPTURE_PROFILES[captureProfile];
   const env = input.env ?? process.env;
   const baslerClient = new BaslerPylonClient({
     pylonRoot: input.pylonRoot ?? env.TENKINGS_BASLER_PYLON_ROOT ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT,
@@ -3157,7 +3197,7 @@ export async function captureFixedRigWarmSideBatch(input: FixedRigWarmEvidencePa
     side: input.side,
     selectedChannels: activeLightingProfile.selectedChannels,
     cameraIndex: input.cameraIndex,
-    savedFormat: "png",
+    savedFormat: captureProfilePlan.rawFormat,
     lensModel: input.lensModel ?? env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL,
     exposureUs,
     gain,
@@ -3168,11 +3208,13 @@ export async function captureFixedRigWarmSideBatch(input: FixedRigWarmEvidencePa
   });
   return {
     executionPath: "warm_full_forensic_runner",
-    fallbackUsed: false,
     packageId,
     packageDir,
     sideDir,
     side: input.side,
+    captureProfile,
+    rawEvidenceFormat: captureProfilePlan.rawFormat,
+    hardwareMeasurement: true,
     activeLightingProfile,
     batch,
     exposureUs,
@@ -3190,15 +3232,30 @@ export async function captureFixedRigWarmSideBatch(input: FixedRigWarmEvidencePa
     verticalStartPx: input.verticalStartPx,
     verticalEndPx: input.verticalEndPx,
     cardBoundaryRect: input.cardBoundaryRect,
+    manualGeometryOverride: input.manualGeometryOverride,
   };
 }
 
 export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSideCaptureBatch): Promise<FixedRigWarmEvidencePackageResult> {
+  const processingStartedAtMs = Date.now();
+  const processingStartedAt = new Date(processingStartedAtMs).toISOString();
+  const processingTiming: Record<string, { durationMs: number }> = {};
+  const timed = async <T>(name: string, operation: () => Promise<T>): Promise<T> => {
+    const startedAtMs = Date.now();
+    try {
+      return await operation();
+    } finally {
+      processingTiming[name] = { durationMs: Math.max(0, Date.now() - startedAtMs) };
+    }
+  };
   const {
     packageId,
     packageDir,
     sideDir,
     side,
+    captureProfile,
+    rawEvidenceFormat,
+    hardwareMeasurement,
     activeLightingProfile,
     batch,
     exposureUs,
@@ -3215,11 +3272,52 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
     verticalStartPx,
     verticalEndPx,
     cardBoundaryRect,
+    manualGeometryOverride,
   } = captureBatch;
+  const rawRoleCaptures = [
+    batch.captures.darkControl,
+    batch.captures.allOn,
+    batch.captures.acceptedProfile,
+    ...batch.captures.channels,
+  ];
+  const sumCaptureTiming = (phase: "grab" | "save" | "hash") =>
+    Math.round(
+      rawRoleCaptures.reduce((total, role) => {
+        const duration = Number((role.capture as BaslerCaptureStillResult & { timing?: Record<string, { durationMs?: number }> }).timing?.[phase]?.durationMs);
+        return total + (Number.isFinite(duration) ? duration : 0);
+      }, 0) * 10
+    ) / 10;
+  const openedAtMs = batch.openedAt ? Date.parse(batch.openedAt) : Number.NaN;
+  const finishedAtMs = batch.finishedAt ? Date.parse(batch.finishedAt) : Number.NaN;
+  const sideCaptureTotalMs = Number.isFinite(openedAtMs) && Number.isFinite(finishedAtMs)
+    ? Math.max(0, finishedAtMs - openedAtMs)
+    : undefined;
+  const captureTiming = {
+    previewReadyAt: undefined,
+    edgeDetectionReadyAt: undefined,
+    operatorOrAutoTriggerAt: batch.openedAt,
+    lightingProfileChanges: batch.leimac?.triggerSetup ?? undefined,
+    frameCaptureMs: sumCaptureTiming("grab"),
+    fileWritesMs: sumCaptureTiming("save"),
+    fileHashMs: sumCaptureTiming("hash"),
+    baslerOpenConfigureMs: Number((batch.timing as any)?.warmCameraOpenConfigure?.durationMs ?? 0),
+    gradingForensicRunnerMs: sideCaptureTotalMs,
+    totalSideMs: sideCaptureTotalMs,
+    targetSideMs: 5000,
+    targetProven:
+      hardwareMeasurement === true && typeof sideCaptureTotalMs === "number"
+        ? sideCaptureTotalMs <= 5000
+        : false,
+    captureProfile,
+    rawEvidenceFormat,
+    hardwareMeasurement: hardwareMeasurement === true,
+    hardwareMeasurementRequired: hardwareMeasurement !== true,
+  };
   const applyBoundary = (quality: FixedRigQualityMetrics) =>
-    cardBoundaryRect ? applyFixedRigCardBoundaryOverride(quality, cardBoundaryRect) : quality;
+    manualGeometryOverride
+      ? applyFixedRigCardBoundaryOverride(quality, manualGeometryOverride.rect)
+      : quality;
   const darkControlCapture = batch.captures.darkControl.capture;
-  const darkStats = applyBoundary(await analyzeFixedRigMacroQuality(darkControlCapture.outputFilePath));
   const analyzeRole = async (role: BaslerFixedRigSideBatchResult["captures"]["allOn"]) => {
     const analyzedStats = await analyzeFixedRigMacroQuality(role.capture.outputFilePath);
     const stats = applyBoundary(analyzedStats);
@@ -3234,54 +3332,74 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
       quadrantBrightness,
     };
   };
-  const allOn = await analyzeRole(batch.captures.allOn);
-  const acceptedProfile = await analyzeRole(batch.captures.acceptedProfile);
-  const channels = await Promise.all(
-    batch.captures.channels
-      .slice()
-      .sort((a, b) => Number(a.channel ?? 0) - Number(b.channel ?? 0))
-      .map(async (role) => ({
-        ...(await analyzeRole(role)),
-        channel: Number(role.channel),
-      }))
+  const [darkStats, allOn, acceptedProfile, channels] = await timed("imageAnalysis", async () =>
+    Promise.all([
+      analyzeFixedRigMacroQuality(darkControlCapture.outputFilePath).then(applyBoundary),
+      analyzeRole(batch.captures.allOn),
+      analyzeRole(batch.captures.acceptedProfile),
+      Promise.all(
+        batch.captures.channels
+          .slice()
+          .sort((a, b) => Number(a.channel ?? 0) - Number(b.channel ?? 0))
+          .map(async (role) => ({
+            ...(await analyzeRole(role)),
+            channel: Number(role.channel),
+          }))
+      ),
+    ])
   );
-  const channelDisplayImages: Array<{ channel: number; displayImage: Awaited<ReturnType<typeof createFixedRigDisplayImage>> }> = [];
-  for (const channelCapture of channels) {
-    channelDisplayImages.push({
-      channel: channelCapture.channel,
-      displayImage: await createFixedRigDisplayImage({
-        sourceImagePath: channelCapture.capture.outputFilePath,
-        outputDir: sideDir,
-        filePrefix: `${side}-channel-${channelCapture.channel}`,
-        rawSourceSha256: channelCapture.capture.sha256,
-      }),
-    });
-  }
+  const normalizedCard = await timed("cropDeskew", () =>
+    detectAndNormalizeCardImage({
+      sourceImagePath: allOn.capture.outputFilePath,
+      normalizedOutputPath: path.join(sideDir, "normalized", `${side}-normalized-card.png`),
+      side,
+      sourceImageId: `${packageId}-${side}-all-on`,
+      sourceFrameId: `${side}-all-on-${String(allOn.capture.sha256).slice(0, 16)}`,
+      timestamp: allOn.capture.timestamp,
+      ...(manualGeometryOverride ? { manualOverride: manualGeometryOverride } : {}),
+    })
+  );
+  const channelDisplayImages: Array<{ channel: number; displayImage: Awaited<ReturnType<typeof createFixedRigDisplayImage>> }> =
+    await timed("channelDisplayGeneration", async () =>
+      Promise.all(
+        channels.map(async (channelCapture) => ({
+          channel: channelCapture.channel,
+          displayImage: await createFixedRigDisplayImage({
+            sourceImagePath: channelCapture.capture.outputFilePath,
+            outputDir: sideDir,
+            filePrefix: `${side}-channel-${channelCapture.channel}`,
+            rawSourceSha256: channelCapture.capture.sha256,
+          }),
+        }))
+      )
+    );
   const roiDefinitions = addFixedRigDisplayRects(buildFixedRigRoiDefinitions(allOn.stats.cardBoundary), allOn.stats.width, allOn.stats.height);
-  const displayImage = await createFixedRigDisplayImage({
-    sourceImagePath: allOn.capture.outputFilePath,
-    outputDir: sideDir,
-    filePrefix: `${side}-all-on`,
-    rawSourceSha256: allOn.capture.sha256,
-  });
-  const overlayPreview = await createFixedRigOverlayPreview({
-    sourceImagePath: displayImage.outputFilePath,
-    outputDir: sideDir,
-    filePrefix: `${side}-all-on`,
-    quality: transformQualityForDisplay(allOn.stats, displayImage.displayTransform),
-    roiDefinitions: roiDefinitions.map((roi) => (roi.displayRect ? { ...roi, rect: roi.displayRect } : roi)),
-    title: `${side} evidence overlay`,
-    displayTransform: displayImage.displayTransform,
-  });
-  const roiCrops = await createFixedRigRoiCrops({
-    sourceDisplayImagePath: displayImage.outputFilePath,
-    rawSourceImagePath: allOn.capture.outputFilePath,
-    outputDir: path.join(sideDir, "roi-crops"),
-    rois: roiDefinitions,
-    displayTransform: displayImage.displayTransform,
-    rawSourceSha256: allOn.capture.sha256,
-    filePrefix: side,
-  });
+  const displayImage = await timed("portraitDisplayGeneration", () => createFixedRigDisplayImage({
+      sourceImagePath: allOn.capture.outputFilePath,
+      outputDir: sideDir,
+      filePrefix: `${side}-all-on`,
+      rawSourceSha256: allOn.capture.sha256,
+    }));
+  const [overlayPreview, roiCrops] = await timed("roiDisplayGeneration", async () => Promise.all([
+    createFixedRigOverlayPreview({
+      sourceImagePath: displayImage.outputFilePath,
+      outputDir: sideDir,
+      filePrefix: `${side}-all-on`,
+      quality: transformQualityForDisplay(allOn.stats, displayImage.displayTransform),
+      roiDefinitions: roiDefinitions.map((roi) => (roi.displayRect ? { ...roi, rect: roi.displayRect } : roi)),
+      title: `${side} evidence overlay`,
+      displayTransform: displayImage.displayTransform,
+    }),
+    createFixedRigRoiCrops({
+      sourceDisplayImagePath: displayImage.outputFilePath,
+      rawSourceImagePath: allOn.capture.outputFilePath,
+      outputDir: path.join(sideDir, "roi-crops"),
+      rois: roiDefinitions,
+      displayTransform: displayImage.displayTransform,
+      rawSourceSha256: allOn.capture.sha256,
+      filePrefix: side,
+    }),
+  ]));
   const surfaceAnalysis = buildFixedRigSurfaceAnalysis({
     side,
     channels: channels.map((channelCapture) => ({
@@ -3337,6 +3455,7 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
     displayImage,
     overlayPreview,
     roiCrops,
+    normalizedCard,
     fixtureCalibrationProfile,
     surfaceAnalysis,
     diagnosticGrading,
@@ -3350,9 +3469,32 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
     rawCoordinateFrame: "basler_sensor_pixels",
     displayCoordinateFrame: "ai_grader_card_portrait_display",
     evidenceSide: side,
+    captureProfile,
+    captureProfilePlan: {
+      rawEvidenceFormat,
+      evidenceRoles: FIXED_RIG_CAPTURE_PROFILES[captureProfile].evidenceRoles,
+      availableCaptureProfiles: ["full_forensic", "production_fast"],
+      previousStableProfile: "full_forensic",
+      productionFastOptIn: captureProfile === "production_fast",
+      speedAcceptance: "pending_supervised_dell_timing",
+      note: FIXED_RIG_CAPTURE_PROFILES[captureProfile].note,
+    },
+    geometryPolicy: {
+      mode: manualGeometryOverride ? "manual_capture" : "automatic_detection",
+      geometrySource: normalizedCard.geometry.geometrySource,
+      detectionUsed: normalizedCard.geometry.detectionUsed,
+      manualOverrideUsed: normalizedCard.geometry.manualOverrideUsed === true,
+      legacyCardBoundaryRectIgnored: Boolean(cardBoundaryRect && !manualGeometryOverride),
+      normalizedArtifactCreated: Boolean(normalizedCard.normalizedArtifact),
+    },
+    captureTiming,
+    processingTiming: {
+      startedAt: processingStartedAt,
+      phases: processingTiming,
+      totalDurationMs: Math.max(0, Date.now() - processingStartedAtMs),
+      frontProcessingMayOverlapFlip: side === "front",
+    },
     executionPath: "warm_full_forensic_runner",
-    fallbackUsed: false,
-    fallbackReason: undefined,
     activeLightingProfile,
     exposureUs,
     gain,
@@ -3371,33 +3513,38 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
     [side]: sideEvidence,
     suggestedDinoLiteTargets: { status: "not_computed", reason: "surface anomaly detector not implemented yet" },
     note:
-      "Warm full-forensic fixed-rig V1 evidence package only; no final grade, certificate, or certified grading claim. Full evidence roles preserved.",
+      `Warm fixed-rig V1 ${captureProfile} profile evidence package only; no final grade, certificate, or certified grading claim. Full evidence roles preserved.`,
   };
   const manifestPath = path.join(packageDir, "manifest.json");
   const analysisPath = path.join(packageDir, "analysis.json");
   const previewReportPath = path.join(packageDir, "preview-report.html");
   const manifestWithPaths = { ...manifest, manifestPath, analysisPath, previewReportPath };
-  await writeJsonArtifact(manifestPath, manifestWithPaths);
-  await writeJsonArtifact(analysisPath, {
+  await timed("metadataWrites", async () => {
+    await writeJsonArtifact(manifestPath, manifestWithPaths);
+    await writeJsonArtifact(analysisPath, {
     status: "computed_diagnostic",
     evidenceClass: manifest.evidenceClass,
     executionPath: "warm_full_forensic_runner",
-    fallbackUsed: false,
+    captureProfile,
+    rawEvidenceFormat,
+    captureTiming,
     activeLightingProfile,
     [side]: {
       allOn: allOn.stats,
       acceptedProfile: acceptedProfile.stats,
+      geometry: normalizedCard.geometry,
+      normalizedCard,
       fixtureCalibrationProfile,
       surfaceAnalysis,
       diagnosticGrading,
     },
     finalGradeComputed: false,
     certifiedClaim: false,
+    });
+    await writeFile(previewReportPath, renderWarmFixedRigEvidencePackageReport({ side, activeLightingProfile, sideEvidence, manifest: manifestWithPaths }), "utf-8");
   });
-  await writeFile(previewReportPath, renderWarmFixedRigEvidencePackageReport({ side, activeLightingProfile, sideEvidence, manifest: manifestWithPaths }), "utf-8");
   return {
     executionPath: "warm_full_forensic_runner",
-    fallbackUsed: false,
     packageId,
     packageDir,
     manifestPath,
@@ -3420,6 +3567,7 @@ function renderWarmFixedRigEvidencePackageReport(input: {
     acceptedProfile: { capture: BaslerCaptureStillResult };
     channelDisplayImages: Array<{ channel: number; displayImage: FixedRigDisplayArtifact }>;
     roiCrops: FixedRigDisplayArtifact[];
+    normalizedCard: CardGeometryNormalizationResult;
     fixtureCalibrationProfile: FixedRigFixtureCalibrationProfile;
     surfaceAnalysis: FixedRigSurfaceAnalysis;
     diagnosticGrading: FixedRigDiagnosticGradingResult;
@@ -3428,7 +3576,8 @@ function renderWarmFixedRigEvidencePackageReport(input: {
 }): string {
   const side = input.side;
   const sideTitle = side === "front" ? "Front" : "Back";
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Warm Fixed-Rig V1 Evidence Package - Provisional Diagnostic</title><style>body{font-family:Arial,sans-serif;margin:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}img{max-width:100%;border:1px solid #aaa;background:#111}.warn{border-left:4px solid #a33;padding:8px 12px;background:#fff}.banner{border:2px solid #a33;background:#fff4f4;padding:12px 16px;font-weight:bold}table{border-collapse:collapse;width:100%;margin:8px 0 16px}td,th{border:1px solid #bbb;padding:6px 8px;text-align:left}</style></head><body><h1>Warm Fixed-Rig V1 Evidence Package</h1><p class="banner">Provisional Diagnostic Only - Not Certified - No Final Grade</p><p class="warn">Warm full-forensic capture preserved dark control, all-on, accepted profile, and Leimac channels 1-8. Raw Basler evidence remains in sensor coordinates; display/ROI assets are derived portrait outputs.</p><p>Execution path warm_full_forensic_runner; fallbackUsed=false. Duty ${escapeHtml(input.activeLightingProfile.selectedDutyPercent)}% PWM ${escapeHtml(input.activeLightingProfile.actualLeimacPwmStep)}; channels ${escapeHtml(input.activeLightingProfile.selectedChannels.join(", "))}; source ${escapeHtml(input.activeLightingProfile.profileSource)}.</p><h2>${sideTitle} Portrait Evidence</h2><img src="${escapeHtml(input.sideEvidence.displayImage.outputFilePath)}" alt="${side} portrait all-on"><img src="${escapeHtml(input.sideEvidence.overlayPreview.outputFilePath)}" alt="${side} portrait overlay"><p>Accepted profile raw capture: ${escapeHtml(input.sideEvidence.acceptedProfile.capture.outputFilePath)}</p><p>Rough profile: ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.status)}; pixel/mm ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed")} x ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed")}; diagnostic grading ${escapeHtml(input.sideEvidence.diagnosticGrading.status)}; surface ${escapeHtml(input.sideEvidence.surfaceAnalysis.status)}; candidates ${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.length)}.</p><table><tr><th>Centering</th><td>${escapeHtml(input.sideEvidence.diagnosticGrading.centering.status)} score ${escapeHtml(input.sideEvidence.diagnosticGrading.centering.score ?? "not_computed")}</td></tr><tr><th>Corners</th><td>TL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topLeft.status)}, TR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topRight.status)}, BR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomRight.status)}, BL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomLeft.status)}</td></tr><tr><th>Edges</th><td>T ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.top.status)}, R ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.right.status)}, B ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.bottom.status)}, L ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.left.status)}</td></tr><tr><th>Surface candidates</th><td>${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.map((candidate) => `${candidate.candidateId} ${candidate.severityBand} ${candidate.anomalyProxyScore}`).join(", ") || "none")}</td></tr></table><h3>${sideTitle} 8-channel portrait displays</h3><div class="grid">${input.sideEvidence.channelDisplayImages.map((entry) => `<figure><img src="${escapeHtml(entry.displayImage.outputFilePath)}" alt="${side} channel ${entry.channel} portrait"><figcaption>${side} channel ${entry.channel}</figcaption></figure>`).join("")}</div><h2>ROI Crops</h2><div class="grid">${input.sideEvidence.roiCrops.map((crop) => `<figure><img src="${escapeHtml(crop.outputFilePath)}" alt="${escapeHtml(crop.roiId)}"><figcaption>${escapeHtml(crop.roiId)}</figcaption></figure>`).join("")}</div><h2>Diagnostic JSON</h2><pre>${escapeHtml(JSON.stringify({ diagnosticGrading: input.sideEvidence.diagnosticGrading, manifest: input.manifest }, null, 2))}</pre></body></html>`;
+  const normalizedImage = input.sideEvidence.normalizedCard.normalizedArtifact?.localOutputPath;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Warm Fixed-Rig V1 Evidence Package - Provisional Diagnostic</title><style>body{font-family:Arial,sans-serif;margin:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}img{max-width:100%;border:1px solid #aaa;background:#111}.warn{border-left:4px solid #a33;padding:8px 12px;background:#fff}.banner{border:2px solid #a33;background:#fff4f4;padding:12px 16px;font-weight:bold}table{border-collapse:collapse;width:100%;margin:8px 0 16px}td,th{border:1px solid #bbb;padding:6px 8px;text-align:left}</style></head><body><h1>Warm Fixed-Rig V1 Evidence Package</h1><p class="banner">Provisional Diagnostic Only - Not Certified - No Final Grade</p><p class="warn">The explicitly selected capture profile preserved dark control, all-on, accepted profile, and Leimac channels 1-8. Raw Basler evidence remains in sensor coordinates; normalized/display/ROI assets are derived outputs.</p><p>Execution path warm_full_forensic_runner. Duty ${escapeHtml(input.activeLightingProfile.selectedDutyPercent)}% PWM ${escapeHtml(input.activeLightingProfile.actualLeimacPwmStep)}; channels ${escapeHtml(input.activeLightingProfile.selectedChannels.join(", "))}; source ${escapeHtml(input.activeLightingProfile.profileSource)}.</p><h2>${sideTitle} Normalized Card</h2><p>Placement ${escapeHtml(input.sideEvidence.normalizedCard.geometry.placementState)}; geometry ${escapeHtml(input.sideEvidence.normalizedCard.geometry.geometrySource)}; capture ${escapeHtml(input.sideEvidence.normalizedCard.geometry.captureMode ?? "automatic_detection")}; rotation ${escapeHtml(input.sideEvidence.normalizedCard.geometry.rotationDegrees ?? "not detected")} degrees; confidence ${escapeHtml(input.sideEvidence.normalizedCard.geometry.confidence)}.</p>${normalizedImage ? `<img src="${escapeHtml(normalizedImage)}" alt="${side} normalized crop and deskew artifact">` : "<p>Automatic geometry did not produce a normalized artifact. Reposition and recapture, or use an explicit operator-confirmed manual capture override.</p>"}<h2>${sideTitle} Portrait Evidence</h2><img src="${escapeHtml(input.sideEvidence.displayImage.outputFilePath)}" alt="${side} portrait all-on"><img src="${escapeHtml(input.sideEvidence.overlayPreview.outputFilePath)}" alt="${side} portrait overlay"><p>Accepted profile raw capture: ${escapeHtml(input.sideEvidence.acceptedProfile.capture.outputFilePath)}</p><p>Rough profile: ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.status)}; pixel/mm ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed")} x ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed")}; diagnostic grading ${escapeHtml(input.sideEvidence.diagnosticGrading.status)}; surface ${escapeHtml(input.sideEvidence.surfaceAnalysis.status)}; candidates ${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.length)}.</p><table><tr><th>Centering</th><td>${escapeHtml(input.sideEvidence.diagnosticGrading.centering.status)} score ${escapeHtml(input.sideEvidence.diagnosticGrading.centering.score ?? "not_computed")}</td></tr><tr><th>Corners</th><td>TL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topLeft.status)}, TR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topRight.status)}, BR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomRight.status)}, BL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomLeft.status)}</td></tr><tr><th>Edges</th><td>T ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.top.status)}, R ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.right.status)}, B ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.bottom.status)}, L ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.left.status)}</td></tr><tr><th>Surface candidates</th><td>${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.map((candidate) => `${candidate.candidateId} ${candidate.severityBand} ${candidate.anomalyProxyScore}`).join(", ") || "none")}</td></tr></table><h3>${sideTitle} 8-channel portrait displays</h3><div class="grid">${input.sideEvidence.channelDisplayImages.map((entry) => `<figure><img src="${escapeHtml(entry.displayImage.outputFilePath)}" alt="${side} channel ${entry.channel} portrait"><figcaption>${side} channel ${entry.channel}</figcaption></figure>`).join("")}</div><h2>ROI Crops</h2><div class="grid">${input.sideEvidence.roiCrops.map((crop) => `<figure><img src="${escapeHtml(crop.outputFilePath)}" alt="${escapeHtml(crop.roiId)}"><figcaption>${escapeHtml(crop.roiId)}</figcaption></figure>`).join("")}</div><h2>Diagnostic JSON</h2><pre>${escapeHtml(JSON.stringify({ diagnosticGrading: input.sideEvidence.diagnosticGrading, geometry: input.sideEvidence.normalizedCard.geometry, manifest: input.manifest }, null, 2))}</pre></body></html>`;
 }
 
 async function writeJsonArtifact(filePath: string, data: unknown): Promise<void> {
@@ -4393,6 +4542,8 @@ function renderUnifiedFixedRigCardReport(input: {
   const fixtureProfile = front?.fixtureCalibrationProfile ?? back?.fixtureCalibrationProfile;
   const frontStats = sideAllOnStats(front);
   const backStats = sideAllOnStats(back);
+  const frontNormalizedPath = front?.normalizedCard?.normalizedArtifact?.localOutputPath;
+  const backNormalizedPath = back?.normalizedCard?.normalizedArtifact?.localOutputPath;
   const clippingWarnings = [sideClippingWarning("Front", frontStats), sideClippingWarning("Back", backStats)].filter(
     (warning): warning is string => Boolean(warning)
   );
@@ -4554,7 +4705,7 @@ function renderUnifiedFixedRigCardReport(input: {
       ${callout("Corners", elementScoreText(provisionalGradeStory.elementScores.corners), "corners")}
     </div>
     <div class="card-stage">
-      ${reportImage(front?.displayImage?.outputFilePath, "front portrait card image")}
+      ${reportImage(frontNormalizedPath ?? front?.displayImage?.outputFilePath, "front normalized portrait card image")}
     </div>
     <div class="callout-col">
       ${callout("Edges", elementScoreText(provisionalGradeStory.elementScores.edges), "edges")}
@@ -4600,8 +4751,8 @@ function renderUnifiedFixedRigCardReport(input: {
   <section>
     <h2>Front and Back Evidence</h2>
     <div class="side-grid">
-      <div class="panel"><h3>Front</h3><div class="image-pair">${reportImage(front?.displayImage?.outputFilePath, "front portrait evidence")}${reportImage(front?.overlayPreview?.outputFilePath, "front overlay/debug image")}</div></div>
-      <div class="panel"><h3>Back</h3><div class="image-pair">${reportImage(back?.displayImage?.outputFilePath, "back portrait evidence")}${reportImage(back?.overlayPreview?.outputFilePath, "back overlay/debug image")}</div></div>
+      <div class="panel"><h3>Front</h3><p>Geometry ${escapeHtml(front?.normalizedCard?.geometry?.geometrySource ?? "not_detected")}; placement ${escapeHtml(front?.normalizedCard?.geometry?.placementState ?? "not_detected")}.</p><div class="image-pair">${reportImage(frontNormalizedPath ?? front?.displayImage?.outputFilePath, "front normalized evidence")}${reportImage(front?.overlayPreview?.outputFilePath, "front overlay/debug image")}</div></div>
+      <div class="panel"><h3>Back</h3><p>Geometry ${escapeHtml(back?.normalizedCard?.geometry?.geometrySource ?? "not_detected")}; placement ${escapeHtml(back?.normalizedCard?.geometry?.placementState ?? "not_detected")}.</p><div class="image-pair">${reportImage(backNormalizedPath ?? back?.displayImage?.outputFilePath, "back normalized evidence")}${reportImage(back?.overlayPreview?.outputFilePath, "back overlay/debug image")}</div></div>
     </div>
   </section>
 
@@ -4904,6 +5055,21 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
   await writeJsonArtifact(manifestPath, {
     ...result,
     generatedAt,
+    geometry: {
+      front: front?.normalizedCard?.geometry,
+      back: back?.normalizedCard?.geometry,
+    },
+    normalizedArtifacts: {
+      front: front?.normalizedCard?.normalizedArtifact,
+      back: back?.normalizedCard?.normalizedArtifact,
+      rawEvidencePreserved: front?.normalizedCard?.rawEvidencePreserved === true && back?.normalizedCard?.rawEvidencePreserved === true,
+    },
+    captureTiming: {
+      front: frontManifest.captureTiming,
+      back: backManifest.captureTiming,
+      frontProcessing: frontManifest.processingTiming,
+      backProcessing: backManifest.processingTiming,
+    },
     sourceReports: {
       front: frontManifest.previewReportPath,
       back: backManifest.previewReportPath,
@@ -4911,6 +5077,8 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
     reportContains: {
       frontEvidenceImages: Boolean(front?.displayImage?.outputFilePath),
       backEvidenceImages: Boolean(back?.displayImage?.outputFilePath),
+      normalizedFrontCard: Boolean(front?.normalizedCard?.normalizedArtifact?.localOutputPath),
+      normalizedBackCard: Boolean(back?.normalizedCard?.normalizedArtifact?.localOutputPath),
       centeringDiagnostic: Boolean(front?.diagnosticGrading?.centering || frontAnalysis.front?.diagnosticGrading?.centering) && Boolean(back?.diagnosticGrading?.centering || backAnalysis.back?.diagnosticGrading?.centering),
       cornerDiagnostics: Boolean(front?.diagnosticGrading?.corners || frontAnalysis.front?.diagnosticGrading?.corners) && Boolean(back?.diagnosticGrading?.corners || backAnalysis.back?.diagnosticGrading?.corners),
       edgeDiagnostics: Boolean(front?.diagnosticGrading?.edges || frontAnalysis.front?.diagnosticGrading?.edges) && Boolean(back?.diagnosticGrading?.edges || backAnalysis.back?.diagnosticGrading?.edges),
@@ -4990,6 +5158,20 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
   await writeJsonArtifact(analysisPath, {
     status,
     evidenceClass: FIXED_RIG_V1_EVIDENCE_CLASS,
+    geometry: {
+      front: front?.normalizedCard?.geometry,
+      back: back?.normalizedCard?.geometry,
+    },
+    normalizedArtifacts: {
+      front: front?.normalizedCard?.normalizedArtifact,
+      back: back?.normalizedCard?.normalizedArtifact,
+    },
+    captureTiming: {
+      front: frontManifest.captureTiming,
+      back: backManifest.captureTiming,
+      frontProcessing: frontManifest.processingTiming,
+      backProcessing: backManifest.processingTiming,
+    },
     front: enhancedFrontAnalysis.front,
     back: enhancedBackAnalysis.back,
     surfaceIntelligence: {

@@ -5,8 +5,14 @@ import { useSession, type SessionPayload } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   AI_GRADER_STATION_STEPS,
+  aiGraderCardPlacementLabel,
   buildAiGraderLocalStationStatus,
   buildSampleAiGraderReportHistory,
+  sanitizeAiGraderPreviewCardGeometryBySide,
+  type AiGraderCaptureProfile,
+  type AiGraderCaptureTriggerMode,
+  type AiGraderPreviewCardGeometryBySide,
+  type AiGraderPreviewGeometrySide,
   type AiGraderWarmRunnerPhase,
   type AiGraderLocalReportHistory,
   type AiGraderLocalReportHistoryItem,
@@ -19,6 +25,11 @@ import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   acceptAiGraderLiveLightingProfile,
   applyAiGraderLiveLighting,
+  buildAiGraderCaptureProfileRequest,
+  buildAiGraderDetectedGeometryCaptureRequest,
+  buildAiGraderManualGeometryCaptureRequest,
+  buildAiGraderRapidCaptureConfigurationRequest,
+  buildAiGraderRapidQueueActivationRequest,
   callAiGraderStationBridge,
   fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
@@ -31,8 +42,21 @@ import {
   pairAiGraderStationBridge,
   safeOffAiGraderLiveLighting,
   stopAiGraderStationPreview,
+  type AiGraderManualGeometryRect,
 } from "../../lib/aiGraderStationBridgeClient";
+import {
+  AI_GRADER_AUTO_CAPTURE_STABLE_MS,
+  advanceAiGraderAutoCapture,
+  type AiGraderAutoCaptureState,
+} from "../../lib/aiGraderRapidAutoCapture";
 import type { AiGraderReportBundle } from "../../lib/aiGraderReportBundle";
+import {
+  aiGraderOcrPrefillReportMetadata,
+  mergeAiGraderOcrPrefillIntoIdentityDraft,
+  runAiGraderOcrPrefillFromLocalReport,
+  type AiGraderOcrPrefillResult,
+  type AiGraderOcrPrefillState,
+} from "../../lib/aiGraderOcrPrefillClient";
 import { findReportImage, reportImageAssets } from "../../lib/aiGraderReportImages";
 import {
   aiGraderOperatorStepCopy,
@@ -44,6 +68,19 @@ import { formatAiGraderPublishStageError } from "../../lib/aiGraderPublishErrors
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
 type StationWorkArea = "grade" | "finish";
+type StationCaptureMode = "single" | "rapid";
+type AutoCaptureUiState = {
+  phase: "disabled" | "waiting_for_card_removal" | "waiting_for_ready" | "stabilizing" | "triggered";
+  side?: AiGraderPreviewGeometrySide;
+  readyStableMs: number;
+};
+type RapidOcrPrefetchStatus = {
+  status: "running" | "ready" | "failed";
+  reviewCount?: number;
+};
+type ManualCaptureConfirmation = {
+  side: AiGraderPreviewGeometrySide;
+};
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
   message: string;
@@ -252,6 +289,20 @@ function formatStationValue(value?: string) {
     .join(" ");
 }
 
+function mergePreviewCardGeometry(
+  current: AiGraderPreviewCardGeometryBySide | undefined,
+  incoming: unknown
+): AiGraderPreviewCardGeometryBySide | undefined {
+  const sanitized = sanitizeAiGraderPreviewCardGeometryBySide(incoming);
+  if (!sanitized) return current;
+  return {
+    ...current,
+    ...sanitized,
+    front: sanitized.front ?? current?.front,
+    back: sanitized.back ?? current?.back,
+  };
+}
+
 function roleLabel(role: string) {
   if (role === "dark_control") return "Dark";
   if (role === "all_on") return "All";
@@ -454,6 +505,32 @@ const defaultIdentityDraft: IdentityDraftState = {
   memorabilia: false,
 };
 
+const OCR_PREFILL_FIELD_LABELS = {
+  category: "Category",
+  playerName: "Player",
+  cardName: "Card",
+  year: "Year",
+  manufacturer: "Maker",
+  productSet: "Set",
+  cardNumber: "Card #",
+  parallel: "Parallel",
+  insert: "Insert",
+  numbered: "Numbered",
+  auto: "Auto",
+  mem: "Mem",
+} as const;
+
+const RAPID_REVIEWABLE_STATES = new Set<string>(["report_ready_needs_confirm", "confirmed_needs_publish", "published"]);
+const RAPID_PROCESSING_STATES = new Set<string>(["front_captured", "front_processing", "back_positioning", "back_captured", "finalizing"]);
+
+function autoCapturePhaseLabel(state: AutoCaptureUiState) {
+  if (state.phase === "disabled") return "Off";
+  if (state.phase === "waiting_for_card_removal") return "Remove card once";
+  if (state.phase === "waiting_for_ready") return state.side === "back" ? "Position back" : "Position front";
+  if (state.phase === "stabilizing") return `Ready ${Math.min(AI_GRADER_AUTO_CAPTURE_STABLE_MS, Math.round(state.readyStableMs))} ms`;
+  return "Triggered";
+}
+
 const emptyFinishQueue: FinishQueueResult = {
   source: "persisted_records",
   orderedBy: "publishedAt_asc_createdAt_asc",
@@ -519,6 +596,27 @@ export default function AiGraderStationPage() {
   const [cardSearchMessage, setCardSearchMessage] = useState("Confirm the card identity to create a Ten Kings CardAsset/Item before publish.");
   const [selectedCard, setSelectedCard] = useState<CardSelectionState | null>(null);
   const [identityDraft, setIdentityDraft] = useState<IdentityDraftState>(defaultIdentityDraft);
+  const identityEditedFieldsRef = useRef<Set<keyof IdentityDraftState>>(new Set());
+  const ocrAttemptedReportIdsRef = useRef<Set<string>>(new Set());
+  const ocrPrefillGenerationRef = useRef(0);
+  const [ocrPrefillRetryNonce, setOcrPrefillRetryNonce] = useState(0);
+  const [ocrPrefillState, setOcrPrefillState] = useState<AiGraderOcrPrefillState>({
+    status: "idle",
+    message: "OCR prefill starts after normalized front and back images are ready.",
+  });
+  const rapidOcrCacheRef = useRef<Map<string, AiGraderOcrPrefillResult>>(new Map());
+  const rapidOcrAttemptedReportIdsRef = useRef<Set<string>>(new Set());
+  const rapidOcrInFlightReportIdRef = useRef<string | null>(null);
+  const [rapidOcrPrefetchStatus, setRapidOcrPrefetchStatus] = useState<Record<string, RapidOcrPrefetchStatus>>({});
+  const [rapidOcrPrefetchTick, setRapidOcrPrefetchTick] = useState(0);
+  const [stationCaptureMode, setStationCaptureMode] = useState<StationCaptureMode>(status.rapidCapture.enabled ? "rapid" : "single");
+  const [stationCaptureProfile, setStationCaptureProfile] = useState<AiGraderCaptureProfile>(status.captureProfile);
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
+  const [manualCaptureConfirmation, setManualCaptureConfirmation] = useState<ManualCaptureConfirmation | null>(null);
+  const autoCaptureMachineRef = useRef<AiGraderAutoCaptureState | undefined>(undefined);
+  const startGradingRef = useRef<((mode: AiGraderCaptureTriggerMode) => Promise<void>) | null>(null);
+  const confirmFlipAndContinueRef = useRef<((mode: AiGraderCaptureTriggerMode) => Promise<void>) | null>(null);
+  const [autoCaptureUi, setAutoCaptureUi] = useState<AutoCaptureUiState>({ phase: "disabled", readyStableMs: 0 });
   const [identityStatus, setIdentityStatus] = useState<StepState>({
     status: "idle",
     message: "Card identity has not been confirmed.",
@@ -573,6 +671,8 @@ export default function AiGraderStationPage() {
     setBridgeUrl(targetBridgeUrl);
     setStationToken(targetStationToken);
     setStatus(next);
+    setStationCaptureProfile(next.captureProfile);
+    setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
     setPreviewStatus(next.previewStatus);
     setLiveLighting(next.liveLighting);
     setBridgeConnected(true);
@@ -716,7 +816,9 @@ export default function AiGraderStationPage() {
   useEffect(() => {
     const backPositioningActive = status.currentStep === "prompt_flip_card" && busy !== "capture-back";
     const previewHeldForFullForensicRun = status.warmRunnerStatus.previewPolicy.holdActive === true && !backPositioningActive;
+    const previewSuspendedForRapidReview = Boolean(status.rapidCaptureQueue.activeQueueItemId);
     const previewSuspendedForStationAction =
+      previewSuspendedForRapidReview ||
       previewHeldForFullForensicRun ||
       busy === "start-grading" ||
       busy === "capture-front" ||
@@ -739,9 +841,11 @@ export default function AiGraderStationPage() {
         ...currentStatus,
         status: "paused_for_capture",
         cameraOwnership: status.warmRunnerStatus.captureLock.held || status.warmRunnerStatus.status === "capturing" ? "capture_action" : "released",
-        lastStopReason: previewHeldForFullForensicRun
-          ? holdReason ?? "Preview paused during full forensic capture and report generation."
-          : "Preview suspended while station action is running.",
+        lastStopReason: previewSuspendedForRapidReview
+          ? "Preview suspended while a queued card is under Confirm Card / Publish review."
+          : previewHeldForFullForensicRun
+            ? holdReason ?? "Preview paused during full forensic capture and report generation."
+            : "Preview suspended while station action is running.",
       }));
       return;
     }
@@ -752,7 +856,11 @@ export default function AiGraderStationPage() {
       try {
         const current = await fetchAiGraderStationPreviewStatus({ baseUrl: bridgeUrl, stationToken });
         if (cancelled) return;
-        setPreviewStatus({ ...current, status: current.status === "live" ? "live" : "starting" });
+        setPreviewStatus((currentStatus) => ({
+          ...current,
+          status: current.status === "live" ? "live" : "starting",
+          cardGeometry: mergePreviewCardGeometry(currentStatus.cardGeometry, current.cardGeometry),
+        }));
         await openAiGraderStationPreviewStream(
           { baseUrl: bridgeUrl, stationToken },
           {
@@ -817,7 +925,40 @@ export default function AiGraderStationPage() {
     status.warmRunnerStatus.previewPolicy.holdReason,
     status.warmRunnerStatus.status,
     status.currentStep,
+    status.rapidCaptureQueue.activeQueueItemId,
   ]);
+
+  useEffect(() => {
+    if (!bridgeConnected || !stationToken.trim() || previewStatus.status !== "live") return;
+    let cancelled = false;
+    let requestPending = false;
+    const refreshGeometry = async () => {
+      if (requestPending) return;
+      requestPending = true;
+      try {
+        const latest = await fetchAiGraderStationPreviewStatus({ baseUrl: bridgeUrl, stationToken });
+        if (cancelled) return;
+        setPreviewStatus((currentStatus) => ({
+          ...latest,
+          status: currentStatus.status === "live" ? "live" : latest.status,
+          frameCount: Math.max(currentStatus.frameCount, latest.frameCount),
+          firstFrameAt: currentStatus.firstFrameAt ?? latest.firstFrameAt,
+          lastFrameAt: latest.lastFrameAt ?? currentStatus.lastFrameAt,
+          cardGeometry: mergePreviewCardGeometry(currentStatus.cardGeometry, latest.cardGeometry),
+        }));
+      } catch {
+        // Geometry status is advisory. A missed poll must never stop MJPEG or manual capture.
+      } finally {
+        requestPending = false;
+      }
+    };
+    void refreshGeometry();
+    const timer = window.setInterval(() => void refreshGeometry(), 600);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [bridgeConnected, bridgeUrl, previewStatus.status, stationToken]);
 
   const currentStep = useMemo(
     () => AI_GRADER_STATION_STEPS.find((step) => step.id === status.currentStep) ?? AI_GRADER_STATION_STEPS[0],
@@ -863,10 +1004,9 @@ export default function AiGraderStationPage() {
     productionAuthActor?.displayName || session?.user.displayName || session?.user.phone || "Ten Kings operator";
   const createCardBlockers = [
     !reportReady ? "generated report" : "",
-    !finalReady ? "final grade" : "",
     ...identityDraftMissing,
   ].filter(Boolean);
-  const canCreateCardFromReport = finalReady && reportReady && identityDraftComplete && !linkedCardReady && identityStatus.status !== "pending";
+  const canCreateCardFromReport = reportReady && identityDraftComplete && !linkedCardReady && identityStatus.status !== "pending";
   const canPublishToTenKings = linkedCardReady && publishReadiness.ready && productionPublish.status !== "published" && productionPublish.status !== "pending";
   const selectedFinishItem = finishQueue.items.find((item) => item.reportId === selectedFinishReportId) ?? finishQueue.items[0] ?? null;
   const selectedFinishReportIdForActions = selectedFinishItem?.reportId ?? null;
@@ -927,6 +1067,21 @@ export default function AiGraderStationPage() {
   const activePipelineStep = gradePipelineSteps.find((step) => !step.done) ?? gradePipelineSteps[gradePipelineSteps.length - 1];
   const publicationStatusLabel =
     productionPublish.status === "idle" ? formatStationValue(publishReadiness.status) : formatStationValue(productionPublish.status);
+  const ocrPrefillReportId = status.reportBundle?.reportId;
+  const ocrPrefillIndicators = ocrPrefillState.result
+    ? Object.entries(ocrPrefillState.result.fields).flatMap(([fieldName, field]) => {
+        if (field.value === null || field.value === false || field.value === "") return [];
+        return [
+          {
+            fieldName,
+            label: OCR_PREFILL_FIELD_LABELS[fieldName as keyof typeof OCR_PREFILL_FIELD_LABELS],
+            confidencePercent: Math.round(Math.max(0, Math.min(1, field.confidence)) * 100),
+            reviewRequired: field.reviewRequired,
+            value: String(field.value),
+          },
+        ];
+      })
+    : [];
 
   useEffect(() => {
     if (workArea !== "finish" || !selectedFinishItem) return;
@@ -1024,6 +1179,93 @@ export default function AiGraderStationPage() {
         height: `${reportOverlayContainedFrame.height}px`,
       }
     : undefined;
+  const safePreviewCardGeometry = sanitizeAiGraderPreviewCardGeometryBySide(previewStatus.cardGeometry);
+  const previewGeometrySide =
+    safePreviewCardGeometry?.activeSide ??
+    (status.currentStep === "prompt_flip_card" || status.currentStep === "capture_back" ? "back" : "front");
+  const activePreviewCardGeometry = safePreviewCardGeometry?.[previewGeometrySide];
+  const cardPlacementState = activePreviewCardGeometry?.placementState ?? "not_detected";
+  const cardPlacementLabel = aiGraderCardPlacementLabel(cardPlacementState);
+  const detectedGeometryReady =
+    cardPlacementState === "ready" &&
+    activePreviewCardGeometry?.geometrySource === "detected" &&
+    activePreviewCardGeometry.detectionUsed === true;
+  const manualOverlayAvailable = previewStatus.status === "live" && Boolean(previewImageSize);
+  const cardGeometryCorners = activePreviewCardGeometry?.corners ?? activePreviewCardGeometry?.detectedCorners ?? null;
+  const cardGeometryFrameSize = activePreviewCardGeometry?.image ?? reportOverlayFrameSize;
+  const cardGeometryPolygonPoints = cardGeometryCorners
+    ? [
+        cardGeometryCorners.topLeft,
+        cardGeometryCorners.topRight,
+        cardGeometryCorners.bottomRight,
+        cardGeometryCorners.bottomLeft,
+      ]
+    : [];
+  const activeAutoCaptureSide: AiGraderPreviewGeometrySide | null = !status.sessionManifest.frontCaptured
+    ? "front"
+    : status.sessionManifest.frontCaptured && !status.sessionManifest.backCaptured &&
+        (status.currentStep === "prompt_flip_card" || status.currentStep === "capture_back")
+      ? "back"
+      : null;
+  const autoCaptureGeometryCandidate = activeAutoCaptureSide ? safePreviewCardGeometry?.[activeAutoCaptureSide] : undefined;
+  const autoCaptureGeometry =
+    autoCaptureGeometryCandidate?.placementState === "ready" &&
+    autoCaptureGeometryCandidate.geometrySource === "detected" &&
+    autoCaptureGeometryCandidate.detectionUsed === true
+      ? autoCaptureGeometryCandidate
+      : undefined;
+  const autoCaptureSessionId = `${status.sessionManifest.gradingSessionId}:${status.sessionManifest.reportId}`;
+  const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 6);
+  const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) => RAPID_PROCESSING_STATES.has(item.state));
+  const rapidOcrQueueSignature = status.rapidCaptureQueue.items
+    .map((item) => `${item.reportId}:${item.state}`)
+    .join("|");
+  const stationSettingsLocked =
+    status.sessionManifest.frontCaptured ||
+    status.sessionManifest.backCaptured ||
+    Boolean(status.rapidCaptureQueue.activeQueueItemId);
+  const canStartGrading =
+    !status.captureFailure &&
+    !status.sessionManifest.frontCaptured &&
+    !status.sessionManifest.backCaptured &&
+    !status.rapidCaptureQueue.activeQueueItemId &&
+    new Set([
+      "start_new_card",
+      "verify_fixture_rulers",
+      "live_preview_focus_framing",
+      "lighting_exposure_tune",
+      "accept_capture_profile",
+      "capture_front",
+    ]).has(status.currentStep);
+  const captureTimingSummary = status.captureTiming.summary;
+  const captureTimingPhaseTotal = (phaseId: (typeof status.captureTiming.phases)[number]["id"]) => {
+    const matching = status.captureTiming.phases.filter((phase) => phase.id === phaseId);
+    return matching.length ? matching.reduce((sum, phase) => sum + phase.durationMs, 0) : undefined;
+  };
+
+  useEffect(() => {
+    if (!bridgeConnected || !stationToken.trim() || stationCaptureMode !== "rapid" || !rapidQueueHasProcessing) return;
+    let cancelled = false;
+    let pending = false;
+    const refreshRapidQueue = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action: "status" });
+        if (!cancelled) setStatus(next);
+      } catch {
+        // Background queue polling is advisory; capture and manual controls stay available.
+      } finally {
+        pending = false;
+      }
+    };
+    const timer = window.setInterval(() => void refreshRapidQueue(), 1200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [bridgeConnected, bridgeUrl, rapidQueueHasProcessing, stationCaptureMode, stationToken]);
+
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
   const warmRunner = status.warmRunnerStatus;
   const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held || busy === "start-grading" || busy === "capture-back";
@@ -1146,6 +1388,149 @@ export default function AiGraderStationPage() {
   const productionAuthHeaders = async (extra: Record<string, string> = {}, actionLabel = "continue the AI Grader production workflow") => {
     const activeSession = await requireProductionSession(actionLabel);
     return buildAdminHeaders(activeSession.token, extra);
+  };
+
+  useEffect(() => {
+    if (!ocrPrefillReportId || !reportReady || linkedCardReady) return;
+    if (!bridgeConnected || !stationToken.trim()) {
+      setOcrPrefillState({
+        status: "waiting",
+        reportId: ocrPrefillReportId,
+        message: "Connect the local station to load normalized images for OCR.",
+      });
+      return;
+    }
+    if (sessionLoading) return;
+    if (!session?.token) {
+      setOcrPrefillState({
+        status: "waiting",
+        reportId: ocrPrefillReportId,
+        message: "Sign in to prefill Confirm Card from OCR.",
+      });
+      return;
+    }
+    if (ocrAttemptedReportIdsRef.current.has(ocrPrefillReportId)) return;
+    ocrAttemptedReportIdsRef.current.add(ocrPrefillReportId);
+    const generation = ocrPrefillGenerationRef.current;
+    let cancelled = false;
+    setOcrPrefillState({
+      status: "running",
+      reportId: ocrPrefillReportId,
+      message: "Reading normalized front and back images.",
+    });
+    void runAiGraderOcrPrefillFromLocalReport({
+      baseUrl: bridgeUrl,
+      stationToken,
+      reportId: ocrPrefillReportId,
+      authHeaders: buildAdminHeaders(session.token),
+    })
+      .then((result) => {
+        if (cancelled || generation !== ocrPrefillGenerationRef.current) return;
+        setIdentityDraft((current) =>
+          mergeAiGraderOcrPrefillIntoIdentityDraft({
+            current,
+            result,
+            operatorEditedFields: identityEditedFieldsRef.current,
+          }).draft
+        );
+        setStatus((current) =>
+          current.reportBundle?.reportId === result.reportId
+            ? {
+                ...current,
+                reportBundle: {
+                  ...current.reportBundle,
+                  ocrPrefill: aiGraderOcrPrefillReportMetadata(result),
+                },
+              }
+            : current
+        );
+        setOcrPrefillState({
+          status: "ready",
+          reportId: ocrPrefillReportId,
+          result,
+          message: "OCR suggestions loaded. Review every field before Confirm Card.",
+        });
+      })
+      .catch((requestError) => {
+        if (cancelled || generation !== ocrPrefillGenerationRef.current) return;
+        setOcrPrefillState({
+          status: "failed",
+          reportId: ocrPrefillReportId,
+          message: requestError instanceof Error ? requestError.message : "OCR prefill did not complete.",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    bridgeConnected,
+    bridgeUrl,
+    linkedCardReady,
+    ocrPrefillReportId,
+    ocrPrefillRetryNonce,
+    reportReady,
+    session?.token,
+    sessionLoading,
+    stationToken,
+  ]);
+
+  useEffect(() => {
+    if (!bridgeConnected || !stationToken.trim() || !productionSignedIn || !session?.token || sessionLoading) return;
+    if (rapidOcrInFlightReportIdRef.current) return;
+    const candidate = status.rapidCaptureQueue.items.find(
+      (item) =>
+        item.state === "report_ready_needs_confirm" &&
+        item.queueItemId !== status.rapidCaptureQueue.activeQueueItemId &&
+        !rapidOcrCacheRef.current.has(item.reportId) &&
+        !rapidOcrAttemptedReportIdsRef.current.has(item.reportId)
+    );
+    if (!candidate) return;
+    rapidOcrInFlightReportIdRef.current = candidate.reportId;
+    rapidOcrAttemptedReportIdsRef.current.add(candidate.reportId);
+    setRapidOcrPrefetchStatus((current) => ({
+      ...current,
+      [candidate.reportId]: { status: "running" },
+    }));
+    void runAiGraderOcrPrefillFromLocalReport({
+      baseUrl: bridgeUrl,
+      stationToken,
+      reportId: candidate.reportId,
+      authHeaders: buildAdminHeaders(session.token),
+    })
+      .then((result) => {
+        rapidOcrCacheRef.current.set(candidate.reportId, result);
+        setRapidOcrPrefetchStatus((current) => ({
+          ...current,
+          [candidate.reportId]: { status: "ready", reviewCount: result.reviewFieldNames.length },
+        }));
+      })
+      .catch(() => {
+        setRapidOcrPrefetchStatus((current) => ({
+          ...current,
+          [candidate.reportId]: { status: "failed" },
+        }));
+      })
+      .finally(() => {
+        rapidOcrInFlightReportIdRef.current = null;
+        setRapidOcrPrefetchTick((current) => current + 1);
+      });
+  }, [
+    bridgeConnected,
+    bridgeUrl,
+    rapidOcrPrefetchTick,
+    rapidOcrQueueSignature,
+    productionSignedIn,
+    session?.token,
+    sessionLoading,
+    stationToken,
+    status.rapidCaptureQueue.activeQueueItemId,
+    status.rapidCaptureQueue.items,
+  ]);
+
+  const retryOcrPrefill = () => {
+    if (!ocrPrefillReportId) return;
+    ocrAttemptedReportIdsRef.current.delete(ocrPrefillReportId);
+    setOcrPrefillRetryNonce((current) => current + 1);
   };
 
   const signInForProduction = async () => {
@@ -1314,7 +1699,7 @@ export default function AiGraderStationPage() {
 
   const ensureLiveLightingSession = async () => {
     if (status.currentStep === "start_new_card" || status.currentStep === "safe_off_end_session") {
-      return runAction("start-session");
+      return runAction("start-session", buildAiGraderCaptureProfileRequest(stationCaptureProfile));
     }
     return status;
   };
@@ -1426,24 +1811,81 @@ export default function AiGraderStationPage() {
     updateLiveLightingDraft(nextDraft, "browser live lighting duty changed");
   };
 
+  const resetPerCardUiState = () => {
+    ocrPrefillGenerationRef.current += 1;
+    identityEditedFieldsRef.current.clear();
+    autoCaptureMachineRef.current = undefined;
+    setManualCaptureConfirmation(null);
+    setAutoCaptureUi({ phase: autoCaptureEnabled ? "waiting_for_card_removal" : "disabled", readyStableMs: 0 });
+    setSelectedCard(null);
+    setIdentityDraft(defaultIdentityDraft);
+    setOcrPrefillState({
+      status: "idle",
+      message: "OCR prefill starts after normalized front and back images are ready.",
+    });
+    setIdentityStatus({ status: "idle", message: "Card identity has not been confirmed." });
+    setConfirmedDownstream({
+      comps: {
+        status: "idle",
+        message: "Comps will queue after Confirm Card.",
+      },
+    });
+    setProductionPublish({ status: "idle", message: "Ten Kings DB/storage publish has not been run." });
+    setSlabUploads({});
+    setCompsState({ status: "idle", message: "Comps have not been run." });
+    setInventoryState({ status: "idle", message: "Card has not been added to inventory." });
+  };
+
+  const changeStationCaptureMode = async (nextMode: StationCaptureMode) => {
+    if (nextMode === stationCaptureMode) return;
+    if (stationSettingsLocked) {
+      setError("Finish or queue the active card before changing capture mode.");
+      return;
+    }
+    setBusy("capture-settings");
+    setError(null);
+    try {
+      const next = await runAction(
+        "configure-rapid-capture",
+        buildAiGraderRapidCaptureConfigurationRequest(nextMode === "rapid")
+      );
+      setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Capture mode could not be updated.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const changeStationCaptureProfile = async (nextProfile: AiGraderCaptureProfile) => {
+    if (nextProfile === stationCaptureProfile) return;
+    if (stationSettingsLocked) {
+      setError("Finish or queue the active card before changing capture profile.");
+      return;
+    }
+    setBusy("capture-settings");
+    setError(null);
+    try {
+      resetPerCardUiState();
+      const next = await runAction("start-session", buildAiGraderCaptureProfileRequest(nextProfile));
+      setStationCaptureProfile(next.captureProfile);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Capture profile could not be updated.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const startNewCard = async () => {
     setBusy("start");
     setError(null);
     try {
-      setSelectedCard(null);
-      setIdentityDraft(defaultIdentityDraft);
-      setIdentityStatus({ status: "idle", message: "Card identity has not been confirmed." });
-      setConfirmedDownstream({
-        comps: {
-          status: "idle",
-          message: "Comps will queue after Confirm Card.",
-        },
-      });
-      setProductionPublish({ status: "idle", message: "Ten Kings DB/storage publish has not been run." });
-      setSlabUploads({});
-      setCompsState({ status: "idle", message: "Comps have not been run." });
-      setInventoryState({ status: "idle", message: "Card has not been added to inventory." });
-      await runAction("start-session");
+      resetPerCardUiState();
+      await runAction(
+        "configure-rapid-capture",
+        buildAiGraderRapidCaptureConfigurationRequest(stationCaptureMode === "rapid")
+      );
+      await runAction("start-session", buildAiGraderCaptureProfileRequest(stationCaptureProfile));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.");
     } finally {
@@ -1451,18 +1893,29 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const startGrading = async () => {
+  const startGrading = async (
+    captureTriggerMode: AiGraderCaptureTriggerMode = "operator",
+    manualGeometryRect?: AiGraderManualGeometryRect
+  ) => {
+    const captureTriggerAt = new Date().toISOString();
     setBusy("start-grading");
     setError(null);
     try {
       if (!canUseBridge) throw new Error("Connect the Dell local station bridge before starting grading.");
       let latest = status;
-      if (latest.currentStep === "start_new_card") latest = await runAction("start-session");
+      if (latest.currentStep === "start_new_card") {
+        latest = await runAction("start-session", buildAiGraderCaptureProfileRequest(stationCaptureProfile));
+      }
       latest = await runAction("confirm-light-idle-off", actionBody({ lightIdleOff: true }, latest, false));
       latest = await runAction("confirm-fixture-rulers", actionBody({ fixtureRulersVisible: true }, latest, false));
       latest = await runAction("accept-profile", actionBody({}, latest, false));
-      await waitForPreviewReleaseBeforeCapture("operator starting front full forensic capture");
-      await runAction("capture-front", actionBody({}, latest, false));
+      await waitForPreviewReleaseBeforeCapture(`${captureTriggerMode} starting front ${stationCaptureProfile} capture`);
+      await runAction("capture-front", {
+        ...actionBody({}, latest, false),
+        ...(manualGeometryRect
+          ? buildAiGraderManualGeometryCaptureRequest({ captureTriggerAt, manualGeometryRect })
+          : buildAiGraderDetectedGeometryCaptureRequest({ captureTriggerAt, captureTriggerMode })),
+      });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Start grading failed.");
     } finally {
@@ -1470,13 +1923,27 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const confirmFlipAndContinue = async () => {
+  const confirmFlipAndContinue = async (
+    captureTriggerMode: AiGraderCaptureTriggerMode = "operator",
+    manualGeometryRect?: AiGraderManualGeometryRect
+  ) => {
+    const captureTriggerAt = new Date().toISOString();
     setBusy("capture-back");
     setError(null);
     try {
       await runAction("confirm-flip", { confirmations: { flipComplete: true } });
-      await waitForPreviewReleaseBeforeCapture("operator starting back full forensic capture");
-      await runAction("capture-back", { confirmations: { flipComplete: true, lightIdleOff: true, fixtureRulersVisible: true } });
+      await waitForPreviewReleaseBeforeCapture(`${captureTriggerMode} starting back ${stationCaptureProfile} capture`);
+      const captured = await runAction("capture-back", {
+        confirmations: { flipComplete: true, lightIdleOff: true, fixtureRulersVisible: true },
+        ...(manualGeometryRect
+          ? buildAiGraderManualGeometryCaptureRequest({ captureTriggerAt, manualGeometryRect })
+          : buildAiGraderDetectedGeometryCaptureRequest({ captureTriggerAt, captureTriggerMode })),
+      });
+      if (stationCaptureMode === "rapid" && captured.rapidCapture.enabled) {
+        await runAction("queue-current-card", {});
+        resetPerCardUiState();
+        return;
+      }
       await runAction("run-diagnostics");
       await runAction("export-report-bundle");
       await prepareLocalProductionRelease();
@@ -1487,6 +1954,109 @@ export default function AiGraderStationPage() {
       setBusy(null);
     }
   };
+
+  const confirmManualOverlayCapture = async () => {
+    const side = manualCaptureConfirmation?.side;
+    if (!side) return;
+    const manualGeometryRect: AiGraderManualGeometryRect = {
+      x: reportOverlayTemplate.x,
+      y: reportOverlayTemplate.y,
+      width: reportOverlayTemplate.width,
+      height: reportOverlayTemplate.height,
+      imageWidth: reportOverlayFrameSize.width,
+      imageHeight: reportOverlayFrameSize.height,
+      coordinateFrame: "portrait_preview_pixels",
+    };
+    setManualCaptureConfirmation(null);
+    if (side === "front") await startGrading("operator", manualGeometryRect);
+    else await confirmFlipAndContinue("operator", manualGeometryRect);
+  };
+
+  const activateRapidQueueItem = async (queueItemId: string) => {
+    setBusy(`rapid-review:${queueItemId}`);
+    setError(null);
+    try {
+      const next = await runAction("activate-queue-item", buildAiGraderRapidQueueActivationRequest(queueItemId));
+      resetPerCardUiState();
+      const reportId = next.reportBundle?.reportId ?? next.latestReport.reportId;
+      const cachedOcr = reportId ? rapidOcrCacheRef.current.get(reportId) : undefined;
+      if (cachedOcr && reportId) {
+        ocrAttemptedReportIdsRef.current.add(reportId);
+        setIdentityDraft((current) =>
+          mergeAiGraderOcrPrefillIntoIdentityDraft({
+            current,
+            result: cachedOcr,
+            operatorEditedFields: identityEditedFieldsRef.current,
+          }).draft
+        );
+        setOcrPrefillState({
+          status: "ready",
+          reportId,
+          result: cachedOcr,
+          message: "Background OCR suggestions loaded. Review every field before Confirm Card.",
+        });
+        setStatus((current) =>
+          current.reportBundle?.reportId === reportId
+            ? {
+                ...current,
+                reportBundle: {
+                  ...current.reportBundle,
+                  ocrPrefill: aiGraderOcrPrefillReportMetadata(cachedOcr),
+                },
+              }
+            : current
+        );
+      }
+      setStationCaptureProfile(next.captureProfile);
+      setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Rapid capture item could not be opened for review.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  startGradingRef.current = startGrading;
+  confirmFlipAndContinueRef.current = confirmFlipAndContinue;
+
+  useEffect(() => {
+    const eligible =
+      autoCaptureEnabled &&
+      bridgeConnected &&
+      Boolean(activeAutoCaptureSide) &&
+      previewStatus.status === "live" &&
+      busy === null &&
+      !warmRunner.captureLock.held;
+    const decision = advanceAiGraderAutoCapture({
+      previous: autoCaptureMachineRef.current,
+      enabled: eligible,
+      sessionId: autoCaptureSessionId,
+      side: activeAutoCaptureSide ?? "front",
+      geometry: eligible ? autoCaptureGeometry : undefined,
+      nowMs: Date.now(),
+    });
+    autoCaptureMachineRef.current = decision.state;
+    setAutoCaptureUi((current) => {
+      const next = {
+        phase: decision.phase,
+        side: activeAutoCaptureSide ?? undefined,
+        readyStableMs: decision.readyStableMs,
+      };
+      return current.phase === next.phase && current.side === next.side && current.readyStableMs === next.readyStableMs ? current : next;
+    });
+    if (!decision.shouldTrigger || !activeAutoCaptureSide) return;
+    if (activeAutoCaptureSide === "front") void startGradingRef.current?.("auto");
+    else void confirmFlipAndContinueRef.current?.("auto");
+  }, [
+    activeAutoCaptureSide,
+    autoCaptureEnabled,
+    autoCaptureGeometry,
+    autoCaptureSessionId,
+    bridgeConnected,
+    busy,
+    previewStatus.status,
+    warmRunner.captureLock.held,
+  ]);
 
   const productionReleaseBody = () => ({
     operatorId: "local-browser-operator",
@@ -1506,11 +2076,18 @@ export default function AiGraderStationPage() {
 
   const buildReportBundleForProduction = (baseBundle: AiGraderReportBundle | undefined = status.reportBundle) => {
     if (!baseBundle) return null;
-    if (!selectedCardIdentity) return baseBundle;
+    const bundleWithOcrPrefill =
+      ocrPrefillState.result?.reportId === baseBundle.reportId
+        ? {
+            ...baseBundle,
+            ocrPrefill: aiGraderOcrPrefillReportMetadata(ocrPrefillState.result),
+          }
+        : baseBundle;
+    if (!selectedCardIdentity) return bundleWithOcrPrefill;
     return {
-      ...baseBundle,
+      ...bundleWithOcrPrefill,
       cardIdentity: {
-        ...baseBundle.cardIdentity,
+        ...bundleWithOcrPrefill.cardIdentity,
         ...selectedCardIdentity,
         sideCount: 2 as const,
         futureSlabbedPhotoRefsReserved: true as const,
@@ -1520,6 +2097,7 @@ export default function AiGraderStationPage() {
   };
 
   const updateIdentityDraft = <K extends keyof IdentityDraftState>(key: K, value: IdentityDraftState[K]) => {
+    identityEditedFieldsRef.current.add(key);
     setIdentityDraft((current) => ({ ...current, [key]: value }));
   };
 
@@ -1655,10 +2233,11 @@ export default function AiGraderStationPage() {
       }
       const draftIdentity = identityDraftPayload();
       const draftTitle = identityDraftTitle();
+      const productionSourceBundle = buildReportBundleForProduction(sourceBundle) ?? sourceBundle;
       const reportBundleWithIdentity: AiGraderReportBundle = {
-        ...sourceBundle,
+        ...productionSourceBundle,
         cardIdentity: {
-          ...sourceBundle.cardIdentity,
+          ...productionSourceBundle.cardIdentity,
           title: draftTitle,
           set: identityDraft.productSet.trim() || undefined,
           cardNumber: identityDraft.cardNumber.trim() || undefined,
@@ -2094,6 +2673,20 @@ export default function AiGraderStationPage() {
         uploadedAssetCount: finalizePayload.result.uploadedAssetCount,
         evidenceAssetCount: finalizePayload.result.evidenceAssetCount,
       });
+      const activeRapidQueueItem = latestStatus.rapidCaptureQueue.items.find(
+        (item) => item.queueItemId === latestStatus.rapidCaptureQueue.activeQueueItemId && item.reportId === publishedReportId
+      );
+      if (activeRapidQueueItem && bridgeConnected && stationToken.trim()) {
+        try {
+          await runAction("publish-report", productionReleaseBody());
+        } catch (queueError) {
+          setError(
+            `Production publish succeeded, but the local rapid queue could not be marked published: ${
+              queueError instanceof Error ? queueError.message : "local queue update failed"
+            }`
+          );
+        }
+      }
       await refreshHistory();
       await refreshFinishQueue(publishedReportId).catch(() => undefined);
     } catch (requestError) {
@@ -3094,6 +3687,21 @@ export default function AiGraderStationPage() {
                   />
                 ))}
               </svg>
+              {cardGeometryPolygonPoints.length === 4 ? (
+                <svg
+                  className={`card-geometry-overlay ${cardPlacementState}`}
+                  viewBox={`0 0 ${cardGeometryFrameSize.width} ${cardGeometryFrameSize.height}`}
+                  focusable="false"
+                >
+                  <polygon points={cardGeometryPolygonPoints.map((corner) => `${corner.x},${corner.y}`).join(" ")} />
+                  {cardGeometryPolygonPoints.map((corner, index) => (
+                    <circle key={index} cx={corner.x} cy={corner.y} r={Math.max(5, cardGeometryFrameSize.width * 0.005)} />
+                  ))}
+                </svg>
+              ) : null}
+            </div>
+            <div className={`card-geometry-badge ${cardPlacementState}`} role="status" aria-live="polite">
+              {cardPlacementLabel}
             </div>
             <div className="camera-status">
               <span>{bridgeStatusLabel}</span>
@@ -3150,10 +3758,40 @@ export default function AiGraderStationPage() {
               <div>
                 <p className="eyebrow">Position Back</p>
                 <h2>Live Preview Is Active</h2>
-                <p>Flip the card, seat the back in the fixture, then capture when the framing is right.</p>
-                <button type="button" onClick={confirmFlipAndContinue} disabled={busy !== null}>
+                <p>Flip the card and wait for Ready. If detection cannot become Ready, use the fixed overlay manually and confirm that override.</p>
+                <button
+                  type="button"
+                  onClick={() => void confirmFlipAndContinue("operator")}
+                  disabled={busy !== null || previewGeometrySide !== "back" || !detectedGeometryReady}
+                >
                   {busy === "capture-back" ? "Capturing Back" : "Capture Back"}
                 </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setManualCaptureConfirmation({ side: "back" })}
+                  disabled={busy !== null || previewGeometrySide !== "back" || !manualOverlayAvailable}
+                >
+                  Use Manual Overlay
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {manualCaptureConfirmation ? (
+            <div className="manual-capture-scrim" role="dialog" aria-modal="true" aria-labelledby="manual-capture-title">
+              <div>
+                <p className="eyebrow">Explicit Manual Capture</p>
+                <h2 id="manual-capture-title">Use Fixed Overlay for {manualCaptureConfirmation.side === "front" ? "Front" : "Back"}?</h2>
+                <p>
+                  Automatic geometry will not be claimed. The yellow card rectangle ({Math.round(reportOverlayTemplate.width)} x {Math.round(reportOverlayTemplate.height)} preview pixels) will be sent to the local bridge as an operator-confirmed manual boundary. Raw forensic images remain unchanged.
+                </p>
+                <div className="action-row">
+                  <button type="button" onClick={() => setManualCaptureConfirmation(null)} disabled={busy !== null}>Cancel</button>
+                  <button type="button" className="primary" onClick={() => void confirmManualOverlayCapture()} disabled={busy !== null || !manualOverlayAvailable}>
+                    Confirm Manual Capture
+                  </button>
+                </div>
               </div>
             </div>
           ) : null}
@@ -3351,10 +3989,120 @@ export default function AiGraderStationPage() {
             <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
               {busy === "start" ? "Starting" : "Start New Card"}
             </button>
-            <button type="button" className="start-grading" onClick={startGrading} disabled={busy !== null}>
+            <button
+              type="button"
+              className="start-grading"
+              onClick={() => void startGrading("operator")}
+              disabled={busy !== null || !canStartGrading || previewGeometrySide !== "front" || !detectedGeometryReady}
+            >
               {busy === "start-grading" ? "Working" : "Start Grading"}
             </button>
+            <button
+              type="button"
+              className="secondary manual-capture-button"
+              onClick={() => setManualCaptureConfirmation({ side: "front" })}
+              disabled={busy !== null || !canStartGrading || previewGeometrySide !== "front" || !manualOverlayAvailable}
+            >
+              Use Manual Overlay
+            </button>
           </section>
+
+          <section className="capture-settings">
+            <div className="capture-settings-head">
+              <div>
+                <p className="eyebrow">Capture Settings</p>
+                <h3>{stationCaptureMode === "rapid" ? "Rapid Capture" : "Single Card"}</h3>
+              </div>
+              <strong>{formatStationValue(stationCaptureProfile)}</strong>
+            </div>
+            <div className="capture-settings-grid">
+              <label>
+                Flow
+                <select
+                  value={stationCaptureMode}
+                  onChange={(event) => void changeStationCaptureMode(event.target.value as StationCaptureMode)}
+                  disabled={!bridgeConnected || busy !== null || stationSettingsLocked}
+                >
+                  <option value="single">Single</option>
+                  <option value="rapid">Rapid</option>
+                </select>
+              </label>
+              <label>
+                Profile
+                <select
+                  value={stationCaptureProfile}
+                  onChange={(event) => void changeStationCaptureProfile(event.target.value as AiGraderCaptureProfile)}
+                  disabled={!bridgeConnected || busy !== null || stationSettingsLocked}
+                >
+                  <option value="full_forensic">Full Forensic</option>
+                  <option value="production_fast">Production Fast</option>
+                </select>
+              </label>
+            </div>
+            <label className="capture-auto-toggle">
+              <input
+                type="checkbox"
+                checked={autoCaptureEnabled}
+                onChange={(event) => {
+                  autoCaptureMachineRef.current = undefined;
+                  setAutoCaptureEnabled(event.target.checked);
+                  setAutoCaptureUi({
+                    phase: event.target.checked ? "waiting_for_card_removal" : "disabled",
+                    readyStableMs: 0,
+                  });
+                }}
+                disabled={!bridgeConnected || busy !== null}
+              />
+              Auto Capture
+              <span>{autoCapturePhaseLabel(autoCaptureUi)}</span>
+            </label>
+            <p>
+              Full Forensic is the previous stable profile. Production Fast is an explicit opt-in and preserves all grading roles; 5 seconds per side is not proven without a Dell hardware run.
+            </p>
+            {autoCaptureEnabled ? <small>Remove the prior card, then hold detected Ready through 3 fresh frames and 800 ms. Manual capture always requires the separate confirmation above.</small> : null}
+          </section>
+
+          {stationCaptureMode === "rapid" || rapidQueueItems.length ? (
+            <section className="rapid-queue">
+              <div className="rapid-queue-head">
+                <div>
+                  <p className="eyebrow">Recent Captures</p>
+                  <h3>{rapidQueueItems.length ? `${rapidQueueItems.length} queued` : "Queue Empty"}</h3>
+                </div>
+                <strong>{rapidQueueHasProcessing ? "Processing" : "Ready"}</strong>
+              </div>
+              <div className="rapid-queue-list">
+                {rapidQueueItems.length ? (
+                  rapidQueueItems.map((item) => {
+                    const reviewable = RAPID_REVIEWABLE_STATES.has(item.state);
+                    const active = item.queueItemId === status.rapidCaptureQueue.activeQueueItemId;
+                    const ocrStatus = rapidOcrPrefetchStatus[item.reportId];
+                    return (
+                      <article key={item.queueItemId} className={active ? "active" : ""}>
+                        <div>
+                          <strong>{formatStationValue(item.state)}</strong>
+                          <small>{item.reportId}</small>
+                          <span>
+                            OCR {ocrStatus?.status ?? (item.state === "report_ready_needs_confirm" ? "queued" : "waiting")}
+                            {ocrStatus?.status === "ready" ? ` / review ${ocrStatus.reviewCount ?? 0}` : ""}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void activateRapidQueueItem(item.queueItemId)}
+                          disabled={!reviewable || active || busy !== null || status.sessionManifest.frontCaptured || status.sessionManifest.backCaptured}
+                        >
+                          {active ? "Active" : reviewable ? "Activate / Review" : "Processing"}
+                        </button>
+                      </article>
+                    );
+                  })
+                ) : (
+                  <p>Captured cards appear here after both raw sides are safely queued.</p>
+                )}
+              </div>
+            </section>
+          ) : null}
 
           <section className={productionSignedIn ? "production-auth signed-in" : "production-auth"}>
             <div>
@@ -3481,6 +4229,39 @@ export default function AiGraderStationPage() {
             <p className={identityStatus.status === "failed" ? "step-message failed" : "step-message"}>
               {identityStatus.status === "idle" ? selectedCard?.subtitle ?? cardSearchMessage : identityStatus.message}
             </p>
+            {reportReady || ocrPrefillState.status !== "idle" ? (
+              <div className={`ocr-prefill-status ${ocrPrefillState.status}`} role="status" aria-live="polite">
+                <div className="ocr-prefill-heading">
+                  <strong>OCR Prefill</strong>
+                  <span>{ocrPrefillState.status === "running" ? "Working" : formatStationValue(ocrPrefillState.status)}</span>
+                </div>
+                <p>{ocrPrefillState.message}</p>
+                {ocrPrefillState.status === "ready" ? (
+                  <>
+                    <div className="ocr-prefill-indicators" aria-label="OCR field confidence">
+                      {ocrPrefillIndicators.map((indicator) => (
+                        <span
+                          key={indicator.fieldName}
+                          className={indicator.reviewRequired ? "review" : ""}
+                          title={`${indicator.label}: ${indicator.value}${indicator.reviewRequired ? " — review required" : ""}`}
+                        >
+                          {indicator.label} {indicator.confidencePercent}%
+                        </span>
+                      ))}
+                      {ocrPrefillState.result?.reviewFieldNames.length ? (
+                        <span className="review">Review {ocrPrefillState.result.reviewFieldNames.length}</span>
+                      ) : null}
+                    </div>
+                    <small>Human Confirm Card and Publish actions are still required.</small>
+                  </>
+                ) : null}
+                {ocrPrefillState.status === "failed" ? (
+                  <button type="button" onClick={retryOcrPrefill} disabled={!session?.token || busy !== null}>
+                    Retry OCR
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             <div className="identity-grid">
               <label>
                 Category
@@ -3650,11 +4431,19 @@ export default function AiGraderStationPage() {
             <div className="warm-grid">
               <div>
                 <span>Execution Path</span>
-                <strong>{warmRunner.executionPath === "cold_command_fallback" ? "Cold Fallback" : "Warm Runner"}</strong>
+                <strong>{warmRunner.executionPath === "cold_command_fallback" ? "Explicit Cold Debug" : "Warm Runner"}</strong>
               </div>
               <div>
-                <span>Fallback</span>
-                <strong>{warmRunner.fallbackUsed || warmRunner.fallback.active ? "Used" : "No"}</strong>
+                <span>Cold Debug Mode</span>
+                <strong>{warmRunner.explicitColdDebugModeUsed || warmRunner.coldDebugMode.active ? "Explicitly Enabled" : "Off"}</strong>
+              </div>
+              <div>
+                <span>Front Geometry</span>
+                <strong>{status.geometryCaptureDecisions.front?.mode === "manual_capture" ? "Manual Override" : status.geometryCaptureDecisions.front?.mode === "detected_geometry" ? "Detected" : "Pending"}</strong>
+              </div>
+              <div>
+                <span>Back Geometry</span>
+                <strong>{status.geometryCaptureDecisions.back?.mode === "manual_capture" ? "Manual Override" : status.geometryCaptureDecisions.back?.mode === "detected_geometry" ? "Detected" : "Pending"}</strong>
               </div>
               <div>
                 <span>Capture Lock</span>
@@ -3677,9 +4466,14 @@ export default function AiGraderStationPage() {
                 <strong>{formatMs(warmRunner.timing.targetTotalMinMs)}-{formatMs(warmRunner.timing.targetTotalMaxMs)}</strong>
               </div>
             </div>
-            {(warmRunner.fallbackUsed || warmRunner.fallback.active) && (
-              <p className="status-note">{warmRunner.fallbackReason ?? warmRunner.fallback.reason ?? "Cold fallback was used; this run does not count for speed acceptance."}</p>
+            {(warmRunner.explicitColdDebugModeUsed || warmRunner.coldDebugMode.active) && (
+              <p className="status-note">{warmRunner.explicitColdDebugReason ?? warmRunner.coldDebugMode.reason ?? "Explicit cold debug mode was configured before capture; this run does not count for speed acceptance."}</p>
             )}
+            {status.captureFailure ? (
+              <p className="status-note failed">
+                {status.captureFailure.side} warm capture failed: {status.captureFailure.message} This capture session is terminal; select Start New Card to retry. No automatic cold capture was attempted.
+              </p>
+            ) : null}
             <div className="evidence-side">
               <div>
                 <span>Front Evidence</span>
@@ -3825,6 +4619,49 @@ export default function AiGraderStationPage() {
           <section className="timing">
             <p className="eyebrow">Timing</p>
             <dl>
+              <dt>Capture profile</dt>
+              <dd>{formatStationValue(status.captureTiming.captureProfile)}</dd>
+              <dt>Front total</dt>
+              <dd>{formatMs(captureTimingSummary.totalFrontMs)}</dd>
+              <dt>Back total</dt>
+              <dd>{formatMs(captureTimingSummary.totalBackMs)}</dd>
+              <dt>Preview ready</dt>
+              <dd>{formatMs(captureTimingSummary.previewReadyMs)}</dd>
+              <dt>Front edge ready</dt>
+              <dd>{formatMs(captureTimingSummary.frontEdgeDetectionReadyMs)}</dd>
+              <dt>Back edge ready</dt>
+              <dd>{formatMs(captureTimingSummary.backEdgeDetectionReadyMs)}</dd>
+              <dt>Front positioning</dt>
+              <dd>{formatMs(captureTimingSummary.frontPositioningMs)}</dd>
+              <dt>Back positioning</dt>
+              <dd>{formatMs(captureTimingSummary.backPositioningMs)}</dd>
+              <dt>Total card</dt>
+              <dd>{formatMs(captureTimingSummary.totalCardMs)}</dd>
+              <dt>Report-ready total</dt>
+              <dd>{formatMs(captureTimingSummary.reportReadyTotalMs)}</dd>
+              <dt>Safe queue latency</dt>
+              <dd>{formatMs(captureTimingSummary.safeQueueLatencyMs)}</dd>
+              <dt>Front during flip</dt>
+              <dd>
+                {formatMs(captureTimingSummary.frontProcessingDuringFlipMs)}
+                {captureTimingSummary.frontProcessingOverlappedFlip ? " overlap" : ""}
+              </dd>
+              <dt>Lighting/profile</dt>
+              <dd>{formatMs(captureTimingPhaseTotal("lighting_profile"))}</dd>
+              <dt>Frame capture</dt>
+              <dd>{formatMs(captureTimingPhaseTotal("frame_capture"))}</dd>
+              <dt>File writes</dt>
+              <dd>{formatMs(captureTimingPhaseTotal("file_writes"))}</dd>
+              <dt>File hashes</dt>
+              <dd>{formatMs(captureTimingPhaseTotal("file_hashes"))}</dd>
+              <dt>Crop / deskew</dt>
+              <dd>{formatMs(captureTimingPhaseTotal("crop_deskew"))}</dd>
+              <dt>Forensic runner</dt>
+              <dd>{formatMs(captureTimingPhaseTotal("grading_forensic_runner"))}</dd>
+              <dt>Side processing</dt>
+              <dd>{formatMs(captureTimingPhaseTotal("side_processing"))}</dd>
+              <dt>Report phase</dt>
+              <dd>{formatMs(captureTimingPhaseTotal("report_generation"))}</dd>
               <dt>Capture commands</dt>
               <dd>{formatMs(status.timingSummary?.captureCommandMs)}</dd>
               <dt>Report generation</dt>
@@ -3846,6 +4683,9 @@ export default function AiGraderStationPage() {
               <dt>Detailed fields</dt>
               <dd>{status.timingSummary?.detailedEntries?.length ?? 0}</dd>
             </dl>
+            <p className={status.captureTiming.target.fiveSecondsPerSideProven ? "timing-target proven" : "timing-target"}>
+              5 s/side: {status.captureTiming.target.fiveSecondsPerSideProven ? "hardware proven" : "not proven"}. {status.captureTiming.target.note}
+            </p>
           </section>
         </aside>
 
@@ -4168,6 +5008,62 @@ export default function AiGraderStationPage() {
           mix-blend-mode: screen;
           filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.72));
         }
+        .card-geometry-overlay {
+          position: absolute;
+          inset: 0;
+          display: block;
+          width: 100%;
+          height: 100%;
+          overflow: visible;
+          filter: drop-shadow(0 0 5px rgba(0, 0, 0, 0.85));
+        }
+        .card-geometry-overlay polygon {
+          fill: rgba(255, 183, 0, 0.05);
+          stroke: #ffb700;
+          stroke-width: 6;
+          stroke-linejoin: round;
+        }
+        .card-geometry-overlay circle {
+          fill: #ffb700;
+          stroke: #111;
+          stroke-width: 2;
+        }
+        .card-geometry-overlay.ready polygon {
+          fill: rgba(34, 197, 94, 0.08);
+          stroke: #22c55e;
+        }
+        .card-geometry-overlay.ready circle {
+          fill: #22c55e;
+        }
+        .card-geometry-badge {
+          position: absolute;
+          z-index: 4;
+          top: 22px;
+          left: 50%;
+          transform: translateX(-50%);
+          min-width: 118px;
+          padding: 9px 15px;
+          border: 1px solid rgba(255, 255, 255, 0.28);
+          border-radius: 999px;
+          color: #f7efe1;
+          background: rgba(68, 73, 69, 0.92);
+          box-shadow: 0 5px 20px rgba(0, 0, 0, 0.34);
+          font-size: 13px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-align: center;
+          text-transform: uppercase;
+          pointer-events: none;
+        }
+        .card-geometry-badge.adjust_card {
+          color: #17120a;
+          background: rgba(255, 183, 0, 0.96);
+        }
+        .card-geometry-badge.ready {
+          color: #fff;
+          background: rgba(22, 130, 65, 0.96);
+          border-color: rgba(119, 255, 166, 0.72);
+        }
         .report-overlay-frame-border,
         .report-overlay-card-template,
         .report-overlay-roi {
@@ -4226,7 +5122,8 @@ export default function AiGraderStationPage() {
           line-height: 1.5;
         }
         .connect-scrim,
-        .flip-scrim {
+        .flip-scrim,
+        .manual-capture-scrim {
           position: absolute;
           inset: 0;
           display: grid;
@@ -4237,7 +5134,8 @@ export default function AiGraderStationPage() {
           z-index: 5;
         }
         .connect-scrim > div,
-        .flip-scrim > div {
+        .flip-scrim > div,
+        .manual-capture-scrim > div {
           width: min(520px, 92vw);
           border: 1px solid rgba(238, 211, 146, 0.32);
           background: rgba(14, 15, 13, 0.92);
@@ -4254,6 +5152,14 @@ export default function AiGraderStationPage() {
         .flip-scrim > div {
           width: min(430px, 92vw);
           pointer-events: auto;
+        }
+        .manual-capture-scrim {
+          z-index: 7;
+        }
+        .manual-capture-scrim p {
+          margin-top: 10px;
+          color: #cfc7b8;
+          line-height: 1.5;
         }
         h1,
         h2,
@@ -4323,6 +5229,10 @@ export default function AiGraderStationPage() {
           background: #5bff9d;
           color: #06100a;
           box-shadow: 0 0 36px rgba(91, 255, 157, 0.22);
+        }
+        .manual-capture-button {
+          width: 100%;
+          margin-top: 10px;
         }
         .connect-scrim .link-button {
           border-color: rgba(255, 255, 255, 0.18);
@@ -4395,6 +5305,8 @@ export default function AiGraderStationPage() {
           line-height: 1.4;
         }
         .next-card,
+        .capture-settings,
+        .rapid-queue,
         .production-auth,
         .profile,
         .live-lighting,
@@ -4416,6 +5328,99 @@ export default function AiGraderStationPage() {
           margin-top: 8px;
           color: #bdb5a8;
           line-height: 1.45;
+        }
+        .capture-settings-head,
+        .rapid-queue-head {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 10px;
+        }
+        .capture-settings-head h3,
+        .rapid-queue-head h3 {
+          margin: 4px 0 0;
+          font-size: 16px;
+        }
+        .capture-settings-head > strong,
+        .rapid-queue-head > strong {
+          color: #f3db92;
+          font-size: 10px;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .capture-settings-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+        .capture-settings-grid label {
+          margin-top: 10px;
+        }
+        .capture-auto-toggle {
+          display: grid;
+          grid-template-columns: 18px minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 7px;
+          margin-top: 11px;
+          padding: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          letter-spacing: 0.04em;
+        }
+        .capture-auto-toggle input {
+          width: 16px;
+          height: 16px;
+          margin: 0;
+        }
+        .capture-auto-toggle span {
+          color: #c9a85f;
+          font-size: 9px;
+        }
+        .capture-settings p,
+        .capture-settings small,
+        .rapid-queue p {
+          display: block;
+          margin: 9px 0 0;
+          color: #bdb5a8;
+          font-size: 10px;
+          line-height: 1.45;
+        }
+        .rapid-queue-list {
+          display: grid;
+          gap: 7px;
+          margin-top: 10px;
+        }
+        .rapid-queue-list article {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 8px;
+          padding: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.03);
+        }
+        .rapid-queue-list article.active {
+          border-color: rgba(91, 255, 157, 0.35);
+          background: rgba(91, 255, 157, 0.07);
+        }
+        .rapid-queue-list article > div {
+          display: grid;
+          min-width: 0;
+          gap: 2px;
+        }
+        .rapid-queue-list small,
+        .rapid-queue-list span {
+          overflow: hidden;
+          color: #aaa69b;
+          font-size: 9px;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .rapid-queue-list button {
+          min-height: 32px;
+          padding: 6px 8px;
+          font-size: 9px;
         }
         .production-auth {
           display: grid;
@@ -4606,6 +5611,68 @@ export default function AiGraderStationPage() {
           background: rgba(95, 12, 18, 0.26);
           color: #ffd6d6;
           padding: 8px;
+        }
+        .ocr-prefill-status {
+          display: grid;
+          gap: 7px;
+          margin: 9px 0 11px;
+          padding: 9px 10px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.04);
+        }
+        .ocr-prefill-status.ready {
+          border-color: rgba(91, 255, 157, 0.3);
+          background: rgba(91, 255, 157, 0.06);
+        }
+        .ocr-prefill-status.failed {
+          border-color: rgba(255, 82, 82, 0.3);
+          background: rgba(95, 12, 18, 0.2);
+        }
+        .ocr-prefill-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          font-size: 12px;
+        }
+        .ocr-prefill-heading span {
+          color: #aaa69b;
+          font-size: 9px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .ocr-prefill-status p {
+          margin: 0;
+        }
+        .ocr-prefill-status small {
+          color: #bdb5a8;
+          font-size: 10px;
+        }
+        .ocr-prefill-status button {
+          justify-self: start;
+          min-height: 30px;
+          padding: 5px 10px;
+        }
+        .ocr-prefill-indicators {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 5px;
+        }
+        .ocr-prefill-indicators span {
+          padding: 3px 6px;
+          border: 1px solid rgba(91, 255, 157, 0.25);
+          border-radius: 999px;
+          color: #caffe0;
+          background: rgba(91, 255, 157, 0.08);
+          font-size: 9px;
+          font-weight: 800;
+        }
+        .ocr-prefill-indicators span.review {
+          border-color: rgba(255, 183, 0, 0.34);
+          color: #ffe1a1;
+          background: rgba(255, 183, 0, 0.09);
         }
         .confirmed-downstream {
           display: grid;
@@ -4990,6 +6057,15 @@ export default function AiGraderStationPage() {
         .timing dd {
           margin: 0;
           font-weight: 800;
+        }
+        .timing-target {
+          margin: 12px 0 0;
+          color: #e5c16d;
+          font-size: 10px;
+          line-height: 1.4;
+        }
+        .timing-target.proven {
+          color: #8fffb8;
         }
         .history {
           position: fixed;

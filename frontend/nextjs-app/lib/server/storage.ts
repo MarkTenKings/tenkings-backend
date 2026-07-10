@@ -1,5 +1,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { GetObjectCommand, HeadObjectCommand, ObjectCannedACL, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -51,6 +53,80 @@ export interface UploadBufferOptions {
 
 export interface PresignUploadOptions {
   metadata?: Record<string, string>;
+  /** Lowercase or uppercase 64-character SHA-256 hex digest of the exact PUT body. */
+  checksumSha256?: string;
+}
+
+export type StorageObjectHead = {
+  storageKey: string;
+  byteSize?: number;
+  contentType?: string;
+  metadata: Record<string, string>;
+  /** SHA-256 of the stored bytes, supplied by storage (or calculated locally), never object metadata. */
+  checksumSha256: string | null;
+};
+
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/i;
+const SHA256_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
+
+export function sha256HexToBase64(value: string) {
+  const normalized = value.trim();
+  if (!SHA256_HEX_PATTERN.test(normalized)) {
+    throw new Error("SHA-256 checksum must be a 64-character hex digest.");
+  }
+  return Buffer.from(normalized, "hex").toString("base64");
+}
+
+export function sha256Base64ToHex(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!SHA256_BASE64_PATTERN.test(normalized)) return null;
+  const decoded = Buffer.from(normalized, "base64");
+  if (decoded.byteLength !== 32 || decoded.toString("base64") !== normalized) return null;
+  return decoded.toString("hex");
+}
+
+export function verifyStorageObjectIntegrity(input: {
+  storageKey: string;
+  expectedByteSize: number;
+  expectedChecksumSha256: string;
+  head: StorageObjectHead;
+}) {
+  const expectedChecksum = SHA256_HEX_PATTERN.test(input.expectedChecksumSha256)
+    ? input.expectedChecksumSha256.toLowerCase()
+    : null;
+  const actualChecksum =
+    typeof input.head.checksumSha256 === "string" && SHA256_HEX_PATTERN.test(input.head.checksumSha256)
+      ? input.head.checksumSha256.toLowerCase()
+      : null;
+  const actualByteSize = input.head.byteSize;
+  const checksumMatches = expectedChecksum != null && actualChecksum === expectedChecksum;
+  const byteSizeMatches = typeof actualByteSize === "number" && actualByteSize === input.expectedByteSize;
+  return {
+    ok: checksumMatches && byteSizeMatches,
+    byteSize: actualByteSize,
+    contentType: input.head.contentType,
+    checksumSha256: actualChecksum,
+    message: !actualChecksum
+      ? `Storage-provided SHA-256 checksum is missing or invalid for ${input.storageKey}.`
+      : !expectedChecksum
+        ? `Expected SHA-256 checksum is invalid for ${input.storageKey}.`
+        : !checksumMatches
+          ? `Storage-provided SHA-256 checksum mismatch for ${input.storageKey}.`
+          : !byteSizeMatches
+            ? `Storage byte size mismatch for ${input.storageKey}.`
+            : undefined,
+  };
+}
+
+async function sha256File(filePath: string) {
+  const digest = createHash("sha256");
+  await new Promise<void>((resolve, reject) => {
+    createReadStream(filePath)
+      .on("data", (chunk) => digest.update(chunk))
+      .on("end", resolve)
+      .on("error", reject);
+  });
+  return digest.digest("hex");
 }
 
 export function getStorageMode(): StorageMode {
@@ -187,11 +263,17 @@ export async function presignUploadUrl(storageKey: string, contentType: string, 
     ContentType: contentType,
     ACL: s3ObjectAcl,
     Metadata: options.metadata,
+    ChecksumSHA256: options.checksumSha256 ? sha256HexToBase64(options.checksumSha256) : undefined,
   });
-  return getSignedUrl(client as any, command as any, { expiresIn: 60 * 10 });
+  return getSignedUrl(client as any, command as any, {
+    expiresIn: 60 * 10,
+    // Keep the payload checksum as a required signed request header instead of
+    // allowing the presigner to hoist it into the URL query string.
+    unhoistableHeaders: options.checksumSha256 ? new Set(["x-amz-checksum-sha256"]) : undefined,
+  });
 }
 
-export async function headStorageObject(storageKey: string) {
+export async function headStorageObject(storageKey: string): Promise<StorageObjectHead> {
   const mode = getStorageMode();
   if (mode !== "s3") {
     const filePath = getLocalFilePath(storageKey);
@@ -201,6 +283,7 @@ export async function headStorageObject(storageKey: string) {
       byteSize: stats.size,
       contentType: undefined as string | undefined,
       metadata: {} as Record<string, string>,
+      checksumSha256: await sha256File(filePath),
     };
   }
   const client = getS3Client();
@@ -208,6 +291,7 @@ export async function headStorageObject(storageKey: string) {
     new HeadObjectCommand({
       Bucket: s3Bucket,
       Key: storageKey,
+      ChecksumMode: "ENABLED",
     })
   );
   return {
@@ -215,6 +299,7 @@ export async function headStorageObject(storageKey: string) {
     byteSize: response.ContentLength,
     contentType: response.ContentType,
     metadata: response.Metadata ?? {},
+    checksumSha256: sha256Base64ToHex(response.ChecksumSHA256),
   };
 }
 

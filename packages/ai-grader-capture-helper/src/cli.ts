@@ -449,6 +449,7 @@ type ParsedCommand =
       stationBridgeMode: "mock" | "real";
       enableLocalStation: boolean;
       warmRunnerDisabled: boolean;
+      captureProfile: "full_forensic" | "production_fast";
       pylonRoot: string | undefined;
       pylonTimeoutMs: number | undefined;
       baslerBridgeScript: string | undefined;
@@ -596,6 +597,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let stationBridgeMode: "mock" | "real" = "mock";
   let enableLocalStation = false;
   let warmRunnerDisabled = false;
+  let captureProfile: "full_forensic" | "production_fast" = "full_forensic";
   let mockRun = false;
   let operatorAcceptedWarnings = false;
   let calibrationProfileId: string | undefined;
@@ -833,6 +835,15 @@ function parseCliArgs(argv: string[]): ParsedCommand {
       case "--disable-warm-runner":
         warmRunnerDisabled = true;
         break;
+      case "--capture-profile": {
+        const value = readOption(rest, index, "--capture-profile");
+        if (value !== "full_forensic" && value !== "production_fast") {
+          throw new CaptureHelperCommandError("--capture-profile must be full_forensic or production_fast.");
+        }
+        captureProfile = value;
+        index += 1;
+        break;
+      }
       case "--mock-run":
         mockRun = true;
         break;
@@ -1471,6 +1482,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         stationBridgeMode,
         enableLocalStation,
         warmRunnerDisabled,
+        captureProfile,
         pylonRoot,
         pylonTimeoutMs,
         baslerBridgeScript,
@@ -2077,6 +2089,7 @@ function helpPayload() {
       "--station-bridge-mode mock|real",
       "--enable-local-station",
       "--disable-warm-runner",
+      "--capture-profile full_forensic|production_fast",
       "--label",
       "--pylon-root",
       "--bridge-script",
@@ -5895,6 +5908,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           port: parsed.port,
           mode: parsed.stationBridgeMode,
           warmRunnerDisabled: parsed.warmRunnerDisabled,
+          captureProfile: parsed.captureProfile,
           stationToken: parsed.stationToken,
           stationPairingCode: parsed.stationPairingCode,
           stationPairingExpiresAt: parsed.stationPairingExpiresAt,

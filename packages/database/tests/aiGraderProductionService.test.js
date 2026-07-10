@@ -9,6 +9,7 @@ const {
   persistAiGraderSlabbedPhotoAsset,
   persistAiGraderProductionRelease,
   persistAiGraderValuationResult,
+  normalizeAiGraderPublicGeometryCaptureDecisions,
   sanitizeAiGraderPublicJson,
 } = require("../dist/database/src/aiGraderProductionService");
 
@@ -46,6 +47,81 @@ function sampleBundle(overrides = {}) {
     lightingProfile: {
       dutyPercent: 1.4,
       exposureUs: 45000,
+    },
+    geometry: {
+      front: {
+        side: "front",
+        placementState: "not_detected",
+        geometrySource: "manual_override",
+        captureMode: "manual_capture",
+        confidence: 0,
+        detectionUsed: false,
+        manualOverrideUsed: true,
+        sourceFrameId: "front-frame-safe-1",
+        localOutputPath: "C:\\TenKings\\capture-data\\front-normalized.png",
+        previewImage: "data:image/png;base64,must-not-survive",
+      },
+      back: {
+        side: "back",
+        placementState: "ready",
+        confidence: 0.92,
+        sourceFrameId: "back-frame-safe-1",
+      },
+    },
+    geometryCaptureDecisions: {
+      front: {
+        mode: "manual_capture",
+        placementState: "not_detected",
+        timestamp: "2026-07-02T12:00:01.000Z",
+        explicitOperatorAction: true,
+        detectionUsed: false,
+        manualOverrideUsed: true,
+        manualBoundaryRect: {
+          x: 100,
+          y: 140,
+          width: 300,
+          height: 420,
+          coordinateFrame: "basler_sensor_pixels",
+        },
+        sourceFrameId: "front-frame-safe-1",
+        localManifestPath: "C:\\TenKings\\capture-data\\station-session.json",
+        bridgeUrl: "http://127.0.0.1:47652/status",
+        stationToken: "must-not-survive",
+        uploadUrl: "https://storage.example.test/front.png?X-Amz-Signature=must-not-survive",
+        hardwareControls: { leimacOn: true },
+      },
+      back: {
+        mode: "detected_geometry",
+        placementState: "ready",
+        timestamp: "2026-07-02T12:00:02.000Z",
+        explicitOperatorAction: false,
+        detectionUsed: true,
+        manualOverrideUsed: false,
+        sourceFrameId: "back-frame-safe-1",
+      },
+    },
+    captureTiming: {
+      schemaVersion: "ten-kings-ai-grader-capture-timing-v1",
+      captureProfile: "production_fast",
+      hardwareMeasurement: false,
+      summary: {
+        totalFrontMs: 4700,
+        totalBackMs: 4800,
+        frontProcessingDuringFlipMs: 900,
+        totalCardMs: 11800,
+      },
+      target: {
+        fiveSecondsPerSideProven: false,
+        hardwareMeasurementRequired: true,
+      },
+    },
+    ocrPrefill: {
+      humanConfirmationRequired: true,
+      inventoryMutationPerformed: false,
+      publishMutationPerformed: false,
+      fields: {
+        playerName: { value: "Test Player", confidence: 0.91, reviewRequired: false },
+      },
     },
     warnings: ["fixture calibration is local"],
     ...overrides,
@@ -233,6 +309,65 @@ test("production storage plan sanitizes local Dell paths and loopback URLs", () 
   assert.match(combinedBodies, /"publicReportUrl": "https:\/\/collect\.tenkings\.co\/ai-grader\/reports\/report-1"/);
 });
 
+test("production report keeps explicit manual geometry decisions while removing all private station data", () => {
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const reportBundleArtifact = plan.artifacts.find((artifact) => artifact.kind === "report-bundle.json");
+  const publicBundle = JSON.parse(reportBundleArtifact?.body ?? "{}");
+  const frontGeometry = publicBundle.geometry.front;
+  const frontDecision = publicBundle.geometryCaptureDecisions.front;
+
+  assert.equal(frontGeometry.geometrySource, "manual_override");
+  assert.equal(frontGeometry.captureMode, "manual_capture");
+  assert.equal(frontGeometry.detectionUsed, false);
+  assert.equal(frontGeometry.manualOverrideUsed, true);
+  assert.equal(frontDecision.mode, "manual_capture");
+  assert.equal(frontDecision.geometrySource, "manual_override");
+  assert.equal(frontDecision.captureMode, "manual_capture");
+  assert.equal(frontDecision.placementState, "not_detected");
+  assert.equal(frontDecision.explicitOperatorAction, true);
+  assert.equal(frontDecision.detectionUsed, false);
+  assert.equal(frontDecision.manualOverrideUsed, true);
+  assert.deepEqual(frontDecision.manualBoundaryRect, {
+    x: 100,
+    y: 140,
+    width: 300,
+    height: 420,
+    coordinateFrame: "basler_sensor_pixels",
+  });
+  assert.equal(publicBundle.geometryCaptureDecisions.back.mode, "detected_geometry");
+  assert.equal(publicBundle.geometryCaptureDecisions.back.geometrySource, "detected");
+
+  const serialized = JSON.stringify(publicBundle);
+  assert.doesNotMatch(
+    serialized,
+    /C:\\TenKings|127\.0\.0\.1|must-not-survive|data:image|X-Amz-Signature|stationToken|bridgeUrl|uploadUrl|hardwareControls|leimacOn/
+  );
+
+  assert.equal(
+    normalizeAiGraderPublicGeometryCaptureDecisions({
+      front: {
+        mode: "manual_capture",
+        placementState: "ready",
+        explicitOperatorAction: false,
+        detectionUsed: true,
+        manualOverrideUsed: false,
+        manualBoundaryRect: {
+          x: 100,
+          y: 140,
+          width: 300,
+          height: 420,
+          coordinateFrame: "basler_sensor_pixels",
+        },
+      },
+    }),
+    undefined
+  );
+});
+
 test("production storage plan uploads AI Grader evidence image assets with public URLs", () => {
   const imageBytes = Buffer.from("front-image");
   const imageChecksum = aiGraderSha256(imageBytes);
@@ -276,6 +411,73 @@ test("production storage plan uploads AI Grader evidence image assets with publi
   assert.doesNotMatch(reportBundleArtifact?.body ?? "", /C:\\TenKings/);
 });
 
+test("production storage plan cannot publish caller-forged hardware timing or OCR mutation claims", () => {
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle({
+      captureTiming: {
+        schemaVersion: "ten-kings-ai-grader-capture-timing-v1",
+        captureProfile: "production_fast",
+        targetSideMs: 5000,
+        hardwareMeasurement: true,
+        events: [],
+        phases: [],
+        summary: {
+          totalFrontMs: 100,
+          totalBackMs: 200,
+          totalCardMs: 500,
+          frontProcessingOverlappedFlip: true,
+        },
+        target: {
+          frontWithinTarget: true,
+          backWithinTarget: true,
+          fiveSecondsPerSideProven: true,
+          hardwareMeasurementRequired: false,
+          note: "caller-forged proof",
+        },
+      },
+      ocrPrefill: {
+        reportId: "report-1",
+        status: "prefill_ready",
+        humanConfirmationRequired: false,
+        inventoryMutationPerformed: true,
+        publishMutationPerformed: true,
+        sourceSides: ["front", "back"],
+        fields: {
+          playerName: {
+            value: "Test Player",
+            confidence: 0.99,
+            reviewRequired: false,
+            sources: ["front_ocr"],
+          },
+        },
+        reviewFieldNames: [],
+        provenance: {
+          ocrEngine: "google_vision_document_text_detection",
+          attributeExtractor: "@tenkings/shared/extractCardAttributes",
+          setLookupUsed: true,
+          setIdentificationUsed: true,
+        },
+        warnings: [],
+      },
+    }),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const bundleArtifact = plan.artifacts.find((artifact) => artifact.kind === "report-bundle.json");
+  const publicBundle = JSON.parse(bundleArtifact?.body ?? "{}");
+
+  assert.equal(publicBundle.captureTiming.summary.totalFrontMs, 100);
+  assert.equal(publicBundle.captureTiming.summary.totalBackMs, 200);
+  assert.equal(publicBundle.captureTiming.hardwareMeasurement, false);
+  assert.equal(publicBundle.captureTiming.target.fiveSecondsPerSideProven, false);
+  assert.equal(publicBundle.captureTiming.target.hardwareMeasurementRequired, true);
+  assert.doesNotMatch(publicBundle.captureTiming.target.note, /caller-forged/);
+  assert.equal(publicBundle.ocrPrefill.humanConfirmationRequired, true);
+  assert.equal(publicBundle.ocrPrefill.inventoryMutationPerformed, false);
+  assert.equal(publicBundle.ocrPrefill.publishMutationPerformed, false);
+  assert.equal(publicBundle.ocrPrefill.fields.playerName.reviewRequired, true);
+});
+
 test("public JSON sanitizer removes local path and loopback fields without dropping evidence refs", () => {
   const sanitized = sanitizeAiGraderPublicJson({
     localReportFolder: "C:\\TenKings\\capture-data\\report",
@@ -288,6 +490,60 @@ test("public JSON sanitizer removes local path and loopback fields without dropp
   assert.equal("reportHtmlPath" in sanitized, false);
   assert.equal(sanitized.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/report-1");
   assert.deepEqual(sanitized.evidenceRefs, ["front", "back"]);
+});
+
+test("public JSON sanitizer removes private OCR, geometry, signed upload, embedded image, and hardware fields", () => {
+  const sanitized = sanitizeAiGraderPublicJson({
+    geometry: {
+      sourceFrameId: "front-frame-42",
+      localOutputPath: "C:\\TenKings\\capture-data\\front-normalized.png",
+      corners: { topLeft: { x: 10, y: 20 } },
+    },
+    captureTiming: { totalCardMs: 12345 },
+    ocrPrefill: {
+      humanConfirmationRequired: true,
+      uploadUrl: "https://storage.example.test/object?X-Amz-Signature=secret",
+      bodyBase64: "data:image/png;base64,abc",
+      token: "generic-token-must-not-survive",
+      nestedCredentials: {
+        accessToken: "access-token-must-not-survive",
+        apiKey: "api-key-must-not-survive",
+        password: "password-must-not-survive",
+      },
+    },
+    hardwareMeasurement: true,
+    hardwareControls: { turnOnLeimac: true },
+    leimacHost: "10.0.0.4",
+    baslerBridgeScript: "C:\\TenKings\\private.ps1",
+    stationToken: "local-station-secret",
+    bridgeUrl: "http://127.0.0.1:47652",
+    namedBridge: "http://dell.local:47652/status",
+    internalBridge: "http://grader.internal:47652/status",
+    wildcardBridge: "http://0.0.0.0:47652/status",
+    ipv6Bridge: "http://[fe80::1]:47652/status",
+    privateUrl: "http://169.254.10.20/frame",
+    signedSource: "https://storage.example.test/object?X-Amz-Signature=must-not-survive",
+    googleSignedSource: "https://storage.example.test/object?X-Goog-Credential=must-not-survive",
+    azureSignedSource: "https://storage.example.test/object?sig=must-not-survive",
+    embeddedBridgeWarning: "Bridge failed at http://127.0.0.1:3020/status?token=must-not-survive; retry locally.",
+    embeddedSignedWarning: "Upload source https://storage.example.test/object?X-Amz-Signature=must-not-survive was rejected.",
+    embeddedWindowsPath: "Runner failed while reading C:\\TenKings\\capture-data\\private\\manifest.json.",
+    embeddedUnixPath: "Runner failed while reading /var/tmp/ai-grader/private.json.",
+    schemeLessLoopback: "Dell bridge 127.0.0.1:3020 did not answer.",
+    schemeLessPrivateIp: "Leimac 10.0.0.4:5000 did not answer.",
+    schemeLessLocalName: "Station grader.local:47652 did not answer.",
+    safePublicWarning: "Public report https://collect.tenkings.co/ai-grader/reports/report-1 is ready.",
+    publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/report-1",
+  });
+
+  const serialized = JSON.stringify(sanitized);
+  assert.match(serialized, /front-frame-42/);
+  assert.match(serialized, /totalCardMs/);
+  assert.match(serialized, /humanConfirmationRequired/);
+  assert.match(serialized, /hardwareMeasurement/);
+  assert.doesNotMatch(serialized, /TenKings|\/var\/tmp|X-Amz|X-Goog|must-not-survive|data:image|station-secret|hardwareControls|leimacHost|baslerBridgeScript|127\.0\.0\.1|10\.0\.0\.4|169\.254|dell\.local|grader\.local|grader\.internal|0\.0\.0\.0|fe80/);
+  assert.match(serialized, /Public report https:\/\/collect\.tenkings\.co/);
+  assert.equal(sanitized.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/report-1");
 });
 
 test("valuation readiness requires final grade and card identity", () => {
@@ -364,6 +620,30 @@ test("production release persistence upserts durable records and optional card l
     ]
   );
   assert.ok(calls.some((call) => call.delegate === "aiGraderValuation" && call.method === "upsert"));
+  const sessionUpsert = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "upsert");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometry.front.placementState, "not_detected");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometry.front.geometrySource, "manual_override");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometry.front.captureMode, "manual_capture");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.mode, "manual_capture");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.geometrySource, "manual_override");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.explicitOperatorAction, true);
+  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.detectionUsed, false);
+  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.manualOverrideUsed, true);
+  assert.deepEqual(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.manualBoundaryRect, {
+    x: 100,
+    y: 140,
+    width: 300,
+    height: 420,
+    coordinateFrame: "basler_sensor_pixels",
+  });
+  assert.doesNotMatch(
+    JSON.stringify(sessionUpsert.args.create.captureSummary),
+    /C:\\TenKings|127\.0\.0\.1|must-not-survive|data:image|X-Amz-Signature|stationToken|bridgeUrl|uploadUrl|hardwareControls|leimacOn/
+  );
+  assert.equal(sessionUpsert.args.create.captureSummary.captureTiming.summary.totalFrontMs, 4700);
+  assert.equal(sessionUpsert.args.create.captureSummary.captureTiming.target.fiveSecondsPerSideProven, false);
+  assert.equal(sessionUpsert.args.create.captureSummary.ocrPrefill.humanConfirmationRequired, true);
+  assert.equal(sessionUpsert.args.create.captureSummary.ocrPrefill.fields.playerName.value, "Test Player");
   const cardUpdate = calls.find((call) => call.delegate === "cardAsset" && call.method === "updateMany");
   assert.equal(cardUpdate.args.data.aiGradeFinal, 8.6);
   assert.equal(cardUpdate.args.data.aiGradeLabel, "8.6");

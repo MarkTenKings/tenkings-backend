@@ -25431,3 +25431,245 @@ By enabling Rip It Live, I confirm:
 - Env vars changed: no.
 - Credentials changed, rotated, or printed: no.
 - Destructive operations: none.
+
+## 2026-07-09 - PR #79 production merge and deployment evidence
+
+### Merge And Main Evidence
+- PR #79 (`https://github.com/MarkTenKings/tenkings-backend/pull/79`) merged into `main` at `2026-07-10T02:18:39Z`.
+- Final PR HEAD: `843ec08efca866de22599fab2f1261132eaf88e9`.
+- Merge commit: `f83d81095ca011be1b763c2730d31ec70d167011`.
+- Confirmed `origin/main` and the local `main` checkout both resolve to `f83d81095ca011be1b763c2730d31ec70d167011`.
+
+### GitHub And Vercel Evidence
+- GitHub main CI run `29064368068` completed with conclusion `success` at `2026-07-10T02:24:19Z`: `https://github.com/MarkTenKings/tenkings-backend/actions/runs/29064368068`.
+- `Install & Build` and all eight Docker image jobs passed: frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
+- Vercel deployment id `5385629074`, environment `Production`, completed with state `success` and description `Deployment has completed` at `2026-07-10T02:20:23Z`.
+- Vercel dashboard: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/HpxEuipBNrtHZTs7d1dbKxcP22Bt`.
+- Vercel production target: `https://tenkings-backend-nextjs-2y9liiohj-ten-kings.vercel.app`.
+
+### Read-Only HTTP Availability
+- `https://collect.tenkings.co/ai-grader/station` -> HTTP `200`.
+- `https://collect.tenkings.co/ai-grader/finish` -> HTTP `200`.
+- `https://collect.tenkings.co/ai-grader/labels/sheets` -> HTTP `200`.
+- These were unauthenticated GET availability checks only. No production workflow smoke was run from the shell.
+
+### Guardrails Observed
+- Hardware run: no.
+- Migrations run: no; PR #79 requires no migration.
+- Env vars changed: no.
+- Credentials changed, rotated, or printed: no.
+- Destructive operations: none.
+
+### Remaining Production Smoke Steps For Mark
+1. On the Dell, hard-refresh `https://collect.tenkings.co/ai-grader/station`, complete normal Ten Kings SMS operator/admin sign-in and local bridge pairing, and verify the station remains the only surface with camera, lighting, and local hardware controls.
+2. Grade and Confirm Card for a known card. Verify the station immediately shows its sheet/slot and comps queued/running/ready state without blocking the next grade; publish through direct storage and start the next grade.
+3. On a separate normal computer with no Dell bridge, station token, camera, or lighting controls, sign in through normal Ten Kings auth and open `https://collect.tenkings.co/ai-grader/finish` and `https://collect.tenkings.co/ai-grader/labels/sheets`.
+4. Verify cards remain in physical chronological sheet/slot order. Print the current sheet while partial if appropriate, and click Mark Sheet Printed only after the physical sheet was actually printed; verify all labels on that sheet become printed.
+5. In Finish Cards, review and select correct eBay sold comps, verify the card value becomes their arithmetic average without duplicate price entry, upload front/back slab photos directly to storage, and verify Add To Inventory remains blocked until every gate passes and then moves the card to Complete.
+6. Verify authenticated downstream/public output exposes no local paths, bridge URLs, station tokens, `data:image` bodies, presigned URLs, or hardware controls.
+
+## 2026-07-09 - AI Grader standalone card geometry and normalization slice
+
+- Added `packages/ai-grader-capture-helper/src/drivers/cardGeometry.ts` and exported it from the driver package.
+- The standalone Sharp-based module detects four ordered outer corners on high-contrast front/back images, evaluates `not_detected` / `adjust_card` / `ready` using configurable confidence, approximately `0.5in` center-offset, `10deg` skew, aspect, and frame-clearance thresholds, and supports an explicit manual rectangle fallback.
+- Path-free geometry metadata records side, corners, bounding box, rotation/skew, confidence, safe source image/frame identifiers, timestamp, placement evaluation, and whether detected or manual geometry was used.
+- Normalization preserves and re-hashes the raw source, deskews/crops to an upright portrait card, and writes a lossless PNG with SHA-256, byte size, dimensions, and source checksum metadata.
+- Added `packages/ai-grader-capture-helper/tests/cardGeometry.test.js` with synthetic front/back `+10deg` / `-10deg` ready boundary cases, excessive skew and center-offset adjustment cases, blank not-detected behavior, configurable threshold coverage, manual fallback, raw preservation, normalized artifact, and path-leak assertions.
+- Validation: `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass; `node --test tests/cardGeometry.test.js` -> pass, `5/5`; focused `git diff --check` -> pass with only the existing Windows line-ending notice.
+- No bridge/UI integration, hardware action, capture, migration, env change, credential action, deploy, DB operation, or destructive operation was performed.
+
+## 2026-07-09 - AI Grader lossless fast profile, normalized package, timing, and public-safety integration slice
+
+- Added guarded capture profile selection: `full_forensic` keeps lossless PNG raw frames and `production_fast` uses lossless TIFF raw frames to target the measured PNG-save bottleneck. Both profiles preserve all 11 per-side roles (dark, all-on, accepted profile, channels 1-8); `full_forensic` remains the fallback and the five-second target remains explicitly unproven pending Dell evidence.
+- Warm side processing now runs independent image analyses and channel-display generation concurrently, records capture/processing timing, generates the four-corner normalized crop/deskew artifact for each side, and preserves/verifies the original raw evidence bytes.
+- Side and unified manifests/analysis now carry path-free geometry, normalized-artifact metadata, capture profile, capture/file-write/hash/crop-processing timings, and front/back raw-preservation state. Unified HTML uses normalized front/back images when available while retaining raw/display/ROI evidence.
+- Report bundles now include front/back geometry, capture timing, optional OCR prefill metadata, and normalized image assets for the existing direct-to-storage publish plan. Production persistence stores these JSON summaries without a schema change.
+- Hardened public JSON sanitation against Windows/Unix local paths, loopback/private/link-local URLs, signed/presigned credential query strings, station/bridge tokens, pairing codes, embedded image bodies, authorization/secret fields, and upload URLs; added a focused database regression assertion.
+- Added a software-only warm-processing test fixture for `production_fast`; no Basler/Leimac command was run.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB action: no.
+
+## 2026-07-09 - AI Grader direct-storage OCR Confirm Card prefill slice
+
+- Added authenticated production actions `ocr-prefill-init` and `ocr-prefill-finalize`, both mapped to the existing AI Grader `publish` auth scope; no auth bypass or new service-account scope was introduced.
+- `ocr-prefill-init` accepts small JSON metadata for exactly one normalized front and one normalized back image, returns deterministic direct-to-storage presigned PUT plans, and sends no image body through Vercel.
+- `ocr-prefill-finalize` validates the upload session and canonical storage keys, HEAD-verifies byte size/content type/checksum metadata when present, derives safe public HTTPS object URLs server-side, and invokes the OCR runtime only after both uploads verify.
+- The OCR runtime reuses `runGoogleVisionOcr`, `@tenkings/shared` `extractCardAttributes`, `identifySetByCardIdentity`, and `lookupSetByCardIdentity`; no separate OCR engine was added. Set/variant enrichment fails soft into review-required fields.
+- Result fields cover category, player/card name, year, manufacturer, product set, card number, parallel, insert, numbered, auto, and memorabilia with per-field confidence, sources, and `reviewRequired`.
+- Every result forces `humanConfirmationRequired=true`, `inventoryMutationPerformed=false`, and `publishMutationPerformed=false`; OCR suggestions cannot create inventory or publish a card.
+- Final output contains no source/storage/presigned URLs, storage keys, local paths, embedded image bodies, tokens, or secrets. OCR network access is dependency-injected; tests use only fake OCR/set lookup dependencies.
+- Files added/updated: `frontend/nextjs-app/lib/server/aiGraderOcrPrefill.ts`, `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts`, `frontend/nextjs-app/pages/api/admin/ai-grader/production/[...action].ts`, and `frontend/nextjs-app/tests/aiGraderOcrPrefill.test.ts`.
+- Validation: focused OCR tests `3/3` pass; existing `aiGraderLocalStation.test.ts` `74/74` pass; Next TypeScript check pass; focused ESLint pass with zero warnings/errors; `pnpm --filter @tenkings/nextjs-app build` pass with existing unrelated image/browser-data/Tailwind warnings; focused `git diff --check` pass with Windows line-ending notices only.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no. External OCR/network call: no.
+
+## 2026-07-09 - AI Grader rapid capture queue and per-session race-safety slice
+
+- Added bridge actions `configure-rapid-capture`, `queue-current-card`, and `activate-queue-item`. Rapid mode is an explicit persisted station setting and does not replace single-card capture.
+- Added explicit per-card workflow history for `front_captured`, `front_processing`, `back_positioning`, `back_captured`, `finalizing`, `report_ready_needs_confirm`, `confirmed_needs_publish`, `published`, and `failed`.
+- Warm processing promises are keyed by session plus side. Queueing detaches the completed card manifest before creating a fully reset next-card manifest, so old outputs, confirmations, command results, and jobs cannot mutate the next card.
+- Raw front/back packages must both be safely persisted and the global capture lock released before queueing. Background diagnostics and bundle generation use a serialized report worker and unique session/report folders.
+- Recent queue state is atomically persisted to `rapid-capture-queue.json`; per-session manifests are also atomically written with per-path serialization to prevent Windows rename races.
+- Completed queue activation restores the original per-card manifest into the existing Confirm/Publish workflow. No queue action confirms or publishes; explicit human `calculate-final-grade`/`finalize-report` and `publish-report` actions advance those states.
+- Updated stale preview-hold assertions to the production behavior: front capture releases preview for flip/back positioning, and back capture reacquires the forensic hold.
+- Validation: capture-helper build passed; `node --test tests/aiGraderLocalStationBridge.test.js` passed `21/21`; focused `git diff --check` passed with Windows line-ending notices only.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no.
+
+## 2026-07-10 - AI Grader rapid queue durable-status ordering fix
+
+- Split the rapid queue's mutable working state from its public committed snapshot. `status().rapidCaptureQueue` now advances only after `rapid-capture-queue.json` has completed its atomic write, so operators cannot observe `report_ready_needs_confirm` while durable state still says `finalizing`.
+- Kept atomic write serialization and restart recovery unchanged; insertion, terminal transitions, confirmation, and publish actions already await the same persistence chain before returning.
+- Hardened the rapid overlap regression to wait for the completed session timing manifest as a separate durable artifact and to immediately verify the committed queue file once public status reports ready.
+- Validation: full `pnpm --filter @tenkings/ai-grader-capture-helper test` passed, including build and `199/199` tests. Focused TypeScript compile and bridge `27/27` also passed. No hardware or network action was run.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no.
+
+## 2026-07-09 - AI Grader live preview geometry bridge integration slice
+
+- Added real MJPEG preview-frame geometry analysis to the local bridge using the shared `detectCardGeometryFromBuffer` detector.
+- Real Basler stdout is still forwarded to the browser first. A bounded JPEG assembler reconstructs complete frames across arbitrary multipart/chunk boundaries, and a 500 ms throttled asynchronous latest-frame-only worker performs geometry detection without awaiting or blocking `res.write`.
+- `previewStatus.cardGeometry` now exposes sanitizer-compatible `activeSide`, `front`, and `back` path-free geometry. Active side follows the station workflow: front before front capture, back during flip/back positioning and capture. The last result for each side remains available.
+- Starting a new card resets both sides and invalidates stale asynchronous results. No preview image is written to disk. Existing manual overlay/capture fallback remains available and capture is not gated on automatic detection.
+- Mock MJPEG preview deterministically advances each side through `not_detected`, `adjust_card`, and `ready`, allowing front/back UI and contract tests without hardware.
+- Added tests for split/chunked JPEG assembly, bounded incomplete input, front/back state transitions, active-side switching, session-manifest persistence, and absence of paths/tokens/loopback or embedded image data in geometry output.
+- Validation: capture-helper build passed; focused bridge plus card-geometry tests passed `28/28`; no hardware capture or external call was run.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no.
+
+## 2026-07-09 - AI Grader unified capture timing schema and operator documentation slice
+
+- Added `aiGraderCaptureTiming.ts`, a path-free V1 wall-clock schema shared by station status/session manifests and report bundles. It records preview start/ready, first edge-ready by side, operator/auto triggers, raw completion, front/back processing, back positioning, queue/report readiness, and named lighting/frame/write/hash/crop/forensic/report phases.
+- Summary calculation uses interval endpoints instead of summing overlapping work. It reports front/back capture time, positioning time, processing time, front-processing overlap with the flip/back-positioning interval, report time, safe-queue latency, and total card time.
+- Five-second acceptance is fail-closed: both measured side intervals must be at or below `5000 ms` and the run must be explicitly marked as a hardware measurement. Software/mock timing can never prove the target.
+- Added three focused timing tests covering side totals, front/flip overlap, mixed operator/auto triggers, report/card totals, an over-target hardware side, and path/token/body safety. Capture-helper build passed and the timing tests passed `3/3`.
+- Updated `docs/ai-grader-capture-helper.md` with geometry/normalization, profile, timing, overlap, rapid-queue, OCR-prefill, public-safety, and exact Dell proof guidance. The documented PR #58 baseline remains front `9442 ms`, back `9243 ms`, and aggregate image writes `11517.3 ms`; no new speed claim was made.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no.
+
+## 2026-07-09 - AI Grader live preview geometry UI slice
+
+- Extended the token-gated local preview status contract with a path-free, front/back `CardGeometryMetadata`-compatible display summary and exact `not_detected` / `adjust_card` / `ready` operator labels.
+- Added an allowlist sanitizer that accepts only finite geometry, safe frame identifiers, normalized timestamps, image dimensions, confidence, and detection/manual-fallback flags; local paths, loopback/bridge URLs, tokens, presigned URLs, embedded image bodies, and unknown fields cannot enter the displayed metadata model.
+- While the MJPEG preview is live, the station polls the token-gated `/preview/status` endpoint every 600 ms and merges front/back geometry without interrupting the stream. Poll failures are advisory and never block manual capture.
+- Added the minimal `Not Detected`, `Adjust Card`, and green `Ready` badge plus a four-corner SVG polygon/marker overlay for the active front/back side. The existing static yellow/cyan/manual placement overlay remains intact as fallback.
+- Existing capture actions and disabled-state logic were not changed; geometry readiness does not gate the operator's capture buttons.
+- Validation: `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` passed `75/75`; `pnpm --filter @tenkings/nextjs-app build` passed with existing image/browser-data/Tailwind warnings; focused `git diff --check` passed with Windows line-ending notices only.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no.
+
+## 2026-07-09 - AI Grader frontend capture-profile and rapid-queue contract slice
+
+- Mirrored `full_forensic` / `production_fast`, the station-setting/explicit-selection/full-forensic-fallback guard, all nine rapid workflow states, workflow history, per-card manifest state, and the recent persisted queue into the frontend local-station contract.
+- Full forensic remains the fixture/default profile. The frontend status sanitizer accepts `production_fast` only when `captureProfileGuard.selectedExplicitly=true`; otherwise it fails closed to `full_forensic`. Both profiles retain the 11-role front/back evidence plan, and the five-second target remains unproven.
+- Added `configure-rapid-capture`, `queue-current-card`, and `activate-queue-item` to the action union, parser, transition fixture, and default endpoint contract.
+- Added typed browser-client request builders for explicit capture profile selection, rapid-mode enable/disable, and queue-item activation. Tests verify the local `/actions/...` paths, POST bodies, station-token-only header, and empty queue-current-card body.
+- Browser-client status handling now allowlists rapid manifest/history/queue fields, safe identifiers/timestamps/text, and known states. It strips unknown/local manifest paths, token fields, path-bearing errors, and unsafe details while forcing human confirmation required and auto-confirm/auto-publish false.
+- Validation: `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` passed `77/77`; `pnpm --filter @tenkings/nextjs-app build` passed with existing image/browser-data/Tailwind warnings; focused `git diff --check` passed with Windows line-ending notices only.
+- No `station.tsx` change was made in this slice. Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no.
+
+## 2026-07-09 - AI Grader browser OCR Confirm Card prefill integration slice
+
+- Added a browser-only direct-storage OCR flow: the paired token-gated bridge supplies normalized front/back bytes, the browser sends only metadata to `ocr-prefill-init`, uploads both images directly to the returned storage PUT URLs, and sends the small finalize manifest to `ocr-prefill-finalize`. Large image bodies never traverse Vercel.
+- The station automatically attempts OCR when a local report bundle and an existing authenticated Ten Kings session are ready. Missing auth/bridge prerequisites remain explicit waiting states; failures have a scoped retry.
+- OCR suggestions merge only into untouched/empty Confirm Card fields. A per-field operator-edit set protects edits made before or during OCR, including deliberately cleared fields.
+- Added compact confidence/review chips. Human `Confirm + Create Card` and `Publish` actions remain explicit; OCR performs neither mutation.
+- The allowlisted safe finalize metadata (field values, confidence, review flags, provenance, warnings, and mandatory human/mutation flags) is persisted as `reportBundle.ocrPrefill` and reattached to bridge-fetched bundles used for create/publish. Upload URLs, storage keys, local paths, image bodies, tokens, and unknown response fields are excluded.
+- Added mocked client tests for normalized-asset selection, token-gated bridge reads, direct PUTs, body-free production requests, operator-edit preservation, mandatory human confirmation, and safe report metadata. Focused tests passed `4/4`; focused ESLint passed with zero errors (four pre-existing `<img>` warnings in `station.tsx`). Full TypeScript validation was temporarily blocked by concurrent timing-contract work missing `captureTiming` in a fixture and was left to the main integration pass.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no. External OCR/network call: no.
+
+## 2026-07-10 - AI Grader frontend unified capture-timing contract slice
+
+- Mirrored the path-free `ten-kings-ai-grader-capture-timing-v1` schema into the frontend local-station status: profile, 5000 ms target, hardware-measurement flag, all timing event/phase enums, ISO timestamps, non-negative finite phase/summary durations, overlap state, and proof target.
+- Added optional `reportReadyTotalMs` separately from `totalCardMs`: rapid `totalCardMs` can end at `safely_queued`/next-card availability while eventual report readiness retains its own wall-clock total.
+- The fixture/default is `full_forensic`, contains no synthetic measurement events/phases, and explicitly leaves five seconds per side unproven with hardware measurement required.
+- Browser status sanitization now accepts only the exact V1 schema and allowlisted fields/enums, normalizes ISO timestamps, rounds finite non-negative durations to 0.1 ms, and discards invalid events, phases, values, future schemas, paths, tokens, URLs, and unknown metadata.
+- `fiveSecondsPerSideProven=true` survives only when the incoming proof flag is true, `hardwareMeasurement=true`, and both `frontWithinTarget` and `backWithinTarget` are true. Software/mock, partial-side, contradictory, or non-V1 metadata fails closed to false.
+- Validation: `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderLocalStation.test.ts` passed `78/78`; `pnpm --filter @tenkings/nextjs-app build` passed with existing image/browser-data/Tailwind warnings; focused `git diff --check` passed with Windows line-ending notices only.
+- No `station.tsx` or capture-helper edit was made in this slice. Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no.
+
+## 2026-07-10 - AI Grader station rapid/profile/auto-capture and background OCR UI slice
+
+- Added simple station settings for Single/Rapid flow, Full Forensic/Production Fast profile, and optional Auto Capture. Full Forensic remains the fallback; the UI states plainly that five seconds per side is unproven without Dell hardware evidence. Every browser-created session sends an explicit capture profile, and changing profile before capture starts a clean session.
+- Kept the single-card back path synchronous. In Rapid mode, successful back raw capture calls `queue-current-card` immediately, returns the operator to the bridge-created clean next-card session, clears per-card identity/OCR/publish UI, and leaves diagnostics/report generation on the serialized background worker.
+- Added a recent safe queue view with processing/completed states and Activate/Review for report-ready or later items. Activation suspends preview/geometry and disables Start Grading so reviewed evidence cannot be overwritten; Start New Card resumes a clean capture session. Successful human production publish invokes the existing local `publish-report` action only to mark an active queue item published.
+- Added a pure auto-capture state machine. It scopes state by session plus side, never arms from default/retained geometry, requires a fresh analyzed `not_detected` removal frame (Adjust alone cannot arm), then requires three distinct recent detected-Ready frame IDs spanning at least 800 ms. Frozen IDs, stale/future timestamps, prior front/back geometry, and prior-card geometry fail closed. Manual capture and overlay fallback remain available.
+- Capture-front/back requests now include separate handler-entry `captureTriggerAt` timestamps plus `captureTriggerMode=operator|auto`, so bridge timing can include browser safe-off/preview-release preflight rather than starting at the later capture command.
+- While rapid reports finalize, the station polls token-gated bridge status. Signed-in stations prefetch OCR for report-ready queue items one at a time through the existing bridge-read/direct-storage init/PUT/finalize flow, cache only the allowlisted safe result in memory, show running/ready/review count, and instantly merge cached suggestions on activation without overwriting operator edits. OCR failure never blocks capture or queue progress.
+- Added concise front/back/card totals, front-processing-during-flip overlap, profile, and fail-closed five-second proof state from `status.captureTiming`.
+- Focused validation: `tests/aiGraderRapidAutoCapture.test.ts` passed `5/5`; `tests/aiGraderOcrPrefillClient.test.ts` passed `4/4`; focused ESLint passed with zero errors and only four pre-existing `<img>` warnings. The full local-station suite ran `78` tests with `74` passing and four failures confined to concurrent production publish API hardening; full TypeScript was likewise blocked by a concurrent OCR test dependency missing `persist`, left for root integration.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no. No hardware control was invoked.
+
+## 2026-07-10 - AI Grader bridge capture-timing and rapid race-hardening integration
+
+- Added canonical path-free `captureTiming` to every fresh station manifest/status and carried cloned snapshots into all bridge-owned active, rapid, and history report-bundle build/write paths.
+- Recorded session start, preview start/first frame, first Ready geometry per side, validated operator/auto trigger, raw side completion, side-processing start/completion, back positioning, report start/ready, and rapid safe queue. Browser click timestamps are accepted only within the previous 60 seconds and never in the future, so client clock data cannot shorten proof time.
+- Extracted named lighting/profile, frame capture, file-write, hash, crop/deskew, forensic runner, side-processing, and report phases from completed side/report results without summing overlapping wall-clock work.
+- Rapid operator-cycle `totalCardMs` now ends at `safely_queued`; `reportReadyTotalMs` separately measures eventual report readiness. Single-card totals still end at report readiness.
+- Five-second proof is fail-closed. Real bridge mode or a fake real-mode runner is insufficient: both front/back capture batches and both processed manifests must explicitly attest hardware measurement before canonical timing or `captureProfileGuard.fiveSecondTargetProven` can become true. Mock/fake regression coverage remains unproven.
+- Hardened processing races: `failed` is terminal, immediate and delayed front/back processing failures cannot be overwritten by positioning/captured/finalizing states, and failed cards cannot queue or run diagnostics.
+- Hardened rapid persistence and activation: interrupted persisted finalization is safely re-enqueued only when both processed packages are complete, otherwise recorded as explicit retryable failure. Activation atomically stops auto-preview, invalidates pending geometry work, discards only an untouched next-card session, and blocks preview/lighting/capture/diagnostics while human review is active until explicit Start Session.
+- Queue retention never evicts `finalizing`, report-ready/unconfirmed, or confirmed/unpublished cards, even when backlog exceeds the 25-item recent-history cap. Only terminal published/failed history is pruned, and restart loading applies the same rule.
+- Validation: capture-helper focused TypeScript compile passed; bridge tests passed `27/27`; timing tests passed `3/3`; the broader focused bridge/timing/report-bundle/geometry run passed `41/41`; focused `git diff --check` passed. A later full dependency rebuild attempt hit transient Windows `EPERM` locks in `packages/shared/dist`, after the earlier full capture-helper build had passed; no source compile error remained.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no.
+
+## 2026-07-10 - AI Grader OCR direct-upload byte-checksum integrity hardening
+
+- Bound each AI Grader presigned direct PUT to the exact normalized-image SHA-256 using S3 `ChecksumSHA256`; the browser upload plan now includes the signed `x-amz-checksum-sha256` base64 header in addition to diagnostic object metadata. The checksum header is explicitly unhoistable so it remains a required signed request header rather than becoming URL-only data.
+- Added strict, canonical SHA-256 hex/base64 conversion. Invalid length, alphabet, padding, or decoded byte length fails closed.
+- `HeadObject` now requests `ChecksumMode: ENABLED` and converts the storage provider's actual `ChecksumSHA256` response into canonical hex. Local storage HEAD calculates the SHA-256 from file bytes for equivalent fail-closed behavior.
+- Upload verification now requires both the storage-provided byte checksum and exact byte size to match. Caller-controlled `x-amz-meta-sha256` is retained only for diagnostics and is never trusted for integrity.
+- Added regression coverage proving same-size tampered bytes fail even when object metadata falsely claims the expected checksum, plus missing-checksum and strict conversion cases.
+- Updated the production-route source regression to require native `ChecksumSHA256`, the signed/unhoistable checksum header, `ChecksumMode: ENABLED`, storage-response checksum conversion, and absence of metadata-based verification.
+- Validation: OCR server/client tests passed `10/10`; the complete `aiGraderLocalStation.test.ts` suite passed `79/79`; `pnpm --filter @tenkings/nextjs-app build` passed with existing unrelated image/browser-data/Tailwind warnings; focused `git diff --check` passed with Windows line-ending notices only.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no. Network call: no.
+
+## 2026-07-10 - AI Grader explicit geometry/profile semantics hardening
+
+- Removed automatic manual geometry fallback from the geometry engine. Detection failure remains `not_detected`, low-quality/out-of-tolerance detection remains `adjust_card`, and no legacy fixture rectangle or unknown `manualFallback` input can silently create a normalized artifact.
+- Replaced fallback terminology with an explicit `manualOverride` contract requiring `action=manual_capture` and `confirmed=true`. Manual output records `geometrySource=manual_override`, `captureMode=manual_capture`, `manualOverrideUsed=true`, `detectionUsed=false`, and `confidence=0`; it can create an operator-requested normalized artifact but can never claim `placementState=ready`.
+- The warm Basler processing API now requires a separate `manualGeometryOverride` to apply any manual boundary. Existing `cardBoundaryRect` fixture configuration is ignored for geometry/quality override and recorded as `legacyCardBoundaryRectIgnored` unless explicit manual capture authority is supplied.
+- Warm side manifests persist a visible geometry policy with automatic/manual mode, source, detection/manual flags, ignored legacy boundary state, and normalized-artifact creation state.
+- Replaced the profile field `fullForensicFallback` with `availableCaptureProfiles`, `previousStableProfile`, and explicit `productionFastOptIn`. Removed warm-package `fallbackUsed`/`fallbackReason` fields and fallback prose: `full_forensic` and `production_fast` are selectable profiles, with `production_fast` opt-in and `full_forensic` retained as the previous stable profile.
+- Added focused regressions for legacy fallback rejection, explicit manual action validation, manual non-Ready semantics, ignored fixture boundary on a blank warm package, visibly recorded explicit manual capture, front/back automatic detection, normalized artifacts, and fast-profile manifest semantics.
+- Validation: `pnpm --filter @tenkings/ai-grader-capture-helper build` passed; focused geometry/warm-processing tests passed `9/9`; focused `git diff --check` passed with Windows line-ending notices only.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no. Network call: no.
+
+## 2026-07-10 - AI Grader geometry decision production persistence and public-safety slice
+
+- Added `geometryCaptureDecisions` to the production report-bundle contract and persisted its normalized front/back audit metadata in `AiGraderSession.captureSummary` alongside sanitized geometry, timing, OCR, and evidence references; no schema migration was required because the destination is existing JSON.
+- Added an explicit public allowlist for geometry decisions: mode, derived geometry/capture source, placement state, operator-action/detection/manual flags, canonical timestamp, safe source-frame ID, and finite positive Basler-sensor manual rectangle.
+- Valid explicit manual decisions remain visible as `mode=manual_capture`, `geometrySource=manual_override`, and `captureMode=manual_capture`. Manual decisions require `explicitOperatorAction=true`, `manualOverrideUsed=true`, `detectionUsed=false`, and a valid rectangle; contradictory/forged manual decisions are dropped. Manual capture can never publish `placementState=ready`.
+- Unknown decision fields are never copied. Local Windows/Unix paths, loopback/private bridge URLs, station/bridge tokens, `data:image` bodies, presigned URLs, credentials, and hardware controls are removed from public report artifacts and persisted capture summaries while safe manual rectangle/decision evidence remains.
+- Added regression coverage for public report visibility, automatic back-side decision preservation, invalid manual-decision rejection, and persisted capture-summary sanitization.
+- Validation: `pnpm --filter @tenkings/database build` passed; focused database AI Grader production/service tests passed `52/52`; focused `git diff --check` passed with Windows line-ending notices only.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no. Network call: no.
+
+## 2026-07-10 - AI Grader rapid queue durable-status validation follow-up
+
+- Public rapid queue status now comes from the last atomically committed queue snapshot. A background transition cannot advertise report-ready until `rapid-capture-queue.json` is durable.
+- Full capture-helper build and test validation passed `199/199`; focused bridge validation passed `27/27`; `git diff --check` passed.
+- No hardware, network, migration, env, credential, deploy, database, or production storage action was performed.
+
+## 2026-07-10 - AI Grader public trust-boundary and detailed timing UI hardening
+
+- Hardened production publish input and persisted/public JSON against private data embedded inside otherwise ordinary prose. Unsafe embedded HTTP(S) loopback/private/link-local/signed URLs, Windows/UNC/POSIX runtime paths, data/blob/file references, token markers, and scheme-less private endpoints such as 127.0.0.1:3020, 10.0.0.4:5000, and grader.local:47652 are rejected or removed. Safe public report URLs remain intact.
+- Added server/database normalization for browser-supplied capture timing. Bounded diagnostic events, phases, and totals remain available, but publication input can never self-assert hardware measurement or five-seconds-per-side proof. Public/persisted timing forces hardwareMeasurement=false, fiveSecondsPerSideProven=false, and hardwareMeasurementRequired=true until a future trusted supervised-Dell attestation path exists.
+- Added server/database normalization for browser-supplied OCR metadata. Public/persisted metadata always requires human confirmation, cannot claim inventory or publish mutation, allowlists the known OCR fields/provenance, and marks published field suggestions for review.
+- Expanded the station timing panel with preview-ready, front/back edge-ready, front/back positioning, report-ready/card/queue totals, flip overlap, and aggregate lighting, frame capture, file write, file hash, crop/deskew, forensic runner, side-processing, and report-generation phases.
+- Added regressions for embedded unsafe prose, scheme-less private endpoints, forged timing proof flags, forged OCR mutation/confirmation flags, and the direct production publish-body trust boundary.
+- Validation after this slice: Next production build passed; station tests passed 79/79; OCR/auto focused tests passed 15/15; database build passed; production-service tests passed 15/15; capture-helper build/tests passed 199/199.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no.
+
+## 2026-07-10 - AI Grader terminal warm-runner and explicit capture-geometry contract
+
+- Removed the bridge's automatic warm-error-to-cold-command switch. Any warm side-capture error now records the exact terminal failure, marks evidence/capture phase failed, attempts safe-off exactly once, releases preview/capture ownership, persists `retryRequired=true` and `automaticColdFallbackAttempted=false`, and requires a fresh explicit `start-session` before another capture.
+- Kept the cold command execution path only behind the explicit `warmRunnerDisabled` debug configuration. It is restricted to `full_forensic`, cannot run `production_fast`, never counts as supervised hardware speed evidence, and uses explicit `explicitColdDebugModeUsed` / `explicitColdDebugReason` status and manifest fields. Removed the old bridge-visible `fallbackUsed`, `fallbackReason`, fallback availability, and automatic-switch contract fields.
+- External `start-session` actions now require an explicit `captureProfile`. Manifests record `selectionSource`, `productionFastOptIn`, both available profiles, and `full_forensic` as the previous stable profile without claiming an automatic profile switch.
+- Capture actions now persist a per-side geometry decision. Detected capture requires a coherent Ready preview result (`geometrySource=detected`, detection used, no manual override, valid four corners and positive bounding box); auto capture can never select manual mode.
+- Explicit manual capture requires an operator trigger plus `manualGeometryRect` with source dimensions and coordinate frame. Portrait MJPEG preview coordinates are inverse-rotated into raw `basler_sensor_pixels`, snapshotted in the station manifest/report bundle, and passed as a confirmed side-specific manual override to warm processing. No configured legacy boundary is passed implicitly.
+- Geometry orientation now separates transform rotation from placement skew. Correct raw landscape cards retain an approximately 90-degree transform while evaluating at approximately zero skew; portrait sideways cards remain Adjust. Manual landscape overrides normalize to portrait output.
+- Geometry decisions are copied into active, rapid, and history report bundles through a path-free allowlist and are covered by front/back detected, contradictory Ready, non-Ready, auto/manual rejection, manual transform, rapid persistence, and private-data regression tests.
+- Validation: capture-helper build and TypeScript no-emit compile passed; bridge tests passed `29/29`; report-bundle tests passed `7/7`; card-geometry tests passed `9/9`; combined focused run passed all but one stale rapid trigger expectation, which was corrected and then the full bridge suite passed; `git diff --check` passed.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB, storage, credential, or network action: no.
+
+## 2026-07-10 - PR #80 no-hidden-fallback integration validation and production merge planned action
+
+- Integrated the terminal warm-failure bridge contract, explicit manual geometry action, explicit profile semantics, portrait-to-sensor manual rectangle transform, raw-landscape orientation/skew correction, frontend confirmation/error UX, report-bundle decision metadata, and production public/persistence allowlist.
+- Final local validation passed: Next.js production build; station `80/80`; label sheets `5/5`; OCR/rapid `15/15`; database build plus production/service `52/52`; capture-helper build plus full suite `207/207`; `git diff --check` with line-ending notices only.
+- Five-seconds-per-side proof remains false. No Dell/Basler/Leimac command was run; no hardware timing was fabricated.
+- Planned authorized action: commit and push the patch to PR #80, wait for all GitHub/Vercel checks on the new HEAD, then merge PR #80 only if the patched SHA is green. The merge is expected to trigger the normal Vercel production deployment for `collect.tenkings.co`.
+- Explicitly out of scope for this action: no migration, env-var change, secret/credential access or rotation, production database/storage mutation, hardware capture/preview/lighting command, Dell bridge restart/install, droplet sync/restart, or manual deploy command.
