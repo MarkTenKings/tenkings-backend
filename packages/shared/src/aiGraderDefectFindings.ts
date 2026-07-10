@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export const AI_GRADER_DEFECT_FINDING_VERSION = "ai-grader-defect-finding-v1" as const;
 export const AI_GRADER_DEFECT_FINDING_MAX_COUNT = 100;
 
@@ -18,6 +20,12 @@ export const AI_GRADER_DEFECT_SEVERITY_BANDS = ["low", "medium", "high"] as cons
 export type AiGraderDefectCategory = (typeof AI_GRADER_DEFECT_CATEGORIES)[number];
 export type AiGraderDefectReviewStatus = (typeof AI_GRADER_DEFECT_REVIEW_STATUSES)[number];
 export type AiGraderDefectSeverityBand = (typeof AI_GRADER_DEFECT_SEVERITY_BANDS)[number];
+
+export function isAiGraderHumanConfirmedReviewStatus(
+  status: string,
+): status is Extract<AiGraderDefectReviewStatus, "confirmed" | "adjusted"> {
+  return status === "confirmed" || status === "adjusted";
+}
 
 export type AiGraderDefectFindingPoint = { x: number; y: number };
 
@@ -75,11 +83,13 @@ export type AiGraderDefectFindingsParseResult = {
   issues: AiGraderDefectFindingValidationIssue[];
 };
 
-type ParseOptions = {
+export type AiGraderDefectFindingParseOptions = {
   knownAssetIds?: ReadonlySet<string>;
   requireTrueViewAsset?: boolean;
   maxFindings?: number;
 };
+
+type ParseOptions = AiGraderDefectFindingParseOptions;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -378,4 +388,318 @@ export function parseAiGraderDefectFindings(value: unknown, options: ParseOption
 
 export function isAiGraderDefectFindingV1(value: unknown): value is AiGraderDefectFindingV1 {
   return parseAiGraderDefectFindingV1(value).success;
+}
+
+/*
+ * Strict persistence and publication contracts.
+ *
+ * The legacy parser above intentionally remains an allowlisting sanitizer for
+ * PR #82 callers. New storage and publication boundaries should use these Zod
+ * schemas: stored findings retain fraction-only geometry and private review
+ * attribution, while published findings use the display projection and never
+ * expose reviewer identity.
+ */
+
+const AI_GRADER_PUBLIC_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+const aiGraderPublicIdentifierSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(AI_GRADER_PUBLIC_IDENTIFIER_PATTERN, "must be a safe stable identifier");
+
+const aiGraderPublicAssetIdSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .refine(isSafeAiGraderPublicAssetId, "must be a safe logical public asset ID");
+
+const aiGraderIsoTimestampSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(40)
+  .refine((value) => Number.isFinite(Date.parse(value)), "must be an ISO timestamp");
+
+const aiGraderSafePublicTextSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(500)
+  .refine((value) => !unsafePublicText(value), "must be safe public text");
+
+const aiGraderFractionSchema = z.number().finite().min(0).max(1);
+
+const aiGraderStoredBoxSchema = z
+  .strictObject({
+    type: z.literal("box"),
+    x: aiGraderFractionSchema,
+    y: aiGraderFractionSchema,
+    width: aiGraderFractionSchema.positive(),
+    height: aiGraderFractionSchema.positive(),
+  })
+  .refine((shape) => shape.x + shape.width <= 1 + 1e-9 && shape.y + shape.height <= 1 + 1e-9, {
+    message: "box must remain inside the normalized card",
+  });
+
+const aiGraderStoredPolygonSchema = z
+  .strictObject({
+    type: z.literal("polygon"),
+    points: z
+      .array(z.strictObject({ x: aiGraderFractionSchema, y: aiGraderFractionSchema }))
+      .min(3)
+      .max(64),
+  })
+  .refine((shape) => polygonArea(shape.points) > 1e-8, {
+    message: "polygon must have nonzero area inside the normalized card",
+  });
+
+const aiGraderPublishedBoxSchema = z
+  .strictObject({
+    kind: z.literal("box"),
+    x: aiGraderFractionSchema,
+    y: aiGraderFractionSchema,
+    width: aiGraderFractionSchema.positive(),
+    height: aiGraderFractionSchema.positive(),
+  })
+  .refine((shape) => shape.x + shape.width <= 1 + 1e-9 && shape.y + shape.height <= 1 + 1e-9, {
+    message: "box must remain inside the normalized card",
+  });
+
+const aiGraderPublishedPolygonSchema = z
+  .strictObject({
+    kind: z.literal("polygon"),
+    points: z
+      .array(z.strictObject({ x: aiGraderFractionSchema, y: aiGraderFractionSchema }))
+      .min(3)
+      .max(64),
+  })
+  .refine((shape) => polygonArea(shape.points) > 1e-8, {
+    message: "polygon must have nonzero area inside the normalized card",
+  });
+
+const aiGraderDetectorSchema = z.strictObject({
+  id: aiGraderPublicIdentifierSchema,
+  version: aiGraderPublicIdentifierSchema,
+  captureProfileVersion: aiGraderPublicIdentifierSchema,
+});
+
+const aiGraderSeveritySchema = z.strictObject({
+  score: z.number().finite().min(0).max(100).optional(),
+  band: z.enum(AI_GRADER_DEFECT_SEVERITY_BANDS),
+});
+
+const aiGraderStoredReviewSchema = z
+  .strictObject({
+    status: z.enum(AI_GRADER_DEFECT_REVIEW_STATUSES),
+    reviewedByUserId: aiGraderPublicIdentifierSchema.optional(),
+    reviewedAt: aiGraderIsoTimestampSchema.optional(),
+  })
+  .superRefine((review, context) => {
+    if (review.status === "unreviewed") {
+      if (review.reviewedByUserId !== undefined) {
+        context.addIssue({ code: "custom", path: ["reviewedByUserId"], message: "must be absent while status is unreviewed" });
+      }
+      if (review.reviewedAt !== undefined) {
+        context.addIssue({ code: "custom", path: ["reviewedAt"], message: "must be absent while status is unreviewed" });
+      }
+      return;
+    }
+    if (!review.reviewedByUserId) {
+      context.addIssue({ code: "custom", path: ["reviewedByUserId"], message: "is required for a reviewed status" });
+    }
+    if (!review.reviewedAt) {
+      context.addIssue({ code: "custom", path: ["reviewedAt"], message: "is required for a reviewed status" });
+    }
+  });
+
+const aiGraderPublishedReviewSchema = z
+  .strictObject({
+    status: z.enum(AI_GRADER_DEFECT_REVIEW_STATUSES),
+    reviewedAt: aiGraderIsoTimestampSchema.optional(),
+  })
+  .superRefine((review, context) => {
+    if (review.status === "unreviewed") {
+      if (review.reviewedAt !== undefined) {
+        context.addIssue({ code: "custom", path: ["reviewedAt"], message: "must be absent while status is unreviewed" });
+      }
+      return;
+    }
+    if (!review.reviewedAt) {
+      context.addIssue({ code: "custom", path: ["reviewedAt"], message: "is required for a reviewed status" });
+    }
+  });
+
+const uniqueAssetIdArray = z
+  .array(aiGraderPublicAssetIdSchema)
+  .max(32)
+  .refine((values) => new Set(values.map((value) => value.toLowerCase())).size === values.length, {
+    message: "asset IDs must be unique case-insensitively",
+  });
+
+const aiGraderStoredEvidenceSchema = z.strictObject({
+  trueViewAssetId: aiGraderPublicAssetIdSchema.optional(),
+  heatmapAssetId: aiGraderPublicAssetIdSchema.optional(),
+  surfaceVisionAssetId: aiGraderPublicAssetIdSchema.optional(),
+  maskAssetId: aiGraderPublicAssetIdSchema.optional(),
+  overlayAssetId: aiGraderPublicAssetIdSchema.optional(),
+  channelAssetIds: uniqueAssetIdArray,
+  roiAssetIds: uniqueAssetIdArray,
+});
+
+const aiGraderPublishedEvidenceSchema = z.strictObject({
+  trueViewAssetId: aiGraderPublicAssetIdSchema,
+  heatmapAssetId: aiGraderPublicAssetIdSchema.optional(),
+  maskAssetId: aiGraderPublicAssetIdSchema.optional(),
+  channelAssetIds: uniqueAssetIdArray,
+  roiAssetIds: uniqueAssetIdArray,
+});
+
+export const aiGraderDefectMeasurementsV1Schema = z
+  .strictObject({
+    lengthMm: z.number().finite().positive().optional(),
+    widthMm: z.number().finite().positive().optional(),
+    calibrationVersion: aiGraderPublicIdentifierSchema,
+  })
+  .refine((measurements) => measurements.lengthMm !== undefined || measurements.widthMm !== undefined, {
+    message: "at least one calibrated measurement is required",
+  });
+
+export const aiGraderStoredDefectFindingV1Schema = z.strictObject({
+  schemaVersion: z.literal(AI_GRADER_DEFECT_FINDING_VERSION),
+  findingId: aiGraderPublicIdentifierSchema,
+  side: z.enum(["front", "back"]),
+  category: z.enum(AI_GRADER_DEFECT_CATEGORIES),
+  detector: aiGraderDetectorSchema,
+  severity: aiGraderSeveritySchema,
+  confidence: z.number().finite().min(0).max(1),
+  review: aiGraderStoredReviewSchema,
+  geometry: z.strictObject({
+    coordinateFrame: z.literal("normalized_card"),
+    units: z.literal("fraction"),
+    shape: z.union([aiGraderStoredBoxSchema, aiGraderStoredPolygonSchema]),
+  }),
+  evidence: aiGraderStoredEvidenceSchema,
+  explanation: aiGraderSafePublicTextSchema,
+});
+
+export const aiGraderPublishedDefectFindingV1Schema = z.strictObject({
+  schemaVersion: z.literal(AI_GRADER_DEFECT_FINDING_VERSION),
+  findingId: aiGraderPublicIdentifierSchema,
+  side: z.enum(["front", "back"]),
+  category: z.enum(AI_GRADER_DEFECT_CATEGORIES),
+  detector: aiGraderDetectorSchema,
+  severity: aiGraderSeveritySchema,
+  confidence: z.number().finite().min(0).max(1),
+  review: aiGraderPublishedReviewSchema,
+  geometry: z.strictObject({
+    coordinateFrame: z.literal("normalized_card"),
+    units: z.literal("fraction"),
+    shape: z.union([aiGraderPublishedBoxSchema, aiGraderPublishedPolygonSchema]),
+  }),
+  evidence: aiGraderPublishedEvidenceSchema,
+  measurements: aiGraderDefectMeasurementsV1Schema.optional(),
+  explanation: aiGraderSafePublicTextSchema,
+});
+
+export type AiGraderDefectMeasurementsV1 = z.infer<typeof aiGraderDefectMeasurementsV1Schema>;
+export type AiGraderStoredDefectFindingV1 = z.infer<typeof aiGraderStoredDefectFindingV1Schema>;
+export type AiGraderPublishedDefectFindingV1 = z.infer<typeof aiGraderPublishedDefectFindingV1Schema>;
+
+export type AiGraderPublishedDefectFindingParseResult =
+  | { success: true; data: AiGraderPublishedDefectFindingV1 }
+  | { success: false; issues: AiGraderDefectFindingValidationIssue[] };
+
+export type AiGraderPublishedDefectFindingsParseResult = {
+  findings: AiGraderPublishedDefectFindingV1[];
+  issues: AiGraderDefectFindingValidationIssue[];
+};
+
+function zodIssuePath(path: PropertyKey[]) {
+  if (!path.length) return "finding";
+  return path.reduce<string>((result, part) => {
+    if (typeof part === "number") return `${result}[${part}]`;
+    return result ? `${result}.${String(part)}` : String(part);
+  }, "");
+}
+
+function publishedFindingAssetReferences(finding: AiGraderPublishedDefectFindingV1) {
+  return [
+    ["evidence.trueViewAssetId", finding.evidence.trueViewAssetId],
+    ["evidence.heatmapAssetId", finding.evidence.heatmapAssetId],
+    ["evidence.maskAssetId", finding.evidence.maskAssetId],
+    ...finding.evidence.channelAssetIds.map((assetId, index) => [`evidence.channelAssetIds[${index}]`, assetId]),
+    ...finding.evidence.roiAssetIds.map((assetId, index) => [`evidence.roiAssetIds[${index}]`, assetId]),
+  ] as Array<[string, string | undefined]>;
+}
+
+export function parseAiGraderPublishedDefectFindingV1(
+  value: unknown,
+  options: AiGraderDefectFindingParseOptions = {},
+): AiGraderPublishedDefectFindingParseResult {
+  const parsed = aiGraderPublishedDefectFindingV1Schema.safeParse(value);
+  if (!parsed.success) {
+    return {
+      success: false,
+      issues: parsed.error.issues.map((entry) => issue(zodIssuePath(entry.path), entry.message)),
+    };
+  }
+
+  const issues: AiGraderDefectFindingValidationIssue[] = [];
+  if (options.requireTrueViewAsset && !parsed.data.evidence.trueViewAssetId) {
+    issues.push(issue("evidence.trueViewAssetId", "is required for a publishable finding"));
+  }
+  if (options.knownAssetIds) {
+    publishedFindingAssetReferences(parsed.data).forEach(([path, assetId]) => {
+      if (assetId && !options.knownAssetIds?.has(assetId)) {
+        issues.push(issue(path, "must reference a published image asset"));
+      }
+    });
+  }
+  return issues.length ? { success: false, issues } : { success: true, data: parsed.data };
+}
+
+export function parseAiGraderPublishedDefectFindings(
+  value: unknown,
+  options: AiGraderDefectFindingParseOptions = {},
+): AiGraderPublishedDefectFindingsParseResult {
+  if (value === undefined) return { findings: [], issues: [] };
+  if (!Array.isArray(value)) return { findings: [], issues: [issue("defectFindings", "must be an array")] };
+  const maxFindings = Math.min(
+    Math.max(options.maxFindings ?? AI_GRADER_DEFECT_FINDING_MAX_COUNT, 0),
+    AI_GRADER_DEFECT_FINDING_MAX_COUNT,
+  );
+  if (value.length > maxFindings) {
+    return { findings: [], issues: [issue("defectFindings", `must contain at most ${maxFindings} findings`)] };
+  }
+
+  const findings: AiGraderPublishedDefectFindingV1[] = [];
+  const issues: AiGraderDefectFindingValidationIssue[] = [];
+  const ids = new Set<string>();
+  value.forEach((entry, index) => {
+    const parsed = parseAiGraderPublishedDefectFindingV1(entry, options);
+    if (!parsed.success) {
+      parsed.issues.forEach((entryIssue) => {
+        issues.push({ ...entryIssue, path: `defectFindings[${index}].${entryIssue.path}` });
+      });
+      return;
+    }
+    const canonicalId = parsed.data.findingId.toLowerCase();
+    if (ids.has(canonicalId)) {
+      issues.push(issue(`defectFindings[${index}].findingId`, "must be unique case-insensitively"));
+      return;
+    }
+    ids.add(canonicalId);
+    findings.push(parsed.data);
+  });
+  return { findings, issues };
+}
+
+export function isAiGraderStoredDefectFindingV1(value: unknown): value is AiGraderStoredDefectFindingV1 {
+  return aiGraderStoredDefectFindingV1Schema.safeParse(value).success;
+}
+
+export function isAiGraderPublishedDefectFindingV1(value: unknown): value is AiGraderPublishedDefectFindingV1 {
+  return aiGraderPublishedDefectFindingV1Schema.safeParse(value).success;
 }

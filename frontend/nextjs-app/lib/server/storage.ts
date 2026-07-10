@@ -236,6 +236,45 @@ export async function readStorageBuffer(storageKey: string) {
   return fs.readFile(filePath);
 }
 
+export async function readStoragePrefix(storageKey: string, maxBytes = 256 * 1024) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 1024 * 1024) {
+    throw new Error("Storage prefix read limit must be between 1 byte and 1 MiB.");
+  }
+  const mode = getStorageMode();
+  if (mode === "s3") {
+    const response = await getS3Client().send(
+      new GetObjectCommand({
+        Bucket: s3Bucket,
+        Key: storageKey,
+        Range: `bytes=0-${maxBytes - 1}`,
+      }),
+    );
+    const body = response.Body;
+    if (!body) throw new Error("Unable to read S3 object prefix.");
+    if (typeof (body as any).transformToByteArray === "function") {
+      return Buffer.from(await (body as any).transformToByteArray());
+    }
+    if (typeof (body as any).on !== "function") throw new Error("Unable to read S3 object prefix.");
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      (body as any)
+        .on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)))
+        .on("end", resolve)
+        .on("error", reject);
+    });
+    return Buffer.concat(chunks).subarray(0, maxBytes);
+  }
+
+  const file = await fs.open(getLocalFilePath(storageKey), "r");
+  try {
+    const buffer = Buffer.alloc(maxBytes);
+    const { bytesRead } = await file.read(buffer, 0, maxBytes, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await file.close();
+  }
+}
+
 export function publicUrlFor(storageKey: string) {
   const cleanedKey = storageKey.replace(/^\/+/, "");
   if (getStorageMode() === "s3") {

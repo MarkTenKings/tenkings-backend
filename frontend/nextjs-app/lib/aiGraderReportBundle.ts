@@ -1,7 +1,9 @@
 import { buildSampleAiGraderProductionRelease, type AiGraderProductionRelease } from "./aiGraderProductionRelease";
-import type { AiGraderDefectFindingV1 } from "@tenkings/shared";
+import type { AiGraderDefectFindingV1, AiGraderPublishedDefectFindingV1 } from "@tenkings/shared";
 
-export const AI_GRADER_WEB_REPORT_BUNDLE_VERSION = "ai-grader-report-bundle-v0.1";
+export const AI_GRADER_WEB_REPORT_BUNDLE_V01_VERSION = "ai-grader-report-bundle-v0.1" as const;
+export const AI_GRADER_WEB_REPORT_BUNDLE_V02_VERSION = "ai-grader-report-bundle-v0.2" as const;
+export const AI_GRADER_WEB_REPORT_BUNDLE_VERSION = AI_GRADER_WEB_REPORT_BUNDLE_V01_VERSION;
 export const AI_GRADER_EXPLICIT_SAMPLE_REPORT_IDS = ["sample-pr45", "sample-final-v0", "sample-defect-v1"] as const;
 
 export function isExplicitAiGraderSampleReportId(reportId: string | string[] | undefined) {
@@ -10,6 +12,47 @@ export function isExplicitAiGraderSampleReportId(reportId: string | string[] | u
 }
 
 export type AiGraderReportElementKey = "centering" | "corners" | "edges" | "surface";
+
+export type AiGraderReportProductionRelease = Partial<
+  Omit<AiGraderProductionRelease, "finalGrade" | "label" | "publication">
+> & {
+  finalGrade: {
+    status?: AiGraderProductionRelease["finalGrade"]["status"];
+    overall?: number;
+    confidence: {
+      score: number;
+      band: "low" | "medium" | "high";
+      warnings?: string[];
+    };
+    gradeImpactReasons?: Array<{
+      id: string;
+      category: string;
+      side: string;
+      severity: string;
+      confidence: string;
+      explanation: string;
+      evidenceRefs?: string[];
+      findingIds?: string[];
+    }>;
+    whyNot10?: AiGraderProductionRelease["finalGrade"]["whyNot10"];
+    elements?: AiGraderProductionRelease["finalGrade"]["elements"];
+    finalGradeComputed?: boolean;
+    certifiedClaim?: boolean;
+  };
+  label: {
+    certId: string;
+    labelGradeText: string;
+    publicReportUrl: string;
+    qrPayloadUrl: string;
+    status?: AiGraderProductionRelease["label"]["status"];
+  };
+  publication: {
+    publicReportUrl: string;
+    qrPayloadUrl?: string;
+    storageMode?: string;
+    dbWritesPerformed?: boolean;
+  };
+};
 
 export type AiGraderReportPublicAsset = {
   id: string;
@@ -20,6 +63,8 @@ export type AiGraderReportPublicAsset = {
   publicUrl?: string;
   localPath?: string;
   byteSize?: number;
+  widthPx?: number;
+  heightPx?: number;
   sha256?: string;
   checksumSha256?: string;
   side?: "front" | "back" | string;
@@ -37,7 +82,7 @@ export type AiGraderReportPublicAsset = {
 };
 
 export type AiGraderReportBundle = {
-  schemaVersion: typeof AI_GRADER_WEB_REPORT_BUNDLE_VERSION;
+  schemaVersion: typeof AI_GRADER_WEB_REPORT_BUNDLE_V01_VERSION;
   generatedAt: string;
   gradingSessionId: string;
   reportId: string;
@@ -92,6 +137,12 @@ export type AiGraderReportBundle = {
   visionLab: {
     available: boolean;
     defectFindings?: AiGraderDefectFindingV1[];
+    findingValidation?: {
+      status: "valid" | "invalid";
+      sourceCandidateCount: number;
+      publishedFindingCount: number;
+      issues: Array<{ path: string; message: string }>;
+    };
     trueViewRefs: string[];
     overlayRefs: string[];
     channelImageRefs: string[];
@@ -119,6 +170,69 @@ export type AiGraderReportBundle = {
   warnings: string[];
   limitations: string[];
 };
+
+export type AiGraderReportBundleV01 = AiGraderReportBundle;
+
+export type AiGraderReportBundleV02 = Partial<
+  Omit<AiGraderReportBundle, "schemaVersion" | "generatedAt" | "reportId" | "certifiedClaim" | "certificateGenerated" | "cardIdentity" | "productionRelease" | "visionLab">
+> & {
+  schemaVersion: typeof AI_GRADER_WEB_REPORT_BUNDLE_V02_VERSION;
+  generatedAt: string;
+  reportId: string;
+  certifiedClaim: false;
+  certificateGenerated: false;
+  cardIdentity: AiGraderReportBundle["cardIdentity"];
+  defectFindings: AiGraderPublishedDefectFindingV1[];
+  productionRelease: AiGraderReportProductionRelease;
+  visionLab?: AiGraderReportBundle["visionLab"];
+};
+
+export type AiGraderCompatibleReportBundle = AiGraderReportBundleV01 | AiGraderReportBundleV02;
+
+function publishedFindingForOverlay(
+  finding: AiGraderPublishedDefectFindingV1,
+): AiGraderDefectFindingV1 | undefined {
+  const shape = finding.geometry.shape;
+  const overlayShape = shape.kind === "box"
+    ? {
+        type: "box" as const,
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+      }
+    : shape.kind === "polygon"
+      ? { type: "polygon" as const, points: shape.points }
+      : undefined;
+  if (!overlayShape) return undefined;
+  return {
+    schemaVersion: finding.schemaVersion,
+    findingId: finding.findingId,
+    side: finding.side,
+    category: finding.category,
+    detector: finding.detector,
+    severity: finding.severity,
+    confidence: finding.confidence,
+    review: finding.review,
+    geometry: {
+      coordinateFrame: finding.geometry.coordinateFrame,
+      units: finding.geometry.units,
+      shape: overlayShape,
+    },
+    evidence: finding.evidence,
+    explanation: finding.explanation,
+  };
+}
+
+/** Returns the schema-appropriate finding source in the PR #82 overlay shape. */
+export function aiGraderReportDefectFindings(bundle: AiGraderCompatibleReportBundle): AiGraderDefectFindingV1[] {
+  if (bundle.schemaVersion === AI_GRADER_WEB_REPORT_BUNDLE_V01_VERSION) {
+    return bundle.visionLab.defectFindings ?? [];
+  }
+  return bundle.defectFindings
+    .map(publishedFindingForOverlay)
+    .filter((finding): finding is AiGraderDefectFindingV1 => Boolean(finding));
+}
 
 export type AiGraderGradeImpactCandidate = {
   id: string;
@@ -377,7 +491,7 @@ export function getAiGraderReportBundle(reportId: string | string[] | undefined)
   return buildMissingAiGraderReportBundle(trimmed || "missing-report-data");
 }
 
-export function hasNoFinalCertifiedClaims(bundle: AiGraderReportBundle) {
+export function hasNoFinalCertifiedClaims(bundle: AiGraderCompatibleReportBundle) {
   return (
     bundle.finalGradeComputed === false &&
     bundle.certifiedClaim === false &&
@@ -388,6 +502,6 @@ export function hasNoFinalCertifiedClaims(bundle: AiGraderReportBundle) {
   );
 }
 
-export function hasNoCertifiedClaim(bundle: AiGraderReportBundle) {
+export function hasNoCertifiedClaim(bundle: AiGraderCompatibleReportBundle) {
   return bundle.certifiedClaim === false && bundle.certificateGenerated === false && (bundle.productionRelease?.certifiedClaim ?? false) === false;
 }

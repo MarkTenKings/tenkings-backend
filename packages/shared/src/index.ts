@@ -206,6 +206,7 @@ export type {
   ThresholdSetVersionSeed,
 } from "./aiGrader";
 export * from "./aiGraderDefectFindings";
+export * from "./aiGraderReportBundles";
 export {
   COLOR_CHECKER_MAX_MEAN_DELTA_E,
   DEFAULT_REQUIRED_CALIBRATION_TYPES,

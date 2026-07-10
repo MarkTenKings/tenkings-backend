@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
-import { isAiGraderRasterBytes } from "../lib/aiGraderRasterValidation";
+import {
+  assertAiGraderBrowserRaster,
+  isAiGraderRasterBytes,
+  readAiGraderRasterDimensions,
+} from "../lib/aiGraderRasterValidation";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -56,6 +60,81 @@ test("direct report upload raster preflight rejects MIME spoofing and trailing p
   assert.equal(isAiGraderRasterBytes(arrayBuffer(PNG), "image/svg+xml"), false);
 });
 
+test("trusted bounded header parsing reads PNG, JPEG, and WebP dimensions", async () => {
+  const jpeg = await sharp({ create: { width: 23, height: 31, channels: 3, background: "white" } }).jpeg().toBuffer();
+  const webp = await sharp({ create: { width: 37, height: 41, channels: 3, background: "white" } }).webp().toBuffer();
+  const largePixels = Buffer.allocUnsafe(1200 * 1600 * 3);
+  let state = 0x13579bdf;
+  for (let index = 0; index < largePixels.length; index += 1) {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    largePixels[index] = state >>> 24;
+  }
+  const largeWebp = await sharp(largePixels, {
+    raw: { width: 1200, height: 1600, channels: 3 },
+  }).webp({ lossless: true }).toBuffer();
+  assert.deepEqual(readAiGraderRasterDimensions(PNG, "image/png"), { widthPx: 1, heightPx: 1 });
+  assert.deepEqual(readAiGraderRasterDimensions(jpeg.subarray(0, 256 * 1024), "image/jpeg"), {
+    widthPx: 23,
+    heightPx: 31,
+  });
+  assert.deepEqual(readAiGraderRasterDimensions(webp.subarray(0, 256 * 1024), "image/webp"), {
+    widthPx: 37,
+    heightPx: 41,
+  });
+  assert.ok(largeWebp.byteLength > 256 * 1024);
+  assert.deepEqual(readAiGraderRasterDimensions(largeWebp.subarray(0, 256 * 1024), "image/webp"), {
+    widthPx: 1200,
+    heightPx: 1600,
+  });
+  assert.equal(readAiGraderRasterDimensions(Buffer.from("not-an-image"), "image/png"), null);
+});
+
+test("browser raster preflight returns decoded dimensions and rejects a planned-dimension mismatch", async () => {
+  const originalCreateImageBitmap = globalThis.createImageBitmap;
+  let closeCount = 0;
+  Object.defineProperty(globalThis, "createImageBitmap", {
+    configurable: true,
+    writable: true,
+    value: async () => ({
+      width: 1,
+      height: 1,
+      close() {
+        closeCount += 1;
+      },
+    }),
+  });
+
+  try {
+    assert.deepEqual(
+      await assertAiGraderBrowserRaster(arrayBuffer(PNG), "image/png", { widthPx: 1, heightPx: 1 }),
+      { widthPx: 1, heightPx: 1 },
+    );
+    assert.deepEqual(
+      await assertAiGraderBrowserRaster(arrayBuffer(PNG), "image/png"),
+      { widthPx: 1, heightPx: 1 },
+    );
+    await assert.rejects(
+      assertAiGraderBrowserRaster(arrayBuffer(PNG), "image/png", { widthPx: 2, heightPx: 1 }),
+      /dimensions do not match the upload plan \(1x1 decoded; 2x1 planned\)/,
+    );
+    await assert.rejects(
+      assertAiGraderBrowserRaster(arrayBuffer(PNG), "image/png", { widthPx: 0, heightPx: 1 }),
+      /plan is missing valid pixel dimensions/,
+    );
+    assert.equal(closeCount, 3);
+  } finally {
+    if (originalCreateImageBitmap) {
+      Object.defineProperty(globalThis, "createImageBitmap", {
+        configurable: true,
+        writable: true,
+        value: originalCreateImageBitmap,
+      });
+    } else {
+      delete (globalThis as { createImageBitmap?: typeof createImageBitmap }).createImageBitmap;
+    }
+  }
+});
+
 test("Dell publish flow decodes report assets before direct storage PUT", () => {
   const stationPath = [
     path.join(process.cwd(), "pages", "ai-grader", "station.tsx"),
@@ -64,5 +143,20 @@ test("Dell publish flow decodes report assets before direct storage PUT", () => 
   assert.ok(stationPath);
   const source = fs.readFileSync(stationPath, "utf8");
   assert.match(source, /artifact\.artifactClass === "report_asset"/);
-  assert.match(source, /await assertAiGraderBrowserRaster\(bytes, artifact\.contentType\)/);
+  assert.match(source, /await assertAiGraderBrowserRaster\(/);
+  assert.match(source, /artifact\.contentType,[\s\S]*plannedDimensions/);
+  assert.match(source, /sourceImageWidthPx: decodedDimensions\.widthPx/);
+  assert.match(source, /\.\.\.verifiedSourceImageDimensions/);
+  const productionApiPath = path.join(
+    process.cwd(),
+    "pages",
+    "api",
+    "admin",
+    "ai-grader",
+    "production",
+    "[...action].ts",
+  );
+  const productionApiSource = fs.readFileSync(productionApiPath, "utf8");
+  assert.match(productionApiSource, /await readStoragePrefix\(storageKey\)/);
+  assert.match(productionApiSource, /readAiGraderRasterDimensions/);
 });

@@ -36,6 +36,7 @@ function analysisWith(candidate, duplicateInVisionLab = false) {
       detectorId: "preliminary_surface_intelligence_v0",
       back: {
         version: "preliminary_surface_intelligence_v0",
+        captureProfileVersion: "ten-kings-fixed-rig-production-fast-v1",
         confidence: { score: 0.77 },
         candidates: [candidate],
       },
@@ -48,6 +49,7 @@ function analysisWith(candidate, duplicateInVisionLab = false) {
           surfaceIntelligence: {
             detectorId: "preliminary_surface_intelligence_v0",
             version: "preliminary_surface_intelligence_v0",
+            captureProfileVersion: "ten-kings-fixed-rig-production-fast-v1",
           },
           candidates: [candidate],
         },
@@ -62,7 +64,6 @@ test("extractor emits a bounded normalized-card finding with approved asset join
   const result = extractAiGraderDefectFindingsV1(analysisWith(analysisCandidate()), {
     knownAssetIds,
     requireTrueViewAsset: true,
-    captureProfileVersion: "production_fast_v1",
     approvedEvidenceBySide: {
       back: {
         trueViewAssetId: "back/normalized-card.png",
@@ -78,8 +79,41 @@ test("extractor emits a bounded normalized-card finding with approved asset join
   assert.equal(finding.category, "surface_anomaly");
   assert.deepEqual(finding.geometry.shape, { type: "box", x: 0.1, y: 0.2, width: 0.25, height: 0.125 });
   assert.equal(finding.evidence.trueViewAssetId, "back/normalized-card.png");
-  assert.equal(finding.detector.captureProfileVersion, "production_fast_v1");
+  assert.equal(finding.detector.captureProfileVersion, "ten-kings-fixed-rig-production-fast-v1");
   assert.equal(finding.review.status, "unreviewed");
+  assert.equal(result.sourceCandidateCount, 1);
+});
+
+test("extractor never substitutes detector id for a missing version and requires capture-profile metadata", () => {
+  const missingId = analysisWith(analysisCandidate());
+  delete missingId.surfaceIntelligence.detectorId;
+  const idResult = extractAiGraderDefectFindingsV1(missingId);
+  assert.equal(idResult.findings.length, 0);
+  assert.equal(idResult.sourceCandidateCount, 1);
+  assert.equal(idResult.issues.some((entry) => entry.path.endsWith(".detectorId")), true);
+
+  const missingVersion = analysisWith(analysisCandidate());
+  delete missingVersion.surfaceIntelligence.back.version;
+  const versionResult = extractAiGraderDefectFindingsV1(missingVersion);
+  assert.equal(versionResult.findings.length, 0);
+  assert.equal(versionResult.sourceCandidateCount, 1);
+  assert.equal(versionResult.issues.some((entry) => entry.path.endsWith(".version")), true);
+
+  const missingCaptureProfile = analysisWith(analysisCandidate());
+  delete missingCaptureProfile.surfaceIntelligence.back.captureProfileVersion;
+  const profileResult = extractAiGraderDefectFindingsV1(missingCaptureProfile);
+  assert.equal(profileResult.findings.length, 0);
+  assert.equal(profileResult.sourceCandidateCount, 1);
+  assert.equal(profileResult.issues.some((entry) => entry.path.endsWith(".captureProfileVersion")), true);
+});
+
+test("extractor treats a genuine zero-candidate analysis as valid without detector metadata", () => {
+  const result = extractAiGraderDefectFindingsV1({
+    surfaceIntelligence: { back: { candidates: [] } },
+  });
+  assert.deepEqual(result.findings, []);
+  assert.deepEqual(result.issues, []);
+  assert.equal(result.sourceCandidateCount, 0);
 });
 
 test("stable finding IDs ignore transient candidate details and duplicate projections", () => {
@@ -96,6 +130,7 @@ test("stable finding IDs ignore transient candidate details and duplicate projec
   const secondResult = extractAiGraderDefectFindingsV1(analysisWith(second));
 
   assert.equal(firstResult.findings.length, 1);
+  assert.equal(firstResult.sourceCandidateCount, 1);
   assert.equal(firstResult.findings[0].findingId, secondResult.findings[0].findingId);
   const serialized = JSON.stringify(secondResult.findings);
   assert.doesNotMatch(serialized, /capture-data|data:image|rawRect|evidenceRefs|renumbered/);

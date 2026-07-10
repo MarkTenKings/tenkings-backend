@@ -25770,3 +25770,63 @@ By enabling Rip It Live, I confirm:
 - Planned action: push this handoff-only audit update, wait for the resulting PR HEAD to pass required checks, merge PR #81 through GitHub, fetch `main`, wait for the new main CI and Vercel Production status, and perform read-only HTTP checks of `/ai-grader/station` and `/ai-grader/reports/sample-defect-v1`.
 - After deployment observation, append the merge SHA/main HEAD, CI result, Vercel Production status, live-route evidence, Dell bridge state, and remaining Dell smoke steps to this local handoff log.
 - Explicitly prohibited in this action: no Dell/Basler/Leimac/preview/capture/hardware command, no Dell bridge restart/install, no migration, no environment-variable change, no credential access/change/rotation/printing, no production database/storage/business-data operation, no droplet action, and no manual deployment command. The only expected deployment is the repository's normal automated Vercel Production deployment caused by the authorized merge.
+
+## 2026-07-10 - Cinematic report Task 0 v0.2 contract follow-up started
+
+- Repository evidence showed the first defect-finding slice was already merged as PR #82 at `origin/main` commit `4f26a302d6b917e11a4074bdbae3ab9ef3bf0a98`; this follow-up starts from that merged commit instead of modifying or reverting either active AI Grader worktree.
+- Created isolated worktree `tenkings-backend/cinematic-task0-v02` on branch `fix/ai-grader-report-bundle-v02-contract` for the approved Task 0 delta only.
+- Planned scope: add Zod runtime schemas for distinct fraction-only stored findings and calibrated/versioned published finding projections; publish new reports as bundle v0.2 while retaining v0.1 read compatibility; keep publication fail-closed for invalid geometry, detector metadata, asset references, and finding references; and emit no physical measurements unless a calibrated, versioned projection can be derived at publish time.
+- No implementation code had been changed when this entry was written. No hardware command, migration, deployment, restart, environment-variable change, credential/secret access, production database/storage mutation, push, or merge was performed.
+
+## 2026-07-10 - Cinematic report Task 0 v0.2 contract completed
+
+- Implemented distinct Zod-validated fraction-only stored `ai-grader-defect-finding-v1` records and published display projections. Stored findings retain stable IDs, detector/capture-profile metadata, safe review status, normalized-card geometry, and asset IDs only; physical measurements exist only in a calibrated, version-stamped published projection.
+- Added bundle v0.2 validation and publication/read boundaries while retaining v0.1 report compatibility. Publication fails closed for invalid fractions, missing detector metadata, unknown/mismatched asset IDs, unsafe public URLs, stale or mismatched calibrated measurements, and grade-impact reasons referring to nonexistent findings.
+- Preserved `publicAssets ?? assets` precedence; canonical normalized-card assets are selected before overlays and emitted heatmap/evidence roles are validated. Public reads reject paths, bridge/private URLs, tokens, presigned URLs, base64/data bodies, credentials, and hardware controls.
+- Removed report-value fallbacks in the data plumbing: unsupported sections/rows remain absent, unreviewed or rejected findings never become confirmed claims, unsupported centering values are omitted rather than synthesized, and `certifiedClaim` remains false unless an authorized policy supplies it. `sample-final-v0` remains a local/test fixture; it is not implicitly fetched from production.
+- The attached static cinematic prototype is not yet a repository source file and no cinematic route exists in this Task 0 worktree. Its embedded demo assignment will be removed when Task 1 deliberately adds and wires the route; no prototype report values have been introduced into shipped application code.
+- PR #82 baseline was fetched and verified at `4f26a302d6b917e11a4074bdbae3ab9ef3bf0a98`. The isolated Task 0 branch has the same HEAD and merge base as `origin/main`, so no rebase or merge was necessary; the PR #82 overlay, finding, raster-validation, persistence, and public-marker behavior were preserved/extended rather than reverted.
+- Validation passed: shared `127/127`; capture-helper `226/226` plus build; database `64/64`; frontend `155/155`; Next.js production build; raster WebP-prefix regression; and `git diff --check` (Windows line-ending notices only).
+- No hardware command, migration, deployment, restart, environment-variable change, credential/secret access, production database/storage mutation, commit, push, merge, or PR creation was performed.
+
+## 2026-07-10 - Cinematic report Task 0 rebased onto current main
+
+- Fetched current `origin/main` at `0e52c3cc5cf452c00e4748456484cc47931d3b8e` (the PR #81 merge, whose history retains PR #82). Created a local Task 0 commit and rebased it onto that head; no push, PR creation, merge, deployment, migration, environment, credential, hardware, or production-data action occurred.
+- The rebase produced one documentation-only conflict in `docs/handoffs/SESSION_LOG.md`, where PR #81 and Task 0 both appended handoff entries. Resolved it by retaining both complete histories. Station, public-defect-report, helper-finding-test, and all other product-code overlaps auto-merged with no conflict; the protected PR #82 overlay component was untouched.
+- Post-rebase suite/build validation is in progress before the Task 1 approval checkpoint.
+
+## 2026-07-10 - Cinematic report Task 0 rebase validation completed
+
+- Rebase validation exposed a legacy-read compatibility regression: the hardened public read accepted explicit v0.1/v0.2 bundles but rejected pre-versioning persisted reports. Added a narrow read-only absent-`schemaVersion` branch that preserves the existing sanitizer, asset/evidence filtering, review stripping, and `certifiedClaim` safety gate. It never accepts an explicit unknown version and never invents a schema version, date, certification state, score, confidence, or measurement.
+- Post-rebase validation passed: shared `127/127`; capture-helper `253/253` plus build; database build plus `28/28`; public-report focused `3/3`; frontend `159/159`; Next.js production build; and `git diff --check` (Windows line-ending notices only). Existing non-blocking image-lint/browser-data/Tailwind and React test-render warnings remain unchanged.
+- No hardware command, migration, deployment, restart, environment-variable change, credential/secret access, production database/storage mutation, push, merge, PR creation, or production action was performed.
+
+## 2026-07-10 - Cinematic public report Task 1 implementation started
+
+- Added the Pages Router route target `/ai-grader/reports/[reportId]/cinematic` as a React-only, server-rendered public-report surface. It shares a sanitized persisted-bundle reader with the existing public API rather than making a self-fetch, constructing an untrusted host URL, or using generated-ID fixture fallback.
+- The route permits only the deliberate `sample-defect-v1` fixture path. `sample-final-v0`, `sample-pr45`, and every generated report ID do not receive a sample fallback. Unknown explicit bundle versions fail closed; unversioned legacy public bundles remain supported only through the existing sanitized read path.
+- The new cinematic adapter selects `publicAssets ?? assets` with role/exact-ID evidence joins, reuses the PR #81/#82 normalized-card overlay for markers, hides unsupported rooms and absent fields, gates mm rows on calibrated version-matched published projections, and keeps the non-certified ribbon visible under the current certification policy.
+- No prototype HTML/script, `window.TENKINGS_REPORT`, `dangerouslySetInnerHTML`, demo report values, hardware control, migration, environment/credential access, production data mutation, deployment, or hardware command has been used. Focused cinematic tests and a Next production build pass; broader validation is in progress.
+
+## 2026-07-10 - Cinematic public report Task 1 completed locally
+
+- Added `/ai-grader/reports/[reportId]/cinematic` as a safe React/Pages Router report. Its `getServerSideProps` consumes a shared public-report reader that performs the same persisted-bundle sanitization as the existing API. The route has no browser-side API fallback, self-fetch, untrusted host construction, raw prototype HTML, or injected script/data assignment.
+- Rebuilt only data-supported cinematic pieces: dark/gold vault summary, responsive published-card stage, front/back forensic laboratory, role-valid evidence modes, exact normalized-card PR #81/#82 markers, accessible finding buttons/details, partial element cards, and actual report notes. Population, provenance, living ticker, journey, per-corner/edge metrics, centering ratios, physical dimensions, and all unsupported prototype rooms remain absent.
+- The adapter uses `publicAssets ?? assets`, role metadata before filename behavior, exact/case-insensitive logical asset joins, side isolation, actual final/provisional grade values, real confidence, and matching calibrated/versioned published measurements only. Current certification policy is hard-disabled, so the non-certified ribbon remains visible and no crown/tier/certificate presentation is emitted.
+- Added regression coverage for persisted v0.2 render data/no prototype values, pre-versioning sparse safety, explicit unknown-version fail-closed behavior, deliberate `sample-defect-v1` fixture-only routing, sample fallback refusal, role/exact-ID asset selection, multiple normalized-card asset selection, canonical fraction/letterbox projection, front/back isolation, review semantics, calibration gating, and private/HTML/body/token leak resistance.
+- Validation passed: shared `127/127`; capture-helper build plus `253/253`; database build plus `28/28`; frontend `169/169`; Next.js production build; and `git diff --check` (Windows line-ending notices only). The focused React SSR harness emits the existing styled-jsx `jsx` warning from the untouched defect overlay, without a test failure.
+- The in-app browser runtime had no available browser binding, so no interactive visual screenshot was taken. The local browser helper was stopped after this read-only attempt; no hardware, bridge, migration, environment/credential change, production data/storage operation, deployment, push, merge, or PR creation occurred in this implementation phase.
+
+## 2026-07-10 - Cinematic public report Task 1 pull request opened
+
+- Pushed `fix/ai-grader-report-bundle-v02-contract` and opened PR #83: `https://github.com/MarkTenKings/tenkings-backend/pull/83`.
+- PR head at creation: `f837b12e391bd4861d231c8df933d1149b25d7ce`; it is based on current fetched `origin/main` `0e52c3cc5cf452c00e4748456484cc47931d3b8e` with that commit as merge base.
+- Initial GitHub state is open/non-draft with CI Install & Build queued and Vercel Preview pending. No merge, deployment, hardware command, migration, environment/credential change, production data/storage operation, or production verification was performed.
+
+## 2026-07-10 - Cinematic report Task 0 capture-helper scope cleanup
+
+- Kept the capture-helper delta limited to report-contract/extraction work in `aiGraderReportBundle.ts`, `aiGraderDefectFindings.ts`, and `aiGraderProductionRelease.ts`. No Dell bridge, capture geometry, Basler fixed-rig, Surface Intelligence, or normalized-coordinate behavior was changed.
+- Removed the Task 0 capture-profile-version export from `aiGraderCaptureTiming.ts`, leaving that file identical to current production `main`. The report-only capture-profile mapping now lives locally in `aiGraderReportBundle.ts`.
+- Focused validation passed after cleanup: capture-helper build and defect-finding/report-bundle tests `27/27`; shared tests `127/127`; database tests `64/64`; and `git diff --check` (Windows line-ending notices only).
+- Separate concurrent Task 1 route/data work appeared in this worktree and was deliberately left unstaged and unmodified. Task 1 is not being continued from a dirty shared worktree.
+- No hardware command, Dell bridge restart, migration, environment-variable change, credential/secret access, production database/storage mutation, deployment, push, merge, PR creation, or other production action was performed.

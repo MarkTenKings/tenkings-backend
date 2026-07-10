@@ -4,8 +4,14 @@ import path from "node:path";
 import type { AiGraderDefectFindingV1 } from "@tenkings/shared";
 import sharp from "sharp";
 import { extractAiGraderDefectFindingsV1, type AiGraderApprovedDefectEvidence } from "./aiGraderDefectFindings";
+import type { AiGraderCaptureTimingProfile } from "./aiGraderCaptureTiming";
 
 export const AI_GRADER_REPORT_BUNDLE_VERSION = "ai-grader-report-bundle-v0.1";
+
+const AI_GRADER_REPORT_CAPTURE_PROFILE_VERSIONS: Record<AiGraderCaptureTimingProfile, string> = {
+  full_forensic: "ten-kings-fixed-rig-full-forensic-v1",
+  production_fast: "ten-kings-fixed-rig-production-fast-v1",
+};
 
 type JsonRecord = Record<string, any>;
 
@@ -32,6 +38,8 @@ export interface AiGraderReportBundleAsset {
   bodyBase64?: string;
   side?: "front" | "back";
   evidenceRole?: AiGraderReportBundleEvidenceRole;
+  widthPx?: number;
+  heightPx?: number;
   required: boolean;
 }
 
@@ -84,6 +92,12 @@ export interface AiGraderReportBundle {
   visionLab: {
     available: boolean;
     defectFindings?: AiGraderDefectFindingV1[];
+    findingValidation: {
+      status: "valid" | "invalid";
+      sourceCandidateCount: number;
+      publishedFindingCount: number;
+      issues: Array<{ path: string; message: string }>;
+    };
     trueViewRefs: string[];
     overlayRefs: string[];
     channelImageRefs: string[];
@@ -198,6 +212,7 @@ async function maybeAsset(input: {
       };
     }
     const contentType = contentTypeForPath(localPath);
+    let imageDimensions: { widthPx: number; heightPx: number } | undefined;
     if (input.kind === "image") {
       const expectedFormat = contentType === "image/png"
         ? "png"
@@ -213,6 +228,7 @@ async function maybeAsset(input: {
       if (imageMetadata.format !== expectedFormat || !imageMetadata.width || !imageMetadata.height) {
         throw new Error("Report image bytes do not match the raster file type.");
       }
+      imageDimensions = { widthPx: imageMetadata.width, heightPx: imageMetadata.height };
       if (
         imageMetadata.exif ||
         imageMetadata.icc ||
@@ -237,6 +253,7 @@ async function maybeAsset(input: {
       ...(body ? { bodyEncoding: "base64" as const, bodyBase64: body.toString("base64") } : {}),
       ...(input.side ? { side: input.side } : {}),
       ...(input.evidenceRole ? { evidenceRole: input.evidenceRole } : {}),
+      ...imageDimensions,
       ...metadata,
     };
   } catch {
@@ -300,6 +317,39 @@ function evidenceImageAssetId(filePath: string, roots: Array<{ label: string; ro
 
 function firstRecord(...values: unknown[]): JsonRecord | undefined {
   return values.find(isRecord) as JsonRecord | undefined;
+}
+
+function nonemptyString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function captureProfileVersionForSide(input: {
+  side: "front" | "back";
+  packageManifest?: JsonRecord;
+  analysis?: JsonRecord;
+  inputCaptureTiming?: JsonRecord;
+}) {
+  const packageTiming = firstRecord(input.packageManifest?.captureTiming);
+  const analysisTiming = firstRecord(input.analysis?.captureTiming);
+  const analysisSideTiming = firstRecord(analysisTiming?.[input.side]);
+  const inputSideTiming = firstRecord(input.inputCaptureTiming?.[input.side]);
+  const explicitVersion = [
+    input.packageManifest?.captureProfileVersion,
+    packageTiming?.captureProfileVersion,
+    analysisSideTiming?.captureProfileVersion,
+    inputSideTiming?.captureProfileVersion,
+    input.inputCaptureTiming?.captureProfileVersion,
+  ].map(nonemptyString).find(Boolean);
+  if (explicitVersion) return explicitVersion;
+
+  const captureProfile = [
+    input.packageManifest?.captureProfile,
+    packageTiming?.captureProfile,
+    analysisSideTiming?.captureProfile,
+    inputSideTiming?.captureProfile,
+    input.inputCaptureTiming?.captureProfile,
+  ].map(nonemptyString).find((value): value is AiGraderCaptureTimingProfile => value === "full_forensic" || value === "production_fast");
+  return captureProfile ? AI_GRADER_REPORT_CAPTURE_PROFILE_VERSIONS[captureProfile] : undefined;
 }
 
 function artifactOutputPath(value: unknown) {
@@ -514,6 +564,20 @@ export async function buildAiGraderReportBundle(input: {
       front: assetSha256ForPath(frontNormalizedImageRef),
       back: assetSha256ForPath(backNormalizedImageRef),
     },
+    captureProfileVersionBySide: {
+      front: captureProfileVersionForSide({
+        side: "front",
+        packageManifest: frontPackageManifest,
+        analysis,
+        inputCaptureTiming: input.captureTiming,
+      }),
+      back: captureProfileVersionForSide({
+        side: "back",
+        packageManifest: backPackageManifest,
+        analysis,
+        inputCaptureTiming: input.captureTiming,
+      }),
+    },
     requireNormalizedSourceMatch: true,
     knownAssetIds: imageAssetIds,
     requireTrueViewAsset: true,
@@ -577,6 +641,16 @@ export async function buildAiGraderReportBundle(input: {
     visionLab: {
       available: isRecord(analysis?.visionLab),
       ...(defectExtraction.findings.length ? { defectFindings: defectExtraction.findings } : {}),
+      findingValidation: {
+        status:
+          defectExtraction.issues.length === 0 &&
+          defectExtraction.sourceCandidateCount === defectExtraction.findings.length
+            ? "valid"
+            : "invalid",
+        sourceCandidateCount: defectExtraction.sourceCandidateCount,
+        publishedFindingCount: defectExtraction.findings.length,
+        issues: defectExtraction.issues,
+      },
       trueViewRefs: visionRefs(analysis, ["true", "portrait"]),
       overlayRefs: visionRefs(analysis, ["overlay"]),
       channelImageRefs: visionRefs(analysis, ["channel"]),
@@ -609,7 +683,7 @@ export async function buildAiGraderReportBundle(input: {
     warnings: [
       ...warnings,
       ...(defectExtraction.issues.length
-        ? [`${defectExtraction.issues.length} defect candidate(s) were omitted because they lacked safe normalized public evidence.`]
+        ? [`${defectExtraction.issues.length} defect-finding extraction validation issue(s) require publication to fail closed.`]
         : []),
     ],
     limitations: [

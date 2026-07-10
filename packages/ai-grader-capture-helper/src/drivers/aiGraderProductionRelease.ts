@@ -10,6 +10,8 @@ export const AI_GRADER_PRODUCTION_RELEASE_VERSION = "ai-grader-production-releas
 
 type JsonRecord = Record<string, any>;
 
+export type AiGraderConfidenceBand = "low" | "medium" | "high";
+
 export type AiGraderProductionGateStatus = "pass" | "accepted_warning" | "fail";
 
 export interface AiGraderProductionGate {
@@ -22,7 +24,7 @@ export interface AiGraderProductionGate {
 
 export interface AiGraderFinalElementScore {
   score: number;
-  confidence: string;
+  confidence: AiGraderConfidenceBand;
   sourceStatus?: string;
   explanation: string;
 }
@@ -41,7 +43,7 @@ export interface AiGraderFinalGrade {
     category: string;
     side: string;
     severity: string;
-    confidence: string;
+    confidence: AiGraderConfidenceBand;
     explanation: string;
     evidenceRefs: string[];
     findingIds?: string[];
@@ -190,6 +192,10 @@ function confidenceBand(score: number): "low" | "medium" | "high" {
   return "low";
 }
 
+function explicitConfidenceBand(value: unknown): AiGraderConfidenceBand | undefined {
+  return value === "low" || value === "medium" || value === "high" ? value : undefined;
+}
+
 function publicReportUrl(reportId: string, publicBaseUrl?: string) {
   const base = (publicBaseUrl ?? "https://collect.tenkings.co").replace(/\/$/, "");
   return `${base}/ai-grader/reports/${encodeURIComponent(reportId)}`;
@@ -268,10 +274,11 @@ function buildProductionGates(bundle: AiGraderReportBundle, warningsAccepted: bo
 
 function finalElement(bundle: AiGraderReportBundle, key: "centering" | "corners" | "edges" | "surface"): AiGraderFinalElementScore | undefined {
   const source = bundle.provisionalGrade?.elementScores?.[key];
-  if (!source || typeof source.score !== "number") return undefined;
+  const sourceConfidenceBand = explicitConfidenceBand(source?.confidenceBand);
+  if (!source || typeof source.score !== "number" || !sourceConfidenceBand) return undefined;
   return {
     score: clampGrade(source.score),
-    confidence: source.confidence ?? bundle.provisionalGrade?.confidence?.band ?? "low",
+    confidence: sourceConfidenceBand,
     sourceStatus: source.status,
     explanation: source.explanation ?? `${key} score was promoted from the evidence-grounded provisional diagnostic result.`,
   };
@@ -304,16 +311,20 @@ function buildFinalGrade(bundle: AiGraderReportBundle, gates: AiGraderProduction
   const sourceConfidence = bundle.provisionalGrade.confidence?.score;
   const warningPenalty = acceptedWarnings.length * 0.08;
   const confidenceScore = Number(Math.max(0.1, Math.min(0.95, (typeof sourceConfidence === "number" ? sourceConfidence : 0.72) - warningPenalty)).toFixed(3));
-  const candidateReasons = (bundle.provisionalGrade.gradeImpactCandidates ?? []).map((candidate) => ({
-    id: candidate.id,
-    category: candidate.category,
-    side: candidate.side,
-    severity: candidate.severity,
-    confidence: candidate.confidence,
-    explanation: candidate.explanation,
-    evidenceRefs: candidate.evidenceRefs,
-    ...(Array.isArray(candidate.findingIds) ? { findingIds: candidate.findingIds.map(String) } : {}),
-  }));
+  const candidateReasons = (bundle.provisionalGrade.gradeImpactCandidates ?? []).flatMap((candidate) => {
+    const candidateConfidenceBand = explicitConfidenceBand(candidate.confidenceBand);
+    if (!candidateConfidenceBand) return [];
+    return [{
+      id: candidate.id,
+      category: candidate.category,
+      side: candidate.side,
+      severity: candidate.severity,
+      confidence: candidateConfidenceBand,
+      explanation: candidate.explanation,
+      evidenceRefs: candidate.evidenceRefs,
+      ...(Array.isArray(candidate.findingIds) ? { findingIds: candidate.findingIds.map(String) } : {}),
+    }];
+  });
   const whyNot10 = (bundle.provisionalGrade.whyNot10 ?? []).map((reason, index) => ({
     id: String(reason.id ?? `why-not-10-${index + 1}`),
     title: String(reason.title ?? "Grade impact reason"),

@@ -9,6 +9,9 @@
     "dev": "tsc -w",
     "test": "pnpm run build && node --test tests"
   },
+  "dependencies": {
+    "zod": "^4.1.11"
+  },
   "devDependencies": {
     "typescript": "^5.5.4"
   }

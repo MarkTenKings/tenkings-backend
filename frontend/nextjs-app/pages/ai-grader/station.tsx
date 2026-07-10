@@ -65,6 +65,7 @@ import {
   buildAiGraderPublishReadiness,
 } from "../../lib/aiGraderOperatorWorkflow";
 import { formatAiGraderPublishStageError } from "../../lib/aiGraderPublishErrors";
+import { productionAssetManifest } from "../../lib/aiGraderProductionAssetManifest";
 import { assertAiGraderBrowserRaster } from "../../lib/aiGraderRasterValidation";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
@@ -245,6 +246,8 @@ type PublishUploadPlanArtifact = {
   byteSize: number;
   publicUrl?: string;
   sourceAssetId?: string;
+  sourceImageWidthPx?: number;
+  sourceImageHeightPx?: number;
   uploadUrl: string;
   uploadMethod: "PUT";
   uploadHeaders: Record<string, string>;
@@ -259,6 +262,8 @@ type PublishUploadedArtifact = {
   checksumSha256: string;
   byteSize: number;
   contentType: string;
+  sourceImageWidthPx?: number;
+  sourceImageHeightPx?: number;
   uploadedAt: string;
 };
 
@@ -374,25 +379,6 @@ function sanitizePublishJson<T>(value: T): T {
     return current;
   };
   return visit(value) as T;
-}
-
-function productionAssetManifest(bundle: AiGraderReportBundle | null) {
-  return (bundle?.assets ?? [])
-    .filter((asset) => {
-      const haystack = `${asset.contentType ?? ""} ${asset.fileName ?? ""} ${asset.id ?? ""} ${asset.kind ?? ""}`.toLowerCase();
-      return haystack.includes("image") || /\.(png|jpe?g|webp)$/i.test(asset.fileName ?? asset.id ?? "");
-    })
-    .map((asset) => ({
-      id: asset.id,
-      kind: asset.kind,
-      fileName: asset.fileName,
-      contentType: asset.contentType,
-      checksumSha256: asset.checksumSha256 ?? asset.sha256,
-      byteSize: asset.byteSize,
-      side: asset.side,
-      required: true,
-    }))
-    .filter((asset) => typeof asset.checksumSha256 === "string" && /^[a-f0-9]{64}$/i.test(asset.checksumSha256) && typeof asset.byteSize === "number" && asset.byteSize > 0);
 }
 
 function sanitizeReportBundleForProduction(bundle: AiGraderReportBundle): AiGraderReportBundle {
@@ -2661,6 +2647,9 @@ export default function AiGraderStationPage() {
         }));
         let bytes: ArrayBuffer;
         let contentType = artifact.contentType || "application/octet-stream";
+        let verifiedSourceImageDimensions:
+          | { sourceImageWidthPx: number; sourceImageHeightPx: number }
+          | undefined;
         if (typeof artifact.body === "string") {
           bytes = utf8Bytes(artifact.body);
         } else if (artifact.sourceAssetId) {
@@ -2700,7 +2689,34 @@ export default function AiGraderStationPage() {
           if (contentType.split(";", 1)[0]?.trim().toLowerCase() !== artifact.contentType.toLowerCase()) {
             throw new Error(`Content type mismatch before upload for ${artifact.kind}.`);
           }
-          await assertAiGraderBrowserRaster(bytes, artifact.contentType);
+          const hasPlannedDimensions =
+            artifact.sourceImageWidthPx !== undefined || artifact.sourceImageHeightPx !== undefined;
+          if (
+            hasPlannedDimensions &&
+            (!Number.isSafeInteger(artifact.sourceImageWidthPx) ||
+              (artifact.sourceImageWidthPx ?? 0) < 1 ||
+              !Number.isSafeInteger(artifact.sourceImageHeightPx) ||
+              (artifact.sourceImageHeightPx ?? 0) < 1)
+          ) {
+            throw new Error(`Upload plan has incomplete source image dimensions for ${artifact.kind}.`);
+          }
+          const plannedDimensions = hasPlannedDimensions
+            ? {
+                widthPx: artifact.sourceImageWidthPx as number,
+                heightPx: artifact.sourceImageHeightPx as number,
+              }
+            : undefined;
+          const decodedDimensions = await assertAiGraderBrowserRaster(
+            bytes,
+            artifact.contentType,
+            plannedDimensions,
+          );
+          if (plannedDimensions) {
+            verifiedSourceImageDimensions = {
+              sourceImageWidthPx: decodedDimensions.widthPx,
+              sourceImageHeightPx: decodedDimensions.heightPx,
+            };
+          }
           contentType = artifact.contentType;
         }
         let uploadResponse: Response;
@@ -2739,6 +2755,7 @@ export default function AiGraderStationPage() {
           checksumSha256,
           byteSize: bytes.byteLength,
           contentType,
+          ...verifiedSourceImageDimensions,
           uploadedAt: new Date().toISOString(),
         });
       }

@@ -27,6 +27,8 @@ import {
   type Prisma,
 } from "@tenkings/database";
 import {
+  AI_GRADER_REPORT_BUNDLE_V01_VERSION,
+  AI_GRADER_REPORT_BUNDLE_V02_VERSION,
   createClassificationPayloadFromAttributes,
   type CardAttributes,
   type NormalizedClassification,
@@ -97,6 +99,8 @@ export type AiGraderProductionUploadManifestArtifact = {
   checksumSha256: string;
   byteSize: number;
   contentType?: string;
+  sourceImageWidthPx?: number;
+  sourceImageHeightPx?: number;
   uploadedAt?: string;
 };
 
@@ -255,6 +259,8 @@ export type AiGraderProductionApiDependencies = {
     byteSize?: number;
     contentType?: string;
     checksumSha256?: string | null;
+    widthPx?: number;
+    heightPx?: number;
     message?: string;
   }>;
   persist(input: {
@@ -483,6 +489,10 @@ function actionKey(req: NextApiRequest) {
 
 function isEnabled(env: EnvLike | undefined, key: string) {
   return env?.[key] === "true";
+}
+
+export function aiGraderPublicReportDbReadsEnabled(env: EnvLike | undefined = process.env) {
+  return isEnabled(env, AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV);
 }
 
 function stringValue(value: unknown, fallback: string) {
@@ -730,10 +740,54 @@ function parsePublishBody(body: unknown) {
   };
 }
 
+function aiGraderPublishBoundaryError(code: string, message: string) {
+  const error = new Error(message);
+  (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+  (error as Error & { statusCode?: number; code?: string }).code = code;
+  return error;
+}
+
+function assertNoUnauthorizedAiGraderClaimFlags(value: unknown, path: string) {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertNoUnauthorizedAiGraderClaimFlags(entry, `${path}[${index}]`));
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const [key, entry] of Object.entries(value)) {
+    const claimKey = key === "certifiedClaim" || key === "certificationClaim" || key === "certificateGenerated";
+    if (claimKey && entry !== false) {
+      throw aiGraderPublishBoundaryError(
+        "AI_GRADER_CERTIFIED_CLAIM_REJECTED",
+        `AI Grader publish rejects ${path}.${key}; certification is not authorized.`,
+      );
+    }
+    assertNoUnauthorizedAiGraderClaimFlags(entry, `${path}.${key}`);
+  }
+}
+
+export function assertAiGraderPublishBundleBoundary(
+  reportBundle: AiGraderProductionReportBundleLike,
+  productionRelease: AiGraderProductionReleaseLike,
+) {
+  const schemaVersion = reportBundle.schemaVersion;
+  if (
+    schemaVersion !== AI_GRADER_REPORT_BUNDLE_V01_VERSION &&
+    schemaVersion !== AI_GRADER_REPORT_BUNDLE_V02_VERSION
+  ) {
+    throw aiGraderPublishBoundaryError(
+      "AI_GRADER_UNSUPPORTED_REPORT_BUNDLE_VERSION",
+      `AI Grader publish supports only ${AI_GRADER_REPORT_BUNDLE_V01_VERSION} and ${AI_GRADER_REPORT_BUNDLE_V02_VERSION}.`,
+    );
+  }
+  assertNoUnauthorizedAiGraderClaimFlags(reportBundle, "reportBundle");
+  assertNoUnauthorizedAiGraderClaimFlags(productionRelease, "productionRelease");
+}
+
 function parseProductionPublishSmallBody(body: unknown) {
   assertSmallJsonPayload(body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader publish request");
   assertNoUnsafePublishPayload(body);
   const parsed = parsePublishBody(body);
+  assertAiGraderPublishBundleBoundary(parsed.reportBundle, parsed.productionRelease);
   const source = body as JsonRecord;
   const reportId = stringValue(source.reportId ?? parsed.productionRelease.reportId ?? parsed.reportBundle.reportId, "");
   if (!reportId) throw new Error("reportId is required.");
@@ -772,6 +826,20 @@ function parseUploadManifest(value: unknown): AiGraderProductionUploadManifest {
       if (!Number.isFinite(byteSize) || byteSize <= 0) {
         throw new Error(`uploadManifest.artifacts[${index}].byteSize must be positive.`);
       }
+      const sourceImageWidthPx = entry.sourceImageWidthPx;
+      const sourceImageHeightPx = entry.sourceImageHeightPx;
+      const hasSourceImageDimensions = sourceImageWidthPx !== undefined || sourceImageHeightPx !== undefined;
+      if (
+        hasSourceImageDimensions &&
+        (!Number.isSafeInteger(sourceImageWidthPx) ||
+          (sourceImageWidthPx as number) < 1 ||
+          (sourceImageWidthPx as number) > 100_000 ||
+          !Number.isSafeInteger(sourceImageHeightPx) ||
+          (sourceImageHeightPx as number) < 1 ||
+          (sourceImageHeightPx as number) > 100_000)
+      ) {
+        throw new Error(`uploadManifest.artifacts[${index}] must include valid sourceImageWidthPx and sourceImageHeightPx together.`);
+      }
       return {
         artifactId,
         storageKey,
@@ -779,6 +847,12 @@ function parseUploadManifest(value: unknown): AiGraderProductionUploadManifest {
         checksumSha256: checksumSha256.toLowerCase(),
         byteSize: Math.round(byteSize),
         contentType: optionalString(entry.contentType),
+        ...(hasSourceImageDimensions
+          ? {
+              sourceImageWidthPx: sourceImageWidthPx as number,
+              sourceImageHeightPx: sourceImageHeightPx as number,
+            }
+          : {}),
         uploadedAt: optionalString(entry.uploadedAt),
       };
     }),
@@ -789,11 +863,13 @@ function publishSessionIdForPlan(reportId: string, plan: AiGraderProductionStora
   const basis = {
     reportId,
     storageKeyPrefix: plan.storageKeyPrefix,
-    artifacts: plan.assetManifest.map((artifact) => ({
+    artifacts: plan.artifacts.map((artifact) => ({
       artifactId: artifact.artifactId,
       storageKey: artifact.storageKey,
       checksumSha256: artifact.checksumSha256,
       byteSize: artifact.byteSize,
+      sourceImageWidthPx: artifact.sourceImageWidthPx,
+      sourceImageHeightPx: artifact.sourceImageHeightPx,
     })),
   };
   return `aigpub_${aiGraderSha256(stableStringify(basis)).slice(0, 32)}`;
@@ -821,6 +897,8 @@ function artifactForResponse(artifact: AiGraderProductionArtifactPlan, presigned
     byteSize: artifact.byteSize,
     publicUrl: artifact.publicUrl ?? presigned.publicUrl,
     sourceAssetId: artifact.sourceAssetId,
+    sourceImageWidthPx: artifact.sourceImageWidthPx,
+    sourceImageHeightPx: artifact.sourceImageHeightPx,
     uploadUrl: presigned.uploadUrl,
     uploadMethod: presigned.uploadMethod,
     uploadHeaders: presigned.uploadHeaders,
@@ -855,12 +933,37 @@ function assertPublishedReleaseReady(input: {
   }
 }
 
-function assertStorageReadyPlan(plan: AiGraderProductionStoragePlan, publicationStatus: string) {
-  const reportImageAssetCount = plan.artifacts.filter((artifact) => artifact.artifactClass === "report_asset").length;
-  if (publicationStatus === "published" && reportImageAssetCount < 1) {
+function reportBundleRequiresPlannedImageDimensions(reportBundle: AiGraderProductionReportBundleLike) {
+  if (reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V02_VERSION) return true;
+  const visionLab = isRecord(reportBundle.visionLab) ? reportBundle.visionLab : undefined;
+  return Boolean(visionLab && isRecord(visionLab.findingValidation));
+}
+
+function assertStorageReadyPlan(
+  plan: AiGraderProductionStoragePlan,
+  publicationStatus: string,
+  requirePlannedImageDimensions: boolean,
+) {
+  const reportImageAssets = plan.artifacts.filter((artifact) => artifact.artifactClass === "report_asset");
+  if (publicationStatus === "published" && reportImageAssets.length < 1) {
     const error = new Error("AI Grader publish requires storage-ready report image asset metadata with checksum and byte size.");
     (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
     (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_REPORT_IMAGES_REQUIRED";
+    throw error;
+  }
+  if (
+    requirePlannedImageDimensions &&
+    reportImageAssets.some(
+      (artifact) =>
+        !Number.isSafeInteger(artifact.sourceImageWidthPx) ||
+        (artifact.sourceImageWidthPx ?? 0) < 1 ||
+        !Number.isSafeInteger(artifact.sourceImageHeightPx) ||
+        (artifact.sourceImageHeightPx ?? 0) < 1,
+    )
+  ) {
+    const error = new Error("AI Grader report image upload plans require source pixel dimensions.");
+    (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+    (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_REPORT_IMAGE_DIMENSIONS_REQUIRED";
     throw error;
   }
 }
@@ -877,6 +980,13 @@ function assertUploadManifestMatchesPlan(manifest: AiGraderProductionUploadManif
     if (uploaded.byteSize !== artifact.byteSize) throw new Error(`Upload manifest byte size mismatch for ${artifact.kind}.`);
     if (uploaded.publicUrl && artifact.publicUrl && uploaded.publicUrl !== artifact.publicUrl) {
       throw new Error(`Upload manifest public URL mismatch for ${artifact.kind}.`);
+    }
+    if (
+      artifact.artifactClass === "report_asset" &&
+      (uploaded.sourceImageWidthPx !== artifact.sourceImageWidthPx ||
+        uploaded.sourceImageHeightPx !== artifact.sourceImageHeightPx)
+    ) {
+      throw new Error(`Upload manifest source image dimensions mismatch for ${artifact.kind}.`);
     }
   }
 }
@@ -910,6 +1020,17 @@ async function verifyUploadedArtifacts(
       verified.checksumSha256.toLowerCase() !== artifact.checksumSha256.toLowerCase()
     ) {
       throw new Error(`Storage checksum metadata mismatch for ${artifact.artifactId}.`);
+    }
+    if (
+      artifact.sourceImageWidthPx !== undefined ||
+      artifact.sourceImageHeightPx !== undefined
+    ) {
+      if (
+        verified.widthPx !== artifact.sourceImageWidthPx ||
+        verified.heightPx !== artifact.sourceImageHeightPx
+      ) {
+        throw new Error(`Storage-decoded source image dimensions mismatch for ${artifact.artifactId}.`);
+      }
     }
   }
 }
@@ -2189,6 +2310,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         if (!deps.createCardFromReport) throw new Error("AI Grader create-card-from-report is not configured.");
         const input = parseCreateCardFromReportBody(req.body);
         assertPublishedReleaseReady(input);
+        assertAiGraderPublishBundleBoundary(input.reportBundle, input.productionRelease);
         const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
         const plan = buildAiGraderProductionStoragePlan({
           reportBundle: input.reportBundle,
@@ -2196,7 +2318,11 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           publicReportBaseUrl: "https://collect.tenkings.co",
           publicUrlFor: deps.publicUrlFor,
         });
-        assertStorageReadyPlan(plan, "published");
+        assertStorageReadyPlan(
+          plan,
+          "published",
+          reportBundleRequiresPlannedImageDimensions(input.reportBundle),
+        );
         const result = await deps.createCardFromReport({
           tenantId,
           reportBundle: input.reportBundle,
@@ -2223,7 +2349,11 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         publicReportBaseUrl: "https://collect.tenkings.co",
         publicUrlFor: deps.publicUrlFor,
       });
-      assertStorageReadyPlan(plan, input.publicationStatus);
+      assertStorageReadyPlan(
+        plan,
+        input.publicationStatus,
+        reportBundleRequiresPlannedImageDimensions(input.reportBundle),
+      );
       const publishSessionId = publishSessionIdForPlan(input.reportId, plan);
 
       if (key === "publish-init") {
@@ -2262,6 +2392,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
                 checksumSha256: artifact.checksumSha256,
                 byteSize: artifact.byteSize,
                 contentType: artifact.contentType,
+                sourceImageWidthPx: artifact.sourceImageWidthPx,
+                sourceImageHeightPx: artifact.sourceImageHeightPx,
               })),
             },
           },
@@ -2339,7 +2471,7 @@ export function createAiGraderPublicReportApiHandler(deps: AiGraderPublicReportA
       res.setHeader("Allow", "GET");
       return res.status(405).json({ ok: false, message: "Method not allowed" });
     }
-    if (!isEnabled(env, AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV)) {
+    if (!aiGraderPublicReportDbReadsEnabled(env)) {
       return res.status(503).json({
         ok: false,
         enabled: false,
