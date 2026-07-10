@@ -88,10 +88,50 @@ function fixtureReportDir() {
             acceptedWarnings: ["clipping: accepted warning"],
           },
           elementScores: {
-            centering: { score: 10 },
-            corners: { score: 8.97 },
-            edges: { score: 8.97 },
-            surface: { score: 5.5 },
+            centering: {
+              category: "centering",
+              status: "provisional_diagnostic",
+              score: 10,
+              confidence: 0.94,
+              confidenceBand: "high",
+              primaryMetrics: {},
+              warnings: [],
+              evidenceRefs: ["analysis.provisionalGradeStory.elementScores.centering"],
+              explanation: "Centering evidence supports the provisional score.",
+            },
+            corners: {
+              category: "corners",
+              status: "provisional_diagnostic",
+              score: 8.97,
+              confidence: 0.72,
+              confidenceBand: "medium",
+              primaryMetrics: {},
+              warnings: [],
+              evidenceRefs: ["analysis.provisionalGradeStory.elementScores.corners"],
+              explanation: "Corner evidence supports the provisional score.",
+            },
+            edges: {
+              category: "edges",
+              status: "provisional_diagnostic",
+              score: 8.97,
+              confidence: 0.71,
+              confidenceBand: "medium",
+              primaryMetrics: {},
+              warnings: [],
+              evidenceRefs: ["analysis.provisionalGradeStory.elementScores.edges"],
+              explanation: "Edge evidence supports the provisional score.",
+            },
+            surface: {
+              category: "surface",
+              status: "provisional_diagnostic",
+              score: 5.5,
+              confidence: 0.78,
+              confidenceBand: "medium",
+              primaryMetrics: {},
+              warnings: [],
+              evidenceRefs: ["analysis.provisionalGradeStory.elementScores.surface"],
+              explanation: "Surface evidence supports the provisional score.",
+            },
           },
           story: { summary: "Evidence-linked story.", claims: [{ claim: "Surface limits grade.", evidenceRefs: ["visionLab.heatmap.back"] }] },
           whyNot10: [{ id: "surface", title: "Surface candidate", explanation: "Back surface candidate.", evidenceRefs: ["visionLab.heatmap.back"] }],
@@ -101,9 +141,12 @@ function fixtureReportDir() {
               category: "surface",
               side: "back",
               severity: "high",
-              confidence: "medium",
+              confidence: 0.78,
+              confidenceBand: "medium",
+              provisionalGradeImpact: 2.5,
               sourceChannels: [3, 1, 6],
               evidenceRefs: ["back-surface-intelligence-v0-heatmap.png"],
+              explanation: "The back surface candidate limits the provisional grade.",
             },
           ],
         },
@@ -245,6 +288,12 @@ test("report bundle exports web-ready provisional contract without final/certifi
   assert.equal(bundle.visionLab.available, true);
   assert.equal(bundle.visionLab.candidateCount, 1);
   assert.equal(bundle.visionLab.defectFindings?.length, 1);
+  assert.deepEqual(bundle.visionLab.findingValidation, {
+    status: "valid",
+    sourceCandidateCount: 1,
+    publishedFindingCount: 1,
+    issues: [],
+  });
   assert.equal(bundle.visionLab.defectFindings?.[0]?.side, "back");
   assert.equal(bundle.visionLab.defectFindings?.[0]?.evidence.trueViewAssetId, "report/back/back-normalized-card.png");
   assert.deepEqual(bundle.visionLab.defectFindings?.[0]?.geometry.shape, {
@@ -259,6 +308,9 @@ test("report bundle exports web-ready provisional contract without final/certifi
   const findingTrueView = bundle.assets.find((asset) => asset.id === bundle.visionLab.defectFindings?.[0]?.evidence.trueViewAssetId);
   assert.equal(findingTrueView?.side, "back");
   assert.equal(findingTrueView?.evidenceRole, "normalized_card");
+  assert.equal(findingTrueView?.widthPx, 1);
+  assert.equal(findingTrueView?.heightPx, 1);
+  assert.equal(bundle.visionLab.defectFindings?.[0]?.detector.captureProfileVersion, "ten-kings-fixed-rig-production-fast-v1");
   const findingHeatmap = bundle.assets.find((asset) => asset.id === bundle.visionLab.defectFindings?.[0]?.evidence.heatmapAssetId);
   assert.equal(findingHeatmap?.side, "back");
   assert.equal(findingHeatmap?.evidenceRole, "surface_heatmap");
@@ -289,7 +341,59 @@ test("report bundle rejects stale defect geometry from a different normalized so
 
   const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "stale-geometry" });
   assert.deepEqual(bundle.visionLab.defectFindings ?? [], []);
+  assert.equal(bundle.visionLab.findingValidation.status, "invalid");
+  assert.equal(bundle.visionLab.findingValidation.sourceCandidateCount, 1);
+  assert.equal(bundle.visionLab.findingValidation.publishedFindingCount, 0);
+  assert.equal(bundle.visionLab.findingValidation.issues.some((entry) => /fingerprints/.test(entry.message)), true);
   assert.equal(bundle.provisionalGrade.gradeImpactCandidates[0].findingIds, undefined);
+});
+
+test("report bundle exposes valid zero-count finding validation when no candidates exist", async () => {
+  const reportDir = fixtureReportDir();
+  const analysisPath = path.join(reportDir, "analysis.json");
+  const analysis = JSON.parse(fs.readFileSync(analysisPath, "utf8"));
+  analysis.surfaceIntelligence.back.candidates = [];
+  analysis.provisionalGradeStory.gradeImpactCandidates = [];
+  fs.writeFileSync(analysisPath, JSON.stringify(analysis, null, 2));
+
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "no-defect-candidates" });
+  assert.deepEqual(bundle.visionLab.findingValidation, {
+    status: "valid",
+    sourceCandidateCount: 0,
+    publishedFindingCount: 0,
+    issues: [],
+  });
+});
+
+test("report bundle marks candidate extraction invalid when detector version is missing", async () => {
+  const reportDir = fixtureReportDir();
+  const analysisPath = path.join(reportDir, "analysis.json");
+  const analysis = JSON.parse(fs.readFileSync(analysisPath, "utf8"));
+  delete analysis.surfaceIntelligence.back.version;
+  fs.writeFileSync(analysisPath, JSON.stringify(analysis, null, 2));
+
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "missing-detector-version" });
+  assert.equal(bundle.visionLab.findingValidation.status, "invalid");
+  assert.equal(bundle.visionLab.findingValidation.sourceCandidateCount, 1);
+  assert.equal(bundle.visionLab.findingValidation.publishedFindingCount, 0);
+  assert.equal(bundle.visionLab.findingValidation.issues.some((entry) => entry.path.endsWith(".version")), true);
+});
+
+test("report bundle marks candidate extraction invalid when capture profile version cannot be derived", async () => {
+  const reportDir = fixtureReportDir();
+  const backManifestPath = path.join(reportDir, "back", "manifest.json");
+  const backManifest = JSON.parse(fs.readFileSync(backManifestPath, "utf8"));
+  delete backManifest.captureTiming.captureProfile;
+  fs.writeFileSync(backManifestPath, JSON.stringify(backManifest, null, 2));
+
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "missing-capture-profile-version" });
+  assert.equal(bundle.visionLab.findingValidation.status, "invalid");
+  assert.equal(bundle.visionLab.findingValidation.sourceCandidateCount, 1);
+  assert.equal(bundle.visionLab.findingValidation.publishedFindingCount, 0);
+  assert.equal(
+    bundle.visionLab.findingValidation.issues.some((entry) => entry.path.endsWith(".captureProfileVersion")),
+    true,
+  );
 });
 
 test("report bundle rejects defect geometry when normalized artifact bytes change", async () => {
@@ -378,12 +482,33 @@ test("production release computes final AI-Grader V0 with label and QR data when
   assert.equal(release.reportStatus, "final_ai_grader_report_v0");
   assert.equal(release.finalGradeComputed, true);
   assert.equal(release.finalGrade.overall, 8.5);
+  assert.equal(release.finalGrade.elements.centering.confidence, "high");
+  assert.equal(release.finalGrade.elements.surface.confidence, "medium");
+  assert.equal(release.finalGrade.gradeImpactReasons[0].confidence, "medium");
   assert.equal(release.label.status, "label_data_ready");
   assert.equal(release.label.qrPayloadUrl, "https://collect.tenkings.co/ai-grader/reports/production-fixture");
   assert.equal(release.certifiedClaim, false);
   assert.equal(release.certificateGenerated, false);
   assert.equal(release.databaseIntegration.productionDbWritesPerformed, false);
   assert.equal(release.storageIntegration.uploadPerformed, false);
+});
+
+test("production release does not invent element or grade-impact confidence bands", async () => {
+  const reportDir = fixtureReportDir();
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "production-confidence-band-fixture" });
+  delete bundle.provisionalGrade.elementScores.centering.confidenceBand;
+  delete bundle.provisionalGrade.gradeImpactCandidates[0].confidenceBand;
+
+  const release = buildAiGraderProductionRelease({
+    bundle,
+    operatorId: "mark",
+    warningsAccepted: true,
+    overrideReason: "Accepted V0 warning gates for confidence-band test.",
+    publicBaseUrl: "https://collect.tenkings.co",
+  });
+
+  assert.equal(release.finalGrade.elements.centering, undefined);
+  assert.equal(release.finalGrade.gradeImpactReasons.length, 0);
 });
 
 test("production release fails closed when required front/back evidence is missing", async () => {

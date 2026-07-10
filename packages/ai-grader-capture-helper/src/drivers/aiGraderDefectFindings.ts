@@ -15,6 +15,7 @@ export type AiGraderApprovedDefectEvidence = Partial<AiGraderDefectFindingV1["ev
 
 export interface ExtractAiGraderDefectFindingsOptions {
   captureProfileVersion?: string;
+  captureProfileVersionBySide?: Partial<Record<Side, string>>;
   approvedEvidenceBySide?: Partial<Record<Side, AiGraderApprovedDefectEvidence>>;
   approvedEvidenceByCandidateKey?: Record<string, AiGraderApprovedDefectEvidence>;
   normalizedSourceSha256BySide?: Partial<Record<Side, string>>;
@@ -28,6 +29,7 @@ export interface AiGraderDefectFindingExtractionResult {
   findings: AiGraderDefectFindingV1[];
   issues: AiGraderDefectFindingValidationIssue[];
   sourceCandidateFindingIds: Record<string, string>;
+  sourceCandidateCount: number;
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -36,6 +38,10 @@ function isRecord(value: unknown): value is JsonRecord {
 
 function finiteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function nonemptyString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function categoryFor(value: unknown): AiGraderDefectCategory | undefined {
@@ -108,8 +114,9 @@ function canonicalGeometry(value: unknown): AiGraderDefectFindingV1["geometry"] 
   return undefined;
 }
 
-function severityBand(value: unknown, score: number | undefined): "low" | "medium" | "high" {
+function severityBand(value: unknown, score: number | undefined): "low" | "medium" | "high" | undefined {
   if (value === "low" || value === "medium" || value === "high") return value;
+  if (score === undefined) return undefined;
   if ((score ?? 0) >= 68) return "high";
   if ((score ?? 0) >= 38) return "medium";
   return "low";
@@ -178,19 +185,45 @@ export function extractAiGraderDefectFindingsV1(
   options: ExtractAiGraderDefectFindingsOptions = {},
 ): AiGraderDefectFindingExtractionResult {
   if (!isRecord(value)) {
-    return { findings: [], issues: [{ path: "analysis", message: "must be an object" }], sourceCandidateFindingIds: {} };
+    return {
+      findings: [],
+      issues: [{ path: "analysis", message: "must be an object" }],
+      sourceCandidateFindingIds: {},
+      sourceCandidateCount: 0,
+    };
   }
   const findings: AiGraderDefectFindingV1[] = [];
   const issues: AiGraderDefectFindingValidationIssue[] = [];
   const sourceCandidateFindingIds: Record<string, string> = {};
+  const sourceCandidateKeys = new Set<string>();
   const ids = new Set<string>();
 
   for (const side of ["front", "back"] as const) {
     for (const container of containersFor(value, side)) {
-      const detectorId = typeof container.detector.detectorId === "string" ? container.detector.detectorId : undefined;
-      const detectorVersion = typeof container.detector.version === "string" ? container.detector.version : detectorId;
-      if (!detectorId || !detectorVersion) {
-        issues.push({ path: container.path, message: "detector identity is required" });
+      if (container.candidates.length === 0) continue;
+      const detectorId = nonemptyString(container.detector.detectorId);
+      const detectorVersion = nonemptyString(container.detector.version);
+      const captureProfileVersion =
+        nonemptyString(container.detector.captureProfileVersion) ??
+        nonemptyString(options.captureProfileVersionBySide?.[side]) ??
+        nonemptyString(options.captureProfileVersion);
+      if (!detectorId) {
+        issues.push({ path: `${container.path}.detectorId`, message: "a nonempty detector id is required when candidates are present" });
+      }
+      if (!detectorVersion) {
+        issues.push({ path: `${container.path}.version`, message: "a nonempty detector version is required when candidates are present" });
+      }
+      if (!captureProfileVersion) {
+        issues.push({
+          path: `${container.path}.captureProfileVersion`,
+          message: "a nonempty capture-profile version from capture metadata is required when candidates are present",
+        });
+      }
+      if (!detectorId || !detectorVersion || !captureProfileVersion) {
+        container.candidates.forEach((candidate, index) => {
+          const candidateId = isRecord(candidate) ? nonemptyString(candidate.candidateId) : undefined;
+          sourceCandidateKeys.add(candidateId ? `${side}:${candidateId}` : `${container.path}.candidates[${index}]`);
+        });
         continue;
       }
       for (let index = 0; index < container.candidates.length; index += 1) {
@@ -199,6 +232,8 @@ export function extractAiGraderDefectFindingsV1(
           break;
         }
         const candidate = container.candidates[index];
+        const sourceCandidateId = isRecord(candidate) ? nonemptyString(candidate.candidateId) : undefined;
+        sourceCandidateKeys.add(sourceCandidateId ? `${side}:${sourceCandidateId}` : `${container.path}.candidates[${index}]`);
         if (!isRecord(candidate)) {
           issues.push({ path: `${container.path}.candidates[${index}]`, message: "candidate must be an object" });
           continue;
@@ -243,7 +278,7 @@ export function extractAiGraderDefectFindingsV1(
         const detector = {
           id: detectorId,
           version: detectorVersion,
-          ...(options.captureProfileVersion ? { captureProfileVersion: options.captureProfileVersion } : {}),
+          captureProfileVersion,
         };
         const scoreSource = finiteNumber(candidate.severityProxy)
           ? candidate.severityProxy
@@ -252,8 +287,8 @@ export function extractAiGraderDefectFindingsV1(
             : undefined;
         const score = scoreSource === undefined ? undefined : Math.min(100, Math.max(0, round(scoreSource)));
         const containerConfidence = isRecord(container.detector.confidence) ? container.detector.confidence.score : undefined;
-        const confidenceSource = finiteNumber(candidate.confidence) ? candidate.confidence : finiteNumber(containerConfidence) ? containerConfidence : 0;
-        const candidateId = typeof candidate.candidateId === "string" ? candidate.candidateId : "";
+        const confidenceSource = finiteNumber(candidate.confidence) ? candidate.confidence : finiteNumber(containerConfidence) ? containerConfidence : undefined;
+        const candidateId = sourceCandidateId ?? "";
         const findingId = createStableAiGraderDefectFindingId({ side, category, detector, geometry });
         if (ids.has(findingId)) {
           if (candidateId) {
@@ -269,7 +304,7 @@ export function extractAiGraderDefectFindingsV1(
             category,
             detector,
             severity: { ...(score === undefined ? {} : { score }), band: severityBand(candidate.severityBand, score) },
-            confidence: round(confidenceSource),
+            confidence: confidenceSource === undefined ? undefined : round(confidenceSource),
             review: { status: "unreviewed" },
             geometry,
             evidence: mergeEvidence(
@@ -300,5 +335,10 @@ export function extractAiGraderDefectFindingsV1(
     knownAssetIds: options.knownAssetIds,
     requireTrueViewAsset: options.requireTrueViewAsset,
   });
-  return { findings: collection.findings, issues: [...issues, ...collection.issues], sourceCandidateFindingIds };
+  return {
+    findings: collection.findings,
+    issues: [...issues, ...collection.issues],
+    sourceCandidateFindingIds,
+    sourceCandidateCount: sourceCandidateKeys.size,
+  };
 }

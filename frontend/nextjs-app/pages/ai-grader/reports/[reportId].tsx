@@ -3,11 +3,12 @@ import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import AiGraderDefectOverlay from "../../../components/ai-grader/AiGraderDefectOverlay";
 import {
+  aiGraderReportDefectFindings,
   getAiGraderReportBundle,
   hasNoCertifiedClaim,
   hasNoFinalCertifiedClaims,
   isExplicitAiGraderSampleReportId,
-  type AiGraderReportBundle,
+  type AiGraderCompatibleReportBundle,
 } from "../../../lib/aiGraderReportBundle";
 import {
   findReportImage,
@@ -72,7 +73,7 @@ function labImageForMode(
 export default function AiGraderReportViewerPage() {
   const router = useRouter();
   const fallbackBundle = getAiGraderReportBundle(router.query.reportId);
-  const [persistedBundle, setPersistedBundle] = useState<AiGraderReportBundle | null>(null);
+  const [persistedBundle, setPersistedBundle] = useState<AiGraderCompatibleReportBundle | null>(null);
   const [publicLookupError, setPublicLookupError] = useState<string | null>(null);
   const [selectedLabMode, setSelectedLabMode] = useState<LabMode>("True View");
   const [selectedLabSide, setSelectedLabSide] = useState<LabSide>("front");
@@ -85,18 +86,20 @@ export default function AiGraderReportViewerPage() {
   const noClaims = hasNoCertifiedClaim(bundle);
   const noFinalClaims = hasNoFinalCertifiedClaims(bundle);
   const primaryCandidate = story?.gradeImpactCandidates?.[0];
-  const impactCandidate = productionRelease?.finalGrade.gradeImpactReasons[0] ?? primaryCandidate;
-  const slabbedPhotos = Array.isArray(productionRelease?.slabbedPhotoContract.photos)
-    ? productionRelease?.slabbedPhotoContract.photos
+  const impactCandidate = productionRelease?.finalGrade.gradeImpactReasons?.[0] ?? primaryCandidate;
+  const slabbedPhotoContract = productionRelease?.slabbedPhotoContract;
+  const slabbedPhotos = Array.isArray(slabbedPhotoContract?.photos)
+    ? slabbedPhotoContract.photos
     : [];
   const compsContract = productionRelease?.ebayCompsContract;
+  const productionGates = productionRelease?.gates ?? [];
   const isMissingGeneratedReport = !persistedBundle && bundle.reportStatus === "missing_report_data";
   const reportSource = persistedBundle
     ? "persisted read-only report endpoint"
     : isExplicitAiGraderSampleReportId(router.query.reportId)
       ? "explicit sample fixture"
       : "not found in persisted production storage";
-  const reportIsFinal = productionRelease?.finalGradeComputed === true;
+  const reportIsFinal = productionRelease?.finalGradeComputed === true || bundle.finalGradeComputed === true;
   const images = reportImageAssets(bundle);
   const frontTrueView =
     findReportImage(images, ["front", "all-on", "portrait"]) ??
@@ -111,7 +114,7 @@ export default function AiGraderReportViewerPage() {
     backTrueView,
     ...images.filter((asset) => asset.renderUrl !== frontTrueView?.renderUrl && asset.renderUrl !== backTrueView?.renderUrl),
   ].filter((asset): asset is AiGraderRenderableReportImage => Boolean(asset)).slice(0, 36);
-  const sideDefectFindings = (bundle.visionLab.defectFindings ?? []).filter((finding) => finding.side === selectedLabSide);
+  const sideDefectFindings = aiGraderReportDefectFindings(bundle).filter((finding) => finding.side === selectedLabSide);
   const selectedFinding = sideDefectFindings.find((finding) => finding.findingId === selectedFindingId) ?? sideDefectFindings[0];
   const exactFindingImage = findReportNormalizedCardImageByExactAssetId(
     images,
@@ -266,7 +269,7 @@ export default function AiGraderReportViewerPage() {
                   <dt>Source channels</dt>
                   <dd>{sourceChannelsText(impactCandidate)}</dd>
                   <dt>Evidence</dt>
-                  <dd>{impactCandidate.evidenceRefs.join(", ")}</dd>
+                  <dd>{(impactCandidate.evidenceRefs ?? []).join(", ")}</dd>
                 </dl>
               ) : (
                 <p>No candidate details available.</p>
@@ -342,28 +345,32 @@ export default function AiGraderReportViewerPage() {
                 <span>Certified Claim</span>
                 <strong>{productionRelease.certifiedClaim ? "Unexpected" : "Disabled"}</strong>
               </article>
-              <article>
-                <span>Slab Photos</span>
-                <strong>{slabbedPhotos.length ? `${slabbedPhotos.length} attached` : productionRelease.slabbedPhotoContract.status}</strong>
-              </article>
-              <article>
-                <span>Valuation</span>
-                <strong>{compsContract?.status ?? "not_run"}</strong>
-              </article>
+              {slabbedPhotoContract ? (
+                <article>
+                  <span>Slab Photos</span>
+                  <strong>{slabbedPhotos.length ? `${slabbedPhotos.length} attached` : slabbedPhotoContract.status}</strong>
+                </article>
+              ) : null}
+              {compsContract ? (
+                <article>
+                  <span>Valuation</span>
+                  <strong>{compsContract.status}</strong>
+                </article>
+              ) : null}
             </div>
-            <div className="gate-list">
-              {productionRelease.gates.map((gate) => (
+            {productionGates.length ? <div className="gate-list">
+              {productionGates.map((gate) => (
                 <article key={gate.id} className={gate.status}>
                   <span>{gate.status.replace("_", " ")}</span>
                   <strong>{gate.label}</strong>
                   <p>{gate.reason}</p>
                 </article>
               ))}
-            </div>
+            </div> : null}
           </section>
         ) : null}
 
-        {productionRelease ? (
+        {productionRelease && (slabbedPhotoContract || compsContract) ? (
           <section className="production">
             <div className="section-head">
               <p className="eyebrow">Slab Photos and Valuation</p>
@@ -387,31 +394,31 @@ export default function AiGraderReportViewerPage() {
                     </article>
                   );
                 })
-              ) : (
+              ) : slabbedPhotoContract ? (
                 <article>
                   <span>Slabbed color photos</span>
-                  <strong>{productionRelease.slabbedPhotoContract.status}</strong>
-                  <p>{productionRelease.slabbedPhotoContract.note}</p>
+                  <strong>{slabbedPhotoContract.status}</strong>
+                  <p>{slabbedPhotoContract.note}</p>
                 </article>
-              )}
-              <article>
+              ) : null}
+              {compsContract ? <article>
                 <span>eBay comps</span>
-                <strong>{compsContract?.status ?? "not_run"}</strong>
+                <strong>{compsContract.status}</strong>
                 <p>
-                  {compsContract?.searchQuery
+                  {compsContract.searchQuery
                     ? `Query: ${compsContract.searchQuery}`
-                    : compsContract?.note ?? "Operator-triggered comps have not been run."}
+                    : compsContract.note}
                 </p>
-              </article>
-              <article>
+              </article> : null}
+              {compsContract ? <article>
                 <span>Valuation</span>
                 <strong>
-                  {typeof compsContract?.valuationMinor === "number"
+                  {typeof compsContract.valuationMinor === "number"
                     ? `$${(compsContract.valuationMinor / 100).toFixed(2)}`
                     : "pending"}
                 </strong>
-                <p>{Array.isArray(compsContract?.compsRefs) ? `${compsContract?.compsRefs.length} comp ref(s)` : "No comps attached."}</p>
-              </article>
+                <p>{Array.isArray(compsContract.compsRefs) ? `${compsContract.compsRefs.length} comp ref(s)` : "No comps attached."}</p>
+              </article> : null}
             </div>
           </section>
         ) : null}
@@ -423,7 +430,7 @@ export default function AiGraderReportViewerPage() {
           </article>
           <article>
             <span>Strongest Warning</span>
-            <p>{story?.gradeStory?.strongestWarning ?? bundle.warnings[0]}</p>
+            <p>{story?.gradeStory?.strongestWarning ?? bundle.warnings?.[0]}</p>
           </article>
           <article>
             <span>Top Candidate</span>
@@ -459,7 +466,7 @@ export default function AiGraderReportViewerPage() {
           <div className="element-grid">
             {ELEMENT_LABELS.map((element) => {
               const result = story?.elementScores?.[element];
-              const finalResult = finalGrade?.elements[element];
+              const finalResult = finalGrade?.elements?.[element];
               return (
                 <article key={element}>
                   <span>{element}</span>
@@ -496,10 +503,18 @@ export default function AiGraderReportViewerPage() {
           <dl>
             <dt>Report source</dt>
             <dd>{reportSource}</dd>
-            <dt>Front evidence</dt>
-            <dd>{bundle.evidenceReferences.frontEvidenceRefs.join(", ") || "missing"}</dd>
-            <dt>Back evidence</dt>
-            <dd>{bundle.evidenceReferences.backEvidenceRefs.join(", ") || "missing"}</dd>
+            {bundle.evidenceReferences?.frontEvidenceRefs?.length ? (
+              <>
+                <dt>Front evidence</dt>
+                <dd>{bundle.evidenceReferences.frontEvidenceRefs.join(", ")}</dd>
+              </>
+            ) : null}
+            {bundle.evidenceReferences?.backEvidenceRefs?.length ? (
+              <>
+                <dt>Back evidence</dt>
+                <dd>{bundle.evidenceReferences.backEvidenceRefs.join(", ")}</dd>
+              </>
+            ) : null}
             <dt>Published image assets</dt>
             <dd>{images.length ? `${images.length} image(s)` : "missing"}</dd>
             <dt>Ruler calibration</dt>
@@ -509,12 +524,16 @@ export default function AiGraderReportViewerPage() {
             <dt>Legacy provisional-only flags</dt>
             <dd>{noFinalClaims ? "provisional only" : "final report data present"}</dd>
             <dt>Label data</dt>
-            <dd>{productionRelease ? `${productionRelease.label.status} (${productionRelease.label.qrPayloadUrl})` : "not generated"}</dd>
-            <dt>DB/storage publication</dt>
-            <dd>{productionRelease ? `${productionRelease.publication.storageMode}; DB writes ${productionRelease.publication.dbWritesPerformed}` : "not generated"}</dd>
+            <dd>{productionRelease ? (productionRelease.label.status ? `${productionRelease.label.status} (${productionRelease.label.qrPayloadUrl})` : productionRelease.label.qrPayloadUrl) : "not generated"}</dd>
+            {productionRelease?.publication.storageMode || productionRelease?.publication.dbWritesPerformed !== undefined ? (
+              <>
+                <dt>DB/storage publication</dt>
+                <dd>{`${productionRelease.publication.storageMode ?? ""}${productionRelease.publication.storageMode ? "; " : ""}DB writes ${productionRelease.publication.dbWritesPerformed}`}</dd>
+              </>
+            ) : null}
           </dl>
           <ul>
-            {bundle.limitations.map((limitation) => (
+            {(bundle.limitations ?? []).map((limitation) => (
               <li key={limitation}>{limitation}</li>
             ))}
           </ul>

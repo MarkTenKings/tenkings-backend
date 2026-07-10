@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createAiGraderPublicReportApiHandler } from "../../../../lib/server/aiGraderProductionApi";
+import { mergeAiGraderPublishedReportReadData } from "../../../../lib/server/aiGraderPublicReportRead";
 import { publicUrlFor, readStorageBuffer } from "../../../../lib/server/storage";
 
 async function readPublishedBundle(reportId: string) {
@@ -46,6 +47,9 @@ async function readPublishedBundle(reportId: string) {
   const raw = await readStorageBuffer(report.reportBundleStorageKey).catch(() => null);
   if (!raw) return null;
   const bundle = JSON.parse(raw.toString("utf8"));
+  if (bundle?.schemaVersion === "ai-grader-report-bundle-v0.2") {
+    return mergeAiGraderPublishedReportReadData(bundle, {});
+  }
   let productionRelease = bundle.productionRelease;
   if (report.productionReleaseStorageKey) {
     const releaseRaw = await readStorageBuffer(report.productionReleaseStorageKey).catch(() => null);
@@ -62,36 +66,12 @@ async function readPublishedBundle(reportId: string) {
   }
   const slabbedPhotos = Array.isArray(report.evidenceAssets) ? report.evidenceAssets : [];
   const valuation = Array.isArray(report.valuations) ? report.valuations[0] ?? null : null;
-  return {
-    ...bundle,
-    ...(productionRelease
-      ? {
-          productionRelease: {
-            ...productionRelease,
-            ...(labelData ? { label: { ...(productionRelease.label ?? {}), ...labelData } } : {}),
-            slabbedPhotoContract: {
-              ...(productionRelease.slabbedPhotoContract ?? {}),
-              status: slabbedPhotos.length ? "uploaded" : productionRelease.slabbedPhotoContract?.status ?? "reserved_not_uploaded",
-              photos: slabbedPhotos,
-            },
-            ebayCompsContract: {
-              ...(productionRelease.ebayCompsContract ?? {}),
-              status: valuation?.status ?? productionRelease.ebayCompsContract?.status ?? "not_run",
-              searchQuery: valuation?.searchQuery ?? productionRelease.ebayCompsContract?.searchQuery,
-              valuationMinor: valuation?.valuationMinor ?? productionRelease.ebayCompsContract?.valuationMinor,
-              valuationCurrency: valuation?.valuationCurrency ?? productionRelease.ebayCompsContract?.valuationCurrency,
-              compsRefs: valuation?.compsRefs ?? productionRelease.ebayCompsContract?.compsRefs ?? [],
-              resultSummary: valuation?.resultSummary ?? productionRelease.ebayCompsContract?.resultSummary,
-            },
-          },
-          finalGradeComputed: productionRelease.finalGradeComputed === true,
-          labelGenerated: productionRelease.labelDataGenerated === true,
-          qrGenerated: productionRelease.qrPayloadGenerated === true,
-          reportStatus: productionRelease.reportStatus ?? bundle.reportStatus,
-          finalStatus: productionRelease.finalStatus ?? bundle.finalStatus,
-        }
-      : {}),
-  };
+  return mergeAiGraderPublishedReportReadData(bundle, {
+    productionRelease,
+    labelData,
+    slabbedPhotos,
+    valuation,
+  });
 }
 
 export default createAiGraderPublicReportApiHandler({

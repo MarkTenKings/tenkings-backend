@@ -29,7 +29,10 @@ test("public report API revalidates defect assets and strips private finding sta
     env: { AI_GRADER_PUBLIC_REPORT_DB_ENABLED: "true" },
     async readPublishedBundle() {
       return {
+        schemaVersion: "ai-grader-report-bundle-v0.1",
         reportId: "report-1",
+        generatedAt: "2026-07-10T12:00:00.000Z",
+        certifiedClaim: false,
         publicAssets: [
           {
             id: "report/back/normalized.png",

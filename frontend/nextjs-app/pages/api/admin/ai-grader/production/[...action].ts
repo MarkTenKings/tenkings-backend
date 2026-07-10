@@ -4,9 +4,11 @@ import {
   headStorageObject,
   presignUploadUrl,
   publicUrlFor,
+  readStoragePrefix,
   sha256HexToBase64,
   verifyStorageObjectIntegrity,
 } from "../../../../../lib/server/storage";
+import { readAiGraderRasterDimensions } from "../../../../../lib/aiGraderRasterValidation";
 import { requireAdminSession } from "../../../../../lib/server/admin";
 import { requireUserSession } from "../../../../../lib/server/session";
 import {
@@ -57,14 +59,36 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       },
       publicUrl: publicUrlFor(storageKey),
     }),
-    verifyUploadedArtifact: async ({ storageKey, byteSize, checksumSha256 }) => {
+    verifyUploadedArtifact: async ({
+      storageKey,
+      byteSize,
+      checksumSha256,
+      contentType,
+      sourceImageWidthPx,
+      sourceImageHeightPx,
+    }) => {
       const head = await headStorageObject(storageKey);
-      return verifyStorageObjectIntegrity({
+      const integrity = verifyStorageObjectIntegrity({
         storageKey,
         expectedByteSize: byteSize,
         expectedChecksumSha256: checksumSha256,
         head,
       });
+      if (!integrity.ok || (sourceImageWidthPx === undefined && sourceImageHeightPx === undefined)) {
+        return integrity;
+      }
+      const dimensions = readAiGraderRasterDimensions(
+        await readStoragePrefix(storageKey),
+        head.contentType ?? contentType ?? "",
+      );
+      if (!dimensions) {
+        return {
+          ...integrity,
+          ok: false,
+          message: `Storage image dimensions could not be verified for ${storageKey}.`,
+        };
+      }
+      return { ...integrity, ...dimensions };
     },
     persist: persistProductionReleaseRuntime,
     listHistory: listProductionReportHistoryRuntime,

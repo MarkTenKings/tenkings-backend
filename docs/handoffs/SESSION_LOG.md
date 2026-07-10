@@ -25770,3 +25770,33 @@ By enabling Rip It Live, I confirm:
 - Planned action: push this handoff-only audit update, wait for the resulting PR HEAD to pass required checks, merge PR #81 through GitHub, fetch `main`, wait for the new main CI and Vercel Production status, and perform read-only HTTP checks of `/ai-grader/station` and `/ai-grader/reports/sample-defect-v1`.
 - After deployment observation, append the merge SHA/main HEAD, CI result, Vercel Production status, live-route evidence, Dell bridge state, and remaining Dell smoke steps to this local handoff log.
 - Explicitly prohibited in this action: no Dell/Basler/Leimac/preview/capture/hardware command, no Dell bridge restart/install, no migration, no environment-variable change, no credential access/change/rotation/printing, no production database/storage/business-data operation, no droplet action, and no manual deployment command. The only expected deployment is the repository's normal automated Vercel Production deployment caused by the authorized merge.
+
+## 2026-07-10 - Cinematic report Task 0 v0.2 contract follow-up started
+
+- Repository evidence showed the first defect-finding slice was already merged as PR #82 at `origin/main` commit `4f26a302d6b917e11a4074bdbae3ab9ef3bf0a98`; this follow-up starts from that merged commit instead of modifying or reverting either active AI Grader worktree.
+- Created isolated worktree `tenkings-backend/cinematic-task0-v02` on branch `fix/ai-grader-report-bundle-v02-contract` for the approved Task 0 delta only.
+- Planned scope: add Zod runtime schemas for distinct fraction-only stored findings and calibrated/versioned published finding projections; publish new reports as bundle v0.2 while retaining v0.1 read compatibility; keep publication fail-closed for invalid geometry, detector metadata, asset references, and finding references; and emit no physical measurements unless a calibrated, versioned projection can be derived at publish time.
+- No implementation code had been changed when this entry was written. No hardware command, migration, deployment, restart, environment-variable change, credential/secret access, production database/storage mutation, push, or merge was performed.
+
+## 2026-07-10 - Cinematic report Task 0 v0.2 contract completed
+
+- Implemented distinct Zod-validated fraction-only stored `ai-grader-defect-finding-v1` records and published display projections. Stored findings retain stable IDs, detector/capture-profile metadata, safe review status, normalized-card geometry, and asset IDs only; physical measurements exist only in a calibrated, version-stamped published projection.
+- Added bundle v0.2 validation and publication/read boundaries while retaining v0.1 report compatibility. Publication fails closed for invalid fractions, missing detector metadata, unknown/mismatched asset IDs, unsafe public URLs, stale or mismatched calibrated measurements, and grade-impact reasons referring to nonexistent findings.
+- Preserved `publicAssets ?? assets` precedence; canonical normalized-card assets are selected before overlays and emitted heatmap/evidence roles are validated. Public reads reject paths, bridge/private URLs, tokens, presigned URLs, base64/data bodies, credentials, and hardware controls.
+- Removed report-value fallbacks in the data plumbing: unsupported sections/rows remain absent, unreviewed or rejected findings never become confirmed claims, unsupported centering values are omitted rather than synthesized, and `certifiedClaim` remains false unless an authorized policy supplies it. `sample-final-v0` remains a local/test fixture; it is not implicitly fetched from production.
+- The attached static cinematic prototype is not yet a repository source file and no cinematic route exists in this Task 0 worktree. Its embedded demo assignment will be removed when Task 1 deliberately adds and wires the route; no prototype report values have been introduced into shipped application code.
+- PR #82 baseline was fetched and verified at `4f26a302d6b917e11a4074bdbae3ab9ef3bf0a98`. The isolated Task 0 branch has the same HEAD and merge base as `origin/main`, so no rebase or merge was necessary; the PR #82 overlay, finding, raster-validation, persistence, and public-marker behavior were preserved/extended rather than reverted.
+- Validation passed: shared `127/127`; capture-helper `226/226` plus build; database `64/64`; frontend `155/155`; Next.js production build; raster WebP-prefix regression; and `git diff --check` (Windows line-ending notices only).
+- No hardware command, migration, deployment, restart, environment-variable change, credential/secret access, production database/storage mutation, commit, push, merge, or PR creation was performed.
+
+## 2026-07-10 - Cinematic report Task 0 rebased onto current main
+
+- Fetched current `origin/main` at `0e52c3cc5cf452c00e4748456484cc47931d3b8e` (the PR #81 merge, whose history retains PR #82). Created a local Task 0 commit and rebased it onto that head; no push, PR creation, merge, deployment, migration, environment, credential, hardware, or production-data action occurred.
+- The rebase produced one documentation-only conflict in `docs/handoffs/SESSION_LOG.md`, where PR #81 and Task 0 both appended handoff entries. Resolved it by retaining both complete histories. Station, public-defect-report, helper-finding-test, and all other product-code overlaps auto-merged with no conflict; the protected PR #82 overlay component was untouched.
+- Post-rebase suite/build validation is in progress before the Task 1 approval checkpoint.
+
+## 2026-07-10 - Cinematic report Task 0 rebase validation completed
+
+- Rebase validation exposed a legacy-read compatibility regression: the hardened public read accepted explicit v0.1/v0.2 bundles but rejected pre-versioning persisted reports. Added a narrow read-only absent-`schemaVersion` branch that preserves the existing sanitizer, asset/evidence filtering, review stripping, and `certifiedClaim` safety gate. It never accepts an explicit unknown version and never invents a schema version, date, certification state, score, confidence, or measurement.
+- Post-rebase validation passed: shared `127/127`; capture-helper `253/253` plus build; database build plus `28/28`; public-report focused `3/3`; frontend `159/159`; Next.js production build; and `git diff --check` (Windows line-ending notices only). Existing non-blocking image-lint/browser-data/Tailwind and React test-render warnings remain unchanged.
+- No hardware command, migration, deployment, restart, environment-variable change, credential/secret access, production database/storage mutation, push, merge, PR creation, or production action was performed.

@@ -116,6 +116,21 @@ function sampleStorageReadyReportBundle(overrides: Partial<typeof SAMPLE_AI_GRAD
     ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
     reportId: "sample-final-v0",
     finalGradeComputed: true,
+    provisionalGrade: {
+      ...SAMPLE_AI_GRADER_REPORT_BUNDLE.provisionalGrade,
+      gradeImpactCandidates: [],
+    },
+    visionLab: {
+      ...SAMPLE_AI_GRADER_REPORT_BUNDLE.visionLab,
+      candidateCount: 0,
+      defectFindings: [],
+      findingValidation: {
+        status: "valid" as const,
+        sourceCandidateCount: 0,
+        publishedFindingCount: 0,
+        issues: [],
+      },
+    },
     assets: [
       {
         id: "front/front-all-on-portrait-display.png",
@@ -125,6 +140,8 @@ function sampleStorageReadyReportBundle(overrides: Partial<typeof SAMPLE_AI_GRAD
         checksumSha256: sha256Hex(imageBytes),
         sha256: sha256Hex(imageBytes),
         byteSize: imageBytes.length,
+        widthPx: 1,
+        heightPx: 1,
       },
     ],
     ...overrides,
@@ -143,7 +160,16 @@ function presignForTest(input: { storageKey: string; contentType: string; checks
   };
 }
 
-function uploadManifestFromPlan(artifacts: Array<{ artifactId: string; storageKey: string; publicUrl?: string; checksumSha256: string; byteSize: number; contentType: string }>) {
+function uploadManifestFromPlan(artifacts: Array<{
+  artifactId: string;
+  storageKey: string;
+  publicUrl?: string;
+  checksumSha256: string;
+  byteSize: number;
+  contentType: string;
+  sourceImageWidthPx?: number;
+  sourceImageHeightPx?: number;
+}>) {
   return {
     artifacts: artifacts.map((artifact) => ({
       artifactId: artifact.artifactId,
@@ -152,6 +178,12 @@ function uploadManifestFromPlan(artifacts: Array<{ artifactId: string; storageKe
       checksumSha256: artifact.checksumSha256,
       byteSize: artifact.byteSize,
       contentType: artifact.contentType,
+      ...(artifact.sourceImageWidthPx && artifact.sourceImageHeightPx
+        ? {
+            sourceImageWidthPx: artifact.sourceImageWidthPx,
+            sourceImageHeightPx: artifact.sourceImageHeightPx,
+          }
+        : {}),
       uploadedAt: "2026-07-06T23:00:00.000Z",
     })),
   };
@@ -1068,6 +1100,8 @@ test("production publish init creates direct storage upload plan without embedde
           contentType: string;
           checksumSha256: string;
           byteSize: number;
+          sourceImageWidthPx?: number;
+          sourceImageHeightPx?: number;
         }>;
       };
       finalizeManifestShape: { uploadManifest: { artifacts: unknown[] } };
@@ -1077,6 +1111,9 @@ test("production publish init creates direct storage upload plan without embedde
   assert.match(body.result.publishSessionId, /^aigpub_/);
   assert.equal(body.result.storageKeyPrefix, "ai-grader/reports/sample-final-v0/");
   assert.equal(body.result.uploadPlan.artifacts.some((artifact) => artifact.artifactClass === "report_asset" && artifact.sourceAssetId), true);
+  const reportAsset = body.result.uploadPlan.artifacts.find((artifact) => artifact.artifactClass === "report_asset");
+  assert.equal(reportAsset?.sourceImageWidthPx, 1);
+  assert.equal(reportAsset?.sourceImageHeightPx, 1);
   for (const artifact of body.result.uploadPlan.artifacts) {
     assert.equal(artifact.uploadHeaders["Content-Type"], artifact.contentType);
     assert.equal(Object.prototype.hasOwnProperty.call(artifact.uploadHeaders, "x-amz-meta-sha256"), false);
@@ -1088,6 +1125,80 @@ test("production publish init creates direct storage upload plan without embedde
   assert.equal(JSON.stringify(body).includes("C:\\TenKings"), false);
   assert.ok(calls.some((call) => call.startsWith("presign:ai-grader/reports/sample-final-v0/report-bundle.json")));
   assert.ok(body.result.finalizeManifestShape.uploadManifest.artifacts.length >= 8);
+});
+
+test("production publish init fails closed when a report asset has no planned pixel dimensions", async () => {
+  const reportBundle = sampleStorageReadyReportBundle();
+  delete (reportBundle.assets?.[0] as { widthPx?: number }).widthPx;
+  delete (reportBundle.assets?.[0] as { heightPx?: number }).heightPx;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async presignUpload(input) {
+      return presignForTest(input);
+    },
+    async persist() {
+      throw new Error("dimensionless report assets must not persist");
+    },
+  });
+
+  const req = mockRequest("POST", ["publish-init"]);
+  req.body = {
+    publicationStatus: "published",
+    reportBundle,
+    productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 400);
+  assert.equal((res.jsonBody as { code?: string }).code, "AI_GRADER_REPORT_IMAGE_DIMENSIONS_REQUIRED");
+  assert.match((res.jsonBody as { message?: string }).message ?? "", /source pixel dimensions/);
+});
+
+test("legacy v0.1 publish init remains available without the post-PR82 finding stamp or image dimensions", async () => {
+  const reportBundle = sampleStorageReadyReportBundle();
+  delete (reportBundle.visionLab as { defectFindings?: unknown }).defectFindings;
+  delete (reportBundle.visionLab as { findingValidation?: unknown }).findingValidation;
+  (reportBundle.visionLab as { candidateCount?: number }).candidateCount = 1;
+  delete (reportBundle.assets?.[0] as { widthPx?: number }).widthPx;
+  delete (reportBundle.assets?.[0] as { heightPx?: number }).heightPx;
+  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async presignUpload(input) {
+      return presignForTest(input);
+    },
+    async persist() {
+      throw new Error("publish init must not persist");
+    },
+  });
+
+  const req = mockRequest("POST", ["publish-init"]);
+  req.body = { publicationStatus: "published", reportBundle, productionRelease };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 200);
+  const body = res.jsonBody as {
+    result: { uploadPlan: { artifacts: Array<{ artifactClass: string; sourceImageWidthPx?: number }> } };
+  };
+  const reportAsset = body.result.uploadPlan.artifacts.find((artifact) => artifact.artifactClass === "report_asset");
+  assert.ok(reportAsset);
+  assert.equal(reportAsset.sourceImageWidthPx, undefined);
 });
 
 test("production publish init rejects bodyBase64, data URLs, local paths, bridge URLs, and token markers", async () => {
@@ -1247,6 +1358,8 @@ test("production publish finalize verifies upload manifest and persists DB recor
         byteSize: input.byteSize,
         contentType: input.contentType,
         checksumSha256: input.checksumSha256,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
       };
     },
     async persist(input) {
@@ -1351,6 +1464,8 @@ test("production publish finalize rejects storage content type mismatch", async 
         byteSize: input.byteSize,
         contentType: "text/plain",
         checksumSha256: input.checksumSha256,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
       };
     },
     async persist() {
@@ -1388,6 +1503,133 @@ test("production publish finalize rejects storage content type mismatch", async 
 
   assert.equal(res.statusCodeValue, 400);
   assert.match((res.jsonBody as { message?: string }).message ?? "", /Storage content type mismatch/);
+});
+
+test("production publish finalize rejects decoded source dimensions that differ from the upload plan", async () => {
+  const reportBundle = sampleStorageReadyReportBundle();
+  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return {
+        user: { id: "admin-1", phone: null, displayName: "Admin" },
+      } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async presignUpload(input) {
+      return presignForTest(input);
+    },
+    async persist() {
+      throw new Error("publish-finalize must not persist mismatched decoded source dimensions");
+    },
+  });
+
+  const initReq = mockRequest("POST", ["publish-init"]);
+  initReq.body = {
+    publicationStatus: "published",
+    reportBundle,
+    productionRelease,
+  };
+  const initRes = mockResponse();
+  await handler(initReq, initRes);
+  assert.equal(initRes.statusCodeValue, 200);
+  const initBody = initRes.jsonBody as {
+    result: {
+      publishSessionId: string;
+      uploadPlan: {
+        artifacts: Array<{
+          artifactId: string;
+          artifactClass: string;
+          storageKey: string;
+          publicUrl?: string;
+          checksumSha256: string;
+          byteSize: number;
+          contentType: string;
+          sourceImageWidthPx?: number;
+          sourceImageHeightPx?: number;
+        }>;
+      };
+    };
+  };
+  const uploadManifest = uploadManifestFromPlan(initBody.result.uploadPlan.artifacts);
+  const reportAsset = uploadManifest.artifacts.find((artifact) => artifact.sourceImageWidthPx !== undefined);
+  assert.ok(reportAsset);
+  reportAsset.sourceImageWidthPx = (reportAsset.sourceImageWidthPx ?? 0) + 1;
+
+  const req = mockRequest("POST", ["publish-finalize"]);
+  req.body = {
+    publicationStatus: "published",
+    reportId: reportBundle.reportId,
+    publishSessionId: initBody.result.publishSessionId,
+    uploadManifest,
+    reportBundle,
+    productionRelease,
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 400);
+  assert.match((res.jsonBody as { message?: string }).message ?? "", /source image dimensions mismatch/);
+});
+
+test("production publish finalize rejects storage-decoded dimensions that differ from the plan", async () => {
+  const reportBundle = sampleStorageReadyReportBundle();
+  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async presignUpload(input) {
+      return presignForTest(input);
+    },
+    async verifyUploadedArtifact(input) {
+      return {
+        ok: true,
+        byteSize: input.byteSize,
+        contentType: input.contentType,
+        checksumSha256: input.checksumSha256,
+        widthPx: input.sourceImageWidthPx === undefined ? undefined : input.sourceImageWidthPx + 1,
+        heightPx: input.sourceImageHeightPx,
+      };
+    },
+    async persist() {
+      throw new Error("publish-finalize must not persist storage-decoded dimension mismatches");
+    },
+  });
+
+  const initReq = mockRequest("POST", ["publish-init"]);
+  initReq.body = { publicationStatus: "published", reportBundle, productionRelease };
+  const initRes = mockResponse();
+  await handler(initReq, initRes);
+  assert.equal(initRes.statusCodeValue, 200);
+  const initBody = initRes.jsonBody as {
+    result: {
+      publishSessionId: string;
+      uploadPlan: { artifacts: Parameters<typeof uploadManifestFromPlan>[0] };
+    };
+  };
+  const req = mockRequest("POST", ["publish-finalize"]);
+  req.body = {
+    publicationStatus: "published",
+    reportId: reportBundle.reportId,
+    publishSessionId: initBody.result.publishSessionId,
+    uploadManifest: uploadManifestFromPlan(initBody.result.uploadPlan.artifacts),
+    reportBundle,
+    productionRelease,
+  };
+  const res = mockResponse();
+  await handler(req, res);
+
+  assert.equal(res.statusCodeValue, 400);
+  assert.match((res.jsonBody as { message?: string }).message ?? "", /Storage-decoded source image dimensions mismatch/);
 });
 
 test("production auth-check verifies current bearer session against AI Grader operator gate", async () => {
@@ -1611,7 +1853,13 @@ test("production publish finalize updates CardAsset linkage when identity is pre
     },
     async verifyUploadedArtifact(input) {
       calls.push(`verify:${input.storageKey}`);
-      return { ok: true, byteSize: input.byteSize, checksumSha256: input.checksumSha256 };
+      return {
+        ok: true,
+        byteSize: input.byteSize,
+        checksumSha256: input.checksumSha256,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
+      };
     },
     async persist(input) {
       calls.push("persist");
@@ -1666,6 +1914,7 @@ test("production publish finalize updates CardAsset linkage when identity is pre
 });
 
 test("production publish init rejects published reports without image asset metadata", async () => {
+  const reportBundle = sampleStorageReadyReportBundle({ assets: [] });
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
@@ -1688,8 +1937,8 @@ test("production publish init rejects published reports without image asset meta
   const req = mockRequest("POST", ["publish-init"]);
   req.body = {
     publicationStatus: "published",
-    reportBundle: SAMPLE_AI_GRADER_REPORT_BUNDLE,
-    productionRelease: buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE),
+    reportBundle,
+    productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
   };
   const res = mockResponse();
   await handler(req, res);
@@ -2742,7 +2991,14 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
     async verifyUploadedArtifact(input) {
       assert.equal(input.byteSize, 5);
       assert.equal(input.checksumSha256, imageChecksum);
-      return { ok: true, byteSize: input.byteSize, checksumSha256: input.checksumSha256, contentType: input.contentType };
+      return {
+        ok: true,
+        byteSize: input.byteSize,
+        checksumSha256: input.checksumSha256,
+        contentType: input.contentType,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
+      };
     },
     async persist() {
       throw new Error("slab upload should not persist production release");

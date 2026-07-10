@@ -4,6 +4,11 @@ export type AiGraderCaptureTimingSide = "front" | "back";
 export type AiGraderCaptureTimingProfile = "full_forensic" | "production_fast";
 export type AiGraderCaptureTriggerMode = "operator" | "auto";
 
+export const AI_GRADER_CAPTURE_PROFILE_VERSIONS: Record<AiGraderCaptureTimingProfile, string> = {
+  full_forensic: "ten-kings-fixed-rig-full-forensic-v1",
+  production_fast: "ten-kings-fixed-rig-production-fast-v1",
+};
+
 export type AiGraderCaptureTimingEventId =
   | "session_started"
   | "preview_stream_started"

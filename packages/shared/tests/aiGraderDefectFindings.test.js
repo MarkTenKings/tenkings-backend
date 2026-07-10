@@ -2,9 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   AI_GRADER_DEFECT_FINDING_VERSION,
+  aiGraderPublishedDefectFindingV1Schema,
+  aiGraderStoredDefectFindingV1Schema,
   isSafeAiGraderPublicAssetId,
   parseAiGraderDefectFindingV1,
   parseAiGraderDefectFindings,
+  parseAiGraderPublishedDefectFindingV1,
+  parseAiGraderPublishedDefectFindings,
 } = require("../dist/aiGraderDefectFindings");
 
 function finding(overrides = {}) {
@@ -13,7 +17,7 @@ function finding(overrides = {}) {
     findingId: "back-surface-001",
     side: "back",
     category: "surface_anomaly",
-    detector: { id: "surface-intelligence", version: "v1" },
+    detector: { id: "surface-intelligence", version: "v1", captureProfileVersion: "capture-v1" },
     severity: { band: "medium" },
     confidence: 0.82,
     review: { status: "unreviewed" },
@@ -30,6 +34,20 @@ function finding(overrides = {}) {
       roiAssetIds: [],
     },
     explanation: "AI-detected provisional surface finding.",
+    ...overrides,
+  };
+}
+
+function publishedFinding(overrides = {}) {
+  const stored = finding();
+  const { overlayAssetId: _overlayAssetId, surfaceVisionAssetId: _surfaceVisionAssetId, ...evidence } = stored.evidence;
+  return {
+    ...stored,
+    geometry: {
+      ...stored.geometry,
+      shape: { kind: "box", x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+    },
+    evidence,
     ...overrides,
   };
 }
@@ -133,4 +151,114 @@ test("defect finding collection enforces its production count bound", () => {
   const parsed = parseAiGraderDefectFindings(Array.from({ length: 101 }, (_, index) => finding({ findingId: `finding-${index}` })));
   assert.equal(parsed.findings.length, 0);
   assert.match(parsed.issues[0].message, /at most 100/);
+});
+
+test("strict stored findings retain private review attribution and reject measurements", () => {
+  const stored = finding({
+    review: {
+      status: "confirmed",
+      reviewedByUserId: "grader-42",
+      reviewedAt: "2026-07-10T15:00:00.000Z",
+    },
+  });
+  assert.equal(aiGraderStoredDefectFindingV1Schema.safeParse(stored).success, true);
+  assert.equal(
+    aiGraderStoredDefectFindingV1Schema.safeParse({
+      ...stored,
+      measurements: { lengthMm: 0.2, calibrationVersion: "cal-v1" },
+    }).success,
+    false,
+  );
+});
+
+test("published finding projection uses kind geometry and excludes reviewer identity", () => {
+  const stored = finding();
+  const published = publishedFinding();
+  assert.equal(aiGraderPublishedDefectFindingV1Schema.safeParse(published).success, true);
+  assert.equal(
+    aiGraderPublishedDefectFindingV1Schema.safeParse({
+      ...published,
+      review: { status: "confirmed", reviewedByUserId: "grader-42" },
+    }).success,
+    false,
+  );
+  assert.equal(aiGraderPublishedDefectFindingV1Schema.safeParse(stored).success, false);
+});
+
+test("strict review metadata matches the declared status", () => {
+  const stored = finding();
+  assert.equal(
+    aiGraderStoredDefectFindingV1Schema.safeParse({
+      ...stored,
+      review: { status: "unreviewed", reviewedAt: "2026-07-10T15:00:00.000Z" },
+    }).success,
+    false,
+  );
+  assert.equal(
+    aiGraderStoredDefectFindingV1Schema.safeParse({
+      ...stored,
+      review: { status: "confirmed", reviewedAt: "2026-07-10T15:00:00.000Z" },
+    }).success,
+    false,
+  );
+
+  const published = publishedFinding();
+  assert.equal(
+    aiGraderPublishedDefectFindingV1Schema.safeParse({
+      ...published,
+      review: { status: "confirmed" },
+    }).success,
+    false,
+  );
+  assert.equal(
+    aiGraderPublishedDefectFindingV1Schema.safeParse({
+      ...published,
+      review: { status: "adjusted", reviewedAt: "2026-07-10T15:00:00.000Z" },
+    }).success,
+    true,
+  );
+});
+
+test("published physical measurements are positive, versioned, and nonempty", () => {
+  const published = publishedFinding();
+  assert.equal(
+    aiGraderPublishedDefectFindingV1Schema.safeParse({
+      ...published,
+      measurements: { lengthMm: 0.2, calibrationVersion: "cal-v1" },
+    }).success,
+    true,
+  );
+  for (const measurements of [
+    { calibrationVersion: "cal-v1" },
+    { lengthMm: 0, calibrationVersion: "cal-v1" },
+    { lengthMm: 0.2 },
+  ]) {
+    assert.equal(aiGraderPublishedDefectFindingV1Schema.safeParse({ ...published, measurements }).success, false);
+  }
+});
+
+test("strict v0.2 finding schemas require capture-profile detector metadata", () => {
+  const stored = finding({ detector: { id: "surface-intelligence", version: "v1" } });
+  assert.equal(aiGraderStoredDefectFindingV1Schema.safeParse(stored).success, false);
+
+  const published = publishedFinding({ detector: stored.detector });
+  assert.equal(aiGraderPublishedDefectFindingV1Schema.safeParse(published).success, false);
+  assert.equal(parseAiGraderDefectFindingV1(stored).success, true, "legacy v0.1 parser remains compatible");
+});
+
+test("published finding wrappers enforce dynamic asset membership and unique IDs", () => {
+  const published = publishedFinding();
+  const knownAssetIds = new Set([
+    "back/back-normalized-card.png",
+    "report/back-heatmap.png",
+  ]);
+  assert.equal(parseAiGraderPublishedDefectFindingV1(published, { knownAssetIds, requireTrueViewAsset: true }).success, true);
+  assert.equal(parseAiGraderPublishedDefectFindingV1(published, { knownAssetIds: new Set() }).success, false);
+
+  const collection = parseAiGraderPublishedDefectFindings([
+    published,
+    { ...published, findingId: published.findingId.toUpperCase() },
+  ], { knownAssetIds });
+  assert.equal(collection.findings.length, 1);
+  assert.match(collection.issues[0].message, /unique case-insensitively/);
 });
