@@ -30,12 +30,63 @@ export type AiGraderStationBridgeActionRequestBody = {
   captureProfile?: AiGraderCaptureProfile;
   captureTriggerAt?: string;
   captureTriggerMode?: "operator" | "auto";
+  geometryCaptureMode?: "detected_geometry" | "manual_capture";
+  manualGeometryRect?: AiGraderManualGeometryRect;
   rapidCaptureEnabled?: boolean;
   queueItemId?: string;
 };
 
+export type AiGraderManualGeometryRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  imageWidth: number;
+  imageHeight: number;
+  coordinateFrame: "portrait_preview_pixels";
+};
+
 export function buildAiGraderCaptureProfileRequest(captureProfile: AiGraderCaptureProfile) {
   return { captureProfile } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderDetectedGeometryCaptureRequest(input: {
+  captureTriggerAt: string;
+  captureTriggerMode: "operator" | "auto";
+}) {
+  return {
+    ...input,
+    geometryCaptureMode: "detected_geometry" as const,
+  } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderManualGeometryCaptureRequest(input: {
+  captureTriggerAt: string;
+  manualGeometryRect: AiGraderManualGeometryRect;
+}) {
+  const rect = input.manualGeometryRect;
+  const values = [rect.x, rect.y, rect.width, rect.height, rect.imageWidth, rect.imageHeight];
+  if (values.some((value) => !Number.isFinite(value))) {
+    throw new Error("AI Grader manual geometry rectangle values must be finite.");
+  }
+  if (
+    rect.x < 0 ||
+    rect.y < 0 ||
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    rect.imageWidth <= 0 ||
+    rect.imageHeight <= 0 ||
+    rect.x + rect.width > rect.imageWidth ||
+    rect.y + rect.height > rect.imageHeight
+  ) {
+    throw new Error("AI Grader manual geometry rectangle must remain inside the portrait preview frame.");
+  }
+  return {
+    captureTriggerAt: input.captureTriggerAt,
+    captureTriggerMode: "operator" as const,
+    geometryCaptureMode: "manual_capture" as const,
+    manualGeometryRect: { ...rect },
+  } satisfies AiGraderStationBridgeActionRequestBody;
 }
 
 export function buildAiGraderRapidCaptureConfigurationRequest(rapidCaptureEnabled: boolean) {

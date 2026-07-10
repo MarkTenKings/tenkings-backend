@@ -169,6 +169,16 @@ export interface AiGraderLocalStationAcceptedProfile {
 }
 
 export type AiGraderWarmRunnerSide = "front" | "back";
+export type AiGraderGeometryCaptureMode = "detected_geometry" | "manual_capture";
+export interface AiGraderManualGeometryRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  imageWidth: number;
+  imageHeight: number;
+  coordinateFrame: "portrait_preview_pixels" | "basler_sensor_pixels";
+}
 export type AiGraderWarmRunnerPhaseStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
 export type AiGraderWarmRunnerExecutionPath = "warm_full_forensic_runner" | "cold_command_fallback";
 export type AiGraderWarmRunnerStatusName =
@@ -218,8 +228,8 @@ export interface AiGraderWarmRunnerStatus {
   mode: "full_forensic";
   backend: AiGraderWarmRunnerExecutionPath;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   status: AiGraderWarmRunnerStatusName;
   sessionId?: string;
   activeSide?: AiGraderWarmRunnerSide;
@@ -264,8 +274,8 @@ export interface AiGraderWarmRunnerStatus {
     stretchTargetMs: 60000;
     measuredTotalMs?: number;
   };
-  fallback: {
-    available: true;
+  coldDebugMode: {
+    configured: boolean;
     active: boolean;
     reason?: string;
   };
@@ -275,7 +285,7 @@ export interface AiGraderWarmRunnerStatus {
     safeOffOnFailure: true;
     safeOffOnCancellation: true;
     safeOffOnSessionEnd: true;
-    fallbackToColdPath: true;
+    explicitColdDebugModeOnly: true;
     publicRouteExposed: false;
     productionServiceTokenUsed: false;
     persistentBaslerSaved: false;
@@ -380,14 +390,16 @@ export interface AiGraderLocalStationBridgeManifest {
   captureProfile: FixedRigCaptureProfile;
   captureProfileGuard: {
     stationSettingRequired: true;
-    selectedExplicitly: boolean;
+    selectionSource: "bridge_default" | "operator_setting" | "rapid_continuation";
+    productionFastOptIn: boolean;
     fullForensicEvidencePreserved: true;
-    fullForensicFallback: "full_forensic";
+    availableCaptureProfiles: ["full_forensic", "production_fast"];
+    previousStableProfile: "full_forensic";
     fiveSecondTargetProven: boolean;
   };
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   confirmations: {
     lightIdleOff: boolean;
     fixtureRulersVisible: boolean;
@@ -440,6 +452,35 @@ export interface AiGraderLocalStationBridgeManifest {
     captureBatch: boolean;
     processedManifest: boolean;
   }>;
+  captureFailure?: {
+    side: AiGraderWarmRunnerSide;
+    stage: "warm_capture";
+    message: string;
+    at: string;
+    retryRequired: true;
+    automaticColdFallbackAttempted: false;
+  };
+  geometryCaptureDecisions: Partial<Record<AiGraderWarmRunnerSide, {
+    mode: AiGraderGeometryCaptureMode;
+    placementState: CardPlacementState;
+    timestamp: string;
+    explicitOperatorAction: boolean;
+    detectionUsed: boolean;
+    manualOverrideUsed: boolean;
+    manualBoundaryRect?: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      coordinateFrame: "basler_sensor_pixels";
+    };
+    manualGeometrySource?: {
+      coordinateFrame: AiGraderManualGeometryRect["coordinateFrame"];
+      imageWidth: number;
+      imageHeight: number;
+    };
+    sourceFrameId?: string;
+  }>>;
   rapidCapture: {
     enabled: boolean;
     queueItemId?: string;
@@ -522,8 +563,8 @@ export interface AiGraderLocalStationTimingEntry {
 export interface AiGraderLocalStationTimingSummary {
   totalCommandMs: number;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   bridgeActionOverheadMs: number;
   captureCommandMs: number;
   reportGenerationMs: number;
@@ -727,6 +768,8 @@ export interface AiGraderLocalStationBridgeActionRequest {
   queueItemId?: string;
   captureTriggerMode?: AiGraderCaptureTriggerMode;
   captureTriggerAt?: string;
+  geometryCaptureMode?: AiGraderGeometryCaptureMode;
+  manualGeometryRect?: AiGraderManualGeometryRect;
 }
 
 export interface StartedAiGraderLocalStationBridge {
@@ -957,8 +1000,10 @@ function mockPreviewGeometry(side: CardGeometrySide, frameIndex: number, timesta
     side,
     placementState,
     geometrySource: detected ? "detected" : "none",
+    captureMode: detected ? "automatic_detection" : "none",
+    confidenceBasis: detected ? "automatic_detection" : "none",
     detectionUsed: detected,
-    manualFallbackUsed: false,
+    manualOverrideUsed: false,
     corners,
     detectedCorners: corners,
     boundingBox: box,
@@ -1053,6 +1098,55 @@ function parseCaptureTriggerMode(value: AiGraderCaptureTriggerMode | undefined):
   if (value === undefined || value === "operator") return "operator";
   if (value === "auto") return "auto";
   throw new Error("AI Grader capture trigger mode must be operator or auto.");
+}
+
+function normalizeManualGeometryRect(input: AiGraderManualGeometryRect | undefined) {
+  if (!input || (
+    input.coordinateFrame !== "portrait_preview_pixels"
+    && input.coordinateFrame !== "basler_sensor_pixels"
+  )) {
+    throw new Error("AI Grader manual_capture requires manualGeometryRect with an explicit portrait_preview_pixels or basler_sensor_pixels coordinateFrame.");
+  }
+  const values = [input.x, input.y, input.width, input.height, input.imageWidth, input.imageHeight];
+  if (!values.every(Number.isFinite)
+    || input.x < 0
+    || input.y < 0
+    || input.width <= 0
+    || input.height <= 0
+    || input.imageWidth <= 0
+    || input.imageHeight <= 0
+    || input.x + input.width > input.imageWidth
+    || input.y + input.height > input.imageHeight) {
+    throw new Error("AI Grader manualGeometryRect must be a positive rectangle contained within its declared source image dimensions.");
+  }
+  const roundPixel = (value: number) => Math.round(value * 1000) / 1000;
+  const rawRect = input.coordinateFrame === "portrait_preview_pixels"
+    ? {
+        x: input.y,
+        y: input.imageWidth - input.x - input.width,
+        width: input.height,
+        height: input.width,
+      }
+    : {
+        x: input.x,
+        y: input.y,
+        width: input.width,
+        height: input.height,
+      };
+  return {
+    rawRect: {
+      x: roundPixel(rawRect.x),
+      y: roundPixel(rawRect.y),
+      width: roundPixel(rawRect.width),
+      height: roundPixel(rawRect.height),
+      coordinateFrame: "basler_sensor_pixels" as const,
+    },
+    source: {
+      coordinateFrame: input.coordinateFrame,
+      imageWidth: roundPixel(input.imageWidth),
+      imageHeight: roundPixel(input.imageHeight),
+    },
+  };
 }
 
 function validatedCaptureTriggerAt(value: string | undefined, actionReceivedAt: string): string {
@@ -1170,11 +1264,15 @@ export function buildAiGraderLocalStationBridgeConfig(
   const exposureUs = input.exposureUs ?? Number(env.AI_GRADER_STATION_EXPOSURE_US ?? FIXED_RIG_SELECTED_EXPOSURE_US);
   const gain = input.gain ?? Number(env.AI_GRADER_STATION_GAIN ?? FIXED_RIG_SELECTED_GAIN);
   const duty = input.duty ?? Number(env.AI_GRADER_STATION_DUTY_PERCENT ?? FIXED_RIG_SELECTED_LEIMAC_DUTY);
+  const warmRunnerDisabled = input.warmRunnerDisabled ?? debugFlagEnabled(env.AI_GRADER_WARM_RUNNER_DISABLED);
   if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
     throw new Error("AI Grader station bridge exposure must be an integer from 1 to 100000 us.");
   }
   if (!Number.isFinite(gain) || gain < 0) throw new Error("AI Grader station bridge gain must be non-negative.");
   if (!Number.isFinite(duty) || duty < 0 || duty > 5) throw new Error("AI Grader station bridge duty must be from 0 to 5 percent.");
+  if (warmRunnerDisabled && captureProfile === "production_fast") {
+    throw new Error("AI Grader production_fast cannot run with explicit cold debug mode; select full_forensic or enable the warm runner.");
+  }
   return {
     enabled,
     host: normalizeHost(firstNonEmpty(input.host, env.AI_GRADER_STATION_BRIDGE_HOST)),
@@ -1203,7 +1301,7 @@ export function buildAiGraderLocalStationBridgeConfig(
     exposureUs,
     gain,
     duty,
-    warmRunnerDisabled: input.warmRunnerDisabled ?? debugFlagEnabled(env.AI_GRADER_WARM_RUNNER_DISABLED),
+    warmRunnerDisabled,
     captureProfile,
     fixtureLabel: input.fixtureLabel,
     fixtureId: input.fixtureId,
@@ -1219,6 +1317,7 @@ export function buildAiGraderLocalStationBridgeConfig(
 }
 
 function newManifest(config: AiGraderLocalStationBridgeConfig, rapidCaptureEnabled = false, startedAt = new Date().toISOString()): AiGraderLocalStationBridgeManifest {
+  const captureProfile: FixedRigCaptureProfile = config.captureProfile;
   return {
     schemaVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
     stationId: "local-dell-ai-grader-station",
@@ -1226,17 +1325,19 @@ function newManifest(config: AiGraderLocalStationBridgeConfig, rapidCaptureEnabl
     mode: config.mode,
     updatedAt: startedAt,
     acceptedProfile: defaultProfile(config),
-    captureProfile: config.captureProfile,
+    captureProfile,
     captureProfileGuard: {
       stationSettingRequired: true,
-      selectedExplicitly: config.captureProfile === "production_fast",
+      selectionSource: "bridge_default",
+      productionFastOptIn: captureProfile === "production_fast",
       fullForensicEvidencePreserved: true,
-      fullForensicFallback: "full_forensic",
+      availableCaptureProfiles: ["full_forensic", "production_fast"],
+      previousStableProfile: "full_forensic",
       fiveSecondTargetProven: false,
     },
     executionPath: config.warmRunnerDisabled ? "cold_command_fallback" : "warm_full_forensic_runner",
-    fallbackUsed: config.warmRunnerDisabled,
-    ...(config.warmRunnerDisabled ? { fallbackReason: "Warm runner disabled by explicit debug flag." } : {}),
+    explicitColdDebugModeUsed: config.warmRunnerDisabled,
+    ...(config.warmRunnerDisabled ? { explicitColdDebugReason: "Warm runner disabled by explicit debug flag before capture." } : {}),
     confirmations: {
       lightIdleOff: false,
       fixtureRulersVisible: false,
@@ -1272,7 +1373,7 @@ function newManifest(config: AiGraderLocalStationBridgeConfig, rapidCaptureEnabl
         : "Mock bridge mode is active; hardware success is not claimed.",
     ],
     captureTiming: createAiGraderCaptureTimingMetadata({
-      captureProfile: config.captureProfile,
+      captureProfile,
       hardwareMeasurement: false,
       startedAt,
     }),
@@ -1280,6 +1381,7 @@ function newManifest(config: AiGraderLocalStationBridgeConfig, rapidCaptureEnabl
       front: { captureBatch: false, processedManifest: false },
       back: { captureBatch: false, processedManifest: false },
     },
+    geometryCaptureDecisions: {},
     rapidCapture: {
       enabled: rapidCaptureEnabled,
       workflowHistory: [],
@@ -1308,14 +1410,14 @@ function fullForensicEvidenceRoles(status: AiGraderWarmRunnerPhaseStatus = "pend
 }
 
 function defaultWarmRunnerStatus(config?: Pick<AiGraderLocalStationBridgeConfig, "warmRunnerDisabled">): AiGraderWarmRunnerStatus {
-  const fallbackDisabled = config?.warmRunnerDisabled === true;
+  const coldDebugConfigured = config?.warmRunnerDisabled === true;
   return {
     enabled: true,
     mode: "full_forensic",
-    backend: fallbackDisabled ? "cold_command_fallback" : "warm_full_forensic_runner",
-    executionPath: fallbackDisabled ? "cold_command_fallback" : "warm_full_forensic_runner",
-    fallbackUsed: fallbackDisabled,
-    ...(fallbackDisabled ? { fallbackReason: "Warm runner disabled by explicit debug flag." } : {}),
+    backend: coldDebugConfigured ? "cold_command_fallback" : "warm_full_forensic_runner",
+    executionPath: coldDebugConfigured ? "cold_command_fallback" : "warm_full_forensic_runner",
+    explicitColdDebugModeUsed: coldDebugConfigured,
+    ...(coldDebugConfigured ? { explicitColdDebugReason: "Warm runner disabled by explicit debug flag before capture." } : {}),
     status: "idle",
     captureLock: {
       held: false,
@@ -1353,10 +1455,10 @@ function defaultWarmRunnerStatus(config?: Pick<AiGraderLocalStationBridgeConfig,
       targetTotalMaxMs: 150000,
       stretchTargetMs: 60000,
     },
-    fallback: {
-      available: true,
-      active: fallbackDisabled,
-      ...(fallbackDisabled ? { reason: "Warm runner disabled by explicit debug flag." } : {}),
+    coldDebugMode: {
+      configured: coldDebugConfigured,
+      active: coldDebugConfigured,
+      ...(coldDebugConfigured ? { reason: "Warm runner disabled by explicit debug flag." } : {}),
     },
     safety: {
       captureLock: true,
@@ -1364,15 +1466,15 @@ function defaultWarmRunnerStatus(config?: Pick<AiGraderLocalStationBridgeConfig,
       safeOffOnFailure: true,
       safeOffOnCancellation: true,
       safeOffOnSessionEnd: true,
-      fallbackToColdPath: true,
+      explicitColdDebugModeOnly: true,
       publicRouteExposed: false,
       productionServiceTokenUsed: false,
       persistentBaslerSaved: false,
       persistentLeimacSaved: false,
     },
     note:
-      fallbackDisabled
-        ? "Full forensic evidence remains the default, but this run is explicitly using the cold command fallback because the warm runner was disabled by debug flag."
+      coldDebugConfigured
+        ? "This debug-only run explicitly uses the cold command path because the warm runner was disabled. It cannot use production_fast or prove the five-second target."
         : "Full forensic evidence remains the default. Speed comes from the bridge-owned warm full forensic runner, persistent side-batch camera ownership, state-aware Leimac writes, capture/process/report queues, preview locking, and safe cleanup.",
   };
 }
@@ -1572,7 +1674,6 @@ function commandInput(config: AiGraderLocalStationBridgeConfig, manifest: AiGrad
     verticalSpanMm: config.verticalSpanMm,
     verticalStartPx: config.verticalStartPx,
     verticalEndPx: config.verticalEndPx,
-    cardBoundaryRect: config.cardBoundaryRect,
   };
 }
 
@@ -1801,8 +1902,8 @@ function timingSummary(results: AiGraderStationCommandResult[], warmRunnerStatus
   return {
     totalCommandMs,
     executionPath: warmRunnerStatus?.executionPath ?? "warm_full_forensic_runner",
-    fallbackUsed: warmRunnerStatus?.fallbackUsed ?? false,
-    ...(warmRunnerStatus?.fallbackReason ? { fallbackReason: warmRunnerStatus.fallbackReason } : {}),
+    explicitColdDebugModeUsed: warmRunnerStatus?.explicitColdDebugModeUsed ?? false,
+    ...(warmRunnerStatus?.explicitColdDebugReason ? { explicitColdDebugReason: warmRunnerStatus.explicitColdDebugReason } : {}),
     bridgeActionOverheadMs: 0,
     captureCommandMs: durationFor(["operator_preview", "capture_front", "capture_back"]),
     reportGenerationMs,
@@ -1812,7 +1913,7 @@ function timingSummary(results: AiGraderStationCommandResult[], warmRunnerStatus
     phaseBreakdown,
     targetInterCaptureNote:
       warmRunnerStatus?.executionPath === "cold_command_fallback"
-        ? "Cold command fallback was used. This run preserves full evidence but does not count for warm-runner speed acceptance."
+        ? "Explicit cold debug mode was configured before capture. This run does not count for production_fast or five-second speed acceptance."
         : "Warm full forensic runner is active with bridge-owned capture/process/report phases and full forensic evidence preserved.",
   };
 }
@@ -2028,12 +2129,6 @@ const defaultWarmForensicRunner: AiGraderWarmForensicRunner = {
   captureSide: captureFixedRigWarmSideBatch,
   processSide: processFixedRigWarmSideBatch,
 };
-
-function warmFailureAllowsColdFallback(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const candidate = error as { safeToFallback?: unknown; capturesStarted?: unknown };
-  return candidate.safeToFallback === true && candidate.capturesStarted === false;
-}
 
 const RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
 const RAPID_CAPTURE_QUEUE_LIMIT = 25;
@@ -2274,6 +2369,26 @@ export class AiGraderLocalStationBridgeService {
     return cloneAiGraderCaptureTiming(this.ensureCaptureTiming(manifest)) as unknown as Record<string, any>;
   }
 
+  private geometryCaptureDecisionSnapshot(manifest: AiGraderLocalStationBridgeManifest): Record<string, any> {
+    const snapshot: Record<string, any> = {};
+    for (const side of ["front", "back"] as const) {
+      const decision = manifest.geometryCaptureDecisions?.[side];
+      if (!decision) continue;
+      snapshot[side] = {
+        mode: decision.mode,
+        placementState: decision.placementState,
+        timestamp: decision.timestamp,
+        explicitOperatorAction: decision.explicitOperatorAction,
+        detectionUsed: decision.detectionUsed,
+        manualOverrideUsed: decision.manualOverrideUsed,
+        ...(decision.manualBoundaryRect ? { manualBoundaryRect: { ...decision.manualBoundaryRect } } : {}),
+        ...(decision.manualGeometrySource ? { manualGeometrySource: { ...decision.manualGeometrySource } } : {}),
+        ...(decision.sourceFrameId ? { sourceFrameId: decision.sourceFrameId } : {}),
+      };
+    }
+    return snapshot;
+  }
+
   private async captureTimingSnapshotForReport(reportId: string, sessionDir?: string): Promise<Record<string, any> | undefined> {
     if (this.manifest.reportId === reportId) return this.captureTimingSnapshot(this.manifest);
     for (const queued of this.queuedManifests.values()) {
@@ -2282,6 +2397,77 @@ export class AiGraderLocalStationBridgeService {
     if (!sessionDir) return undefined;
     const persisted = await readJsonFile(path.join(sessionDir, "station-session.json")) as AiGraderLocalStationBridgeManifest | undefined;
     return persisted?.reportId === reportId ? this.captureTimingSnapshot(persisted) : undefined;
+  }
+
+  private async geometryCaptureDecisionSnapshotForReport(reportId: string, sessionDir?: string): Promise<Record<string, any> | undefined> {
+    if (this.manifest.reportId === reportId) return this.geometryCaptureDecisionSnapshot(this.manifest);
+    for (const queued of this.queuedManifests.values()) {
+      if (queued.reportId === reportId) return this.geometryCaptureDecisionSnapshot(queued);
+    }
+    if (!sessionDir) return undefined;
+    const persisted = await readJsonFile(path.join(sessionDir, "station-session.json")) as AiGraderLocalStationBridgeManifest | undefined;
+    return persisted?.reportId === reportId ? this.geometryCaptureDecisionSnapshot(persisted) : undefined;
+  }
+
+  private recordGeometryCaptureDecision(
+    manifest: AiGraderLocalStationBridgeManifest,
+    side: AiGraderWarmRunnerSide,
+    request: Pick<AiGraderLocalStationBridgeActionRequest, "captureTriggerMode" | "geometryCaptureMode" | "manualGeometryRect">,
+    timestamp: string
+  ) {
+    const triggerMode = parseCaptureTriggerMode(request.captureTriggerMode);
+    const requestedMode = request.geometryCaptureMode ?? "detected_geometry";
+    if (requestedMode !== "detected_geometry" && requestedMode !== "manual_capture") {
+      throw new Error("AI Grader geometry capture mode must be detected_geometry or manual_capture.");
+    }
+    const geometry = manifest.previewStatus.cardGeometry[side];
+    const placementState = geometry?.placementState ?? "not_detected";
+    const detectedCorners = geometry?.detectedCorners ?? geometry?.corners;
+    const detectedPoints = detectedCorners
+      ? [detectedCorners.topLeft, detectedCorners.topRight, detectedCorners.bottomRight, detectedCorners.bottomLeft]
+      : [];
+    const validDetectedGeometry = placementState === "ready"
+      && geometry?.geometrySource === "detected"
+      && geometry.detectionUsed === true
+      && geometry.manualOverrideUsed !== true
+      && detectedPoints.length === 4
+      && detectedPoints.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+      && Boolean(geometry.boundingBox)
+      && Number.isFinite(geometry.boundingBox?.x)
+      && Number.isFinite(geometry.boundingBox?.y)
+      && Number.isFinite(geometry.boundingBox?.width)
+      && Number.isFinite(geometry.boundingBox?.height)
+      && Number(geometry.boundingBox?.width) > 0
+      && Number(geometry.boundingBox?.height) > 0;
+    if (triggerMode === "auto" && requestedMode === "manual_capture") {
+      throw new Error("AI Grader auto-capture cannot use manual_capture; wait for a Ready detected-geometry state.");
+    }
+    if (requestedMode === "detected_geometry" && !validDetectedGeometry) {
+      throw new Error(`AI Grader ${side} capture requires a valid Ready detected-geometry state; current state is ${placementState}. Use an explicit operator manual_capture action with a confirmed overlay boundary.`);
+    }
+    if (requestedMode === "manual_capture" && triggerMode !== "operator") {
+      throw new Error("AI Grader manual_capture requires an explicit operator capture action.");
+    }
+    const normalizedManualGeometry = requestedMode === "manual_capture"
+      ? normalizeManualGeometryRect(request.manualGeometryRect)
+      : undefined;
+    const sourceFrameId = typeof geometry?.sourceFrameId === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(geometry.sourceFrameId)
+      ? geometry.sourceFrameId
+      : undefined;
+    manifest.geometryCaptureDecisions[side] = {
+      mode: requestedMode,
+      placementState,
+      timestamp,
+      explicitOperatorAction: requestedMode === "manual_capture",
+      detectionUsed: requestedMode === "detected_geometry" && geometry?.detectionUsed === true,
+      manualOverrideUsed: requestedMode === "manual_capture",
+      ...(normalizedManualGeometry ? { manualBoundaryRect: normalizedManualGeometry.rawRect } : {}),
+      ...(normalizedManualGeometry ? { manualGeometrySource: normalizedManualGeometry.source } : {}),
+      ...(sourceFrameId ? { sourceFrameId } : {}),
+    };
+    manifest.progressLog.push(
+      `${timestamp} ${side} capture geometry decision: ${requestedMode} at ${placementState}${requestedMode === "manual_capture" ? "; explicit operator-confirmed overlay boundary will normalize this side" : ""}.`
+    );
   }
 
   private recordProcessedSideTiming(
@@ -2527,20 +2713,23 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private async createFreshSession(
-    request: Pick<AiGraderLocalStationBridgeActionRequest, "reportId" | "captureProfile">,
-    now = new Date().toISOString()
+    request: { reportId?: string; captureProfile: FixedRigCaptureProfile },
+    now = new Date().toISOString(),
+    selectionSource: AiGraderLocalStationBridgeManifest["captureProfileGuard"]["selectionSource"] = "operator_setting"
   ) {
     if (this.captureLock) {
       throw new Error(`Cannot start a new card while capture lock is held by ${this.captureLock.owner}.`);
+    }
+    if (this.config.warmRunnerDisabled && request.captureProfile === "production_fast") {
+      throw new Error("AI Grader production_fast cannot run with explicit cold debug mode; select full_forensic or enable the warm runner.");
     }
     const { packageId, packageDir } = await createFixedRigPackageDir(this.config.outputDir, "ai-grader-browser-station-session");
     this.releaseFullForensicPreviewHold("new station session started");
     this.clearLiveLightingWatchdog();
     const manifest = newManifest(this.config, this.rapidQueue.rapidCaptureEnabled, now);
-    if (request.captureProfile) {
-      manifest.captureProfile = parseCaptureProfile(request.captureProfile);
-      manifest.captureProfileGuard.selectedExplicitly = request.captureProfile === "production_fast";
-    }
+    manifest.captureProfile = parseCaptureProfile(request.captureProfile);
+    manifest.captureProfileGuard.selectionSource = selectionSource;
+    manifest.captureProfileGuard.productionFastOptIn = request.captureProfile === "production_fast";
     manifest.captureTiming = createAiGraderCaptureTimingMetadata({
       captureProfile: manifest.captureProfile,
       hardwareMeasurement: false,
@@ -2570,7 +2759,7 @@ export class AiGraderLocalStationBridgeService {
       backend: manifest.executionPath,
       executionPath: manifest.executionPath,
       detail: manifest.executionPath === "cold_command_fallback"
-        ? "Bridge-owned session initialized with cold fallback explicitly selected by debug flag."
+        ? "Bridge-owned session initialized with the explicit cold debug command path."
         : "Bridge-owned warm session initialized; Basler/Leimac ownership will be serialized through the capture lock.",
     }, manifest);
     manifest.warmRunnerStatus.status = "idle";
@@ -2597,6 +2786,7 @@ export class AiGraderLocalStationBridgeService {
             reportId: manifest.reportId,
             publicBasePath: this.config.publicBasePath,
             captureTiming: this.captureTimingSnapshot(manifest),
+            geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(manifest),
           });
           manifest.outputs.reportBundlePath = bundle.bundlePath;
           manifest.outputs.publishPackageDir = bundle.outputDir;
@@ -2712,7 +2902,7 @@ export class AiGraderLocalStationBridgeService {
     await writeSessionManifest(snapshot);
     await this.persistRapidQueue();
     this.enqueueRapidFinalization(queueItemId);
-    await this.createFreshSession({ captureProfile: snapshot.captureProfile });
+    await this.createFreshSession({ captureProfile: snapshot.captureProfile }, new Date().toISOString(), "rapid_continuation");
   }
 
   private async activateRapidQueueItem(queueItemId: string) {
@@ -3285,22 +3475,26 @@ export class AiGraderLocalStationBridgeService {
     manifest.warmRunnerStatus.evidencePlan.rolesBySide[side] = fullForensicEvidenceRoles(status);
   }
 
-  private setExecutionPath(pathName: AiGraderWarmRunnerExecutionPath, fallbackReason?: string, manifest: AiGraderLocalStationBridgeManifest = this.manifest) {
+  private setExecutionPath(pathName: AiGraderWarmRunnerExecutionPath, coldDebugReason?: string, manifest: AiGraderLocalStationBridgeManifest = this.manifest) {
     manifest.executionPath = pathName;
-    manifest.fallbackUsed = pathName === "cold_command_fallback";
-    if (fallbackReason) manifest.fallbackReason = fallbackReason;
-    else delete manifest.fallbackReason;
+    manifest.explicitColdDebugModeUsed = pathName === "cold_command_fallback";
+    if (coldDebugReason) manifest.explicitColdDebugReason = coldDebugReason;
+    else delete manifest.explicitColdDebugReason;
     manifest.warmRunnerStatus.backend = pathName;
     manifest.warmRunnerStatus.executionPath = pathName;
-    manifest.warmRunnerStatus.fallbackUsed = pathName === "cold_command_fallback";
-    if (fallbackReason) manifest.warmRunnerStatus.fallbackReason = fallbackReason;
-    else delete manifest.warmRunnerStatus.fallbackReason;
-    manifest.warmRunnerStatus.fallback.active = pathName === "cold_command_fallback";
-    if (fallbackReason) manifest.warmRunnerStatus.fallback.reason = fallbackReason;
-    else delete manifest.warmRunnerStatus.fallback.reason;
+    manifest.warmRunnerStatus.explicitColdDebugModeUsed = pathName === "cold_command_fallback";
+    if (coldDebugReason) manifest.warmRunnerStatus.explicitColdDebugReason = coldDebugReason;
+    else delete manifest.warmRunnerStatus.explicitColdDebugReason;
+    manifest.warmRunnerStatus.coldDebugMode.configured = this.config.warmRunnerDisabled;
+    manifest.warmRunnerStatus.coldDebugMode.active = pathName === "cold_command_fallback";
+    if (coldDebugReason) manifest.warmRunnerStatus.coldDebugMode.reason = coldDebugReason;
+    else delete manifest.warmRunnerStatus.coldDebugMode.reason;
   }
 
   private buildWarmEvidenceInput(side: AiGraderWarmRunnerSide, manifest: AiGraderLocalStationBridgeManifest = this.manifest): FixedRigWarmEvidencePackageInput {
+    const manualBoundaryRect = manifest.geometryCaptureDecisions?.[side]?.mode === "manual_capture"
+      ? manifest.geometryCaptureDecisions[side]?.manualBoundaryRect
+      : undefined;
     return {
       outputDir: this.config.outputDir,
       side: side as FixedRigCardSide,
@@ -3324,7 +3518,18 @@ export class AiGraderLocalStationBridgeService {
       verticalSpanMm: this.config.verticalSpanMm,
       verticalStartPx: this.config.verticalStartPx,
       verticalEndPx: this.config.verticalEndPx,
-      cardBoundaryRect: this.config.cardBoundaryRect,
+      ...(manualBoundaryRect ? {
+        manualGeometryOverride: {
+          action: "manual_capture",
+          confirmed: true,
+          rect: {
+            x: manualBoundaryRect.x,
+            y: manualBoundaryRect.y,
+            width: manualBoundaryRect.width,
+            height: manualBoundaryRect.height,
+          },
+        },
+      } : {}),
     };
   }
 
@@ -3340,7 +3545,7 @@ export class AiGraderLocalStationBridgeService {
       payload: {
         ok: true,
         executionPath: "warm_full_forensic_runner",
-        fallbackUsed: false,
+        explicitColdDebugModeUsed: false,
         captureProfile: this.manifest.captureProfile,
         packageDir,
         manifestPath: result.manifestPath,
@@ -3368,13 +3573,15 @@ export class AiGraderLocalStationBridgeService {
   private async runSafeOffCleanup(reason: string): Promise<void> {
     if (this.config.mode !== "real") return;
     const cleanupStartedAt = new Date().toISOString();
+    const cleanupExecutionPath = this.manifest.executionPath;
     this.manifest.warmRunnerStatus.status = "safe_off";
     this.markWarmPhase({
       id: "warm_safe_cleanup",
       label: "Watchdog safe-off cleanup",
       status: "active",
       startedAt: cleanupStartedAt,
-      backend: "cold_command_fallback",
+      backend: cleanupExecutionPath,
+      executionPath: cleanupExecutionPath,
       detail: reason,
     });
     try {
@@ -3388,7 +3595,8 @@ export class AiGraderLocalStationBridgeService {
         label: "Watchdog safe-off cleanup",
         status: result.ok ? "completed" : "failed",
         startedAt: cleanupStartedAt,
-        backend: "cold_command_fallback",
+        backend: cleanupExecutionPath,
+        executionPath: cleanupExecutionPath,
         detail: reason,
       });
     } catch (error) {
@@ -3399,18 +3607,19 @@ export class AiGraderLocalStationBridgeService {
         label: "Watchdog safe-off cleanup",
         status: "failed",
         startedAt: cleanupStartedAt,
-        backend: "cold_command_fallback",
+        backend: cleanupExecutionPath,
+        executionPath: cleanupExecutionPath,
         detail: message,
       });
     }
   }
 
-  private async runColdFallbackSideCapture(side: AiGraderWarmRunnerSide, reason: string): Promise<AiGraderStationCommandResult> {
+  private async runExplicitColdDebugSideCapture(side: AiGraderWarmRunnerSide, reason: string): Promise<AiGraderStationCommandResult> {
     const stepId = side === "front" ? "capture_front" : "capture_back";
-    const owner = `cold-fallback-${stepId}`;
+    const owner = `cold-debug-${stepId}`;
     const phaseId = `capture_${side}`;
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
-    this.activateFullForensicPreviewHold(`${side} cold fallback full forensic capture starting`);
+    this.activateFullForensicPreviewHold(`${side} explicit cold debug full forensic capture starting`);
     this.setExecutionPath("cold_command_fallback", reason);
     this.acquireCaptureLock(owner);
     let phase: AiGraderWarmRunnerPhase | undefined;
@@ -3424,14 +3633,14 @@ export class AiGraderLocalStationBridgeService {
         side,
         backend: "cold_command_fallback",
         executionPath: "cold_command_fallback",
-        detail: "Emergency/debug cold fallback preserves dark_control, all_on, accepted_profile, and Leimac channels 1-8.",
+        detail: "Explicit cold debug mode preserves dark_control, all_on, accepted_profile, and Leimac channels 1-8.",
       });
       const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, stepId));
       result.payload = {
         ...(result.payload ?? {}),
         executionPath: "cold_command_fallback",
-        fallbackUsed: true,
-        fallbackReason: reason,
+        explicitColdDebugModeUsed: true,
+        explicitColdDebugReason: reason,
       };
       this.manifest.commandResults.push(result);
       if (!result.ok) {
@@ -3444,7 +3653,7 @@ export class AiGraderLocalStationBridgeService {
           startedAt: phase?.startedAt,
           backend: "cold_command_fallback",
           executionPath: "cold_command_fallback",
-          detail: result.error ?? "Cold fallback evidence package failed.",
+          detail: result.error ?? "Explicit cold debug evidence package failed.",
         });
         throw new Error(result.error ?? `${side} evidence capture failed.`);
       }
@@ -3468,7 +3677,7 @@ export class AiGraderLocalStationBridgeService {
         startedAt: phase?.startedAt,
         backend: "cold_command_fallback",
         executionPath: "cold_command_fallback",
-        detail: "Full forensic side stack captured through emergency/debug cold fallback.",
+        detail: "Full forensic side stack captured through the explicit cold debug command path.",
       });
       this.markWarmPhase({
         id: `process_${side}_artifacts`,
@@ -3483,9 +3692,9 @@ export class AiGraderLocalStationBridgeService {
       return result;
     } catch (error) {
       this.manifest.warmRunnerStatus.status = "failed";
-      await this.runSafeOffCleanup(`${side} cold fallback capture failure`);
+      await this.runSafeOffCleanup(`${side} explicit cold debug capture failure`);
       this.manifest.warmRunnerStatus.status = "failed";
-      this.releaseFullForensicPreviewHold(`${side} cold fallback capture failed after safe-off cleanup`);
+      this.releaseFullForensicPreviewHold(`${side} explicit cold debug capture failed after safe-off cleanup`);
       throw error;
     } finally {
       this.releaseCaptureLock(owner);
@@ -3500,7 +3709,7 @@ export class AiGraderLocalStationBridgeService {
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
     this.activateFullForensicPreviewHold(`${side} warm full forensic capture starting`);
     if (this.config.warmRunnerDisabled) {
-      return this.runColdFallbackSideCapture(side, "Warm runner disabled by explicit debug flag.");
+      return this.runExplicitColdDebugSideCapture(side, "Warm runner disabled by explicit debug flag.");
     }
     this.acquireCaptureLock(owner);
     const captureStartedAtMs = Date.now();
@@ -3531,7 +3740,7 @@ export class AiGraderLocalStationBridgeService {
           payload: {
             ok: true,
             executionPath: "warm_full_forensic_runner",
-            fallbackUsed: false,
+            explicitColdDebugModeUsed: false,
             captureProfile: sessionManifest.captureProfile,
             rawEvidenceFormat: sessionManifest.captureProfile === "production_fast" ? "tiff" : "png",
             packageDir: mockPackageDir,
@@ -3587,7 +3796,7 @@ export class AiGraderLocalStationBridgeService {
         payload: {
           ok: true,
           executionPath: "warm_full_forensic_runner",
-          fallbackUsed: false,
+          explicitColdDebugModeUsed: false,
           captureProfile: sessionManifest.captureProfile,
           rawEvidenceFormat: batch.rawEvidenceFormat,
           packageDir: batch.packageDir,
@@ -3677,16 +3886,47 @@ export class AiGraderLocalStationBridgeService {
       await Promise.resolve();
       return result;
     } catch (error) {
-      this.manifest.warmRunnerStatus.status = "failed";
-      const allowFallback = warmFailureAllowsColdFallback(error);
+      const failedAt = new Date().toISOString();
+      const message = error instanceof Error ? error.message : `${side} warm capture failed.`;
+      sessionManifest.warmRunnerStatus.status = "failed";
+      this.updateEvidenceRoles(side, "failed", sessionManifest);
+      this.markWarmPhase({
+        id: phaseId,
+        label,
+        status: "failed",
+        side,
+        startedAt: phase?.startedAt,
+        backend: "warm_full_forensic_runner",
+        executionPath: "warm_full_forensic_runner",
+        detail: message,
+      }, sessionManifest);
+      sessionManifest.captureFailure = {
+        side,
+        stage: "warm_capture",
+        message,
+        at: failedAt,
+        retryRequired: true,
+        automaticColdFallbackAttempted: false,
+      };
+      sessionManifest.captureTimingHardwareEvidence[side] = { captureBatch: false, processedManifest: false };
+      this.ensureCaptureTiming(sessionManifest);
+      sessionManifest.captureProfileGuard.fiveSecondTargetProven = false;
+      if (!sessionManifest.warnings.includes(message)) sessionManifest.warnings.push(message);
+      sessionManifest.progressLog.push(`${failedAt} ${side} warm capture failed; safe-off is required and an operator retry is required. No automatic cold debug capture was attempted.`);
+      this.transitionRapidWorkflow(sessionManifest, "failed", message);
       await this.runSafeOffCleanup(`${side} warm capture failure`);
-      if (allowFallback) {
-        const reason = `${side} warm runner failed before capture started and reported safe fallback eligibility.`;
-        this.releaseCaptureLock(owner);
-        return this.runColdFallbackSideCapture(side, reason);
-      }
-      this.manifest.warmRunnerStatus.status = "failed";
+      sessionManifest.warmRunnerStatus.status = "failed";
       this.releaseFullForensicPreviewHold(`${side} warm capture failed after safe-off cleanup`);
+      this.updatePreviewStatus({
+        status: "error",
+        cameraOwnership: "released",
+        lastError: message,
+        lastStopReason: `${side} warm capture failed after safe-off cleanup; retry required.`,
+      });
+      if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+      sessionManifest.updatedAt = new Date().toISOString();
+      await writeSessionManifest(sessionManifest);
+      await this.syncQueuedManifest(sessionManifest);
       throw error;
     } finally {
       if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
@@ -3732,8 +3972,8 @@ export class AiGraderLocalStationBridgeService {
     result.payload = {
       ...(result.payload ?? {}),
       executionPath: manifest.executionPath,
-      fallbackUsed: manifest.fallbackUsed,
-      ...(manifest.fallbackReason ? { fallbackReason: manifest.fallbackReason } : {}),
+      explicitColdDebugModeUsed: manifest.explicitColdDebugModeUsed,
+      ...(manifest.explicitColdDebugReason ? { explicitColdDebugReason: manifest.explicitColdDebugReason } : {}),
     };
     manifest.commandResults.push(result);
     this.markWarmPhase({
@@ -3967,6 +4207,7 @@ export class AiGraderLocalStationBridgeService {
           publicBasePath: this.config.publicBasePath,
           includeAssetBodies: true,
           captureTiming: this.captureTimingSnapshot(this.manifest),
+          geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
         });
         return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, this.manifest.productionRelease), source: "active_manifest_generated_with_asset_bodies" };
       }
@@ -3998,6 +4239,7 @@ export class AiGraderLocalStationBridgeService {
         reportId: expectedReportId,
         publicBasePath: this.config.publicBasePath,
         captureTiming: this.captureTimingSnapshot(this.manifest),
+        geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
       });
       this.manifest.reportBundle = bundle;
       return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, this.manifest.productionRelease), source: "active_manifest_generated_from_report_dir" };
@@ -4014,6 +4256,7 @@ export class AiGraderLocalStationBridgeService {
           publicBasePath: this.config.publicBasePath,
           includeAssetBodies: true,
           captureTiming: await this.captureTimingSnapshotForReport(expectedReportId, item.sessionDir),
+          geometryCaptureDecisions: await this.geometryCaptureDecisionSnapshotForReport(expectedReportId, item.sessionDir),
         });
         const release = await readProductionReleaseFromPath(item.productionReleasePath);
         return { reportId: expectedReportId, bundle: bundleWithProductionRelease(generated, release), source: "history_generated_with_asset_bodies" };
@@ -4030,6 +4273,7 @@ export class AiGraderLocalStationBridgeService {
           reportId: expectedReportId,
           publicBasePath: this.config.publicBasePath,
           captureTiming: await this.captureTimingSnapshotForReport(expectedReportId, item.sessionDir),
+          geometryCaptureDecisions: await this.geometryCaptureDecisionSnapshotForReport(expectedReportId, item.sessionDir),
         });
         return { reportId: expectedReportId, bundle: generated, source: "history_generated_from_report_dir" };
       }
@@ -4163,6 +4407,7 @@ export class AiGraderLocalStationBridgeService {
             reportId: stationManifest.reportId,
             publicBasePath: this.config.publicBasePath,
             captureTiming: this.captureTimingSnapshot(stationManifest),
+            geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(stationManifest),
           });
           items.push(historyItemFromBundle({
             bundle: generated,
@@ -4222,7 +4467,10 @@ export class AiGraderLocalStationBridgeService {
     }
 
     if (action === "start-session") {
-      await this.createFreshSession(request, now);
+      if (!request.captureProfile) {
+        throw new Error("AI Grader start-session requires an explicit captureProfile of full_forensic or production_fast.");
+      }
+      await this.createFreshSession({ reportId: request.reportId, captureProfile: request.captureProfile }, now);
       return this.status();
     }
 
@@ -4241,6 +4489,10 @@ export class AiGraderLocalStationBridgeService {
 
     if (!this.manifest.sessionId && action !== "safe-off" && action !== "end-session") {
       throw new Error("Start a station session before running AI Grader station actions.");
+    }
+
+    if (this.manifest.captureFailure && (action === "capture-front" || action === "capture-back")) {
+      throw new Error(`The ${this.manifest.captureFailure.side} capture failed and requires a new start-session retry before any further capture.`);
     }
 
     if (action === "confirm-light-idle-off") {
@@ -4367,6 +4619,7 @@ export class AiGraderLocalStationBridgeService {
 
     if (action === "capture-front") {
       assertFixtureVisible(this.manifest);
+      this.recordGeometryCaptureDecision(this.manifest, "front", request, now);
       this.recordCaptureTimingEvent(this.manifest, {
         id: "capture_trigger",
         side: "front",
@@ -4395,6 +4648,7 @@ export class AiGraderLocalStationBridgeService {
     if (action === "capture-back") {
       assertFixtureVisible(this.manifest);
       assertFlipComplete(this.manifest);
+      this.recordGeometryCaptureDecision(this.manifest, "back", request, now);
       this.recordCaptureTimingEvent(this.manifest, {
         id: "capture_trigger",
         side: "back",
@@ -4441,6 +4695,7 @@ export class AiGraderLocalStationBridgeService {
         reportId: this.manifest.reportId,
         publicBasePath: this.config.publicBasePath,
         captureTiming: this.captureTimingSnapshot(this.manifest),
+        geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
       });
       this.manifest.outputs.reportBundlePath = bundle.bundlePath;
       this.manifest.outputs.publishPackageDir = bundle.outputDir;

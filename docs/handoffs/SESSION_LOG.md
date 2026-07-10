@@ -25617,6 +25617,27 @@ By enabling Rip It Live, I confirm:
 - Validation: OCR server/client tests passed `10/10`; the complete `aiGraderLocalStation.test.ts` suite passed `79/79`; `pnpm --filter @tenkings/nextjs-app build` passed with existing unrelated image/browser-data/Tailwind warnings; focused `git diff --check` passed with Windows line-ending notices only.
 - Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no. Network call: no.
 
+## 2026-07-10 - AI Grader explicit geometry/profile semantics hardening
+
+- Removed automatic manual geometry fallback from the geometry engine. Detection failure remains `not_detected`, low-quality/out-of-tolerance detection remains `adjust_card`, and no legacy fixture rectangle or unknown `manualFallback` input can silently create a normalized artifact.
+- Replaced fallback terminology with an explicit `manualOverride` contract requiring `action=manual_capture` and `confirmed=true`. Manual output records `geometrySource=manual_override`, `captureMode=manual_capture`, `manualOverrideUsed=true`, `detectionUsed=false`, and `confidence=0`; it can create an operator-requested normalized artifact but can never claim `placementState=ready`.
+- The warm Basler processing API now requires a separate `manualGeometryOverride` to apply any manual boundary. Existing `cardBoundaryRect` fixture configuration is ignored for geometry/quality override and recorded as `legacyCardBoundaryRectIgnored` unless explicit manual capture authority is supplied.
+- Warm side manifests persist a visible geometry policy with automatic/manual mode, source, detection/manual flags, ignored legacy boundary state, and normalized-artifact creation state.
+- Replaced the profile field `fullForensicFallback` with `availableCaptureProfiles`, `previousStableProfile`, and explicit `productionFastOptIn`. Removed warm-package `fallbackUsed`/`fallbackReason` fields and fallback prose: `full_forensic` and `production_fast` are selectable profiles, with `production_fast` opt-in and `full_forensic` retained as the previous stable profile.
+- Added focused regressions for legacy fallback rejection, explicit manual action validation, manual non-Ready semantics, ignored fixture boundary on a blank warm package, visibly recorded explicit manual capture, front/back automatic detection, normalized artifacts, and fast-profile manifest semantics.
+- Validation: `pnpm --filter @tenkings/ai-grader-capture-helper build` passed; focused geometry/warm-processing tests passed `9/9`; focused `git diff --check` passed with Windows line-ending notices only.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no. Network call: no.
+
+## 2026-07-10 - AI Grader geometry decision production persistence and public-safety slice
+
+- Added `geometryCaptureDecisions` to the production report-bundle contract and persisted its normalized front/back audit metadata in `AiGraderSession.captureSummary` alongside sanitized geometry, timing, OCR, and evidence references; no schema migration was required because the destination is existing JSON.
+- Added an explicit public allowlist for geometry decisions: mode, derived geometry/capture source, placement state, operator-action/detection/manual flags, canonical timestamp, safe source-frame ID, and finite positive Basler-sensor manual rectangle.
+- Valid explicit manual decisions remain visible as `mode=manual_capture`, `geometrySource=manual_override`, and `captureMode=manual_capture`. Manual decisions require `explicitOperatorAction=true`, `manualOverrideUsed=true`, `detectionUsed=false`, and a valid rectangle; contradictory/forged manual decisions are dropped. Manual capture can never publish `placementState=ready`.
+- Unknown decision fields are never copied. Local Windows/Unix paths, loopback/private bridge URLs, station/bridge tokens, `data:image` bodies, presigned URLs, credentials, and hardware controls are removed from public report artifacts and persisted capture summaries while safe manual rectangle/decision evidence remains.
+- Added regression coverage for public report visibility, automatic back-side decision preservation, invalid manual-decision rejection, and persisted capture-summary sanitization.
+- Validation: `pnpm --filter @tenkings/database build` passed; focused database AI Grader production/service tests passed `52/52`; focused `git diff --check` passed with Windows line-ending notices only.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no. Network call: no.
+
 ## 2026-07-10 - AI Grader rapid queue durable-status validation follow-up
 
 - Public rapid queue status now comes from the last atomically committed queue snapshot. A background transition cannot advertise report-ready until `rapid-capture-queue.json` is durable.
@@ -25632,3 +25653,23 @@ By enabling Rip It Live, I confirm:
 - Added regressions for embedded unsafe prose, scheme-less private endpoints, forged timing proof flags, forged OCR mutation/confirmation flags, and the direct production publish-body trust boundary.
 - Validation after this slice: Next production build passed; station tests passed 79/79; OCR/auto focused tests passed 15/15; database build passed; production-service tests passed 15/15; capture-helper build/tests passed 199/199.
 - Hardware run: no. Migration: no. Env/credential/deploy/production DB or storage write: no.
+
+## 2026-07-10 - AI Grader terminal warm-runner and explicit capture-geometry contract
+
+- Removed the bridge's automatic warm-error-to-cold-command switch. Any warm side-capture error now records the exact terminal failure, marks evidence/capture phase failed, attempts safe-off exactly once, releases preview/capture ownership, persists `retryRequired=true` and `automaticColdFallbackAttempted=false`, and requires a fresh explicit `start-session` before another capture.
+- Kept the cold command execution path only behind the explicit `warmRunnerDisabled` debug configuration. It is restricted to `full_forensic`, cannot run `production_fast`, never counts as supervised hardware speed evidence, and uses explicit `explicitColdDebugModeUsed` / `explicitColdDebugReason` status and manifest fields. Removed the old bridge-visible `fallbackUsed`, `fallbackReason`, fallback availability, and automatic-switch contract fields.
+- External `start-session` actions now require an explicit `captureProfile`. Manifests record `selectionSource`, `productionFastOptIn`, both available profiles, and `full_forensic` as the previous stable profile without claiming an automatic profile switch.
+- Capture actions now persist a per-side geometry decision. Detected capture requires a coherent Ready preview result (`geometrySource=detected`, detection used, no manual override, valid four corners and positive bounding box); auto capture can never select manual mode.
+- Explicit manual capture requires an operator trigger plus `manualGeometryRect` with source dimensions and coordinate frame. Portrait MJPEG preview coordinates are inverse-rotated into raw `basler_sensor_pixels`, snapshotted in the station manifest/report bundle, and passed as a confirmed side-specific manual override to warm processing. No configured legacy boundary is passed implicitly.
+- Geometry orientation now separates transform rotation from placement skew. Correct raw landscape cards retain an approximately 90-degree transform while evaluating at approximately zero skew; portrait sideways cards remain Adjust. Manual landscape overrides normalize to portrait output.
+- Geometry decisions are copied into active, rapid, and history report bundles through a path-free allowlist and are covered by front/back detected, contradictory Ready, non-Ready, auto/manual rejection, manual transform, rapid persistence, and private-data regression tests.
+- Validation: capture-helper build and TypeScript no-emit compile passed; bridge tests passed `29/29`; report-bundle tests passed `7/7`; card-geometry tests passed `9/9`; combined focused run passed all but one stale rapid trigger expectation, which was corrected and then the full bridge suite passed; `git diff --check` passed.
+- Hardware run: no. Migration: no. Env/credential/deploy/production DB, storage, credential, or network action: no.
+
+## 2026-07-10 - PR #80 no-hidden-fallback integration validation and production merge planned action
+
+- Integrated the terminal warm-failure bridge contract, explicit manual geometry action, explicit profile semantics, portrait-to-sensor manual rectangle transform, raw-landscape orientation/skew correction, frontend confirmation/error UX, report-bundle decision metadata, and production public/persistence allowlist.
+- Final local validation passed: Next.js production build; station `80/80`; label sheets `5/5`; OCR/rapid `15/15`; database build plus production/service `52/52`; capture-helper build plus full suite `207/207`; `git diff --check` with line-ending notices only.
+- Five-seconds-per-side proof remains false. No Dell/Basler/Leimac command was run; no hardware timing was fabricated.
+- Planned authorized action: commit and push the patch to PR #80, wait for all GitHub/Vercel checks on the new HEAD, then merge PR #80 only if the patched SHA is green. The merge is expected to trigger the normal Vercel production deployment for `collect.tenkings.co`.
+- Explicitly out of scope for this action: no migration, env-var change, secret/credential access or rotation, production database/storage mutation, hardware capture/preview/lighting command, Dell bridge restart/install, droplet sync/restart, or manual deploy command.

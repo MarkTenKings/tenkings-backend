@@ -121,10 +121,12 @@ export type AiGraderCaptureTimingMetadata = {
 
 export type AiGraderCaptureProfileGuard = {
   stationSettingRequired: true;
-  selectedExplicitly: boolean;
+  selectionSource: "bridge_default" | "operator_setting" | "rapid_continuation";
+  productionFastOptIn: boolean;
   fullForensicEvidencePreserved: true;
-  fullForensicFallback: "full_forensic";
-  fiveSecondTargetProven: false;
+  availableCaptureProfiles: ["full_forensic", "production_fast"];
+  previousStableProfile: "full_forensic";
+  fiveSecondTargetProven: boolean;
 };
 
 export type AiGraderRapidCaptureWorkflowState =
@@ -237,8 +239,8 @@ export type AiGraderWarmRunnerStatus = {
   mode: "full_forensic";
   backend: AiGraderWarmRunnerExecutionPath;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   status: AiGraderWarmRunnerStatusName;
   sessionId?: string;
   activeSide?: AiGraderWarmRunnerSide;
@@ -283,8 +285,8 @@ export type AiGraderWarmRunnerStatus = {
     stretchTargetMs: number;
     measuredTotalMs?: number;
   };
-  fallback: {
-    available: true;
+  coldDebugMode: {
+    configured: boolean;
     active: boolean;
     reason?: string;
   };
@@ -294,7 +296,7 @@ export type AiGraderWarmRunnerStatus = {
     safeOffOnFailure: true;
     safeOffOnCancellation: true;
     safeOffOnSessionEnd: true;
-    fallbackToColdPath: true;
+    explicitColdDebugModeOnly: true;
     publicRouteExposed: false;
     productionServiceTokenUsed: false;
     persistentBaslerSaved: false;
@@ -314,8 +316,8 @@ export type AiGraderLocalStationStatus = {
   nextAction: AiGraderStationAction;
   nextActionLabel: string;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   captureProfile: AiGraderCaptureProfile;
   captureProfileGuard: AiGraderCaptureProfileGuard;
   captureTiming: AiGraderCaptureTimingMetadata;
@@ -376,6 +378,24 @@ export type AiGraderLocalStationStatus = {
   previewStatus: AiGraderLocalStationPreviewStatus;
   liveLighting: AiGraderLiveLightingStatus;
   warmRunnerStatus: AiGraderWarmRunnerStatus;
+  captureFailure?: {
+    side: AiGraderWarmRunnerSide;
+    stage: "warm_capture";
+    message: string;
+    at: string;
+    retryRequired: true;
+    automaticColdFallbackAttempted: false;
+  };
+  geometryCaptureDecisions: Partial<Record<AiGraderWarmRunnerSide, {
+    mode: "detected_geometry" | "manual_capture";
+    placementState: AiGraderCardPlacementState;
+    timestamp: string;
+    explicitOperatorAction: boolean;
+    detectionUsed: boolean;
+    manualOverrideUsed: boolean;
+    manualBoundaryRect?: AiGraderPreviewGeometryBoundingBox;
+    sourceFrameId?: string;
+  }>>;
   reportBundle?: AiGraderReportBundle;
   stationUrl?: string;
   bridgeSecurity?: {
@@ -709,26 +729,135 @@ export function sanitizeAiGraderRapidCaptureQueue(
   };
 }
 
+function sanitizeGeometryCaptureDecisions(value: unknown): AiGraderLocalStationStatus["geometryCaptureDecisions"] {
+  if (!rapidCaptureRecord(value)) return {};
+  const result: AiGraderLocalStationStatus["geometryCaptureDecisions"] = {};
+  for (const side of ["front", "back"] as const) {
+    const decision = value[side];
+    if (!rapidCaptureRecord(decision)) continue;
+    const mode = decision.mode === "detected_geometry" || decision.mode === "manual_capture" ? decision.mode : undefined;
+    const placementState =
+      decision.placementState === "ready" || decision.placementState === "adjust_card" || decision.placementState === "not_detected"
+        ? decision.placementState
+        : undefined;
+    const timestamp = safeRapidCaptureTimestamp(decision.timestamp);
+    if (!mode || !placementState || !timestamp) continue;
+    const sourceFrameId = sanitizePreviewGeometrySourceFrameId(decision.sourceFrameId);
+    const manualBoundaryRect = sanitizePreviewGeometryBoundingBox(decision.manualBoundaryRect);
+    const manual = mode === "manual_capture";
+    if (manual && (decision.explicitOperatorAction !== true || decision.manualOverrideUsed !== true || !manualBoundaryRect)) continue;
+    if (!manual && (decision.detectionUsed !== true || decision.manualOverrideUsed === true)) continue;
+    result[side] = {
+      mode,
+      placementState,
+      timestamp,
+      explicitOperatorAction: manual,
+      detectionUsed: !manual,
+      manualOverrideUsed: manual,
+      ...(manualBoundaryRect ? { manualBoundaryRect } : {}),
+      ...(sourceFrameId ? { sourceFrameId } : {}),
+    };
+  }
+  return result;
+}
+
 /** Keeps the local status useful to the station UI while allowlisting rapid
  * queue fields and refusing an unguarded production_fast profile. */
 export function sanitizeAiGraderLocalStationStatusForDisplay(
   status: AiGraderLocalStationStatus
 ): AiGraderLocalStationStatus {
   const rapidCapture = sanitizeAiGraderRapidCaptureManifest(status.rapidCapture);
+  const guardSource = status.captureProfileGuard?.selectionSource;
+  const selectionSource =
+    guardSource === "operator_setting" || guardSource === "rapid_continuation" || guardSource === "bridge_default"
+      ? guardSource
+      : "bridge_default";
   const productionFastSelected =
-    status.captureProfile === "production_fast" && status.captureProfileGuard?.selectedExplicitly === true;
+    status.captureProfile === "production_fast" &&
+    status.captureProfileGuard?.productionFastOptIn === true &&
+    (selectionSource === "operator_setting" || selectionSource === "rapid_continuation");
   const captureProfile: AiGraderCaptureProfile = productionFastSelected ? "production_fast" : "full_forensic";
+  const sanitizedCaptureTiming = sanitizeAiGraderCaptureTiming(status.captureTiming, captureProfile);
+  const explicitColdDebugModeUsed =
+    status.executionPath === "cold_command_fallback" && status.explicitColdDebugModeUsed === true;
+  const unsafeStatus = status as AiGraderLocalStationStatus & Record<string, unknown>;
+  const {
+    fallbackUsed: _legacyFallbackUsed,
+    fallbackReason: _legacyFallbackReason,
+    warmRunnerStatus: unsafeWarmRunner,
+    timingSummary: unsafeTimingSummary,
+    ...statusWithoutLegacyFallback
+  } = unsafeStatus;
+  const {
+    fallbackUsed: _legacyWarmFallbackUsed,
+    fallbackReason: _legacyWarmFallbackReason,
+    fallback: _legacyWarmFallback,
+    ...warmRunnerWithoutLegacyFallback
+  } = unsafeWarmRunner as AiGraderWarmRunnerStatus & Record<string, unknown>;
+  const {
+    fallbackToColdPath: _legacyFallbackToColdPath,
+    ...warmSafetyWithoutLegacyFallback
+  } = unsafeWarmRunner.safety as AiGraderWarmRunnerStatus["safety"] & Record<string, unknown>;
+  const timingSummary = unsafeTimingSummary
+    ? (() => {
+        const {
+          fallbackUsed: _legacyTimingFallbackUsed,
+          fallbackReason: _legacyTimingFallbackReason,
+          ...timingWithoutLegacyFallback
+        } = unsafeTimingSummary as AiGraderLocalStationTimingSummary & Record<string, unknown>;
+        return {
+          ...timingWithoutLegacyFallback,
+          explicitColdDebugModeUsed:
+            unsafeTimingSummary.executionPath === "cold_command_fallback" &&
+            unsafeTimingSummary.explicitColdDebugModeUsed === true,
+          ...(safeRapidCaptureText(unsafeTimingSummary.explicitColdDebugReason)
+            ? { explicitColdDebugReason: safeRapidCaptureText(unsafeTimingSummary.explicitColdDebugReason) }
+            : {}),
+        } as AiGraderLocalStationTimingSummary;
+      })()
+    : undefined;
   return {
-    ...status,
+    ...statusWithoutLegacyFallback,
+    explicitColdDebugModeUsed,
+    ...(safeRapidCaptureText(status.explicitColdDebugReason)
+      ? { explicitColdDebugReason: safeRapidCaptureText(status.explicitColdDebugReason) }
+      : {}),
     captureProfile,
     captureProfileGuard: {
       stationSettingRequired: true,
-      selectedExplicitly: productionFastSelected,
+      selectionSource,
+      productionFastOptIn: productionFastSelected,
       fullForensicEvidencePreserved: true,
-      fullForensicFallback: "full_forensic",
-      fiveSecondTargetProven: false,
+      availableCaptureProfiles: ["full_forensic", "production_fast"],
+      previousStableProfile: "full_forensic",
+      fiveSecondTargetProven:
+        !explicitColdDebugModeUsed &&
+        status.executionPath === "warm_full_forensic_runner" &&
+        sanitizedCaptureTiming.target.fiveSecondsPerSideProven,
     },
-    captureTiming: sanitizeAiGraderCaptureTiming(status.captureTiming, captureProfile),
+    captureTiming: sanitizedCaptureTiming,
+    warmRunnerStatus: {
+      ...warmRunnerWithoutLegacyFallback,
+      explicitColdDebugModeUsed:
+        unsafeWarmRunner.executionPath === "cold_command_fallback" && unsafeWarmRunner.explicitColdDebugModeUsed === true,
+      ...(safeRapidCaptureText(unsafeWarmRunner.explicitColdDebugReason)
+        ? { explicitColdDebugReason: safeRapidCaptureText(unsafeWarmRunner.explicitColdDebugReason) }
+        : {}),
+      coldDebugMode: {
+        configured: unsafeWarmRunner.coldDebugMode?.configured === true,
+        active:
+          unsafeWarmRunner.executionPath === "cold_command_fallback" && unsafeWarmRunner.coldDebugMode?.active === true,
+        ...(safeRapidCaptureText(unsafeWarmRunner.coldDebugMode?.reason)
+          ? { reason: safeRapidCaptureText(unsafeWarmRunner.coldDebugMode?.reason) }
+          : {}),
+      },
+      safety: {
+        ...warmSafetyWithoutLegacyFallback,
+        explicitColdDebugModeOnly: true,
+      },
+    },
+    geometryCaptureDecisions: sanitizeGeometryCaptureDecisions(status.geometryCaptureDecisions),
+    ...(timingSummary ? { timingSummary } : {}),
     rapidCapture,
     rapidCaptureQueue: sanitizeAiGraderRapidCaptureQueue(status.rapidCaptureQueue, rapidCapture.enabled),
   };
@@ -737,8 +866,8 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
 export type AiGraderLocalStationTimingSummary = {
   totalCommandMs: number;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  fallbackUsed: boolean;
-  fallbackReason?: string;
+  explicitColdDebugModeUsed: boolean;
+  explicitColdDebugReason?: string;
   bridgeActionOverheadMs: number;
   captureCommandMs: number;
   reportGenerationMs: number;
@@ -812,9 +941,11 @@ export type AiGraderPreviewCardGeometrySummary = {
   version?: "ten-kings-card-geometry-v1";
   side: AiGraderPreviewGeometrySide;
   placementState: AiGraderCardPlacementState;
-  geometrySource: "detected" | "manual_fallback" | "none";
+  geometrySource: "detected" | "manual_override" | "none";
+  captureMode: "automatic_detection" | "manual_capture" | "none";
+  confidenceBasis: "automatic_detection" | "operator_confirmation" | "none";
   detectionUsed: boolean;
-  manualFallbackUsed: boolean;
+  manualOverrideUsed: boolean;
   corners: AiGraderPreviewGeometryCorners | null;
   detectedCorners: AiGraderPreviewGeometryCorners | null;
   boundingBox: AiGraderPreviewGeometryBoundingBox | null;
@@ -903,9 +1034,25 @@ export function sanitizeAiGraderPreviewCardGeometry(
       ? value.placementState
       : "not_detected";
   const geometrySource =
-    value.geometrySource === "detected" || value.geometrySource === "manual_fallback" || value.geometrySource === "none"
+    value.geometrySource === "detected" || value.geometrySource === "manual_override" || value.geometrySource === "none"
       ? value.geometrySource
       : "none";
+  const captureMode =
+    value.captureMode === "automatic_detection" || value.captureMode === "manual_capture" || value.captureMode === "none"
+      ? value.captureMode
+      : geometrySource === "detected"
+        ? "automatic_detection"
+        : geometrySource === "manual_override"
+          ? "manual_capture"
+          : "none";
+  const confidenceBasis =
+    value.confidenceBasis === "automatic_detection" || value.confidenceBasis === "operator_confirmation" || value.confidenceBasis === "none"
+      ? value.confidenceBasis
+      : captureMode === "automatic_detection"
+        ? "automatic_detection"
+        : captureMode === "manual_capture"
+          ? "operator_confirmation"
+          : "none";
   const corners = sanitizePreviewGeometryCorners(value.corners);
   const detectedCorners = sanitizePreviewGeometryCorners(value.detectedCorners);
   const rotationDegrees = previewGeometryNumber(value.rotationDegrees) ?? null;
@@ -925,8 +1072,10 @@ export function sanitizeAiGraderPreviewCardGeometry(
     side,
     placementState,
     geometrySource,
+    captureMode,
+    confidenceBasis,
     detectionUsed: value.detectionUsed === true,
-    manualFallbackUsed: value.manualFallbackUsed === true,
+    manualOverrideUsed: value.manualOverrideUsed === true,
     corners,
     detectedCorners,
     boundingBox: sanitizePreviewGeometryBoundingBox(value.boundingBox),
@@ -1219,7 +1368,7 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
     mode: "full_forensic",
     backend: "warm_full_forensic_runner",
     executionPath: "warm_full_forensic_runner",
-    fallbackUsed: false,
+    explicitColdDebugModeUsed: false,
     status: "idle",
     captureLock: {
       held: false,
@@ -1257,8 +1406,8 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
       targetTotalMaxMs: 150000,
       stretchTargetMs: 60000,
     },
-    fallback: {
-      available: true,
+    coldDebugMode: {
+      configured: false,
       active: false,
     },
     safety: {
@@ -1267,7 +1416,7 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
       safeOffOnFailure: true,
       safeOffOnCancellation: true,
       safeOffOnSessionEnd: true,
-      fallbackToColdPath: true,
+      explicitColdDebugModeOnly: true,
       publicRouteExposed: false,
       productionServiceTokenUsed: false,
       persistentBaslerSaved: false,
@@ -1297,8 +1446,10 @@ function defaultPreviewStatus(): AiGraderLocalStationPreviewStatus {
         side: "front",
         placementState: "not_detected",
         geometrySource: "none",
+        captureMode: "none",
+        confidenceBasis: "none",
         detectionUsed: false,
-        manualFallbackUsed: false,
+        manualOverrideUsed: false,
         corners: null,
         detectedCorners: null,
         boundingBox: null,
@@ -1310,8 +1461,10 @@ function defaultPreviewStatus(): AiGraderLocalStationPreviewStatus {
         side: "back",
         placementState: "not_detected",
         geometrySource: "none",
+        captureMode: "none",
+        confidenceBasis: "none",
         detectionUsed: false,
-        manualFallbackUsed: false,
+        manualOverrideUsed: false,
         corners: null,
         detectedCorners: null,
         boundingBox: null,
@@ -1414,13 +1567,15 @@ export function buildAiGraderLocalStationStatus(input: {
     nextAction,
     nextActionLabel: actionLabel(nextAction),
     executionPath: "warm_full_forensic_runner",
-    fallbackUsed: false,
+    explicitColdDebugModeUsed: false,
     captureProfile,
     captureProfileGuard: {
       stationSettingRequired: true,
-      selectedExplicitly: captureProfile === "production_fast",
+      selectionSource: captureProfile === "production_fast" ? "operator_setting" : "bridge_default",
+      productionFastOptIn: captureProfile === "production_fast",
       fullForensicEvidencePreserved: true,
-      fullForensicFallback: "full_forensic",
+      availableCaptureProfiles: ["full_forensic", "production_fast"],
+      previousStableProfile: "full_forensic",
       fiveSecondTargetProven: false,
     },
     captureTiming: buildDefaultAiGraderCaptureTiming(captureProfile),
@@ -1486,6 +1641,7 @@ export function buildAiGraderLocalStationStatus(input: {
     previewStatus: defaultPreviewStatus(),
     liveLighting: defaultLiveLightingStatus(),
     warmRunnerStatus: defaultWarmRunnerStatus(),
+    geometryCaptureDecisions: {},
     reportBundle,
     outputs: {
       productionReleasePath: finalComputed ? "sample-production-release.json" : undefined,
@@ -1496,7 +1652,7 @@ export function buildAiGraderLocalStationStatus(input: {
     timingSummary: {
       totalCommandMs: 0,
       executionPath: "warm_full_forensic_runner",
-      fallbackUsed: false,
+      explicitColdDebugModeUsed: false,
       bridgeActionOverheadMs: 0,
       captureCommandMs: 0,
       reportGenerationMs: 0,

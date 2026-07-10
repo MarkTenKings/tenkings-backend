@@ -85,7 +85,9 @@ Behavior:
 
 ## Current Priorities
 - Increase AI Grader capture throughput without replacing the PR #79 workflow: close-enough geometry, normalized crop/deskew, front processing during flip, guarded rapid capture, Confirm Card OCR prefill, and honest Dell timing proof.
-- Keep `full_forensic` as the safety fallback. A faster profile may change lossless encoding/processing but must preserve dark, all-on, accepted-profile, and channels `1-8` per side until supervised evidence proves another change safe.
+- Keep `full_forensic` and `production_fast` as explicit selectable profiles. `full_forensic` is the previous stable/default selection until supervised Dell A/B evidence proves a later default change; it is never an automatic fallback. `production_fast` remains opt-in and must preserve dark, all-on, accepted-profile, and channels `1-8` per side.
+- A warm-runner failure is terminal for that capture attempt: safe-off, release ownership/locks, show the exact error, and require operator retry. The cold command path is developer/debug-only when explicitly configured before the session and cannot count toward production-fast timing acceptance.
+- Failed/low-confidence edge detection remains `Not Detected` or `Adjust Card`. Manual capture/geometry must be an explicit operator-confirmed action and must persist `manual_capture` / `manual_override` with `detectionUsed=false`; a configured fixture boundary must never be substituted silently.
 - Do not claim five seconds per side from software/mock timing. The last supervised Dell control measured about `9442 ms` front and `9243 ms` back; image writes were the largest measured stage. A new hardware comparison requires Mark's explicit approval.
 - Stabilize prod `/admin/variant-ref-qa` behavior and counts
 - Ensure set/parallel label normalization is correct

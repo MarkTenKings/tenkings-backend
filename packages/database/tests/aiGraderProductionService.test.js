@@ -9,6 +9,7 @@ const {
   persistAiGraderSlabbedPhotoAsset,
   persistAiGraderProductionRelease,
   persistAiGraderValuationResult,
+  normalizeAiGraderPublicGeometryCaptureDecisions,
   sanitizeAiGraderPublicJson,
 } = require("../dist/database/src/aiGraderProductionService");
 
@@ -50,14 +51,52 @@ function sampleBundle(overrides = {}) {
     geometry: {
       front: {
         side: "front",
-        placementState: "ready",
-        confidence: 0.94,
+        placementState: "not_detected",
+        geometrySource: "manual_override",
+        captureMode: "manual_capture",
+        confidence: 0,
+        detectionUsed: false,
+        manualOverrideUsed: true,
         sourceFrameId: "front-frame-safe-1",
+        localOutputPath: "C:\\TenKings\\capture-data\\front-normalized.png",
+        previewImage: "data:image/png;base64,must-not-survive",
       },
       back: {
         side: "back",
         placementState: "ready",
         confidence: 0.92,
+        sourceFrameId: "back-frame-safe-1",
+      },
+    },
+    geometryCaptureDecisions: {
+      front: {
+        mode: "manual_capture",
+        placementState: "not_detected",
+        timestamp: "2026-07-02T12:00:01.000Z",
+        explicitOperatorAction: true,
+        detectionUsed: false,
+        manualOverrideUsed: true,
+        manualBoundaryRect: {
+          x: 100,
+          y: 140,
+          width: 300,
+          height: 420,
+          coordinateFrame: "basler_sensor_pixels",
+        },
+        sourceFrameId: "front-frame-safe-1",
+        localManifestPath: "C:\\TenKings\\capture-data\\station-session.json",
+        bridgeUrl: "http://127.0.0.1:47652/status",
+        stationToken: "must-not-survive",
+        uploadUrl: "https://storage.example.test/front.png?X-Amz-Signature=must-not-survive",
+        hardwareControls: { leimacOn: true },
+      },
+      back: {
+        mode: "detected_geometry",
+        placementState: "ready",
+        timestamp: "2026-07-02T12:00:02.000Z",
+        explicitOperatorAction: false,
+        detectionUsed: true,
+        manualOverrideUsed: false,
         sourceFrameId: "back-frame-safe-1",
       },
     },
@@ -268,6 +307,65 @@ test("production storage plan sanitizes local Dell paths and loopback URLs", () 
   assert.doesNotMatch(combinedBodies, /C:\\TenKings/);
   assert.doesNotMatch(combinedBodies, /127\.0\.0\.1/);
   assert.match(combinedBodies, /"publicReportUrl": "https:\/\/collect\.tenkings\.co\/ai-grader\/reports\/report-1"/);
+});
+
+test("production report keeps explicit manual geometry decisions while removing all private station data", () => {
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const reportBundleArtifact = plan.artifacts.find((artifact) => artifact.kind === "report-bundle.json");
+  const publicBundle = JSON.parse(reportBundleArtifact?.body ?? "{}");
+  const frontGeometry = publicBundle.geometry.front;
+  const frontDecision = publicBundle.geometryCaptureDecisions.front;
+
+  assert.equal(frontGeometry.geometrySource, "manual_override");
+  assert.equal(frontGeometry.captureMode, "manual_capture");
+  assert.equal(frontGeometry.detectionUsed, false);
+  assert.equal(frontGeometry.manualOverrideUsed, true);
+  assert.equal(frontDecision.mode, "manual_capture");
+  assert.equal(frontDecision.geometrySource, "manual_override");
+  assert.equal(frontDecision.captureMode, "manual_capture");
+  assert.equal(frontDecision.placementState, "not_detected");
+  assert.equal(frontDecision.explicitOperatorAction, true);
+  assert.equal(frontDecision.detectionUsed, false);
+  assert.equal(frontDecision.manualOverrideUsed, true);
+  assert.deepEqual(frontDecision.manualBoundaryRect, {
+    x: 100,
+    y: 140,
+    width: 300,
+    height: 420,
+    coordinateFrame: "basler_sensor_pixels",
+  });
+  assert.equal(publicBundle.geometryCaptureDecisions.back.mode, "detected_geometry");
+  assert.equal(publicBundle.geometryCaptureDecisions.back.geometrySource, "detected");
+
+  const serialized = JSON.stringify(publicBundle);
+  assert.doesNotMatch(
+    serialized,
+    /C:\\TenKings|127\.0\.0\.1|must-not-survive|data:image|X-Amz-Signature|stationToken|bridgeUrl|uploadUrl|hardwareControls|leimacOn/
+  );
+
+  assert.equal(
+    normalizeAiGraderPublicGeometryCaptureDecisions({
+      front: {
+        mode: "manual_capture",
+        placementState: "ready",
+        explicitOperatorAction: false,
+        detectionUsed: true,
+        manualOverrideUsed: false,
+        manualBoundaryRect: {
+          x: 100,
+          y: 140,
+          width: 300,
+          height: 420,
+          coordinateFrame: "basler_sensor_pixels",
+        },
+      },
+    }),
+    undefined
+  );
 });
 
 test("production storage plan uploads AI Grader evidence image assets with public URLs", () => {
@@ -523,7 +621,25 @@ test("production release persistence upserts durable records and optional card l
   );
   assert.ok(calls.some((call) => call.delegate === "aiGraderValuation" && call.method === "upsert"));
   const sessionUpsert = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "upsert");
-  assert.equal(sessionUpsert.args.create.captureSummary.geometry.front.placementState, "ready");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometry.front.placementState, "not_detected");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometry.front.geometrySource, "manual_override");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometry.front.captureMode, "manual_capture");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.mode, "manual_capture");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.geometrySource, "manual_override");
+  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.explicitOperatorAction, true);
+  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.detectionUsed, false);
+  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.manualOverrideUsed, true);
+  assert.deepEqual(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.manualBoundaryRect, {
+    x: 100,
+    y: 140,
+    width: 300,
+    height: 420,
+    coordinateFrame: "basler_sensor_pixels",
+  });
+  assert.doesNotMatch(
+    JSON.stringify(sessionUpsert.args.create.captureSummary),
+    /C:\\TenKings|127\.0\.0\.1|must-not-survive|data:image|X-Amz-Signature|stationToken|bridgeUrl|uploadUrl|hardwareControls|leimacOn/
+  );
   assert.equal(sessionUpsert.args.create.captureSummary.captureTiming.summary.totalFrontMs, 4700);
   assert.equal(sessionUpsert.args.create.captureSummary.captureTiming.target.fiveSecondsPerSideProven, false);
   assert.equal(sessionUpsert.args.create.captureSummary.ocrPrefill.humanConfirmationRequired, true);

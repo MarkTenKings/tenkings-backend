@@ -26,6 +26,8 @@ import {
   acceptAiGraderLiveLightingProfile,
   applyAiGraderLiveLighting,
   buildAiGraderCaptureProfileRequest,
+  buildAiGraderDetectedGeometryCaptureRequest,
+  buildAiGraderManualGeometryCaptureRequest,
   buildAiGraderRapidCaptureConfigurationRequest,
   buildAiGraderRapidQueueActivationRequest,
   callAiGraderStationBridge,
@@ -40,6 +42,7 @@ import {
   pairAiGraderStationBridge,
   safeOffAiGraderLiveLighting,
   stopAiGraderStationPreview,
+  type AiGraderManualGeometryRect,
 } from "../../lib/aiGraderStationBridgeClient";
 import {
   AI_GRADER_AUTO_CAPTURE_STABLE_MS,
@@ -74,6 +77,9 @@ type AutoCaptureUiState = {
 type RapidOcrPrefetchStatus = {
   status: "running" | "ready" | "failed";
   reviewCount?: number;
+};
+type ManualCaptureConfirmation = {
+  side: AiGraderPreviewGeometrySide;
 };
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
@@ -606,6 +612,7 @@ export default function AiGraderStationPage() {
   const [stationCaptureMode, setStationCaptureMode] = useState<StationCaptureMode>(status.rapidCapture.enabled ? "rapid" : "single");
   const [stationCaptureProfile, setStationCaptureProfile] = useState<AiGraderCaptureProfile>(status.captureProfile);
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
+  const [manualCaptureConfirmation, setManualCaptureConfirmation] = useState<ManualCaptureConfirmation | null>(null);
   const autoCaptureMachineRef = useRef<AiGraderAutoCaptureState | undefined>(undefined);
   const startGradingRef = useRef<((mode: AiGraderCaptureTriggerMode) => Promise<void>) | null>(null);
   const confirmFlipAndContinueRef = useRef<((mode: AiGraderCaptureTriggerMode) => Promise<void>) | null>(null);
@@ -1179,6 +1186,11 @@ export default function AiGraderStationPage() {
   const activePreviewCardGeometry = safePreviewCardGeometry?.[previewGeometrySide];
   const cardPlacementState = activePreviewCardGeometry?.placementState ?? "not_detected";
   const cardPlacementLabel = aiGraderCardPlacementLabel(cardPlacementState);
+  const detectedGeometryReady =
+    cardPlacementState === "ready" &&
+    activePreviewCardGeometry?.geometrySource === "detected" &&
+    activePreviewCardGeometry.detectionUsed === true;
+  const manualOverlayAvailable = previewStatus.status === "live" && Boolean(previewImageSize);
   const cardGeometryCorners = activePreviewCardGeometry?.corners ?? activePreviewCardGeometry?.detectedCorners ?? null;
   const cardGeometryFrameSize = activePreviewCardGeometry?.image ?? reportOverlayFrameSize;
   const cardGeometryPolygonPoints = cardGeometryCorners
@@ -1195,7 +1207,13 @@ export default function AiGraderStationPage() {
         (status.currentStep === "prompt_flip_card" || status.currentStep === "capture_back")
       ? "back"
       : null;
-  const autoCaptureGeometry = activeAutoCaptureSide ? safePreviewCardGeometry?.[activeAutoCaptureSide] : undefined;
+  const autoCaptureGeometryCandidate = activeAutoCaptureSide ? safePreviewCardGeometry?.[activeAutoCaptureSide] : undefined;
+  const autoCaptureGeometry =
+    autoCaptureGeometryCandidate?.placementState === "ready" &&
+    autoCaptureGeometryCandidate.geometrySource === "detected" &&
+    autoCaptureGeometryCandidate.detectionUsed === true
+      ? autoCaptureGeometryCandidate
+      : undefined;
   const autoCaptureSessionId = `${status.sessionManifest.gradingSessionId}:${status.sessionManifest.reportId}`;
   const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 6);
   const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) => RAPID_PROCESSING_STATES.has(item.state));
@@ -1207,6 +1225,7 @@ export default function AiGraderStationPage() {
     status.sessionManifest.backCaptured ||
     Boolean(status.rapidCaptureQueue.activeQueueItemId);
   const canStartGrading =
+    !status.captureFailure &&
     !status.sessionManifest.frontCaptured &&
     !status.sessionManifest.backCaptured &&
     !status.rapidCaptureQueue.activeQueueItemId &&
@@ -1796,6 +1815,7 @@ export default function AiGraderStationPage() {
     ocrPrefillGenerationRef.current += 1;
     identityEditedFieldsRef.current.clear();
     autoCaptureMachineRef.current = undefined;
+    setManualCaptureConfirmation(null);
     setAutoCaptureUi({ phase: autoCaptureEnabled ? "waiting_for_card_removal" : "disabled", readyStableMs: 0 });
     setSelectedCard(null);
     setIdentityDraft(defaultIdentityDraft);
@@ -1873,7 +1893,10 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const startGrading = async (captureTriggerMode: AiGraderCaptureTriggerMode = "operator") => {
+  const startGrading = async (
+    captureTriggerMode: AiGraderCaptureTriggerMode = "operator",
+    manualGeometryRect?: AiGraderManualGeometryRect
+  ) => {
     const captureTriggerAt = new Date().toISOString();
     setBusy("start-grading");
     setError(null);
@@ -1889,8 +1912,9 @@ export default function AiGraderStationPage() {
       await waitForPreviewReleaseBeforeCapture(`${captureTriggerMode} starting front ${stationCaptureProfile} capture`);
       await runAction("capture-front", {
         ...actionBody({}, latest, false),
-        captureTriggerAt,
-        captureTriggerMode,
+        ...(manualGeometryRect
+          ? buildAiGraderManualGeometryCaptureRequest({ captureTriggerAt, manualGeometryRect })
+          : buildAiGraderDetectedGeometryCaptureRequest({ captureTriggerAt, captureTriggerMode })),
       });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Start grading failed.");
@@ -1899,7 +1923,10 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const confirmFlipAndContinue = async (captureTriggerMode: AiGraderCaptureTriggerMode = "operator") => {
+  const confirmFlipAndContinue = async (
+    captureTriggerMode: AiGraderCaptureTriggerMode = "operator",
+    manualGeometryRect?: AiGraderManualGeometryRect
+  ) => {
     const captureTriggerAt = new Date().toISOString();
     setBusy("capture-back");
     setError(null);
@@ -1908,8 +1935,9 @@ export default function AiGraderStationPage() {
       await waitForPreviewReleaseBeforeCapture(`${captureTriggerMode} starting back ${stationCaptureProfile} capture`);
       const captured = await runAction("capture-back", {
         confirmations: { flipComplete: true, lightIdleOff: true, fixtureRulersVisible: true },
-        captureTriggerAt,
-        captureTriggerMode,
+        ...(manualGeometryRect
+          ? buildAiGraderManualGeometryCaptureRequest({ captureTriggerAt, manualGeometryRect })
+          : buildAiGraderDetectedGeometryCaptureRequest({ captureTriggerAt, captureTriggerMode })),
       });
       if (stationCaptureMode === "rapid" && captured.rapidCapture.enabled) {
         await runAction("queue-current-card", {});
@@ -1925,6 +1953,23 @@ export default function AiGraderStationPage() {
     } finally {
       setBusy(null);
     }
+  };
+
+  const confirmManualOverlayCapture = async () => {
+    const side = manualCaptureConfirmation?.side;
+    if (!side) return;
+    const manualGeometryRect: AiGraderManualGeometryRect = {
+      x: reportOverlayTemplate.x,
+      y: reportOverlayTemplate.y,
+      width: reportOverlayTemplate.width,
+      height: reportOverlayTemplate.height,
+      imageWidth: reportOverlayFrameSize.width,
+      imageHeight: reportOverlayFrameSize.height,
+      coordinateFrame: "portrait_preview_pixels",
+    };
+    setManualCaptureConfirmation(null);
+    if (side === "front") await startGrading("operator", manualGeometryRect);
+    else await confirmFlipAndContinue("operator", manualGeometryRect);
   };
 
   const activateRapidQueueItem = async (queueItemId: string) => {
@@ -3713,10 +3758,40 @@ export default function AiGraderStationPage() {
               <div>
                 <p className="eyebrow">Position Back</p>
                 <h2>Live Preview Is Active</h2>
-                <p>Flip the card, seat the back in the fixture, then capture when the framing is right.</p>
-                <button type="button" onClick={() => void confirmFlipAndContinue("operator")} disabled={busy !== null}>
+                <p>Flip the card and wait for Ready. If detection cannot become Ready, use the fixed overlay manually and confirm that override.</p>
+                <button
+                  type="button"
+                  onClick={() => void confirmFlipAndContinue("operator")}
+                  disabled={busy !== null || previewGeometrySide !== "back" || !detectedGeometryReady}
+                >
                   {busy === "capture-back" ? "Capturing Back" : "Capture Back"}
                 </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setManualCaptureConfirmation({ side: "back" })}
+                  disabled={busy !== null || previewGeometrySide !== "back" || !manualOverlayAvailable}
+                >
+                  Use Manual Overlay
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {manualCaptureConfirmation ? (
+            <div className="manual-capture-scrim" role="dialog" aria-modal="true" aria-labelledby="manual-capture-title">
+              <div>
+                <p className="eyebrow">Explicit Manual Capture</p>
+                <h2 id="manual-capture-title">Use Fixed Overlay for {manualCaptureConfirmation.side === "front" ? "Front" : "Back"}?</h2>
+                <p>
+                  Automatic geometry will not be claimed. The yellow card rectangle ({Math.round(reportOverlayTemplate.width)} x {Math.round(reportOverlayTemplate.height)} preview pixels) will be sent to the local bridge as an operator-confirmed manual boundary. Raw forensic images remain unchanged.
+                </p>
+                <div className="action-row">
+                  <button type="button" onClick={() => setManualCaptureConfirmation(null)} disabled={busy !== null}>Cancel</button>
+                  <button type="button" className="primary" onClick={() => void confirmManualOverlayCapture()} disabled={busy !== null || !manualOverlayAvailable}>
+                    Confirm Manual Capture
+                  </button>
+                </div>
               </div>
             </div>
           ) : null}
@@ -3918,9 +3993,17 @@ export default function AiGraderStationPage() {
               type="button"
               className="start-grading"
               onClick={() => void startGrading("operator")}
-              disabled={busy !== null || !canStartGrading}
+              disabled={busy !== null || !canStartGrading || previewGeometrySide !== "front" || !detectedGeometryReady}
             >
               {busy === "start-grading" ? "Working" : "Start Grading"}
+            </button>
+            <button
+              type="button"
+              className="secondary manual-capture-button"
+              onClick={() => setManualCaptureConfirmation({ side: "front" })}
+              disabled={busy !== null || !canStartGrading || previewGeometrySide !== "front" || !manualOverlayAvailable}
+            >
+              Use Manual Overlay
             </button>
           </section>
 
@@ -3974,9 +4057,9 @@ export default function AiGraderStationPage() {
               <span>{autoCapturePhaseLabel(autoCaptureUi)}</span>
             </label>
             <p>
-              Full Forensic is the fallback. Production Fast preserves all grading roles; 5 seconds per side is not proven without a Dell hardware run.
+              Full Forensic is the previous stable profile. Production Fast is an explicit opt-in and preserves all grading roles; 5 seconds per side is not proven without a Dell hardware run.
             </p>
-            {autoCaptureEnabled ? <small>Remove the prior card, then hold detected Ready through 3 fresh frames and 800 ms. Manual capture remains available.</small> : null}
+            {autoCaptureEnabled ? <small>Remove the prior card, then hold detected Ready through 3 fresh frames and 800 ms. Manual capture always requires the separate confirmation above.</small> : null}
           </section>
 
           {stationCaptureMode === "rapid" || rapidQueueItems.length ? (
@@ -4348,11 +4431,19 @@ export default function AiGraderStationPage() {
             <div className="warm-grid">
               <div>
                 <span>Execution Path</span>
-                <strong>{warmRunner.executionPath === "cold_command_fallback" ? "Cold Fallback" : "Warm Runner"}</strong>
+                <strong>{warmRunner.executionPath === "cold_command_fallback" ? "Explicit Cold Debug" : "Warm Runner"}</strong>
               </div>
               <div>
-                <span>Fallback</span>
-                <strong>{warmRunner.fallbackUsed || warmRunner.fallback.active ? "Used" : "No"}</strong>
+                <span>Cold Debug Mode</span>
+                <strong>{warmRunner.explicitColdDebugModeUsed || warmRunner.coldDebugMode.active ? "Explicitly Enabled" : "Off"}</strong>
+              </div>
+              <div>
+                <span>Front Geometry</span>
+                <strong>{status.geometryCaptureDecisions.front?.mode === "manual_capture" ? "Manual Override" : status.geometryCaptureDecisions.front?.mode === "detected_geometry" ? "Detected" : "Pending"}</strong>
+              </div>
+              <div>
+                <span>Back Geometry</span>
+                <strong>{status.geometryCaptureDecisions.back?.mode === "manual_capture" ? "Manual Override" : status.geometryCaptureDecisions.back?.mode === "detected_geometry" ? "Detected" : "Pending"}</strong>
               </div>
               <div>
                 <span>Capture Lock</span>
@@ -4375,9 +4466,14 @@ export default function AiGraderStationPage() {
                 <strong>{formatMs(warmRunner.timing.targetTotalMinMs)}-{formatMs(warmRunner.timing.targetTotalMaxMs)}</strong>
               </div>
             </div>
-            {(warmRunner.fallbackUsed || warmRunner.fallback.active) && (
-              <p className="status-note">{warmRunner.fallbackReason ?? warmRunner.fallback.reason ?? "Cold fallback was used; this run does not count for speed acceptance."}</p>
+            {(warmRunner.explicitColdDebugModeUsed || warmRunner.coldDebugMode.active) && (
+              <p className="status-note">{warmRunner.explicitColdDebugReason ?? warmRunner.coldDebugMode.reason ?? "Explicit cold debug mode was configured before capture; this run does not count for speed acceptance."}</p>
             )}
+            {status.captureFailure ? (
+              <p className="status-note failed">
+                {status.captureFailure.side} warm capture failed: {status.captureFailure.message} This capture session is terminal; select Start New Card to retry. No automatic cold capture was attempted.
+              </p>
+            ) : null}
             <div className="evidence-side">
               <div>
                 <span>Front Evidence</span>
@@ -5026,7 +5122,8 @@ export default function AiGraderStationPage() {
           line-height: 1.5;
         }
         .connect-scrim,
-        .flip-scrim {
+        .flip-scrim,
+        .manual-capture-scrim {
           position: absolute;
           inset: 0;
           display: grid;
@@ -5037,7 +5134,8 @@ export default function AiGraderStationPage() {
           z-index: 5;
         }
         .connect-scrim > div,
-        .flip-scrim > div {
+        .flip-scrim > div,
+        .manual-capture-scrim > div {
           width: min(520px, 92vw);
           border: 1px solid rgba(238, 211, 146, 0.32);
           background: rgba(14, 15, 13, 0.92);
@@ -5054,6 +5152,14 @@ export default function AiGraderStationPage() {
         .flip-scrim > div {
           width: min(430px, 92vw);
           pointer-events: auto;
+        }
+        .manual-capture-scrim {
+          z-index: 7;
+        }
+        .manual-capture-scrim p {
+          margin-top: 10px;
+          color: #cfc7b8;
+          line-height: 1.5;
         }
         h1,
         h2,
@@ -5123,6 +5229,10 @@ export default function AiGraderStationPage() {
           background: #5bff9d;
           color: #06100a;
           box-shadow: 0 0 36px rgba(91, 255, 157, 0.22);
+        }
+        .manual-capture-button {
+          width: 100%;
+          margin-top: 10px;
         }
         .connect-scrim .link-button {
           border-color: rgba(255, 255, 255, 0.18);

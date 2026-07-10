@@ -84,6 +84,10 @@ export interface AiGraderReportBundle {
     front?: JsonRecord;
     back?: JsonRecord;
   };
+  geometryCaptureDecisions?: {
+    front?: JsonRecord;
+    back?: JsonRecord;
+  };
   captureTiming?: JsonRecord;
   ocrPrefill?: JsonRecord;
   assets: AiGraderReportBundleAsset[];
@@ -316,6 +320,7 @@ export async function buildAiGraderReportBundle(input: {
   publicBasePath?: string;
   includeAssetBodies?: boolean;
   captureTiming?: JsonRecord;
+  geometryCaptureDecisions?: JsonRecord;
   ocrPrefill?: JsonRecord;
 }): Promise<AiGraderReportBundle> {
   const reportDir = normalizeLocalPath(input.reportDir);
@@ -457,6 +462,7 @@ export async function buildAiGraderReportBundle(input: {
       ...(frontGeometry ? { front: frontGeometry } : {}),
       ...(backGeometry ? { back: backGeometry } : {}),
     },
+    ...(input.geometryCaptureDecisions ? { geometryCaptureDecisions: input.geometryCaptureDecisions } : {}),
     captureTiming:
       input.captureTiming ??
       ({
@@ -487,6 +493,7 @@ export async function writeAiGraderReportBundle(input: {
   generatedAt?: string;
   publicBasePath?: string;
   captureTiming?: JsonRecord;
+  geometryCaptureDecisions?: JsonRecord;
   ocrPrefill?: JsonRecord;
 }): Promise<AiGraderReportBundleWriteResult> {
   const outputDir = normalizeLocalPath(input.outputDir ?? input.reportDir);

@@ -20,6 +20,12 @@ async function makeCardTiff(filePath) {
   await sharp(svg).tiff({ compression: "none" }).toFile(filePath);
 }
 
+async function makeBlankTiff(filePath) {
+  await sharp({ create: { width: 500, height: 700, channels: 3, background: "#202226" } })
+    .tiff({ compression: "none" })
+    .toFile(filePath);
+}
+
 function sha256(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
@@ -57,22 +63,18 @@ function capture(filePath, label, timestamp, index) {
   };
 }
 
-test("production_fast warm processing preserves all forensic roles and writes geometry, normalized, and timing artifacts", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-fast-warm-processing-"));
-  const packageDir = path.join(root, "package-front");
-  const sideDir = path.join(packageDir, "front");
-  fs.mkdirSync(sideDir, { recursive: true });
-  const rawPath = path.join(sideDir, "front-all-roles.tiff");
-  await makeCardTiff(rawPath);
-  const rawBefore = fs.readFileSync(rawPath);
+function warmBatchInput({ packageId, packageDir, sideDir, rawPath, cardBoundaryRect, manualGeometryOverride }) {
   const timestamp = "2026-07-09T20:00:00.000Z";
   const roles = Array.from({ length: 11 }, (_, index) => capture(rawPath, `role-${index}`, timestamp, index));
-  const role = (name, label, captureValue, channel) => ({ role: name, label, ...(channel !== undefined ? { channel } : {}), capture: captureValue });
-
-  const result = await processFixedRigWarmSideBatch({
+  const role = (name, label, captureValue, channel) => ({
+    role: name,
+    label,
+    ...(channel !== undefined ? { channel } : {}),
+    capture: captureValue,
+  });
+  return {
     executionPath: "warm_full_forensic_runner",
-    fallbackUsed: false,
-    packageId: "synthetic-fast-front",
+    packageId,
     packageDir,
     sideDir,
     side: "front",
@@ -111,7 +113,9 @@ test("production_fast warm processing preserves all forensic roles and writes ge
         darkControl: role("dark_control", "front-dark", roles[0]),
         allOn: role("all_on", "front-all-on", roles[1], "all"),
         acceptedProfile: role("accepted_profile", "front-profile", roles[2], [1, 2, 3, 4, 5, 6, 7, 8]),
-        channels: roles.slice(3).map((captureValue, index) => role(`channel_${index + 1}`, `front-channel-${index + 1}`, captureValue, index + 1)),
+        channels: roles.slice(3).map((captureValue, index) =>
+          role(`channel_${index + 1}`, `front-channel-${index + 1}`, captureValue, index + 1)
+        ),
       },
       timing: { warmCameraOpenConfigure: { durationMs: 450 } },
       safety: { safeOffBefore: true, safeOffAfter: true },
@@ -119,15 +123,45 @@ test("production_fast warm processing preserves all forensic roles and writes ge
     },
     exposureUs: 45000,
     gain: 0,
-  });
+    ...(cardBoundaryRect ? { cardBoundaryRect } : {}),
+    ...(manualGeometryOverride ? { manualGeometryOverride } : {}),
+  };
+}
+
+test("production_fast warm processing preserves all forensic roles and writes geometry, normalized, and timing artifacts", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-fast-warm-processing-"));
+  const packageDir = path.join(root, "package-front");
+  const sideDir = path.join(packageDir, "front");
+  fs.mkdirSync(sideDir, { recursive: true });
+  const rawPath = path.join(sideDir, "front-all-roles.tiff");
+  await makeCardTiff(rawPath);
+  const rawBefore = fs.readFileSync(rawPath);
+  const result = await processFixedRigWarmSideBatch(warmBatchInput({
+    packageId: "synthetic-fast-front",
+    packageDir,
+    sideDir,
+    rawPath,
+    // A configured fixture rectangle is not permission to override automatic
+    // geometry. It must be ignored unless manualGeometryOverride is explicit.
+    cardBoundaryRect: { x: 10, y: 10, width: 100, height: 140 },
+  }));
 
   const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
   assert.equal(manifest.captureProfile, "production_fast");
   assert.equal(manifest.captureProfilePlan.rawEvidenceFormat, "tiff");
   assert.equal(manifest.captureProfilePlan.evidenceRoles, "full_forensic");
+  assert.deepEqual(manifest.captureProfilePlan.availableCaptureProfiles, ["full_forensic", "production_fast"]);
+  assert.equal(manifest.captureProfilePlan.previousStableProfile, "full_forensic");
+  assert.equal(manifest.captureProfilePlan.productionFastOptIn, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(manifest.captureProfilePlan, "fullForensicFallback"), false);
   assert.equal(manifest.front.channels.length, 8);
   assert.equal(manifest.front.normalizedCard.geometry.side, "front");
+  assert.equal(manifest.front.normalizedCard.geometry.geometrySource, "detected");
+  assert.equal(manifest.front.normalizedCard.geometry.captureMode, "automatic_detection");
   assert.equal(manifest.front.normalizedCard.geometry.detectionUsed, true);
+  assert.equal(manifest.front.normalizedCard.geometry.manualOverrideUsed, false);
+  assert.equal(manifest.geometryPolicy.legacyCardBoundaryRectIgnored, true);
+  assert.equal(manifest.geometryPolicy.normalizedArtifactCreated, true);
   assert.equal(manifest.front.normalizedCard.rawEvidencePreserved, true);
   assert.equal(fs.existsSync(manifest.front.normalizedCard.normalizedArtifact.localOutputPath), true);
   assert.equal(manifest.captureTiming.frameCaptureMs > 0, true);
@@ -138,4 +172,70 @@ test("production_fast warm processing preserves all forensic roles and writes ge
   assert.equal(manifest.captureTiming.hardwareMeasurementRequired, true);
   assert.equal(manifest.processingTiming.frontProcessingMayOverlapFlip, true);
   assert.deepEqual(fs.readFileSync(rawPath), rawBefore);
+});
+
+test("legacy fixture boundary cannot silently normalize an undetected card", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-no-manual-fallback-"));
+  const packageDir = path.join(root, "package-front");
+  const sideDir = path.join(packageDir, "front");
+  fs.mkdirSync(sideDir, { recursive: true });
+  const rawPath = path.join(sideDir, "blank-all-roles.tiff");
+  await makeBlankTiff(rawPath);
+
+  const result = await processFixedRigWarmSideBatch(warmBatchInput({
+    packageId: "synthetic-undetected-front",
+    packageDir,
+    sideDir,
+    rawPath,
+    cardBoundaryRect: { x: 100, y: 140, width: 300, height: 420 },
+  }));
+  const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
+  const normalized = manifest.front.normalizedCard;
+
+  assert.equal(normalized.geometry.placementState, "not_detected");
+  assert.equal(normalized.geometry.geometrySource, "none");
+  assert.equal(normalized.geometry.captureMode, "none");
+  assert.equal(normalized.geometry.detectionUsed, false);
+  assert.equal(normalized.geometry.manualOverrideUsed, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(normalized.geometry, "manualFallbackUsed"), false);
+  assert.equal(normalized.normalizedArtifact, undefined);
+  assert.equal(manifest.geometryPolicy.legacyCardBoundaryRectIgnored, true);
+  assert.equal(manifest.geometryPolicy.normalizedArtifactCreated, false);
+  assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
+});
+
+test("explicit operator-confirmed manual capture is visibly recorded and never claims Ready or detection", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-explicit-manual-capture-"));
+  const packageDir = path.join(root, "package-front");
+  const sideDir = path.join(packageDir, "front");
+  fs.mkdirSync(sideDir, { recursive: true });
+  const rawPath = path.join(sideDir, "blank-manual-all-roles.tiff");
+  await makeBlankTiff(rawPath);
+
+  const result = await processFixedRigWarmSideBatch(warmBatchInput({
+    packageId: "synthetic-manual-front",
+    packageDir,
+    sideDir,
+    rawPath,
+    manualGeometryOverride: {
+      action: "manual_capture",
+      confirmed: true,
+      rect: { x: 100, y: 140, width: 300, height: 420 },
+    },
+  }));
+  const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
+  const normalized = manifest.front.normalizedCard;
+
+  assert.equal(normalized.geometry.placementState, "not_detected");
+  assert.equal(normalized.geometry.geometrySource, "manual_override");
+  assert.equal(normalized.geometry.captureMode, "manual_capture");
+  assert.equal(normalized.geometry.confidenceBasis, "operator_confirmation");
+  assert.equal(normalized.geometry.confidence, 0);
+  assert.equal(normalized.geometry.detectionUsed, false);
+  assert.equal(normalized.geometry.manualOverrideUsed, true);
+  assert.equal(normalized.geometry.detectedCorners, null);
+  assert.equal(manifest.geometryPolicy.mode, "manual_capture");
+  assert.equal(manifest.geometryPolicy.manualOverrideUsed, true);
+  assert.equal(manifest.geometryPolicy.normalizedArtifactCreated, true);
+  assert.equal(fs.existsSync(normalized.normalizedArtifact.localOutputPath), true);
 });

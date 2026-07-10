@@ -97,6 +97,10 @@ export type AiGraderReportBundle = {
     front?: Record<string, unknown>;
     back?: Record<string, unknown>;
   };
+  geometryCaptureDecisions?: {
+    front?: Record<string, unknown>;
+    back?: Record<string, unknown>;
+  };
   captureTiming?: Record<string, unknown>;
   ocrPrefill?: Record<string, unknown>;
   assets?: AiGraderReportPublicAsset[];

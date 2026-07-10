@@ -59,8 +59,10 @@ test("detects four front corners within close-enough offset and +10 degree skew,
   assert.equal(result.geometry.side, "front");
   assert.equal(result.geometry.placementState, "ready");
   assert.equal(result.geometry.geometrySource, "detected");
+  assert.equal(result.geometry.captureMode, "automatic_detection");
+  assert.equal(result.geometry.confidenceBasis, "automatic_detection");
   assert.equal(result.geometry.detectionUsed, true);
-  assert.equal(result.geometry.manualFallbackUsed, false);
+  assert.equal(result.geometry.manualOverrideUsed, false);
   assert.ok(result.geometry.detectedCorners);
   assert.ok(result.geometry.detectedCorners.topLeft.x < result.geometry.detectedCorners.topRight.x);
   assert.ok(Math.abs(result.geometry.rotationDegrees - 10) < 1.5);
@@ -102,6 +104,44 @@ test("detects back geometry at negative skew and reports ready", async () => {
   assert.ok(geometry.boundingBox.height > 450);
 });
 
+test("accepts a correctly oriented raw landscape card while retaining its right-angle transform rotation", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "landscape-raw.png");
+  const normalizedPath = path.join(dir, "landscape-normalized.png");
+  await writeSyntheticCard(rawPath, {
+    width: 1000,
+    height: 800,
+    cardWidth: 490,
+    cardHeight: 350,
+  });
+
+  const result = await detectAndNormalizeCardImage({
+    sourceImagePath: rawPath,
+    normalizedOutputPath: normalizedPath,
+    side: "front",
+  });
+
+  assert.equal(result.geometry.placementState, "ready");
+  assert.ok(Math.abs(Math.abs(result.geometry.rotationDegrees) - 90) < 1.5);
+  assert.ok(result.geometry.skewDegrees < 1.5);
+  assert.equal(result.geometry.placement.withinSkewTolerance, true);
+  assert.ok(result.normalizedArtifact);
+  assert.ok(result.normalizedArtifact.imageWidth < result.normalizedArtifact.imageHeight);
+});
+
+test("does not treat a sideways card in a portrait frame as zero-skew placement", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "portrait-frame-sideways-card.png");
+  await writeSyntheticCard(rawPath, { cardWidth: 490, cardHeight: 350 });
+
+  const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "front" });
+
+  assert.equal(geometry.placementState, "adjust_card");
+  assert.ok(Math.abs(Math.abs(geometry.rotationDegrees) - 90) < 1.5);
+  assert.ok(geometry.skewDegrees > 88);
+  assert.equal(geometry.placement.withinSkewTolerance, false);
+});
+
 test("returns adjust_card for excessive skew or center offset while retaining detected geometry", async () => {
   const dir = tempDir();
   const skewedPath = path.join(dir, "skewed.png");
@@ -127,7 +167,7 @@ test("returns adjust_card for excessive skew or center offset while retaining de
   assert.equal(relaxed.placement.maxSkewDegrees, 15);
 });
 
-test("returns not_detected without emitting a normalized artifact for a blank image", async () => {
+test("returns not_detected without emitting a normalized artifact or honoring legacy automatic fallback input", async () => {
   const dir = tempDir();
   const rawPath = path.join(dir, "blank.png");
   const normalizedPath = path.join(dir, "blank-normalized.png");
@@ -137,17 +177,22 @@ test("returns not_detected without emitting a normalized artifact for a blank im
     sourceImagePath: rawPath,
     normalizedOutputPath: normalizedPath,
     side: "front",
+    // This legacy property is deliberately ignored. Manual geometry now needs
+    // the explicit manualOverride action below.
+    manualFallback: { rect: { x: 225, y: 255, width: 350, height: 490 } },
   });
 
   assert.equal(result.geometry.placementState, "not_detected");
   assert.equal(result.geometry.geometrySource, "none");
+  assert.equal(result.geometry.captureMode, "none");
+  assert.equal(result.geometry.manualOverrideUsed, false);
   assert.equal(result.geometry.corners, null);
   assert.equal(result.normalizedArtifact, undefined);
   assert.equal(fs.existsSync(normalizedPath), false);
   assert.equal(result.rawEvidencePreserved, true);
 });
 
-test("uses an explicit manual rectangle fallback and saves a normalized artifact without claiming detected corners", async () => {
+test("requires an explicit manual_capture override and saves an artifact without claiming detection or Ready", async () => {
   const dir = tempDir();
   const rawPath = path.join(dir, "manual-source.png");
   const normalizedPath = path.join(dir, "manual-normalized.png");
@@ -157,13 +202,21 @@ test("uses an explicit manual rectangle fallback and saves a normalized artifact
     sourceImagePath: rawPath,
     normalizedOutputPath: normalizedPath,
     side: "back",
-    manualFallback: { rect: { x: 225, y: 255, width: 350, height: 490 }, confidence: 0.95 },
+    manualOverride: {
+      action: "manual_capture",
+      confirmed: true,
+      rect: { x: 225, y: 255, width: 350, height: 490 },
+    },
   });
 
-  assert.equal(result.geometry.placementState, "ready");
-  assert.equal(result.geometry.geometrySource, "manual_fallback");
+  assert.equal(result.geometry.placementState, "not_detected");
+  assert.equal(result.geometry.geometrySource, "manual_override");
+  assert.equal(result.geometry.captureMode, "manual_capture");
+  assert.equal(result.geometry.confidenceBasis, "operator_confirmation");
   assert.equal(result.geometry.detectionUsed, false);
-  assert.equal(result.geometry.manualFallbackUsed, true);
+  assert.equal(result.geometry.manualOverrideUsed, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(result.geometry, "manualFallbackUsed"), false);
+  assert.equal(result.geometry.confidence, 0);
   assert.equal(result.geometry.detectedCorners, null);
   assert.ok(result.geometry.corners);
   assert.deepEqual(result.geometry.boundingBox, { x: 225, y: 255, width: 350, height: 490 });
@@ -171,4 +224,49 @@ test("uses an explicit manual rectangle fallback and saves a normalized artifact
   assert.equal(result.normalizedArtifact.imageWidth, 350);
   assert.equal(result.normalizedArtifact.imageHeight, 490);
   assert.equal(result.rawEvidencePreserved, true);
+});
+
+test("manual landscape override records a right-angle rotation and writes a portrait artifact", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "manual-landscape-source.png");
+  const normalizedPath = path.join(dir, "manual-landscape-normalized.png");
+  await sharp({ create: { width: 1000, height: 800, channels: 3, background: "#202226" } }).png().toFile(rawPath);
+
+  const result = await detectAndNormalizeCardImage({
+    sourceImagePath: rawPath,
+    normalizedOutputPath: normalizedPath,
+    side: "back",
+    manualOverride: {
+      action: "manual_capture",
+      confirmed: true,
+      rect: { x: 255, y: 225, width: 490, height: 350 },
+    },
+  });
+
+  assert.equal(result.geometry.rotationDegrees, 90);
+  assert.equal(result.geometry.skewDegrees, 0);
+  assert.ok(result.normalizedArtifact);
+  assert.ok(result.normalizedArtifact.imageWidth < result.normalizedArtifact.imageHeight);
+  assert.equal(result.normalizedArtifact.imageWidth, 350);
+  assert.equal(result.normalizedArtifact.imageHeight, 490);
+});
+
+test("rejects a manual rectangle that is not an explicitly confirmed manual_capture action", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "unconfirmed-manual-source.png");
+  await writeBlank(rawPath);
+
+  await assert.rejects(
+    detectAndNormalizeCardImage({
+      sourceImagePath: rawPath,
+      normalizedOutputPath: path.join(dir, "must-not-exist.png"),
+      side: "front",
+      manualOverride: {
+        action: "manual_capture",
+        confirmed: false,
+        rect: { x: 225, y: 255, width: 350, height: 490 },
+      },
+    }),
+    /action=manual_capture and confirmed=true/,
+  );
 });

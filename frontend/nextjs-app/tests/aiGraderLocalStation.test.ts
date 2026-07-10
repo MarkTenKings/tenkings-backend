@@ -52,6 +52,8 @@ import {
   acceptAiGraderLiveLightingProfile,
   applyAiGraderLiveLighting,
   buildAiGraderCaptureProfileRequest,
+  buildAiGraderDetectedGeometryCaptureRequest,
+  buildAiGraderManualGeometryCaptureRequest,
   buildAiGraderRapidCaptureConfigurationRequest,
   buildAiGraderRapidQueueActivationRequest,
   callAiGraderStationBridge,
@@ -261,20 +263,22 @@ test("local station contract exposes workflow status with no login, DB, or hardw
   assert.equal(status.bridgeContract.endpoints.some((endpoint) => endpoint.path === "/lighting/apply"), true);
   assert.equal(status.warmRunnerStatus.mode, "full_forensic");
   assert.equal(status.executionPath, "warm_full_forensic_runner");
-  assert.equal(status.fallbackUsed, false);
+  assert.equal(status.explicitColdDebugModeUsed, false);
   assert.equal(status.warmRunnerStatus.executionPath, "warm_full_forensic_runner");
   assert.equal(status.warmRunnerStatus.backend, "warm_full_forensic_runner");
-  assert.equal(status.warmRunnerStatus.fallbackUsed, false);
-  assert.equal(status.warmRunnerStatus.fallback.active, false);
+  assert.equal(status.warmRunnerStatus.explicitColdDebugModeUsed, false);
+  assert.equal(status.warmRunnerStatus.coldDebugMode.active, false);
   assert.equal(status.warmRunnerStatus.previewPolicy.holdPreviewDuringFullForensicRun, true);
   assert.equal(status.warmRunnerStatus.previewPolicy.holdActive, false);
   assert.equal(status.timingSummary?.executionPath, "warm_full_forensic_runner");
-  assert.equal(status.timingSummary?.fallbackUsed, false);
+  assert.equal(status.timingSummary?.explicitColdDebugModeUsed, false);
   assert.equal(status.warmRunnerStatus.evidencePlan.defaultFullForensic, true);
   assert.equal(status.captureProfile, "full_forensic");
   assert.equal(status.captureProfileGuard.stationSettingRequired, true);
-  assert.equal(status.captureProfileGuard.selectedExplicitly, false);
-  assert.equal(status.captureProfileGuard.fullForensicFallback, "full_forensic");
+  assert.equal(status.captureProfileGuard.selectionSource, "bridge_default");
+  assert.equal(status.captureProfileGuard.productionFastOptIn, false);
+  assert.deepEqual(status.captureProfileGuard.availableCaptureProfiles, ["full_forensic", "production_fast"]);
+  assert.equal(status.captureProfileGuard.previousStableProfile, "full_forensic");
   assert.equal(status.captureProfileGuard.fiveSecondTargetProven, false);
   assert.equal(status.captureTiming.schemaVersion, AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION);
   assert.equal(status.captureTiming.captureProfile, "full_forensic");
@@ -320,7 +324,8 @@ test("local station contract exposes workflow status with no login, DB, or hardw
     "channel_7",
     "channel_8",
   ]);
-  assert.equal(status.warmRunnerStatus.fallback.available, true);
+  assert.equal(status.warmRunnerStatus.coldDebugMode.configured, false);
+  assert.equal(status.warmRunnerStatus.safety.explicitColdDebugModeOnly, true);
   assert.equal(status.warmRunnerStatus.safety.captureLock, true);
   assert.equal(status.warmRunnerStatus.safety.watchdogSafeOff, true);
   assert.equal(status.warmRunnerStatus.safety.safeOffOnFailure, true);
@@ -351,8 +356,10 @@ test("preview geometry exposes exact operator states and strips local/private me
       side: "front",
       placementState: "ready",
       geometrySource: "detected",
+      captureMode: "automatic_detection",
+      confidenceBasis: "automatic_detection",
       detectionUsed: true,
-      manualFallbackUsed: false,
+      manualOverrideUsed: false,
       corners,
       detectedCorners: corners,
       boundingBox: { x: 120, y: 80, width: 960, height: 1500 },
@@ -371,9 +378,11 @@ test("preview geometry exposes exact operator states and strips local/private me
     back: {
       side: "back",
       placementState: "adjust_card",
-      geometrySource: "manual_fallback",
+      geometrySource: "manual_override",
+      captureMode: "manual_capture",
+      confidenceBasis: "operator_confirmation",
       detectionUsed: false,
-      manualFallbackUsed: true,
+      manualOverrideUsed: true,
       corners,
       detectedCorners: null,
       boundingBox: { x: 120, y: 80, width: 960, height: 1500 },
@@ -385,6 +394,8 @@ test("preview geometry exposes exact operator states and strips local/private me
 
   assert.equal(safe?.front?.placementState, "ready");
   assert.equal(safe?.back?.placementState, "adjust_card");
+  assert.equal(safe?.back?.geometrySource, "manual_override");
+  assert.equal(safe?.back?.manualOverrideUsed, true);
   assert.equal(safe?.front?.sourceFrameId, undefined);
   assert.deepEqual(safe?.front?.corners, corners);
   const displayedMetadata = JSON.stringify(safe);
@@ -412,7 +423,8 @@ test("production_fast is explicit and rapid capture status stays display-safe", 
     rapidCaptureEnabled: true,
   });
   assert.equal(fast.captureProfile, "production_fast");
-  assert.equal(fast.captureProfileGuard.selectedExplicitly, true);
+  assert.equal(fast.captureProfileGuard.selectionSource, "operator_setting");
+  assert.equal(fast.captureProfileGuard.productionFastOptIn, true);
   assert.equal(fast.captureProfileGuard.stationSettingRequired, true);
   assert.equal(fast.captureProfileGuard.fullForensicEvidencePreserved, true);
   assert.equal(fast.captureProfileGuard.fiveSecondTargetProven, false);
@@ -424,6 +436,30 @@ test("production_fast is explicit and rapid capture status stays display-safe", 
   const timestamp = "2026-07-09T12:00:00.000Z";
   const unsafeStatus = {
     ...fast,
+    fallbackUsed: true,
+    fallbackReason: "legacy automatic fallback",
+    geometryCaptureDecisions: {
+      front: {
+        mode: "manual_capture",
+        placementState: "not_detected",
+        timestamp,
+        explicitOperatorAction: true,
+        detectionUsed: false,
+        manualOverrideUsed: true,
+        manualBoundaryRect: { x: 120, y: 80, width: 960, height: 1500 },
+        sourceFrameId: "preview-front-44",
+        localPath: "C:\\TenKings\\private\\front.tiff",
+      },
+      back: {
+        mode: "detected_geometry",
+        placementState: "ready",
+        timestamp,
+        explicitOperatorAction: false,
+        detectionUsed: true,
+        manualOverrideUsed: false,
+        sourceFrameId: "preview-back-52",
+      },
+    },
     rapidCapture: {
       enabled: true,
       queueItemId: "rapid-queue-1",
@@ -476,15 +512,20 @@ test("production_fast is explicit and rapid capture status stays display-safe", 
   assert.equal(safeStatus.rapidCaptureQueue.items[0]?.autoConfirmed, false);
   assert.equal(safeStatus.rapidCaptureQueue.items[0]?.autoPublished, false);
   assert.equal(safeStatus.rapidCaptureQueue.items[0]?.error, undefined);
+  assert.equal(safeStatus.geometryCaptureDecisions.front?.mode, "manual_capture");
+  assert.equal(safeStatus.geometryCaptureDecisions.front?.manualOverrideUsed, true);
+  assert.deepEqual(safeStatus.geometryCaptureDecisions.front?.manualBoundaryRect, { x: 120, y: 80, width: 960, height: 1500 });
+  assert.equal(safeStatus.geometryCaptureDecisions.back?.mode, "detected_geometry");
+  assert.equal(Object.prototype.hasOwnProperty.call(safeStatus, "fallbackUsed"), false);
   const displayedRapidStatus = JSON.stringify({ rapidCapture: safeStatus.rapidCapture, rapidCaptureQueue: safeStatus.rapidCaptureQueue });
   assert.doesNotMatch(displayedRapidStatus, /C:\\TenKings|manifestPath|stationToken|private-token/i);
 
   const unguardedFast = sanitizeAiGraderLocalStationStatusForDisplay({
     ...fast,
-    captureProfileGuard: { ...fast.captureProfileGuard, selectedExplicitly: false },
+    captureProfileGuard: { ...fast.captureProfileGuard, selectionSource: "bridge_default" },
   });
   assert.equal(unguardedFast.captureProfile, "full_forensic");
-  assert.equal(unguardedFast.captureProfileGuard.selectedExplicitly, false);
+  assert.equal(unguardedFast.captureProfileGuard.productionFastOptIn, false);
 });
 
 test("capture timing accepts only path-free V1 metadata and fails closed on five-second proof", () => {
@@ -594,6 +635,14 @@ test("capture timing accepts only path-free V1 metadata and fails closed on five
   });
   assert.equal(sanitizedStatus.captureTiming.captureProfile, "production_fast");
   assert.equal(sanitizedStatus.captureTiming.target.fiveSecondsPerSideProven, true);
+  assert.equal(sanitizedStatus.captureProfileGuard.fiveSecondTargetProven, true);
+  const coldDebugStatus = sanitizeAiGraderLocalStationStatusForDisplay({
+    ...fastStatus,
+    executionPath: "cold_command_fallback",
+    explicitColdDebugModeUsed: true,
+    captureTiming: rawTiming as unknown as typeof fastStatus.captureTiming,
+  });
+  assert.equal(coldDebugStatus.captureProfileGuard.fiveSecondTargetProven, false);
 });
 
 test("local station action parser accepts known actions and rejects unknown actions", () => {
@@ -3698,8 +3747,58 @@ test("Dell station launcher opens pairing URL in a stable Chrome profile", () =>
   assert.equal(launcherSource.includes("pairingCodeRedacted = $true"), true);
 });
 
-test("browser station client sends explicit profile and rapid queue action bodies", async () => {
+test("station UI keeps automatic capture on Ready detected geometry and requires explicit manual overlay confirmation", () => {
+  const stationPath = [
+    path.join(process.cwd(), "pages", "ai-grader", "station.tsx"),
+    path.join(process.cwd(), "frontend", "nextjs-app", "pages", "ai-grader", "station.tsx"),
+  ].find((candidate) => fs.existsSync(candidate));
+  assert.ok(stationPath);
+  const source = fs.readFileSync(stationPath, "utf8");
+  assert.match(source, /geometrySource === "detected"/);
+  assert.match(source, /detectionUsed === true/);
+  assert.match(source, /buildAiGraderDetectedGeometryCaptureRequest/);
+  assert.match(source, /buildAiGraderManualGeometryCaptureRequest/);
+  assert.match(source, /coordinateFrame: "portrait_preview_pixels"/);
+  assert.match(source, /Confirm Manual Capture/);
+  assert.match(source, /Automatic geometry will not be claimed/);
+  assert.match(source, /manualCaptureConfirmation\.side/);
+  assert.match(source, /const canStartGrading =\s*!status\.captureFailure &&/);
+  assert.match(source, /This capture session is terminal; select Start New Card to retry\./);
+  assert.doesNotMatch(source, /Full Forensic is the fallback/);
+  assert.doesNotMatch(source, /Cold Fallback/);
+});
+
+test("browser station client sends explicit profile, geometry, and rapid queue action bodies", async () => {
   assert.deepEqual(buildAiGraderCaptureProfileRequest("production_fast"), { captureProfile: "production_fast" });
+  assert.deepEqual(
+    buildAiGraderDetectedGeometryCaptureRequest({ captureTriggerAt: "2026-07-10T12:00:00.000Z", captureTriggerMode: "auto" }),
+    { captureTriggerAt: "2026-07-10T12:00:00.000Z", captureTriggerMode: "auto", geometryCaptureMode: "detected_geometry" }
+  );
+  const manualRect = {
+    x: 120,
+    y: 80,
+    width: 960,
+    height: 1500,
+    imageWidth: 1200,
+    imageHeight: 1680,
+    coordinateFrame: "portrait_preview_pixels" as const,
+  };
+  assert.deepEqual(
+    buildAiGraderManualGeometryCaptureRequest({ captureTriggerAt: "2026-07-10T12:00:00.000Z", manualGeometryRect: manualRect }),
+    {
+      captureTriggerAt: "2026-07-10T12:00:00.000Z",
+      captureTriggerMode: "operator",
+      geometryCaptureMode: "manual_capture",
+      manualGeometryRect: manualRect,
+    }
+  );
+  assert.throws(
+    () => buildAiGraderManualGeometryCaptureRequest({
+      captureTriggerAt: "2026-07-10T12:00:00.000Z",
+      manualGeometryRect: { ...manualRect, x: 900, width: 400 },
+    }),
+    /inside the portrait preview frame/i
+  );
   assert.deepEqual(buildAiGraderRapidCaptureConfigurationRequest(true), { rapidCaptureEnabled: true });
   assert.deepEqual(buildAiGraderRapidQueueActivationRequest(" queue-1 "), { queueItemId: "queue-1" });
   assert.throws(() => buildAiGraderRapidQueueActivationRequest("   "), /queue item ID is required/i);

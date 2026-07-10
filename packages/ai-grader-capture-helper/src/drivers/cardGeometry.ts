@@ -9,7 +9,8 @@ export const STANDARD_CARD_HEIGHT_INCHES = 3.5;
 
 export type CardGeometrySide = "front" | "back";
 export type CardPlacementState = "not_detected" | "adjust_card" | "ready";
-export type CardGeometrySource = "detected" | "manual_fallback" | "none";
+export type CardGeometrySource = "detected" | "manual_override" | "none";
+export type CardGeometryCaptureMode = "automatic_detection" | "manual_capture" | "none";
 
 export interface CardGeometryPoint {
   x: number;
@@ -90,8 +91,12 @@ export interface CardGeometryMetadata {
   side: CardGeometrySide;
   placementState: CardPlacementState;
   geometrySource: CardGeometrySource;
+  captureMode: CardGeometryCaptureMode;
+  /** Describes what the numeric confidence represents. */
+  confidenceBasis: "automatic_detection" | "operator_confirmation" | "none";
   detectionUsed: boolean;
-  manualFallbackUsed: boolean;
+  /** Explicit operator-selected manual geometry; never an automatic fallback. */
+  manualOverrideUsed: boolean;
   corners: CardGeometryCorners | null;
   detectedCorners: CardGeometryCorners | null;
   boundingBox: CardGeometryBoundingBox | null;
@@ -111,9 +116,10 @@ export interface CardGeometryMetadata {
   warnings: string[];
 }
 
-export interface CardGeometryManualFallback {
+export interface CardGeometryManualOverride {
+  action: "manual_capture";
+  confirmed: true;
   rect: CardGeometryBoundingBox;
-  confidence?: number;
 }
 
 export interface DetectCardGeometryInput {
@@ -123,8 +129,7 @@ export interface DetectCardGeometryInput {
   sourceFrameId?: string;
   timestamp?: string;
   thresholds?: Partial<CardGeometryThresholds>;
-  manualFallback?: CardGeometryManualFallback;
-  forceManualFallback?: boolean;
+  manualOverride?: CardGeometryManualOverride;
 }
 
 export interface DetectCardGeometryBufferInput extends Omit<DetectCardGeometryInput, "sourceImagePath"> {
@@ -379,6 +384,18 @@ function normalizeRotationDegrees(value: number): number {
   return normalized;
 }
 
+function placementSkewDegrees(rotationDegrees: number, imageWidth: number, imageHeight: number): number {
+  // The Basler raw frame is landscape and is rotated for the portrait operator
+  // preview, so its correctly oriented card has a transform rotation near
+  // +/-90 degrees. Portrait image inputs expect the short card axis near 0.
+  // Keep the full rotation for deskewing, but gate placement on deviation from
+  // the orientation expected by the source frame.
+  const expectedRotationDegrees = imageWidth > imageHeight ? 90 : 0;
+  return expectedRotationDegrees === 90
+    ? Math.abs(90 - Math.abs(rotationDegrees))
+    : Math.abs(rotationDegrees);
+}
+
 function scalePoint(point: CardGeometryPoint, scaleX: number, scaleY: number): CardGeometryPoint {
   return { x: round(point.x * scaleX, 3), y: round(point.y * scaleY, 3) };
 }
@@ -555,20 +572,22 @@ async function attemptDetection(prepared: PreparedImage, thresholds: CardGeometr
   };
 }
 
-function validateManualFallback(
-  fallback: CardGeometryManualFallback,
+function validateManualOverride(
+  override: CardGeometryManualOverride,
   imageWidth: number,
   imageHeight: number,
-): { corners: CardGeometryCorners; boundingBox: CardGeometryBoundingBox; confidence: number; shortSidePixels: number; longSidePixels: number } {
-  const rect = fallback.rect;
+): { corners: CardGeometryCorners; boundingBox: CardGeometryBoundingBox; shortSidePixels: number; longSidePixels: number } {
+  if (override.action !== "manual_capture" || override.confirmed !== true) {
+    throw new Error("manualOverride requires action=manual_capture and confirmed=true.");
+  }
+  const rect = override.rect;
   for (const [name, value] of Object.entries(rect)) {
-    if (!Number.isFinite(value)) throw new Error(`manualFallback.rect.${name} must be finite.`);
+    if (!Number.isFinite(value)) throw new Error(`manualOverride.rect.${name} must be finite.`);
   }
-  if (rect.width <= 0 || rect.height <= 0) throw new Error("manualFallback.rect width and height must be positive.");
+  if (rect.width <= 0 || rect.height <= 0) throw new Error("manualOverride.rect width and height must be positive.");
   if (rect.x < 0 || rect.y < 0 || rect.x + rect.width > imageWidth || rect.y + rect.height > imageHeight) {
-    throw new Error("manualFallback.rect must remain inside the source image.");
+    throw new Error("manualOverride.rect must remain inside the source image.");
   }
-  const confidence = clamp(fallback.confidence ?? 1, 0, 1);
   const corners: CardGeometryCorners = {
     topLeft: { x: rect.x, y: rect.y },
     topRight: { x: rect.x + rect.width, y: rect.y },
@@ -578,7 +597,6 @@ function validateManualFallback(
   return {
     corners,
     boundingBox: { ...rect },
-    confidence,
     shortSidePixels: Math.min(rect.width, rect.height),
     longSidePixels: Math.max(rect.width, rect.height),
   };
@@ -589,7 +607,7 @@ function placementEvaluation(input: {
   boundingBox: CardGeometryBoundingBox;
   shortSidePixels: number;
   longSidePixels: number;
-  rotationDegrees: number;
+  skewDegrees: number;
   confidence: number;
   relativeAspectError: number;
   imageWidth: number;
@@ -630,7 +648,7 @@ function placementEvaluation(input: {
     minReadyConfidence: input.thresholds.minReadyConfidence,
     withinCenterTolerance: Math.max(Math.abs(inchX), Math.abs(inchY)) <= input.thresholds.maxCenterOffsetInches,
     withinSkewTolerance:
-      Math.abs(input.rotationDegrees) <= input.thresholds.maxSkewDegrees + SKEW_ESTIMATION_EPSILON_DEGREES,
+      Math.abs(input.skewDegrees) <= input.thresholds.maxSkewDegrees + SKEW_ESTIMATION_EPSILON_DEGREES,
     withinAspectTolerance: input.relativeAspectError <= input.thresholds.maxRelativeAspectError,
     withinFrame,
     confidenceReady: input.confidence >= input.thresholds.minReadyConfidence,
@@ -662,7 +680,9 @@ function placementState(placement: CardGeometryPlacementEvaluation): CardPlaceme
 
 function placementWarnings(placement: CardGeometryPlacementEvaluation, source: CardGeometrySource): string[] {
   const warnings: string[] = [];
-  if (source === "manual_fallback") warnings.push("Automatic detection was unavailable or bypassed; manual placement fallback was used.");
+  if (source === "manual_override") {
+    warnings.push("Automatic geometry was not used; an operator explicitly confirmed manual capture geometry.");
+  }
   if (!placement.withinCenterTolerance) warnings.push("Card center is outside the configured close-enough placement tolerance.");
   if (!placement.withinSkewTolerance) warnings.push("Card rotation is outside the configured skew tolerance.");
   if (!placement.withinAspectTolerance) warnings.push("Detected card aspect ratio is outside tolerance.");
@@ -675,40 +695,67 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
   const thresholds = normalizeThresholds(input.thresholds);
   const timestamp = normalizeTimestamp(input.timestamp);
   const detection = await attemptDetection(prepared, thresholds);
-  const useManual = Boolean(input.manualFallback && (input.forceManualFallback || !detection.candidate || detection.candidate.confidence < thresholds.minDetectionConfidence));
 
-  if (useManual && input.manualFallback) {
-    const fallback = validateManualFallback(input.manualFallback, prepared.orientedWidth, prepared.orientedHeight);
-    const measuredAspectRatio = fallback.longSidePixels / fallback.shortSidePixels;
+  if (input.manualOverride) {
+    const override = validateManualOverride(input.manualOverride, prepared.orientedWidth, prepared.orientedHeight);
+    const measuredAspectRatio = override.longSidePixels / override.shortSidePixels;
     const relativeAspectError = Math.abs(measuredAspectRatio - thresholds.expectedAspectRatio) / thresholds.expectedAspectRatio;
+    const rotationDegrees = override.boundingBox.width > override.boundingBox.height ? 90 : 0;
+    const skewDegrees = placementSkewDegrees(rotationDegrees, prepared.orientedWidth, prepared.orientedHeight);
     const placement = placementEvaluation({
-      ...fallback,
-      rotationDegrees: 0,
+      ...override,
+      skewDegrees,
+      confidence: 0,
       relativeAspectError,
       imageWidth: prepared.orientedWidth,
       imageHeight: prepared.orientedHeight,
       thresholds,
     });
+    let automaticCandidateWasOutsideThresholds = false;
+    if (detection.candidate && detection.candidate.confidence >= thresholds.minDetectionConfidence) {
+      const automaticPlacement = placementEvaluation({
+        corners: detection.candidate.corners,
+        boundingBox: detection.candidate.boundingBox,
+        shortSidePixels: detection.candidate.shortSidePixels,
+        longSidePixels: detection.candidate.longSidePixels,
+        skewDegrees: placementSkewDegrees(
+          detection.candidate.rotationDegrees,
+          prepared.orientedWidth,
+          prepared.orientedHeight,
+        ),
+        confidence: detection.candidate.confidence,
+        relativeAspectError: detection.candidate.relativeAspectError,
+        imageWidth: prepared.orientedWidth,
+        imageHeight: prepared.orientedHeight,
+        thresholds,
+      });
+      automaticCandidateWasOutsideThresholds = placementState(automaticPlacement) === "adjust_card";
+    }
     return {
       version: CARD_GEOMETRY_VERSION,
       side: input.side,
-      placementState: placementState(placement),
-      geometrySource: "manual_fallback",
+      // Ready is reserved for confident automatic detection. A manual capture
+      // may still normalize an operator-confirmed rectangle, but never claims
+      // automatic placement readiness.
+      placementState: automaticCandidateWasOutsideThresholds ? "adjust_card" : "not_detected",
+      geometrySource: "manual_override",
+      captureMode: "manual_capture",
+      confidenceBasis: "operator_confirmation",
       detectionUsed: false,
-      manualFallbackUsed: true,
-      corners: fallback.corners,
+      manualOverrideUsed: true,
+      corners: override.corners,
       detectedCorners: null,
-      boundingBox: fallback.boundingBox,
-      rotationDegrees: 0,
-      skewDegrees: 0,
-      confidence: round(fallback.confidence, 4),
+      boundingBox: override.boundingBox,
+      rotationDegrees,
+      skewDegrees: round(skewDegrees, 3),
+      confidence: 0,
       ...(sanitizeSourceId(input.sourceImageId) ? { sourceImageId: sanitizeSourceId(input.sourceImageId) } : {}),
       ...(sanitizeSourceId(input.sourceFrameId) ? { sourceFrameId: sanitizeSourceId(input.sourceFrameId) } : {}),
       timestamp,
       image: { width: prepared.orientedWidth, height: prepared.orientedHeight, coordinateFrame: "source_image_pixels" },
       placement,
       detection: detection.diagnostics,
-      warnings: placementWarnings(placement, "manual_fallback"),
+      warnings: placementWarnings(placement, "manual_override"),
     };
   }
 
@@ -719,8 +766,10 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
       side: input.side,
       placementState: "not_detected",
       geometrySource: "none",
+      captureMode: "none",
+      confidenceBasis: "none",
       detectionUsed: false,
-      manualFallbackUsed: false,
+      manualOverrideUsed: false,
       corners: null,
       detectedCorners: null,
       boundingBox: null,
@@ -742,7 +791,7 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
     boundingBox: candidate.boundingBox,
     shortSidePixels: candidate.shortSidePixels,
     longSidePixels: candidate.longSidePixels,
-    rotationDegrees: candidate.rotationDegrees,
+    skewDegrees: placementSkewDegrees(candidate.rotationDegrees, prepared.orientedWidth, prepared.orientedHeight),
     confidence: candidate.confidence,
     relativeAspectError: candidate.relativeAspectError,
     imageWidth: prepared.orientedWidth,
@@ -754,13 +803,18 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
     side: input.side,
     placementState: placementState(placement),
     geometrySource: "detected",
+    captureMode: "automatic_detection",
+    confidenceBasis: "automatic_detection",
     detectionUsed: true,
-    manualFallbackUsed: false,
+    manualOverrideUsed: false,
     corners: candidate.corners,
     detectedCorners: candidate.corners,
     boundingBox: candidate.boundingBox,
     rotationDegrees: candidate.rotationDegrees,
-    skewDegrees: round(Math.abs(candidate.rotationDegrees), 3),
+    skewDegrees: round(
+      placementSkewDegrees(candidate.rotationDegrees, prepared.orientedWidth, prepared.orientedHeight),
+      3,
+    ),
     confidence: candidate.confidence,
     ...(sanitizeSourceId(input.sourceImageId) ? { sourceImageId: sanitizeSourceId(input.sourceImageId) } : {}),
     ...(sanitizeSourceId(input.sourceFrameId) ? { sourceFrameId: sanitizeSourceId(input.sourceFrameId) } : {}),

@@ -29,8 +29,10 @@ function geometry(input: {
     side: input.side ?? "front",
     placementState: input.state,
     geometrySource: ready ? "detected" : "none",
+    captureMode: ready ? "automatic_detection" : "none",
+    confidenceBasis: ready ? "automatic_detection" : "none",
     detectionUsed: ready,
-    manualFallbackUsed: false,
+    manualOverrideUsed: false,
     corners,
     detectedCorners: corners,
     boundingBox: ready ? { x: 10, y: 10, width: 80, height: 130 } : null,
@@ -180,7 +182,8 @@ test("station rapid flow keeps capture, review, OCR, and publish gates explicit"
   assert.match(source, /captureTriggerMode/);
   assert.match(source, /queue-current-card/);
   assert.match(source, /previewSuspendedForRapidReview/);
-  assert.match(source, /disabled=\{busy !== null \|\| !canStartGrading\}/);
+  assert.match(source, /disabled=\{busy !== null \|\| !canStartGrading \|\| previewGeometrySide !== "front"/);
+  assert.match(source, /const canStartGrading =\s*!status\.captureFailure &&/);
   assert.match(source, /report_ready_needs_confirm/);
   assert.match(source, /rapidOcrInFlightReportIdRef/);
   assert.match(source, /Background OCR suggestions loaded/);

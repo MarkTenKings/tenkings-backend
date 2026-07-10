@@ -126,8 +126,10 @@ function fixtureReportDir() {
               side,
               placementState: "ready",
               geometrySource: "detected",
+              captureMode: "automatic_detection",
+              confidenceBasis: "automatic_detection",
               detectionUsed: true,
-              manualFallbackUsed: false,
+              manualOverrideUsed: false,
               corners: {
                 topLeft: { x: 10, y: 20 },
                 topRight: { x: 210, y: 20 },
@@ -165,7 +167,30 @@ function fixtureReportDir() {
 
 test("report bundle exports web-ready provisional contract without final/certified claims", async () => {
   const reportDir = fixtureReportDir();
-  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "fixture-report" });
+  const bundle = await buildAiGraderReportBundle({
+    reportDir,
+    reportId: "fixture-report",
+    geometryCaptureDecisions: {
+      front: {
+        mode: "detected_geometry",
+        placementState: "ready",
+        timestamp: "2026-07-09T12:00:00.000Z",
+        explicitOperatorAction: false,
+        detectionUsed: true,
+        manualOverrideUsed: false,
+        sourceFrameId: "front-frame-safe-id",
+      },
+      back: {
+        mode: "manual_capture",
+        placementState: "adjust_card",
+        timestamp: "2026-07-09T12:00:05.000Z",
+        explicitOperatorAction: true,
+        detectionUsed: false,
+        manualOverrideUsed: true,
+        manualBoundaryRect: { x: 100, y: 100, width: 1400, height: 1000, coordinateFrame: "basler_sensor_pixels" },
+      },
+    },
+  });
 
   assert.equal(bundle.schemaVersion, AI_GRADER_REPORT_BUNDLE_VERSION);
   assert.equal(bundle.reportId, "fixture-report");
@@ -180,6 +205,9 @@ test("report bundle exports web-ready provisional contract without final/certifi
   assert.equal(bundle.assets.some((asset) => asset.kind === "image" && asset.fileName === "back-normalized-card.png"), true);
   assert.equal(bundle.geometry?.front?.placementState, "ready");
   assert.equal(bundle.geometry?.back?.placementState, "ready");
+  assert.equal(bundle.geometryCaptureDecisions?.front?.mode, "detected_geometry");
+  assert.equal(bundle.geometryCaptureDecisions?.back?.mode, "manual_capture");
+  assert.equal(bundle.geometryCaptureDecisions?.back?.manualOverrideUsed, true);
   assert.equal(bundle.captureTiming?.front?.captureProfile, "production_fast");
   assert.equal(bundle.captureTiming?.frontProcessing?.frontProcessingMayOverlapFlip, true);
   assert.equal(bundle.finalGradeComputed, false);
