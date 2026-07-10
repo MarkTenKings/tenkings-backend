@@ -25800,3 +25800,11 @@ By enabling Rip It Live, I confirm:
 - Rebase validation exposed a legacy-read compatibility regression: the hardened public read accepted explicit v0.1/v0.2 bundles but rejected pre-versioning persisted reports. Added a narrow read-only absent-`schemaVersion` branch that preserves the existing sanitizer, asset/evidence filtering, review stripping, and `certifiedClaim` safety gate. It never accepts an explicit unknown version and never invents a schema version, date, certification state, score, confidence, or measurement.
 - Post-rebase validation passed: shared `127/127`; capture-helper `253/253` plus build; database build plus `28/28`; public-report focused `3/3`; frontend `159/159`; Next.js production build; and `git diff --check` (Windows line-ending notices only). Existing non-blocking image-lint/browser-data/Tailwind and React test-render warnings remain unchanged.
 - No hardware command, migration, deployment, restart, environment-variable change, credential/secret access, production database/storage mutation, push, merge, PR creation, or production action was performed.
+
+## 2026-07-10 - Cinematic report Task 0 capture-helper scope cleanup
+
+- Kept the capture-helper delta limited to report-contract/extraction work in `aiGraderReportBundle.ts`, `aiGraderDefectFindings.ts`, and `aiGraderProductionRelease.ts`. No Dell bridge, capture geometry, Basler fixed-rig, Surface Intelligence, or normalized-coordinate behavior was changed.
+- Removed the Task 0 capture-profile-version export from `aiGraderCaptureTiming.ts`, leaving that file identical to current production `main`. The report-only capture-profile mapping now lives locally in `aiGraderReportBundle.ts`.
+- Focused validation passed after cleanup: capture-helper build and defect-finding/report-bundle tests `27/27`; shared tests `127/127`; database tests `64/64`; and `git diff --check` (Windows line-ending notices only).
+- Separate concurrent Task 1 route/data work appeared in this worktree and was deliberately left unstaged and unmodified. Task 1 is not being continued from a dirty shared worktree.
+- No hardware command, Dell bridge restart, migration, environment-variable change, credential/secret access, production database/storage mutation, deployment, push, merge, PR creation, or other production action was performed.

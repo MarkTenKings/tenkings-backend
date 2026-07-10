@@ -4,9 +4,14 @@ import path from "node:path";
 import type { AiGraderDefectFindingV1 } from "@tenkings/shared";
 import sharp from "sharp";
 import { extractAiGraderDefectFindingsV1, type AiGraderApprovedDefectEvidence } from "./aiGraderDefectFindings";
-import { AI_GRADER_CAPTURE_PROFILE_VERSIONS, type AiGraderCaptureTimingProfile } from "./aiGraderCaptureTiming";
+import type { AiGraderCaptureTimingProfile } from "./aiGraderCaptureTiming";
 
 export const AI_GRADER_REPORT_BUNDLE_VERSION = "ai-grader-report-bundle-v0.1";
+
+const AI_GRADER_REPORT_CAPTURE_PROFILE_VERSIONS: Record<AiGraderCaptureTimingProfile, string> = {
+  full_forensic: "ten-kings-fixed-rig-full-forensic-v1",
+  production_fast: "ten-kings-fixed-rig-production-fast-v1",
+};
 
 type JsonRecord = Record<string, any>;
 
@@ -344,7 +349,7 @@ function captureProfileVersionForSide(input: {
     inputSideTiming?.captureProfile,
     input.inputCaptureTiming?.captureProfile,
   ].map(nonemptyString).find((value): value is AiGraderCaptureTimingProfile => value === "full_forensic" || value === "production_fast");
-  return captureProfile ? AI_GRADER_CAPTURE_PROFILE_VERSIONS[captureProfile] : undefined;
+  return captureProfile ? AI_GRADER_REPORT_CAPTURE_PROFILE_VERSIONS[captureProfile] : undefined;
 }
 
 function artifactOutputPath(value: unknown) {
