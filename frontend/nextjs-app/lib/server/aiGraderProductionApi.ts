@@ -20,6 +20,7 @@ import {
   computeAiGraderValuationStatus,
   normalizeAiGraderPublicCaptureTiming,
   normalizeAiGraderPublicOcrPrefill,
+  sanitizeAiGraderPublicReportBundleForRead,
   persistAiGraderSlabbedPhotoAsset,
   persistAiGraderProductionRelease,
   persistAiGraderValuationResult,
@@ -466,6 +467,7 @@ type AiGraderFinishCardsQueueBuildOptions = {
 export type AiGraderPublicReportApiDependencies = {
   env?: EnvLike;
   readPublishedBundle(reportId: string): Promise<AiGraderProductionReportBundleLike | null>;
+  publicUrlFor?: (storageKey: string) => string;
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -2349,10 +2351,15 @@ export function createAiGraderPublicReportApiHandler(deps: AiGraderPublicReportA
     if (!reportId) return res.status(400).json({ ok: false, message: "reportId is required." });
     const bundle = await deps.readPublishedBundle(reportId);
     if (!bundle) return res.status(404).json({ ok: false, message: "Published AI Grader report not found." });
+    const publicBundle = sanitizeAiGraderPublicReportBundleForRead(bundle, {
+      expectedReportId: reportId,
+      publicUrlFor: deps.publicUrlFor,
+    });
+    if (!publicBundle) return res.status(500).json({ ok: false, message: "Published AI Grader report is invalid." });
     return res.status(200).json({
       ok: true,
       reportId,
-      bundle,
+      bundle: publicBundle,
       readOnly: true,
       noHardwareControls: true,
     });

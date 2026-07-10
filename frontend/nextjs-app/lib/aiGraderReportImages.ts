@@ -63,3 +63,17 @@ export function findReportImage(assets: AiGraderRenderableReportImage[], terms: 
     return normalizedTerms.every((term) => haystack.includes(term));
   });
 }
+
+export function findReportImageByExactAssetId(assets: AiGraderRenderableReportImage[], assetId: string | undefined) {
+  if (!assetId) return undefined;
+  return assets.find((asset) => asset.id === assetId);
+}
+
+export function findReportNormalizedCardImageByExactAssetId(
+  assets: AiGraderRenderableReportImage[],
+  assetId: string | undefined,
+  side: "front" | "back",
+) {
+  const asset = findReportImageByExactAssetId(assets, assetId);
+  return asset?.side === side && asset.evidenceRole === "normalized_card" ? asset : undefined;
+}

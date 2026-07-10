@@ -1,7 +1,33 @@
 import { createHash } from "crypto";
 import { Prisma } from "@prisma/client";
+import {
+  isSafeAiGraderPublicAssetId,
+  parseAiGraderDefectFindings,
+  type AiGraderDefectFindingV1,
+} from "@tenkings/shared";
 
 type JsonRecord = Record<string, unknown>;
+
+type AiGraderPublicEvidenceRole =
+  | "normalized_card"
+  | "surface_heatmap"
+  | "surface_vision"
+  | "confidence_mask"
+  | "measurement_overlay"
+  | "directional_channel"
+  | "roi_crop"
+  | "other_evidence";
+
+const AI_GRADER_PUBLIC_EVIDENCE_ROLES = new Set<AiGraderPublicEvidenceRole>([
+  "normalized_card",
+  "surface_heatmap",
+  "surface_vision",
+  "confidence_mask",
+  "measurement_overlay",
+  "directional_channel",
+  "roi_crop",
+  "other_evidence",
+]);
 
 export type AiGraderProductionPublicationStatus =
   | "draft"
@@ -102,6 +128,8 @@ export type AiGraderProductionArtifactPlan = {
   byteSize: number;
   publicUrl?: string;
   sourceAssetId?: string;
+  sourceAssetSide?: "front" | "back";
+  sourceEvidenceRole?: AiGraderPublicEvidenceRole;
 };
 
 export type AiGraderProductionStoragePlan = {
@@ -788,13 +816,36 @@ function reportAssetArtifacts(input: {
 }): AiGraderProductionArtifactPlan[] {
   const rawAssets = Array.isArray(input.reportBundle.assets) ? input.reportBundle.assets : [];
   const seenStorageKeys = new Set<string>();
+  const seenSourceAssetIds = new Set<string>();
   const artifacts: AiGraderProductionArtifactPlan[] = [];
   rawAssets.filter(isRecord).forEach((asset, index) => {
     const bodyBase64 = stringValue(asset.bodyBase64, "");
-    const contentType = stringValue(asset.contentType, "application/octet-stream");
-    if (!contentType.toLowerCase().startsWith("image/")) return;
+    const contentType = stringValue(asset.contentType, "application/octet-stream").toLowerCase();
+    if (!contentType.startsWith("image/")) return;
+    if (!AI_GRADER_PUBLIC_IMAGE_CONTENT_TYPES.has(contentType)) {
+      throw new Error("AI Grader public report image assets must use an approved raster image type.");
+    }
     if (!isImageAssetRecord(asset)) return;
-    const id = stringValue(asset.id, `image-${index + 1}`);
+    const id = stringValue(asset.id, "");
+    if (!isSafeAiGraderPublicAssetId(id)) {
+      throw new Error("AI Grader report contains an unsafe public image asset ID.");
+    }
+    const canonicalId = id.toLowerCase();
+    if (seenSourceAssetIds.has(canonicalId)) {
+      throw new Error("AI Grader report contains duplicate public image asset IDs.");
+    }
+    seenSourceAssetIds.add(canonicalId);
+    const sourceAssetSide = asset.side === "front" || asset.side === "back" ? asset.side : undefined;
+    const sourceEvidenceRole =
+      typeof asset.evidenceRole === "string" && AI_GRADER_PUBLIC_EVIDENCE_ROLES.has(asset.evidenceRole as AiGraderPublicEvidenceRole)
+        ? asset.evidenceRole as AiGraderPublicEvidenceRole
+        : undefined;
+    if (asset.evidenceRole !== undefined && !sourceEvidenceRole) {
+      throw new Error("AI Grader report contains an unsupported public image evidence role.");
+    }
+    if (sourceEvidenceRole && !sourceAssetSide) {
+      throw new Error("AI Grader report evidence-role image assets require a front or back side.");
+    }
     const checksumSha256 = bodyBase64
       ? aiGraderSha256(Buffer.from(bodyBase64, "base64"))
       : checksumValue(asset.checksumSha256 ?? asset.sha256);
@@ -819,9 +870,205 @@ function reportAssetArtifacts(input: {
         byteSize,
         publicUrl: input.publicUrlFor(storageKey),
         sourceAssetId: id,
+        ...(sourceAssetSide ? { sourceAssetSide } : {}),
+        ...(sourceEvidenceRole ? { sourceEvidenceRole } : {}),
     });
   });
   return artifacts;
+}
+
+function publicDefectFindings(
+  value: unknown,
+  publicAssets: JsonRecord[],
+  strict: boolean,
+): AiGraderDefectFindingV1[] {
+  const assetById = new Map(
+    publicAssets
+      .filter((asset) => isSafeAiGraderPublicAssetId(asset.id))
+      .map((asset) => [String(asset.id), asset] as const),
+  );
+  const parsed = parseAiGraderDefectFindings(value, {
+    knownAssetIds: new Set(assetById.keys()),
+    requireTrueViewAsset: true,
+  });
+  let semanticIssueCount = 0;
+  const matches = (assetId: string | undefined, side: "front" | "back", role: AiGraderPublicEvidenceRole) => {
+    if (!assetId) return true;
+    const asset = assetById.get(assetId);
+    return asset?.side === side && asset.evidenceRole === role;
+  };
+  const findings = parsed.findings.flatMap((finding) => {
+    const evidence = finding.evidence;
+    const valid =
+      matches(evidence.trueViewAssetId, finding.side, "normalized_card") &&
+      matches(evidence.heatmapAssetId, finding.side, "surface_heatmap") &&
+      matches(evidence.surfaceVisionAssetId, finding.side, "surface_vision") &&
+      matches(evidence.maskAssetId, finding.side, "confidence_mask") &&
+      matches(evidence.overlayAssetId, finding.side, "measurement_overlay") &&
+      evidence.channelAssetIds.every((assetId) => matches(assetId, finding.side, "directional_channel")) &&
+      evidence.roiAssetIds.every((assetId) => matches(assetId, finding.side, "roi_crop"));
+    if (!valid) {
+      semanticIssueCount += 1;
+      return [];
+    }
+    return [{
+      ...finding,
+      review: { status: "unreviewed" as const },
+      explanation: `AI-detected provisional ${finding.category.replace(/_/g, " ")} finding. Review the linked evidence before relying on this finding.`,
+    }];
+  });
+  if (strict && (parsed.issues.length || semanticIssueCount)) {
+    throw new Error("AI Grader report contains invalid public defect findings.");
+  }
+  return findings;
+}
+
+function validateFindingIdReferences(value: unknown, knownFindingIds: ReadonlySet<string>) {
+  if (!Array.isArray(value)) return;
+  for (const entry of value) {
+    if (!isRecord(entry) || entry.findingIds === undefined) continue;
+    if (
+      !Array.isArray(entry.findingIds) ||
+      entry.findingIds.some((findingId) => typeof findingId !== "string" || !knownFindingIds.has(findingId))
+    ) {
+      throw new Error("AI Grader report contains an invalid defect finding reference.");
+    }
+  }
+}
+
+function filterFindingIdReferences(value: unknown, knownFindingIds: ReadonlySet<string>) {
+  if (!Array.isArray(value)) return value;
+  return value.map((entry) => {
+    if (!isRecord(entry) || entry.findingIds === undefined) return entry;
+    const { findingIds: rawFindingIds, ...rest } = entry;
+    if (!Array.isArray(rawFindingIds)) return rest;
+    const findingIds = rawFindingIds.filter((findingId): findingId is string =>
+      typeof findingId === "string" && knownFindingIds.has(findingId)
+    );
+    return findingIds.length ? { ...rest, findingIds } : rest;
+  });
+}
+
+const LEGACY_AI_GRADER_PUBLIC_ASSET_ID = /^[a-z0-9][a-z0-9._-]{0,220}:[1-9][0-9]{0,3}$/;
+const AI_GRADER_PUBLIC_IMAGE_CONTENT_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+function safeAiGraderStorageKey(value: unknown): value is string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 1024) return false;
+  if (/^[\\/]|[\\?#\u0000-\u001f\u007f]/.test(value)) return false;
+  const segments = value.split("/");
+  return segments.every((segment) => segment && segment !== "." && segment !== ".." && /^[A-Za-z0-9][A-Za-z0-9._-]{0,240}$/.test(segment));
+}
+
+function safeAiGraderReadAssetUrl(value: unknown, storageKey: string) {
+  if (typeof value !== "string" || !value || looksLikeLocalPathOrLoopback(value)) return undefined;
+  const expectedSuffix = `/${storageKey}`;
+  if (value.startsWith("/") && !value.startsWith("//") && !/[?#]/.test(value)) {
+    return value.endsWith(expectedSuffix) ? value : undefined;
+  }
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" || parsed.search || parsed.hash || parsed.username || parsed.password || unsafeAiGraderPublicUrl(value)) {
+      return undefined;
+    }
+    return parsed.pathname.endsWith(expectedSuffix) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeAiGraderReadPublicAssets(
+  value: unknown,
+  expectedStorageKeyPrefix: string,
+  publicUrlFor: (storageKey: string) => string,
+): JsonRecord[] {
+  if (!Array.isArray(value)) return [];
+  const assets: JsonRecord[] = [];
+  const seenIds = new Set<string>();
+  const seenStorageKeys = new Set<string>();
+  for (const raw of value) {
+    if (!isRecord(raw)) continue;
+    const id = typeof raw.id === "string" ? raw.id : "";
+    if (!isSafeAiGraderPublicAssetId(id) && !LEGACY_AI_GRADER_PUBLIC_ASSET_ID.test(id)) continue;
+    const canonicalId = id.toLowerCase();
+    if (seenIds.has(canonicalId)) continue;
+    const contentType = typeof raw.contentType === "string" ? raw.contentType.toLowerCase() : "";
+    const checksumSha256 = checksumValue(raw.checksumSha256 ?? raw.sha256);
+    const byteSize = positiveIntegerValue(raw.byteSize);
+    const storageKey = safeAiGraderStorageKey(raw.storageKey) ? raw.storageKey : undefined;
+    if (!storageKey?.startsWith(expectedStorageKeyPrefix) || seenStorageKeys.has(storageKey)) continue;
+    const publicUrl = safeAiGraderReadAssetUrl(publicUrlFor(storageKey), storageKey);
+    if (!AI_GRADER_PUBLIC_IMAGE_CONTENT_TYPES.has(contentType) || !checksumSha256 || !byteSize || !storageKey || !publicUrl) continue;
+    const side = raw.side === "front" || raw.side === "back" ? raw.side : undefined;
+    const evidenceRole =
+      typeof raw.evidenceRole === "string" && AI_GRADER_PUBLIC_EVIDENCE_ROLES.has(raw.evidenceRole as AiGraderPublicEvidenceRole)
+        ? raw.evidenceRole as AiGraderPublicEvidenceRole
+        : undefined;
+    if (evidenceRole && !side) continue;
+    seenIds.add(canonicalId);
+    seenStorageKeys.add(storageKey);
+    assets.push({
+      id,
+      kind: "report-image",
+      fileName: safeAssetFileName(stringValue(raw.fileName, id), "report-image"),
+      contentType,
+      storageKey,
+      publicUrl,
+      byteSize,
+      checksumSha256,
+      ...(side ? { side } : {}),
+      ...(evidenceRole ? { evidenceRole } : {}),
+    });
+  }
+  return assets;
+}
+
+export function sanitizeAiGraderPublicReportBundleForRead(
+  value: unknown,
+  options: {
+    expectedReportId?: string;
+    publicUrlFor?: (storageKey: string) => string;
+  } = {},
+): JsonRecord | undefined {
+  if (!isRecord(value)) return undefined;
+  const sanitized = sanitizeAiGraderPublicJson(value);
+  if (!isRecord(sanitized)) return undefined;
+  const bundleReportId = typeof sanitized.reportId === "string" ? sanitized.reportId.trim() : "";
+  const expectedReportId = options.expectedReportId?.trim() || bundleReportId;
+  if (!expectedReportId || (bundleReportId && bundleReportId !== expectedReportId)) return undefined;
+  const expectedStorageKeyPrefix = `ai-grader/reports/${safeSegment(expectedReportId)}/assets/`;
+  const publicUrlFor = options.publicUrlFor ?? ((storageKey: string) => `/storage/${storageKey}`);
+  const publicAssets = normalizeAiGraderReadPublicAssets([
+    ...(Array.isArray(sanitized.publicAssets) ? sanitized.publicAssets : []),
+    ...(Array.isArray(sanitized.assets) ? sanitized.assets : []),
+  ], expectedStorageKeyPrefix, publicUrlFor);
+  const visionLab = isRecord(sanitized.visionLab) ? sanitized.visionLab : {};
+  const findings = publicDefectFindings(visionLab.defectFindings, publicAssets, false);
+  const knownFindingIds = new Set(findings.map((finding) => finding.findingId));
+  const provisionalGrade = isRecord(sanitized.provisionalGrade) ? sanitized.provisionalGrade : undefined;
+  const productionRelease = isRecord(sanitized.productionRelease) ? sanitized.productionRelease : undefined;
+  const finalGrade = productionRelease && isRecord(productionRelease.finalGrade) ? productionRelease.finalGrade : undefined;
+  return {
+    ...sanitized,
+    assets: publicAssets,
+    publicAssets,
+    ...(provisionalGrade
+      ? { provisionalGrade: { ...provisionalGrade, gradeImpactCandidates: filterFindingIdReferences(provisionalGrade.gradeImpactCandidates, knownFindingIds) } }
+      : {}),
+    ...(productionRelease
+      ? {
+          productionRelease: {
+            ...productionRelease,
+            ...(finalGrade
+              ? { finalGrade: { ...finalGrade, gradeImpactReasons: filterFindingIdReferences(finalGrade.gradeImpactReasons, knownFindingIds) } }
+              : {}),
+          },
+        }
+      : {}),
+    visionLab: {
+      ...visionLab,
+      ...(findings.length ? { defectFindings: findings } : { defectFindings: [] }),
+    },
+  };
 }
 
 export function buildAiGraderLabelPreviewHtml(productionRelease: AiGraderProductionReleaseLike) {
@@ -878,7 +1125,7 @@ export function buildAiGraderProductionStoragePlan(input: {
     input.reportBundle.geometryCaptureDecisions
   );
   const publicAssets = reportAssets.map((entry) => ({
-    id: entry.artifactId.replace(`${reportId}:report-asset:`, ""),
+    id: entry.sourceAssetId,
     kind: entry.kind,
     fileName: entry.storageKey.split("/").pop(),
     contentType: entry.contentType,
@@ -886,7 +1133,16 @@ export function buildAiGraderProductionStoragePlan(input: {
     publicUrl: entry.publicUrl,
     byteSize: entry.byteSize,
     checksumSha256: entry.checksumSha256,
+    ...(entry.sourceAssetSide ? { side: entry.sourceAssetSide } : {}),
+    ...(entry.sourceEvidenceRole ? { evidenceRole: entry.sourceEvidenceRole } : {}),
   }));
+  const rawVisionLab = isRecord(input.reportBundle.visionLab) ? input.reportBundle.visionLab : {};
+  const defectFindings = publicDefectFindings(rawVisionLab.defectFindings, publicAssets, true);
+  const knownFindingIds = new Set(defectFindings.map((finding) => finding.findingId));
+  const provisionalGrade = isRecord(input.reportBundle.provisionalGrade) ? input.reportBundle.provisionalGrade : {};
+  validateFindingIdReferences(provisionalGrade.gradeImpactCandidates, knownFindingIds);
+  const releaseFinalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
+  validateFindingIdReferences(releaseFinalGrade.gradeImpactReasons, knownFindingIds);
   const sanitizedBundle = sanitizeAiGraderPublicJson({
     ...input.reportBundle,
     reportId,
@@ -895,6 +1151,10 @@ export function buildAiGraderProductionStoragePlan(input: {
     ...(publicGeometryCaptureDecisions
       ? { geometryCaptureDecisions: publicGeometryCaptureDecisions }
       : { geometryCaptureDecisions: undefined }),
+    visionLab: {
+      ...rawVisionLab,
+      ...(defectFindings.length ? { defectFindings } : { defectFindings: undefined }),
+    },
     assets: publicAssets,
     publicAssets,
     publicPathPlaceholders: {

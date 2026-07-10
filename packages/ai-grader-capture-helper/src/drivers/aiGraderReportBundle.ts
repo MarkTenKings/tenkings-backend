@@ -1,10 +1,23 @@
 import crypto from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { AiGraderDefectFindingV1 } from "@tenkings/shared";
+import sharp from "sharp";
+import { extractAiGraderDefectFindingsV1, type AiGraderApprovedDefectEvidence } from "./aiGraderDefectFindings";
 
 export const AI_GRADER_REPORT_BUNDLE_VERSION = "ai-grader-report-bundle-v0.1";
 
 type JsonRecord = Record<string, any>;
+
+export type AiGraderReportBundleEvidenceRole =
+  | "normalized_card"
+  | "surface_heatmap"
+  | "surface_vision"
+  | "confidence_mask"
+  | "measurement_overlay"
+  | "directional_channel"
+  | "roi_crop"
+  | "other_evidence";
 
 export interface AiGraderReportBundleAsset {
   id: string;
@@ -17,6 +30,8 @@ export interface AiGraderReportBundleAsset {
   byteSize?: number;
   bodyEncoding?: "base64";
   bodyBase64?: string;
+  side?: "front" | "back";
+  evidenceRole?: AiGraderReportBundleEvidenceRole;
   required: boolean;
 }
 
@@ -68,6 +83,7 @@ export interface AiGraderReportBundle {
   };
   visionLab: {
     available: boolean;
+    defectFindings?: AiGraderDefectFindingV1[];
     trueViewRefs: string[];
     overlayRefs: string[];
     channelImageRefs: string[];
@@ -165,6 +181,8 @@ async function maybeAsset(input: {
   required: boolean;
   reportId: string;
   includeBody?: boolean;
+  side?: "front" | "back";
+  evidenceRole?: AiGraderReportBundleEvidenceRole;
 }): Promise<AiGraderReportBundleAsset | undefined> {
   if (!input.localPath) return undefined;
   const localPath = normalizeLocalPath(input.localPath);
@@ -179,6 +197,33 @@ async function maybeAsset(input: {
         required: input.required,
       };
     }
+    const contentType = contentTypeForPath(localPath);
+    if (input.kind === "image") {
+      const expectedFormat = contentType === "image/png"
+        ? "png"
+        : contentType === "image/jpeg"
+          ? "jpeg"
+          : contentType === "image/webp"
+            ? "webp"
+            : contentType === "image/tiff"
+              ? "tiff"
+              : undefined;
+      if (!expectedFormat) throw new Error("Unsupported report image content type.");
+      const imageMetadata = await sharp(localPath).metadata();
+      if (imageMetadata.format !== expectedFormat || !imageMetadata.width || !imageMetadata.height) {
+        throw new Error("Report image bytes do not match the raster file type.");
+      }
+      if (
+        imageMetadata.exif ||
+        imageMetadata.icc ||
+        imageMetadata.iptc ||
+        imageMetadata.xmp ||
+        imageMetadata.tifftagPhotoshop ||
+        imageMetadata.comments?.length
+      ) {
+        throw new Error("Report image contains private or unapproved embedded metadata.");
+      }
+    }
     const metadata = await fileMetadata(localPath);
     const body = input.includeBody ? await readFile(localPath) : undefined;
     return {
@@ -186,10 +231,12 @@ async function maybeAsset(input: {
       kind: input.kind,
       localPath,
       fileName: path.basename(localPath),
-      contentType: contentTypeForPath(localPath),
+      contentType,
       publicPathPlaceholder: `/ai-grader/reports/${input.reportId}/assets/${path.basename(localPath)}`,
       required: input.required,
       ...(body ? { bodyEncoding: "base64" as const, bodyBase64: body.toString("base64") } : {}),
+      ...(input.side ? { side: input.side } : {}),
+      ...(input.evidenceRole ? { evidenceRole: input.evidenceRole } : {}),
       ...metadata,
     };
   } catch {
@@ -253,6 +300,10 @@ function evidenceImageAssetId(filePath: string, roots: Array<{ label: string; ro
 
 function firstRecord(...values: unknown[]): JsonRecord | undefined {
   return values.find(isRecord) as JsonRecord | undefined;
+}
+
+function artifactOutputPath(value: unknown) {
+  return isRecord(value) && typeof value.outputFilePath === "string" ? value.outputFilePath : undefined;
 }
 
 function deriveReportId(input: { reportDir: string; reportId?: string; manifest?: JsonRecord; analysis?: JsonRecord }) {
@@ -354,10 +405,11 @@ export async function buildAiGraderReportBundle(input: {
   const backNormalized = firstRecord(backPackageManifest?.back?.normalizedCard, backPackageManifest?.normalizedCard);
   const frontGeometry = firstRecord(frontNormalized?.geometry, frontPackageManifest?.front?.geometry, frontPackageManifest?.geometry);
   const backGeometry = firstRecord(backNormalized?.geometry, backPackageManifest?.back?.geometry, backPackageManifest?.geometry);
-  const normalizedImageRefs = [
-    typeof frontNormalized?.normalizedArtifact?.localOutputPath === "string" ? frontNormalized.normalizedArtifact.localOutputPath : "",
-    typeof backNormalized?.normalizedArtifact?.localOutputPath === "string" ? backNormalized.normalizedArtifact.localOutputPath : "",
-  ].filter(Boolean);
+  const frontNormalizedImageRef =
+    typeof frontNormalized?.normalizedArtifact?.localOutputPath === "string" ? frontNormalized.normalizedArtifact.localOutputPath : "";
+  const backNormalizedImageRef =
+    typeof backNormalized?.normalizedArtifact?.localOutputPath === "string" ? backNormalized.normalizedArtifact.localOutputPath : "";
+  const normalizedImageRefs = [frontNormalizedImageRef, backNormalizedImageRef].filter(Boolean);
   const imageRefs = unique([
     ...(await imageRefsFromHtml(reportHtmlPath, reportDir)),
     ...visionRefs(analysis, ["true", "portrait", "overlay", "channel", "heatmap", "surface vision", "surface-vision", "confidence"]),
@@ -370,18 +422,40 @@ export async function buildAiGraderReportBundle(input: {
     ...(frontPackageDir ? [{ label: "front", root: frontPackageDir }] : []),
     ...(backPackageDir ? [{ label: "back", root: backPackageDir }] : []),
   ];
+  const imageEvidenceMetadata = new Map<string, { side: "front" | "back"; evidenceRole: AiGraderReportBundleEvidenceRole }>();
+  const registerImageEvidence = (
+    localPath: string | undefined,
+    side: "front" | "back",
+    evidenceRole: AiGraderReportBundleEvidenceRole,
+  ) => {
+    if (!localPath) return;
+    const resolved = normalizeReferencedPath(localPath, reportDir);
+    if (resolved) imageEvidenceMetadata.set(path.resolve(resolved), { side, evidenceRole });
+  };
+  const surfaceRootForAssets = firstRecord(analysis?.surfaceIntelligence);
+  const visionSidesForAssets = firstRecord(analysis?.visionLab?.sides);
+  for (const side of ["front", "back"] as const) {
+    const surfaceSide = firstRecord(surfaceRootForAssets?.[side]) ?? firstRecord(visionSidesForAssets?.[side]);
+    registerImageEvidence(side === "front" ? frontNormalizedImageRef : backNormalizedImageRef, side, "normalized_card");
+    registerImageEvidence(artifactOutputPath(surfaceSide?.heatmap), side, "surface_heatmap");
+    registerImageEvidence(artifactOutputPath(surfaceSide?.surfaceVision), side, "surface_vision");
+    registerImageEvidence(artifactOutputPath(surfaceSide?.glareMask), side, "confidence_mask");
+    registerImageEvidence(artifactOutputPath(surfaceSide?.underexposureMask), side, "confidence_mask");
+  }
   const imageAssets = (
     await Promise.all(
-      unique(imageRefs).map((localPath) =>
-        maybeAsset({
+      unique(imageRefs).map((localPath) => {
+        const evidenceMetadata = imageEvidenceMetadata.get(path.resolve(localPath));
+        return maybeAsset({
           id: evidenceImageAssetId(localPath, roots),
           kind: "image",
           localPath,
           required: false,
           reportId,
           includeBody: input.includeAssetBodies,
+          ...evidenceMetadata,
         })
-      )
+      })
     )
   ).filter((asset): asset is AiGraderReportBundleAsset => Boolean(asset));
   const assets = (
@@ -393,6 +467,64 @@ export async function buildAiGraderReportBundle(input: {
       maybeAsset({ id: "back-package", kind: "folder", localPath: backPackageDir, required: false, reportId }),
     ])
   ).filter((asset): asset is AiGraderReportBundleAsset => Boolean(asset)).concat(imageAssets);
+  const imageAssetIds = new Set(imageAssets.map((asset) => asset.id));
+  const assetIdForPath = (localPath: string | undefined) => {
+    if (!localPath) return undefined;
+    const resolved = path.resolve(localPath);
+    return imageAssets.find((asset) => path.resolve(asset.localPath) === resolved)?.id;
+  };
+  const assetSha256ForPath = (localPath: string | undefined) => {
+    if (!localPath) return undefined;
+    const resolved = path.resolve(localPath);
+    return imageAssets.find((asset) => path.resolve(asset.localPath) === resolved)?.sha256;
+  };
+  const evidenceForSide = (side: "front" | "back", normalizedPath: string | undefined): AiGraderApprovedDefectEvidence => {
+    const surfaceRoot = firstRecord(analysis?.surfaceIntelligence);
+    const surfaceSide = firstRecord(surfaceRoot?.[side]);
+    const visionSides = firstRecord(analysis?.visionLab?.sides);
+    const visionSide = firstRecord(visionSides?.[side]);
+    const source = surfaceSide ?? visionSide;
+    const trueViewAssetId = assetIdForPath(normalizedPath);
+    const heatmapAssetId = assetIdForPath(artifactOutputPath(source?.heatmap));
+    const surfaceVisionAssetId = assetIdForPath(artifactOutputPath(source?.surfaceVision));
+    const maskAssetId = assetIdForPath(artifactOutputPath(source?.glareMask));
+    return {
+      ...(trueViewAssetId ? { trueViewAssetId } : {}),
+      ...(heatmapAssetId ? { heatmapAssetId } : {}),
+      ...(surfaceVisionAssetId ? { surfaceVisionAssetId } : {}),
+      ...(maskAssetId ? { maskAssetId } : {}),
+      channelAssetIds: [],
+      roiAssetIds: [],
+    };
+  };
+  const defectExtraction = extractAiGraderDefectFindingsV1(analysis, {
+    approvedEvidenceBySide: {
+      front: evidenceForSide("front", frontNormalizedImageRef),
+      back: evidenceForSide("back", backNormalizedImageRef),
+    },
+    normalizedSourceSha256BySide: {
+      front: typeof frontNormalized?.normalizedArtifact?.sourceSha256 === "string"
+        ? frontNormalized.normalizedArtifact.sourceSha256
+        : undefined,
+      back: typeof backNormalized?.normalizedArtifact?.sourceSha256 === "string"
+        ? backNormalized.normalizedArtifact.sourceSha256
+        : undefined,
+    },
+    normalizedArtifactSha256BySide: {
+      front: assetSha256ForPath(frontNormalizedImageRef),
+      back: assetSha256ForPath(backNormalizedImageRef),
+    },
+    requireNormalizedSourceMatch: true,
+    knownAssetIds: imageAssetIds,
+    requireTrueViewAsset: true,
+  });
+  const linkedCandidates = candidates.map((candidate: unknown) => {
+    if (!isRecord(candidate) || typeof candidate.id !== "string") return candidate;
+    const findingId = candidate.side === "front" || candidate.side === "back"
+      ? defectExtraction.sourceCandidateFindingIds[`${candidate.side}:${candidate.id}`]
+      : undefined;
+    return findingId ? { ...candidate, findingIds: [findingId] } : candidate;
+  });
 
   return {
     schemaVersion: AI_GRADER_REPORT_BUNDLE_VERSION,
@@ -433,7 +565,7 @@ export async function buildAiGraderReportBundle(input: {
           gates: firstRecord(story.gates),
           gradeStory: firstRecord(story.story),
           whyNot10: Array.isArray(story.whyNot10) ? story.whyNot10 : [],
-          gradeImpactCandidates: candidates,
+          gradeImpactCandidates: linkedCandidates,
         }
       : undefined,
     evidenceReferences: {
@@ -444,6 +576,7 @@ export async function buildAiGraderReportBundle(input: {
     },
     visionLab: {
       available: isRecord(analysis?.visionLab),
+      ...(defectExtraction.findings.length ? { defectFindings: defectExtraction.findings } : {}),
       trueViewRefs: visionRefs(analysis, ["true", "portrait"]),
       overlayRefs: visionRefs(analysis, ["overlay"]),
       channelImageRefs: visionRefs(analysis, ["channel"]),
@@ -473,7 +606,12 @@ export async function buildAiGraderReportBundle(input: {
       } as JsonRecord),
     ...(input.ocrPrefill ? { ocrPrefill: input.ocrPrefill } : {}),
     assets,
-    warnings,
+    warnings: [
+      ...warnings,
+      ...(defectExtraction.issues.length
+        ? [`${defectExtraction.issues.length} defect candidate(s) were omitted because they lacked safe normalized public evidence.`]
+        : []),
+    ],
     limitations: [
       "Provisional Diagnostic Grade only.",
       "Not Certified.",

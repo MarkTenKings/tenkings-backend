@@ -1,6 +1,8 @@
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
+const sharp = require("sharp");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
@@ -14,6 +16,15 @@ const {
   writeAiGraderProductionRelease,
 } = require("../dist/drivers/aiGraderProductionRelease");
 const { runCaptureHelperCli } = require("../dist/cli");
+const PNG_BYTES = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+const REPLACEMENT_PNG_BYTES = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z6S8AAAAASUVORK5CYII=",
+  "base64",
+);
+const PNG_SHA256 = crypto.createHash("sha256").update(PNG_BYTES).digest("hex");
 
 async function runCli(argv) {
   let stdout = "";
@@ -36,6 +47,12 @@ async function runCli(argv) {
 
 function fixtureReportDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ai-grader-report-bundle-fixture-"));
+  const sourceSha256BySide = Object.fromEntries(
+    ["front", "back"].map((side) => [side, PNG_SHA256]),
+  );
+  const normalizedArtifactSha256BySide = Object.fromEntries(
+    ["front", "back"].map((side) => [side, PNG_SHA256]),
+  );
   fs.writeFileSync(
     path.join(dir, "manifest.json"),
     JSON.stringify(
@@ -80,7 +97,7 @@ function fixtureReportDir() {
           whyNot10: [{ id: "surface", title: "Surface candidate", explanation: "Back surface candidate.", evidenceRefs: ["visionLab.heatmap.back"] }],
           gradeImpactCandidates: [
             {
-              id: "back-surface-001",
+              id: "back-surface-intelligence-v0-001",
               category: "surface",
               side: "back",
               severity: "high",
@@ -89,6 +106,31 @@ function fixtureReportDir() {
               evidenceRefs: ["back-surface-intelligence-v0-heatmap.png"],
             },
           ],
+        },
+        surfaceIntelligence: {
+          detectorId: "preliminary_surface_intelligence_v0",
+          back: {
+            version: "preliminary_surface_intelligence_v0",
+            confidence: { score: 0.78 },
+            heatmap: { outputFilePath: path.join(dir, "back-surface-intelligence-v0-heatmap.png") },
+            candidates: [
+              {
+                candidateId: "back-surface-intelligence-v0-001",
+                side: "back",
+                category: "surface",
+                severityBand: "high",
+                severityProxy: 74.25,
+                confidence: 0.78,
+                analysisGeometry: {
+                  coordinateFrame: "normalized_card",
+                  units: "fraction",
+                  sourceSha256: sourceSha256BySide.back,
+                  normalizedArtifactSha256: normalizedArtifactSha256BySide.back,
+                  shape: { type: "box", x: 0.1, y: 0.2, width: 0.25, height: 0.125 },
+                },
+              },
+            ],
+          },
         },
         visionLab: {
           trueView: { front: "front-true-view.png", back: "back-true-view.png" },
@@ -102,10 +144,10 @@ function fixtureReportDir() {
   );
   fs.mkdirSync(path.join(dir, "front"));
   fs.mkdirSync(path.join(dir, "back"));
-  fs.writeFileSync(path.join(dir, "front", "front-all-on-portrait-display.png"), Buffer.from("front-image"));
-  fs.writeFileSync(path.join(dir, "back", "back-all-on-portrait-display.png"), Buffer.from("back-image"));
-  fs.writeFileSync(path.join(dir, "front", "front-normalized-card.png"), Buffer.from("front-normalized-image"));
-  fs.writeFileSync(path.join(dir, "back", "back-normalized-card.png"), Buffer.from("back-normalized-image"));
+  fs.writeFileSync(path.join(dir, "front", "front-all-on-portrait-display.png"), PNG_BYTES);
+  fs.writeFileSync(path.join(dir, "back", "back-all-on-portrait-display.png"), PNG_BYTES);
+  fs.writeFileSync(path.join(dir, "front", "front-normalized-card.png"), PNG_BYTES);
+  fs.writeFileSync(path.join(dir, "back", "back-normalized-card.png"), PNG_BYTES);
   for (const side of ["front", "back"]) {
     fs.writeFileSync(
       path.join(dir, side, "manifest.json"),
@@ -147,6 +189,8 @@ function fixtureReportDir() {
             normalizedArtifact: {
               localOutputPath: path.join(dir, side, `${side}-normalized-card.png`),
               mimeType: "image/png",
+              sha256: normalizedArtifactSha256BySide[side],
+              sourceSha256: sourceSha256BySide[side],
             },
             rawEvidencePreserved: true,
           },
@@ -154,7 +198,7 @@ function fixtureReportDir() {
       })
     );
   }
-  fs.writeFileSync(path.join(dir, "back-surface-intelligence-v0-heatmap.png"), Buffer.from("heatmap-image"));
+  fs.writeFileSync(path.join(dir, "back-surface-intelligence-v0-heatmap.png"), PNG_BYTES);
   fs.writeFileSync(
     path.join(dir, "provisional-diagnostic-report.html"),
     `<html><body>Provisional Diagnostic - Not Certified - No Final Grade
@@ -200,6 +244,24 @@ test("report bundle exports web-ready provisional contract without final/certifi
   assert.equal(bundle.provisionalGrade?.gates?.results?.[0]?.status, "accepted_warning");
   assert.equal(bundle.visionLab.available, true);
   assert.equal(bundle.visionLab.candidateCount, 1);
+  assert.equal(bundle.visionLab.defectFindings?.length, 1);
+  assert.equal(bundle.visionLab.defectFindings?.[0]?.side, "back");
+  assert.equal(bundle.visionLab.defectFindings?.[0]?.evidence.trueViewAssetId, "report/back/back-normalized-card.png");
+  assert.deepEqual(bundle.visionLab.defectFindings?.[0]?.geometry.shape, {
+    type: "box",
+    x: 0.1,
+    y: 0.2,
+    width: 0.25,
+    height: 0.125,
+  });
+  assert.doesNotMatch(JSON.stringify(bundle.visionLab.defectFindings), /sourceSha256/);
+  assert.deepEqual(bundle.provisionalGrade?.gradeImpactCandidates?.[0]?.findingIds, [bundle.visionLab.defectFindings?.[0]?.findingId]);
+  const findingTrueView = bundle.assets.find((asset) => asset.id === bundle.visionLab.defectFindings?.[0]?.evidence.trueViewAssetId);
+  assert.equal(findingTrueView?.side, "back");
+  assert.equal(findingTrueView?.evidenceRole, "normalized_card");
+  const findingHeatmap = bundle.assets.find((asset) => asset.id === bundle.visionLab.defectFindings?.[0]?.evidence.heatmapAssetId);
+  assert.equal(findingHeatmap?.side, "back");
+  assert.equal(findingHeatmap?.evidenceRole, "surface_heatmap");
   assert.equal(bundle.assets.some((asset) => asset.kind === "image" && asset.fileName === "front-all-on-portrait-display.png"), true);
   assert.equal(bundle.assets.some((asset) => asset.kind === "image" && asset.fileName === "front-normalized-card.png"), true);
   assert.equal(bundle.assets.some((asset) => asset.kind === "image" && asset.fileName === "back-normalized-card.png"), true);
@@ -218,6 +280,49 @@ test("report bundle exports web-ready provisional contract without final/certifi
   assert.match(bundle.limitations.join(" "), /No QR Certificate Yet/);
 });
 
+test("report bundle rejects stale defect geometry from a different normalized source", async () => {
+  const reportDir = fixtureReportDir();
+  const analysisPath = path.join(reportDir, "analysis.json");
+  const analysis = JSON.parse(fs.readFileSync(analysisPath, "utf8"));
+  analysis.surfaceIntelligence.back.candidates[0].analysisGeometry.sourceSha256 = "f".repeat(64);
+  fs.writeFileSync(analysisPath, JSON.stringify(analysis, null, 2));
+
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "stale-geometry" });
+  assert.deepEqual(bundle.visionLab.defectFindings ?? [], []);
+  assert.equal(bundle.provisionalGrade.gradeImpactCandidates[0].findingIds, undefined);
+});
+
+test("report bundle rejects defect geometry when normalized artifact bytes change", async () => {
+  const reportDir = fixtureReportDir();
+  fs.writeFileSync(path.join(reportDir, "back", "back-normalized-card.png"), REPLACEMENT_PNG_BYTES);
+
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "replaced-normalized-artifact" });
+  assert.deepEqual(bundle.visionLab.defectFindings ?? [], []);
+  assert.equal(bundle.provisionalGrade.gradeImpactCandidates[0].findingIds, undefined);
+});
+
+test("report bundle excludes non-raster bytes mislabeled with an image extension", async () => {
+  const reportDir = fixtureReportDir();
+  fs.writeFileSync(path.join(reportDir, "back", "back-normalized-card.png"), Buffer.from("<svg><script>bad</script></svg>"));
+
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "mime-spoofed-image" });
+  assert.equal(bundle.assets.some((asset) => asset.fileName === "back-normalized-card.png"), false);
+  assert.deepEqual(bundle.visionLab.defectFindings ?? [], []);
+});
+
+test("report bundle excludes raster images with embedded private metadata", async () => {
+  const reportDir = fixtureReportDir();
+  const normalizedPath = path.join(reportDir, "back", "back-normalized-card.png");
+  await sharp(PNG_BYTES)
+    .withXmp('<x:xmpmeta xmlns:x="adobe:ns:meta/"><private>local-device-comment</private></x:xmpmeta>')
+    .png()
+    .toFile(normalizedPath);
+
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "private-image-metadata" });
+  assert.equal(bundle.assets.some((asset) => asset.fileName === "back-normalized-card.png"), false);
+  assert.deepEqual(bundle.visionLab.defectFindings ?? [], []);
+});
+
 test("report bundle can include base64 image bodies for local operator viewer export", async () => {
   const reportDir = fixtureReportDir();
   const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "fixture-report", includeAssetBodies: true });
@@ -225,8 +330,8 @@ test("report bundle can include base64 image bodies for local operator viewer ex
   const frontImage = bundle.assets.find((asset) => asset.kind === "image" && asset.fileName === "front-all-on-portrait-display.png");
   assert.equal(frontImage?.contentType, "image/png");
   assert.equal(frontImage?.bodyEncoding, "base64");
-  assert.equal(Buffer.from(frontImage?.bodyBase64 ?? "", "base64").toString("utf8"), "front-image");
-  assert.equal(frontImage?.sha256, "635c727b41c225c9496e646413781d7c3aa11874287dd7a9d584911839f42999");
+  assert.deepEqual(Buffer.from(frontImage?.bodyBase64 ?? "", "base64"), PNG_BYTES);
+  assert.equal(frontImage?.sha256, PNG_SHA256);
 });
 
 test("report bundle writer creates bundle, asset manifest, and checksums", async () => {

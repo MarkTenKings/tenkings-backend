@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createAiGraderPublicReportApiHandler } from "../../../../lib/server/aiGraderProductionApi";
-import { readStorageBuffer } from "../../../../lib/server/storage";
+import { publicUrlFor, readStorageBuffer } from "../../../../lib/server/storage";
 
 async function readPublishedBundle(reportId: string) {
   const { prisma } = await import("@tenkings/database");
@@ -96,4 +96,5 @@ async function readPublishedBundle(reportId: string) {
 
 export default createAiGraderPublicReportApiHandler({
   readPublishedBundle,
+  publicUrlFor,
 });

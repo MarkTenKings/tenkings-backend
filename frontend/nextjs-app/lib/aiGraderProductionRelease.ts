@@ -36,6 +36,7 @@ export type AiGraderFinalGrade = {
     confidence: string;
     explanation: string;
     evidenceRefs: string[];
+    findingIds?: string[];
   }>;
   whyNot10: Array<{
     id: string;
@@ -182,6 +183,7 @@ export function buildSampleAiGraderProductionRelease(bundle: AiGraderReportBundl
       confidence: candidate.confidence,
       explanation: candidate.explanation,
       evidenceRefs: candidate.evidenceRefs,
+      ...(candidate.findingIds ? { findingIds: candidate.findingIds } : {}),
     })),
     whyNot10: bundle.provisionalGrade?.whyNot10 ?? [],
     finalGradeComputed: true,
