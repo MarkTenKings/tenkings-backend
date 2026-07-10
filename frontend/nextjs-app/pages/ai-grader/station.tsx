@@ -12,6 +12,7 @@ import {
   type AiGraderCaptureProfile,
   type AiGraderCaptureTriggerMode,
   type AiGraderPreviewCardGeometryBySide,
+  type AiGraderPreviewGeometryPoint,
   type AiGraderPreviewGeometrySide,
   type AiGraderWarmRunnerPhase,
   type AiGraderLocalReportHistory,
@@ -291,17 +292,14 @@ function formatStationValue(value?: string) {
 }
 
 function mergePreviewCardGeometry(
-  current: AiGraderPreviewCardGeometryBySide | undefined,
+  _current: AiGraderPreviewCardGeometryBySide | undefined,
   incoming: unknown
 ): AiGraderPreviewCardGeometryBySide | undefined {
   const sanitized = sanitizeAiGraderPreviewCardGeometryBySide(incoming);
-  if (!sanitized) return current;
-  return {
-    ...current,
-    ...sanitized,
-    front: sanitized.front ?? current?.front,
-    back: sanitized.back ?? current?.back,
-  };
+  // A successful bridge poll is authoritative. In particular, if the bridge
+  // clears the active side after a detector error, never retain an older Ready
+  // outline in the browser and accidentally keep capture enabled.
+  return sanitized;
 }
 
 function roleLabel(role: string) {
@@ -439,6 +437,8 @@ type PreviewFrameSize = { width: number; height: number };
 const REPORT_OVERLAY_DEFAULT_FRAME_SIZE: PreviewFrameSize = { width: 1200, height: 1680 };
 const REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.97;
 const REPORT_OVERLAY_CARD_ASPECT_RATIO = 2.5 / 3.5;
+const PREVIEW_GEOMETRY_STATUS_POLL_MS = 200;
+const PREVIEW_GEOMETRY_MAX_AGE_MS = 2000;
 const REPORT_OVERLAY_ROI_RATIOS = [
   { id: "top-left-corner", type: "corner", x: 0, y: 0, width: 0.18, height: 0.18 },
   { id: "top-right-corner", type: "corner", x: 0.82, y: 0, width: 0.18, height: 0.18 },
@@ -530,6 +530,46 @@ function autoCapturePhaseLabel(state: AutoCaptureUiState) {
   if (state.phase === "waiting_for_ready") return state.side === "back" ? "Position back" : "Position front";
   if (state.phase === "stabilizing") return `Ready ${Math.min(AI_GRADER_AUTO_CAPTURE_STABLE_MS, Math.round(state.readyStableMs))} ms`;
   return "Triggered";
+}
+
+function pointToward(
+  from: AiGraderPreviewGeometryPoint,
+  toward: AiGraderPreviewGeometryPoint,
+  distance: number
+): AiGraderPreviewGeometryPoint {
+  const dx = toward.x - from.x;
+  const dy = toward.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= 0) return { ...from };
+  const scale = Math.min(0.45, distance / length);
+  return { x: from.x + dx * scale, y: from.y + dy * scale };
+}
+
+function midpoint(
+  first: AiGraderPreviewGeometryPoint,
+  second: AiGraderPreviewGeometryPoint
+): AiGraderPreviewGeometryPoint {
+  return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+}
+
+function centeredAxisLine(
+  center: AiGraderPreviewGeometryPoint,
+  from: AiGraderPreviewGeometryPoint,
+  toward: AiGraderPreviewGeometryPoint,
+  halfLength: number
+) {
+  const dx = toward.x - from.x;
+  const dy = toward.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= 0) return null;
+  const unitX = dx / length;
+  const unitY = dy / length;
+  return {
+    x1: center.x - unitX * halfLength,
+    y1: center.y - unitY * halfLength,
+    x2: center.x + unitX * halfLength,
+    y2: center.y + unitY * halfLength,
+  };
 }
 
 const emptyFinishQueue: FinishQueueResult = {
@@ -666,6 +706,7 @@ export default function AiGraderStationPage() {
   });
 
   const connectBridgeWithCredentials = async (targetBridgeUrl: string, targetStationToken: string) => {
+    await fetchAiGraderStationBridgeHealth({ baseUrl: targetBridgeUrl });
     const next = await callAiGraderStationBridge({ baseUrl: targetBridgeUrl, stationToken: targetStationToken, action: "status" });
     window.localStorage.setItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY, targetBridgeUrl);
     window.localStorage.setItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY, targetStationToken);
@@ -729,8 +770,16 @@ export default function AiGraderStationPage() {
       if (savedToken) setStationToken(savedToken);
       try {
         await fetchAiGraderStationBridgeHealth({ baseUrl: savedBridgeUrl });
-      } catch {
-        if (!cancelled) setBridgeConnectionState("not_running");
+      } catch (requestError) {
+        if (!cancelled) {
+          const message = requestError instanceof Error ? requestError.message : "AI Grader local bridge health check failed.";
+          if (/update\/restart required/i.test(message)) {
+            setBridgeConnectionState("error");
+            setError(message);
+          } else {
+            setBridgeConnectionState("not_running");
+          }
+        }
         return;
       }
       if (pairingCode) {
@@ -954,7 +1003,7 @@ export default function AiGraderStationPage() {
       }
     };
     void refreshGeometry();
-    const timer = window.setInterval(() => void refreshGeometry(), 600);
+    const timer = window.setInterval(() => void refreshGeometry(), PREVIEW_GEOMETRY_STATUS_POLL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -1187,10 +1236,17 @@ export default function AiGraderStationPage() {
   const activePreviewCardGeometry = safePreviewCardGeometry?.[previewGeometrySide];
   const cardPlacementState = activePreviewCardGeometry?.placementState ?? "not_detected";
   const cardPlacementLabel = aiGraderCardPlacementLabel(cardPlacementState);
+  const activeGeometryTimestampMs = Date.parse(activePreviewCardGeometry?.timestamp ?? "");
+  const activeGeometryAgeMs = Date.now() - activeGeometryTimestampMs;
+  const detectedGeometryFresh =
+    Number.isFinite(activeGeometryTimestampMs) &&
+    activeGeometryAgeMs >= -250 &&
+    activeGeometryAgeMs <= PREVIEW_GEOMETRY_MAX_AGE_MS;
   const detectedGeometryReady =
     cardPlacementState === "ready" &&
     activePreviewCardGeometry?.geometrySource === "detected" &&
-    activePreviewCardGeometry.detectionUsed === true;
+    activePreviewCardGeometry.detectionUsed === true &&
+    detectedGeometryFresh;
   const manualOverlayAvailable = previewStatus.status === "live" && Boolean(previewImageSize);
   const cardGeometryCorners = activePreviewCardGeometry?.corners ?? activePreviewCardGeometry?.detectedCorners ?? null;
   const cardGeometryFrameSize = activePreviewCardGeometry?.image ?? reportOverlayFrameSize;
@@ -1202,6 +1258,32 @@ export default function AiGraderStationPage() {
         cardGeometryCorners.bottomLeft,
       ]
     : [];
+  const detectedGeometryVisible =
+    cardGeometryPolygonPoints.length === 4 &&
+    activePreviewCardGeometry?.geometrySource === "detected" &&
+    activePreviewCardGeometry.detectionUsed === true;
+  const detectedGeometryDominant = detectedGeometryVisible && manualCaptureConfirmation === null;
+  const cardGeometryCueLength = Math.max(14, Math.min(cardGeometryFrameSize.width, cardGeometryFrameSize.height) * 0.026);
+  const cardGeometryCornerBrackets = cardGeometryPolygonPoints.map((corner, index, points) => ({
+    corner,
+    towardPrevious: pointToward(corner, points[(index + points.length - 1) % points.length], cardGeometryCueLength),
+    towardNext: pointToward(corner, points[(index + 1) % points.length], cardGeometryCueLength),
+  }));
+  const cardGeometryEdgeMidpoints = cardGeometryPolygonPoints.map((point, index, points) =>
+    midpoint(point, points[(index + 1) % points.length])
+  );
+  const cardGeometryCenter = cardGeometryPolygonPoints.length === 4
+    ? {
+        x: cardGeometryPolygonPoints.reduce((sum, point) => sum + point.x, 0) / 4,
+        y: cardGeometryPolygonPoints.reduce((sum, point) => sum + point.y, 0) / 4,
+      }
+    : null;
+  const cardGeometryCenterAxes = cardGeometryCenter && cardGeometryEdgeMidpoints.length === 4
+    ? [
+        centeredAxisLine(cardGeometryCenter, cardGeometryEdgeMidpoints[3], cardGeometryEdgeMidpoints[1], cardGeometryCueLength * 0.72),
+        centeredAxisLine(cardGeometryCenter, cardGeometryEdgeMidpoints[0], cardGeometryEdgeMidpoints[2], cardGeometryCueLength * 0.72),
+      ].filter((axis): axis is NonNullable<typeof axis> => Boolean(axis))
+    : [];
   const activeAutoCaptureSide: AiGraderPreviewGeometrySide | null = !status.sessionManifest.frontCaptured
     ? "front"
     : status.sessionManifest.frontCaptured && !status.sessionManifest.backCaptured &&
@@ -1212,7 +1294,10 @@ export default function AiGraderStationPage() {
   const autoCaptureGeometry =
     autoCaptureGeometryCandidate?.placementState === "ready" &&
     autoCaptureGeometryCandidate.geometrySource === "detected" &&
-    autoCaptureGeometryCandidate.detectionUsed === true
+    autoCaptureGeometryCandidate.detectionUsed === true &&
+    Number.isFinite(Date.parse(autoCaptureGeometryCandidate.timestamp ?? "")) &&
+    Date.now() - Date.parse(autoCaptureGeometryCandidate.timestamp ?? "") >= -250 &&
+    Date.now() - Date.parse(autoCaptureGeometryCandidate.timestamp ?? "") <= PREVIEW_GEOMETRY_MAX_AGE_MS
       ? autoCaptureGeometryCandidate
       : undefined;
   const autoCaptureSessionId = `${status.sessionManifest.gradingSessionId}:${status.sessionManifest.reportId}`;
@@ -1238,6 +1323,34 @@ export default function AiGraderStationPage() {
       "accept_capture_profile",
       "capture_front",
     ]).has(status.currentStep);
+  const cardAdjustmentGuidance =
+    activePreviewCardGeometry?.adjustmentReason === "outside_frame"
+      ? "Move the card until all four corners have clear space from the frame edge."
+      : activePreviewCardGeometry?.adjustmentReason === "unsafe_scale"
+        ? "Use the fixed plate position; the detected card size is outside the grading-safe camera range."
+        : activePreviewCardGeometry?.adjustmentReason === "rotate_top_up"
+          ? "Rotate the printed top toward the top of the preview."
+          : activePreviewCardGeometry?.adjustmentReason === "wrong_aspect"
+            ? "Flatten the card and make sure the outline follows the physical outer edges."
+            : activePreviewCardGeometry?.adjustmentReason === "low_confidence"
+              ? "Hold steady and use the base-plate color with the strongest contrast around the card border."
+              : "Keep all four corners inside the frame, keep the printed top roughly toward the top, and hold steady.";
+  const cardPlacementGuidance = detectedGeometryReady
+    ? `Edges locked. Off-center placement and ordinary rotation will be corrected. ${previewGeometrySide === "back" ? "Capture Back" : "Start Grading"} is enabled.`
+    : cardPlacementState === "adjust_card" && detectedGeometryVisible
+      ? `Edges found. ${cardAdjustmentGuidance}`
+      : "Place the card on the solid base plate with all four edges visible and the printed top roughly toward the top.";
+  const frontStartGuidance = status.captureFailure
+    ? "Capture stopped. Select Start New Card to retry."
+    : status.sessionManifest.frontCaptured
+      ? "Front captured. Follow the back-card prompt in the camera view."
+      : status.rapidCaptureQueue.activeQueueItemId
+        ? "Finish the active Confirm Card review before starting another capture."
+        : !canStartGrading
+          ? "Select Start New Card to begin."
+          : previewGeometrySide !== "front"
+            ? "Finish the current back capture before starting another front."
+            : cardPlacementGuidance;
   const captureTimingSummary = status.captureTiming.summary;
   const captureTimingPhaseTotal = (phaseId: (typeof status.captureTiming.phases)[number]["id"]) => {
     const matching = status.captureTiming.phases.filter((phase) => phase.id === phaseId);
@@ -3652,7 +3765,7 @@ export default function AiGraderStationPage() {
             )}
             <div className="report-overlay-stage" style={reportOverlayStageStyle} aria-hidden="true">
               <svg
-                className="report-framing-overlay"
+                className={`report-framing-overlay${detectedGeometryDominant ? " geometry-dominant" : ""}${manualCaptureConfirmation ? " manual-active" : ""}`}
                 viewBox={`0 0 ${reportOverlayFrameSize.width} ${reportOverlayFrameSize.height}`}
                 focusable="false"
               >
@@ -3702,9 +3815,40 @@ export default function AiGraderStationPage() {
                   focusable="false"
                 >
                   <polygon points={cardGeometryPolygonPoints.map((corner) => `${corner.x},${corner.y}`).join(" ")} />
-                  {cardGeometryPolygonPoints.map((corner, index) => (
-                    <circle key={index} cx={corner.x} cy={corner.y} r={Math.max(5, cardGeometryFrameSize.width * 0.005)} />
+                  {cardGeometryCornerBrackets.map((bracket, index) => (
+                    <polyline
+                      className="card-geometry-corner-bracket"
+                      key={`corner-${index}`}
+                      points={`${bracket.towardPrevious.x},${bracket.towardPrevious.y} ${bracket.corner.x},${bracket.corner.y} ${bracket.towardNext.x},${bracket.towardNext.y}`}
+                    />
                   ))}
+                  {cardGeometryEdgeMidpoints.map((edgeMidpoint, index) => (
+                    <circle
+                      className="card-geometry-edge-midpoint"
+                      key={`edge-${index}`}
+                      cx={edgeMidpoint.x}
+                      cy={edgeMidpoint.y}
+                      r={Math.max(3, cardGeometryFrameSize.width * 0.0032)}
+                    />
+                  ))}
+                  {cardGeometryCenterAxes.map((axis, index) => (
+                    <line
+                      className="card-geometry-center-axis"
+                      key={`axis-${index}`}
+                      x1={axis.x1}
+                      y1={axis.y1}
+                      x2={axis.x2}
+                      y2={axis.y2}
+                    />
+                  ))}
+                  {cardGeometryCenter ? (
+                    <circle
+                      className="card-geometry-center-point"
+                      cx={cardGeometryCenter.x}
+                      cy={cardGeometryCenter.y}
+                      r={Math.max(2.5, cardGeometryFrameSize.width * 0.0025)}
+                    />
+                  ) : null}
                 </svg>
               ) : null}
             </div>
@@ -3766,11 +3910,15 @@ export default function AiGraderStationPage() {
               <div>
                 <p className="eyebrow">Position Back</p>
                 <h2>Live Preview Is Active</h2>
-                <p>Flip the card and wait for Ready. If detection cannot become Ready, use the fixed overlay manually and confirm that override.</p>
+                <p>Flip the card and use the live edge outline as the placement guide.</p>
+                <p id="back-geometry-guidance" className={`geometry-action-status ${cardPlacementState}`}>
+                  {cardPlacementGuidance}
+                </p>
                 <button
                   type="button"
                   onClick={() => void confirmFlipAndContinue("operator")}
-                  disabled={busy !== null || previewGeometrySide !== "back" || !detectedGeometryReady}
+                  aria-describedby="back-geometry-guidance"
+                  disabled={busy !== null || Boolean(status.captureFailure) || previewGeometrySide !== "back" || !detectedGeometryReady}
                 >
                   {busy === "capture-back" ? "Capturing Back" : "Capture Back"}
                 </button>
@@ -4001,10 +4149,14 @@ export default function AiGraderStationPage() {
               type="button"
               className="start-grading"
               onClick={() => void startGrading("operator")}
+              aria-describedby="front-geometry-guidance"
               disabled={busy !== null || !canStartGrading || previewGeometrySide !== "front" || !detectedGeometryReady}
             >
               {busy === "start-grading" ? "Working" : "Start Grading"}
             </button>
+            <p id="front-geometry-guidance" className={`geometry-action-status ${detectedGeometryReady ? "ready" : cardPlacementState}`}>
+              {frontStartGuidance}
+            </p>
             <button
               type="button"
               className="secondary manual-capture-button"
@@ -4479,7 +4631,7 @@ export default function AiGraderStationPage() {
             )}
             {status.captureFailure ? (
               <p className="status-note failed">
-                {status.captureFailure.side} warm capture failed: {status.captureFailure.message} This capture session is terminal; select Start New Card to retry. No automatic cold capture was attempted.
+                {status.captureFailure.side} warm {status.captureFailure.stage === "warm_processing" ? "processing" : "capture"} failed: {status.captureFailure.message} This capture session is terminal; select Start New Card to retry. No automatic cold capture was attempted.
               </p>
             ) : null}
             <div className="evidence-side">
@@ -5012,9 +5164,30 @@ export default function AiGraderStationPage() {
           display: block;
           width: 100%;
           height: 100%;
-          opacity: 0.9;
+          opacity: 0.78;
           mix-blend-mode: screen;
           filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.72));
+          transition: opacity 120ms ease, filter 120ms ease;
+        }
+        .report-framing-overlay.geometry-dominant {
+          opacity: 0.16;
+          filter: none;
+        }
+        .report-framing-overlay.geometry-dominant .report-overlay-centerline,
+        .report-framing-overlay.geometry-dominant .report-overlay-roi {
+          opacity: 0;
+        }
+        .report-framing-overlay.geometry-dominant .report-overlay-card-template {
+          stroke-width: 3;
+          stroke-dasharray: 14 18;
+        }
+        .report-framing-overlay.manual-active {
+          opacity: 0.94;
+          filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.72));
+        }
+        .report-framing-overlay.manual-active .report-overlay-centerline,
+        .report-framing-overlay.manual-active .report-overlay-roi {
+          opacity: 1;
         }
         .card-geometry-overlay {
           position: absolute;
@@ -5028,19 +5201,41 @@ export default function AiGraderStationPage() {
         .card-geometry-overlay polygon {
           fill: rgba(255, 183, 0, 0.05);
           stroke: #ffb700;
-          stroke-width: 6;
+          stroke-width: 4;
           stroke-linejoin: round;
+          vector-effect: non-scaling-stroke;
         }
-        .card-geometry-overlay circle {
+        .card-geometry-overlay .card-geometry-corner-bracket,
+        .card-geometry-overlay .card-geometry-center-axis {
+          fill: none;
+          stroke: #ffb700;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+          vector-effect: non-scaling-stroke;
+        }
+        .card-geometry-overlay .card-geometry-corner-bracket {
+          stroke-width: 9;
+        }
+        .card-geometry-overlay .card-geometry-center-axis {
+          stroke-width: 3;
+        }
+        .card-geometry-overlay .card-geometry-edge-midpoint,
+        .card-geometry-overlay .card-geometry-center-point {
           fill: #ffb700;
           stroke: #111;
           stroke-width: 2;
+          vector-effect: non-scaling-stroke;
         }
         .card-geometry-overlay.ready polygon {
           fill: rgba(34, 197, 94, 0.08);
           stroke: #22c55e;
         }
-        .card-geometry-overlay.ready circle {
+        .card-geometry-overlay.ready .card-geometry-corner-bracket,
+        .card-geometry-overlay.ready .card-geometry-center-axis {
+          stroke: #22c55e;
+        }
+        .card-geometry-overlay.ready .card-geometry-edge-midpoint,
+        .card-geometry-overlay.ready .card-geometry-center-point {
           fill: #22c55e;
         }
         .card-geometry-badge {
@@ -5336,6 +5531,26 @@ export default function AiGraderStationPage() {
           margin-top: 8px;
           color: #bdb5a8;
           line-height: 1.45;
+        }
+        .geometry-action-status {
+          margin-top: 10px;
+          border-left: 3px solid #7d827e;
+          border-radius: 4px;
+          padding: 8px 10px;
+          color: #d5d8d5;
+          background: rgba(255, 255, 255, 0.045);
+          font-size: 12px;
+          line-height: 1.4;
+        }
+        .geometry-action-status.adjust_card {
+          border-left-color: #ffb700;
+          color: #ffe2a0;
+          background: rgba(255, 183, 0, 0.09);
+        }
+        .geometry-action-status.ready {
+          border-left-color: #22c55e;
+          color: #bfffd2;
+          background: rgba(34, 197, 94, 0.1);
         }
         .capture-settings-head,
         .rapid-queue-head {

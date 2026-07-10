@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const sharp = require("sharp");
 const {
   AiGraderLocalStationBridgeService,
   AiGraderPreviewJpegFrameAssembler,
@@ -171,6 +172,7 @@ function manualCaptureRequest(overrides = {}) {
 
 function markReadyGeometry(service, side) {
   service.manifest.previewStatus.cardGeometry[side] = {
+    side,
     placementState: "ready",
     geometrySource: "detected",
     detectionUsed: true,
@@ -189,6 +191,7 @@ function markReadyGeometry(service, side) {
     },
     boundingBox: { x: 100, y: 100, width: 1000, height: 1400 },
     sourceFrameId: `test-${side}-ready`,
+    timestamp: new Date().toISOString(),
   };
 }
 
@@ -243,6 +246,63 @@ test("preview JPEG assembler handles split multipart frames and bounds incomplet
   const incomplete = new AiGraderPreviewJpegFrameAssembler();
   incomplete.push(Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(12 * 1024 * 1024 + 100)]));
   assert.equal(incomplete.bufferedByteLength <= 12 * 1024 * 1024, true);
+});
+
+test("preview JPEG assembler preserves captured-at metadata across split multipart headers and has a receipt-time fallback", () => {
+  const capturedAt = "2026-07-10T15:16:17.123Z";
+  const jpeg = Buffer.from([0xff, 0xd8, 9, 8, 7, 0xff, 0xd9]);
+  const multipart = Buffer.concat([
+    Buffer.from(`--frame\r\nContent-Type: image/jpeg\r\nX-AI-Grader-Frame-Index: 42\r\nX-AI-Grader-Captured-At: ${capturedAt}\r\n\r\n`),
+    jpeg,
+    Buffer.from("\r\n"),
+  ]);
+  const assembler = new AiGraderPreviewJpegFrameAssembler();
+  const frames = [];
+  for (const split of [multipart.subarray(0, 7), multipart.subarray(7, 61), multipart.subarray(61, -3), multipart.subarray(-3)]) {
+    frames.push(...assembler.pushWithMetadata(split));
+  }
+  assert.equal(frames.length, 1);
+  assert.deepEqual(frames[0].bytes, jpeg);
+  assert.equal(frames[0].capturedAt, capturedAt);
+  assert.equal(frames[0].frameIndex, 42);
+  assert.equal(frames[0].timestampSource, "preview_capture_header");
+  assert.ok(Number.isFinite(Date.parse(frames[0].receivedAt)));
+
+  const fallback = new AiGraderPreviewJpegFrameAssembler().pushWithMetadata(jpeg);
+  assert.equal(fallback.length, 1);
+  assert.equal(fallback[0].capturedAt, undefined);
+  assert.equal(fallback[0].timestampSource, "bridge_received");
+  assert.ok(Number.isFinite(Date.parse(fallback[0].receivedAt)));
+});
+
+test("preview geometry timestamps the result from the frame header instead of detector start time", async () => {
+  const dir = outputDir(`preview-captured-at-${Date.now()}`);
+  const warm = makeFakeWarmRunner();
+  const service = new AiGraderLocalStationBridgeService(realConfig({ outputDir: dir }), {
+    async run(step) {
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+    },
+  }, warm.runner);
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="900" height="1260">
+      <rect width="900" height="1260" fill="#17191d"/>
+      <rect x="198" y="277" width="504" height="706" rx="4" fill="#f2f0e9"/>
+    </svg>
+  `);
+  const jpeg = await sharp(svg).jpeg({ quality: 90 }).toBuffer();
+  const capturedAt = new Date(Date.now() - 250).toISOString();
+  service.queuePreviewGeometryAnalysis(jpeg, 42, capturedAt, "preview_capture_header");
+  const status = await waitFor(
+    () => service.status().previewStatus.cardGeometry.front?.sourceFrameId === "preview-front-42"
+      ? service.status()
+      : undefined,
+    "preview geometry did not analyze the synthetic captured-at frame"
+  );
+  assert.equal(status.previewStatus.cardGeometry.front.timestamp, capturedAt);
+  assert.equal(status.previewStatus.cardGeometry.analysis.lastFrameCapturedAt, capturedAt);
+  assert.equal(status.previewStatus.cardGeometry.analysis.lastFrameTimestampSource, "preview_capture_header");
+  assert.notEqual(status.previewStatus.cardGeometry.analysis.lastStartedAt, capturedAt);
 });
 
 test("rapid queue retention never evicts unreviewed backlog beyond the recent-item cap", () => {
@@ -537,6 +597,7 @@ test("mock live preview reports deterministic path-free front and back geometry 
   try {
     const startedSession = await post("start-session", { captureProfile: "full_forensic" });
     assert.equal(startedSession.previewStatus.cardGeometry.activeSide, "front");
+    assert.equal(startedSession.previewStatus.cardGeometry.analysis.throttleMs, 125);
     assert.equal(startedSession.previewStatus.cardGeometry.front, undefined);
     assert.equal(startedSession.previewStatus.cardGeometry.back, undefined);
     await post("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
@@ -547,7 +608,8 @@ test("mock live preview reports deterministic path-free front and back geometry 
       const value = await geometry();
       return value.front?.placementState === "not_detected" ? value : undefined;
     }, "front preview never reported not_detected");
-    assert.equal(notDetectedFront.manualOverlayFallbackAvailable, true);
+    assert.equal(notDetectedFront.explicitManualOverlayAvailable, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(notDetectedFront, "manualOverlayFallbackAvailable"), false);
     await waitForAsync(async () => (await geometry()).front?.placementState === "adjust_card", "front preview never reported adjust_card");
     const readyFront = await waitForAsync(async () => {
       const value = await geometry();
@@ -664,6 +726,53 @@ test("capture geometry gating rejects contradictory Ready state and passes expli
   const serialized = JSON.stringify(persisted.geometryCaptureDecisions);
   assert.equal(serialized.includes(dir), false);
   assert.equal(/token|data:image|presigned|https?:\/\//i.test(serialized), false);
+});
+
+test("capture geometry gating rejects a stale Ready frame instead of reusing old corners", async () => {
+  const dir = outputDir(`stale-ready-geometry-${Date.now()}`);
+  const warm = makeFakeWarmRunner();
+  const service = new AiGraderLocalStationBridgeService(realConfig({ outputDir: dir }), {
+    async run(step) {
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+    },
+  }, warm.runner);
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  markReadyGeometry(service, "front");
+  service.manifest.previewStatus.cardGeometry.front.timestamp = new Date(Date.now() - 3000).toISOString();
+
+  await assert.rejects(
+    () => service.action("capture-front"),
+    /latest detected frame is stale/i,
+  );
+  assert.equal(warm.calls.some((call) => call.type === "capture"), false);
+  assert.equal(service.status().geometryCaptureDecisions.front, undefined);
+});
+
+test("capture geometry freshness is frozen at a recent operator click during bounded preview handoff", async () => {
+  const dir = outputDir(`click-time-ready-geometry-${Date.now()}`);
+  const warm = makeFakeWarmRunner();
+  const service = new AiGraderLocalStationBridgeService(realConfig({ outputDir: dir }), {
+    async run(step) {
+      return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+    },
+  }, warm.runner);
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  markReadyGeometry(service, "front");
+  const clickAt = new Date(Date.now() - 6000).toISOString();
+  service.manifest.previewStatus.cardGeometry.front.timestamp = new Date(Date.parse(clickAt) - 500).toISOString();
+
+  const status = await service.action("capture-front", {
+    captureTriggerMode: "operator",
+    geometryCaptureMode: "detected_geometry",
+    captureTriggerAt: clickAt,
+  });
+
+  assert.equal(status.geometryCaptureDecisions.front.timestamp, clickAt);
+  assert.equal(warm.calls.some((call) => call.type === "capture" && call.side === "front"), true);
 });
 
 test("station bridge live lighting endpoints are token-gated and validate duty and channels", async () => {
@@ -1082,6 +1191,7 @@ test("capture timing includes validated browser click-to-action delay", async ()
   await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
   const captureTriggerAt = new Date(Date.now() - 1200).toISOString();
   markReadyGeometry(service, "front");
+  service.manifest.previewStatus.cardGeometry.front.timestamp = new Date(Date.parse(captureTriggerAt) - 100).toISOString();
   const status = await service.action("capture-front", { captureTriggerMode: "auto", captureTriggerAt });
   const trigger = status.captureTiming.events.find((event) => event.id === "capture_trigger" && event.side === "front");
   assert.equal(trigger.at, captureTriggerAt);
@@ -1354,6 +1464,14 @@ test("side processing failures are terminal and cannot be overwritten or queued"
     () => immediate.status().rapidCapture.workflowState === "failed" ? immediate.status() : undefined,
     "immediate processing failure did not become terminal"
   );
+  assert.deepEqual(immediateFailed.captureFailure, {
+    side: "front",
+    stage: "warm_processing",
+    message: "front processing failed",
+    at: immediateFailed.captureFailure.at,
+    retryRequired: true,
+    automaticColdFallbackAttempted: false,
+  });
   assert.equal(immediateFailed.rapidCapture.workflowHistory.some((event) => event.state === "back_positioning"), false);
   await assert.rejects(() => immediate.action("queue-current-card"), /failed processing state|front and back/i);
   await assert.rejects(() => immediate.action("run-diagnostics"), /processing failed/i);
@@ -1380,8 +1498,33 @@ test("side processing failures are terminal and cannot be overwritten or queued"
     "delayed processing failure did not become terminal"
   );
   assert.equal(delayedFailed.rapidCapture.workflowState, "failed");
+  assert.deepEqual(delayedFailed.captureFailure, {
+    side: "front",
+    stage: "warm_processing",
+    message: "delayed front processing failed",
+    at: delayedFailed.captureFailure.at,
+    retryRequired: true,
+    automaticColdFallbackAttempted: false,
+  });
+  const persistedDelayedFailure = await waitFor(() => {
+    try {
+      const value = JSON.parse(fs.readFileSync(delayedFailed.outputs.manifestPath, "utf8"));
+      return value.captureFailure?.stage === "warm_processing" ? value.captureFailure : undefined;
+    } catch {
+      return undefined;
+    }
+  }, "delayed processing failure was not persisted to the station manifest");
+  assert.equal(persistedDelayedFailure.message, "delayed front processing failed");
+  await delayed.action("confirm-flip", { confirmations: { flipComplete: true } });
+  await assert.rejects(
+    () => delayed.action("capture-back", manualCaptureRequest()),
+    /requires a new start-session retry/i
+  );
+  assert.equal(delayedWarm.calls.some((call) => call.type === "capture" && call.side === "back"), false);
   await assert.rejects(() => delayed.action("queue-current-card"), /failed processing state|front and back/i);
   await assert.rejects(() => delayed.action("run-diagnostics"), /processing failed/i);
+  const delayedRetry = await delayed.action("start-session", { captureProfile: "full_forensic" });
+  assert.equal(delayedRetry.captureFailure, undefined);
 
   const backWarm = makeFakeWarmRunner({ processError: new Error("back processing failed"), processErrorSide: "back" });
   const back = new AiGraderLocalStationBridgeService(
@@ -1397,6 +1540,14 @@ test("side processing failures are terminal and cannot be overwritten or queued"
     () => back.status().rapidCapture.workflowState === "failed" ? back.status() : undefined,
     "back processing failure did not become terminal"
   );
+  assert.deepEqual(backFailed.captureFailure, {
+    side: "back",
+    stage: "warm_processing",
+    message: "back processing failed",
+    at: backFailed.captureFailure.at,
+    retryRequired: true,
+    automaticColdFallbackAttempted: false,
+  });
   assert.equal(backFailed.rapidCapture.workflowHistory.some((event) => event.state === "back_captured"), false);
   await assert.rejects(() => back.action("queue-current-card"), /failed processing state/i);
 });
@@ -1927,6 +2078,9 @@ test("Windows bridge scripts keep station token out of scheduled task and launch
   const stopScript = fs.readFileSync(path.join(repoRoot, "scripts", "ai-grader", "stop-local-station-bridge.ps1"), "utf8");
 
   assert.equal(startScript.includes("--station-token"), false);
+  assert.match(startScript, /if \(-not \$SkipBuild\) \{[\s\S]*capture-helper\" build/);
+  assert.equal(startScript.includes("-and -not (Test-Path -LiteralPath $cliPath)"), false);
+  assert.match(startScript, /build failed; the local bridge was not started with stale compiled code/i);
   assert.equal(installScript.includes("--station-token"), false);
   assert.equal(openScript.includes("--station-token"), false);
   assert.equal(installScript.includes("AI_GRADER_SERVICE_ACCOUNT_TOKEN"), false);

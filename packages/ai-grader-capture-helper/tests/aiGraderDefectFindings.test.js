@@ -285,6 +285,7 @@ test("projected geometry matches pixels produced by the real rotate-and-crop nor
       sourceImageHeight: 100,
       displayTransform: "rotate90cw",
       rotationDegrees: normalized.geometry.rotationDegrees,
+      deskewAppliedDegrees: normalized.normalizedArtifact.deskewAppliedDegrees,
       corners: normalized.geometry.corners,
     },
   );
@@ -314,4 +315,82 @@ test("projected geometry matches pixels produced by the real rotate-and-crop nor
   for (const key of ["x", "y", "right", "bottom"]) {
     assert.ok(Math.abs(actualBounds[key] - projectedBounds[key]) <= 0.02, `${key}: ${actualBounds[key]} vs ${projectedBounds[key]}`);
   }
+});
+
+test("near-limit close-enough normalization keeps canonical finding geometry and fingerprint linkage", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ai-grader-defect-close-enough-"));
+  const sourceImagePath = path.join(dir, "source-34-degrees.png");
+  const normalizedOutputPath = path.join(dir, "normalized-34-degrees.png");
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="2000" height="2000">
+      <rect width="2000" height="2000" fill="#121518"/>
+      <g transform="translate(1000 1000) rotate(34)">
+        <rect x="-500" y="-700" width="1000" height="1400" rx="10" fill="#eeeae0"/>
+        <rect x="-420" y="-590" width="840" height="1180" fill="#805f2c"/>
+      </g>
+    </svg>
+  `);
+  await sharp(svg).png().toFile(sourceImagePath);
+
+  const normalized = await detectAndNormalizeCardImage({
+    sourceImagePath,
+    normalizedOutputPath,
+    side: "back",
+  });
+  assert.equal(normalized.geometry.placementState, "ready");
+  assert.ok(Math.abs(normalized.geometry.skewDegrees - 34) < 1.5);
+  assert.equal(normalized.geometry.placement.maxNormalizationSkewDegrees, 35);
+  assert.ok(normalized.normalizedArtifact);
+  assert.equal(normalized.normalizedArtifact.imageWidth, 1200);
+  assert.equal(normalized.normalizedArtifact.imageHeight, 1680);
+
+  const canonicalRect = { x: 240, y: 336, width: 360, height: 420 };
+  const projected = projectFixedRigDisplayRectToNormalizedCardGeometry(canonicalRect, {
+    projectionMode: "normalized_card_direct",
+    inputCoordinateFrame: "normalized_card_portrait_pixels",
+    sourceSha256: normalized.rawArtifact.sha256,
+    normalizedArtifactSha256: normalized.normalizedArtifact.sha256,
+    normalizedImageWidth: normalized.normalizedArtifact.imageWidth,
+    normalizedImageHeight: normalized.normalizedArtifact.imageHeight,
+  });
+  assert.deepEqual(projected.shape, {
+    type: "polygon",
+    points: [
+      { x: 0.2, y: 0.2 },
+      { x: 0.5, y: 0.2 },
+      { x: 0.5, y: 0.45 },
+      { x: 0.2, y: 0.45 },
+    ],
+  });
+
+  const candidate = analysisCandidate({ analysisGeometry: projected });
+  const result = extractAiGraderDefectFindingsV1(analysisWith(candidate), {
+    approvedEvidenceBySide: { back: { trueViewAssetId: "back/normalized-card.png" } },
+    normalizedSourceSha256BySide: { back: normalized.rawArtifact.sha256 },
+    normalizedArtifactSha256BySide: { back: normalized.normalizedArtifact.sha256 },
+    requireNormalizedSourceMatch: true,
+    requireTrueViewAsset: true,
+    knownAssetIds: new Set(["back/normalized-card.png"]),
+  });
+  assert.deepEqual(result.issues, []);
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].side, "back");
+  assert.deepEqual(result.findings[0].geometry.shape, {
+    type: "polygon",
+    points: [
+      { x: 0.2, y: 0.2 },
+      { x: 0.2, y: 0.45 },
+      { x: 0.5, y: 0.45 },
+      { x: 0.5, y: 0.2 },
+    ],
+  });
+  assert.equal(result.findings[0].evidence.trueViewAssetId, "back/normalized-card.png");
+
+  const crossSideFingerprint = extractAiGraderDefectFindingsV1(analysisWith(candidate), {
+    normalizedSourceSha256BySide: { front: normalized.rawArtifact.sha256, back: "f".repeat(64) },
+    normalizedArtifactSha256BySide: { front: normalized.normalizedArtifact.sha256, back: "e".repeat(64) },
+    requireNormalizedSourceMatch: true,
+  });
+  assert.equal(crossSideFingerprint.findings.length, 0);
+  assert.equal(crossSideFingerprint.issues.some((issue) => /fingerprints/.test(issue.message)), true);
 });

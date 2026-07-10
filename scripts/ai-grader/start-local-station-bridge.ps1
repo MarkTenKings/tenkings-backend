@@ -71,10 +71,11 @@ $selectedVerticalEndPx = if ($PSBoundParameters.ContainsKey("VerticalEndPx")) { 
 $selectedCardBoundaryRect = if ($PSBoundParameters.ContainsKey("CardBoundaryRect")) { $CardBoundaryRect } elseif ($config) { [string]$config.cardBoundaryRect } else { "285,349,1878,1350" }
 
 $cliPath = Join-Path $repoRoot "packages\ai-grader-capture-helper\dist\cli.js"
-if (-not $SkipBuild -and -not (Test-Path -LiteralPath $cliPath)) {
-  Write-Host "Building @tenkings/ai-grader-capture-helper because dist/cli.js is missing..."
+if (-not $SkipBuild) {
+  Write-Host "Building @tenkings/ai-grader-capture-helper before bridge startup so the running action contract matches the checked-out source..."
   & pnpm --filter "@tenkings/ai-grader-capture-helper" build
   if ($LASTEXITCODE -ne 0) {
+    Write-Error "AI Grader capture-helper build failed; the local bridge was not started with stale compiled code."
     exit $LASTEXITCODE
   }
 }

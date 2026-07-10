@@ -24,6 +24,7 @@ export interface SurfaceIntelligenceImageInput {
   rawSourceSha256?: string;
   imageWidth?: number;
   imageHeight?: number;
+  analysisCoordinateFrame?: "normalized_card_portrait_pixels";
 }
 
 export interface SurfaceIntelligenceChannelInput {
@@ -44,16 +45,30 @@ export interface BuildPreliminarySurfaceIntelligenceInput {
   roiCrops?: Array<{ roiId?: string; outputFilePath?: string; displayRect?: { x: number; y: number; width: number; height: number } }>;
   quality?: Partial<FixedRigQualityMetrics>;
   inheritedWarnings?: string[];
+  registrationStatus?: "assumed_fixed_rig" | "normalized_geometry_transform";
   normalizedCardProjection?: SurfaceIntelligenceNormalizedCardProjection;
 }
 
-export interface SurfaceIntelligenceNormalizedCardProjection {
+interface SurfaceIntelligenceProjectionFingerprints {
   sourceSha256: string;
   normalizedArtifactSha256: string;
+}
+
+export interface SurfaceIntelligenceDirectNormalizedCardProjection extends SurfaceIntelligenceProjectionFingerprints {
+  projectionMode: "normalized_card_direct";
+  inputCoordinateFrame: "normalized_card_portrait_pixels";
+  normalizedImageWidth: number;
+  normalizedImageHeight: number;
+}
+
+export interface SurfaceIntelligenceSourceDisplayProjection extends SurfaceIntelligenceProjectionFingerprints {
+  projectionMode?: "source_display_rotation_crop";
+  inputCoordinateFrame?: "ai_grader_card_portrait_display";
   sourceImageWidth: number;
   sourceImageHeight: number;
   displayTransform: FixedRigDisplayTransform;
   rotationDegrees: number;
+  deskewAppliedDegrees?: number;
   corners: {
     topLeft: { x: number; y: number };
     topRight: { x: number; y: number };
@@ -61,6 +76,10 @@ export interface SurfaceIntelligenceNormalizedCardProjection {
     bottomLeft: { x: number; y: number };
   };
 }
+
+export type SurfaceIntelligenceNormalizedCardProjection =
+  | SurfaceIntelligenceDirectNormalizedCardProjection
+  | SurfaceIntelligenceSourceDisplayProjection;
 
 interface LoadedImage {
   filePath: string;
@@ -83,7 +102,7 @@ interface Rect {
 
 function inverseDisplayPoint(
   point: { x: number; y: number },
-  projection: SurfaceIntelligenceNormalizedCardProjection,
+  projection: SurfaceIntelligenceSourceDisplayProjection,
 ) {
   const { sourceImageWidth: width, sourceImageHeight: height, displayTransform } = projection;
   if (displayTransform === "none") return { ...point };
@@ -125,6 +144,36 @@ export function projectFixedRigDisplayRectToNormalizedCardGeometry(
   rect: Rect,
   projection: SurfaceIntelligenceNormalizedCardProjection,
 ): FixedRigSurfaceAnomalyCandidate["analysisGeometry"] | undefined {
+  if (projection.projectionMode === "normalized_card_direct") {
+    if (
+      projection.inputCoordinateFrame !== "normalized_card_portrait_pixels" ||
+      ![rect.x, rect.y, rect.width, rect.height, projection.normalizedImageWidth, projection.normalizedImageHeight]
+        .every(Number.isFinite) ||
+      rect.width <= 0 ||
+      rect.height <= 0 ||
+      projection.normalizedImageWidth <= 0 ||
+      projection.normalizedImageHeight <= 0 ||
+      !/^[a-f0-9]{64}$/i.test(projection.sourceSha256) ||
+      !/^[a-f0-9]{64}$/i.test(projection.normalizedArtifactSha256)
+    ) return undefined;
+    const points = [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y + rect.height },
+      { x: rect.x, y: rect.y + rect.height },
+    ].map((point) => ({
+      x: roundMetric(point.x / projection.normalizedImageWidth, 6),
+      y: roundMetric(point.y / projection.normalizedImageHeight, 6),
+    }));
+    if (points.some((point) => point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1)) return undefined;
+    return {
+      coordinateFrame: "normalized_card",
+      units: "fraction",
+      sourceSha256: projection.sourceSha256.toLowerCase(),
+      normalizedArtifactSha256: projection.normalizedArtifactSha256.toLowerCase(),
+      shape: { type: "polygon", points },
+    };
+  }
   if (
     ![rect.x, rect.y, rect.width, rect.height, projection.sourceImageWidth, projection.sourceImageHeight, projection.rotationDegrees]
       .every(Number.isFinite) ||
@@ -142,7 +191,9 @@ export function projectFixedRigDisplayRectToNormalizedCardGeometry(
     projection.corners.bottomLeft,
   ];
   if (cardPoints.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return undefined;
-  const deskewDegrees = -projection.rotationDegrees;
+  const deskewDegrees = Number.isFinite(projection.deskewAppliedDegrees)
+    ? Number(projection.deskewAppliedDegrees)
+    : -projection.rotationDegrees;
   const rotatedImage = rotatedImageDimensions(
     projection.sourceImageWidth,
     projection.sourceImageHeight,
@@ -580,11 +631,20 @@ function candidatesFromCells(input: {
     const analysisGeometry = input.normalizedCardProjection
       ? projectFixedRigDisplayRectToNormalizedCardGeometry(cell.rect, input.normalizedCardProjection)
       : undefined;
+    const usesCanonicalNormalizedPixels =
+      input.normalizedCardProjection?.projectionMode === "normalized_card_direct";
     return {
       candidateId: `${input.side}-surface-intelligence-v0-${String(index + 1).padStart(3, "0")}`,
       side: input.side,
       category: "surface",
       ...(analysisGeometry ? { analysisGeometry } : {}),
+      ...(usesCanonicalNormalizedPixels
+        ? {
+            analysisRect: cell.rect,
+            analysisCoordinateFrame: "normalized_card_portrait_pixels" as const,
+            displayCoordinateFrame: "normalized_card_portrait_pixels" as const,
+          }
+        : { displayCoordinateFrame: "ai_grader_card_portrait_display" as const }),
       displayRect: cell.rect,
       sourceChannels,
       strongestChannel: cell.strongestChannel,
@@ -694,6 +754,21 @@ export async function buildPreliminarySurfaceIntelligenceV0(
   }
 
   const base = await loadGrayscale(firstPath);
+  const normalizedProjectionMatchesAnalysisRaster =
+    input.normalizedCardProjection?.projectionMode !== "normalized_card_direct" ||
+    (
+      input.normalizedCardProjection.inputCoordinateFrame === "normalized_card_portrait_pixels" &&
+      input.normalizedCardProjection.normalizedImageWidth === base.width &&
+      input.normalizedCardProjection.normalizedImageHeight === base.height
+    );
+  const normalizedCardProjection = normalizedProjectionMatchesAnalysisRaster
+    ? input.normalizedCardProjection
+    : undefined;
+  const projectionWarnings = normalizedProjectionMatchesAnalysisRaster
+    ? []
+    : [
+        "Normalized-card finding projection was suppressed because its canonical dimensions did not match the analyzed channel raster.",
+      ];
   for (const entry of orderedInputs) {
     const filePath = entry.displayImage?.outputFilePath;
     if (!(await fileExists(filePath))) continue;
@@ -816,7 +891,7 @@ export async function buildPreliminarySurfaceIntelligenceV0(
   const candidates = candidatesFromCells({
     side: input.side,
     cells,
-    normalizedCardProjection: input.normalizedCardProjection,
+    normalizedCardProjection,
     confidenceScore,
     heatmap,
     surfaceVision,
@@ -824,7 +899,7 @@ export async function buildPreliminarySurfaceIntelligenceV0(
     roiCrops: input.roiCrops,
   });
   const warnings = mergeWarnings({
-    inheritedWarnings: input.inheritedWarnings,
+    inheritedWarnings: [...(input.inheritedWarnings ?? []), ...projectionWarnings],
     clippedFraction: maps.clippedFraction,
     darkFraction: maps.darkFraction,
     channelCount: validChannels.length,
@@ -857,6 +932,9 @@ export async function buildPreliminarySurfaceIntelligenceV0(
             imageHeight: entry.displayImage.imageHeight ?? base.height,
             rawSourceFilePath: entry.displayImage.rawSourceFilePath ?? entry.displayImage.outputFilePath,
             rawCoordinateFrame: "basler_sensor_pixels" as const,
+            ...(entry.displayImage.analysisCoordinateFrame
+              ? { analysisCoordinateFrame: entry.displayImage.analysisCoordinateFrame }
+              : {}),
             displayTransform: entry.displayImage.displayTransform ?? "none",
             displayCoordinateFrame: "ai_grader_card_portrait_display" as const,
             rawEvidenceUnmodified: true as const,
@@ -870,9 +948,11 @@ export async function buildPreliminarySurfaceIntelligenceV0(
     version: PRELIMINARY_SURFACE_INTELLIGENCE_VERSION,
     status: validChannels.length >= 2 ? "computed_diagnostic" : "insufficient_evidence",
     registration: {
-      status: "assumed_fixed_rig",
+      status: input.registrationStatus ?? "assumed_fixed_rig",
       note:
-        "Per-channel portrait images are assumed aligned by the fixed fixture; V0 does not compute calibrated photometric light directions or homography.",
+        input.registrationStatus === "normalized_geometry_transform"
+          ? "All channel images share the authoritative full-resolution all-on geometry transform in normalized_card_portrait_pixels."
+          : "Per-channel portrait images are assumed aligned by the fixed fixture; V0 does not compute calibrated photometric light directions or homography.",
     },
     perChannelStats,
     heatmap,
@@ -890,7 +970,15 @@ export async function buildPreliminarySurfaceIntelligenceV0(
         p99: roundMetric(maps.p99, 4),
       },
       cardRect,
-      coordinateFrame: "ai_grader_card_portrait_display",
+      coordinateFrame:
+        input.normalizedCardProjection?.projectionMode === "normalized_card_direct"
+          ? "normalized_card_portrait_pixels"
+          : "ai_grader_card_portrait_display",
+      findingProjection:
+        normalizedCardProjection?.projectionMode ??
+        (input.normalizedCardProjection?.projectionMode === "normalized_card_direct"
+          ? "suppressed_dimension_mismatch"
+          : "not_provided"),
     },
     masks: {
       clippingFraction: roundMetric(maps.clippedFraction, 6),

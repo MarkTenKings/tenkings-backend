@@ -1366,19 +1366,14 @@ test("Surface Intelligence V0 generates heatmap, Surface Vision, masks, and cons
         source: "approximate_detected_boundary",
       },
     ],
+    registrationStatus: "normalized_geometry_transform",
     normalizedCardProjection: {
+      projectionMode: "normalized_card_direct",
+      inputCoordinateFrame: "normalized_card_portrait_pixels",
       sourceSha256: "a".repeat(64),
       normalizedArtifactSha256: "b".repeat(64),
-      sourceImageWidth: width,
-      sourceImageHeight: height,
-      displayTransform: "none",
-      rotationDegrees: 0,
-      corners: {
-        topLeft: { x: 12, y: 14 },
-        topRight: { x: 168, y: 14 },
-        bottomRight: { x: 168, y: 244 },
-        bottomLeft: { x: 12, y: 244 },
-      },
+      normalizedImageWidth: width,
+      normalizedImageHeight: height,
     },
     roiCrops: [{ roiId: "center-surface", outputFilePath: path.join(imageDir, "center-surface.png"), displayRect: { x: 50, y: 70, width: 80, height: 90 } }],
     inheritedWarnings: ["fixture warning carried through"],
@@ -1401,6 +1396,12 @@ test("Surface Intelligence V0 generates heatmap, Surface Vision, masks, and cons
   assert.equal(result.candidates[0].analysisGeometry.units, "fraction");
   assert.equal(result.candidates[0].analysisGeometry.sourceSha256, "a".repeat(64));
   assert.equal(result.candidates[0].analysisGeometry.normalizedArtifactSha256, "b".repeat(64));
+  assert.deepEqual(result.candidates[0].analysisRect, result.candidates[0].displayRect);
+  assert.equal(result.candidates[0].analysisCoordinateFrame, "normalized_card_portrait_pixels");
+  assert.equal(result.candidates[0].displayCoordinateFrame, "normalized_card_portrait_pixels");
+  assert.equal(result.registration.status, "normalized_geometry_transform");
+  assert.equal(result.normalization.coordinateFrame, "normalized_card_portrait_pixels");
+  assert.equal(result.normalization.findingProjection, "normalized_card_direct");
   const normalizedShape = result.candidates[0].analysisGeometry.shape;
   assert.equal(normalizedShape.type, "polygon");
   assert.equal(normalizedShape.points.length, 4);
