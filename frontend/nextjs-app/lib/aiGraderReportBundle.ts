@@ -1,7 +1,8 @@
 import { buildSampleAiGraderProductionRelease, type AiGraderProductionRelease } from "./aiGraderProductionRelease";
+import type { AiGraderDefectFindingV1 } from "@tenkings/shared";
 
 export const AI_GRADER_WEB_REPORT_BUNDLE_VERSION = "ai-grader-report-bundle-v0.1";
-export const AI_GRADER_EXPLICIT_SAMPLE_REPORT_IDS = ["sample-pr45", "sample-final-v0"] as const;
+export const AI_GRADER_EXPLICIT_SAMPLE_REPORT_IDS = ["sample-pr45", "sample-final-v0", "sample-defect-v1"] as const;
 
 export function isExplicitAiGraderSampleReportId(reportId: string | string[] | undefined) {
   const normalized = Array.isArray(reportId) ? reportId[0] : reportId;
@@ -22,6 +23,15 @@ export type AiGraderReportPublicAsset = {
   sha256?: string;
   checksumSha256?: string;
   side?: "front" | "back" | string;
+  evidenceRole?:
+    | "normalized_card"
+    | "surface_heatmap"
+    | "surface_vision"
+    | "confidence_mask"
+    | "measurement_overlay"
+    | "directional_channel"
+    | "roi_crop"
+    | "other_evidence";
   bodyEncoding?: "base64" | string;
   bodyBase64?: string;
 };
@@ -81,6 +91,7 @@ export type AiGraderReportBundle = {
   };
   visionLab: {
     available: boolean;
+    defectFindings?: AiGraderDefectFindingV1[];
     trueViewRefs: string[];
     overlayRefs: string[];
     channelImageRefs: string[];
@@ -115,10 +126,11 @@ export type AiGraderGradeImpactCandidate = {
   side: "front" | "back" | "both";
   severity: "low" | "medium" | "high";
   confidence: string;
-  provisionalGradeImpact: string;
+  provisionalGradeImpact: string | number;
   evidenceRefs: string[];
   sourceChannels?: number[];
   explanation: string;
+  findingIds?: string[];
 };
 
 export const SAMPLE_AI_GRADER_REPORT_BUNDLE: AiGraderReportBundle = {
@@ -290,6 +302,59 @@ export function getAiGraderReportBundle(reportId: string | string[] | undefined)
   const trimmed = normalized?.trim() ?? "";
   if (trimmed === "sample-pr45") {
     return SAMPLE_AI_GRADER_REPORT_BUNDLE;
+  }
+  if (trimmed === "sample-defect-v1") {
+    const findingId = "dfv1_1234567890abcdef12345678";
+    return {
+      ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+      reportId: "sample-defect-v1",
+      provisionalGrade: {
+        ...SAMPLE_AI_GRADER_REPORT_BUNDLE.provisionalGrade,
+        gradeImpactCandidates: (SAMPLE_AI_GRADER_REPORT_BUNDLE.provisionalGrade?.gradeImpactCandidates ?? []).map((candidate, index) =>
+          index === 0 ? { ...candidate, findingIds: [findingId] } : candidate
+        ),
+      },
+      visionLab: {
+        ...SAMPLE_AI_GRADER_REPORT_BUNDLE.visionLab,
+        defectFindings: [
+          {
+            schemaVersion: "ai-grader-defect-finding-v1",
+            findingId,
+            side: "back",
+            category: "surface_anomaly",
+            detector: {
+              id: "preliminary_surface_intelligence_v0",
+              version: "preliminary_surface_intelligence_v0",
+            },
+            severity: { score: 74.25, band: "high" },
+            confidence: 0.78,
+            review: { status: "unreviewed" },
+            geometry: {
+              coordinateFrame: "normalized_card",
+              units: "fraction",
+              shape: { type: "box", x: 0.56, y: 0.27, width: 0.19, height: 0.14 },
+            },
+            evidence: {
+              trueViewAssetId: "sample/back-normalized-card.png",
+              channelAssetIds: [],
+              roiAssetIds: [],
+            },
+            explanation: "AI-detected provisional surface finding. Review the linked evidence before relying on this finding.",
+          },
+        ],
+      },
+      publicAssets: [
+        {
+          id: "sample/back-normalized-card.png",
+          kind: "image",
+          fileName: "back-normalized-card.png",
+          contentType: "image/png",
+          publicUrl: "/images/card-pull-1.png",
+          side: "back",
+          evidenceRole: "normalized_card",
+        },
+      ],
+    };
   }
   if (trimmed === "sample-final-v0") {
     const productionRelease = buildSampleAiGraderProductionRelease({

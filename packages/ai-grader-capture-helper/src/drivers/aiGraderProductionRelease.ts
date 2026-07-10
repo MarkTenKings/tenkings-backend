@@ -44,6 +44,7 @@ export interface AiGraderFinalGrade {
     confidence: string;
     explanation: string;
     evidenceRefs: string[];
+    findingIds?: string[];
   }>;
   whyNot10: Array<{
     id: string;
@@ -311,6 +312,7 @@ function buildFinalGrade(bundle: AiGraderReportBundle, gates: AiGraderProduction
     confidence: candidate.confidence,
     explanation: candidate.explanation,
     evidenceRefs: candidate.evidenceRefs,
+    ...(Array.isArray(candidate.findingIds) ? { findingIds: candidate.findingIds.map(String) } : {}),
   }));
   const whyNot10 = (bundle.provisionalGrade.whyNot10 ?? []).map((reason, index) => ({
     id: String(reason.id ?? `why-not-10-${index + 1}`),

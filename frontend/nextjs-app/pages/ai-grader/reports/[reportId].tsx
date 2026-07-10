@@ -1,6 +1,7 @@
 import Head from "next/head";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
+import AiGraderDefectOverlay from "../../../components/ai-grader/AiGraderDefectOverlay";
 import {
   getAiGraderReportBundle,
   hasNoCertifiedClaim,
@@ -8,7 +9,13 @@ import {
   isExplicitAiGraderSampleReportId,
   type AiGraderReportBundle,
 } from "../../../lib/aiGraderReportBundle";
-import { findReportImage, reportImageAssets, type AiGraderRenderableReportImage } from "../../../lib/aiGraderReportImages";
+import {
+  findReportImage,
+  findReportNormalizedCardImageByExactAssetId,
+  reportImageAssets,
+  type AiGraderRenderableReportImage,
+} from "../../../lib/aiGraderReportImages";
+import { defectFindingsForExactImage } from "../../../lib/aiGraderDefectFindings";
 
 const ELEMENT_LABELS = ["centering", "corners", "edges", "surface"] as const;
 const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Confidence", "Evidence Replay"] as const;
@@ -69,6 +76,7 @@ export default function AiGraderReportViewerPage() {
   const [publicLookupError, setPublicLookupError] = useState<string | null>(null);
   const [selectedLabMode, setSelectedLabMode] = useState<LabMode>("True View");
   const [selectedLabSide, setSelectedLabSide] = useState<LabSide>("front");
+  const [selectedFindingId, setSelectedFindingId] = useState<string | undefined>();
   const bundle = persistedBundle ?? fallbackBundle;
   const story = bundle.provisionalGrade;
   const productionRelease = bundle.productionRelease;
@@ -103,7 +111,22 @@ export default function AiGraderReportViewerPage() {
     backTrueView,
     ...images.filter((asset) => asset.renderUrl !== frontTrueView?.renderUrl && asset.renderUrl !== backTrueView?.renderUrl),
   ].filter((asset): asset is AiGraderRenderableReportImage => Boolean(asset)).slice(0, 36);
-  const selectedLabAsset = labImageForMode(images, selectedLabMode, selectedLabSide, impactCandidate);
+  const sideDefectFindings = (bundle.visionLab.defectFindings ?? []).filter((finding) => finding.side === selectedLabSide);
+  const selectedFinding = sideDefectFindings.find((finding) => finding.findingId === selectedFindingId) ?? sideDefectFindings[0];
+  const exactFindingImage = findReportNormalizedCardImageByExactAssetId(
+    images,
+    selectedFinding?.evidence.trueViewAssetId,
+    selectedLabSide,
+  );
+  const exactImageFindings = defectFindingsForExactImage(sideDefectFindings, selectedFinding?.evidence.trueViewAssetId);
+  const findingOverlayMode = selectedLabMode === "True View" || selectedLabMode === "Evidence Replay";
+  const missingExactFindingEvidence = Boolean(findingOverlayMode && selectedFinding && !exactFindingImage);
+  const selectedLabAsset =
+    missingExactFindingEvidence
+      ? undefined
+      : findingOverlayMode && exactFindingImage
+      ? exactFindingImage
+      : labImageForMode(images, selectedLabMode, selectedLabSide, impactCandidate);
   const selectedLabModeAvailable = Boolean(selectedLabAsset?.renderUrl);
 
   useEffect(() => {
@@ -181,36 +204,50 @@ export default function AiGraderReportViewerPage() {
           </div>
           <div className="lab-layout">
             <aside>
+              <div className="mode-list" role="group" aria-label="Vision Lab evidence mode">
               {LAB_MODES.map((mode) => (
                 <button
                   key={mode}
                   type="button"
+                  aria-pressed={mode === selectedLabMode}
                   className={mode === selectedLabMode ? "active" : ""}
-                  disabled={!labImageForMode(images, mode, selectedLabSide, impactCandidate)?.renderUrl}
+                  disabled={
+                    !(
+                      ((mode === "True View" || mode === "Evidence Replay") && (exactFindingImage?.renderUrl || selectedFinding)) ||
+                      labImageForMode(images, mode, selectedLabSide, impactCandidate)?.renderUrl
+                    )
+                  }
                   onClick={() => setSelectedLabMode(mode)}
                 >
                   {mode}
                 </button>
               ))}
-              <div className="side-switch" aria-label="Vision Lab side selector">
-                <button type="button" className={selectedLabSide === "front" ? "active" : ""} onClick={() => setSelectedLabSide("front")}>
+              </div>
+              <div className="side-switch" role="group" aria-label="Vision Lab card side">
+                <button type="button" aria-pressed={selectedLabSide === "front"} className={selectedLabSide === "front" ? "active" : ""} onClick={() => setSelectedLabSide("front")}>
                   Front
                 </button>
-                <button type="button" className={selectedLabSide === "back" ? "active" : ""} onClick={() => setSelectedLabSide("back")}>
+                <button type="button" aria-pressed={selectedLabSide === "back"} className={selectedLabSide === "back" ? "active" : ""} onClick={() => setSelectedLabSide("back")}>
                   Back
                 </button>
               </div>
             </aside>
-            <div className="lab-canvas">
-              {selectedLabAsset?.renderUrl ? (
+            <div id="vision-lab-panel" className="lab-canvas">
+              {selectedLabAsset?.renderUrl && findingOverlayMode && exactFindingImage && exactImageFindings.length ? (
+                <AiGraderDefectOverlay
+                  image={exactFindingImage}
+                  findings={exactImageFindings}
+                  selectedFindingId={selectedFinding?.findingId}
+                  onSelectFinding={setSelectedFindingId}
+                />
+              ) : selectedLabAsset?.renderUrl ? (
                 <img className="lab-image selected" src={selectedLabAsset.renderUrl} alt={`Vision Lab ${selectedLabSide} ${selectedLabMode}`} />
               ) : (
                 <div className="viewer-card">
                   <span>{selectedLabMode}</span>
-                  <strong>{selectedLabModeAvailable ? "Evidence referenced" : "Mode unavailable"}</strong>
+                  <strong>{missingExactFindingEvidence ? "Normalized finding evidence unavailable" : selectedLabModeAvailable ? "Evidence referenced" : "Mode unavailable"}</strong>
                 </div>
               )}
-              {impactCandidate ? <div className="marker">{selectedLabMode === "Evidence Replay" ? "Replay candidate" : "Surface candidate"}</div> : null}
             </div>
             <aside className="evidence">
               <h3>{selectedLabMode}</h3>
@@ -234,6 +271,25 @@ export default function AiGraderReportViewerPage() {
               ) : (
                 <p>No candidate details available.</p>
               )}
+              {sideDefectFindings.length ? (
+                <div className="finding-list" aria-label={`${selectedLabSide} defect findings`}>
+                  <h3>Provisional findings</h3>
+                  {sideDefectFindings.map((finding, index) => (
+                    <button
+                      type="button"
+                      key={finding.findingId}
+                      className={finding.findingId === selectedFinding?.findingId ? "active" : ""}
+                      aria-pressed={finding.findingId === selectedFinding?.findingId}
+                      onClick={() => setSelectedFindingId(finding.findingId)}
+                    >
+                      {index + 1}. {finding.category.replace(/_/g, " ")} / {finding.severity.band} / {finding.review.status}
+                    </button>
+                  ))}
+                  <p>{selectedFinding?.explanation}</p>
+                  <small>{selectedFinding ? `${Math.round(selectedFinding.confidence * 100)}% detector confidence; ${selectedFinding.review.status}` : ""}</small>
+                  {missingExactFindingEvidence ? <strong className="finding-unavailable">Exact normalized-card evidence is unavailable; no overlay is shown.</strong> : null}
+                </div>
+              ) : null}
             </aside>
             </div>
           </section>
@@ -807,6 +863,10 @@ export default function AiGraderReportViewerPage() {
           align-content: start;
           gap: 8px;
         }
+        .mode-list {
+          display: grid;
+          gap: 8px;
+        }
         .lab-layout button {
           border: 1px solid rgba(255, 255, 255, 0.14);
           background: rgba(255, 255, 255, 0.05);
@@ -886,16 +946,27 @@ export default function AiGraderReportViewerPage() {
           max-width: 180px;
           font-size: 18px;
         }
-        .marker {
-          position: absolute;
-          right: 18%;
-          bottom: 28%;
-          border: 1px solid #f16f4b;
-          background: rgba(241, 111, 75, 0.18);
-          color: #ffd9ca;
-          padding: 7px 9px;
-          border-radius: 8px;
+        .finding-list {
+          display: grid;
+          gap: 8px;
+          margin-top: 16px;
+          padding-top: 14px;
+          border-top: 1px solid rgba(255, 255, 255, 0.14);
+        }
+        .finding-list button {
+          padding: 9px 10px;
           font-size: 12px;
+          text-transform: capitalize;
+        }
+        .finding-list p,
+        .finding-list small {
+          color: #c9c2b7;
+          line-height: 1.45;
+        }
+        .finding-unavailable {
+          color: #ffb7a3;
+          font-size: 12px;
+          line-height: 1.45;
         }
         .evidence dl {
           display: grid;
@@ -978,6 +1049,10 @@ export default function AiGraderReportViewerPage() {
             text-align: left;
           }
           .hero {
+            min-height: auto;
+          }
+          .hero-lab .lab-layout {
+            grid-template-columns: 1fr;
             min-height: auto;
           }
           .callout {

@@ -15,6 +15,7 @@ import {
   PRELIMINARY_SURFACE_INTELLIGENCE_VERSION,
   buildPreliminarySurfaceIntelligenceV0,
   mergeSurfaceAnalysisWithSurfaceIntelligence,
+  type SurfaceIntelligenceNormalizedCardProjection,
 } from "./fixedRigSurfaceIntelligence";
 import {
   LIGHT_DIRECTION_CALIBRATION_PROFILE_VERSION,
@@ -29,6 +30,8 @@ import {
   type FixedRigProvisionalGradeStoryResult,
 } from "./fixedRigProvisionalGradeStory";
 import {
+  NORMALIZED_CARD_HEIGHT_PIXELS,
+  NORMALIZED_CARD_WIDTH_PIXELS,
   detectAndNormalizeCardImage,
   normalizeCardImageWithGeometry,
   type CardGeometryMetadata,
@@ -473,8 +476,19 @@ export interface FixedRigSurfaceAnomalyCandidate {
   candidateId: string;
   side: FixedRigCardSide;
   category?: "surface";
+  analysisGeometry?: {
+    coordinateFrame: "normalized_card";
+    units: "fraction";
+    sourceSha256: string;
+    normalizedArtifactSha256: string;
+    shape:
+      | { type: "box"; x: number; y: number; width: number; height: number }
+      | { type: "polygon"; points: Array<{ x: number; y: number }> };
+  };
   displayRect?: { x: number; y: number; width: number; height: number };
+  displayCoordinateFrame?: "ai_grader_card_portrait_display" | "normalized_card_portrait_pixels";
   rawRect?: { x: number; y: number; width: number; height: number };
+  rawCoordinateFrame?: "basler_sensor_pixels";
   analysisRect?: { x: number; y: number; width: number; height: number };
   analysisCoordinateFrame?: "normalized_card_portrait_pixels";
   sourceChannels: number[];
@@ -1546,8 +1560,17 @@ export function buildFixedRigSurfaceAnalysis(input: {
           {
             candidateId: `${input.side}-surface-candidate-001`,
             side: input.side,
-            ...(centerSurface?.displayRect ? { displayRect: centerSurface.displayRect } : {}),
-            ...(centerSurfaceRawRect ? { rawRect: centerSurfaceRawRect } : {}),
+            ...(centerSurface?.displayRect
+              ? {
+                  displayRect: centerSurface.displayRect,
+                  displayCoordinateFrame: centerSurfaceUsesNormalizedCoordinates
+                    ? "normalized_card_portrait_pixels" as const
+                    : "ai_grader_card_portrait_display" as const,
+                }
+              : {}),
+            ...(centerSurfaceRawRect
+              ? { rawRect: centerSurfaceRawRect, rawCoordinateFrame: "basler_sensor_pixels" as const }
+              : {}),
             ...(centerSurfaceAnalysisRect
               ? {
                   analysisRect: centerSurfaceAnalysisRect,
@@ -4448,8 +4471,13 @@ function normalizeCandidate(candidate: FixedRigEvidencePackageJson, side: FixedR
     confidence: candidate.confidenceBand ?? candidate.confidence ?? "low",
     anomalyProxyScore: candidate.anomalyProxyScore ?? candidate.severityProxy ?? 0,
     severityProxy: candidate.severityProxy ?? candidate.anomalyProxyScore ?? 0,
+    analysisGeometry: candidate.analysisGeometry,
+    analysisRect: candidate.analysisRect,
+    analysisCoordinateFrame: candidate.analysisCoordinateFrame,
     displayRect: candidate.displayRect,
+    displayCoordinateFrame: candidate.displayCoordinateFrame,
     rawRect: candidate.rawRect,
+    rawCoordinateFrame: candidate.rawCoordinateFrame,
     sourceChannels: Array.isArray(candidate.sourceChannels) ? candidate.sourceChannels : [],
     strongestChannel: candidate.strongestChannel,
     physicalDirectionMappingStatus: candidate.physicalDirectionMappingStatus ?? "pending",
@@ -5388,6 +5416,72 @@ function surfaceIntelligenceChannels(side: FixedRigEvidencePackageJson | undefin
   });
 }
 
+function surfaceIntelligenceNormalizedCardProjection(
+  side: FixedRigEvidencePackageJson | undefined,
+): SurfaceIntelligenceNormalizedCardProjection | undefined {
+  const geometry = side?.normalizedCard?.geometry;
+  const artifact = side?.normalizedCard?.normalizedArtifact;
+  const displayImage = side?.displayImage;
+  const corners = geometry?.corners;
+  const image = geometry?.image;
+  const displayTransform = displayImage?.displayTransform;
+  const normalizedSourceSha256 = artifact?.sourceSha256;
+  const normalizedArtifactSha256 = artifact?.sha256;
+  const displaySourceSha256 = displayImage?.rawSourceSha256;
+  if (
+    !artifact?.localOutputPath ||
+    !/^[a-f0-9]{64}$/i.test(normalizedSourceSha256 ?? "") ||
+    !/^[a-f0-9]{64}$/i.test(normalizedArtifactSha256 ?? "") ||
+    normalizedSourceSha256?.toLowerCase() !== String(displaySourceSha256 ?? "").toLowerCase()
+  ) return undefined;
+
+  if (displayImage?.analysisCoordinateFrame === "normalized_card_portrait_pixels") {
+    if (
+      artifact.coordinateFrame !== "normalized_card_portrait_pixels" ||
+      displayTransform !== "none" ||
+      String(displayImage.sha256 ?? "").toLowerCase() !== normalizedArtifactSha256?.toLowerCase() ||
+      artifact.imageWidth !== NORMALIZED_CARD_WIDTH_PIXELS ||
+      artifact.imageHeight !== NORMALIZED_CARD_HEIGHT_PIXELS ||
+      displayImage.imageWidth !== artifact.imageWidth ||
+      displayImage.imageHeight !== artifact.imageHeight
+    ) return undefined;
+    return {
+      projectionMode: "normalized_card_direct",
+      inputCoordinateFrame: "normalized_card_portrait_pixels",
+      sourceSha256: normalizedSourceSha256,
+      normalizedArtifactSha256,
+      normalizedImageWidth: artifact.imageWidth,
+      normalizedImageHeight: artifact.imageHeight,
+    };
+  }
+
+  if (
+    !corners ||
+    !image ||
+    !Number.isFinite(image.width) ||
+    !Number.isFinite(image.height) ||
+    !Number.isFinite(geometry?.rotationDegrees) ||
+    !["none", "rotate90cw", "rotate90ccw", "rotate180"].includes(displayTransform)
+  ) return undefined;
+  const expectedDisplayWidth = displayTransform === "rotate90cw" || displayTransform === "rotate90ccw" ? image.height : image.width;
+  const expectedDisplayHeight = displayTransform === "rotate90cw" || displayTransform === "rotate90ccw" ? image.width : image.height;
+  if (displayImage?.imageWidth !== expectedDisplayWidth || displayImage?.imageHeight !== expectedDisplayHeight) return undefined;
+  return {
+    projectionMode: "source_display_rotation_crop",
+    inputCoordinateFrame: "ai_grader_card_portrait_display",
+    sourceSha256: normalizedSourceSha256,
+    normalizedArtifactSha256,
+    sourceImageWidth: image.width,
+    sourceImageHeight: image.height,
+    displayTransform,
+    rotationDegrees: geometry.rotationDegrees,
+    ...(Number.isFinite(artifact.deskewAppliedDegrees)
+      ? { deskewAppliedDegrees: Number(artifact.deskewAppliedDegrees) }
+      : {}),
+    corners,
+  };
+}
+
 function withSurfaceAnalysisForSide(
   analysis: FixedRigEvidencePackageJson,
   side: FixedRigCardSide,
@@ -5464,6 +5558,7 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
           front.analysisCoordinateSystem?.coordinateFrame === "normalized_card_portrait_pixels"
             ? "normalized_geometry_transform"
             : "assumed_fixed_rig",
+        normalizedCardProjection: surfaceIntelligenceNormalizedCardProjection(front),
       })
     : undefined;
   const backSurfaceIntelligence = back
@@ -5482,6 +5577,7 @@ export async function createUnifiedFixedRigDiagnosticCardReport(input: {
           back.analysisCoordinateSystem?.coordinateFrame === "normalized_card_portrait_pixels"
             ? "normalized_geometry_transform"
             : "assumed_fixed_rig",
+        normalizedCardProjection: surfaceIntelligenceNormalizedCardProjection(back),
       })
     : undefined;
   const enhancedFrontSurface = frontSurfaceIntelligence ? mergeSurfaceAnalysisWithSurfaceIntelligence(frontSurface, frontSurfaceIntelligence) : frontSurface;

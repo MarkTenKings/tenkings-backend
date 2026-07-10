@@ -205,6 +205,7 @@ export type {
   RequiredCalibrationSetOptions,
   ThresholdSetVersionSeed,
 } from "./aiGrader";
+export * from "./aiGraderDefectFindings";
 export {
   COLOR_CHECKER_MAX_MEAN_DELTA_E,
   DEFAULT_REQUIRED_CALIBRATION_TYPES,

@@ -65,6 +65,7 @@ import {
   buildAiGraderPublishReadiness,
 } from "../../lib/aiGraderOperatorWorkflow";
 import { formatAiGraderPublishStageError } from "../../lib/aiGraderPublishErrors";
+import { assertAiGraderBrowserRaster } from "../../lib/aiGraderRasterValidation";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
@@ -2694,6 +2695,13 @@ export default function AiGraderStationPage() {
         }
         if (bytes.byteLength !== artifact.byteSize) {
           throw new Error(`Byte size mismatch before upload for ${artifact.kind}.`);
+        }
+        if (artifact.artifactClass === "report_asset") {
+          if (contentType.split(";", 1)[0]?.trim().toLowerCase() !== artifact.contentType.toLowerCase()) {
+            throw new Error(`Content type mismatch before upload for ${artifact.kind}.`);
+          }
+          await assertAiGraderBrowserRaster(bytes, artifact.contentType);
+          contentType = artifact.contentType;
         }
         let uploadResponse: Response;
         try {

@@ -3635,7 +3635,10 @@ test("AI Grader public report source renders provisional evidence gates", () => 
   assert.equal(reportSource.includes("selectedLabSide"), true);
   assert.equal(reportSource.includes("setSelectedLabSide(\"front\")"), true);
   assert.equal(reportSource.includes("setSelectedLabSide(\"back\")"), true);
-  assert.equal(reportSource.includes("disabled={!labImageForMode"), true);
+  assert.equal(reportSource.includes('className="mode-list" role="group"'), true);
+  assert.equal(reportSource.includes("aria-pressed={mode === selectedLabMode}"), true);
+  assert.equal(reportSource.includes('aria-pressed={selectedLabSide === "front"}'), true);
+  assert.equal(reportSource.includes("exactFindingImage?.renderUrl || selectedFinding"), true);
   assert.equal(reportSource.includes("labImageForMode(images, mode, selectedLabSide, impactCandidate)"), true);
   assert.equal(reportSource.includes("vision-lab hero-lab"), true);
   assert.equal(reportSource.includes("Open public report"), true);

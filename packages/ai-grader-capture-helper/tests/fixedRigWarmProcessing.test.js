@@ -18,12 +18,16 @@ async function makeCardTiff(filePath, options = {}) {
   const centerX = 700 + (options.offsetX ?? 10);
   const centerY = 980 + (options.offsetY ?? -5);
   const angle = options.angle ?? 7;
+  const directionalPatch = Number.isInteger(options.directionalChannel)
+    ? `<rect x="-410" y="-600" width="240" height="260" fill="rgb(${35 + options.directionalChannel * 27}, ${35 + options.directionalChannel * 27}, ${35 + options.directionalChannel * 27})"/>`
+    : "";
   const svg = Buffer.from(`
     <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1960">
       <rect width="1400" height="1960" fill="#16191d"/>
       <g transform="translate(${centerX} ${centerY}) rotate(${angle})">
         <rect x="-525" y="-735" width="1050" height="1470" rx="8" fill="#f1efe8"/>
         <rect x="-440" y="-620" width="880" height="1240" fill="#8b6b35"/>
+        ${directionalPatch}
       </g>
     </svg>
   `);
@@ -84,9 +88,12 @@ function capture(filePath, label, timestamp, index) {
   };
 }
 
-function warmBatchInput({ packageId, packageDir, sideDir, rawPath, side = "front", cardBoundaryRect, manualGeometryOverride }) {
+function warmBatchInput({ packageId, packageDir, sideDir, rawPath, rolePaths, side = "front", cardBoundaryRect, manualGeometryOverride }) {
   const timestamp = "2026-07-09T20:00:00.000Z";
-  const roles = Array.from({ length: 11 }, (_, index) => capture(rawPath, `role-${index}`, timestamp, index));
+  const roles = Array.from(
+    { length: 11 },
+    (_, index) => capture(rolePaths?.[index] ?? rawPath, `role-${index}`, timestamp, index),
+  );
   const role = (name, label, captureValue, channel) => ({
     role: name,
     label,
@@ -479,11 +486,18 @@ test("front and back warm normalized evidence produces a capped unified provisio
     fs.mkdirSync(sideDir, { recursive: true });
     const rawPath = path.join(sideDir, `${side}-all-roles.tiff`);
     await makeCardTiff(rawPath, options);
+    const channelPaths = [];
+    for (let channel = 1; channel <= 8; channel += 1) {
+      const channelPath = path.join(sideDir, `${side}-directional-channel-${channel}.tiff`);
+      await makeCardTiff(channelPath, { ...options, directionalChannel: channel });
+      channelPaths.push(channelPath);
+    }
     return processFixedRigWarmSideBatch(warmBatchInput({
       packageId: `synthetic-normalized-${side}`,
       packageDir,
       sideDir,
       rawPath,
+      rolePaths: [rawPath, rawPath, rawPath, ...channelPaths],
       side,
     }));
   };
@@ -504,6 +518,8 @@ test("front and back warm normalized evidence produces a capped unified provisio
   const story = analysis.provisionalGradeStory;
   const frontLightDirection = analysis.front.surfaceAnalysis.lightDirection;
   const backLightDirection = analysis.back.surfaceAnalysis.lightDirection;
+  const frontFindings = analysis.surfaceIntelligence.front.candidates;
+  const backFindings = analysis.surfaceIntelligence.back.candidates;
 
   assert.equal(unified.status, "computed_diagnostic");
   assert.equal(manifest.reportContains.provisionalDiagnosticGrade, true);
@@ -524,6 +540,25 @@ test("front and back warm normalized evidence produces a capped unified provisio
   assert.equal(story.gates.results.find((gate) => gate.gate === "element_score_coverage")?.status, "pass");
   assert.equal(story.gates.results.some((gate) => gate.gate === "ruler_calibration"), false);
   assert.equal(story.formulas.appliedWeights.centering, 0);
+  assert.ok(frontFindings.length > 0);
+  assert.ok(backFindings.length > 0);
+  for (const [side, sideManifest, findings] of [
+    ["front", frontManifest.front, frontFindings],
+    ["back", backManifest.back, backFindings],
+  ]) {
+    assert.equal(findings.every((finding) => finding.side === side), true);
+    assert.equal(findings.every((finding) => finding.analysisCoordinateFrame === "normalized_card_portrait_pixels"), true);
+    assert.equal(findings.every((finding) => finding.displayCoordinateFrame === "normalized_card_portrait_pixels"), true);
+    assert.equal(findings.every((finding) => finding.analysisGeometry?.coordinateFrame === "normalized_card"), true);
+    assert.equal(
+      findings.every((finding) => finding.analysisGeometry?.sourceSha256 === sideManifest.normalizedCard.normalizedArtifact.sourceSha256),
+      true,
+    );
+    assert.equal(
+      findings.every((finding) => finding.analysisGeometry?.normalizedArtifactSha256 === sideManifest.normalizedCard.normalizedArtifact.sha256),
+      true,
+    );
+  }
   assert.ok(Math.abs(
     story.formulas.appliedWeights.corners +
       story.formulas.appliedWeights.edges +
@@ -584,6 +619,13 @@ test("front and back warm normalized evidence produces a capped unified provisio
   });
   const release = buildAiGraderProductionRelease({ bundle, warningsAccepted: true });
   assert.equal(typeof bundle.provisionalGrade?.overall, "number");
+  assert.ok(bundle.visionLab.defectFindings.length > 0);
+  assert.equal(bundle.visionLab.defectFindings.some((finding) => finding.side === "front"), true);
+  assert.equal(bundle.visionLab.defectFindings.some((finding) => finding.side === "back"), true);
+  assert.equal(
+    bundle.visionLab.defectFindings.every((finding) => finding.evidence.trueViewAssetId?.includes(`${finding.side}-normalized-card.png`)),
+    true,
+  );
   assert.equal(bundle.provisionalGrade?.elementScores?.centering?.score, undefined);
   assert.equal(release.finalGradeComputed, true);
   assert.equal(release.finalGrade.overall, bundle.provisionalGrade.overall);
