@@ -17,7 +17,10 @@ const { buildAiGraderStationRealCommandPlan } = require("../dist/drivers/aiGrade
 const { buildAiGraderReportBundle } = require("../dist/drivers/aiGraderReportBundle");
 const { buildAiGraderProductionRelease } = require("../dist/drivers/aiGraderProductionRelease");
 const { createStableAiGraderDefectFindingId } = require("../dist/drivers/aiGraderDefectFindings");
-const { AI_GRADER_REPORT_RECOVERY_GUIDANCE } = require("../dist/drivers/aiGraderReportPackageRecovery");
+const {
+  AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+  readAiGraderReportPackageReleaseEvidence,
+} = require("../dist/drivers/aiGraderReportPackageRecovery");
 const { runCaptureHelperCli } = require("../dist/cli");
 const PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -231,6 +234,54 @@ async function installStaleCandidatePackage(service, config, reportId, options =
   }];
   fs.writeFileSync(manifest.outputs.manifestPath, JSON.stringify(manifest, null, 2));
   return { canonicalDir, gradingSessionId, legacyFindingId, manifest, previousRelease, source, stale };
+}
+
+function assertEmbeddedImageBodiesMatchCanonical(bundle, canonicalBundle) {
+  const canonicalImages = canonicalBundle.assets.filter((asset) => asset.kind === "image");
+  assert.ok(canonicalImages.length > 0);
+  for (const canonicalAsset of canonicalImages) {
+    const returnedAsset = bundle.assets.find((asset) => asset.id === canonicalAsset.id);
+    assert.ok(returnedAsset, canonicalAsset.id);
+    assert.equal(returnedAsset.sha256, canonicalAsset.sha256, canonicalAsset.id);
+    assert.equal(returnedAsset.byteSize, canonicalAsset.byteSize, canonicalAsset.id);
+    assert.equal(returnedAsset.contentType, canonicalAsset.contentType, canonicalAsset.id);
+    assert.equal(returnedAsset.bodyEncoding, "base64", canonicalAsset.id);
+    assert.equal(typeof returnedAsset.bodyBase64, "string", canonicalAsset.id);
+    const body = Buffer.from(returnedAsset.bodyBase64, "base64");
+    assert.equal(body.byteLength, canonicalAsset.byteSize, canonicalAsset.id);
+    assert.equal(
+      require("node:crypto").createHash("sha256").update(body).digest("hex"),
+      canonicalAsset.sha256,
+      canonicalAsset.id,
+    );
+  }
+}
+
+async function assertFinalizedBodyBundleMatchesCanonical(resolved, canonicalDir) {
+  const canonicalBundlePath = path.join(canonicalDir, "report-bundle.json");
+  const canonicalBundleBytes = fs.readFileSync(canonicalBundlePath, "utf8");
+  const canonicalBundle = JSON.parse(canonicalBundleBytes);
+  const canonicalRelease = JSON.parse(fs.readFileSync(path.join(canonicalDir, "production-release.json"), "utf8"));
+  const verifiedRelease = await readAiGraderReportPackageReleaseEvidence({
+    packageDir: canonicalDir,
+    bundle: canonicalBundle,
+  });
+
+  assert.deepEqual(verifiedRelease, canonicalRelease);
+  assert.deepEqual(JSON.parse(JSON.stringify(resolved.bundle.productionRelease)), canonicalRelease);
+  assert.deepEqual(JSON.parse(JSON.stringify(resolved.bundle.visionLab)), canonicalBundle.visionLab);
+  assert.equal(resolved.bundle.finalGradeComputed, true);
+  assert.equal(resolved.bundle.finalStatus, canonicalRelease.finalStatus);
+  assert.equal(canonicalRelease.reportStatus, "final_ai_grader_report_v0");
+  assert.equal(canonicalRelease.finalStatus, "final_grade_computed");
+  assert.equal(canonicalRelease.finalGradeComputed, true);
+  assert.equal(canonicalRelease.finalGrade.finalGradeComputed, true);
+  assert.equal(typeof canonicalRelease.finalGrade.overall, "number");
+  assert.ok(canonicalRelease.gates.length > 0);
+  assert.ok(canonicalRelease.label.certId);
+  assert.ok(canonicalRelease.label.qrPayloadUrl);
+  assertEmbeddedImageBodiesMatchCanonical(resolved.bundle, canonicalBundle);
+  assert.equal(canonicalBundleBytes.includes("bodyBase64"), false);
 }
 
 function makeFakeWarmRunner(options = {}) {
@@ -1291,6 +1342,154 @@ test("stale candidate report without a release recovers only the base package be
   assert.equal(release.operatorFinalization.operatorId, "corrective-operator");
   assert.equal(release.operatorFinalization.warningsAccepted, true);
   assert.equal(release.operatorFinalization.overrideReason, "Explicit review after safe base recovery.");
+});
+
+test("finalized active includeAssetBodies returns the exact canonical verified release with integrity-bound image bodies", async () => {
+  const dir = outputDir("active-finalized-body-release-" + Date.now());
+  const bundleRoot = path.join(dir, "report-bundles");
+  fs.rmSync(dir, { recursive: true, force: true });
+  const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+  const service = new AiGraderLocalStationBridgeService(config);
+  const reportId = "active-finalized-body-release";
+  const fixture = await installStaleCandidatePackage(service, config, reportId);
+
+  const resolved = await service.reportBundle(reportId, { includeAssetBodies: true });
+
+  assert.equal(resolved.bundle.visionLab.defectFindings[0].findingId, fixture.legacyFindingId);
+  await assertFinalizedBodyBundleMatchesCanonical(resolved, fixture.canonicalDir);
+});
+
+test("finalized history includeAssetBodies returns the exact canonical verified release with integrity-bound image bodies", async () => {
+  const dir = outputDir("history-finalized-body-release-" + Date.now());
+  const bundleRoot = path.join(dir, "report-bundles");
+  fs.rmSync(dir, { recursive: true, force: true });
+  const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+  const seedService = new AiGraderLocalStationBridgeService(config);
+  const reportId = "history-finalized-body-release";
+  const fixture = await installStaleCandidatePackage(seedService, config, reportId);
+  const historyService = new AiGraderLocalStationBridgeService(config);
+
+  const resolved = await historyService.reportBundle(reportId, { includeAssetBodies: true });
+
+  assert.equal(resolved.bundle.visionLab.defectFindings[0].findingId, fixture.legacyFindingId);
+  await assertFinalizedBodyBundleMatchesCanonical(resolved, fixture.canonicalDir);
+});
+
+test("active and history includeAssetBodies keep a canonically unfinalized report unfinalized despite a cached manifest release", async () => {
+  for (const access of ["active", "history"]) {
+    const dir = outputDir(access + "-unfinalized-body-release-" + Date.now());
+    const bundleRoot = path.join(dir, "report-bundles");
+    fs.rmSync(dir, { recursive: true, force: true });
+    const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+    const seedService = new AiGraderLocalStationBridgeService(config);
+    const reportId = access + "-unfinalized-body-release";
+    const fixture = await installStaleCandidatePackage(seedService, config, reportId, {
+      includeRelease: false,
+      embedRelease: true,
+    });
+    assert.equal(fixture.manifest.productionRelease.finalGradeComputed, true);
+    const reader = access === "active" ? seedService : new AiGraderLocalStationBridgeService(config);
+
+    const resolved = await reader.reportBundle(reportId, { includeAssetBodies: true });
+    const canonicalBundleBytes = fs.readFileSync(path.join(fixture.canonicalDir, "report-bundle.json"), "utf8");
+    const canonicalBundle = JSON.parse(canonicalBundleBytes);
+
+    assert.equal(resolved.bundle.productionRelease, undefined, access);
+    assert.notEqual(resolved.bundle.finalGradeComputed, true, access);
+    assert.notEqual(resolved.bundle.finalStatus, "final_grade_computed", access);
+    assert.equal(canonicalBundle.reportProducer.contractVersion, "ai-grader-report-producer-v0.2", access);
+    assert.equal(fs.existsSync(path.join(fixture.canonicalDir, "asset-manifest.json")), true, access);
+    assert.equal(fs.existsSync(path.join(fixture.canonicalDir, "checksums.json")), true, access);
+    for (const fileName of [
+      "production-release.json",
+      "label-data.json",
+      "publication-manifest.json",
+      "integration-contract.json",
+    ]) {
+      assert.equal(fs.existsSync(path.join(fixture.canonicalDir, fileName)), false, access + ":" + fileName);
+    }
+    assertEmbeddedImageBodiesMatchCanonical(resolved.bundle, canonicalBundle);
+    assert.equal(canonicalBundleBytes.includes("bodyBase64"), false, access);
+  }
+});
+
+test("includeAssetBodies rejects corrupt active and identity-mismatched history canonical release evidence without cached fallback", async () => {
+  for (const failure of ["corrupt-active", "mismatched-history"]) {
+    const dir = outputDir("body-release-" + failure + "-" + Date.now());
+    const bundleRoot = path.join(dir, "report-bundles");
+    fs.rmSync(dir, { recursive: true, force: true });
+    const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+    const seedService = new AiGraderLocalStationBridgeService(config);
+    const reportId = "body-release-" + failure;
+    const fixture = await installStaleCandidatePackage(seedService, config, reportId);
+    await seedService.reportBundle(reportId);
+    const releasePath = path.join(fixture.canonicalDir, "production-release.json");
+    const tamperedBytes = failure === "corrupt-active"
+      ? Buffer.from("{not-json")
+      : Buffer.from(JSON.stringify({
+          ...JSON.parse(fs.readFileSync(releasePath, "utf8")),
+          reportId: "different-report-id",
+        }, null, 2));
+    fs.writeFileSync(releasePath, tamperedBytes);
+    const reader = failure === "corrupt-active"
+      ? seedService
+      : new AiGraderLocalStationBridgeService(config);
+
+    await assert.rejects(
+      reader.reportBundle(reportId, { includeAssetBodies: true }),
+      (error) => error instanceof Error && error.message === AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+      failure,
+    );
+    assert.deepEqual(fs.readFileSync(releasePath), tamperedBytes, failure);
+  }
+});
+
+test("includeAssetBodies rejects an orphaned canonical release package when report-bundle.json is missing", async () => {
+  const dir = outputDir("body-release-orphaned-canonical-" + Date.now());
+  const bundleRoot = path.join(dir, "report-bundles");
+  fs.rmSync(dir, { recursive: true, force: true });
+  const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+  const service = new AiGraderLocalStationBridgeService(config);
+  const reportId = "body-release-orphaned-canonical";
+  const fixture = await installStaleCandidatePackage(service, config, reportId);
+  await service.reportBundle(reportId);
+  const bundlePath = path.join(fixture.canonicalDir, "report-bundle.json");
+  const releasePath = path.join(fixture.canonicalDir, "production-release.json");
+  const releaseBytes = fs.readFileSync(releasePath);
+  fs.rmSync(bundlePath);
+
+  await assert.rejects(
+    service.reportBundle(reportId, { includeAssetBodies: true }),
+    (error) => error instanceof Error && error.message === AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+  );
+  assert.equal(fs.existsSync(bundlePath), false);
+  assert.deepEqual(fs.readFileSync(releasePath), releaseBytes);
+});
+
+test("includeAssetBodies rejects impossible finalized gate state and incomplete accepted-warning attribution", async () => {
+  for (const failure of ["failed-final-gate", "unlisted-accepted-warning"]) {
+    const dir = outputDir("body-release-" + failure + "-" + Date.now());
+    const bundleRoot = path.join(dir, "report-bundles");
+    fs.rmSync(dir, { recursive: true, force: true });
+    const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+    const service = new AiGraderLocalStationBridgeService(config);
+    const reportId = "body-release-" + failure;
+    const fixture = await installStaleCandidatePackage(service, config, reportId);
+    await service.reportBundle(reportId);
+    const releasePath = path.join(fixture.canonicalDir, "production-release.json");
+    const release = JSON.parse(fs.readFileSync(releasePath, "utf8"));
+    release.gates[0].status = failure === "failed-final-gate" ? "fail" : "accepted_warning";
+    release.operatorFinalization.acceptedWarningGateIds = [];
+    const tamperedBytes = Buffer.from(JSON.stringify(release, null, 2));
+    fs.writeFileSync(releasePath, tamperedBytes);
+
+    await assert.rejects(
+      service.reportBundle(reportId, { includeAssetBodies: true }),
+      (error) => error instanceof Error && error.message === AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+      failure,
+    );
+    assert.deepEqual(fs.readFileSync(releasePath), tamperedBytes, failure);
+  }
 });
 
 test("next locked report access restores an interrupted canonical backup before recovery", async () => {

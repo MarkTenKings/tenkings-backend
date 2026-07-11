@@ -380,26 +380,73 @@ async function assertReleaseDerivedPackage(input: {
 }
 
 function assertProductionReleaseEvidence(release: AiGraderProductionRelease, bundle: AiGraderReportBundle) {
+  const finalGradeComputed = release?.finalGradeComputed === true;
+  const expectedReportStatus = finalGradeComputed ? "final_ai_grader_report_v0" : "insufficient_evidence";
+  const expectedFinalStatus = finalGradeComputed ? "final_grade_computed" : "insufficient_evidence";
+  const expectedGradeStatus = finalGradeComputed ? "final_ai_grader_grade_v0" : "insufficient_evidence";
+  const expectedLabelStatus = finalGradeComputed ? "label_data_ready" : "blocked_insufficient_evidence";
+  const expectedPublicationStatus = finalGradeComputed ? "local_bundle_ready" : "blocked_insufficient_evidence";
   if (!isRecord(release) ||
       release.schemaVersion !== "ai-grader-production-release-v0.1" ||
       release.reportId !== bundle.reportId ||
       release.gradingSessionId !== bundle.gradingSessionId ||
+      release.reportStatus !== expectedReportStatus ||
+      release.finalStatus !== expectedFinalStatus ||
+      typeof release.finalGradeComputed !== "boolean" ||
+      release.certifiedClaim !== false ||
+      release.certificateGenerated !== false ||
+      release.labelDataGenerated !== finalGradeComputed ||
+      release.qrPayloadGenerated !== finalGradeComputed ||
       !sameJson(release.visionLab, bundle.visionLab) ||
       !isRecord(release.operatorFinalization) ||
       typeof release.operatorFinalization.operatorId !== "string" ||
+      !release.operatorFinalization.operatorId.trim() ||
       typeof release.operatorFinalization.finalizedAt !== "string" ||
+      !release.operatorFinalization.finalizedAt.trim() ||
       typeof release.operatorFinalization.warningsAccepted !== "boolean" ||
       !Array.isArray(release.operatorFinalization.acceptedWarningGateIds) ||
       !Array.isArray(release.gates) ||
+      release.gates.length === 0 ||
+      release.gates.some((gate) =>
+        !isRecord(gate) ||
+        typeof gate.id !== "string" ||
+        !gate.id.trim() ||
+        !new Set(["pass", "accepted_warning", "fail"]).has(gate.status) ||
+        typeof gate.reason !== "string" ||
+        !Array.isArray(gate.evidenceRefs)
+      ) ||
       !isRecord(release.finalGrade) ||
-      !isRecord(release.label)) {
+      release.finalGrade.status !== expectedGradeStatus ||
+      release.finalGrade.finalGradeComputed !== finalGradeComputed ||
+      (finalGradeComputed && (typeof release.finalGrade.overall !== "number" || !Number.isFinite(release.finalGrade.overall))) ||
+      !isRecord(release.label) ||
+      release.label.status !== expectedLabelStatus ||
+      release.label.reportId !== bundle.reportId ||
+      typeof release.label.certId !== "string" ||
+      !release.label.certId.trim() ||
+      typeof release.label.publicReportUrl !== "string" ||
+      !release.label.publicReportUrl.trim() ||
+      typeof release.label.qrPayloadUrl !== "string" ||
+      !release.label.qrPayloadUrl.trim() ||
+      !isRecord(release.publication) ||
+      release.publication.status !== expectedPublicationStatus ||
+      release.publication.reportId !== bundle.reportId ||
+      release.publication.publicReportUrl !== release.label.publicReportUrl ||
+      release.publication.qrPayloadUrl !== release.label.qrPayloadUrl) {
     throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
   }
-  for (const acceptedGateId of release.operatorFinalization.acceptedWarningGateIds) {
-    if (typeof acceptedGateId !== "string" ||
-        !release.gates.some((gate) => gate.id === acceptedGateId && gate.status === "accepted_warning")) {
-      throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
-    }
+  const gateIds = release.gates.map((gate) => gate.id);
+  const acceptedWarningGateIds = release.gates
+    .filter((gate) => gate.status === "accepted_warning")
+    .map((gate) => gate.id);
+  const finalizedAcceptedGateIds = release.operatorFinalization.acceptedWarningGateIds;
+  if (new Set(gateIds).size !== gateIds.length ||
+      new Set(finalizedAcceptedGateIds).size !== finalizedAcceptedGateIds.length ||
+      finalizedAcceptedGateIds.some((gateId) => typeof gateId !== "string") ||
+      acceptedWarningGateIds.length !== finalizedAcceptedGateIds.length ||
+      acceptedWarningGateIds.some((gateId) => !finalizedAcceptedGateIds.includes(gateId)) ||
+      (finalGradeComputed && release.gates.some((gate) => gate.status === "fail"))) {
+    throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
   }
 }
 

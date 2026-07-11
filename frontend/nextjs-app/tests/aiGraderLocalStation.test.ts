@@ -22,6 +22,7 @@ import {
 } from "../lib/aiGraderLocalStation";
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE, getAiGraderReportBundle, hasNoCertifiedClaim, hasNoFinalCertifiedClaims } from "../lib/aiGraderReportBundle";
 import { buildSampleAiGraderProductionRelease } from "../lib/aiGraderProductionRelease";
+import { resolveAiGraderAuthoritativeProductionPackage } from "../lib/aiGraderReleaseAuthority";
 import {
   AI_GRADER_NORMAL_OPERATOR_ACTION_LABELS,
   buildAiGraderCompsReadiness,
@@ -782,6 +783,109 @@ test("production release fixture reserves label and QR URL but does not perform 
   assert.equal(release.slabbedPhotoContract.status, "reserved_not_uploaded");
   assert.equal(release.ebayCompsContract.status, "not_run");
   assert.equal(release.cardInventoryLinkage.status, "contract_ready_not_persisted");
+});
+
+for (const operatorAction of ["Confirm Card", "Publish"] as const) {
+  test(`${operatorAction} treats a fetched bridge bundle without a release as authoritative and explicitly finalizes`, async () => {
+    const baseRelease = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
+    const staleRelease = {
+      ...baseRelease,
+      generatedAt: "2026-07-11T10:00:00.000Z",
+      operatorFinalization: {
+        ...baseRelease.operatorFinalization,
+        operatorId: "stale-browser-release",
+      },
+    };
+    const verifiedRelease = {
+      ...baseRelease,
+      generatedAt: "2026-07-11T11:00:00.000Z",
+      operatorFinalization: {
+        ...baseRelease.operatorFinalization,
+        operatorId: "explicitly-finalized-release",
+      },
+    };
+    const cachedBundle = {
+      ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+      productionRelease: staleRelease,
+    };
+    const recoveredBundle = {
+      ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+      productionRelease: undefined,
+    };
+    const finalizedBundle = {
+      ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+      productionRelease: verifiedRelease,
+    };
+    const initialStatus = {
+      latestReport: { reportId: SAMPLE_AI_GRADER_REPORT_BUNDLE.reportId },
+      reportBundle: cachedBundle,
+      productionRelease: staleRelease,
+    };
+    const finalizedStatus = {
+      latestReport: { reportId: SAMPLE_AI_GRADER_REPORT_BUNDLE.reportId },
+      reportBundle: finalizedBundle,
+      productionRelease: verifiedRelease,
+    };
+    const events: string[] = [];
+    let fetchCount = 0;
+
+    const resolved = await resolveAiGraderAuthoritativeProductionPackage({
+      initialStatus,
+      async fetchBridgeBundle(reportId) {
+        assert.equal(reportId, SAMPLE_AI_GRADER_REPORT_BUNDLE.reportId);
+        fetchCount += 1;
+        events.push(`fetch-${fetchCount}`);
+        return fetchCount === 1 ? recoveredBundle : finalizedBundle;
+      },
+      async explicitlyFinalize() {
+        events.push("explicit-finalize");
+        return finalizedStatus;
+      },
+    });
+
+    assert.deepEqual(events, ["fetch-1", "explicit-finalize", "fetch-2"]);
+    assert.equal(resolved.bridgeBundleFetched, true);
+    assert.equal(resolved.sourceBundle, finalizedBundle);
+    assert.equal(resolved.productionRelease, verifiedRelease);
+    const submittedPayload = JSON.stringify({
+      action: operatorAction,
+      reportBundle: resolved.sourceBundle,
+      productionRelease: resolved.productionRelease,
+    });
+    assert.match(submittedPayload, /explicitly-finalized-release/);
+    assert.doesNotMatch(submittedPayload, /stale-browser-release/);
+  });
+}
+
+test("cached production release is eligible only when no bridge fetch callback is available", async () => {
+  const baseRelease = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
+  const cachedRelease = {
+    ...baseRelease,
+    operatorFinalization: {
+      ...baseRelease.operatorFinalization,
+      operatorId: "offline-cached-release",
+    },
+  };
+  let explicitFinalizeCalls = 0;
+
+  const resolved = await resolveAiGraderAuthoritativeProductionPackage({
+    initialStatus: {
+      latestReport: { reportId: SAMPLE_AI_GRADER_REPORT_BUNDLE.reportId },
+      reportBundle: {
+        ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+        productionRelease: undefined,
+      },
+      productionRelease: cachedRelease,
+    },
+    async explicitlyFinalize() {
+      explicitFinalizeCalls += 1;
+      throw new Error("A finalized cached release must not be recalculated without a bridge fetch.");
+    },
+  });
+
+  assert.equal(resolved.bridgeBundleFetched, false);
+  assert.equal(resolved.productionRelease, cachedRelease);
+  assert.equal(explicitFinalizeCalls, 0);
 });
 
 test("normal AI Grader operator workflow hides internal pipeline buttons", () => {
@@ -3773,6 +3877,10 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish\""), false);
   assert.equal(stationSource.includes("selectedIds: []"), true);
   assert.equal(stationSource.includes('<option value="unknown">Unknown</option>'), false);
+  const createCardFunctionSource = stationSource.slice(
+    stationSource.indexOf("const createCardFromConfirmedIdentity"),
+    stationSource.indexOf("const searchCardItems")
+  );
   const publishFunctionSource = stationSource.slice(
     stationSource.indexOf("const publishToTenKingsSystem"),
     stationSource.indexOf("const uploadSlabbedPhoto")
@@ -3781,6 +3889,11 @@ test("AI Grader station source opens reports inline without popup dependency", (
     stationSource.indexOf("const uploadSlabbedPhoto"),
     stationSource.indexOf("const runEbayComps")
   );
+  assert.equal(createCardFunctionSource.includes("resolveAiGraderAuthoritativeProductionPackage"), true);
+  assert.equal(createCardFunctionSource.includes("explicitlyFinalize: prepareLocalProductionRelease"), true);
+  assert.equal(publishFunctionSource.includes("resolveAiGraderAuthoritativeProductionPackage"), true);
+  assert.equal(publishFunctionSource.includes("explicitlyFinalize: prepareLocalProductionRelease"), true);
+  assert.doesNotMatch(stationSource, /sourceBundle\?\.productionRelease\s*\?\?\s*latestStatus\.productionRelease/);
   assert.equal(publishFunctionSource.includes("includeAssetBodies"), false);
   assert.equal(publishFunctionSource.includes("formatAiGraderPublishStageError"), true);
   assert.equal(publishFunctionSource.includes("uploadAiGraderArtifactDirectly"), true);

@@ -9,6 +9,7 @@ import {
   buildAiGraderLocalStationStatus,
   buildSampleAiGraderReportHistory,
   sanitizeAiGraderPreviewCardGeometryBySide,
+  type AiGraderLocalStationStatus,
   type AiGraderCaptureProfile,
   type AiGraderCaptureTriggerMode,
   type AiGraderPreviewCardGeometryBySide,
@@ -17,9 +18,9 @@ import {
   type AiGraderWarmRunnerPhase,
   type AiGraderLocalReportHistory,
   type AiGraderLocalReportHistoryItem,
-  type AiGraderLocalStationStatus,
   type AiGraderStationAction,
 } from "../../lib/aiGraderLocalStation";
+import { resolveAiGraderAuthoritativeProductionPackage } from "../../lib/aiGraderReleaseAuthority";
 import {
   AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY,
   AI_GRADER_STATION_TOKEN_STORAGE_KEY,
@@ -2315,26 +2316,14 @@ export default function AiGraderStationPage() {
     setBusy("create-card-from-report");
     setIdentityStatus({ status: "pending", message: "Creating Ten Kings CardAsset and Item from confirmed AI Grader identity." });
     try {
-      let latestStatus = status;
-      let reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
-      let sourceBundle = latestStatus.reportBundle;
-      if (bridgeConnected && stationToken.trim() && reportId) {
-        sourceBundle = await fetchAiGraderStationReportBundle({
-          baseUrl: bridgeUrl,
-          stationToken,
-          reportId,
-        });
-      }
-      let productionRelease = sourceBundle?.productionRelease ?? latestStatus.productionRelease;
-      if (!productionRelease?.finalGradeComputed && reportReady) {
-        latestStatus = await prepareLocalProductionRelease();
-        reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? reportId;
-        sourceBundle = latestStatus.reportBundle;
-        if (bridgeConnected && stationToken.trim() && reportId) {
-          sourceBundle = await fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId });
-        }
-        productionRelease = sourceBundle?.productionRelease ?? latestStatus.productionRelease;
-      }
+      const resolvedPackage = await resolveAiGraderAuthoritativeProductionPackage({
+        initialStatus: status,
+        fetchBridgeBundle: bridgeConnected && stationToken.trim()
+          ? (reportId) => fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId })
+          : undefined,
+        explicitlyFinalize: prepareLocalProductionRelease,
+      });
+      const { reportId, sourceBundle, productionRelease } = resolvedPackage;
       if (!sourceBundle || !productionRelease) {
         throw new Error("A finalized production release and report bundle are required before card creation.");
       }
@@ -2565,35 +2554,21 @@ export default function AiGraderStationPage() {
     setError(null);
     setProductionPublish((current) => ({ ...current, status: "pending", message: "Preparing canonical local publish package." }));
     try {
-      let latestStatus = status;
-      let sourceBundle = latestStatus.reportBundle;
-      let reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
-      if (bridgeConnected && stationToken.trim() && reportId) {
-        setProductionPublish((current) => ({ ...current, status: "pending", message: "Reading local package manifest from the paired Dell bridge." }));
-        try {
-          sourceBundle = await fetchAiGraderStationReportBundle({
-            baseUrl: bridgeUrl,
-            stationToken,
-            reportId,
-          });
-        } catch (error) {
-          throw new Error(formatAiGraderPublishStageError({ stage: "local-package-read", error }));
-        }
-      }
-      let productionRelease = sourceBundle?.productionRelease ?? latestStatus.productionRelease;
-      if (!productionRelease?.finalGradeComputed && reportReady) {
-        latestStatus = await prepareLocalProductionRelease();
-        reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? reportId;
-        sourceBundle = latestStatus.reportBundle;
-        if (bridgeConnected && stationToken.trim() && reportId) {
-          try {
-            sourceBundle = await fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId });
-          } catch (error) {
-            throw new Error(formatAiGraderPublishStageError({ stage: "local-package-read", error }));
-          }
-        }
-        productionRelease = sourceBundle?.productionRelease ?? latestStatus.productionRelease;
-      }
+      const resolvedPackage = await resolveAiGraderAuthoritativeProductionPackage({
+        initialStatus: status,
+        fetchBridgeBundle: bridgeConnected && stationToken.trim()
+          ? async (reportId) => {
+              setProductionPublish((current) => ({ ...current, status: "pending", message: "Reading local package manifest from the paired Dell bridge." }));
+              try {
+                return await fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId });
+              } catch (error) {
+                throw new Error(formatAiGraderPublishStageError({ stage: "local-package-read", error }));
+              }
+            }
+          : undefined,
+        explicitlyFinalize: prepareLocalProductionRelease,
+      });
+      const { latestStatus, reportId, sourceBundle, productionRelease } = resolvedPackage;
       const reportBundleWithIdentity = buildReportBundleForProduction(sourceBundle);
       const readiness = buildAiGraderPublishReadiness({
         bundle: reportBundleWithIdentity,
