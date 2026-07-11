@@ -2315,10 +2315,7 @@ export default function AiGraderStationPage() {
     setIdentityStatus({ status: "pending", message: "Creating Ten Kings CardAsset and Item from confirmed AI Grader identity." });
     try {
       let latestStatus = status;
-      if (!latestStatus.productionRelease?.finalGradeComputed && reportReady) {
-        latestStatus = await prepareLocalProductionRelease();
-      }
-      const reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
+      let reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
       let sourceBundle = latestStatus.reportBundle;
       if (bridgeConnected && stationToken.trim() && reportId) {
         sourceBundle = await fetchAiGraderStationReportBundle({
@@ -2327,9 +2324,22 @@ export default function AiGraderStationPage() {
           reportId,
         });
       }
-      const productionRelease = latestStatus.productionRelease ?? sourceBundle?.productionRelease;
+      let productionRelease = sourceBundle?.productionRelease ?? latestStatus.productionRelease;
+      if (!productionRelease?.finalGradeComputed && reportReady) {
+        latestStatus = await prepareLocalProductionRelease();
+        reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? reportId;
+        sourceBundle = latestStatus.reportBundle;
+        if (bridgeConnected && stationToken.trim() && reportId) {
+          sourceBundle = await fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId });
+        }
+        productionRelease = sourceBundle?.productionRelease ?? latestStatus.productionRelease;
+      }
       if (!sourceBundle || !productionRelease) {
         throw new Error("A finalized production release and report bundle are required before card creation.");
+      }
+      if (productionRelease.reportId !== sourceBundle.reportId ||
+          productionRelease.gradingSessionId !== sourceBundle.gradingSessionId) {
+        throw new Error("The recovered report bundle and production release do not share the same report/session identity.");
       }
       const draftIdentity = identityDraftPayload();
       const draftTitle = identityDraftTitle();
@@ -2555,11 +2565,8 @@ export default function AiGraderStationPage() {
     setProductionPublish((current) => ({ ...current, status: "pending", message: "Preparing canonical local publish package." }));
     try {
       let latestStatus = status;
-      if (!latestStatus.productionRelease?.finalGradeComputed && reportReady) {
-        latestStatus = await prepareLocalProductionRelease();
-      }
       let sourceBundle = latestStatus.reportBundle;
-      const reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
+      let reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
       if (bridgeConnected && stationToken.trim() && reportId) {
         setProductionPublish((current) => ({ ...current, status: "pending", message: "Reading local package manifest from the paired Dell bridge." }));
         try {
@@ -2572,14 +2579,31 @@ export default function AiGraderStationPage() {
           throw new Error(formatAiGraderPublishStageError({ stage: "local-package-read", error }));
         }
       }
+      let productionRelease = sourceBundle?.productionRelease ?? latestStatus.productionRelease;
+      if (!productionRelease?.finalGradeComputed && reportReady) {
+        latestStatus = await prepareLocalProductionRelease();
+        reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? reportId;
+        sourceBundle = latestStatus.reportBundle;
+        if (bridgeConnected && stationToken.trim() && reportId) {
+          try {
+            sourceBundle = await fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId });
+          } catch (error) {
+            throw new Error(formatAiGraderPublishStageError({ stage: "local-package-read", error }));
+          }
+        }
+        productionRelease = sourceBundle?.productionRelease ?? latestStatus.productionRelease;
+      }
       const reportBundleWithIdentity = buildReportBundleForProduction(sourceBundle);
-      const productionRelease = latestStatus.productionRelease ?? sourceBundle?.productionRelease;
       const readiness = buildAiGraderPublishReadiness({
         bundle: reportBundleWithIdentity,
         productionRelease,
       });
       if (!reportBundleWithIdentity || !productionRelease) {
         throw new Error("A finalized production release and report bundle are required before Ten Kings publish.");
+      }
+      if (productionRelease.reportId !== reportBundleWithIdentity.reportId ||
+          productionRelease.gradingSessionId !== reportBundleWithIdentity.gradingSessionId) {
+        throw new Error("The recovered report bundle and production release do not share the same report/session identity.");
       }
       if (!readiness.ready) {
         throw new Error(readiness.message);

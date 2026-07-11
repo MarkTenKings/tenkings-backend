@@ -7,9 +7,16 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   AI_GRADER_REPORT_BUNDLE_VERSION,
+  AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
   buildAiGraderReportBundle,
   writeAiGraderReportBundle,
 } = require("../dist/drivers/aiGraderReportBundle");
+const { createStableAiGraderDefectFindingId } = require("../dist/drivers/aiGraderDefectFindings");
+const {
+  AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+  aiGraderReportBundleNeedsRecovery,
+  recoverAiGraderReportPackage,
+} = require("../dist/drivers/aiGraderReportPackageRecovery");
 const {
   AI_GRADER_PRODUCTION_RELEASE_VERSION,
   buildAiGraderProductionRelease,
@@ -252,6 +259,30 @@ function fixtureReportDir() {
   return dir;
 }
 
+function pr82StaleCandidateBundle(bundle) {
+  const stale = structuredClone(bundle);
+  delete stale.reportProducer;
+  delete stale.visionLab.findingValidation;
+  const finding = stale.visionLab.defectFindings[0];
+  const legacyDetector = { id: finding.detector.id, version: finding.detector.version };
+  const legacyFindingId = createStableAiGraderDefectFindingId({
+    side: finding.side,
+    category: finding.category,
+    detector: legacyDetector,
+    geometry: finding.geometry,
+  });
+  finding.findingId = legacyFindingId;
+  finding.detector = legacyDetector;
+  stale.provisionalGrade.gradeImpactCandidates[0].findingIds = [legacyFindingId];
+  for (const asset of stale.assets) {
+    if (asset.kind === "image") {
+      delete asset.widthPx;
+      delete asset.heightPx;
+    }
+  }
+  return { stale, legacyFindingId };
+}
+
 test("report bundle exports web-ready provisional contract without final/certified claims", async () => {
   const reportDir = fixtureReportDir();
   const bundle = await buildAiGraderReportBundle({
@@ -280,6 +311,8 @@ test("report bundle exports web-ready provisional contract without final/certifi
   });
 
   assert.equal(bundle.schemaVersion, AI_GRADER_REPORT_BUNDLE_VERSION);
+  assert.equal(bundle.reportProducer.contractVersion, AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION);
+  assert.equal(bundle.reportProducer.capabilities.includes("finding-validation-v1"), true);
   assert.equal(bundle.reportId, "fixture-report");
   assert.equal(bundle.reportStatus, "provisional_diagnostic_ready");
   assert.equal(bundle.provisionalGrade?.overall, 8.5);
@@ -448,6 +481,108 @@ test("report bundle writer creates bundle, asset manifest, and checksums", async
   assert.equal(fs.existsSync(result.checksumsPath), true);
   const checksums = JSON.parse(fs.readFileSync(result.checksumsPath, "utf8"));
   assert.equal(checksums.checksums.some((entry) => entry.id === "report-html" && /^[a-f0-9]{64}$/.test(entry.sha256)), true);
+});
+
+test("stale PR82 candidate package is atomically recovered without recapture and preserves verified IDs and hashes", async () => {
+  const reportDir = fixtureReportDir();
+  const reportId = "recover-pr82-report";
+  const gradingSessionId = "recover-pr82-session";
+  const current = await buildAiGraderReportBundle({ reportDir, reportId, gradingSessionId });
+  const { stale, legacyFindingId } = pr82StaleCandidateBundle(current);
+  const previousRelease = buildAiGraderProductionRelease({
+    bundle: stale,
+    generatedAt: "2026-07-11T12:00:00.000Z",
+    operatorId: "operator-verified",
+    warningsAccepted: true,
+    overrideReason: "Reviewed existing report",
+  });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ai-grader-report-recovery-"));
+  const canonicalDir = path.join(root, reportId);
+  fs.mkdirSync(canonicalDir, { recursive: true });
+  fs.writeFileSync(path.join(canonicalDir, "report-bundle.json"), JSON.stringify(stale));
+  fs.writeFileSync(path.join(canonicalDir, "production-release.json"), JSON.stringify(previousRelease));
+  fs.writeFileSync(path.join(canonicalDir, "old-generation.marker"), "old");
+
+  assert.equal(await aiGraderReportBundleNeedsRecovery(stale, reportDir), true);
+  const result = await recoverAiGraderReportPackage({
+    canonicalDir,
+    reportDir,
+    reportId,
+    gradingSessionId,
+    previousBundle: stale,
+    previousRelease,
+  });
+
+  assert.equal(result.bundle.schemaVersion, "ai-grader-report-bundle-v0.1");
+  assert.equal(result.bundle.reportProducer.contractVersion, AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION);
+  assert.equal(result.bundle.visionLab.findingValidation.status, "valid");
+  assert.equal(result.bundle.visionLab.defectFindings[0].findingId, legacyFindingId);
+  assert.equal(result.bundle.visionLab.defectFindings[0].detector.captureProfileVersion, "ten-kings-fixed-rig-production-fast-v1");
+  assert.deepEqual(result.productionRelease.operatorFinalization, previousRelease.operatorFinalization);
+  assert.equal(fs.existsSync(path.join(canonicalDir, "old-generation.marker")), false);
+  for (const fileName of [
+    "report-bundle.json", "asset-manifest.json", "checksums.json", "production-release.json",
+    "label-data.json", "publication-manifest.json", "integration-contract.json",
+  ]) {
+    assert.equal(fs.existsSync(path.join(canonicalDir, fileName)), true, fileName);
+  }
+  assert.equal(fs.readdirSync(path.join(canonicalDir, "assets")).length > 0, true);
+  assert.equal(JSON.stringify(result).includes(".staging-"), false);
+  const oldHashes = new Map(stale.assets.filter((asset) => asset.sha256).map((asset) => [asset.id, asset.sha256]));
+  for (const asset of result.bundle.assets.filter((asset) => oldHashes.has(asset.id))) {
+    assert.equal(asset.sha256, oldHashes.get(asset.id));
+  }
+  assert.equal(await aiGraderReportBundleNeedsRecovery(result.bundle, reportDir), false);
+});
+
+test("candidate-free legacy v0.1 remains compatible", async () => {
+  const reportDir = fixtureReportDir();
+  const analysisPath = path.join(reportDir, "analysis.json");
+  const analysis = JSON.parse(fs.readFileSync(analysisPath, "utf8"));
+  analysis.surfaceIntelligence.back.candidates = [];
+  analysis.provisionalGradeStory.gradeImpactCandidates = [];
+  fs.writeFileSync(analysisPath, JSON.stringify(analysis, null, 2));
+  const legacy = await buildAiGraderReportBundle({ reportDir, reportId: "candidate-free-legacy" });
+  delete legacy.reportProducer;
+  delete legacy.visionLab.defectFindings;
+  delete legacy.visionLab.findingValidation;
+  assert.equal(await aiGraderReportBundleNeedsRecovery(legacy, reportDir), false);
+});
+
+test("report recovery rejects tampered IDs, invalid fingerprints, and missing analysis without replacing the old package", async () => {
+  for (const failure of ["tampered-id", "invalid-fingerprint", "missing-analysis"]) {
+    const reportDir = fixtureReportDir();
+    const reportId = "blocked-recovery-" + failure;
+    const gradingSessionId = reportId + "-session";
+    const current = await buildAiGraderReportBundle({ reportDir, reportId, gradingSessionId });
+    const { stale } = pr82StaleCandidateBundle(current);
+    if (failure === "tampered-id") {
+      stale.visionLab.defectFindings[0].findingId = "dfv1_000000000000000000000000";
+    } else if (failure === "invalid-fingerprint") {
+      const analysisPath = path.join(reportDir, "analysis.json");
+      const analysis = JSON.parse(fs.readFileSync(analysisPath, "utf8"));
+      analysis.surfaceIntelligence.back.candidates[0].analysisGeometry.sourceSha256 = "f".repeat(64);
+      fs.writeFileSync(analysisPath, JSON.stringify(analysis, null, 2));
+    } else {
+      fs.unlinkSync(path.join(reportDir, "analysis.json"));
+    }
+    const previousRelease = buildAiGraderProductionRelease({ bundle: stale, operatorId: "operator-verified", warningsAccepted: true });
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ai-grader-report-recovery-blocked-"));
+    const canonicalDir = path.join(root, reportId);
+    fs.mkdirSync(canonicalDir, { recursive: true });
+    const oldBundleBytes = Buffer.from(JSON.stringify(stale));
+    const oldReleaseBytes = Buffer.from(JSON.stringify(previousRelease));
+    fs.writeFileSync(path.join(canonicalDir, "report-bundle.json"), oldBundleBytes);
+    fs.writeFileSync(path.join(canonicalDir, "production-release.json"), oldReleaseBytes);
+
+    await assert.rejects(
+      recoverAiGraderReportPackage({ canonicalDir, reportDir, reportId, gradingSessionId, previousBundle: stale, previousRelease }),
+      (error) => error instanceof Error && error.message === AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+    );
+    assert.deepEqual(fs.readFileSync(path.join(canonicalDir, "report-bundle.json")), oldBundleBytes);
+    assert.deepEqual(fs.readFileSync(path.join(canonicalDir, "production-release.json")), oldReleaseBytes);
+    assert.equal(fs.readdirSync(root).some((name) => name.includes(".staging-") || name.includes(".backup-")), false);
+  }
 });
 
 test("report bundle CLI rejects repo output and writes software-only safety payload", async () => {

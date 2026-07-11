@@ -10,6 +10,7 @@ import { config as aiGraderProductionRouteConfig } from "../pages/api/admin/ai-g
 import {
   AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION,
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+  AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
   aiGraderCardPlacementLabel,
   buildSampleAiGraderReportHistory,
   buildAiGraderLocalStationStatus,
@@ -3941,6 +3942,7 @@ test("browser station bridge client checks local bridge health without station o
     return new Response(JSON.stringify({
       ok: true,
       bridgeVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+      reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
       mode: "real",
       localOnly: true,
       tokenRequired: true,
@@ -3971,6 +3973,24 @@ test("browser station bridge health fails explicitly when the running helper con
   await assert.rejects(
     () => fetchAiGraderStationBridgeHealth({ baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL }, staleFetch),
     new RegExp(`update/restart required.*${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}.*v0\\.4`, "i"),
+  );
+});
+
+test("browser station bridge health gives re-export guidance for a stale report producer", async () => {
+  const staleFetch: typeof fetch = async () => new Response(JSON.stringify({
+    ok: true,
+    bridgeVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+    reportProducerContractVersion: "ai-grader-report-producer-v0.1",
+    mode: "real",
+    localOnly: true,
+    tokenRequired: true,
+    hardwareActionsEnabled: true,
+    allowedOrigins: ["https://collect.tenkings.co"],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  await assert.rejects(
+    () => fetchAiGraderStationBridgeHealth({ baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL }, staleFetch),
+    /report producer update\/restart required.*re-export.*No hardware recapture/i,
   );
 });
 

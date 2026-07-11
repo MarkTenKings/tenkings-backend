@@ -83,6 +83,10 @@ export type AiGraderReportPublicAsset = {
 
 export type AiGraderReportBundle = {
   schemaVersion: typeof AI_GRADER_WEB_REPORT_BUNDLE_V01_VERSION;
+  reportProducer?: {
+    contractVersion: string;
+    capabilities: string[];
+  };
   generatedAt: string;
   gradingSessionId: string;
   reportId: string;

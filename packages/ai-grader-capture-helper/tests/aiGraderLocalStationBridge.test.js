@@ -14,6 +14,9 @@ const {
   startAiGraderLocalStationBridgeHttpServer,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
 const { buildAiGraderStationRealCommandPlan } = require("../dist/drivers/aiGraderStationWorkflow");
+const { buildAiGraderReportBundle } = require("../dist/drivers/aiGraderReportBundle");
+const { buildAiGraderProductionRelease } = require("../dist/drivers/aiGraderProductionRelease");
+const { createStableAiGraderDefectFindingId } = require("../dist/drivers/aiGraderDefectFindings");
 const { runCaptureHelperCli } = require("../dist/cli");
 const PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -74,6 +77,150 @@ function fullEvidenceRoleIds() {
     "channel_7",
     "channel_8",
   ];
+}
+
+function createCandidateRecoveryReport(rootDir, reportId, gradingSessionId) {
+  const reportDir = path.join(rootDir, reportId + "-unified-report");
+  const frontDir = path.join(reportDir, "front");
+  const backDir = path.join(reportDir, "back");
+  fs.mkdirSync(frontDir, { recursive: true });
+  fs.mkdirSync(backDir, { recursive: true });
+  const normalized = {
+    front: path.join(frontDir, "front-normalized-card.png"),
+    back: path.join(backDir, "back-normalized-card.png"),
+  };
+  fs.writeFileSync(normalized.front, PNG_BYTES);
+  fs.writeFileSync(normalized.back, PNG_BYTES);
+  const heatmapPath = path.join(backDir, "back-surface-heatmap.png");
+  fs.writeFileSync(heatmapPath, PNG_BYTES);
+  for (const side of ["front", "back"]) {
+    fs.writeFileSync(path.join(reportDir, side, "manifest.json"), JSON.stringify({
+      captureProfile: "production_fast",
+      [side]: {
+        normalizedCard: {
+          geometry: { placementState: "ready", normalizedWidth: 1200, normalizedHeight: 1680 },
+          normalizedArtifact: { localOutputPath: normalized[side], sourceSha256: PNG_SHA256 },
+        },
+      },
+    }, null, 2));
+  }
+  fs.writeFileSync(path.join(reportDir, "manifest.json"), JSON.stringify({
+    reportId,
+    gradingSessionId,
+    frontPackageDir: frontDir,
+    backPackageDir: backDir,
+  }, null, 2));
+
+  fs.writeFileSync(path.join(reportDir, "analysis.json"), JSON.stringify({
+    reportId,
+    gradingSessionId,
+    provisionalGradeStory: {
+      status: "provisional_diagnostic_grade",
+      provisionalOverallGrade: 8.4,
+      confidence: { score: 0.8, band: "high", warnings: [] },
+      gradeImpactCandidates: [{
+        id: "back-candidate-001",
+        side: "back",
+        category: "surface",
+        severity: "medium",
+        confidence: 0.8,
+        confidenceBand: "high",
+        evidenceRefs: ["back-surface-heatmap.png"],
+        explanation: "Evidence-linked candidate.",
+      }],
+      whyNot10: [],
+      elementScores: {},
+    },
+    surfaceIntelligence: {
+      detectorId: "preliminary_surface_intelligence_v0",
+      back: {
+        version: "preliminary_surface_intelligence_v0",
+        confidence: { score: 0.8 },
+        heatmap: { outputFilePath: heatmapPath },
+        candidates: [{
+          candidateId: "back-candidate-001",
+          side: "back",
+          category: "surface",
+          severityBand: "medium",
+          confidence: 0.8,
+          analysisGeometry: {
+            coordinateFrame: "normalized_card",
+            units: "fraction",
+            sourceSha256: PNG_SHA256,
+            normalizedArtifactSha256: PNG_SHA256,
+            shape: { type: "box", x: 0.1, y: 0.2, width: 0.2, height: 0.1 },
+          },
+        }],
+      },
+    },
+    visionLab: {},
+  }, null, 2));
+  const reportHtmlPath = path.join(reportDir, "provisional-diagnostic-report.html");
+  fs.writeFileSync(reportHtmlPath, '<html><body><img src="' + normalized.front + '"><img src="' + normalized.back + '"></body></html>');
+  return { reportDir, reportHtmlPath };
+}
+
+async function installStaleCandidatePackage(service, config, reportId) {
+  await service.action("start-session", { reportId, captureProfile: "production_fast" });
+  const manifest = service.manifest;
+  const gradingSessionId = manifest.sessionId;
+  const source = createCandidateRecoveryReport(config.outputDir, reportId, gradingSessionId);
+  const current = await buildAiGraderReportBundle({
+    reportDir: source.reportDir,
+    reportId,
+    gradingSessionId,
+    captureTiming: manifest.captureTiming,
+  });
+  assert.equal(current.visionLab.findingValidation.status, "valid");
+  const stale = structuredClone(current);
+  delete stale.reportProducer;
+  delete stale.visionLab.findingValidation;
+  const finding = stale.visionLab.defectFindings[0];
+  const legacyDetector = { id: finding.detector.id, version: finding.detector.version };
+  const legacyFindingId = createStableAiGraderDefectFindingId({
+    side: finding.side,
+    category: finding.category,
+    detector: legacyDetector,
+    geometry: finding.geometry,
+  });
+  finding.findingId = legacyFindingId;
+  finding.detector = legacyDetector;
+  stale.provisionalGrade.gradeImpactCandidates[0].findingIds = [legacyFindingId];
+  for (const asset of stale.assets) {
+    if (asset.kind === "image") {
+      delete asset.widthPx;
+      delete asset.heightPx;
+    }
+  }
+  const previousRelease = buildAiGraderProductionRelease({
+    bundle: stale,
+    generatedAt: "2026-07-11T12:00:00.000Z",
+    operatorId: "mark",
+    warningsAccepted: true,
+    overrideReason: "Confirmed report recovery test",
+  });
+  assert.equal(previousRelease.finalGradeComputed, true);
+  const canonicalDir = path.join(config.reportBundleOutputDir, reportId);
+  fs.mkdirSync(canonicalDir, { recursive: true });
+  fs.writeFileSync(path.join(canonicalDir, "report-bundle.json"), JSON.stringify(stale, null, 2));
+  fs.writeFileSync(path.join(canonicalDir, "production-release.json"), JSON.stringify(previousRelease, null, 2));
+  Object.assign(manifest.outputs, {
+    unifiedReportDir: source.reportDir,
+    unifiedReportPath: source.reportHtmlPath,
+    publishPackageDir: canonicalDir,
+    reportBundlePath: path.join(canonicalDir, "report-bundle.json"),
+    productionReleasePath: path.join(canonicalDir, "production-release.json"),
+  });
+  manifest.reportBundle = stale;
+  manifest.productionRelease = previousRelease;
+  manifest.rapidCapture.workflowState = "confirmed_needs_publish";
+  manifest.rapidCapture.workflowHistory = [{
+    state: "confirmed_needs_publish",
+    at: "2026-07-11T12:00:00.000Z",
+    detail: "Human confirmation completed; publish remains required.",
+  }];
+  fs.writeFileSync(manifest.outputs.manifestPath, JSON.stringify(manifest, null, 2));
+  return { canonicalDir, gradingSessionId, legacyFindingId, manifest, previousRelease, source, stale };
 }
 
 function makeFakeWarmRunner(options = {}) {
@@ -405,6 +552,8 @@ test("station bridge HTTP health and pairing support production web auto-connect
     assert.equal(health.headers.get("access-control-allow-origin"), "https://collect.tenkings.co");
     assert.equal(health.headers.get("access-control-allow-private-network"), "true");
     const healthBody = await health.json();
+    assert.equal(healthBody.bridgeVersion, "ai-grader-local-station-bridge-v0.6");
+    assert.equal(healthBody.reportProducerContractVersion, "ai-grader-report-producer-v0.2");
     assert.equal(healthBody.pairingAvailable, true);
     assert.equal(healthBody.tokenRequired, true);
     assert.equal(healthBody.stationToken, undefined);
@@ -926,6 +1075,7 @@ test("mock station bridge runs staged workflow without claiming hardware", async
 
   let status = service.status();
   assert.equal(status.bridgeVersion, AI_GRADER_LOCAL_STATION_BRIDGE_VERSION);
+  assert.equal(status.reportProducerContractVersion, "ai-grader-report-producer-v0.2");
   assert.equal(status.hardwareActionsEnabled, false);
   assert.equal(status.safety.hardwareAccessed, false);
   assert.equal(status.warmRunnerStatus.mode, "full_forensic");
@@ -1057,6 +1207,31 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   const release = JSON.parse(fs.readFileSync(status.outputs.productionReleasePath, "utf8"));
   assert.equal(release.databaseIntegration.productionDbWritesPerformed, false);
   assert.equal(release.storageIntegration.uploadPerformed, false);
+});
+
+test("active confirmed report recovers a stale PR82 package once under concurrent reads", async () => {
+  const dir = outputDir("active-report-recovery-" + Date.now());
+  const bundleRoot = path.join(dir, "report-bundles");
+  fs.rmSync(dir, { recursive: true, force: true });
+  const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+  const service = new AiGraderLocalStationBridgeService(config);
+  const reportId = "active-pr82-recovery-report";
+  const fixture = await installStaleCandidatePackage(service, config, reportId);
+  const workflowHistory = structuredClone(fixture.manifest.rapidCapture.workflowHistory);
+
+  const resolved = await Promise.all([service.reportBundle(reportId), service.reportBundle(reportId)]);
+  assert.equal(resolved.some((item) => item.source === "canonical_publish_package_recovered"), true);
+  assert.equal(resolved.every((item) => item.bundle.reportProducer.contractVersion === "ai-grader-report-producer-v0.2"), true);
+  assert.equal(resolved[0].bundle.visionLab.defectFindings[0].findingId, fixture.legacyFindingId);
+  assert.deepEqual(resolved[0].bundle.productionRelease.operatorFinalization, fixture.previousRelease.operatorFinalization);
+  for (const fileName of [
+    "report-bundle.json", "asset-manifest.json", "checksums.json", "production-release.json",
+    "label-data.json", "publication-manifest.json", "integration-contract.json",
+  ]) assert.equal(fs.existsSync(path.join(fixture.canonicalDir, fileName)), true, fileName);
+  const nextStatus = service.status();
+  assert.equal(nextStatus.rapidCapture.workflowState, "confirmed_needs_publish");
+  assert.deepEqual(nextStatus.rapidCapture.workflowHistory, workflowHistory);
+  assert.equal(nextStatus.progressLog.filter((entry) => entry.includes("derived package safely recovered")).length, 1);
 });
 
 test("browser live lighting safe-offs on capture start and records safety event", async () => {
@@ -1953,6 +2128,30 @@ test("fresh bridge status exposes latest generated report from local history", a
   assert.equal(resolved.source, "history_generated_with_asset_bodies");
   assert.equal(imageAsset?.bodyEncoding, "base64");
   assert.deepEqual(Buffer.from(imageAsset?.bodyBase64 ?? "", "base64"), PNG_BYTES);
+});
+
+test("fresh bridge recovers stale history package idempotently without changing confirmed workflow state", async () => {
+  const dir = outputDir("history-report-recovery-" + Date.now());
+  const bundleRoot = path.join(dir, "report-bundles");
+  fs.rmSync(dir, { recursive: true, force: true });
+  const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+  const seedService = new AiGraderLocalStationBridgeService(config);
+  const reportId = "history-pr82-recovery-report";
+  const fixture = await installStaleCandidatePackage(seedService, config, reportId);
+  const freshService = new AiGraderLocalStationBridgeService(config);
+
+  const first = await freshService.reportBundle(reportId);
+  assert.equal(first.source, "canonical_publish_package_recovered");
+  assert.equal(first.bundle.visionLab.defectFindings[0].findingId, fixture.legacyFindingId);
+  const firstBytes = fs.readFileSync(path.join(fixture.canonicalDir, "report-bundle.json"));
+  const second = await freshService.reportBundle(reportId);
+  assert.equal(second.source, "canonical_publish_package");
+  assert.deepEqual(fs.readFileSync(path.join(fixture.canonicalDir, "report-bundle.json")), firstBytes);
+
+  const persisted = JSON.parse(fs.readFileSync(fixture.manifest.outputs.manifestPath, "utf8"));
+  assert.equal(persisted.rapidCapture.workflowState, "confirmed_needs_publish");
+  assert.deepEqual(persisted.rapidCapture.workflowHistory, fixture.manifest.rapidCapture.workflowHistory);
+  assert.equal(persisted.progressLog.filter((entry) => entry.includes("derived package safely recovered")).length, 1);
 });
 
 test("station bridge ignores stale shared bundle paths for requested history report", async () => {
