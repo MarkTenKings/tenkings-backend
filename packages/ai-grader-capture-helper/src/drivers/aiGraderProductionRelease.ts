@@ -357,6 +357,7 @@ function buildFinalGrade(bundle: AiGraderReportBundle, gates: AiGraderProduction
 
 export function buildAiGraderProductionRelease(input: {
   bundle: AiGraderReportBundle;
+  previousRelease?: AiGraderProductionRelease;
   generatedAt?: string;
   operatorId?: string;
   warningsAccepted?: boolean;
@@ -364,7 +365,7 @@ export function buildAiGraderProductionRelease(input: {
   publicBaseUrl?: string;
   reportBundlePath?: string;
 }): AiGraderProductionRelease {
-  const generatedAt = input.generatedAt ?? new Date().toISOString();
+  const generatedAt = input.generatedAt ?? input.previousRelease?.generatedAt ?? new Date().toISOString();
   const warningsAccepted = input.warningsAccepted === true;
   const gates = buildProductionGates(input.bundle, warningsAccepted);
   const finalGrade = buildFinalGrade(input.bundle, gates);
@@ -423,7 +424,7 @@ export function buildAiGraderProductionRelease(input: {
     qrPayloadGenerated: label.status === "label_data_ready",
     gates,
     finalGrade,
-    operatorFinalization: {
+    operatorFinalization: input.previousRelease?.operatorFinalization ?? {
       operatorId: input.operatorId ?? "local-operator",
       finalizedAt: generatedAt,
       warningsAccepted,
@@ -438,17 +439,17 @@ export function buildAiGraderProductionRelease(input: {
     calibrationProfile: input.bundle.calibrationProfile,
     rulerCalibration: input.bundle.rulerCalibration,
     lightingProfile: input.bundle.lightingProfile,
-    slabbedPhotoContract: {
+    slabbedPhotoContract: input.previousRelease?.slabbedPhotoContract ?? {
       status: "reserved_not_uploaded",
       note: "Slabbed color photos are separate from Basler evidence and will attach after physical encapsulation.",
     },
-    ebayCompsContract: {
+    ebayCompsContract: input.previousRelease?.ebayCompsContract ?? {
       status: "not_run",
       valuationStatus: "pending_card_identity_and_final_sale_context",
       compsRefs: [],
       note: "No live SerpAPI/eBay lookup is run by Production Release V0.",
     },
-    cardInventoryLinkage: {
+    cardInventoryLinkage: input.previousRelease?.cardInventoryLinkage ?? {
       status: "contract_ready_not_persisted",
       cardAssetId: input.bundle.cardIdentity.cardAssetId,
       note: "Production Release V0 emits linkage fields but performs no DB write.",
@@ -495,6 +496,9 @@ async function readBundleFromPath(bundlePath: string): Promise<AiGraderReportBun
 
 export async function writeAiGraderProductionRelease(input: {
   reportBundlePath?: string;
+  reportBundleReferencePath?: string;
+  artifactReferenceDir?: string;
+  previousRelease?: AiGraderProductionRelease;
   reportDir?: string;
   outputDir: string;
   reportId?: string;
@@ -517,19 +521,21 @@ export async function writeAiGraderProductionRelease(input: {
       });
   const productionRelease = buildAiGraderProductionRelease({
     bundle,
+    previousRelease: input.previousRelease,
     generatedAt: input.generatedAt,
     operatorId: input.operatorId,
     warningsAccepted: input.warningsAccepted,
     overrideReason: input.overrideReason,
     publicBaseUrl: input.publicBaseUrl,
-    reportBundlePath: input.reportBundlePath,
+    reportBundlePath: input.reportBundleReferencePath ?? input.reportBundlePath,
   });
   const productionReleasePath = path.join(outputDir, "production-release.json");
   const labelDataPath = path.join(outputDir, "label-data.json");
   const publicationManifestPath = path.join(outputDir, "publication-manifest.json");
   const integrationContractPath = path.join(outputDir, "integration-contract.json");
-  productionRelease.publication.productionReleasePath = productionReleasePath;
-  productionRelease.publication.labelDataPath = labelDataPath;
+  const artifactReferenceDir = path.resolve(input.artifactReferenceDir ?? outputDir);
+  productionRelease.publication.productionReleasePath = path.join(artifactReferenceDir, "production-release.json");
+  productionRelease.publication.labelDataPath = path.join(artifactReferenceDir, "label-data.json");
 
   await writeFile(productionReleasePath, `${JSON.stringify(productionRelease, null, 2)}\n`, "utf-8");
   await writeFile(labelDataPath, `${JSON.stringify(productionRelease.label, null, 2)}\n`, "utf-8");

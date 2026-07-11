@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AiGraderDefectFindingV1 } from "@tenkings/shared";
 import sharp from "sharp";
@@ -7,6 +7,12 @@ import { extractAiGraderDefectFindingsV1, type AiGraderApprovedDefectEvidence } 
 import type { AiGraderCaptureTimingProfile } from "./aiGraderCaptureTiming";
 
 export const AI_GRADER_REPORT_BUNDLE_VERSION = "ai-grader-report-bundle-v0.1";
+export const AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION = "ai-grader-report-producer-v0.2";
+export const AI_GRADER_REPORT_PRODUCER_CAPABILITIES = [
+  "finding-validation-v1",
+  "capture-profile-provenance-v1",
+  "raster-dimensions-v1",
+] as const;
 
 const AI_GRADER_REPORT_CAPTURE_PROFILE_VERSIONS: Record<AiGraderCaptureTimingProfile, string> = {
   full_forensic: "ten-kings-fixed-rig-full-forensic-v1",
@@ -45,6 +51,10 @@ export interface AiGraderReportBundleAsset {
 
 export interface AiGraderReportBundle {
   schemaVersion: typeof AI_GRADER_REPORT_BUNDLE_VERSION;
+  reportProducer: {
+    contractVersion: typeof AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION;
+    capabilities: Array<(typeof AI_GRADER_REPORT_PRODUCER_CAPABILITIES)[number]>;
+  };
   generatedAt: string;
   gradingSessionId: string;
   reportId: string;
@@ -418,6 +428,8 @@ export async function buildAiGraderReportBundle(input: {
   outputDir?: string;
   reportId?: string;
   generatedAt?: string;
+  gradingSessionId?: string;
+  cardIdentity?: AiGraderReportBundle["cardIdentity"];
   publicBasePath?: string;
   includeAssetBodies?: boolean;
   captureTiming?: JsonRecord;
@@ -592,8 +604,12 @@ export async function buildAiGraderReportBundle(input: {
 
   return {
     schemaVersion: AI_GRADER_REPORT_BUNDLE_VERSION,
+    reportProducer: {
+      contractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
+      capabilities: [...AI_GRADER_REPORT_PRODUCER_CAPABILITIES],
+    },
     generatedAt: input.generatedAt ?? new Date().toISOString(),
-    gradingSessionId: deriveSessionId(manifest, analysis, reportId),
+    gradingSessionId: input.gradingSessionId ?? deriveSessionId(manifest, analysis, reportId),
     reportId,
     reportStatus: deriveReportStatus(story),
     provisionalStatus: "provisional_diagnostic",
@@ -613,7 +629,7 @@ export async function buildAiGraderReportBundle(input: {
       assetBaseUrlTemplate: `${input.publicBasePath ?? "/ai-grader/reports"}/{reportId}/assets`,
       uploadStorageKeyPrefix: `ai-grader/reports/${reportId}/`,
     },
-    cardIdentity: {
+    cardIdentity: input.cardIdentity ?? {
       cardAssetId: typeof manifest?.cardAssetId === "string" ? manifest.cardAssetId : undefined,
       title: typeof manifest?.cardTitle === "string" ? manifest.cardTitle : "Ten Kings AI Grader report",
       sideCount: 2,
@@ -703,15 +719,43 @@ export async function writeAiGraderReportBundle(input: {
   outputDir?: string;
   reportId?: string;
   generatedAt?: string;
+  gradingSessionId?: string;
+  cardIdentity?: AiGraderReportBundle["cardIdentity"];
   publicBasePath?: string;
   captureTiming?: JsonRecord;
   geometryCaptureDecisions?: JsonRecord;
   ocrPrefill?: JsonRecord;
+  copyDerivedAssets?: boolean;
+  artifactReferenceDir?: string;
+  transformBundle?: (bundle: AiGraderReportBundle) => void;
 }): Promise<AiGraderReportBundleWriteResult> {
   const outputDir = normalizeLocalPath(input.outputDir ?? input.reportDir);
   assertReportBundleOutputDirAllowed(outputDir);
   await mkdir(outputDir, { recursive: true });
   const bundle = await buildAiGraderReportBundle({ ...input, outputDir });
+  if (input.copyDerivedAssets) {
+    const stagedAssetsDir = path.join(outputDir, "assets");
+    const referencedAssetsDir = path.join(path.resolve(input.artifactReferenceDir ?? outputDir), "assets");
+    const sourceRoots = await Promise.all([
+      bundle.localReportFolder,
+      bundle.evidenceReferences.frontPackageDir,
+      bundle.evidenceReferences.backPackageDir,
+    ].filter((value): value is string => Boolean(value)).map((value) => realpath(value)));
+    await mkdir(stagedAssetsDir, { recursive: true });
+    for (const asset of bundle.assets) {
+      if (asset.kind === "folder" || !asset.sha256 || typeof asset.byteSize !== "number") continue;
+      const sourcePath = await realpath(asset.localPath);
+      if (!sourceRoots.some((root) => isSubpath(sourcePath, root))) {
+        throw new Error("AI Grader report asset is outside the immutable report evidence roots.");
+      }
+      const safeBaseName = path.basename(asset.localPath).replace(/[^A-Za-z0-9._-]/g, "_") || "artifact.bin";
+      const stablePrefix = crypto.createHash("sha256").update(asset.id).digest("hex").slice(0, 12);
+      const packagedFileName = stablePrefix + "-" + safeBaseName;
+      await copyFile(sourcePath, path.join(stagedAssetsDir, packagedFileName));
+      asset.localPath = path.join(referencedAssetsDir, packagedFileName);
+    }
+  }
+  input.transformBundle?.(bundle);
   const bundlePath = path.join(outputDir, "report-bundle.json");
   const assetManifestPath = path.join(outputDir, "asset-manifest.json");
   const checksumsPath = path.join(outputDir, "checksums.json");

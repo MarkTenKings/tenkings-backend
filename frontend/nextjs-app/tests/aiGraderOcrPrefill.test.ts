@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
   createAiGraderProductionApiHandler,
@@ -281,8 +283,16 @@ test("OCR prefill existing extractor marks low-confidence values for review", as
   assert.equal((networkInputs as any[]).every((image) => typeof image.url === "string"), true);
 });
 
-test("OCR prefill finalize fails closed when the storage-provided checksum is missing or tampered", async () => {
-  for (const storedChecksum of [undefined, "0".repeat(64)]) {
+test("OCR prefill finalize rejects missing or wrong checksum, byte size, and content type", async () => {
+  const failures = [
+    { name: "missing-checksum", patch: { checksumSha256: undefined }, message: /native sha-256 checksum/i },
+    { name: "tampered-checksum", patch: { checksumSha256: "0".repeat(64) }, message: /checksum mismatch/i },
+    { name: "missing-size", patch: { byteSize: undefined }, message: /byte size mismatch/i },
+    { name: "wrong-size", patch: { byteSize: 999 }, message: /byte size mismatch/i },
+    { name: "missing-type", patch: { contentType: undefined }, message: /content type mismatch/i },
+    { name: "wrong-type", patch: { contentType: "image/jpeg" }, message: /content type mismatch/i },
+  ];
+  for (const failure of failures) {
     let ocrCalls = 0;
     const handler = createAiGraderProductionApiHandler({
       env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
@@ -306,7 +316,11 @@ test("OCR prefill finalize fails closed when the storage-provided checksum is mi
           storageKey,
           uploadUrl: `https://uploads.tenkings.test/${storageKey}`,
           uploadMethod: "PUT",
-          uploadHeaders: { "Content-Type": contentType, "x-amz-meta-sha256": checksumSha256 },
+          uploadHeaders: {
+            "Content-Type": contentType,
+            "x-amz-meta-sha256": checksumSha256,
+            "x-amz-checksum-sha256": checksumSha256,
+          },
           publicUrl: `https://cdn.tenkings.test/${storageKey}`,
         };
       },
@@ -315,30 +329,40 @@ test("OCR prefill finalize fails closed when the storage-provided checksum is mi
           ok: true,
           byteSize: input.byteSize,
           contentType: input.contentType,
-          checksumSha256: storedChecksum,
+          checksumSha256: input.checksumSha256,
+          ...failure.patch,
         };
       },
       async runOcrPrefill() {
         ocrCalls += 1;
         throw new Error("OCR must not run for an unverified object");
       },
+      async persist() {
+        throw new Error("persist must not run for an unverified object");
+      },
     });
     const initRes = mockResponse();
     await handler(
       mockRequest("POST", ["ocr-prefill-init"], {
-        reportId: `checksum-${storedChecksum ? "tampered" : "missing"}`,
+        reportId: "integrity-" + failure.name,
         images: normalizedImages(),
       }),
       initRes
     );
     assert.equal(initRes.statusCodeValue, 200);
+    const uploadHeaders = (initRes.jsonBody as any).result.uploadPlan[0].uploadHeaders;
+    assert.equal(Object.keys(uploadHeaders).some((name) => name.toLowerCase() === "x-amz-meta-sha256"), false);
+    assert.equal(Object.keys(uploadHeaders).some((name) => name.toLowerCase() === "x-amz-checksum-sha256"), false);
     const finalizeRes = mockResponse();
     await handler(
       mockRequest("POST", ["ocr-prefill-finalize"], (initRes.jsonBody as any).result.requiredFinalizeManifest),
       finalizeRes
     );
     assert.notEqual(finalizeRes.statusCodeValue, 200);
-    assert.match(String((finalizeRes.jsonBody as any)?.message ?? ""), /storage-provided sha-256 checksum/i);
+    assert.match(String((finalizeRes.jsonBody as any)?.message ?? ""), failure.message);
+    if (failure.name === "missing-checksum") {
+      assert.equal((finalizeRes.jsonBody as any)?.code, "AI_GRADER_STORAGE_CHECKSUM_UNAVAILABLE");
+    }
     assert.equal(ocrCalls, 0);
   }
 });
@@ -392,6 +416,29 @@ test("OCR upload checksum conversion is strict and round-trips S3 base64 SHA-256
   assert.equal(sha256Base64ToHex(`${checksumBase64.slice(0, -1)}A`), null);
   assert.equal(sha256Base64ToHex("not-base64"), null);
   assert.throws(() => sha256HexToBase64("0".repeat(63)), /64-character hex digest/);
+});
+
+test("AWS presigning binds SHA-256 in the signed query without a browser checksum header", async () => {
+  const checksumHex = sha256("normalized-card-query-contract");
+  const client = new S3Client({
+    region: "us-east-1",
+    endpoint: "https://storage.example.invalid",
+    credentials: { accessKeyId: "test-access-key", secretAccessKey: "test-secret-key" },
+  });
+  try {
+    const signed = await getSignedUrl(client as any, new PutObjectCommand({
+      Bucket: "test-bucket",
+      Key: "test-object",
+      ContentType: "image/png",
+      ChecksumSHA256: sha256HexToBase64(checksumHex),
+    }) as any, { expiresIn: 600 });
+    const url = new URL(signed);
+    assert.equal(url.searchParams.get("x-amz-checksum-sha256"), sha256HexToBase64(checksumHex));
+    assert.equal(url.searchParams.get("X-Amz-SignedHeaders"), "host");
+    assert.equal(url.searchParams.get("X-Amz-SignedHeaders")?.includes("x-amz-checksum-sha256"), false);
+  } finally {
+    client.destroy();
+  }
 });
 
 test("OCR prefill rejects image bodies, caller URLs, and unsafe storage source URLs", async () => {

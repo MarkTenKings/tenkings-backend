@@ -886,6 +886,13 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+export function sanitizeAiGraderUploadHeadersForResponse(headers: Record<string, string> | undefined) {
+  return Object.fromEntries(Object.entries(headers ?? {}).filter(([name]) => {
+    const normalized = name.trim().toLowerCase();
+    return normalized !== "x-amz-meta-sha256" && normalized !== "x-amz-checksum-sha256";
+  }));
+}
+
 function artifactForResponse(artifact: AiGraderProductionArtifactPlan, presigned: AiGraderProductionPresignedUpload): AiGraderProductionUploadPlanArtifact {
   return {
     artifactId: artifact.artifactId,
@@ -901,7 +908,7 @@ function artifactForResponse(artifact: AiGraderProductionArtifactPlan, presigned
     sourceImageHeightPx: artifact.sourceImageHeightPx,
     uploadUrl: presigned.uploadUrl,
     uploadMethod: presigned.uploadMethod,
-    uploadHeaders: presigned.uploadHeaders,
+    uploadHeaders: sanitizeAiGraderUploadHeadersForResponse(presigned.uploadHeaders),
     ...(artifact.artifactClass !== "report_asset" && typeof artifact.body === "string"
       ? { body: artifact.body, bodyEncoding: "utf8" as const }
       : {}),
@@ -996,31 +1003,61 @@ function normalizedContentType(value: string | undefined) {
 }
 
 function storageContentTypeMatches(actual: string | undefined, expected: string | undefined) {
-  if (!actual || !expected) return true;
+  if (!actual || !expected) return false;
   return normalizedContentType(actual) === normalizedContentType(expected);
+}
+
+type VerifiedStorageArtifact = {
+  ok: boolean;
+  byteSize?: number;
+  contentType?: string;
+  checksumSha256?: string | null;
+  widthPx?: number;
+  heightPx?: number;
+};
+
+export function assertAiGraderStorageArtifactIntegrity(input: {
+  verified: VerifiedStorageArtifact;
+  expectedByteSize: number;
+  expectedContentType: string | undefined;
+  expectedChecksumSha256: string;
+  label: string;
+}) {
+  const checksum = typeof input.verified.checksumSha256 === "string"
+    ? input.verified.checksumSha256.toLowerCase()
+    : "";
+  if (!/^[a-f0-9]{64}$/.test(checksum)) {
+    const error = new Error("Storage did not return a native SHA-256 checksum for " + input.label + ". Finalize stopped.");
+    (error as Error & { statusCode?: number; code?: string }).statusCode = 502;
+    (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_STORAGE_CHECKSUM_UNAVAILABLE";
+    throw error;
+  }
+  if (checksum !== input.expectedChecksumSha256.toLowerCase()) {
+    throw new Error("Storage-provided SHA-256 checksum mismatch for " + input.label + ".");
+  }
+  if (!Number.isSafeInteger(input.verified.byteSize) || input.verified.byteSize !== input.expectedByteSize) {
+    throw new Error("Storage byte size mismatch for " + input.label + ".");
+  }
+  if (!storageContentTypeMatches(input.verified.contentType, input.expectedContentType)) {
+    throw new Error("Storage content type mismatch for " + input.label + ".");
+  }
+  if (!input.verified.ok) throw new Error("Storage verification failed for " + input.label + ".");
 }
 
 async function verifyUploadedArtifacts(
   deps: AiGraderProductionApiDependencies,
   manifest: AiGraderProductionUploadManifest
 ) {
-  if (!deps.verifyUploadedArtifact) return;
+  if (!deps.verifyUploadedArtifact) throw new Error("AI Grader storage verification is not configured.");
   for (const artifact of manifest.artifacts) {
     const verified = await deps.verifyUploadedArtifact(artifact);
-    if (!verified.ok) throw new Error(verified.message ?? `Uploaded artifact ${artifact.artifactId} was not found in storage.`);
-    if (typeof verified.byteSize === "number" && verified.byteSize !== artifact.byteSize) {
-      throw new Error(`Storage byte size mismatch for ${artifact.artifactId}.`);
-    }
-    if (!storageContentTypeMatches(verified.contentType, artifact.contentType)) {
-      throw new Error(`Storage content type mismatch for ${artifact.artifactId}.`);
-    }
-    if (
-      typeof verified.checksumSha256 === "string" &&
-      verified.checksumSha256 &&
-      verified.checksumSha256.toLowerCase() !== artifact.checksumSha256.toLowerCase()
-    ) {
-      throw new Error(`Storage checksum metadata mismatch for ${artifact.artifactId}.`);
-    }
+    assertAiGraderStorageArtifactIntegrity({
+      verified,
+      expectedByteSize: artifact.byteSize,
+      expectedContentType: artifact.contentType,
+      expectedChecksumSha256: artifact.checksumSha256,
+      label: "publish artifact",
+    });
     if (
       artifact.sourceImageWidthPx !== undefined ||
       artifact.sourceImageHeightPx !== undefined
@@ -1029,7 +1066,7 @@ async function verifyUploadedArtifacts(
         verified.widthPx !== artifact.sourceImageWidthPx ||
         verified.heightPx !== artifact.sourceImageHeightPx
       ) {
-        throw new Error(`Storage-decoded source image dimensions mismatch for ${artifact.artifactId}.`);
+        throw new Error("Storage-decoded source image dimensions mismatch for publish artifact.");
       }
     }
   }
@@ -1893,7 +1930,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             publicUrl,
             uploadUrl: presigned.uploadUrl,
             uploadMethod: presigned.uploadMethod,
-            uploadHeaders: presigned.uploadHeaders,
+            uploadHeaders: sanitizeAiGraderUploadHeadersForResponse(presigned.uploadHeaders),
           });
         }
         const result: AiGraderOcrPrefillUploadInitResult = {
@@ -1927,19 +1964,13 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             byteSize: image.byteSize,
             contentType: image.mimeType,
           });
-          if (!verified.ok) throw new Error(`Uploaded normalized ${image.side} image was not found in storage.`);
-          if (typeof verified.byteSize === "number" && verified.byteSize !== image.byteSize) {
-            throw new Error(`Storage byte size mismatch for normalized ${image.side} image.`);
-          }
-          if (!storageContentTypeMatches(verified.contentType, image.mimeType)) {
-            throw new Error(`Storage content type mismatch for normalized ${image.side} image.`);
-          }
-          if (typeof verified.checksumSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(verified.checksumSha256)) {
-            throw new Error(`Storage-provided SHA-256 checksum is missing for normalized ${image.side} image.`);
-          }
-          if (verified.checksumSha256.toLowerCase() !== image.checksumSha256.toLowerCase()) {
-            throw new Error(`Storage-provided SHA-256 checksum mismatch for normalized ${image.side} image.`);
-          }
+          assertAiGraderStorageArtifactIntegrity({
+            verified,
+            expectedByteSize: image.byteSize,
+            expectedContentType: image.mimeType,
+            expectedChecksumSha256: image.checksumSha256,
+            label: "normalized " + image.side + " OCR image",
+          });
         }
         let result: AiGraderOcrPrefillResult;
         try {
@@ -1996,7 +2027,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           publicUrl: presigned.publicUrl,
           uploadUrl: presigned.uploadUrl,
           uploadMethod: presigned.uploadMethod,
-          uploadHeaders: presigned.uploadHeaders,
+          uploadHeaders: sanitizeAiGraderUploadHeadersForResponse(presigned.uploadHeaders),
           requiredFinalizeManifest: {
             reportId: input.reportId,
             side: input.side,
@@ -2017,8 +2048,9 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       }
       if (key === "slabbed-photo-finalize") {
         if (!deps.finalizeSlabbedPhotoUpload) throw new Error("AI Grader slabbed photo finalize is not configured.");
+        if (!deps.verifyUploadedArtifact) throw new Error("AI Grader slabbed photo upload verification is not configured.");
         const input = parseSlabbedPhotoFinalizeBody(req.body);
-        if (deps.verifyUploadedArtifact) {
+        {
           const verified = await deps.verifyUploadedArtifact({
             artifactId: `slabbed-photo:${input.reportId}:${input.side}`,
             storageKey: input.storageKey,
@@ -2027,20 +2059,13 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             byteSize: input.byteSize,
             contentType: input.mimeType,
           });
-          if (!verified.ok) throw new Error(verified.message ?? `Uploaded slabbed ${input.side} photo was not found in storage.`);
-          if (typeof verified.byteSize === "number" && verified.byteSize !== input.byteSize) {
-            throw new Error(`Storage byte size mismatch for slabbed ${input.side} photo.`);
-          }
-          if (!storageContentTypeMatches(verified.contentType, input.mimeType)) {
-            throw new Error(`Storage content type mismatch for slabbed ${input.side} photo.`);
-          }
-          if (
-            typeof verified.checksumSha256 === "string" &&
-            verified.checksumSha256 &&
-            verified.checksumSha256.toLowerCase() !== input.checksumSha256.toLowerCase()
-          ) {
-            throw new Error(`Storage checksum metadata mismatch for slabbed ${input.side} photo.`);
-          }
+          assertAiGraderStorageArtifactIntegrity({
+            verified,
+            expectedByteSize: input.byteSize,
+            expectedContentType: input.mimeType,
+            expectedChecksumSha256: input.checksumSha256,
+            label: "slabbed " + input.side + " photo",
+          });
         }
         const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
         const result = await deps.finalizeSlabbedPhotoUpload({

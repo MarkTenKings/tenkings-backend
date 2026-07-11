@@ -8,6 +8,7 @@ import type {
 } from "./aiGraderLocalStation";
 import {
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+  AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
   sanitizeAiGraderLocalStationStatusForDisplay,
 } from "./aiGraderLocalStation";
 import type { AiGraderReportBundle } from "./aiGraderReportBundle";
@@ -105,6 +106,7 @@ export function buildAiGraderRapidQueueActivationRequest(queueItemId: string) {
 export type AiGraderStationBridgeHealth = {
   ok: boolean;
   bridgeVersion: string;
+  reportProducerContractVersion: string;
   mode: "mock" | "real";
   localOnly: true;
   tokenRequired: true;
@@ -175,7 +177,12 @@ export async function fetchAiGraderStationBridgeHealth(
       ? payload.bridgeVersion.trim()
       : "unknown";
     throw new Error(
-      `Dell local bridge update/restart required. Production expects ${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}; the running bridge is ${runningVersion}. Launch the Ten Kings AI Grader Station desktop shortcut to load the current helper.`,
+      `Dell local bridge update/restart required. Production expects ${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}; the running bridge is ${runningVersion}. Launch the Ten Kings AI Grader Station desktop shortcut, then re-export the existing report. No hardware recapture is required.`,
+    );
+  }
+  if (payload.reportProducerContractVersion !== AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION) {
+    throw new Error(
+      `Dell report producer update/restart required. Launch the Ten Kings AI Grader Station desktop shortcut, then re-export the existing report. No hardware recapture is required.`,
     );
   }
   return payload as AiGraderStationBridgeHealth;

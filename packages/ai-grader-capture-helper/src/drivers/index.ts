@@ -84,9 +84,22 @@ export {
 } from "./fixedRigProvisionalGradeStory";
 export {
   AI_GRADER_REPORT_BUNDLE_VERSION,
+  AI_GRADER_REPORT_PRODUCER_CAPABILITIES,
+  AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
   buildAiGraderReportBundle,
   writeAiGraderReportBundle,
 } from "./aiGraderReportBundle";
+export {
+  AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+  aiGraderReportBundleHasCurrentProducer,
+  aiGraderReportBundleHasFindingCandidates,
+  aiGraderReportBundleNeedsRecovery,
+  aiGraderReportPackageHasCompleteCurrentSidecars,
+  readAiGraderReportPackageReleaseEvidence,
+  reconcileAiGraderReportPackageTransaction,
+  recoverAiGraderReportPackage,
+  withAiGraderReportPackageOperation,
+} from "./aiGraderReportPackageRecovery";
 export {
   createStableAiGraderDefectFindingId,
   extractAiGraderDefectFindingsV1,

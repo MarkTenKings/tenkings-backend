@@ -1,7 +1,8 @@
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE, type AiGraderReportBundle } from "./aiGraderReportBundle";
 import type { AiGraderProductionRelease } from "./aiGraderProductionRelease";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.5";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.6";
+export const AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION = "ai-grader-report-producer-v0.2";
 
 export type AiGraderStationStepId =
   | "start_new_card"
@@ -307,6 +308,7 @@ export type AiGraderWarmRunnerStatus = {
 
 export type AiGraderLocalStationStatus = {
   bridgeVersion: typeof AI_GRADER_LOCAL_STATION_BRIDGE_VERSION;
+  reportProducerContractVersion: typeof AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION;
   stationId: string;
   mode: AiGraderLocalStationBridgeMode;
   localOnly: true;
@@ -1571,6 +1573,7 @@ export function buildAiGraderLocalStationStatus(input: {
 
   return {
     bridgeVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+    reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
     stationId: "local-dell-ai-grader-station",
     mode: input.mode ?? "mock_dev",
     localOnly: true,

@@ -41,10 +41,21 @@ import {
 } from "./aiGraderStationWorkflow";
 import { BaslerPylonClient } from "./baslerPylonClient";
 import {
+  AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
   buildAiGraderReportBundle,
   writeAiGraderReportBundle,
   type AiGraderReportBundle,
+  type AiGraderReportBundleAsset,
 } from "./aiGraderReportBundle";
+import {
+  AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+  aiGraderReportBundleNeedsRecovery,
+  readAiGraderReportPackageReleaseEvidence,
+  reconcileAiGraderReportPackageTransaction,
+  recoverAiGraderReportPackage,
+  withAiGraderReportPackageOperation,
+  type RecoverAiGraderReportPackageResult,
+} from "./aiGraderReportPackageRecovery";
 import {
   writeAiGraderProductionRelease,
   type AiGraderProductionRelease,
@@ -64,7 +75,7 @@ import {
   type AiGraderCaptureTriggerMode,
 } from "./aiGraderCaptureTiming";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.5";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.6";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
@@ -502,6 +513,7 @@ export interface AiGraderLocalStationBridgeManifest {
 export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBridgeManifest {
   ok: true;
   bridgeVersion: typeof AI_GRADER_LOCAL_STATION_BRIDGE_VERSION;
+  reportProducerContractVersion: typeof AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION;
   localOnly: true;
   loginRequired: false;
   hardwareActionsEnabled: boolean;
@@ -1691,10 +1703,23 @@ function dirnameIfFile(filePath: string | undefined) {
   return path.dirname(filePath);
 }
 
+function isSubpath(childPath: string, parentPath: string) {
+  const relative = path.relative(path.resolve(parentPath), path.resolve(childPath));
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function safeReportPackageSegment(reportId: string) {
-  const sanitized = reportId.trim().replace(/[^A-Za-z0-9._-]/g, "_");
-  if (!sanitized) throw new Error("AI Grader report ID is required for the publish package directory.");
-  return sanitized;
+  const normalized = reportId.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(normalized)) {
+    throw new Error("AI Grader report ID is not safe for a publish package directory.");
+  }
+  return normalized;
+}
+
+interface AiGraderReportRecoverySource {
+  manifest: AiGraderLocalStationBridgeManifest;
+  reportDir: string;
+  sessionManifestPath: string;
 }
 
 function reportBundleRootDir(config: AiGraderLocalStationBridgeConfig) {
@@ -1906,6 +1931,16 @@ async function exists(filePath: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function recoveryPathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
+    throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
   }
 }
 
@@ -2172,16 +2207,37 @@ async function readProductionReleaseFromPath(releasePath: string | undefined): P
 }
 
 function bundleWithProductionRelease(bundle: AiGraderReportBundle, productionRelease: AiGraderProductionRelease | undefined): AiGraderReportBundle {
-  if (!productionRelease) return bundle;
+  const cleanBundle = { ...bundle } as AiGraderReportBundle & { productionRelease?: AiGraderProductionRelease };
+  delete cleanBundle.productionRelease;
+  const unfinalizedReportStatus = cleanBundle.reportStatus === "insufficient_evidence" || cleanBundle.reportStatus === "missing_report_data"
+    ? cleanBundle.reportStatus
+    : "provisional_diagnostic_ready";
+  if (!productionRelease) {
+    return {
+      ...cleanBundle,
+      reportStatus: unfinalizedReportStatus,
+      finalStatus: "not_computed",
+      finalGradeComputed: false,
+      certifiedClaim: false,
+      labelGenerated: false,
+      qrGenerated: false,
+      certificateGenerated: false,
+    } as AiGraderReportBundle;
+  }
+  if (productionRelease.reportId !== bundle.reportId ||
+      productionRelease.gradingSessionId !== bundle.gradingSessionId) {
+    throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
+  }
   return {
-    ...bundle,
+    ...cleanBundle,
+    reportStatus: productionRelease.reportStatus,
     finalStatus: productionRelease.finalStatus as any,
     finalGradeComputed: productionRelease.finalGradeComputed as any,
     certifiedClaim: false,
     labelGenerated: productionRelease.labelDataGenerated as any,
     qrGenerated: productionRelease.qrPayloadGenerated as any,
     certificateGenerated: false,
-    ...(productionRelease ? { productionRelease } : {}),
+    productionRelease,
   } as AiGraderReportBundle;
 }
 
@@ -2336,6 +2392,7 @@ export class AiGraderLocalStationBridgeService {
     return {
       ok: true,
       bridgeVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+      reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
       localOnly: true,
       loginRequired: false,
       hardwareActionsEnabled: this.config.mode === "real",
@@ -2480,6 +2537,128 @@ export class AiGraderLocalStationBridgeService {
     if (!sessionDir) return undefined;
     const persisted = await readJsonFile(path.join(sessionDir, "station-session.json")) as AiGraderLocalStationBridgeManifest | undefined;
     return persisted?.reportId === reportId ? this.geometryCaptureDecisionSnapshot(persisted) : undefined;
+  }
+
+  private recoverySourceFromManifest(
+    manifest: AiGraderLocalStationBridgeManifest,
+    reportId: string,
+    sessionManifestPath: string,
+  ): AiGraderReportRecoverySource | undefined {
+    if (manifest.reportId !== reportId || !manifest.sessionId) return undefined;
+    const reportDir = manifest.outputs.unifiedReportDir ?? dirnameIfFile(manifest.outputs.unifiedReportPath);
+    if (!reportDir || !isSubpath(reportDir, this.config.outputDir) ||
+        !isSubpath(sessionManifestPath, this.config.outputDir)) return undefined;
+    return { manifest, reportDir: path.resolve(reportDir), sessionManifestPath: path.resolve(sessionManifestPath) };
+  }
+
+  private async findReportRecoverySource(reportId: string): Promise<AiGraderReportRecoverySource | undefined> {
+    const activeManifestPath = this.manifest.outputs.manifestPath ??
+      (this.manifest.outputs.sessionDir ? path.join(this.manifest.outputs.sessionDir, "station-session.json") : undefined);
+    if (activeManifestPath) {
+      const active = this.recoverySourceFromManifest(this.manifest, reportId, activeManifestPath);
+      if (active) return active;
+    }
+    for (const queued of this.queuedManifests.values()) {
+      const queuedManifestPath = queued.outputs.manifestPath ??
+        (queued.outputs.sessionDir ? path.join(queued.outputs.sessionDir, "station-session.json") : undefined);
+      if (!queuedManifestPath) continue;
+      const source = this.recoverySourceFromManifest(queued, reportId, queuedManifestPath);
+      if (source) return source;
+    }
+    let entries: Array<{ name: string; isDirectory(): boolean }> = [];
+    try {
+      entries = await readdir(this.config.outputDir, { withFileTypes: true });
+    } catch {
+      return undefined;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const sessionManifestPath = path.join(this.config.outputDir, entry.name, "station-session.json");
+      const persisted = await readJsonFile(sessionManifestPath) as AiGraderLocalStationBridgeManifest | undefined;
+      if (!persisted) continue;
+      const source = this.recoverySourceFromManifest(persisted, reportId, sessionManifestPath);
+      if (source) return source;
+    }
+    return undefined;
+  }
+
+  private async applyRecoveredReportPackage(
+    source: AiGraderReportRecoverySource,
+    result: RecoverAiGraderReportPackageResult,
+  ) {
+    const manifest = source.manifest;
+    manifest.outputs.reportBundlePath = result.bundlePath;
+    manifest.outputs.assetManifestPath = result.assetManifestPath;
+    manifest.outputs.checksumsPath = result.checksumsPath;
+    manifest.outputs.publishPackageDir = result.outputDir;
+    manifest.reportBundle = result.bundle;
+    if (result.productionRelease) {
+      manifest.outputs.productionReleasePath = result.productionReleasePath;
+      manifest.outputs.labelDataPath = result.labelDataPath;
+      manifest.outputs.publicationManifestPath = result.publicationManifestPath;
+      manifest.outputs.integrationContractPath = result.integrationContractPath;
+      manifest.productionRelease = result.productionRelease;
+      manifest.safety.finalGradeComputed = result.productionRelease.finalGradeComputed;
+      manifest.safety.labelGenerated = result.productionRelease.labelDataGenerated;
+      manifest.safety.qrGenerated = result.productionRelease.qrPayloadGenerated;
+    } else {
+      manifest.outputs.productionReleasePath = undefined;
+      manifest.outputs.labelDataPath = undefined;
+      manifest.outputs.publicationManifestPath = undefined;
+      manifest.outputs.integrationContractPath = undefined;
+      manifest.productionRelease = undefined;
+      manifest.safety.finalGradeComputed = false;
+      manifest.safety.labelGenerated = false;
+      manifest.safety.qrGenerated = false;
+    }
+    manifest.progressLog.push(new Date().toISOString() + " Existing report derived package safely recovered for Confirm Card and Publish.");
+    if (this.manifest.reportId === manifest.reportId && this.manifest.sessionId === manifest.sessionId) {
+      this.manifest = manifest;
+    }
+    for (const [queueItemId, queued] of this.queuedManifests) {
+      if (queued.reportId === manifest.reportId && queued.sessionId === manifest.sessionId) {
+        this.queuedManifests.set(queueItemId, manifest);
+      }
+    }
+    await writeJsonAtomic(source.sessionManifestPath, manifest);
+  }
+
+  private async recoverReportBundleIfNeeded(input: {
+    reportId: string;
+    bundle: AiGraderReportBundle;
+    packageDir: string;
+  }) {
+    const source = await this.findReportRecoverySource(input.reportId);
+    if (!source || source.manifest.sessionId !== input.bundle.gradingSessionId ||
+        typeof input.bundle.localReportFolder !== "string" ||
+        path.resolve(input.bundle.localReportFolder) !== path.resolve(source.reportDir)) {
+      throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
+    }
+    const productionRelease = await readAiGraderReportPackageReleaseEvidence({
+      packageDir: input.packageDir,
+      bundle: input.bundle,
+    });
+    const needsRecovery = await aiGraderReportBundleNeedsRecovery(input.bundle, source?.reportDir, input.packageDir);
+    if (!needsRecovery) return { ...input, productionRelease, recovered: false as const };
+    const result = await recoverAiGraderReportPackage({
+      canonicalDir: publishPackageDir(this.config, input.reportId),
+      reportDir: source.reportDir,
+      reportId: input.reportId,
+      gradingSessionId: input.bundle.gradingSessionId,
+      previousBundle: input.bundle,
+      previousRelease: productionRelease,
+      publicBasePath: this.config.publicBasePath,
+      publicBaseUrl: this.config.publicBasePath?.startsWith("http") ? this.config.publicBasePath : undefined,
+      captureTiming: this.captureTimingSnapshot(source.manifest),
+      geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(source.manifest),
+    });
+    await this.applyRecoveredReportPackage(source, result);
+    return {
+      reportId: input.reportId,
+      bundle: result.bundle,
+      productionRelease: result.productionRelease,
+      recovered: true as const,
+    };
   }
 
   private recordGeometryCaptureDecision(
@@ -2881,13 +3060,24 @@ export class AiGraderLocalStationBridgeService {
           manifest.outputs.unifiedReportPath = extractUnifiedReportPath(result.payload);
           const reportDir = manifest.outputs.unifiedReportDir ?? dirnameIfFile(manifest.outputs.unifiedReportPath);
           if (!reportDir) throw new Error("Rapid finalization did not produce a unified report folder.");
-          const bundle = await writeAiGraderReportBundle({
-            reportDir,
-            outputDir: publishPackageDir(this.config, manifest.reportId ?? "local-report"),
-            reportId: manifest.reportId,
-            publicBasePath: this.config.publicBasePath,
-            captureTiming: this.captureTimingSnapshot(manifest),
-            geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(manifest),
+          const reportId = manifest.reportId ?? "local-report";
+          const packageDir = publishPackageDir(this.config, reportId);
+          const bundle = await withAiGraderReportPackageOperation(reportId, async () => {
+            await reconcileAiGraderReportPackageTransaction({
+              canonicalDir: packageDir,
+              reportId,
+              gradingSessionId: manifest.sessionId,
+              reportDir,
+            });
+            return writeAiGraderReportBundle({
+              reportDir,
+              outputDir: packageDir,
+              reportId,
+              gradingSessionId: manifest.sessionId,
+              publicBasePath: this.config.publicBasePath,
+              captureTiming: this.captureTimingSnapshot(manifest),
+              geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(manifest),
+            });
           });
           manifest.outputs.reportBundlePath = bundle.bundlePath;
           manifest.outputs.publishPackageDir = bundle.outputDir;
@@ -4303,47 +4493,195 @@ export class AiGraderLocalStationBridgeService {
     });
   }
 
+  private async attachVerifiedReportAssetBodies(
+    expectedReportId: string,
+    authoritativeBundle: AiGraderReportBundle,
+  ): Promise<AiGraderReportBundle> {
+    try {
+      const recoverySource = await this.findReportRecoverySource(expectedReportId);
+      if (!recoverySource ||
+          authoritativeBundle.reportId !== expectedReportId ||
+          authoritativeBundle.gradingSessionId !== recoverySource.manifest.sessionId ||
+          typeof authoritativeBundle.localReportFolder !== "string" ||
+          path.resolve(authoritativeBundle.localReportFolder) !== path.resolve(recoverySource.reportDir)) {
+        throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
+      }
+      const bodyBundle = await buildAiGraderReportBundle({
+        reportDir: recoverySource.reportDir,
+        outputDir: publishPackageDir(this.config, expectedReportId),
+        reportId: expectedReportId,
+        generatedAt: authoritativeBundle.generatedAt,
+        gradingSessionId: authoritativeBundle.gradingSessionId,
+        cardIdentity: authoritativeBundle.cardIdentity,
+        publicBasePath: this.config.publicBasePath,
+        includeAssetBodies: true,
+        captureTiming: authoritativeBundle.captureTiming ?? this.captureTimingSnapshot(recoverySource.manifest),
+        geometryCaptureDecisions: authoritativeBundle.geometryCaptureDecisions ??
+          this.geometryCaptureDecisionSnapshot(recoverySource.manifest),
+        ocrPrefill: authoritativeBundle.ocrPrefill,
+      });
+      if (bodyBundle.reportId !== authoritativeBundle.reportId ||
+          bodyBundle.gradingSessionId !== authoritativeBundle.gradingSessionId) {
+        throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
+      }
+      const authoritativeImages = authoritativeBundle.assets.filter((asset) => asset.kind === "image");
+      const bodyImages = bodyBundle.assets.filter((asset) => asset.kind === "image");
+      const bodyImagesById = new Map(bodyImages.map((asset) => [asset.id, asset]));
+      if (bodyImagesById.size !== bodyImages.length || bodyImages.length !== authoritativeImages.length ||
+          new Set(authoritativeImages.map((asset) => asset.id)).size !== authoritativeImages.length) {
+        throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
+      }
+      const verifiedBodies = new Map<string, Pick<AiGraderReportBundleAsset, "bodyEncoding" | "bodyBase64">>();
+      for (const authoritativeAsset of authoritativeImages) {
+        const bodyAsset = bodyImagesById.get(authoritativeAsset.id);
+        if (!bodyAsset ||
+            !/^[a-f0-9]{64}$/.test(authoritativeAsset.sha256 ?? "") ||
+            !Number.isSafeInteger(authoritativeAsset.byteSize) ||
+            Number(authoritativeAsset.byteSize) <= 0 ||
+            bodyAsset.sha256 !== authoritativeAsset.sha256 ||
+            bodyAsset.byteSize !== authoritativeAsset.byteSize ||
+            (authoritativeAsset.contentType !== undefined && bodyAsset.contentType !== authoritativeAsset.contentType) ||
+            (authoritativeAsset.widthPx !== undefined && bodyAsset.widthPx !== authoritativeAsset.widthPx) ||
+            (authoritativeAsset.heightPx !== undefined && bodyAsset.heightPx !== authoritativeAsset.heightPx) ||
+            (authoritativeAsset.side !== undefined && bodyAsset.side !== authoritativeAsset.side) ||
+            (authoritativeAsset.evidenceRole !== undefined && bodyAsset.evidenceRole !== authoritativeAsset.evidenceRole) ||
+            bodyAsset.bodyEncoding !== "base64" ||
+            typeof bodyAsset.bodyBase64 !== "string") {
+          throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
+        }
+        const normalizedBody = bodyAsset.bodyBase64.replace(/\s/g, "");
+        const bodyBytes = Buffer.from(normalizedBody, "base64");
+        if (!normalizedBody ||
+            bodyBytes.toString("base64") !== normalizedBody ||
+            bodyBytes.byteLength !== authoritativeAsset.byteSize ||
+            crypto.createHash("sha256").update(bodyBytes).digest("hex") !== authoritativeAsset.sha256) {
+          throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
+        }
+        verifiedBodies.set(authoritativeAsset.id, {
+          bodyEncoding: "base64",
+          bodyBase64: normalizedBody,
+        });
+      }
+      return {
+        ...authoritativeBundle,
+        assets: authoritativeBundle.assets.map((asset) => {
+          const { bodyEncoding: _unverifiedEncoding, bodyBase64: _unverifiedBody, ...cleanAsset } = asset;
+          const verifiedBody = verifiedBodies.get(asset.id);
+          return verifiedBody ? { ...cleanAsset, ...verifiedBody } : cleanAsset;
+        }),
+      };
+    } catch {
+      throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
+    }
+  }
+
+  private async reportBundleResponse(input: {
+    expectedReportId: string;
+    bundle: AiGraderReportBundle;
+    productionRelease?: AiGraderProductionRelease;
+    source: string;
+    includeAssetBodies?: boolean;
+  }): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
+    const authoritativeBundle = bundleWithProductionRelease(input.bundle, input.productionRelease);
+    const responseBundle = input.includeAssetBodies
+      ? await this.attachVerifiedReportAssetBodies(input.expectedReportId, authoritativeBundle)
+      : authoritativeBundle;
+    return {
+      reportId: input.expectedReportId,
+      bundle: responseBundle,
+      source: input.includeAssetBodies ? input.source + "_with_asset_bodies" : input.source,
+    };
+  }
+
   async reportBundle(
     reportId: string | undefined,
     options: { includeAssetBodies?: boolean } = {}
   ): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
     const expectedReportId = reportId?.trim() || this.manifest.reportId;
     if (!expectedReportId) throw new Error("No AI Grader report ID is available yet.");
+    return withAiGraderReportPackageOperation(expectedReportId, async () => {
+      const recoverySource = await this.findReportRecoverySource(expectedReportId);
+      await reconcileAiGraderReportPackageTransaction({
+        canonicalDir: publishPackageDir(this.config, expectedReportId),
+        reportId: expectedReportId,
+        gradingSessionId: recoverySource?.manifest.sessionId,
+        reportDir: recoverySource?.reportDir,
+      });
+      return this.reportBundleUnlocked(expectedReportId, options);
+    });
+  }
+
+  private async reportBundleUnlocked(
+    expectedReportId: string,
+    options: { includeAssetBodies?: boolean } = {},
+  ): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
     const packageDir = publishPackageDir(this.config, expectedReportId);
     const canonicalBundlePath = publishPackagePath(this.config, expectedReportId, "report-bundle.json");
-    const canonicalProductionReleasePath = publishPackagePath(this.config, expectedReportId, "production-release.json");
-    if (options.includeAssetBodies) {
-      const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
-      if (reportDir && this.manifest.reportId === expectedReportId) {
-        const bundle = await buildAiGraderReportBundle({
-          reportDir,
-          outputDir: packageDir,
-          reportId: expectedReportId,
-          publicBasePath: this.config.publicBasePath,
-          includeAssetBodies: true,
-          captureTiming: this.captureTimingSnapshot(this.manifest),
-          geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
-        });
-        return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, this.manifest.productionRelease), source: "active_manifest_generated_with_asset_bodies" };
-      }
+    const canonicalDirExists = await recoveryPathExists(packageDir);
+    const canonicalBundleExists = canonicalDirExists
+      ? await recoveryPathExists(canonicalBundlePath)
+      : false;
+    if (canonicalDirExists && !canonicalBundleExists) {
+      throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
     }
     const canonicalBundle = await readBundleFromPath(canonicalBundlePath);
+    if (canonicalBundleExists && canonicalBundle?.reportId !== expectedReportId) {
+      throw new Error(AI_GRADER_REPORT_RECOVERY_GUIDANCE);
+    }
     if (canonicalBundle?.reportId === expectedReportId) {
-      const productionRelease = await readProductionReleaseFromPath(canonicalProductionReleasePath)
-        ?? this.manifest.productionRelease
-        ?? await readProductionReleaseFromPath(this.manifest.outputs.productionReleasePath);
-      return { reportId: expectedReportId, bundle: bundleWithProductionRelease(canonicalBundle, productionRelease), source: "canonical_publish_package" };
+      const resolved = await this.recoverReportBundleIfNeeded({
+        reportId: expectedReportId,
+        bundle: canonicalBundle,
+        packageDir,
+      });
+      return this.reportBundleResponse({
+        expectedReportId,
+        bundle: resolved.bundle,
+        productionRelease: resolved.productionRelease,
+        source: resolved.recovered ? "canonical_publish_package_recovered" : "canonical_publish_package",
+        includeAssetBodies: options.includeAssetBodies,
+      });
     }
     if (this.manifest.reportBundle?.reportId === expectedReportId) {
-      return { reportId: expectedReportId, bundle: bundleWithProductionRelease(this.manifest.reportBundle, this.manifest.productionRelease), source: "active_manifest_memory" };
+      const resolved = await this.recoverReportBundleIfNeeded({
+        reportId: expectedReportId,
+        bundle: this.manifest.reportBundle,
+        packageDir: options.includeAssetBodies
+          ? packageDir
+          : this.manifest.outputs.reportBundlePath
+          ? path.dirname(this.manifest.outputs.reportBundlePath)
+          : packageDir,
+      });
+      return this.reportBundleResponse({
+        expectedReportId,
+        bundle: resolved.bundle,
+        productionRelease: resolved.productionRelease,
+        source: resolved.recovered ? "active_manifest_memory_recovered" : "active_manifest_memory",
+        includeAssetBodies: options.includeAssetBodies,
+      });
     }
 
     const bundleFromPath = await readBundleFromPath(this.manifest.outputs.reportBundlePath);
     if (bundleFromPath?.reportId === expectedReportId) {
       this.manifest.reportBundle = bundleFromPath;
-      const productionRelease = this.manifest.productionRelease ?? await readProductionReleaseFromPath(this.manifest.outputs.productionReleasePath);
-      this.manifest.productionRelease = productionRelease;
-      return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundleFromPath, productionRelease), source: "active_manifest_report_bundle_path" };
+      const resolved = await this.recoverReportBundleIfNeeded({
+        reportId: expectedReportId,
+        bundle: bundleFromPath,
+        packageDir: options.includeAssetBodies
+          ? packageDir
+          : this.manifest.outputs.reportBundlePath
+          ? path.dirname(this.manifest.outputs.reportBundlePath)
+          : packageDir,
+      });
+      this.manifest.reportBundle = resolved.bundle;
+      this.manifest.productionRelease = resolved.productionRelease;
+      return this.reportBundleResponse({
+        expectedReportId,
+        bundle: resolved.bundle,
+        productionRelease: resolved.productionRelease,
+        source: resolved.recovered ? "active_manifest_report_bundle_path_recovered" : "active_manifest_report_bundle_path",
+        includeAssetBodies: options.includeAssetBodies,
+      });
     }
 
     const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
@@ -4357,41 +4695,50 @@ export class AiGraderLocalStationBridgeService {
         geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
       });
       this.manifest.reportBundle = bundle;
-      return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, this.manifest.productionRelease), source: "active_manifest_generated_from_report_dir" };
+      return this.reportBundleResponse({
+        expectedReportId,
+        bundle,
+        source: options.includeAssetBodies ? "active_manifest_generated" : "active_manifest_generated_from_report_dir",
+        includeAssetBodies: options.includeAssetBodies,
+      });
     }
 
-    for (const item of await this.reportHistoryItems()) {
-      if (item.reportId !== expectedReportId) continue;
-      const reportDirFromHtml = dirnameIfFile(item.localHtmlPath);
-      if (options.includeAssetBodies && reportDirFromHtml) {
-        const generated = await buildAiGraderReportBundle({
-          reportDir: reportDirFromHtml,
-          outputDir: publishPackageDir(this.config, expectedReportId),
+    const historySource = await this.findReportRecoverySource(expectedReportId);
+    if (historySource) {
+      const historyBundle = await readBundleFromPath(historySource.manifest.outputs.reportBundlePath);
+      if (historyBundle?.reportId === expectedReportId) {
+        const resolved = await this.recoverReportBundleIfNeeded({
           reportId: expectedReportId,
-          publicBasePath: this.config.publicBasePath,
-          includeAssetBodies: true,
-          captureTiming: await this.captureTimingSnapshotForReport(expectedReportId, item.sessionDir),
-          geometryCaptureDecisions: await this.geometryCaptureDecisionSnapshotForReport(expectedReportId, item.sessionDir),
+          bundle: historyBundle,
+          packageDir: options.includeAssetBodies
+            ? packageDir
+            : historySource.manifest.outputs.reportBundlePath
+            ? path.dirname(historySource.manifest.outputs.reportBundlePath)
+            : packageDir,
         });
-        const release = await readProductionReleaseFromPath(item.productionReleasePath);
-        return { reportId: expectedReportId, bundle: bundleWithProductionRelease(generated, release), source: "history_generated_with_asset_bodies" };
-      }
-      const bundle = await readBundleFromPath(item.reportBundlePath);
-      if (bundle?.reportId === expectedReportId) {
-        const release = await readProductionReleaseFromPath(item.productionReleasePath);
-        return { reportId: expectedReportId, bundle: bundleWithProductionRelease(bundle, release), source: "history_report_bundle_path" };
-      }
-      if (reportDirFromHtml) {
-        const generated = await buildAiGraderReportBundle({
-          reportDir: reportDirFromHtml,
-          outputDir: publishPackageDir(this.config, expectedReportId),
-          reportId: expectedReportId,
-          publicBasePath: this.config.publicBasePath,
-          captureTiming: await this.captureTimingSnapshotForReport(expectedReportId, item.sessionDir),
-          geometryCaptureDecisions: await this.geometryCaptureDecisionSnapshotForReport(expectedReportId, item.sessionDir),
+        return this.reportBundleResponse({
+          expectedReportId,
+          bundle: resolved.bundle,
+          productionRelease: resolved.productionRelease,
+          source: resolved.recovered ? "history_report_bundle_path_recovered" : "history_report_bundle_path",
+          includeAssetBodies: options.includeAssetBodies,
         });
-        return { reportId: expectedReportId, bundle: generated, source: "history_generated_from_report_dir" };
       }
+      const generated = await buildAiGraderReportBundle({
+        reportDir: historySource.reportDir,
+        outputDir: packageDir,
+        reportId: expectedReportId,
+        gradingSessionId: historySource.manifest.sessionId,
+        publicBasePath: this.config.publicBasePath,
+        captureTiming: this.captureTimingSnapshot(historySource.manifest),
+        geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(historySource.manifest),
+      });
+      return this.reportBundleResponse({
+        expectedReportId,
+        bundle: generated,
+        source: options.includeAssetBodies ? "history_generated" : "history_generated_from_report_dir",
+        includeAssetBodies: options.includeAssetBodies,
+      });
     }
 
     throw new Error(`AI Grader report ${expectedReportId} was not found in the local station output directory.`);
@@ -4413,6 +4760,22 @@ export class AiGraderLocalStationBridgeService {
     if (!this.manifest.outputs.reportBundlePath) {
       await this.action("export-report-bundle", request);
     }
+    return withAiGraderReportPackageOperation(reportId, async () => {
+      const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
+      await reconcileAiGraderReportPackageTransaction({
+        canonicalDir: publishPackageDir(this.config, reportId),
+        reportId,
+        gradingSessionId: this.manifest.sessionId,
+        reportDir,
+      });
+      return this.writeProductionReleaseUnlocked(request, reportId);
+    });
+  }
+
+  private async writeProductionReleaseUnlocked(
+    request: AiGraderLocalStationBridgeActionRequest,
+    reportId: string,
+  ): Promise<AiGraderProductionRelease> {
     if (!this.manifest.outputs.reportBundlePath) {
       throw new Error("Production release requires an exported report-bundle.json.");
     }
@@ -4805,14 +5168,24 @@ export class AiGraderLocalStationBridgeService {
     if (action === "export-report-bundle") {
       const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
       if (!reportDir) throw new Error("Report bundle export requires a generated unified report folder.");
-      const outputDir = publishPackageDir(this.config, this.manifest.reportId ?? "local-report");
-      const bundle = await writeAiGraderReportBundle({
-        reportDir,
-        outputDir,
-        reportId: this.manifest.reportId,
-        publicBasePath: this.config.publicBasePath,
-        captureTiming: this.captureTimingSnapshot(this.manifest),
-        geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
+      const reportId = this.manifest.reportId ?? "local-report";
+      const outputDir = publishPackageDir(this.config, reportId);
+      const bundle = await withAiGraderReportPackageOperation(reportId, async () => {
+        await reconcileAiGraderReportPackageTransaction({
+          canonicalDir: outputDir,
+          reportId,
+          gradingSessionId: this.manifest.sessionId,
+          reportDir,
+        });
+        return writeAiGraderReportBundle({
+          reportDir,
+          outputDir,
+          reportId,
+          gradingSessionId: this.manifest.sessionId,
+          publicBasePath: this.config.publicBasePath,
+          captureTiming: this.captureTimingSnapshot(this.manifest),
+          geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
+        });
       });
       this.manifest.outputs.reportBundlePath = bundle.bundlePath;
       this.manifest.outputs.publishPackageDir = bundle.outputDir;
@@ -5024,6 +5397,7 @@ export function createAiGraderLocalStationBridgeHttpServer(
         return sendJson(res, 200, {
           ok: true,
           bridgeVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+          reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
           mode: config.mode,
           localOnly: true,
           tokenRequired: true,

@@ -9,6 +9,7 @@ import {
   buildAiGraderLocalStationStatus,
   buildSampleAiGraderReportHistory,
   sanitizeAiGraderPreviewCardGeometryBySide,
+  type AiGraderLocalStationStatus,
   type AiGraderCaptureProfile,
   type AiGraderCaptureTriggerMode,
   type AiGraderPreviewCardGeometryBySide,
@@ -17,9 +18,9 @@ import {
   type AiGraderWarmRunnerPhase,
   type AiGraderLocalReportHistory,
   type AiGraderLocalReportHistoryItem,
-  type AiGraderLocalStationStatus,
   type AiGraderStationAction,
 } from "../../lib/aiGraderLocalStation";
+import { resolveAiGraderAuthoritativeProductionPackage } from "../../lib/aiGraderReleaseAuthority";
 import {
   AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY,
   AI_GRADER_STATION_TOKEN_STORAGE_KEY,
@@ -67,6 +68,7 @@ import {
 import { formatAiGraderPublishStageError } from "../../lib/aiGraderPublishErrors";
 import { productionAssetManifest } from "../../lib/aiGraderProductionAssetManifest";
 import { assertAiGraderBrowserRaster } from "../../lib/aiGraderRasterValidation";
+import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
@@ -2314,22 +2316,20 @@ export default function AiGraderStationPage() {
     setBusy("create-card-from-report");
     setIdentityStatus({ status: "pending", message: "Creating Ten Kings CardAsset and Item from confirmed AI Grader identity." });
     try {
-      let latestStatus = status;
-      if (!latestStatus.productionRelease?.finalGradeComputed && reportReady) {
-        latestStatus = await prepareLocalProductionRelease();
-      }
-      const reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
-      let sourceBundle = latestStatus.reportBundle;
-      if (bridgeConnected && stationToken.trim() && reportId) {
-        sourceBundle = await fetchAiGraderStationReportBundle({
-          baseUrl: bridgeUrl,
-          stationToken,
-          reportId,
-        });
-      }
-      const productionRelease = latestStatus.productionRelease ?? sourceBundle?.productionRelease;
+      const resolvedPackage = await resolveAiGraderAuthoritativeProductionPackage({
+        initialStatus: status,
+        fetchBridgeBundle: bridgeConnected && stationToken.trim()
+          ? (reportId) => fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId })
+          : undefined,
+        explicitlyFinalize: prepareLocalProductionRelease,
+      });
+      const { reportId, sourceBundle, productionRelease } = resolvedPackage;
       if (!sourceBundle || !productionRelease) {
         throw new Error("A finalized production release and report bundle are required before card creation.");
+      }
+      if (productionRelease.reportId !== sourceBundle.reportId ||
+          productionRelease.gradingSessionId !== sourceBundle.gradingSessionId) {
+        throw new Error("The recovered report bundle and production release do not share the same report/session identity.");
       }
       const draftIdentity = identityDraftPayload();
       const draftTitle = identityDraftTitle();
@@ -2554,32 +2554,32 @@ export default function AiGraderStationPage() {
     setError(null);
     setProductionPublish((current) => ({ ...current, status: "pending", message: "Preparing canonical local publish package." }));
     try {
-      let latestStatus = status;
-      if (!latestStatus.productionRelease?.finalGradeComputed && reportReady) {
-        latestStatus = await prepareLocalProductionRelease();
-      }
-      let sourceBundle = latestStatus.reportBundle;
-      const reportId = latestStatus.productionRelease?.reportId ?? latestStatus.reportBundle?.reportId ?? latestStatus.latestReport.reportId;
-      if (bridgeConnected && stationToken.trim() && reportId) {
-        setProductionPublish((current) => ({ ...current, status: "pending", message: "Reading local package manifest from the paired Dell bridge." }));
-        try {
-          sourceBundle = await fetchAiGraderStationReportBundle({
-            baseUrl: bridgeUrl,
-            stationToken,
-            reportId,
-          });
-        } catch (error) {
-          throw new Error(formatAiGraderPublishStageError({ stage: "local-package-read", error }));
-        }
-      }
+      const resolvedPackage = await resolveAiGraderAuthoritativeProductionPackage({
+        initialStatus: status,
+        fetchBridgeBundle: bridgeConnected && stationToken.trim()
+          ? async (reportId) => {
+              setProductionPublish((current) => ({ ...current, status: "pending", message: "Reading local package manifest from the paired Dell bridge." }));
+              try {
+                return await fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId });
+              } catch (error) {
+                throw new Error(formatAiGraderPublishStageError({ stage: "local-package-read", error }));
+              }
+            }
+          : undefined,
+        explicitlyFinalize: prepareLocalProductionRelease,
+      });
+      const { latestStatus, reportId, sourceBundle, productionRelease } = resolvedPackage;
       const reportBundleWithIdentity = buildReportBundleForProduction(sourceBundle);
-      const productionRelease = latestStatus.productionRelease ?? sourceBundle?.productionRelease;
       const readiness = buildAiGraderPublishReadiness({
         bundle: reportBundleWithIdentity,
         productionRelease,
       });
       if (!reportBundleWithIdentity || !productionRelease) {
         throw new Error("A finalized production release and report bundle are required before Ten Kings publish.");
+      }
+      if (productionRelease.reportId !== reportBundleWithIdentity.reportId ||
+          productionRelease.gradingSessionId !== reportBundleWithIdentity.gradingSessionId) {
+        throw new Error("The recovered report bundle and production release do not share the same report/session identity.");
       }
       if (!readiness.ready) {
         throw new Error(readiness.message);
@@ -2669,7 +2669,7 @@ export default function AiGraderStationPage() {
               formatAiGraderPublishStageError({
                 stage: "local-asset-read",
                 error,
-                artifact: { index, total: uploadArtifacts.length, kind: artifact.kind, storageKey: artifact.storageKey },
+                artifact: { index, total: uploadArtifacts.length, kind: artifact.kind },
               })
             );
           }
@@ -2719,15 +2719,13 @@ export default function AiGraderStationPage() {
           }
           contentType = artifact.contentType;
         }
-        let uploadResponse: Response;
         try {
-          uploadResponse = await fetch(artifact.uploadUrl, {
-            method: artifact.uploadMethod ?? "PUT",
-            mode: "cors",
-            headers: {
-              ...artifact.uploadHeaders,
-              "Content-Type": contentType,
-            },
+          await uploadAiGraderArtifactDirectly({
+            purpose: "publish",
+            uploadUrl: artifact.uploadUrl,
+            uploadMethod: artifact.uploadMethod,
+            uploadHeaders: artifact.uploadHeaders,
+            contentType,
             body: bytes,
           });
         } catch (error) {
@@ -2735,16 +2733,7 @@ export default function AiGraderStationPage() {
             formatAiGraderPublishStageError({
               stage: "direct-storage-upload",
               error,
-              artifact: { index, total: uploadArtifacts.length, kind: artifact.kind, storageKey: artifact.storageKey },
-            })
-          );
-        }
-        if (!uploadResponse.ok) {
-          throw new Error(
-            formatAiGraderPublishStageError({
-              stage: "direct-storage-upload",
-              error: new Error(`HTTP ${uploadResponse.status}`),
-              artifact: { index, total: uploadArtifacts.length, kind: artifact.kind, storageKey: artifact.storageKey },
+              artifact: { index, total: uploadArtifacts.length, kind: artifact.kind },
             })
           );
         }
@@ -2898,28 +2887,17 @@ export default function AiGraderStationPage() {
         ...current,
         [side]: { status: "uploading", message: `Uploading slabbed ${side} photo directly to storage.` },
       }));
-      let uploadResponse: Response;
       try {
-        uploadResponse = await fetch(plan.uploadUrl, {
-          method: plan.uploadMethod ?? "PUT",
-          mode: "cors",
-          headers: {
-            ...(plan.uploadHeaders ?? {}),
-            "Content-Type": file.type || "image/jpeg",
-          },
+        await uploadAiGraderArtifactDirectly({
+          purpose: "slab-photo",
+          uploadUrl: plan.uploadUrl,
+          uploadMethod: plan.uploadMethod,
+          uploadHeaders: plan.uploadHeaders,
+          contentType: file.type || "image/jpeg",
           body: bytes,
         });
       } catch (error) {
         throw new Error(formatAiGraderPublishStageError({ stage: "slabbed-photo-upload", error, side }));
-      }
-      if (!uploadResponse.ok) {
-        throw new Error(
-          formatAiGraderPublishStageError({
-            stage: "slabbed-photo-upload",
-            error: new Error(`HTTP ${uploadResponse.status}`),
-            side,
-          })
-        );
       }
       let finalizeResponse: Response;
       try {
