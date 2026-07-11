@@ -3,10 +3,12 @@ import test from "node:test";
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE } from "../lib/aiGraderReportBundle";
 import {
   aiGraderOcrPrefillReportMetadata,
+  AiGraderOcrPrefillStageError,
   findAiGraderNormalizedOcrAssets,
   mergeAiGraderOcrPrefillIntoIdentityDraft,
   runAiGraderOcrPrefillFromLocalReport,
   type AiGraderOcrPrefillResult,
+  type AiGraderOcrPrefillStage,
 } from "../lib/aiGraderOcrPrefillClient";
 
 const FRONT_HASH = "1".repeat(64);
@@ -123,7 +125,11 @@ test("OCR prefill browser flow fetches local normalized bytes and uploads them d
               publicUrl: `https://cdn.tenkings.test/${image.storageKey}`,
               uploadUrl: `https://uploads.tenkings.test/${image.side}`,
               uploadMethod: "PUT",
-              uploadHeaders: { "Content-Type": image.mimeType },
+              uploadHeaders: {
+                "Content-Type": image.mimeType,
+                "x-amz-meta-sha256": "must-be-stripped",
+                "X-Amz-Checksum-Sha256": "must-be-stripped",
+              },
             })),
             requiredFinalizeManifest: {
               reportId: body.reportId,
@@ -137,6 +143,11 @@ test("OCR prefill browser flow fetches local normalized bytes and uploads them d
     }
     if (url.startsWith("https://uploads.tenkings.test/")) {
       assert.equal(init?.method, "PUT");
+      assert.equal(init?.mode, "cors");
+      assert.equal(init?.credentials, "omit");
+      const headers = init?.headers as Record<string, string>;
+      assert.equal(Object.keys(headers).some((name) => name.toLowerCase() === "x-amz-meta-sha256"), false);
+      assert.equal(Object.keys(headers).some((name) => name.toLowerCase() === "x-amz-checksum-sha256"), false);
       assert.ok(init?.body instanceof Blob);
       directUploads.push({ url, byteSize: (init.body as Blob).size });
       return new Response(null, { status: 200 });
@@ -190,6 +201,131 @@ test("OCR prefill browser flow fetches local normalized bytes and uploads them d
   assert.equal(productionBodies.length, 2);
   assert.equal(JSON.stringify(productionBodies).includes("browser-local-token"), false);
   assert.equal(JSON.stringify(productionBodies).includes("operator-session"), false);
+});
+
+test("OCR prefill reports eight distinct redacted failure stages", async () => {
+  const stages: AiGraderOcrPrefillStage[] = [
+    "bundle_fetch", "front_asset_fetch", "back_asset_fetch", "init",
+    "front_put", "back_put", "finalize", "ocr_response",
+  ];
+  const messages = new Set<string>();
+  for (const injectedStage of stages) {
+    let directUploadCount = 0;
+    const fetchImpl: typeof fetch = async (request) => {
+      const url = String(request);
+      if (url.endsWith("/ocr-prefill-init")) {
+        if (injectedStage === "init") throw new Error("secret-sentinel init token URL key");
+        const images = [
+          { side: "front", artifactRole: "normalized_card", fileName: "front.png", mimeType: "image/png", checksumSha256: FRONT_HASH, byteSize: 5, storageKey: "private/front" },
+          { side: "back", artifactRole: "normalized_card", fileName: "back.png", mimeType: "image/png", checksumSha256: BACK_HASH, byteSize: 4, storageKey: "private/back" },
+        ];
+        return new Response(JSON.stringify({ ok: true, result: {
+          reportId: "ocr-client-report",
+          uploadSessionId: "aigocr_test",
+          humanConfirmationRequired: true,
+          uploadPlan: images.map((image) => ({
+            ...image,
+            publicUrl: "https://cdn.example.invalid/redacted",
+            uploadUrl: "https://upload.example.invalid/" + image.side + "?secret-sentinel",
+            uploadMethod: "PUT",
+            uploadHeaders: { "Content-Type": "image/png" },
+          })),
+          requiredFinalizeManifest: { reportId: "ocr-client-report", uploadSessionId: "aigocr_test", images },
+        } }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/ocr-prefill-finalize")) {
+        if (injectedStage === "finalize") throw new Error("secret-sentinel finalize credential");
+        return new Response(JSON.stringify({ ok: true, result: injectedStage === "ocr_response" ? {} : resultFixture() }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error("secret-sentinel unexpected URL");
+    };
+    await assert.rejects(
+      runAiGraderOcrPrefillFromLocalReport({
+        baseUrl: "http://127.0.0.1:47652/private",
+        stationToken: "secret-sentinel-station-token",
+        reportId: "ocr-client-report",
+        authHeaders: { Authorization: "Bearer secret-sentinel-credential" },
+        ...(injectedStage === "bundle_fetch" ? {} : { bundle: normalizedBundle() }),
+      }, {
+        fetchImpl,
+        async fetchBundle() {
+          throw new Error("secret-sentinel bundle path token");
+        },
+        async fetchAsset({ assetId }) {
+          const side = assetId.startsWith("front/") ? "front" : "back";
+          if (injectedStage === side + "_asset_fetch") throw new Error("secret-sentinel local path URL");
+          const bytes = new Uint8Array(side === "front" ? [1, 2, 3, 4, 5] : [6, 7, 8, 9]).buffer;
+          return { bytes, contentType: "image/png", byteSize: bytes.byteLength, checksumSha256: side === "front" ? FRONT_HASH : BACK_HASH };
+        },
+        async digestSha256(bytes) {
+          return bytes.byteLength === 5 ? FRONT_HASH : BACK_HASH;
+        },
+        async uploadDirect(input) {
+          directUploadCount += 1;
+          if ((injectedStage === "front_put" && input.uploadUrl.includes("/front")) ||
+              (injectedStage === "back_put" && input.uploadUrl.includes("/back"))) {
+            throw new Error("secret-sentinel signed URL header key");
+          }
+        },
+      }),
+      (error) => {
+        assert.ok(error instanceof AiGraderOcrPrefillStageError);
+        assert.equal(error.stage, injectedStage);
+        assert.doesNotMatch(error.message, /secret-sentinel|token|credential|private\/|upload\.example|storageKey/i);
+        messages.add(error.message);
+        return true;
+      },
+    );
+    if (injectedStage === "front_put") assert.equal(directUploadCount, 1);
+    if (injectedStage === "back_put") assert.equal(directUploadCount, 2);
+  }
+  assert.equal(messages.size, stages.length);
+});
+
+test("OCR prefill exposes only the safe native-checksum provider blocker", async () => {
+  let requestCount = 0;
+  await assert.rejects(
+    runAiGraderOcrPrefillFromLocalReport({
+      baseUrl: "http://127.0.0.1:47652",
+      stationToken: "secret-sentinel-token",
+      reportId: "ocr-client-report",
+      authHeaders: { Authorization: "Bearer secret-sentinel-credential" },
+      bundle: normalizedBundle(),
+    }, {
+      async fetchAsset({ assetId }) {
+        const front = assetId.startsWith("front/");
+        const bytes = new Uint8Array(front ? [1, 2, 3, 4, 5] : [6, 7, 8, 9]).buffer;
+        return { bytes, contentType: "image/png", byteSize: bytes.byteLength, checksumSha256: front ? FRONT_HASH : BACK_HASH };
+      },
+      async digestSha256(bytes) { return bytes.byteLength === 5 ? FRONT_HASH : BACK_HASH; },
+      async uploadDirect() {},
+      async fetchImpl() {
+        requestCount += 1;
+        if (requestCount === 1) {
+          const images = [
+            { side: "front", artifactRole: "normalized_card", fileName: "front.png", mimeType: "image/png", checksumSha256: FRONT_HASH, byteSize: 5, storageKey: "private/front" },
+            { side: "back", artifactRole: "normalized_card", fileName: "back.png", mimeType: "image/png", checksumSha256: BACK_HASH, byteSize: 4, storageKey: "private/back" },
+          ];
+          return new Response(JSON.stringify({ ok: true, result: {
+            reportId: "ocr-client-report", uploadSessionId: "aigocr_test", humanConfirmationRequired: true,
+            uploadPlan: images.map((image) => ({ ...image, publicUrl: "https://cdn.example.invalid/x", uploadUrl: "https://upload.example.invalid/x", uploadMethod: "PUT", uploadHeaders: {} })),
+            requiredFinalizeManifest: { reportId: "ocr-client-report", uploadSessionId: "aigocr_test", images },
+          } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          ok: false,
+          code: "AI_GRADER_STORAGE_CHECKSUM_UNAVAILABLE",
+          message: "secret-sentinel provider URL key path",
+        }), { status: 502 });
+      },
+    }),
+    (error) => error instanceof AiGraderOcrPrefillStageError && error.stage === "finalize" &&
+      /storage did not return a native SHA-256 checksum/i.test(error.message) &&
+      !/secret-sentinel|URL|key|path/.test(error.message),
+  );
 });
 
 test("OCR prefill merge fills empty fields but preserves operator-edited identity", () => {

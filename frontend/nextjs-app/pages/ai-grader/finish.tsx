@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession, type SessionPayload } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
+import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
 
 type QueueStage = "needs_comps_review" | "needs_slab_photos" | "ready_for_inventory" | "complete";
 type StageFilter = "active" | QueueStage;
@@ -633,18 +634,14 @@ export default function AiGraderFinishPage() {
       if (typeof plan.uploadUrl !== "string" || typeof plan.requiredFinalizeManifest !== "object") {
         throw new Error("The storage upload plan was incomplete.");
       }
-      const uploadTarget = safeHttpsUrl(plan.uploadUrl);
-      if (!uploadTarget) throw new Error("The storage upload target was invalid.");
-      const uploadResponse = await fetch(uploadTarget, {
-        method: typeof plan.uploadMethod === "string" ? plan.uploadMethod : "PUT",
-        mode: "cors",
-        headers: {
-          ...(asRecord(plan.uploadHeaders) as Record<string, string>),
-          "Content-Type": file.type || "image/jpeg",
-        },
+      await uploadAiGraderArtifactDirectly({
+        purpose: "slab-photo",
+        uploadUrl: plan.uploadUrl,
+        uploadMethod: typeof plan.uploadMethod === "string" ? plan.uploadMethod : "PUT",
+        uploadHeaders: asRecord(plan.uploadHeaders) as Record<string, string>,
+        contentType: file.type || "image/jpeg",
         body: bytes,
       });
-      if (!uploadResponse.ok) throw new Error(`Direct storage upload failed with HTTP ${uploadResponse.status}.`);
       const finalizeResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-finalize", {
         method: "POST",
         headers: await authenticatedHeaders({ "content-type": "application/json" }, `attach the ${side} slab photo`),

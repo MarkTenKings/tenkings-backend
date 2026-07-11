@@ -3,6 +3,41 @@ import {
   fetchAiGraderStationReportAsset,
   fetchAiGraderStationReportBundle,
 } from "./aiGraderStationBridgeClient";
+import { uploadAiGraderArtifactDirectly } from "./aiGraderDirectUpload";
+
+export type AiGraderOcrPrefillStage =
+  | "bundle_fetch"
+  | "front_asset_fetch"
+  | "back_asset_fetch"
+  | "init"
+  | "front_put"
+  | "back_put"
+  | "finalize"
+  | "ocr_response";
+
+const OCR_STAGE_MESSAGES: Record<AiGraderOcrPrefillStage, string> = {
+  bundle_fetch: "OCR Prefill could not read the local report bundle. Update or re-export the existing report and retry.",
+  front_asset_fetch: "OCR Prefill could not read the normalized front image from the local bridge.",
+  back_asset_fetch: "OCR Prefill could not read the normalized back image from the local bridge.",
+  init: "OCR Prefill upload initialization failed.",
+  front_put: "OCR Prefill direct upload failed for the normalized front image.",
+  back_put: "OCR Prefill direct upload failed for the normalized back image.",
+  finalize: "OCR Prefill finalize request failed.",
+  ocr_response: "OCR Prefill response was invalid or incomplete.",
+};
+
+export class AiGraderOcrPrefillStageError extends Error {
+  readonly stage: AiGraderOcrPrefillStage;
+
+  constructor(stage: AiGraderOcrPrefillStage, message = OCR_STAGE_MESSAGES[stage]) {
+    super(message);
+    this.name = "AiGraderOcrPrefillStageError";
+    this.stage = stage;
+  }
+}
+
+const OCR_NATIVE_CHECKSUM_BLOCKER =
+  "OCR Prefill stopped because storage did not return a native SHA-256 checksum. Storage checksum support must be confirmed before retrying.";
 
 export type AiGraderOcrPrefillField<T extends string | boolean | null = string | boolean | null> = {
   value: T;
@@ -209,12 +244,37 @@ function normalizedMimeType(value: string | undefined) {
   return mimeType;
 }
 
-async function jsonResponse<T>(response: Response, label: string): Promise<T> {
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload?.ok !== true) {
-    throw new Error(payload?.message ?? `${label} failed with HTTP ${response.status}.`);
+async function responsePayload(response: Response): Promise<Record<string, any> | null> {
+  try {
+    const payload = await response.json();
+    return typeof payload === "object" && payload !== null && !Array.isArray(payload) ? payload : null;
+  } catch {
+    return null;
   }
-  return payload.result as T;
+}
+
+function isOcrInitResult(value: unknown): value is OcrInitResult {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const result = value as Partial<OcrInitResult>;
+  return typeof result.reportId === "string" && typeof result.uploadSessionId === "string" &&
+    Array.isArray(result.uploadPlan) && typeof result.requiredFinalizeManifest === "object" &&
+    result.requiredFinalizeManifest !== null;
+}
+
+function safeOcrResult(value: unknown, reportId: string) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new AiGraderOcrPrefillStageError("ocr_response");
+  }
+  const result = value as AiGraderOcrPrefillResult;
+  if (result.reportId !== reportId || result.status !== "prefill_ready" ||
+      result.humanConfirmationRequired !== true || !result.fields || !Array.isArray(result.sourceSides)) {
+    throw new AiGraderOcrPrefillStageError("ocr_response");
+  }
+  try {
+    return safeAiGraderOcrPrefillResult(result);
+  } catch {
+    throw new AiGraderOcrPrefillStageError("ocr_response");
+  }
 }
 
 export async function runAiGraderOcrPrefillFromLocalReport(
@@ -230,20 +290,26 @@ export async function runAiGraderOcrPrefillFromLocalReport(
     fetchBundle?: typeof fetchAiGraderStationReportBundle;
     fetchAsset?: typeof fetchAiGraderStationReportAsset;
     digestSha256?: (bytes: ArrayBuffer) => Promise<string>;
+    uploadDirect?: typeof uploadAiGraderArtifactDirectly;
   } = {}
 ): Promise<AiGraderOcrPrefillResult> {
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const fetchBundle = dependencies.fetchBundle ?? fetchAiGraderStationReportBundle;
   const fetchAsset = dependencies.fetchAsset ?? fetchAiGraderStationReportAsset;
   const digestSha256 = dependencies.digestSha256 ?? sha256Hex;
-  const bundle =
-    input.bundle ??
-    (await fetchBundle({
+  const uploadDirect = dependencies.uploadDirect ?? uploadAiGraderArtifactDirectly;
+  let bundle: AiGraderReportBundle;
+  let normalizedAssets: NormalizedAsset[];
+  try {
+    bundle = input.bundle ?? await fetchBundle({
       baseUrl: input.baseUrl,
       stationToken: input.stationToken,
       reportId: input.reportId,
-    }));
-  const normalizedAssets = findAiGraderNormalizedOcrAssets(bundle);
+    });
+    normalizedAssets = findAiGraderNormalizedOcrAssets(bundle);
+  } catch {
+    throw new AiGraderOcrPrefillStageError("bundle_fetch");
+  }
   const localImages = [] as Array<{
     side: "front" | "back";
     assetId: string;
@@ -254,64 +320,93 @@ export async function runAiGraderOcrPrefillFromLocalReport(
     byteSize: number;
   }>;
   for (const { side, asset } of normalizedAssets) {
-    const fetched = await fetchAsset({
-      baseUrl: input.baseUrl,
-      stationToken: input.stationToken,
-      reportId: input.reportId,
-      assetId: asset.id,
-    });
-    const checksumSha256 = (await digestSha256(fetched.bytes)).toLowerCase();
-    const expectedChecksum = String(asset.checksumSha256 ?? asset.sha256 ?? fetched.checksumSha256 ?? "").toLowerCase();
-    if (expectedChecksum && expectedChecksum !== checksumSha256) {
-      throw new Error(`Normalized ${side} OCR image checksum does not match the local report manifest.`);
+    try {
+      const fetched = await fetchAsset({
+        baseUrl: input.baseUrl,
+        stationToken: input.stationToken,
+        reportId: input.reportId,
+        assetId: asset.id,
+      });
+      const checksumSha256 = (await digestSha256(fetched.bytes)).toLowerCase();
+      const expectedChecksum = String(asset.checksumSha256 ?? asset.sha256 ?? fetched.checksumSha256 ?? "").toLowerCase();
+      if (!/^[a-f0-9]{64}$/.test(checksumSha256) || (expectedChecksum && expectedChecksum !== checksumSha256)) {
+        throw new Error("invalid local checksum");
+      }
+      localImages.push({
+        side,
+        assetId: asset.id,
+        bytes: fetched.bytes,
+        fileName: asset.fileName || side + "-normalized-card.png",
+        mimeType: normalizedMimeType(asset.contentType ?? fetched.contentType),
+        checksumSha256,
+        byteSize: fetched.bytes.byteLength,
+      });
+    } catch {
+      throw new AiGraderOcrPrefillStageError(side === "front" ? "front_asset_fetch" : "back_asset_fetch");
     }
-    localImages.push({
-      side,
-      assetId: asset.id,
-      bytes: fetched.bytes,
-      fileName: asset.fileName || `${side}-normalized-card.png`,
-      mimeType: normalizedMimeType(asset.contentType ?? fetched.contentType),
-      checksumSha256,
-      byteSize: fetched.bytes.byteLength,
-    });
   }
   const authHeaders = { ...input.authHeaders, "content-type": "application/json" };
-  const initResponse = await fetchImpl("/api/admin/ai-grader/production/ocr-prefill-init", {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({
-      reportId: input.reportId,
-      images: localImages.map(({ side, fileName, mimeType, checksumSha256, byteSize }) => ({
-        side,
-        artifactRole: "normalized_card",
-        fileName,
-        mimeType,
-        checksumSha256,
-        byteSize,
-      })),
-    }),
-  });
-  const init = await jsonResponse<OcrInitResult>(initResponse, "OCR prefill upload planning");
+  let init: OcrInitResult;
+  try {
+    const initResponse = await fetchImpl("/api/admin/ai-grader/production/ocr-prefill-init", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        reportId: input.reportId,
+        images: localImages.map(({ side, fileName, mimeType, checksumSha256, byteSize }) => ({
+          side,
+          artifactRole: "normalized_card",
+          fileName,
+          mimeType,
+          checksumSha256,
+          byteSize,
+        })),
+      }),
+    });
+    const payload = await responsePayload(initResponse);
+    if (!initResponse.ok || payload?.ok !== true || !isOcrInitResult(payload.result) ||
+        payload.result.reportId !== input.reportId || payload.result.uploadPlan.length !== localImages.length) {
+      throw new Error("invalid init response");
+    }
+    init = payload.result;
+  } catch {
+    throw new AiGraderOcrPrefillStageError("init");
+  }
   for (const localImage of localImages) {
     const plan = init.uploadPlan.find((entry) => entry.side === localImage.side);
-    if (!plan) throw new Error(`OCR prefill upload plan is missing the normalized ${localImage.side} image.`);
-    const uploadResponse = await fetchImpl(plan.uploadUrl, {
-      method: plan.uploadMethod,
-      headers: plan.uploadHeaders,
-      body: new Blob([localImage.bytes], { type: localImage.mimeType }),
-    });
-    if (!uploadResponse.ok) {
-      throw new Error(`Direct storage upload failed for normalized ${localImage.side} image with HTTP ${uploadResponse.status}.`);
+    if (!plan) throw new AiGraderOcrPrefillStageError("init");
+    try {
+      await uploadDirect({
+        purpose: "ocr",
+        uploadUrl: plan.uploadUrl,
+        uploadMethod: plan.uploadMethod,
+        uploadHeaders: plan.uploadHeaders,
+        contentType: localImage.mimeType,
+        body: new Blob([localImage.bytes], { type: localImage.mimeType }),
+      }, fetchImpl);
+    } catch {
+      throw new AiGraderOcrPrefillStageError(localImage.side === "front" ? "front_put" : "back_put");
     }
   }
-  const finalizeResponse = await fetchImpl("/api/admin/ai-grader/production/ocr-prefill-finalize", {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify(init.requiredFinalizeManifest),
-  });
-  return safeAiGraderOcrPrefillResult(
-    await jsonResponse<AiGraderOcrPrefillResult>(finalizeResponse, "OCR prefill finalize")
-  );
+  let finalizeResponse: Response;
+  try {
+    finalizeResponse = await fetchImpl("/api/admin/ai-grader/production/ocr-prefill-finalize", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify(init.requiredFinalizeManifest),
+    });
+  } catch {
+    throw new AiGraderOcrPrefillStageError("finalize");
+  }
+  const finalizePayload = await responsePayload(finalizeResponse);
+  if (!finalizeResponse.ok) {
+    if (finalizePayload?.code === "AI_GRADER_STORAGE_CHECKSUM_UNAVAILABLE") {
+      throw new AiGraderOcrPrefillStageError("finalize", OCR_NATIVE_CHECKSUM_BLOCKER);
+    }
+    throw new AiGraderOcrPrefillStageError("finalize");
+  }
+  if (finalizePayload?.ok !== true) throw new AiGraderOcrPrefillStageError("ocr_response");
+  return safeOcrResult(finalizePayload.result, input.reportId);
 }
 
 export function mergeAiGraderOcrPrefillIntoIdentityDraft<T extends AiGraderIdentityDraftLike>(input: {

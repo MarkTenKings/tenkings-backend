@@ -33,6 +33,7 @@ import {
   AI_GRADER_EBAY_COMPS_ENABLED_ENV,
   AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
   AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV,
+  assertAiGraderStorageArtifactIntegrity,
   buildAiGraderFinishCardsQueueResult,
   buildAiGraderProductionHistoryResult,
   createAiGraderProductionApiHandler,
@@ -922,7 +923,8 @@ test("production AI Grader route binds direct uploads to the storage-provider SH
   const routeSource = fs.readFileSync(routePath, "utf8");
   assert.equal(routeSource.includes("presignUploadUrl(storageKey, contentType, {"), true);
   assert.equal(routeSource.includes("checksumSha256,"), true);
-  assert.equal(routeSource.includes('"x-amz-checksum-sha256": sha256HexToBase64(checksumSha256)'), true);
+  assert.equal(routeSource.includes("x-amz-meta-sha256"), false);
+  assert.equal(routeSource.includes("x-amz-checksum-sha256"), false);
   assert.equal(routeSource.includes("verifyStorageObjectIntegrity({"), true);
   assert.equal(routeSource.includes("head.metadata"), false);
   assert.equal(routeSource.includes('"Content-Type": contentType'), true);
@@ -936,7 +938,8 @@ test("production AI Grader route binds direct uploads to the storage-provider SH
   assert.ok(storagePath);
   const storageSource = fs.readFileSync(storagePath, "utf8");
   assert.equal(storageSource.includes("ChecksumSHA256: options.checksumSha256"), true);
-  assert.equal(storageSource.includes('unhoistableHeaders: options.checksumSha256 ? new Set(["x-amz-checksum-sha256"])'), true);
+  assert.equal(storageSource.includes("unhoistableHeaders"), false);
+  assert.equal(storageSource.includes("Metadata: options.metadata"), false);
   assert.equal(storageSource.includes('ChecksumMode: "ENABLED"'), true);
   assert.equal(storageSource.includes("sha256Base64ToHex(response.ChecksumSHA256)"), true);
 });
@@ -1055,7 +1058,12 @@ test("production publish init creates direct storage upload plan without embedde
     async presignUpload(input) {
       assert.equal(Object.prototype.hasOwnProperty.call(input as Record<string, unknown>, "metadata"), false);
       calls.push(`presign:${input.storageKey}`);
-      return presignForTest(input);
+      const presigned = presignForTest(input);
+      return { ...presigned, uploadHeaders: {
+        ...presigned.uploadHeaders,
+        "x-amz-meta-sha256": "unsafe-future-regression",
+        "X-Amz-Checksum-Sha256": "unsafe-future-regression",
+      } };
     },
     async persist() {
       throw new Error("publish-init should not persist");
@@ -1118,6 +1126,7 @@ test("production publish init creates direct storage upload plan without embedde
   for (const artifact of body.result.uploadPlan.artifacts) {
     assert.equal(artifact.uploadHeaders["Content-Type"], artifact.contentType);
     assert.equal(Object.prototype.hasOwnProperty.call(artifact.uploadHeaders, "x-amz-meta-sha256"), false);
+    assert.equal(Object.keys(artifact.uploadHeaders).some((name) => name.toLowerCase() === "x-amz-checksum-sha256"), false);
     assert.match(artifact.checksumSha256, /^[a-f0-9]{64}$/);
     assert.equal(Number.isInteger(artifact.byteSize) && artifact.byteSize > 0, true);
   }
@@ -1857,6 +1866,7 @@ test("production publish finalize updates CardAsset linkage when identity is pre
       return {
         ok: true,
         byteSize: input.byteSize,
+        contentType: input.contentType,
         checksumSha256: input.checksumSha256,
         widthPx: input.sourceImageWidthPx,
         heightPx: input.sourceImageHeightPx,
@@ -2987,7 +2997,12 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
       assert.match(input.storageKey, /^ai-grader\/reports\/sample-final-v0\/slabbed\/front-/);
       assert.equal(input.contentType, "image/png");
       assert.equal(input.checksumSha256, imageChecksum);
-      return presignForTest(input);
+      const presigned = presignForTest(input);
+      return { ...presigned, uploadHeaders: {
+        ...presigned.uploadHeaders,
+        "x-amz-meta-sha256": "unsafe-future-regression",
+        "X-Amz-Checksum-Sha256": "unsafe-future-regression",
+      } };
     },
     async verifyUploadedArtifact(input) {
       assert.equal(input.byteSize, 5);
@@ -3060,6 +3075,7 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
   assert.equal(initBody.ok, true);
   assert.equal(initBody.result.uploadHeaders["Content-Type"], "image/png");
   assert.equal(Object.prototype.hasOwnProperty.call(initBody.result.uploadHeaders, "x-amz-meta-sha256"), false);
+  assert.equal(Object.keys(initBody.result.uploadHeaders).some((name) => name.toLowerCase() === "x-amz-checksum-sha256"), false);
 
   const finalizeReq = mockRequest("POST", ["slabbed-photo-finalize"]);
   finalizeReq.body = initBody.result.requiredFinalizeManifest;
@@ -3707,13 +3723,13 @@ test("AI Grader publish stage errors distinguish storage CORS reachability from 
       index: 2,
       total: 9,
       kind: "front/front-all-on-portrait-display.png",
-      storageKey: "ai-grader/reports/sample-final-v0/assets/front.png",
     },
   });
   assert.match(corsMessage, /Direct storage upload could not reach storage; likely storage CORS\/preflight/);
   assert.match(corsMessage, /artifact 3\/9/);
-  assert.match(corsMessage, /front\/front-all-on-portrait-display\.png/);
-  assert.match(corsMessage, /ai-grader\/reports\/sample-final-v0\/assets\/front\.png/);
+  assert.match(corsMessage, /front-all-on-portrait-display\.png/);
+  assert.doesNotMatch(corsMessage, /front\/front-all/);
+  assert.doesNotMatch(corsMessage, /ai-grader\/reports|storageKey/);
 
   const httpMessage = formatAiGraderPublishStageError({
     stage: "direct-storage-upload",
@@ -3722,7 +3738,6 @@ test("AI Grader publish stage errors distinguish storage CORS reachability from 
       index: 0,
       total: 9,
       kind: "report-bundle.json",
-      storageKey: "ai-grader/reports/sample-final-v0/report-bundle.json",
     },
   });
   assert.match(httpMessage, /Direct storage upload failed for artifact 1\/9 report-bundle\.json/);
@@ -3768,9 +3783,11 @@ test("AI Grader station source opens reports inline without popup dependency", (
   );
   assert.equal(publishFunctionSource.includes("includeAssetBodies"), false);
   assert.equal(publishFunctionSource.includes("formatAiGraderPublishStageError"), true);
-  assert.equal(publishFunctionSource.includes('mode: "cors"'), true);
+  assert.equal(publishFunctionSource.includes("uploadAiGraderArtifactDirectly"), true);
+  assert.equal(publishFunctionSource.includes('mode: "cors"'), false);
   assert.equal(slabbedUploadSource.includes("formatAiGraderPublishStageError"), true);
-  assert.equal(slabbedUploadSource.includes('mode: "cors"'), true);
+  assert.equal(slabbedUploadSource.includes("uploadAiGraderArtifactDirectly"), true);
+  assert.equal(slabbedUploadSource.includes('mode: "cors"'), false);
   assert.equal(stationSource.includes("readAsDataURL"), false);
   assert.equal(stationSource.includes("dataUrl"), false);
   assert.equal(stationSource.includes("Confirm + Create Card"), true);
@@ -3849,7 +3866,8 @@ test("standalone Finish Cards page uses production auth and no Dell bridge or ha
   assert.equal(source.includes("/api/admin/ai-grader/production/slabbed-photo-init"), true);
   assert.equal(source.includes("/api/admin/ai-grader/production/slabbed-photo-finalize"), true);
   assert.equal(source.includes("/api/admin/ai-grader/production/add-to-inventory"), true);
-  assert.equal(source.includes('mode: "cors"'), true);
+  assert.equal(source.includes("uploadAiGraderArtifactDirectly"), true);
+  assert.equal(source.includes('mode: "cors"'), false);
   assert.equal(source.includes("valuationMinor:"), false);
   assert.equal(source.includes("aiGraderStationBridgeClient"), false);
   assert.equal(source.includes("/api/ai-grader/station"), false);
@@ -3974,6 +3992,35 @@ test("browser station bridge health fails explicitly when the running helper con
     () => fetchAiGraderStationBridgeHealth({ baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL }, staleFetch),
     new RegExp(`update/restart required.*${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}.*v0\\.4`, "i"),
   );
+});
+
+test("shared finalize integrity contract is strict for publish, OCR, and slab-photo flows", () => {
+  const checksum = "a".repeat(64);
+  const base = { ok: true, byteSize: 123, contentType: "image/png", checksumSha256: checksum };
+  const failures = [
+    { patch: { checksumSha256: null }, pattern: /native SHA-256 checksum/i, code: "AI_GRADER_STORAGE_CHECKSUM_UNAVAILABLE" },
+    { patch: { checksumSha256: "b".repeat(64) }, pattern: /checksum mismatch/i },
+    { patch: { byteSize: undefined }, pattern: /byte size mismatch/i },
+    { patch: { byteSize: 124 }, pattern: /byte size mismatch/i },
+    { patch: { contentType: undefined }, pattern: /content type mismatch/i },
+    { patch: { contentType: "image/jpeg" }, pattern: /content type mismatch/i },
+  ];
+  for (const label of ["publish artifact", "normalized front OCR image", "slabbed front photo"]) {
+    for (const failure of failures) {
+      assert.throws(() => assertAiGraderStorageArtifactIntegrity({
+        verified: { ...base, ...failure.patch },
+        expectedByteSize: 123,
+        expectedContentType: "image/png",
+        expectedChecksumSha256: checksum,
+        label,
+      }), (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, failure.pattern);
+        if (failure.code) assert.equal((error as Error & { code?: string }).code, failure.code);
+        return true;
+      });
+    }
+  }
 });
 
 test("browser station bridge health gives re-export guidance for a stale report producer", async () => {

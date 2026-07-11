@@ -13,7 +13,6 @@ type ArtifactContext = {
   index?: number;
   total?: number;
   kind?: string;
-  storageKey?: string;
 };
 
 function errorMessage(error: unknown) {
@@ -22,6 +21,7 @@ function errorMessage(error: unknown) {
 
 export function isAiGraderFetchReachabilityError(error: unknown) {
   if (!(error instanceof Error)) return false;
+  if ((error as Error & { code?: string }).code === "network") return true;
   const message = error.message.toLowerCase();
   return (
     error.name === "TypeError" &&
@@ -38,9 +38,13 @@ function artifactLabel(context?: ArtifactContext) {
     typeof context.index === "number" && typeof context.total === "number"
       ? `artifact ${context.index + 1}/${context.total}`
       : "artifact";
-  const kind = context.kind ? ` ${context.kind}` : "";
-  const storageKey = context.storageKey ? ` (${context.storageKey})` : "";
-  return `${position}${kind}${storageKey}`;
+  const safeKind = context.kind
+    ?.split(/[\\/]/)
+    .at(-1)
+    ?.replace(/[^A-Za-z0-9._-]/g, "_")
+    .slice(0, 80);
+  const kind = safeKind ? ` ${safeKind}` : "";
+  return `${position}${kind}`;
 }
 
 export function formatAiGraderPublishStageError(input: {

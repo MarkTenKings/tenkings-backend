@@ -67,6 +67,7 @@ import {
 import { formatAiGraderPublishStageError } from "../../lib/aiGraderPublishErrors";
 import { productionAssetManifest } from "../../lib/aiGraderProductionAssetManifest";
 import { assertAiGraderBrowserRaster } from "../../lib/aiGraderRasterValidation";
+import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
@@ -2693,7 +2694,7 @@ export default function AiGraderStationPage() {
               formatAiGraderPublishStageError({
                 stage: "local-asset-read",
                 error,
-                artifact: { index, total: uploadArtifacts.length, kind: artifact.kind, storageKey: artifact.storageKey },
+                artifact: { index, total: uploadArtifacts.length, kind: artifact.kind },
               })
             );
           }
@@ -2743,15 +2744,13 @@ export default function AiGraderStationPage() {
           }
           contentType = artifact.contentType;
         }
-        let uploadResponse: Response;
         try {
-          uploadResponse = await fetch(artifact.uploadUrl, {
-            method: artifact.uploadMethod ?? "PUT",
-            mode: "cors",
-            headers: {
-              ...artifact.uploadHeaders,
-              "Content-Type": contentType,
-            },
+          await uploadAiGraderArtifactDirectly({
+            purpose: "publish",
+            uploadUrl: artifact.uploadUrl,
+            uploadMethod: artifact.uploadMethod,
+            uploadHeaders: artifact.uploadHeaders,
+            contentType,
             body: bytes,
           });
         } catch (error) {
@@ -2759,16 +2758,7 @@ export default function AiGraderStationPage() {
             formatAiGraderPublishStageError({
               stage: "direct-storage-upload",
               error,
-              artifact: { index, total: uploadArtifacts.length, kind: artifact.kind, storageKey: artifact.storageKey },
-            })
-          );
-        }
-        if (!uploadResponse.ok) {
-          throw new Error(
-            formatAiGraderPublishStageError({
-              stage: "direct-storage-upload",
-              error: new Error(`HTTP ${uploadResponse.status}`),
-              artifact: { index, total: uploadArtifacts.length, kind: artifact.kind, storageKey: artifact.storageKey },
+              artifact: { index, total: uploadArtifacts.length, kind: artifact.kind },
             })
           );
         }
@@ -2922,28 +2912,17 @@ export default function AiGraderStationPage() {
         ...current,
         [side]: { status: "uploading", message: `Uploading slabbed ${side} photo directly to storage.` },
       }));
-      let uploadResponse: Response;
       try {
-        uploadResponse = await fetch(plan.uploadUrl, {
-          method: plan.uploadMethod ?? "PUT",
-          mode: "cors",
-          headers: {
-            ...(plan.uploadHeaders ?? {}),
-            "Content-Type": file.type || "image/jpeg",
-          },
+        await uploadAiGraderArtifactDirectly({
+          purpose: "slab-photo",
+          uploadUrl: plan.uploadUrl,
+          uploadMethod: plan.uploadMethod,
+          uploadHeaders: plan.uploadHeaders,
+          contentType: file.type || "image/jpeg",
           body: bytes,
         });
       } catch (error) {
         throw new Error(formatAiGraderPublishStageError({ stage: "slabbed-photo-upload", error, side }));
-      }
-      if (!uploadResponse.ok) {
-        throw new Error(
-          formatAiGraderPublishStageError({
-            stage: "slabbed-photo-upload",
-            error: new Error(`HTTP ${uploadResponse.status}`),
-            side,
-          })
-        );
       }
       let finalizeResponse: Response;
       try {

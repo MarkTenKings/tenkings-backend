@@ -52,7 +52,6 @@ export interface UploadBufferOptions {
 }
 
 export interface PresignUploadOptions {
-  metadata?: Record<string, string>;
   /** Lowercase or uppercase 64-character SHA-256 hex digest of the exact PUT body. */
   checksumSha256?: string;
 }
@@ -301,14 +300,12 @@ export async function presignUploadUrl(storageKey: string, contentType: string, 
     Key: storageKey,
     ContentType: contentType,
     ACL: s3ObjectAcl,
-    Metadata: options.metadata,
     ChecksumSHA256: options.checksumSha256 ? sha256HexToBase64(options.checksumSha256) : undefined,
   });
   return getSignedUrl(client as any, command as any, {
     expiresIn: 60 * 10,
-    // Keep the payload checksum as a required signed request header instead of
-    // allowing the presigner to hoist it into the URL query string.
-    unhoistableHeaders: options.checksumSha256 ? new Set(["x-amz-checksum-sha256"]) : undefined,
+    // The SDK's default hoisting binds ChecksumSHA256 in the signed query so
+    // browsers do not need a custom checksum request header (and its CORS preflight).
   });
 }
 
