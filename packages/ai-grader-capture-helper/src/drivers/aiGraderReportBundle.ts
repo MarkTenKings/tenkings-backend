@@ -12,7 +12,6 @@ export const AI_GRADER_REPORT_PRODUCER_CAPABILITIES = [
   "finding-validation-v1",
   "capture-profile-provenance-v1",
   "raster-dimensions-v1",
-  "atomic-derived-package-v1",
 ] as const;
 
 const AI_GRADER_REPORT_CAPTURE_PROFILE_VERSIONS: Record<AiGraderCaptureTimingProfile, string> = {

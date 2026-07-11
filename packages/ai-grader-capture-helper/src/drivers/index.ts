@@ -94,6 +94,9 @@ export {
   aiGraderReportBundleHasCurrentProducer,
   aiGraderReportBundleHasFindingCandidates,
   aiGraderReportBundleNeedsRecovery,
+  aiGraderReportPackageHasCompleteCurrentSidecars,
+  readAiGraderReportPackageReleaseEvidence,
+  reconcileAiGraderReportPackageTransaction,
   recoverAiGraderReportPackage,
   withAiGraderReportPackageOperation,
 } from "./aiGraderReportPackageRecovery";

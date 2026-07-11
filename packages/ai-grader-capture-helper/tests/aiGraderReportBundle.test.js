@@ -7,6 +7,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   AI_GRADER_REPORT_BUNDLE_VERSION,
+  AI_GRADER_REPORT_PRODUCER_CAPABILITIES,
   AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
   buildAiGraderReportBundle,
   writeAiGraderReportBundle,
@@ -159,6 +160,10 @@ function fixtureReportDir() {
         },
         surfaceIntelligence: {
           detectorId: "preliminary_surface_intelligence_v0",
+          front: {
+            version: "preliminary_surface_intelligence_v0",
+            candidates: [],
+          },
           back: {
             version: "preliminary_surface_intelligence_v0",
             confidence: { score: 0.78 },
@@ -483,7 +488,7 @@ test("report bundle writer creates bundle, asset manifest, and checksums", async
   assert.equal(checksums.checksums.some((entry) => entry.id === "report-html" && /^[a-f0-9]{64}$/.test(entry.sha256)), true);
 });
 
-test("stale PR82 candidate package is atomically recovered without recapture and preserves verified IDs and hashes", async () => {
+test("stale PR82 candidate package is transactionally recovered without recapture and preserves verified IDs and hashes", async () => {
   const reportDir = fixtureReportDir();
   const reportId = "recover-pr82-report";
   const gradingSessionId = "recover-pr82-session";
@@ -532,10 +537,10 @@ test("stale PR82 candidate package is atomically recovered without recapture and
   for (const asset of result.bundle.assets.filter((asset) => oldHashes.has(asset.id))) {
     assert.equal(asset.sha256, oldHashes.get(asset.id));
   }
-  assert.equal(await aiGraderReportBundleNeedsRecovery(result.bundle, reportDir), false);
+  assert.equal(await aiGraderReportBundleNeedsRecovery(result.bundle, reportDir, canonicalDir), false);
 });
 
-test("candidate-free legacy v0.1 remains compatible", async () => {
+test("verified candidate-free legacy v0.1 remains compatible", async () => {
   const reportDir = fixtureReportDir();
   const analysisPath = path.join(reportDir, "analysis.json");
   const analysis = JSON.parse(fs.readFileSync(analysisPath, "utf8"));
@@ -547,6 +552,114 @@ test("candidate-free legacy v0.1 remains compatible", async () => {
   delete legacy.visionLab.defectFindings;
   delete legacy.visionLab.findingValidation;
   assert.equal(await aiGraderReportBundleNeedsRecovery(legacy, reportDir), false);
+});
+
+test("candidate-free compatibility fails closed when source analysis is missing, corrupt, incomplete, or one-sided", async () => {
+  for (const failure of ["missing", "corrupt", "incomplete", "one-sided"]) {
+    const reportDir = fixtureReportDir();
+    const legacy = await buildAiGraderReportBundle({ reportDir, reportId: "unverified-zero-" + failure });
+    delete legacy.reportProducer;
+    delete legacy.defectFindings;
+    delete legacy.visionLab.defectFindings;
+    delete legacy.visionLab.findingValidation;
+    delete legacy.visionLab.findingContractVersion;
+    delete legacy.visionLab.candidateCount;
+    if (legacy.provisionalGrade) delete legacy.provisionalGrade.gradeImpactCandidates;
+    const analysisPath = path.join(reportDir, "analysis.json");
+    if (failure === "missing") fs.unlinkSync(analysisPath);
+    if (failure === "corrupt") fs.writeFileSync(analysisPath, "{not-json");
+    if (failure === "incomplete") fs.writeFileSync(analysisPath, "{}");
+    if (failure === "one-sided") {
+      const analysis = JSON.parse(fs.readFileSync(analysisPath, "utf8"));
+      delete analysis.surfaceIntelligence.front;
+      fs.writeFileSync(analysisPath, JSON.stringify(analysis, null, 2));
+    }
+
+    await assert.rejects(
+      aiGraderReportBundleNeedsRecovery(legacy, reportDir),
+      (error) => error instanceof Error && error.message === AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+    );
+  }
+});
+
+test("current producer requires complete matching base sidecars and omits the atomic package capability", async () => {
+  assert.equal(AI_GRADER_REPORT_PRODUCER_CAPABILITIES.includes("atomic-derived-package-v1"), false);
+  for (const failure of [
+    "missing-asset-manifest",
+    "mismatched-asset-manifest",
+    "missing-checksums",
+    "mismatched-checksums",
+    "missing-asset-integrity",
+    "missing-asset-integrity-missing-status",
+    "retired-atomic-capability",
+  ]) {
+    const reportDir = fixtureReportDir();
+    const reportId = "current-sidecars-" + failure;
+    const gradingSessionId = reportId + "-session";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ai-grader-current-sidecars-"));
+    const canonicalDir = path.join(root, reportId);
+    const written = await writeAiGraderReportBundle({
+      reportDir,
+      outputDir: canonicalDir,
+      reportId,
+      gradingSessionId,
+    });
+    const bundlePath = path.join(canonicalDir, "report-bundle.json");
+    const assetManifestPath = path.join(canonicalDir, "asset-manifest.json");
+    const checksumsPath = path.join(canonicalDir, "checksums.json");
+    if (failure === "missing-asset-manifest") fs.unlinkSync(assetManifestPath);
+    if (failure === "mismatched-asset-manifest") {
+      const sidecar = JSON.parse(fs.readFileSync(assetManifestPath, "utf8"));
+      sidecar.assets[0].localPath = sidecar.assets[0].localPath + ".mismatched";
+      fs.writeFileSync(assetManifestPath, JSON.stringify(sidecar, null, 2));
+    }
+    if (failure === "missing-checksums") fs.unlinkSync(checksumsPath);
+    if (failure === "mismatched-checksums") {
+      const sidecar = JSON.parse(fs.readFileSync(checksumsPath, "utf8"));
+      sidecar.checksums[0].sha256 = "f".repeat(64);
+      fs.writeFileSync(checksumsPath, JSON.stringify(sidecar, null, 2));
+    }
+    if (failure.startsWith("missing-asset-integrity")) {
+      const asset = written.bundle.assets.find((entry) => entry.kind !== "folder");
+      delete asset.sha256;
+      delete asset.byteSize;
+      if (failure.endsWith("missing-status")) written.bundle.reportStatus = "missing_report_data";
+      fs.writeFileSync(bundlePath, JSON.stringify(written.bundle, null, 2));
+      const assetManifest = JSON.parse(fs.readFileSync(assetManifestPath, "utf8"));
+      assetManifest.assets = written.bundle.assets;
+      fs.writeFileSync(assetManifestPath, JSON.stringify(assetManifest, null, 2));
+      const checksums = JSON.parse(fs.readFileSync(checksumsPath, "utf8"));
+      checksums.checksums = checksums.checksums.filter((entry) => entry.id !== asset.id);
+      fs.writeFileSync(checksumsPath, JSON.stringify(checksums, null, 2));
+    }
+    if (failure === "retired-atomic-capability") {
+      written.bundle.reportProducer.capabilities.push("atomic-derived-package-v1");
+      fs.writeFileSync(bundlePath, JSON.stringify(written.bundle, null, 2));
+    }
+
+    assert.equal(await aiGraderReportBundleNeedsRecovery(written.bundle, reportDir, canonicalDir), true);
+    const recovered = await recoverAiGraderReportPackage({
+      canonicalDir,
+      reportDir,
+      reportId,
+      gradingSessionId,
+      previousBundle: written.bundle,
+    });
+    assert.equal(recovered.productionRelease, undefined);
+    assert.equal(recovered.bundle.reportProducer.capabilities.includes("atomic-derived-package-v1"), false);
+    assert.equal(await aiGraderReportBundleNeedsRecovery(recovered.bundle, reportDir, canonicalDir), false);
+    const assetManifest = JSON.parse(fs.readFileSync(path.join(canonicalDir, "asset-manifest.json"), "utf8"));
+    const checksums = JSON.parse(fs.readFileSync(path.join(canonicalDir, "checksums.json"), "utf8"));
+    assert.equal(assetManifest.reportId, reportId);
+    assert.deepEqual(assetManifest.assets, recovered.bundle.assets);
+    assert.equal(checksums.reportId, reportId);
+    assert.deepEqual(checksums.checksums, recovered.bundle.assets.filter((asset) => asset.sha256).map((asset) => ({
+      id: asset.id,
+      localPath: asset.localPath,
+      sha256: asset.sha256,
+      byteSize: asset.byteSize,
+    })));
+  }
 });
 
 test("report recovery rejects tampered IDs, invalid fingerprints, and missing analysis without replacing the old package", async () => {

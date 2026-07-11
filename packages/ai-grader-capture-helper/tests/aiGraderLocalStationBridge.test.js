@@ -17,6 +17,7 @@ const { buildAiGraderStationRealCommandPlan } = require("../dist/drivers/aiGrade
 const { buildAiGraderReportBundle } = require("../dist/drivers/aiGraderReportBundle");
 const { buildAiGraderProductionRelease } = require("../dist/drivers/aiGraderProductionRelease");
 const { createStableAiGraderDefectFindingId } = require("../dist/drivers/aiGraderDefectFindings");
+const { AI_GRADER_REPORT_RECOVERY_GUIDANCE } = require("../dist/drivers/aiGraderReportPackageRecovery");
 const { runCaptureHelperCli } = require("../dist/cli");
 const PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -133,6 +134,10 @@ function createCandidateRecoveryReport(rootDir, reportId, gradingSessionId) {
     },
     surfaceIntelligence: {
       detectorId: "preliminary_surface_intelligence_v0",
+      front: {
+        version: "preliminary_surface_intelligence_v0",
+        candidates: [],
+      },
       back: {
         version: "preliminary_surface_intelligence_v0",
         confidence: { score: 0.8 },
@@ -160,7 +165,7 @@ function createCandidateRecoveryReport(rootDir, reportId, gradingSessionId) {
   return { reportDir, reportHtmlPath };
 }
 
-async function installStaleCandidatePackage(service, config, reportId) {
+async function installStaleCandidatePackage(service, config, reportId, options = {}) {
   await service.action("start-session", { reportId, captureProfile: "production_fast" });
   const manifest = service.manifest;
   const gradingSessionId = manifest.sessionId;
@@ -203,7 +208,10 @@ async function installStaleCandidatePackage(service, config, reportId) {
   const canonicalDir = path.join(config.reportBundleOutputDir, reportId);
   fs.mkdirSync(canonicalDir, { recursive: true });
   fs.writeFileSync(path.join(canonicalDir, "report-bundle.json"), JSON.stringify(stale, null, 2));
-  fs.writeFileSync(path.join(canonicalDir, "production-release.json"), JSON.stringify(previousRelease, null, 2));
+  const includeRelease = options.includeRelease !== false;
+  if (includeRelease) {
+    fs.writeFileSync(path.join(canonicalDir, "production-release.json"), JSON.stringify(previousRelease, null, 2));
+  }
   Object.assign(manifest.outputs, {
     unifiedReportDir: source.reportDir,
     unifiedReportPath: source.reportHtmlPath,
@@ -212,12 +220,14 @@ async function installStaleCandidatePackage(service, config, reportId) {
     productionReleasePath: path.join(canonicalDir, "production-release.json"),
   });
   manifest.reportBundle = stale;
-  manifest.productionRelease = previousRelease;
-  manifest.rapidCapture.workflowState = "confirmed_needs_publish";
+  manifest.productionRelease = includeRelease || options.embedRelease ? previousRelease : undefined;
+  manifest.rapidCapture.workflowState = includeRelease ? "confirmed_needs_publish" : "report_ready_needs_confirm";
   manifest.rapidCapture.workflowHistory = [{
-    state: "confirmed_needs_publish",
+    state: includeRelease ? "confirmed_needs_publish" : "report_ready_needs_confirm",
     at: "2026-07-11T12:00:00.000Z",
-    detail: "Human confirmation completed; publish remains required.",
+    detail: includeRelease
+      ? "Human confirmation completed; publish remains required."
+      : "Report is ready; explicit operator finalization remains required.",
   }];
   fs.writeFileSync(manifest.outputs.manifestPath, JSON.stringify(manifest, null, 2));
   return { canonicalDir, gradingSessionId, legacyFindingId, manifest, previousRelease, source, stale };
@@ -1071,7 +1081,8 @@ test("real station command plan still uses full forensic front/back evidence pac
 
 test("mock station bridge runs staged workflow without claiming hardware", async () => {
   const bundleRoot = outputDir(`canonical-report-bundles-${Date.now()}`);
-  const service = new AiGraderLocalStationBridgeService(mockConfig({ reportBundleOutputDir: bundleRoot }));
+  const config = mockConfig({ reportBundleOutputDir: bundleRoot });
+  const service = new AiGraderLocalStationBridgeService(config);
 
   let status = service.status();
   assert.equal(status.bridgeVersion, AI_GRADER_LOCAL_STATION_BRIDGE_VERSION);
@@ -1160,6 +1171,13 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(warmSessionManifest.executionPath, "warm_full_forensic_runner");
   assert.equal(warmSessionManifest.explicitColdDebugModeUsed, false);
   assert.equal(Object.prototype.hasOwnProperty.call(warmSessionManifest, "fallbackUsed"), false);
+  const completeMockReport = createCandidateRecoveryReport(
+    config.outputDir,
+    status.latestReport.reportId,
+    service.manifest.sessionId,
+  );
+  service.manifest.outputs.unifiedReportDir = completeMockReport.reportDir;
+  service.manifest.outputs.unifiedReportPath = completeMockReport.reportHtmlPath;
   const resolvedReport = await service.reportBundle(status.latestReport.reportId);
   assert.equal(resolvedReport.reportId, status.latestReport.reportId);
   assert.equal(resolvedReport.bundle.finalGradeComputed, false);
@@ -1232,6 +1250,144 @@ test("active confirmed report recovers a stale PR82 package once under concurren
   assert.equal(nextStatus.rapidCapture.workflowState, "confirmed_needs_publish");
   assert.deepEqual(nextStatus.rapidCapture.workflowHistory, workflowHistory);
   assert.equal(nextStatus.progressLog.filter((entry) => entry.includes("derived package safely recovered")).length, 1);
+});
+
+test("stale candidate report without a release recovers only the base package before explicit operator finalization", async () => {
+  const dir = outputDir("active-report-recovery-no-release-" + Date.now());
+  const bundleRoot = path.join(dir, "report-bundles");
+  fs.rmSync(dir, { recursive: true, force: true });
+  const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+  const service = new AiGraderLocalStationBridgeService(config);
+  const reportId = "active-pr82-recovery-no-release";
+  const fixture = await installStaleCandidatePackage(service, config, reportId, {
+    includeRelease: false,
+    embedRelease: true,
+  });
+
+  const resolved = await service.reportBundle(reportId);
+  assert.equal(resolved.source, "canonical_publish_package_recovered");
+  assert.equal(resolved.bundle.productionRelease, undefined);
+  for (const fileName of ["report-bundle.json", "asset-manifest.json", "checksums.json"]) {
+    assert.equal(fs.existsSync(path.join(fixture.canonicalDir, fileName)), true, fileName);
+  }
+  assert.equal(fs.existsSync(path.join(fixture.canonicalDir, "assets")), true);
+  for (const fileName of ["production-release.json", "label-data.json", "publication-manifest.json", "integration-contract.json"]) {
+    assert.equal(fs.existsSync(path.join(fixture.canonicalDir, fileName)), false, fileName);
+  }
+  let status = service.status();
+  assert.equal(status.productionRelease, undefined);
+  assert.equal(status.outputs.productionReleasePath, undefined);
+  assert.equal(status.safety.finalGradeComputed, false);
+  assert.equal(status.safety.labelGenerated, false);
+  assert.equal(status.rapidCapture.workflowState, "report_ready_needs_confirm");
+
+  status = await service.action("calculate-final-grade", {
+    operatorId: "corrective-operator",
+    warningsAccepted: true,
+    overrideReason: "Explicit review after safe base recovery.",
+  });
+  const release = JSON.parse(fs.readFileSync(path.join(fixture.canonicalDir, "production-release.json"), "utf8"));
+  assert.equal(status.productionRelease.operatorFinalization.operatorId, "corrective-operator");
+  assert.equal(release.operatorFinalization.operatorId, "corrective-operator");
+  assert.equal(release.operatorFinalization.warningsAccepted, true);
+  assert.equal(release.operatorFinalization.overrideReason, "Explicit review after safe base recovery.");
+});
+
+test("next locked report access restores an interrupted canonical backup before recovery", async () => {
+  const dir = outputDir("active-report-recovery-interrupted-" + Date.now());
+  const bundleRoot = path.join(dir, "report-bundles");
+  fs.rmSync(dir, { recursive: true, force: true });
+  const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+  const service = new AiGraderLocalStationBridgeService(config);
+  const reportId = "active-pr82-recovery-interrupted";
+  const fixture = await installStaleCandidatePackage(service, config, reportId);
+  const transactionId = "simulated-interruption";
+  const backupDir = path.join(bundleRoot, "." + reportId + ".backup-" + transactionId);
+  const stageDir = path.join(bundleRoot, "." + reportId + ".staging-" + transactionId);
+  fs.renameSync(fixture.canonicalDir, backupDir);
+  fs.mkdirSync(stageDir, { recursive: true });
+  fs.writeFileSync(path.join(stageDir, "partial.marker"), "interrupted");
+
+  const resolved = await service.reportBundle(reportId);
+  assert.equal(resolved.source, "canonical_publish_package_recovered");
+  assert.equal(resolved.bundle.visionLab.defectFindings[0].findingId, fixture.legacyFindingId);
+  assert.equal(fs.existsSync(fixture.canonicalDir), true);
+  assert.equal(fs.existsSync(backupDir), false);
+  assert.equal(fs.existsSync(stageDir), false);
+  assert.equal(service.status().rapidCapture.workflowState, "confirmed_needs_publish");
+});
+
+test("current producer sidecars cannot bypass immutable session and report-folder identity", async () => {
+  const dir = outputDir("current-producer-identity-" + Date.now());
+  const bundleRoot = path.join(dir, "report-bundles");
+  fs.rmSync(dir, { recursive: true, force: true });
+  const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+  const service = new AiGraderLocalStationBridgeService(config);
+  const reportId = "current-producer-wrong-session";
+  const fixture = await installStaleCandidatePackage(service, config, reportId, { includeRelease: false });
+  await service.reportBundle(reportId);
+  const bundlePath = path.join(fixture.canonicalDir, "report-bundle.json");
+  const bundle = JSON.parse(fs.readFileSync(bundlePath, "utf8"));
+  bundle.gradingSessionId = "wrong-session";
+  fs.writeFileSync(bundlePath, JSON.stringify(bundle, null, 2));
+
+  await assert.rejects(
+    service.reportBundle(reportId),
+    (error) => error instanceof Error && error.message === AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+  );
+});
+
+test("corrupt release evidence or an orphan release sidecar fails without replacing the base package", async () => {
+  for (const failure of ["corrupt-release", "orphan-sidecar"]) {
+    const dir = outputDir("release-evidence-" + failure + "-" + Date.now());
+    const bundleRoot = path.join(dir, "report-bundles");
+    fs.rmSync(dir, { recursive: true, force: true });
+    const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+    const service = new AiGraderLocalStationBridgeService(config);
+    const reportId = "release-evidence-" + failure;
+    const fixture = await installStaleCandidatePackage(service, config, reportId, {
+      includeRelease: failure === "corrupt-release",
+    });
+    const bundlePath = path.join(fixture.canonicalDir, "report-bundle.json");
+    const oldBundleBytes = fs.readFileSync(bundlePath);
+    const evidencePath = failure === "corrupt-release"
+      ? path.join(fixture.canonicalDir, "production-release.json")
+      : path.join(fixture.canonicalDir, "label-data.json");
+    const evidenceBytes = failure === "corrupt-release"
+      ? Buffer.from("{not-json")
+      : Buffer.from(JSON.stringify({ reportId, status: "orphaned" }));
+    fs.writeFileSync(evidencePath, evidenceBytes);
+
+    await assert.rejects(
+      service.reportBundle(reportId),
+      (error) => error instanceof Error && error.message === AI_GRADER_REPORT_RECOVERY_GUIDANCE,
+    );
+    assert.deepEqual(fs.readFileSync(bundlePath), oldBundleBytes);
+    assert.deepEqual(fs.readFileSync(evidencePath), evidenceBytes);
+  }
+});
+
+test("tampered promoted assets restore the last committed backup before rebuilding", async () => {
+  const dir = outputDir("promoted-asset-rollback-" + Date.now());
+  const bundleRoot = path.join(dir, "report-bundles");
+  fs.rmSync(dir, { recursive: true, force: true });
+  const config = mockConfig({ outputDir: dir, reportBundleOutputDir: bundleRoot });
+  const service = new AiGraderLocalStationBridgeService(config);
+  const reportId = "promoted-asset-rollback";
+  const fixture = await installStaleCandidatePackage(service, config, reportId);
+  const savedBackup = path.join(bundleRoot, "saved-stale-generation");
+  fs.cpSync(fixture.canonicalDir, savedBackup, { recursive: true });
+  const first = await service.reportBundle(reportId);
+  const transactionBackup = path.join(bundleRoot, "." + reportId + ".backup-tampered-promotion");
+  fs.renameSync(savedBackup, transactionBackup);
+  const imageAsset = first.bundle.assets.find((asset) => asset.kind === "image");
+  fs.writeFileSync(imageAsset.localPath, Buffer.alloc(imageAsset.byteSize, 0));
+
+  const rebuilt = await service.reportBundle(reportId);
+  assert.equal(rebuilt.source, "canonical_publish_package_recovered");
+  assert.equal(rebuilt.bundle.visionLab.defectFindings[0].findingId, fixture.legacyFindingId);
+  assert.equal(fs.existsSync(transactionBackup), false);
+  assert.equal(fs.readFileSync(imageAsset.localPath).equals(Buffer.alloc(imageAsset.byteSize, 0)), false);
 });
 
 test("browser live lighting safe-offs on capture start and records safety event", async () => {
