@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "ocr:evaluate": "tsx scripts/ai-grader-ocr-evaluate.ts",
     "migrate:images": "ts-node --project tsconfig.scripts.json scripts/migrate-image-variants.ts",
     "migrate:images:dry": "ts-node --project tsconfig.scripts.json scripts/migrate-image-variants.ts --dry-run"
   },

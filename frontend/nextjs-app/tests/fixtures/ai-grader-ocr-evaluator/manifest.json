@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "ai-grader-ocr-evaluation-manifest-v1",
+  "cases": [
+    {
+      "id": "synthetic-sport-001",
+      "groundTruthFile": "ground-truth/synthetic-sport-001.json",
+      "resultFile": "results/synthetic-sport-001.json"
+    },
+    {
+      "id": "synthetic-tcg-001",
+      "groundTruthFile": "ground-truth/synthetic-tcg-001.json",
+      "resultFile": "results/synthetic-tcg-001.json"
+    }
+  ]
+}

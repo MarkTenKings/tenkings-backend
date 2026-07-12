@@ -1,0 +1,19 @@
+{
+  "latencyMs": 1800,
+  "fields": {
+    "category": { "state": "supported", "value": "tcg" },
+    "playerName": { "state": "unknown", "value": null },
+    "cardName": { "state": "supported", "value": "Synthetic Creature" },
+    "year": { "state": "supported", "value": "2024" },
+    "manufacturer": { "state": "supported", "value": "Synthetic Games" },
+    "sport": { "state": "unknown", "value": null },
+    "game": { "state": "supported", "value": "synthetic tcg" },
+    "productSet": { "state": "disagreement", "value": null },
+    "cardNumber": { "state": "supported", "value": "42/100" },
+    "insert": { "state": "unknown", "value": null },
+    "parallel": { "state": "supported", "value": "Foil" },
+    "numbered": { "state": "unknown", "value": null },
+    "autograph": { "state": "unknown", "value": null },
+    "memorabilia": { "state": "unknown", "value": null }
+  }
+}

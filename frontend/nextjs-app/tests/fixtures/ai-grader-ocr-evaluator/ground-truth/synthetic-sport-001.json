@@ -1,0 +1,18 @@
+{
+  "fields": {
+    "category": "sport",
+    "playerName": "Synthetic Player",
+    "cardName": null,
+    "year": "2025",
+    "manufacturer": "Synthetic Maker",
+    "sport": "basketball",
+    "game": null,
+    "productSet": "Synthetic Set",
+    "cardNumber": "S-1",
+    "insert": null,
+    "parallel": "Blue",
+    "numbered": "1/10",
+    "autograph": false,
+    "memorabilia": false
+  }
+}
