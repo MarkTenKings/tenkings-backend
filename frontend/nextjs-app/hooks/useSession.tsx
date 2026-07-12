@@ -384,7 +384,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const handleSendCode = async () => {
+  const handleSendCode = async (turnstileToken: string) => {
     const rawPhone = authState.phone.trim();
     const normalized = normalizePhoneInput(rawPhone);
     if (!normalized) {
@@ -393,7 +393,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
     setAuthState((prev) => ({ ...prev, loading: true, error: null, message: null }));
     try {
-      await requestLoginCode(normalized);
+      await requestLoginCode(normalized, turnstileToken);
       setAuthState((prev) => ({
         ...prev,
         loading: false,

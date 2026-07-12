@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { setAuthToken } from "../../lib/api";
 import { TEN_KINGS_COLLECTIBLES_CROWN_PATH } from "../../lib/tenKingsBrand";
 import { useSession } from "../../hooks/useSession";
+import TurnstileWidget from "../../components/TurnstileWidget";
 
 function normalizePhoneInput(input: string) {
   const trimmed = input.trim();
@@ -23,6 +24,8 @@ export default function StockerLoginPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
 
   useEffect(() => {
     if (!loading && session?.token) {
@@ -36,6 +39,10 @@ export default function StockerLoginPage() {
 
   const handleSendCode = async (event: FormEvent) => {
     event.preventDefault();
+    if (!turnstileToken) {
+      setError("Complete human verification before requesting a code.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -44,7 +51,7 @@ export default function StockerLoginPage() {
       const response = await fetch("/api/stocker/auth/send-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: normalizedPhone }),
+        body: JSON.stringify({ phone: normalizedPhone, turnstileToken }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.message ?? payload?.error?.message ?? "Unable to send code");
@@ -55,6 +62,8 @@ export default function StockerLoginPage() {
       setError(sendError instanceof Error ? sendError.message : "Unable to send code");
     } finally {
       setBusy(false);
+      setTurnstileToken(null);
+      setTurnstileResetKey((value) => value + 1);
     }
   };
 
@@ -111,6 +120,7 @@ export default function StockerLoginPage() {
                 className="mt-2 w-full rounded-md border border-zinc-800 bg-[#111] px-4 py-3 text-base text-white outline-none focus:border-[#d4a843]"
               />
             </label>
+            {step === "phone" ? <TurnstileWidget resetKey={turnstileResetKey} onTokenChange={setTurnstileToken} /> : null}
             {step === "code" ? (
               <label className="block text-xs uppercase tracking-[0.18em] text-zinc-500">
                 Verification Code
@@ -127,13 +137,21 @@ export default function StockerLoginPage() {
             {message ? <p className="text-sm text-[#d4a843]">{message}</p> : null}
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || (step === "phone" && !turnstileToken)}
               className="h-14 w-full rounded-md bg-[#d4a843] font-heading text-sm font-semibold uppercase tracking-[0.14em] text-black disabled:opacity-60"
             >
               {busy ? "Please wait" : step === "phone" ? "Send Code" : "Verify"}
             </button>
             {step === "code" ? (
-              <button type="button" onClick={() => setStep("phone")} className="w-full py-2 text-center text-xs uppercase tracking-[0.18em] text-zinc-500">
+              <button
+                type="button"
+                onClick={() => {
+                  setStep("phone");
+                  setTurnstileToken(null);
+                  setTurnstileResetKey((value) => value + 1);
+                }}
+                className="w-full py-2 text-center text-xs uppercase tracking-[0.18em] text-zinc-500"
+              >
                 Change Phone
               </button>
             ) : null}
