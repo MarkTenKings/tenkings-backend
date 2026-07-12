@@ -67,3 +67,7 @@ echo "DATABASE_URL length: ${#DATABASE_URL}"
 - Confirm expected commit hash in serving environment
 - Hit target API endpoint and verify response shape
 - Verify affected admin UI screen after hard refresh
+
+## AI Grader Direct-Upload CORS Gate
+
+Any AI Grader release that makes x-amz-checksum-sha256 a required signed browser PUT header must remain unmerged and undeployed until Mark separately approves the additive DigitalOcean Spaces CORS rule documented in docs/ai-grader-capture-helper.md. Preserve the existing CORS rules, verify production-origin PUT and HEAD preflights for Content-Type, x-amz-acl, and x-amz-checksum-sha256, and stop before merge if either verification fails. Do not use a code deploy as the CORS test.

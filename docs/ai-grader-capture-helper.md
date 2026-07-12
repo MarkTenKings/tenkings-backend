@@ -1446,7 +1446,7 @@ Credential exposure checkpoint: if the production `DATABASE_URL` is exposed in t
 
 The July 2026 throughput workflow separates Dell capture from downstream finishing:
 
-- Person 1 uses `/ai-grader/station` on the Dell for capture, grade review, Confirm Card, publication, and immediately starting the next grade. Confirm Card atomically links or creates the card/item, assigns the next label sheet slot, and queues the existing KingsReview/SerpAPI eBay sold-comps lookup. The station shows only the assigned sheet/slot and comps lifecycle status; downstream review controls live elsewhere.
+- Person 1 uses `/ai-grader/station` on the Dell for capture, grade review, Confirm Card, publication, and immediately starting the next grade. Confirm Card uses finalized/unpublished semantics and a current producer-v0.2 package: it fail-closed validates the authoritative release, actual final grade, finding extraction, and exactly one normalized front/back image before atomically linking or creating the card/item and queuing the existing KingsReview/SerpAPI eBay sold-comps lookup. It never projects published sidecars or invents label/QR state. A label sheet slot is assigned only when the authoritative release already contains complete generated label and QR data; neither label readiness nor OCR success blocks fully manual Confirm Card. The station shows only any assigned sheet/slot and comps lifecycle status; downstream review controls live elsewhere.
 - Person 2 uses `/ai-grader/finish` from a normal computer. This page uses normal Ten Kings SMS/operator/admin auth and has no bridge, pairing, station token, Basler, lighting, or local hardware dependency. Its chronological queue stages are Needs Comps Review, Needs Slab Photos, Ready for Inventory, and Complete.
 - Person 2 or Mark uses `/ai-grader/labels/sheets` for the physical label queue. Sheets are 8.5in x 12in portrait with 16 slots in a 2-column by 8-row grid; each label is 2.73in x 0.83in. A partial sheet can be sealed and printed at any time. Mark Sheet Printed updates every label on that sheet atomically. The legacy per-label print-state mutation is retired; inventory readiness cannot bypass the sheet-level print transition.
 
@@ -1474,7 +1474,7 @@ Printed-design centering remains `not_computed`; camera placement is never subst
 
 Detection failure does not silently use a configured fixture boundary and does not generate a normalized geometry artifact. An explicit, operator-confirmed manual rectangle is recorded as `manual_capture` / `manual_override`, with `detectionUsed=false`, `confidence=0`, and a non-Ready placement state. The side manifest and analysis record front/back corners, bounding box, rotation/skew, confidence, source frame/image ID, timestamp, geometry source, normalized artifact hash/dimensions/resampling, coordinate-frame registration, and raw-source preservation evidence. The unified local report and report bundle include normalized artifact references while retaining all original evidence.
 
-Bridge protocol `ai-grader-local-station-bridge-v0.5` makes this contract explicit. The production page rejects an older in-memory helper with an actionable update/restart message instead of sending an unknown action. Normal bridge startup rebuilds the checked-out capture helper unless the developer explicitly selects `-SkipBuild`, and a failed build stops startup rather than running stale compiled code.
+Bridge protocol `ai-grader-local-station-bridge-v0.6` and report-producer contract `ai-grader-report-producer-v0.2` make this contract explicit. The production page rejects an older in-memory helper with an actionable update/restart message instead of sending an unknown action. Normal bridge startup rebuilds the checked-out capture helper unless the developer explicitly selects `-SkipBuild`, and a failed build stops startup rather than running stale compiled code.
 
 Two station capture profiles are available:
 
@@ -1496,6 +1496,28 @@ The strict extraction covers category, player/card name, year, manufacturer, spo
 The latest supervised Dell evidence remains the PR #58 control run: front capture `9442 ms`, back capture `9243 ms`, front processing `4229 ms` overlapped with the flip, back processing `3611 ms`, and unified report generation `14867 ms`. Across both sides, image writes consumed `11517.3 ms`, compared with `3156.2 ms` of frame grabs and about `454 ms` of Basler open/configure per side. Therefore five seconds per side is not yet proven. The next required action is a Mark-approved, supervised, same-card paired Dell run of `full_forensic` and `production_fast`, verifying all 11 raw roles and normalized outputs while comparing per-side timing and grading artifacts. No hardware run should be started merely to validate this software change.
 
 Direct PUT plans bind the actual object bytes with the storage provider's SHA-256 checksum header, and finalize requires the storage-returned checksum plus exact byte size; caller-controlled object metadata is not an integrity proof. Production publication also treats browser timing as diagnostic rather than a hardware attestation: public/persisted output cannot claim five seconds per side, auto-confirmed OCR, inventory mutation, or OCR-triggered publication from caller-supplied flags. Embedded local/private endpoints, signed URLs, runtime paths, tokens, and hardware controls are rejected or removed even when they appear inside a longer warning string.
+
+#### DigitalOcean Spaces Native-Checksum Rollout Gate
+
+The browser checksum header is a signed, required part of every AI Grader OCR, publish, and slab-photo direct PUT. DigitalOcean Spaces CORS must be updated before code that requires this header is merged or deployed. The update is additive: preserve every existing CORS rule and append exactly this production-origin rule; do not replace the bucket configuration.
+
+    <CORSRule>
+      <AllowedOrigin>https://collect.tenkings.co</AllowedOrigin>
+      <AllowedMethod>PUT</AllowedMethod>
+      <AllowedMethod>HEAD</AllowedMethod>
+      <AllowedHeader>Content-Type</AllowedHeader>
+      <AllowedHeader>x-amz-acl</AllowedHeader>
+      <AllowedHeader>x-amz-checksum-sha256</AllowedHeader>
+    </CORSRule>
+
+Rollout order is fail-closed:
+
+1. Finish review and CI for the checksum-header PR, but leave it unmerged and undeployed.
+2. Obtain Mark's separate explicit approval for the additive Spaces CORS change.
+3. Apply only the rule above and verify, read-only, that the exact production origin can preflight PUT and HEAD with Content-Type, x-amz-acl, and x-amz-checksum-sha256. Do not expose a signed object URL while recording the result.
+4. If either preflight fails, stop; do not merge or deploy the checksum-header code.
+5. Only after both checks pass, merge normally and allow the automatic production deployment.
+6. After the automatic deployment is green, Mark may authorize one newly captured card smoke through OCR Prefill, manual Confirm Card, and the existing comps handoff. Capture performance, ring-light restoration, edge accuracy, and startup delay remain a separate later PR.
 
 Exact supervised Dell proof procedure after Mark explicitly approves hardware:
 
