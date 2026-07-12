@@ -4,6 +4,7 @@ import twilio from "twilio";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { prisma, Prisma } from "@tenkings/database";
+import { TURNSTILE_SEND_CODE_ACTION, verifyTurnstileToken } from "./turnstile.js";
 
 const app = express();
 const port = process.env.PORT ? Number(process.env.PORT) : 8080;
@@ -12,6 +13,8 @@ const serviceName = "auth-service";
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
+const turnstileSecretKey = process.env.TURNSTILE_SECRET_KEY?.trim();
+const turnstileExpectedHostname = (process.env.TURNSTILE_EXPECTED_HOSTNAME?.trim() || "collect.tenkings.co").toLowerCase();
 const parsedTtl = process.env.SESSION_TTL_HOURS ? Number(process.env.SESSION_TTL_HOURS) : 720;
 const sessionTtlHours = Number.isFinite(parsedTtl) && parsedTtl > 0 ? parsedTtl : 720;
 
@@ -66,17 +69,41 @@ const resolveWallet = async (userId: string, existing?: { id: string; balance: n
 
 const sendCodeSchema = z.object({
   phone: phoneSchema,
+  turnstileToken: z.string().min(1).max(2_048),
 });
 
-app.post(["/auth/send-code", "/send-code"], async (req, res, next) => {
+app.post(["/auth/send-code", "/send-code"], async (req, res) => {
   try {
+    const parsed = sendCodeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Phone number and human verification are required" });
+    }
+
+    if (!turnstileSecretKey) {
+      return res.status(503).json({ message: "Human verification is not configured" });
+    }
+
+    const { phone, turnstileToken } = parsed.data;
+    const turnstile = await verifyTurnstileToken({
+      secretKey: turnstileSecretKey,
+      token: turnstileToken,
+      expectedHostname: turnstileExpectedHostname,
+      expectedAction: TURNSTILE_SEND_CODE_ACTION,
+    });
+
+    if (!turnstile.success) {
+      console.warn("[auth] Turnstile rejected send-code request", {
+        reason: turnstile.reason,
+        errorCodes: turnstile.errorCodes,
+      });
+      return res.status(403).json({ message: "Human verification failed. Please try again." });
+    }
+
     if (!twilioClient || !verifyServiceSid) {
       return res.status(503).json({ message: "Twilio verify not configured" });
     }
 
-    const { phone } = sendCodeSchema.parse(req.body);
-
-    console.log(`[auth] send-code request`, { phone });
+    console.log("[auth] send-code request accepted", { verification: "turnstile" });
 
     await twilioClient.verify.v2.services(verifyServiceSid).verifications.create({
       to: phone,
@@ -91,8 +118,14 @@ app.post(["/auth/send-code", "/send-code"], async (req, res, next) => {
 
     res.json({ status: "sent" });
   } catch (error) {
-    console.error("auth send-code failed", error);
-    next(error);
+    const details = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+    console.error("auth send-code failed", {
+      name: error instanceof Error ? error.name : "UnknownError",
+      message: error instanceof Error ? error.message : "Unexpected error",
+      code: details.code,
+      status: details.status,
+    });
+    return res.status(502).json({ message: "Unable to send verification code. Please try again." });
   }
 });
 

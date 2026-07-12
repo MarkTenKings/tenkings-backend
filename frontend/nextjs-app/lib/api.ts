@@ -232,11 +232,11 @@ export async function rejectIngestion(id: string, notes?: string) {
   });
 }
 
-export async function requestLoginCode(phone: string) {
+export async function requestLoginCode(phone: string, turnstileToken: string) {
   return handle<{ status: string }>(service("auth/send-code"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ phone }),
+    body: JSON.stringify({ phone, turnstileToken }),
     skipAuth: true,
   });
 }
