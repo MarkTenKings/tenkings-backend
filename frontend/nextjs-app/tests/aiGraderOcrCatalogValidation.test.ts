@@ -6,7 +6,7 @@ import {
   canonicalizeAiGraderOcrCatalog,
   resolveAiGraderCatalogOption,
   type AiGraderOcrPrefillFields,
-} from "../lib/server/aiGraderOcrPrefillCurrent";
+} from "../lib/server/aiGraderOcrPrefill";
 
 function supported<T extends string | boolean>(value: T, confidence = 0.92) {
   return {

@@ -73,6 +73,11 @@ import {
   stopAiGraderStationPreview,
 } from "../lib/aiGraderStationBridgeClient";
 import { reportImageAssets } from "../lib/aiGraderReportImages";
+import { canConfirmAiGraderCardManually } from "../lib/aiGraderForwardConfirm";
+import {
+  AiGraderOcrPrefillStageError,
+  runAiGraderOcrPrefillFromLocalReport,
+} from "../lib/aiGraderOcrPrefillClient";
 
 type MockResponse = NextApiResponse & {
   statusCodeValue: number | null;
@@ -1015,6 +1020,7 @@ test("production publication API is disabled by default and does not require DB 
 
 test("production publication API route keeps Vercel request bodies platform-safe", () => {
   assert.equal(aiGraderProductionRouteConfig.api.bodyParser.sizeLimit, "1mb");
+  assert.equal(aiGraderProductionRouteConfig.maxDuration, 60);
 });
 
 test("production AI Grader route binds direct uploads to the storage-provider SHA-256 checksum", () => {
@@ -1543,7 +1549,7 @@ test("production publish finalize verifies upload manifest and persists DB recor
   assert.equal(persistedReportBundle?.ocrPrefill?.humanConfirmationRequired, true);
   assert.equal(persistedReportBundle?.ocrPrefill?.inventoryMutationPerformed, false);
   assert.equal(persistedReportBundle?.ocrPrefill?.publishMutationPerformed, false);
-  assert.equal(persistedReportBundle?.ocrPrefill?.fields?.playerName?.reviewRequired, true);
+  assert.equal(persistedReportBundle?.ocrPrefill?.fields?.playerName?.reviewRequired, false);
   const body = res.jsonBody as { ok: boolean; result: { uploadedAssetCount: number; evidenceAssetCount: number; storageKeyPrefix: string } };
   assert.equal(body.ok, true);
   assert.equal(body.result.uploadedAssetCount, uploadManifest?.artifacts.length);
@@ -2902,6 +2908,158 @@ test("create-card-from-report runtime creates an operator-owned inventory Item w
   assert.equal(calls.filter((call) => call.delegate === "aiGraderValuation" && call.method === "create").length, 1);
 });
 
+test("current producer OCR failure composes with authoritative manual Confirm and idempotent comps handoff", async () => {
+  const frontBytes = Buffer.from([1, 2, 3, 4, 5]);
+  const backBytes = Buffer.from([6, 7, 8, 9]);
+  const currentBundle = sampleStorageReadyReportBundle({
+    reportId: "forward-ocr-confirm-integration",
+    reportProducer: {
+      contractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
+      capabilities: ["finding-validation-v1", "raster-dimensions-v1"],
+    },
+    publicAssets: undefined,
+    assets: [
+      {
+        id: "front/normalized/front-normalized-card.png",
+        kind: "image",
+        fileName: "front-normalized-card.png",
+        contentType: "image/png",
+        checksumSha256: sha256Hex(frontBytes),
+        sha256: sha256Hex(frontBytes),
+        byteSize: frontBytes.length,
+        widthPx: 1200,
+        heightPx: 1680,
+        side: "front",
+        evidenceRole: "normalized_card",
+        bodyBase64: frontBytes.toString("base64"),
+      },
+      {
+        id: "back/normalized/back-normalized-card.png",
+        kind: "image",
+        fileName: "back-normalized-card.png",
+        contentType: "image/png",
+        checksumSha256: sha256Hex(backBytes),
+        sha256: sha256Hex(backBytes),
+        byteSize: backBytes.length,
+        widthPx: 1200,
+        heightPx: 1680,
+        side: "back",
+        evidenceRole: "normalized_card",
+        bodyBase64: backBytes.toString("base64"),
+      },
+    ],
+  } as any);
+
+  let requestCount = 0;
+  let ocrFailure: unknown;
+  try {
+    await runAiGraderOcrPrefillFromLocalReport({
+      baseUrl: "http://127.0.0.1:47652",
+      stationToken: "test-only-station-token",
+      reportId: currentBundle.reportId,
+      authHeaders: { Authorization: "Bearer test-only-operator" },
+      bundle: currentBundle as any,
+    }, {
+      async fetchAsset({ assetId }) {
+        const bytes = assetId.startsWith("front/") ? frontBytes : backBytes;
+        return {
+          bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+          contentType: "image/png",
+          byteSize: bytes.length,
+          checksumSha256: sha256Hex(bytes),
+        };
+      },
+      async digestSha256(bytes) { return bytes.byteLength === frontBytes.length ? sha256Hex(frontBytes) : sha256Hex(backBytes); },
+      async uploadDirect() {},
+      async fetchImpl(_request, init) {
+        requestCount += 1;
+        if (requestCount === 1) {
+          const body = JSON.parse(String(init?.body));
+          const images = body.images.map((image: any) => ({ ...image, storageKey: `private/${image.side}` }));
+          return new Response(JSON.stringify({ ok: true, result: {
+            reportId: currentBundle.reportId,
+            reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
+            uploadSessionId: "aigocr_composed",
+            humanConfirmationRequired: true,
+            uploadPlan: images.map((image: any) => ({
+              ...image,
+              publicUrl: "https://cdn.example.invalid/redacted",
+              uploadUrl: `https://upload.example.invalid/${image.side}`,
+              uploadMethod: "PUT",
+              uploadHeaders: {},
+            })),
+            requiredFinalizeManifest: {
+              reportId: currentBundle.reportId,
+              reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
+              uploadSessionId: "aigocr_composed",
+              images,
+            },
+          } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          ok: false,
+          code: "AI_GRADER_OCR_OPENAI_TIMEOUT",
+          message: "provider details must not be trusted",
+        }), { status: 504 });
+      },
+    });
+  } catch (error) {
+    ocrFailure = error;
+  }
+  assert.equal(ocrFailure instanceof AiGraderOcrPrefillStageError, true);
+  assert.equal((ocrFailure as AiGraderOcrPrefillStageError).failureCode, "AI_GRADER_OCR_OPENAI_TIMEOUT");
+  assert.equal(canConfirmAiGraderCardManually({
+    reportReady: true,
+    identityComplete: true,
+    linkedCardReady: false,
+    confirmationPending: false,
+  }), true);
+
+  const verifiedRelease = buildSampleAiGraderProductionRelease(currentBundle as any);
+  const staleRelease = {
+    ...verifiedRelease,
+    operatorFinalization: { ...verifiedRelease.operatorFinalization, operatorId: "stale-browser-operator" },
+  };
+  const authoritativeBundle = { ...currentBundle, productionRelease: verifiedRelease } as any;
+  const authoritative = await resolveAiGraderAuthoritativeProductionPackage({
+    initialStatus: {
+      latestReport: { reportId: currentBundle.reportId },
+      reportBundle: { ...currentBundle, productionRelease: staleRelease } as any,
+      productionRelease: staleRelease,
+    },
+    async fetchBridgeBundle() { return authoritativeBundle; },
+    async explicitlyFinalize() { throw new Error("verified fetched release should not be re-finalized"); },
+  });
+  assert.equal(authoritative.sourceBundle, authoritativeBundle);
+  assert.equal(authoritative.productionRelease, verifiedRelease);
+
+  const storagePlan = buildAiGraderProductionStoragePlan({
+    reportBundle: authoritative.sourceBundle!,
+    productionRelease: authoritative.productionRelease!,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+  });
+  const { db, calls } = createConfirmCardRuntimeDb();
+  const confirm = () => createAiGraderCardFromReportRuntime({
+    tenantId: "tenant-1",
+    reportBundle: authoritative.sourceBundle!,
+    productionRelease: authoritative.productionRelease!,
+    storagePlan,
+    identity: validConfirmedSportIdentity(),
+    operatorUserId: "operator-user-1",
+    dbClient: db,
+    env: { OPERATOR_USER_ID: "operator-owner-1" },
+  });
+  const first = await confirm();
+  const retry = await confirm();
+  assert.equal(first.cardAssetId, retry.cardAssetId);
+  assert.equal(first.itemId, retry.itemId);
+  assert.equal(first.downstream?.comps.status, "queued");
+  assert.equal(calls.filter((call) => call.delegate === "cardAsset" && call.method === "create").length, 1);
+  assert.equal(calls.filter((call) => call.delegate === "item" && call.method === "create").length, 1);
+  assert.equal(calls.filter((call) => call.delegate === "aiGraderValuation" && call.method === "create").length, 1);
+});
+
 test("create-card-from-report runtime fails before card rows when OPERATOR_USER_ID is missing", async () => {
   const { db, calls } = createConfirmCardRuntimeDb();
   const { reportBundle, productionRelease, storagePlan } = storagePlanForConfirmCardRuntime();
@@ -4037,6 +4195,11 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("launchConfirmedCardComps"), true);
   assert.equal(stationSource.includes("Sheet ${confirmedDownstream.labelSheet.sheetNumber} / Slot"), true);
   assert.equal(stationSource.includes("Start Next Grade"), true);
+  assert.equal(stationSource.includes("requestError instanceof AiGraderOcrPrefillStageError"), true);
+  assert.equal(stationSource.includes("failureCode: typedFailure.failureCode"), true);
+  assert.equal(stationSource.includes("failureCategory: typedFailure.failureCategory"), true);
+  assert.equal(stationSource.includes("failureLabel: typedFailure.failureLabel"), true);
+  assert.equal(stationSource.includes("ocrPrefillState.failureLabel"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/finish-queue"), true);
   assert.equal(stationSource.includes("gradePipelineSteps"), true);
   assert.equal(stationSource.includes("finishPipelineSteps"), true);

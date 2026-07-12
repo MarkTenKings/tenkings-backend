@@ -14,6 +14,10 @@ import {
   type AiGraderOcrPrefillResult,
   type AiGraderOcrPrefillStage,
 } from "../lib/aiGraderOcrPrefillClient";
+import {
+  aiGraderOcrFailurePresentation,
+  type AiGraderOcrFailureCode,
+} from "../lib/aiGraderOcrFailure";
 
 const FRONT_HASH = "1".repeat(64);
 const BACK_HASH = "2".repeat(64);
@@ -399,6 +403,81 @@ test("OCR prefill exposes only the safe native-checksum provider blocker", async
       /storage did not return a native SHA-256 checksum/i.test(error.message) &&
       !/secret-sentinel|URL|key|path/.test(error.message),
   );
+});
+
+test("OCR prefill browser client preserves every safe provider and catalog failure category", async () => {
+  const codes: AiGraderOcrFailureCode[] = [
+    "AI_GRADER_OCR_GOOGLE_CONFIG_MISSING",
+    "AI_GRADER_OCR_GOOGLE_PROVIDER_FAILED",
+    "AI_GRADER_OCR_OPENAI_CONFIG_MISSING",
+    "AI_GRADER_OCR_OPENAI_TIMEOUT",
+    "AI_GRADER_OCR_OPENAI_NETWORK",
+    "AI_GRADER_OCR_OPENAI_NON_2XX",
+    "AI_GRADER_OCR_OPENAI_REFUSAL",
+    "AI_GRADER_OCR_OPENAI_SCHEMA_FAILED",
+    "AI_GRADER_OCR_CATALOG_FAILED",
+  ];
+  for (const code of codes) {
+    let requestCount = 0;
+    await assert.rejects(
+      runAiGraderOcrPrefillFromLocalReport({
+        baseUrl: "http://127.0.0.1:47652",
+        stationToken: "secret-sentinel-token",
+        reportId: "ocr-client-report",
+        authHeaders: { Authorization: "Bearer secret-sentinel-credential" },
+        bundle: normalizedBundle(),
+      }, {
+        async fetchAsset({ assetId }) {
+          const front = assetId.startsWith("front/");
+          const bytes = new Uint8Array(front ? [1, 2, 3, 4, 5] : [6, 7, 8, 9]).buffer;
+          return { bytes, contentType: "image/png", byteSize: bytes.byteLength, checksumSha256: front ? FRONT_HASH : BACK_HASH };
+        },
+        async digestSha256(bytes) { return bytes.byteLength === 5 ? FRONT_HASH : BACK_HASH; },
+        async uploadDirect() {},
+        async fetchImpl(_request, init) {
+          requestCount += 1;
+          if (requestCount === 1) {
+            const requestBody = JSON.parse(String(init?.body));
+            const images = requestBody.images.map((image: any) => ({
+              ...image,
+              storageKey: `private/${image.side}`,
+            }));
+            return new Response(JSON.stringify({ ok: true, result: {
+              reportId: "ocr-client-report",
+              reportProducerContractVersion: "ai-grader-report-producer-v0.2",
+              uploadSessionId: "aigocr_test",
+              humanConfirmationRequired: true,
+              uploadPlan: images.map((image: any) => ({
+                ...image,
+                publicUrl: "https://cdn.example.invalid/redacted",
+                uploadUrl: `https://upload.example.invalid/${image.side}`,
+                uploadMethod: "PUT",
+                uploadHeaders: {},
+              })),
+              requiredFinalizeManifest: {
+                reportId: "ocr-client-report",
+                reportProducerContractVersion: "ai-grader-report-producer-v0.2",
+                uploadSessionId: "aigocr_test",
+                images,
+              },
+            } }), { status: 200 });
+          }
+          return new Response(JSON.stringify({
+            ok: false,
+            code,
+            message: "secret-sentinel provider URL token path",
+          }), { status: aiGraderOcrFailurePresentation(code).statusCode });
+        },
+      }),
+      (error) => error instanceof AiGraderOcrPrefillStageError &&
+        error.stage === "provider" &&
+        error.failureCode === code &&
+        error.failureCategory === aiGraderOcrFailurePresentation(code).category &&
+        error.failureLabel === aiGraderOcrFailurePresentation(code).label &&
+        error.message === aiGraderOcrFailurePresentation(code).message &&
+        !/secret-sentinel|URL|token|path/.test(error.message),
+    );
+  }
 });
 
 test("OCR prefill merge fills empty fields but preserves operator-edited identity", () => {

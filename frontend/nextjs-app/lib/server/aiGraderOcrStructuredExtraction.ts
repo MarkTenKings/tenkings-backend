@@ -112,7 +112,9 @@ const MAX_SIDE_TEXT_CHARS = 8_000;
 const MAX_TOKENS_PER_SIDE = 250;
 const MAX_TOKEN_TEXT_CHARS = 80;
 const MAX_FIELD_TEXT_CHARS = 180;
-const DEFAULT_TIMEOUT_MS = 45_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_TIMEOUT_MS = 30_000;
+export const AI_GRADER_OCR_MAX_OUTPUT_TOKENS = 2_400;
 
 function clampConfidence(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value)) return 0;
@@ -131,6 +133,24 @@ function safeText(value: unknown, maxLength: number) {
   return normalized;
 }
 
+function safeModelId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const model = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(model) ? model : null;
+}
+
+function boundedElapsedMs(value: number) {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.min(60_000, Math.round(value));
+}
+
+function boundedTimeoutMs(value: number | undefined) {
+  const requested = typeof value === "number" && Number.isFinite(value)
+    ? Math.round(value)
+    : DEFAULT_TIMEOUT_MS;
+  return Math.max(1, Math.min(MAX_TIMEOUT_MS, requested));
+}
+
 function safeBoundingBox(token: OcrToken) {
   return (Array.isArray(token.bbox) ? token.bbox : [])
     .slice(0, 8)
@@ -143,7 +163,7 @@ function safeBoundingBox(token: OcrToken) {
 export function effectiveAiGraderOcrModel(env: Record<string, string | undefined> = process.env) {
   const configured = String(env[AI_GRADER_OCR_MODEL_ENV] ?? "").trim();
   const model = configured || DEFAULT_AI_GRADER_OCR_MODEL;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(model)) {
+  if (!safeModelId(model)) {
     throw new AiGraderOcrStructuredExtractionError("invalid_config");
   }
   return model;
@@ -280,6 +300,7 @@ function extractionInstructions() {
     "For unknown or disagreement fields return null value. Confidence must describe support for the emitted state.",
     "numbered is the exact serial inscription such as 23/99, not a card number or a print-run guess.",
     "autograph and memorabilia are tri-state: supported true, supported false, or null with unknown/disagreement.",
+    "Never infer false from missing autograph or memorabilia keywords. Supported false requires explicit negative visual or OCR evidence and an evidence reference.",
     "Do not output teamName. Do not invent catalog spellings, sets, inserts, parallels, players, characters, or card numbers.",
   ].join(" ");
 }
@@ -296,6 +317,8 @@ export function buildAiGraderOcrStructuredRequest(input: {
   images.forEach((image) => assertImageUrl(image.url));
   return {
     model: input.model,
+    store: false,
+    max_output_tokens: AI_GRADER_OCR_MAX_OUTPUT_TOKENS,
     reasoning: { effort: "medium" },
     input: [
       {
@@ -314,6 +337,7 @@ export function buildAiGraderOcrStructuredRequest(input: {
       },
     ],
     text: {
+      verbosity: "low",
       format: {
         type: "json_schema",
         name: "ai_grader_ocr_structured_extraction",
@@ -434,16 +458,24 @@ export async function runAiGraderOcrStructuredExtraction(
     env?: Record<string, string | undefined>;
     fetchImpl?: typeof fetch;
     timeoutMs?: number;
+    now?: () => number;
   } = {}
-): Promise<AiGraderOcrStructuredExtraction & { model: string; evidence: AiGraderOcrBoundedEvidence }> {
+): Promise<AiGraderOcrStructuredExtraction & {
+  requestedModel: string;
+  actualModel: string;
+  providerElapsedMs: number;
+  evidence: AiGraderOcrBoundedEvidence;
+}> {
   const env = dependencies.env ?? process.env;
   const apiKey = String(env.OPENAI_API_KEY ?? "").trim();
   if (!apiKey) throw new AiGraderOcrStructuredExtractionError("missing_config");
-  const model = effectiveAiGraderOcrModel(env);
+  const requestedModel = effectiveAiGraderOcrModel(env);
   const evidence = buildAiGraderOcrBoundedEvidence({ ocr: input.ocr, heuristicHints: input.heuristicHints });
-  const request = buildAiGraderOcrStructuredRequest({ model, images: input.images, evidence });
+  const request = buildAiGraderOcrStructuredRequest({ model: requestedModel, images: input.images, evidence });
+  const now = dependencies.now ?? Date.now;
+  const startedAt = now();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), dependencies.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), boundedTimeoutMs(dependencies.timeoutMs));
   let response: Response;
   try {
     response = await (dependencies.fetchImpl ?? fetch)(OPENAI_RESPONSES_ENDPOINT, {
@@ -470,5 +502,15 @@ export async function runAiGraderOcrStructuredExtraction(
   } catch {
     throw new AiGraderOcrStructuredExtractionError("malformed_response");
   }
-  return { ...parseAiGraderOcrStructuredResponse(payload, evidence), model, evidence };
+  const actualModel = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? safeModelId((payload as Record<string, unknown>).model)
+    : null;
+  if (!actualModel) throw new AiGraderOcrStructuredExtractionError("malformed_response");
+  return {
+    ...parseAiGraderOcrStructuredResponse(payload, evidence),
+    requestedModel,
+    actualModel,
+    providerElapsedMs: boundedElapsedMs(now() - startedAt),
+    evidence,
+  };
 }

@@ -8,7 +8,17 @@ import {
   AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
   createAiGraderProductionApiHandler,
 } from "../lib/server/aiGraderProductionApi";
-import { runAiGraderOcrPrefillRuntime } from "../lib/server/aiGraderOcrPrefillCurrent";
+import {
+  AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS,
+  runAiGraderOcrPrefillRuntime,
+} from "../lib/server/aiGraderOcrPrefill";
+import {
+  AiGraderOcrFailure,
+  aiGraderOcrFailurePresentation,
+  type AiGraderOcrFailureCode,
+} from "../lib/aiGraderOcrFailure";
+import { AiGraderGoogleVisionError } from "../lib/server/googleVisionOcr";
+import { AiGraderOcrStructuredExtractionError } from "../lib/server/aiGraderOcrStructuredExtraction";
 import {
   sha256Base64ToHex,
   sha256HexToBase64,
@@ -114,6 +124,7 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
   const verifiedSides: string[] = [];
   let ocrCalls = 0;
   let persistCalls = 0;
+  let recordedDiagnostics: unknown = null;
   const handler = createAiGraderProductionApiHandler({
     env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
     async requireAdminSession() {
@@ -182,7 +193,17 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
           setIdentificationUsed: true,
         },
         warnings: ["Human review is required."],
+        internalProviderDiagnostics: {
+          schemaVersion: "ai-grader-ocr-provider-diagnostics-v1",
+          googleElapsedMs: 321,
+          openAiElapsedMs: 654,
+          totalProviderElapsedMs: 975,
+          actualOpenAiModel: "gpt-5.6-sol-2026-07-01",
+        },
       } as any;
+    },
+    recordOcrProviderDiagnostics(diagnostics) {
+      recordedDiagnostics = diagnostics;
     },
     async persist() {
       persistCalls += 1;
@@ -225,10 +246,85 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
   const serializedFinal = JSON.stringify(finalizeBody);
   assert.equal(/https?:\/\//i.test(serializedFinal), false);
   assert.equal(/uploadUrl|publicUrl|storageKey|X-Amz|bodyBase64|data:image|C:\\TenKings/i.test(serializedFinal), false);
+  assert.equal(/internalProviderDiagnostics|googleElapsedMs|openAiElapsedMs|totalProviderElapsedMs/i.test(serializedFinal), false);
+  assert.deepEqual(recordedDiagnostics, {
+    schemaVersion: "ai-grader-ocr-provider-diagnostics-v1",
+    googleElapsedMs: 321,
+    openAiElapsedMs: 654,
+    totalProviderElapsedMs: 975,
+    actualOpenAiModel: "gpt-5.6-sol-2026-07-01",
+  });
   assert.deepEqual(authActions, ["publish", "publish"]);
   assert.deepEqual(verifiedSides.sort(), ["back", "front"]);
   assert.equal(ocrCalls, 1);
   assert.equal(persistCalls, 0);
+});
+
+test("OCR finalize API preserves safe typed provider and catalog diagnostics", async () => {
+  const codes: AiGraderOcrFailureCode[] = [
+    "AI_GRADER_OCR_GOOGLE_CONFIG_MISSING",
+    "AI_GRADER_OCR_GOOGLE_PROVIDER_FAILED",
+    "AI_GRADER_OCR_OPENAI_CONFIG_MISSING",
+    "AI_GRADER_OCR_OPENAI_TIMEOUT",
+    "AI_GRADER_OCR_OPENAI_NETWORK",
+    "AI_GRADER_OCR_OPENAI_NON_2XX",
+    "AI_GRADER_OCR_OPENAI_REFUSAL",
+    "AI_GRADER_OCR_OPENAI_SCHEMA_FAILED",
+    "AI_GRADER_OCR_CATALOG_FAILED",
+  ];
+  let currentCode = codes[0]!;
+  const handler = createAiGraderProductionApiHandler({
+    env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
+    async requireAdminSession() { throw new Error("not used"); },
+    async requireProductionActor(_req, action) {
+      return {
+        type: "service_account",
+        role: "ai_grader_service",
+        serviceAccountId: "typed-diagnostics-test",
+        scopes: ["publish"],
+        audit: { actorType: "service_account", action, requestedAt: "2026-07-11T12:00:00.000Z" },
+      };
+    },
+    publicUrlFor(storageKey) { return `https://cdn.tenkings.test/${storageKey}`; },
+    async presignUpload({ storageKey, contentType }) {
+      return {
+        storageKey,
+        uploadUrl: `https://uploads.tenkings.test/${storageKey}`,
+        uploadMethod: "PUT",
+        uploadHeaders: { "Content-Type": contentType },
+        publicUrl: `https://cdn.tenkings.test/${storageKey}`,
+      };
+    },
+    async verifyUploadedArtifact(input) {
+      return {
+        ok: true,
+        byteSize: input.byteSize,
+        contentType: input.contentType,
+        checksumSha256: input.checksumSha256,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
+      };
+    },
+    async runOcrPrefill() { throw new AiGraderOcrFailure(currentCode); },
+    async persist() { throw new Error("must not persist"); },
+  });
+
+  for (const [index, code] of codes.entries()) {
+    currentCode = code;
+    const reportId = `typed-diagnostic-${index}`;
+    const initRes = mockResponse();
+    await handler(mockRequest("POST", ["ocr-prefill-init"], { reportId, images: normalizedImages() }), initRes);
+    assert.equal(initRes.statusCodeValue, 200);
+    const finalizeRes = mockResponse();
+    await handler(
+      mockRequest("POST", ["ocr-prefill-finalize"], (initRes.jsonBody as any).result.requiredFinalizeManifest),
+      finalizeRes,
+    );
+    assert.equal(finalizeRes.statusCodeValue, aiGraderOcrFailurePresentation(code).statusCode);
+    assert.equal((finalizeRes.jsonBody as any).code, code);
+    assert.equal((finalizeRes.jsonBody as any).message, aiGraderOcrFailurePresentation(code).message);
+    assert.doesNotMatch(JSON.stringify(finalizeRes.jsonBody), /typed-diagnostics-test|uploads\.tenkings|storageKey/i);
+  }
 });
 
 test("OCR prefill existing extractor marks low-confidence values for review", async () => {
@@ -261,7 +357,9 @@ test("OCR prefill existing extractor marks low-confidence values for review", as
         });
         const unknown = { state: "unknown" as const, value: null, confidence: 0, evidenceRefs: [] };
         return {
-          model: "gpt-5.6-sol",
+          requestedModel: "gpt-5.6-sol",
+          actualModel: "gpt-5.6-sol-2026-07-01",
+          providerElapsedMs: 120,
           evidence: { sides: [], heuristicHints: {} },
           fields: {
             category: supported("sport", 0.9),
@@ -327,6 +425,201 @@ test("OCR prefill existing extractor marks low-confidence values for review", as
   assert.ok(result.reviewFieldNames.includes("year"));
   assert.equal(JSON.stringify(networkInputs).includes("base64"), false);
   assert.equal((networkInputs as any[]).every((image) => typeof image.url === "string"), true);
+});
+
+test("OCR heuristic hints use true for positive autograph or memorabilia evidence and null for absence", async () => {
+  const observed: Array<Record<string, unknown>> = [];
+  const unknown = { state: "unknown" as const, value: null, confidence: 0, evidenceRefs: [] };
+  const structuredFields = {
+    category: unknown,
+    playerName: unknown,
+    cardName: unknown,
+    year: unknown,
+    manufacturer: unknown,
+    sport: unknown,
+    game: unknown,
+    productSet: unknown,
+    cardNumber: unknown,
+    insert: unknown,
+    parallel: unknown,
+    numbered: unknown,
+    autograph: unknown,
+    memorabilia: unknown,
+  };
+  for (const combinedText of ["1990 SKYBOX MICHAEL JORDAN", "AUTOGRAPH PATCH CARD"]) {
+    await runAiGraderOcrPrefillRuntime({
+      reportId: `heuristic-${observed.length}`,
+      images: [
+        { side: "front", url: "https://cdn.tenkings.test/front.png" },
+        { side: "back", url: "https://cdn.tenkings.test/back.png" },
+      ],
+    }, {
+      async runOcr() {
+        return {
+          results: [
+            { id: "front", text: combinedText, confidence: 0.9, tokens: [] },
+            { id: "back", text: "", confidence: 0, tokens: [] },
+          ],
+          combined_text: combinedText,
+        };
+      },
+      async runStructuredExtraction(input) {
+        observed.push(input.heuristicHints ?? {});
+        return {
+          requestedModel: "gpt-5.6-sol",
+          actualModel: "gpt-5.6-sol-2026-07-01",
+          providerElapsedMs: 10,
+          evidence: { sides: [], heuristicHints: input.heuristicHints ?? {} },
+          fields: structuredFields,
+        } as any;
+      },
+    });
+  }
+  assert.equal(observed[0]?.autograph, null);
+  assert.equal(observed[0]?.memorabilia, null);
+  assert.equal(observed[1]?.autograph, true);
+  assert.equal(observed[1]?.memorabilia, true);
+});
+
+test("OCR runtime enforces provider phase limits inside one Vercel-compatible budget", async () => {
+  const observedTimeouts: number[] = [];
+  const unknown = { state: "unknown" as const, value: null, confidence: 0, evidenceRefs: [] };
+  const result = await runAiGraderOcrPrefillRuntime({
+    reportId: "provider-budget",
+    images: [
+      { side: "front", url: "https://cdn.tenkings.test/front.png" },
+      { side: "back", url: "https://cdn.tenkings.test/back.png" },
+    ],
+  }, {
+    now: () => 1_000,
+    async runOcr(_images, options) {
+      observedTimeouts.push(options?.timeoutMs ?? 0);
+      return {
+        results: [
+          { id: "front", text: "", confidence: 0, tokens: [] },
+          { id: "back", text: "", confidence: 0, tokens: [] },
+        ],
+        combined_text: "",
+      };
+    },
+    async runStructuredExtraction(_input, options) {
+      observedTimeouts.push(options?.timeoutMs ?? 0);
+      return {
+        requestedModel: "gpt-5.6-sol",
+        actualModel: "gpt-5.6-sol-2026-07-01",
+        providerElapsedMs: 0,
+        evidence: { sides: [], heuristicHints: {} },
+        fields: {
+          category: unknown, playerName: unknown, cardName: unknown, year: unknown,
+          manufacturer: unknown, sport: unknown, game: unknown, productSet: unknown,
+          cardNumber: unknown, insert: unknown, parallel: unknown, numbered: unknown,
+          autograph: unknown, memorabilia: unknown,
+        },
+      } as any;
+    },
+  });
+  assert.equal(AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS, 45_000);
+  assert.deepEqual(observedTimeouts, [12_000, 30_000]);
+  assert.equal(result.provenance.structuredExtractionModel, "gpt-5.6-sol-2026-07-01");
+  assert.equal(result.internalProviderDiagnostics.actualOpenAiModel, "gpt-5.6-sol-2026-07-01");
+  assert.equal("requestedModel" in result.provenance, false);
+});
+
+test("OCR runtime maps Google and OpenAI failures to stable production categories", async () => {
+  const input = {
+    reportId: "typed-provider-failure",
+    images: [
+      { side: "front" as const, url: "https://cdn.tenkings.test/front.png" },
+      { side: "back" as const, url: "https://cdn.tenkings.test/back.png" },
+    ],
+  };
+  const ocr = {
+    results: [
+      { id: "front", text: "", confidence: 0, tokens: [] },
+      { id: "back", text: "", confidence: 0, tokens: [] },
+    ],
+    combined_text: "",
+  };
+  const googleCases = [
+    { error: new AiGraderGoogleVisionError("missing_config"), code: "AI_GRADER_OCR_GOOGLE_CONFIG_MISSING" },
+    { error: new AiGraderGoogleVisionError("provider_error", "front"), code: "AI_GRADER_OCR_GOOGLE_FRONT_FAILED" },
+    { error: new AiGraderGoogleVisionError("provider_error", "back"), code: "AI_GRADER_OCR_GOOGLE_BACK_FAILED" },
+    { error: new AiGraderGoogleVisionError("response_count_mismatch"), code: "AI_GRADER_OCR_GOOGLE_PROVIDER_FAILED" },
+  ] as const;
+  for (const entry of googleCases) {
+    await assert.rejects(
+      runAiGraderOcrPrefillRuntime(input, { async runOcr() { throw entry.error; } }),
+      (error) => error instanceof AiGraderOcrFailure && error.code === entry.code,
+    );
+  }
+  const openAiCases = [
+    { source: "missing_config", code: "AI_GRADER_OCR_OPENAI_CONFIG_MISSING" },
+    { source: "invalid_config", code: "AI_GRADER_OCR_OPENAI_CONFIG_MISSING" },
+    { source: "timeout", code: "AI_GRADER_OCR_OPENAI_TIMEOUT" },
+    { source: "network", code: "AI_GRADER_OCR_OPENAI_NETWORK" },
+    { source: "non_2xx", code: "AI_GRADER_OCR_OPENAI_NON_2XX" },
+    { source: "refusal", code: "AI_GRADER_OCR_OPENAI_REFUSAL" },
+    { source: "malformed_response", code: "AI_GRADER_OCR_OPENAI_SCHEMA_FAILED" },
+  ] as const;
+  for (const entry of openAiCases) {
+    await assert.rejects(
+      runAiGraderOcrPrefillRuntime(input, {
+        async runOcr() { return ocr; },
+        async runStructuredExtraction() {
+          throw new AiGraderOcrStructuredExtractionError(entry.source);
+        },
+      }),
+      (error) => error instanceof AiGraderOcrFailure && error.code === entry.code,
+    );
+  }
+});
+
+test("OCR runtime reports catalog infrastructure failure without exposing its cause", async () => {
+  const supported = <T extends string | boolean>(value: T) => ({
+    state: "supported" as const,
+    value,
+    confidence: 0.95,
+    evidenceRefs: ["image.front"],
+  });
+  const unknown = { state: "unknown" as const, value: null, confidence: 0, evidenceRefs: [] };
+  await assert.rejects(
+    runAiGraderOcrPrefillRuntime({
+      reportId: "catalog-failure",
+      images: [
+        { side: "front", url: "https://cdn.tenkings.test/front.png" },
+        { side: "back", url: "https://cdn.tenkings.test/back.png" },
+      ],
+    }, {
+      async runOcr() {
+        return {
+          results: [
+            { id: "front", text: "1996 Fleer Michael Jordan #23", confidence: 0.9, tokens: [] },
+            { id: "back", text: "Basketball", confidence: 0.9, tokens: [] },
+          ],
+          combined_text: "1996 Fleer Michael Jordan #23 Basketball",
+        };
+      },
+      async runStructuredExtraction() {
+        return {
+          requestedModel: "gpt-5.6-sol",
+          actualModel: "gpt-5.6-sol-2026-07-01",
+          providerElapsedMs: 10,
+          evidence: { sides: [], heuristicHints: {} },
+          fields: {
+            category: supported("sport"), playerName: supported("Michael Jordan"), cardName: unknown,
+            year: supported("1996"), manufacturer: supported("Fleer"), sport: supported("basketball"), game: unknown,
+            productSet: supported("1996 Fleer Basketball"), cardNumber: supported("23"), insert: unknown,
+            parallel: unknown, numbered: unknown, autograph: unknown, memorabilia: unknown,
+          },
+        } as any;
+      },
+      async identifySet() {
+        throw new Error("secret database path credential");
+      },
+    }),
+    (error) => error instanceof AiGraderOcrFailure &&
+      error.code === "AI_GRADER_OCR_CATALOG_FAILED" && !/secret|database|path|credential/i.test(error.message),
+  );
 });
 
 test("OCR prefill finalize rejects missing or wrong checksum, byte size, and content type", async () => {

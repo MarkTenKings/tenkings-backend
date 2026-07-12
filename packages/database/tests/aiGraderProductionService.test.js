@@ -10,6 +10,7 @@ const {
   persistAiGraderProductionRelease,
   persistAiGraderValuationResult,
   normalizeAiGraderPublicGeometryCaptureDecisions,
+  normalizeAiGraderPublicOcrPrefill,
   sanitizeAiGraderPublicJson,
   sanitizeAiGraderPublicReportBundleForRead,
 } = require("../dist/database/src/aiGraderProductionService");
@@ -1209,7 +1210,105 @@ test("production storage plan cannot publish caller-forged hardware timing or OC
   assert.equal(publicBundle.ocrPrefill.humanConfirmationRequired, true);
   assert.equal(publicBundle.ocrPrefill.inventoryMutationPerformed, false);
   assert.equal(publicBundle.ocrPrefill.publishMutationPerformed, false);
-  assert.equal(publicBundle.ocrPrefill.fields.playerName.reviewRequired, true);
+  assert.equal(publicBundle.ocrPrefill.fields.playerName.reviewRequired, false);
+});
+
+test("current AI Grader OCR public contract round-trips every field and bounded provenance", () => {
+  const supported = (value, evidenceRef = "google.front.text") => ({
+    state: "supported",
+    value,
+    confidence: 0.9234,
+    reviewRequired: false,
+    evidenceRefs: [evidenceRef, evidenceRef, "https://unsafe.example/path", ...Array.from({ length: 30 }, (_, index) => `google.front.token.${index}`)],
+  });
+  const unknown = { state: "unknown", value: null, confidence: 0.2, reviewRequired: true, evidenceRefs: [] };
+  const input = {
+    reportId: "current-ocr-report",
+    status: "prefill_ready",
+    sourceSides: ["front", "back", "front"],
+    fields: {
+      category: supported("sport", "image.front"),
+      playerName: supported("Michael Jordan"),
+      cardName: unknown,
+      year: supported("1996"),
+      manufacturer: supported("Fleer"),
+      sport: supported("basketball"),
+      game: unknown,
+      productSet: supported("1996 Fleer Basketball"),
+      cardNumber: supported("23"),
+      parallel: supported("Base"),
+      insert: unknown,
+      numbered: supported("12/99"),
+      autograph: supported(false, "image.front"),
+      memorabilia: supported(true, "image.front"),
+    },
+    reviewFieldNames: ["cardName", "game", "insert"],
+    provenance: {
+      ocrEngine: "google_vision_document_text_detection_url_only",
+      attributeExtractor: "@tenkings/shared/extractCardAttributes",
+      structuredExtractor: "openai_responses_strict_json_schema",
+      structuredExtractionModel: "gpt-5.6-sol-2026-07-01",
+      setLookupUsed: true,
+      setIdentificationUsed: true,
+      responseId: "provider-id-must-not-survive",
+      totalProviderElapsedMs: 1234,
+    },
+    warnings: [],
+  };
+
+  const normalized = normalizeAiGraderPublicOcrPrefill(input);
+  assert.deepEqual(Object.keys(normalized.fields).sort(), Object.keys(input.fields).sort());
+  for (const name of Object.keys(input.fields)) {
+    assert.equal(normalized.fields[name].state, input.fields[name].state);
+    assert.equal(normalized.fields[name].value, input.fields[name].value);
+    assert.equal(normalized.fields[name].confidence, Math.round(input.fields[name].confidence * 1000) / 1000);
+    assert.equal(normalized.fields[name].reviewRequired, input.fields[name].reviewRequired);
+    assert.equal(Array.isArray(normalized.fields[name].evidenceRefs), true);
+    assert.equal(normalized.fields[name].evidenceRefs.length <= 24, true);
+    assert.equal(normalized.fields[name].evidenceRefs.some((entry) => entry.includes("http")), false);
+  }
+  assert.deepEqual(normalized.sourceSides, ["front", "back"]);
+  assert.deepEqual(normalized.reviewFieldNames, ["cardName", "game", "insert"]);
+  assert.equal(normalized.provenance.structuredExtractor, "openai_responses_strict_json_schema");
+  assert.equal(normalized.provenance.structuredExtractionModel, "gpt-5.6-sol-2026-07-01");
+  assert.equal("responseId" in normalized.provenance, false);
+  assert.equal("totalProviderElapsedMs" in normalized.provenance, false);
+
+  const unsafeProvenance = normalizeAiGraderPublicOcrPrefill({
+    fields: {},
+    provenance: {
+      ocrEngine: "data:image/png;base64,private",
+      attributeExtractor: "C:\\private\\extractor",
+      structuredExtractor: "https://provider.example/private",
+      structuredExtractionModel: "../private-model",
+    },
+  });
+  assert.equal(unsafeProvenance.provenance.ocrEngine, "existing_ten_kings_ocr");
+  assert.equal(unsafeProvenance.provenance.attributeExtractor, "@tenkings/shared/extractCardAttributes");
+  assert.equal("structuredExtractor" in unsafeProvenance.provenance, false);
+  assert.equal("structuredExtractionModel" in unsafeProvenance.provenance, false);
+});
+
+test("legacy auto and mem OCR fields translate explicitly to autograph and memorabilia", () => {
+  const normalized = normalizeAiGraderPublicOcrPrefill({
+    fields: {
+      auto: { value: true, confidence: 0.8, reviewRequired: false, sources: ["front_ocr"] },
+      mem: { value: null, confidence: 0, reviewRequired: true, sources: [] },
+    },
+    reviewFieldNames: ["mem"],
+    provenance: {},
+  });
+  assert.equal("auto" in normalized.fields, false);
+  assert.equal("mem" in normalized.fields, false);
+  assert.deepEqual(normalized.fields.autograph, {
+    state: "supported",
+    value: true,
+    confidence: 0.8,
+    reviewRequired: false,
+    evidenceRefs: ["front_ocr"],
+  });
+  assert.equal(normalized.fields.memorabilia.state, "unknown");
+  assert.deepEqual(normalized.reviewFieldNames, ["memorabilia"]);
 });
 
 test("public JSON sanitizer removes local path and loopback fields without dropping evidence refs", () => {

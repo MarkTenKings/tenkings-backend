@@ -60,10 +60,15 @@ import type {
   AiGraderOcrPrefillResult,
   AiGraderOcrPrefillSide,
   AiGraderOcrPrefillSourceImage,
-} from "./aiGraderOcrPrefillCurrent";
+  AiGraderOcrProviderDiagnostics,
+} from "./aiGraderOcrPrefill";
 import {
   effectiveAiGraderOcrModel,
 } from "./aiGraderOcrStructuredExtraction";
+import {
+  AiGraderOcrFailure,
+  isAiGraderOcrFailureCode,
+} from "../aiGraderOcrFailure";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
@@ -315,7 +320,8 @@ export type AiGraderProductionApiDependencies = {
   runOcrPrefill?(input: {
     reportId: string;
     images: AiGraderOcrPrefillSourceImage[];
-  }): Promise<AiGraderOcrPrefillResult>;
+  }): Promise<AiGraderOcrPrefillResult & { internalProviderDiagnostics?: AiGraderOcrProviderDiagnostics }>;
+  recordOcrProviderDiagnostics?(diagnostics: AiGraderOcrProviderDiagnostics): void;
   runComps?(input: {
     reportId: string;
     searchQuery: string;
@@ -2032,27 +2038,39 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             throw new Error("Storage-decoded normalized OCR image dimensions mismatch.");
           }
         }
-        let result: AiGraderOcrPrefillResult;
+        let runtimeResult: AiGraderOcrPrefillResult & {
+          internalProviderDiagnostics?: AiGraderOcrProviderDiagnostics;
+        };
         try {
-          result = await deps.runOcrPrefill({
+          runtimeResult = await deps.runOcrPrefill({
             reportId: input.reportId,
             images: input.images.map((image) => ({
               side: image.side,
               url: safeOcrSourceUrl(deps.publicUrlFor(image.storageKey)),
             })),
           });
-        } catch {
-          const error = new Error("AI Grader OCR prefill could not be completed; keep Confirm Card fields in review state and retry.");
-          (error as Error & { statusCode?: number; code?: string }).statusCode = 502;
-          (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_OCR_PREFILL_FAILED";
-          throw error;
+        } catch (error) {
+          if (isRecord(error) && isAiGraderOcrFailureCode(error.code)) throw error;
+          throw new AiGraderOcrFailure("AI_GRADER_OCR_INTERNAL_FAILED");
+        }
+        if (runtimeResult.internalProviderDiagnostics && deps.recordOcrProviderDiagnostics) {
+          try {
+            deps.recordOcrProviderDiagnostics(runtimeResult.internalProviderDiagnostics);
+          } catch {
+            // Diagnostics recording must never alter the OCR result.
+          }
         }
         const safeResult: AiGraderOcrPrefillResult = {
-          ...result,
           reportId: input.reportId,
+          status: runtimeResult.status,
           humanConfirmationRequired: true,
           inventoryMutationPerformed: false,
           publishMutationPerformed: false,
+          sourceSides: runtimeResult.sourceSides,
+          fields: runtimeResult.fields,
+          reviewFieldNames: runtimeResult.reviewFieldNames,
+          provenance: runtimeResult.provenance,
+          warnings: runtimeResult.warnings,
         };
         assertOcrPrefillResultSafe(safeResult);
         assertSmallJsonPayload(safeResult, AI_GRADER_PRODUCTION_VERCEL_PAYLOAD_LIMIT_BYTES, "AI Grader OCR prefill result");

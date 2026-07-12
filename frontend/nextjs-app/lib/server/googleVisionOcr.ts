@@ -24,6 +24,53 @@ export type OcrResponse = {
 };
 
 const GOOGLE_VISION_ENDPOINT = "https://vision.googleapis.com/v1/images:annotate";
+const DEFAULT_AI_GRADER_GOOGLE_TIMEOUT_MS = 12_000;
+const MAX_AI_GRADER_GOOGLE_TIMEOUT_MS = 15_000;
+
+export type AiGraderGoogleVisionErrorCode =
+  | "missing_config"
+  | "invalid_input"
+  | "timeout"
+  | "network"
+  | "non_2xx"
+  | "provider_error"
+  | "malformed_response"
+  | "response_count_mismatch";
+
+export class AiGraderGoogleVisionError extends Error {
+  readonly code: AiGraderGoogleVisionErrorCode;
+  readonly side?: "front" | "back";
+
+  constructor(code: AiGraderGoogleVisionErrorCode, side?: "front" | "back") {
+    const sideLabel = side ? ` for the normalized ${side} image` : "";
+    const message = code === "missing_config"
+      ? "Google Vision is not configured for AI Grader OCR."
+      : code === "invalid_input"
+        ? "AI Grader Google Vision requires verified public HTTPS image URLs."
+        : code === "timeout"
+          ? "Google Vision timed out during AI Grader OCR."
+          : code === "network"
+            ? "AI Grader OCR could not reach Google Vision."
+            : code === "non_2xx"
+              ? "Google Vision rejected the AI Grader OCR request."
+              : code === "response_count_mismatch"
+                ? "Google Vision returned an incomplete AI Grader OCR response."
+                : code === "malformed_response"
+                  ? `Google Vision returned a malformed AI Grader OCR response${sideLabel}.`
+                  : `Google Vision returned an AI Grader OCR error${sideLabel}.`;
+    super(message);
+    this.name = "AiGraderGoogleVisionError";
+    this.code = code;
+    this.side = side;
+  }
+}
+
+function boundedGoogleTimeoutMs(value: number | undefined) {
+  const requested = typeof value === "number" && Number.isFinite(value)
+    ? Math.round(value)
+    : DEFAULT_AI_GRADER_GOOGLE_TIMEOUT_MS;
+  return Math.max(1, Math.min(MAX_AI_GRADER_GOOGLE_TIMEOUT_MS, requested));
+}
 
 const clampConfidence = (value: unknown): number => {
   if (typeof value !== "number" || Number.isNaN(value)) {
@@ -183,38 +230,83 @@ const toPreparedVisionImage = async (image: OcrImageInput): Promise<PreparedVisi
 
 async function runPreparedGoogleVisionOcr(
   prepared: PreparedVisionImage[],
-  options: { apiKey: string; fetchImpl?: typeof fetch; safeErrors?: boolean }
+  options: {
+    apiKey: string;
+    fetchImpl?: typeof fetch;
+    safeErrors?: boolean;
+    timeoutMs?: number;
+    requireExactResponses?: boolean;
+  }
 ): Promise<OcrResponse> {
-  const response = await (options.fetchImpl ?? fetch)(`${GOOGLE_VISION_ENDPOINT}?key=${encodeURIComponent(options.apiKey)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      requests: prepared.map((entry) => ({
-        image: entry.image,
-        features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
-      })),
-    }),
-  });
+  const controller = options.timeoutMs === undefined ? null : new AbortController();
+  const timeout = controller
+    ? setTimeout(() => controller.abort(), boundedGoogleTimeoutMs(options.timeoutMs))
+    : null;
+  let response: Response;
+  try {
+    response = await (options.fetchImpl ?? fetch)(`${GOOGLE_VISION_ENDPOINT}?key=${encodeURIComponent(options.apiKey)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requests: prepared.map((entry) => ({
+          image: entry.image,
+          features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+        })),
+      }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+  } catch (error) {
+    if (!options.safeErrors) throw error;
+    if (controller?.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+      throw new AiGraderGoogleVisionError("timeout");
+    }
+    throw new AiGraderGoogleVisionError("network");
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 
   if (!response.ok) {
-    if (options.safeErrors) throw new Error("Google Vision rejected the AI Grader OCR request.");
+    if (options.safeErrors) throw new AiGraderGoogleVisionError("non_2xx");
     const body = await response.text().catch(() => "");
     throw new Error(`Google Vision request failed (${response.status})${body ? `: ${body.slice(0, 200)}` : ""}`);
   }
 
-  const payload = (await response.json()) as {
-    error?: { message?: string };
-    responses?: Array<Record<string, unknown>>;
-  };
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    if (options.safeErrors) throw new AiGraderGoogleVisionError("malformed_response");
+    throw new Error("Google Vision returned malformed JSON.");
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    if (options.safeErrors) throw new AiGraderGoogleVisionError("malformed_response");
+    throw new Error("Google Vision returned an invalid response.");
+  }
+  const payloadRecord = payload as Record<string, unknown>;
 
-  if (payload?.error?.message) {
-    if (options.safeErrors) throw new Error("Google Vision could not complete the AI Grader OCR request.");
-    throw new Error(payload.error.message);
+  if (payloadRecord.error !== undefined && payloadRecord.error !== null) {
+    if (options.safeErrors) throw new AiGraderGoogleVisionError("provider_error");
+    const error = payloadRecord.error as { message?: unknown };
+    throw new Error(typeof error?.message === "string" ? error.message : "Google Vision returned an error.");
   }
 
-  const responses = Array.isArray(payload.responses) ? payload.responses : [];
+  const responses = Array.isArray(payloadRecord.responses) ? payloadRecord.responses : [];
+  if (options.requireExactResponses && responses.length !== prepared.length) {
+    throw new AiGraderGoogleVisionError("response_count_mismatch");
+  }
   const results = prepared.map((entry, index) => {
-    const raw = responses[index] as any;
+    const side = entry.id === "front" || entry.id === "back" ? entry.id : undefined;
+    const raw = responses[index];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      if (options.safeErrors) throw new AiGraderGoogleVisionError("malformed_response", side);
+      return { id: entry.id, text: "", confidence: 0, tokens: [] };
+    }
+    const rawRecord = raw as Record<string, unknown>;
+    if (rawRecord.error !== undefined && rawRecord.error !== null) {
+      if (options.safeErrors) throw new AiGraderGoogleVisionError("provider_error", side);
+      const error = rawRecord.error as { message?: unknown };
+      throw new Error(typeof error?.message === "string" ? error.message : "Google Vision returned an image error.");
+    }
     const tokens = parseVisionTokens(raw, entry.id);
     const text = extractResponseText(raw);
     return {
@@ -257,20 +349,21 @@ export async function runGoogleVisionDocumentTextDetectionByUrl(
   dependencies: {
     env?: Record<string, string | undefined>;
     fetchImpl?: typeof fetch;
+    timeoutMs?: number;
   } = {}
 ): Promise<OcrResponse> {
   const apiKey = String((dependencies.env ?? process.env).GOOGLE_VISION_API_KEY ?? "").trim();
-  if (!apiKey) throw new Error("Google Vision is not configured for AI Grader OCR.");
+  if (!apiKey) throw new AiGraderGoogleVisionError("missing_config");
   if (!Array.isArray(images) || images.length === 0) return { results: [], combined_text: "" };
   const prepared = images.map((image) => {
     let parsed: URL;
     try {
       parsed = new URL(String(image.url ?? ""));
     } catch {
-      throw new Error("AI Grader Google Vision requires verified public HTTPS image URLs.");
+      throw new AiGraderGoogleVisionError("invalid_input");
     }
     if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) {
-      throw new Error("AI Grader Google Vision requires verified public HTTPS image URLs.");
+      throw new AiGraderGoogleVisionError("invalid_input");
     }
     return {
       id: typeof image.id === "string" ? image.id : undefined,
@@ -281,5 +374,7 @@ export async function runGoogleVisionDocumentTextDetectionByUrl(
     apiKey,
     fetchImpl: dependencies.fetchImpl,
     safeErrors: true,
+    timeoutMs: dependencies.timeoutMs ?? DEFAULT_AI_GRADER_GOOGLE_TIMEOUT_MS,
+    requireExactResponses: true,
   });
 }

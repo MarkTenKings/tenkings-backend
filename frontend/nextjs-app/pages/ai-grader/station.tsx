@@ -53,6 +53,7 @@ import {
 } from "../../lib/aiGraderRapidAutoCapture";
 import type { AiGraderReportBundle } from "../../lib/aiGraderReportBundle";
 import {
+  AiGraderOcrPrefillStageError,
   aiGraderOcrPrefillReportMetadata,
   mergeAiGraderOcrPrefillIntoIdentityDraft,
   runAiGraderOcrPrefillFromLocalReport,
@@ -1563,10 +1564,16 @@ export default function AiGraderStationPage() {
       })
       .catch((requestError) => {
         if (cancelled || generation !== ocrPrefillGenerationRef.current) return;
+        const typedFailure = requestError instanceof AiGraderOcrPrefillStageError
+          ? requestError
+          : null;
         setOcrPrefillState({
           status: "failed",
           reportId: ocrPrefillReportId,
           message: requestError instanceof Error ? requestError.message : "OCR prefill did not complete.",
+          ...(typedFailure?.failureCode ? { failureCode: typedFailure.failureCode } : {}),
+          ...(typedFailure?.failureCategory ? { failureCategory: typedFailure.failureCategory } : {}),
+          ...(typedFailure?.failureLabel ? { failureLabel: typedFailure.failureLabel } : {}),
         });
       });
     return () => {
@@ -4399,6 +4406,9 @@ export default function AiGraderStationPage() {
                   <span>{ocrPrefillState.status === "running" ? "Working" : formatStationValue(ocrPrefillState.status)}</span>
                 </div>
                 <p>{ocrPrefillState.message}</p>
+                {ocrPrefillState.status === "failed" && ocrPrefillState.failureLabel ? (
+                  <small>{ocrPrefillState.failureLabel}</small>
+                ) : null}
                 {ocrPrefillState.status === "ready" ? (
                   <>
                     <div className="ocr-prefill-indicators" aria-label="OCR field confidence">

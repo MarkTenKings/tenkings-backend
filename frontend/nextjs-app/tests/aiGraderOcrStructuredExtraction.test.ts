@@ -53,6 +53,7 @@ function structuredFields() {
 function responsePayload(fields = structuredFields()) {
   return {
     status: "completed",
+    model: "gpt-5.6-sol-2026-07-01",
     output: [{
       type: "message",
       content: [{ type: "output_text", text: JSON.stringify({ fields }) }],
@@ -84,6 +85,8 @@ test("AI Grader structured extraction uses one strict Responses request with bot
 
   assert.equal(requestCount, 1);
   assert.equal(requestBody.model, "gpt-5.6-sol");
+  assert.equal(requestBody.store, false);
+  assert.equal(requestBody.max_output_tokens, 2400);
   assert.equal(requestBody.text.format.type, "json_schema");
   assert.equal(requestBody.text.format.strict, true);
   assert.deepEqual(requestBody.text.format.schema, AI_GRADER_OCR_STRUCTURED_OUTPUT_SCHEMA);
@@ -95,9 +98,14 @@ test("AI Grader structured extraction uses one strict Responses request with bot
     "https://cdn.tenkings.test/front.png",
     "https://cdn.tenkings.test/back.png",
   ]);
+  const instructionText = requestBody.input[0].content[0].text;
+  assert.match(instructionText, /Never infer false from missing autograph or memorabilia keywords/);
+  assert.match(instructionText, /Supported false requires explicit negative visual or OCR evidence/);
   const serialized = JSON.stringify(requestBody);
   assert.equal(/data:image|base64|json_object|fallback/i.test(serialized), false);
-  assert.equal(result.model, "gpt-5.6-sol");
+  assert.equal(result.requestedModel, "gpt-5.6-sol");
+  assert.equal(result.actualModel, "gpt-5.6-sol-2026-07-01");
+  assert.equal(result.providerElapsedMs >= 0, true);
   assert.equal(result.fields.autograph.value, false);
 });
 
@@ -137,12 +145,14 @@ test("structured extraction fails closed for missing config, non-2xx, refusal, m
     {
       code: "refusal",
       fetchImpl: async () => new Response(JSON.stringify({
+        model: "gpt-5.6-sol-2026-07-01",
         output: [{ content: [{ type: "refusal", refusal: "secret-sentinel" }] }],
       }), { status: 200 }),
     },
     {
       code: "malformed_response",
       fetchImpl: async () => new Response(JSON.stringify({
+        model: "gpt-5.6-sol-2026-07-01",
         output: [{ content: [{ type: "output_text", text: "not-json" }] }],
       }), { status: 200 }),
     },

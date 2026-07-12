@@ -703,14 +703,21 @@ const PUBLIC_OCR_FIELD_NAMES = [
   "cardName",
   "year",
   "manufacturer",
+  "sport",
+  "game",
   "productSet",
   "cardNumber",
   "parallel",
   "insert",
   "numbered",
-  "auto",
-  "mem",
+  "autograph",
+  "memorabilia",
 ] as const;
+type PublicOcrFieldName = (typeof PUBLIC_OCR_FIELD_NAMES)[number];
+const LEGACY_PUBLIC_OCR_FIELD_ALIASES: Partial<Record<PublicOcrFieldName, "auto" | "mem">> = {
+  autograph: "auto",
+  memorabilia: "mem",
+};
 
 function boundedPublicDuration(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 24 * 60 * 60 * 1000
@@ -779,51 +786,101 @@ export function normalizeAiGraderPublicCaptureTiming(value: unknown): JsonRecord
  * OCR metadata may assist display, but it can never carry caller-controlled
  * claims that confirmation, publication, or inventory mutation occurred.
  */
+function publicOcrEvidenceRefs(raw: JsonRecord) {
+  const entries = Array.isArray(raw.evidenceRefs)
+    ? raw.evidenceRefs
+    : Array.isArray(raw.sources)
+      ? raw.sources
+      : [];
+  return Array.from(new Set(entries
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(entry))))
+    .slice(0, 24);
+}
+
+function publicOcrProvenanceIdentifier(value: unknown, fallback?: string) {
+  if (typeof value !== "string") return fallback;
+  const candidate = value.trim().slice(0, 120);
+  if (
+    !candidate ||
+    candidate.includes("..") ||
+    candidate.includes(String.fromCharCode(92)) ||
+    /^(?:https?|data|file):/i.test(candidate) ||
+    /^[A-Za-z]:[\\/]/.test(candidate)
+  ) return fallback;
+  if (/^@[A-Za-z0-9._-]+\/[A-Za-z0-9._/-]+$/.test(candidate)) return candidate;
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(candidate) ? candidate : fallback;
+}
+
+function canonicalPublicOcrReviewFieldName(value: unknown): PublicOcrFieldName | null {
+  if (value === "auto") return "autograph";
+  if (value === "mem") return "memorabilia";
+  return (PUBLIC_OCR_FIELD_NAMES as readonly unknown[]).includes(value)
+    ? value as PublicOcrFieldName
+    : null;
+}
+
 export function normalizeAiGraderPublicOcrPrefill(value: unknown): JsonRecord | undefined {
   if (!isRecord(value)) return undefined;
   const rawFields = isRecord(value.fields) ? value.fields : {};
   const fields: JsonRecord = {};
   for (const name of PUBLIC_OCR_FIELD_NAMES) {
-    const raw = rawFields[name];
+    const legacyName = LEGACY_PUBLIC_OCR_FIELD_ALIASES[name];
+    const raw = rawFields[name] ?? (legacyName ? rawFields[legacyName] : undefined);
     if (!isRecord(raw)) continue;
-    const fieldValue =
-      typeof raw.value === "string"
-        ? raw.value.slice(0, 240)
-        : typeof raw.value === "boolean" || raw.value === null
-          ? raw.value
-          : null;
+    const booleanField = name === "autograph" || name === "memorabilia";
+    let fieldValue: string | boolean | null = booleanField
+      ? typeof raw.value === "boolean" ? raw.value : null
+      : typeof raw.value === "string" ? raw.value.slice(0, 240) : null;
+    let state = raw.state === "supported" || raw.state === "unknown" || raw.state === "disagreement"
+      ? raw.state
+      : fieldValue === null
+        ? "unknown"
+        : "supported";
+    if (state !== "supported") fieldValue = null;
+    if (state === "supported" && fieldValue === null) state = "unknown";
     const confidence =
       typeof raw.confidence === "number" && Number.isFinite(raw.confidence)
         ? Math.max(0, Math.min(1, Math.round(raw.confidence * 1000) / 1000))
         : 0;
     fields[name] = {
+      state,
       value: fieldValue,
       confidence,
-      reviewRequired: true,
-      sources: (Array.isArray(raw.sources) ? raw.sources : [])
-        .filter((source): source is string => typeof source === "string")
-        .slice(0, 10)
-        .map((source) => source.slice(0, 80)),
+      reviewRequired: state !== "supported" || raw.reviewRequired === true,
+      evidenceRefs: publicOcrEvidenceRefs(raw),
     };
   }
   const provenance = isRecord(value.provenance) ? value.provenance : {};
+  const requestedReviewFields = (Array.isArray(value.reviewFieldNames) ? value.reviewFieldNames : [])
+    .map(canonicalPublicOcrReviewFieldName)
+    .filter((name): name is PublicOcrFieldName => Boolean(name) && isRecord(fields[name!]));
+  const reviewFieldNames = requestedReviewFields.length
+    ? Array.from(new Set(requestedReviewFields))
+    : Object.entries(fields)
+      .filter(([, field]) => isRecord(field) && field.reviewRequired === true)
+      .map(([name]) => name);
+  const structuredExtractor = publicOcrProvenanceIdentifier(provenance.structuredExtractor);
+  const structuredExtractionModel = publicOcrProvenanceIdentifier(provenance.structuredExtractionModel);
   return {
     ...(typeof value.reportId === "string" ? { reportId: value.reportId.slice(0, 200) } : {}),
     status: "prefill_ready",
     humanConfirmationRequired: true,
     inventoryMutationPerformed: false,
     publishMutationPerformed: false,
-    sourceSides: (Array.isArray(value.sourceSides) ? value.sourceSides : []).filter(
-      (side) => side === "front" || side === "back"
-    ),
+    sourceSides: Array.from(new Set((Array.isArray(value.sourceSides) ? value.sourceSides : [])
+      .filter((side) => side === "front" || side === "back"))).slice(0, 2),
     fields,
-    reviewFieldNames: Object.keys(fields),
+    reviewFieldNames,
     provenance: {
-      ocrEngine: typeof provenance.ocrEngine === "string" ? provenance.ocrEngine.slice(0, 120) : "existing_ten_kings_ocr",
-      attributeExtractor:
-        typeof provenance.attributeExtractor === "string"
-          ? provenance.attributeExtractor.slice(0, 120)
-          : "@tenkings/shared/extractCardAttributes",
+      ocrEngine: publicOcrProvenanceIdentifier(provenance.ocrEngine, "existing_ten_kings_ocr"),
+      attributeExtractor: publicOcrProvenanceIdentifier(
+        provenance.attributeExtractor,
+        "@tenkings/shared/extractCardAttributes"
+      ),
+      ...(structuredExtractor ? { structuredExtractor } : {}),
+      ...(structuredExtractionModel ? { structuredExtractionModel } : {}),
       setLookupUsed: provenance.setLookupUsed === true,
       setIdentificationUsed: provenance.setIdentificationUsed === true,
     },

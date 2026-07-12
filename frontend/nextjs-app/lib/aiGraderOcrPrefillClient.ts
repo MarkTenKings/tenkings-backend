@@ -5,6 +5,12 @@ import {
   fetchAiGraderStationReportBundle,
 } from "./aiGraderStationBridgeClient";
 import { uploadAiGraderArtifactDirectly } from "./aiGraderDirectUpload";
+import {
+  aiGraderOcrFailurePresentation,
+  isAiGraderOcrFailureCode,
+  type AiGraderOcrFailureCategory,
+  type AiGraderOcrFailureCode,
+} from "./aiGraderOcrFailure";
 
 export type AiGraderOcrPrefillStage =
   | "bundle_fetch"
@@ -14,6 +20,7 @@ export type AiGraderOcrPrefillStage =
   | "front_put"
   | "back_put"
   | "finalize"
+  | "provider"
   | "ocr_response";
 
 const OCR_STAGE_MESSAGES: Record<AiGraderOcrPrefillStage, string> = {
@@ -24,16 +31,30 @@ const OCR_STAGE_MESSAGES: Record<AiGraderOcrPrefillStage, string> = {
   front_put: "OCR Prefill direct upload failed for the normalized front image.",
   back_put: "OCR Prefill direct upload failed for the normalized back image.",
   finalize: "OCR Prefill finalize request failed.",
+  provider: "OCR Prefill provider processing failed.",
   ocr_response: "OCR Prefill response was invalid or incomplete.",
 };
 
 export class AiGraderOcrPrefillStageError extends Error {
   readonly stage: AiGraderOcrPrefillStage;
+  readonly failureCode?: AiGraderOcrFailureCode;
+  readonly failureCategory?: AiGraderOcrFailureCategory;
+  readonly failureLabel?: string;
 
-  constructor(stage: AiGraderOcrPrefillStage, message = OCR_STAGE_MESSAGES[stage]) {
+  constructor(
+    stage: AiGraderOcrPrefillStage,
+    message = OCR_STAGE_MESSAGES[stage],
+    failureCode?: AiGraderOcrFailureCode
+  ) {
     super(message);
     this.name = "AiGraderOcrPrefillStageError";
     this.stage = stage;
+    this.failureCode = failureCode;
+    if (failureCode) {
+      const presentation = aiGraderOcrFailurePresentation(failureCode);
+      this.failureCategory = presentation.category;
+      this.failureLabel = presentation.label;
+    }
   }
 }
 
@@ -88,6 +109,9 @@ export type AiGraderOcrPrefillState = {
   message: string;
   reportId?: string;
   result?: AiGraderOcrPrefillResult;
+  failureCode?: AiGraderOcrFailureCode;
+  failureCategory?: AiGraderOcrFailureCategory;
+  failureLabel?: string;
 };
 
 type NormalizedAsset = {
@@ -463,6 +487,11 @@ export async function runAiGraderOcrPrefillFromLocalReport(
   if (!finalizeResponse.ok) {
     if (finalizePayload?.code === "AI_GRADER_STORAGE_CHECKSUM_UNAVAILABLE") {
       throw new AiGraderOcrPrefillStageError("finalize", OCR_NATIVE_CHECKSUM_BLOCKER);
+    }
+    const failureCode = finalizePayload?.code;
+    if (isAiGraderOcrFailureCode(failureCode)) {
+      const presentation = aiGraderOcrFailurePresentation(failureCode);
+      throw new AiGraderOcrPrefillStageError("provider", presentation.message, failureCode);
     }
     throw new AiGraderOcrPrefillStageError("finalize");
   }
