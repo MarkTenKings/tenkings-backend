@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
+  applyAiGraderConfirmedPublishAuthority,
   buildAiGraderConfirmCardReferencePlan,
   buildAiGraderProductionStoragePlan,
 } from "@tenkings/database";
@@ -1164,6 +1165,195 @@ test("server upload plans allow only the exact native checksum and safe signed h
   }
 });
 
+test("Publish init rejects missing, cross-tenant, and mismatched durable linkage before storage planning", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const cases: Array<{
+    name: string;
+    mutateBody?: (body: any) => void;
+    authorityOverride?: Record<string, unknown>;
+  }> = [
+    { name: "missing CardAsset", mutateBody: (body) => { delete body.cardAssetId; } },
+    { name: "missing Item", mutateBody: (body) => { delete body.itemId; } },
+    { name: "mismatched report", mutateBody: (body) => { body.reportId = "other-report"; } },
+    { name: "mismatched grading session", mutateBody: (body) => { body.gradingSessionId = "other-session"; } },
+    { name: "cross tenant", authorityOverride: { tenantId: "other-tenant" } },
+    { name: "durable report mismatch", authorityOverride: { reportId: "other-report" } },
+    { name: "durable session mismatch", authorityOverride: { gradingSessionId: "other-session" } },
+    { name: "durable CardAsset mismatch", authorityOverride: { cardAssetId: "other-card" } },
+    { name: "durable Item mismatch", authorityOverride: { itemId: "other-item" } },
+  ];
+  for (const scenario of cases) {
+    const calls = { authority: 0, plan: 0, presign: 0, verify: 0, persist: 0 };
+    const handler = createAiGraderProductionApiHandler({
+      env: {
+        [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+        AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+      },
+      async requireAdminSession() {
+        return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+      },
+      publicUrlFor(storageKey) {
+        calls.plan += 1;
+        return "https://cdn.tenkings.test/" + storageKey;
+      },
+      async resolvePublishAuthority(input) {
+        calls.authority += 1;
+        return { ...durablePublishAuthority(input), ...(scenario.authorityOverride ?? {}) } as any;
+      },
+      async presignUpload(input) {
+        calls.presign += 1;
+        return presignForTest(input);
+      },
+      async verifyUploadedArtifact() {
+        calls.verify += 1;
+        throw new Error("linkage rejection must precede storage verification");
+      },
+      async persist() {
+        calls.persist += 1;
+        throw new Error("linkage rejection must precede persistence");
+      },
+    });
+    const body = publishRequestBody(reportBundle, productionRelease);
+    scenario.mutateBody?.(body);
+    const req = mockRequest("POST", ["publish-init"]);
+    req.body = body;
+    const res = mockResponse();
+    await handler(req, res);
+    assert.equal(res.statusCodeValue, 400, scenario.name);
+    assert.equal(calls.plan, 0, scenario.name);
+    assert.equal(calls.presign, 0, scenario.name);
+    assert.equal(calls.verify, 0, scenario.name);
+    assert.equal(calls.persist, 0, scenario.name);
+  }
+});
+
+test("Publish init rejects incomplete or contradictory label and QR readiness before presign", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const cases = [
+    { name: "label flag missing", release: { ...productionRelease, labelDataGenerated: false } },
+    { name: "QR flag missing", release: { ...productionRelease, qrPayloadGenerated: false } },
+    {
+      name: "contradictory label status",
+      release: {
+        ...productionRelease,
+        label: { ...productionRelease.label, status: "blocked_insufficient_evidence" },
+      },
+    },
+  ];
+  for (const scenario of cases) {
+    let authorityCalls = 0;
+    let presignCalls = 0;
+    let persistCalls = 0;
+    const handler = createAiGraderProductionApiHandler({
+      env: {
+        [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+        AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+      },
+      async requireAdminSession() {
+        return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+      },
+      publicUrlFor: (storageKey) => "https://cdn.tenkings.test/" + storageKey,
+      async resolvePublishAuthority(input) {
+        authorityCalls += 1;
+        return durablePublishAuthority(input);
+      },
+      async presignUpload(input) {
+        presignCalls += 1;
+        return presignForTest(input);
+      },
+      async persist() {
+        persistCalls += 1;
+        throw new Error("invalid readiness must not persist");
+      },
+    });
+    const req = mockRequest("POST", ["publish-init"]);
+    req.body = publishRequestBody(reportBundle, scenario.release);
+    const res = mockResponse();
+    await handler(req, res);
+    assert.equal(res.statusCodeValue, 400, scenario.name);
+    assert.equal((res.jsonBody as any).code, "AI_GRADER_PUBLISH_LABEL_NOT_READY", scenario.name);
+    assert.equal(authorityCalls, 0, scenario.name);
+    assert.equal(presignCalls, 0, scenario.name);
+    assert.equal(persistCalls, 0, scenario.name);
+  }
+});
+
+test("Publish init accepts current normalized grading without centering but rejects a missing required element", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const { centering: _uncomputedCentering, ...normalizedElements } = productionRelease.finalGrade.elements;
+  const normalizedRelease = {
+    ...productionRelease,
+    finalGrade: {
+      ...productionRelease.finalGrade,
+      elements: normalizedElements,
+    },
+  };
+  let successfulPresigns = 0;
+  const successHandler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => "https://cdn.tenkings.test/" + storageKey,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
+    async presignUpload(input) {
+      successfulPresigns += 1;
+      return presignForTest(input);
+    },
+    async persist() {
+      throw new Error("publish-init should not persist");
+    },
+  });
+  const successReq = mockRequest("POST", ["publish-init"]);
+  successReq.body = publishRequestBody(reportBundle, normalizedRelease);
+  const successRes = mockResponse();
+  await successHandler(successReq, successRes);
+  assert.equal(successRes.statusCodeValue, 200);
+  assert.equal(successfulPresigns > 0, true);
+
+  const { corners: _missingCorners, ...incompleteElements } = normalizedElements;
+  let authorityCalls = 0;
+  let failedPresigns = 0;
+  const failureHandler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => "https://cdn.tenkings.test/" + storageKey,
+    async resolvePublishAuthority(input) {
+      authorityCalls += 1;
+      return durablePublishAuthority(input);
+    },
+    async presignUpload(input) {
+      failedPresigns += 1;
+      return presignForTest(input);
+    },
+    async persist() {
+      throw new Error("invalid grade must not persist");
+    },
+  });
+  const failureReq = mockRequest("POST", ["publish-init"]);
+  failureReq.body = publishRequestBody(reportBundle, {
+    ...normalizedRelease,
+    finalGrade: {
+      ...normalizedRelease.finalGrade,
+      elements: incompleteElements,
+    },
+  });
+  const failureRes = mockResponse();
+  await failureHandler(failureReq, failureRes);
+  assert.equal(failureRes.statusCodeValue, 400);
+  assert.equal((failureRes.jsonBody as any).code, "AI_GRADER_PUBLISH_FINAL_GRADE_REQUIRED");
+  assert.equal(authorityCalls, 0);
+  assert.equal(failedPresigns, 0);
+});
+
 test("production publication API rejects insufficient evidence reports before upload", async () => {
   const release = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
   const blockedRelease = {
@@ -1201,18 +1391,16 @@ test("production publication API rejects insufficient evidence reports before up
     },
   });
 
-  const req = mockRequest("POST", ["publish-init"]);
-  req.body = {
-    publicationStatus: "published",
-    reportBundle: {
-      ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
-      reportStatus: "insufficient_evidence",
-      finalStatus: "insufficient_evidence",
-      finalGradeComputed: false,
-      productionRelease: blockedRelease,
-    },
+  const blockedBundle = {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    reportId: blockedRelease.reportId,
+    reportStatus: "insufficient_evidence",
+    finalStatus: "insufficient_evidence",
+    finalGradeComputed: false,
     productionRelease: blockedRelease,
   };
+  const req = mockRequest("POST", ["publish-init"]);
+  req.body = publishRequestBody(blockedBundle, blockedRelease);
   const res = mockResponse();
   await handler(req, res);
 
@@ -1221,8 +1409,8 @@ test("production publication API rejects insufficient evidence reports before up
   assert.equal(persistCalled, false);
   assert.deepEqual(res.jsonBody, {
     ok: false,
-    code: "AI_GRADER_REPORT_NOT_PUBLISH_READY",
-    message: "AI Grader report is not publish-ready. Final grade, label data, and QR payload are required before publishing.",
+    code: "AI_GRADER_PUBLISH_FINAL_GRADE_REQUIRED",
+    message: "Publish requires a complete valid final grade from the authoritative release.",
   });
 });
 
@@ -1279,6 +1467,7 @@ test("production publish init creates direct storage upload plan without embedde
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
     async presignUpload(input) {
       assert.equal(Object.prototype.hasOwnProperty.call(input as Record<string, unknown>, "metadata"), false);
       calls.push(`presign:${input.storageKey}`);
@@ -1310,6 +1499,7 @@ test("production publish init creates direct storage upload plan without embedde
       })),
     },
     cardAssetId: "card-asset-1",
+    itemId: "item-1",
   };
   const res = mockResponse();
   await handler(req, res);
@@ -1377,6 +1567,7 @@ test("production publish init fails closed when a report asset has no planned pi
       return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
     async presignUpload(input) {
       return presignForTest(input);
     },
@@ -1386,11 +1577,7 @@ test("production publish init fails closed when a report asset has no planned pi
   });
 
   const req = mockRequest("POST", ["publish-init"]);
-  req.body = {
-    publicationStatus: "published",
-    reportBundle,
-    productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
-  };
+  req.body = publishRequestBody(reportBundle, buildSampleAiGraderProductionRelease(reportBundle));
   const res = mockResponse();
   await handler(req, res);
 
@@ -1416,6 +1603,7 @@ test("legacy v0.1 publish init remains available without the post-PR82 finding s
       return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
     async presignUpload(input) {
       return presignForTest(input);
     },
@@ -1425,7 +1613,7 @@ test("legacy v0.1 publish init remains available without the post-PR82 finding s
   });
 
   const req = mockRequest("POST", ["publish-init"]);
-  req.body = { publicationStatus: "published", reportBundle, productionRelease };
+  req.body = publishRequestBody(reportBundle, productionRelease);
   const res = mockResponse();
   await handler(req, res);
 
@@ -1581,6 +1769,7 @@ test("production publish finalize verifies upload manifest and persists DB recor
       };
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
     async presignUpload(input) {
       return presignForTest(input);
     },
@@ -1624,11 +1813,7 @@ test("production publish finalize verifies upload manifest and persists DB recor
   });
 
   const initReq = mockRequest("POST", ["publish-init"]);
-  initReq.body = {
-    publicationStatus: "published",
-    reportBundle,
-    productionRelease,
-  };
+  initReq.body = publishRequestBody(reportBundle, productionRelease);
   initReq.headers.authorization = "Bearer harmless-test-session";
   const initRes = mockResponse();
   await handler(initReq, initRes);
@@ -1638,15 +1823,10 @@ test("production publish finalize verifies upload manifest and persists DB recor
   uploadManifest = uploadManifestFromPlan(initBody.result.uploadPlan.artifacts);
 
   const req = mockRequest("POST", ["publish-finalize"]);
-  req.body = {
-    publicationStatus: "published",
-    reportId: reportBundle.reportId,
+  req.body = publishRequestBody(reportBundle, productionRelease, {
     publishSessionId,
     uploadManifest,
-    reportBundle,
-    productionRelease,
-    cardAssetId: "card-asset-1",
-  };
+  });
   req.headers.authorization = "Bearer harmless-test-session";
   const res = mockResponse();
   await handler(req, res);
@@ -1696,6 +1876,178 @@ test("production publish finalize verifies upload manifest and persists DB recor
   assert.equal(verifiedArtifacts.every((artifact) => typeof artifact.contentType === "string" && artifact.contentType.length > 0), true);
 });
 
+test("Publish finalize repeats durable authority before storage verification or persistence", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  let authorityCalls = 0;
+  let planCalls = 0;
+  let presignCalls = 0;
+  let verifyCalls = 0;
+  let persistCalls = 0;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor(storageKey) {
+      planCalls += 1;
+      return "https://cdn.tenkings.test/" + storageKey;
+    },
+    async resolvePublishAuthority(input) {
+      authorityCalls += 1;
+      return authorityCalls === 1
+        ? durablePublishAuthority(input)
+        : { ...durablePublishAuthority(input), itemId: "other-item" };
+    },
+    async presignUpload(input) {
+      presignCalls += 1;
+      return presignForTest(input);
+    },
+    async verifyUploadedArtifact() {
+      verifyCalls += 1;
+      throw new Error("finalize authority mismatch must precede storage verification");
+    },
+    async persist() {
+      persistCalls += 1;
+      throw new Error("finalize authority mismatch must precede persistence");
+    },
+  });
+  const initReq = mockRequest("POST", ["publish-init"]);
+  initReq.body = publishRequestBody(reportBundle, productionRelease);
+  const initRes = mockResponse();
+  await handler(initReq, initRes);
+  assert.equal(initRes.statusCodeValue, 200);
+  const initResult = (initRes.jsonBody as any).result;
+  const planCallsAfterInit = planCalls;
+  const presignCallsAfterInit = presignCalls;
+
+  const finalizeReq = mockRequest("POST", ["publish-finalize"]);
+  finalizeReq.body = publishRequestBody(reportBundle, productionRelease, {
+    publishSessionId: initResult.publishSessionId,
+    uploadManifest: uploadManifestFromPlan(initResult.uploadPlan.artifacts),
+  });
+  const finalizeRes = mockResponse();
+  await handler(finalizeReq, finalizeRes);
+  assert.equal(finalizeRes.statusCodeValue, 400);
+  assert.equal((finalizeRes.jsonBody as any).code, "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH");
+  assert.equal(authorityCalls, 2);
+  assert.equal(planCalls, planCallsAfterInit);
+  assert.equal(presignCalls, presignCallsAfterInit);
+  assert.equal(verifyCalls, 0);
+  assert.equal(persistCalls, 0);
+});
+
+test("Publish replaces tampered caller identity with durable Confirm authority in storage and persistence", async () => {
+  const { reportBundle: sourceBundle, productionRelease: sourceRelease } = sampleConfirmReadyPackage();
+  const tampered = "TAMPERED_IDENTITY_MUST_NOT_PUBLISH";
+  const reportBundle = {
+    ...sourceBundle,
+    cardIdentity: {
+      ...sourceBundle.cardIdentity,
+      title: tampered,
+      playerName: tampered,
+      cardName: tampered,
+      productSet: tampered,
+      set: tampered,
+      cardNumber: "999",
+      cardAssetId: TEST_PUBLISH_CARD_ASSET_ID,
+      itemId: TEST_PUBLISH_ITEM_ID,
+    },
+  };
+  const productionRelease = {
+    ...sourceRelease,
+    label: {
+      ...sourceRelease.label,
+      cardIdentity: {
+        title: tampered,
+        playerName: tampered,
+        cardName: tampered,
+        productSet: tampered,
+        set: tampered,
+        cardNumber: "999",
+        cardAssetId: TEST_PUBLISH_CARD_ASSET_ID,
+        itemId: TEST_PUBLISH_ITEM_ID,
+      },
+    },
+    cardInventoryLinkage: {
+      ...(sourceRelease.cardInventoryLinkage ?? {}),
+      status: "linked",
+      cardAssetId: TEST_PUBLISH_CARD_ASSET_ID,
+      itemId: TEST_PUBLISH_ITEM_ID,
+    },
+  };
+  let persistedInput: any;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => "https://cdn.tenkings.test/" + storageKey,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
+    async presignUpload(input) {
+      return presignForTest(input);
+    },
+    async verifyUploadedArtifact(input) {
+      return {
+        ok: true,
+        byteSize: input.byteSize,
+        contentType: input.contentType,
+        checksumSha256: input.checksumSha256,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
+      };
+    },
+    async persist(input) {
+      persistedInput = input;
+      return {
+        gradingSessionId: input.reportBundle.gradingSessionId,
+        reportId: input.reportBundle.reportId,
+        publicationStatus: "published",
+        storagePlan: input.storagePlan,
+        evidenceAssetCount: input.storagePlan.artifacts.length,
+        cardAssetUpdatedCount: 1,
+        itemUpdatedCount: 1,
+      } as any;
+    },
+  });
+  const initReq = mockRequest("POST", ["publish-init"]);
+  initReq.body = publishRequestBody(reportBundle, productionRelease);
+  const initRes = mockResponse();
+  await handler(initReq, initRes);
+  assert.equal(initRes.statusCodeValue, 200);
+  const initResult = (initRes.jsonBody as any).result;
+  const serializedBodies = initResult.uploadPlan.artifacts
+    .map((artifact: any) => artifact.body)
+    .filter(Boolean)
+    .join("\n");
+  assert.doesNotMatch(serializedBodies, new RegExp(tampered));
+  assert.doesNotMatch(serializedBodies, /"cardNumber": "999"/);
+  assert.match(serializedBodies, /Michael Jordan/);
+  assert.match(serializedBodies, /"set": "Fleer"/);
+  assert.match(serializedBodies, /"cardNumber": "23"/);
+
+  const finalizeReq = mockRequest("POST", ["publish-finalize"]);
+  finalizeReq.body = publishRequestBody(reportBundle, productionRelease, {
+    publishSessionId: initResult.publishSessionId,
+    uploadManifest: uploadManifestFromPlan(initResult.uploadPlan.artifacts),
+  });
+  const finalizeRes = mockResponse();
+  await handler(finalizeReq, finalizeRes);
+  assert.equal(finalizeRes.statusCodeValue, 200);
+  assert.ok(persistedInput);
+  assert.equal(persistedInput.reportBundle.cardIdentity.playerName, "Michael Jordan");
+  assert.equal(persistedInput.reportBundle.cardIdentity.productSet, "Fleer");
+  assert.equal(persistedInput.reportBundle.cardIdentity.cardNumber, "23");
+  assert.equal(persistedInput.productionRelease.label.cardIdentity.playerName, "Michael Jordan");
+  assert.equal(persistedInput.productionRelease.cardInventoryLinkage.cardAssetId, TEST_PUBLISH_CARD_ASSET_ID);
+  assert.doesNotMatch(JSON.stringify(persistedInput), new RegExp(tampered));
+});
+
 test("production publish finalize rejects storage content type mismatch", async () => {
   const reportBundle = sampleStorageReadyReportBundle();
   const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
@@ -1710,6 +2062,7 @@ test("production publish finalize rejects storage content type mismatch", async 
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
     async presignUpload(input) {
       return presignForTest(input);
     },
@@ -1729,11 +2082,7 @@ test("production publish finalize rejects storage content type mismatch", async 
   });
 
   const initReq = mockRequest("POST", ["publish-init"]);
-  initReq.body = {
-    publicationStatus: "published",
-    reportBundle,
-    productionRelease,
-  };
+  initReq.body = publishRequestBody(reportBundle, productionRelease);
   const initRes = mockResponse();
   await handler(initReq, initRes);
   assert.equal(initRes.statusCodeValue, 200);
@@ -1745,14 +2094,10 @@ test("production publish finalize rejects storage content type mismatch", async 
   };
 
   const req = mockRequest("POST", ["publish-finalize"]);
-  req.body = {
-    publicationStatus: "published",
-    reportId: reportBundle.reportId,
+  req.body = publishRequestBody(reportBundle, productionRelease, {
     publishSessionId: initBody.result.publishSessionId,
     uploadManifest: uploadManifestFromPlan(initBody.result.uploadPlan.artifacts),
-    reportBundle,
-    productionRelease,
-  };
+  });
   const res = mockResponse();
   await handler(req, res);
 
@@ -1774,6 +2119,7 @@ test("production publish finalize rejects decoded source dimensions that differ 
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
     async presignUpload(input) {
       return presignForTest(input);
     },
@@ -1783,11 +2129,7 @@ test("production publish finalize rejects decoded source dimensions that differ 
   });
 
   const initReq = mockRequest("POST", ["publish-init"]);
-  initReq.body = {
-    publicationStatus: "published",
-    reportBundle,
-    productionRelease,
-  };
+  initReq.body = publishRequestBody(reportBundle, productionRelease);
   const initRes = mockResponse();
   await handler(initReq, initRes);
   assert.equal(initRes.statusCodeValue, 200);
@@ -1815,14 +2157,10 @@ test("production publish finalize rejects decoded source dimensions that differ 
   reportAsset.sourceImageWidthPx = (reportAsset.sourceImageWidthPx ?? 0) + 1;
 
   const req = mockRequest("POST", ["publish-finalize"]);
-  req.body = {
-    publicationStatus: "published",
-    reportId: reportBundle.reportId,
+  req.body = publishRequestBody(reportBundle, productionRelease, {
     publishSessionId: initBody.result.publishSessionId,
     uploadManifest,
-    reportBundle,
-    productionRelease,
-  };
+  });
   const res = mockResponse();
   await handler(req, res);
 
@@ -1842,6 +2180,7 @@ test("production publish finalize rejects storage-decoded dimensions that differ
       return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
     async presignUpload(input) {
       return presignForTest(input);
     },
@@ -1861,7 +2200,7 @@ test("production publish finalize rejects storage-decoded dimensions that differ
   });
 
   const initReq = mockRequest("POST", ["publish-init"]);
-  initReq.body = { publicationStatus: "published", reportBundle, productionRelease };
+  initReq.body = publishRequestBody(reportBundle, productionRelease);
   const initRes = mockResponse();
   await handler(initReq, initRes);
   assert.equal(initRes.statusCodeValue, 200);
@@ -1872,14 +2211,10 @@ test("production publish finalize rejects storage-decoded dimensions that differ
     };
   };
   const req = mockRequest("POST", ["publish-finalize"]);
-  req.body = {
-    publicationStatus: "published",
-    reportId: reportBundle.reportId,
+  req.body = publishRequestBody(reportBundle, productionRelease, {
     publishSessionId: initBody.result.publishSessionId,
     uploadManifest: uploadManifestFromPlan(initBody.result.uploadPlan.artifacts),
-    reportBundle,
-    productionRelease,
-  };
+  });
   const res = mockResponse();
   await handler(req, res);
 
@@ -2109,6 +2444,7 @@ test("production publish finalize updates CardAsset linkage when identity is pre
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
     async presignUpload(input) {
       calls.push(`presign:${input.storageKey}`);
       return presignForTest(input);
@@ -2139,27 +2475,17 @@ test("production publish finalize updates CardAsset linkage when identity is pre
   });
 
   const initReq = mockRequest("POST", ["publish-init"]);
-  initReq.body = {
-    publicationStatus: "published",
-    reportBundle,
-    productionRelease,
-    cardAssetId: "card-asset-1",
-  };
+  initReq.body = publishRequestBody(reportBundle, productionRelease);
   const initRes = mockResponse();
   await handler(initReq, initRes);
   assert.equal(initRes.statusCodeValue, 200);
   const initBody = initRes.jsonBody as { result: { publishSessionId: string; uploadPlan: { artifacts: Array<{ artifactId: string; storageKey: string; publicUrl?: string; checksumSha256: string; byteSize: number; contentType: string }> } } };
 
   const req = mockRequest("POST", ["publish-finalize"]);
-  req.body = {
-    publicationStatus: "published",
-    reportId: reportBundle.reportId,
+  req.body = publishRequestBody(reportBundle, productionRelease, {
     publishSessionId: initBody.result.publishSessionId,
     uploadManifest: uploadManifestFromPlan(initBody.result.uploadPlan.artifacts),
-    reportBundle,
-    productionRelease,
-    cardAssetId: "card-asset-1",
-  };
+  });
   const res = mockResponse();
   await handler(req, res);
 
@@ -2189,6 +2515,7 @@ test("production publish init rejects published reports without image asset meta
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
     async presignUpload() {
       throw new Error("publish without image metadata should not presign");
     },
@@ -2198,11 +2525,7 @@ test("production publish init rejects published reports without image asset meta
   });
 
   const req = mockRequest("POST", ["publish-init"]);
-  req.body = {
-    publicationStatus: "published",
-    reportBundle,
-    productionRelease: buildSampleAiGraderProductionRelease(reportBundle),
-  };
+  req.body = publishRequestBody(reportBundle, buildSampleAiGraderProductionRelease(reportBundle));
   const res = mockResponse();
   await handler(req, res);
 
@@ -2227,6 +2550,7 @@ test("production publish init returns storage-backed public report bundle body o
       } as any;
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    resolvePublishAuthority: resolvePublishAuthorityForTest,
     async presignUpload(input) {
       return presignForTest(input);
     },
@@ -2236,11 +2560,7 @@ test("production publish init returns storage-backed public report bundle body o
   });
 
   const req = mockRequest("POST", ["publish-init"]);
-  req.body = {
-    publicationStatus: "published",
-    reportBundle,
-    productionRelease,
-  };
+  req.body = publishRequestBody(reportBundle, productionRelease);
   const res = mockResponse();
   await handler(req, res);
 
@@ -2998,6 +3318,69 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
   };
 }
 
+const TEST_PUBLISH_CARD_ASSET_ID = "card-asset-1";
+const TEST_PUBLISH_ITEM_ID = "item-1";
+
+function durablePublishAuthority(input: {
+  tenantId: string;
+  reportId: string;
+  gradingSessionId: string;
+  cardAssetId: string;
+  itemId: string;
+}) {
+  return {
+    ...input,
+    sessionId: "db-session-1",
+    reportRowId: "db-report-1",
+    finalOverallGrade: 8.5,
+    confirmedIdentity: {
+      ...validConfirmedSportIdentity(),
+      title: "1996 Fleer Michael Jordan #23",
+      set: "Fleer",
+      source: "card_asset",
+      status: "linked",
+      sideCount: 2,
+      cardAssetId: input.cardAssetId,
+      itemId: input.itemId,
+    },
+  };
+}
+
+async function resolvePublishAuthorityForTest(input: Parameters<typeof durablePublishAuthority>[0]) {
+  return durablePublishAuthority(input);
+}
+
+function canonicalPublishPackageForTest(reportBundle: any, productionRelease: any) {
+  const authority = durablePublishAuthority({
+    tenantId: "tenant-1",
+    reportId: reportBundle.reportId,
+    gradingSessionId: reportBundle.gradingSessionId,
+    cardAssetId: TEST_PUBLISH_CARD_ASSET_ID,
+    itemId: TEST_PUBLISH_ITEM_ID,
+  });
+  return {
+    ...applyAiGraderConfirmedPublishAuthority({ reportBundle, productionRelease, authority }),
+    authority,
+  };
+}
+
+function publishRequestBody(
+  reportBundle: any,
+  productionRelease: any,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    publicationStatus: "published",
+    reportId: reportBundle.reportId,
+    gradingSessionId: reportBundle.gradingSessionId,
+    cardAssetId: TEST_PUBLISH_CARD_ASSET_ID,
+    itemId: TEST_PUBLISH_ITEM_ID,
+    reportBundle,
+    productionRelease,
+    ...overrides,
+  };
+}
+
 function validConfirmedSportIdentity() {
   return {
     category: "sport" as const,
@@ -3366,6 +3749,15 @@ function createPublishedCardTransitionTx(input: {
   const gradingSessionId = input.reportBundle.gradingSessionId;
   const certId = input.productionRelease.label.certId;
   let batch = { id: "batch-1", status: "UPLOADING", totalCount: 1, processedCount: 0 };
+  let confirmedIdentity = {
+    ...validConfirmedSportIdentity(),
+    title: "1996 Fleer Michael Jordan #23",
+    set: "Fleer",
+    source: "card_asset",
+    status: "linked",
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+  };
   let labelRow: any = {
     id: "grading-label-1",
     reportId: "report-row-1",
@@ -3392,10 +3784,13 @@ function createPublishedCardTransitionTx(input: {
         record("aiGraderSession", "findUnique", args);
         return {
           id: "session-row-1",
+          tenantId: "tenant-1",
+          gradingSessionId,
           reportId,
           cardAssetId: "card-asset-1",
           itemId: "item-1",
-          status: publicationStatus,
+          status: publicationStatus === "published" ? "published" : "card_created",
+          cardIdentity: confirmedIdentity,
         };
       },
     },
@@ -3410,6 +3805,7 @@ function createPublishedCardTransitionTx(input: {
           publicationStatus,
           cardAssetId: "card-asset-1",
           itemId: "item-1",
+          finalOverallGrade: input.productionRelease.finalGrade.overall,
         };
       },
     },
@@ -3435,6 +3831,7 @@ function createPublishedCardTransitionTx(input: {
         record("item", "findUnique", args);
         return {
           id: "item-1",
+          number: "card-asset-1",
           imageUrl: publicationStatus === "published" ? "https://cdn.tenkings.test/published/front.png" : "",
         };
       },
@@ -3502,15 +3899,28 @@ function createPublishedCardTransitionTx(input: {
     failNextBatchPromotion() {
       failNextBatchPromotion = true;
     },
+    replaceConfirmedIdentity(value: Record<string, unknown>) {
+      confirmedIdentity = { ...confirmedIdentity, ...value };
+    },
     input: {
       tx,
       tenantId: "tenant-1",
       gradingSessionId,
       reportId,
       productionRelease: input.productionRelease,
-      confirmedIdentity: validConfirmedSportIdentity(),
       cardAssetId: "card-asset-1",
       itemId: "item-1",
+      publishAuthority: {
+        ...durablePublishAuthority({
+          tenantId: "tenant-1",
+          reportId,
+          gradingSessionId,
+          cardAssetId: "card-asset-1",
+          itemId: "item-1",
+        }),
+        sessionId: "session-row-1",
+        reportRowId: "report-row-1",
+      },
       operatorUserId: "operator-user-1",
     },
   };
@@ -3536,8 +3946,141 @@ test("verified Publish promotes the batch and assigns one grading-label slot, wi
   assert.equal(state.calls.some((call) => call.delegate === "qrCode" || call.delegate === "packLabel"), false);
 });
 
-test("Publish runtime composes durable hosted promotion with retryable batch and grading-label assignment", async () => {
+test("physical grading-label payload resolves identity from durable Confirm state only", async () => {
+  const { reportBundle, productionRelease: sourceRelease } = sampleConfirmReadyPackage();
+  const tampered = "TAMPERED_LABEL_IDENTITY";
+  const productionRelease = {
+    ...sourceRelease,
+    label: {
+      ...sourceRelease.label,
+      cardIdentity: {
+        title: tampered,
+        playerName: tampered,
+        productSet: tampered,
+        cardNumber: "999",
+      },
+    },
+  };
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease });
+  await completePublishedAiGraderCardTx(state.input);
+  const payload = state.getLabel().payload as any;
+  assert.equal(payload.confirmedCardIdentity.playerName, "Michael Jordan");
+  assert.equal(payload.confirmedCardIdentity.productSet, "Fleer");
+  assert.equal(payload.confirmedCardIdentity.cardNumber, "23");
+  assert.equal(payload.cardIdentity.playerName, "Michael Jordan");
+  assert.doesNotMatch(JSON.stringify(payload), new RegExp(tampered));
+  assert.doesNotMatch(JSON.stringify(payload), /"cardNumber":"999"/);
+});
+
+test("physical grading-label assignment rejects durable identity drift after Publish authority was captured", async () => {
   const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease });
+  state.replaceConfirmedIdentity({
+    title: "Changed after Publish",
+    playerName: "Changed after Publish",
+  });
+  await assert.rejects(
+    () => completePublishedAiGraderCardTx(state.input),
+    (error: any) =>
+      error.code === "AI_GRADER_PUBLISH_IDENTITY_AUTHORITY_CHANGED" &&
+      /restart Publish/.test(error.message),
+  );
+  assert.equal(state.calls.some((call) => call.delegate === "aiGraderLabel"), false);
+  assert.equal(state.calls.some((call) => call.delegate === "cardBatch"), false);
+});
+
+test("Publish runtime validates deterministic linkage before any persistence call", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease, publicationStatus: "draft" });
+  let authorityCalls = 0;
+  let persistCalls = 0;
+  await assert.rejects(
+    () => persistProductionReleaseRuntime({
+      tenantId: "tenant-1",
+      reportBundle,
+      productionRelease,
+      storagePlan: {
+        storageKeyPrefix: "ai-grader/reports/no-write/",
+        publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/no-write",
+        qrPayloadUrl: "https://collect.tenkings.co/ai-grader/reports/no-write",
+        artifacts: [],
+        assetManifest: [],
+      } as any,
+      publicationStatus: "published",
+      cardAssetId: "card-asset-1",
+      itemId: null,
+      dbClient: state.db,
+      resolveAuthority: (async () => {
+        authorityCalls += 1;
+        throw new Error("authority must not run for missing deterministic linkage");
+      }) as any,
+      persistRelease: (async () => {
+        persistCalls += 1;
+        throw new Error("persistence must not run for missing deterministic linkage");
+      }) as any,
+    }),
+    /one exact report, session, CardAsset, and Item linkage/,
+  );
+  assert.equal(authorityCalls, 0);
+  assert.equal(persistCalls, 0);
+  assert.equal(state.getBatch().status, "UPLOADING");
+  assert.equal((state.getLabel().payload as any).labelSheet, undefined);
+});
+
+test("Publish runtime rejects durable identity drift after storage planning before persistence", async () => {
+  const source = sampleConfirmReadyPackage();
+  const canonical = canonicalPublishPackageForTest(source.reportBundle, source.productionRelease);
+  const state = createPublishedCardTransitionTx({
+    reportBundle: canonical.reportBundle,
+    productionRelease: canonical.productionRelease,
+    publicationStatus: "draft",
+  });
+  let persistCalls = 0;
+  const changedAuthority = {
+    ...canonical.authority,
+    confirmedIdentity: {
+      ...canonical.authority.confirmedIdentity,
+      title: "Changed after storage planning",
+      playerName: "Changed after storage planning",
+    },
+  };
+  await assert.rejects(
+    () => persistProductionReleaseRuntime({
+      tenantId: "tenant-1",
+      reportBundle: canonical.reportBundle,
+      productionRelease: canonical.productionRelease,
+      storagePlan: {
+        storageKeyPrefix: "ai-grader/reports/identity-drift/",
+        publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/identity-drift",
+        qrPayloadUrl: "https://collect.tenkings.co/ai-grader/reports/identity-drift",
+        artifacts: [],
+        assetManifest: [],
+      } as any,
+      publicationStatus: "published",
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+      dbClient: state.db,
+      resolveAuthority: (async () => changedAuthority) as any,
+      persistRelease: (async () => {
+        persistCalls += 1;
+        throw new Error("identity drift must fail before persistence");
+      }) as any,
+    }),
+    (error: any) =>
+      error.code === "AI_GRADER_PUBLISH_IDENTITY_AUTHORITY_CHANGED" &&
+      /restart Publish/.test(error.message),
+  );
+  assert.equal(persistCalls, 0);
+  assert.equal((state.getLabel().payload as any).labelSheet, undefined);
+  assert.equal(state.getBatch().status, "UPLOADING");
+});
+
+test("Publish runtime composes durable hosted promotion with retryable batch and grading-label assignment", async () => {
+  const source = sampleConfirmReadyPackage();
+  const { reportBundle, productionRelease } = canonicalPublishPackageForTest(
+    source.reportBundle,
+    source.productionRelease,
+  );
   const state = createPublishedCardTransitionTx({ reportBundle, productionRelease, publicationStatus: "draft" });
   const storagePlan = {
     storageKeyPrefix: "ai-grader/reports/composed-publish/",
@@ -3606,7 +4149,11 @@ test("Publish runtime composes durable hosted promotion with retryable batch and
 });
 
 test("scoped service-account Publish can assign the grading-label slot without inventing a human assignee", async () => {
-  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const source = sampleConfirmReadyPackage();
+  const { reportBundle, productionRelease } = canonicalPublishPackageForTest(
+    source.reportBundle,
+    source.productionRelease,
+  );
   const state = createPublishedCardTransitionTx({ reportBundle, productionRelease, publicationStatus: "draft" });
   const storagePlan = {
     storageKeyPrefix: "ai-grader/reports/service-publish/",

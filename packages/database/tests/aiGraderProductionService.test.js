@@ -68,12 +68,7 @@ function sampleBundle(overrides = {}) {
     certificateGenerated: false,
     localReportFolder: "C:\\TenKings\\capture-data\\ai-grader-station\\report-1",
     reportHtmlPath: "C:\\TenKings\\capture-data\\ai-grader-station\\report-1\\provisional-diagnostic-report.html",
-    cardIdentity: {
-      title: "1996 Test Card #1",
-      cardAssetId: "card-asset-1",
-      itemId: "item-1",
-      sideCount: 2,
-    },
+    cardIdentity: sampleConfirmedIdentity(),
     provisionalGrade: {
       gradeStory: {
         strongestPositiveFinding: "Centering is strong.",
@@ -235,6 +230,7 @@ function sampleRelease(overrides = {}) {
       qrPayloadUrl: "http://127.0.0.1:3020/ai-grader/reports/report-1",
       publicReportUrl: "http://127.0.0.1:3020/ai-grader/reports/report-1",
       certificateStatus: "report_id_issued_not_certified",
+      cardIdentity: sampleConfirmedIdentity(),
     },
     publication: {
       status: "local_bundle_ready",
@@ -253,8 +249,9 @@ function sampleRelease(overrides = {}) {
       compsRefs: [],
     },
     cardInventoryLinkage: {
-      status: "contract_ready",
+      status: "linked",
       cardAssetId: "card-asset-1",
+      itemId: "item-1",
     },
     ...overrides,
   };
@@ -271,7 +268,57 @@ function sampleActorAudit(overrides = {}) {
   };
 }
 
-function createMockDelegate(name, calls, id, findUniqueValue) {
+function sampleConfirmedIdentity(overrides = {}) {
+  return {
+    category: "sport",
+    title: "1996 Topps Michael Jordan #23",
+    playerName: "Michael Jordan",
+    year: "1996",
+    manufacturer: "Topps",
+    sport: "basketball",
+    productSet: "Topps",
+    set: "Topps",
+    cardNumber: "23",
+    autograph: false,
+    memorabilia: false,
+    source: "card_asset",
+    status: "linked",
+    sideCount: 2,
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    ...overrides,
+  };
+}
+
+function confirmedProductionSession(overrides = {}) {
+  return {
+    id: "db-session-1",
+    tenantId: "tenant-1",
+    gradingSessionId: "station-session-1",
+    reportId: "report-1",
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    status: "card_created",
+    cardIdentity: sampleConfirmedIdentity(),
+    ...overrides,
+  };
+}
+
+function confirmedProductionReport(overrides = {}) {
+  return {
+    id: "db-report-1",
+    tenantId: "tenant-1",
+    sessionId: "db-session-1",
+    reportId: "report-1",
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    publicationStatus: "draft",
+    finalOverallGrade: 8.6,
+    ...overrides,
+  };
+}
+
+function createMockDelegate(name, calls, id, findUniqueValue, updateManyValue) {
   return {
     async upsert(args) {
       calls.push({ delegate: name, method: "upsert", args });
@@ -286,19 +333,26 @@ function createMockDelegate(name, calls, id, findUniqueValue) {
       if (findUniqueValue !== undefined) {
         return typeof findUniqueValue === "function" ? findUniqueValue(args) : findUniqueValue;
       }
+      if (name === "aiGraderSession") {
+        return confirmedProductionSession({
+          gradingSessionId: args.where?.gradingSessionId ?? "station-session-1",
+        });
+      }
       if (name === "aiGraderReport") {
-        return {
-          id: "db-report-1",
-          tenantId: "tenant-1",
-          sessionId: "db-session-1",
+        return confirmedProductionReport({
           reportId: args.where?.reportId ?? "report-1",
-          cardAssetId: "card-asset-1",
-          itemId: "item-1",
+        });
+      }
+      if (name === "cardAsset") {
+        return {
+          id: "card-asset-1",
+          batchId: "batch-1",
         };
       }
       if (name === "item") {
         return {
           id: "item-1",
+          number: "card-asset-1",
           detailsJson: {
             existingItemDetail: "keep-me",
             nestedItemDetail: { preserved: true },
@@ -318,6 +372,9 @@ function createMockDelegate(name, calls, id, findUniqueValue) {
     },
     async updateMany(args) {
       calls.push({ delegate: name, method: "updateMany", args });
+      if (updateManyValue !== undefined) {
+        return typeof updateManyValue === "function" ? updateManyValue(args) : updateManyValue;
+      }
       return { count: 1 };
     },
   };
@@ -330,15 +387,27 @@ function createMockProductionDb(options = {}) {
       calls.push({ delegate: "$queryRaw", method: "$queryRaw" });
       return [];
     },
-    aiGraderSession: createMockDelegate("aiGraderSession", calls, "db-session-1"),
-    aiGraderReport: createMockDelegate("aiGraderReport", calls, "db-report-1"),
+    aiGraderSession: createMockDelegate(
+      "aiGraderSession",
+      calls,
+      "db-session-1",
+      options.session,
+      options.sessionUpdateMany,
+    ),
+    aiGraderReport: createMockDelegate(
+      "aiGraderReport",
+      calls,
+      "db-report-1",
+      options.report,
+      options.reportUpdateMany,
+    ),
     aiGraderEvidenceAsset: createMockDelegate("aiGraderEvidenceAsset", calls, "db-evidence-1"),
     aiGraderGrade: createMockDelegate("aiGraderGrade", calls, "db-grade-1"),
     aiGraderLabel: createMockDelegate("aiGraderLabel", calls, "db-label-1", options.existingLabel),
     aiGraderPublication: createMockDelegate("aiGraderPublication", calls, "db-publication-1"),
     aiGraderValuation: createMockDelegate("aiGraderValuation", calls, "db-valuation-1", options.existingValuation),
-    cardAsset: createMockDelegate("cardAsset", calls, "card-asset-1"),
-    item: createMockDelegate("item", calls, "item-1"),
+    cardAsset: createMockDelegate("cardAsset", calls, "card-asset-1", options.cardAsset),
+    item: createMockDelegate("item", calls, "item-1", options.item),
   };
   return {
     calls,
@@ -1412,7 +1481,7 @@ test("label preview is print-ready HTML with certification claim disabled", () =
   assert.doesNotMatch(html, /Certified Grade/);
 });
 
-test("production release persistence upserts durable records and optional card linkage", async () => {
+test("production release persistence updates verified durable records and optional card linkage", async () => {
   const { db, calls } = createMockProductionDb();
   const imageBytes = Buffer.from("front");
   const reportBundle = sampleBundle({
@@ -1452,12 +1521,16 @@ test("production release persistence upserts durable records and optional card l
   assert.equal(result.cardAssetUpdatedCount, 1);
   assert.equal(result.itemUpdatedCount, 1);
   assert.deepEqual(
-    calls.map((call) => `${call.delegate}.${call.method}`).slice(0, 11),
+    calls.map((call) => `${call.delegate}.${call.method}`).slice(0, 15),
     [
       "$transaction.$transaction",
       "$queryRaw.$queryRaw",
-      "aiGraderSession.upsert",
-      "aiGraderReport.upsert",
+      "aiGraderSession.findUnique",
+      "aiGraderReport.findUnique",
+      "cardAsset.findUnique",
+      "item.findUnique",
+      "aiGraderSession.updateMany",
+      "aiGraderReport.updateMany",
       "aiGraderGrade.upsert",
       "$queryRaw.$queryRaw",
       "aiGraderLabel.findMany",
@@ -1468,16 +1541,19 @@ test("production release persistence upserts durable records and optional card l
     ]
   );
   assert.ok(calls.some((call) => call.delegate === "aiGraderValuation" && call.method === "upsert"));
-  const sessionUpsert = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "upsert");
-  assert.equal(sessionUpsert.args.create.captureSummary.geometry.front.placementState, "not_detected");
-  assert.equal(sessionUpsert.args.create.captureSummary.geometry.front.geometrySource, "manual_override");
-  assert.equal(sessionUpsert.args.create.captureSummary.geometry.front.captureMode, "manual_capture");
-  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.mode, "manual_capture");
-  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.geometrySource, "manual_override");
-  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.explicitOperatorAction, true);
-  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.detectionUsed, false);
-  assert.equal(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.manualOverrideUsed, true);
-  assert.deepEqual(sessionUpsert.args.create.captureSummary.geometryCaptureDecisions.front.manualBoundaryRect, {
+  const sessionUpdate = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "updateMany");
+  for (const field of ["tenantId", "gradingSessionId", "reportId", "cardAssetId", "itemId", "cardIdentity"]) {
+    assert.equal(Object.prototype.hasOwnProperty.call(sessionUpdate.args.data, field), false);
+  }
+  assert.equal(sessionUpdate.args.data.captureSummary.geometry.front.placementState, "not_detected");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometry.front.geometrySource, "manual_override");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometry.front.captureMode, "manual_capture");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.mode, "manual_capture");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.geometrySource, "manual_override");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.explicitOperatorAction, true);
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.detectionUsed, false);
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.manualOverrideUsed, true);
+  assert.deepEqual(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.manualBoundaryRect, {
     x: 100,
     y: 140,
     width: 300,
@@ -1485,13 +1561,13 @@ test("production release persistence upserts durable records and optional card l
     coordinateFrame: "basler_sensor_pixels",
   });
   assert.doesNotMatch(
-    JSON.stringify(sessionUpsert.args.create.captureSummary),
+    JSON.stringify(sessionUpdate.args.data.captureSummary),
     /C:\\TenKings|127\.0\.0\.1|must-not-survive|data:image|X-Amz-Signature|stationToken|bridgeUrl|uploadUrl|hardwareControls|leimacOn/
   );
-  assert.equal(sessionUpsert.args.create.captureSummary.captureTiming.summary.totalFrontMs, 4700);
-  assert.equal(sessionUpsert.args.create.captureSummary.captureTiming.target.fiveSecondsPerSideProven, false);
-  assert.equal(sessionUpsert.args.create.captureSummary.ocrPrefill.humanConfirmationRequired, true);
-  assert.equal(sessionUpsert.args.create.captureSummary.ocrPrefill.fields.playerName.value, "Test Player");
+  assert.equal(sessionUpdate.args.data.captureSummary.captureTiming.summary.totalFrontMs, 4700);
+  assert.equal(sessionUpdate.args.data.captureSummary.captureTiming.target.fiveSecondsPerSideProven, false);
+  assert.equal(sessionUpdate.args.data.captureSummary.ocrPrefill.humanConfirmationRequired, true);
+  assert.equal(sessionUpdate.args.data.captureSummary.ocrPrefill.fields.playerName.value, "Test Player");
   const cardUpdate = calls.find((call) => call.delegate === "cardAsset" && call.method === "updateMany");
   assert.equal(cardUpdate.args.data.aiGradeFinal, 8.6);
   assert.equal(cardUpdate.args.data.aiGradeLabel, "8.6");
@@ -1504,6 +1580,145 @@ test("production release persistence upserts durable records and optional card l
   assert.deepEqual(itemUpdate.args.data.detailsJson.nestedItemDetail, { preserved: true });
   assert.equal(itemUpdate.args.data.detailsJson.aiGraderReportId, "report-1");
   assert.equal(itemUpdate.args.data.imageUrl, cardUpdate.args.data.imageUrl);
+});
+
+test("production persistence rejects cross-tenant or mismatched Confirm authority before publication writes", async () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle,
+    productionRelease,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const cases = [
+    { name: "cross tenant session", options: { session: confirmedProductionSession({ tenantId: "other-tenant" }) } },
+    { name: "mismatched report session", options: { report: confirmedProductionReport({ sessionId: "other-session-row" }) } },
+    { name: "mismatched CardAsset", options: { report: confirmedProductionReport({ cardAssetId: "other-card" }) } },
+    { name: "mismatched Item", options: { report: confirmedProductionReport({ itemId: "other-item" }) } },
+  ];
+  for (const scenario of cases) {
+    const { db, calls } = createMockProductionDb(scenario.options);
+    await assert.rejects(
+      () => persistAiGraderProductionRelease(db, {
+        tenantId: "tenant-1",
+        reportBundle,
+        productionRelease,
+        storagePlan: plan,
+        cardAssetId: "card-asset-1",
+        itemId: "item-1",
+      }),
+      /durable confirmed report, session, CardAsset, and Item authority/,
+      scenario.name,
+    );
+    assert.equal(calls.some((call) => call.method === "upsert" || call.method === "updateMany"), false, scenario.name);
+  }
+});
+
+test("production persistence never recreates Confirm rows that disappear or rebind after authority resolution", async () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle,
+    productionRelease,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const cases = [
+    {
+      name: "session disappeared",
+      options: { sessionUpdateMany: { count: 0 } },
+      expectedUpdateDelegates: ["aiGraderSession"],
+    },
+    {
+      name: "report rebound",
+      options: { reportUpdateMany: { count: 0 } },
+      expectedUpdateDelegates: ["aiGraderSession", "aiGraderReport"],
+    },
+  ];
+  for (const scenario of cases) {
+    const { db, calls } = createMockProductionDb(scenario.options);
+    await assert.rejects(
+      () => persistAiGraderProductionRelease(db, {
+        tenantId: "tenant-1",
+        reportBundle,
+        productionRelease,
+        storagePlan: plan,
+        cardAssetId: "card-asset-1",
+        itemId: "item-1",
+      }),
+      /linkage changed after durable Confirm authority was verified/,
+      scenario.name,
+    );
+    assert.equal(calls.some((call) => call.method === "upsert"), false, scenario.name);
+    assert.deepEqual(
+      calls.filter((call) => call.method === "updateMany").map((call) => call.delegate),
+      scenario.expectedUpdateDelegates,
+      scenario.name,
+    );
+    assert.equal(
+      calls.some((call) =>
+        ["aiGraderGrade", "aiGraderLabel", "aiGraderPublication", "aiGraderEvidenceAsset", "aiGraderValuation"]
+          .includes(call.delegate)
+      ),
+      false,
+      scenario.name,
+    );
+  }
+});
+
+test("production persistence rejects identity drift between the storage plan and locked Confirm authority", async () => {
+  const tampered = "TAMPERED_DB_IDENTITY";
+  const reportBundle = sampleBundle({
+    cardIdentity: {
+      title: tampered,
+      set: tampered,
+      cardNumber: "999",
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+      sideCount: 2,
+    },
+  });
+  const productionRelease = sampleRelease({
+    label: {
+      ...sampleRelease().label,
+      cardIdentity: {
+        title: tampered,
+        playerName: tampered,
+        productSet: tampered,
+        cardNumber: "999",
+        cardAssetId: "card-asset-1",
+        itemId: "item-1",
+      },
+    },
+    cardInventoryLinkage: {
+      status: "linked",
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+    },
+  });
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: sampleBundle(),
+    productionRelease: sampleRelease(),
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const { db, calls } = createMockProductionDb();
+  await assert.rejects(
+    () => persistAiGraderProductionRelease(db, {
+      tenantId: "tenant-1",
+      reportBundle,
+      productionRelease,
+      storagePlan: plan,
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+    }),
+    (error) =>
+      error?.code === "AI_GRADER_PUBLISH_IDENTITY_AUTHORITY_CHANGED" &&
+      /restart Publish/.test(error.message),
+  );
+  assert.equal(
+    calls.some((call) => call.method === "upsert" || call.method === "updateMany"),
+    false,
+  );
+  assert.doesNotMatch(JSON.stringify(calls), new RegExp(tampered));
 });
 
 test("production publish preserves label sheet, print audit, and progressed runtime valuation", async () => {
@@ -1691,11 +1906,11 @@ test("production release persistence stores actor audit in existing JSON surface
     persistedAt: "2026-07-02T12:30:00.000Z",
   });
 
-  const sessionUpsert = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "upsert");
-  assert.deepEqual(sessionUpsert.args.create.safetySummary.actorAudit, expectedAudit);
+  const sessionUpdate = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "updateMany");
+  assert.deepEqual(sessionUpdate.args.data.safetySummary.actorAudit, expectedAudit);
 
-  const reportUpsert = calls.find((call) => call.delegate === "aiGraderReport" && call.method === "upsert");
-  assert.deepEqual(reportUpsert.args.create.checksumSummary.actorAudit, expectedAudit);
+  const reportUpdate = calls.find((call) => call.delegate === "aiGraderReport" && call.method === "updateMany");
+  assert.deepEqual(reportUpdate.args.data.checksumSummary.actorAudit, expectedAudit);
 
   const gradeUpsert = calls.find((call) => call.delegate === "aiGraderGrade" && call.method === "upsert");
   assert.deepEqual(gradeUpsert.args.create.operatorFinalization.actorAudit, expectedAudit);

@@ -2770,6 +2770,7 @@ export default function AiGraderStationPage() {
           body: JSON.stringify({
             publicationStatus: "published",
             reportId: initPayload.result.reportId,
+            gradingSessionId: sanitizedRelease?.gradingSessionId ?? sanitizedBundle.gradingSessionId,
             publishSessionId: initPayload.result.publishSessionId,
             reportBundle: sanitizedBundle,
             productionRelease: sanitizedRelease,

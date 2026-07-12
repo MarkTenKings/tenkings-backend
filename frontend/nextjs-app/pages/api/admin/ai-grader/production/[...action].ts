@@ -21,6 +21,7 @@ import {
   persistAiGraderCompsRuntime,
   persistAiGraderSelectedCompsRuntime,
   persistProductionReleaseRuntime,
+  resolveAiGraderPublishAuthorityRuntime,
   runAiGraderEbayCompsRuntime,
   searchAiGraderCardItemsRuntime,
 } from "../../../../../lib/server/aiGraderProductionApi";
@@ -45,6 +46,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     requireAdminSession,
     requireUserSession,
     publicUrlFor,
+    resolvePublishAuthority: resolveAiGraderPublishAuthorityRuntime,
     presignUpload: async ({ storageKey, contentType, checksumSha256 }) => ({
       storageKey,
       uploadUrl: await presignUploadUrl(storageKey, contentType, {

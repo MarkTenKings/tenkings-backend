@@ -1,5 +1,7 @@
 import {
+  assertAiGraderDurableConfirmedIdentityMatchesAuthority,
   buildAiGraderCompsSearchQuery,
+  type AiGraderConfirmedPublishAuthority,
   type AiGraderProductionReleaseLike,
   type AiGraderProductionReportBundleLike,
   type Prisma,
@@ -322,14 +324,13 @@ export async function completePublishedAiGraderCardTx(input: {
   gradingSessionId: string;
   reportId: string;
   productionRelease: AiGraderProductionReleaseLike;
-  confirmedIdentity: unknown;
   cardAssetId: string;
   itemId: string;
+  publishAuthority: AiGraderConfirmedPublishAuthority;
   operatorUserId?: string;
   now?: Date;
 }): Promise<AiGraderPublishedLabelAssignmentResult> {
   const now = input.now ?? new Date();
-  const identity = normalizeAiGraderConfirmedCardIdentity(input.confirmedIdentity);
   const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
   const certId = optionalString(releaseLabel.certId);
   if (
@@ -349,7 +350,16 @@ export async function completePublishedAiGraderCardTx(input: {
   const [session, report] = await Promise.all([
     input.tx.aiGraderSession.findUnique({
       where: { gradingSessionId: input.gradingSessionId },
-      select: { id: true, reportId: true, cardAssetId: true, itemId: true, status: true },
+      select: {
+        id: true,
+        tenantId: true,
+        gradingSessionId: true,
+        reportId: true,
+        cardAssetId: true,
+        itemId: true,
+        status: true,
+        cardIdentity: true,
+      },
     }),
     input.tx.aiGraderReport.findUnique({
       where: { reportId: input.reportId },
@@ -369,6 +379,8 @@ export async function completePublishedAiGraderCardTx(input: {
   if (
     !reportRowId ||
     !sessionId ||
+    optionalString(session?.tenantId) !== input.tenantId ||
+    optionalString(session?.gradingSessionId) !== input.gradingSessionId ||
     optionalString(report?.tenantId) !== input.tenantId ||
     optionalString(report?.sessionId) !== sessionId ||
     optionalString(report?.reportId) !== input.reportId ||
@@ -376,12 +388,40 @@ export async function completePublishedAiGraderCardTx(input: {
     optionalString(report?.cardAssetId) !== input.cardAssetId ||
     optionalString(report?.itemId) !== input.itemId ||
     optionalString(session?.cardAssetId) !== input.cardAssetId ||
-    optionalString(session?.itemId) !== input.itemId
+    optionalString(session?.itemId) !== input.itemId ||
+    input.publishAuthority.tenantId !== input.tenantId ||
+    input.publishAuthority.gradingSessionId !== input.gradingSessionId ||
+    input.publishAuthority.reportId !== input.reportId ||
+    input.publishAuthority.cardAssetId !== input.cardAssetId ||
+    input.publishAuthority.itemId !== input.itemId ||
+    input.publishAuthority.sessionId !== sessionId ||
+    input.publishAuthority.reportRowId !== reportRowId
   ) {
     throw runtimeError(
       "Verified Publish linkage does not match the durable report, session, CardAsset, and Item identity.",
       409,
       "AI_GRADER_PUBLISHED_LINKAGE_MISMATCH"
+    );
+  }
+  const identity = normalizeAiGraderConfirmedCardIdentity(session?.cardIdentity);
+  assertAiGraderDurableConfirmedIdentityMatchesAuthority(session?.cardIdentity, input.publishAuthority);
+  const categoryIdentityMissing =
+    (identity.category === "sport" && (!identity.playerName || !identity.sport)) ||
+    (identity.category === "tcg" && (!identity.cardName || !identity.game)) ||
+    (identity.category === "comics" && !identity.cardName);
+  if (
+    !identity.category ||
+    !identity.title ||
+    !identity.year ||
+    !identity.manufacturer ||
+    !identity.productSet ||
+    !identity.cardNumber ||
+    categoryIdentityMissing
+  ) {
+    throw runtimeError(
+      "Verified Publish could not resolve the durable operator-confirmed card identity.",
+      409,
+      "AI_GRADER_PUBLISHED_IDENTITY_INVALID"
     );
   }
   if (optionalString(report?.publicationStatus) !== "published" || optionalString(session?.status) !== "published") {

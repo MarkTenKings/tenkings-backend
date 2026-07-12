@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import type {
+  AiGraderConfirmedPublishAuthority,
+  AiGraderConfirmedPublishAuthorityInput,
   AiGraderConfirmCardReferencePlan,
   AiGraderCardItemSelection,
   AiGraderProductionArtifactPlan,
@@ -11,6 +13,8 @@ import type {
   AiGraderValuationStatus,
 } from "@tenkings/database";
 import {
+  applyAiGraderConfirmedPublishAuthority,
+  assertAiGraderConfirmedPublishIdentitySnapshot,
   aiGraderSha256,
   buildAiGraderConfirmCardReferencePlan,
   buildAiGraderCompsSearchQuery,
@@ -25,6 +29,7 @@ import {
   persistAiGraderSlabbedPhotoAsset,
   persistAiGraderProductionRelease,
   persistAiGraderValuationResult,
+  resolveAiGraderConfirmedPublishAuthority,
   type Prisma,
 } from "@tenkings/database";
 import {
@@ -274,6 +279,9 @@ export type AiGraderProductionApiDependencies = {
     env: EnvLike
   ): Promise<AiGraderProductionActor>;
   publicUrlFor(storageKey: string): string;
+  resolvePublishAuthority?(
+    input: AiGraderConfirmedPublishAuthorityInput
+  ): Promise<AiGraderConfirmedPublishAuthority>;
   presignUpload?(input: {
     storageKey: string;
     contentType: string;
@@ -855,6 +863,64 @@ function parseProductionPublishSmallBody(body: unknown) {
   };
 }
 
+function parseConfirmedPublishSmallBody(body: unknown) {
+  const parsed = parseProductionPublishSmallBody(body);
+  const source = body as JsonRecord;
+  const reportId = optionalString(source.reportId);
+  const gradingSessionId = optionalString(source.gradingSessionId);
+  const cardAssetId = optionalString(source.cardAssetId);
+  const itemId = optionalString(source.itemId);
+  const bundleReportId = optionalString(parsed.reportBundle.reportId);
+  const releaseReportId = optionalString(parsed.productionRelease.reportId);
+  const bundleSessionId = optionalString(parsed.reportBundle.gradingSessionId);
+  const releaseSessionId = optionalString(parsed.productionRelease.gradingSessionId);
+  const bundleIdentity = isRecord(parsed.reportBundle.cardIdentity) ? parsed.reportBundle.cardIdentity : {};
+  const releaseLabel = isRecord(parsed.productionRelease.label) ? parsed.productionRelease.label : {};
+  const labelIdentity = isRecord(releaseLabel.cardIdentity) ? releaseLabel.cardIdentity : {};
+  const inventoryLinkage = isRecord(parsed.productionRelease.cardInventoryLinkage)
+    ? parsed.productionRelease.cardInventoryLinkage
+    : {};
+  const embeddedCardAssetIds = [
+    optionalString(bundleIdentity.cardAssetId),
+    optionalString(labelIdentity.cardAssetId),
+    optionalString(inventoryLinkage.cardAssetId),
+  ].filter((value): value is string => Boolean(value));
+  const embeddedItemIds = [
+    optionalString(bundleIdentity.itemId),
+    optionalString(labelIdentity.itemId),
+    optionalString(inventoryLinkage.itemId),
+  ].filter((value): value is string => Boolean(value));
+  if (
+    !reportId ||
+    !gradingSessionId ||
+    !cardAssetId ||
+    !itemId ||
+    !bundleReportId ||
+    !releaseReportId ||
+    reportId !== bundleReportId ||
+    reportId !== releaseReportId ||
+    !bundleSessionId ||
+    !releaseSessionId ||
+    gradingSessionId !== bundleSessionId ||
+    gradingSessionId !== releaseSessionId ||
+    embeddedCardAssetIds.some((value) => value !== cardAssetId) ||
+    embeddedItemIds.some((value) => value !== itemId) ||
+    (optionalString(releaseLabel.reportId) && optionalString(releaseLabel.reportId) !== reportId)
+  ) {
+    throw aiGraderPublishBoundaryError(
+      "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
+      "Publish requires one exact report, grading-session, CardAsset, and Item linkage.",
+    );
+  }
+  return {
+    ...parsed,
+    reportId,
+    gradingSessionId,
+    cardAssetId,
+    itemId,
+  };
+}
+
 function parseUploadManifest(value: unknown): AiGraderProductionUploadManifest {
   const manifest = isRecord(value) ? value : {};
   const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
@@ -1012,20 +1078,170 @@ function planWithoutBodies(plan: AiGraderProductionStoragePlan): AiGraderProduct
 
 function assertPublishedReleaseReady(input: {
   publicationStatus: "draft" | "finalized" | "published" | "unpublished" | "revoked" | "error";
+  reportId: string;
+  gradingSessionId?: string;
+  cardAssetId?: string;
+  itemId?: string;
+  reportBundle: AiGraderProductionReportBundleLike;
   productionRelease: AiGraderProductionReleaseLike;
 }) {
-  const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
-  const releaseBlocked =
-    input.publicationStatus === "published" &&
-    (input.productionRelease.finalGradeComputed !== true ||
-      stringValue(input.productionRelease.reportStatus, "") === "insufficient_evidence" ||
-      stringValue(releaseLabel.status, "") === "blocked_insufficient_evidence");
-  if (releaseBlocked) {
-    const error = new Error("AI Grader report is not publish-ready. Final grade, label data, and QR payload are required before publishing.");
+  const fail = (code: string, message: string) => {
+    const error = new Error(message);
     (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
-    (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_REPORT_NOT_PUBLISH_READY";
+    (error as Error & { statusCode?: number; code?: string }).code = code;
     throw error;
+  };
+  if (
+    input.publicationStatus !== "published" ||
+    !input.reportId ||
+    !input.gradingSessionId ||
+    !input.cardAssetId ||
+    !input.itemId
+  ) {
+    fail(
+      "AI_GRADER_PUBLISH_LINKAGE_REQUIRED",
+      "Publish requires explicit report, grading-session, CardAsset, and Item linkage.",
+    );
   }
+  const finalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
+  const overall = typeof finalGrade.overall === "number" ? finalGrade.overall : Number.NaN;
+  const elements = isRecord(finalGrade.elements) ? finalGrade.elements : {};
+  const validElementScore = (key: string) => {
+    const element = isRecord(elements[key]) ? elements[key] : {};
+    return typeof element.score === "number" && Number.isFinite(element.score) && element.score >= 1 && element.score <= 10;
+  };
+  const requiredElementScoresComplete = ["corners", "edges", "surface"].every(validElementScore);
+  const optionalCenteringValid = !Object.prototype.hasOwnProperty.call(elements, "centering") ||
+    validElementScore("centering");
+  const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
+  if (
+    input.productionRelease.finalGradeComputed !== true ||
+    input.productionRelease.reportStatus !== "final_ai_grader_report_v0" ||
+    input.productionRelease.finalStatus !== "final_grade_computed" ||
+    finalGrade.status !== "final_ai_grader_grade_v0" ||
+    finalGrade.finalGradeComputed !== true ||
+    !Number.isFinite(overall) ||
+    overall < 1 ||
+    overall > 10 ||
+    !requiredElementScoresComplete ||
+    !optionalCenteringValid
+  ) {
+    fail(
+      "AI_GRADER_PUBLISH_FINAL_GRADE_REQUIRED",
+      "Publish requires a complete valid final grade from the authoritative release.",
+    );
+  }
+  const gates = Array.isArray(input.productionRelease.gates) ? input.productionRelease.gates : [];
+  const failedGate = firstFailedConfirmGate(input.reportBundle, input.productionRelease);
+  const gateIds = gates.map((gate) => isRecord(gate) ? optionalString(gate.id) : undefined);
+  const acceptedWarningGateIds = gates
+    .filter((gate) => isRecord(gate) && gate.status === "accepted_warning")
+    .map((gate) => optionalString((gate as JsonRecord).id));
+  const finalization = isRecord(input.productionRelease.operatorFinalization)
+    ? input.productionRelease.operatorFinalization
+    : {};
+  const acceptedIds = Array.isArray(finalization.acceptedWarningGateIds)
+    ? finalization.acceptedWarningGateIds
+    : [];
+  if (
+    failedGate ||
+    gates.length === 0 ||
+    gates.some((gate) =>
+      !isRecord(gate) ||
+      !optionalString(gate.id) ||
+      !optionalString(gate.reason) ||
+      !["pass", "accepted_warning"].includes(String(gate.status))
+    ) ||
+    gateIds.some((gateId) => !gateId) ||
+    new Set(gateIds).size !== gateIds.length ||
+    !optionalString(finalization.operatorId) ||
+    !optionalString(finalization.finalizedAt) ||
+    Number.isNaN(Date.parse(String(finalization.finalizedAt))) ||
+    typeof finalization.warningsAccepted !== "boolean" ||
+    !Array.isArray(finalization.acceptedWarningGateIds) ||
+    acceptedIds.some((gateId) => typeof gateId !== "string" || !gateId.trim() || !gateIds.includes(gateId.trim())) ||
+    new Set(acceptedIds).size !== acceptedIds.length ||
+    acceptedWarningGateIds.some((gateId) => !acceptedIds.includes(gateId)) ||
+    (acceptedWarningGateIds.length > 0 && finalization.warningsAccepted !== true)
+  ) {
+    fail(
+      "AI_GRADER_PUBLISH_GATE_FAILED",
+      failedGate
+        ? "Publish failed authoritative gate " + failedGate.id + ": " + failedGate.reason
+        : "Publish requires complete passing or explicitly accepted authoritative gate evidence.",
+    );
+  }
+  const reportUrl = optionalString(releaseLabel.publicReportUrl);
+  const qrPayloadUrl = optionalString(releaseLabel.qrPayloadUrl);
+  const publication = isRecord(input.productionRelease.publication) ? input.productionRelease.publication : {};
+  let reportUrlValid = false;
+  try {
+    const parsed = reportUrl ? new URL(reportUrl) : null;
+    reportUrlValid = Boolean(
+      parsed &&
+      parsed.protocol === "https:" &&
+      !parsed.search &&
+      !parsed.hash &&
+      decodeURIComponent(parsed.pathname.split("/").filter(Boolean).at(-1) ?? "") === input.reportId
+    );
+  } catch {
+    reportUrlValid = false;
+  }
+  if (
+    input.productionRelease.labelDataGenerated !== true ||
+    input.productionRelease.qrPayloadGenerated !== true ||
+    optionalString(releaseLabel.status) !== "label_data_ready" ||
+    optionalString(releaseLabel.reportId) !== input.reportId ||
+    !optionalString(releaseLabel.certId) ||
+    optionalString(releaseLabel.labelGradeText) !== overall.toFixed(1) ||
+    optionalString(releaseLabel.certificateStatus) !== "report_id_issued_not_certified" ||
+    !reportUrlValid ||
+    !qrPayloadUrl ||
+    qrPayloadUrl !== reportUrl ||
+    optionalString(publication.reportId) !== input.reportId ||
+    optionalString(publication.publicReportUrl) !== reportUrl ||
+    optionalString(publication.qrPayloadUrl) !== qrPayloadUrl
+  ) {
+    fail(
+      "AI_GRADER_PUBLISH_LABEL_NOT_READY",
+      "Publish requires complete, internally consistent label data and QR payload evidence.",
+    );
+  }
+}
+
+function assertResolvedPublishAuthority(input: {
+  authority: AiGraderConfirmedPublishAuthority;
+  tenantId: string;
+  reportId: string;
+  gradingSessionId: string;
+  cardAssetId: string;
+  itemId: string;
+  productionRelease: AiGraderProductionReleaseLike;
+}) {
+  const { authority } = input;
+  const finalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
+  const confirmedIdentity = isRecord(authority.confirmedIdentity) ? authority.confirmedIdentity : {};
+  if (
+    authority.tenantId !== input.tenantId ||
+    authority.reportId !== input.reportId ||
+    authority.gradingSessionId !== input.gradingSessionId ||
+    authority.cardAssetId !== input.cardAssetId ||
+    authority.itemId !== input.itemId ||
+    !optionalString(authority.sessionId) ||
+    !optionalString(authority.reportRowId) ||
+    typeof authority.finalOverallGrade !== "number" ||
+    authority.finalOverallGrade !== finalGrade.overall ||
+    optionalString(confirmedIdentity.source) !== "card_asset" ||
+    optionalString(confirmedIdentity.status) !== "linked" ||
+    optionalString(confirmedIdentity.cardAssetId) !== input.cardAssetId ||
+    optionalString(confirmedIdentity.itemId) !== input.itemId
+  ) {
+    throw aiGraderPublishBoundaryError(
+      "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH",
+      "Publish linkage does not match the durable confirmed report, session, CardAsset, Item, and final-grade authority.",
+    );
+  }
+  parseConfirmedCardIdentity(authority.confirmedIdentity);
 }
 
 const AI_GRADER_CONFIRM_REQUIRED_PRODUCER_CAPABILITIES = [
@@ -2776,9 +2992,40 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           result,
         });
       }
-      const input = parseProductionPublishSmallBody(req.body);
-      assertPublishedReleaseReady(input);
+      const requestedInput = parseConfirmedPublishSmallBody(req.body);
+      assertPublishedReleaseReady(requestedInput);
       const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+      if (!deps.resolvePublishAuthority) {
+        throw aiGraderPublishBoundaryError(
+          "AI_GRADER_PUBLISH_AUTHORITY_UNAVAILABLE",
+          "Durable Confirm authority is unavailable; Publish stopped before storage or database changes.",
+        );
+      }
+      const authority = await deps.resolvePublishAuthority({
+        tenantId,
+        reportId: requestedInput.reportId,
+        gradingSessionId: requestedInput.gradingSessionId,
+        cardAssetId: requestedInput.cardAssetId,
+        itemId: requestedInput.itemId,
+      });
+      assertResolvedPublishAuthority({
+        authority,
+        tenantId,
+        reportId: requestedInput.reportId,
+        gradingSessionId: requestedInput.gradingSessionId,
+        cardAssetId: requestedInput.cardAssetId,
+        itemId: requestedInput.itemId,
+        productionRelease: requestedInput.productionRelease,
+      });
+      const canonical = applyAiGraderConfirmedPublishAuthority({
+        reportBundle: requestedInput.reportBundle,
+        productionRelease: requestedInput.productionRelease,
+        authority,
+      });
+      const input = {
+        ...requestedInput,
+        ...canonical,
+      };
       const plan = buildAiGraderProductionStoragePlan({
         reportBundle: input.reportBundle,
         productionRelease: input.productionRelease,
@@ -2945,6 +3192,22 @@ export function createAiGraderPublicReportApiHandler(deps: AiGraderPublicReportA
   };
 }
 
+export async function resolveAiGraderPublishAuthorityRuntime(
+  input: AiGraderConfirmedPublishAuthorityInput & { dbClient?: any },
+) {
+  const { prisma } = await import("@tenkings/database");
+  return resolveAiGraderConfirmedPublishAuthority(
+    input.dbClient ?? (prisma as any),
+    {
+      tenantId: input.tenantId,
+      gradingSessionId: input.gradingSessionId,
+      reportId: input.reportId,
+      cardAssetId: input.cardAssetId,
+      itemId: input.itemId,
+    },
+  );
+}
+
 export async function persistProductionReleaseRuntime(input: {
   tenantId: string;
   reportBundle: AiGraderProductionReportBundleLike;
@@ -2957,31 +3220,104 @@ export async function persistProductionReleaseRuntime(input: {
   actorAudit?: AiGraderProductionActorAudit | null;
   dbClient?: any;
   persistRelease?: typeof persistAiGraderProductionRelease;
+  resolveAuthority?: typeof resolveAiGraderConfirmedPublishAuthority;
 }): Promise<AiGraderProductionPublishPersistResult> {
   const { prisma } = await import("@tenkings/database");
-  const { dbClient, persistRelease, ...persistInput } = input;
+  const { dbClient, persistRelease, resolveAuthority, ...persistInput } = input;
   const db = dbClient ?? (prisma as any);
-  const persisted = await (persistRelease ?? persistAiGraderProductionRelease)(db, persistInput);
+  const reportId = optionalString(input.reportBundle.reportId);
+  const releaseReportId = optionalString(input.productionRelease.reportId);
+  const gradingSessionId = optionalString(input.reportBundle.gradingSessionId);
+  const releaseSessionId = optionalString(input.productionRelease.gradingSessionId);
+  const cardAssetId = optionalString(input.cardAssetId);
+  const itemId = optionalString(input.itemId);
+  const operatorUserId = optionalString(input.operatorUserId);
+  const bundleIdentity = isRecord(input.reportBundle.cardIdentity) ? input.reportBundle.cardIdentity : {};
+  const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
+  const labelIdentity = isRecord(releaseLabel.cardIdentity) ? releaseLabel.cardIdentity : {};
+  const inventoryLinkage = isRecord(input.productionRelease.cardInventoryLinkage)
+    ? input.productionRelease.cardInventoryLinkage
+    : {};
+  const embeddedCardIds = [
+    optionalString(bundleIdentity.cardAssetId),
+    optionalString(labelIdentity.cardAssetId),
+    optionalString(inventoryLinkage.cardAssetId),
+  ].filter((value): value is string => Boolean(value));
+  const embeddedItemIds = [
+    optionalString(bundleIdentity.itemId),
+    optionalString(labelIdentity.itemId),
+    optionalString(inventoryLinkage.itemId),
+  ].filter((value): value is string => Boolean(value));
+  if (
+    !reportId ||
+    !releaseReportId ||
+    reportId !== releaseReportId ||
+    !gradingSessionId ||
+    !releaseSessionId ||
+    gradingSessionId !== releaseSessionId ||
+    !cardAssetId ||
+    !itemId ||
+    embeddedCardIds.some((value) => value !== cardAssetId) ||
+    embeddedItemIds.some((value) => value !== itemId)
+  ) {
+    throw aiGraderPublishBoundaryError(
+      "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
+      "Verified Publish requires one exact report, session, CardAsset, and Item linkage.",
+    );
+  }
+  assertPublishedReleaseReady({
+    publicationStatus: input.publicationStatus,
+    reportId,
+    gradingSessionId,
+    cardAssetId,
+    itemId,
+    reportBundle: input.reportBundle,
+    productionRelease: input.productionRelease,
+  });
+  const authority = await (resolveAuthority ?? resolveAiGraderConfirmedPublishAuthority)(db, {
+    tenantId: input.tenantId,
+    reportId,
+    gradingSessionId,
+    cardAssetId,
+    itemId,
+  });
+  assertResolvedPublishAuthority({
+    authority,
+    tenantId: input.tenantId,
+    reportId,
+    gradingSessionId,
+    cardAssetId,
+    itemId,
+    productionRelease: input.productionRelease,
+  });
+  assertAiGraderConfirmedPublishIdentitySnapshot({
+    reportBundle: input.reportBundle,
+    productionRelease: input.productionRelease,
+    authority,
+  });
+  const canonical = applyAiGraderConfirmedPublishAuthority({
+    reportBundle: input.reportBundle,
+    productionRelease: input.productionRelease,
+    authority,
+  });
+  const persisted = await (persistRelease ?? persistAiGraderProductionRelease)(db, {
+    ...persistInput,
+    ...canonical,
+    cardAssetId,
+    itemId,
+  });
   if (persisted.publicationStatus !== "published") return persisted;
 
-  const reportId = optionalString(input.productionRelease.reportId ?? input.reportBundle.reportId);
-  const gradingSessionId = optionalString(input.productionRelease.gradingSessionId ?? input.reportBundle.gradingSessionId);
-  const cardAssetId = optionalString(input.cardAssetId ?? input.reportBundle.cardIdentity?.cardAssetId);
-  const itemId = optionalString(input.itemId ?? input.reportBundle.cardIdentity?.itemId);
-  const operatorUserId = optionalString(input.operatorUserId);
-  if (!reportId || !gradingSessionId || !cardAssetId || !itemId) {
-    throw new Error("Verified Publish requires durable report, session, CardAsset, and Item linkage.");
-  }
   const labelSheetAssignment = await db.$transaction((tx: any) =>
     completePublishedAiGraderCardTx({
       tx,
       tenantId: input.tenantId,
       gradingSessionId,
       reportId,
-      productionRelease: input.productionRelease,
-      confirmedIdentity: input.reportBundle.cardIdentity,
+      productionRelease: canonical.productionRelease,
       cardAssetId,
       itemId,
+      publishAuthority: authority,
       ...(operatorUserId ? { operatorUserId } : {}),
     })
   );

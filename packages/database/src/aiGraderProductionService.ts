@@ -68,7 +68,7 @@ export type AiGraderProductionTransactionClient = {
   aiGraderLabel: AiGraderProductionDbDelegate;
   aiGraderPublication: AiGraderProductionDbDelegate;
   aiGraderValuation: AiGraderProductionDbDelegate;
-  cardAsset?: Pick<AiGraderProductionDbDelegate, "updateMany">;
+  cardAsset?: Pick<AiGraderProductionDbDelegate, "findUnique" | "updateMany">;
   item?: Pick<AiGraderProductionDbDelegate, "findUnique" | "updateMany">;
 };
 
@@ -178,6 +178,21 @@ export type AiGraderProductionPersistInput = {
   persistedAt?: string | Date;
 };
 
+export type AiGraderConfirmedPublishAuthorityInput = {
+  tenantId: string;
+  gradingSessionId: string;
+  reportId: string;
+  cardAssetId: string;
+  itemId: string;
+};
+
+export type AiGraderConfirmedPublishAuthority = AiGraderConfirmedPublishAuthorityInput & {
+  sessionId: string;
+  reportRowId: string;
+  confirmedIdentity: JsonRecord;
+  finalOverallGrade?: number;
+};
+
 export type AiGraderProductionPersistResult = {
   gradingSessionId: string;
   reportId: string;
@@ -271,6 +286,178 @@ function trimmedString(value: unknown) {
 
 function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function boundedIdentityString(value: unknown) {
+  const normalized = trimmedString(value).replace(/\s+/g, " ").slice(0, 240);
+  return normalized || undefined;
+}
+
+function normalizeDurableConfirmedIdentity(
+  value: unknown,
+  cardAssetId: string,
+  itemId: string,
+): JsonRecord {
+  const source = isRecord(value) ? value : {};
+  const category = boundedIdentityString(source.category);
+  const title = boundedIdentityString(source.title ?? source.displayTitle);
+  const productSet = boundedIdentityString(source.productSet ?? source.set);
+  return {
+    ...(category === "sport" || category === "tcg" || category === "comics" ? { category } : {}),
+    ...(title ? { title } : {}),
+    ...(boundedIdentityString(source.playerName) ? { playerName: boundedIdentityString(source.playerName) } : {}),
+    ...(boundedIdentityString(source.cardName) ? { cardName: boundedIdentityString(source.cardName) } : {}),
+    ...(boundedIdentityString(source.teamName) ? { teamName: boundedIdentityString(source.teamName) } : {}),
+    ...(boundedIdentityString(source.year) ? { year: boundedIdentityString(source.year) } : {}),
+    ...(boundedIdentityString(source.manufacturer ?? source.company ?? source.brand)
+      ? { manufacturer: boundedIdentityString(source.manufacturer ?? source.company ?? source.brand) }
+      : {}),
+    ...(boundedIdentityString(source.sport) ? { sport: boundedIdentityString(source.sport) } : {}),
+    ...(boundedIdentityString(source.game) ? { game: boundedIdentityString(source.game) } : {}),
+    ...(productSet ? { productSet, set: productSet } : {}),
+    ...(boundedIdentityString(source.productLine) ? { productLine: boundedIdentityString(source.productLine) } : {}),
+    ...(boundedIdentityString(source.insert) ? { insert: boundedIdentityString(source.insert) } : {}),
+    ...(boundedIdentityString(source.insertSet) ? { insertSet: boundedIdentityString(source.insertSet) } : {}),
+    ...(boundedIdentityString(source.parallel) ? { parallel: boundedIdentityString(source.parallel) } : {}),
+    ...(boundedIdentityString(source.cardNumber ?? source.number)
+      ? { cardNumber: boundedIdentityString(source.cardNumber ?? source.number) }
+      : {}),
+    ...(boundedIdentityString(source.numbered) ? { numbered: boundedIdentityString(source.numbered) } : {}),
+    ...(typeof source.autograph === "boolean" ? { autograph: source.autograph } : {}),
+    ...(typeof source.memorabilia === "boolean" ? { memorabilia: source.memorabilia } : {}),
+    source: "card_asset",
+    status: "linked",
+    sideCount: 2,
+    cardAssetId,
+    itemId,
+  };
+}
+
+function aiGraderPublishAuthorityError(code: string, message: string, statusCode = 409) {
+  const error = new Error(message);
+  (error as Error & { code?: string; statusCode?: number }).code = code;
+  (error as Error & { code?: string; statusCode?: number }).statusCode = statusCode;
+  return error;
+}
+
+export function applyAiGraderConfirmedPublishAuthority(input: {
+  reportBundle: AiGraderProductionReportBundleLike;
+  productionRelease: AiGraderProductionReleaseLike;
+  authority: AiGraderConfirmedPublishAuthority;
+}): {
+  reportBundle: AiGraderProductionReportBundleLike;
+  productionRelease: AiGraderProductionReleaseLike;
+} {
+  const { authority } = input;
+  const confirmedIdentity = normalizeDurableConfirmedIdentity(
+    authority.confirmedIdentity,
+    authority.cardAssetId,
+    authority.itemId,
+  );
+  const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
+  const linkage = isRecord(input.productionRelease.cardInventoryLinkage)
+    ? input.productionRelease.cardInventoryLinkage
+    : {};
+  return {
+    reportBundle: {
+      ...input.reportBundle,
+      gradingSessionId: authority.gradingSessionId,
+      reportId: authority.reportId,
+      cardIdentity: confirmedIdentity,
+    },
+    productionRelease: {
+      ...input.productionRelease,
+      gradingSessionId: authority.gradingSessionId,
+      reportId: authority.reportId,
+      label: {
+        ...releaseLabel,
+        reportId: authority.reportId,
+        cardIdentity: confirmedIdentity,
+      },
+      cardInventoryLinkage: {
+        ...linkage,
+        status: "linked",
+        cardAssetId: authority.cardAssetId,
+        itemId: authority.itemId,
+      },
+    },
+  };
+}
+
+function hasExactConfirmedIdentitySnapshot(
+  value: unknown,
+  authority: AiGraderConfirmedPublishAuthority,
+) {
+  if (!isRecord(value)) return false;
+  const expected = normalizeDurableConfirmedIdentity(
+    authority.confirmedIdentity,
+    authority.cardAssetId,
+    authority.itemId,
+  );
+  const actualKeys = Object.keys(value).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return actualKeys.length === expectedKeys.length &&
+    actualKeys.every((key, index) => key === expectedKeys[index]) &&
+    expectedKeys.every((key) => value[key] === expected[key]);
+}
+
+function hasMatchingDurableConfirmedIdentity(
+  value: unknown,
+  authority: AiGraderConfirmedPublishAuthority,
+) {
+  if (!isRecord(value)) return false;
+  if (
+    trimmedString(value.source) !== "card_asset" ||
+    trimmedString(value.status) !== "linked" ||
+    trimmedString(value.cardAssetId) !== authority.cardAssetId ||
+    trimmedString(value.itemId) !== authority.itemId
+  ) {
+    return false;
+  }
+  const expected = normalizeDurableConfirmedIdentity(
+    authority.confirmedIdentity,
+    authority.cardAssetId,
+    authority.itemId,
+  );
+  const actual = normalizeDurableConfirmedIdentity(
+    value,
+    authority.cardAssetId,
+    authority.itemId,
+  );
+  const expectedKeys = Object.keys(expected).sort();
+  const actualKeys = Object.keys(actual).sort();
+  return actualKeys.length === expectedKeys.length &&
+    actualKeys.every((key, index) => key === expectedKeys[index]) &&
+    expectedKeys.every((key) => actual[key] === expected[key]);
+}
+
+export function assertAiGraderDurableConfirmedIdentityMatchesAuthority(
+  value: unknown,
+  authority: AiGraderConfirmedPublishAuthority,
+) {
+  if (!hasMatchingDurableConfirmedIdentity(value, authority)) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_IDENTITY_AUTHORITY_CHANGED",
+      "The durable confirmed identity changed after this Publish package was authorized; restart Publish from the authoritative confirmed report.",
+    );
+  }
+}
+
+export function assertAiGraderConfirmedPublishIdentitySnapshot(input: {
+  reportBundle: AiGraderProductionReportBundleLike;
+  productionRelease: AiGraderProductionReleaseLike;
+  authority: AiGraderConfirmedPublishAuthority;
+}) {
+  const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
+  if (
+    !hasExactConfirmedIdentitySnapshot(input.reportBundle.cardIdentity, input.authority) ||
+    !hasExactConfirmedIdentitySnapshot(releaseLabel.cardIdentity, input.authority)
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_IDENTITY_AUTHORITY_CHANGED",
+      "The durable confirmed identity changed after this Publish package was authorized; restart Publish from the authoritative confirmed report.",
+    );
+  }
 }
 
 function positiveIntegerValue(value: unknown) {
@@ -2198,9 +2385,225 @@ function reportData(input: AiGraderProductionPersistInput, sessionId: string, re
   };
 }
 
+async function resolveAiGraderConfirmedPublishAuthorityTx(
+  tx: AiGraderProductionTransactionClient,
+  input: AiGraderConfirmedPublishAuthorityInput,
+): Promise<AiGraderConfirmedPublishAuthority> {
+  const tenantId = trimmedString(input.tenantId);
+  const gradingSessionId = trimmedString(input.gradingSessionId);
+  const reportId = trimmedString(input.reportId);
+  const cardAssetId = trimmedString(input.cardAssetId);
+  const itemId = trimmedString(input.itemId);
+  if (!tenantId || !gradingSessionId || !reportId || !cardAssetId || !itemId) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_LINKAGE_REQUIRED",
+      "Publish requires explicit report, grading-session, CardAsset, and Item linkage.",
+      400,
+    );
+  }
+  if (
+    typeof tx.aiGraderSession.findUnique !== "function" ||
+    typeof tx.aiGraderReport.findUnique !== "function" ||
+    typeof tx.cardAsset?.findUnique !== "function" ||
+    typeof tx.item?.findUnique !== "function"
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_AUTHORITY_UNAVAILABLE",
+      "Durable Confirm authority is unavailable; Publish stopped before storage or database changes.",
+      503,
+    );
+  }
+  const [session, report, card, item] = await Promise.all([
+    tx.aiGraderSession.findUnique({
+      where: { gradingSessionId },
+      select: {
+        id: true,
+        tenantId: true,
+        gradingSessionId: true,
+        reportId: true,
+        cardAssetId: true,
+        itemId: true,
+        status: true,
+        cardIdentity: true,
+      },
+    }),
+    tx.aiGraderReport.findUnique({
+      where: { reportId },
+      select: {
+        id: true,
+        tenantId: true,
+        sessionId: true,
+        reportId: true,
+        publicationStatus: true,
+        cardAssetId: true,
+        itemId: true,
+        finalOverallGrade: true,
+      },
+    }),
+    tx.cardAsset.findUnique({
+      where: { id: cardAssetId },
+      select: { id: true, batchId: true },
+    }),
+    tx.item.findUnique({
+      where: { id: itemId },
+      select: { id: true, number: true },
+    }),
+  ]);
+  const sessionRecord = isRecord(session) ? session : {};
+  const reportRecord = isRecord(report) ? report : {};
+  const cardRecord = isRecord(card) ? card : {};
+  const itemRecord = isRecord(item) ? item : {};
+  const sessionId = trimmedString(sessionRecord.id);
+  const reportRowId = trimmedString(reportRecord.id);
+  const sessionStatus = trimmedString(sessionRecord.status);
+  const reportPublicationStatus = trimmedString(reportRecord.publicationStatus);
+  if (
+    !sessionId ||
+    !reportRowId ||
+    trimmedString(sessionRecord.tenantId) !== tenantId ||
+    trimmedString(reportRecord.tenantId) !== tenantId ||
+    trimmedString(sessionRecord.gradingSessionId) !== gradingSessionId ||
+    trimmedString(sessionRecord.reportId) !== reportId ||
+    trimmedString(reportRecord.reportId) !== reportId ||
+    trimmedString(reportRecord.sessionId) !== sessionId ||
+    trimmedString(sessionRecord.cardAssetId) !== cardAssetId ||
+    trimmedString(reportRecord.cardAssetId) !== cardAssetId ||
+    trimmedString(sessionRecord.itemId) !== itemId ||
+    trimmedString(reportRecord.itemId) !== itemId ||
+    !["card_created", "published"].includes(sessionStatus) ||
+    !["draft", "published"].includes(reportPublicationStatus) ||
+    trimmedString(cardRecord.id) !== cardAssetId ||
+    !trimmedString(cardRecord.batchId) ||
+    trimmedString(itemRecord.id) !== itemId ||
+    trimmedString(itemRecord.number) !== cardAssetId
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH",
+      "Publish linkage does not match the durable confirmed report, session, CardAsset, and Item authority.",
+    );
+  }
+  const durableIdentity = isRecord(sessionRecord.cardIdentity) ? sessionRecord.cardIdentity : {};
+  if (
+    trimmedString(durableIdentity.source) !== "card_asset" ||
+    trimmedString(durableIdentity.status) !== "linked" ||
+    trimmedString(durableIdentity.cardAssetId) !== cardAssetId ||
+    trimmedString(durableIdentity.itemId) !== itemId
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_CONFIRMED_IDENTITY_INVALID",
+      "Publish could not verify the durable operator-confirmed card identity.",
+    );
+  }
+  const confirmedIdentity = normalizeDurableConfirmedIdentity(durableIdentity, cardAssetId, itemId);
+  const category = trimmedString(confirmedIdentity.category);
+  const missingCommon = [
+    confirmedIdentity.title,
+    confirmedIdentity.year,
+    confirmedIdentity.manufacturer,
+    confirmedIdentity.productSet,
+    confirmedIdentity.cardNumber,
+  ].some((value) => !trimmedString(value));
+  const categoryIdentityMissing =
+    (category === "sport" && (!trimmedString(confirmedIdentity.playerName) || !trimmedString(confirmedIdentity.sport))) ||
+    (category === "tcg" && (!trimmedString(confirmedIdentity.cardName) || !trimmedString(confirmedIdentity.game))) ||
+    (category === "comics" && !trimmedString(confirmedIdentity.cardName));
+  const finalOverallGrade = numberValue(reportRecord.finalOverallGrade);
+  if (
+    !["sport", "tcg", "comics"].includes(category) ||
+    missingCommon ||
+    categoryIdentityMissing ||
+    finalOverallGrade === undefined ||
+    finalOverallGrade < 1 ||
+    finalOverallGrade > 10
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_CONFIRMED_IDENTITY_INVALID",
+      "Publish could not verify a complete durable operator-confirmed identity and final grade.",
+    );
+  }
+  return {
+    tenantId,
+    gradingSessionId,
+    reportId,
+    cardAssetId,
+    itemId,
+    sessionId,
+    reportRowId,
+    confirmedIdentity,
+    finalOverallGrade,
+  };
+}
+
 async function runInTransaction<T>(db: AiGraderProductionPrismaClient, fn: (tx: AiGraderProductionTransactionClient) => Promise<T>) {
   if (typeof db.$transaction === "function") return db.$transaction(fn);
   return fn(db);
+}
+
+export async function resolveAiGraderConfirmedPublishAuthority(
+  db: AiGraderProductionPrismaClient,
+  input: AiGraderConfirmedPublishAuthorityInput,
+) {
+  return runInTransaction(db, (tx) => resolveAiGraderConfirmedPublishAuthorityTx(tx, input));
+}
+
+function aiGraderPersistAuthorityInput(input: AiGraderProductionPersistInput): AiGraderConfirmedPublishAuthorityInput {
+  const bundleReportId = trimmedString(input.reportBundle.reportId);
+  const releaseReportId = trimmedString(input.productionRelease.reportId);
+  const bundleSessionId = trimmedString(input.reportBundle.gradingSessionId);
+  const releaseSessionId = trimmedString(input.productionRelease.gradingSessionId);
+  const bundleIdentity = isRecord(input.reportBundle.cardIdentity) ? input.reportBundle.cardIdentity : {};
+  const label = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
+  const labelIdentity = isRecord(label.cardIdentity) ? label.cardIdentity : {};
+  const linkage = isRecord(input.productionRelease.cardInventoryLinkage)
+    ? input.productionRelease.cardInventoryLinkage
+    : {};
+  const cardAssetId = trimmedString(input.cardAssetId) ||
+    trimmedString(bundleIdentity.cardAssetId) ||
+    trimmedString(linkage.cardAssetId) ||
+    trimmedString(labelIdentity.cardAssetId);
+  const itemId = trimmedString(input.itemId) ||
+    trimmedString(bundleIdentity.itemId) ||
+    trimmedString(linkage.itemId) ||
+    trimmedString(labelIdentity.itemId);
+  const cardIds = [
+    input.cardAssetId,
+    bundleIdentity.cardAssetId,
+    linkage.cardAssetId,
+    labelIdentity.cardAssetId,
+  ].map(trimmedString).filter(Boolean);
+  const itemIds = [
+    input.itemId,
+    bundleIdentity.itemId,
+    linkage.itemId,
+    labelIdentity.itemId,
+  ].map(trimmedString).filter(Boolean);
+  if (
+    !trimmedString(input.tenantId) ||
+    !bundleReportId ||
+    !releaseReportId ||
+    bundleReportId !== releaseReportId ||
+    !bundleSessionId ||
+    !releaseSessionId ||
+    bundleSessionId !== releaseSessionId ||
+    !cardAssetId ||
+    !itemId ||
+    cardIds.some((value) => value !== cardAssetId) ||
+    itemIds.some((value) => value !== itemId) ||
+    (trimmedString(label.reportId) && trimmedString(label.reportId) !== bundleReportId)
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
+      "Publish requires one exact report, grading-session, CardAsset, and Item linkage.",
+      400,
+    );
+  }
+  return {
+    tenantId: trimmedString(input.tenantId),
+    gradingSessionId: bundleSessionId,
+    reportId: bundleReportId,
+    cardAssetId,
+    itemId,
+  };
 }
 
 async function acquireAiGraderLabelSheetLock(tx: AiGraderProductionTransactionClient, tenantId: string) {
@@ -2221,36 +2624,117 @@ export async function persistAiGraderProductionRelease(
   db: AiGraderProductionPrismaClient,
   input: AiGraderProductionPersistInput
 ): Promise<AiGraderProductionPersistResult> {
-  const gradingSessionId = stringValue(input.productionRelease.gradingSessionId ?? input.reportBundle.gradingSessionId, "");
-  const reportId = stringValue(input.productionRelease.reportId ?? input.reportBundle.reportId, "");
-  if (!input.tenantId.trim()) throw new Error("tenantId is required.");
-  if (!gradingSessionId) throw new Error("gradingSessionId is required.");
-  if (!reportId) throw new Error("reportId is required.");
+  const linkage = aiGraderPersistAuthorityInput(input);
+  const gradingSessionId = linkage.gradingSessionId;
+  const reportId = linkage.reportId;
   const now = dateValue(input.persistedAt);
   const publicationStatus = input.publicationStatus ?? "published";
 
   return runInTransaction(db, async (tx) => {
     await acquireAiGraderReportLifecycleLock(tx, reportId);
+    const authority = await resolveAiGraderConfirmedPublishAuthorityTx(tx, linkage);
+    const releaseOverall = finalOverallGrade(input.productionRelease);
+    if (releaseOverall === undefined || releaseOverall !== authority.finalOverallGrade) {
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_PUBLISH_FINAL_GRADE_MISMATCH",
+        "Publish final grade does not match the durable grade confirmed for this report.",
+      );
+    }
+    assertAiGraderConfirmedPublishIdentitySnapshot({
+      reportBundle: input.reportBundle,
+      productionRelease: input.productionRelease,
+      authority,
+    });
     const baseSessionData = sessionData(input, gradingSessionId, reportId, now);
-    const session = await tx.aiGraderSession.upsert({
-      where: { gradingSessionId },
-      update: baseSessionData,
-      create: {
-        ...baseSessionData,
-        createdAt: now,
+    const {
+      tenantId: _sessionTenantId,
+      gradingSessionId: _sessionGradingSessionId,
+      reportId: _sessionReportId,
+      cardAssetId: _sessionCardAssetId,
+      itemId: _sessionItemId,
+      cardIdentity: _confirmedIdentity,
+      ...sessionUpdateData
+    } = baseSessionData;
+    if (typeof tx.aiGraderSession.updateMany !== "function") {
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_PUBLISH_AUTHORITY_UNAVAILABLE",
+        "Durable Confirm authority cannot be updated safely; Publish stopped before database publication changes.",
+        503,
+      );
+    }
+    const sessionUpdate = await tx.aiGraderSession.updateMany({
+      where: {
+        id: authority.sessionId,
+        tenantId: authority.tenantId,
+        gradingSessionId: authority.gradingSessionId,
+        reportId: authority.reportId,
+        cardAssetId: authority.cardAssetId,
+        itemId: authority.itemId,
+        status: { in: ["card_created", "published"] },
       },
+      data: sessionUpdateData,
     });
-    const sessionId = stringValue((session as JsonRecord).id, gradingSessionId);
+    if (sessionUpdate.count !== 1) {
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH",
+        "Publish linkage changed after durable Confirm authority was verified.",
+      );
+    }
+    const sessionId = authority.sessionId;
+    const session = {
+      id: authority.sessionId,
+      tenantId: authority.tenantId,
+      gradingSessionId: authority.gradingSessionId,
+      reportId: authority.reportId,
+      cardAssetId: authority.cardAssetId,
+      itemId: authority.itemId,
+      cardIdentity: authority.confirmedIdentity,
+      ...sessionUpdateData,
+    };
     const baseReportData = reportData(input, sessionId, reportId, publicationStatus, now);
-    const report = await tx.aiGraderReport.upsert({
-      where: { reportId },
-      update: baseReportData,
-      create: {
-        ...baseReportData,
-        createdAt: now,
+    const {
+      tenantId: _reportTenantId,
+      sessionId: _reportSessionId,
+      reportId: _reportId,
+      cardAssetId: _reportCardAssetId,
+      itemId: _reportItemId,
+      ...reportUpdateData
+    } = baseReportData;
+    if (typeof tx.aiGraderReport.updateMany !== "function") {
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_PUBLISH_AUTHORITY_UNAVAILABLE",
+        "Durable Confirm authority cannot be updated safely; Publish stopped before database publication changes.",
+        503,
+      );
+    }
+    const reportUpdate = await tx.aiGraderReport.updateMany({
+      where: {
+        id: authority.reportRowId,
+        tenantId: authority.tenantId,
+        sessionId: authority.sessionId,
+        reportId: authority.reportId,
+        cardAssetId: authority.cardAssetId,
+        itemId: authority.itemId,
+        publicationStatus: { in: ["draft", "published"] },
       },
+      data: reportUpdateData,
     });
-    const reportRowId = stringValue((report as JsonRecord).id, reportId);
+    if (reportUpdate.count !== 1) {
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH",
+        "Publish linkage changed after durable Confirm authority was verified.",
+      );
+    }
+    const reportRowId = authority.reportRowId;
+    const report = {
+      id: authority.reportRowId,
+      tenantId: authority.tenantId,
+      sessionId: authority.sessionId,
+      reportId: authority.reportId,
+      cardAssetId: authority.cardAssetId,
+      itemId: authority.itemId,
+      ...reportUpdateData,
+    };
     const finalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
     const elements = elementScores(input.productionRelease);
     const confidenceData = confidence(input.productionRelease);
