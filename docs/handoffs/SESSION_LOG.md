@@ -26052,3 +26052,17 @@ By enabling Rip It Live, I confirm:
 - Post-integration validation passed: all 22 frontend AI Grader/Google Vision files `242/242`; database build/tests `73/73` without migrations; shared build/tests `127/127`; capture-helper/simulator/shared build plus helper tests `273/273`; Next app TypeScript no-emit; Next.js production build with `64/64` static pages; and both working-tree and `origin/main...HEAD` diff checks. Existing image-lint, Tailwind glob, browser-data age, and Node module-type warnings remain unchanged.
 - Independent final review found no remaining path for browser-supplied immutable report or release fields to reach storage artifacts, database/public grading data, or physical labels. The next action is pushing the existing PR #88 branch and waiting for fresh GitHub and Vercel preview checks; PR #88 remains unmerged.
 - No CORS change, checksum probe, deployment, hardware/capture/preview/lighting action, Dell restart, migration, environment/credential operation, production database/storage/data mutation, or PR merge was performed.
+
+## 2026-07-12 - PR #88 production merge planned action
+
+- Mark explicitly waived the pre-merge production checksum canary because the reviewed PR code could not run from the production origin before merge, while preview had the wrong origin and the PC had no authenticated production-storage control surface. This waiver did not weaken provider-native checksum enforcement or authorize an ETag/metadata fallback.
+- Planned action: fetch and require unchanged `origin/main` `cbdd72f9a2611829ec9192e30139ecec09ed2545`; verify PR #88 remains open, non-draft, CLEAN, MERGEABLE, fully green, and pinned to approved head `69a8627680cacd8757cd28f26083b4eb60e9dab6`; merge through GitHub's normal protected merge-commit method; then observe automatic main CI and Vercel Production only.
+- Prohibited throughout: CORS changes, hardware/capture/preview/lighting, Dell update/restart, OCR, Confirm Card, Publish, migrations, environment or credential changes, and production database/storage operations.
+
+## 2026-07-12 - PR #88 production merge and automatic deployment observed result
+
+- The pre-merge base remained exact `cbdd72f9a2611829ec9192e30139ecec09ed2545`. PR #88 was open, non-draft, CLEAN, MERGEABLE, fully green, and still pinned to approved head `69a8627680cacd8757cd28f26083b4eb60e9dab6`.
+- GitHub's protected merge-commit method merged PR #88 at `2026-07-12T23:43:48Z` as `8cbe5d8cbf3ffd15974592d973c83b30a81d0293`. Its parents are exact prior main `cbdd72f9a2611829ec9192e30139ecec09ed2545` and exact approved PR head `69a8627680cacd8757cd28f26083b4eb60e9dab6`; fetched `origin/main` matched the merge commit.
+- Automatic main CI run `29213921507` completed successfully: Install & Build and all eight Docker image jobs passed. The only annotation was the existing GitHub Actions Node runtime deprecation notice.
+- Automatic Vercel Production for exact merge commit `8cbe5d8cbf3ffd15974592d973c83b30a81d0293` reported `success` with `Deployment has completed`. No manual deployment or rerun was triggered.
+- No CORS change, checksum probe, hardware/capture/preview/lighting action, Dell update/restart, OCR, Confirm Card, Publish, migration, environment/credential operation, production database/storage operation, force/rebase/history rewrite, or branch-protection bypass was performed.
