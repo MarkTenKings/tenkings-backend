@@ -467,6 +467,7 @@ export async function runAiGraderOcrPrefillFromLocalReport(
         uploadMethod: plan.uploadMethod,
         uploadHeaders: plan.uploadHeaders,
         contentType: localImage.mimeType,
+        checksumSha256: localImage.checksumSha256,
         body: new Blob([localImage.bytes], { type: localImage.mimeType }),
       }, fetchImpl);
     } catch {

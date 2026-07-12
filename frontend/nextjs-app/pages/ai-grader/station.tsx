@@ -390,7 +390,9 @@ function sanitizeReportBundleForProduction(bundle: AiGraderReportBundle): AiGrad
   return {
     ...sanitized,
     assets: productionAssetManifest(bundle) as AiGraderReportBundle["assets"],
-    publicAssets: (sanitized.publicAssets ?? []).map((asset) => sanitizePublishJson(asset)),
+    ...(Array.isArray(bundle.publicAssets)
+      ? { publicAssets: (sanitized.publicAssets ?? []).map((asset) => sanitizePublishJson(asset)) }
+      : {}),
   };
 }
 
@@ -409,6 +411,10 @@ function sanitizeProductionReleaseForProduction(release: AiGraderReportBundle["p
         : "Published AI Grader report is unlinked and needs card linkage before inventory automation.",
     },
   });
+}
+
+function sanitizeProductionReleaseForConfirm(release: AiGraderReportBundle["productionRelease"]) {
+  return release ? sanitizePublishJson(release) : release;
 }
 
 async function sha256Hex(bytes: ArrayBuffer) {
@@ -2367,12 +2373,12 @@ export default function AiGraderStationPage() {
         throw new Error("Card creation requires storage-ready image asset metadata with SHA-256 checksums and byte sizes.");
       }
       const sanitizedBundle = sanitizeReportBundleForProduction(reportBundleWithIdentity);
-      const sanitizedRelease = sanitizeProductionReleaseForProduction(productionRelease, sanitizedBundle, null);
+      const sanitizedRelease = sanitizeProductionReleaseForConfirm(productionRelease);
       const response = await fetch("/api/admin/ai-grader/production/create-card-from-report", {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify({
-          publicationStatus: "published",
+          publicationStatus: "finalized",
           reportId: sanitizedRelease?.reportId ?? sanitizedBundle.reportId,
           certId: sanitizedRelease?.label?.certId,
           gradingSessionId: sanitizedRelease?.gradingSessionId ?? sanitizedBundle.gradingSessionId,
@@ -2410,17 +2416,8 @@ export default function AiGraderStationPage() {
         downstreamComps.status === "failed"
           ? downstreamComps.status
           : "queued";
-      const assignedSheet =
-        typeof downstream.sheetNumber === "number" && typeof downstream.slot === "number"
-          ? {
-              sheetNumber: downstream.sheetNumber,
-              slot: downstream.slot,
-              capacity: typeof downstream.capacity === "number" ? downstream.capacity : 16,
-            }
-          : undefined;
       setConfirmedDownstream({
         reportId: result.reportId,
-        labelSheet: assignedSheet,
         comps: {
           status: downstreamCompsStatus,
           message:
@@ -2741,6 +2738,7 @@ export default function AiGraderStationPage() {
             uploadMethod: artifact.uploadMethod,
             uploadHeaders: artifact.uploadHeaders,
             contentType,
+            checksumSha256,
             body: bytes,
           });
         } catch (error) {
@@ -2772,6 +2770,7 @@ export default function AiGraderStationPage() {
           body: JSON.stringify({
             publicationStatus: "published",
             reportId: initPayload.result.reportId,
+            gradingSessionId: sanitizedRelease?.gradingSessionId ?? sanitizedBundle.gradingSessionId,
             publishSessionId: initPayload.result.publishSessionId,
             reportBundle: sanitizedBundle,
             productionRelease: sanitizedRelease,
@@ -2799,8 +2798,15 @@ export default function AiGraderStationPage() {
         return;
       }
       const publishedReportId = finalizePayload.result.reportId;
-      if (!publishedReportId || !finalizePayload.result.publicReportUrl || !finalizePayload.result.labelPreviewUrl) {
-        throw new Error("Publish finalize response did not include reportId, publicReportUrl, and labelPreviewUrl.");
+      const publishedLabelSheet = finalizePayload.result.labelSheetAssignment;
+      if (
+        !publishedReportId ||
+        !finalizePayload.result.publicReportUrl ||
+        !finalizePayload.result.labelPreviewUrl ||
+        typeof publishedLabelSheet?.sheetNumber !== "number" ||
+        typeof publishedLabelSheet?.slot !== "number"
+      ) {
+        throw new Error("Publish finalize response did not include the report, label preview, and grading-label assignment.");
       }
       setProductionPublish((current) => ({ ...current, status: "pending", message: "Verifying public report route and storage-backed images." }));
       const publicVerification = await verifyPublishedReportRoute(publishedReportId);
@@ -2815,6 +2821,15 @@ export default function AiGraderStationPage() {
         uploadedAssetCount: finalizePayload.result.uploadedAssetCount,
         evidenceAssetCount: finalizePayload.result.evidenceAssetCount,
       });
+      setConfirmedDownstream((current) => ({
+        ...current,
+        reportId: publishedReportId,
+        labelSheet: {
+          sheetNumber: publishedLabelSheet.sheetNumber,
+          slot: publishedLabelSheet.slot,
+          capacity: typeof publishedLabelSheet.capacity === "number" ? publishedLabelSheet.capacity : 16,
+        },
+      }));
       const activeRapidQueueItem = latestStatus.rapidCaptureQueue.items.find(
         (item) => item.queueItemId === latestStatus.rapidCaptureQueue.activeQueueItemId && item.reportId === publishedReportId
       );
@@ -2870,6 +2885,8 @@ export default function AiGraderStationPage() {
       if (!reportId) throw new Error("A report ID is required before uploading slabbed photos.");
       const bytes = await file.arrayBuffer();
       const checksumSha256 = await sha256Hex(bytes);
+      const slabMimeType = file.type || "image/jpeg";
+      const slabDimensions = await assertAiGraderBrowserRaster(bytes, slabMimeType);
       let initResponse: Response;
       try {
         initResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-init", {
@@ -2879,9 +2896,11 @@ export default function AiGraderStationPage() {
             reportId,
             side,
             fileName: file.name,
-            mimeType: file.type || "image/jpeg",
+            mimeType: slabMimeType,
             byteSize: bytes.byteLength,
             checksumSha256,
+            widthPx: slabDimensions.widthPx,
+            heightPx: slabDimensions.heightPx,
           }),
         });
       } catch (error) {
@@ -2908,7 +2927,8 @@ export default function AiGraderStationPage() {
           uploadUrl: plan.uploadUrl,
           uploadMethod: plan.uploadMethod,
           uploadHeaders: plan.uploadHeaders,
-          contentType: file.type || "image/jpeg",
+          contentType: slabMimeType,
+          checksumSha256,
           body: bytes,
         });
       } catch (error) {

@@ -149,12 +149,15 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
     publicUrlFor(storageKey) {
       return `https://cdn.tenkings.test/${storageKey}`;
     },
-    async presignUpload({ storageKey, contentType }) {
+    async presignUpload({ storageKey, contentType, checksumSha256 }) {
       return {
         storageKey,
         uploadUrl: `https://uploads.tenkings.test/${storageKey}?X-Amz-Signature=test-only`,
         uploadMethod: "PUT",
-        uploadHeaders: { "Content-Type": contentType },
+        uploadHeaders: {
+          "Content-Type": contentType,
+          "x-amz-checksum-sha256": sha256HexToBase64(checksumSha256),
+        },
         publicUrl: `https://cdn.tenkings.test/${storageKey}`,
       };
     },
@@ -286,12 +289,15 @@ test("OCR finalize API preserves safe typed provider and catalog diagnostics", a
       };
     },
     publicUrlFor(storageKey) { return `https://cdn.tenkings.test/${storageKey}`; },
-    async presignUpload({ storageKey, contentType }) {
+    async presignUpload({ storageKey, contentType, checksumSha256 }) {
       return {
         storageKey,
         uploadUrl: `https://uploads.tenkings.test/${storageKey}`,
         uploadMethod: "PUT",
-        uploadHeaders: { "Content-Type": contentType },
+        uploadHeaders: {
+          "Content-Type": contentType,
+          "x-amz-checksum-sha256": sha256HexToBase64(checksumSha256),
+        },
         publicUrl: `https://cdn.tenkings.test/${storageKey}`,
       };
     },
@@ -660,7 +666,7 @@ test("OCR prefill finalize rejects missing or wrong checksum, byte size, and con
           uploadHeaders: {
             "Content-Type": contentType,
             "x-amz-meta-sha256": checksumSha256,
-            "x-amz-checksum-sha256": checksumSha256,
+            "x-amz-checksum-sha256": sha256HexToBase64(checksumSha256),
           },
           publicUrl: `https://cdn.tenkings.test/${storageKey}`,
         };
@@ -695,7 +701,10 @@ test("OCR prefill finalize rejects missing or wrong checksum, byte size, and con
     assert.equal(initRes.statusCodeValue, 200);
     const uploadHeaders = (initRes.jsonBody as any).result.uploadPlan[0].uploadHeaders;
     assert.equal(Object.keys(uploadHeaders).some((name) => name.toLowerCase() === "x-amz-meta-sha256"), false);
-    assert.equal(Object.keys(uploadHeaders).some((name) => name.toLowerCase() === "x-amz-checksum-sha256"), false);
+    assert.equal(
+      uploadHeaders["x-amz-checksum-sha256"],
+      sha256HexToBase64(normalizedImages()[0].checksumSha256),
+    );
     const finalizeRes = mockResponse();
     await handler(
       mockRequest("POST", ["ocr-prefill-finalize"], (initRes.jsonBody as any).result.requiredFinalizeManifest),
@@ -761,7 +770,7 @@ test("OCR upload checksum conversion is strict and round-trips S3 base64 SHA-256
   assert.throws(() => sha256HexToBase64("0".repeat(63)), /64-character hex digest/);
 });
 
-test("AWS presigning binds SHA-256 in the signed query without a browser checksum header", async () => {
+test("AWS presigning requires SHA-256 as an unhoistable signed browser header", async () => {
   const checksumHex = sha256("normalized-card-query-contract");
   const client = new S3Client({
     region: "us-east-1",
@@ -774,11 +783,14 @@ test("AWS presigning binds SHA-256 in the signed query without a browser checksu
       Key: "test-object",
       ContentType: "image/png",
       ChecksumSHA256: sha256HexToBase64(checksumHex),
-    }) as any, { expiresIn: 600 });
+    }) as any, {
+      expiresIn: 600,
+      unhoistableHeaders: new Set(["x-amz-checksum-sha256"]),
+    });
     const url = new URL(signed);
-    assert.equal(url.searchParams.get("x-amz-checksum-sha256"), sha256HexToBase64(checksumHex));
-    assert.equal(url.searchParams.get("X-Amz-SignedHeaders"), "host");
-    assert.equal(url.searchParams.get("X-Amz-SignedHeaders")?.includes("x-amz-checksum-sha256"), false);
+    assert.equal(url.searchParams.get("x-amz-checksum-sha256"), null);
+    assert.equal(url.searchParams.get("X-Amz-SignedHeaders"), "host;x-amz-checksum-sha256");
+    assert.equal(url.searchParams.get("X-Amz-SignedHeaders")?.includes("x-amz-checksum-sha256"), true);
   } finally {
     client.destroy();
   }
@@ -805,12 +817,15 @@ test("OCR prefill rejects image bodies, caller URLs, and unsafe storage source U
     publicUrlFor(storageKey) {
       return `http://127.0.0.1:47652/${storageKey}?X-Amz-Signature=must-not-leak`;
     },
-    async presignUpload({ storageKey, contentType }) {
+    async presignUpload({ storageKey, contentType, checksumSha256 }) {
       return {
         storageKey,
         uploadUrl: `https://uploads.tenkings.test/${storageKey}`,
         uploadMethod: "PUT",
-        uploadHeaders: { "Content-Type": contentType },
+        uploadHeaders: {
+          "Content-Type": contentType,
+          "x-amz-checksum-sha256": sha256HexToBase64(checksumSha256),
+        },
         publicUrl: `https://cdn.tenkings.test/${storageKey}`,
       };
     },
