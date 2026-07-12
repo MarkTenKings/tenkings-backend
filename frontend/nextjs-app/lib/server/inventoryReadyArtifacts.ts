@@ -4,10 +4,10 @@ import { ensureLabelPairForItemTx } from "./qrCodes";
 
 export const PRICE_REQUIRED_MESSAGE =
   "Price valuation field must be complete before moving a card to inventory ready.";
-export const AI_GRADER_INVENTORY_OWNER_USER_ID_ENV = "OPERATOR_USER_ID";
+export const AI_GRADER_ITEM_OWNER_USER_ID_ENV = "OPERATOR_USER_ID";
 
 type EnvLike = Record<string, string | undefined>;
-type InventoryReadyOwner = { id: string };
+type AiGraderItemOwner = { id: string };
 
 function jsonObject(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -51,14 +51,14 @@ const resolveItemSet = (card: { classificationJson: unknown }) => {
   );
 };
 
-export const resolveInventoryReadyOwner = async (
+export const resolveAiGraderItemOwner = async (
   db: Pick<Prisma.TransactionClient, "user">,
   env: EnvLike = process.env
-): Promise<InventoryReadyOwner> => {
-  const inventoryOwnerUserId = env[AI_GRADER_INVENTORY_OWNER_USER_ID_ENV]?.trim();
+): Promise<AiGraderItemOwner> => {
+  const inventoryOwnerUserId = env[AI_GRADER_ITEM_OWNER_USER_ID_ENV]?.trim();
 
   if (!inventoryOwnerUserId) {
-    throw new Error("OPERATOR_USER_ID must be configured for AI Grader inventory ownership.");
+    throw new Error("OPERATOR_USER_ID must be configured for AI Grader item ownership.");
   }
 
   const inventoryOwner = await db.user.findUnique({ where: { id: inventoryOwnerUserId }, select: { id: true } });
@@ -69,13 +69,12 @@ export const resolveInventoryReadyOwner = async (
   return inventoryOwner;
 };
 
-export const ensureInventoryReadyArtifactsTx = async (
+export const ensureCardItemOwnershipTx = async (
   db: Prisma.TransactionClient,
   cardId: string,
-  createdById: string,
-  options: { env?: EnvLike; owner?: InventoryReadyOwner } = {}
+  options: { env?: EnvLike; owner?: AiGraderItemOwner; expectedItemId?: string } = {}
 ) => {
-  const owner = options.owner ?? (await resolveInventoryReadyOwner(db, options.env ?? process.env));
+  const owner = options.owner ?? (await resolveAiGraderItemOwner(db, options.env ?? process.env));
   const card = await db.cardAsset.findUnique({
     where: { id: cardId },
     select: {
@@ -97,7 +96,15 @@ export const ensureInventoryReadyArtifactsTx = async (
     throw new Error("Card not found");
   }
 
-  let item = await db.item.findFirst({ where: { number: card.id } });
+  let item = options.expectedItemId
+    ? await db.item.findUnique({ where: { id: options.expectedItemId } })
+    : await db.item.findFirst({ where: { number: card.id } });
+  if (options.expectedItemId && !item) {
+    throw new Error("The linked Item could not be resolved for the confirmed CardAsset.");
+  }
+  if (item && item.number !== card.id) {
+    throw new Error("The linked Item does not match the confirmed CardAsset identity.");
+  }
   if (!item) {
     const name = resolveItemName(card);
     const set = resolveItemSet(card);
@@ -123,13 +130,6 @@ export const ensureInventoryReadyArtifactsTx = async (
       },
     });
 
-    await db.itemOwnership.create({
-      data: {
-        itemId: item.id,
-        ownerId: owner.id,
-        note: `Minted from card asset ${card.id} (Inventory Ready)`,
-      },
-    });
   } else {
     const updates: Prisma.ItemUpdateInput = {};
 
@@ -159,15 +159,45 @@ export const ensureInventoryReadyArtifactsTx = async (
     }
   }
 
-  const labelPair = await ensureLabelPairForItemTx(db, {
+  const existingOwnership = await db.itemOwnership.findFirst({
+    where: {
+      itemId: item.id,
+      ownerId: owner.id,
+    },
+    select: { id: true },
+  });
+  if (!existingOwnership) {
+    await db.itemOwnership.create({
+      data: {
+        itemId: item.id,
+        ownerId: owner.id,
+        note: `Linked from confirmed AI Grader card asset ${card.id}`,
+      },
+    });
+  }
+
+  return {
+    cardAssetId: card.id,
     itemId: item.id,
+  };
+};
+
+export const ensureInventoryReadyArtifactsTx = async (
+  db: Prisma.TransactionClient,
+  cardId: string,
+  createdById: string,
+  options: { env?: EnvLike; owner?: AiGraderItemOwner; expectedItemId?: string } = {}
+) => {
+  const linkage = await ensureCardItemOwnershipTx(db, cardId, options);
+
+  const labelPair = await ensureLabelPairForItemTx(db, {
+    itemId: linkage.itemId,
     createdById,
     locationId: null,
   });
 
   return {
-    cardAssetId: card.id,
-    itemId: item.id,
+    ...linkage,
     labelPair,
   };
 };

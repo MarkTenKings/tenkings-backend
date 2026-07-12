@@ -38,9 +38,10 @@ import type { AdminSession } from "./admin";
 import type { UserSession } from "./session";
 import { buildAiGraderLabelPreviewUrl } from "../aiGraderOperatorWorkflow";
 import {
+  ensureCardItemOwnershipTx,
   ensureInventoryReadyArtifactsTx,
   PRICE_REQUIRED_MESSAGE,
-  resolveInventoryReadyOwner,
+  resolveAiGraderItemOwner,
 } from "./inventoryReadyArtifacts";
 import {
   aiGraderProductionAuthStatus,
@@ -52,8 +53,10 @@ import {
 import type { AiGraderLabelSheetsResult } from "../aiGraderLabelSheets";
 import { AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION } from "../aiGraderLocalStation";
 import {
-  queueConfirmedAiGraderLabelTx,
-  type AiGraderConfirmedLabelQueueResult,
+  completePublishedAiGraderCardTx,
+  linkConfirmedAiGraderCardTx,
+  type AiGraderConfirmedCardQueueResult,
+  type AiGraderPublishedLabelAssignmentResult,
   type AiGraderPreparedLabelSheetResult,
   type AiGraderPrintedLabelSheetResult,
 } from "./aiGraderLabelSheetRuntime";
@@ -179,11 +182,14 @@ export type AiGraderCreateCardFromReportResult = {
   publicImageUrl: string;
   cardIdentity: AiGraderCardItemSearchResult;
   productionRelease: AiGraderProductionReleaseLike;
-  inventoryReady: {
+  itemLinkage: {
     itemNumberConvention: "Item.number = CardAsset.id";
-    labelPairId?: string | null;
   };
-  downstream?: AiGraderConfirmedLabelQueueResult;
+  downstream?: AiGraderConfirmedCardQueueResult;
+};
+
+export type AiGraderProductionPublishPersistResult = AiGraderProductionPersistResult & {
+  labelSheetAssignment?: AiGraderPublishedLabelAssignmentResult;
 };
 
 export type AiGraderSlabbedPhotoUploadInitResult = {
@@ -292,7 +298,7 @@ export type AiGraderProductionApiDependencies = {
     cardAssetId?: string | null;
     itemId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
-  }): Promise<AiGraderProductionPersistResult>;
+  }): Promise<AiGraderProductionPublishPersistResult>;
   listHistory?(): Promise<AiGraderProductionHistoryResult>;
   listFinishQueue?(input: { tenantId: string }): Promise<AiGraderFinishCardsQueueResult>;
   listLabelSheets?(input: { tenantId: string }): Promise<AiGraderLabelSheetsResult>;
@@ -2881,6 +2887,17 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           cardAssetUpdatedCount: result.cardAssetUpdatedCount,
           itemUpdatedCount: result.itemUpdatedCount,
           storageKeyPrefix: result.storagePlan.storageKeyPrefix,
+          ...(result.labelSheetAssignment
+            ? {
+                labelSheetAssignment: {
+                  sheetNumber: result.labelSheetAssignment.sheetNumber,
+                  slot: result.labelSheetAssignment.slot,
+                  capacity: result.labelSheetAssignment.capacity,
+                  status: result.labelSheetAssignment.status,
+                  existing: result.labelSheetAssignment.existing,
+                },
+              }
+            : {}),
         },
       });
     } catch (error) {
@@ -2938,9 +2955,37 @@ export async function persistProductionReleaseRuntime(input: {
   cardAssetId?: string | null;
   itemId?: string | null;
   actorAudit?: AiGraderProductionActorAudit | null;
-}) {
+  dbClient?: any;
+  persistRelease?: typeof persistAiGraderProductionRelease;
+}): Promise<AiGraderProductionPublishPersistResult> {
   const { prisma } = await import("@tenkings/database");
-  return persistAiGraderProductionRelease(prisma as any, input);
+  const { dbClient, persistRelease, ...persistInput } = input;
+  const db = dbClient ?? (prisma as any);
+  const persisted = await (persistRelease ?? persistAiGraderProductionRelease)(db, persistInput);
+  if (persisted.publicationStatus !== "published") return persisted;
+
+  const reportId = optionalString(input.productionRelease.reportId ?? input.reportBundle.reportId);
+  const gradingSessionId = optionalString(input.productionRelease.gradingSessionId ?? input.reportBundle.gradingSessionId);
+  const cardAssetId = optionalString(input.cardAssetId ?? input.reportBundle.cardIdentity?.cardAssetId);
+  const itemId = optionalString(input.itemId ?? input.reportBundle.cardIdentity?.itemId);
+  const operatorUserId = optionalString(input.operatorUserId);
+  if (!reportId || !gradingSessionId || !cardAssetId || !itemId) {
+    throw new Error("Verified Publish requires durable report, session, CardAsset, and Item linkage.");
+  }
+  const labelSheetAssignment = await db.$transaction((tx: any) =>
+    completePublishedAiGraderCardTx({
+      tx,
+      tenantId: input.tenantId,
+      gradingSessionId,
+      reportId,
+      productionRelease: input.productionRelease,
+      confirmedIdentity: input.reportBundle.cardIdentity,
+      cardAssetId,
+      itemId,
+      ...(operatorUserId ? { operatorUserId } : {}),
+    })
+  );
+  return { ...persisted, labelSheetAssignment };
 }
 
 function safeStorageSegment(value: string) {
@@ -3256,7 +3301,17 @@ async function existingAiGraderCreatedCardResult(input: {
     where: { reportId: input.reportId },
     select: { cardAssetId: true, itemId: true },
   });
-  const cardAssetId = optionalString((isRecord(session) ? session.cardAssetId : null) ?? (isRecord(report) ? report.cardAssetId : null));
+  const sessionCardAssetId = optionalString(isRecord(session) ? session.cardAssetId : null);
+  const reportCardAssetId = optionalString(isRecord(report) ? report.cardAssetId : null);
+  const sessionItemId = optionalString(isRecord(session) ? session.itemId : null);
+  const reportItemId = optionalString(isRecord(report) ? report.itemId : null);
+  if (
+    (sessionCardAssetId && reportCardAssetId && sessionCardAssetId !== reportCardAssetId) ||
+    (sessionItemId && reportItemId && sessionItemId !== reportItemId)
+  ) {
+    throw new Error("AI Grader report and session CardAsset/Item linkage do not match.");
+  }
+  const cardAssetId = sessionCardAssetId ?? reportCardAssetId;
   if (!cardAssetId) return null;
   const card = await input.db.cardAsset?.findUnique?.({
     where: { id: cardAssetId },
@@ -3273,10 +3328,12 @@ async function existingAiGraderCreatedCardResult(input: {
     },
   });
   if (!isRecord(card)) return null;
-  const inventory = await ensureInventoryReadyArtifactsTx(input.db, cardAssetId, input.operatorUserId, {
+  const linkedItemId = sessionItemId ?? reportItemId;
+  const itemLinkage = await ensureCardItemOwnershipTx(input.db, cardAssetId, {
     env: input.env,
+    ...(linkedItemId ? { expectedItemId: linkedItemId } : {}),
   });
-  const itemId = optionalString((isRecord(session) ? session.itemId : null) ?? (isRecord(report) ? report.itemId : null)) ?? inventory.itemId;
+  const itemId = itemLinkage.itemId;
   const fallbackTitle = identityTitle(input.identity) || optionalString(card.fileName) || cardAssetId;
   const title = optionalString(card.customTitle) ?? fallbackTitle;
   const set = identitySet(input.identity);
@@ -3300,9 +3357,8 @@ async function existingAiGraderCreatedCardResult(input: {
     publicImageUrl,
     cardIdentity,
     productionRelease: linkedProductionRelease(input.productionRelease, cardAssetId, itemId, cardIdentity),
-    inventoryReady: {
+    itemLinkage: {
       itemNumberConvention: "Item.number = CardAsset.id",
-      labelPairId: inventory.labelPair?.pairId ?? null,
     },
   };
 }
@@ -3363,8 +3419,8 @@ export async function createAiGraderCardFromReportRuntime(input: {
         }),
       ]);
       const sessionId = optionalString(existingSession?.id ?? existingReport?.sessionId);
-      if (!sessionId) throw new Error("AI Grader session could not be resolved for label sheet assignment.");
-      const downstream = await queueConfirmedAiGraderLabelTx({
+      if (!sessionId) throw new Error("AI Grader session could not be resolved for confirmed card linkage.");
+      const downstream = await linkConfirmedAiGraderCardTx({
         tx,
         tenantId: input.tenantId,
         sessionId,
@@ -3380,7 +3436,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
       return { ...existing, downstream };
     }
 
-    const owner = await resolveInventoryReadyOwner(tx, input.env ?? process.env);
+    const owner = await resolveAiGraderItemOwner(tx, input.env ?? process.env);
     const now = new Date();
     const classification = classificationFromIdentity(input.identity);
     const title = identityTitle(input.identity) || stringValue(input.reportBundle.cardIdentity?.title, `AI Grader ${reportId}`);
@@ -3405,11 +3461,9 @@ export async function createAiGraderCardFromReportRuntime(input: {
         notes: `Created from AI Grader report ${reportId}`,
         uploadedById: operatorUserId,
         totalCount: 1,
-        processedCount: 1,
-        status: "READY",
-        stage: "INVENTORY_READY",
+        processedCount: 0,
+        status: "UPLOADING",
         tags: ["ai-grader", "new-card-intake"],
-        stageChangedAt: now,
       },
     });
 
@@ -3452,20 +3506,20 @@ export async function createAiGraderCardFromReportRuntime(input: {
       },
     });
 
-    const inventory = await ensureInventoryReadyArtifactsTx(tx, card.id, operatorUserId, {
+    const itemLinkage = await ensureCardItemOwnershipTx(tx, card.id, {
       env: input.env ?? process.env,
       owner,
     });
     const cardIdentity = cardIdentityResult({
       cardAssetId: card.id,
-      itemId: inventory.itemId,
+      itemId: itemLinkage.itemId,
       title,
       set,
       identity: input.identity,
       details: classification,
       imageUrl: publicImageUrl,
     });
-    const linkedRelease = linkedProductionRelease(input.productionRelease, card.id, inventory.itemId, cardIdentity);
+    const linkedRelease = linkedProductionRelease(input.productionRelease, card.id, itemLinkage.itemId, cardIdentity);
     const linkedIdentity = {
       ...input.identity,
       ...cardIdentity,
@@ -3481,7 +3535,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
         reportId,
         operatorUserId,
         cardAssetId: card.id,
-        itemId: inventory.itemId,
+        itemId: itemLinkage.itemId,
         status: "card_created",
         cardIdentity: jsonInput(linkedIdentity),
         updatedAt: now,
@@ -3492,7 +3546,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
         reportId,
         operatorUserId,
         cardAssetId: card.id,
-        itemId: inventory.itemId,
+        itemId: itemLinkage.itemId,
         status: "card_created",
         source: "browser_station",
         cardIdentity: jsonInput(linkedIdentity),
@@ -3500,7 +3554,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
         updatedAt: now,
       },
     });
-    const downstream = await queueConfirmedAiGraderLabelTx({
+    const downstream = await linkConfirmedAiGraderCardTx({
       tx,
       tenantId: input.tenantId,
       sessionId: stringValue(aiGraderSession.id, ""),
@@ -3510,7 +3564,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
       productionRelease: linkedRelease,
       confirmedIdentity: input.identity,
       cardAssetId: card.id,
-      itemId: inventory.itemId,
+      itemId: itemLinkage.itemId,
       operatorUserId,
       now,
     });
@@ -3518,16 +3572,15 @@ export async function createAiGraderCardFromReportRuntime(input: {
     return {
       reportId,
       cardAssetId: card.id,
-      itemId: inventory.itemId,
+      itemId: itemLinkage.itemId,
       batchId: batch.id,
       title,
       set,
       publicImageUrl,
       cardIdentity,
       productionRelease: linkedRelease,
-      inventoryReady: {
+      itemLinkage: {
         itemNumberConvention: "Item.number = CardAsset.id",
-        labelPairId: inventory.labelPair?.pairId ?? null,
       },
       downstream,
     };
@@ -4063,6 +4116,8 @@ export async function addAiGraderCardToInventoryRuntime(input: {
   reportId: string;
   operatorUserId?: string | null;
   actorAudit?: AiGraderProductionActorAudit | null;
+  dbClient?: any;
+  env?: EnvLike;
 }): Promise<AiGraderAddToInventoryResult> {
   if (!input.operatorUserId) {
     const error = new Error("A human operator session is required to move an AI Grader card into inventory.");
@@ -4071,7 +4126,7 @@ export async function addAiGraderCardToInventoryRuntime(input: {
   }
   const operatorUserId = input.operatorUserId;
   const { prisma } = await import("@tenkings/database");
-  const db = prisma as any;
+  const db = input.dbClient ?? (prisma as any);
   return db.$transaction(async (tx: any) => {
     if (typeof tx.$queryRaw !== "function") {
       throw new Error("AI Grader inventory transaction locking is unavailable.");
@@ -4097,7 +4152,10 @@ export async function addAiGraderCardToInventoryRuntime(input: {
       (error as Error & { statusCode?: number }).statusCode = 400;
       throw error;
     }
-    const inventory = await ensureInventoryReadyArtifactsTx(tx, cardAssetId, operatorUserId);
+    const inventory = await ensureInventoryReadyArtifactsTx(tx, cardAssetId, operatorUserId, {
+      env: input.env ?? process.env,
+      expectedItemId: readiness.itemId,
+    });
     const now = new Date();
     await tx.cardAsset.update({
       where: { id: cardAssetId },

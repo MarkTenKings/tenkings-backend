@@ -39,16 +39,19 @@ import {
   AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV,
   assertAiGraderConfirmCardReady,
   assertAiGraderStorageArtifactIntegrity,
+  addAiGraderCardToInventoryRuntime,
   buildAiGraderFinishCardsQueueResult,
   buildAiGraderProductionHistoryResult,
   createAiGraderProductionApiHandler,
   createAiGraderCardFromReportRuntime,
   createAiGraderPublicReportApiHandler,
   persistAiGraderCompsRuntime,
+  persistProductionReleaseRuntime,
   persistAiGraderSelectedCompsRuntime,
   sanitizeAiGraderUploadHeadersForResponse,
   validateAiGraderInventoryReadiness,
 } from "../lib/server/aiGraderProductionApi";
+import { completePublishedAiGraderCardTx } from "../lib/server/aiGraderLabelSheetRuntime";
 import {
   AI_GRADER_OPERATOR_USER_IDS_ENV,
   AI_GRADER_SERVICE_ACCOUNT_ID_ENV,
@@ -1607,6 +1610,15 @@ test("production publish finalize verifies upload manifest and persists DB recor
         evidenceAssetCount: input.storagePlan.artifacts.length,
         cardAssetUpdatedCount: 0,
         itemUpdatedCount: 0,
+        labelSheetAssignment: {
+          sheetId: "ai-grader-label-sheet-000001",
+          sheetNumber: 1,
+          slot: 1,
+          capacity: 16,
+          status: "open",
+          assignedAt: "2026-07-12T12:00:00.000Z",
+          existing: false,
+        },
       } as any;
     },
   });
@@ -1664,11 +1676,20 @@ test("production publish finalize verifies upload manifest and persists DB recor
   assert.equal(persistedReportBundle?.ocrPrefill?.inventoryMutationPerformed, false);
   assert.equal(persistedReportBundle?.ocrPrefill?.publishMutationPerformed, false);
   assert.equal(persistedReportBundle?.ocrPrefill?.fields?.playerName?.reviewRequired, false);
-  const body = res.jsonBody as { ok: boolean; result: { uploadedAssetCount: number; evidenceAssetCount: number; storageKeyPrefix: string } };
+  const body = res.jsonBody as { ok: boolean; result: { uploadedAssetCount: number; evidenceAssetCount: number; storageKeyPrefix: string; labelSheetAssignment: { sheetNumber: number; slot: number } } };
   assert.equal(body.ok, true);
   assert.equal(body.result.uploadedAssetCount, uploadManifest?.artifacts.length);
   assert.equal(body.result.evidenceAssetCount, uploadManifest?.artifacts.length);
   assert.equal(body.result.storageKeyPrefix, "ai-grader/reports/sample-final-v0/");
+  assert.deepEqual(body.result.labelSheetAssignment, {
+    sheetNumber: 1,
+    slot: 1,
+    capacity: 16,
+    status: "open",
+    existing: false,
+  });
+  assert.equal("sheetId" in body.result.labelSheetAssignment, false);
+  assert.equal("assignedAt" in body.result.labelSheetAssignment, false);
   assert.equal(verifiedArtifacts.length, uploadManifest?.artifacts.length);
   assert.equal(verifiedArtifacts.every((artifact) => /^[a-f0-9]{64}$/.test(artifact.checksumSha256)), true);
   assert.equal(verifiedArtifacts.every((artifact) => artifact.byteSize > 0), true);
@@ -2688,9 +2709,12 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
   const inventoryOwnerFound = options.inventoryOwnerFound ?? true;
   let createdCard: any = null;
   let createdItem: any = null;
+  let itemOwnershipRow: any = null;
   let aiGraderSessionRow: any = null;
   let aiGraderReportRow: any = null;
   let aiGraderValuationRow: any = null;
+  let inventoryLabelRow: any = null;
+  let slabbedAssets: any[] = [];
   const cardQr = {
     id: "qr-card-1",
     code: "tkc_testcard",
@@ -2785,6 +2809,10 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
         record("aiGraderLabel", "upsert", args);
         return { id: "ai-grader-label-1", ...args.create, ...args.update };
       },
+      async findFirst(args: any) {
+        record("aiGraderLabel", "findFirst", args);
+        return inventoryLabelRow;
+      },
     },
     aiGraderValuation: {
       async findUnique(args: any) {
@@ -2802,6 +2830,16 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
           ? { ...aiGraderValuationRow, ...args.update }
           : { ...args.create };
         return aiGraderValuationRow;
+      },
+      async findFirst(args: any) {
+        record("aiGraderValuation", "findFirst", args);
+        return aiGraderValuationRow?.status === "completed" ? aiGraderValuationRow : null;
+      },
+    },
+    aiGraderEvidenceAsset: {
+      async findMany(args: any) {
+        record("aiGraderEvidenceAsset", "findMany", args);
+        return slabbedAssets;
       },
     },
     cardBatch: {
@@ -2821,6 +2859,7 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
         if (!createdCard || args?.where?.id !== createdCard.id) return null;
         return {
           id: createdCard.id,
+          batchId: createdCard.batchId,
           fileName: createdCard.fileName,
           imageUrl: createdCard.imageUrl,
           thumbnailUrl: createdCard.thumbnailUrl,
@@ -2830,8 +2869,13 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
           resolvedPlayerName: createdCard.resolvedPlayerName,
           classificationJson: createdCard.classificationJson,
           ocrJson: null,
-          valuationMinor: null,
+          valuationMinor: createdCard.valuationMinor ?? null,
         };
+      },
+      async update(args: any) {
+        record("cardAsset", "update", args);
+        createdCard = { ...createdCard, ...args.data };
+        return createdCard;
       },
     },
     cardPhoto: {
@@ -2853,7 +2897,7 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
       async findUnique(args: any) {
         record("item", "findUnique", args);
         if (args?.where?.id === "item-1") {
-          return { id: "item-1", cardQrCodeId: createdItem?.cardQrCodeId ?? null };
+          return createdItem;
         }
         return null;
       },
@@ -2864,9 +2908,14 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
       },
     },
     itemOwnership: {
+      async findFirst(args: any) {
+        record("itemOwnership", "findFirst", args);
+        return itemOwnershipRow;
+      },
       async create(args: any) {
         record("itemOwnership", "create", args);
-        return { id: "ownership-1", ...args.data };
+        itemOwnershipRow = { id: "ownership-1", ...args.data };
+        return itemOwnershipRow;
       },
     },
     qrCode: {
@@ -2900,7 +2949,7 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
       },
       async findFirst(args: any) {
         record("packLabel", "findFirst", args);
-        return null;
+        return label.itemId && args?.where?.cardQrCodeId === label.cardQrCodeId ? label : null;
       },
       async findUnique(args: any) {
         record("packLabel", "findUnique", args);
@@ -2929,6 +2978,22 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
           resultSummary: { workflowStatus: status },
         };
       }
+    },
+    markInventoryReadyPrerequisites() {
+      if (!aiGraderReportRow || !createdCard || !createdItem) throw new Error("Confirm must run before inventory readiness is seeded.");
+      aiGraderReportRow = { ...aiGraderReportRow, publicationStatus: "published" };
+      inventoryLabelRow = { id: "grading-label-1", physicalPrintStatus: "printed" };
+      slabbedAssets = [
+        { id: "slab-front", side: "front", storageKey: "private/slab-front.jpg", publicUrl: "https://cdn.tenkings.test/slab-front.jpg", byteSize: 10 },
+        { id: "slab-back", side: "back", storageKey: "private/slab-back.jpg", publicUrl: "https://cdn.tenkings.test/slab-back.jpg", byteSize: 11 },
+      ];
+      aiGraderValuationRow = {
+        ...(aiGraderValuationRow ?? {}),
+        id: "ai-grader-valuation:sample-final-v0",
+        status: "completed",
+        valuationMinor: 12345,
+      };
+      createdCard = { ...createdCard, valuationMinor: 12345 };
     },
   };
 }
@@ -2961,7 +3026,7 @@ function storagePlanForConfirmCardRuntime() {
   };
 }
 
-test("create-card-from-report runtime creates an operator-owned inventory Item without email owner env", async () => {
+test("create-card-from-report runtime creates only pending CardAsset, Item ownership, draft linkage, and comps handoff", async () => {
   const { db, calls } = createConfirmCardRuntimeDb();
   const { reportBundle, productionRelease, storagePlan } = storagePlanForConfirmCardRuntime();
 
@@ -3014,8 +3079,10 @@ test("create-card-from-report runtime creates an operator-owned inventory Item w
   assert.equal(result.itemId, "item-1");
   assert.equal(retryResult.cardAssetId, result.cardAssetId);
   assert.equal(retryResult.itemId, result.itemId);
-  assert.equal(result.downstream?.sheetNumber, 1);
-  assert.equal(result.downstream?.slot, 1);
+  assert.equal("inventoryReady" in result, false);
+  assert.deepEqual(result.itemLinkage, { itemNumberConvention: "Item.number = CardAsset.id" });
+  assert.equal(result.downstream ? "sheetNumber" in result.downstream : false, false);
+  assert.equal(result.downstream ? "slot" in result.downstream : false, false);
   assert.equal(result.downstream?.comps.status, "queued");
   const ownerLookup = calls.find((call) => call.delegate === "user" && call.method === "findUnique");
   assert.deepEqual(ownerLookup?.args.where, { id: "operator-owner-1" });
@@ -3025,8 +3092,14 @@ test("create-card-from-report runtime creates an operator-owned inventory Item w
   assert.equal(itemCreate?.args.data.number, "card-asset-1");
   const itemOwnershipCreate = calls.find((call) => call.delegate === "itemOwnership" && call.method === "create");
   assert.equal(itemOwnershipCreate?.args.data.ownerId, "operator-owner-1");
+  assert.match(itemOwnershipCreate?.args.data.note, /confirmed AI Grader card asset/);
+  assert.equal(itemOwnershipCreate?.args.data.note.includes("Inventory Ready"), false);
   const batchCreate = calls.find((call) => call.delegate === "cardBatch" && call.method === "create");
   assert.equal(batchCreate?.args.data.uploadedById, "operator-user-1");
+  assert.equal(batchCreate?.args.data.status, "UPLOADING");
+  assert.equal(batchCreate?.args.data.processedCount, 0);
+  assert.equal("stage" in batchCreate?.args.data, false);
+  assert.equal("stageChangedAt" in batchCreate?.args.data, false);
   const cardCreate = calls.find((call) => call.delegate === "cardAsset" && call.method === "create");
   assert.equal(cardCreate?.args.data.status, "UPLOADING");
   assert.equal(cardCreate?.args.data.imageUrl, "");
@@ -3041,16 +3114,16 @@ test("create-card-from-report runtime creates an operator-owned inventory Item w
   const sessionUpsert = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "upsert");
   assert.equal(sessionUpsert?.args.create.operatorUserId, "operator-user-1");
   assert.equal(calls.some((call) => call.delegate === "$queryRaw"), true);
-  assert.equal(calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "upsert"), true);
-  const labelUpsert = calls.find((call) => call.delegate === "aiGraderLabel" && call.method === "upsert");
-  assert.equal(labelUpsert?.args.create.certId, productionRelease.label?.certId);
-  assert.equal(labelUpsert?.args.create.labelGradeText, productionRelease.label?.labelGradeText);
-  assert.equal(labelUpsert?.args.create.publicReportUrl, productionRelease.label?.publicReportUrl);
-  assert.equal(labelUpsert?.args.create.qrPayloadUrl, productionRelease.label?.qrPayloadUrl);
+  assert.equal(productionRelease.labelDataGenerated, true);
+  assert.equal(productionRelease.qrPayloadGenerated, true);
+  assert.equal(calls.some((call) => call.delegate === "aiGraderLabel"), false);
+  assert.equal(calls.some((call) => call.delegate === "qrCode"), false);
+  assert.equal(calls.some((call) => call.delegate === "packLabel"), false);
   assert.equal(calls.some((call) => call.delegate === "aiGraderValuation" && call.method === "create"), true);
   assert.equal(calls.some((call) => call.delegate === "$transaction" && call.method === "$transaction"), true);
   assert.equal(calls.filter((call) => call.delegate === "cardAsset" && call.method === "create").length, 1);
   assert.equal(calls.filter((call) => call.delegate === "item" && call.method === "create").length, 1);
+  assert.equal(calls.filter((call) => call.delegate === "itemOwnership" && call.method === "create").length, 1);
   assert.equal(calls.filter((call) => call.delegate === "aiGraderValuation" && call.method === "create").length, 1);
 });
 
@@ -3161,11 +3234,7 @@ test("current producer OCR failure composes with authoritative manual Confirm an
     confirmationPending: false,
   }), true);
 
-  const verifiedRelease = {
-    ...buildSampleAiGraderProductionRelease(currentBundle as any),
-    labelDataGenerated: false,
-    qrPayloadGenerated: false,
-  };
+  const verifiedRelease = buildSampleAiGraderProductionRelease(currentBundle as any);
   const staleRelease = {
     ...verifiedRelease,
     operatorFinalization: { ...verifiedRelease.operatorFinalization, operatorId: "stale-browser-operator" },
@@ -3212,8 +3281,10 @@ test("current producer OCR failure composes with authoritative manual Confirm an
   assert.equal(first.downstream?.comps.status, "queued");
   assert.equal(first.downstream?.comps.shouldStart, true);
   assert.equal(retry.downstream?.comps.shouldStart, true);
-  assert.equal(first.downstream?.sheetNumber, undefined);
-  assert.equal(calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "upsert"), false);
+  assert.equal(first.downstream ? "sheetNumber" in first.downstream : false, false);
+  assert.equal(calls.some((call) => call.delegate === "aiGraderLabel"), false);
+  assert.equal(calls.some((call) => call.delegate === "qrCode"), false);
+  assert.equal(calls.some((call) => call.delegate === "packLabel"), false);
   assert.equal(calls.filter((call) => call.delegate === "cardAsset" && call.method === "create").length, 1);
   assert.equal(calls.filter((call) => call.delegate === "item" && call.method === "create").length, 1);
   assert.equal(calls.filter((call) => call.delegate === "aiGraderValuation" && call.method === "create").length, 1);
@@ -3283,6 +3354,363 @@ test("current producer OCR failure composes with authoritative manual Confirm an
   assert.equal(calls.filter((call) => call.delegate === "aiGraderValuation" && call.method === "create").length, 1);
 });
 
+function createPublishedCardTransitionTx(input: {
+  reportBundle: any;
+  productionRelease: any;
+  publicationStatus?: "draft" | "published";
+}) {
+  const calls: ConfirmCardDbCall[] = [];
+  let publicationStatus = input.publicationStatus ?? "published";
+  let failNextBatchPromotion = false;
+  const reportId = input.reportBundle.reportId;
+  const gradingSessionId = input.reportBundle.gradingSessionId;
+  const certId = input.productionRelease.label.certId;
+  let batch = { id: "batch-1", status: "UPLOADING", totalCount: 1, processedCount: 0 };
+  let labelRow: any = {
+    id: "grading-label-1",
+    reportId: "report-row-1",
+    certId,
+    labelStatus: "label_data_ready",
+    certificateStatus: input.productionRelease.label.certificateStatus,
+    labelGradeText: input.productionRelease.label.labelGradeText,
+    publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/test",
+    qrPayloadUrl: "https://collect.tenkings.co/ai-grader/reports/test",
+    physicalPrintStatus: "not_printed",
+    payload: { ...input.productionRelease.label },
+    createdAt: new Date("2026-07-12T12:00:00.000Z"),
+    updatedAt: new Date("2026-07-12T12:00:00.000Z"),
+    report: { reportId, publicationStatus },
+  };
+  const record = (delegate: string, method: string, args?: any) => calls.push({ delegate, method, args });
+  const tx: any = {
+    async $queryRaw(...args: any[]) {
+      record("$queryRaw", "$queryRaw", args);
+      return [{ pg_advisory_xact_lock: null }];
+    },
+    aiGraderSession: {
+      async findUnique(args: any) {
+        record("aiGraderSession", "findUnique", args);
+        return {
+          id: "session-row-1",
+          reportId,
+          cardAssetId: "card-asset-1",
+          itemId: "item-1",
+          status: publicationStatus,
+        };
+      },
+    },
+    aiGraderReport: {
+      async findUnique(args: any) {
+        record("aiGraderReport", "findUnique", args);
+        return {
+          id: "report-row-1",
+          tenantId: "tenant-1",
+          sessionId: "session-row-1",
+          reportId,
+          publicationStatus,
+          cardAssetId: "card-asset-1",
+          itemId: "item-1",
+        };
+      },
+    },
+    aiGraderPublication: {
+      async findUnique(args: any) {
+        record("aiGraderPublication", "findUnique", args);
+        return { status: publicationStatus };
+      },
+    },
+    cardAsset: {
+      async findUnique(args: any) {
+        record("cardAsset", "findUnique", args);
+        return {
+          id: "card-asset-1",
+          batchId: batch.id,
+          status: publicationStatus === "published" ? "READY" : "UPLOADING",
+          imageUrl: publicationStatus === "published" ? "https://cdn.tenkings.test/published/front.png" : "",
+        };
+      },
+    },
+    item: {
+      async findUnique(args: any) {
+        record("item", "findUnique", args);
+        return {
+          id: "item-1",
+          imageUrl: publicationStatus === "published" ? "https://cdn.tenkings.test/published/front.png" : "",
+        };
+      },
+    },
+    aiGraderLabel: {
+      async findMany(args: any) {
+        record("aiGraderLabel", "findMany", args);
+        return [{ ...labelRow, report: { reportId, publicationStatus } }];
+      },
+      async update(args: any) {
+        record("aiGraderLabel", "update", args);
+        labelRow = { ...labelRow, ...args.data };
+        return labelRow;
+      },
+    },
+    cardBatch: {
+      async findUnique(args: any) {
+        record("cardBatch", "findUnique", args);
+        return args.where.id === batch.id ? batch : null;
+      },
+      async updateMany(args: any) {
+        record("cardBatch", "updateMany", args);
+        if (failNextBatchPromotion) {
+          failNextBatchPromotion = false;
+          return { count: 0 };
+        }
+        if (args.where.id !== batch.id) return { count: 0 };
+        batch = { ...batch, ...args.data };
+        return { count: 1 };
+      },
+    },
+  };
+  const db = {
+    ...tx,
+    async $transaction(callback: (tx: any) => Promise<unknown>) {
+      record("$transaction", "$transaction");
+      const batchBefore = { ...batch };
+      const labelBefore = {
+        ...labelRow,
+        payload: JSON.parse(JSON.stringify(labelRow.payload)),
+      };
+      try {
+        return await callback(tx);
+      } catch (error) {
+        batch = batchBefore;
+        labelRow = labelBefore;
+        throw error;
+      }
+    },
+  };
+  return {
+    tx,
+    db,
+    calls,
+    getBatch: () => batch,
+    getLabel: () => labelRow,
+    getPublishedCard: () => ({
+      status: publicationStatus === "published" ? "READY" : "UPLOADING",
+      imageUrl: publicationStatus === "published" ? "https://cdn.tenkings.test/published/front.png" : "",
+    }),
+    markPublished() {
+      publicationStatus = "published";
+      labelRow = { ...labelRow, report: { reportId, publicationStatus } };
+    },
+    failNextBatchPromotion() {
+      failNextBatchPromotion = true;
+    },
+    input: {
+      tx,
+      tenantId: "tenant-1",
+      gradingSessionId,
+      reportId,
+      productionRelease: input.productionRelease,
+      confirmedIdentity: validConfirmedSportIdentity(),
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+      operatorUserId: "operator-user-1",
+    },
+  };
+}
+
+test("verified Publish promotes the batch and assigns one grading-label slot, with retry repairing partial state idempotently", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease });
+
+  assert.equal((state.getLabel().payload as any).labelSheet, undefined);
+  const first = await completePublishedAiGraderCardTx(state.input);
+  const retry = await completePublishedAiGraderCardTx(state.input);
+
+  assert.equal(first.sheetNumber, 1);
+  assert.equal(first.slot, 1);
+  assert.equal(first.existing, false);
+  assert.equal(retry.sheetId, first.sheetId);
+  assert.equal(retry.slot, first.slot);
+  assert.equal(retry.existing, true);
+  assert.deepEqual(state.getBatch(), { id: "batch-1", status: "READY", totalCount: 1, processedCount: 1 });
+  assert.equal((state.getLabel().payload as any).labelSheet.slot, 1);
+  assert.equal(state.calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "upsert"), false);
+  assert.equal(state.calls.some((call) => call.delegate === "qrCode" || call.delegate === "packLabel"), false);
+});
+
+test("Publish runtime composes durable hosted promotion with retryable batch and grading-label assignment", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease, publicationStatus: "draft" });
+  const storagePlan = {
+    storageKeyPrefix: "ai-grader/reports/composed-publish/",
+    publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/composed-publish",
+    qrPayloadUrl: "https://collect.tenkings.co/ai-grader/reports/composed-publish",
+    artifacts: [],
+    assetManifest: [],
+    publicReportBundle: {},
+  } as any;
+  let persistCalls = 0;
+  const persistRelease = async (_db: any, persistedInput: any) => {
+    persistCalls += 1;
+    assert.equal(persistedInput.publicationStatus, "published");
+    state.markPublished();
+    return {
+      gradingSessionId: reportBundle.gradingSessionId,
+      reportId: reportBundle.reportId,
+      publicationStatus: "published" as const,
+      session: {},
+      report: {},
+      grade: {},
+      label: {},
+      publication: {},
+      valuation: {},
+      evidenceAssetCount: 0,
+      cardAssetUpdatedCount: 1,
+      itemUpdatedCount: 1,
+      storagePlan,
+    };
+  };
+  const runtimeInput = {
+    tenantId: "tenant-1",
+    reportBundle,
+    productionRelease,
+    storagePlan,
+    publicationStatus: "published" as const,
+    operatorUserId: "operator-user-1",
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    dbClient: state.db,
+    persistRelease: persistRelease as any,
+  };
+
+  assert.equal((state.getLabel().payload as any).labelSheet, undefined);
+  state.failNextBatchPromotion();
+  await assert.rejects(
+    () => persistProductionReleaseRuntime(runtimeInput),
+    /could not promote the linked CardBatch/
+  );
+  assert.deepEqual(state.getPublishedCard(), {
+    status: "READY",
+    imageUrl: "https://cdn.tenkings.test/published/front.png",
+  });
+  assert.equal((state.getLabel().payload as any).labelSheet, undefined);
+  assert.equal(state.getBatch().status, "UPLOADING");
+  assert.equal(state.getBatch().processedCount, 0);
+
+  const retry = await persistProductionReleaseRuntime(runtimeInput);
+  assert.equal(persistCalls, 2);
+  assert.equal(retry.labelSheetAssignment?.slot, 1);
+  assert.equal((state.getLabel().payload as any).labelSheet.slot, 1);
+  assert.equal(state.getBatch().status, "READY");
+  assert.equal(state.getBatch().processedCount, 1);
+  assert.equal(state.calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "upsert"), false);
+  assert.equal(state.calls.some((call) => call.delegate === "qrCode" || call.delegate === "packLabel"), false);
+});
+
+test("scoped service-account Publish can assign the grading-label slot without inventing a human assignee", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease, publicationStatus: "draft" });
+  const storagePlan = {
+    storageKeyPrefix: "ai-grader/reports/service-publish/",
+    publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/service-publish",
+    qrPayloadUrl: "https://collect.tenkings.co/ai-grader/reports/service-publish",
+    artifacts: [],
+    assetManifest: [],
+    publicReportBundle: {},
+  } as any;
+  const result = await persistProductionReleaseRuntime({
+    tenantId: "tenant-1",
+    reportBundle,
+    productionRelease,
+    storagePlan,
+    publicationStatus: "published",
+    operatorUserId: null,
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    actorAudit: {
+      actorType: "service_account",
+      action: "publish",
+      requestedAt: "2026-07-12T12:00:00.000Z",
+      serviceAccountId: "ai-grader-publisher",
+      role: "ai_grader_service",
+    },
+    dbClient: state.db,
+    persistRelease: (async () => {
+      state.markPublished();
+      return {
+        gradingSessionId: reportBundle.gradingSessionId,
+        reportId: reportBundle.reportId,
+        publicationStatus: "published",
+        session: {},
+        report: {},
+        grade: {},
+        label: {},
+        publication: {},
+        valuation: {},
+        evidenceAssetCount: 0,
+        cardAssetUpdatedCount: 1,
+        itemUpdatedCount: 1,
+        storagePlan,
+      };
+    }) as any,
+  });
+  assert.equal(result.labelSheetAssignment?.slot, 1);
+  assert.equal("assignedByUserId" in (state.getLabel().payload as any).labelSheet, false);
+});
+
+test("failed or non-durable Publish cannot assign a grading-label slot or promote the batch", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease, publicationStatus: "draft" });
+
+  await assert.rejects(
+    () => completePublishedAiGraderCardTx(state.input),
+    /durably published before assigning/
+  );
+  assert.deepEqual(state.getBatch(), { id: "batch-1", status: "UPLOADING", totalCount: 1, processedCount: 0 });
+  assert.equal((state.getLabel().payload as any).labelSheet, undefined);
+  assert.equal(state.calls.some((call) => call.delegate === "aiGraderLabel"), false);
+  assert.equal(state.calls.some((call) => call.delegate === "cardBatch"), false);
+  assert.equal(state.calls.some((call) => call.delegate === "qrCode" || call.delegate === "packLabel"), false);
+});
+
+test("Add to Inventory exclusively creates one inventory QR and PackLabel pair and remains idempotent", async () => {
+  const state = createConfirmCardRuntimeDb();
+  const { reportBundle, productionRelease, storagePlan } = storagePlanForConfirmCardRuntime();
+  await createAiGraderCardFromReportRuntime({
+    tenantId: "tenant-1",
+    reportBundle,
+    productionRelease,
+    storagePlan,
+    identity: validConfirmedSportIdentity(),
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+    env: { OPERATOR_USER_ID: "operator-owner-1" },
+  });
+  assert.equal(state.calls.some((call) => call.delegate === "qrCode" || call.delegate === "packLabel"), false);
+  state.markInventoryReadyPrerequisites();
+
+  const add = () => addAiGraderCardToInventoryRuntime({
+    tenantId: "tenant-1",
+    reportId: reportBundle.reportId,
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+    env: { OPERATOR_USER_ID: "operator-owner-1" },
+  });
+  const first = await add();
+  const retry = await add();
+
+  assert.equal(first.reviewStage, "INVENTORY_READY_FOR_SALE");
+  assert.equal(first.labelPairId, retry.labelPairId);
+  assert.equal(state.calls.filter((call) => call.delegate === "qrCode" && call.method === "create").length, 2);
+  assert.equal(state.calls.filter((call) => call.delegate === "packLabel" && call.method === "create").length, 1);
+  assert.equal(state.calls.filter((call) => call.delegate === "item" && call.method === "create").length, 1);
+  assert.equal(state.calls.filter((call) => call.delegate === "itemOwnership" && call.method === "create").length, 1);
+  assert.equal(
+    state.calls.filter(
+      (call) => call.delegate === "cardAsset" && call.method === "update" && call.args.data.reviewStage === "INVENTORY_READY_FOR_SALE"
+    ).length,
+    2
+  );
+});
+
 test("create-card-from-report runtime fails before card rows when OPERATOR_USER_ID is missing", async () => {
   const { db, calls } = createConfirmCardRuntimeDb();
   const { reportBundle, productionRelease, storagePlan } = storagePlanForConfirmCardRuntime();
@@ -3299,7 +3727,7 @@ test("create-card-from-report runtime fails before card rows when OPERATOR_USER_
         dbClient: db,
         env: {},
       }),
-    /OPERATOR_USER_ID must be configured for AI Grader inventory ownership/
+    /OPERATOR_USER_ID must be configured for AI Grader item ownership/
   );
 
   assert.equal(calls.some((call) => call.delegate === "cardBatch" && call.method === "create"), false);
@@ -3390,9 +3818,8 @@ test("create-card-from-report action sends small storage-backed metadata and ret
             note: "linked",
           },
         },
-        inventoryReady: {
+        itemLinkage: {
           itemNumberConvention: "Item.number = CardAsset.id",
-          labelPairId: "TKPAIR",
         },
       };
     },

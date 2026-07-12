@@ -2416,17 +2416,8 @@ export default function AiGraderStationPage() {
         downstreamComps.status === "failed"
           ? downstreamComps.status
           : "queued";
-      const assignedSheet =
-        typeof downstream.sheetNumber === "number" && typeof downstream.slot === "number"
-          ? {
-              sheetNumber: downstream.sheetNumber,
-              slot: downstream.slot,
-              capacity: typeof downstream.capacity === "number" ? downstream.capacity : 16,
-            }
-          : undefined;
       setConfirmedDownstream({
         reportId: result.reportId,
-        labelSheet: assignedSheet,
         comps: {
           status: downstreamCompsStatus,
           message:
@@ -2806,8 +2797,15 @@ export default function AiGraderStationPage() {
         return;
       }
       const publishedReportId = finalizePayload.result.reportId;
-      if (!publishedReportId || !finalizePayload.result.publicReportUrl || !finalizePayload.result.labelPreviewUrl) {
-        throw new Error("Publish finalize response did not include reportId, publicReportUrl, and labelPreviewUrl.");
+      const publishedLabelSheet = finalizePayload.result.labelSheetAssignment;
+      if (
+        !publishedReportId ||
+        !finalizePayload.result.publicReportUrl ||
+        !finalizePayload.result.labelPreviewUrl ||
+        typeof publishedLabelSheet?.sheetNumber !== "number" ||
+        typeof publishedLabelSheet?.slot !== "number"
+      ) {
+        throw new Error("Publish finalize response did not include the report, label preview, and grading-label assignment.");
       }
       setProductionPublish((current) => ({ ...current, status: "pending", message: "Verifying public report route and storage-backed images." }));
       const publicVerification = await verifyPublishedReportRoute(publishedReportId);
@@ -2822,6 +2820,15 @@ export default function AiGraderStationPage() {
         uploadedAssetCount: finalizePayload.result.uploadedAssetCount,
         evidenceAssetCount: finalizePayload.result.evidenceAssetCount,
       });
+      setConfirmedDownstream((current) => ({
+        ...current,
+        reportId: publishedReportId,
+        labelSheet: {
+          sheetNumber: publishedLabelSheet.sheetNumber,
+          slot: publishedLabelSheet.slot,
+          capacity: typeof publishedLabelSheet.capacity === "number" ? publishedLabelSheet.capacity : 16,
+        },
+      }));
       const activeRapidQueueItem = latestStatus.rapidCaptureQueue.items.find(
         (item) => item.queueItemId === latestStatus.rapidCaptureQueue.activeQueueItemId && item.reportId === publishedReportId
       );
