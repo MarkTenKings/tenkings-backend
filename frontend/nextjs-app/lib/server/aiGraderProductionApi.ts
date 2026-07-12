@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import type {
+  AiGraderConfirmCardReferencePlan,
   AiGraderCardItemSelection,
   AiGraderProductionArtifactPlan,
   AiGraderProductionPersistResult,
@@ -11,11 +12,11 @@ import type {
 } from "@tenkings/database";
 import {
   aiGraderSha256,
+  buildAiGraderConfirmCardReferencePlan,
   buildAiGraderCompsSearchQuery,
   buildAiGraderProductionStoragePlan,
   CardAssetStatus,
   CardEvidenceKind,
-  CardPhotoKind,
   CardReviewStage,
   computeAiGraderValuationStatus,
   normalizeAiGraderPublicCaptureTiming,
@@ -69,6 +70,7 @@ import {
   AiGraderOcrFailure,
   isAiGraderOcrFailureCode,
 } from "../aiGraderOcrFailure";
+import { sha256Base64ToHex } from "./storage";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
@@ -129,6 +131,8 @@ export type AiGraderSlabbedPhotoUploadResult = {
   publicUrl: string;
   byteSize: number;
   checksumSha256: string;
+  widthPx: number;
+  heightPx: number;
   persisted: boolean;
 };
 
@@ -198,6 +202,8 @@ export type AiGraderSlabbedPhotoUploadInitResult = {
     checksumSha256: string;
     byteSize: number;
     mimeType: string;
+    widthPx: number;
+    heightPx: number;
   };
 };
 
@@ -300,7 +306,7 @@ export type AiGraderProductionApiDependencies = {
     tenantId: string;
     reportBundle: AiGraderProductionReportBundleLike;
     productionRelease: AiGraderProductionReleaseLike;
-    storagePlan: AiGraderProductionStoragePlan;
+    storagePlan: AiGraderConfirmCardReferencePlan;
     identity: AiGraderConfirmedCardIdentity;
     operatorUserId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
@@ -314,6 +320,8 @@ export type AiGraderProductionApiDependencies = {
     mimeType: string;
     byteSize: number;
     checksumSha256: string;
+    widthPx: number;
+    heightPx: number;
     operatorUserId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderSlabbedPhotoUploadResult>;
@@ -920,11 +928,51 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function sanitizeAiGraderUploadHeadersForResponse(headers: Record<string, string> | undefined) {
-  return Object.fromEntries(Object.entries(headers ?? {}).filter(([name]) => {
+export function sanitizeAiGraderUploadHeadersForResponse(
+  headers: Record<string, string> | undefined,
+  expectedChecksumSha256: string,
+) {
+  const expectedChecksum = expectedChecksumSha256.trim().toLowerCase();
+  const result: Record<string, string> = {};
+  let checksumHeaderCount = 0;
+  let contentTypeHeaderCount = 0;
+  let aclHeaderCount = 0;
+  for (const [name, value] of Object.entries(headers ?? {})) {
     const normalized = name.trim().toLowerCase();
-    return normalized !== "x-amz-meta-sha256" && normalized !== "x-amz-checksum-sha256";
-  }));
+    if (!normalized || normalized === "x-amz-meta-sha256") continue;
+    if (normalized === "x-amz-checksum-sha256") {
+      checksumHeaderCount += 1;
+      if (sha256Base64ToHex(value) !== expectedChecksum) {
+        throw aiGraderPublishBoundaryError(
+          "AI_GRADER_UPLOAD_CHECKSUM_HEADER_INVALID",
+          "AI Grader direct upload checksum header is missing or invalid.",
+        );
+      }
+      result["x-amz-checksum-sha256"] = value.trim();
+      continue;
+    }
+    if (normalized === "content-type") {
+      contentTypeHeaderCount += 1;
+      result["Content-Type"] = String(value);
+      continue;
+    }
+    if (normalized === "x-amz-acl") {
+      aclHeaderCount += 1;
+      result["x-amz-acl"] = String(value);
+    }
+  }
+  if (
+    !/^[a-f0-9]{64}$/.test(expectedChecksum) ||
+    checksumHeaderCount !== 1 ||
+    contentTypeHeaderCount > 1 ||
+    aclHeaderCount > 1
+  ) {
+    throw aiGraderPublishBoundaryError(
+      "AI_GRADER_UPLOAD_CHECKSUM_HEADER_INVALID",
+      "AI Grader direct upload checksum header is missing or invalid.",
+    );
+  }
+  return result;
 }
 
 function artifactForResponse(artifact: AiGraderProductionArtifactPlan, presigned: AiGraderProductionPresignedUpload): AiGraderProductionUploadPlanArtifact {
@@ -942,7 +990,7 @@ function artifactForResponse(artifact: AiGraderProductionArtifactPlan, presigned
     sourceImageHeightPx: artifact.sourceImageHeightPx,
     uploadUrl: presigned.uploadUrl,
     uploadMethod: presigned.uploadMethod,
-    uploadHeaders: sanitizeAiGraderUploadHeadersForResponse(presigned.uploadHeaders),
+    uploadHeaders: sanitizeAiGraderUploadHeadersForResponse(presigned.uploadHeaders, artifact.checksumSha256),
     ...(artifact.artifactClass !== "report_asset" && typeof artifact.body === "string"
       ? { body: artifact.body, bodyEncoding: "utf8" as const }
       : {}),
@@ -972,6 +1020,269 @@ function assertPublishedReleaseReady(input: {
     (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_REPORT_NOT_PUBLISH_READY";
     throw error;
   }
+}
+
+const AI_GRADER_CONFIRM_REQUIRED_PRODUCER_CAPABILITIES = [
+  "finding-validation-v1",
+  "capture-profile-provenance-v1",
+  "raster-dimensions-v1",
+] as const;
+
+function aiGraderConfirmBoundaryError(code: string, message: string) {
+  const error = new Error(message);
+  (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+  (error as Error & { statusCode?: number; code?: string }).code = code;
+  return error;
+}
+
+function safeConfirmGateText(value: unknown, fallback: string) {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.replace(/\s+/g, " ").trim().slice(0, 320);
+  return normalized && !unsafePublishString(normalized) ? normalized : fallback;
+}
+
+function firstFailedConfirmGate(
+  reportBundle: AiGraderProductionReportBundleLike,
+  productionRelease: AiGraderProductionReleaseLike,
+) {
+  const releaseGate = Array.isArray(productionRelease.gates)
+    ? productionRelease.gates.find((entry) => isRecord(entry) && entry.status === "fail")
+    : undefined;
+  if (isRecord(releaseGate)) {
+    return {
+      id: safeConfirmGateText(releaseGate.id, "production_release"),
+      reason: safeConfirmGateText(releaseGate.reason, "The production release gate failed."),
+    };
+  }
+  const provisionalGrade = isRecord(reportBundle.provisionalGrade) ? reportBundle.provisionalGrade : {};
+  const provisionalGates = isRecord(provisionalGrade.gates) ? provisionalGrade.gates : {};
+  const result = Array.isArray(provisionalGates.results)
+    ? provisionalGates.results.find((entry) => isRecord(entry) && entry.status === "fail")
+    : undefined;
+  if (isRecord(result)) {
+    return {
+      id: safeConfirmGateText(result.gate, "source_grade"),
+      reason: safeConfirmGateText(result.summary, "The source grading gate failed."),
+    };
+  }
+  const blocker = Array.isArray(provisionalGates.blockers)
+    ? provisionalGates.blockers.find((entry) => typeof entry === "string")
+    : undefined;
+  if (typeof blocker === "string") {
+    const separator = blocker.indexOf(":");
+    return {
+      id: safeConfirmGateText(separator > 0 ? blocker.slice(0, separator) : "source_grade", "source_grade"),
+      reason: safeConfirmGateText(separator > 0 ? blocker.slice(separator + 1) : blocker, "The source grading gate failed."),
+    };
+  }
+  return undefined;
+}
+
+function assertExplicitOperatorFinalization(
+  productionRelease: AiGraderProductionReleaseLike,
+) {
+  const finalization = isRecord(productionRelease.operatorFinalization)
+    ? productionRelease.operatorFinalization
+    : undefined;
+  const acceptedWarningGateIds = finalization?.acceptedWarningGateIds;
+  if (
+    !finalization ||
+    !optionalString(finalization.operatorId) ||
+    !optionalString(finalization.finalizedAt) ||
+    Number.isNaN(Date.parse(String(finalization.finalizedAt))) ||
+    typeof finalization.warningsAccepted !== "boolean" ||
+    !Array.isArray(acceptedWarningGateIds) ||
+    acceptedWarningGateIds.some((gateId) => typeof gateId !== "string" || !gateId.trim()) ||
+    new Set(acceptedWarningGateIds).size !== acceptedWarningGateIds.length
+  ) {
+    throw aiGraderConfirmBoundaryError(
+      "AI_GRADER_CONFIRM_OPERATOR_FINALIZATION_REQUIRED",
+      "Confirm Card requires an explicit authoritative operator finalization.",
+    );
+  }
+  const gates = Array.isArray(productionRelease.gates) ? productionRelease.gates : [];
+  const gateIds = gates.map((gate) => isRecord(gate) ? optionalString(gate.id) : undefined);
+  const acceptedGateIds = gates
+    .filter((gate) => isRecord(gate) && gate.status === "accepted_warning")
+    .map((gate) => optionalString((gate as JsonRecord).id));
+  if (
+    gates.length === 0 ||
+    gates.some((gate) =>
+      !isRecord(gate) ||
+      !optionalString(gate.id) ||
+      !["pass", "accepted_warning", "fail"].includes(String(gate.status)) ||
+      !optionalString(gate.reason) ||
+      !Array.isArray(gate.evidenceRefs) ||
+      gate.evidenceRefs.length === 0 ||
+      gate.evidenceRefs.length > 64 ||
+      gate.evidenceRefs.some((evidenceRef) =>
+        typeof evidenceRef !== "string" ||
+        !evidenceRef.trim() ||
+        evidenceRef.length > 500
+      )
+    ) ||
+    gateIds.some((gateId) => !gateId) ||
+    new Set(gateIds).size !== gateIds.length ||
+    acceptedGateIds.some((gateId) => !gateId) ||
+    acceptedGateIds.length !== acceptedWarningGateIds.length ||
+    acceptedGateIds.some((gateId) => !acceptedWarningGateIds.includes(gateId)) ||
+    (acceptedGateIds.length > 0 && finalization.warningsAccepted !== true)
+  ) {
+    throw aiGraderConfirmBoundaryError(
+      "AI_GRADER_CONFIRM_RELEASE_GATES_INVALID",
+      "Confirm Card requires complete authoritative production gate evidence.",
+    );
+  }
+}
+
+function assertAuthoritativeConfirmReleaseIdentity(
+  reportBundle: AiGraderProductionReportBundleLike,
+  productionRelease: AiGraderProductionReleaseLike,
+) {
+  const reportId = optionalString(reportBundle.reportId);
+  const gradingSessionId = optionalString(reportBundle.gradingSessionId);
+  const embeddedRelease = isRecord(reportBundle.productionRelease)
+    ? reportBundle.productionRelease
+    : undefined;
+  const embeddedFinalGrade = embeddedRelease && isRecord(embeddedRelease.finalGrade)
+    ? embeddedRelease.finalGrade
+    : {};
+  const submittedFinalGrade = isRecord(productionRelease.finalGrade)
+    ? productionRelease.finalGrade
+    : {};
+  if (
+    !reportId ||
+    !gradingSessionId ||
+    productionRelease.schemaVersion !== "ai-grader-production-release-v0.1" ||
+    optionalString(productionRelease.reportId) !== reportId ||
+    optionalString(productionRelease.gradingSessionId) !== gradingSessionId ||
+    !optionalString(productionRelease.generatedAt) ||
+    !embeddedRelease ||
+    optionalString(embeddedRelease.reportId) !== reportId ||
+    optionalString(embeddedRelease.gradingSessionId) !== gradingSessionId ||
+    optionalString(embeddedRelease.generatedAt) !== optionalString(productionRelease.generatedAt) ||
+    embeddedRelease.finalGradeComputed !== productionRelease.finalGradeComputed ||
+    embeddedFinalGrade.status !== submittedFinalGrade.status ||
+    embeddedFinalGrade.overall !== submittedFinalGrade.overall ||
+    embeddedFinalGrade.finalGradeComputed !== submittedFinalGrade.finalGradeComputed
+  ) {
+    throw aiGraderConfirmBoundaryError(
+      "AI_GRADER_CONFIRM_RELEASE_IDENTITY_MISMATCH",
+      "Confirm Card requires the authoritative release for the same report and grading session.",
+    );
+  }
+  if (stableStringify(embeddedRelease) !== stableStringify(productionRelease)) {
+    throw aiGraderConfirmBoundaryError(
+      "AI_GRADER_CONFIRM_RELEASE_IDENTITY_MISMATCH",
+      "Confirm Card requires the authoritative release exactly as returned with the fetched report bundle.",
+    );
+  }
+  const embeddedFinalization = isRecord(embeddedRelease.operatorFinalization)
+    ? embeddedRelease.operatorFinalization
+    : {};
+  const submittedFinalization = isRecord(productionRelease.operatorFinalization)
+    ? productionRelease.operatorFinalization
+    : {};
+  if (
+    optionalString(embeddedFinalization.operatorId) !== optionalString(submittedFinalization.operatorId) ||
+    optionalString(embeddedFinalization.finalizedAt) !== optionalString(submittedFinalization.finalizedAt)
+  ) {
+    throw aiGraderConfirmBoundaryError(
+      "AI_GRADER_CONFIRM_RELEASE_IDENTITY_MISMATCH",
+      "Confirm Card requires the authoritative release for the same report and grading session.",
+    );
+  }
+}
+
+function assertConfirmNormalizedEvidence(reportBundle: AiGraderProductionReportBundleLike) {
+  const assets = Array.isArray(reportBundle.assets) ? reportBundle.assets : [];
+  const normalized = assets.filter((asset) => isRecord(asset) && asset.evidenceRole === "normalized_card");
+  const normalizedIds = normalized.map((asset) => optionalString((asset as JsonRecord).id));
+  const validAsset = (asset: JsonRecord, side: "front" | "back") => {
+    const checksumSha256 = optionalString(asset.checksumSha256);
+    const sha256 = optionalString(asset.sha256);
+    if (checksumSha256 && sha256 && checksumSha256.toLowerCase() !== sha256.toLowerCase()) return false;
+    const checksum = checksumSha256 ?? sha256;
+    return (
+      asset.side === side &&
+      asset.contentType === "image/png" &&
+      asset.widthPx === 1200 &&
+      asset.heightPx === 1680 &&
+      Boolean(checksum && /^[a-f0-9]{64}$/i.test(checksum)) &&
+      Number.isSafeInteger(asset.byteSize) &&
+      Number(asset.byteSize) > 0 &&
+      Boolean(optionalString(asset.id))
+    );
+  };
+  const front = normalized.filter((asset) => isRecord(asset) && validAsset(asset, "front"));
+  const back = normalized.filter((asset) => isRecord(asset) && validAsset(asset, "back"));
+  if (
+    normalized.length !== 2 ||
+    front.length !== 1 ||
+    back.length !== 1 ||
+    normalizedIds.some((id) => !id) ||
+    new Set(normalizedIds).size !== normalizedIds.length
+  ) {
+    throw aiGraderConfirmBoundaryError(
+      "AI_GRADER_CONFIRM_NORMALIZED_EVIDENCE_REQUIRED",
+      "Confirm Card requires exactly one verified 1200x1680 PNG normalized-card asset for each side.",
+    );
+  }
+}
+
+export function assertAiGraderConfirmCardReady(input: {
+  publicationStatus: "draft" | "finalized" | "published" | "unpublished" | "revoked" | "error";
+  reportBundle: AiGraderProductionReportBundleLike;
+  productionRelease: AiGraderProductionReleaseLike;
+}) {
+  if (input.publicationStatus !== "finalized") {
+    throw aiGraderConfirmBoundaryError(
+      "AI_GRADER_CONFIRM_FINALIZED_STATUS_REQUIRED",
+      "Confirm Card requires finalized, unpublished report semantics.",
+    );
+  }
+  const producer = isRecord(input.reportBundle.reportProducer) ? input.reportBundle.reportProducer : {};
+  const capabilities = Array.isArray(producer.capabilities) ? producer.capabilities : [];
+  if (
+    input.reportBundle.schemaVersion !== AI_GRADER_REPORT_BUNDLE_V01_VERSION ||
+    producer.contractVersion !== AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION ||
+    AI_GRADER_CONFIRM_REQUIRED_PRODUCER_CAPABILITIES.some((capability) => !capabilities.includes(capability))
+  ) {
+    throw aiGraderConfirmBoundaryError(
+      "AI_GRADER_CONFIRM_CURRENT_PRODUCER_REQUIRED",
+      "Confirm Card requires a current report-producer v0.2 package with complete validation provenance.",
+    );
+  }
+  assertAuthoritativeConfirmReleaseIdentity(input.reportBundle, input.productionRelease);
+  assertExplicitOperatorFinalization(input.productionRelease);
+  const finalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
+  const overall = typeof finalGrade.overall === "number" ? finalGrade.overall : Number.NaN;
+  if (
+    input.productionRelease.finalGradeComputed !== true ||
+    input.productionRelease.reportStatus !== "final_ai_grader_report_v0" ||
+    input.productionRelease.finalStatus !== "final_grade_computed" ||
+    finalGrade.status !== "final_ai_grader_grade_v0" ||
+    finalGrade.finalGradeComputed !== true ||
+    !Number.isFinite(overall) ||
+    overall < 1 ||
+    overall > 10
+  ) {
+    const failedGate = firstFailedConfirmGate(input.reportBundle, input.productionRelease);
+    throw aiGraderConfirmBoundaryError(
+      "AI_GRADER_CONFIRM_FINAL_GRADE_REQUIRED",
+      failedGate
+        ? "Confirm Card requires an actual final grade. Failed gate " + failedGate.id + ": " + failedGate.reason
+        : "Confirm Card requires an actual final grade from the authoritative production release.",
+    );
+  }
+  const failedGate = firstFailedConfirmGate(input.reportBundle, input.productionRelease);
+  if (failedGate) {
+    throw aiGraderConfirmBoundaryError(
+      "AI_GRADER_CONFIRM_GATE_FAILED",
+      "Confirm Card failed gate " + failedGate.id + ": " + failedGate.reason,
+    );
+  }
+  assertConfirmNormalizedEvidence(input.reportBundle);
 }
 
 function reportBundleRequiresPlannedImageDimensions(reportBundle: AiGraderProductionReportBundleLike) {
@@ -1403,11 +1714,17 @@ function parseSlabbedPhotoInitBody(body: unknown) {
   const mimeType = stringValue(body.mimeType, "image/jpeg");
   const checksumSha256 = stringValue(body.checksumSha256, "");
   const byteSize = numericValue(body.byteSize, 0);
+  const widthPx = numericValue(body.widthPx, 0);
+  const heightPx = numericValue(body.heightPx, 0);
   if (!reportId) throw new Error("reportId is required.");
   if (side !== "front" && side !== "back") throw new Error("side must be front or back.");
-  if (!/^image\//i.test(mimeType)) throw new Error("Only image uploads are supported for slabbed photos.");
+  if (!["image/png", "image/jpeg", "image/webp"].includes(mimeType.split(";", 1)[0].trim().toLowerCase())) {
+    throw new Error("Slabbed photos must use PNG, JPEG, or WebP raster images.");
+  }
   if (!/^[a-f0-9]{64}$/i.test(checksumSha256)) throw new Error("checksumSha256 must be a SHA-256 hex digest.");
   if (!Number.isFinite(byteSize) || byteSize <= 0) throw new Error("byteSize must be positive.");
+  if (!Number.isSafeInteger(widthPx) || widthPx < 1 || widthPx > 100_000) throw new Error("widthPx must be a safe positive image dimension.");
+  if (!Number.isSafeInteger(heightPx) || heightPx < 1 || heightPx > 100_000) throw new Error("heightPx must be a safe positive image dimension.");
   return {
     reportId,
     side,
@@ -1415,6 +1732,8 @@ function parseSlabbedPhotoInitBody(body: unknown) {
     mimeType,
     checksumSha256: checksumSha256.toLowerCase(),
     byteSize: Math.round(byteSize),
+    widthPx,
+    heightPx,
   };
 }
 
@@ -1989,7 +2308,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             publicUrl,
             uploadUrl: presigned.uploadUrl,
             uploadMethod: presigned.uploadMethod,
-            uploadHeaders: sanitizeAiGraderUploadHeadersForResponse(presigned.uploadHeaders),
+            uploadHeaders: sanitizeAiGraderUploadHeadersForResponse(presigned.uploadHeaders, image.checksumSha256),
           });
         }
         const result: AiGraderOcrPrefillUploadInitResult = {
@@ -2105,7 +2424,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           publicUrl: presigned.publicUrl,
           uploadUrl: presigned.uploadUrl,
           uploadMethod: presigned.uploadMethod,
-          uploadHeaders: sanitizeAiGraderUploadHeadersForResponse(presigned.uploadHeaders),
+          uploadHeaders: sanitizeAiGraderUploadHeadersForResponse(presigned.uploadHeaders, input.checksumSha256),
           requiredFinalizeManifest: {
             reportId: input.reportId,
             side: input.side,
@@ -2114,6 +2433,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             checksumSha256: input.checksumSha256,
             byteSize: input.byteSize,
             mimeType: input.mimeType,
+            widthPx: input.widthPx,
+            heightPx: input.heightPx,
           },
         };
         assertSmallJsonPayload(result, AI_GRADER_PRODUCTION_VERCEL_PAYLOAD_LIMIT_BYTES, "AI Grader slabbed-photo-init response");
@@ -2136,6 +2457,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             checksumSha256: input.checksumSha256,
             byteSize: input.byteSize,
             contentType: input.mimeType,
+            sourceImageWidthPx: input.widthPx,
+            sourceImageHeightPx: input.heightPx,
           });
           assertAiGraderStorageArtifactIntegrity({
             verified,
@@ -2144,6 +2467,9 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             expectedChecksumSha256: input.checksumSha256,
             label: "slabbed " + input.side + " photo",
           });
+          if (verified.widthPx !== input.widthPx || verified.heightPx !== input.heightPx) {
+            throw new Error("Storage-decoded slabbed photo dimensions mismatch.");
+          }
         }
         const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
         const result = await deps.finalizeSlabbedPhotoUpload({
@@ -2155,6 +2481,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           publicUrl: input.publicUrl,
           checksumSha256: input.checksumSha256,
           byteSize: input.byteSize,
+          widthPx: input.widthPx,
+          heightPx: input.heightPx,
           operatorUserId: actorOperatorUserId(authorizedActor),
           actorAudit: authorizedActor.audit,
         });
@@ -2416,25 +2744,20 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       if (key === "create-card-from-report") {
         if (!deps.createCardFromReport) throw new Error("AI Grader create-card-from-report is not configured.");
         const input = parseCreateCardFromReportBody(req.body);
-        assertPublishedReleaseReady(input);
+        assertAiGraderConfirmCardReady(input);
         assertAiGraderPublishBundleBoundary(input.reportBundle, input.productionRelease);
         const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
-        const plan = buildAiGraderProductionStoragePlan({
+        const plan = buildAiGraderConfirmCardReferencePlan({
           reportBundle: input.reportBundle,
           productionRelease: input.productionRelease,
           publicReportBaseUrl: "https://collect.tenkings.co",
           publicUrlFor: deps.publicUrlFor,
         });
-        assertStorageReadyPlan(
-          plan,
-          "published",
-          reportBundleRequiresPlannedImageDimensions(input.reportBundle),
-        );
         const result = await deps.createCardFromReport({
           tenantId,
           reportBundle: input.reportBundle,
           productionRelease: input.productionRelease,
-          storagePlan: planWithoutBodies(plan),
+          storagePlan: plan,
           identity: input.identity,
           operatorUserId: actorOperatorUserId(authorizedActor),
           actorAudit: authorizedActor.audit,
@@ -2653,28 +2976,8 @@ function firstNumber(...values: unknown[]) {
   return null;
 }
 
-function firstArtifactUrl(plan: AiGraderProductionStoragePlan, artifact: AiGraderProductionArtifactPlan | undefined) {
-  if (!artifact) return null;
-  return artifact.publicUrl ?? plan.assetManifest.find((entry) => entry.artifactId === artifact.artifactId)?.publicUrl ?? null;
-}
-
-function reportImageArtifacts(plan: AiGraderProductionStoragePlan) {
-  return plan.artifacts.filter((artifact) => artifact.artifactClass === "report_asset" && /^image\//i.test(artifact.contentType));
-}
-
-function primaryReportImageArtifact(plan: AiGraderProductionStoragePlan) {
-  const artifacts = reportImageArtifacts(plan);
-  return (
-    artifacts.find((artifact) => `${artifact.storageKey} ${artifact.sourceAssetId ?? ""}`.toLowerCase().includes("front")) ??
-    artifacts[0]
-  );
-}
-
-function photoKindForArtifact(artifact: AiGraderProductionArtifactPlan) {
-  const haystack = `${artifact.storageKey} ${artifact.sourceAssetId ?? ""} ${artifact.kind}`.toLowerCase();
-  if (haystack.includes("back")) return CardPhotoKind.BACK;
-  if (haystack.includes("front")) return CardPhotoKind.FRONT;
-  return null;
+function primaryConfirmImage(plan: AiGraderConfirmCardReferencePlan) {
+  return plan.imageReferences.find((reference) => reference.sourceAssetSide === "front");
 }
 
 function fileNameFromStorageKey(storageKey: string, fallback: string) {
@@ -2790,19 +3093,23 @@ function linkedProductionRelease(
   itemId: string,
   cardIdentity: AiGraderCardItemSearchResult
 ): AiGraderProductionReleaseLike {
-  const existingLabel = isRecord(productionRelease.label) ? productionRelease.label : {};
+  const existingLabel = isRecord(productionRelease.label) ? productionRelease.label : undefined;
   return sanitizeAiGraderReleaseLike({
     ...productionRelease,
-    label: {
-      ...existingLabel,
-      cardIdentity: {
-        ...((isRecord(existingLabel.cardIdentity) ? existingLabel.cardIdentity : {}) as JsonRecord),
-        ...cardIdentity,
-        source: "card_asset",
-        cardAssetId,
-        itemId,
-      },
-    },
+    ...(existingLabel
+      ? {
+          label: {
+            ...existingLabel,
+            cardIdentity: {
+              ...((isRecord(existingLabel.cardIdentity) ? existingLabel.cardIdentity : {}) as JsonRecord),
+              ...cardIdentity,
+              source: "card_asset",
+              cardAssetId,
+              itemId,
+            },
+          },
+        }
+      : {}),
     cardInventoryLinkage: {
       ...(isRecord(productionRelease.cardInventoryLinkage) ? productionRelease.cardInventoryLinkage : {}),
       status: "linked",
@@ -3004,7 +3311,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
   tenantId: string;
   reportBundle: AiGraderProductionReportBundleLike;
   productionRelease: AiGraderProductionReleaseLike;
-  storagePlan: AiGraderProductionStoragePlan;
+  storagePlan: AiGraderConfirmCardReferencePlan;
   identity: AiGraderConfirmedCardIdentity;
   operatorUserId?: string | null;
   actorAudit?: AiGraderProductionActorAudit | null;
@@ -3021,11 +3328,11 @@ export async function createAiGraderCardFromReportRuntime(input: {
   const gradingSessionId = optionalString(input.productionRelease.gradingSessionId ?? input.reportBundle.gradingSessionId);
   if (!reportId) throw new Error("reportId is required.");
   if (!gradingSessionId) throw new Error("gradingSessionId is required.");
-  const primary = primaryReportImageArtifact(input.storagePlan);
-  const publicImageUrl = firstArtifactUrl(input.storagePlan, primary);
-  if (!primary || !publicImageUrl) {
-    throw new Error("AI Grader card creation requires at least one storage-backed report image artifact.");
+  const primary = primaryConfirmImage(input.storagePlan);
+  if (!primary) {
+    throw new Error("AI Grader card creation requires verified front normalized-card evidence.");
   }
+  const publicImageUrl = "";
 
   const { prisma } = await import("@tenkings/database");
   const db = input.dbClient ?? (prisma as any);
@@ -3065,7 +3372,6 @@ export async function createAiGraderCardFromReportRuntime(input: {
         reportId,
         reportBundle: input.reportBundle,
         productionRelease: existing.productionRelease,
-        storagePlan: input.storagePlan,
         confirmedIdentity: input.identity,
         cardAssetId: existing.cardAssetId,
         itemId: existing.itemId,
@@ -3081,21 +3387,21 @@ export async function createAiGraderCardFromReportRuntime(input: {
     const set = identitySet(input.identity);
     const category = collectibleCategoryFromIdentity(input.identity);
     const finalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
-    const label = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
+    const label = isRecord(input.productionRelease.label) ? input.productionRelease.label : undefined;
     const finalOverallGrade = firstNumber(finalGrade.overall, (input.reportBundle as JsonRecord).finalOverallGrade);
-    const labelGrade = optionalString(label.labelGradeText) ?? (finalOverallGrade != null ? finalOverallGrade.toFixed(1) : null);
+    const labelGrade = optionalString(label?.labelGradeText) ?? null;
     const gradeJson = {
       source: "ai_grader_new_card_intake_v0",
       reportId,
-      certId: optionalString(label.certId),
+      certId: optionalString(label?.certId),
       finalGrade,
-      label,
+      ...(label ? { label } : {}),
       actorAudit: input.actorAudit ?? null,
     };
 
     const batch = await tx.cardBatch.create({
       data: {
-        label: `AI Grader ${optionalString(label.certId) ?? reportId}`,
+        label: `AI Grader ${optionalString(label?.certId) ?? reportId}`,
         notes: `Created from AI Grader report ${reportId}`,
         uploadedById: operatorUserId,
         totalCount: 1,
@@ -3110,20 +3416,27 @@ export async function createAiGraderCardFromReportRuntime(input: {
     const card = await tx.cardAsset.create({
       data: {
         batchId: batch.id,
-        storageKey: primary.storageKey,
-        fileName: fileNameFromStorageKey(primary.storageKey, "ai-grader-report-image"),
+        storageKey: primary.reservedStorageKey,
+        fileName: fileNameFromStorageKey(primary.sourceAssetId, "ai-grader-normalized-front.png"),
         fileSize: primary.byteSize,
         mimeType: primary.contentType,
         imageUrl: publicImageUrl,
-        thumbnailUrl: publicImageUrl,
-        cdnHdUrl: publicImageUrl,
-        cdnThumbUrl: publicImageUrl,
-        status: CardAssetStatus.READY,
+        thumbnailUrl: null,
+        cdnHdUrl: null,
+        cdnThumbUrl: null,
+        status: CardAssetStatus.UPLOADING,
         classificationJson: jsonInput(classification),
         classificationSourcesJson: jsonInput({
           source: "ai_grader_confirmed_identity",
           reportId,
           confirmedAt: now.toISOString(),
+          normalizedEvidence: input.storagePlan.imageReferences.map((reference) => ({
+            assetId: reference.sourceAssetId,
+            side: reference.sourceAssetSide,
+            checksumSha256: reference.checksumSha256,
+            byteSize: reference.byteSize,
+          })),
+          storageStatus: "awaiting_publish_upload",
         }),
         customTitle: title,
         resolvedPlayerName: input.identity.playerName ?? input.identity.cardName ?? null,
@@ -3138,29 +3451,6 @@ export async function createAiGraderCardFromReportRuntime(input: {
         subCategory: input.identity.sport ?? input.identity.game ?? null,
       },
     });
-
-    const seenPhotoKinds = new Set<string>();
-    for (const artifact of reportImageArtifacts(input.storagePlan)) {
-      const kind = photoKindForArtifact(artifact);
-      const imageUrl = firstArtifactUrl(input.storagePlan, artifact);
-      if (!kind || !imageUrl || seenPhotoKinds.has(kind)) continue;
-      seenPhotoKinds.add(kind);
-      await tx.cardPhoto.create({
-        data: {
-          cardAssetId: card.id,
-          kind,
-          storageKey: artifact.storageKey,
-          fileName: fileNameFromStorageKey(artifact.storageKey, `${kind.toLowerCase()}-ai-grader-report-image`),
-          fileSize: artifact.byteSize,
-          mimeType: artifact.contentType,
-          imageUrl,
-          thumbnailUrl: imageUrl,
-          cdnHdUrl: imageUrl,
-          cdnThumbUrl: imageUrl,
-          createdById: operatorUserId,
-        },
-      });
-    }
 
     const inventory = await ensureInventoryReadyArtifactsTx(tx, card.id, operatorUserId, {
       env: input.env ?? process.env,
@@ -3218,7 +3508,6 @@ export async function createAiGraderCardFromReportRuntime(input: {
       reportId,
       reportBundle: input.reportBundle,
       productionRelease: linkedRelease,
-      storagePlan: input.storagePlan,
       confirmedIdentity: input.identity,
       cardAssetId: card.id,
       itemId: inventory.itemId,
@@ -3254,6 +3543,8 @@ export async function finalizeAiGraderSlabbedPhotoUploadRuntime(input: {
   mimeType: string;
   byteSize: number;
   checksumSha256: string;
+  widthPx: number;
+  heightPx: number;
   operatorUserId?: string | null;
   actorAudit?: AiGraderProductionActorAudit | null;
 }): Promise<AiGraderSlabbedPhotoUploadResult> {
@@ -3267,6 +3558,8 @@ export async function finalizeAiGraderSlabbedPhotoUploadRuntime(input: {
     mimeType: input.mimeType,
     byteSize: input.byteSize,
     checksumSha256: input.checksumSha256,
+    widthPx: input.widthPx,
+    heightPx: input.heightPx,
     operatorUserId: input.operatorUserId,
     actorAudit: input.actorAudit ?? null,
   });
@@ -3277,6 +3570,8 @@ export async function finalizeAiGraderSlabbedPhotoUploadRuntime(input: {
     publicUrl: input.publicUrl,
     byteSize: input.byteSize,
     checksumSha256: input.checksumSha256,
+    widthPx: input.widthPx,
+    heightPx: input.heightPx,
     persisted: true,
   };
 }
@@ -3723,6 +4018,16 @@ export async function persistAiGraderCompsRuntime(input: {
       throw conflict(
         "This eBay sold comps result belongs to an older attempt and was not saved.",
         "AI_GRADER_COMPS_STALE_ATTEMPT"
+      );
+    }
+    if (
+      input.status === "running" &&
+      currentStatus === "ready" &&
+      optionalString(currentSummary.lifecycleStatus) === "ready"
+    ) {
+      throw conflict(
+        "eBay sold comps are already ready for review for this card.",
+        "AI_GRADER_COMPS_ALREADY_READY"
       );
     }
     const persistedSearchQuery = optionalString(current?.searchQuery);

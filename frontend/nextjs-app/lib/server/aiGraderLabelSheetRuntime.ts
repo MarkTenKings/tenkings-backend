@@ -2,7 +2,6 @@ import {
   buildAiGraderCompsSearchQuery,
   type AiGraderProductionReleaseLike,
   type AiGraderProductionReportBundleLike,
-  type AiGraderProductionStoragePlan,
   type Prisma,
 } from "@tenkings/database";
 import {
@@ -25,13 +24,13 @@ import type { AiGraderProductionActorAudit } from "./aiGraderProductionAuth";
 type JsonRecord = Record<string, unknown>;
 
 export type AiGraderConfirmedLabelQueueResult = {
-  sheetId: string;
-  sheetNumber: number;
-  slot: number;
-  capacity: 16;
-  status: "open" | "full" | "sealed" | "printed";
-  assignedAt: string;
-  existing: boolean;
+  sheetId?: string;
+  sheetNumber?: number;
+  slot?: number;
+  capacity?: 16;
+  status?: "open" | "full" | "sealed" | "printed";
+  assignedAt?: string;
+  existing?: boolean;
   comps: {
     status: "queued" | "running" | "ready" | "completed" | "failed";
     searchQuery: string;
@@ -193,7 +192,6 @@ export async function queueConfirmedAiGraderLabelTx(input: {
   reportId: string;
   reportBundle: AiGraderProductionReportBundleLike;
   productionRelease: AiGraderProductionReleaseLike;
-  storagePlan: AiGraderProductionStoragePlan;
   confirmedIdentity: unknown;
   cardAssetId: string;
   itemId: string;
@@ -204,12 +202,20 @@ export async function queueConfirmedAiGraderLabelTx(input: {
   const identity = normalizeAiGraderConfirmedCardIdentity(input.confirmedIdentity);
   const grade = finalGradeDetails(input.productionRelease);
   const label = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
-  const certId = stringValue(label.certId, input.reportId);
-  const labelGradeText = stringValue(label.labelGradeText, grade.overall != null ? grade.overall.toFixed(1) : "PENDING");
-  const labelPreviewUrl = input.storagePlan.assetManifest.find((asset) => asset.kind === "label-preview.html")?.publicUrl;
+  const certId = optionalString(label.certId);
+  const labelGradeText = optionalString(label.labelGradeText);
+  const publicReportUrl = optionalString(label.publicReportUrl);
+  const qrPayloadUrl = optionalString(label.qrPayloadUrl);
+  const labelPreviewUrl = optionalString(label.labelPreviewUrl);
+  const labelStatus = optionalString(label.status);
+  const certificateStatus = optionalString(label.certificateStatus);
+  const labelReady = input.productionRelease.labelDataGenerated === true &&
+    input.productionRelease.qrPayloadGenerated === true &&
+    labelStatus === "label_data_ready" &&
+    Boolean(certId && labelGradeText && publicReportUrl && qrPayloadUrl && certificateStatus);
 
   await acquireReportLifecycleLock(input.tx, input.reportId);
-  await acquireLabelSheetLock(input.tx, input.tenantId);
+  if (labelReady) await acquireLabelSheetLock(input.tx, input.tenantId);
 
   const existingReport = await input.tx.aiGraderReport.findUnique({
     where: { reportId: input.reportId },
@@ -222,8 +228,8 @@ export async function queueConfirmedAiGraderLabelTx(input: {
       sessionId: input.sessionId,
       cardAssetId: input.cardAssetId,
       itemId: input.itemId,
-      publicReportUrl: input.storagePlan.publicReportUrl,
-      qrPayloadUrl: input.storagePlan.qrPayloadUrl,
+      ...(publicReportUrl ? { publicReportUrl } : {}),
+      ...(qrPayloadUrl ? { qrPayloadUrl } : {}),
       finalOverallGrade: grade.overall,
       updatedAt: now,
     },
@@ -237,8 +243,8 @@ export async function queueConfirmedAiGraderLabelTx(input: {
       publicationStatus: "draft",
       cardAssetId: input.cardAssetId,
       itemId: input.itemId,
-      publicReportUrl: input.storagePlan.publicReportUrl,
-      qrPayloadUrl: input.storagePlan.qrPayloadUrl,
+      publicReportUrl: publicReportUrl ?? null,
+      qrPayloadUrl: qrPayloadUrl ?? null,
       finalOverallGrade: grade.overall,
       createdAt: now,
       updatedAt: now,
@@ -247,6 +253,8 @@ export async function queueConfirmedAiGraderLabelTx(input: {
   const reportRowId = stringValue(report?.id ?? existingReport?.id, "");
   if (!reportRowId) throw new Error("AI Grader draft report could not be created for label assignment.");
 
+  let labelAssignment: Partial<AiGraderConfirmedLabelQueueResult> = {};
+  if (labelReady && certId && labelGradeText && publicReportUrl && qrPayloadUrl && labelStatus && certificateStatus) {
   const rows = await readTenantLabels(input.tx, input.tenantId);
   const sources = sourceRows(rows);
   const reportLabel = rows.find((row: any) => externalReportId(row) === input.reportId);
@@ -285,8 +293,8 @@ export async function queueConfirmedAiGraderLabelTx(input: {
     reportId: input.reportId,
     certId,
     labelGradeText,
-    qrPayloadUrl: input.storagePlan.qrPayloadUrl,
-    publicReportUrl: input.storagePlan.publicReportUrl,
+    qrPayloadUrl,
+    publicReportUrl,
     physicalPrintStatus: existingLabel?.physicalPrintStatus,
     payload: initialPayload,
   });
@@ -320,10 +328,10 @@ export async function queueConfirmedAiGraderLabelTx(input: {
       tenantId: input.tenantId,
       sessionId: input.sessionId,
       reportId: reportRowId,
-      labelStatus: stringValue(label.status, "label_data_ready"),
-      certificateStatus: stringValue(label.certificateStatus, "report_id_issued_not_certified"),
-      qrPayloadUrl: input.storagePlan.qrPayloadUrl,
-      publicReportUrl: input.storagePlan.publicReportUrl,
+      labelStatus,
+      certificateStatus,
+      qrPayloadUrl,
+      publicReportUrl,
       labelGradeText,
       labelPreviewUrl: labelPreviewUrl ?? null,
       ...(invalidatePrintedLabel ? { physicalPrintStatus: "not_printed" } : {}),
@@ -335,10 +343,10 @@ export async function queueConfirmedAiGraderLabelTx(input: {
       sessionId: input.sessionId,
       reportId: reportRowId,
       certId,
-      labelStatus: stringValue(label.status, "label_data_ready"),
-      certificateStatus: stringValue(label.certificateStatus, "report_id_issued_not_certified"),
-      qrPayloadUrl: input.storagePlan.qrPayloadUrl,
-      publicReportUrl: input.storagePlan.publicReportUrl,
+      labelStatus,
+      certificateStatus,
+      qrPayloadUrl,
+      publicReportUrl,
       labelGradeText,
       labelPreviewUrl: labelPreviewUrl ?? null,
       payload: jsonInput(payload),
@@ -346,6 +354,16 @@ export async function queueConfirmedAiGraderLabelTx(input: {
       updatedAt: now,
     },
   });
+  labelAssignment = {
+    sheetId: slot.assignment.sheetId,
+    sheetNumber: slot.assignment.sheetNumber,
+    slot: slot.assignment.slot,
+    capacity: 16,
+    status: slot.sheetStatus,
+    assignedAt: slot.assignment.assignedAt,
+    existing: slot.existing,
+  };
+  }
 
   const reportBundle = {
     ...input.reportBundle,
@@ -410,16 +428,12 @@ export async function queueConfirmedAiGraderLabelTx(input: {
             : "queued";
 
   return {
-    sheetId: slot.assignment.sheetId,
-    sheetNumber: slot.assignment.sheetNumber,
-    slot: slot.assignment.slot,
-    capacity: 16,
-    status: slot.sheetStatus,
-    assignedAt: slot.assignment.assignedAt,
-    existing: slot.existing,
+    ...labelAssignment,
     comps: {
       status: compsStatus,
       searchQuery: optionalString(existingValuation?.searchQuery) ?? searchQuery,
+      // A queued durable handoff may be relaunched after a lost browser response;
+      // the advisory-locked run-comps claim prevents duplicate provider execution.
       shouldStart: compsStatus === "queued",
     },
   };

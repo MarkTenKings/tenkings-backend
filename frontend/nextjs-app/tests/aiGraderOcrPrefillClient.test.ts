@@ -22,13 +22,17 @@ import {
 const FRONT_HASH = "1".repeat(64);
 const BACK_HASH = "2".repeat(64);
 
+function checksumBase64(value: string) {
+  return Buffer.from(value, "hex").toString("base64");
+}
+
 function normalizedBundle(): AiGraderReportBundle & { assets: AiGraderReportPublicAsset[] } {
   return {
     ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
     reportId: "ocr-client-report",
     reportProducer: {
       contractVersion: "ai-grader-report-producer-v0.2",
-      capabilities: ["finding-validation-v1", "raster-dimensions-v1"],
+      capabilities: ["finding-validation-v1", "capture-profile-provenance-v1", "raster-dimensions-v1"],
     },
     assets: [
       {
@@ -202,7 +206,7 @@ test("OCR prefill browser flow fetches local normalized bytes and uploads them d
               uploadHeaders: {
                 "Content-Type": image.mimeType,
                 "x-amz-meta-sha256": "must-be-stripped",
-                "X-Amz-Checksum-Sha256": "must-be-stripped",
+                "X-Amz-Checksum-Sha256": checksumBase64(image.checksumSha256),
               },
             })),
             requiredFinalizeManifest: {
@@ -222,7 +226,10 @@ test("OCR prefill browser flow fetches local normalized bytes and uploads them d
       assert.equal(init?.credentials, "omit");
       const headers = init?.headers as Record<string, string>;
       assert.equal(Object.keys(headers).some((name) => name.toLowerCase() === "x-amz-meta-sha256"), false);
-      assert.equal(Object.keys(headers).some((name) => name.toLowerCase() === "x-amz-checksum-sha256"), false);
+      assert.equal(
+        headers["x-amz-checksum-sha256"],
+        checksumBase64(url.endsWith("/front") ? FRONT_HASH : BACK_HASH),
+      );
       assert.ok(init?.body instanceof Blob);
       directUploads.push({ url, byteSize: (init.body as Blob).size });
       return new Response(null, { status: 200 });

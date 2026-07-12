@@ -4,7 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { buildAiGraderProductionStoragePlan } from "@tenkings/database";
+import {
+  buildAiGraderConfirmCardReferencePlan,
+  buildAiGraderProductionStoragePlan,
+} from "@tenkings/database";
 import aiGraderLocalStationHandler from "../pages/api/ai-grader/station/[...action]";
 import { config as aiGraderProductionRouteConfig } from "../pages/api/admin/ai-grader/production/[...action]";
 import {
@@ -34,6 +37,7 @@ import {
   AI_GRADER_EBAY_COMPS_ENABLED_ENV,
   AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
   AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV,
+  assertAiGraderConfirmCardReady,
   assertAiGraderStorageArtifactIntegrity,
   buildAiGraderFinishCardsQueueResult,
   buildAiGraderProductionHistoryResult,
@@ -42,6 +46,7 @@ import {
   createAiGraderPublicReportApiHandler,
   persistAiGraderCompsRuntime,
   persistAiGraderSelectedCompsRuntime,
+  sanitizeAiGraderUploadHeadersForResponse,
   validateAiGraderInventoryReadiness,
 } from "../lib/server/aiGraderProductionApi";
 import {
@@ -118,6 +123,17 @@ function sha256Hex(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function sha256Base64FromHex(value: string) {
+  return Buffer.from(value, "hex").toString("base64");
+}
+
+const currentV02StructurePath = [
+  path.join(process.cwd(), "tests", "fixtures", "ai-grader-current-v02-confirm-structure.json"),
+  path.join(process.cwd(), "frontend", "nextjs-app", "tests", "fixtures", "ai-grader-current-v02-confirm-structure.json"),
+].find((candidate) => fs.existsSync(candidate));
+if (!currentV02StructurePath) throw new Error("Current AI Grader v0.2 structural fixture is missing.");
+const CURRENT_V02_CONFIRM_STRUCTURE = JSON.parse(fs.readFileSync(currentV02StructurePath, "utf8"));
+
 function sampleStorageReadyReportBundle(overrides: Partial<typeof SAMPLE_AI_GRADER_REPORT_BUNDLE> = {}) {
   const imageBytes = Buffer.from("front-image");
   return {
@@ -156,6 +172,61 @@ function sampleStorageReadyReportBundle(overrides: Partial<typeof SAMPLE_AI_GRAD
   };
 }
 
+function sampleConfirmReadyPackage() {
+  const frontBytes = Buffer.from("confirm-front-normalized");
+  const backBytes = Buffer.from("confirm-back-normalized");
+  const baseBundle = sampleStorageReadyReportBundle({
+    schemaVersion: CURRENT_V02_CONFIRM_STRUCTURE.schemaVersion,
+    reportProducer: CURRENT_V02_CONFIRM_STRUCTURE.reportProducer,
+    assets: [
+      {
+        id: "front/normalized/front-normalized-card.png",
+        kind: "image",
+        fileName: "front-normalized-card.png",
+        contentType: "image/png",
+        checksumSha256: sha256Hex(frontBytes),
+        sha256: sha256Hex(frontBytes),
+        byteSize: frontBytes.length,
+        widthPx: 1200,
+        heightPx: 1680,
+        side: "front",
+        evidenceRole: "normalized_card",
+      },
+      {
+        id: "back/normalized/back-normalized-card.png",
+        kind: "image",
+        fileName: "back-normalized-card.png",
+        contentType: "image/png",
+        checksumSha256: sha256Hex(backBytes),
+        sha256: sha256Hex(backBytes),
+        byteSize: backBytes.length,
+        widthPx: 1200,
+        heightPx: 1680,
+        side: "back",
+        evidenceRole: "normalized_card",
+      },
+    ],
+  } as any);
+  assert.equal(CURRENT_V02_CONFIRM_STRUCTURE.sourceAssetCount, 77);
+  assert.deepEqual(
+    baseBundle.assets.map((asset: any) => ({
+      side: asset.side,
+      mimeType: asset.contentType,
+      widthPx: asset.widthPx,
+      heightPx: asset.heightPx,
+    })),
+    CURRENT_V02_CONFIRM_STRUCTURE.normalizedCards,
+  );
+  const productionRelease = buildSampleAiGraderProductionRelease(baseBundle);
+  return {
+    reportBundle: {
+      ...baseBundle,
+      productionRelease,
+    },
+    productionRelease,
+  };
+}
+
 function presignForTest(input: { storageKey: string; contentType: string; checksumSha256: string }) {
   return {
     storageKey: input.storageKey,
@@ -163,6 +234,7 @@ function presignForTest(input: { storageKey: string; contentType: string; checks
     uploadMethod: "PUT" as const,
     uploadHeaders: {
       "Content-Type": input.contentType,
+      "x-amz-checksum-sha256": sha256Base64FromHex(input.checksumSha256),
     },
     publicUrl: `https://cdn.tenkings.test/${input.storageKey}`,
   };
@@ -1034,7 +1106,7 @@ test("production AI Grader route binds direct uploads to the storage-provider SH
   assert.equal(routeSource.includes("presignUploadUrl(storageKey, contentType, {"), true);
   assert.equal(routeSource.includes("checksumSha256,"), true);
   assert.equal(routeSource.includes("x-amz-meta-sha256"), false);
-  assert.equal(routeSource.includes("x-amz-checksum-sha256"), false);
+  assert.equal(routeSource.includes("x-amz-checksum-sha256"), true);
   assert.equal(routeSource.includes("verifyStorageObjectIntegrity({"), true);
   assert.equal(routeSource.includes("head.metadata"), false);
   assert.equal(routeSource.includes('"Content-Type": contentType'), true);
@@ -1048,10 +1120,45 @@ test("production AI Grader route binds direct uploads to the storage-provider SH
   assert.ok(storagePath);
   const storageSource = fs.readFileSync(storagePath, "utf8");
   assert.equal(storageSource.includes("ChecksumSHA256: options.checksumSha256"), true);
-  assert.equal(storageSource.includes("unhoistableHeaders"), false);
+  assert.equal(storageSource.includes("unhoistableHeaders"), true);
   assert.equal(storageSource.includes("Metadata: options.metadata"), false);
   assert.equal(storageSource.includes('ChecksumMode: "ENABLED"'), true);
   assert.equal(storageSource.includes("sha256Base64ToHex(response.ChecksumSHA256)"), true);
+});
+
+test("server upload plans allow only the exact native checksum and safe signed headers", () => {
+  const checksumSha256 = sha256Hex("server-upload-plan");
+  const checksumBase64 = sha256Base64FromHex(checksumSha256);
+  const sanitized = sanitizeAiGraderUploadHeadersForResponse({
+    "Content-Type": "image/png",
+    "x-amz-acl": "public-read",
+    "x-amz-meta-sha256": "forbidden",
+    "x-amz-checksum-sha256": checksumBase64,
+    "x-unsafe-extra": "forbidden",
+  }, checksumSha256);
+  assert.deepEqual(sanitized, {
+    "Content-Type": "image/png",
+    "x-amz-acl": "public-read",
+    "x-amz-checksum-sha256": checksumBase64,
+  });
+  const invalidPlans = [
+    { "Content-Type": "image/png" },
+    { "Content-Type": "image/png", "x-amz-checksum-sha256": sha256Base64FromHex("0".repeat(64)) },
+    {
+      "Content-Type": "image/png",
+      "x-amz-checksum-sha256": checksumBase64,
+      "X-Amz-Checksum-Sha256": checksumBase64,
+    },
+  ];
+  for (const headers of invalidPlans) {
+    assert.throws(
+      () => sanitizeAiGraderUploadHeadersForResponse(headers as Record<string, string>, checksumSha256),
+      (error: any) =>
+        error.code === "AI_GRADER_UPLOAD_CHECKSUM_HEADER_INVALID" &&
+        error.message === "AI Grader direct upload checksum header is missing or invalid." &&
+        !/https?:|token|credential|storage key/i.test(error.message),
+    );
+  }
 });
 
 test("production publication API rejects insufficient evidence reports before upload", async () => {
@@ -1151,8 +1258,12 @@ test("legacy production publish action is rejected instead of accepting image bo
 
 test("production publish init creates direct storage upload plan without embedded bodies", async () => {
   const calls: string[] = [];
-  const reportBundle = sampleStorageReadyReportBundle();
-  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  const currentPackage = sampleConfirmReadyPackage();
+  const reportBundle = {
+    ...currentPackage.reportBundle,
+    publicAssets: undefined,
+  } as any;
+  const productionRelease = currentPackage.productionRelease;
   const handler = createAiGraderProductionApiHandler({
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
@@ -1172,7 +1283,6 @@ test("production publish init creates direct storage upload plan without embedde
       return { ...presigned, uploadHeaders: {
         ...presigned.uploadHeaders,
         "x-amz-meta-sha256": "unsafe-future-regression",
-        "X-Amz-Checksum-Sha256": "unsafe-future-regression",
       } };
     },
     async persist() {
@@ -1190,7 +1300,7 @@ test("production publish init creates direct storage upload plan without embedde
     productionRelease,
     assetManifest: { assets: reportBundle.assets },
     checksums: {
-      checksums: reportBundle.assets?.map((asset) => ({
+      checksums: reportBundle.assets?.map((asset: any) => ({
         id: asset.id,
         checksumSha256: asset.checksumSha256,
         byteSize: asset.byteSize,
@@ -1231,12 +1341,16 @@ test("production publish init creates direct storage upload plan without embedde
   assert.equal(body.result.storageKeyPrefix, "ai-grader/reports/sample-final-v0/");
   assert.equal(body.result.uploadPlan.artifacts.some((artifact) => artifact.artifactClass === "report_asset" && artifact.sourceAssetId), true);
   const reportAsset = body.result.uploadPlan.artifacts.find((artifact) => artifact.artifactClass === "report_asset");
-  assert.equal(reportAsset?.sourceImageWidthPx, 1);
-  assert.equal(reportAsset?.sourceImageHeightPx, 1);
+  assert.equal(body.result.uploadPlan.artifacts.filter((artifact) => artifact.artifactClass === "report_asset").length, 2);
+  assert.equal(reportAsset?.sourceImageWidthPx, 1200);
+  assert.equal(reportAsset?.sourceImageHeightPx, 1680);
   for (const artifact of body.result.uploadPlan.artifacts) {
     assert.equal(artifact.uploadHeaders["Content-Type"], artifact.contentType);
     assert.equal(Object.prototype.hasOwnProperty.call(artifact.uploadHeaders, "x-amz-meta-sha256"), false);
-    assert.equal(Object.keys(artifact.uploadHeaders).some((name) => name.toLowerCase() === "x-amz-checksum-sha256"), false);
+    assert.equal(
+      artifact.uploadHeaders["x-amz-checksum-sha256"],
+      sha256Base64FromHex(artifact.checksumSha256),
+    );
     assert.match(artifact.checksumSha256, /^[a-f0-9]{64}$/);
     assert.equal(Number.isInteger(artifact.byteSize) && artifact.byteSize > 0, true);
   }
@@ -2682,6 +2796,13 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
         aiGraderValuationRow = { ...args.data };
         return aiGraderValuationRow;
       },
+      async upsert(args: any) {
+        record("aiGraderValuation", "upsert", args);
+        aiGraderValuationRow = aiGraderValuationRow
+          ? { ...aiGraderValuationRow, ...args.update }
+          : { ...args.create };
+        return aiGraderValuationRow;
+      },
     },
     cardBatch: {
       async create(args: any) {
@@ -2797,7 +2918,19 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
     },
   };
 
-  return { db, calls };
+  return {
+    db,
+    calls,
+    setValuationStatus(status: string) {
+      if (aiGraderValuationRow) {
+        aiGraderValuationRow = {
+          ...aiGraderValuationRow,
+          status,
+          resultSummary: { workflowStatus: status },
+        };
+      }
+    },
+  };
 }
 
 function validConfirmedSportIdentity() {
@@ -2815,12 +2948,11 @@ function validConfirmedSportIdentity() {
 }
 
 function storagePlanForConfirmCardRuntime() {
-  const reportBundle = sampleStorageReadyReportBundle();
-  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
   return {
     reportBundle,
     productionRelease,
-    storagePlan: buildAiGraderProductionStoragePlan({
+    storagePlan: buildAiGraderConfirmCardReferencePlan({
       reportBundle,
       productionRelease,
       publicReportBaseUrl: "https://collect.tenkings.co",
@@ -2895,12 +3027,26 @@ test("create-card-from-report runtime creates an operator-owned inventory Item w
   assert.equal(itemOwnershipCreate?.args.data.ownerId, "operator-owner-1");
   const batchCreate = calls.find((call) => call.delegate === "cardBatch" && call.method === "create");
   assert.equal(batchCreate?.args.data.uploadedById, "operator-user-1");
-  const photoCreate = calls.find((call) => call.delegate === "cardPhoto" && call.method === "create");
-  assert.equal(photoCreate?.args.data.createdById, "operator-user-1");
+  const cardCreate = calls.find((call) => call.delegate === "cardAsset" && call.method === "create");
+  assert.equal(cardCreate?.args.data.status, "UPLOADING");
+  assert.equal(cardCreate?.args.data.imageUrl, "");
+  assert.equal(cardCreate?.args.data.thumbnailUrl, null);
+  assert.equal(cardCreate?.args.data.cdnHdUrl, null);
+  assert.equal(cardCreate?.args.data.cdnThumbUrl, null);
+  assert.equal(cardCreate?.args.data.storageKey, storagePlan.imageReferences[0].reservedStorageKey);
+  assert.equal(cardCreate?.args.data.classificationSourcesJson.storageStatus, "awaiting_publish_upload");
+  assert.equal(cardCreate?.args.data.classificationSourcesJson.normalizedEvidence.length, 2);
+  assert.equal(calls.some((call) => call.delegate === "cardPhoto" && call.method === "create"), false);
+  assert.equal(itemCreate?.args.data.imageUrl, "");
   const sessionUpsert = calls.find((call) => call.delegate === "aiGraderSession" && call.method === "upsert");
   assert.equal(sessionUpsert?.args.create.operatorUserId, "operator-user-1");
   assert.equal(calls.some((call) => call.delegate === "$queryRaw"), true);
   assert.equal(calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "upsert"), true);
+  const labelUpsert = calls.find((call) => call.delegate === "aiGraderLabel" && call.method === "upsert");
+  assert.equal(labelUpsert?.args.create.certId, productionRelease.label?.certId);
+  assert.equal(labelUpsert?.args.create.labelGradeText, productionRelease.label?.labelGradeText);
+  assert.equal(labelUpsert?.args.create.publicReportUrl, productionRelease.label?.publicReportUrl);
+  assert.equal(labelUpsert?.args.create.qrPayloadUrl, productionRelease.label?.qrPayloadUrl);
   assert.equal(calls.some((call) => call.delegate === "aiGraderValuation" && call.method === "create"), true);
   assert.equal(calls.some((call) => call.delegate === "$transaction" && call.method === "$transaction"), true);
   assert.equal(calls.filter((call) => call.delegate === "cardAsset" && call.method === "create").length, 1);
@@ -2913,10 +3059,8 @@ test("current producer OCR failure composes with authoritative manual Confirm an
   const backBytes = Buffer.from([6, 7, 8, 9]);
   const currentBundle = sampleStorageReadyReportBundle({
     reportId: "forward-ocr-confirm-integration",
-    reportProducer: {
-      contractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
-      capabilities: ["finding-validation-v1", "raster-dimensions-v1"],
-    },
+    schemaVersion: CURRENT_V02_CONFIRM_STRUCTURE.schemaVersion,
+    reportProducer: CURRENT_V02_CONFIRM_STRUCTURE.reportProducer,
     publicAssets: undefined,
     assets: [
       {
@@ -2931,7 +3075,6 @@ test("current producer OCR failure composes with authoritative manual Confirm an
         heightPx: 1680,
         side: "front",
         evidenceRole: "normalized_card",
-        bodyBase64: frontBytes.toString("base64"),
       },
       {
         id: "back/normalized/back-normalized-card.png",
@@ -2945,7 +3088,6 @@ test("current producer OCR failure composes with authoritative manual Confirm an
         heightPx: 1680,
         side: "back",
         evidenceRole: "normalized_card",
-        bodyBase64: backBytes.toString("base64"),
       },
     ],
   } as any);
@@ -2974,7 +3116,11 @@ test("current producer OCR failure composes with authoritative manual Confirm an
       async fetchImpl(_request, init) {
         requestCount += 1;
         if (requestCount === 1) {
-          const body = JSON.parse(String(init?.body));
+          const serialized = String(init?.body);
+          assert.equal(serialized.includes(frontBytes.toString("base64")), false);
+          assert.equal(serialized.includes(backBytes.toString("base64")), false);
+          assert.equal(serialized.includes("bodyBase64"), false);
+          const body = JSON.parse(serialized);
           const images = body.images.map((image: any) => ({ ...image, storageKey: `private/${image.side}` }));
           return new Response(JSON.stringify({ ok: true, result: {
             reportId: currentBundle.reportId,
@@ -3015,7 +3161,11 @@ test("current producer OCR failure composes with authoritative manual Confirm an
     confirmationPending: false,
   }), true);
 
-  const verifiedRelease = buildSampleAiGraderProductionRelease(currentBundle as any);
+  const verifiedRelease = {
+    ...buildSampleAiGraderProductionRelease(currentBundle as any),
+    labelDataGenerated: false,
+    qrPayloadGenerated: false,
+  };
   const staleRelease = {
     ...verifiedRelease,
     operatorFinalization: { ...verifiedRelease.operatorFinalization, operatorId: "stale-browser-operator" },
@@ -3032,8 +3182,13 @@ test("current producer OCR failure composes with authoritative manual Confirm an
   });
   assert.equal(authoritative.sourceBundle, authoritativeBundle);
   assert.equal(authoritative.productionRelease, verifiedRelease);
+  assert.doesNotThrow(() => assertAiGraderConfirmCardReady({
+    publicationStatus: "finalized",
+    reportBundle: authoritative.sourceBundle!,
+    productionRelease: authoritative.productionRelease!,
+  }));
 
-  const storagePlan = buildAiGraderProductionStoragePlan({
+  const storagePlan = buildAiGraderConfirmCardReferencePlan({
     reportBundle: authoritative.sourceBundle!,
     productionRelease: authoritative.productionRelease!,
     publicReportBaseUrl: "https://collect.tenkings.co",
@@ -3055,6 +3210,74 @@ test("current producer OCR failure composes with authoritative manual Confirm an
   assert.equal(first.cardAssetId, retry.cardAssetId);
   assert.equal(first.itemId, retry.itemId);
   assert.equal(first.downstream?.comps.status, "queued");
+  assert.equal(first.downstream?.comps.shouldStart, true);
+  assert.equal(retry.downstream?.comps.shouldStart, true);
+  assert.equal(first.downstream?.sheetNumber, undefined);
+  assert.equal(calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "upsert"), false);
+  assert.equal(calls.filter((call) => call.delegate === "cardAsset" && call.method === "create").length, 1);
+  assert.equal(calls.filter((call) => call.delegate === "item" && call.method === "create").length, 1);
+  assert.equal(calls.filter((call) => call.delegate === "aiGraderValuation" && call.method === "create").length, 1);
+
+  let providerCalls = 0;
+  const compsHandler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      [AI_GRADER_EBAY_COMPS_ENABLED_ENV]: "true",
+      SERPAPI_KEY: "redacted-test-key",
+      AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+    },
+    async requireAdminSession() {
+      return { user: { id: "operator-user-1", phone: null, displayName: "Operator" } } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async persist() {
+      throw new Error("comps handoff must not publish");
+    },
+    async persistComps(input) {
+      return persistAiGraderCompsRuntime({ ...input, dbClient: db });
+    },
+    async runComps(input) {
+      providerCalls += 1;
+      return {
+        searchQuery: input.searchQuery,
+        searchUrl: "https://www.ebay.com/sch/i.html?_nkw=confirmed+card",
+        compsRefs: [{
+          id: "comp-1",
+          source: "ebay_sold",
+          title: "Confirmed card sold listing",
+          url: "https://www.ebay.com/itm/1234567890",
+          price: "$100.00",
+        }],
+        resultSummary: { valuationMinor: 10000, valuationCurrency: "USD" },
+      };
+    },
+  });
+  const compsBody = {
+    reportId: currentBundle.reportId,
+    reportBundle: {
+      ...authoritative.sourceBundle,
+      cardIdentity: first.cardIdentity,
+    },
+    productionRelease: first.productionRelease,
+    selection: first.cardIdentity,
+  };
+  const firstCompsReq = mockRequest("POST", ["run-comps"]);
+  firstCompsReq.body = compsBody;
+  const firstCompsRes = mockResponse();
+  await compsHandler(firstCompsReq, firstCompsRes);
+  assert.equal(firstCompsRes.statusCodeValue, 200);
+  assert.equal((firstCompsRes.jsonBody as any).result.status, "ready");
+
+  const retryCompsReq = mockRequest("POST", ["run-comps"]);
+  retryCompsReq.body = compsBody;
+  const retryCompsRes = mockResponse();
+  await compsHandler(retryCompsReq, retryCompsRes);
+  assert.equal(retryCompsRes.statusCodeValue, 409);
+  assert.equal((retryCompsRes.jsonBody as any).code, "AI_GRADER_COMPS_ALREADY_READY");
+  assert.equal(providerCalls, 1);
+
+  const afterCompsRetry = await confirm();
+  assert.equal(afterCompsRetry.downstream?.comps.shouldStart, false);
   assert.equal(calls.filter((call) => call.delegate === "cardAsset" && call.method === "create").length, 1);
   assert.equal(calls.filter((call) => call.delegate === "item" && call.method === "create").length, 1);
   assert.equal(calls.filter((call) => call.delegate === "aiGraderValuation" && call.method === "create").length, 1);
@@ -3109,8 +3332,7 @@ test("create-card-from-report runtime fails before card rows when configured ope
 });
 
 test("create-card-from-report action sends small storage-backed metadata and returns linked card identity", async () => {
-  const reportBundle = sampleStorageReadyReportBundle();
-  const productionRelease = buildSampleAiGraderProductionRelease(reportBundle);
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
   let createCalled = false;
   const handler = createAiGraderProductionApiHandler({
     env: {
@@ -3135,7 +3357,12 @@ test("create-card-from-report action sends small storage-backed metadata and ret
       assert.equal(input.identity.playerName, "Michael Jordan");
       assert.equal(input.identity.year, "1996");
       assert.equal(input.operatorUserId, "admin-1");
-      assert.equal(input.storagePlan.artifacts.some((artifact) => "body" in artifact), false);
+      assert.equal(input.storagePlan.planVersion, "ai-grader-confirm-card-reference-plan-v1");
+      assert.equal(input.storagePlan.imageReferences.length, 2);
+      assert.equal(input.storagePlan.imageReferences.some((artifact) => "body" in artifact), false);
+      assert.deepEqual(input.storagePlan.imageReferences.map((asset) => asset.sourceAssetSide), ["front", "back"]);
+      assert.equal("publicReportUrl" in input.storagePlan, false);
+      assert.equal("qrPayloadUrl" in input.storagePlan, false);
       assert.equal(input.storagePlan.storageKeyPrefix, "ai-grader/reports/sample-final-v0/");
       return {
         reportId: "sample-final-v0",
@@ -3173,7 +3400,7 @@ test("create-card-from-report action sends small storage-backed metadata and ret
 
   const req = mockRequest("POST", ["create-card-from-report"]);
   req.body = {
-    publicationStatus: "published",
+    publicationStatus: "finalized",
     reportBundle,
     productionRelease,
     identity: {
@@ -3198,6 +3425,272 @@ test("create-card-from-report action sends small storage-backed metadata and ret
   assert.equal(body.result.itemId, "item-1");
   assert.equal(body.result.productionRelease.cardInventoryLinkage.status, "linked");
   assert.equal(createCalled, true);
+});
+
+test("create-card-from-report requires finalized unpublished semantics and never accepts published impersonation", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  let createCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async persist() {
+      throw new Error("published Confirm must fail before persistence");
+    },
+    async createCardFromReport() {
+      createCalled = true;
+      throw new Error("published Confirm must fail before runtime");
+    },
+  });
+  const req = mockRequest("POST", ["create-card-from-report"]);
+  req.body = {
+    publicationStatus: "published",
+    reportBundle,
+    productionRelease,
+    identity: validConfirmedSportIdentity(),
+  };
+  const res = mockResponse();
+  await handler(req, res);
+  assert.equal(res.statusCodeValue, 400);
+  assert.equal((res.jsonBody as any).code, "AI_GRADER_CONFIRM_FINALIZED_STATUS_REQUIRED");
+  assert.match(String((res.jsonBody as any).message), /finalized, unpublished/i);
+  assert.equal(createCalled, false);
+});
+
+test("Confirm reference plan uses canonical assets and never builds publication sidecars", () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const plan = buildAiGraderConfirmCardReferencePlan({
+    reportBundle: { ...reportBundle, publicAssets: [] } as any,
+    productionRelease,
+    publicUrlFor: (key) => `https://cdn.tenkings.test/${key}`,
+  });
+  assert.deepEqual(plan.imageReferences.map((asset) => asset.sourceAssetSide), ["front", "back"]);
+  assert.equal(plan.imageReferences.every((asset) => asset.sourceEvidenceRole === "normalized_card"), true);
+  assert.equal(plan.imageReferences.some((asset) => "body" in asset || "bodyEncoding" in asset), false);
+  assert.equal(plan.imageReferences.some((asset) => "storageKey" in asset || "publicUrl" in asset), false);
+  assert.equal(plan.imageReferences.every((asset) => typeof asset.reservedStorageKey === "string"), true);
+  assert.equal("artifacts" in plan, false);
+  assert.equal("publicReportUrl" in plan, false);
+  assert.equal("qrPayloadUrl" in plan, false);
+});
+
+test("Confirm rejects missing or invalid current-producer finding validation before runtime work", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  let createCalls = 0;
+  const handler = createAiGraderProductionApiHandler({
+    env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
+    async requireAdminSession() { return { user: { id: "admin-1" } } as any; },
+    publicUrlFor: (key) => `https://cdn.tenkings.test/${key}`,
+    async persist() { throw new Error("Confirm finding failure must not persist"); },
+    async createCardFromReport() { createCalls += 1; throw new Error("Confirm finding failure must not create"); },
+  });
+  const invalidValidations = [
+    undefined,
+    { status: "valid", sourceCandidateCount: 1, publishedFindingCount: 0, issues: [] },
+  ];
+  for (const findingValidation of invalidValidations) {
+    const req = mockRequest("POST", ["create-card-from-report"]);
+    req.body = {
+      publicationStatus: "finalized",
+      reportBundle: {
+        ...reportBundle,
+        visionLab: { ...reportBundle.visionLab, findingValidation },
+      },
+      productionRelease,
+      identity: validConfirmedSportIdentity(),
+    };
+    const res = mockResponse();
+    await handler(req, res);
+    assert.equal(res.statusCodeValue, 400);
+    assert.match(String((res.jsonBody as any).message), /finding extraction/i);
+  }
+  assert.equal(createCalls, 0);
+  assert.throws(
+    () => buildAiGraderConfirmCardReferencePlan({
+      reportBundle: {
+        ...reportBundle,
+        provisionalGrade: {
+          ...reportBundle.provisionalGrade,
+          gradeImpactCandidates: [{ id: "candidate", findingIds: ["missing-finding"] }],
+        },
+      } as any,
+      productionRelease,
+    }),
+    /invalid defect finding reference/i,
+  );
+});
+
+test("Confirm Card reports the exact source grade gate and does not invent a missing final grade", () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const blockedRelease = {
+    ...productionRelease,
+    reportStatus: "insufficient_evidence",
+    finalStatus: "insufficient_evidence",
+    finalGradeComputed: false,
+    finalGrade: {
+      ...productionRelease.finalGrade,
+      status: "insufficient_evidence",
+      overall: undefined,
+      finalGradeComputed: false,
+    },
+  };
+  const blockedBundle = {
+    ...reportBundle,
+    productionRelease: blockedRelease,
+    provisionalGrade: {
+      ...reportBundle.provisionalGrade,
+      gates: {
+        requiredGatesPassed: false,
+        results: [
+          {
+            gate: "focus_sharpness",
+            status: "fail",
+            summary: "Minimum sharpness is 14.4081; soft target is 60.",
+            evidenceRefs: ["analysis.front.allOn.sharpnessScore", "analysis.back.allOn.sharpnessScore"],
+          },
+          {
+            gate: "element_score_coverage",
+            status: "fail",
+            summary: "Corner, edge, and surface diagnostics are incomplete.",
+            evidenceRefs: ["analysis.provisionalGradeStory.elementScores"],
+          },
+        ],
+        blockers: [
+          "focus_sharpness: Minimum sharpness is 14.4081; soft target is 60.",
+          "element_score_coverage: Corner, edge, and surface diagnostics are incomplete.",
+        ],
+      },
+    },
+  };
+  assert.throws(
+    () => assertAiGraderConfirmCardReady({
+      publicationStatus: "finalized",
+      reportBundle: blockedBundle as any,
+      productionRelease: blockedRelease as any,
+    }),
+    (error: any) =>
+      error.code === "AI_GRADER_CONFIRM_FINAL_GRADE_REQUIRED" &&
+      /focus_sharpness/.test(error.message) &&
+      /14\.4081/.test(error.message) &&
+      !/label data|QR payload/i.test(error.message),
+  );
+});
+
+test("Confirm Card rejects any submitted release divergence from the fetched bundle", () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const tampered = {
+    ...productionRelease,
+    gates: productionRelease.gates.map((gate: any, index: number) =>
+      index === 0 ? { ...gate, reason: "caller changed authoritative gate evidence" } : gate),
+  };
+  assert.throws(
+    () => assertAiGraderConfirmCardReady({
+      publicationStatus: "finalized",
+      reportBundle,
+      productionRelease: tampered,
+    }),
+    (error: any) => error.code === "AI_GRADER_CONFIRM_RELEASE_IDENTITY_MISMATCH",
+  );
+});
+
+test("Confirm Card rejects out-of-range or incomplete final grades", () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const invalidReleases = [
+    { ...productionRelease, finalGrade: { ...productionRelease.finalGrade, overall: 11 } },
+    {
+      ...productionRelease,
+      finalGrade: {
+        ...productionRelease.finalGrade,
+        finalGradeComputed: false,
+      },
+    },
+  ];
+  for (const release of invalidReleases) {
+    assert.throws(
+      () => assertAiGraderConfirmCardReady({
+        publicationStatus: "finalized",
+        reportBundle: { ...reportBundle, productionRelease: release } as any,
+        productionRelease: release as any,
+      }),
+      (error: any) => error.code === "AI_GRADER_CONFIRM_FINAL_GRADE_REQUIRED",
+    );
+  }
+});
+
+test("Confirm Card rejects production gates without bounded evidence references", () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const invalidRelease = {
+    ...productionRelease,
+    gates: productionRelease.gates.map((gate: any, index: number) =>
+      index === 0 ? { ...gate, evidenceRefs: [] } : gate),
+  };
+  assert.throws(
+    () => assertAiGraderConfirmCardReady({
+      publicationStatus: "finalized",
+      reportBundle: { ...reportBundle, productionRelease: invalidRelease } as any,
+      productionRelease: invalidRelease as any,
+    }),
+    (error: any) => error.code === "AI_GRADER_CONFIRM_RELEASE_GATES_INVALID",
+  );
+});
+
+test("Confirm Card rejects invalid normalized evidence and producer provenance without weakening findings", () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const cases = [
+    {
+      expectedCode: "AI_GRADER_CONFIRM_CURRENT_PRODUCER_REQUIRED",
+      reportBundle: { ...reportBundle, reportProducer: { contractVersion: "ai-grader-report-producer-v0.1", capabilities: [] } },
+    },
+    {
+      expectedCode: "AI_GRADER_CONFIRM_CURRENT_PRODUCER_REQUIRED",
+      reportBundle: {
+        ...reportBundle,
+        reportProducer: {
+          contractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
+          capabilities: ["finding-validation-v1", "raster-dimensions-v1"],
+        },
+      },
+    },
+    {
+      expectedCode: "AI_GRADER_CONFIRM_NORMALIZED_EVIDENCE_REQUIRED",
+      reportBundle: { ...reportBundle, assets: reportBundle.assets.filter((asset: any) => asset.side === "front") },
+    },
+    {
+      expectedCode: "AI_GRADER_CONFIRM_NORMALIZED_EVIDENCE_REQUIRED",
+      reportBundle: {
+        ...reportBundle,
+        assets: reportBundle.assets.map((asset: any) => asset.side === "back" ? { ...asset, contentType: "image/tiff" } : asset),
+      },
+    },
+    {
+      expectedCode: "AI_GRADER_CONFIRM_NORMALIZED_EVIDENCE_REQUIRED",
+      reportBundle: {
+        ...reportBundle,
+        assets: reportBundle.assets.map((asset: any) => asset.side === "back" ? { ...asset, widthPx: 1199 } : asset),
+      },
+    },
+    {
+      expectedCode: "AI_GRADER_CONFIRM_NORMALIZED_EVIDENCE_REQUIRED",
+      reportBundle: {
+        ...reportBundle,
+        assets: reportBundle.assets.map((asset: any) => asset.side === "back" ? { ...asset, checksumSha256: "tampered" } : asset),
+      },
+    },
+  ];
+  for (const entry of cases) {
+    assert.throws(
+      () => assertAiGraderConfirmCardReady({
+        publicationStatus: "finalized",
+        reportBundle: entry.reportBundle as any,
+        productionRelease,
+      }),
+      (error: any) => error.code === entry.expectedCode,
+    );
+  }
 });
 
 test("create-card-from-report action rejects incomplete confirmed identity", async () => {
@@ -3309,12 +3802,13 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
       return { ...presigned, uploadHeaders: {
         ...presigned.uploadHeaders,
         "x-amz-meta-sha256": "unsafe-future-regression",
-        "X-Amz-Checksum-Sha256": "unsafe-future-regression",
       } };
     },
     async verifyUploadedArtifact(input) {
       assert.equal(input.byteSize, 5);
       assert.equal(input.checksumSha256, imageChecksum);
+      assert.equal(input.sourceImageWidthPx, 640);
+      assert.equal(input.sourceImageHeightPx, 900);
       return {
         ok: true,
         byteSize: input.byteSize,
@@ -3335,6 +3829,8 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
       assert.equal(input.mimeType, "image/png");
       assert.equal(input.byteSize, 5);
       assert.equal(input.checksumSha256, imageChecksum);
+      assert.equal(input.widthPx, 640);
+      assert.equal(input.heightPx, 900);
       assert.match(input.storageKey, /^ai-grader\/reports\/sample-final-v0\/slabbed\/front-/);
       assert.equal(input.operatorUserId, "admin-1");
       assert.deepEqual(
@@ -3358,6 +3854,8 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
         publicUrl: input.publicUrl,
         byteSize: input.byteSize,
         checksumSha256: input.checksumSha256,
+        widthPx: input.widthPx,
+        heightPx: input.heightPx,
         persisted: true,
       };
     },
@@ -3371,6 +3869,8 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
     mimeType: "image/png",
     byteSize: 5,
     checksumSha256: imageChecksum,
+    widthPx: 640,
+    heightPx: 900,
   };
   const initRes = mockResponse();
   await handler(initReq, initRes);
@@ -3383,7 +3883,9 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
   assert.equal(initBody.ok, true);
   assert.equal(initBody.result.uploadHeaders["Content-Type"], "image/png");
   assert.equal(Object.prototype.hasOwnProperty.call(initBody.result.uploadHeaders, "x-amz-meta-sha256"), false);
-  assert.equal(Object.keys(initBody.result.uploadHeaders).some((name) => name.toLowerCase() === "x-amz-checksum-sha256"), false);
+  assert.equal(initBody.result.uploadHeaders["x-amz-checksum-sha256"], sha256Base64FromHex(imageChecksum));
+  assert.equal(initBody.result.requiredFinalizeManifest.widthPx, 640);
+  assert.equal(initBody.result.requiredFinalizeManifest.heightPx, 900);
 
   const finalizeReq = mockRequest("POST", ["slabbed-photo-finalize"]);
   finalizeReq.body = initBody.result.requiredFinalizeManifest;
@@ -3396,6 +3898,78 @@ test("slabbed photo direct upload init/finalize persists through the env-gated p
   assert.equal(body.result.persisted, true);
   assert.match(body.result.publicUrl, /slabbed\/front-/);
   assert.equal(finalized, true);
+});
+
+test("slabbed photo finalize rejects missing or mismatched storage-decoded dimensions before persistence", async () => {
+  const imageChecksum = sha256Hex("hello");
+  for (const decoded of [
+    { widthPx: 641, heightPx: 900 },
+    { widthPx: undefined, heightPx: undefined },
+  ]) {
+    let finalized = false;
+    const handler = createAiGraderProductionApiHandler({
+      env: {
+        [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+        AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
+      },
+      async requireAdminSession() {
+        return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+      },
+      publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+      async presignUpload(input) {
+        return presignForTest(input);
+      },
+      async verifyUploadedArtifact(input) {
+        return {
+          ok: true,
+          byteSize: input.byteSize,
+          checksumSha256: input.checksumSha256,
+          contentType: input.contentType,
+          widthPx: decoded.widthPx,
+          heightPx: decoded.heightPx,
+        };
+      },
+      async persist() {
+        throw new Error("slab upload should not persist production release");
+      },
+      async finalizeSlabbedPhotoUpload(input) {
+        finalized = true;
+        return {
+          reportId: input.reportId,
+          side: input.side,
+          storageKey: input.storageKey,
+          publicUrl: input.publicUrl,
+          byteSize: input.byteSize,
+          checksumSha256: input.checksumSha256,
+          widthPx: input.widthPx,
+          heightPx: input.heightPx,
+          persisted: true,
+        };
+      },
+    });
+    const initReq = mockRequest("POST", ["slabbed-photo-init"]);
+    initReq.body = {
+      reportId: "sample-final-v0",
+      side: "front",
+      fileName: "front.png",
+      mimeType: "image/png",
+      byteSize: 5,
+      checksumSha256: imageChecksum,
+      widthPx: 640,
+      heightPx: 900,
+    };
+    const initRes = mockResponse();
+    await handler(initReq, initRes);
+    assert.equal(initRes.statusCodeValue, 200);
+
+    const finalizeReq = mockRequest("POST", ["slabbed-photo-finalize"]);
+    finalizeReq.body = (initRes.jsonBody as any).result.requiredFinalizeManifest;
+    const finalizeRes = mockResponse();
+    await handler(finalizeReq, finalizeRes);
+    assert.equal(finalizeRes.statusCodeValue, 400);
+    assert.match(String((finalizeRes.jsonBody as any).message), /dimensions mismatch/);
+    assert.equal(finalized, false);
+  }
 });
 
 test("eBay comps action reports ready without live execution when env is disabled", async () => {
@@ -3612,6 +4186,14 @@ test("comps persistence rejects completed reviews and overlapping live attempts"
     {
       current: { status: "running", resultSummary: { attemptId: "existing-attempt" }, updatedAt: new Date() },
       code: "AI_GRADER_COMPS_ALREADY_RUNNING",
+    },
+    {
+      current: {
+        status: "ready",
+        resultSummary: { lifecycleStatus: "ready", attemptId: "completed-attempt" },
+        updatedAt: new Date(),
+      },
+      code: "AI_GRADER_COMPS_ALREADY_READY",
     },
   ]) {
     const tx = {
@@ -4122,6 +4704,11 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/create-card-from-report"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish-init"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/publish-finalize"), true);
+  assert.equal(stationSource.includes("...(Array.isArray(bundle.publicAssets)"), true);
+  assert.equal(
+    stationSource.includes("publicAssets: (sanitized.publicAssets ?? []).map"),
+    true,
+  );
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/slabbed-photo-init"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/slabbed-photo-finalize"), true);
   assert.equal(stationSource.includes("/api/admin/ai-grader/production/mark-label-printed"), false);
@@ -4145,8 +4732,11 @@ test("AI Grader station source opens reports inline without popup dependency", (
   );
   assert.equal(createCardFunctionSource.includes("resolveAiGraderAuthoritativeProductionPackage"), true);
   assert.equal(createCardFunctionSource.includes("explicitlyFinalize: prepareLocalProductionRelease"), true);
+  assert.equal(createCardFunctionSource.includes('publicationStatus: "finalized"'), true);
+  assert.equal(createCardFunctionSource.includes('publicationStatus: "published"'), false);
   assert.equal(publishFunctionSource.includes("resolveAiGraderAuthoritativeProductionPackage"), true);
   assert.equal(publishFunctionSource.includes("explicitlyFinalize: prepareLocalProductionRelease"), true);
+  assert.equal(publishFunctionSource.includes('publicationStatus: "published"'), true);
   assert.doesNotMatch(stationSource, /sourceBundle\?\.productionRelease\s*\?\?\s*latestStatus\.productionRelease/);
   assert.equal(publishFunctionSource.includes("includeAssetBodies"), false);
   assert.equal(publishFunctionSource.includes("formatAiGraderPublishStageError"), true);

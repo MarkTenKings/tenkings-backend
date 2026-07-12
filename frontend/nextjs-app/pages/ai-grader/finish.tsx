@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession, type SessionPayload } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
+import { assertAiGraderBrowserRaster } from "../../lib/aiGraderRasterValidation";
 
 type QueueStage = "needs_comps_review" | "needs_slab_photos" | "ready_for_inventory" | "complete";
 type StageFilter = "active" | QueueStage;
@@ -614,6 +615,8 @@ export default function AiGraderFinishPage() {
     try {
       const bytes = await file.arrayBuffer();
       const checksumSha256 = await sha256Hex(bytes);
+      const slabMimeType = file.type || "image/jpeg";
+      const slabDimensions = await assertAiGraderBrowserRaster(bytes, slabMimeType);
       const initResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-init", {
         method: "POST",
         headers: await authenticatedHeaders({ "content-type": "application/json" }, `upload the ${side} slab photo`),
@@ -621,9 +624,11 @@ export default function AiGraderFinishPage() {
           reportId: item.reportId,
           side,
           fileName: file.name,
-          mimeType: file.type || "image/jpeg",
+          mimeType: slabMimeType,
           byteSize: bytes.byteLength,
           checksumSha256,
+          widthPx: slabDimensions.widthPx,
+          heightPx: slabDimensions.heightPx,
         }),
       });
       const initPayload = await readPayload(initResponse);
@@ -639,7 +644,8 @@ export default function AiGraderFinishPage() {
         uploadUrl: plan.uploadUrl,
         uploadMethod: typeof plan.uploadMethod === "string" ? plan.uploadMethod : "PUT",
         uploadHeaders: asRecord(plan.uploadHeaders) as Record<string, string>,
-        contentType: file.type || "image/jpeg",
+        contentType: slabMimeType,
+        checksumSha256,
         body: bytes,
       });
       const finalizeResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-finalize", {

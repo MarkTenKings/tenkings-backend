@@ -304,8 +304,12 @@ export async function presignUploadUrl(storageKey: string, contentType: string, 
   });
   return getSignedUrl(client as any, command as any, {
     expiresIn: 60 * 10,
-    // The SDK's default hoisting binds ChecksumSHA256 in the signed query so
-    // browsers do not need a custom checksum request header (and its CORS preflight).
+    // Keep the provider-native checksum in the signed request headers. DigitalOcean
+    // Spaces accepts a query-hoisted checksum but does not persist a checksum that
+    // HeadObject can round-trip, so the browser must send this exact signed header.
+    unhoistableHeaders: options.checksumSha256
+      ? new Set(["x-amz-checksum-sha256"])
+      : undefined,
   });
 }
 

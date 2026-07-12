@@ -1414,15 +1414,30 @@ test("label preview is print-ready HTML with certification claim disabled", () =
 
 test("production release persistence upserts durable records and optional card linkage", async () => {
   const { db, calls } = createMockProductionDb();
+  const imageBytes = Buffer.from("front");
+  const reportBundle = sampleBundle({
+    assets: [{
+      id: "report/front/front-normalized-card.png",
+      kind: "image",
+      fileName: "front-normalized-card.png",
+      contentType: "image/png",
+      checksumSha256: aiGraderSha256(imageBytes),
+      byteSize: imageBytes.length,
+      widthPx: 1200,
+      heightPx: 1680,
+      side: "front",
+      evidenceRole: "normalized_card",
+    }],
+  });
   const plan = buildAiGraderProductionStoragePlan({
-    reportBundle: sampleBundle(),
+    reportBundle,
     productionRelease: sampleRelease(),
     publicReportBaseUrl: "https://collect.tenkings.co",
   });
 
   const result = await persistAiGraderProductionRelease(db, {
     tenantId: "tenant-1",
-    reportBundle: sampleBundle(),
+    reportBundle,
     productionRelease: sampleRelease(),
     storagePlan: plan,
     operatorUserId: "user-1",
@@ -1480,11 +1495,15 @@ test("production release persistence upserts durable records and optional card l
   const cardUpdate = calls.find((call) => call.delegate === "cardAsset" && call.method === "updateMany");
   assert.equal(cardUpdate.args.data.aiGradeFinal, 8.6);
   assert.equal(cardUpdate.args.data.aiGradeLabel, "8.6");
+  assert.equal(cardUpdate.args.data.status, "READY");
+  assert.equal(cardUpdate.args.data.storageKey, plan.artifacts.find((artifact) => artifact.artifactClass === "report_asset").storageKey);
+  assert.equal(cardUpdate.args.data.imageUrl, plan.artifacts.find((artifact) => artifact.artifactClass === "report_asset").publicUrl);
   const itemUpdate = calls.find((call) => call.delegate === "item" && call.method === "updateMany");
   assert.equal(calls.some((call) => call.delegate === "item" && call.method === "findUnique"), true);
   assert.equal(itemUpdate.args.data.detailsJson.existingItemDetail, "keep-me");
   assert.deepEqual(itemUpdate.args.data.detailsJson.nestedItemDetail, { preserved: true });
   assert.equal(itemUpdate.args.data.detailsJson.aiGraderReportId, "report-1");
+  assert.equal(itemUpdate.args.data.imageUrl, cardUpdate.args.data.imageUrl);
 });
 
 test("production publish preserves label sheet, print audit, and progressed runtime valuation", async () => {

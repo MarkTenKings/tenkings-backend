@@ -390,7 +390,9 @@ function sanitizeReportBundleForProduction(bundle: AiGraderReportBundle): AiGrad
   return {
     ...sanitized,
     assets: productionAssetManifest(bundle) as AiGraderReportBundle["assets"],
-    publicAssets: (sanitized.publicAssets ?? []).map((asset) => sanitizePublishJson(asset)),
+    ...(Array.isArray(bundle.publicAssets)
+      ? { publicAssets: (sanitized.publicAssets ?? []).map((asset) => sanitizePublishJson(asset)) }
+      : {}),
   };
 }
 
@@ -409,6 +411,10 @@ function sanitizeProductionReleaseForProduction(release: AiGraderReportBundle["p
         : "Published AI Grader report is unlinked and needs card linkage before inventory automation.",
     },
   });
+}
+
+function sanitizeProductionReleaseForConfirm(release: AiGraderReportBundle["productionRelease"]) {
+  return release ? sanitizePublishJson(release) : release;
 }
 
 async function sha256Hex(bytes: ArrayBuffer) {
@@ -2367,12 +2373,12 @@ export default function AiGraderStationPage() {
         throw new Error("Card creation requires storage-ready image asset metadata with SHA-256 checksums and byte sizes.");
       }
       const sanitizedBundle = sanitizeReportBundleForProduction(reportBundleWithIdentity);
-      const sanitizedRelease = sanitizeProductionReleaseForProduction(productionRelease, sanitizedBundle, null);
+      const sanitizedRelease = sanitizeProductionReleaseForConfirm(productionRelease);
       const response = await fetch("/api/admin/ai-grader/production/create-card-from-report", {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify({
-          publicationStatus: "published",
+          publicationStatus: "finalized",
           reportId: sanitizedRelease?.reportId ?? sanitizedBundle.reportId,
           certId: sanitizedRelease?.label?.certId,
           gradingSessionId: sanitizedRelease?.gradingSessionId ?? sanitizedBundle.gradingSessionId,
@@ -2741,6 +2747,7 @@ export default function AiGraderStationPage() {
             uploadMethod: artifact.uploadMethod,
             uploadHeaders: artifact.uploadHeaders,
             contentType,
+            checksumSha256,
             body: bytes,
           });
         } catch (error) {
@@ -2870,6 +2877,8 @@ export default function AiGraderStationPage() {
       if (!reportId) throw new Error("A report ID is required before uploading slabbed photos.");
       const bytes = await file.arrayBuffer();
       const checksumSha256 = await sha256Hex(bytes);
+      const slabMimeType = file.type || "image/jpeg";
+      const slabDimensions = await assertAiGraderBrowserRaster(bytes, slabMimeType);
       let initResponse: Response;
       try {
         initResponse = await fetch("/api/admin/ai-grader/production/slabbed-photo-init", {
@@ -2879,9 +2888,11 @@ export default function AiGraderStationPage() {
             reportId,
             side,
             fileName: file.name,
-            mimeType: file.type || "image/jpeg",
+            mimeType: slabMimeType,
             byteSize: bytes.byteLength,
             checksumSha256,
+            widthPx: slabDimensions.widthPx,
+            heightPx: slabDimensions.heightPx,
           }),
         });
       } catch (error) {
@@ -2908,7 +2919,8 @@ export default function AiGraderStationPage() {
           uploadUrl: plan.uploadUrl,
           uploadMethod: plan.uploadMethod,
           uploadHeaders: plan.uploadHeaders,
-          contentType: file.type || "image/jpeg",
+          contentType: slabMimeType,
+          checksumSha256,
           body: bytes,
         });
       } catch (error) {

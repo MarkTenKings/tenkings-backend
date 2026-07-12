@@ -5,6 +5,7 @@ import {
   presignUploadUrl,
   publicUrlFor,
   readStoragePrefix,
+  sha256HexToBase64,
   verifyStorageObjectIntegrity,
 } from "../../../../../lib/server/storage";
 import { readAiGraderRasterDimensions } from "../../../../../lib/aiGraderRasterValidation";
@@ -53,6 +54,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       uploadHeaders: {
         "Content-Type": contentType,
         ...(getS3ObjectAcl() ? { "x-amz-acl": String(getS3ObjectAcl()) } : {}),
+        "x-amz-checksum-sha256": sha256HexToBase64(checksumSha256),
       },
       publicUrl: publicUrlFor(storageKey),
     }),

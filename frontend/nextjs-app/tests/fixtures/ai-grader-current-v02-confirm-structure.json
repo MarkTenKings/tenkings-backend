@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "ai-grader-report-bundle-v0.1",
+  "reportProducer": {
+    "contractVersion": "ai-grader-report-producer-v0.2",
+    "capabilities": [
+      "finding-validation-v1",
+      "capture-profile-provenance-v1",
+      "raster-dimensions-v1"
+    ]
+  },
+  "sourceAssetCount": 77,
+  "normalizedCards": [
+    { "side": "front", "mimeType": "image/png", "widthPx": 1200, "heightPx": 1680 },
+    { "side": "back", "mimeType": "image/png", "widthPx": 1200, "heightPx": 1680 }
+  ],
+  "findingValidation": {
+    "status": "valid",
+    "sourceCandidateCount": 0,
+    "publishedFindingCount": 0,
+    "issueCount": 0
+  },
+  "gradeShape": {
+    "status": "provisional_diagnostic_grade",
+    "requiredGatesPassed": true,
+    "elementCount": 4
+  },
+  "releaseShape": {
+    "reportStatus": "final_ai_grader_report_v0",
+    "finalStatus": "final_grade_computed",
+    "finalGradeComputed": true,
+    "operatorFinalizationRequired": true
+  }
+}

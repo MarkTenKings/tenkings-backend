@@ -235,6 +235,60 @@ function warningMentions(bundle: AiGraderReportBundle, pattern: RegExp) {
   return pattern.test(text);
 }
 
+function sourceGradeReadinessGate(bundle: AiGraderReportBundle): AiGraderProductionGate | undefined {
+  if (!isRecord(bundle.provisionalGrade?.gates)) return undefined;
+  const gates = bundle.provisionalGrade.gates;
+  const results = Array.isArray(gates.results) ? gates.results : [];
+  const blockers = Array.isArray(gates.blockers) ? gates.blockers : [];
+  const acceptedWarnings = Array.isArray(gates.acceptedWarnings) ? gates.acceptedWarnings : [];
+  const failedResult = results.find((entry: unknown) => isRecord(entry) && entry.status === "fail");
+  const blocker = blockers.find((entry: unknown) => typeof entry === "string");
+  const validResults = results.length > 0 && results.every((entry: unknown) =>
+    isRecord(entry) &&
+    typeof entry.gate === "string" &&
+    entry.gate.length > 0 &&
+    (entry.status === "pass" || entry.status === "accepted_warning") &&
+    typeof entry.summary === "string" &&
+    Array.isArray(entry.evidenceRefs) &&
+    entry.evidenceRefs.every((ref: unknown) => typeof ref === "string" && ref.length > 0)
+  );
+  const validGateLists = blockers.length === 0 &&
+    acceptedWarnings.every((warning: unknown) => typeof warning === "string" && warning.length > 0);
+  const sourceReady =
+    bundle.provisionalGrade?.status === "provisional_diagnostic_grade" &&
+    gates.requiredGatesPassed === true &&
+    typeof bundle.provisionalGrade?.overall === "number" &&
+    Number.isFinite(bundle.provisionalGrade.overall) &&
+    bundle.provisionalGrade.overall >= 1 &&
+    bundle.provisionalGrade.overall <= 10 &&
+    validResults &&
+    validGateLists;
+  const failedGate = isRecord(failedResult) && typeof failedResult.gate === "string"
+    ? failedResult.gate
+    : "source_grade";
+  const failedReason = isRecord(failedResult) && typeof failedResult.summary === "string"
+    ? failedResult.summary
+    : typeof blocker === "string"
+      ? blocker
+      : gates.requiredGatesPassed !== true
+        ? "The source grading gates did not explicitly pass."
+        : !validResults || !validGateLists
+          ? "The source grading gate evidence is incomplete or invalid."
+          : "The source report did not compute a valid 1-to-10 provisional overall grade.";
+  return {
+    id: "source_grade_readiness",
+    label: "Source grade readiness",
+    status: sourceReady ? "pass" : "fail",
+    reason: sourceReady
+      ? "The source report computed an evidence-gated provisional overall grade."
+      : "Source grade gate " + failedGate + " failed: " + failedReason,
+    evidenceRefs: [
+      "bundle.provisionalGrade.overall",
+      "bundle.provisionalGrade.gates",
+    ],
+  };
+}
+
 function gate(
   id: string,
   label: string,
@@ -260,7 +314,9 @@ function gate(
 function buildProductionGates(bundle: AiGraderReportBundle, warningsAccepted: boolean): AiGraderProductionGate[] {
   const clippingWarning = warningMentions(bundle, /clipping|saturat/i);
   const focusWarning = warningMentions(bundle, /focus|sharp|blur/i);
+  const sourceGradeGate = sourceGradeReadinessGate(bundle);
   return [
+    ...(sourceGradeGate ? [sourceGradeGate] : []),
     gate("ruler_calibration", "Ruler calibration", hasCalibration(bundle), "Ruler/fixed fixture calibration metadata is required.", ["bundle.rulerCalibration"], warningsAccepted),
     gate("repeatability", "Repeatability", !warningMentions(bundle, /repeatability.*fail/i), "Repeatability must pass or be operator-accepted.", ["bundle.warnings"], warningsAccepted),
     gate("framing_overlay", "Framing and overlay", !warningMentions(bundle, /framing.*fail|overlay.*fail/i), "Framing/overlay gate must pass or be operator-accepted.", ["bundle.calibrationProfile", "bundle.warnings"], warningsAccepted),

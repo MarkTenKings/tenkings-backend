@@ -777,6 +777,60 @@ test("production release fails closed when required front/back evidence is missi
   assert.equal(release.gates.some((gate) => gate.id === "front_evidence" && gate.status === "fail"), true);
 });
 
+test("production release projects the exact source grade blocker instead of hiding a missing final grade", async () => {
+  const reportDir = fixtureReportDir();
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "source-grade-blocker" });
+  bundle.provisionalGrade.status = "insufficient_evidence";
+  delete bundle.provisionalGrade.overall;
+  bundle.provisionalGrade.gates = {
+    requiredGatesPassed: false,
+    results: [
+      {
+        gate: "focus_sharpness",
+        status: "fail",
+        summary: "Minimum sharpness is 14.4081; soft target is 60.",
+        evidenceRefs: ["analysis.front.allOn.sharpnessScore", "analysis.back.allOn.sharpnessScore"],
+      },
+    ],
+    blockers: ["focus_sharpness: Minimum sharpness is 14.4081; soft target is 60."],
+    acceptedWarnings: [],
+  };
+
+  const release = buildAiGraderProductionRelease({
+    bundle,
+    operatorId: "operator",
+    warningsAccepted: true,
+  });
+
+  assert.equal(release.finalGradeComputed, false);
+  const sourceGate = release.gates.find((gate) => gate.id === "source_grade_readiness");
+  assert.equal(sourceGate?.status, "fail");
+  assert.match(sourceGate?.reason ?? "", /focus_sharpness/);
+  assert.match(sourceGate?.reason ?? "", /14\.4081/);
+  assert.equal(release.labelDataGenerated, false);
+  assert.equal(release.qrPayloadGenerated, false);
+});
+
+test("production release rejects fail-open source grade shapes", async () => {
+  const source = await buildAiGraderReportBundle({ reportDir: fixtureReportDir(), reportId: "source-grade-shape" });
+  const cases = [
+    (bundle) => { delete bundle.provisionalGrade.gates.requiredGatesPassed; },
+    (bundle) => { bundle.provisionalGrade.gates.requiredGatesPassed = false; },
+    (bundle) => { bundle.provisionalGrade.gates.results = []; },
+    (bundle) => { delete bundle.provisionalGrade.gates.results[0].evidenceRefs; },
+    (bundle) => { bundle.provisionalGrade.overall = 11; },
+  ];
+  for (const mutate of cases) {
+    const bundle = structuredClone(source);
+    mutate(bundle);
+    const release = buildAiGraderProductionRelease({ bundle, operatorId: "operator", warningsAccepted: true });
+    assert.equal(release.finalGradeComputed, false);
+    assert.equal(release.gates.find((gate) => gate.id === "source_grade_readiness")?.status, "fail");
+    assert.equal(release.labelDataGenerated, false);
+    assert.equal(release.qrPayloadGenerated, false);
+  }
+});
+
 test("production release writer and CLI write local publication artifacts without hardware or DB side effects", async () => {
   const reportDir = fixtureReportDir();
   const bundleOutput = fs.mkdtempSync(path.join(os.tmpdir(), "ai-grader-production-bundle-"));
