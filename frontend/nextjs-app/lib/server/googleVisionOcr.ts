@@ -126,6 +126,11 @@ type PreparedVisionImage = {
   };
 };
 
+export type GoogleVisionUrlOcrInput = {
+  id?: string;
+  url: string;
+};
+
 const shouldUseImageUri = (): boolean => {
   const raw = String(process.env.GOOGLE_VISION_USE_IMAGE_URI ?? "true").trim().toLowerCase();
   if (["0", "false", "no", "off"].includes(raw)) {
@@ -176,18 +181,11 @@ const toPreparedVisionImage = async (image: OcrImageInput): Promise<PreparedVisi
   throw new Error("OCR image requires `url` or `base64`.");
 };
 
-export async function runGoogleVisionOcr(images: OcrImageInput[]): Promise<OcrResponse> {
-  const apiKey = (process.env.GOOGLE_VISION_API_KEY ?? "").trim();
-  if (!apiKey) {
-    throw new Error("GOOGLE_VISION_API_KEY is not configured");
-  }
-  if (!Array.isArray(images) || images.length === 0) {
-    return { results: [], combined_text: "" };
-  }
-
-  const prepared = await Promise.all(images.map((image) => toPreparedVisionImage(image)));
-
-  const response = await fetch(`${GOOGLE_VISION_ENDPOINT}?key=${encodeURIComponent(apiKey)}`, {
+async function runPreparedGoogleVisionOcr(
+  prepared: PreparedVisionImage[],
+  options: { apiKey: string; fetchImpl?: typeof fetch; safeErrors?: boolean }
+): Promise<OcrResponse> {
+  const response = await (options.fetchImpl ?? fetch)(`${GOOGLE_VISION_ENDPOINT}?key=${encodeURIComponent(options.apiKey)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -199,6 +197,7 @@ export async function runGoogleVisionOcr(images: OcrImageInput[]): Promise<OcrRe
   });
 
   if (!response.ok) {
+    if (options.safeErrors) throw new Error("Google Vision rejected the AI Grader OCR request.");
     const body = await response.text().catch(() => "");
     throw new Error(`Google Vision request failed (${response.status})${body ? `: ${body.slice(0, 200)}` : ""}`);
   }
@@ -209,6 +208,7 @@ export async function runGoogleVisionOcr(images: OcrImageInput[]): Promise<OcrRe
   };
 
   if (payload?.error?.message) {
+    if (options.safeErrors) throw new Error("Google Vision could not complete the AI Grader OCR request.");
     throw new Error(payload.error.message);
   }
 
@@ -234,4 +234,52 @@ export async function runGoogleVisionOcr(images: OcrImageInput[]): Promise<OcrRe
     results,
     combined_text: combinedText,
   };
+}
+
+export async function runGoogleVisionOcr(images: OcrImageInput[]): Promise<OcrResponse> {
+  const apiKey = (process.env.GOOGLE_VISION_API_KEY ?? "").trim();
+  if (!apiKey) {
+    throw new Error("GOOGLE_VISION_API_KEY is not configured");
+  }
+  if (!Array.isArray(images) || images.length === 0) {
+    return { results: [], combined_text: "" };
+  }
+  const prepared = await Promise.all(images.map((image) => toPreparedVisionImage(image)));
+  return runPreparedGoogleVisionOcr(prepared, { apiKey });
+}
+
+/**
+ * AI Grader-only Vision entry point. It always supplies verified public object
+ * URLs to Google and has no server-fetch/base64 branch.
+ */
+export async function runGoogleVisionDocumentTextDetectionByUrl(
+  images: GoogleVisionUrlOcrInput[],
+  dependencies: {
+    env?: Record<string, string | undefined>;
+    fetchImpl?: typeof fetch;
+  } = {}
+): Promise<OcrResponse> {
+  const apiKey = String((dependencies.env ?? process.env).GOOGLE_VISION_API_KEY ?? "").trim();
+  if (!apiKey) throw new Error("Google Vision is not configured for AI Grader OCR.");
+  if (!Array.isArray(images) || images.length === 0) return { results: [], combined_text: "" };
+  const prepared = images.map((image) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(String(image.url ?? ""));
+    } catch {
+      throw new Error("AI Grader Google Vision requires verified public HTTPS image URLs.");
+    }
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new Error("AI Grader Google Vision requires verified public HTTPS image URLs.");
+    }
+    return {
+      id: typeof image.id === "string" ? image.id : undefined,
+      image: { source: { imageUri: parsed.toString() } },
+    } satisfies PreparedVisionImage;
+  });
+  return runPreparedGoogleVisionOcr(prepared, {
+    apiKey,
+    fetchImpl: dependencies.fetchImpl,
+    safeErrors: true,
+  });
 }

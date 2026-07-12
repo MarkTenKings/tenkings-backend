@@ -49,6 +49,7 @@ import {
   type AiGraderProductionActorAudit,
 } from "./aiGraderProductionAuth";
 import type { AiGraderLabelSheetsResult } from "../aiGraderLabelSheets";
+import { AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION } from "../aiGraderLocalStation";
 import {
   queueConfirmedAiGraderLabelTx,
   type AiGraderConfirmedLabelQueueResult,
@@ -59,7 +60,10 @@ import type {
   AiGraderOcrPrefillResult,
   AiGraderOcrPrefillSide,
   AiGraderOcrPrefillSourceImage,
-} from "./aiGraderOcrPrefill";
+} from "./aiGraderOcrPrefillCurrent";
+import {
+  effectiveAiGraderOcrModel,
+} from "./aiGraderOcrStructuredExtraction";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
@@ -199,11 +203,14 @@ export type AiGraderOcrPrefillImageUpload = {
   mimeType: string;
   checksumSha256: string;
   byteSize: number;
+  widthPx: 1200;
+  heightPx: 1680;
   storageKey: string;
 };
 
 export type AiGraderOcrPrefillUploadInitResult = {
   reportId: string;
+  reportProducerContractVersion: typeof AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION;
   uploadSessionId: string;
   humanConfirmationRequired: true;
   uploadPlan: Array<
@@ -216,6 +223,7 @@ export type AiGraderOcrPrefillUploadInitResult = {
   >;
   requiredFinalizeManifest: {
     reportId: string;
+    reportProducerContractVersion: typeof AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION;
     uploadSessionId: string;
     images: AiGraderOcrPrefillImageUpload[];
   };
@@ -328,7 +336,11 @@ export type AiGraderProductionApiDependencies = {
     actorAudit?: AiGraderProductionActorAudit | null;
     errorCode?: string | null;
     attemptId?: string | null;
-  }): Promise<unknown>;
+  }): Promise<{
+    reportId?: string;
+    status?: string;
+    valuation?: { searchQuery?: string | null };
+  }>;
   persistSelectedComps?(input: {
     tenantId: string;
     reportId: string;
@@ -489,6 +501,22 @@ function actionKey(req: NextApiRequest) {
 
 function isEnabled(env: EnvLike | undefined, key: string) {
   return env?.[key] === "true";
+}
+
+export function aiGraderProductionReadiness(env: EnvLike = process.env) {
+  let effectiveModel: string;
+  try {
+    effectiveModel = effectiveAiGraderOcrModel(env);
+  } catch {
+    effectiveModel = "invalid_configuration";
+  }
+  return {
+    googleVisionConfigured: Boolean(String(env.GOOGLE_VISION_API_KEY ?? "").trim()),
+    openAiConfigured: Boolean(String(env.OPENAI_API_KEY ?? "").trim()),
+    effectiveAiGraderModel: effectiveModel,
+    ebayCompsEnabled: isEnabled(env, AI_GRADER_EBAY_COMPS_ENABLED_ENV),
+    serpApiConfigured: Boolean(String(env.SERPAPI_KEY ?? "").trim()),
+  };
 }
 
 export function aiGraderPublicReportDbReadsEnabled(env: EnvLike | undefined = process.env) {
@@ -1175,7 +1203,6 @@ function parseCreateCardFromReportBody(body: unknown) {
   };
 }
 
-const AI_GRADER_OCR_PREFILL_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const AI_GRADER_OCR_PREFILL_MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 
 function assertNoOcrUploadBodyFields(entry: JsonRecord, path: string) {
@@ -1193,16 +1220,19 @@ function parseOcrPrefillImageMetadata(value: unknown, index: number, allowStorag
   if (!isRecord(value)) throw new Error(`images[${index}] must be an object.`);
   assertNoOcrUploadBodyFields(value, `images[${index}]`);
   const side = stringValue(value.side, "") as AiGraderOcrPrefillSide;
-  const artifactRole = stringValue(value.artifactRole, "normalized_card");
+  const artifactRole = stringValue(value.artifactRole, "");
   const fileName = sanitizeUploadFileName(stringValue(value.fileName, `${side || "card"}-normalized.png`));
-  const mimeType = stringValue(value.mimeType, "image/png").toLowerCase();
+  const mimeType = stringValue(value.mimeType, "").toLowerCase();
   const checksumSha256 = stringValue(value.checksumSha256, "").toLowerCase();
   const byteSize = Math.round(numericValue(value.byteSize, 0));
+  const widthPx = Math.round(numericValue(value.widthPx, 0));
+  const heightPx = Math.round(numericValue(value.heightPx, 0));
   const storageKey = allowStorageKey ? stringValue(value.storageKey, "") : "";
   if (side !== "front" && side !== "back") throw new Error(`images[${index}].side must be front or back.`);
   if (artifactRole !== "normalized_card") throw new Error(`images[${index}].artifactRole must be normalized_card.`);
-  if (!AI_GRADER_OCR_PREFILL_MIME_TYPES.has(mimeType)) {
-    throw new Error(`images[${index}].mimeType must be image/jpeg, image/png, or image/webp.`);
+  if (mimeType !== "image/png") throw new Error(`images[${index}].mimeType must be image/png.`);
+  if (widthPx !== 1200 || heightPx !== 1680) {
+    throw new Error(`images[${index}] must be exactly 1200x1680.`);
   }
   if (!/^[a-f0-9]{64}$/.test(checksumSha256)) {
     throw new Error(`images[${index}].checksumSha256 must be a SHA-256 hex digest.`);
@@ -1211,7 +1241,17 @@ function parseOcrPrefillImageMetadata(value: unknown, index: number, allowStorag
     throw new Error(`images[${index}].byteSize must be between 1 and ${AI_GRADER_OCR_PREFILL_MAX_IMAGE_BYTES}.`);
   }
   if (allowStorageKey && !storageKey) throw new Error(`images[${index}].storageKey is required.`);
-  return { side, artifactRole: "normalized_card", fileName, mimeType, checksumSha256, byteSize, storageKey };
+  return {
+    side,
+    artifactRole: "normalized_card",
+    fileName,
+    mimeType,
+    checksumSha256,
+    byteSize,
+    widthPx: 1200,
+    heightPx: 1680,
+    storageKey,
+  };
 }
 
 function buildOcrPrefillStorageKey(reportId: string, image: Omit<AiGraderOcrPrefillImageUpload, "storageKey">) {
@@ -1235,13 +1275,16 @@ function ocrPrefillUploadSessionId(reportId: string, images: AiGraderOcrPrefillI
   return `aigocr_${aiGraderSha256(
     stableStringify({
       reportId,
-      images: images.map(({ side, artifactRole, storageKey, checksumSha256, byteSize, mimeType }) => ({
+      reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
+      images: images.map(({ side, artifactRole, storageKey, checksumSha256, byteSize, mimeType, widthPx, heightPx }) => ({
         side,
         artifactRole,
         storageKey,
         checksumSha256,
         byteSize,
         mimeType,
+        widthPx,
+        heightPx,
       })),
     })
   ).slice(0, 32)}`;
@@ -1253,6 +1296,10 @@ function parseOcrPrefillBody(body: unknown, finalize: boolean) {
   if (!isRecord(body)) throw new Error("JSON object body is required.");
   const reportId = stringValue(body.reportId, "");
   if (!reportId || reportId.length > 200) throw new Error("reportId is required and must be 200 characters or fewer.");
+  const reportProducerContractVersion = stringValue(body.reportProducerContractVersion, "");
+  if (reportProducerContractVersion !== AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION) {
+    throw new Error("OCR Prefill accepts only current report-producer v0.2 packages.");
+  }
   const rawImages = Array.isArray(body.images) ? body.images : [];
   const parsedImages = rawImages.map((image, index) => parseOcrPrefillImageMetadata(image, index, finalize));
   const expectedImages = normalizeOcrPrefillImages(reportId, parsedImages);
@@ -1275,7 +1322,12 @@ function parseOcrPrefillBody(body: unknown, finalize: boolean) {
     (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_OCR_UPLOAD_SESSION_MISMATCH";
     throw error;
   }
-  return { reportId, images: expectedImages, uploadSessionId };
+  return {
+    reportId,
+    reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
+    images: expectedImages,
+    uploadSessionId,
+  };
 }
 
 function isPrivateIpv4(hostname: string) {
@@ -1823,7 +1875,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       res.setHeader("Allow", allow);
       return res.status(405).json({ ok: false, message: "Method not allowed" });
     }
-    if (key !== "run-comps" && !isEnabled(env, AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV)) {
+    if (key !== "run-comps" && key !== "auth-check" && !isEnabled(env, AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV)) {
       return res.status(503).json({
         ok: false,
         enabled: false,
@@ -1878,6 +1930,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             role: authorizedActor.role,
             displayName,
             action: authorizedActor.audit.action,
+            readiness: aiGraderProductionReadiness(env),
           },
         });
       }
@@ -1935,11 +1988,13 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         }
         const result: AiGraderOcrPrefillUploadInitResult = {
           reportId: input.reportId,
+          reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
           uploadSessionId: input.uploadSessionId,
           humanConfirmationRequired: true,
           uploadPlan,
           requiredFinalizeManifest: {
             reportId: input.reportId,
+            reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
             uploadSessionId: input.uploadSessionId,
             images: input.images,
           },
@@ -1963,6 +2018,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             checksumSha256: image.checksumSha256,
             byteSize: image.byteSize,
             contentType: image.mimeType,
+            sourceImageWidthPx: image.widthPx,
+            sourceImageHeightPx: image.heightPx,
           });
           assertAiGraderStorageArtifactIntegrity({
             verified,
@@ -1971,6 +2028,9 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             expectedChecksumSha256: image.checksumSha256,
             label: "normalized " + image.side + " OCR image",
           });
+          if (verified.widthPx !== image.widthPx || verified.heightPx !== image.heightPx) {
+            throw new Error("Storage-decoded normalized OCR image dimensions mismatch.");
+          }
         }
         let result: AiGraderOcrPrefillResult;
         try {
@@ -2110,20 +2170,6 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             } satisfies AiGraderCompsRunResult,
           });
         }
-        if (!input.searchQuery) {
-          return res.status(200).json({
-            ok: true,
-            enabled: true,
-            operation: "aiGraderEbayComps",
-            result: {
-              status: "not_ready_missing_identity",
-              liveExecutionEnabled: false,
-              compsRefs: [],
-              persisted: false,
-              message: "A searchable card identity is required before comps execution.",
-            } satisfies AiGraderCompsRunResult,
-          });
-        }
         if (!isEnabled(env, AI_GRADER_EBAY_COMPS_ENABLED_ENV)) {
           return res.status(200).json({
             ok: true,
@@ -2132,10 +2178,25 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             result: {
               status: "ready",
               liveExecutionEnabled: false,
-              searchQuery: input.searchQuery,
               compsRefs: [],
               persisted: false,
               message: `Live eBay comps are ready but disabled. Set ${AI_GRADER_EBAY_COMPS_ENABLED_ENV}=true with SERPAPI_KEY and operator approval to execute.`,
+            } satisfies AiGraderCompsRunResult,
+          });
+        }
+        if (!String(env.SERPAPI_KEY ?? "").trim()) {
+          return res.status(200).json({
+            ok: true,
+            enabled: true,
+            operation: "aiGraderEbayComps",
+            result: {
+              status: "failed",
+              liveExecutionEnabled: false,
+              compsRefs: [],
+              persisted: false,
+              retryable: true,
+              errorCode: "AI_GRADER_SERPAPI_NOT_CONFIGURED",
+              message: "eBay sold comps are enabled but SerpApi is not configured. Retry after configuration is restored.",
             } satisfies AiGraderCompsRunResult,
           });
         }
@@ -2145,7 +2206,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         const requestedByUserId = actorOperatorUserId(authorizedActor);
         const startedAt = new Date().toISOString();
         const attemptId = `aigc_${aiGraderSha256(`${input.reportId}:${startedAt}:${Math.random()}`).slice(0, 24)}`;
-        await deps.persistComps({
+        const claim = await deps.persistComps({
           tenantId,
           reportId: input.reportId,
           status: "running",
@@ -2161,10 +2222,14 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           actorAudit: authorizedActor.audit,
           attemptId,
         });
+        const confirmedSearchQuery = optionalString(claim.valuation?.searchQuery);
+        if (!confirmedSearchQuery) {
+          throw new Error("Confirmed card identity did not provide a persisted comps search query.");
+        }
         try {
           const comps = await deps.runComps({
             reportId: input.reportId,
-            searchQuery: input.searchQuery,
+            searchQuery: confirmedSearchQuery,
             reportBundle: input.reportBundle,
             productionRelease: input.productionRelease,
             limit: input.limit,
@@ -2189,7 +2254,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             tenantId,
             reportId: input.reportId,
             status: "ready",
-            searchQuery: input.searchQuery,
+            searchQuery: confirmedSearchQuery,
             compsRefs: safeCompsRefs,
             resultSummary,
             requestedByUserId,
@@ -2204,7 +2269,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             result: {
               status: "ready",
               liveExecutionEnabled: true,
-              searchQuery: input.searchQuery,
+              searchQuery: confirmedSearchQuery,
               searchUrl: safeSearchUrl ?? undefined,
               compsRefs: safeCompsRefs,
               resultSummary,
@@ -2219,7 +2284,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             tenantId,
             reportId: input.reportId,
             status: "failed",
-            searchQuery: input.searchQuery,
+            searchQuery: confirmedSearchQuery,
             compsRefs: [],
             resultSummary: {
               source: "ebay_sold",
@@ -2248,7 +2313,6 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             result: {
               status: "failed",
               liveExecutionEnabled: true,
-              searchQuery: input.searchQuery,
               compsRefs: [],
               persisted: true,
               errorCode: failure.errorCode,
@@ -2855,6 +2919,7 @@ async function existingAiGraderCreatedCardResult(input: {
   productionRelease: AiGraderProductionReleaseLike;
   identity: AiGraderConfirmedCardIdentity;
   operatorUserId: string;
+  env?: EnvLike;
 }): Promise<AiGraderCreateCardFromReportResult | null> {
   const session = input.gradingSessionId
     ? await input.db.aiGraderSession?.findUnique?.({
@@ -2883,7 +2948,9 @@ async function existingAiGraderCreatedCardResult(input: {
     },
   });
   if (!isRecord(card)) return null;
-  const inventory = await ensureInventoryReadyArtifactsTx(input.db, cardAssetId, input.operatorUserId);
+  const inventory = await ensureInventoryReadyArtifactsTx(input.db, cardAssetId, input.operatorUserId, {
+    env: input.env,
+  });
   const itemId = optionalString((isRecord(session) ? session.itemId : null) ?? (isRecord(report) ? report.itemId : null)) ?? inventory.itemId;
   const fallbackTitle = identityTitle(input.identity) || optionalString(card.fileName) || cardAssetId;
   const title = optionalString(card.customTitle) ?? fallbackTitle;
@@ -2957,6 +3024,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
       productionRelease: input.productionRelease,
       identity: input.identity,
       operatorUserId,
+      env: input.env,
     });
     if (existing) {
       const [existingSession, existingReport] = await Promise.all([
@@ -3610,7 +3678,7 @@ export async function persistAiGraderCompsRuntime(input: {
     const valuationId = `ai-grader-valuation:${input.reportId}`;
     const current = await tx.aiGraderValuation.findUnique({
       where: { id: valuationId },
-      select: { status: true, resultSummary: true, updatedAt: true },
+      select: { status: true, searchQuery: true, resultSummary: true, updatedAt: true },
     });
     const currentStatus = optionalString(current?.status);
     const currentSummary = isRecord(current?.resultSummary) ? current.resultSummary : {};
@@ -3639,12 +3707,19 @@ export async function persistAiGraderCompsRuntime(input: {
         "AI_GRADER_COMPS_STALE_ATTEMPT"
       );
     }
+    const persistedSearchQuery = optionalString(current?.searchQuery);
+    if (input.status === "running" && !persistedSearchQuery) {
+      throw conflict(
+        "Confirmed card identity has not queued an eBay sold-comps search yet.",
+        "AI_GRADER_COMPS_CONFIRMED_IDENTITY_REQUIRED"
+      );
+    }
     return persistAiGraderValuationResult(tx as any, {
       tenantId: input.tenantId,
       reportId: input.reportId,
       status: input.status,
       source: "ebay_sold",
-      searchQuery: input.searchQuery ?? null,
+      searchQuery: persistedSearchQuery ?? input.searchQuery ?? null,
       compsRefs: input.compsRefs,
       resultSummary: {
         ...resultSummary,

@@ -25,9 +25,11 @@ test("v0.1 report findings continue to use the nested stored-finding shape", () 
 
 test("v0.2 report findings use only the top-level published projection and convert kind for the overlay", () => {
   const legacyBundle = getAiGraderReportBundle("sample-defect-v1");
+  const finalizedFixture = getAiGraderReportBundle("sample-final-v0");
   const bundle = {
     ...legacyBundle,
     schemaVersion: AI_GRADER_WEB_REPORT_BUNDLE_V02_VERSION,
+    productionRelease: finalizedFixture.productionRelease!,
     defectFindings: [
       {
         schemaVersion: "ai-grader-defect-finding-v1",

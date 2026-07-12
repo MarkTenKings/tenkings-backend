@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SAMPLE_AI_GRADER_REPORT_BUNDLE } from "../lib/aiGraderReportBundle";
+import {
+  SAMPLE_AI_GRADER_REPORT_BUNDLE,
+  type AiGraderReportBundle,
+  type AiGraderReportPublicAsset,
+} from "../lib/aiGraderReportBundle";
 import {
   aiGraderOcrPrefillReportMetadata,
   AiGraderOcrPrefillStageError,
@@ -14,10 +18,14 @@ import {
 const FRONT_HASH = "1".repeat(64);
 const BACK_HASH = "2".repeat(64);
 
-function normalizedBundle() {
+function normalizedBundle(): AiGraderReportBundle & { assets: AiGraderReportPublicAsset[] } {
   return {
     ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
     reportId: "ocr-client-report",
+    reportProducer: {
+      contractVersion: "ai-grader-report-producer-v0.2",
+      capabilities: ["finding-validation-v1", "raster-dimensions-v1"],
+    },
     assets: [
       {
         id: "front/normalized/front-normalized-card.png",
@@ -26,6 +34,10 @@ function normalizedBundle() {
         contentType: "image/png",
         checksumSha256: FRONT_HASH,
         byteSize: 5,
+        widthPx: 1200,
+        heightPx: 1680,
+        side: "front",
+        evidenceRole: "normalized_card",
       },
       {
         id: "back/normalized/back-normalized-card.png",
@@ -34,6 +46,10 @@ function normalizedBundle() {
         contentType: "image/png",
         checksumSha256: BACK_HASH,
         byteSize: 4,
+        widthPx: 1200,
+        heightPx: 1680,
+        side: "back",
+        evidenceRole: "normalized_card",
       },
       {
         id: "front/channel-1.png",
@@ -47,12 +63,13 @@ function normalizedBundle() {
 
 function resultFixture(): AiGraderOcrPrefillResult {
   const known = <T extends string | boolean>(value: T, confidence = 0.9) => ({
+    state: "supported" as const,
     value,
     confidence,
     reviewRequired: confidence < 0.8,
-    sources: ["front_ocr"],
+    evidenceRefs: ["google.front.text"],
   });
-  const missing = { value: null, confidence: 0, reviewRequired: true, sources: [] };
+  const missing = { state: "unknown" as const, value: null, confidence: 0, reviewRequired: true, evidenceRefs: [] };
   return {
     reportId: "ocr-client-report",
     status: "prefill_ready",
@@ -66,18 +83,22 @@ function resultFixture(): AiGraderOcrPrefillResult {
       cardName: missing,
       year: known("1990"),
       manufacturer: known("SkyBox"),
+      sport: known("basketball"),
+      game: missing,
       productSet: known("1990 SkyBox Basketball"),
       cardNumber: known("41"),
       parallel: known("Base", 0.74),
       insert: missing,
       numbered: missing,
-      auto: known(true, 0.84),
-      mem: missing,
+      autograph: known(true, 0.84),
+      memorabilia: missing,
     },
-    reviewFieldNames: ["cardName", "parallel", "insert", "numbered", "mem"],
+    reviewFieldNames: ["cardName", "game", "parallel", "insert", "numbered", "memorabilia"],
     provenance: {
       ocrEngine: "google_vision_document_text_detection",
       attributeExtractor: "@tenkings/shared/extractCardAttributes",
+      structuredExtractor: "openai_responses_strict_json_schema",
+      structuredExtractionModel: "gpt-5.6-sol",
       setLookupUsed: true,
       setIdentificationUsed: true,
     },
@@ -92,12 +113,60 @@ test("OCR prefill client selects only normalized front/back report assets", () =
   assert.equal(assets[1]?.asset.id, "back/normalized/back-normalized-card.png");
   assert.throws(
     () => findAiGraderNormalizedOcrAssets({ ...normalizedBundle(), assets: [] }),
-    /Normalized front\/back card artifacts/
+    /exactly one verified normalized front asset/
   );
+});
+
+test("OCR input selection rejects stale producers and every normalized asset identity violation", () => {
+  const base = normalizedBundle();
+  const cases: Array<{ bundle: any; message: RegExp }> = [
+    {
+      bundle: { ...base, reportProducer: { contractVersion: "ai-grader-report-producer-v0.1", capabilities: [] } },
+      message: /current report-producer v0\.2/,
+    },
+    {
+      bundle: { ...base, assets: base.assets.map((asset: any, index: number) =>
+        index === 0 ? { ...asset, evidenceRole: "directional_channel" } : asset) },
+      message: /exactly one verified normalized front asset/,
+    },
+    {
+      bundle: { ...base, assets: base.assets.map((asset: any, index: number) =>
+        index === 0 ? { ...asset, contentType: "image\/tiff", fileName: "front-raw.tiff" } : asset) },
+      message: /image\/png at exactly 1200x1680/,
+    },
+    {
+      bundle: { ...base, assets: base.assets.map((asset: any, index: number) =>
+        index === 0 ? { ...asset, widthPx: 1199 } : asset) },
+      message: /1200x1680/,
+    },
+    {
+      bundle: { ...base, assets: base.assets.map((asset: any, index: number) =>
+        index === 0 ? { ...asset, checksumSha256: "bad" } : asset) },
+      message: /valid, consistent SHA-256/,
+    },
+    {
+      bundle: { ...base, assets: base.assets.map((asset: any, index: number) =>
+        index === 0 ? { ...asset, byteSize: 0 } : asset) },
+      message: /positive byte size/,
+    },
+    {
+      bundle: { ...base, assets: base.assets.map((asset: any, index: number) =>
+        index === 1 ? { ...asset, id: base.assets[0].id } : asset) },
+      message: /unique asset identities/,
+    },
+    {
+      bundle: { ...base, assets: [...base.assets, { ...base.assets[0], id: "another-front" }] },
+      message: /exactly one verified normalized front asset/,
+    },
+  ];
+  for (const entry of cases) {
+    assert.throws(() => findAiGraderNormalizedOcrAssets(entry.bundle), entry.message);
+  }
 });
 
 test("OCR prefill browser flow fetches local normalized bytes and uploads them directly to storage", async () => {
   const bundle = normalizedBundle();
+  bundle.assets[0]!.fileName = "C:\\private\\front-normalized-card.png";
   const productionBodies: unknown[] = [];
   const directUploads: Array<{ url: string; byteSize: number }> = [];
   const result = resultFixture();
@@ -118,6 +187,7 @@ test("OCR prefill browser flow fetches local normalized bytes and uploads them d
           ok: true,
           result: {
             reportId: body.reportId,
+            reportProducerContractVersion: "ai-grader-report-producer-v0.2",
             uploadSessionId: "aigocr_test",
             humanConfirmationRequired: true,
             uploadPlan: images.map((image: any) => ({
@@ -133,6 +203,7 @@ test("OCR prefill browser flow fetches local normalized bytes and uploads them d
             })),
             requiredFinalizeManifest: {
               reportId: body.reportId,
+              reportProducerContractVersion: "ai-grader-report-producer-v0.2",
               uploadSessionId: "aigocr_test",
               images,
             },
@@ -201,6 +272,7 @@ test("OCR prefill browser flow fetches local normalized bytes and uploads them d
   assert.equal(productionBodies.length, 2);
   assert.equal(JSON.stringify(productionBodies).includes("browser-local-token"), false);
   assert.equal(JSON.stringify(productionBodies).includes("operator-session"), false);
+  assert.equal(JSON.stringify(productionBodies).includes("C:\\private"), false);
 });
 
 test("OCR prefill reports eight distinct redacted failure stages", async () => {
@@ -216,11 +288,12 @@ test("OCR prefill reports eight distinct redacted failure stages", async () => {
       if (url.endsWith("/ocr-prefill-init")) {
         if (injectedStage === "init") throw new Error("secret-sentinel init token URL key");
         const images = [
-          { side: "front", artifactRole: "normalized_card", fileName: "front.png", mimeType: "image/png", checksumSha256: FRONT_HASH, byteSize: 5, storageKey: "private/front" },
-          { side: "back", artifactRole: "normalized_card", fileName: "back.png", mimeType: "image/png", checksumSha256: BACK_HASH, byteSize: 4, storageKey: "private/back" },
+          { side: "front", artifactRole: "normalized_card", fileName: "front.png", mimeType: "image/png", checksumSha256: FRONT_HASH, byteSize: 5, widthPx: 1200, heightPx: 1680, storageKey: "private/front" },
+          { side: "back", artifactRole: "normalized_card", fileName: "back.png", mimeType: "image/png", checksumSha256: BACK_HASH, byteSize: 4, widthPx: 1200, heightPx: 1680, storageKey: "private/back" },
         ];
         return new Response(JSON.stringify({ ok: true, result: {
           reportId: "ocr-client-report",
+          reportProducerContractVersion: "ai-grader-report-producer-v0.2",
           uploadSessionId: "aigocr_test",
           humanConfirmationRequired: true,
           uploadPlan: images.map((image) => ({
@@ -230,7 +303,7 @@ test("OCR prefill reports eight distinct redacted failure stages", async () => {
             uploadMethod: "PUT",
             uploadHeaders: { "Content-Type": "image/png" },
           })),
-          requiredFinalizeManifest: { reportId: "ocr-client-report", uploadSessionId: "aigocr_test", images },
+          requiredFinalizeManifest: { reportId: "ocr-client-report", reportProducerContractVersion: "ai-grader-report-producer-v0.2", uploadSessionId: "aigocr_test", images },
         } }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url.endsWith("/ocr-prefill-finalize")) {
@@ -306,13 +379,13 @@ test("OCR prefill exposes only the safe native-checksum provider blocker", async
         requestCount += 1;
         if (requestCount === 1) {
           const images = [
-            { side: "front", artifactRole: "normalized_card", fileName: "front.png", mimeType: "image/png", checksumSha256: FRONT_HASH, byteSize: 5, storageKey: "private/front" },
-            { side: "back", artifactRole: "normalized_card", fileName: "back.png", mimeType: "image/png", checksumSha256: BACK_HASH, byteSize: 4, storageKey: "private/back" },
+            { side: "front", artifactRole: "normalized_card", fileName: "front.png", mimeType: "image/png", checksumSha256: FRONT_HASH, byteSize: 5, widthPx: 1200, heightPx: 1680, storageKey: "private/front" },
+            { side: "back", artifactRole: "normalized_card", fileName: "back.png", mimeType: "image/png", checksumSha256: BACK_HASH, byteSize: 4, widthPx: 1200, heightPx: 1680, storageKey: "private/back" },
           ];
           return new Response(JSON.stringify({ ok: true, result: {
-            reportId: "ocr-client-report", uploadSessionId: "aigocr_test", humanConfirmationRequired: true,
+            reportId: "ocr-client-report", reportProducerContractVersion: "ai-grader-report-producer-v0.2", uploadSessionId: "aigocr_test", humanConfirmationRequired: true,
             uploadPlan: images.map((image) => ({ ...image, publicUrl: "https://cdn.example.invalid/x", uploadUrl: "https://upload.example.invalid/x", uploadMethod: "PUT", uploadHeaders: {} })),
-            requiredFinalizeManifest: { reportId: "ocr-client-report", uploadSessionId: "aigocr_test", images },
+            requiredFinalizeManifest: { reportId: "ocr-client-report", reportProducerContractVersion: "ai-grader-report-producer-v0.2", uploadSessionId: "aigocr_test", images },
           } }), { status: 200 });
         }
         return new Response(JSON.stringify({
@@ -335,6 +408,8 @@ test("OCR prefill merge fills empty fields but preserves operator-edited identit
     cardName: "Operator Chosen Name",
     year: "",
     manufacturer: "Operator Brand",
+    sport: "",
+    game: "",
     productSet: "",
     cardNumber: "",
     insert: "",
@@ -352,13 +427,64 @@ test("OCR prefill merge fills empty fields but preserves operator-edited identit
   assert.equal(merged.draft.category, "tcg");
   assert.equal(merged.draft.cardName, "Operator Chosen Name");
   assert.equal(merged.draft.manufacturer, "Operator Brand");
-  assert.equal(merged.draft.playerName, "Michael Jordan");
+  assert.equal(merged.draft.playerName, "");
   assert.equal(merged.draft.year, "1990");
   assert.equal(merged.draft.productSet, "1990 SkyBox Basketball");
   assert.equal(merged.draft.cardNumber, "41");
   assert.equal(merged.draft.autograph, true);
   assert.equal(merged.draft.memorabilia, false);
   assert.equal(merged.appliedFields.includes("manufacturer"), false);
+});
+
+test("unknown and disagreement fields remain empty while explicit boolean negatives stay operator-controlled", () => {
+  const result = resultFixture();
+  result.fields.playerName = {
+    state: "disagreement",
+    value: null,
+    confidence: 0.9,
+    reviewRequired: true,
+    evidenceRefs: ["image.front", "google.front.text"],
+  };
+  result.fields.year = {
+    state: "unknown",
+    value: null,
+    confidence: 0.4,
+    reviewRequired: true,
+    evidenceRefs: [],
+  };
+  result.fields.autograph = {
+    state: "supported",
+    value: false,
+    confidence: 0.95,
+    reviewRequired: false,
+    evidenceRefs: ["image.front"],
+  };
+  const current = {
+    category: "sport" as const,
+    playerName: "",
+    cardName: "",
+    year: "",
+    manufacturer: "",
+    sport: "",
+    game: "",
+    productSet: "",
+    cardNumber: "",
+    insert: "",
+    parallel: "",
+    numbered: "",
+    autograph: true,
+    memorabilia: false,
+  };
+  const merged = mergeAiGraderOcrPrefillIntoIdentityDraft({
+    current,
+    result,
+    operatorEditedFields: new Set<keyof typeof current>(["autograph"]),
+  });
+  assert.equal(merged.draft.playerName, "");
+  assert.equal(merged.draft.year, "");
+  assert.equal(merged.draft.autograph, true);
+  assert.equal(merged.appliedFields.includes("playerName"), false);
+  assert.equal(merged.appliedFields.includes("year"), false);
 });
 
 test("OCR report metadata keeps only the safe finalize contract", () => {

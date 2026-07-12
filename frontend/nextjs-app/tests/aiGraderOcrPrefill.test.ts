@@ -8,7 +8,7 @@ import {
   AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
   createAiGraderProductionApiHandler,
 } from "../lib/server/aiGraderProductionApi";
-import { runAiGraderOcrPrefillRuntime } from "../lib/server/aiGraderOcrPrefill";
+import { runAiGraderOcrPrefillRuntime } from "../lib/server/aiGraderOcrPrefillCurrent";
 import {
   sha256Base64ToHex,
   sha256HexToBase64,
@@ -22,10 +22,13 @@ type MockResponse = NextApiResponse & {
 };
 
 function mockRequest(method: string, action: string[], body: unknown = {}): NextApiRequest {
+  const requestBody = action[0] === "ocr-prefill-init" && body && typeof body === "object" && !Array.isArray(body)
+    ? { reportProducerContractVersion: "ai-grader-report-producer-v0.2", ...(body as Record<string, unknown>) }
+    : body;
   return {
     method,
     query: { action },
-    body,
+    body: requestBody,
     headers: {},
   } as unknown as NextApiRequest;
 }
@@ -58,42 +61,51 @@ function normalizedImages() {
   return [
     {
       side: "front",
+      artifactRole: "normalized_card",
       fileName: "front-normalized.png",
       mimeType: "image/png",
       checksumSha256: sha256("front-normalized"),
       byteSize: 2048,
+      widthPx: 1200,
+      heightPx: 1680,
     },
     {
       side: "back",
+      artifactRole: "normalized_card",
       fileName: "back-normalized.png",
       mimeType: "image/png",
       checksumSha256: sha256("back-normalized"),
       byteSize: 3072,
+      widthPx: 1200,
+      heightPx: 1680,
     },
   ];
 }
 
 function prefillFields() {
   const known = <T extends string | boolean>(value: T, confidence = 0.9) => ({
+    state: "supported" as const,
     value,
     confidence,
     reviewRequired: confidence < 0.8,
-    sources: ["front_ocr"],
+    evidenceRefs: ["google.front.text"],
   });
-  const missing = { value: null, confidence: 0, reviewRequired: true, sources: [] };
+  const missing = { state: "unknown" as const, value: null, confidence: 0, reviewRequired: true, evidenceRefs: [] };
   return {
     category: known("sport"),
     playerName: known("Michael Jordan"),
     cardName: missing,
     year: known("1990"),
     manufacturer: known("SkyBox"),
+    sport: known("basketball"),
+    game: missing,
     productSet: known("1990 SkyBox Basketball"),
     cardNumber: known("41"),
     parallel: missing,
     insert: missing,
     numbered: missing,
-    auto: missing,
-    mem: missing,
+    autograph: missing,
+    memorabilia: missing,
   };
 }
 
@@ -142,6 +154,8 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
         byteSize: input.byteSize,
         contentType: input.contentType,
         checksumSha256: input.checksumSha256,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
       };
     },
     async runOcrPrefill(input) {
@@ -158,10 +172,12 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
         publishMutationPerformed: false,
         sourceSides: ["front", "back"],
         fields: prefillFields(),
-        reviewFieldNames: ["cardName", "parallel", "insert", "numbered", "auto", "mem"],
+        reviewFieldNames: ["cardName", "game", "parallel", "insert", "numbered", "autograph", "memorabilia"],
         provenance: {
-          ocrEngine: "google_vision_document_text_detection",
+          ocrEngine: "google_vision_document_text_detection_url_only",
           attributeExtractor: "@tenkings/shared/extractCardAttributes",
+          structuredExtractor: "openai_responses_strict_json_schema",
+          structuredExtractionModel: "gpt-5.6-sol",
           setLookupUsed: true,
           setIdentificationUsed: true,
         },
@@ -236,6 +252,35 @@ test("OCR prefill existing extractor marks low-confidence values for review", as
           combined_text: "1990 SKYBOX\nMICHAEL JORDAN\nBASKETBALL\nCARD NO. 41",
         };
       },
+      async runStructuredExtraction() {
+        const supported = <T extends string | boolean>(value: T, confidence: number, ref = "google.front.text") => ({
+          state: "supported" as const,
+          value,
+          confidence,
+          evidenceRefs: [ref],
+        });
+        const unknown = { state: "unknown" as const, value: null, confidence: 0, evidenceRefs: [] };
+        return {
+          model: "gpt-5.6-sol",
+          evidence: { sides: [], heuristicHints: {} },
+          fields: {
+            category: supported("sport", 0.9),
+            playerName: supported("Michael Jordan", 0.75),
+            cardName: unknown,
+            year: supported("1990", 0.42),
+            manufacturer: supported("SkyBox", 0.42),
+            sport: supported("basketball", 0.8),
+            game: unknown,
+            productSet: supported("1990 SkyBox Basketball", 0.6),
+            cardNumber: supported("41", 0.6),
+            insert: unknown,
+            parallel: unknown,
+            numbered: unknown,
+            autograph: unknown,
+            memorabilia: unknown,
+          },
+        } as any;
+      },
       async identifySet() {
         return {
           setId: null,
@@ -276,7 +321,8 @@ test("OCR prefill existing extractor marks low-confidence values for review", as
   assert.equal(result.fields.year.reviewRequired, true);
   assert.equal(result.fields.manufacturer.value, "SkyBox");
   assert.equal(result.fields.manufacturer.reviewRequired, true);
-  assert.equal(result.fields.cardNumber.value, "41");
+  assert.equal(result.fields.cardNumber.value, null);
+  assert.equal(result.fields.cardNumber.state, "unknown");
   assert.equal(result.fields.cardNumber.reviewRequired, true);
   assert.ok(result.reviewFieldNames.includes("year"));
   assert.equal(JSON.stringify(networkInputs).includes("base64"), false);
@@ -291,6 +337,8 @@ test("OCR prefill finalize rejects missing or wrong checksum, byte size, and con
     { name: "wrong-size", patch: { byteSize: 999 }, message: /byte size mismatch/i },
     { name: "missing-type", patch: { contentType: undefined }, message: /content type mismatch/i },
     { name: "wrong-type", patch: { contentType: "image/jpeg" }, message: /content type mismatch/i },
+    { name: "wrong-width", patch: { widthPx: 1199 }, message: /dimensions mismatch/i },
+    { name: "wrong-height", patch: { heightPx: 1679 }, message: /dimensions mismatch/i },
   ];
   for (const failure of failures) {
     let ocrCalls = 0;
@@ -330,6 +378,8 @@ test("OCR prefill finalize rejects missing or wrong checksum, byte size, and con
           byteSize: input.byteSize,
           contentType: input.contentType,
           checksumSha256: input.checksumSha256,
+          widthPx: input.sourceImageWidthPx,
+          heightPx: input.sourceImageHeightPx,
           ...failure.patch,
         };
       },
@@ -484,6 +534,15 @@ test("OCR prefill rejects image bodies, caller URLs, and unsafe storage source U
   });
 
   const bodyRes = mockResponse();
+  const staleProducerRes = mockResponse();
+  await handler(mockRequest("POST", ["ocr-prefill-init"], {
+    reportId: "unsafe-report",
+    reportProducerContractVersion: "ai-grader-report-producer-v0.1",
+    images: normalizedImages(),
+  }), staleProducerRes);
+  assert.equal(staleProducerRes.statusCodeValue, 400);
+  assert.match((staleProducerRes.jsonBody as any).message, /current report-producer v0\.2/);
+
   const imagesWithBody = normalizedImages();
   (imagesWithBody[0] as any).bodyBase64 = "embedded-image";
   await handler(mockRequest("POST", ["ocr-prefill-init"], { reportId: "unsafe-report", images: imagesWithBody }), bodyRes);
@@ -536,5 +595,5 @@ test("OCR prefill rejects image bodies, caller URLs, and unsafe storage source U
   assert.equal(sourceRes.statusCodeValue, 400);
   assert.match((sourceRes.jsonBody as any).message, /public HTTPS object URL/);
   assert.equal(ocrCalls, 0);
-  assert.equal(authCalls, 1);
+  assert.equal(authCalls, 2);
 });

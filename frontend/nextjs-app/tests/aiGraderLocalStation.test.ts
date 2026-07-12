@@ -1785,6 +1785,13 @@ test("production auth-check verifies current bearer session against AI Grader op
     role: "ai_grader_operator",
     displayName: "Station Operator",
     action: "publish",
+    readiness: {
+      googleVisionConfigured: false,
+      openAiConfigured: false,
+      effectiveAiGraderModel: "gpt-5.6-sol",
+      ebayCompsEnabled: false,
+      serpApiConfigured: false,
+    },
   });
 });
 
@@ -2561,6 +2568,9 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
   const inventoryOwnerFound = options.inventoryOwnerFound ?? true;
   let createdCard: any = null;
   let createdItem: any = null;
+  let aiGraderSessionRow: any = null;
+  let aiGraderReportRow: any = null;
+  let aiGraderValuationRow: any = null;
   const cardQr = {
     id: "qr-card-1",
     code: "tkc_testcard",
@@ -2613,29 +2623,37 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
     aiGraderSession: {
       async findUnique(args: any) {
         record("aiGraderSession", "findUnique", args);
-        return null;
+        return aiGraderSessionRow;
       },
       async upsert(args: any) {
         record("aiGraderSession", "upsert", args);
-        return { id: "session-1", ...args.create };
+        aiGraderSessionRow = aiGraderSessionRow
+          ? { ...aiGraderSessionRow, ...args.update }
+          : { id: "session-1", ...args.create };
+        return aiGraderSessionRow;
       },
       async updateMany(args: any) {
         record("aiGraderSession", "updateMany", args);
+        if (aiGraderSessionRow) aiGraderSessionRow = { ...aiGraderSessionRow, ...args.data };
         return { count: 1 };
       },
     },
     aiGraderReport: {
       async findUnique(args: any) {
         record("aiGraderReport", "findUnique", args);
-        return null;
+        return aiGraderReportRow;
       },
       async updateMany(args: any) {
         record("aiGraderReport", "updateMany", args);
+        if (aiGraderReportRow) aiGraderReportRow = { ...aiGraderReportRow, ...args.data };
         return { count: 1 };
       },
       async upsert(args: any) {
         record("aiGraderReport", "upsert", args);
-        return { id: "report-row-1", ...args.create, ...args.update };
+        aiGraderReportRow = aiGraderReportRow
+          ? { ...aiGraderReportRow, ...args.update }
+          : { id: "report-row-1", ...args.create };
+        return aiGraderReportRow;
       },
     },
     aiGraderLabel: {
@@ -2651,11 +2669,12 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
     aiGraderValuation: {
       async findUnique(args: any) {
         record("aiGraderValuation", "findUnique", args);
-        return null;
+        return aiGraderValuationRow;
       },
       async create(args: any) {
         record("aiGraderValuation", "create", args);
-        return { ...args.data };
+        aiGraderValuationRow = { ...args.data };
+        return aiGraderValuationRow;
       },
     },
     cardBatch: {
@@ -2697,7 +2716,7 @@ function createConfirmCardRuntimeDb(options: { inventoryOwnerFound?: boolean } =
     item: {
       async findFirst(args: any) {
         record("item", "findFirst", args);
-        return null;
+        return createdItem;
       },
       async create(args: any) {
         record("item", "create", args);
@@ -2830,9 +2849,33 @@ test("create-card-from-report runtime creates an operator-owned inventory Item w
       HOUSE_USER_EMAIL: undefined,
     },
   });
+  const retryResult = await createAiGraderCardFromReportRuntime({
+    tenantId: "tenant-1",
+    reportBundle,
+    productionRelease,
+    storagePlan,
+    identity: validConfirmedSportIdentity(),
+    operatorUserId: "operator-user-1",
+    actorAudit: {
+      actorType: "human_operator",
+      action: "publish",
+      requestedAt: "2026-07-07T12:00:01.000Z",
+      userId: "operator-user-1",
+      serviceAccountId: null,
+      role: "ai_grader_operator",
+    },
+    dbClient: db,
+    env: {
+      OPERATOR_USER_ID: "operator-owner-1",
+      PACK_INVENTORY_SELLER_EMAIL: undefined,
+      HOUSE_USER_EMAIL: undefined,
+    },
+  });
 
   assert.equal(result.cardAssetId, "card-asset-1");
   assert.equal(result.itemId, "item-1");
+  assert.equal(retryResult.cardAssetId, result.cardAssetId);
+  assert.equal(retryResult.itemId, result.itemId);
   assert.equal(result.downstream?.sheetNumber, 1);
   assert.equal(result.downstream?.slot, 1);
   assert.equal(result.downstream?.comps.status, "queued");
@@ -2854,6 +2897,9 @@ test("create-card-from-report runtime creates an operator-owned inventory Item w
   assert.equal(calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "upsert"), true);
   assert.equal(calls.some((call) => call.delegate === "aiGraderValuation" && call.method === "create"), true);
   assert.equal(calls.some((call) => call.delegate === "$transaction" && call.method === "$transaction"), true);
+  assert.equal(calls.filter((call) => call.delegate === "cardAsset" && call.method === "create").length, 1);
+  assert.equal(calls.filter((call) => call.delegate === "item" && call.method === "create").length, 1);
+  assert.equal(calls.filter((call) => call.delegate === "aiGraderValuation" && call.method === "create").length, 1);
 });
 
 test("create-card-from-report runtime fails before card rows when OPERATOR_USER_ID is missing", async () => {
@@ -3232,11 +3278,52 @@ test("eBay comps action reports ready without live execution when env is disable
   await handler(req, res);
 
   assert.equal(res.statusCodeValue, 200);
-  const body = res.jsonBody as { ok: boolean; result: { status: string; liveExecutionEnabled: boolean; searchQuery: string } };
+  const body = res.jsonBody as { ok: boolean; result: { status: string; liveExecutionEnabled: boolean; searchQuery?: string } };
   assert.equal(body.ok, true);
   assert.equal(body.result.status, "ready");
   assert.equal(body.result.liveExecutionEnabled, false);
-  assert.match(body.result.searchQuery, /Michael Jordan/);
+  assert.equal(body.result.searchQuery, undefined);
+  assert.equal(liveCalled, false);
+});
+
+test("eBay comps reports an honest retryable state when enabled without SerpApi configuration", async () => {
+  let liveCalled = false;
+  const handler = createAiGraderProductionApiHandler({
+    env: {
+      [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
+      [AI_GRADER_EBAY_COMPS_ENABLED_ENV]: "true",
+    },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async persist() {
+      throw new Error("comps should not publish a release");
+    },
+    async runComps() {
+      liveCalled = true;
+      throw new Error("runner must not start without SerpApi readiness");
+    },
+  });
+  const finalBundle = {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    reportId: "sample-final-v0",
+    cardIdentity: { ...SAMPLE_AI_GRADER_REPORT_BUNDLE.cardIdentity, title: "Michael Jordan Test Card" },
+  };
+  const req = mockRequest("POST", ["run-comps"]);
+  req.body = {
+    reportBundle: finalBundle,
+    productionRelease: buildSampleAiGraderProductionRelease(finalBundle),
+  };
+  const res = mockResponse();
+  await handler(req, res);
+  assert.equal(res.statusCodeValue, 200);
+  const result = (res.jsonBody as any).result;
+  assert.equal(result.status, "failed");
+  assert.equal(result.retryable, true);
+  assert.equal(result.persisted, false);
+  assert.equal(result.compsRefs.length, 0);
+  assert.equal(result.errorCode, "AI_GRADER_SERPAPI_NOT_CONFIGURED");
   assert.equal(liveCalled, false);
 });
 
@@ -3247,6 +3334,7 @@ test("eBay comps action returns candidates and selected comps persist separately
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
       [AI_GRADER_EBAY_COMPS_ENABLED_ENV]: "true",
+      SERPAPI_KEY: "redacted-test-key",
       AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
     },
     async requireAdminSession() {
@@ -3262,7 +3350,7 @@ test("eBay comps action returns candidates and selected comps persist separately
       throw new Error("comps should not persist production release");
     },
     async runComps(input) {
-      assert.match(input.searchQuery, /Michael Jordan/);
+      assert.equal(input.searchQuery, "Persisted Michael Jordan Confirmed Identity");
       return {
         searchQuery: input.searchQuery,
         searchUrl: "https://www.ebay.com/sch/i.html?_nkw=Michael+Jordan",
@@ -3281,7 +3369,10 @@ test("eBay comps action returns candidates and selected comps persist separately
     async persistComps(input) {
       persistedCompsStatuses.push(input.status);
       assert.equal(input.reportId, "sample-final-v0");
-      return { status: input.status };
+      return {
+        status: input.status,
+        valuation: { searchQuery: "Persisted Michael Jordan Confirmed Identity" },
+      };
     },
     async persistSelectedComps(input) {
       selectedPersisted = true;
@@ -3323,6 +3414,7 @@ test("eBay comps action returns candidates and selected comps persist separately
   req.body = {
     reportBundle: finalBundle,
     productionRelease: buildSampleAiGraderProductionRelease(finalBundle),
+    searchQuery: "Tampered Browser Query",
   };
   const res = mockResponse();
   await handler(req, res);
@@ -3540,6 +3632,7 @@ test("eBay comps failures persist a sanitized retryable error for Finish Cards",
     env: {
       [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true",
       [AI_GRADER_EBAY_COMPS_ENABLED_ENV]: "true",
+      SERPAPI_KEY: "redacted-test-key",
       AI_GRADER_PRODUCTION_TENANT_ID: "tenant-1",
     },
     async requireAdminSession() {
@@ -3551,7 +3644,10 @@ test("eBay comps failures persist a sanitized retryable error for Finish Cards",
     },
     async persistComps(input) {
       persisted.push({ status: input.status, resultSummary: input.resultSummary, errorCode: input.errorCode });
-      return { status: input.status };
+      return {
+        status: input.status,
+        valuation: { searchQuery: "Persisted Michael Jordan Confirmed Identity" },
+      };
     },
     async runComps() {
       const error = new Error("SerpApi timeout at /var/task/private/worker.js api_key=do-not-leak") as Error & {

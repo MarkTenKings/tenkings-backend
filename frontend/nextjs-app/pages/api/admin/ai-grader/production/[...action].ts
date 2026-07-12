@@ -28,7 +28,7 @@ import {
   markAiGraderLabelSheetPrintedRuntime,
   prepareAiGraderLabelSheetPrintRuntime,
 } from "../../../../../lib/server/aiGraderLabelSheetRuntime";
-import { runAiGraderOcrPrefillRuntime } from "../../../../../lib/server/aiGraderOcrPrefill";
+import { runAiGraderOcrPrefillRuntime } from "../../../../../lib/server/aiGraderOcrPrefillCurrent";
 
 export const config = {
   api: {
