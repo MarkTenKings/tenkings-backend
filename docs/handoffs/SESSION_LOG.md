@@ -25930,3 +25930,9 @@ By enabling Rip It Live, I confirm:
 - The final public-contract check also proves URL-, data-, and local-path-shaped model/extractor provenance is removed while safe bounded current provenance round-trips. `git diff --check` passed, no lockfile/dependency change was introduced, and stale competing OCR imports plus the generic `AI_GRADER_OCR_PREFILL_FAILED` code are absent.
 - The database finding assertion, release authority, provider-native checksum enforcement, current-producer v0.2 gate, direct browser-to-storage upload, and Publish behavior remain unchanged. Existing non-blocking Next image-lint, React styled-jsx, and Node module-type warnings remain unchanged.
 - PR #85 remains unmerged. No hardware, camera, lighting, preview, capture, production smoke, old-report recovery, Dell restart, migration, deployment, environment/credential operation, production database/storage/data mutation, or configuration change was performed.
+
+## 2026-07-12 - PR #85 OCR provenance documentation correction
+
+- Corrected the capture-helper OCR architecture text to match the implemented public contract: the actual returned OpenAI model identifier is safe bounded station/public report provenance, while provider timing remains internal-only and provider request/response IDs plus timing internals are never public.
+- Validation passed: `git diff --check`; changed-file inspection confirmed only `docs/ai-grader-capture-helper.md` and `docs/handoffs/SESSION_LOG.md` were modified.
+- Documentation only; no runtime code, tests, configuration, credentials, migration, production data/storage, hardware, deployment, or merge action was performed.
