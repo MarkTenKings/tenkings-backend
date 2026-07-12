@@ -1,8 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  AI_GRADER_PUBLISH_AUTHORITY_EXCLUDED_RUNTIME_FIELDS,
   buildAiGraderLabelPreviewHtml,
   buildAiGraderCompsSearchQuery,
+  buildAiGraderPublishAuthorityRecord,
   buildAiGraderProductionStoragePlan,
   aiGraderSha256,
   computeAiGraderValuationStatus,
@@ -382,6 +384,16 @@ function createMockDelegate(name, calls, id, findUniqueValue, updateManyValue) {
 
 function createMockProductionDb(options = {}) {
   const calls = [];
+  const publishAuthority = buildAiGraderPublishAuthorityRecord({
+    reportBundle: options.reportBundle ?? sampleBundle(),
+    productionRelease: options.productionRelease ?? sampleRelease(),
+  });
+  const confirmedCardAsset = options.cardAsset ?? {
+    id: "card-asset-1",
+    batchId: "batch-1",
+    classificationSourcesJson: { aiGraderPublishAuthority: publishAuthority },
+    aiGradingJson: { publishAuthority },
+  };
   const tx = {
     async $queryRaw() {
       calls.push({ delegate: "$queryRaw", method: "$queryRaw" });
@@ -406,7 +418,7 @@ function createMockProductionDb(options = {}) {
     aiGraderLabel: createMockDelegate("aiGraderLabel", calls, "db-label-1", options.existingLabel),
     aiGraderPublication: createMockDelegate("aiGraderPublication", calls, "db-publication-1"),
     aiGraderValuation: createMockDelegate("aiGraderValuation", calls, "db-valuation-1", options.existingValuation),
-    cardAsset: createMockDelegate("cardAsset", calls, "card-asset-1", options.cardAsset),
+    cardAsset: createMockDelegate("cardAsset", calls, "card-asset-1", confirmedCardAsset),
     item: createMockDelegate("item", calls, "item-1", options.item),
   };
   return {
@@ -1482,7 +1494,6 @@ test("label preview is print-ready HTML with certification claim disabled", () =
 });
 
 test("production release persistence updates verified durable records and optional card linkage", async () => {
-  const { db, calls } = createMockProductionDb();
   const imageBytes = Buffer.from("front");
   const reportBundle = sampleBundle({
     assets: [{
@@ -1503,6 +1514,8 @@ test("production release persistence updates verified durable records and option
     productionRelease: sampleRelease(),
     publicReportBaseUrl: "https://collect.tenkings.co",
   });
+  const productionRelease = sampleRelease();
+  const { db, calls } = createMockProductionDb({ reportBundle, productionRelease });
 
   const result = await persistAiGraderProductionRelease(db, {
     tenantId: "tenant-1",
@@ -1574,6 +1587,10 @@ test("production release persistence updates verified durable records and option
   assert.equal(cardUpdate.args.data.status, "READY");
   assert.equal(cardUpdate.args.data.storageKey, plan.artifacts.find((artifact) => artifact.artifactClass === "report_asset").storageKey);
   assert.equal(cardUpdate.args.data.imageUrl, plan.artifacts.find((artifact) => artifact.artifactClass === "report_asset").publicUrl);
+  assert.deepEqual(
+    cardUpdate.args.data.aiGradingJson.publishAuthority,
+    buildAiGraderPublishAuthorityRecord({ reportBundle, productionRelease }),
+  );
   const itemUpdate = calls.find((call) => call.delegate === "item" && call.method === "updateMany");
   assert.equal(calls.some((call) => call.delegate === "item" && call.method === "findUnique"), true);
   assert.equal(itemUpdate.args.data.detailsJson.existingItemDetail, "keep-me");
@@ -1611,6 +1628,218 @@ test("production persistence rejects cross-tenant or mismatched Confirm authorit
       scenario.name,
     );
     assert.equal(calls.some((call) => call.method === "upsert" || call.method === "updateMany"), false, scenario.name);
+  }
+});
+
+test("immutable Publish authority seals included report fields and ignores only fixed runtime exclusions", () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const authority = buildAiGraderPublishAuthorityRecord({ reportBundle, productionRelease });
+  const excludedRuntimeMutation = buildAiGraderPublishAuthorityRecord({
+    reportBundle: {
+      ...reportBundle,
+      cardIdentity: { title: "Runtime identity is controlled separately" },
+      productionRelease: { browserOnly: true },
+    },
+    productionRelease: {
+      ...productionRelease,
+      cardIdentity: { title: "Runtime identity is controlled separately" },
+      label: {
+        ...productionRelease.label,
+        cardIdentity: { title: "Runtime identity is controlled separately" },
+        publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/runtime-only",
+        qrPayloadUrl: "https://collect.tenkings.co/ai-grader/reports/runtime-only",
+      },
+      publication: { status: "published", storageKeyPrefix: "runtime-only/" },
+      ebayCompsContract: { status: "completed", compsRefs: [{ id: "runtime-comp" }] },
+      slabbedPhotoContract: { status: "complete" },
+      cardInventoryLinkage: { status: "inventory_ready" },
+    },
+  });
+  assert.equal(excludedRuntimeMutation.digestSha256, authority.digestSha256);
+
+  const includedMutation = buildAiGraderPublishAuthorityRecord({
+    reportBundle,
+    productionRelease: {
+      ...productionRelease,
+      label: { ...productionRelease.label, certId: "TK-AIG-CHANGED" },
+    },
+  });
+  assert.notEqual(includedMutation.digestSha256, authority.digestSha256);
+  assert.match(authority.digestSha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(AI_GRADER_PUBLISH_AUTHORITY_EXCLUDED_RUNTIME_FIELDS, [
+    "report.cardIdentity",
+    "report.productionRelease",
+    "report.localReportFolder",
+    "report.reportHtmlPath",
+    "report.manifestPath",
+    "report.analysisPath",
+    "report.publicPathPlaceholders",
+    "report.publicAssets",
+    "report.assets[*].localPath",
+    "report.assets[*].publicPathPlaceholder",
+    "report.assets[*].bodyEncoding",
+    "report.assets[*].bodyBase64",
+    "report.assets[*].publicUrl",
+    "report.assets[*].storageKey",
+    "report.assets[*].uploadedAt",
+    "release.cardIdentity",
+    "release.label.cardIdentity",
+    "release.label.publicReportUrl",
+    "release.label.qrPayloadUrl",
+    "release.label.labelPreviewUrl",
+    "release.label.labelDataStorageKey",
+    "release.label.labelPreviewKey",
+    "release.label.physicalPrintStatus",
+    "release.label.labelSheet",
+    "release.label.physicalPrint",
+    "release.publication",
+    "release.databaseIntegration",
+    "release.storageIntegration",
+    "release.slabbedPhotoContract",
+    "release.ebayCompsContract",
+    "release.cardInventoryLinkage",
+  ]);
+  const serialized = JSON.stringify(authority);
+  assert.doesNotMatch(serialized, /C:\\TenKings|127\.0\.0\.1|runtime-only|storageKeyPrefix|compsRefs/);
+  assert.match(serialized, /finalGrade|operatorFinalization|findingValidation|ocrPrefill|captureTiming/);
+
+  const mixedIds = ["z/asset.png", "A/asset.png", "a-/asset.png", "a_/asset.png", "é/asset.png"];
+  const ordered = buildAiGraderPublishAuthorityRecord({
+    reportBundle: {
+      ...reportBundle,
+      assets: mixedIds.map((id) => ({ id, contentType: "image/png", checksumSha256: "a".repeat(64), byteSize: 1 })),
+    },
+    productionRelease,
+  }).projection.report.assets.map((asset) => asset.id);
+  assert.deepEqual(ordered, [...mixedIds].sort());
+});
+
+test("locked production persistence rejects an immutable package mismatch before publication writes", async () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle,
+    productionRelease,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const { db, calls } = createMockProductionDb();
+  await assert.rejects(
+    () => persistAiGraderProductionRelease(db, {
+      tenantId: "tenant-1",
+      reportBundle: {
+        ...reportBundle,
+        warnings: [...reportBundle.warnings, "Changed after Confirm Card"],
+      },
+      productionRelease,
+      storagePlan: plan,
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+    }),
+    (error) => error?.code === "AI_GRADER_PUBLISH_PACKAGE_AUTHORITY_MISMATCH",
+  );
+  assert.equal(
+    calls.some((call) => call.method === "upsert" || call.method === "updateMany"),
+    false,
+  );
+});
+
+test("locked production persistence rejects a corrupt stored authority digest before publication writes", async () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const publishAuthority = buildAiGraderPublishAuthorityRecord({ reportBundle, productionRelease });
+  const corruptAuthority = { ...publishAuthority, digestSha256: "0".repeat(64) };
+  const { db, calls } = createMockProductionDb({
+    reportBundle,
+    productionRelease,
+    cardAsset: {
+      id: "card-asset-1",
+      batchId: "batch-1",
+      classificationSourcesJson: { aiGraderPublishAuthority: corruptAuthority },
+      aiGradingJson: { publishAuthority },
+    },
+  });
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle,
+    productionRelease,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  await assert.rejects(
+    () => persistAiGraderProductionRelease(db, {
+      tenantId: "tenant-1",
+      reportBundle,
+      productionRelease,
+      storagePlan: plan,
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+    }),
+    (error) => error?.code === "AI_GRADER_PUBLISH_AUTHORITY_DIGEST_MISMATCH",
+  );
+  assert.equal(
+    calls.some((call) => call.method === "upsert" || call.method === "updateMany"),
+    false,
+  );
+});
+
+test("locked production persistence rejects missing, malformed, or contradictory stored authority", async () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const publishAuthority = buildAiGraderPublishAuthorityRecord({ reportBundle, productionRelease });
+  const otherAuthority = buildAiGraderPublishAuthorityRecord({
+    reportBundle: { ...reportBundle, warnings: [...reportBundle.warnings, "Contradictory authority"] },
+    productionRelease,
+  });
+  const cases = [
+    {
+      name: "missing",
+      cardAsset: { id: "card-asset-1", batchId: "batch-1", classificationSourcesJson: {}, aiGradingJson: {} },
+      code: "AI_GRADER_PUBLISH_AUTHORITY_MISSING",
+    },
+    {
+      name: "malformed",
+      cardAsset: {
+        id: "card-asset-1",
+        batchId: "batch-1",
+        classificationSourcesJson: { aiGraderPublishAuthority: { schemaVersion: "wrong" } },
+        aiGradingJson: { publishAuthority },
+      },
+      code: "AI_GRADER_PUBLISH_AUTHORITY_MALFORMED",
+    },
+    {
+      name: "contradictory",
+      cardAsset: {
+        id: "card-asset-1",
+        batchId: "batch-1",
+        classificationSourcesJson: { aiGraderPublishAuthority: publishAuthority },
+        aiGradingJson: { publishAuthority: otherAuthority },
+      },
+      code: "AI_GRADER_PUBLISH_AUTHORITY_CONTRADICTORY",
+    },
+  ];
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle,
+    productionRelease,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  for (const scenario of cases) {
+    const { db, calls } = createMockProductionDb({ reportBundle, productionRelease, cardAsset: scenario.cardAsset });
+    await assert.rejects(
+      () => persistAiGraderProductionRelease(db, {
+        tenantId: "tenant-1",
+        reportBundle,
+        productionRelease,
+        storagePlan: plan,
+        cardAssetId: "card-asset-1",
+        itemId: "item-1",
+      }),
+      (error) => error?.code === scenario.code,
+      scenario.name,
+    );
+    assert.equal(
+      calls.some((call) => call.method === "upsert" || call.method === "updateMany"),
+      false,
+      scenario.name,
+    );
   }
 });
 
@@ -1665,7 +1894,7 @@ test("production persistence never recreates Confirm rows that disappear or rebi
   }
 });
 
-test("production persistence rejects identity drift between the storage plan and locked Confirm authority", async () => {
+test("production persistence replaces stale browser identity with locked durable Confirm authority", async () => {
   const tampered = "TAMPERED_DB_IDENTITY";
   const reportBundle = sampleBundle({
     cardIdentity: {
@@ -1697,27 +1926,22 @@ test("production persistence rejects identity drift between the storage plan and
   });
   const plan = buildAiGraderProductionStoragePlan({
     reportBundle: sampleBundle(),
-    productionRelease: sampleRelease(),
+    productionRelease,
     publicReportBaseUrl: "https://collect.tenkings.co",
   });
   const { db, calls } = createMockProductionDb();
-  await assert.rejects(
-    () => persistAiGraderProductionRelease(db, {
-      tenantId: "tenant-1",
-      reportBundle,
-      productionRelease,
-      storagePlan: plan,
-      cardAssetId: "card-asset-1",
-      itemId: "item-1",
-    }),
-    (error) =>
-      error?.code === "AI_GRADER_PUBLISH_IDENTITY_AUTHORITY_CHANGED" &&
-      /restart Publish/.test(error.message),
-  );
-  assert.equal(
-    calls.some((call) => call.method === "upsert" || call.method === "updateMany"),
-    false,
-  );
+  await persistAiGraderProductionRelease(db, {
+    tenantId: "tenant-1",
+    reportBundle,
+    productionRelease,
+    storagePlan: plan,
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+  });
+  const labelUpsert = calls.find((call) => call.delegate === "aiGraderLabel" && call.method === "upsert");
+  assert.equal(labelUpsert.args.update.payload.cardIdentity.playerName, "Michael Jordan");
+  assert.equal(labelUpsert.args.update.payload.cardIdentity.productSet, "Topps");
+  assert.equal(labelUpsert.args.update.payload.cardIdentity.cardNumber, "23");
   assert.doesNotMatch(JSON.stringify(calls), new RegExp(tampered));
 });
 

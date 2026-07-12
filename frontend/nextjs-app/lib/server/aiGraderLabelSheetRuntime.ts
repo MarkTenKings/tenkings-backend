@@ -1,6 +1,8 @@
 import {
   assertAiGraderDurableConfirmedIdentityMatchesAuthority,
   buildAiGraderCompsSearchQuery,
+  canonicalAiGraderPublishAuthorityJson,
+  parseAiGraderPublishAuthorityRecord,
   type AiGraderConfirmedPublishAuthority,
   type AiGraderProductionReleaseLike,
   type AiGraderProductionReportBundleLike,
@@ -331,21 +333,6 @@ export async function completePublishedAiGraderCardTx(input: {
   now?: Date;
 }): Promise<AiGraderPublishedLabelAssignmentResult> {
   const now = input.now ?? new Date();
-  const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
-  const certId = optionalString(releaseLabel.certId);
-  if (
-    input.productionRelease.labelDataGenerated !== true ||
-    input.productionRelease.qrPayloadGenerated !== true ||
-    optionalString(releaseLabel.status) !== "label_data_ready" ||
-    !certId
-  ) {
-    throw runtimeError(
-      "Verified Publish did not persist complete grading-label data.",
-      409,
-      "AI_GRADER_PUBLISHED_LABEL_NOT_READY"
-    );
-  }
-
   await acquireReportLifecycleLock(input.tx, input.reportId);
   const [session, report] = await Promise.all([
     input.tx.aiGraderSession.findUnique({
@@ -447,6 +434,8 @@ export async function completePublishedAiGraderCardTx(input: {
         thumbnailUrl: true,
         cdnHdUrl: true,
         cdnThumbUrl: true,
+        classificationSourcesJson: true,
+        aiGradingJson: true,
       },
     }),
     input.tx.item.findUnique({
@@ -454,6 +443,43 @@ export async function completePublishedAiGraderCardTx(input: {
       select: { id: true, imageUrl: true, thumbnailUrl: true, cdnHdUrl: true, cdnThumbUrl: true },
     }),
   ]);
+  const classificationSources = isRecord(card?.classificationSourcesJson)
+    ? card.classificationSourcesJson
+    : {};
+  const cardAiGradingJson = isRecord(card?.aiGradingJson) ? card.aiGradingJson : {};
+  const storedPublishAuthority = parseAiGraderPublishAuthorityRecord(
+    classificationSources.aiGraderPublishAuthority,
+  );
+  const mirroredPublishAuthority = parseAiGraderPublishAuthorityRecord(
+    cardAiGradingJson.publishAuthority,
+  );
+  if (
+    canonicalAiGraderPublishAuthorityJson(storedPublishAuthority) !==
+      canonicalAiGraderPublishAuthorityJson(mirroredPublishAuthority) ||
+    canonicalAiGraderPublishAuthorityJson(storedPublishAuthority) !==
+      canonicalAiGraderPublishAuthorityJson(input.publishAuthority.publishAuthority)
+  ) {
+    throw runtimeError(
+      "The published card does not match its immutable Confirm authority.",
+      409,
+      "AI_GRADER_PUBLISH_AUTHORITY_CONTRADICTORY",
+    );
+  }
+  const durableRelease = storedPublishAuthority.projection.release;
+  const releaseLabel = isRecord(durableRelease.label) ? durableRelease.label : {};
+  const certId = optionalString(releaseLabel.certId);
+  if (
+    durableRelease.labelDataGenerated !== true ||
+    durableRelease.qrPayloadGenerated !== true ||
+    optionalString(releaseLabel.status) !== "label_data_ready" ||
+    !certId
+  ) {
+    throw runtimeError(
+      "Verified Publish did not preserve complete durable grading-label authority.",
+      409,
+      "AI_GRADER_PUBLISHED_LABEL_NOT_READY",
+    );
+  }
   const batchId = optionalString(card?.batchId);
   const cardHostedImage = optionalString(card?.cdnHdUrl ?? card?.imageUrl ?? card?.thumbnailUrl ?? card?.cdnThumbUrl);
   const itemHostedImage = optionalString(item?.cdnHdUrl ?? item?.imageUrl ?? item?.thumbnailUrl ?? item?.cdnThumbUrl);
@@ -524,7 +550,7 @@ export async function completePublishedAiGraderCardTx(input: {
     assignedByUserId: input.operatorUserId,
   });
   const persistedRelease = {
-    ...input.productionRelease,
+    ...durableRelease,
     label: {
       ...releaseLabel,
       certId,

@@ -186,11 +186,31 @@ export type AiGraderConfirmedPublishAuthorityInput = {
   itemId: string;
 };
 
+export const AI_GRADER_PUBLISH_AUTHORITY_SCHEMA_VERSION =
+  "ai-grader-confirm-publish-authority-v1" as const;
+export const AI_GRADER_PUBLISH_AUTHORITY_PROJECTION_VERSION =
+  "ai-grader-immutable-publish-projection-v1" as const;
+
+export type AiGraderPublishAuthorityRecord = {
+  schemaVersion: typeof AI_GRADER_PUBLISH_AUTHORITY_SCHEMA_VERSION;
+  projectionVersion: typeof AI_GRADER_PUBLISH_AUTHORITY_PROJECTION_VERSION;
+  digestAlgorithm: "sha256";
+  digestSha256: string;
+  projection: {
+    schemaVersion: typeof AI_GRADER_PUBLISH_AUTHORITY_PROJECTION_VERSION;
+    excludedRuntimeFields: string[];
+    report: JsonRecord;
+    release: JsonRecord;
+  };
+};
+
 export type AiGraderConfirmedPublishAuthority = AiGraderConfirmedPublishAuthorityInput & {
   sessionId: string;
   reportRowId: string;
   confirmedIdentity: JsonRecord;
   finalOverallGrade?: number;
+  publishAuthority: AiGraderPublishAuthorityRecord;
+  cardAiGradingJson: JsonRecord;
 };
 
 export type AiGraderProductionPersistResult = {
@@ -340,6 +360,363 @@ function aiGraderPublishAuthorityError(code: string, message: string, statusCode
   return error;
 }
 
+export const AI_GRADER_PUBLISH_AUTHORITY_EXCLUDED_RUNTIME_FIELDS = Object.freeze([
+  "report.cardIdentity",
+  "report.productionRelease",
+  "report.localReportFolder",
+  "report.reportHtmlPath",
+  "report.manifestPath",
+  "report.analysisPath",
+  "report.publicPathPlaceholders",
+  "report.publicAssets",
+  "report.assets[*].localPath",
+  "report.assets[*].publicPathPlaceholder",
+  "report.assets[*].bodyEncoding",
+  "report.assets[*].bodyBase64",
+  "report.assets[*].publicUrl",
+  "report.assets[*].storageKey",
+  "report.assets[*].uploadedAt",
+  "release.cardIdentity",
+  "release.label.cardIdentity",
+  "release.label.publicReportUrl",
+  "release.label.qrPayloadUrl",
+  "release.label.labelPreviewUrl",
+  "release.label.labelDataStorageKey",
+  "release.label.labelPreviewKey",
+  "release.label.physicalPrintStatus",
+  "release.label.labelSheet",
+  "release.label.physicalPrint",
+  "release.publication",
+  "release.databaseIntegration",
+  "release.storageIntegration",
+  "release.slabbedPhotoContract",
+  "release.ebayCompsContract",
+  "release.cardInventoryLinkage",
+]) as readonly string[];
+
+export function canonicalAiGraderPublishAuthorityJson(value: unknown): string {
+  const visit = (current: unknown, path: string): string => {
+    if (current === null) return "null";
+    if (typeof current === "boolean" || typeof current === "string") return JSON.stringify(current);
+    if (typeof current === "number") {
+      if (!Number.isFinite(current)) {
+        throw aiGraderPublishAuthorityError(
+          "AI_GRADER_PUBLISH_AUTHORITY_MALFORMED",
+          "The confirmed Publish authority contains an invalid numeric value.",
+        );
+      }
+      return JSON.stringify(current);
+    }
+    if (Array.isArray(current)) {
+      for (let index = 0; index < current.length; index += 1) {
+        if (!Object.prototype.hasOwnProperty.call(current, index)) {
+          throw aiGraderPublishAuthorityError(
+            "AI_GRADER_PUBLISH_AUTHORITY_MALFORMED",
+            "The confirmed Publish authority contains an invalid sparse array.",
+          );
+        }
+      }
+      return "[" + current.map((entry, index) => visit(entry, path + "[" + index + "]")).join(",") + "]";
+    }
+    if (isRecord(current)) {
+      const prototype = Object.getPrototypeOf(current);
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw aiGraderPublishAuthorityError(
+          "AI_GRADER_PUBLISH_AUTHORITY_MALFORMED",
+          "The confirmed Publish authority contains an unsupported object value.",
+        );
+      }
+      return "{" + Object.keys(current)
+        .sort()
+        .map((key) => {
+          const entry = current[key];
+          if (entry === undefined) {
+            throw aiGraderPublishAuthorityError(
+              "AI_GRADER_PUBLISH_AUTHORITY_MALFORMED",
+              "The confirmed Publish authority contains an undefined value.",
+            );
+          }
+          return JSON.stringify(key) + ":" + visit(entry, path + "." + key);
+        })
+        .join(",") + "}";
+    }
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_AUTHORITY_MALFORMED",
+      "The confirmed Publish authority contains a non-JSON value.",
+    );
+  };
+  return visit(value, "$");
+}
+
+function publishAuthorityJsonValue(value: unknown): unknown {
+  const sanitized = sanitizeAiGraderPublicJson(value);
+  const serialized = canonicalAiGraderPublishAuthorityJson(sanitized);
+  return JSON.parse(serialized);
+}
+
+function publishAuthorityRecordValue(value: unknown): JsonRecord {
+  const projected = publishAuthorityJsonValue(value);
+  return isRecord(projected) ? projected : {};
+}
+
+function publishAuthorityBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function publishAuthorityAssets(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value.map((entry, index) => {
+    if (!isRecord(entry)) {
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_PUBLISH_AUTHORITY_MALFORMED",
+        "The confirmed report contains invalid evidence asset metadata.",
+      );
+    }
+    const id = trimmedString(entry.id);
+    const canonicalId = id.toLowerCase();
+    if (!id || seen.has(canonicalId)) {
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_PUBLISH_AUTHORITY_MALFORMED",
+        "The confirmed report contains a missing or duplicate evidence asset identity.",
+      );
+    }
+    seen.add(canonicalId);
+    const checksumSha256 = checksumValue(entry.checksumSha256);
+    const sha256 = checksumValue(entry.sha256);
+    if (checksumSha256 && sha256 && checksumSha256 !== sha256) {
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_PUBLISH_AUTHORITY_MALFORMED",
+        "The confirmed report contains contradictory evidence asset hashes.",
+      );
+    }
+    const checksum = checksumSha256 ?? sha256;
+    const byteSize = positiveIntegerValue(entry.byteSize);
+    const widthPx = positiveIntegerValue(entry.widthPx);
+    const heightPx = positiveIntegerValue(entry.heightPx);
+    const side = entry.side === "front" || entry.side === "back" ? entry.side : undefined;
+    const evidenceRole =
+      typeof entry.evidenceRole === "string" &&
+      AI_GRADER_PUBLIC_EVIDENCE_ROLES.has(entry.evidenceRole as AiGraderPublicEvidenceRole)
+        ? entry.evidenceRole as AiGraderPublicEvidenceRole
+        : undefined;
+    const contentType = trimmedString(entry.contentType).toLowerCase();
+    const kind = trimmedString(entry.kind);
+    const fileName = trimmedString(entry.fileName);
+    return {
+      id,
+      ...(kind ? { kind } : {}),
+      ...(fileName ? { fileName: safeAssetFileName(fileName, "report-asset-" + (index + 1)) } : {}),
+      ...(contentType ? { contentType } : {}),
+      ...(checksum ? { checksumSha256: checksum } : {}),
+      ...(byteSize ? { byteSize } : {}),
+      ...(widthPx ? { widthPx } : {}),
+      ...(heightPx ? { heightPx } : {}),
+      ...(side ? { side } : {}),
+      ...(evidenceRole ? { evidenceRole } : {}),
+      required: publishAuthorityBoolean(entry.required),
+    };
+  }).sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+}
+
+function publishAuthorityReportProjection(reportBundle: AiGraderProductionReportBundleLike): JsonRecord {
+  const producer = isRecord(reportBundle.reportProducer) ? reportBundle.reportProducer : {};
+  const capabilities = Array.from(new Set(
+    (Array.isArray(producer.capabilities) ? producer.capabilities : [])
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => value.trim()),
+  )).sort();
+  const projection: JsonRecord = {
+    schemaVersion: reportBundle.schemaVersion ?? null,
+    generatedAt: reportBundle.generatedAt ?? null,
+    gradingSessionId: reportBundle.gradingSessionId ?? null,
+    reportId: reportBundle.reportId ?? null,
+    reportProducer: {
+      contractVersion: trimmedString(producer.contractVersion) || null,
+      capabilities,
+    },
+    reportStatus: reportBundle.reportStatus ?? null,
+    provisionalStatus: reportBundle.provisionalStatus ?? null,
+    finalStatus: reportBundle.finalStatus ?? null,
+    finalGradeComputed: publishAuthorityBoolean(reportBundle.finalGradeComputed),
+    certifiedClaim: publishAuthorityBoolean(reportBundle.certifiedClaim),
+    labelGenerated: publishAuthorityBoolean(reportBundle.labelGenerated),
+    qrGenerated: publishAuthorityBoolean(reportBundle.qrGenerated),
+    certificateGenerated: publishAuthorityBoolean(reportBundle.certificateGenerated),
+    assets: publishAuthorityAssets(reportBundle.assets),
+    provisionalGrade: publishAuthorityJsonValue(reportBundle.provisionalGrade ?? null),
+    evidenceReferences: publishAuthorityJsonValue(reportBundle.evidenceReferences ?? null),
+    visionLab: publishAuthorityJsonValue(reportBundle.visionLab ?? null),
+    defectFindings: publishAuthorityJsonValue(reportBundle.defectFindings ?? null),
+    calibrationProfile: publishAuthorityJsonValue(reportBundle.calibrationProfile ?? null),
+    rulerCalibration: publishAuthorityJsonValue(reportBundle.rulerCalibration ?? null),
+    lightingProfile: publishAuthorityJsonValue(reportBundle.lightingProfile ?? null),
+    repeatabilitySummary: publishAuthorityJsonValue(reportBundle.repeatabilitySummary ?? null),
+    geometry: publishAuthorityJsonValue(reportBundle.geometry ?? null),
+    geometryCaptureDecisions: publishAuthorityJsonValue(reportBundle.geometryCaptureDecisions ?? null),
+    captureTiming: publishAuthorityJsonValue(reportBundle.captureTiming ?? null),
+    ocrPrefill: publishAuthorityJsonValue(reportBundle.ocrPrefill ?? null),
+    warnings: publishAuthorityJsonValue(reportBundle.warnings ?? []),
+    limitations: publishAuthorityJsonValue(reportBundle.limitations ?? []),
+  };
+  return publishAuthorityRecordValue(projection);
+}
+
+function publishAuthorityReleaseProjection(productionRelease: AiGraderProductionReleaseLike): JsonRecord {
+  const label = isRecord(productionRelease.label) ? productionRelease.label : {};
+  const projection: JsonRecord = {
+    schemaVersion: productionRelease.schemaVersion ?? null,
+    generatedAt: productionRelease.generatedAt ?? null,
+    gradingSessionId: productionRelease.gradingSessionId ?? null,
+    reportId: productionRelease.reportId ?? null,
+    reportStatus: productionRelease.reportStatus ?? null,
+    finalStatus: productionRelease.finalStatus ?? null,
+    finalGradeComputed: publishAuthorityBoolean(productionRelease.finalGradeComputed),
+    certifiedClaim: publishAuthorityBoolean(productionRelease.certifiedClaim),
+    certificateGenerated: publishAuthorityBoolean(productionRelease.certificateGenerated),
+    labelDataGenerated: publishAuthorityBoolean(productionRelease.labelDataGenerated),
+    qrPayloadGenerated: publishAuthorityBoolean(productionRelease.qrPayloadGenerated),
+    finalGrade: publishAuthorityJsonValue(productionRelease.finalGrade ?? null),
+    gates: publishAuthorityJsonValue(productionRelease.gates ?? []),
+    evidenceReferences: publishAuthorityJsonValue(productionRelease.evidenceReferences ?? null),
+    visionLab: publishAuthorityJsonValue(productionRelease.visionLab ?? null),
+    calibrationProfile: publishAuthorityJsonValue(productionRelease.calibrationProfile ?? null),
+    rulerCalibration: publishAuthorityJsonValue(productionRelease.rulerCalibration ?? null),
+    lightingProfile: publishAuthorityJsonValue(productionRelease.lightingProfile ?? null),
+    operatorFinalization: publishAuthorityJsonValue(productionRelease.operatorFinalization ?? null),
+    warnings: publishAuthorityJsonValue(productionRelease.warnings ?? []),
+    limitations: publishAuthorityJsonValue(productionRelease.limitations ?? []),
+    label: publishAuthorityJsonValue({
+      labelVersion: label.labelVersion ?? null,
+      reportId: label.reportId ?? null,
+      certId: label.certId ?? null,
+      status: label.status ?? null,
+      labelGradeText: label.labelGradeText ?? null,
+      elementScores: label.elementScores ?? null,
+      certificateStatus: label.certificateStatus ?? null,
+      certifiedClaim: publishAuthorityBoolean(label.certifiedClaim),
+    }),
+  };
+  return publishAuthorityRecordValue(projection);
+}
+
+export function buildAiGraderPublishAuthorityRecord(input: {
+  reportBundle: AiGraderProductionReportBundleLike;
+  productionRelease: AiGraderProductionReleaseLike;
+}): AiGraderPublishAuthorityRecord {
+  const projection = publishAuthorityRecordValue({
+    schemaVersion: AI_GRADER_PUBLISH_AUTHORITY_PROJECTION_VERSION,
+    excludedRuntimeFields: [...AI_GRADER_PUBLISH_AUTHORITY_EXCLUDED_RUNTIME_FIELDS],
+    report: publishAuthorityReportProjection(input.reportBundle),
+    release: publishAuthorityReleaseProjection(input.productionRelease),
+  }) as AiGraderPublishAuthorityRecord["projection"];
+  const digestSha256 = aiGraderSha256(canonicalAiGraderPublishAuthorityJson(projection));
+  return {
+    schemaVersion: AI_GRADER_PUBLISH_AUTHORITY_SCHEMA_VERSION,
+    projectionVersion: AI_GRADER_PUBLISH_AUTHORITY_PROJECTION_VERSION,
+    digestAlgorithm: "sha256",
+    digestSha256,
+    projection,
+  };
+}
+
+export function parseAiGraderPublishAuthorityRecord(value: unknown): AiGraderPublishAuthorityRecord {
+  if (!isRecord(value)) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_AUTHORITY_MISSING",
+      "This confirmed card has no immutable Publish authority. Stop and re-grade or re-confirm it through the current workflow.",
+    );
+  }
+  const projection = isRecord(value.projection) ? value.projection : {};
+  const exclusions = Array.isArray(projection.excludedRuntimeFields)
+    ? projection.excludedRuntimeFields
+    : [];
+  const exactExclusions =
+    exclusions.length === AI_GRADER_PUBLISH_AUTHORITY_EXCLUDED_RUNTIME_FIELDS.length &&
+    exclusions.every((entry, index) => entry === AI_GRADER_PUBLISH_AUTHORITY_EXCLUDED_RUNTIME_FIELDS[index]);
+  const digestSha256 = trimmedString(value.digestSha256).toLowerCase();
+  if (
+    value.schemaVersion !== AI_GRADER_PUBLISH_AUTHORITY_SCHEMA_VERSION ||
+    value.projectionVersion !== AI_GRADER_PUBLISH_AUTHORITY_PROJECTION_VERSION ||
+    value.digestAlgorithm !== "sha256" ||
+    projection.schemaVersion !== AI_GRADER_PUBLISH_AUTHORITY_PROJECTION_VERSION ||
+    !exactExclusions ||
+    !isRecord(projection.report) ||
+    !isRecord(projection.release) ||
+    !/^[a-f0-9]{64}$/.test(digestSha256)
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_AUTHORITY_MALFORMED",
+      "The immutable Publish authority is malformed. Stop and re-grade or re-confirm the card through the current workflow.",
+    );
+  }
+  const canonicalProjection = JSON.parse(
+    canonicalAiGraderPublishAuthorityJson(projection),
+  ) as AiGraderPublishAuthorityRecord["projection"];
+  const computedDigest = aiGraderSha256(
+    canonicalAiGraderPublishAuthorityJson(canonicalProjection),
+  );
+  if (computedDigest !== digestSha256) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_AUTHORITY_DIGEST_MISMATCH",
+      "The immutable Publish authority failed its SHA-256 integrity check. Stop and re-grade or re-confirm the card through the current workflow.",
+    );
+  }
+  return {
+    schemaVersion: AI_GRADER_PUBLISH_AUTHORITY_SCHEMA_VERSION,
+    projectionVersion: AI_GRADER_PUBLISH_AUTHORITY_PROJECTION_VERSION,
+    digestAlgorithm: "sha256",
+    digestSha256,
+    projection: canonicalProjection,
+  };
+}
+
+export function assertAiGraderPublishPackageMatchesAuthority(input: {
+  reportBundle: AiGraderProductionReportBundleLike;
+  productionRelease: AiGraderProductionReleaseLike;
+  publishAuthority: AiGraderPublishAuthorityRecord;
+}) {
+  const actual = buildAiGraderPublishAuthorityRecord({
+    reportBundle: input.reportBundle,
+    productionRelease: input.productionRelease,
+  });
+  if (
+    actual.digestSha256 !== input.publishAuthority.digestSha256 ||
+    canonicalAiGraderPublishAuthorityJson(actual.projection) !==
+      canonicalAiGraderPublishAuthorityJson(input.publishAuthority.projection)
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_PACKAGE_AUTHORITY_MISMATCH",
+      "The Publish package differs from the report accepted during Confirm Card. Refetch the authoritative confirmed report and retry.",
+    );
+  }
+}
+
+function assertAiGraderPublishAuthorityMatchesDurableLinkage(input: {
+  publishAuthority: AiGraderPublishAuthorityRecord;
+  gradingSessionId: string;
+  reportId: string;
+  finalOverallGrade: number;
+}) {
+  const report = input.publishAuthority.projection.report;
+  const release = input.publishAuthority.projection.release;
+  const finalGrade = isRecord(release.finalGrade) ? release.finalGrade : {};
+  const label = isRecord(release.label) ? release.label : {};
+  if (
+    trimmedString(report.reportId) !== input.reportId ||
+    trimmedString(release.reportId) !== input.reportId ||
+    trimmedString(label.reportId) !== input.reportId ||
+    trimmedString(report.gradingSessionId) !== input.gradingSessionId ||
+    trimmedString(release.gradingSessionId) !== input.gradingSessionId ||
+    numberValue(finalGrade.overall) !== input.finalOverallGrade
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_AUTHORITY_CONTRADICTORY",
+      "The immutable Publish authority contradicts the durable report, session, or final-grade linkage. Stop and re-grade or re-confirm the card through the current workflow.",
+    );
+  }
+}
+
 export function applyAiGraderConfirmedPublishAuthority(input: {
   reportBundle: AiGraderProductionReportBundleLike;
   productionRelease: AiGraderProductionReleaseLike;
@@ -349,37 +726,71 @@ export function applyAiGraderConfirmedPublishAuthority(input: {
   productionRelease: AiGraderProductionReleaseLike;
 } {
   const { authority } = input;
+  const publishAuthority = parseAiGraderPublishAuthorityRecord(authority.publishAuthority);
+  const durableReport = JSON.parse(
+    canonicalAiGraderPublishAuthorityJson(publishAuthority.projection.report),
+  ) as JsonRecord;
+  const durableRelease = JSON.parse(
+    canonicalAiGraderPublishAuthorityJson(publishAuthority.projection.release),
+  ) as JsonRecord;
   const confirmedIdentity = normalizeDurableConfirmedIdentity(
     authority.confirmedIdentity,
     authority.cardAssetId,
     authority.itemId,
   );
-  const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
-  const linkage = isRecord(input.productionRelease.cardInventoryLinkage)
-    ? input.productionRelease.cardInventoryLinkage
-    : {};
-  return {
-    reportBundle: {
-      ...input.reportBundle,
-      gradingSessionId: authority.gradingSessionId,
+  const releaseLabel = isRecord(durableRelease.label) ? durableRelease.label : {};
+  const canonicalRelease: AiGraderProductionReleaseLike = {
+    ...durableRelease,
+    gradingSessionId: authority.gradingSessionId,
+    reportId: authority.reportId,
+    cardIdentity: confirmedIdentity,
+    label: {
+      ...releaseLabel,
       reportId: authority.reportId,
       cardIdentity: confirmedIdentity,
     },
-    productionRelease: {
-      ...input.productionRelease,
+    cardInventoryLinkage: {
+      status: "linked",
+      cardAssetId: authority.cardAssetId,
+      itemId: authority.itemId,
+      note: "Server-owned linkage to the operator-confirmed CardAsset and Item.",
+    },
+  };
+  return {
+    reportBundle: {
+      ...durableReport,
       gradingSessionId: authority.gradingSessionId,
       reportId: authority.reportId,
-      label: {
-        ...releaseLabel,
-        reportId: authority.reportId,
-        cardIdentity: confirmedIdentity,
-      },
-      cardInventoryLinkage: {
-        ...linkage,
-        status: "linked",
-        cardAssetId: authority.cardAssetId,
-        itemId: authority.itemId,
-      },
+      cardIdentity: confirmedIdentity,
+      productionRelease: canonicalRelease,
+    },
+    productionRelease: canonicalRelease,
+  };
+}
+
+export function applyAiGraderServerPublishedRuntimeState(
+  productionRelease: AiGraderProductionReleaseLike,
+  storagePlan: AiGraderProductionStoragePlan,
+): AiGraderProductionReleaseLike {
+  const label = isRecord(productionRelease.label) ? productionRelease.label : {};
+  const reportId = trimmedString(productionRelease.reportId);
+  return {
+    ...productionRelease,
+    label: {
+      ...label,
+      reportId,
+      publicReportUrl: storagePlan.publicReportUrl,
+      qrPayloadUrl: storagePlan.qrPayloadUrl,
+    },
+    publication: {
+      reportId,
+      status: "published",
+      publicReportUrl: storagePlan.publicReportUrl,
+      qrPayloadUrl: storagePlan.qrPayloadUrl,
+      storageMode: "managed_storage",
+      dbWritesPerformed: true,
+      uploadPerformed: true,
+      storageKeyPrefix: storagePlan.storageKeyPrefix,
     },
   };
 }
@@ -2442,7 +2853,12 @@ async function resolveAiGraderConfirmedPublishAuthorityTx(
     }),
     tx.cardAsset.findUnique({
       where: { id: cardAssetId },
-      select: { id: true, batchId: true },
+      select: {
+        id: true,
+        batchId: true,
+        classificationSourcesJson: true,
+        aiGradingJson: true,
+      },
     }),
     tx.item.findUnique({
       where: { id: itemId },
@@ -2521,6 +2937,34 @@ async function resolveAiGraderConfirmedPublishAuthorityTx(
       "Publish could not verify a complete durable operator-confirmed identity and final grade.",
     );
   }
+  const classificationSources = isRecord(cardRecord.classificationSourcesJson)
+    ? cardRecord.classificationSourcesJson
+    : {};
+  const cardAiGradingJson = isRecord(cardRecord.aiGradingJson)
+    ? cardRecord.aiGradingJson
+    : {};
+  const publishAuthority = parseAiGraderPublishAuthorityRecord(
+    classificationSources.aiGraderPublishAuthority,
+  );
+  const mirroredPublishAuthority = parseAiGraderPublishAuthorityRecord(
+    cardAiGradingJson.publishAuthority,
+  );
+  if (
+    publishAuthority.digestSha256 !== mirroredPublishAuthority.digestSha256 ||
+    canonicalAiGraderPublishAuthorityJson(publishAuthority) !==
+      canonicalAiGraderPublishAuthorityJson(mirroredPublishAuthority)
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_AUTHORITY_CONTRADICTORY",
+      "The confirmed card has contradictory immutable Publish authority records. Stop and re-grade or re-confirm it through the current workflow.",
+    );
+  }
+  assertAiGraderPublishAuthorityMatchesDurableLinkage({
+    publishAuthority,
+    gradingSessionId,
+    reportId,
+    finalOverallGrade,
+  });
   return {
     tenantId,
     gradingSessionId,
@@ -2531,6 +2975,8 @@ async function resolveAiGraderConfirmedPublishAuthorityTx(
     reportRowId,
     confirmedIdentity,
     finalOverallGrade,
+    publishAuthority,
+    cardAiGradingJson,
   };
 }
 
@@ -2633,6 +3079,30 @@ export async function persistAiGraderProductionRelease(
   return runInTransaction(db, async (tx) => {
     await acquireAiGraderReportLifecycleLock(tx, reportId);
     const authority = await resolveAiGraderConfirmedPublishAuthorityTx(tx, linkage);
+    assertAiGraderPublishPackageMatchesAuthority({
+      reportBundle: input.reportBundle,
+      productionRelease: input.productionRelease,
+      publishAuthority: authority.publishAuthority,
+    });
+    const canonical = applyAiGraderConfirmedPublishAuthority({
+      reportBundle: input.reportBundle,
+      productionRelease: input.productionRelease,
+      authority,
+    });
+    const canonicalProductionRelease = applyAiGraderServerPublishedRuntimeState(
+      canonical.productionRelease,
+      input.storagePlan,
+    );
+    input = {
+      ...input,
+      reportBundle: {
+        ...canonical.reportBundle,
+        productionRelease: canonicalProductionRelease,
+      },
+      productionRelease: canonicalProductionRelease,
+      cardAssetId: authority.cardAssetId,
+      itemId: authority.itemId,
+    };
     const releaseOverall = finalOverallGrade(input.productionRelease);
     if (releaseOverall === undefined || releaseOverall !== authority.finalOverallGrade) {
       throw aiGraderPublishAuthorityError(
@@ -3001,12 +3471,14 @@ export async function persistAiGraderProductionRelease(
           aiGradeFinal: finalOverallGrade(input.productionRelease) ?? null,
           aiGradeLabel: label.labelGradeText ?? null,
           aiGradingJson: json({
+            ...authority.cardAiGradingJson,
             reportId,
             publicReportUrl: input.storagePlan.publicReportUrl,
             publicationStatus,
             finalGrade: input.productionRelease.finalGrade,
             label,
             actorAudit: actorAuditJson(input.actorAudit),
+            publishAuthority: authority.publishAuthority,
           }),
           aiGradeGeneratedAt: now,
           ...(publicationStatus === "published" && publishedImage && publishedImageUrl

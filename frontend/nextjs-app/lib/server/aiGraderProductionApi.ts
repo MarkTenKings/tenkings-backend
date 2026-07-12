@@ -14,8 +14,11 @@ import type {
 } from "@tenkings/database";
 import {
   applyAiGraderConfirmedPublishAuthority,
+  applyAiGraderServerPublishedRuntimeState,
   assertAiGraderConfirmedPublishIdentitySnapshot,
+  assertAiGraderPublishPackageMatchesAuthority,
   aiGraderSha256,
+  buildAiGraderPublishAuthorityRecord,
   buildAiGraderConfirmCardReferencePlan,
   buildAiGraderCompsSearchQuery,
   buildAiGraderProductionStoragePlan,
@@ -29,8 +32,10 @@ import {
   persistAiGraderSlabbedPhotoAsset,
   persistAiGraderProductionRelease,
   persistAiGraderValuationResult,
+  parseAiGraderPublishAuthorityRecord,
   resolveAiGraderConfirmedPublishAuthority,
   type Prisma,
+  type AiGraderPublishAuthorityRecord,
 } from "@tenkings/database";
 import {
   AI_GRADER_REPORT_BUNDLE_V01_VERSION,
@@ -876,6 +881,8 @@ function parseConfirmedPublishSmallBody(body: unknown) {
   const releaseSessionId = optionalString(parsed.productionRelease.gradingSessionId);
   const bundleIdentity = isRecord(parsed.reportBundle.cardIdentity) ? parsed.reportBundle.cardIdentity : {};
   const releaseLabel = isRecord(parsed.productionRelease.label) ? parsed.productionRelease.label : {};
+  const requestedCertId = optionalString(source.certId);
+  const releaseCertId = optionalString(releaseLabel.certId);
   const labelIdentity = isRecord(releaseLabel.cardIdentity) ? releaseLabel.cardIdentity : {};
   const inventoryLinkage = isRecord(parsed.productionRelease.cardInventoryLinkage)
     ? parsed.productionRelease.cardInventoryLinkage
@@ -905,7 +912,8 @@ function parseConfirmedPublishSmallBody(body: unknown) {
     gradingSessionId !== releaseSessionId ||
     embeddedCardAssetIds.some((value) => value !== cardAssetId) ||
     embeddedItemIds.some((value) => value !== itemId) ||
-    (optionalString(releaseLabel.reportId) && optionalString(releaseLabel.reportId) !== reportId)
+    (optionalString(releaseLabel.reportId) && optionalString(releaseLabel.reportId) !== reportId) ||
+    (requestedCertId && requestedCertId !== releaseCertId)
   ) {
     throw aiGraderPublishBoundaryError(
       "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
@@ -3017,6 +3025,11 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         itemId: requestedInput.itemId,
         productionRelease: requestedInput.productionRelease,
       });
+      assertAiGraderPublishPackageMatchesAuthority({
+        reportBundle: requestedInput.reportBundle,
+        productionRelease: requestedInput.productionRelease,
+        publishAuthority: authority.publishAuthority,
+      });
       const canonical = applyAiGraderConfirmedPublishAuthority({
         reportBundle: requestedInput.reportBundle,
         productionRelease: requestedInput.productionRelease,
@@ -3265,15 +3278,6 @@ export async function persistProductionReleaseRuntime(input: {
       "Verified Publish requires one exact report, session, CardAsset, and Item linkage.",
     );
   }
-  assertPublishedReleaseReady({
-    publicationStatus: input.publicationStatus,
-    reportId,
-    gradingSessionId,
-    cardAssetId,
-    itemId,
-    reportBundle: input.reportBundle,
-    productionRelease: input.productionRelease,
-  });
   const authority = await (resolveAuthority ?? resolveAiGraderConfirmedPublishAuthority)(db, {
     tenantId: input.tenantId,
     reportId,
@@ -3290,19 +3294,47 @@ export async function persistProductionReleaseRuntime(input: {
     itemId,
     productionRelease: input.productionRelease,
   });
-  assertAiGraderConfirmedPublishIdentitySnapshot({
+  assertAiGraderPublishPackageMatchesAuthority({
     reportBundle: input.reportBundle,
     productionRelease: input.productionRelease,
-    authority,
+    publishAuthority: authority.publishAuthority,
   });
   const canonical = applyAiGraderConfirmedPublishAuthority({
     reportBundle: input.reportBundle,
     productionRelease: input.productionRelease,
     authority,
   });
+  const canonicalProductionRelease = applyAiGraderServerPublishedRuntimeState(
+    canonical.productionRelease,
+    input.storagePlan,
+  );
+  assertPublishedReleaseReady({
+    publicationStatus: input.publicationStatus,
+    reportId,
+    gradingSessionId,
+    cardAssetId,
+    itemId,
+    reportBundle: {
+      ...canonical.reportBundle,
+      productionRelease: canonicalProductionRelease,
+    },
+    productionRelease: canonicalProductionRelease,
+  });
+  assertAiGraderConfirmedPublishIdentitySnapshot({
+    reportBundle: {
+      ...canonical.reportBundle,
+      productionRelease: canonicalProductionRelease,
+    },
+    productionRelease: canonicalProductionRelease,
+    authority,
+  });
   const persisted = await (persistRelease ?? persistAiGraderProductionRelease)(db, {
     ...persistInput,
-    ...canonical,
+    reportBundle: {
+      ...canonical.reportBundle,
+      productionRelease: canonicalProductionRelease,
+    },
+    productionRelease: canonicalProductionRelease,
     cardAssetId,
     itemId,
   });
@@ -3314,7 +3346,7 @@ export async function persistProductionReleaseRuntime(input: {
       tenantId: input.tenantId,
       gradingSessionId,
       reportId,
-      productionRelease: canonical.productionRelease,
+      productionRelease: canonicalProductionRelease,
       cardAssetId,
       itemId,
       publishAuthority: authority,
@@ -3622,9 +3654,11 @@ async function existingAiGraderCreatedCardResult(input: {
   tenantId: string;
   reportId: string;
   gradingSessionId?: string | null;
+  reportBundle: AiGraderProductionReportBundleLike;
   productionRelease: AiGraderProductionReleaseLike;
   identity: AiGraderConfirmedCardIdentity;
   operatorUserId: string;
+  publishAuthority: AiGraderPublishAuthorityRecord;
   env?: EnvLike;
 }): Promise<AiGraderCreateCardFromReportResult | null> {
   const session = input.gradingSessionId
@@ -3661,9 +3695,35 @@ async function existingAiGraderCreatedCardResult(input: {
       cdnHdUrl: true,
       cdnThumbUrl: true,
       classificationJson: true,
+      classificationSourcesJson: true,
+      aiGradingJson: true,
     },
   });
   if (!isRecord(card)) return null;
+  const classificationSources = isRecord(card.classificationSourcesJson)
+    ? card.classificationSourcesJson
+    : {};
+  const aiGradingJson = isRecord(card.aiGradingJson) ? card.aiGradingJson : {};
+  const storedPublishAuthority = parseAiGraderPublishAuthorityRecord(
+    classificationSources.aiGraderPublishAuthority,
+  );
+  const mirroredPublishAuthority = parseAiGraderPublishAuthorityRecord(
+    aiGradingJson.publishAuthority,
+  );
+  if (
+    storedPublishAuthority.digestSha256 !== mirroredPublishAuthority.digestSha256 ||
+    storedPublishAuthority.digestSha256 !== input.publishAuthority.digestSha256
+  ) {
+    throw aiGraderPublishBoundaryError(
+      "AI_GRADER_PUBLISH_AUTHORITY_CONTRADICTORY",
+      "The confirmed card does not match its immutable Publish authority. Stop and re-grade or re-confirm it through the current workflow.",
+    );
+  }
+  assertAiGraderPublishPackageMatchesAuthority({
+    reportBundle: input.reportBundle,
+    productionRelease: input.productionRelease,
+    publishAuthority: storedPublishAuthority,
+  });
   const linkedItemId = sessionItemId ?? reportItemId;
   const itemLinkage = await ensureCardItemOwnershipTx(input.db, cardAssetId, {
     env: input.env,
@@ -3725,6 +3785,10 @@ export async function createAiGraderCardFromReportRuntime(input: {
     throw new Error("AI Grader card creation requires verified front normalized-card evidence.");
   }
   const publicImageUrl = "";
+  const publishAuthority = buildAiGraderPublishAuthorityRecord({
+    reportBundle: input.reportBundle,
+    productionRelease: input.productionRelease,
+  });
 
   const { prisma } = await import("@tenkings/database");
   const db = input.dbClient ?? (prisma as any);
@@ -3738,9 +3802,11 @@ export async function createAiGraderCardFromReportRuntime(input: {
       tenantId: input.tenantId,
       reportId,
       gradingSessionId,
+      reportBundle: input.reportBundle,
       productionRelease: input.productionRelease,
       identity: input.identity,
       operatorUserId,
+      publishAuthority,
       env: input.env,
     });
     if (existing) {
@@ -3789,6 +3855,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
       finalGrade,
       ...(label ? { label } : {}),
       actorAudit: input.actorAudit ?? null,
+      publishAuthority,
     };
 
     const batch = await tx.cardBatch.create({
@@ -3820,6 +3887,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
           source: "ai_grader_confirmed_identity",
           reportId,
           confirmedAt: now.toISOString(),
+          aiGraderPublishAuthority: publishAuthority,
           normalizedEvidence: input.storagePlan.imageReferences.map((reference) => ({
             assetId: reference.sourceAssetId,
             side: reference.sourceAssetSide,
