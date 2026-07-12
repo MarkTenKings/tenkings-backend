@@ -53,6 +53,7 @@ import {
 } from "../../lib/aiGraderRapidAutoCapture";
 import type { AiGraderReportBundle } from "../../lib/aiGraderReportBundle";
 import {
+  AiGraderOcrPrefillStageError,
   aiGraderOcrPrefillReportMetadata,
   mergeAiGraderOcrPrefillIntoIdentityDraft,
   runAiGraderOcrPrefillFromLocalReport,
@@ -69,6 +70,7 @@ import { formatAiGraderPublishStageError } from "../../lib/aiGraderPublishErrors
 import { productionAssetManifest } from "../../lib/aiGraderProductionAssetManifest";
 import { assertAiGraderBrowserRaster } from "../../lib/aiGraderRasterValidation";
 import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
+import { canConfirmAiGraderCardManually } from "../../lib/aiGraderForwardConfirm";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
@@ -500,13 +502,15 @@ const OCR_PREFILL_FIELD_LABELS = {
   cardName: "Card",
   year: "Year",
   manufacturer: "Maker",
+  sport: "Sport",
+  game: "Game",
   productSet: "Set",
   cardNumber: "Card #",
   parallel: "Parallel",
   insert: "Insert",
   numbered: "Numbered",
-  auto: "Auto",
-  mem: "Mem",
+  autograph: "Auto",
+  memorabilia: "Mem",
 } as const;
 
 const RAPID_REVIEWABLE_STATES = new Set<string>(["report_ready_needs_confirm", "confirmed_needs_publish", "published"]);
@@ -1044,7 +1048,12 @@ export default function AiGraderStationPage() {
     !reportReady ? "generated report" : "",
     ...identityDraftMissing,
   ].filter(Boolean);
-  const canCreateCardFromReport = reportReady && identityDraftComplete && !linkedCardReady && identityStatus.status !== "pending";
+  const canCreateCardFromReport = canConfirmAiGraderCardManually({
+    reportReady,
+    identityComplete: identityDraftComplete,
+    linkedCardReady,
+    confirmationPending: identityStatus.status === "pending",
+  });
   const canPublishToTenKings = linkedCardReady && publishReadiness.ready && productionPublish.status !== "published" && productionPublish.status !== "pending";
   const selectedFinishItem = finishQueue.items.find((item) => item.reportId === selectedFinishReportId) ?? finishQueue.items[0] ?? null;
   const selectedFinishReportIdForActions = selectedFinishItem?.reportId ?? null;
@@ -1550,15 +1559,21 @@ export default function AiGraderStationPage() {
           status: "ready",
           reportId: ocrPrefillReportId,
           result,
-          message: "OCR suggestions loaded. Review every field before Confirm Card.",
+          message: `OCR ready. Review ${result.reviewFieldNames.length} field${result.reviewFieldNames.length === 1 ? "" : "s"} before Confirm Card.`,
         });
       })
       .catch((requestError) => {
         if (cancelled || generation !== ocrPrefillGenerationRef.current) return;
+        const typedFailure = requestError instanceof AiGraderOcrPrefillStageError
+          ? requestError
+          : null;
         setOcrPrefillState({
           status: "failed",
           reportId: ocrPrefillReportId,
           message: requestError instanceof Error ? requestError.message : "OCR prefill did not complete.",
+          ...(typedFailure?.failureCode ? { failureCode: typedFailure.failureCode } : {}),
+          ...(typedFailure?.failureCategory ? { failureCategory: typedFailure.failureCategory } : {}),
+          ...(typedFailure?.failureLabel ? { failureLabel: typedFailure.failureLabel } : {}),
         });
       });
     return () => {
@@ -4391,6 +4406,9 @@ export default function AiGraderStationPage() {
                   <span>{ocrPrefillState.status === "running" ? "Working" : formatStationValue(ocrPrefillState.status)}</span>
                 </div>
                 <p>{ocrPrefillState.message}</p>
+                {ocrPrefillState.status === "failed" && ocrPrefillState.failureLabel ? (
+                  <small>{ocrPrefillState.failureLabel}</small>
+                ) : null}
                 {ocrPrefillState.status === "ready" ? (
                   <>
                     <div className="ocr-prefill-indicators" aria-label="OCR field confidence">

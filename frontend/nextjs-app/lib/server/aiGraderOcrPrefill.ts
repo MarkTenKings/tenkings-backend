@@ -1,10 +1,26 @@
-import { extractCardAttributes } from "@tenkings/shared";
-import type { OcrResponse } from "./googleVisionOcr";
-import { runGoogleVisionOcr } from "./googleVisionOcr";
+import {
+  extractCardAttributes,
+  normalizeCardIdentityPlayerNameBase,
+  normalizeCardNumber,
+} from "@tenkings/shared";
 import type { IdentifySetResult } from "./cardSetIdentification";
 import { identifySetByCardIdentity } from "./cardSetIdentification";
-import type { LookupSetResult } from "./setLookup";
+import {
+  AiGraderGoogleVisionError,
+  runGoogleVisionDocumentTextDetectionByUrl,
+  type OcrResponse,
+} from "./googleVisionOcr";
+import type { LookupSetParallelOption, LookupSetResult } from "./setLookup";
 import { lookupSetByCardIdentity } from "./setLookup";
+import {
+  AiGraderOcrStructuredExtractionError,
+  runAiGraderOcrStructuredExtraction,
+  type AiGraderOcrExtractionState,
+  type AiGraderOcrStructuredExtraction,
+  type AiGraderOcrStructuredField,
+  type AiGraderOcrStructuredValue,
+} from "./aiGraderOcrStructuredExtraction";
+import { AiGraderOcrFailure } from "../aiGraderOcrFailure";
 
 export type AiGraderOcrPrefillSide = "front" | "back";
 
@@ -16,10 +32,28 @@ export type AiGraderOcrPrefillSourceImage = {
 export type AiGraderOcrPrefillFieldValue = string | boolean | null;
 
 export type AiGraderOcrPrefillField<T extends AiGraderOcrPrefillFieldValue = AiGraderOcrPrefillFieldValue> = {
+  state: AiGraderOcrExtractionState;
   value: T;
   confidence: number;
   reviewRequired: boolean;
-  sources: string[];
+  evidenceRefs: string[];
+};
+
+export type AiGraderOcrPrefillFields = {
+  category: AiGraderOcrPrefillField<string | null>;
+  playerName: AiGraderOcrPrefillField<string | null>;
+  cardName: AiGraderOcrPrefillField<string | null>;
+  year: AiGraderOcrPrefillField<string | null>;
+  manufacturer: AiGraderOcrPrefillField<string | null>;
+  sport: AiGraderOcrPrefillField<string | null>;
+  game: AiGraderOcrPrefillField<string | null>;
+  productSet: AiGraderOcrPrefillField<string | null>;
+  cardNumber: AiGraderOcrPrefillField<string | null>;
+  insert: AiGraderOcrPrefillField<string | null>;
+  parallel: AiGraderOcrPrefillField<string | null>;
+  numbered: AiGraderOcrPrefillField<string | null>;
+  autograph: AiGraderOcrPrefillField<boolean | null>;
+  memorabilia: AiGraderOcrPrefillField<boolean | null>;
 };
 
 export type AiGraderOcrPrefillResult = {
@@ -29,306 +63,465 @@ export type AiGraderOcrPrefillResult = {
   inventoryMutationPerformed: false;
   publishMutationPerformed: false;
   sourceSides: AiGraderOcrPrefillSide[];
-  fields: {
-    category: AiGraderOcrPrefillField<string | null>;
-    playerName: AiGraderOcrPrefillField<string | null>;
-    cardName: AiGraderOcrPrefillField<string | null>;
-    year: AiGraderOcrPrefillField<string | null>;
-    manufacturer: AiGraderOcrPrefillField<string | null>;
-    productSet: AiGraderOcrPrefillField<string | null>;
-    cardNumber: AiGraderOcrPrefillField<string | null>;
-    parallel: AiGraderOcrPrefillField<string | null>;
-    insert: AiGraderOcrPrefillField<string | null>;
-    numbered: AiGraderOcrPrefillField<string | null>;
-    auto: AiGraderOcrPrefillField<boolean | null>;
-    mem: AiGraderOcrPrefillField<boolean | null>;
-  };
+  fields: AiGraderOcrPrefillFields;
   reviewFieldNames: string[];
   provenance: {
-    ocrEngine: "google_vision_document_text_detection";
+    ocrEngine: "google_vision_document_text_detection_url_only";
     attributeExtractor: "@tenkings/shared/extractCardAttributes";
+    structuredExtractor: "openai_responses_strict_json_schema";
+    structuredExtractionModel: string;
     setLookupUsed: boolean;
     setIdentificationUsed: boolean;
   };
   warnings: string[];
 };
 
+export type AiGraderOcrProviderDiagnostics = {
+  schemaVersion: "ai-grader-ocr-provider-diagnostics-v1";
+  googleElapsedMs: number;
+  openAiElapsedMs: number;
+  totalProviderElapsedMs: number;
+  actualOpenAiModel: string;
+};
+
+export type AiGraderOcrPrefillRuntimeResult = AiGraderOcrPrefillResult & {
+  internalProviderDiagnostics: AiGraderOcrProviderDiagnostics;
+};
+
 export type AiGraderOcrPrefillRuntimeDependencies = {
-  runOcr?: typeof runGoogleVisionOcr;
+  runOcr?: (
+    images: Array<{ id: string; url: string }>,
+    options?: { timeoutMs: number }
+  ) => Promise<OcrResponse>;
+  runStructuredExtraction?: typeof runAiGraderOcrStructuredExtraction;
   identifySet?: typeof identifySetByCardIdentity;
   lookupSet?: typeof lookupSetByCardIdentity;
+  now?: () => number;
+  providerTimeBudgetMs?: number;
 };
 
 const REVIEW_CONFIDENCE_THRESHOLD = 0.8;
+export const AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS = 45_000;
+const AI_GRADER_GOOGLE_TIME_BUDGET_MS = 12_000;
+const AI_GRADER_OPENAI_TIME_BUDGET_MS = 30_000;
 
-function clampConfidence(value: number) {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(1, value));
+function boundedProviderElapsedMs(value: number) {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.min(AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS, Math.round(value));
 }
 
-function roundedConfidence(value: number) {
-  return Number(clampConfidence(value).toFixed(3));
+function providerTimeBudgetMs(value: number | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS;
+  return Math.max(1, Math.min(AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS, Math.round(value)));
 }
 
-function safeText(value: string | null | undefined, maxLength = 160) {
-  const normalized = String(value ?? "")
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, maxLength);
-  if (!normalized) return null;
-  if (/^data:/i.test(normalized) || /https?:\/\//i.test(normalized) || /^[a-z]:\\/i.test(normalized)) return null;
-  return normalized;
+function roundedConfidence(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Number(Math.max(0, Math.min(1, value)).toFixed(3));
 }
 
-function field<T extends AiGraderOcrPrefillFieldValue>(
-  value: T,
-  confidence: number,
-  sources: Array<string | null | undefined>
+function outputField<T extends AiGraderOcrPrefillFieldValue>(
+  field: AiGraderOcrStructuredField<T>
 ): AiGraderOcrPrefillField<T> {
-  const normalizedConfidence = value == null ? 0 : roundedConfidence(confidence);
+  const confidence = roundedConfidence(field.confidence);
   return {
-    value,
-    confidence: normalizedConfidence,
-    reviewRequired: value == null || normalizedConfidence < REVIEW_CONFIDENCE_THRESHOLD,
-    sources: Array.from(new Set(sources.filter((source): source is string => Boolean(source)))),
+    state: field.state,
+    value: field.state === "supported" ? field.value : null as T,
+    confidence,
+    reviewRequired: field.state !== "supported" || confidence < REVIEW_CONFIDENCE_THRESHOLD,
+    evidenceRefs: Array.from(new Set(field.evidenceRefs)),
   };
 }
 
-function averageOcrConfidence(response: OcrResponse) {
-  const confidences = response.results
-    .map((result) => clampConfidence(result.confidence))
-    .filter((value) => value > 0);
-  if (!confidences.length) return 0;
-  return confidences.reduce((sum, value) => sum + value, 0) / confidences.length;
+function reviewedField<T extends AiGraderOcrPrefillFieldValue>(
+  field: AiGraderOcrPrefillField<T>,
+  input: {
+    state: AiGraderOcrExtractionState;
+    value: T;
+    confidence?: number;
+    evidenceRef: string;
+  }
+): AiGraderOcrPrefillField<T> {
+  const confidence = roundedConfidence(input.confidence ?? field.confidence);
+  return {
+    state: input.state,
+    value: input.state === "supported" ? input.value : null as T,
+    confidence,
+    reviewRequired: input.state !== "supported" || confidence < REVIEW_CONFIDENCE_THRESHOLD,
+    evidenceRefs: Array.from(new Set([...field.evidenceRefs, input.evidenceRef])),
+  };
 }
 
-function textBySide(response: OcrResponse) {
-  const result = new Map<AiGraderOcrPrefillSide, string>();
-  for (const entry of response.results) {
-    if (entry.id !== "front" && entry.id !== "back") continue;
-    result.set(entry.id, String(entry.text ?? ""));
-  }
-  return result;
-}
-
-function sourcesForValue(value: string | null, sides: Map<AiGraderOcrPrefillSide, string>) {
-  if (!value) return ["ocr"];
-  const normalizedValue = value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const sources: string[] = [];
-  for (const [side, text] of sides) {
-    const normalizedText = text.toLowerCase().replace(/[^a-z0-9]+/g, " ");
-    if (normalizedValue && normalizedText.includes(normalizedValue)) sources.push(`${side}_ocr`);
-  }
-  return sources.length ? sources : ["combined_ocr"];
-}
-
-function inferCategoryAndSport(text: string, hasPlayerName: boolean) {
-  const normalized = text.toLowerCase();
-  const tcgSignals = ["pokemon", "pokémon", "magic the gathering", "yu-gi-oh", "yugioh", "trainer", "mana"];
-  const comicsSignals = ["marvel comics", "dc comics", "issue no", "issue #", "cover art"];
-  const sports: Array<[string, string[]]> = [
-    ["basketball", ["basketball", "nba"]],
-    ["baseball", ["baseball", "mlb"]],
-    ["football", ["football", "nfl"]],
-    ["hockey", ["hockey", "nhl"]],
-    ["soccer", ["soccer", "football club", "fc "]],
-  ];
-  if (tcgSignals.some((signal) => normalized.includes(signal))) {
-    return { category: "tcg", sport: null, confidence: 0.9 };
-  }
-  if (comicsSignals.some((signal) => normalized.includes(signal))) {
-    return { category: "comics", sport: null, confidence: 0.88 };
-  }
-  for (const [sport, signals] of sports) {
-    if (signals.some((signal) => normalized.includes(signal))) {
-      return { category: "sport", sport, confidence: 0.9 };
-    }
-  }
-  return hasPlayerName
-    ? { category: "sport", sport: null, confidence: 0.58 }
-    : { category: null, sport: null, confidence: 0 };
-}
-
-function extractCardNumber(text: string) {
-  const patterns = [
-    /(?:CARD\s*(?:NO\.?|NUMBER|#)|NO\.?|#)\s*[:.-]?\s*([A-Z]{0,4}-?\d{1,5}[A-Z]?)/i,
-    /\b([A-Z]{1,4}-\d{1,5}[A-Z]?)\b/i,
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    const candidate = safeText(match?.[1] ?? "", 24)?.toUpperCase() ?? null;
-    if (candidate && !candidate.includes("/")) return candidate;
-  }
-  return null;
-}
-
-function normalizedMatchText(value: string | null | undefined) {
+function normalizedWords(value: string | null | undefined) {
   return String(value ?? "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
-function parallelFromLookup(text: string, lookup: LookupSetResult | null, variantKeywords: string[]) {
-  const normalizedText = normalizedMatchText(text);
-  const options = lookup?.scopedParallels?.length ? lookup.scopedParallels : lookup?.parallels ?? [];
-  const matches = options
-    .map((option) => ({ option, key: normalizedMatchText(option.label) }))
-    .filter(({ key }) => key.length >= 3 && normalizedText.includes(key))
-    .sort((left, right) => right.key.length - left.key.length);
-  if (matches[0]?.option.label) {
-    return { value: safeText(matches[0].option.label), confidence: lookup?.match === "exact" ? 0.91 : 0.78, source: "set_variant_lookup" };
-  }
-  const keyword = variantKeywords
-    .map((value) => safeText(value))
-    .find((value) => value && !/^(AUTO|AUTOGRAPH|SIGNATURE|PATCH|NUMBERED)$/i.test(value));
-  return keyword
-    ? { value: keyword, confidence: 0.66, source: "shared_attribute_extractor" }
-    : { value: null, confidence: 0, source: null };
+function normalizedAlias(value: string | null | undefined) {
+  return normalizedWords(value).replace(/[^a-z0-9]+/g, "");
 }
 
-async function resolveSetEvidence(input: {
-  year: string | null;
-  manufacturer: string | null;
-  sport: string | null;
-  playerName: string | null;
-  cardNumber: string | null;
-  frontText: string;
-  combinedText: string;
-  identifySet: typeof identifySetByCardIdentity;
-  lookupSet: typeof lookupSetByCardIdentity;
-}) {
-  const complete = Boolean(input.year && input.manufacturer && input.sport && input.playerName && input.cardNumber);
-  if (!complete) {
-    return { identified: null as IdentifySetResult | null, lookup: null as LookupSetResult | null, warnings: [] as string[] };
+export type AiGraderCatalogOptionResolution = {
+  match: "exact" | "alias" | "multiple" | "none";
+  value: string | null;
+};
+
+export function resolveAiGraderCatalogOption(
+  proposed: string | null | undefined,
+  options: Array<{ label: string }>
+): AiGraderCatalogOptionResolution {
+  const words = normalizedWords(proposed);
+  const alias = normalizedAlias(proposed);
+  if (!words || !alias) return { match: "none", value: null };
+  const exact = options.filter((option) => normalizedWords(option.label) === words);
+  if (exact.length === 1) return { match: "exact", value: exact[0]!.label };
+  if (exact.length > 1) return { match: "multiple", value: null };
+  const aliases = options.filter((option) => normalizedAlias(option.label) === alias);
+  if (aliases.length === 1) return { match: "alias", value: aliases[0]!.label };
+  if (aliases.length > 1) return { match: "multiple", value: null };
+  return { match: "none", value: null };
+}
+
+function canonicalStringField(
+  field: AiGraderOcrPrefillField<string | null>,
+  canonicalValue: string | null | undefined,
+  input: {
+    normalize?: (value: string | null | undefined) => string;
+    evidenceRef: string;
+    unresolvedState?: "unknown" | "disagreement";
   }
-  const warnings: string[] = [];
-  let identified: IdentifySetResult | null = null;
-  let lookup: LookupSetResult | null = null;
-  try {
-    identified = await input.identifySet({
-      year: input.year,
-      manufacturer: input.manufacturer,
-      sport: input.sport,
-      playerName: input.playerName,
-      cardNumber: input.cardNumber,
-      frontCardText: input.frontText,
-      combinedText: input.combinedText,
+) {
+  if (field.state !== "supported" || typeof field.value !== "string") {
+    return reviewedField(field, {
+      state: field.state,
+      value: null,
+      evidenceRef: input.evidenceRef,
     });
-  } catch {
-    warnings.push("Existing Ten Kings set identification was unavailable; OCR fields still require review.");
   }
-  try {
-    lookup = await input.lookupSet({
-      year: input.year!,
-      manufacturer: input.manufacturer!,
-      sport: input.sport!,
-      playerName: input.playerName!,
-      cardNumber: input.cardNumber!,
+  if (!canonicalValue) {
+    return reviewedField(field, {
+      state: input.unresolvedState ?? "disagreement",
+      value: null,
+      confidence: Math.max(field.confidence, 0.8),
+      evidenceRef: input.evidenceRef,
     });
-  } catch {
-    warnings.push("Existing Ten Kings set/variant lookup was unavailable; OCR fields still require review.");
   }
-  return { identified, lookup, warnings };
+  const normalize = input.normalize ?? normalizedAlias;
+  if (!normalize(field.value) || normalize(field.value) !== normalize(canonicalValue)) {
+    return reviewedField(field, {
+      state: "disagreement",
+      value: null,
+      confidence: Math.max(field.confidence, 0.8),
+      evidenceRef: input.evidenceRef,
+    });
+  }
+  return reviewedField(field, {
+    state: "supported",
+    value: canonicalValue,
+    confidence: Math.max(field.confidence, 0.9),
+    evidenceRef: input.evidenceRef,
+  });
+}
+
+function unsupportedCatalogField(
+  field: AiGraderOcrPrefillField<string | null>,
+  state: "unknown" | "disagreement",
+  evidenceRef: string
+) {
+  return reviewedField(field, {
+    state,
+    value: null,
+    confidence: state === "disagreement" ? Math.max(field.confidence, 0.8) : field.confidence,
+    evidenceRef,
+  });
+}
+
+function validateNumberedField(
+  field: AiGraderOcrPrefillField<string | null>,
+  parallel: LookupSetParallelOption | null
+) {
+  if (field.state !== "supported" || typeof field.value !== "string") return field;
+  const match = field.value.replace(/\s+/g, "").match(/^(\d{1,6})\/(\d{1,6})$/);
+  if (!match) return unsupportedCatalogField(field, "disagreement", "catalog.numbered.format");
+  const numerator = Number(match[1]);
+  const denominator = Number(match[2]);
+  if (numerator < 1 || denominator < 1 || numerator > denominator ||
+      (parallel?.serialDenominator != null && parallel.serialDenominator !== denominator)) {
+    return unsupportedCatalogField(field, "disagreement", "catalog.numbered.denominator");
+  }
+  return reviewedField(field, {
+    state: "supported",
+    value: `${numerator}/${denominator}`,
+    confidence: field.confidence,
+    evidenceRef: "catalog.numbered.validated",
+  });
+}
+
+export function canonicalizeAiGraderOcrCatalog(input: {
+  fields: AiGraderOcrPrefillFields;
+  category: "sport" | "tcg" | "comics" | null;
+  identified: IdentifySetResult | null;
+  lookup: LookupSetResult | null;
+}): AiGraderOcrPrefillFields {
+  const fields: AiGraderOcrPrefillFields = { ...input.fields };
+  const identityKey = input.category === "sport" ? "playerName" : "cardName";
+  const otherIdentityKey = identityKey === "playerName" ? "cardName" : "playerName";
+  fields[otherIdentityKey] = unsupportedCatalogField(fields[otherIdentityKey], "unknown", "catalog.identity.not_applicable");
+
+  if (!input.identified || input.identified.confidence === "none") {
+    const state = (input.identified?.candidateCount ?? 0) > 1 ? "disagreement" : "unknown";
+    fields[identityKey] = unsupportedCatalogField(fields[identityKey], state, "catalog.identity.unresolved");
+    fields.productSet = unsupportedCatalogField(fields.productSet, state, "catalog.set.unresolved");
+    fields.cardNumber = unsupportedCatalogField(fields.cardNumber, state, "catalog.card_number.unresolved");
+    fields.insert = unsupportedCatalogField(fields.insert, state, "catalog.insert.unresolved");
+    fields.parallel = unsupportedCatalogField(fields.parallel, state, "catalog.parallel.unresolved");
+    fields.numbered = validateNumberedField(fields.numbered, null);
+    return fields;
+  }
+
+  const lookupMismatch = input.lookup?.match === "exact" && input.lookup.setId &&
+    input.identified.setId && input.lookup.setId !== input.identified.setId;
+  if (lookupMismatch) {
+    for (const key of [identityKey, "productSet", "cardNumber", "insert", "parallel"] as const) {
+      fields[key] = unsupportedCatalogField(fields[key], "disagreement", "catalog.identity.lookup_disagreement");
+    }
+    fields.numbered = validateNumberedField(fields.numbered, null);
+    return fields;
+  }
+
+  fields[identityKey] = canonicalStringField(fields[identityKey], input.identified.playerName, {
+    normalize: normalizeCardIdentityPlayerNameBase,
+    evidenceRef: "catalog.identity",
+  });
+  fields.productSet = canonicalStringField(fields.productSet, input.identified.setName, {
+    evidenceRef: "catalog.set",
+  });
+  fields.cardNumber = canonicalStringField(fields.cardNumber, input.identified.cardNumber, {
+    normalize: (value) => normalizeCardNumber(String(value ?? "")) ?? "",
+    evidenceRef: "catalog.card_number",
+  });
+
+  const catalogInsert = input.identified.programLabel ?? (input.lookup?.match === "exact" ? input.lookup.insertLabel : null);
+  fields.insert = input.lookup?.match === "multiple"
+    ? unsupportedCatalogField(fields.insert, "disagreement", "catalog.insert.multiple")
+    : canonicalStringField(fields.insert, catalogInsert, { evidenceRef: "catalog.insert" });
+
+  const parallelOptions = input.lookup?.match === "exact"
+    ? (input.lookup.scopedParallels.length ? input.lookup.scopedParallels : input.lookup.parallels)
+    : [];
+  const parallelResolution = resolveAiGraderCatalogOption(fields.parallel.value, parallelOptions);
+  let matchedParallel: LookupSetParallelOption | null = null;
+  if (fields.parallel.state !== "supported") {
+    fields.parallel = unsupportedCatalogField(fields.parallel, fields.parallel.state, "catalog.parallel");
+  } else if (parallelResolution.match === "exact" || parallelResolution.match === "alias") {
+    matchedParallel = parallelOptions.find((option) => option.label === parallelResolution.value) ?? null;
+    fields.parallel = reviewedField(fields.parallel, {
+      state: "supported",
+      value: parallelResolution.value,
+      confidence: Math.max(fields.parallel.confidence, parallelResolution.match === "exact" ? 0.95 : 0.9),
+      evidenceRef: `catalog.parallel.${parallelResolution.match}`,
+    });
+  } else {
+    fields.parallel = unsupportedCatalogField(
+      fields.parallel,
+      parallelResolution.match === "multiple" ? "disagreement" : "disagreement",
+      `catalog.parallel.${parallelResolution.match}`
+    );
+  }
+  fields.numbered = validateNumberedField(fields.numbered, matchedParallel);
+  return fields;
+}
+
+function supportedString(field: AiGraderOcrStructuredField<AiGraderOcrStructuredValue>) {
+  return field.state === "supported" && typeof field.value === "string" ? field.value : null;
+}
+
+function heuristicHints(response: OcrResponse) {
+  const attributes = extractCardAttributes(String(response.combined_text ?? ""));
+  return {
+    playerName: attributes.playerName,
+    year: attributes.year,
+    manufacturer: attributes.brand,
+    productSet: attributes.setName,
+    numbered: attributes.numbered,
+    autograph: attributes.autograph === true ? true : null,
+    memorabilia: attributes.memorabilia === true ? true : null,
+    variantKeywords: attributes.variantKeywords.join(" ") || null,
+  };
+}
+
+function googleFailure(error: unknown) {
+  if (error instanceof AiGraderOcrFailure) return error;
+  if (error instanceof AiGraderGoogleVisionError) {
+    if (error.code === "missing_config") {
+      return new AiGraderOcrFailure("AI_GRADER_OCR_GOOGLE_CONFIG_MISSING");
+    }
+    if (error.side === "front") return new AiGraderOcrFailure("AI_GRADER_OCR_GOOGLE_FRONT_FAILED");
+    if (error.side === "back") return new AiGraderOcrFailure("AI_GRADER_OCR_GOOGLE_BACK_FAILED");
+  }
+  return new AiGraderOcrFailure("AI_GRADER_OCR_GOOGLE_PROVIDER_FAILED");
+}
+
+function openAiFailure(error: unknown) {
+  if (error instanceof AiGraderOcrFailure) return error;
+  if (!(error instanceof AiGraderOcrStructuredExtractionError)) {
+    return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_SCHEMA_FAILED");
+  }
+  if (error.code === "missing_config" || error.code === "invalid_config") {
+    return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_CONFIG_MISSING");
+  }
+  if (error.code === "timeout") return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_TIMEOUT");
+  if (error.code === "network") return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_NETWORK");
+  if (error.code === "non_2xx") return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_NON_2XX");
+  if (error.code === "refusal") return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_REFUSAL");
+  return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_SCHEMA_FAILED");
+}
+
+function remainingProviderMs(deadline: number, now: () => number) {
+  return Math.max(0, Math.round(deadline - now()));
 }
 
 export async function runAiGraderOcrPrefillRuntime(
   input: { reportId: string; images: AiGraderOcrPrefillSourceImage[] },
   dependencies: AiGraderOcrPrefillRuntimeDependencies = {}
-): Promise<AiGraderOcrPrefillResult> {
-  const runOcr = dependencies.runOcr ?? runGoogleVisionOcr;
+): Promise<AiGraderOcrPrefillRuntimeResult> {
+  const images = [...input.images].sort((left, right) => (left.side === right.side ? 0 : left.side === "front" ? -1 : 1));
+  if (images.length !== 2 || images[0]?.side !== "front" || images[1]?.side !== "back") {
+    throw new Error("AI Grader OCR requires exactly one verified normalized front image and one verified normalized back image.");
+  }
+  const now = dependencies.now ?? Date.now;
+  const providerStartedAt = now();
+  const providerDeadline = providerStartedAt + providerTimeBudgetMs(dependencies.providerTimeBudgetMs);
+  const googleStartedAt = now();
+  let ocr: OcrResponse;
+  try {
+    const timeoutMs = Math.min(AI_GRADER_GOOGLE_TIME_BUDGET_MS, remainingProviderMs(providerDeadline, now));
+    if (timeoutMs < 1) throw new AiGraderGoogleVisionError("timeout");
+    const requests = images.map((image) => ({ id: image.side, url: image.url }));
+    ocr = dependencies.runOcr
+      ? await dependencies.runOcr(requests, { timeoutMs })
+      : await runGoogleVisionDocumentTextDetectionByUrl(requests, { timeoutMs });
+  } catch (error) {
+    throw googleFailure(error);
+  }
+  const googleElapsedMs = boundedProviderElapsedMs(now() - googleStartedAt);
+  const openAiStartedAt = now();
+  let structured: AiGraderOcrStructuredExtraction & {
+    requestedModel: string;
+    actualModel: string;
+    providerElapsedMs: number;
+    evidence: unknown;
+  };
+  try {
+    const timeoutMs = Math.min(AI_GRADER_OPENAI_TIME_BUDGET_MS, remainingProviderMs(providerDeadline, now));
+    if (timeoutMs < 1) throw new AiGraderOcrStructuredExtractionError("timeout");
+    const runStructured = dependencies.runStructuredExtraction ?? runAiGraderOcrStructuredExtraction;
+    structured = await runStructured(
+      { images, ocr, heuristicHints: heuristicHints(ocr) },
+      { timeoutMs }
+    );
+    if (remainingProviderMs(providerDeadline, now) < 1) {
+      throw new AiGraderOcrStructuredExtractionError("timeout");
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(structured.actualModel)) {
+      throw new AiGraderOcrStructuredExtractionError("malformed_response");
+    }
+  } catch (error) {
+    throw openAiFailure(error);
+  }
+  const openAiElapsedMs = boundedProviderElapsedMs(now() - openAiStartedAt);
+  const baseFields: AiGraderOcrPrefillFields = {
+    category: outputField(structured.fields.category),
+    playerName: outputField(structured.fields.playerName),
+    cardName: outputField(structured.fields.cardName),
+    year: outputField(structured.fields.year),
+    manufacturer: outputField(structured.fields.manufacturer),
+    sport: outputField(structured.fields.sport),
+    game: outputField(structured.fields.game),
+    productSet: outputField(structured.fields.productSet),
+    cardNumber: outputField(structured.fields.cardNumber),
+    insert: outputField(structured.fields.insert),
+    parallel: outputField(structured.fields.parallel),
+    numbered: outputField(structured.fields.numbered),
+    autograph: outputField(structured.fields.autograph),
+    memorabilia: outputField(structured.fields.memorabilia),
+  };
+  const categoryValue = supportedString(structured.fields.category);
+  const category = categoryValue === "sport" || categoryValue === "tcg" || categoryValue === "comics"
+    ? categoryValue
+    : null;
+  const identityName = category === "sport"
+    ? supportedString(structured.fields.playerName)
+    : supportedString(structured.fields.cardName);
+  const domain = category === "sport"
+    ? supportedString(structured.fields.sport)
+    : category === "tcg"
+      ? supportedString(structured.fields.game)
+      : null;
+  const year = supportedString(structured.fields.year);
+  const manufacturer = supportedString(structured.fields.manufacturer);
+  const cardNumber = supportedString(structured.fields.cardNumber);
+  const canResolveCatalog = Boolean(category && domain && year && manufacturer && identityName && cardNumber);
   const identifySet = dependencies.identifySet ?? identifySetByCardIdentity;
   const lookupSet = dependencies.lookupSet ?? lookupSetByCardIdentity;
-  const response = await runOcr(input.images.map((image) => ({ id: image.side, url: image.url })));
-  const combinedText = String(response.combined_text ?? "").trim();
-  const sideText = textBySide(response);
-  const attributes = extractCardAttributes(combinedText);
-  const ocrConfidence = averageOcrConfidence(response);
-  const extractedPlayerName = safeText(attributes.playerName);
-  const categoryEvidence = inferCategoryAndSport(combinedText, Boolean(extractedPlayerName));
-  const year = safeText(attributes.year, 16);
-  const manufacturer = safeText(attributes.brand);
-  const extractedSet = safeText(attributes.setName);
-  const extractedCardNumber = extractCardNumber(combinedText);
-  const setEvidence = await resolveSetEvidence({
-    year,
-    manufacturer,
-    sport: categoryEvidence.sport,
-    playerName: extractedPlayerName,
-    cardNumber: extractedCardNumber,
-    frontText: sideText.get("front") ?? "",
-    combinedText,
-    identifySet,
-    lookupSet,
-  });
-  const identifiedConfidence =
-    setEvidence.identified?.confidence === "exact" ? 0.95 : setEvidence.identified?.confidence === "fuzzy" ? 0.82 : 0;
-  const lookupConfidence = setEvidence.lookup?.match === "exact" ? 0.94 : setEvidence.lookup?.match === "multiple" ? 0.72 : 0;
-  // Set lookup IDs are internal taxonomy identifiers, not operator-facing set
-  // names. Use the existing card-identification label or OCR text and reserve
-  // set lookup for insert/parallel enrichment.
-  const productSet = safeText(setEvidence.identified?.setName) ?? extractedSet;
-  const cardNumber = safeText(setEvidence.identified?.cardNumber, 24) ?? extractedCardNumber;
-  const insert = safeText(setEvidence.identified?.programLabel) ?? safeText(setEvidence.lookup?.insertLabel);
-  const parallel = parallelFromLookup(combinedText, setEvidence.lookup, attributes.variantKeywords);
-  const identifiedPlayerName = safeText(setEvidence.identified?.playerName);
-  const playerName =
-    categoryEvidence.category === "tcg" || categoryEvidence.category === "comics"
-      ? null
-      : identifiedPlayerName ?? extractedPlayerName;
-  const cardName = categoryEvidence.category === "tcg" || categoryEvidence.category === "comics" ? extractedPlayerName : null;
-  const fields: AiGraderOcrPrefillResult["fields"] = {
-    category: field(
-      categoryEvidence.category,
-      Math.min(ocrConfidence > 0 ? ocrConfidence : 0.45, categoryEvidence.confidence),
-      ["ocr_category_signals"]
-    ),
-    playerName: field(
-      playerName,
-      Math.max(identifiedPlayerName ? identifiedConfidence : 0, ocrConfidence * 0.86),
-      [identifiedPlayerName ? "card_set_identification" : null, ...sourcesForValue(playerName, sideText)]
-    ),
-    cardName: field(cardName, ocrConfidence * 0.82, sourcesForValue(cardName, sideText)),
-    year: field(year, ocrConfidence * 0.92, sourcesForValue(year, sideText)),
-    manufacturer: field(manufacturer, ocrConfidence * 0.86, sourcesForValue(manufacturer, sideText)),
-    productSet: field(
-      productSet,
-      Math.max(identifiedConfidence, lookupConfidence, ocrConfidence * 0.72),
-      [identifiedConfidence ? "card_set_identification" : null, lookupConfidence ? "set_lookup" : null, ...sourcesForValue(extractedSet, sideText)]
-    ),
-    cardNumber: field(
-      cardNumber,
-      Math.max(identifiedConfidence, lookupConfidence, ocrConfidence * 0.8),
-      [identifiedConfidence ? "card_set_identification" : null, lookupConfidence ? "set_lookup" : null, ...sourcesForValue(extractedCardNumber, sideText)]
-    ),
-    parallel: field(parallel.value, parallel.confidence * (ocrConfidence > 0 ? ocrConfidence : 0.45), [parallel.source]),
-    insert: field(insert, Math.max(identifiedConfidence, lookupConfidence), [identifiedConfidence ? "card_set_identification" : null, lookupConfidence ? "set_lookup" : null]),
-    numbered: field(safeText(attributes.numbered, 32), ocrConfidence * 0.9, ["shared_attribute_extractor"]),
-    auto: field(attributes.autograph ? true : null, attributes.autograph ? ocrConfidence * 0.9 : 0, ["shared_attribute_extractor"]),
-    mem: field(attributes.memorabilia ? true : null, attributes.memorabilia ? ocrConfidence * 0.9 : 0, ["shared_attribute_extractor"]),
-  };
+  let identified: IdentifySetResult | null = null;
+  let lookup: LookupSetResult | null = null;
+  if (canResolveCatalog) {
+    try {
+      identified = await identifySet({
+        year,
+        manufacturer,
+        sport: domain,
+        playerName: identityName,
+        cardNumber,
+        insertSet: supportedString(structured.fields.insert),
+        frontCardText: ocr.results.find((result) => result.id === "front")?.text ?? "",
+        combinedText: ocr.combined_text,
+      });
+      lookup = await lookupSet({
+        year: year!,
+        manufacturer: manufacturer!,
+        sport: domain!,
+        playerName: identityName!,
+        cardNumber: cardNumber!,
+      });
+    } catch {
+      throw new AiGraderOcrFailure("AI_GRADER_OCR_CATALOG_FAILED");
+    }
+  }
+  const fields = canonicalizeAiGraderOcrCatalog({ fields: baseFields, category, identified, lookup });
   const reviewFieldNames = Object.entries(fields)
-    .filter(([, value]) => value.reviewRequired)
+    .filter(([, field]) => field.reviewRequired)
     .map(([name]) => name);
-  const warnings = [...setEvidence.warnings];
-  if (!combinedText) warnings.push("No OCR text was detected in the normalized front/back images.");
-  if (reviewFieldNames.length) warnings.push("Low-confidence or missing OCR fields require operator review.");
+  const warnings = reviewFieldNames.length
+    ? ["Unknown or conflicting OCR fields require operator review."]
+    : [];
   return {
     reportId: input.reportId,
     status: "prefill_ready",
     humanConfirmationRequired: true,
     inventoryMutationPerformed: false,
     publishMutationPerformed: false,
-    sourceSides: input.images.map((image) => image.side),
+    sourceSides: images.map((image) => image.side),
     fields,
     reviewFieldNames,
     provenance: {
-      ocrEngine: "google_vision_document_text_detection",
+      ocrEngine: "google_vision_document_text_detection_url_only",
       attributeExtractor: "@tenkings/shared/extractCardAttributes",
-      setLookupUsed: Boolean(setEvidence.lookup),
-      setIdentificationUsed: Boolean(setEvidence.identified),
+      structuredExtractor: "openai_responses_strict_json_schema",
+      structuredExtractionModel: structured.actualModel,
+      setLookupUsed: Boolean(lookup),
+      setIdentificationUsed: Boolean(identified),
     },
     warnings,
+    internalProviderDiagnostics: {
+      schemaVersion: "ai-grader-ocr-provider-diagnostics-v1",
+      googleElapsedMs,
+      openAiElapsedMs,
+      totalProviderElapsedMs: boundedProviderElapsedMs(now() - providerStartedAt),
+      actualOpenAiModel: structured.actualModel,
+    },
   };
 }

@@ -31,6 +31,7 @@ import {
 import { runAiGraderOcrPrefillRuntime } from "../../../../../lib/server/aiGraderOcrPrefill";
 
 export const config = {
+  maxDuration: 60,
   api: {
     bodyParser: {
       sizeLimit: "1mb",
@@ -94,6 +95,15 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     createCardFromReport: createAiGraderCardFromReportRuntime,
     finalizeSlabbedPhotoUpload: finalizeAiGraderSlabbedPhotoUploadRuntime,
     runOcrPrefill: runAiGraderOcrPrefillRuntime,
+    recordOcrProviderDiagnostics(diagnostics) {
+      console.info("AI Grader OCR provider diagnostics", {
+        schemaVersion: diagnostics.schemaVersion,
+        googleElapsedMs: diagnostics.googleElapsedMs,
+        openAiElapsedMs: diagnostics.openAiElapsedMs,
+        totalProviderElapsedMs: diagnostics.totalProviderElapsedMs,
+        actualOpenAiModel: diagnostics.actualOpenAiModel,
+      });
+    },
     runComps: runAiGraderEbayCompsRuntime,
     persistComps: persistAiGraderCompsRuntime,
     persistSelectedComps: persistAiGraderSelectedCompsRuntime,

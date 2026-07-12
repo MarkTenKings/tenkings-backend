@@ -1,9 +1,16 @@
 import type { AiGraderReportBundle, AiGraderReportPublicAsset } from "./aiGraderReportBundle";
+import { AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION } from "./aiGraderLocalStation";
 import {
   fetchAiGraderStationReportAsset,
   fetchAiGraderStationReportBundle,
 } from "./aiGraderStationBridgeClient";
 import { uploadAiGraderArtifactDirectly } from "./aiGraderDirectUpload";
+import {
+  aiGraderOcrFailurePresentation,
+  isAiGraderOcrFailureCode,
+  type AiGraderOcrFailureCategory,
+  type AiGraderOcrFailureCode,
+} from "./aiGraderOcrFailure";
 
 export type AiGraderOcrPrefillStage =
   | "bundle_fetch"
@@ -13,6 +20,7 @@ export type AiGraderOcrPrefillStage =
   | "front_put"
   | "back_put"
   | "finalize"
+  | "provider"
   | "ocr_response";
 
 const OCR_STAGE_MESSAGES: Record<AiGraderOcrPrefillStage, string> = {
@@ -23,16 +31,30 @@ const OCR_STAGE_MESSAGES: Record<AiGraderOcrPrefillStage, string> = {
   front_put: "OCR Prefill direct upload failed for the normalized front image.",
   back_put: "OCR Prefill direct upload failed for the normalized back image.",
   finalize: "OCR Prefill finalize request failed.",
+  provider: "OCR Prefill provider processing failed.",
   ocr_response: "OCR Prefill response was invalid or incomplete.",
 };
 
 export class AiGraderOcrPrefillStageError extends Error {
   readonly stage: AiGraderOcrPrefillStage;
+  readonly failureCode?: AiGraderOcrFailureCode;
+  readonly failureCategory?: AiGraderOcrFailureCategory;
+  readonly failureLabel?: string;
 
-  constructor(stage: AiGraderOcrPrefillStage, message = OCR_STAGE_MESSAGES[stage]) {
+  constructor(
+    stage: AiGraderOcrPrefillStage,
+    message = OCR_STAGE_MESSAGES[stage],
+    failureCode?: AiGraderOcrFailureCode
+  ) {
     super(message);
     this.name = "AiGraderOcrPrefillStageError";
     this.stage = stage;
+    this.failureCode = failureCode;
+    if (failureCode) {
+      const presentation = aiGraderOcrFailurePresentation(failureCode);
+      this.failureCategory = presentation.category;
+      this.failureLabel = presentation.label;
+    }
   }
 }
 
@@ -40,10 +62,11 @@ const OCR_NATIVE_CHECKSUM_BLOCKER =
   "OCR Prefill stopped because storage did not return a native SHA-256 checksum. Storage checksum support must be confirmed before retrying.";
 
 export type AiGraderOcrPrefillField<T extends string | boolean | null = string | boolean | null> = {
+  state: "supported" | "unknown" | "disagreement";
   value: T;
   confidence: number;
   reviewRequired: boolean;
-  sources: string[];
+  evidenceRefs: string[];
 };
 
 export type AiGraderOcrPrefillResult = {
@@ -59,18 +82,22 @@ export type AiGraderOcrPrefillResult = {
     cardName: AiGraderOcrPrefillField<string | null>;
     year: AiGraderOcrPrefillField<string | null>;
     manufacturer: AiGraderOcrPrefillField<string | null>;
+    sport: AiGraderOcrPrefillField<string | null>;
+    game: AiGraderOcrPrefillField<string | null>;
     productSet: AiGraderOcrPrefillField<string | null>;
     cardNumber: AiGraderOcrPrefillField<string | null>;
     parallel: AiGraderOcrPrefillField<string | null>;
     insert: AiGraderOcrPrefillField<string | null>;
     numbered: AiGraderOcrPrefillField<string | null>;
-    auto: AiGraderOcrPrefillField<boolean | null>;
-    mem: AiGraderOcrPrefillField<boolean | null>;
+    autograph: AiGraderOcrPrefillField<boolean | null>;
+    memorabilia: AiGraderOcrPrefillField<boolean | null>;
   };
   reviewFieldNames: string[];
   provenance: {
     ocrEngine: string;
     attributeExtractor: string;
+    structuredExtractor: string;
+    structuredExtractionModel: string;
     setLookupUsed: boolean;
     setIdentificationUsed: boolean;
   };
@@ -82,6 +109,9 @@ export type AiGraderOcrPrefillState = {
   message: string;
   reportId?: string;
   result?: AiGraderOcrPrefillResult;
+  failureCode?: AiGraderOcrFailureCode;
+  failureCategory?: AiGraderOcrFailureCategory;
+  failureLabel?: string;
 };
 
 type NormalizedAsset = {
@@ -96,6 +126,8 @@ type OcrUploadPlan = {
   mimeType: string;
   checksumSha256: string;
   byteSize: number;
+  widthPx: 1200;
+  heightPx: 1680;
   storageKey: string;
   publicUrl: string;
   uploadUrl: string;
@@ -105,11 +137,13 @@ type OcrUploadPlan = {
 
 type OcrInitResult = {
   reportId: string;
+  reportProducerContractVersion: typeof AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION;
   uploadSessionId: string;
   humanConfirmationRequired: true;
   uploadPlan: OcrUploadPlan[];
   requiredFinalizeManifest: {
     reportId: string;
+    reportProducerContractVersion: typeof AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION;
     uploadSessionId: string;
     images: Array<{
       side: "front" | "back";
@@ -118,6 +152,8 @@ type OcrInitResult = {
       mimeType: string;
       checksumSha256: string;
       byteSize: number;
+      widthPx: 1200;
+      heightPx: 1680;
       storageKey: string;
     }>;
   };
@@ -129,6 +165,8 @@ export type AiGraderIdentityDraftLike = {
   cardName: string;
   year: string;
   manufacturer: string;
+  sport: string;
+  game: string;
   productSet: string;
   cardNumber: string;
   insert: string;
@@ -143,6 +181,8 @@ const OCR_STRING_FIELD_MAP = {
   cardName: "cardName",
   year: "year",
   manufacturer: "manufacturer",
+  sport: "sport",
+  game: "game",
   productSet: "productSet",
   cardNumber: "cardNumber",
   insert: "insert",
@@ -156,13 +196,15 @@ const OCR_RESULT_FIELD_NAMES = [
   "cardName",
   "year",
   "manufacturer",
+  "sport",
+  "game",
   "productSet",
   "cardNumber",
   "parallel",
   "insert",
   "numbered",
-  "auto",
-  "mem",
+  "autograph",
+  "memorabilia",
 ] as const;
 
 export function safeAiGraderOcrPrefillResult(result: AiGraderOcrPrefillResult): AiGraderOcrPrefillResult {
@@ -176,13 +218,19 @@ export function safeAiGraderOcrPrefillResult(result: AiGraderOcrPrefillResult): 
     fields: Object.fromEntries(
       OCR_RESULT_FIELD_NAMES.map((fieldName) => {
         const field = result.fields[fieldName];
+        if (!field || !["supported", "unknown", "disagreement"].includes(field.state) ||
+            !Array.isArray(field.evidenceRefs) ||
+            (field.state === "supported" ? field.value === null : field.value !== null)) {
+          throw new Error("Invalid OCR structured field.");
+        }
         return [
           fieldName,
           {
+            state: field.state,
             value: field.value,
             confidence: field.confidence,
             reviewRequired: field.reviewRequired,
-            sources: [...field.sources],
+            evidenceRefs: [...field.evidenceRefs],
           },
         ];
       })
@@ -191,6 +239,8 @@ export function safeAiGraderOcrPrefillResult(result: AiGraderOcrPrefillResult): 
     provenance: {
       ocrEngine: result.provenance.ocrEngine,
       attributeExtractor: result.provenance.attributeExtractor,
+      structuredExtractor: result.provenance.structuredExtractor,
+      structuredExtractionModel: result.provenance.structuredExtractionModel,
       setLookupUsed: result.provenance.setLookupUsed,
       setIdentificationUsed: result.provenance.setIdentificationUsed,
     },
@@ -202,25 +252,41 @@ export function aiGraderOcrPrefillReportMetadata(result: AiGraderOcrPrefillResul
   return safeAiGraderOcrPrefillResult(result) as unknown as Record<string, unknown>;
 }
 
-function normalizedAssetSide(asset: AiGraderReportPublicAsset): "front" | "back" | null {
-  const text = `${asset.id ?? ""} ${asset.fileName ?? ""}`.toLowerCase().replace(/\\/g, "/");
-  if (!/(normalized[-_/ ]card|normalized\/.*normalized-card)/.test(text)) return null;
-  if (asset.side === "front" || /(^|\/)front(\/|-)/.test(text) || /front-normalized/.test(text)) return "front";
-  if (asset.side === "back" || /(^|\/)back(\/|-)/.test(text) || /back-normalized/.test(text)) return "back";
-  return null;
-}
-
 export function findAiGraderNormalizedOcrAssets(bundle: AiGraderReportBundle): NormalizedAsset[] {
-  const assets = [...(bundle.assets ?? []), ...(bundle.publicAssets ?? [])];
+  if (bundle.reportProducer?.contractVersion !== AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION) {
+    throw new Error("OCR Prefill requires a current report-producer v0.2 package. Update the Dell helper and capture a new card.");
+  }
+  const normalizedAssets = [...(bundle.assets ?? []), ...(bundle.publicAssets ?? [])]
+    .filter((asset) => asset.evidenceRole === "normalized_card");
+  if (normalizedAssets.length !== 2) {
+    throw new Error("OCR Prefill requires exactly one verified normalized front asset and one verified normalized back asset.");
+  }
   const selected = new Map<"front" | "back", AiGraderReportPublicAsset>();
-  for (const asset of assets) {
-    if (asset.kind && asset.kind !== "image") continue;
-    const side = normalizedAssetSide(asset);
-    if (!side || selected.has(side)) continue;
+  const assetIds = new Set<string>();
+  for (const asset of normalizedAssets) {
+    const id = String(asset.id ?? "").trim();
+    const side = asset.side;
+    const checksum = String(asset.checksumSha256 ?? asset.sha256 ?? "").toLowerCase();
+    const alternateChecksum = String(asset.sha256 ?? asset.checksumSha256 ?? "").toLowerCase();
+    if (!id || assetIds.has(id)) throw new Error("Normalized OCR assets must have unique asset identities.");
+    if (asset.kind !== "image" || (side !== "front" && side !== "back") || selected.has(side)) {
+      throw new Error("Normalized OCR assets must contain one exact front image and one exact back image.");
+    }
+    if (asset.contentType?.toLowerCase() !== "image/png" ||
+        asset.widthPx !== 1200 || asset.heightPx !== 1680) {
+      throw new Error("Normalized OCR assets must be image/png at exactly 1200x1680.");
+    }
+    if (!/^[a-f0-9]{64}$/.test(checksum) || checksum !== alternateChecksum) {
+      throw new Error("Normalized OCR assets must include one valid, consistent SHA-256 digest.");
+    }
+    if (!Number.isInteger(asset.byteSize) || Number(asset.byteSize) <= 0) {
+      throw new Error("Normalized OCR assets must include a positive byte size.");
+    }
+    assetIds.add(id);
     selected.set(side, asset);
   }
   if (!selected.has("front") || !selected.has("back")) {
-    throw new Error("Normalized front/back card artifacts are not available for OCR prefill yet.");
+    throw new Error("Normalized OCR assets must contain one exact front image and one exact back image.");
   }
   return (["front", "back"] as const).map((side) => ({ side, asset: selected.get(side)! }));
 }
@@ -237,11 +303,16 @@ async function sha256Hex(bytes: ArrayBuffer) {
 }
 
 function normalizedMimeType(value: string | undefined) {
-  const mimeType = String(value ?? "image/png").split(";")[0]?.trim().toLowerCase() ?? "image/png";
-  if (!new Set(["image/png", "image/jpeg", "image/webp"]).has(mimeType)) {
-    throw new Error(`Normalized OCR image content type ${mimeType} is not supported.`);
-  }
-  return mimeType;
+  const mimeType = String(value ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+  if (mimeType !== "image/png") throw new Error("Normalized OCR images must use image/png.");
+  return "image/png";
+}
+
+function safeNormalizedFileName(value: string | undefined, side: "front" | "back") {
+  const baseName = String(value ?? "").replace(/\\/g, "/").split("/").pop()?.trim() ?? "";
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.png$/i.test(baseName)
+    ? baseName
+    : `${side}-normalized-card.png`;
 }
 
 async function responsePayload(response: Response): Promise<Record<string, any> | null> {
@@ -256,7 +327,9 @@ async function responsePayload(response: Response): Promise<Record<string, any> 
 function isOcrInitResult(value: unknown): value is OcrInitResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const result = value as Partial<OcrInitResult>;
-  return typeof result.reportId === "string" && typeof result.uploadSessionId === "string" &&
+  return typeof result.reportId === "string" &&
+    result.reportProducerContractVersion === AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION &&
+    typeof result.uploadSessionId === "string" &&
     Array.isArray(result.uploadPlan) && typeof result.requiredFinalizeManifest === "object" &&
     result.requiredFinalizeManifest !== null;
 }
@@ -306,6 +379,7 @@ export async function runAiGraderOcrPrefillFromLocalReport(
       stationToken: input.stationToken,
       reportId: input.reportId,
     });
+    if (bundle.reportId !== input.reportId) throw new Error("report identity mismatch");
     normalizedAssets = findAiGraderNormalizedOcrAssets(bundle);
   } catch {
     throw new AiGraderOcrPrefillStageError("bundle_fetch");
@@ -318,6 +392,8 @@ export async function runAiGraderOcrPrefillFromLocalReport(
     mimeType: string;
     checksumSha256: string;
     byteSize: number;
+    widthPx: 1200;
+    heightPx: 1680;
   }>;
   for (const { side, asset } of normalizedAssets) {
     try {
@@ -332,14 +408,20 @@ export async function runAiGraderOcrPrefillFromLocalReport(
       if (!/^[a-f0-9]{64}$/.test(checksumSha256) || (expectedChecksum && expectedChecksum !== checksumSha256)) {
         throw new Error("invalid local checksum");
       }
+      if (fetched.bytes.byteLength !== asset.byteSize || fetched.byteSize !== asset.byteSize ||
+          normalizedMimeType(fetched.contentType) !== "image/png") {
+        throw new Error("invalid local normalized image metadata");
+      }
       localImages.push({
         side,
         assetId: asset.id,
         bytes: fetched.bytes,
-        fileName: asset.fileName || side + "-normalized-card.png",
-        mimeType: normalizedMimeType(asset.contentType ?? fetched.contentType),
+        fileName: safeNormalizedFileName(asset.fileName, side),
+        mimeType: normalizedMimeType(asset.contentType),
         checksumSha256,
         byteSize: fetched.bytes.byteLength,
+        widthPx: 1200,
+        heightPx: 1680,
       });
     } catch {
       throw new AiGraderOcrPrefillStageError(side === "front" ? "front_asset_fetch" : "back_asset_fetch");
@@ -353,13 +435,16 @@ export async function runAiGraderOcrPrefillFromLocalReport(
       headers: authHeaders,
       body: JSON.stringify({
         reportId: input.reportId,
-        images: localImages.map(({ side, fileName, mimeType, checksumSha256, byteSize }) => ({
+        reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
+        images: localImages.map(({ side, fileName, mimeType, checksumSha256, byteSize, widthPx, heightPx }) => ({
           side,
           artifactRole: "normalized_card",
           fileName,
           mimeType,
           checksumSha256,
           byteSize,
+          widthPx,
+          heightPx,
         })),
       }),
     });
@@ -403,6 +488,11 @@ export async function runAiGraderOcrPrefillFromLocalReport(
     if (finalizePayload?.code === "AI_GRADER_STORAGE_CHECKSUM_UNAVAILABLE") {
       throw new AiGraderOcrPrefillStageError("finalize", OCR_NATIVE_CHECKSUM_BLOCKER);
     }
+    const failureCode = finalizePayload?.code;
+    if (isAiGraderOcrFailureCode(failureCode)) {
+      const presentation = aiGraderOcrFailurePresentation(failureCode);
+      throw new AiGraderOcrPrefillStageError("provider", presentation.message, failureCode);
+    }
     throw new AiGraderOcrPrefillStageError("finalize");
   }
   if (finalizePayload?.ok !== true) throw new AiGraderOcrPrefillStageError("ocr_response");
@@ -425,16 +515,26 @@ export function mergeAiGraderOcrPrefillIntoIdentityDraft<T extends AiGraderIdent
     appliedFields.push(key);
   };
   const category = input.result.fields.category.value;
-  if (category === "sport" || category === "tcg" || category === "comics") {
+  if (input.result.fields.category.state === "supported" &&
+      (category === "sport" || category === "tcg" || category === "comics")) {
     apply("category", category as T["category"], true);
   }
   for (const [resultKey, draftKey] of Object.entries(OCR_STRING_FIELD_MAP) as Array<
     [keyof typeof OCR_STRING_FIELD_MAP, (typeof OCR_STRING_FIELD_MAP)[keyof typeof OCR_STRING_FIELD_MAP]]
   >) {
-    const value = input.result.fields[resultKey].value;
-    if (typeof value === "string" && value.trim()) apply(draftKey as keyof T, value.trim() as T[keyof T]);
+    const field = input.result.fields[resultKey];
+    const value = field.value;
+    if ((draftKey === "playerName" || draftKey === "sport") && next.category !== "sport") continue;
+    if ((draftKey === "cardName" || draftKey === "game") && next.category === "sport") continue;
+    if (field.state === "supported" && typeof value === "string" && value.trim()) {
+      apply(draftKey as keyof T, value.trim() as T[keyof T]);
+    }
   }
-  if (input.result.fields.auto.value === true) apply("autograph", true as T["autograph"]);
-  if (input.result.fields.mem.value === true) apply("memorabilia", true as T["memorabilia"]);
+  if (input.result.fields.autograph.state === "supported") {
+    apply("autograph", (input.result.fields.autograph.value === true) as T["autograph"]);
+  }
+  if (input.result.fields.memorabilia.state === "supported") {
+    apply("memorabilia", (input.result.fields.memorabilia.value === true) as T["memorabilia"]);
+  }
   return { draft: next, appliedFields };
 }

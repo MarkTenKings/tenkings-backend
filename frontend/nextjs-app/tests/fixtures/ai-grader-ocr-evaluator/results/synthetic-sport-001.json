@@ -1,0 +1,19 @@
+{
+  "latencyMs": 1200,
+  "fields": {
+    "category": { "state": "supported", "value": "sport" },
+    "playerName": { "state": "supported", "value": "Synthetic Player" },
+    "cardName": { "state": "unknown", "value": null },
+    "year": { "state": "supported", "value": "2025" },
+    "manufacturer": { "state": "supported", "value": "Synthetic Maker" },
+    "sport": { "state": "supported", "value": "basketball" },
+    "game": { "state": "unknown", "value": null },
+    "productSet": { "state": "supported", "value": "Synthetic Set" },
+    "cardNumber": { "state": "supported", "value": "S-1" },
+    "insert": { "state": "unknown", "value": null },
+    "parallel": { "state": "supported", "value": "Blue" },
+    "numbered": { "state": "supported", "value": "1/10" },
+    "autograph": { "state": "supported", "value": false },
+    "memorabilia": { "state": "supported", "value": false }
+  }
+}
