@@ -8,7 +8,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc -p .",
     "start": "node dist/index.js",
-    "test": "echo \"(placeholder)\" && exit 0"
+    "test": "pnpm run build && node --test dist/turnstile.test.js"
   },
   "dependencies": {
     "@tenkings/database": "workspace:*",

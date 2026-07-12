@@ -1,4 +1,5 @@
-import { FormEvent } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import TurnstileWidget from "./TurnstileWidget";
 
 interface AuthModalProps {
   open: boolean;
@@ -10,7 +11,7 @@ interface AuthModalProps {
   error: string | null;
   onPhoneChange: (value: string) => void;
   onCodeChange: (value: string) => void;
-  onSendCode: () => Promise<void> | void;
+  onSendCode: (turnstileToken: string) => Promise<void> | void;
   onVerifyCode: () => Promise<void> | void;
   onClose: () => void;
 }
@@ -29,16 +30,33 @@ export default function AuthModal({
   onVerifyCode,
   onClose,
 }: AuthModalProps) {
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
+
+  useEffect(() => {
+    if (!open || step !== "phone") {
+      setTurnstileToken(null);
+    }
+  }, [open, step]);
+
   if (!open) {
     return null;
   }
 
-  const handleSubmit = (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (step === "phone") {
-      onSendCode();
+      if (!turnstileToken) {
+        return;
+      }
+      try {
+        await onSendCode(turnstileToken);
+      } finally {
+        setTurnstileToken(null);
+        setTurnstileResetKey((value) => value + 1);
+      }
     } else {
-      onVerifyCode();
+      await onVerifyCode();
     }
   };
 
@@ -87,6 +105,8 @@ export default function AuthModal({
             />
           </label>
 
+          {step === "phone" ? <TurnstileWidget resetKey={turnstileResetKey} onTokenChange={setTurnstileToken} /> : null}
+
           {step === "code" && (
             <label className="block text-sm text-slate-200">
               Verification code
@@ -123,7 +143,7 @@ export default function AuthModal({
             <button
               type="submit"
               className="rounded-full border border-gold-500/60 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold-500 disabled:cursor-not-allowed disabled:bg-gold-500/50 disabled:text-night-900/60"
-              disabled={loading}
+              disabled={loading || (step === "phone" && !turnstileToken)}
             >
               {step === "phone" ? (loading ? "Sending" : "Send Code") : loading ? "Verifying" : "Verify"}
             </button>
