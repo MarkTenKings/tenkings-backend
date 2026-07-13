@@ -57,6 +57,16 @@ Media/Live:
 - Large images use direct browser-to-storage PUTs. Vercel receives only small manifests/metadata.
 - Raw forensic capture evidence remains local and immutable. Derived normalized/crop/deskew assets supplement rather than replace the raw front/back evidence.
 
+## AI Grader NFC identity architecture (software-ready, not deployed)
+
+- `static_url_v1` associates one server-generated `https://collect.tenkings.co/nfc/{publicTagId}` with the exact durable Published report, Confirm-authority CardAsset/Item, certificate, and AiGraderLabel. NTAG215 is a registered convenience link, never cryptographic authentication.
+- Hosted init/complete/status/revoke/replace APIs use normal human AI Grader auth, report-lifecycle locks, one-time hashed attempts, exact local readback digests, immutable audit events, and explicit revoke-before-replace. Raw tag UID is never accepted; only its SHA-256 fingerprint is persisted after readback.
+- `/nfc/[publicTagId]` is production-DB-only and resolves only an active, exactly linked, still-public Published report. `/ai-grader/nfc` owns local programming. Finish only shows safe state and opens that route; it has no helper/hardware control.
+- The separate .NET 8 Windows helper is loopback/production-Origin/token restricted and owns fixed ACR1552U PC/SC NTAG215 operations. It is independent of the capture helper and never imports native NFC libraries into Next/Vercel.
+- `AI_GRADER_NFC_REQUIRED` defaults false. When false, QR and current inventory behavior are unchanged. When true, Add To Inventory requires exact active NFC inside the locked server transaction. Do not enable until the reviewed migration, server secret, hosted deploy, helper install, and sacrificial-tag acceptance are separately approved.
+- The future `NTAG424_DNA` / `ntag424_sun_v1` seam is type-only and unimplemented. No keys, SUN validation, counters, originality proof, or cryptographic success claim exists.
+- Operational detail, official hardware references, installation, rollout order, and the exact hardware-approval gate are in `docs/ai-grader-nfc-helper.md`.
+
 ## Kiosk Lifecycle (Phase 1)
 Stages:
 - COUNTDOWN

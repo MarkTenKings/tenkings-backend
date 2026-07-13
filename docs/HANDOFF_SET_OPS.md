@@ -12720,3 +12720,12 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/ai-grader-capture-helper build` passed; its full test suite passed `207/207`.
   - `git diff --check` passed with Windows line-ending notices only.
 - Guardrails held during the patch: no hardware commands, migration, environment change, credential access/rotation/printing, database/storage write, OCR network call, Dell bridge restart, droplet restart, or deploy.
+
+## 2026-07-12 - Agent 4 AI Grader NFC static-link software handoff
+
+- The focused NFC branch is based on exact fetched `origin/main` `814101fa5ce148b5f02c762943f7efc4c00fd591`. It adds reviewed-but-unapplied Prisma migration `20260712160000_ai_grader_nfc_static_url_v1`, the reserved/programming/verified/active/revoked/error state machine, hashed one-time programming attempts, append-only audits, exact Confirm/Publish linkage, partial uniqueness constraints, and explicit revoke-before-replace.
+- Hosted human-auth APIs own public identity/URL allocation and exact readback activation. Public `/nfc/[publicTagId]` uses production DB relations only and says Registered Ten Kings NFC link / Linked to this Ten Kings AI Grader report. NTAG215 is explicitly non-cryptographic.
+- Dedicated `/ai-grader/nfc` combines hosted authority with the independent loopback Windows helper. Finish only displays the safe NFC status/gate/link. The existing station/capture bridge and QR/16-slot label flow remain unchanged.
+- `AI_GRADER_NFC_REQUIRED` remains default false. When later enabled, exact active NFC is checked inside the report-locked Add To Inventory transaction. Migration, server secret, deploy, helper install, hardware acceptance, and the policy change each require separate operational approval.
+- The helper uses fixed documented ACR1552U PC/SC commands, NTAG215 CC/NDEF pages 4-127, recoverable zero-length-first writes, exact readback, one-operation locking, loopback/Origin/token/body controls, protected local config, and redacted logs. It never locks/configures tags or installs/updates drivers or firmware.
+- Hardware was not authorized or touched. See `docs/ai-grader-nfc-helper.md` for the exact later sacrificial-tag approval sentence and rollout prerequisites. A real report tag remains prohibited before migration/deploy authorization.
