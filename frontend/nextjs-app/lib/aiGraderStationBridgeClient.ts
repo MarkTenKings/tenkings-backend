@@ -130,12 +130,30 @@ export type AiGraderStationPreviewFrame = {
   byteLength: number;
   frameIndex?: number;
   capturedAt?: string;
+  sessionId?: string;
+  side?: "front" | "back";
+  sideEpoch?: string;
+  frameId?: string;
+};
+
+export type AiGraderStationPreviewStreamState = {
+  statusCode: 409;
+  code?: string;
+  message: string;
+  previewStatus?: AiGraderLocalStationPreviewStatus;
+};
+
+export type AiGraderStationPreviewStreamResult = {
+  kind: "eof" | "abort" | "authoritative_state";
 };
 
 export type AiGraderStationPreviewStreamHandlers = {
   signal?: AbortSignal;
   onOpen?: (contentType: string) => void;
   onFrame?: (frame: AiGraderStationPreviewFrame) => void;
+  onEof?: () => void;
+  onAbort?: () => void;
+  onState?: (state: AiGraderStationPreviewStreamState) => void;
   onError?: (error: Error) => void;
 };
 
@@ -398,6 +416,33 @@ export async function heartbeatAiGraderLiveLighting(input: {
   }, fetchImpl);
 }
 
+export type AiGraderBackPositioningRetryResult = {
+  status: "inactive" | "restoring" | "waiting_for_frame" | "ready" | "failed" | "safe_off";
+  captureReady: boolean;
+  sessionId?: string;
+  sideEpoch: string;
+  profileIdentity?: string;
+  dutyPercent?: number;
+  channels?: number[];
+  attemptCount: number;
+  firstFrameGraceMs: number;
+  lastError?: { code: string; message: string };
+  positioningLightReady: boolean;
+  appliedEnabled: boolean;
+};
+
+export async function retryAiGraderBackPositioningLight(input: {
+  baseUrl: string;
+  stationToken: string;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderBackPositioningRetryResult> {
+  return bridgePostJson<AiGraderBackPositioningRetryResult>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: "/lighting/retry-back-positioning",
+    body: {},
+  }, fetchImpl);
+}
+
 function concatBytes(left: Uint8Array, right: Uint8Array) {
   const joined = new Uint8Array(left.length + right.length);
   joined.set(left, 0);
@@ -436,11 +481,12 @@ export async function openAiGraderStationPreviewStream(
   },
   handlers: AiGraderStationPreviewStreamHandlers = {},
   fetchImpl: typeof fetch = fetch
-): Promise<void> {
+): Promise<AiGraderStationPreviewStreamResult> {
   const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
   if (!input.stationToken.trim()) {
     throw new Error("AI Grader station bridge token is required.");
   }
+  try {
   const response = await fetchImpl(`${baseUrl}/preview/stream`, {
     method: "GET",
     headers: {
@@ -450,12 +496,37 @@ export async function openAiGraderStationPreviewStream(
   });
   if (!response.ok || !response.body) {
     const text = await response.text().catch(() => "");
+    let payload: Record<string, any> = {};
     let message = "AI Grader preview stream could not be opened.";
     try {
-      const payload = JSON.parse(text);
+      payload = JSON.parse(text) as Record<string, any>;
       message = payload.message ?? payload.error?.message ?? message;
     } catch {
       if (text.trim()) message = text.trim();
+    }
+    const authoritativeStateCodes = new Set([
+      "AI_GRADER_QUEUE_REVIEW_ACTIVE",
+      "AI_GRADER_CAPTURE_LOCK_HELD",
+      "AI_GRADER_PREVIEW_PAUSED_FOR_GRADING_SESSION",
+    ]);
+    const previewResult = payload.result && typeof payload.result === "object"
+      ? payload.result as Partial<AiGraderLocalStationPreviewStatus>
+      : undefined;
+    const authoritativePreviewState =
+      response.status === 409 &&
+      typeof payload.code === "string" &&
+      authoritativeStateCodes.has(payload.code) &&
+      previewResult &&
+      new Set(["paused_for_capture", "stopped", "error"]).has(String(previewResult.status)) &&
+      new Set(["capture_action", "released"]).has(String(previewResult.cameraOwnership));
+    if (authoritativePreviewState) {
+      handlers.onState?.({
+        statusCode: 409,
+        code: payload.code.slice(0, 80),
+        message: message.slice(0, 240),
+        previewStatus: previewResult as AiGraderLocalStationPreviewStatus,
+      });
+      return { kind: "authoritative_state" };
     }
     throw new Error(message);
   }
@@ -472,6 +543,10 @@ export async function openAiGraderStationPreviewStream(
   let currentContentType = "image/jpeg";
   let currentFrameIndex: number | undefined;
   let currentCapturedAt: string | undefined;
+  let currentSessionId: string | undefined;
+  let currentSide: "front" | "back" | undefined;
+  let currentSideEpoch: string | undefined;
+  let currentFrameId: string | undefined;
 
   const parseAvailableFrames = () => {
     while (true) {
@@ -494,6 +569,11 @@ export async function openAiGraderStationPreviewStream(
         const frameIndexValue = Number(headerValue(headerText, "X-AI-Grader-Frame-Index"));
         currentFrameIndex = Number.isFinite(frameIndexValue) ? frameIndexValue : undefined;
         currentCapturedAt = headerValue(headerText, "X-AI-Grader-Captured-At");
+        currentSessionId = headerValue(headerText, "X-AI-Grader-Session-Id");
+        const side = headerValue(headerText, "X-AI-Grader-Preview-Side");
+        currentSide = side === "front" || side === "back" ? side : undefined;
+        currentSideEpoch = headerValue(headerText, "X-AI-Grader-Preview-Epoch");
+        currentFrameId = headerValue(headerText, "X-AI-Grader-Frame-Id");
         expectedLength = lengthValue;
         buffer = buffer.slice(headerEndIndex + headerEndBytes.length);
       }
@@ -507,24 +587,37 @@ export async function openAiGraderStationPreviewStream(
         byteLength: frameBytes.length,
         frameIndex: currentFrameIndex,
         capturedAt: currentCapturedAt,
+        sessionId: currentSessionId,
+        side: currentSide,
+        sideEpoch: currentSideEpoch,
+        frameId: currentFrameId,
       });
       expectedLength = null;
     }
   };
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        buffer = concatBytes(buffer, value);
-        parseAvailableFrames();
-      }
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      buffer = concatBytes(buffer, value);
+      parseAvailableFrames();
     }
+  }
+  if (handlers.signal?.aborted) {
+    handlers.onAbort?.();
+    return { kind: "abort" };
+  }
+  handlers.onEof?.();
+  return { kind: "eof" };
   } catch (error) {
     const normalized = error instanceof Error ? error : new Error("AI Grader preview stream failed.");
-    if (normalized.name !== "AbortError") handlers.onError?.(normalized);
-    if (normalized.name !== "AbortError") throw normalized;
+    if (normalized.name === "AbortError" || handlers.signal?.aborted) {
+      handlers.onAbort?.();
+      return { kind: "abort" };
+    }
+    handlers.onError?.(normalized);
+    throw normalized;
   }
 }
 

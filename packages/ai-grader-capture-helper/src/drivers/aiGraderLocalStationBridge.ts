@@ -75,12 +75,17 @@ import {
   type AiGraderCaptureTriggerMode,
 } from "./aiGraderCaptureTiming";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.6";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.7";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
 const PREVIEW_CAMERA_SETTLE_MS = 350;
 const LIVE_LIGHTING_WATCHDOG_MS = 15000;
+const BACK_POSITIONING_FIRST_FRAME_GRACE_MS = 6000;
+const BACK_POSITIONING_LIVE_FRAME_MAX_AGE_MS = 2000;
+const BACK_POSITIONING_EVENT_LIMIT = 20;
+const BACK_POSITIONING_ERROR_MAX_LENGTH = 240;
+const BACK_CAPTURE_AUTHORIZATION_MS = 10000;
 // The Basler preview runs at roughly 4-5 fps on the Dell. Geometry analysis is
 // latest-frame-only, so a 125 ms cadence can inspect every delivered frame
 // without building a queue while avoiding the former fixed half-second lag.
@@ -544,7 +549,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     endpoints: Array<{
       method: "GET" | "POST";
       path: string;
-      action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "preview-stop" | "lighting-status" | "lighting-apply" | "lighting-safe-off" | "lighting-accept" | "lighting-heartbeat";
+      action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "preview-stop" | "lighting-status" | "lighting-apply" | "lighting-safe-off" | "lighting-accept" | "lighting-heartbeat" | "lighting-retry-back-positioning";
       hardwareAccess: boolean;
       description: string;
     }>;
@@ -632,6 +637,11 @@ export interface AiGraderLocalStationPreviewStatus {
   cameraOwnership: "idle" | "preview_stream" | "capture_action" | "released";
   frameSource: "basler_pylon_continuous_grab" | "mock_station_preview" | "native_pylon_window";
   frameCount: number;
+  sessionId?: string;
+  activeSide: CardGeometrySide;
+  sideEpoch: string;
+  latestFrameId?: string;
+  positioningLightReady: boolean;
   fps?: number;
   startedAt?: string;
   firstFrameAt?: string;
@@ -640,8 +650,10 @@ export interface AiGraderLocalStationPreviewStatus {
   lastStopReason?: string;
   cardGeometry: {
     activeSide: CardGeometrySide;
-    front?: CardGeometryMetadata;
-    back?: CardGeometryMetadata;
+    sessionId?: string;
+    sideEpoch: string;
+    front?: CardGeometryMetadata & { sessionId: string; sideEpoch: string };
+    back?: CardGeometryMetadata & { sessionId: string; sideEpoch: string };
     analysis: {
       source: "real_mjpeg_jpeg" | "mock_deterministic";
       throttleMs: number;
@@ -678,7 +690,7 @@ export interface AiGraderLiveLightingProfile {
   dutyPercent: number;
   actualLeimacPwmStep: number;
   channels: number[];
-  source: "browser_live_tuning" | "default";
+  source: "browser_live_tuning" | "accepted_station_profile" | "default";
   acceptedForCapture: boolean;
   acceptedAt?: string;
 }
@@ -688,6 +700,61 @@ export interface AiGraderLiveLightingSafetyEvent {
   type: "apply" | "safe_off" | "accept" | "heartbeat" | "watchdog_safe_off" | "capture_start_safe_off" | "failure_safe_off";
   reason: string;
   ok: boolean;
+}
+
+export interface AiGraderBackPositioningLightEvent {
+  at: string;
+  type: "restore_starting" | "restore_success" | "restore_failure" | "fresh_frame_ready" | "safe_off";
+  trigger: "front_capture" | "operator_retry" | "preview_frame" | "safety";
+  profileIdentity?: string;
+  error?: {
+    code: "AI_GRADER_BACK_POSITIONING_RESTORE_FAILED" | "AI_GRADER_BACK_PREVIEW_FRAME_REQUIRED";
+    message: string;
+  };
+}
+
+export interface AiGraderBackPositioningLightStatus {
+  status: "inactive" | "restoring" | "waiting_for_frame" | "ready" | "failed" | "safe_off";
+  captureReady: boolean;
+  sessionId?: string;
+  side: "back";
+  sideEpoch: string;
+  profileIdentity?: string;
+  dutyPercent?: number;
+  actualLeimacPwmStep?: number;
+  channels?: number[];
+  attemptCount: number;
+  firstFrameGraceMs: number;
+  firstFrameGraceExpiresAt?: string;
+  lastAttempt?: "front_capture" | "operator_retry";
+  lastError?: {
+    code: "AI_GRADER_BACK_POSITIONING_RESTORE_FAILED" | "AI_GRADER_BACK_PREVIEW_FRAME_REQUIRED";
+    message: string;
+  };
+  captureAuthorization?: {
+    sessionId: string;
+    sideEpoch: string;
+    frameId: string;
+    profileIdentity: string;
+    authorizedAt: string;
+    expiresAt: string;
+  };
+  events: AiGraderBackPositioningLightEvent[];
+}
+
+export interface AiGraderBackPositioningRetryResult {
+  status: AiGraderBackPositioningLightStatus["status"];
+  captureReady: boolean;
+  sessionId?: string;
+  sideEpoch: string;
+  profileIdentity?: string;
+  dutyPercent?: number;
+  channels?: number[];
+  attemptCount: number;
+  firstFrameGraceMs: number;
+  lastError?: AiGraderBackPositioningLightStatus["lastError"];
+  positioningLightReady: boolean;
+  appliedEnabled: boolean;
 }
 
 export interface AiGraderLiveLightingStatus {
@@ -734,6 +801,7 @@ export interface AiGraderLiveLightingStatus {
     arbitraryWritesAllowed: false;
   };
   safetyEvents: AiGraderLiveLightingSafetyEvent[];
+  backPositioning: AiGraderBackPositioningLightStatus;
   lastError?: string;
   note: string;
 }
@@ -897,23 +965,45 @@ function mockPreviewSvg(frameIndex: number, generatedAt: string): Buffer {
   return Buffer.from(svg, "utf-8");
 }
 
-function writeMjpegFrame(res: http.ServerResponse, contentType: string, bytes: Buffer, frameIndex: number) {
+function writeMjpegFrame(
+  res: http.ServerResponse,
+  contentType: string,
+  bytes: Buffer,
+  frameIndex: number,
+  capturedAt: string,
+  binding: { sessionId: string; side: CardGeometrySide; sideEpoch: string },
+  frameId: string
+) {
   res.write(`--${PREVIEW_MJPEG_BOUNDARY}\r\n`);
   res.write(`Content-Type: ${contentType}\r\n`);
   res.write(`Content-Length: ${bytes.length}\r\n`);
   res.write(`X-AI-Grader-Frame-Index: ${frameIndex}\r\n`);
-  res.write(`X-AI-Grader-Captured-At: ${new Date().toISOString()}\r\n\r\n`);
+  res.write(`X-AI-Grader-Captured-At: ${capturedAt}\r\n`);
+  res.write(`X-AI-Grader-Session-Id: ${binding.sessionId}\r\n`);
+  res.write(`X-AI-Grader-Preview-Side: ${binding.side}\r\n`);
+  res.write(`X-AI-Grader-Preview-Epoch: ${binding.sideEpoch}\r\n`);
+  res.write(`X-AI-Grader-Frame-Id: ${frameId}\r\n\r\n`);
   res.write(bytes);
   res.write("\r\n");
 }
 
-function setMjpegHeaders(res: http.ServerResponse, origin: string | undefined, config: AiGraderLocalStationBridgeConfig) {
+function setMjpegHeaders(
+  res: http.ServerResponse,
+  origin: string | undefined,
+  config: AiGraderLocalStationBridgeConfig,
+  binding: { sessionId: string; side: CardGeometrySide; sideEpoch: string },
+  streamId: string
+) {
   setCors(res, origin, config);
   res.writeHead(200, {
     "Content-Type": `multipart/x-mixed-replace; boundary=${PREVIEW_MJPEG_BOUNDARY}`,
     "Cache-Control": "no-store, no-cache, must-revalidate",
     "Connection": "close",
     "X-AI-Grader-Preview": "local-token-gated",
+    "X-AI-Grader-Session-Id": binding.sessionId,
+    "X-AI-Grader-Preview-Side": binding.side,
+    "X-AI-Grader-Preview-Epoch": binding.sideEpoch,
+    "X-AI-Grader-Frame-Id": streamId,
   });
 }
 
@@ -983,9 +1073,24 @@ function activePreviewGeometrySide(step: AiGraderLocalStationStepId): CardGeomet
     : "front";
 }
 
-function defaultPreviewGeometryStatus(config: Pick<AiGraderLocalStationBridgeConfig, "mode">): AiGraderPreviewGeometryStatus {
+function buildPreviewSideEpoch(sessionId: string | undefined, side: CardGeometrySide, epoch: number) {
+  const identity = crypto
+    .createHash("sha256")
+    .update(`${sessionId ?? "pending"}:${side}:${epoch}`)
+    .digest("hex")
+    .slice(0, 16);
+  return `${side}-${epoch}-${identity}`;
+}
+
+function defaultPreviewGeometryStatus(
+  config: Pick<AiGraderLocalStationBridgeConfig, "mode">,
+  binding: { sessionId?: string; side?: CardGeometrySide; sideEpoch?: string } = {}
+): AiGraderPreviewGeometryStatus {
+  const side = binding.side ?? "front";
   return {
-    activeSide: "front",
+    activeSide: side,
+    sessionId: binding.sessionId,
+    sideEpoch: binding.sideEpoch ?? buildPreviewSideEpoch(binding.sessionId, side, 0),
     analysis: {
       source: config.mode === "real" ? "real_mjpeg_jpeg" : "mock_deterministic",
       throttleMs: PREVIEW_GEOMETRY_THROTTLE_MS,
@@ -999,7 +1104,14 @@ function defaultPreviewGeometryStatus(config: Pick<AiGraderLocalStationBridgeCon
   };
 }
 
-function mockPreviewGeometry(side: CardGeometrySide, frameIndex: number, timestamp: string): CardGeometryMetadata {
+function mockPreviewGeometry(
+  side: CardGeometrySide,
+  frameIndex: number,
+  timestamp: string,
+  sessionId: string,
+  sideEpoch: string,
+  frameId: string
+): CardGeometryMetadata & { sessionId: string; sideEpoch: string } {
   const placementState: CardPlacementState = frameIndex === 1 ? "not_detected" : frameIndex === 2 ? "adjust_card" : "ready";
   const detected = placementState !== "not_detected";
   const ready = placementState === "ready";
@@ -1033,8 +1145,10 @@ function mockPreviewGeometry(side: CardGeometrySide, frameIndex: number, timesta
     skewDegrees: detected ? 0 : null,
     confidence: ready ? 0.96 : detected ? 0.82 : 0,
     sourceImageId: `preview-${side}`,
-    sourceFrameId: `preview-${side}-${frameIndex}`,
+    sourceFrameId: frameId,
     timestamp,
+    sessionId,
+    sideEpoch,
     image: { width: 900, height: 1260, coordinateFrame: "source_image_pixels" },
     semanticOrientation: {
       canonicalOrientation: "portrait",
@@ -1557,6 +1671,7 @@ function defaultWarmRunnerStatus(config?: Pick<AiGraderLocalStationBridgeConfig,
 }
 
 function defaultPreviewStatus(config: AiGraderLocalStationBridgeConfig): AiGraderLocalStationPreviewStatus {
+  const sideEpoch = buildPreviewSideEpoch(undefined, "front", 0);
   return {
     status: "not_started",
     implementationType: config.mode === "real" ? "mjpeg_fetch_stream" : "mock_mjpeg_stream",
@@ -1569,7 +1684,10 @@ function defaultPreviewStatus(config: AiGraderLocalStationBridgeConfig): AiGrade
     cameraOwnership: "idle",
     frameSource: config.mode === "real" ? "basler_pylon_continuous_grab" : "mock_station_preview",
     frameCount: 0,
-    cardGeometry: defaultPreviewGeometryStatus(config),
+    activeSide: "front",
+    sideEpoch,
+    positioningLightReady: false,
+    cardGeometry: defaultPreviewGeometryStatus(config, { side: "front", sideEpoch }),
     safety: {
       publicRouteExposed: false,
       requiresStationToken: true,
@@ -1634,6 +1752,15 @@ function defaultLiveLightingStatus(config: AiGraderLocalStationBridgeConfig): Ai
       arbitraryWritesAllowed: false,
     },
     safetyEvents: [],
+    backPositioning: {
+      status: "inactive",
+      captureReady: false,
+      side: "back",
+      sideEpoch: buildPreviewSideEpoch(undefined, "back", 0),
+      attemptCount: 0,
+      firstFrameGraceMs: BACK_POSITIONING_FIRST_FRAME_GRACE_MS,
+      events: [],
+    },
     note:
       "Browser live lighting tuning is local-only through the paired Dell bridge. Live edits command Leimac for visual tuning only until the operator accepts the profile for capture.",
   };
@@ -1672,6 +1799,78 @@ function validateProfile(profile: Partial<AiGraderLocalStationAcceptedProfile> |
     channels,
     source: profile.source ?? "bridge_operator",
     acceptedAt: new Date().toISOString(),
+  };
+}
+
+function boundedBackPositioningError(
+  error: unknown,
+  code: "AI_GRADER_BACK_POSITIONING_RESTORE_FAILED" | "AI_GRADER_BACK_PREVIEW_FRAME_REQUIRED" = "AI_GRADER_BACK_POSITIONING_RESTORE_FAILED"
+) {
+  const fallback = code === "AI_GRADER_BACK_PREVIEW_FRAME_REQUIRED"
+    ? "A fresh live back preview frame is required before the positioning light can remain on."
+    : "The accepted back-positioning light profile could not be restored. Retry after checking the local light connection.";
+  let message = error instanceof Error ? error.message : fallback;
+  message = message
+    .replace(/[A-Za-z]:\\[^\r\n]*/g, "[local path]")
+    .replace(/(?:https?:\/\/|\\\\)[^\s]+/gi, "[local endpoint]")
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[local address]")
+    .replace(/\b(?:token|secret|authorization|bearer|password)\b\s*[:=]?\s*[^\s,;]*/gi, "[redacted]")
+    .replace(/[\r\n\t]+/g, " ")
+    .trim()
+    .slice(0, BACK_POSITIONING_ERROR_MAX_LENGTH);
+  return { code, message: message || fallback };
+}
+
+function boundedPreviewLifecycleError(error: unknown) {
+  const fallback = "The local preview lifecycle failed. Restart the preview after checking the local camera connection.";
+  let message = error instanceof Error ? error.message : typeof error === "string" ? error : fallback;
+  message = message
+    .replace(/[A-Za-z]:\\[^\r\n]*/g, "[local path]")
+    .replace(/(?:https?:\/\/|\\\\)[^\s]+/gi, "[local endpoint]")
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[local address]")
+    .replace(/\b(?:token|secret|authorization|bearer|password)\b\s*[:=]?\s*[^\s,;]*/gi, "[redacted]")
+    .replace(/[\r\n\t]+/g, " ")
+    .trim()
+    .slice(0, BACK_POSITIONING_ERROR_MAX_LENGTH);
+  return message || fallback;
+}
+
+function durableAcceptedPositioningProfile(profile: AiGraderLocalStationAcceptedProfile) {
+  const duty = roundDuty(profile.dutyPercent);
+  const channels = normalizeLightingChannels(profile.channels, { allowEmpty: false });
+  const allowedSources = new Set<AiGraderLocalStationAcceptedProfile["source"]>([
+    "operator_preview",
+    "browser_live_tuning",
+    "default",
+    "cli_override",
+    "bridge_operator",
+  ]);
+  if (
+    duty.dutyPercent <= 0
+    || duty.dutyPercent > LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT
+    || duty.actualLeimacPwmStep !== profile.actualLeimacPwmStep
+    || !allowedSources.has(profile.source)
+  ) {
+    throw new Error("The durable accepted station profile is invalid for guarded back positioning.");
+  }
+  const identityInput = JSON.stringify({
+    dutyPercent: duty.dutyPercent,
+    actualLeimacPwmStep: duty.actualLeimacPwmStep,
+    channels,
+    source: profile.source,
+    acceptedAt: profile.acceptedAt ?? null,
+  });
+  return {
+    profile: {
+      enabled: true,
+      dutyPercent: duty.dutyPercent,
+      actualLeimacPwmStep: duty.actualLeimacPwmStep,
+      channels,
+      source: "accepted_station_profile" as const,
+      acceptedForCapture: true,
+      acceptedAt: profile.acceptedAt,
+    },
+    identity: `accepted-${crypto.createHash("sha256").update(identityInput).digest("hex").slice(0, 16)}`,
   };
 }
 
@@ -1866,7 +2065,7 @@ function reportRoute(reportId: string | undefined) {
 function bridgeEndpoints() {
     const actions: Array<{
       method: "GET" | "POST";
-      action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "preview-stop" | "lighting-status" | "lighting-apply" | "lighting-safe-off" | "lighting-accept" | "lighting-heartbeat";
+      action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "preview-stop" | "lighting-status" | "lighting-apply" | "lighting-safe-off" | "lighting-accept" | "lighting-heartbeat" | "lighting-retry-back-positioning";
       hardwareAccess: boolean;
       description: string;
       path?: string;
@@ -1880,6 +2079,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "lighting-safe-off", path: "/lighting/safe-off", hardwareAccess: true, description: "Safe-off browser live Leimac lighting." },
     { method: "POST", action: "lighting-accept", path: "/lighting/accept", hardwareAccess: false, description: "Accept current browser live lighting profile for warm capture." },
     { method: "POST", action: "lighting-heartbeat", path: "/lighting/heartbeat", hardwareAccess: false, description: "Keep browser live lighting watchdog alive while the operator page is connected." },
+    { method: "POST", action: "lighting-retry-back-positioning", path: "/lighting/retry-back-positioning", hardwareAccess: true, description: "Retry the accepted-profile back-positioning light restore without browser hardware parameters." },
     { method: "POST", action: "start-session", hardwareAccess: false, description: "Create a local station session folder and manifest." },
     { method: "POST", action: "configure-rapid-capture", hardwareAccess: false, description: "Enable or disable persisted rapid capture mode; human confirmation and publish remain required." },
     { method: "POST", action: "queue-current-card", hardwareAccess: false, description: "Safely queue captured front/back packages for serialized background report finalization and start a clean next card." },
@@ -2358,14 +2558,18 @@ export class AiGraderLocalStationBridgeService {
     frameTimestampSource: "preview_capture_header" | "bridge_received";
     side: CardGeometrySide;
     sessionId?: string;
+    sideEpoch: string;
+    frameId: string;
     epoch: number;
   };
   private previewGeometryAnalysisInFlight = false;
   private previewGeometryTimer?: ReturnType<typeof setTimeout>;
   private previewGeometryLastStartedAtMs = 0;
   private previewGeometryEpoch = 0;
+  private previewStreamSequence = 0;
   private liveLightingWatchdog?: ReturnType<typeof setTimeout>;
   private leimacClient?: LeimacIdmuClient;
+  private lightingWriteChain: Promise<void> = Promise.resolve();
 
   constructor(
     config: AiGraderLocalStationBridgeConfig,
@@ -2687,6 +2891,9 @@ export class AiGraderLocalStationBridgeService {
       && geometryAgeMs <= PREVIEW_GEOMETRY_MAX_AGE_MS;
     const validDetectedGeometry = placementState === "ready"
       && geometry?.side === side
+      && geometry?.sessionId === manifest.sessionId
+      && geometry?.sideEpoch === manifest.previewStatus.sideEpoch
+      && manifest.previewStatus.activeSide === side
       && geometry?.geometrySource === "detected"
       && geometry.detectionUsed === true
       && geometry.manualOverrideUsed !== true
@@ -2777,27 +2984,61 @@ export class AiGraderLocalStationBridgeService {
   private refreshPreviewGeometryActiveSide() {
     const geometry = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
     const activeSide = activePreviewGeometrySide(this.manifest.currentStep);
-    if (geometry.activeSide === activeSide && this.manifest.previewStatus.cardGeometry) return;
+    if (
+      geometry.activeSide === activeSide
+      && this.manifest.previewStatus.activeSide === activeSide
+      && this.manifest.previewStatus.cardGeometry
+    ) return;
+    this.manifest.previewStatus.activeSide = activeSide;
     this.manifest.previewStatus.cardGeometry = { ...geometry, activeSide };
   }
 
-  private resetPreviewGeometryAnalysis() {
+  private transitionPreviewSide(side: CardGeometrySide, options: { preserveFrontGeometry?: boolean } = {}) {
     this.previewGeometryEpoch += 1;
     this.previewGeometryPending = undefined;
     if (this.previewGeometryTimer) clearTimeout(this.previewGeometryTimer);
     this.previewGeometryTimer = undefined;
     this.previewGeometryLastStartedAtMs = 0;
+    const sessionId = this.manifest.sessionId;
+    const sideEpoch = buildPreviewSideEpoch(sessionId, side, this.previewGeometryEpoch);
+    const historicalFront = options.preserveFrontGeometry
+      ? this.manifest.previewStatus.cardGeometry?.front
+      : undefined;
+    this.updatePreviewStatus({
+      sessionId,
+      activeSide: side,
+      sideEpoch,
+      latestFrameId: undefined,
+      positioningLightReady: false,
+      frameCount: 0,
+      fps: undefined,
+      firstFrameAt: undefined,
+      lastFrameAt: undefined,
+    });
     this.manifest.previewStatus.cardGeometry = {
-      ...defaultPreviewGeometryStatus(this.config),
-      activeSide: activePreviewGeometrySide(this.manifest.currentStep),
+      ...defaultPreviewGeometryStatus(this.config, { sessionId, side, sideEpoch }),
+      ...(historicalFront ? { front: historicalFront } : {}),
     };
+    this.updateBackPositioningLight({
+      sessionId,
+      sideEpoch,
+      captureReady: false,
+      captureAuthorization: undefined,
+    });
   }
 
-  private noteMockPreviewGeometry(frameIndex: number) {
-    const side = activePreviewGeometrySide(this.manifest.currentStep);
+  private resetPreviewGeometryAnalysis() {
+    this.transitionPreviewSide(activePreviewGeometrySide(this.manifest.currentStep));
+  }
+
+  private noteMockPreviewGeometry(frameIndex: number, frameId: string) {
+    const side = this.manifest.previewStatus.activeSide;
+    const sessionId = this.manifest.sessionId;
+    if (!sessionId) return;
+    const sideEpoch = this.manifest.previewStatus.sideEpoch;
     const now = new Date().toISOString();
     const current = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
-    const geometry = mockPreviewGeometry(side, frameIndex, now);
+    const geometry = mockPreviewGeometry(side, frameIndex, now, sessionId, sideEpoch, frameId);
     this.manifest.previewStatus.cardGeometry = {
       ...current,
       activeSide: side,
@@ -2822,9 +3063,16 @@ export class AiGraderLocalStationBridgeService {
     frame: Buffer,
     frameIndex: number,
     frameCapturedAt: string,
-    frameTimestampSource: "preview_capture_header" | "bridge_received"
+    frameTimestampSource: "preview_capture_header" | "bridge_received",
+    frameId: string,
+    binding: { sessionId: string; side: CardGeometrySide; sideEpoch: string }
   ) {
-    const side = activePreviewGeometrySide(this.manifest.currentStep);
+    if (
+      binding.sessionId !== this.manifest.sessionId
+      || binding.side !== this.manifest.previewStatus.activeSide
+      || binding.sideEpoch !== this.manifest.previewStatus.sideEpoch
+    ) return;
+    const side = binding.side;
     const current = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
     const stalePending = Boolean(this.previewGeometryPending);
     this.previewGeometryPending = {
@@ -2833,7 +3081,9 @@ export class AiGraderLocalStationBridgeService {
       frameCapturedAt,
       frameTimestampSource,
       side,
-      sessionId: this.manifest.sessionId,
+      sessionId: binding.sessionId,
+      sideEpoch: binding.sideEpoch,
+      frameId,
       epoch: this.previewGeometryEpoch,
     };
     this.manifest.previewStatus.cardGeometry = {
@@ -2881,16 +3131,26 @@ export class AiGraderLocalStationBridgeService {
       fileName: "preview-frame.jpg",
       side: pending.side,
       sourceImageId: `preview-${pending.side}`,
-      sourceFrameId: `preview-${pending.side}-${pending.frameIndex}`,
+      sourceFrameId: pending.frameId,
       timestamp: pending.frameCapturedAt,
     }).then((geometry) => {
-      if (pending.epoch !== this.previewGeometryEpoch || pending.sessionId !== this.manifest.sessionId) return;
+      if (
+        pending.epoch !== this.previewGeometryEpoch
+        || pending.sessionId !== this.manifest.sessionId
+        || pending.side !== this.manifest.previewStatus.activeSide
+        || pending.sideEpoch !== this.manifest.previewStatus.sideEpoch
+      ) return;
       const completedAtMs = Date.now();
       const latest = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
+      const boundGeometry = {
+        ...geometry,
+        sessionId: pending.sessionId,
+        sideEpoch: pending.sideEpoch,
+      };
       this.manifest.previewStatus.cardGeometry = {
         ...latest,
         activeSide: activePreviewGeometrySide(this.manifest.currentStep),
-        [pending.side]: geometry,
+        [pending.side]: boundGeometry,
         analysis: {
           ...latest.analysis,
           inFlight: false,
@@ -2902,15 +3162,19 @@ export class AiGraderLocalStationBridgeService {
           lastError: undefined,
         },
       };
-      if (geometry.placementState === "ready") {
+      if (boundGeometry.placementState === "ready") {
         this.recordCaptureTimingEvent(this.manifest, {
           id: "edge_detection_ready",
           side: pending.side,
-          at: geometry.timestamp,
+          at: boundGeometry.timestamp,
         });
       }
     }).catch(() => {
-      if (pending.epoch !== this.previewGeometryEpoch || pending.sessionId !== this.manifest.sessionId) return;
+      if (
+        pending.epoch !== this.previewGeometryEpoch
+        || pending.sessionId !== this.manifest.sessionId
+        || pending.sideEpoch !== this.manifest.previewStatus.sideEpoch
+      ) return;
       const completedAtMs = Date.now();
       const latest = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
       // Never retain a prior Ready outline after a decoder/detector failure.
@@ -2992,6 +3256,36 @@ export class AiGraderLocalStationBridgeService {
     await this.persistRapidQueue();
   }
 
+  private async releaseStationRuntimeForReplacement(reason: string) {
+    let previewError: unknown;
+    let safeOffError: unknown;
+    try {
+      await this.stopPreviewStream(reason, {
+        waitForRelease: true,
+        requireRelease: true,
+        settleMs: PREVIEW_CAMERA_SETTLE_MS,
+      });
+    } catch (error) {
+      previewError = error;
+    }
+    try {
+      await this.safeOffLiveLighting(reason, "safe_off", { force: true });
+    } catch (error) {
+      safeOffError = error;
+      const lastError = boundedBackPositioningError(error);
+      this.updateBackPositioningLight({ status: "failed", captureReady: false, captureAuthorization: undefined, lastError });
+      this.recordBackPositioningLightEvent({
+        type: "restore_failure",
+        trigger: "safety",
+        profileIdentity: this.manifest.liveLighting.backPositioning.profileIdentity,
+        error: lastError,
+      });
+    }
+    await writeSessionManifest(this.manifest);
+    if (previewError) throw new Error(boundedPreviewLifecycleError(previewError));
+    if (safeOffError) throw safeOffError;
+  }
+
   private async createFreshSession(
     request: { reportId?: string; captureProfile: FixedRigCaptureProfile },
     now = new Date().toISOString(),
@@ -3002,6 +3296,9 @@ export class AiGraderLocalStationBridgeService {
     }
     if (this.config.warmRunnerDisabled && request.captureProfile === "production_fast") {
       throw new Error("AI Grader production_fast cannot run with explicit cold debug mode; select full_forensic or enable the warm runner.");
+    }
+    if (this.manifest.sessionId) {
+      await this.releaseStationRuntimeForReplacement("station session replacement");
     }
     const { packageId, packageDir } = await createFixedRigPackageDir(this.config.outputDir, "ai-grader-browser-station-session");
     this.releaseFullForensicPreviewHold("new station session started");
@@ -3239,6 +3536,9 @@ export class AiGraderLocalStationBridgeService {
     if (!manifest || manifest.sessionId !== item.sessionId || manifest.reportId !== item.reportId) {
       throw new Error(`Rapid capture queue item ${queueItemId} has no valid persisted session manifest.`);
     }
+    if (this.manifest.sessionId) {
+      await this.releaseStationRuntimeForReplacement("rapid queue item activation");
+    }
     this.manifest = cloneManifest(manifest);
     this.releaseFullForensicPreviewHold("completed rapid queue item activated for human review");
     this.manifest.rapidCapture.enabled = this.rapidQueue.rapidCaptureEnabled;
@@ -3312,7 +3612,40 @@ export class AiGraderLocalStationBridgeService {
         ...this.manifest.liveLighting.safety,
         ...(update.safety ?? {}),
       },
+      backPositioning: {
+        ...this.manifest.liveLighting.backPositioning,
+        ...(update.backPositioning ?? {}),
+      },
     };
+  }
+
+  private stopOrphanedPreviewStreamsUntilReleased(timeoutMs: number, settleMs: number) {
+    return stopOrphanedBaslerPreviewStreamsUntilReleased(timeoutMs, settleMs);
+  }
+
+  private updateBackPositioningLight(update: Partial<AiGraderBackPositioningLightStatus>) {
+    this.updateLiveLightingStatus({
+      backPositioning: {
+        ...this.manifest.liveLighting.backPositioning,
+        ...update,
+      },
+    });
+    this.updatePreviewStatus({
+      positioningLightReady: update.captureReady ?? this.manifest.liveLighting.backPositioning.captureReady,
+    });
+  }
+
+  private recordBackPositioningLightEvent(event: Omit<AiGraderBackPositioningLightEvent, "at">) {
+    const nextEvent: AiGraderBackPositioningLightEvent = { at: new Date().toISOString(), ...event };
+    this.updateBackPositioningLight({
+      events: [
+        ...this.manifest.liveLighting.backPositioning.events.slice(-(BACK_POSITIONING_EVENT_LIMIT - 1)),
+        nextEvent,
+      ],
+    });
+    this.manifest.progressLog.push(
+      `${nextEvent.at} Back positioning light ${event.type} (${event.trigger})${event.profileIdentity ? ` profile ${event.profileIdentity}` : ""}.`
+    );
   }
 
   private recordLiveLightingEvent(event: Omit<AiGraderLiveLightingSafetyEvent, "at">) {
@@ -3339,21 +3672,42 @@ export class AiGraderLocalStationBridgeService {
     });
   }
 
-  private scheduleLiveLightingWatchdog(reason: string) {
+  private scheduleLiveLightingWatchdog(reason: string, timeoutMs = LIVE_LIGHTING_WATCHDOG_MS) {
     if (this.liveLightingWatchdog) clearTimeout(this.liveLightingWatchdog);
     const lastHeartbeatAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + LIVE_LIGHTING_WATCHDOG_MS).toISOString();
+    const expiresAt = new Date(Date.now() + timeoutMs).toISOString();
     this.updateLiveLightingStatus({
       watchdog: {
         enabled: true,
-        timeoutMs: LIVE_LIGHTING_WATCHDOG_MS,
+        timeoutMs,
         lastHeartbeatAt,
         expiresAt,
       },
     });
     this.liveLightingWatchdog = setTimeout(() => {
-      void this.safeOffLiveLighting(`watchdog timeout after ${reason}`, "watchdog_safe_off").catch(() => {});
-    }, LIVE_LIGHTING_WATCHDOG_MS);
+      void this.handleLiveLightingWatchdogExpiry(reason).catch(() => {});
+    }, timeoutMs);
+    this.liveLightingWatchdog.unref?.();
+  }
+
+  private async handleLiveLightingWatchdogExpiry(reason: string) {
+    const positioningWasActive = new Set(["restoring", "waiting_for_frame", "ready"])
+      .has(this.manifest.liveLighting.backPositioning.status);
+    await this.safeOffLiveLighting(`watchdog timeout after ${reason}`, "watchdog_safe_off").catch(() => {});
+    if (positioningWasActive) {
+      const lastError = boundedBackPositioningError(
+        new Error("Back positioning light safe-off: a fresh live preview frame and heartbeat were not received in time."),
+        "AI_GRADER_BACK_PREVIEW_FRAME_REQUIRED"
+      );
+      this.updateBackPositioningLight({ status: "failed", captureReady: false, lastError });
+      this.recordBackPositioningLightEvent({
+        type: "restore_failure",
+        trigger: "safety",
+        profileIdentity: this.manifest.liveLighting.backPositioning.profileIdentity,
+        error: lastError,
+      });
+    }
+    await writeSessionManifest(this.manifest);
   }
 
   private assertLiveLightingReady() {
@@ -3428,8 +3782,252 @@ export class AiGraderLocalStationBridgeService {
     return writes;
   }
 
+  private executeLiveLightingFrames(
+    frames: LeimacIdmuWriteFrame[]
+  ): Promise<Array<LeimacIdmuWriteResult | { responseKind: "mock"; ok: true }>> {
+    const run = this.lightingWriteChain
+      .catch(() => {})
+      .then(() => this.writeLiveLightingFrames(frames));
+    this.lightingWriteChain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private assertBackPositioningRestoreEligible() {
+    if (!this.manifest.sessionId || !this.manifest.outputs.frontPackageDir) {
+      throw new Error("Back-positioning light restore requires safely persisted front evidence for the active session.");
+    }
+    if (this.manifest.currentStep !== "prompt_flip_card") {
+      throw new Error("Back-positioning light restore is valid only while the active session is at prompt_flip_card.");
+    }
+    if (this.captureLock) {
+      throw new Error("Back-positioning light restore is unavailable while the capture lock is held.");
+    }
+    if (this.activeQueueItemId) {
+      throw new Error("Back-positioning light restore is disabled while a rapid queue item is under human review.");
+    }
+    if (this.manifest.warmRunnerStatus.previewPolicy.holdActive) {
+      throw new Error("Back-positioning light restore requires the forensic preview hold to be released.");
+    }
+    if (this.manifest.captureFailure || this.manifest.rapidCapture.workflowState === "failed") {
+      throw new Error("Back-positioning light restore is unavailable after a capture or processing failure.");
+    }
+    this.assertLiveLightingReady();
+  }
+
+  private async restoreBackPositioningLight(trigger: "front_capture" | "operator_retry") {
+    this.assertBackPositioningRestoreEligible();
+    const accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
+    const current = this.manifest.liveLighting.backPositioning;
+    const applied = this.manifest.liveLighting.applied;
+    const sameActiveProfile = current.sessionId === this.manifest.sessionId
+      && current.sideEpoch === this.manifest.previewStatus.sideEpoch
+      && current.profileIdentity === accepted.identity
+      && applied.enabled
+      && applied.dutyPercent === accepted.profile.dutyPercent
+      && applied.actualLeimacPwmStep === accepted.profile.actualLeimacPwmStep
+      && applied.channels.join(",") === accepted.profile.channels.join(",")
+      && new Set(["waiting_for_frame", "ready"]).has(current.status);
+    if (sameActiveProfile) return this.liveLightingStatus();
+
+    const attemptCount = current.attemptCount + 1;
+    const startedAt = new Date().toISOString();
+    this.updateBackPositioningLight({
+      status: "restoring",
+      captureReady: false,
+      sessionId: this.manifest.sessionId,
+      sideEpoch: this.manifest.previewStatus.sideEpoch,
+      profileIdentity: accepted.identity,
+      dutyPercent: accepted.profile.dutyPercent,
+      actualLeimacPwmStep: accepted.profile.actualLeimacPwmStep,
+      channels: [...accepted.profile.channels],
+      attemptCount,
+      lastAttempt: trigger,
+      firstFrameGraceExpiresAt: undefined,
+      lastError: undefined,
+      captureAuthorization: undefined,
+    });
+    this.recordBackPositioningLightEvent({
+      type: "restore_starting",
+      trigger,
+      profileIdentity: accepted.identity,
+    });
+    await writeSessionManifest(this.manifest);
+
+    try {
+      const startedAtMs = Date.now();
+      const writes = await this.executeLiveLightingFrames(this.liveLightingFrames(accepted.profile));
+      const appliedAt = new Date().toISOString();
+      const firstFrameGraceExpiresAt = new Date(Date.now() + BACK_POSITIONING_FIRST_FRAME_GRACE_MS).toISOString();
+      this.updateLiveLightingStatus({
+        status: "on",
+        profile: accepted.profile,
+        applied: {
+          enabled: true,
+          dutyPercent: accepted.profile.dutyPercent,
+          actualLeimacPwmStep: accepted.profile.actualLeimacPwmStep,
+          channels: [...accepted.profile.channels],
+          appliedAt,
+          lastApplyLatencyMs: Math.max(0, Date.now() - startedAtMs),
+          lastResponseKinds: writes.map((write) => write.responseKind),
+        },
+        connection: { state: this.config.mode === "mock" ? "mock" : "idle", persistentLeimacSession: false },
+        lastError: undefined,
+      });
+      this.updateBackPositioningLight({
+        status: "waiting_for_frame",
+        captureReady: false,
+        firstFrameGraceExpiresAt,
+        lastError: undefined,
+      });
+      this.recordBackPositioningLightEvent({
+        type: "restore_success",
+        trigger,
+        profileIdentity: accepted.identity,
+      });
+      this.scheduleLiveLightingWatchdog("back positioning first-frame grace", BACK_POSITIONING_FIRST_FRAME_GRACE_MS);
+    } catch (error) {
+      const lastError = boundedBackPositioningError(error);
+      try {
+        await this.safeOffLiveLighting("back positioning restore failure", "failure_safe_off", { force: true });
+      } catch {}
+      this.updateBackPositioningLight({
+        status: "failed",
+        captureReady: false,
+        firstFrameGraceExpiresAt: undefined,
+        lastError,
+      });
+      this.recordBackPositioningLightEvent({
+        type: "restore_failure",
+        trigger,
+        profileIdentity: accepted.identity,
+        error: lastError,
+      });
+    }
+    this.manifest.progressLog.push(`${startedAt} Back-positioning restore attempt ${attemptCount} completed with status ${this.manifest.liveLighting.backPositioning.status}.`);
+    await writeSessionManifest(this.manifest);
+    return this.liveLightingStatus();
+  }
+
+  private backPositioningRetryResult(): AiGraderBackPositioningRetryResult {
+    const positioning = this.manifest.liveLighting.backPositioning;
+    return {
+      status: positioning.status,
+      captureReady: positioning.captureReady,
+      sessionId: positioning.sessionId,
+      sideEpoch: positioning.sideEpoch,
+      profileIdentity: positioning.profileIdentity,
+      dutyPercent: positioning.dutyPercent,
+      channels: positioning.channels ? [...positioning.channels] : undefined,
+      attemptCount: positioning.attemptCount,
+      firstFrameGraceMs: positioning.firstFrameGraceMs,
+      lastError: positioning.lastError ? { ...positioning.lastError } : undefined,
+      positioningLightReady: this.manifest.previewStatus.positioningLightReady,
+      appliedEnabled: this.manifest.liveLighting.applied.enabled,
+    };
+  }
+
+  async retryBackPositioningLight(): Promise<AiGraderBackPositioningRetryResult> {
+    await this.restoreBackPositioningLight("operator_retry");
+    return this.backPositioningRetryResult();
+  }
+
+  private backPositioningCaptureReady() {
+    const positioning = this.manifest.liveLighting.backPositioning;
+    const lastFrameMs = Date.parse(this.manifest.previewStatus.lastFrameAt ?? "");
+    const frameAgeMs = Date.now() - lastFrameMs;
+    let accepted: ReturnType<typeof durableAcceptedPositioningProfile> | undefined;
+    try {
+      accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
+    } catch {
+      return false;
+    }
+    return positioning.status === "ready"
+      && positioning.captureReady
+      && positioning.sessionId === this.manifest.sessionId
+      && positioning.sideEpoch === this.manifest.previewStatus.sideEpoch
+      && positioning.profileIdentity === accepted.identity
+      && this.manifest.previewStatus.status === "live"
+      && this.manifest.previewStatus.activeSide === "back"
+      && this.manifest.previewStatus.positioningLightReady
+      && Boolean(this.manifest.previewStatus.latestFrameId)
+      && Number.isFinite(lastFrameMs)
+      && frameAgeMs >= 0
+      && frameAgeMs <= BACK_POSITIONING_LIVE_FRAME_MAX_AGE_MS
+      && this.manifest.liveLighting.applied.enabled
+      && this.manifest.liveLighting.applied.dutyPercent === accepted.profile.dutyPercent
+      && this.manifest.liveLighting.applied.actualLeimacPwmStep === accepted.profile.actualLeimacPwmStep
+      && this.manifest.liveLighting.applied.channels.join(",") === accepted.profile.channels.join(",");
+  }
+
+  private assertBackPositioningCaptureReady() {
+    if (!this.backPositioningCaptureReady()) {
+      throw new Error("Back Capture requires the durable accepted positioning light plus a fresh session/side/epoch-bound live back preview frame. Retry Back Positioning Light while prompt_flip_card is active.");
+    }
+  }
+
+  private authorizeBackCapture() {
+    this.assertBackPositioningCaptureReady();
+    const positioning = this.manifest.liveLighting.backPositioning;
+    const frameId = this.manifest.previewStatus.latestFrameId!;
+    const authorizedAt = new Date().toISOString();
+    const captureAuthorization = {
+      sessionId: this.manifest.sessionId!,
+      sideEpoch: positioning.sideEpoch,
+      frameId,
+      profileIdentity: positioning.profileIdentity!,
+      authorizedAt,
+      expiresAt: new Date(Date.now() + BACK_CAPTURE_AUTHORIZATION_MS).toISOString(),
+    };
+    this.updateBackPositioningLight({ captureAuthorization });
+    return captureAuthorization;
+  }
+
+  private assertBackCaptureAuthorization(
+    authorization: NonNullable<AiGraderBackPositioningLightStatus["captureAuthorization"]> | undefined,
+    options: { requireFreshLiveFrame?: boolean; geometryCaptureMode?: AiGraderGeometryCaptureMode } = {}
+  ) {
+    const current = this.manifest.liveLighting.backPositioning.captureAuthorization;
+    let accepted: ReturnType<typeof durableAcceptedPositioningProfile> | undefined;
+    try {
+      accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
+    } catch {}
+    if (
+      !authorization
+      || !current
+      || !accepted
+      || current.sessionId !== authorization.sessionId
+      || current.sideEpoch !== authorization.sideEpoch
+      || current.frameId !== authorization.frameId
+      || current.profileIdentity !== authorization.profileIdentity
+      || authorization.sessionId !== this.manifest.sessionId
+      || authorization.sideEpoch !== this.manifest.previewStatus.sideEpoch
+      || authorization.profileIdentity !== accepted.identity
+      || Date.parse(authorization.expiresAt) < Date.now()
+    ) {
+      throw new Error("Back Capture authorization is missing, stale, or does not match the active session/side/epoch/frame/profile.");
+    }
+    if (options.requireFreshLiveFrame) {
+      if (!this.backPositioningCaptureReady() || this.manifest.previewStatus.latestFrameId !== authorization.frameId) {
+        throw new Error("Back Capture authorization no longer matches the latest fresh live back preview frame.");
+      }
+      if (options.geometryCaptureMode === "detected_geometry") {
+        const geometry = this.manifest.previewStatus.cardGeometry.back;
+        if (
+          geometry?.sessionId !== authorization.sessionId
+          || geometry?.sideEpoch !== authorization.sideEpoch
+          || geometry?.sourceFrameId !== authorization.frameId
+        ) {
+          throw new Error("Back Capture detected geometry does not match the authorized session/side/epoch/frame.");
+        }
+      }
+    }
+  }
+
   async applyLiveLighting(request: JsonBody = {}): Promise<AiGraderLiveLightingStatus> {
     if (this.activeQueueItemId) throw new Error("Live lighting is disabled while a rapid queue item is under human review.");
+    if (this.manifest.currentStep === "prompt_flip_card" || this.manifest.currentStep === "capture_back") {
+      throw new Error("Browser hardware/profile values are disabled during back positioning; use the accepted-profile retry operation.");
+    }
     this.assertLiveLightingReady();
     if (!this.manifest.sessionId) throw new Error("Start a station session before browser live lighting tuning.");
     const profile = validateLiveLightingRequest(request, this.manifest.liveLighting);
@@ -3455,7 +4053,7 @@ export class AiGraderLocalStationBridgeService {
       lastError: undefined,
     });
     try {
-      const writes = await this.writeLiveLightingFrames(this.liveLightingFrames(profile));
+      const writes = await this.executeLiveLightingFrames(this.liveLightingFrames(profile));
       const appliedAt = new Date().toISOString();
       const lastApplyLatencyMs = Math.max(0, Date.now() - startedAtMs);
       this.updateLiveLightingStatus({
@@ -3494,8 +4092,53 @@ export class AiGraderLocalStationBridgeService {
 
   async heartbeatLiveLighting(reason = "browser live lighting heartbeat"): Promise<AiGraderLiveLightingStatus> {
     if (this.activeQueueItemId) throw new Error("Live lighting is disabled while a rapid queue item is under human review.");
-    if (this.manifest.liveLighting.applied.enabled) this.scheduleLiveLightingWatchdog(reason);
-    else this.updateLiveLightingStatus({ watchdog: { enabled: true, timeoutMs: LIVE_LIGHTING_WATCHDOG_MS, lastHeartbeatAt: new Date().toISOString() } });
+    const positioning = this.manifest.liveLighting.backPositioning;
+    if (
+      this.manifest.liveLighting.applied.enabled
+      && new Set(["waiting_for_frame", "ready"]).has(positioning.status)
+    ) {
+      const lastFrameMs = Date.parse(this.manifest.previewStatus.lastFrameAt ?? "");
+      const frameAgeMs = Date.now() - lastFrameMs;
+      const freshFrame = this.manifest.previewStatus.status === "live"
+        && this.manifest.previewStatus.sessionId === this.manifest.sessionId
+        && this.manifest.previewStatus.activeSide === "back"
+        && this.manifest.previewStatus.sideEpoch === positioning.sideEpoch
+        && Boolean(this.manifest.previewStatus.latestFrameId)
+        && Number.isFinite(lastFrameMs)
+        && frameAgeMs >= 0
+        && frameAgeMs <= BACK_POSITIONING_LIVE_FRAME_MAX_AGE_MS;
+      if (freshFrame) {
+        this.scheduleLiveLightingWatchdog(reason);
+      } else {
+        const withinGrace = positioning.status === "waiting_for_frame"
+          && Date.parse(positioning.firstFrameGraceExpiresAt ?? "") > Date.now();
+        if (!withinGrace) {
+          const lastError = boundedBackPositioningError(
+            new Error("Back positioning light safe-off: heartbeat did not have a recent live back preview frame."),
+            "AI_GRADER_BACK_PREVIEW_FRAME_REQUIRED"
+          );
+          let safeOffError: unknown;
+          try {
+            await this.safeOffLiveLighting("back positioning heartbeat without a fresh frame", "watchdog_safe_off");
+          } catch (error) {
+            safeOffError = error;
+          }
+          this.updateBackPositioningLight({ status: "failed", captureReady: false, lastError });
+          this.recordBackPositioningLightEvent({
+            type: "restore_failure",
+            trigger: "safety",
+            profileIdentity: positioning.profileIdentity,
+            error: lastError,
+          });
+          await writeSessionManifest(this.manifest);
+          if (safeOffError) throw safeOffError;
+        }
+      }
+    } else if (this.manifest.liveLighting.applied.enabled) {
+      this.scheduleLiveLightingWatchdog(reason);
+    } else {
+      this.updateLiveLightingStatus({ watchdog: { enabled: true, timeoutMs: LIVE_LIGHTING_WATCHDOG_MS, lastHeartbeatAt: new Date().toISOString() } });
+    }
     this.recordLiveLightingEvent({ type: "heartbeat", reason, ok: true });
     await writeSessionManifest(this.manifest);
     return this.liveLightingStatus();
@@ -3504,6 +4147,9 @@ export class AiGraderLocalStationBridgeService {
   async acceptLiveLightingForCapture(request: JsonBody = {}): Promise<AiGraderLiveLightingStatus> {
     if (this.activeQueueItemId) throw new Error("Capture profile changes are disabled while a rapid queue item is under human review.");
     if (!this.manifest.sessionId) throw new Error("Start a station session before accepting a browser live lighting profile.");
+    if (this.manifest.outputs.frontPackageDir || this.manifest.currentStep === "prompt_flip_card" || this.manifest.currentStep === "capture_back") {
+      throw new Error("Capture profile changes are disabled after front evidence is persisted; back positioning uses only the durable profile accepted before front capture.");
+    }
     const profile = validateLiveLightingRequest({
       enabled: true,
       dutyPercent: request.dutyPercent ?? this.manifest.liveLighting.profile.dutyPercent,
@@ -3542,32 +4188,55 @@ export class AiGraderLocalStationBridgeService {
   private async safeOffLiveLighting(
     reason: string,
     eventType: AiGraderLiveLightingSafetyEvent["type"] = "safe_off",
-    options: { force?: boolean } = {}
+    options: { force?: boolean; preserveBackCaptureAuthorization?: boolean } = {}
   ): Promise<void> {
     const shouldSend = options.force === true || this.manifest.liveLighting.applied.enabled || this.manifest.liveLighting.status === "on" || this.manifest.liveLighting.status === "applying";
+    const positioningWasActive = this.manifest.liveLighting.backPositioning.status !== "inactive"
+      && this.manifest.liveLighting.backPositioning.status !== "safe_off";
+    const captureAuthorization = options.preserveBackCaptureAuthorization
+      ? this.manifest.liveLighting.backPositioning.captureAuthorization
+      : undefined;
     this.clearLiveLightingWatchdog();
-    if (!shouldSend) {
-      this.updateLiveLightingStatus({
+    this.updateLiveLightingStatus({
+      status: "safe_off",
+      profile: {
+        ...this.manifest.liveLighting.profile,
+        enabled: false,
+        acceptedForCapture: this.manifest.liveLighting.profile.acceptedForCapture,
+      },
+      applied: {
+        enabled: false,
+        dutyPercent: 0,
+        actualLeimacPwmStep: 0,
+        channels: [],
+        appliedAt: new Date().toISOString(),
+      },
+      connection: {
+        state: shouldSend ? (this.config.mode === "mock" ? "mock" : "writing") : (this.config.mode === "mock" ? "mock" : "idle"),
+        persistentLeimacSession: false,
+      },
+    });
+    if (positioningWasActive) {
+      this.updateBackPositioningLight({
         status: "safe_off",
-        profile: {
-          ...this.manifest.liveLighting.profile,
-          enabled: false,
-          acceptedForCapture: this.manifest.liveLighting.profile.acceptedForCapture,
-        },
-        applied: { enabled: false, dutyPercent: 0, actualLeimacPwmStep: 0, channels: [], appliedAt: new Date().toISOString() },
+        captureReady: false,
+        firstFrameGraceExpiresAt: undefined,
+        captureAuthorization,
       });
+      this.recordBackPositioningLightEvent({
+        type: "safe_off",
+        trigger: "safety",
+        profileIdentity: this.manifest.liveLighting.backPositioning.profileIdentity,
+      });
+    }
+    if (!shouldSend) {
       this.recordLiveLightingEvent({ type: eventType, reason, ok: true });
       return;
     }
     try {
-      const writes = await this.writeLiveLightingFrames(buildLeimacIdmuSafeOffFrames(this.config.leimacUnit ?? 1));
+      const writes = await this.executeLiveLightingFrames(buildLeimacIdmuSafeOffFrames(this.config.leimacUnit ?? 1));
       this.updateLiveLightingStatus({
         status: "safe_off",
-        profile: {
-          ...this.manifest.liveLighting.profile,
-          enabled: false,
-          acceptedForCapture: this.manifest.liveLighting.profile.acceptedForCapture,
-        },
         applied: {
           enabled: false,
           dutyPercent: 0,
@@ -3581,18 +4250,52 @@ export class AiGraderLocalStationBridgeService {
       });
       this.recordLiveLightingEvent({ type: eventType, reason, ok: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Browser live lighting safe-off failed.";
+      const message = boundedBackPositioningError(
+        error instanceof Error ? error : new Error("Browser live lighting safe-off failed.")
+      ).message;
       this.updateLiveLightingStatus({
         status: "error",
         lastError: message,
         connection: { state: "error", persistentLeimacSession: false },
       });
       this.recordLiveLightingEvent({ type: eventType, reason: `${reason}: ${message}`, ok: false });
-      throw error;
+      throw new Error(message);
     }
   }
 
-  private notePreviewFrame(frameCount: number) {
+  private async safeOffAfterPreviewLoss(reason: string): Promise<void> {
+    const positioningWasActive = this.manifest.previewStatus.activeSide === "back"
+      && new Set(["restoring", "waiting_for_frame", "ready"]).has(this.manifest.liveLighting.backPositioning.status);
+    try {
+      await this.safeOffLiveLighting(reason, "safe_off");
+    } catch (error) {
+      if (positioningWasActive) {
+        const lastError = boundedBackPositioningError(
+          new Error("Back positioning light safe-off could not be confirmed after preview loss."),
+          "AI_GRADER_BACK_PREVIEW_FRAME_REQUIRED"
+        );
+        this.updateBackPositioningLight({ status: "failed", captureReady: false, lastError, captureAuthorization: undefined });
+        this.recordBackPositioningLightEvent({
+          type: "restore_failure",
+          trigger: "safety",
+          profileIdentity: this.manifest.liveLighting.backPositioning.profileIdentity,
+          error: lastError,
+        });
+      }
+    }
+    await writeSessionManifest(this.manifest);
+  }
+
+  private notePreviewFrame(
+    frameCount: number,
+    binding: { sessionId: string; side: CardGeometrySide; sideEpoch: string },
+    frameId: string
+  ) {
+    if (
+      binding.sessionId !== this.manifest.sessionId
+      || binding.side !== this.manifest.previewStatus.activeSide
+      || binding.sideEpoch !== this.manifest.previewStatus.sideEpoch
+    ) return false;
     const now = new Date().toISOString();
     const current = this.manifest.previewStatus;
     const startedMs = current.startedAt ? Date.parse(current.startedAt) : Date.now();
@@ -3601,6 +4304,10 @@ export class AiGraderLocalStationBridgeService {
       status: "live",
       cameraOwnership: "preview_stream",
       frameCount,
+      sessionId: binding.sessionId,
+      activeSide: binding.side,
+      sideEpoch: binding.sideEpoch,
+      latestFrameId: frameId,
       firstFrameAt: current.firstFrameAt ?? now,
       lastFrameAt: now,
       fps: Math.round((frameCount / elapsedSeconds) * 10) / 10,
@@ -3608,6 +4315,29 @@ export class AiGraderLocalStationBridgeService {
     if (frameCount === 1) {
       this.recordCaptureTimingEvent(this.manifest, { id: "preview_ready", at: now });
     }
+    const positioning = this.manifest.liveLighting.backPositioning;
+    if (
+      binding.side === "back"
+      && positioning.status === "waiting_for_frame"
+      && positioning.sessionId === binding.sessionId
+      && positioning.sideEpoch === binding.sideEpoch
+      && this.manifest.liveLighting.applied.enabled
+    ) {
+      this.updateBackPositioningLight({
+        status: "ready",
+        captureReady: true,
+        firstFrameGraceExpiresAt: undefined,
+        lastError: undefined,
+      });
+      this.recordBackPositioningLightEvent({
+        type: "fresh_frame_ready",
+        trigger: "preview_frame",
+        profileIdentity: positioning.profileIdentity,
+      });
+      this.scheduleLiveLightingWatchdog("fresh back preview frame");
+      void writeSessionManifest(this.manifest).catch(() => {});
+    }
+    return true;
   }
 
   private async stopPreviewStream(
@@ -3619,7 +4349,7 @@ export class AiGraderLocalStationBridgeService {
     this.previewStop?.(reason);
     this.previewStop = undefined;
     if (child) stopChildProcessTree(child);
-    const stoppedOrphans = await stopOrphanedBaslerPreviewStreamsUntilReleased(
+    const stoppedOrphans = await this.stopOrphanedPreviewStreamsUntilReleased(
       PREVIEW_RELEASE_TIMEOUT_MS,
       options.settleMs ?? PREVIEW_CAMERA_SETTLE_MS
     );
@@ -3667,22 +4397,42 @@ export class AiGraderLocalStationBridgeService {
 
   async stopPreviewForOperator(reason = "operator requested preview stop"): Promise<AiGraderLocalStationPreviewStatus> {
     await this.stopPreviewStream(reason, { waitForRelease: true, settleMs: PREVIEW_CAMERA_SETTLE_MS });
+    await this.safeOffLiveLighting("operator preview stop", "safe_off");
     this.manifest.progressLog.push(`${new Date().toISOString()} Browser preview stream stopped: ${reason}.`);
     await writeSessionManifest(this.manifest);
     return this.previewStatus();
   }
 
+  async shutdown(reason = "local bridge server closing"): Promise<void> {
+    let previewError: unknown;
+    try {
+      await this.stopPreviewStream(reason, {
+        waitForRelease: true,
+        requireRelease: true,
+        settleMs: PREVIEW_CAMERA_SETTLE_MS,
+      });
+    } catch (error) {
+      previewError = error;
+    }
+    const safeOff = await this.runTerminalSafeOff(reason);
+    this.clearLiveLightingWatchdog();
+    await writeSessionManifest(this.manifest);
+    if (previewError) throw new Error(boundedPreviewLifecycleError(previewError));
+    if (!safeOff.ok) throw new Error(safeOff.directError?.message ?? "Local bridge shutdown safe-off could not be confirmed.");
+  }
+
   private async stopPreviewForHardwareAction(action: string) {
-    await this.safeOffLiveLighting(`capture start before ${action}`, "capture_start_safe_off");
     await this.stopPreviewStream(`preview released before ${action} capture action`, {
       waitForRelease: true,
       requireRelease: true,
       settleMs: PREVIEW_CAMERA_SETTLE_MS,
-      captureOwner: true,
+    });
+    await this.safeOffLiveLighting(`capture start before ${action}`, "capture_start_safe_off", {
+      preserveBackCaptureAuthorization: action === "back",
     });
     this.manifest.warmRunnerStatus.previewPolicy.lastPausedAt = new Date().toISOString();
     this.manifest.progressLog.push(`${new Date().toISOString()} Browser preview stream paused/released before ${action}.`);
-    const stoppedOrphans = await stopOrphanedBaslerPreviewStreamsUntilReleased(PREVIEW_RELEASE_TIMEOUT_MS, PREVIEW_CAMERA_SETTLE_MS);
+    const stoppedOrphans = await this.stopOrphanedPreviewStreamsUntilReleased(PREVIEW_RELEASE_TIMEOUT_MS, PREVIEW_CAMERA_SETTLE_MS);
     if (stoppedOrphans > 0) {
       this.manifest.progressLog.push(`${new Date().toISOString()} Stopped ${stoppedOrphans} stale Basler browser preview process(es) before ${action} capture.`);
       await delay(PREVIEW_CAMERA_SETTLE_MS);
@@ -3861,8 +4611,8 @@ export class AiGraderLocalStationBridgeService {
     return result;
   }
 
-  private async runSafeOffCleanup(reason: string): Promise<void> {
-    if (this.config.mode !== "real") return;
+  private async runSafeOffCleanup(reason: string): Promise<boolean> {
+    if (this.config.mode !== "real") return true;
     const cleanupStartedAt = new Date().toISOString();
     const cleanupExecutionPath = this.manifest.executionPath;
     this.manifest.warmRunnerStatus.status = "safe_off";
@@ -3890,6 +4640,7 @@ export class AiGraderLocalStationBridgeService {
         executionPath: cleanupExecutionPath,
         detail: reason,
       });
+      return result.ok;
     } catch (error) {
       const message = error instanceof Error ? error.message : `Safe-off failed after ${reason}.`;
       this.manifest.warnings.push(message);
@@ -3902,20 +4653,57 @@ export class AiGraderLocalStationBridgeService {
         executionPath: cleanupExecutionPath,
         detail: message,
       });
+      return false;
     }
   }
 
-  private async runExplicitColdDebugSideCapture(side: AiGraderWarmRunnerSide, reason: string): Promise<AiGraderStationCommandResult> {
+  private async runTerminalSafeOff(reason: string) {
+    let directError: ReturnType<typeof boundedBackPositioningError> | undefined;
+    try {
+      await this.safeOffLiveLighting(reason, "safe_off", { force: true });
+    } catch (error) {
+      directError = boundedBackPositioningError(error);
+      this.updateBackPositioningLight({
+        status: "failed",
+        captureReady: false,
+        captureAuthorization: undefined,
+        lastError: directError,
+      });
+      this.recordBackPositioningLightEvent({
+        type: "restore_failure",
+        trigger: "safety",
+        profileIdentity: this.manifest.liveLighting.backPositioning.profileIdentity,
+        error: directError,
+      });
+      if (!this.manifest.warnings.includes(directError.message)) this.manifest.warnings.push(directError.message);
+    }
+    const guardedCleanupOk = await this.runSafeOffCleanup(reason);
+    return {
+      ok: !directError || guardedCleanupOk,
+      directError,
+      guardedCleanupOk,
+    };
+  }
+
+  private async runExplicitColdDebugSideCapture(
+    side: AiGraderWarmRunnerSide,
+    reason: string,
+    backAuthorization?: NonNullable<AiGraderBackPositioningLightStatus["captureAuthorization"]>
+  ): Promise<AiGraderStationCommandResult> {
     const stepId = side === "front" ? "capture_front" : "capture_back";
     const owner = `cold-debug-${stepId}`;
     const phaseId = `capture_${side}`;
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
     this.activateFullForensicPreviewHold(`${side} explicit cold debug full forensic capture starting`);
     this.setExecutionPath("cold_command_fallback", reason);
-    this.acquireCaptureLock(owner);
     let phase: AiGraderWarmRunnerPhase | undefined;
     try {
       await this.stopPreviewForHardwareAction(side);
+      if (side === "back") {
+        this.assertBackCaptureAuthorization(backAuthorization);
+        this.updateBackPositioningLight({ captureAuthorization: undefined });
+      }
+      this.acquireCaptureLock(owner);
       this.updateEvidenceRoles(side, "active");
       phase = this.markWarmPhase({
         id: phaseId,
@@ -3982,17 +4770,33 @@ export class AiGraderLocalStationBridgeService {
       this.manifest.warmRunnerStatus.status = "processing";
       return result;
     } catch (error) {
+      if (
+        side === "back"
+        && !this.captureLock
+        && error instanceof Error
+        && /Back Capture authorization/i.test(error.message)
+      ) {
+        this.manifest.currentStep = "prompt_flip_card";
+        this.manifest.confirmations.flipComplete = false;
+        this.updateBackPositioningLight({ captureAuthorization: undefined, captureReady: false });
+        this.releaseFullForensicPreviewHold("back capture authorization expired before camera ownership");
+        await writeSessionManifest(this.manifest);
+        throw error;
+      }
       this.manifest.warmRunnerStatus.status = "failed";
       await this.runSafeOffCleanup(`${side} explicit cold debug capture failure`);
       this.manifest.warmRunnerStatus.status = "failed";
       this.releaseFullForensicPreviewHold(`${side} explicit cold debug capture failed after safe-off cleanup`);
       throw error;
     } finally {
-      this.releaseCaptureLock(owner);
+      if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
     }
   }
 
-  private async runWarmSideCapture(side: AiGraderWarmRunnerSide): Promise<AiGraderStationCommandResult> {
+  private async runWarmSideCapture(
+    side: AiGraderWarmRunnerSide,
+    backAuthorization?: NonNullable<AiGraderBackPositioningLightStatus["captureAuthorization"]>
+  ): Promise<AiGraderStationCommandResult> {
     const sessionManifest = this.manifest;
     const stepId = side === "front" ? "capture_front" : "capture_back";
     const owner = `warm-${stepId}`;
@@ -4000,13 +4804,17 @@ export class AiGraderLocalStationBridgeService {
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
     this.activateFullForensicPreviewHold(`${side} warm full forensic capture starting`);
     if (this.config.warmRunnerDisabled) {
-      return this.runExplicitColdDebugSideCapture(side, "Warm runner disabled by explicit debug flag.");
+      return this.runExplicitColdDebugSideCapture(side, "Warm runner disabled by explicit debug flag.", backAuthorization);
     }
-    this.acquireCaptureLock(owner);
     const captureStartedAtMs = Date.now();
     let phase: AiGraderWarmRunnerPhase | undefined;
     try {
       await this.stopPreviewForHardwareAction(side);
+      if (side === "back") {
+        this.assertBackCaptureAuthorization(backAuthorization);
+        this.updateBackPositioningLight({ captureAuthorization: undefined });
+      }
+      this.acquireCaptureLock(owner);
       this.setExecutionPath("warm_full_forensic_runner", undefined, sessionManifest);
       this.updateEvidenceRoles(side, "active", sessionManifest);
       phase = this.markWarmPhase({
@@ -4163,6 +4971,20 @@ export class AiGraderLocalStationBridgeService {
         };
         if (!sessionManifest.warnings.includes(message)) sessionManifest.warnings.push(message);
         this.transitionRapidWorkflow(sessionManifest, "failed", message);
+        if (sessionManifest === this.manifest) {
+          await this.safeOffLiveLighting(`${side} processing failure`, "failure_safe_off").catch(() => {});
+          await this.stopPreviewStream(`${side} processing failure released preview`, {
+            waitForRelease: true,
+            settleMs: PREVIEW_CAMERA_SETTLE_MS,
+          }).catch(() => {});
+          this.updatePreviewStatus({
+            status: "error",
+            cameraOwnership: "released",
+            positioningLightReady: false,
+            lastError: boundedBackPositioningError(error).message,
+            lastStopReason: `${side} processing failed; preview and positioning light were released.`,
+          });
+        }
         await writeSessionManifest(sessionManifest);
         await this.syncQueuedManifest(sessionManifest);
         throw error;
@@ -4188,6 +5010,15 @@ export class AiGraderLocalStationBridgeService {
     } catch (error) {
       const failedAt = new Date().toISOString();
       const message = error instanceof Error ? error.message : `${side} warm capture failed.`;
+      if (side === "back" && !this.captureLock && /Back Capture authorization/i.test(message)) {
+        sessionManifest.currentStep = "prompt_flip_card";
+        sessionManifest.confirmations.flipComplete = false;
+        this.updateBackPositioningLight({ captureAuthorization: undefined, captureReady: false });
+        this.releaseFullForensicPreviewHold("back capture authorization expired before camera ownership");
+        sessionManifest.progressLog.push(`${failedAt} Back capture authorization expired before camera ownership; front evidence remains preserved and positioning retry is required.`);
+        await writeSessionManifest(sessionManifest);
+        throw error;
+      }
       sessionManifest.warmRunnerStatus.status = "failed";
       this.updateEvidenceRoles(side, "failed", sessionManifest);
       this.markWarmPhase({
@@ -4316,6 +5147,26 @@ export class AiGraderLocalStationBridgeService {
       );
       return Promise.resolve();
     }
+    if (!this.manifest.sessionId) {
+      this.updatePreviewStatus({
+        status: "stopped",
+        cameraOwnership: "released",
+        lastStopReason: "A session-bound preview requires an active station session.",
+      });
+      sendJson(
+        res,
+        409,
+        {
+          ok: false,
+          code: "AI_GRADER_PREVIEW_SESSION_REQUIRED",
+          message: "Start a station session before opening the session-bound preview.",
+          result: this.previewStatus(),
+        },
+        origin,
+        this.config
+      );
+      return Promise.resolve();
+    }
     if (this.captureLock) {
       this.updatePreviewStatus({
         status: "paused_for_capture",
@@ -4364,6 +5215,13 @@ export class AiGraderLocalStationBridgeService {
     }
     await this.stopPreviewStream("new preview stream requested", { waitForRelease: true, settleMs: 100 });
     const previewStartedAt = new Date().toISOString();
+    const binding = {
+      sessionId: this.manifest.sessionId,
+      side: this.manifest.previewStatus.activeSide,
+      sideEpoch: this.manifest.previewStatus.sideEpoch,
+    };
+    const streamSequence = ++this.previewStreamSequence;
+    const streamId = `stream-${streamSequence}-${binding.sideEpoch}`;
     this.updatePreviewStatus({
       status: "starting",
       implementationType: this.config.mode === "real" ? "mjpeg_fetch_stream" : "mock_mjpeg_stream",
@@ -4376,6 +5234,11 @@ export class AiGraderLocalStationBridgeService {
       cameraOwnership: this.config.mode === "real" ? "preview_stream" : "idle",
       frameSource: this.config.mode === "real" ? "basler_pylon_continuous_grab" : "mock_station_preview",
       frameCount: 0,
+      sessionId: binding.sessionId,
+      activeSide: binding.side,
+      sideEpoch: binding.sideEpoch,
+      latestFrameId: undefined,
+      positioningLightReady: this.manifest.liveLighting.backPositioning.captureReady,
       fps: undefined,
       startedAt: previewStartedAt,
       firstFrameAt: undefined,
@@ -4384,7 +5247,7 @@ export class AiGraderLocalStationBridgeService {
       lastStopReason: undefined,
     });
     this.recordCaptureTimingEvent(this.manifest, { id: "preview_stream_started", at: previewStartedAt });
-    setMjpegHeaders(res, origin, this.config);
+    setMjpegHeaders(res, origin, this.config, binding, streamId);
 
     return new Promise<void>((resolve) => {
       let settled = false;
@@ -4404,6 +5267,14 @@ export class AiGraderLocalStationBridgeService {
           cameraOwnership: "released",
           lastStopReason: reason,
         });
+        if (
+          reason.startsWith("browser preview")
+          || reason.startsWith("preview process")
+          || reason === "preview start error"
+          || reason === "preview epoch replaced"
+        ) {
+          void this.safeOffAfterPreviewLoss("preview loss").catch(() => {});
+        }
         try {
           if (!res.destroyed) res.end();
         } catch {}
@@ -4417,11 +5288,20 @@ export class AiGraderLocalStationBridgeService {
         let frameCount = 0;
         const send = () => {
           if (settled || res.destroyed) return;
+          if (
+            binding.sessionId !== this.manifest.sessionId
+            || binding.side !== this.manifest.previewStatus.activeSide
+            || binding.sideEpoch !== this.manifest.previewStatus.sideEpoch
+          ) {
+            finish("preview epoch replaced");
+            return;
+          }
           frameCount += 1;
           const generatedAt = new Date().toISOString();
-          writeMjpegFrame(res, "image/svg+xml", mockPreviewSvg(frameCount, generatedAt), frameCount);
-          this.notePreviewFrame(frameCount);
-          this.noteMockPreviewGeometry(frameCount);
+          const frameId = `frame-${streamSequence}-${frameCount}`;
+          writeMjpegFrame(res, "image/svg+xml", mockPreviewSvg(frameCount, generatedAt), frameCount, generatedAt, binding, frameId);
+          this.notePreviewFrame(frameCount, binding, frameId);
+          this.noteMockPreviewGeometry(frameCount, frameId);
         };
         send();
         mockPreviewTimer = setInterval(send, 250);
@@ -4448,26 +5328,43 @@ export class AiGraderLocalStationBridgeService {
         const jpegFrames = new AiGraderPreviewJpegFrameAssembler();
         child.stdout.on("data", (chunk: Buffer) => {
           if (settled || res.destroyed) return;
-          // Forward bytes immediately. JPEG assembly and Sharp analysis happen
-          // afterward and are never awaited from the stream callback.
-          res.write(chunk);
           for (const frame of jpegFrames.pushWithMetadata(chunk)) {
+            if (
+              binding.sessionId !== this.manifest.sessionId
+              || binding.side !== this.manifest.previewStatus.activeSide
+              || binding.sideEpoch !== this.manifest.previewStatus.sideEpoch
+            ) {
+              finish("preview epoch replaced");
+              return;
+            }
             frameCount += 1;
-            this.notePreviewFrame(frameCount);
+            const frameId = `frame-${streamSequence}-${frame.frameIndex ?? frameCount}`;
+            writeMjpegFrame(
+              res,
+              "image/jpeg",
+              frame.bytes,
+              frame.frameIndex ?? frameCount,
+              frame.capturedAt ?? frame.receivedAt,
+              binding,
+              frameId
+            );
+            this.notePreviewFrame(frameCount, binding, frameId);
             this.queuePreviewGeometryAnalysis(
               frame.bytes,
               frame.frameIndex ?? frameCount,
               frame.capturedAt ?? frame.receivedAt,
-              frame.timestampSource
+              frame.timestampSource,
+              frameId,
+              binding
             );
           }
         });
         child.stderr.on("data", (chunk: Buffer) => {
           const text = chunk.toString("utf-8").trim();
-          if (text) this.updatePreviewStatus({ lastError: text.slice(0, 500) });
+          if (text) this.updatePreviewStatus({ lastError: boundedPreviewLifecycleError(text) });
         });
         child.on("error", (error) => {
-          this.updatePreviewStatus({ status: "error", lastError: error.message, cameraOwnership: "released" });
+          this.updatePreviewStatus({ status: "error", lastError: boundedPreviewLifecycleError(error), cameraOwnership: "released" });
           finish("preview process error");
         });
         child.on("close", (code) => {
@@ -4486,7 +5383,7 @@ export class AiGraderLocalStationBridgeService {
         this.updatePreviewStatus({
           status: "error",
           cameraOwnership: "released",
-          lastError: error instanceof Error ? error.message : "Preview stream failed to start.",
+          lastError: boundedPreviewLifecycleError(error),
         });
         finish("preview start error");
       }
@@ -4988,6 +5885,9 @@ export class AiGraderLocalStationBridgeService {
     }
 
     if (action === "accept-profile") {
+      if (this.manifest.outputs.frontPackageDir || this.manifest.currentStep === "prompt_flip_card" || this.manifest.currentStep === "capture_back") {
+        throw new Error("Capture profile changes are disabled after front evidence is persisted; start a new session to accept a different profile.");
+      }
       this.manifest.acceptedProfile = validateProfile(request.acceptedProfile, this.manifest.acceptedProfile);
       this.manifest.currentStep = "capture_front";
       this.manifest.progressLog.push(`${now} Accepted profile ${this.manifest.acceptedProfile.dutyPercent}% / ${this.manifest.acceptedProfile.exposureUs} us.`);
@@ -4996,6 +5896,7 @@ export class AiGraderLocalStationBridgeService {
     }
 
     if (action === "confirm-flip") {
+      this.authorizeBackCapture();
       this.manifest.confirmations.flipComplete = true;
       this.manifest.currentStep = "capture_back";
       this.refreshPreviewGeometryActiveSide();
@@ -5010,8 +5911,7 @@ export class AiGraderLocalStationBridgeService {
     }
 
     if (action === "cancel-session") {
-      await this.safeOffLiveLighting("station cancellation", "safe_off");
-      await this.runSafeOffCleanup("station cancellation");
+      const safeOff = await this.runTerminalSafeOff("station cancellation");
       this.releaseFullForensicPreviewHold("station cancellation completed");
       this.manifest.currentStep = "safe_off_end_session";
       this.manifest.warmRunnerStatus.status = "cancelled";
@@ -5025,17 +5925,18 @@ export class AiGraderLocalStationBridgeService {
       });
       this.manifest.progressLog.push(`${now} Station session cancelled.`);
       await writeSessionManifest(this.manifest);
+      if (!safeOff.ok) throw new Error(safeOff.directError?.message ?? "Station cancellation safe-off could not be confirmed.");
       return this.status();
     }
 
     if (action === "end-session") {
-      await this.safeOffLiveLighting("station session end", "safe_off");
-      await this.runSafeOffCleanup("station session end");
+      const safeOff = await this.runTerminalSafeOff("station session end");
       this.releaseFullForensicPreviewHold("station session end completed");
       this.manifest.currentStep = "safe_off_end_session";
       this.manifest.warmRunnerStatus.status = "complete";
       this.manifest.progressLog.push(`${now} Station session ended.`);
       await writeSessionManifest(this.manifest);
+      if (!safeOff.ok) throw new Error(safeOff.directError?.message ?? "Station session-end safe-off could not be confirmed.");
       return this.status();
     }
 
@@ -5113,7 +6014,7 @@ export class AiGraderLocalStationBridgeService {
         return this.status();
       }
       this.manifest.currentStep = "prompt_flip_card";
-      this.refreshPreviewGeometryActiveSide();
+      this.transitionPreviewSide("back", { preserveFrontGeometry: true });
       this.releaseFullForensicPreviewHold("front capture complete; operator can position back with live preview");
       this.transitionRapidWorkflow(this.manifest, "front_captured", "Front raw evidence package is safely persisted.");
       this.transitionRapidWorkflow(this.manifest, "front_processing", "Front artifact processing started while the operator flips the card.");
@@ -5121,13 +6022,42 @@ export class AiGraderLocalStationBridgeService {
       this.recordCaptureTimingEvent(this.manifest, { id: "back_positioning_started", side: "back" });
       this.manifest.progressLog.push(`${now} Front evidence captured with warm-runner orchestration.`);
       await writeSessionManifest(this.manifest);
+      try {
+        await this.restoreBackPositioningLight("front_capture");
+      } catch (error) {
+        const lastError = boundedBackPositioningError(error);
+        try {
+          await this.safeOffLiveLighting("back positioning automatic restore failure", "failure_safe_off", { force: true });
+        } catch {}
+        this.updateBackPositioningLight({ status: "failed", captureReady: false, lastError });
+        this.recordBackPositioningLightEvent({
+          type: "restore_failure",
+          trigger: "front_capture",
+          profileIdentity: this.manifest.liveLighting.backPositioning.profileIdentity,
+          error: lastError,
+        });
+        await writeSessionManifest(this.manifest);
+      }
       return this.status();
     }
 
     if (action === "capture-back") {
       assertFixtureVisible(this.manifest);
       assertFlipComplete(this.manifest);
+      const backAuthorization = this.manifest.liveLighting.backPositioning.captureAuthorization;
       const captureTriggerAt = validatedCaptureTriggerAt(request.captureTriggerAt, now);
+      try {
+        this.assertBackCaptureAuthorization(backAuthorization, {
+          requireFreshLiveFrame: true,
+          geometryCaptureMode: request.geometryCaptureMode ?? "detected_geometry",
+        });
+      } catch (error) {
+        this.manifest.currentStep = "prompt_flip_card";
+        this.manifest.confirmations.flipComplete = false;
+        this.updateBackPositioningLight({ captureAuthorization: undefined, captureReady: false });
+        await writeSessionManifest(this.manifest);
+        throw error;
+      }
       this.recordGeometryCaptureDecision(this.manifest, "back", request, captureTriggerAt);
       this.recordCaptureTimingEvent(this.manifest, {
         id: "capture_trigger",
@@ -5135,7 +6065,7 @@ export class AiGraderLocalStationBridgeService {
         triggerMode: parseCaptureTriggerMode(request.captureTriggerMode),
         at: captureTriggerAt,
       });
-      const result = await this.runWarmSideCapture("back");
+      const result = await this.runWarmSideCapture("back", backAuthorization);
       this.manifest.outputs.backPackageDir = extractPackageDir(result.payload);
       if (this.manifest.rapidCapture.workflowState === "failed") {
         this.manifest.progressLog.push(`${new Date().toISOString()} Back raw capture completed, but processing failed; report finalization was not started.`);
@@ -5278,6 +6208,10 @@ function setCors(res: http.ServerResponse, origin: string | undefined, config: A
   }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "content-type,x-ai-grader-station-token");
+  res.setHeader(
+    "Access-Control-Expose-Headers",
+    "x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-frame-id"
+  );
   res.setHeader("Access-Control-Allow-Private-Network", "true");
   res.setHeader("Access-Control-Max-Age", "600");
 }
@@ -5501,6 +6435,20 @@ export function createAiGraderLocalStationBridgeHttpServer(
         return sendJson(res, 200, { ok: true, operation: "lighting-heartbeat", result: await service.heartbeatLiveLighting(reason) }, origin, config);
       }
 
+      if (url.pathname === "/lighting/retry-back-positioning") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for /lighting/retry-back-positioning." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        if (Object.keys(body).length !== 0) {
+          throw new Error("Back-positioning retry accepts no browser hardware, profile, host, path, channel, duty, or reason parameters.");
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "lighting-retry-back-positioning",
+          result: await service.retryBackPositioningLight(),
+        }, origin, config);
+      }
+
       const reportBundleMatch = url.pathname.match(/^\/reports\/([^/]+)\/bundle$/);
       if (reportBundleMatch) {
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for report bundles." }, origin, config);
@@ -5573,9 +6521,27 @@ export function createAiGraderLocalStationBridgeHttpServer(
       return sendJson(res, 400, { ok: false, code: "AI_GRADER_STATION_BRIDGE_ERROR", message }, origin, config);
     }
   });
-  server.on("close", () => {
-    void service.safeOffLiveLightingForOperator("local bridge server closing").catch(() => {});
-  });
+  let shutdownPromise: Promise<void> | undefined;
+  const beginShutdown = () => shutdownPromise ??= service.shutdown("local bridge server closing");
+  const originalClose = server.close.bind(server);
+  server.close = ((callback?: (error?: Error) => void) => {
+    let resolveServerClose!: (error?: Error) => void;
+    const serverClosed = new Promise<Error | undefined>((resolve) => {
+      resolveServerClose = resolve;
+    });
+    const result = originalClose((error?: Error) => resolveServerClose(error));
+    const cleanup = beginShutdown();
+    void serverClosed.then(async (serverError) => {
+      let cleanupError: Error | undefined;
+      try {
+        await cleanup;
+      } catch (error) {
+        cleanupError = error instanceof Error ? error : new Error("Local bridge shutdown cleanup failed.");
+      }
+      callback?.(serverError ?? cleanupError);
+    });
+    return result;
+  }) as typeof server.close;
   return server;
 }
 

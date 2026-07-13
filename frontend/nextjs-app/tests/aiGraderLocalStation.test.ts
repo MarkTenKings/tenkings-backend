@@ -6147,7 +6147,7 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("backPositioningActive"), true);
   assert.equal(stationSource.includes('busy === "back"'), false);
   assert.equal(stationSource.includes('busy === "capture-back"'), true);
-  assert.equal(stationSource.includes("Live Preview Is Active"), true);
+  assert.equal(stationSource.includes("Starting Back Preview"), true);
   assert.equal(stationSource.includes("Capture Back"), true);
   assert.equal(stationSource.includes("selectedFinishItem.slabPhotos.frontUploaded"), true);
   assert.equal(stationSource.includes("setSlabUploads({"), true);

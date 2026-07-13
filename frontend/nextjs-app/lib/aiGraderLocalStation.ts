@@ -955,6 +955,8 @@ export type AiGraderPreviewCardGeometrySummary = {
   rotationDegrees: number | null;
   skewDegrees: number | null;
   confidence: number;
+  sessionId?: string;
+  sideEpoch?: string;
   sourceFrameId?: string;
   timestamp?: string;
   image?: {
@@ -1072,6 +1074,8 @@ export function sanitizeAiGraderPreviewCardGeometry(
   const rotationDegrees = previewGeometryNumber(value.rotationDegrees) ?? null;
   const skewDegrees = previewGeometryNumber(value.skewDegrees) ?? null;
   const confidenceValue = previewGeometryNumber(value.confidence) ?? 0;
+  const sessionId = sanitizePreviewGeometrySourceFrameId(value.sessionId);
+  const sideEpoch = sanitizePreviewGeometrySourceFrameId(value.sideEpoch);
   const sourceFrameId = sanitizePreviewGeometrySourceFrameId(value.sourceFrameId);
   const timestamp = sanitizePreviewGeometryTimestamp(value.timestamp);
   const imageRecord = previewGeometryRecord(value.image) ? value.image : undefined;
@@ -1097,6 +1101,8 @@ export function sanitizeAiGraderPreviewCardGeometry(
     rotationDegrees,
     skewDegrees,
     confidence: Math.max(0, Math.min(1, confidenceValue)),
+    ...(sessionId ? { sessionId } : {}),
+    ...(sideEpoch ? { sideEpoch } : {}),
     ...(sourceFrameId ? { sourceFrameId } : {}),
     ...(timestamp ? { timestamp } : {}),
     ...(image ? { image } : {}),
@@ -1128,6 +1134,11 @@ export type AiGraderLocalStationPreviewStatus = {
   cameraOwnership: "idle" | "preview_stream" | "capture_action" | "released";
   frameSource: "basler_pylon_continuous_grab" | "mock_station_preview" | "native_pylon_window";
   frameCount: number;
+  sessionId?: string;
+  activeSide?: AiGraderPreviewGeometrySide;
+  sideEpoch?: string;
+  latestFrameId?: string;
+  positioningLightReady?: boolean;
   cardGeometry?: AiGraderPreviewCardGeometryBySide;
   fps?: number;
   startedAt?: string;
@@ -1181,6 +1192,29 @@ export type AiGraderLiveLightingStatus = {
   connection: {
     state: "mock" | "not_configured" | "idle" | "writing" | "error";
     persistentLeimacSession: false;
+  };
+  backPositioning?: {
+    status: "inactive" | "restoring" | "waiting_for_frame" | "ready" | "failed" | "safe_off";
+    captureReady: boolean;
+    sessionId?: string;
+    side: "back";
+    sideEpoch: string;
+    profileIdentity?: string;
+    dutyPercent?: number;
+    actualLeimacPwmStep?: number;
+    channels?: number[];
+    attemptCount: number;
+    firstFrameGraceMs: number;
+    firstFrameGraceExpiresAt?: string;
+    lastAttempt?: "front_capture" | "operator_retry";
+    lastError?: { code: string; message: string };
+    events: Array<{
+      at: string;
+      type: "restore_starting" | "restore_success" | "restore_failure" | "fresh_frame_ready" | "safe_off";
+      trigger: "front_capture" | "operator_retry" | "preview_frame" | "safety";
+      profileIdentity?: string;
+      error?: { code: string; message: string };
+    }>;
   };
   safety: {
     publicRouteExposed: false;

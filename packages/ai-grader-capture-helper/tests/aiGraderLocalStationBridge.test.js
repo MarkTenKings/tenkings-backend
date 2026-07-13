@@ -22,6 +22,16 @@ const {
   readAiGraderReportPackageReleaseEvidence,
 } = require("../dist/drivers/aiGraderReportPackageRecovery");
 const { runCaptureHelperCli } = require("../dist/cli");
+
+// Unit tests must never contact the configured Dell/Leimac endpoint. Individual
+// failure tests can replace this per service instance with a deterministic throw.
+AiGraderLocalStationBridgeService.prototype.writeLiveLightingFrames = async function (frames) {
+  return frames.map(() => ({ responseKind: "mock", ok: true }));
+};
+AiGraderLocalStationBridgeService.prototype.stopOrphanedPreviewStreamsUntilReleased = async function () {
+  return 0;
+};
+
 const PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
@@ -379,8 +389,11 @@ function manualCaptureRequest(overrides = {}) {
 }
 
 function markReadyGeometry(service, side) {
+  const status = service.status();
   service.manifest.previewStatus.cardGeometry[side] = {
     side,
+    sessionId: status.sessionId,
+    sideEpoch: status.previewStatus.sideEpoch,
     placementState: "ready",
     geometrySource: "detected",
     detectionUsed: true,
@@ -398,9 +411,35 @@ function markReadyGeometry(service, side) {
       bottomLeft: { x: 100, y: 1500 },
     },
     boundingBox: { x: 100, y: 100, width: 1000, height: 1400 },
-    sourceFrameId: `test-${side}-ready`,
+    sourceFrameId: side === "back" && status.previewStatus.latestFrameId
+      ? status.previewStatus.latestFrameId
+      : `test-${side}-ready`,
     timestamp: new Date().toISOString(),
   };
+}
+
+function noteFreshBackPreviewFrame(service, frameIndex = 1) {
+  const status = service.status();
+  assert.equal(status.previewStatus.activeSide, "back");
+  assert.ok(status.sessionId);
+  const frameId = `test-back-frame-${frameIndex}`;
+  const accepted = service.notePreviewFrame(frameIndex, {
+    sessionId: status.sessionId,
+    side: "back",
+    sideEpoch: status.previewStatus.sideEpoch,
+  }, frameId);
+  assert.equal(accepted, true);
+  assert.equal(service.status().previewStatus.positioningLightReady, true);
+  return frameId;
+}
+
+async function prepareBackPositioning(service) {
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await service.action("capture-front", manualCaptureRequest());
+  noteFreshBackPreviewFrame(service);
+  return service.status();
 }
 
 function deferred() {
@@ -500,9 +539,14 @@ test("preview geometry timestamps the result from the frame header instead of de
   `);
   const jpeg = await sharp(svg).jpeg({ quality: 90 }).toBuffer();
   const capturedAt = new Date(Date.now() - 250).toISOString();
-  service.queuePreviewGeometryAnalysis(jpeg, 42, capturedAt, "preview_capture_header");
+  const binding = {
+    sessionId: service.status().sessionId,
+    side: "front",
+    sideEpoch: service.status().previewStatus.sideEpoch,
+  };
+  service.queuePreviewGeometryAnalysis(jpeg, 42, capturedAt, "preview_capture_header", "test-front-frame-42", binding);
   const status = await waitFor(
-    () => service.status().previewStatus.cardGeometry.front?.sourceFrameId === "preview-front-42"
+    () => service.status().previewStatus.cardGeometry.front?.sourceFrameId === "test-front-frame-42"
       ? service.status()
       : undefined,
     "preview geometry did not analyze the synthetic captured-at frame"
@@ -613,7 +657,7 @@ test("station bridge HTTP health and pairing support production web auto-connect
     assert.equal(health.headers.get("access-control-allow-origin"), "https://collect.tenkings.co");
     assert.equal(health.headers.get("access-control-allow-private-network"), "true");
     const healthBody = await health.json();
-    assert.equal(healthBody.bridgeVersion, "ai-grader-local-station-bridge-v0.6");
+    assert.equal(healthBody.bridgeVersion, "ai-grader-local-station-bridge-v0.7");
     assert.equal(healthBody.reportProducerContractVersion, "ai-grader-report-producer-v0.2");
     assert.equal(healthBody.pairingAvailable, true);
     assert.equal(healthBody.tokenRequired, true);
@@ -696,6 +740,18 @@ test("station bridge preview status and stream are token-gated and local-only", 
     });
     assert.equal(unauthorizedStop.status, 401);
     await unauthorizedStop.text();
+
+    const startSession = await fetch(`${started.url}/actions/start-session`, {
+      method: "POST",
+      headers: {
+        Origin: "https://collect.tenkings.co",
+        "x-ai-grader-station-token": "local-station-token-456",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ captureProfile: "full_forensic" }),
+    });
+    assert.equal(startSession.status, 200);
+    await startSession.text();
 
     const streamChunk = await new Promise((resolve, reject) => {
       let settled = false;
@@ -1196,6 +1252,7 @@ test("mock station bridge runs staged workflow without claiming hardware", async
   assert.equal(status.captureTiming.events.find((event) => event.id === "capture_trigger" && event.side === "front")?.triggerMode, "operator");
   await assert.rejects(() => service.action("capture-back"), /flip/);
 
+  noteFreshBackPreviewFrame(service);
   status = await service.action("confirm-flip", { confirmations: { flipComplete: true } });
   assert.equal(status.confirmations.flipComplete, true);
   markReadyGeometry(service, "back");
@@ -1589,7 +1646,7 @@ test("tampered promoted assets restore the last committed backup before rebuildi
   assert.equal(fs.readFileSync(imageAsset.localPath).equals(Buffer.alloc(imageAsset.byteSize, 0)), false);
 });
 
-test("browser live lighting safe-offs on capture start and records safety event", async () => {
+test("browser live lighting safe-offs before front capture and only then restores accepted back positioning", async () => {
   const service = new AiGraderLocalStationBridgeService(mockConfig({
     outputDir: outputDir(`lighting-capture-safeoff-${Date.now()}`),
   }));
@@ -1601,10 +1658,16 @@ test("browser live lighting safe-offs on capture start and records safety event"
   await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
   const status = await service.action("capture-front", manualCaptureRequest());
 
-  assert.equal(status.liveLighting.applied.enabled, false);
+  assert.equal(status.liveLighting.applied.enabled, true);
+  assert.equal(status.liveLighting.backPositioning.status, "waiting_for_frame");
+  assert.equal(status.liveLighting.backPositioning.captureReady, false);
   assert.equal(status.liveLighting.safetyEvents.some((event) => event.type === "capture_start_safe_off" && event.ok), true);
+  assert.deepEqual(
+    status.liveLighting.backPositioning.events.slice(0, 2).map((event) => event.type),
+    ["restore_starting", "restore_success"]
+  );
   const sessionManifest = JSON.parse(fs.readFileSync(status.outputs.manifestPath, "utf8"));
-  assert.equal(sessionManifest.liveLighting.applied.enabled, false);
+  assert.equal(sessionManifest.liveLighting.applied.enabled, true);
   assert.equal(sessionManifest.liveLighting.safetyEvents.some((event) => event.type === "capture_start_safe_off"), true);
 });
 
@@ -1640,6 +1703,526 @@ test("accepted browser live lighting profile is passed to warm capture", async (
   assert.equal(warm.calls[0].input.activeLightingProfile.profileSource, "browser_live_tuning");
   assert.equal(warm.calls[0].input.activeLightingProfile.selectedDutyPercent, 1.7);
   assert.deepEqual(warm.calls[0].input.activeLightingProfile.selectedChannels, [2, 4, 6, 8]);
+});
+
+test("front capture safe-offs before lock and restores only the exact durably persisted accepted profile after release", async () => {
+  const dir = outputDir(`positioning-order-${Date.now()}`);
+  let service;
+  const writes = [];
+  const warm = makeFakeWarmRunner({
+    onCaptureStarted() {
+      const duringCapture = service.status();
+      assert.equal(duringCapture.warmRunnerStatus.captureLock.held, true);
+      assert.equal(duringCapture.liveLighting.applied.enabled, false);
+      assert.equal(duringCapture.previewStatus.cameraOwnership, "capture_action");
+    },
+  });
+  service = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: dir }),
+    { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } },
+    warm.runner
+  );
+  service.writeLiveLightingFrames = async (frames) => {
+    const snapshot = service.status();
+    writes.push({ frames, snapshot });
+    if (snapshot.currentStep === "prompt_flip_card" && frames.length > 3) {
+      assert.equal(snapshot.warmRunnerStatus.captureLock.held, false);
+      assert.equal(snapshot.warmRunnerStatus.previewPolicy.holdActive, false);
+      assert.ok(snapshot.outputs.frontPackageDir);
+      const persisted = JSON.parse(fs.readFileSync(snapshot.outputs.manifestPath, "utf8"));
+      assert.equal(persisted.currentStep, "prompt_flip_card");
+      assert.equal(persisted.outputs.frontPackageDir, snapshot.outputs.frontPackageDir);
+      assert.equal(persisted.warmRunnerStatus.captureLock.held, false);
+      assert.equal(persisted.warmRunnerStatus.previewPolicy.holdActive, false);
+      assert.equal(persisted.liveLighting.backPositioning.status, "restoring");
+    }
+    return frames.map(() => ({ responseKind: "mock", ok: true }));
+  };
+
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.applyLiveLighting({ enabled: true, dutyPercent: 5, channels: [8, 2, 4] });
+  await service.acceptLiveLightingForCapture({ dutyPercent: 5, channels: [8, 2, 4], exposureUs: 47000, gain: 0 });
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  const status = await service.action("capture-front", manualCaptureRequest());
+
+  assert.equal(status.currentStep, "prompt_flip_card");
+  assert.equal(status.liveLighting.backPositioning.status, "waiting_for_frame");
+  assert.equal(status.liveLighting.backPositioning.dutyPercent, 5);
+  assert.equal(status.liveLighting.backPositioning.actualLeimacPwmStep, 50);
+  assert.deepEqual(status.liveLighting.backPositioning.channels, [2, 4, 8]);
+  assert.equal(status.liveLighting.applied.dutyPercent, 5);
+  assert.deepEqual(status.liveLighting.applied.channels, [2, 4, 8]);
+  assert.match(status.liveLighting.backPositioning.profileIdentity, /^accepted-[a-f0-9]{16}$/);
+  assert.deepEqual(
+    status.liveLighting.backPositioning.events.slice(-2).map((event) => event.type),
+    ["restore_starting", "restore_success"]
+  );
+  assert.ok(writes.some((entry) => entry.snapshot.currentStep === "prompt_flip_card"));
+  noteFreshBackPreviewFrame(service);
+  await service.action("confirm-flip", { confirmations: { flipComplete: true } });
+  const back = await service.action("capture-back", manualCaptureRequest());
+  assert.equal(back.sessionManifest.backCaptured, true);
+  assert.equal(back.liveLighting.applied.enabled, false);
+  assert.equal(back.liveLighting.backPositioning.captureAuthorization, undefined);
+});
+
+test("failed front never restores; restore failure preserves front and retry is guarded, bounded, and idempotent", async () => {
+  const runner = { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } };
+  const failedWarm = makeFakeWarmRunner({ captureError: new Error("front capture failed") });
+  const failed = new AiGraderLocalStationBridgeService(realConfig({
+    outputDir: outputDir(`front-no-restore-${Date.now()}`),
+  }), runner, failedWarm.runner);
+  let failedWrites = 0;
+  failed.writeLiveLightingFrames = async (frames) => {
+    failedWrites += 1;
+    return frames.map(() => ({ responseKind: "mock", ok: true }));
+  };
+  await failed.action("start-session", { captureProfile: "full_forensic" });
+  await failed.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await failed.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await assert.rejects(() => failed.action("capture-front", manualCaptureRequest()), /front capture failed/);
+  assert.equal(failed.status().outputs.frontPackageDir, undefined);
+  assert.equal(failed.status().liveLighting.backPositioning.attemptCount, 0);
+  assert.equal(failed.status().liveLighting.backPositioning.events.some((event) => event.type.startsWith("restore_")), false);
+  assert.equal(failedWrites, 0);
+
+  const service = new AiGraderLocalStationBridgeService(realConfig({
+    outputDir: outputDir(`restore-failure-${Date.now()}`),
+  }), runner, makeFakeWarmRunner().runner);
+  let failRestore = true;
+  let restoreWrites = 0;
+  service.writeLiveLightingFrames = async (frames) => {
+    const isRestore = frames.length > 3;
+    if (isRestore) {
+      restoreWrites += 1;
+      if (failRestore) {
+        throw new Error("Timed out at http://169.254.191.156/C:\\private\\profile.json token=do-not-log");
+      }
+    }
+    return frames.map(() => ({ responseKind: "mock", ok: true }));
+  };
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.action("accept-profile", {
+    acceptedProfile: { dutyPercent: 1.7, exposureUs: 46000, gain: 0, channels: [2, 4, 6, 8] },
+  });
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  const front = await service.action("capture-front", manualCaptureRequest());
+  assert.ok(front.outputs.frontPackageDir);
+  assert.equal(front.currentStep, "prompt_flip_card");
+  assert.equal(front.liveLighting.applied.enabled, false);
+  assert.equal(front.liveLighting.backPositioning.status, "failed");
+  assert.equal(front.liveLighting.backPositioning.captureReady, false);
+  assert.equal(front.previewStatus.positioningLightReady, false);
+  assert.equal(front.sessionManifest.backCaptured, false);
+  assert.equal(front.liveLighting.backPositioning.lastError.code, "AI_GRADER_BACK_POSITIONING_RESTORE_FAILED");
+  assert.doesNotMatch(front.liveLighting.backPositioning.lastError.message, /169\.254|private|do-not-log|token/i);
+  await assert.rejects(
+    () => service.action("confirm-flip", { confirmations: { flipComplete: true } }),
+    /Back Capture requires/i
+  );
+
+  failRestore = false;
+  const retried = await service.retryBackPositioningLight();
+  assert.equal(retried.status, "waiting_for_frame");
+  assert.equal(retried.attemptCount, 2);
+  assert.equal(restoreWrites, 2);
+  const idempotent = await service.retryBackPositioningLight();
+  assert.equal(idempotent.attemptCount, 2);
+  assert.equal(restoreWrites, 2);
+
+  service.captureLock = { owner: "test-lock", acquiredAt: new Date().toISOString() };
+  await assert.rejects(() => service.retryBackPositioningLight(), /capture lock/i);
+  service.captureLock = undefined;
+  service.activeQueueItemId = "test-queue-review";
+  await assert.rejects(() => service.retryBackPositioningLight(), /queue item/i);
+  service.activeQueueItemId = undefined;
+  await service.safeOffLiveLightingForOperator("test cleanup");
+});
+
+test("retry route is token-gated, accepts no caller profile, and returns only accepted-profile status", async () => {
+  const token = "local-positioning-retry-token";
+  const started = await startAiGraderLocalStationBridgeHttpServer({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 0,
+    stationToken: token,
+    allowedOrigins: ["https://collect.tenkings.co"],
+    outputDir: outputDir(`retry-route-${Date.now()}`),
+  });
+  const headers = {
+    Origin: "https://collect.tenkings.co",
+    "x-ai-grader-station-token": token,
+    "content-type": "application/json",
+  };
+  const post = async (pathName, body, requestHeaders = headers) => fetch(`${started.url}${pathName}`, {
+    method: "POST",
+    headers: requestHeaders,
+    body: JSON.stringify(body),
+  });
+  try {
+    const unauthorized = await post("/lighting/retry-back-positioning", {}, {
+      Origin: "https://collect.tenkings.co",
+      "content-type": "application/json",
+    });
+    assert.equal(unauthorized.status, 401);
+    await unauthorized.text();
+    assert.equal((await post("/actions/start-session", { captureProfile: "full_forensic" })).status, 200);
+    assert.equal((await post("/actions/confirm-light-idle-off", { confirmations: { lightIdleOff: true } })).status, 200);
+    assert.equal((await post("/actions/confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } })).status, 200);
+    assert.equal((await post("/actions/capture-front", manualCaptureRequest())).status, 200);
+
+    const injected = await post("/lighting/retry-back-positioning", {
+      dutyPercent: 5,
+      channels: [1],
+      host: "example.invalid",
+      path: "C:\\private",
+    });
+    assert.equal(injected.status, 400);
+    assert.match(await injected.text(), /accepts no browser hardware/i);
+
+    const retry = await post("/lighting/retry-back-positioning", {});
+    assert.equal(retry.status, 200);
+    const payload = await retry.json();
+    assert.equal(payload.operation, "lighting-retry-back-positioning");
+    assert.equal(payload.result.status, "waiting_for_frame");
+    assert.equal(payload.result.captureReady, false);
+    assert.equal(payload.result.positioningLightReady, false);
+    assert.equal(payload.result.appliedEnabled, true);
+    assert.equal(payload.result.dutyPercent, 1.2);
+    assert.deepEqual(payload.result.channels, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.deepEqual(Object.keys(payload.result).sort(), [
+      "appliedEnabled",
+      "attemptCount",
+      "captureReady",
+      "channels",
+      "dutyPercent",
+      "firstFrameGraceMs",
+      "positioningLightReady",
+      "profileIdentity",
+      "sessionId",
+      "sideEpoch",
+      "status",
+    ]);
+    assert.doesNotMatch(JSON.stringify(payload.result), /example\.invalid|C:\\private/i);
+
+    const disconnected = await new Promise((resolve, reject) => {
+      let settled = false;
+      const request = http.request(`${started.url}/preview/stream`, { headers }, (response) => {
+        assert.equal(response.statusCode, 200);
+        assert.ok(response.headers["x-ai-grader-session-id"]);
+        assert.equal(response.headers["x-ai-grader-preview-side"], "back");
+        assert.ok(response.headers["x-ai-grader-preview-epoch"]);
+        assert.ok(response.headers["x-ai-grader-frame-id"]);
+        response.once("data", () => {
+          settled = true;
+          response.destroy();
+          request.destroy();
+          resolve(true);
+        });
+      });
+      request.on("error", (error) => {
+        if (!settled) reject(error);
+      });
+      request.end();
+    });
+    assert.equal(disconnected, true);
+    const safelyDisconnected = await waitForAsync(async () => {
+      const response = await fetch(`${started.url}/lighting/status`, { headers });
+      const status = (await response.json()).result;
+      return status.applied.enabled === false && status.backPositioning.status === "safe_off"
+        ? status
+        : undefined;
+    }, "preview disconnect did not safe-off back positioning light");
+    assert.equal(safelyDisconnected.applied.enabled, false);
+
+    const restoredAgain = await post("/lighting/retry-back-positioning", {});
+    assert.equal(restoredAgain.status, 200);
+    const cancelled = await post("/actions/cancel-session", {});
+    assert.equal(cancelled.status, 200);
+    const cancelledPayload = await cancelled.json();
+    assert.equal(cancelledPayload.result.liveLighting.applied.enabled, false);
+    assert.equal(cancelledPayload.result.warmRunnerStatus.status, "cancelled");
+  } finally {
+    if (typeof started.server.closeAllConnections === "function") started.server.closeAllConnections();
+    await closeServer(started.server);
+  }
+});
+
+test("back positioning requires a current frame, heartbeat cannot outlive it, and side epochs reject late front work", async () => {
+  const service = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`epoch-heartbeat-${Date.now()}`),
+  }));
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await service.action("capture-front", manualCaptureRequest());
+  const positioned = service.status();
+  const backEpoch = positioned.previewStatus.sideEpoch;
+  assert.equal(positioned.previewStatus.activeSide, "back");
+  assert.equal(positioned.previewStatus.latestFrameId, undefined);
+  assert.equal(positioned.previewStatus.positioningLightReady, false);
+  assert.equal(positioned.previewStatus.cardGeometry.back, undefined);
+  const graceExpiry = positioned.liveLighting.watchdog.expiresAt;
+  await service.heartbeatLiveLighting("first-frame grace heartbeat");
+  assert.equal(service.status().liveLighting.watchdog.expiresAt, graceExpiry);
+  assert.equal(service.notePreviewFrame(1, {
+    sessionId: positioned.sessionId,
+    side: "front",
+    sideEpoch: positioned.previewStatus.cardGeometry.front?.sideEpoch ?? "front-old",
+  }, "late-front-frame"), false);
+  assert.equal(service.status().previewStatus.latestFrameId, undefined);
+
+  noteFreshBackPreviewFrame(service, 1);
+  const live = service.status();
+  assert.equal(live.liveLighting.backPositioning.status, "ready");
+  assert.equal(live.previewStatus.sideEpoch, backEpoch);
+  const previousExpiry = live.liveLighting.watchdog.expiresAt;
+  await service.heartbeatLiveLighting("fresh-frame heartbeat");
+  assert.ok(Date.parse(service.status().liveLighting.watchdog.expiresAt) >= Date.parse(previousExpiry));
+
+  service.manifest.previewStatus.lastFrameAt = new Date(Date.now() - 5000).toISOString();
+  service.manifest.liveLighting.backPositioning.firstFrameGraceExpiresAt = new Date(Date.now() - 1).toISOString();
+  await service.heartbeatLiveLighting("stale-frame heartbeat");
+  const stale = service.status();
+  assert.equal(stale.liveLighting.applied.enabled, false);
+  assert.equal(stale.liveLighting.backPositioning.status, "failed");
+  assert.equal(stale.previewStatus.positioningLightReady, false);
+  assert.equal(stale.liveLighting.backPositioning.lastError.code, "AI_GRADER_BACK_PREVIEW_FRAME_REQUIRED");
+});
+
+test("front-to-back side epoch rejects an in-flight old detector result and binds new geometry only to back", async () => {
+  const service = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`late-detector-epoch-${Date.now()}`),
+  }));
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="900" height="1260">
+      <rect width="900" height="1260" fill="#17191d"/>
+      <rect x="198" y="277" width="504" height="706" fill="#f2f0e9"/>
+    </svg>
+  `);
+  const jpeg = await sharp(svg).jpeg({ quality: 90 }).toBuffer();
+  const front = service.status();
+  const oldBinding = {
+    sessionId: front.sessionId,
+    side: "front",
+    sideEpoch: front.previewStatus.sideEpoch,
+  };
+  service.queuePreviewGeometryAnalysis(
+    jpeg,
+    1,
+    new Date().toISOString(),
+    "bridge_received",
+    "old-front-frame",
+    oldBinding
+  );
+  service.manifest.currentStep = "prompt_flip_card";
+  service.transitionPreviewSide("back", { preserveFrontGeometry: true });
+  await waitFor(() => service.previewGeometryAnalysisInFlight === false, "old detector work did not settle");
+  assert.equal(service.status().previewStatus.cardGeometry.front, undefined);
+  assert.equal(service.status().previewStatus.cardGeometry.back, undefined);
+  assert.equal(service.notePreviewFrame(2, oldBinding, "late-old-front-frame"), false);
+
+  const back = service.status();
+  const backBinding = {
+    sessionId: back.sessionId,
+    side: "back",
+    sideEpoch: back.previewStatus.sideEpoch,
+  };
+  service.queuePreviewGeometryAnalysis(
+    jpeg,
+    2,
+    new Date().toISOString(),
+    "bridge_received",
+    "new-back-frame",
+    backBinding
+  );
+  const analyzed = await waitFor(
+    () => service.status().previewStatus.cardGeometry.back?.sourceFrameId === "new-back-frame"
+      ? service.status()
+      : undefined,
+    "new back detector work did not bind to the back epoch"
+  );
+  assert.equal(analyzed.previewStatus.cardGeometry.back.sessionId, back.sessionId);
+  assert.equal(analyzed.previewStatus.cardGeometry.back.sideEpoch, back.previewStatus.sideEpoch);
+  assert.equal(analyzed.previewStatus.cardGeometry.back.side, "back");
+});
+
+test("first-frame watchdog and failed preview-loss safe-off both fail closed", async () => {
+  const watchdog = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`first-frame-watchdog-${Date.now()}`),
+  }));
+  await watchdog.action("start-session", { captureProfile: "full_forensic" });
+  await watchdog.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await watchdog.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await watchdog.action("capture-front", manualCaptureRequest());
+  assert.equal(watchdog.status().liveLighting.backPositioning.status, "waiting_for_frame");
+  await watchdog.handleLiveLightingWatchdogExpiry("deterministic first-frame grace test");
+  assert.equal(watchdog.status().liveLighting.applied.enabled, false);
+  assert.equal(watchdog.status().liveLighting.backPositioning.status, "failed");
+  assert.equal(watchdog.status().liveLighting.backPositioning.lastError.code, "AI_GRADER_BACK_PREVIEW_FRAME_REQUIRED");
+
+  const disconnect = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`preview-loss-safeoff-failure-${Date.now()}`),
+  }));
+  let failSafeOff = false;
+  disconnect.writeLiveLightingFrames = async (frames) => {
+    if (failSafeOff && frames.length <= 3) throw new Error("safe-off failed at C:\\private\\bridge token=do-not-log");
+    return frames.map(() => ({ responseKind: "mock", ok: true }));
+  };
+  await prepareBackPositioning(disconnect);
+  failSafeOff = true;
+  await disconnect.safeOffAfterPreviewLoss("deterministic preview disconnect");
+  const failed = disconnect.status();
+  assert.equal(failed.liveLighting.status, "error");
+  assert.equal(failed.liveLighting.applied.enabled, false);
+  assert.equal(failed.liveLighting.backPositioning.status, "failed");
+  assert.equal(failed.liveLighting.backPositioning.captureReady, false);
+  assert.doesNotMatch(JSON.stringify(failed.liveLighting.backPositioning.lastError), /private|do-not-log|token/i);
+  const rebound = disconnect.status();
+  assert.equal(disconnect.notePreviewFrame(2, {
+    sessionId: rebound.sessionId,
+    side: "back",
+    sideEpoch: rebound.previewStatus.sideEpoch,
+  }, "test-back-frame-after-failed-safeoff"), true);
+  assert.equal(disconnect.status().previewStatus.positioningLightReady, false);
+  await assert.rejects(
+    () => disconnect.action("confirm-flip", { confirmations: { flipComplete: true } }),
+    /Back Capture requires/i
+  );
+});
+
+test("session replacement safe-offs before discarding illuminated state", async () => {
+  const service = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`session-replacement-safeoff-${Date.now()}`),
+  }));
+  const writes = [];
+  service.writeLiveLightingFrames = async (frames) => {
+    writes.push(frames);
+    return frames.map(() => ({ responseKind: "mock", ok: true }));
+  };
+  const positioned = await prepareBackPositioning(service);
+  const oldSessionId = positioned.sessionId;
+  assert.equal(positioned.liveLighting.applied.enabled, true);
+  const replacement = await service.action("start-session", { captureProfile: "full_forensic" });
+  assert.notEqual(replacement.sessionId, oldSessionId);
+  assert.equal(replacement.liveLighting.applied.enabled, false);
+  assert.ok(writes.at(-1).length <= 3, "session replacement did not finish with an allowlisted safe-off write");
+});
+
+test("back authorization rejects changed profile, changed latest frame, and mismatched detected geometry frame", async () => {
+  const service = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`back-auth-binding-${Date.now()}`),
+  }));
+  await prepareBackPositioning(service);
+  await service.action("confirm-flip", { confirmations: { flipComplete: true } });
+  const auth = structuredClone(service.status().liveLighting.backPositioning.captureAuthorization);
+  const acceptedProfile = structuredClone(service.manifest.acceptedProfile);
+  const authorizedFrameId = service.status().previewStatus.latestFrameId;
+
+  await assert.rejects(
+    () => service.acceptLiveLightingForCapture({ dutyPercent: 2, channels: [1] }),
+    /disabled after front evidence/i
+  );
+  service.manifest.acceptedProfile = { ...acceptedProfile, dutyPercent: 2, actualLeimacPwmStep: 20 };
+  assert.throws(
+    () => service.assertBackCaptureAuthorization(auth, { requireFreshLiveFrame: true, geometryCaptureMode: "manual_capture" }),
+    /stale.*profile/i
+  );
+  service.manifest.acceptedProfile = acceptedProfile;
+
+  service.manifest.previewStatus.latestFrameId = "newer-unconfirmed-frame";
+  service.manifest.previewStatus.lastFrameAt = new Date().toISOString();
+  assert.throws(
+    () => service.assertBackCaptureAuthorization(auth, { requireFreshLiveFrame: true, geometryCaptureMode: "manual_capture" }),
+    /latest fresh live back preview frame/i
+  );
+  service.manifest.previewStatus.latestFrameId = authorizedFrameId;
+  service.manifest.previewStatus.lastFrameAt = new Date().toISOString();
+  markReadyGeometry(service, "back");
+  service.manifest.previewStatus.cardGeometry.back.sourceFrameId = "wrong-geometry-frame";
+  assert.throws(
+    () => service.assertBackCaptureAuthorization(auth, { requireFreshLiveFrame: true, geometryCaptureMode: "detected_geometry" }),
+    /detected geometry.*authorized.*frame/i
+  );
+  service.manifest.previewStatus.cardGeometry.back.sourceFrameId = authorizedFrameId;
+  assert.doesNotThrow(
+    () => service.assertBackCaptureAuthorization(auth, { requireFreshLiveFrame: true, geometryCaptureMode: "detected_geometry" })
+  );
+});
+
+test("lighting writes serialize and shutdown waits for the final safe-off", async () => {
+  const serialized = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`serialized-lighting-${Date.now()}`),
+  }));
+  await serialized.action("start-session", { captureProfile: "full_forensic" });
+  let activeWrites = 0;
+  let maximumActiveWrites = 0;
+  serialized.writeLiveLightingFrames = async (frames) => {
+    activeWrites += 1;
+    maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    activeWrites -= 1;
+    return frames.map(() => ({ responseKind: "mock", ok: true }));
+  };
+  await Promise.all([
+    serialized.applyLiveLighting({ enabled: true, dutyPercent: 1.2, channels: [1] }),
+    serialized.safeOffLiveLightingForOperator("concurrent disconnect safe-off"),
+  ]);
+  assert.equal(maximumActiveWrites, 1);
+  assert.equal(serialized.status().liveLighting.applied.enabled, false);
+
+  const shutdown = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir(`shutdown-safeoff-await-${Date.now()}`),
+  }));
+  await shutdown.action("start-session", { captureProfile: "full_forensic" });
+  await shutdown.applyLiveLighting({ enabled: true, dutyPercent: 1.2, channels: [1] });
+  const gate = deferred();
+  let shutdownSettled = false;
+  shutdown.writeLiveLightingFrames = async (frames) => {
+    await gate.promise;
+    return frames.map(() => ({ responseKind: "mock", ok: true }));
+  };
+  const shutdownPromise = shutdown.shutdown("deterministic bridge shutdown").then(() => {
+    shutdownSettled = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(shutdownSettled, false);
+  gate.resolve();
+  await shutdownPromise;
+  assert.equal(shutdownSettled, true);
+  assert.equal(shutdown.status().liveLighting.applied.enabled, false);
+});
+
+test("cancel and end persist terminal state when direct live safe-off fails but guarded cleanup succeeds", async () => {
+  for (const action of ["cancel-session", "end-session"]) {
+    const cleanupCalls = [];
+    const service = new AiGraderLocalStationBridgeService(realConfig({
+      outputDir: outputDir(`${action}-safeoff-fallback-${Date.now()}`),
+    }), {
+      async run(step) {
+        cleanupCalls.push(step.id);
+        return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+      },
+    });
+    await service.action("start-session", { captureProfile: "full_forensic" });
+    await service.applyLiveLighting({ enabled: true, dutyPercent: 1.2, channels: [1] });
+    service.writeLiveLightingFrames = async (frames) => {
+      if (frames.length <= 3) throw new Error("direct safe-off failed at C:\\private\\light token=do-not-log");
+      return frames.map(() => ({ responseKind: "mock", ok: true }));
+    };
+    const status = await service.action(action);
+    assert.deepEqual(cleanupCalls, ["safe_off"]);
+    assert.equal(status.currentStep, "safe_off_end_session");
+    assert.equal(status.liveLighting.applied.enabled, false);
+    assert.equal(status.warmRunnerStatus.status, action === "cancel-session" ? "cancelled" : "complete");
+    assert.doesNotMatch(JSON.stringify(status.warnings), /C:\\|private|do-not-log/i);
+    const persisted = JSON.parse(fs.readFileSync(status.outputs.manifestPath, "utf8"));
+    assert.equal(persisted.currentStep, "safe_off_end_session");
+  }
 });
 
 test("real station bridge uses warm full forensic runner by default with fake runner", async () => {
@@ -1682,6 +2265,7 @@ test("real station bridge uses warm full forensic runner by default with fake ru
   await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
   await service.action("launch-preview");
   await service.action("capture-front", manualCaptureRequest());
+  noteFreshBackPreviewFrame(service);
   await service.action("confirm-flip", { confirmations: { flipComplete: true } });
   await service.action("capture-back", manualCaptureRequest());
   const status = await service.action("run-diagnostics");
@@ -1786,6 +2370,7 @@ test("rapid capture overlaps front processing with back positioning and isolates
   );
   assert.equal(warm.calls.some((call) => call.type === "process" && call.side === "front"), true);
 
+  noteFreshBackPreviewFrame(service);
   await service.action("confirm-flip", { confirmations: { flipComplete: true } });
   markReadyGeometry(service, "back");
   status = await service.action("capture-back", { captureTriggerMode: "auto" });
@@ -1881,6 +2466,7 @@ test("persisted rapid queue activation still requires explicit human confirm and
   await producer.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
   await producer.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
   await producer.action("capture-front", manualCaptureRequest());
+  noteFreshBackPreviewFrame(producer);
   await producer.action("confirm-flip", { confirmations: { flipComplete: true } });
   await producer.action("capture-back", manualCaptureRequest());
   await producer.action("queue-current-card");
@@ -2045,7 +2631,10 @@ test("side processing failures are terminal and cannot be overwritten or queued"
     }
   }, "delayed processing failure was not persisted to the station manifest");
   assert.equal(persistedDelayedFailure.message, "delayed front processing failed");
-  await delayed.action("confirm-flip", { confirmations: { flipComplete: true } });
+  await assert.rejects(
+    () => delayed.action("confirm-flip", { confirmations: { flipComplete: true } }),
+    /Back Capture requires/i
+  );
   await assert.rejects(
     () => delayed.action("capture-back", manualCaptureRequest()),
     /requires a new start-session retry/i
@@ -2064,6 +2653,7 @@ test("side processing failures are terminal and cannot be overwritten or queued"
   );
   await prepare(back);
   await back.action("capture-front", manualCaptureRequest());
+  noteFreshBackPreviewFrame(back);
   await back.action("confirm-flip", { confirmations: { flipComplete: true } });
   await back.action("capture-back", manualCaptureRequest());
   const backFailed = await waitFor(
@@ -2102,6 +2692,7 @@ test("restart marks an interrupted rapid finalization as explicit retryable fail
   await original.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
   await original.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
   await original.action("capture-front", manualCaptureRequest());
+  noteFreshBackPreviewFrame(original);
   await original.action("confirm-flip", { confirmations: { flipComplete: true } });
   await original.action("capture-back", manualCaptureRequest());
   const queued = await original.action("queue-current-card");
@@ -2336,10 +2927,16 @@ test("front capture releases preview for flip/back positioning while back captur
     await activeStreamClosed;
     activeReq.destroy();
 
-    await readOnePreviewFrame();
-
+    const backFrameReady = new Promise((resolve, reject) => {
+      activeReq = http.request(`${started.url}/preview/stream`, { headers }, (res) => {
+        assert.equal(res.statusCode, 200);
+        res.once("data", () => resolve());
+      });
+      activeReq.on("error", reject);
+      activeReq.end();
+    });
+    await backFrameReady;
     await postAction("confirm-flip", { confirmations: { flipComplete: true } });
-    await readOnePreviewFrame();
 
     const backStatus = await postAction("capture-back", manualCaptureRequest());
     assert.equal(backStatus.sessionManifest.backCaptured, true);
