@@ -10,15 +10,19 @@ The AI Grader NFC feature writes one static NFC Forum URI record to an NTAG215:
 
 An NTAG215 static URL is a convenience identity link and can be copied. Approved product language is **Registered Ten Kings NFC link** and **Linked to this Ten Kings AI Grader report**. It is not cryptographic authentication of the chip, slab, or card. `static_url_v1` therefore reports `registered_link`, never `cryptographically_verified`.
 
+Hosted activation additionally requires an ECDSA P-256 operational attestation from an approved finishing-workstation helper. That signature proves only that the allowlisted helper reported a successful PC/SC write/readback (or an exact already-programmed readback) for the locked attempt. It does not make NTAG215 cryptographic hardware, card, or slab authentication and must never be described that way.
+
 The schema has an intentionally unimplemented `NTAG424_DNA` / `ntag424_sun_v1` strategy seam. This release has no SUN verifier, counters, keys, originality-signature validation, or cryptographic-success state. Future key material must not be stored in application JSON.
 
 ## Hosted architecture
 
 - `AiGraderNfcTag` owns exact tenant, published report, confirmed CardAsset, Item, certificate, and AiGraderLabel linkage; a SHA-256 UID fingerprint is stored only after successful local readback. Raw UID bytes are not accepted or persisted.
-- `AiGraderNfcProgrammingAttempt` stores a token hash, never the opaque token, and expires within 30 minutes (the hosted route currently issues five-minute attempts). Init and complete use actor-scoped idempotency keys.
+- `AiGraderNfcProgrammingAttempt` stores a token hash and a SHA-256 challenge hash, never the opaque token or raw attestation challenge, and expires within 30 minutes (the hosted route currently issues five-minute attempts). Init replay with the same actor/report idempotency key reconstructs the same one-time token/challenge; it never allocates a second live attempt.
+- Completion accepts only helper protocol `tenkings-ai-grader-nfc-loopback-v2`, result `write_verified_pcsc_readback` or `already_programmed_exact`, and an ECDSA P-256/SHA-256 IEEE-P1363 signature from the current server allowlist. The database service reconstructs and verifies the canonical statement itself; a browser flag cannot activate a registration.
 - `AiGraderNfcAuditEvent` is append-only through database triggers. Revoke requires a reason; replacement revokes the old row before allocating a new public identity.
 - Report-lifecycle advisory locks and partial unique indexes enforce one open reservation/active link per report, CardAsset, and Item. A separate unique index prevents the same UID fingerprint from being active on more than one card.
-- Hosted endpoints are `/api/admin/ai-grader/nfc/status`, `/init`, `/complete`, `/revoke`, and `/replace`. They use normal AI Grader human auth, bounded JSON, fixed safe error codes, and server-resolved Confirm/Publish authority. Service-account NFC calls fail closed.
+- Hosted endpoints are `/api/admin/ai-grader/nfc/status`, `/init`, `/complete`, `/revoke`, and `/replace`. Status/init/complete require a human `ai_grader_operator` or `ai_grader_admin`; revoke/replace require a human `ai_grader_admin`. Client role fields are ignored and service-account NFC calls fail closed.
+- Ordinary init after any revoked registration fails with `AI_GRADER_NFC_REPLACEMENT_REQUIRED`. Only the admin replace transaction can revoke the exact old registration with its immutable reason/audit tuple and pass the module-private authorization that creates one replacement.
 - `/nfc/[publicTagId]` is a production-database-only public read. Only a fully active, exactly linked, still-published public report resolves. Other states expose no private IDs, UID evidence, local paths, storage/provider details, or hardware controls.
 - `/ai-grader/nfc?reportId=...` is the only browser hardware workflow. `/ai-grader/finish` shows the safe NFC state and links to it but remains usable without local hardware.
 
@@ -26,10 +30,37 @@ The NFC inventory policy is additive and defaults off:
 
 ```dotenv
 AI_GRADER_NFC_REQUIRED=false
+AI_GRADER_NFC_PROGRAMMING_ENABLED=false
 AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET=<random server-only value of at least 32 bytes>
+AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON={<lowercase-sha256-der-spki-key-id>:{"tenantId":"ten-kings","algorithm":"ecdsa-p256-sha256-p1363","publicSpkiDerBase64":"<standard-base64-der-spki>"}}
 ```
 
-When `AI_GRADER_NFC_REQUIRED` is false, the current Finish/QR/inventory workflow is unchanged. When true, Add To Inventory rechecks one exact active non-revoked NFC row inside the existing report-locked transaction. Do not enable it before the migration is applied and the finishing helper is installed and accepted. NFC data is additive to label/report contracts; it does not remove, hide, or replace the existing QR or create another label-sheet slot.
+`AI_GRADER_NFC_PROGRAMMING_ENABLED` is independent and also defaults false. While false, authenticated status and admin revocation remain available, but init, complete, and replace return a fixed disabled error and the browser never contacts the helper. When true, the attempt-token secret and at least one valid P-256 key for the exact tenant are mandatory. The JSON allowlist is server-only, limited to 16 KiB/eight exact entries, and contains public SPKI only—never a private key, token, challenge, or signature.
+
+Authenticated readiness returns only `nfcProgrammingEnabled`, `nfcRequired`, `nfcAttemptTokenConfigured`, `nfcWorkstationAttestationConfigured`, `nfcWorkstationKeyCount`, and `expectedNfcHelperProtocolVersion`. When `AI_GRADER_NFC_REQUIRED` is false, the current Finish/QR/inventory workflow is unchanged. When true, Add To Inventory rechecks one exact active non-revoked NFC row inside the existing report-locked transaction. Do not enable it before the migration is applied and the finishing helper is installed and accepted. NFC data is additive to label/report contracts; it does not remove, hide, or replace the existing QR or create another label-sheet slot.
+
+## Operational attestation contract
+
+Each programming attempt has an independent random 32-byte base64url challenge. Init returns the raw challenge to the authenticated operator workflow, but the database stores only its SHA-256 digest. The helper signs these exact UTF-8 lines with newline separators and no trailing newline:
+
+```text
+ai-grader-nfc-helper-attestation-v1
+attemptId
+attestationChallenge
+publicTagId
+normalizedUrl
+uidFingerprintSha256
+readbackPayloadSha256
+readerResultCode
+helperProtocolVersion
+observedAt
+```
+
+The signature algorithm is ECDSA P-256 with SHA-256 and the IEEE P1363 fixed-field 64-byte representation, encoded as unpadded base64url. `observedAt` is strict millisecond UTC RFC3339 and is checked against the attempt window with no more than two minutes of clock skew. The database service, not a route or browser boolean, checks the stored challenge digest, exact actor/tenant/report/CardAsset/Item/label/certificate/URL/digests, current helper protocol, eligible result, allowlisted tenant key, time window, and signature before consuming the attempt.
+
+The workstation key ID is the lowercase SHA-256 digest of the DER SubjectPublicKeyInfo. The server accepts only the fixed `ecdsa-p256-sha256-p1363` algorithm and a DER SPKI that imports as the NIST P-256 curve and hashes to its allowlist key. Removing a key from the server allowlist revokes it for later completion; key bodies and IDs are not exposed by public NFC/report responses.
+
+Completion evidence is bounded and internal: schema, key ID, algorithm, statement SHA-256, signature, observed time, protocol, and result code, plus `workstationOperationalAttestation=true` and `cryptographicTagAuthentication=false`. The raw UID, raw challenge, private key, helper token, device identifiers, paths, and APDUs are never stored in that evidence or returned publicly.
 
 ## Hardware and memory boundaries
 
@@ -68,6 +99,10 @@ The workstation token is separate from browser sign-in and from the camera captu
 
 All native reads and writes share one nonblocking operation gate. A timed-out native call retains the gate until it actually ends, preventing a retry from overlapping a still-running PC/SC transaction. Write idempotency keys return the original result and reject reuse with changed input.
 
+The current protocol is `tenkings-ai-grader-nfc-loopback-v2`. A write request includes the exact attempt ID, public tag ID, challenge, URL, and local idempotency context. Only exact full readback can produce the signed `write_verified_pcsc_readback` or `already_programmed_exact` result. No-tag, reader, overwrite-required, partial-write, timeout, readback-mismatch, or other failure responses contain no signature. Definite failures before any write release their local idempotency entry for a bounded retry; uncertain work keeps its entry and operation gate so the browser can recover the same result without an overlapping or duplicate write. After any uncertain timeout, disconnect, or helper restart, keep the exact same physical tag on the reader, wait until the helper is no longer busy, and use **Retry Current Attempt**. Do not remove or swap the tag during that recovery.
+
+Production signing uses the fixed named current-user Microsoft Software Key Storage Provider key `TenKings.AiGrader.Nfc.WorkstationAttestation.v1`. It must be ECDSA P-256, signing-only, non-ephemeral, and `ExportPolicy=None`. Installer reruns reuse and validate that exact key; ordinary update never rotates it. Protected helper JSON contains only the bounded key name and derived key ID. The private key never leaves Windows CNG or appears in JSON, logs, arguments, browser data, Vercel, or the database.
+
 ## Build and hardware-free verification
 
 ```powershell
@@ -86,10 +121,11 @@ Run from an elevated PowerShell only after the workstation installation is appro
 ```powershell
 scripts\ai-grader-nfc\install-ai-grader-nfc-helper.ps1 -StartNow -CreateShortcut
 scripts\ai-grader-nfc\status-ai-grader-nfc-helper.ps1
+scripts\ai-grader-nfc\export-ai-grader-nfc-workstation-public-key.ps1
 scripts\ai-grader-nfc\open-ai-grader-nfc-workstation.ps1
 ```
 
-The install creates only the dedicated `TenKingsAiGraderNfcHelper` scheduled task, `C:\TenKings\tools\ai-grader-nfc-helper`, protected `C:\TenKings\config\ai-grader-nfc`, and optional **Ten Kings AI Grader NFC** desktop shortcut. It does not change the Dell capture-helper Startup shortcut/task or camera/light software.
+The install creates or reuses the named current-user non-exportable Windows CNG signing key, then creates only the dedicated `TenKingsAiGraderNfcHelper` scheduled task, `C:\TenKings\tools\ai-grader-nfc-helper`, protected `C:\TenKings\config\ai-grader-nfc`, and optional **Ten Kings AI Grader NFC** desktop shortcut. It does not change the Dell capture-helper Startup shortcut/task or camera/light software. The export command emits only one server-allowlist entry with public DER SPKI, derived key ID, tenant, and algorithm; it cannot export private key material.
 
 Maintenance commands:
 
@@ -106,11 +142,12 @@ Uninstall preserves published binaries/config by default; removal switches are e
 
 1. Review and explicitly approve the migration in `packages/database/prisma/migrations/20260712160000_ai_grader_nfc_static_url_v1/migration.sql`.
 2. Apply it through the normal migration runbook. It is not run by this PR or a Vercel build.
-3. Configure a random server-only `AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET`; leave `AI_GRADER_NFC_REQUIRED=false`.
-4. Deploy the hosted code through the normal runbook and verify authenticated status/public invalid-state reads without programming hardware.
-5. Approve and install the standalone helper on the dedicated finishing PC; pair the production-origin browser.
-6. Complete the separate sacrificial-tag hardware gate below. This is not production report programming.
-7. Only after migration, hosted/helper acceptance, and operator readiness, separately approve changing `AI_GRADER_NFC_REQUIRED=true`.
+3. Leave both `AI_GRADER_NFC_PROGRAMMING_ENABLED=false` and `AI_GRADER_NFC_REQUIRED=false`; configure a random server-only `AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET`.
+4. Deploy the hosted code through the normal runbook and verify authenticated redacted readiness, admin revocation availability, and public invalid-state reads without contacting helper hardware.
+5. Approve and install the standalone helper on the dedicated finishing PC, export its public-only allowlist entry, review it, and configure `AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON`. Pair the production-origin browser. Do not provision or rotate a key from an ordinary helper update.
+6. After the migration, secret, and tenant key are ready, separately approve `AI_GRADER_NFC_PROGRAMMING_ENABLED=true` and verify programming readiness before any tag operation.
+7. Complete the separate sacrificial-tag hardware gate below. This is not production report programming.
+8. Only after migration, hosted/helper acceptance, and operator readiness, separately approve changing `AI_GRADER_NFC_REQUIRED=true`.
 
 Do not program a real report tag before those prerequisites and a specific production-operation approval.
 
