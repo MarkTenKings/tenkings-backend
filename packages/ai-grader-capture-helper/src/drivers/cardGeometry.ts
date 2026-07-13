@@ -58,7 +58,10 @@ export interface CardGeometryThresholds {
 }
 
 export interface CardGeometryDetectionDiagnostics {
-  method: "adaptive_border_contrast_connected_component_pca_v1" | "solid_plate_color_component_pca_v2";
+  method:
+    | "adaptive_border_contrast_connected_component_pca_v1"
+    | "solid_plate_color_component_pca_v2"
+    | "perimeter_gradient_rectangle_v3";
   backgroundLuma: number;
   backgroundColor?: { r: number; g: number; b: number };
   backgroundNoise?: number;
@@ -73,6 +76,42 @@ export interface CardGeometryDetectionDiagnostics {
   relativeAspectError?: number;
   analysisWidth: number;
   analysisHeight: number;
+  /** Present only for the fail-closed perimeter-gradient fallback. */
+  perimeterGradientStrength?: number;
+  perimeterSideStrengths?: [number, number, number, number];
+  /** Mean interior-versus-exterior transition per captured perimeter side. */
+  perimeterSignedSideStrengths?: [number, number, number, number];
+  /** Fraction of transition energy that agrees with each side's dominant polarity. */
+  perimeterSidePolarityConsistency?: [number, number, number, number];
+  /** Dominant captured interior/exterior polarity for each independently gated side. */
+  perimeterSidePolarity?: [
+    "lighter_inside" | "darker_inside",
+    "lighter_inside" | "darker_inside",
+    "lighter_inside" | "darker_inside",
+    "lighter_inside" | "darker_inside",
+  ];
+  /** Candidates admitted only to local refinement; never accepted geometry. */
+  perimeterProvisionalCandidateCount?: number;
+  /** Path-free rejection evidence for a failed full-resolution perimeter search. */
+  perimeterClosestRejectedCandidate?: {
+    reasons: Array<
+      "coverage" | "aspect" | "clearance" | "side_gradient" |
+      "side_signed_gradient" | "side_polarity_coherence" | "total_gradient"
+    >;
+    measuredAspectRatio: number;
+    cardCoverage: number;
+    clearance: number;
+    sideStrengths: [number, number, number, number];
+    signedSideStrengths: [number, number, number, number];
+    sidePolarityConsistency: [number, number, number, number];
+    sidePolarity: [
+      "lighter_inside" | "darker_inside",
+      "lighter_inside" | "darker_inside",
+      "lighter_inside" | "darker_inside",
+      "lighter_inside" | "darker_inside",
+    ];
+  };
+  perimeterCandidateCount?: number;
 }
 
 export interface CardGeometryPlacementEvaluation {
@@ -552,7 +591,7 @@ function boundingBoxForCorners(corners: CardGeometryCorners): CardGeometryBoundi
   };
 }
 
-async function attemptDetection(prepared: PreparedImage, thresholds: CardGeometryThresholds): Promise<DetectionAttempt> {
+async function attemptSolidPlateDetection(prepared: PreparedImage, thresholds: CardGeometryThresholds): Promise<DetectionAttempt> {
   const scale = Math.min(1, thresholds.analysisMaxDimension / Math.max(prepared.orientedWidth, prepared.orientedHeight));
   const analysisWidth = Math.max(32, Math.round(prepared.orientedWidth * scale));
   const analysisHeight = Math.max(32, Math.round(prepared.orientedHeight * scale));
@@ -791,6 +830,607 @@ async function attemptDetection(prepared: PreparedImage, thresholds: CardGeometr
       relativeAspectError,
       diagnostics,
     },
+  };
+}
+
+/**
+ * The primary solid-plate segmentation deliberately rejects weak, fragmented
+ * foreground masks so artwork cannot become a card boundary. Some legitimate
+ * dark-on-dark full-resolution captures instead retain a coherent outer
+ * perimeter while the interior has much stronger artwork contrast. This
+ * fallback fits that captured perimeter only when every side of a standard
+ * card rectangle has independently measured gradient support.
+ *
+ * It is intentionally a separate, stricter authority rather than a lower
+ * solid-plate threshold: no browser rectangle, fixture rectangle, or preview
+ * coordinates participate in this path.
+ */
+const PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION = 512;
+const PERIMETER_GRADIENT_MIN_SIDE_STRENGTH = 1.4;
+const PERIMETER_GRADIENT_MIN_TOTAL_STRENGTH = 8.4;
+const PERIMETER_GRADIENT_MIN_SIGNED_SIDE_STRENGTH = 1.2;
+const PERIMETER_GRADIENT_MIN_POLARITY_CONSISTENCY = 0.8;
+const PERIMETER_GRADIENT_ANGLE_DEGREES = [-30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30] as const;
+const PERIMETER_GRADIENT_ASPECT_FACTORS = [0.86, 0.93, 1, 1.07, 1.14] as const;
+
+interface PerimeterGradientScore {
+  sideStrengths: [number, number, number, number];
+  sideSignedStrengths: [number, number, number, number];
+  sidePolarityConsistency: [number, number, number, number];
+  sidePolarity: [
+    "lighter_inside" | "darker_inside",
+    "lighter_inside" | "darker_inside",
+    "lighter_inside" | "darker_inside",
+    "lighter_inside" | "darker_inside",
+  ];
+  totalStrength: number;
+  clearance: number;
+  corners: CardGeometryCorners;
+  longAxis: CardGeometryPoint;
+  shortAxis: CardGeometryPoint;
+}
+
+interface PerimeterGradientCandidate extends PerimeterGradientScore {
+  centerX: number;
+  centerY: number;
+  longSide: number;
+  shortSide: number;
+  aspectRatio: number;
+  coverage: number;
+  angleDegrees: number;
+}
+
+function lumaForRgb(red: number, green: number, blue: number): number {
+  return Math.round(0.2126 * red + 0.7152 * green + 0.0722 * blue);
+}
+
+interface PerimeterGradientLineScore {
+  strength: number;
+  signedStrength: number;
+  polarityConsistency: number;
+  polarity: "lighter_inside" | "darker_inside";
+}
+
+function perimeterGradientLineScore(input: {
+  luma: Uint8Array;
+  width: number;
+  height: number;
+  base: CardGeometryPoint;
+  normal: CardGeometryPoint;
+  span: CardGeometryPoint;
+  sampleCount: number;
+}): PerimeterGradientLineScore {
+  const sample = (x: number, y: number) => {
+    const boundedX = clamp(Math.round(x), 0, input.width - 1);
+    const boundedY = clamp(Math.round(y), 0, input.height - 1);
+    return input.luma[boundedY * input.width + boundedX] ?? 0;
+  };
+  const absoluteValues: number[] = [];
+  let signedTotal = 0;
+  let positiveEnergy = 0;
+  let negativeEnergy = 0;
+  // Two analysis pixels keeps the test localized to an observed edge while
+  // remaining stable after the capped full-resolution analysis resize.
+  const offset = 2;
+  for (let index = 0; index < input.sampleCount; index += 1) {
+    const position = (index + 0.5) / input.sampleCount - 0.5;
+    const x = input.base.x + input.span.x * position;
+    const y = input.base.y + input.span.y * position;
+    const signedDifference =
+      sample(x - input.normal.x * offset, y - input.normal.y * offset) -
+      sample(x + input.normal.x * offset, y + input.normal.y * offset);
+    absoluteValues.push(Math.abs(signedDifference));
+    signedTotal += signedDifference;
+    if (signedDifference >= 1) positiveEnergy += signedDifference;
+    if (signedDifference <= -1) negativeEnergy += -signedDifference;
+  }
+  absoluteValues.sort((left, right) => left - right);
+  // Edge glare can be localized, while an invisible boundary cannot be
+  // rescued by a few bright pixels. Require support across the strongest 60%
+  // of evenly-spaced samples from the full captured frame.
+  const supported = absoluteValues.slice(Math.floor(absoluteValues.length * 0.4));
+  const strength = supported.reduce((sum, value) => sum + value, 0) / Math.max(1, supported.length);
+  const polarity = positiveEnergy >= negativeEnergy ? "lighter_inside" : "darker_inside";
+  const observedEnergy = positiveEnergy + negativeEnergy;
+  const agreeingEnergy = polarity === "lighter_inside" ? positiveEnergy : negativeEnergy;
+  return {
+    strength: round(strength, 4),
+    signedStrength: round(signedTotal / Math.max(1, input.sampleCount), 4),
+    polarityConsistency: round(agreeingEnergy / Math.max(1, observedEnergy), 4),
+    polarity,
+  };
+}
+
+function perimeterGradientCorners(input: {
+  centerX: number;
+  centerY: number;
+  longSide: number;
+  shortSide: number;
+  angleDegrees: number;
+  imageLandscape: boolean;
+}): { corners: CardGeometryCorners; longAxis: CardGeometryPoint; shortAxis: CardGeometryPoint } {
+  const baseAngleRadians = input.imageLandscape ? 0 : Math.PI / 2;
+  const angleRadians = baseAngleRadians + (input.angleDegrees * Math.PI) / 180;
+  let longAxis = { x: Math.cos(angleRadians), y: Math.sin(angleRadians) };
+  // Keep the same deterministic axis branch as the PCA authority. This is
+  // essential for Dell landscape normalization to preserve operator-top.
+  if (longAxis.y < 0 || (Math.abs(longAxis.y) < 1e-8 && longAxis.x < 0)) {
+    longAxis = { x: -longAxis.x, y: -longAxis.y };
+  }
+  const shortAxis = { x: longAxis.y, y: -longAxis.x };
+  const shortHalf = input.shortSide / 2;
+  const longHalf = input.longSide / 2;
+  return {
+    longAxis,
+    shortAxis,
+    corners: {
+      topLeft: {
+        x: input.centerX - shortAxis.x * shortHalf - longAxis.x * longHalf,
+        y: input.centerY - shortAxis.y * shortHalf - longAxis.y * longHalf,
+      },
+      topRight: {
+        x: input.centerX + shortAxis.x * shortHalf - longAxis.x * longHalf,
+        y: input.centerY + shortAxis.y * shortHalf - longAxis.y * longHalf,
+      },
+      bottomRight: {
+        x: input.centerX + shortAxis.x * shortHalf + longAxis.x * longHalf,
+        y: input.centerY + shortAxis.y * shortHalf + longAxis.y * longHalf,
+      },
+      bottomLeft: {
+        x: input.centerX - shortAxis.x * shortHalf + longAxis.x * longHalf,
+        y: input.centerY - shortAxis.y * shortHalf + longAxis.y * longHalf,
+      },
+    },
+  };
+}
+
+function scorePerimeterGradientCandidate(input: {
+  luma: Uint8Array;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+  longSide: number;
+  shortSide: number;
+  angleDegrees: number;
+  imageLandscape: boolean;
+}): PerimeterGradientScore {
+  const { corners, longAxis, shortAxis } = perimeterGradientCorners(input);
+  const sideScores = [
+    perimeterGradientLineScore({
+      luma: input.luma,
+      width: input.width,
+      height: input.height,
+      base: {
+        x: input.centerX + shortAxis.x * input.shortSide / 2,
+        y: input.centerY + shortAxis.y * input.shortSide / 2,
+      },
+      normal: shortAxis,
+      span: { x: longAxis.x * input.longSide, y: longAxis.y * input.longSide },
+      sampleCount: 32,
+    }),
+    perimeterGradientLineScore({
+      luma: input.luma,
+      width: input.width,
+      height: input.height,
+      base: {
+        x: input.centerX - shortAxis.x * input.shortSide / 2,
+        y: input.centerY - shortAxis.y * input.shortSide / 2,
+      },
+      normal: { x: -shortAxis.x, y: -shortAxis.y },
+      span: { x: longAxis.x * input.longSide, y: longAxis.y * input.longSide },
+      sampleCount: 32,
+    }),
+    perimeterGradientLineScore({
+      luma: input.luma,
+      width: input.width,
+      height: input.height,
+      base: {
+        x: input.centerX + longAxis.x * input.longSide / 2,
+        y: input.centerY + longAxis.y * input.longSide / 2,
+      },
+      normal: longAxis,
+      span: { x: shortAxis.x * input.shortSide, y: shortAxis.y * input.shortSide },
+      sampleCount: 24,
+    }),
+    perimeterGradientLineScore({
+      luma: input.luma,
+      width: input.width,
+      height: input.height,
+      base: {
+        x: input.centerX - longAxis.x * input.longSide / 2,
+        y: input.centerY - longAxis.y * input.longSide / 2,
+      },
+      normal: { x: -longAxis.x, y: -longAxis.y },
+      span: { x: shortAxis.x * input.shortSide, y: shortAxis.y * input.shortSide },
+      sampleCount: 24,
+    }),
+  ] as const;
+  const sideStrengths = sideScores.map((score) => score.strength) as [number, number, number, number];
+  const sideSignedStrengths = sideScores.map((score) => score.signedStrength) as [number, number, number, number];
+  const sidePolarityConsistency = sideScores.map((score) => score.polarityConsistency) as [number, number, number, number];
+  const sidePolarity = sideScores.map((score) => score.polarity) as PerimeterGradientScore["sidePolarity"];
+  const clearance = Math.min(
+    ...[corners.topLeft, corners.topRight, corners.bottomRight, corners.bottomLeft].flatMap((point) => [
+      point.x,
+      point.y,
+      input.width - point.x,
+      input.height - point.y,
+    ]),
+  );
+  return {
+    sideStrengths,
+    sideSignedStrengths,
+    sidePolarityConsistency,
+    sidePolarity,
+    totalStrength: round(sideStrengths.reduce((sum, value) => sum + value, 0), 4),
+    clearance: round(clearance, 4),
+    corners,
+    longAxis,
+    shortAxis,
+  };
+}
+
+type PerimeterGradientGateFailure =
+  | "coverage"
+  | "aspect"
+  | "clearance"
+  | "side_gradient"
+  | "side_signed_gradient"
+  | "side_polarity_coherence"
+  | "total_gradient";
+
+function perimeterGradientGateFailures(input: {
+  candidate: PerimeterGradientCandidate;
+  thresholds: CardGeometryThresholds;
+  imageWidth: number;
+  imageHeight: number;
+}): PerimeterGradientGateFailure[] {
+  const relativeAspectError = Math.abs(input.candidate.aspectRatio - input.thresholds.expectedAspectRatio) / input.thresholds.expectedAspectRatio;
+  const edgeClearance = Math.min(input.imageWidth, input.imageHeight) * input.thresholds.minEdgeClearanceRatio;
+  const failures: PerimeterGradientGateFailure[] = [];
+  if (input.candidate.coverage < input.thresholds.minCardCoverage || input.candidate.coverage > input.thresholds.maxCardCoverage) {
+    failures.push("coverage");
+  }
+  if (relativeAspectError > input.thresholds.maxRelativeAspectError) failures.push("aspect");
+  if (input.candidate.clearance < edgeClearance) failures.push("clearance");
+  if (!input.candidate.sideStrengths.every((strength) => strength >= PERIMETER_GRADIENT_MIN_SIDE_STRENGTH)) {
+    failures.push("side_gradient");
+  }
+  if (!input.candidate.sideSignedStrengths.every((strength) => Math.abs(strength) >= PERIMETER_GRADIENT_MIN_SIGNED_SIDE_STRENGTH)) {
+    failures.push("side_signed_gradient");
+  }
+  if (!input.candidate.sidePolarityConsistency.every((consistency) => consistency >= PERIMETER_GRADIENT_MIN_POLARITY_CONSISTENCY)) {
+    failures.push("side_polarity_coherence");
+  }
+  if (input.candidate.totalStrength < PERIMETER_GRADIENT_MIN_TOTAL_STRENGTH) failures.push("total_gradient");
+  return failures;
+}
+
+function candidateWithinPerimeterGates(input: {
+  candidate: PerimeterGradientCandidate;
+  thresholds: CardGeometryThresholds;
+  imageWidth: number;
+  imageHeight: number;
+}): boolean {
+  return perimeterGradientGateFailures(input).length === 0;
+}
+
+function centerValues(length: number, step: number): number[] {
+  const values = new Set<number>();
+  const center = length / 2;
+  for (let offset = -Math.ceil(length / step); offset <= Math.ceil(length / step); offset += 1) {
+    const value = round(center + offset * step, 3);
+    if (value > 0 && value < length) values.add(value);
+  }
+  return [...values].sort((left, right) => left - right);
+}
+
+async function attemptPerimeterGradientDetection(prepared: PreparedImage, thresholds: CardGeometryThresholds): Promise<DetectionAttempt> {
+  const scale = Math.min(1, PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION / Math.max(prepared.orientedWidth, prepared.orientedHeight));
+  const analysisWidth = Math.max(32, Math.round(prepared.orientedWidth * scale));
+  const analysisHeight = Math.max(32, Math.round(prepared.orientedHeight * scale));
+  const { data, info } = await sharp(prepared.rawBytes)
+    .autoOrient()
+    .resize(analysisWidth, analysisHeight, { fit: "fill" })
+    .removeAlpha()
+    .toColourspace("srgb")
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const channels = info.channels;
+  const luma = new Uint8Array(analysisWidth * analysisHeight);
+  const borderHistogram = new Uint32Array(256);
+  const differenceHistogram = new Uint32Array(256);
+  const borderSize = Math.max(2, Math.round(Math.min(analysisWidth, analysisHeight) * 0.025));
+  let borderCount = 0;
+  for (let index = 0; index < luma.length; index += 1) {
+    const offset = index * channels;
+    const red = data[offset] ?? 0;
+    const green = data[offset + Math.min(1, channels - 1)] ?? red;
+    const blue = data[offset + Math.min(2, channels - 1)] ?? red;
+    const value = lumaForRgb(red, green, blue);
+    luma[index] = value;
+    const x = index % analysisWidth;
+    const y = Math.floor(index / analysisWidth);
+    if (x < borderSize || x >= analysisWidth - borderSize || y < borderSize || y >= analysisHeight - borderSize) {
+      borderHistogram[value] = (borderHistogram[value] ?? 0) + 1;
+      borderCount += 1;
+    }
+  }
+  const backgroundLuma = medianFromHistogram(borderHistogram, borderCount);
+  for (const value of luma) {
+    const difference = Math.abs(value - backgroundLuma);
+    differenceHistogram[difference] = (differenceHistogram[difference] ?? 0) + 1;
+  }
+  const contrastRange = histogramPercentile(differenceHistogram, luma.length, 0.95);
+  const diagnosticsBase: CardGeometryDetectionDiagnostics = {
+    method: "perimeter_gradient_rectangle_v3",
+    backgroundLuma,
+    contrastRange,
+    foregroundThreshold: PERIMETER_GRADIENT_MIN_SIDE_STRENGTH,
+    foregroundPixelFraction: 0,
+    expectedAspectRatio: thresholds.expectedAspectRatio,
+    analysisWidth,
+    analysisHeight,
+  };
+  if (contrastRange < 2) {
+    return {
+      diagnostics: diagnosticsBase,
+      reason: "The captured full-resolution frame has no usable card-perimeter gradient.",
+    };
+  }
+
+  const imageLandscape = analysisWidth >= analysisHeight;
+  const area = analysisWidth * analysisHeight;
+  const coarseSizeStep = Math.max(12, Math.round(Math.min(analysisWidth, analysisHeight) * 0.045));
+  const coarseCenterStep = Math.max(18, Math.round(Math.min(analysisWidth, analysisHeight) * 0.055));
+  const coarseCandidates: PerimeterGradientCandidate[] = [];
+  const provisionalCoarseCandidates: PerimeterGradientCandidate[] = [];
+  let closestRejectedCandidate: { candidate: PerimeterGradientCandidate; failures: PerimeterGradientGateFailure[] } | undefined;
+  const recordCandidate = (candidate: PerimeterGradientCandidate) => {
+    const failures = perimeterGradientGateFailures({
+      candidate,
+      thresholds,
+      imageWidth: analysisWidth,
+      imageHeight: analysisHeight,
+    });
+    if (!failures.length) {
+      coarseCandidates.push(candidate);
+      return;
+    }
+    // A coarse lattice can land a few analysis pixels away from a real weak
+    // edge. It may seed local refinement only when every other captured-frame
+    // gate already passes; the original signed threshold still governs the
+    // final candidate and is never waived for normalization.
+    if (failures.every((failure) => failure === "side_signed_gradient")) {
+      provisionalCoarseCandidates.push(candidate);
+    }
+    const structuralFailures = new Set<PerimeterGradientGateFailure>(["coverage", "aspect", "clearance"]);
+    const currentStructuralFailureCount = failures.filter((failure) => structuralFailures.has(failure)).length;
+    const previousStructuralFailureCount = closestRejectedCandidate
+      ? closestRejectedCandidate.failures.filter((failure) => structuralFailures.has(failure)).length
+      : Number.POSITIVE_INFINITY;
+    if (
+      !closestRejectedCandidate ||
+      currentStructuralFailureCount < previousStructuralFailureCount ||
+      (currentStructuralFailureCount === previousStructuralFailureCount && failures.length < closestRejectedCandidate.failures.length) ||
+      (currentStructuralFailureCount === previousStructuralFailureCount && failures.length === closestRejectedCandidate.failures.length && candidate.totalStrength > closestRejectedCandidate.candidate.totalStrength) ||
+      (currentStructuralFailureCount === previousStructuralFailureCount && failures.length === closestRejectedCandidate.failures.length && candidate.totalStrength === closestRejectedCandidate.candidate.totalStrength && candidate.coverage > closestRejectedCandidate.candidate.coverage)
+    ) {
+      closestRejectedCandidate = { candidate, failures };
+    }
+  };
+  const closestRejectionDiagnostics = () => {
+    if (!closestRejectedCandidate) return undefined;
+    const candidate = closestRejectedCandidate.candidate;
+    return {
+      reasons: closestRejectedCandidate.failures,
+      measuredAspectRatio: round(candidate.aspectRatio, 5),
+      cardCoverage: round(candidate.coverage, 5),
+      clearance: round(candidate.clearance, 4),
+      sideStrengths: candidate.sideStrengths,
+      signedSideStrengths: candidate.sideSignedStrengths,
+      sidePolarityConsistency: candidate.sidePolarityConsistency,
+      sidePolarity: candidate.sidePolarity,
+    };
+  };
+  for (const aspectFactor of PERIMETER_GRADIENT_ASPECT_FACTORS) {
+    const aspectRatio = thresholds.expectedAspectRatio * aspectFactor;
+    const minShort = Math.sqrt((thresholds.minCardCoverage * area) / aspectRatio);
+    const maxShort = Math.sqrt((thresholds.maxCardCoverage * area) / aspectRatio);
+    for (let shortSide = minShort; shortSide <= maxShort; shortSide += coarseSizeStep) {
+      const longSide = shortSide * aspectRatio;
+      const coverage = (longSide * shortSide) / area;
+      for (const angleDegrees of PERIMETER_GRADIENT_ANGLE_DEGREES) {
+        for (const centerX of centerValues(analysisWidth, coarseCenterStep)) {
+          for (const centerY of centerValues(analysisHeight, coarseCenterStep)) {
+            const score = scorePerimeterGradientCandidate({
+              luma,
+              width: analysisWidth,
+              height: analysisHeight,
+              centerX,
+              centerY,
+              longSide,
+              shortSide,
+              angleDegrees,
+              imageLandscape,
+            });
+            const candidate: PerimeterGradientCandidate = {
+              ...score,
+              centerX,
+              centerY,
+              longSide,
+              shortSide,
+              aspectRatio,
+              coverage,
+              angleDegrees,
+            };
+            recordCandidate(candidate);
+          }
+        }
+      }
+    }
+  }
+  if (!coarseCandidates.length && !provisionalCoarseCandidates.length) {
+    const closest = closestRejectionDiagnostics();
+    return {
+      diagnostics: {
+        ...diagnosticsBase,
+        perimeterCandidateCount: 0,
+        perimeterProvisionalCandidateCount: 0,
+        ...(closest ? { perimeterClosestRejectedCandidate: closest } : {}),
+      },
+      reason: closest
+        ? `No complete four-edge card perimeter passed the captured-frame gates; the closest candidate failed: ${closest.reasons.join(", ")}.`
+        : "No complete four-edge card perimeter had a usable captured-frame gradient.",
+    };
+  }
+  // Physical-card candidates are ranked by safe captured-frame coverage first;
+  // a smaller internal artwork rectangle may never replace a larger validated
+  // perimeter. Gradient strength breaks only equal-scale ties.
+  const refinementSeeds = coarseCandidates.length ? coarseCandidates : provisionalCoarseCandidates;
+  refinementSeeds.sort((left, right) =>
+    right.coverage - left.coverage || right.totalStrength - left.totalStrength || left.angleDegrees - right.angleDegrees,
+  );
+  const coarse = refinementSeeds[0]!;
+  const refinedCandidates: PerimeterGradientCandidate[] = [];
+  if (candidateWithinPerimeterGates({ candidate: coarse, thresholds, imageWidth: analysisWidth, imageHeight: analysisHeight })) {
+    refinedCandidates.push(coarse);
+  }
+  const refineCoverageFloor = Math.max(thresholds.minCardCoverage, coarse.coverage - 0.035);
+  for (const deltaAngle of [-3, 0, 3]) {
+    for (const deltaAspect of [-0.04, 0, 0.04]) {
+      const aspectRatio = coarse.aspectRatio + deltaAspect;
+      if (aspectRatio <= 0) continue;
+      for (const deltaShort of [-12, -6, 0, 6, 12]) {
+        const shortSide = coarse.shortSide + deltaShort;
+        if (shortSide <= 0) continue;
+        const longSide = shortSide * aspectRatio;
+        const coverage = (longSide * shortSide) / area;
+        if (coverage < refineCoverageFloor || coverage > thresholds.maxCardCoverage) continue;
+        for (const deltaX of [-12, -6, 0, 6, 12]) {
+          for (const deltaY of [-12, -6, 0, 6, 12]) {
+            const centerX = coarse.centerX + deltaX;
+            const centerY = coarse.centerY + deltaY;
+            const score = scorePerimeterGradientCandidate({
+              luma,
+              width: analysisWidth,
+              height: analysisHeight,
+              centerX,
+              centerY,
+              longSide,
+              shortSide,
+              angleDegrees: coarse.angleDegrees + deltaAngle,
+              imageLandscape,
+            });
+            const candidate: PerimeterGradientCandidate = {
+              ...score,
+              centerX,
+              centerY,
+              longSide,
+              shortSide,
+              aspectRatio,
+              coverage,
+              angleDegrees: coarse.angleDegrees + deltaAngle,
+            };
+            if (candidateWithinPerimeterGates({ candidate, thresholds, imageWidth: analysisWidth, imageHeight: analysisHeight })) {
+              refinedCandidates.push(candidate);
+            }
+          }
+        }
+      }
+    }
+  }
+  refinedCandidates.sort((left, right) =>
+    right.coverage - left.coverage || right.totalStrength - left.totalStrength || left.angleDegrees - right.angleDegrees,
+  );
+  if (!refinedCandidates.length) {
+    const closest = closestRejectionDiagnostics();
+    return {
+      diagnostics: {
+        ...diagnosticsBase,
+        perimeterCandidateCount: coarseCandidates.length,
+        perimeterProvisionalCandidateCount: provisionalCoarseCandidates.length,
+        ...(closest ? { perimeterClosestRejectedCandidate: closest } : {}),
+      },
+      reason: closest
+        ? `No complete four-edge card perimeter passed after local refinement; the closest candidate failed: ${closest.reasons.join(", ")}.`
+        : "No complete four-edge card perimeter passed local refinement.",
+    };
+  }
+  const selected = refinedCandidates[0]!;
+  const scaleX = prepared.orientedWidth / analysisWidth;
+  const scaleY = prepared.orientedHeight / analysisHeight;
+  const corners: CardGeometryCorners = {
+    topLeft: scalePoint(selected.corners.topLeft, scaleX, scaleY),
+    topRight: scalePoint(selected.corners.topRight, scaleX, scaleY),
+    bottomRight: scalePoint(selected.corners.bottomRight, scaleX, scaleY),
+    bottomLeft: scalePoint(selected.corners.bottomLeft, scaleX, scaleY),
+  };
+  const relativeAspectError = Math.abs(selected.aspectRatio - thresholds.expectedAspectRatio) / thresholds.expectedAspectRatio;
+  const meanSideStrength = selected.totalStrength / 4;
+  const gradientStrengthScore = clamp(
+    (meanSideStrength - PERIMETER_GRADIENT_MIN_SIDE_STRENGTH) / Math.max(0.1, 8 - PERIMETER_GRADIENT_MIN_SIDE_STRENGTH),
+    0,
+    1,
+  );
+  // This score is evaluated only after every absolute, signed, and per-side
+  // polarity gate above has passed. Each side is independently checked because
+  // directional illumination can reverse an otherwise valid local transition;
+  // browser and preview geometry never participate in this decision.
+  const polarityCoherenceScore = clamp(
+    (Math.min(...selected.sidePolarityConsistency) - PERIMETER_GRADIENT_MIN_POLARITY_CONSISTENCY) /
+      Math.max(0.01, 1 - PERIMETER_GRADIENT_MIN_POLARITY_CONSISTENCY),
+    0,
+    1,
+  );
+  const edgeScore = clamp(gradientStrengthScore * 0.4 + polarityCoherenceScore * 0.6, 0, 1);
+  const aspectScore = clamp(1 - relativeAspectError / Math.max(0.01, thresholds.maxRelativeAspectError), 0, 1);
+  const coverageScore =
+    selected.coverage < thresholds.minCardCoverage
+      ? 0
+      : selected.coverage > thresholds.maxCardCoverage
+        ? 0
+        : 1;
+  const confidence = round(0.32 * aspectScore + 0.22 * coverageScore + 0.31 * edgeScore + 0.15, 4);
+  const rotationDegrees = round(normalizeRotationDegrees((Math.atan2(selected.shortAxis.y, selected.shortAxis.x) * 180) / Math.PI), 3);
+  const diagnostics: CardGeometryDetectionDiagnostics = {
+    ...diagnosticsBase,
+    measuredAspectRatio: round(selected.aspectRatio, 5),
+    relativeAspectError: round(relativeAspectError, 5),
+    perimeterGradientStrength: round(selected.totalStrength, 4),
+    perimeterSideStrengths: selected.sideStrengths,
+    perimeterSignedSideStrengths: selected.sideSignedStrengths,
+    perimeterSidePolarityConsistency: selected.sidePolarityConsistency,
+    perimeterSidePolarity: selected.sidePolarity,
+    perimeterCandidateCount: refinedCandidates.length,
+    perimeterProvisionalCandidateCount: provisionalCoarseCandidates.length,
+  };
+  return {
+    diagnostics,
+    candidate: {
+      corners,
+      boundingBox: boundingBoxForCorners(corners),
+      rotationDegrees,
+      confidence,
+      shortSidePixels: selected.shortSide * scaleX,
+      longSidePixels: selected.longSide * scaleY,
+      cardCoverage: selected.coverage,
+      measuredAspectRatio: selected.aspectRatio,
+      relativeAspectError,
+      diagnostics,
+    },
+  };
+}
+
+async function attemptDetection(prepared: PreparedImage, thresholds: CardGeometryThresholds): Promise<DetectionAttempt> {
+  const solidPlate = await attemptSolidPlateDetection(prepared, thresholds);
+  if (solidPlate.candidate) return solidPlate;
+  const perimeter = await attemptPerimeterGradientDetection(prepared, thresholds);
+  if (perimeter.candidate) return perimeter;
+  return {
+    diagnostics: perimeter.diagnostics,
+    reason: perimeter.reason ?? solidPlate.reason ?? "No reliable captured-frame card geometry was detected.",
   };
 }
 

@@ -25,6 +25,84 @@ const frontImageId = "report/front/normalized-card.png";
 const backImageId = "report/back/normalized-card.png";
 const frontHeatmapId = "report/front/surface-findings-heatmap.png";
 
+function publicStorageLocatorPaths(value: unknown, path = "$"): string[] {
+  if (Array.isArray(value)) return value.flatMap((entry, index) => publicStorageLocatorPaths(entry, `${path}[${index}]`));
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return (
+      /^(?:s3|gs|az|swift):\/\//i.test(trimmed) ||
+      /^ai-grader\/reports\/[^/?#]+(?:\/|$)/i.test(trimmed) ||
+      /(^|[\s('"=:])(\/Users\/|\/home\/|\/root\/|\/tmp\/|\/var\/|\/app\/|\/workspace\/|\/mnt\/|\/opt\/|\/srv\/|\/etc\/|\/private\/|\/run\/|\/usr\/|\/bin\/|\/sbin\/|\/lib\/|\/lib64\/|\/dev\/|\/proc\/|\/sys\/|\/System\/|\/Library\/|\/Volumes\/)/i.test(trimmed) ||
+      /^(?:(?:authorization\s*:\s*)?(?:bearer|basic)\s+\S{8,}|(?:x[-_]?api[-_]?key|api[-_]?key)\s*[:=]\s*\S{8,})$/i.test(trimmed) ||
+      /^eyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+$/i.test(trimmed) ||
+      /^(?:iVBORw0KGgo|\/9j\/|R0lGOD|UklGR|SUkq|TU0A)/.test(trimmed)
+    ) ? [path] : [];
+  }
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) => {
+    const compact = key.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const forbidden =
+      compact.endsWith("base64") ||
+      compact.endsWith("payload") ||
+      compact.includes("encoded") ||
+      compact.endsWith("body") ||
+      compact.includes("binary") ||
+      compact.includes("presigned") ||
+      compact.includes("bridge") ||
+      compact.includes("cookie") ||
+      compact.includes("header") ||
+      compact === "jwt" ||
+      compact.endsWith("jwt") ||
+      compact.endsWith("endpoint") ||
+      compact === "sourceurl" ||
+      [
+        "artifactkey",
+        "artifactkeys",
+        "artifactlocator",
+        "artifactlocators",
+        "signedurl",
+        "signeduri",
+        "downloadurl",
+        "downloaduri",
+        "privateurl",
+        "privateuri",
+        "internalurl",
+        "internaluri",
+      ].includes(compact) ||
+      compact.includes("provider") ||
+      compact.includes("openai") ||
+      compact.includes("googlevision") ||
+      compact.includes("serpapi") ||
+      compact.includes("storagekey") ||
+      compact.includes("storageprefix") ||
+      compact.includes("storagepath") ||
+      compact.includes("storagereference") ||
+      compact.includes("storagelocator") ||
+      compact.includes("privatestorage") ||
+      compact.includes("internalstorage") ||
+      compact.includes("privateobject") ||
+      compact.includes("internalobject") ||
+      [
+        "labelpreviewkey",
+        "reportbundlekey",
+        "productionreleasekey",
+        "labeldatakey",
+        "assetmanifestkey",
+        "reporthtmlkey",
+        "publicationmanifestkey",
+        "integrationcontractkey",
+      ].includes(compact) ||
+      (compact.startsWith("storage") &&
+        /(?:key|prefix|path|reference|ref|locator|url|uri|object|objectid|bucket|bucketname|blob|blobid)$/.test(compact)) ||
+      /(?:object|blob|bucket|s3|spaces)(?:key|path|prefix|reference|ref|locator|id|uri|url|name|handle)$/.test(compact) ||
+      compact === "sourcekey";
+    return [
+      ...(forbidden ? [`${path}.${key}`] : []),
+      ...publicStorageLocatorPaths(entry, `${path}.${key}`),
+    ];
+  });
+}
+
 function finding(overrides: Record<string, unknown> = {}) {
   return {
     schemaVersion: "ai-grader-defect-finding-v1",
@@ -274,6 +352,106 @@ test("page-level SSR resolver serializes only the cinematic DTO and fails closed
     ...dependencies,
     async readPublicBundle() { return { reportId: "unknown-schema", schemaVersion: "ai-grader-report-bundle-v9.9" }; },
   }), null);
+});
+
+test("page-level SSR browser payload recursively excludes storage locators while retaining safe public evidence URLs", async () => {
+  const persisted = publicBundle();
+  const rawPersistedBundle = publicBundle({
+    reportBundleStorageKey: "private-report-bundle",
+    storageUrl: "https://private-storage.example.test/report",
+    storageObjectId: "private-report-object-id",
+    storageBucket: "private-report-bucket",
+    storageBlob: "private-report-blob",
+    artifactKeys: ["private-report-artifact-key"],
+    signedUrl: "https://private-storage.example.test/report?signature=private",
+    downloadUrl: "https://private-storage.example.test/download/report",
+    providerPrivateIdentifier: "private-provider-identifier",
+    serpApiSearchId: "private-serp-search-id",
+    openAiOperationName: "private-openai-operation",
+    providerId: "private-provider-id",
+    helperBridgeUrl: "https://private-bridge.example.test/session",
+    requestHeaders: {
+      cookie: "private-cookie",
+      authorization: "private-authorization-header",
+    },
+    opaquePayload: "cHJpdmF0ZS1vcGFxdWUtcGF5bG9hZA==",
+    encodedImage: "cHJpdmF0ZS1lbmNvZGVkLWltYWdl",
+    rawStorageReference: "ai-grader/reports/persisted-cinematic-report/assets/private-hidden-object.png",
+    headerMap: { cookie: "private-header-cookie" },
+    jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwcml2YXRlIn0.private-signature",
+    openAiResponseHandle: "private-openai-handle",
+    serpApiSearchReference: "private-serp-reference",
+    source: "s3://private-bucket/hidden.png",
+    objectHandle: "gs://private-bucket/hidden.png",
+    sourceKey: "ai-grader/reports/persisted-cinematic-report/assets/private-source-key.png",
+    sourceUrl: "https://private-bridge.example.test/status",
+    opaqueSource: "ai-grader/reports/persisted-cinematic-report/report-bundle.json",
+    reference: "ai-grader/reports/persisted-cinematic-report/production-release.json",
+    unixOpaque: "/etc/private-cinematic-report.json",
+    opaqueEnvironmentValues: {
+      first: "/var/private-cinematic-report.json",
+      second: "/usr/private-cinematic-report.json",
+      third: "/proc/private-cinematic-report.json",
+      fourth: "/dev/private-cinematic-report.json",
+      fifth: "/bin/private-cinematic-report.json",
+    },
+    opaqueTransportValues: {
+      first: "Bearer synthetic-cinematic-bearer-value",
+      second: "Basic c3ludGhldGljLWNpbmV0aWMtYmFzaWMtdmFsdWU=",
+      third: "x-api-key: synthetic-cinematic-api-key-value",
+    },
+    imageContent: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+    opaqueData: "cHJpdmF0ZS1vcGFxdWUtZW5jb2RlZC1iaW5hcnktcGF5bG9hZC1mb3ItcmVhZGJvdW5kYXJ5LXRlc3Rpbmctb25seQ==",
+    publicAssets: persisted.publicAssets.map((asset, index) => index === 0
+      ? {
+          ...asset,
+          storageKey: "private-front-storage-key",
+          storageKeyPrefix: "private-front-storage-prefix",
+          privateObjectReference: "private-front-object-reference",
+        }
+      : asset),
+    productionRelease: {
+      ...persisted.productionRelease,
+      productionReleaseStorageKey: "private-production-release",
+      label: {
+        ...persisted.productionRelease.label,
+        labelDataStorageKey: "private-label-data",
+        labelPreviewKey: "private-label-preview",
+      },
+      slabbedPhotoContract: {
+        photos: [{
+          storageKey: "private-slabbed-photo",
+          objectUri: "s3://private-bucket/slabbed-front.png",
+        }],
+      },
+    },
+    visionLab: {
+      defectEvidence: {
+        storage_path: "private-defect-path",
+        objectReference: "private-defect-object",
+        imageBase64: "private-image-body",
+        rawBase64: "private-raw-body",
+        previewBase64: "private-preview-body",
+      },
+    },
+  });
+  const props = await resolveAiGraderCinematicReportPageProps("persisted-cinematic-report", {
+    publicReadsEnabled: () => true,
+    async readPublicBundle() { return rawPersistedBundle; },
+    fixtureBundle(reportId: string) { return { reportId }; },
+  });
+  assert.ok(props);
+  const browserPayload = JSON.parse(JSON.stringify(props));
+  assert.deepEqual(publicStorageLocatorPaths(browserPayload), []);
+  assert.doesNotMatch(JSON.stringify(browserPayload), /private-/);
+  assert.doesNotMatch(JSON.stringify(browserPayload), /cHJpdmF0ZS1vcGFxdWUtcGF5bG9hZA|cHJpdmF0ZS1lbmNvZGVkLWltYWdl|private-header-cookie|private-openai-handle|private-serp-reference|private-bucket|private-source-key|private-bridge|report-bundle\.json|production-release\.json|\/(?:etc|var|usr|proc|dev|bin)\/private-cinematic|synthetic-cinematic-(?:bearer|api-key)-value|c3ludGhldGljLWNpbmV0aWMtYmFzaWMtdmFsdWU=|iVBORw0KGgo|cHJpdmF0ZS1vcGFxdWUtZW5jb2RlZC/);
+  assert.equal(props?.report.images.front?.trueView?.renderUrl, "/storage/front-normalized-card.png");
+  const html = renderToStaticMarkup(createElement(CinematicReport, { report: props!.report }));
+  assert.match(html, /\/storage\/front-normalized-card\.png/);
+  assert.doesNotMatch(
+    html,
+    /private-report|private-front|private-label|private-slabbed|private-defect|storageKey|artifactKeys|signedUrl|downloadUrl/,
+  );
 });
 
 test("sample-defect-v1 remains an explicit, isolated cinematic fixture", async () => {

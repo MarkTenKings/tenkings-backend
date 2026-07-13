@@ -40,6 +40,24 @@ async function makeBlankTiff(filePath) {
     .toFile(filePath);
 }
 
+async function makeDarkPerimeterTiff(filePath, options = {}) {
+  const centerX = 700 + (options.offsetX ?? 0);
+  const centerY = 980 + (options.offsetY ?? 0);
+  const angle = options.angle ?? 0;
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1960">
+      <rect width="1400" height="1960" fill="#000000"/>
+      <g transform="translate(${centerX} ${centerY}) rotate(${angle})">
+        <rect x="-525" y="-735" width="1050" height="1470" rx="9" fill="#090b0d"/>
+        <path d="M -350 -220 L 10 -430 L 360 -90 L 145 340 L -300 240 Z" fill="#b8a765"/>
+        <circle cx="180" cy="170" r="210" fill="#425f79"/>
+        <rect x="-380" y="390" width="570" height="150" fill="#d9d9d9"/>
+      </g>
+    </svg>
+  `);
+  await sharp(svg).tiff({ compression: "none" }).toFile(filePath);
+}
+
 async function makeSmallCardTiff(filePath) {
   const svg = Buffer.from(`
     <svg xmlns="http://www.w3.org/2000/svg" width="500" height="700">
@@ -356,7 +374,145 @@ test("legacy fixture boundary cannot silently normalize an undetected card and f
       rawPath,
       cardBoundaryRect: { x: 100, y: 140, width: 300, height: 420 },
     })),
-    /full-resolution geometry did not produce a normalized card artifact; reposition the card and retry/i,
+    /full-resolution geometry authority rejected the primary all-on frame.*no usable card-perimeter gradient/i,
+  );
+  assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
+});
+
+test("dark captured all-on perimeter remains the primary full-resolution authority and records captured-role consensus", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-dark-perimeter-primary-"));
+  const packageDir = path.join(root, "package-front");
+  const sideDir = path.join(packageDir, "front");
+  fs.mkdirSync(sideDir, { recursive: true });
+  const rawPath = path.join(sideDir, "dark-perimeter-all-roles.tiff");
+  await makeDarkPerimeterTiff(rawPath, { angle: 1, offsetX: 10, offsetY: -8 });
+  const rawBefore = fs.readFileSync(rawPath);
+
+  const result = await processFixedRigWarmSideBatch(warmBatchInput({
+    packageId: "synthetic-dark-perimeter-primary",
+    packageDir,
+    sideDir,
+    rawPath,
+  }));
+  const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
+  const authority = manifest.analysisCoordinateSystem.fullResolutionGeometryAuthority;
+
+  assert.equal(manifest.front.normalizedCard.geometry.detection.method, "perimeter_gradient_rectangle_v3");
+  assert.equal(manifest.analysisCoordinateSystem.authoritativeGeometryRole, "all_on");
+  assert.equal(manifest.analysisCoordinateSystem.transform.method, "authoritative_all_on_geometry_rotation_crop_canonical_resize_v1");
+  assert.equal(authority.primaryRole, "all_on");
+  assert.equal(authority.authoritativeRole, "all_on");
+  assert.equal(authority.resolution, "primary_all_on");
+  assert.deepEqual(authority.consensus.agreeingRoles, ["all_on", "accepted_profile"]);
+  assert.equal(authority.source.role, "all_on");
+  assert.equal(typeof authority.source.sourceSha256, "string");
+  assert.equal(authority.source.geometry.corners !== null, true);
+  assert.equal(manifest.geometryPolicy.fullResolutionGeometryAuthority.authoritativeRole, "all_on");
+  assert.deepEqual(fs.readFileSync(rawPath), rawBefore);
+});
+
+test("accepted-profile recovery requires an independent agreeing directional captured role when all-on is unavailable", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-secondary-geometry-authority-"));
+  const packageDir = path.join(root, "package-front");
+  const sideDir = path.join(packageDir, "front");
+  fs.mkdirSync(sideDir, { recursive: true });
+  const blankPath = path.join(sideDir, "all-on-unavailable.tiff");
+  const acceptedPath = path.join(sideDir, "accepted-profile.tiff");
+  const directionalPath = path.join(sideDir, "channel-one.tiff");
+  await Promise.all([
+    makeBlankTiff(blankPath),
+    makeDarkPerimeterTiff(acceptedPath, { angle: 1, offsetX: 10, offsetY: -8 }),
+    makeDarkPerimeterTiff(directionalPath, { angle: 1, offsetX: 10, offsetY: -8 }),
+  ]);
+  const rolePaths = [blankPath, blankPath, acceptedPath, directionalPath, blankPath, blankPath, blankPath, blankPath, blankPath, blankPath, blankPath];
+
+  const result = await processFixedRigWarmSideBatch(warmBatchInput({
+    packageId: "synthetic-secondary-geometry-authority",
+    packageDir,
+    sideDir,
+    rawPath: blankPath,
+    rolePaths,
+  }));
+  const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
+  const authority = manifest.analysisCoordinateSystem.fullResolutionGeometryAuthority;
+
+  assert.equal(manifest.analysisCoordinateSystem.authoritativeGeometryRole, "accepted_profile");
+  assert.equal(manifest.analysisCoordinateSystem.transform.method, "validated_secondary_captured_role_geometry_rotation_crop_canonical_resize_v1");
+  assert.equal(authority.resolution, "secondary_accepted_profile_consensus");
+  assert.equal(authority.authoritativeRole, "accepted_profile");
+  assert.equal(authority.consensus.required, true);
+  assert.equal(authority.consensus.agreeingRoles.includes("accepted_profile"), true);
+  assert.equal(authority.consensus.agreeingRoles.includes("channel_1"), true);
+  assert.equal(manifest.front.normalizedCard.normalizedArtifact.sourceSha256, manifest.front.allOn.capture.sha256);
+  assert.equal(manifest.rawEvidenceIntegrity.roles.every((role) => role.preserved), true);
+});
+
+test("secondary authority rejects directional roles that each match accepted-profile but conflict pairwise", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-secondary-pairwise-conflict-"));
+  const packageDir = path.join(root, "package-front");
+  const sideDir = path.join(packageDir, "front");
+  fs.mkdirSync(sideDir, { recursive: true });
+  const blankPath = path.join(sideDir, "all-on-unavailable.tiff");
+  const acceptedPath = path.join(sideDir, "accepted-profile.tiff");
+  const directionalLeftPath = path.join(sideDir, "channel-left.tiff");
+  const directionalRightPath = path.join(sideDir, "channel-right.tiff");
+  await Promise.all([
+    makeBlankTiff(blankPath),
+    makeCardTiff(acceptedPath, { angle: 0, offsetX: 0, offsetY: 0 }),
+    // Each 30 px shift is below the 35 px accepted-profile tolerance, while
+    // the two directional candidates are 60 px apart and must fail pairwise.
+    makeCardTiff(directionalLeftPath, { angle: 0, offsetX: -30, offsetY: 0 }),
+    makeCardTiff(directionalRightPath, { angle: 0, offsetX: 30, offsetY: 0 }),
+  ]);
+  const rolePaths = [
+    blankPath,
+    blankPath,
+    acceptedPath,
+    directionalLeftPath,
+    directionalRightPath,
+    blankPath,
+    blankPath,
+    blankPath,
+    blankPath,
+    blankPath,
+    blankPath,
+  ];
+
+  await assert.rejects(
+    processFixedRigWarmSideBatch(warmBatchInput({
+      packageId: "synthetic-secondary-pairwise-conflict",
+      packageDir,
+      sideDir,
+      rawPath: blankPath,
+      rolePaths,
+    })),
+    /full-resolution geometry authority found conflicting secondary captured-role candidates/i,
+  );
+  assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
+});
+
+test("conflicting all-on and accepted-profile full-resolution candidates fail before any normalized card artifact", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-conflicting-geometry-authority-"));
+  const packageDir = path.join(root, "package-front");
+  const sideDir = path.join(packageDir, "front");
+  fs.mkdirSync(sideDir, { recursive: true });
+  const allOnPath = path.join(sideDir, "all-on.tiff");
+  const acceptedPath = path.join(sideDir, "accepted-profile-offset.tiff");
+  await Promise.all([
+    makeCardTiff(allOnPath, { angle: 0, offsetX: 0, offsetY: 0 }),
+    makeCardTiff(acceptedPath, { angle: 0, offsetX: 0, offsetY: 100 }),
+  ]);
+  const rolePaths = [allOnPath, allOnPath, acceptedPath, allOnPath, allOnPath, allOnPath, allOnPath, allOnPath, allOnPath, allOnPath, allOnPath];
+
+  await assert.rejects(
+    processFixedRigWarmSideBatch(warmBatchInput({
+      packageId: "synthetic-conflicting-geometry-authority",
+      packageDir,
+      sideDir,
+      rawPath: allOnPath,
+      rolePaths,
+    })),
+    /full-resolution geometry authority found conflicting all-on and accepted-profile candidates/i,
   );
   assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
 });

@@ -1041,7 +1041,7 @@ function unsafeAiGraderPublicUrl(value: string) {
 
 function looksLikeLocalPathOrLoopback(value: string) {
   if (/\b[a-z]:[\\/]/i.test(value) || /\\TenKings\\/i.test(value) || /(^|\s)\\\\[^\\]+\\/i.test(value)) return true;
-  if (/(^|[\s('"=:])(\/Users\/|\/home\/|\/root\/|\/tmp\/|\/var\/tmp\/|\/app\/|\/workspace\/)/i.test(value)) return true;
+  if (/(^|[\s('"=:])(\/Users\/|\/home\/|\/root\/|\/tmp\/|\/var\/|\/app\/|\/workspace\/|\/mnt\/|\/opt\/|\/srv\/|\/etc\/|\/private\/|\/run\/|\/usr\/|\/bin\/|\/sbin\/|\/lib\/|\/lib64\/|\/dev\/|\/proc\/|\/sys\/|\/System\/|\/Library\/|\/Volumes\/)/i.test(value)) return true;
   if (/(^|[\s('"=:])(data|blob):/i.test(value) || /\bfile:\/\//i.test(value)) return true;
   if (
     /x-ai-grader-station-token|stationToken\s*[=:]|service-token|DATABASE_URL|Authorization\s*:\s*Bearer|x-amz-(?:signature|credential|security-token)|x-goog-(?:signature|credential)/i.test(value)
@@ -1052,6 +1052,28 @@ function looksLikeLocalPathOrLoopback(value: string) {
   ) return true;
   const embeddedUrls = value.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
   return embeddedUrls.some((url) => unsafeAiGraderPublicUrl(url));
+}
+
+/**
+ * Read-boundary-only value guard. Canonical packages retain raw object keys
+ * until server validation succeeds, so this must never run before validation.
+ */
+function looksLikeAiGraderPrivateReadValue(value: string) {
+  const trimmed = value.trim();
+  if (looksLikeLocalPathOrLoopback(value)) return true;
+  if (/^(?:s3|gs|az|swift):\/\//i.test(trimmed)) return true;
+  if (/^ai-grader\/reports\/[^/?#]+(?:\/|$)/i.test(trimmed)) return true;
+  if (/^(?:(?:authorization\s*:\s*)?(?:bearer|basic)\s+\S{8,}|(?:x[-_]?api[-_]?key|api[-_]?key)\s*[:=]\s*\S{8,})$/i.test(trimmed)) return true;
+  if (/^eyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+$/i.test(trimmed)) return true;
+  if (/^(?:iVBORw0KGgo|\/9j\/|R0lGOD|UklGR|SUkq|TU0A)/.test(trimmed)) return true;
+  if (
+    trimmed.length >= 80 &&
+    (
+      /^(?:[a-z0-9+/]{4})*(?:[a-z0-9+/]{2}==|[a-z0-9+/]{3}=)?$/i.test(trimmed) ||
+      /^[a-z0-9_-]+$/i.test(trimmed)
+    )
+  ) return true;
+  return false;
 }
 
 function unsafeAiGraderPublicKey(entryKey: string) {
@@ -1087,6 +1109,82 @@ function unsafeAiGraderPublicKey(entryKey: string) {
     "lightingcontrols",
   ]).has(compact);
   return credentialKey || hardwareControlKey;
+}
+
+/**
+ * Storage locators are needed while the server validates a persisted report,
+ * but they are never part of a public-report response. Keep this separate from
+ * the general public JSON sanitizer: that sanitizer is also used while writing
+ * canonical publication artifacts, where storage locators remain meaningful.
+ */
+function unsafeAiGraderPublicStorageLocatorKey(entryKey: string) {
+  const compact = entryKey.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (
+    compact.endsWith("base64") ||
+    compact.endsWith("payload") ||
+    compact.includes("encoded") ||
+    compact.endsWith("body") ||
+    compact.includes("binary") ||
+    compact.includes("presigned") ||
+    compact.includes("bridge") ||
+    compact.includes("cookie") ||
+    compact.includes("header") ||
+    compact === "jwt" ||
+    compact.endsWith("jwt") ||
+    compact.endsWith("endpoint") ||
+    compact === "sourceurl" ||
+    new Set([
+      "artifactkey",
+      "artifactkeys",
+      "artifactlocator",
+      "artifactlocators",
+      "signedurl",
+      "signeduri",
+      "downloadurl",
+      "downloaduri",
+      "privateurl",
+      "privateuri",
+      "internalurl",
+      "internaluri",
+    ]).has(compact)
+  ) return true;
+  if (
+    compact.includes("provider") ||
+    compact.includes("openai") ||
+    compact.includes("googlevision") ||
+    compact.includes("serpapi")
+  ) return true;
+  if (
+    compact.includes("storagekey") ||
+    compact.includes("storageprefix") ||
+    compact.includes("storagepath") ||
+    compact.includes("storagereference") ||
+    compact.includes("storagelocator") ||
+    compact.includes("privatestorage") ||
+    compact.includes("internalstorage") ||
+    compact.includes("privateobject") ||
+    compact.includes("internalobject")
+  ) return true;
+  if (
+    new Set([
+      "labelpreviewkey",
+      "reportbundlekey",
+      "productionreleasekey",
+      "labeldatakey",
+      "assetmanifestkey",
+      "reporthtmlkey",
+      "publicationmanifestkey",
+      "integrationcontractkey",
+    ]).has(compact)
+  ) return true;
+  if (
+    compact.startsWith("storage") &&
+    /(?:key|prefix|path|reference|ref|locator|url|uri|object|objectid|bucket|bucketname|blob|blobid)$/.test(compact)
+  ) return true;
+  return (
+    /(?:object|blob|bucket|s3|spaces)(?:key|path|prefix|reference|ref|locator|id|uri|url|name|handle)$/.test(compact) ||
+    compact === "sourcekey"
+  );
 }
 
 export function sanitizeAiGraderPublicJson<T>(value: T): T {
@@ -1132,6 +1230,36 @@ export function sanitizeAiGraderPublicJson<T>(value: T): T {
     return current;
   }
   return visit(value) as T;
+}
+
+/**
+ * Final read-boundary projection. This runs only after the persisted package
+ * and every asset locator have been validated. It deliberately removes storage
+ * locators at every nesting depth without mutating the canonical package.
+ */
+function projectAiGraderPublicReadJson(value: unknown): unknown {
+  function visit(current: unknown): unknown {
+    if (typeof current === "string") {
+      return looksLikeAiGraderPrivateReadValue(current) ? undefined : current;
+    }
+    if (Array.isArray(current)) {
+      return current.map((item) => visit(item)).filter((item) => item !== undefined);
+    }
+    if (!isRecord(current)) return current;
+    const next: JsonRecord = {};
+    for (const [entryKey, entryValue] of Object.entries(current)) {
+      if (unsafeAiGraderPublicStorageLocatorKey(entryKey)) continue;
+      const cleaned = visit(entryValue);
+      if (cleaned !== undefined) next[entryKey] = cleaned;
+    }
+    return next;
+  }
+  return visit(value);
+}
+
+function finalAiGraderPublicReadRecord(value: unknown): JsonRecord | undefined {
+  const projected = projectAiGraderPublicReadJson(value);
+  return isRecord(projected) ? projected : undefined;
 }
 
 const AI_GRADER_UNAUTHORIZED_CLAIM_KEYS = new Set([
@@ -1977,7 +2105,6 @@ function normalizeAiGraderReadPublicAssets(
       kind: "report-image",
       fileName: safeAssetFileName(stringValue(raw.fileName, id), "report-image"),
       contentType,
-      storageKey,
       publicUrl,
       byteSize,
       checksumSha256,
@@ -2021,10 +2148,13 @@ export function sanitizeAiGraderPublicReportBundleForRead(
       assets: publicAssets,
       publicAssets,
     });
-    return parsed.success ? parsed.data : undefined;
+    if (!parsed.success) return undefined;
+    const publicProjection = finalAiGraderPublicReadRecord(parsed.data);
+    const publicParsed = aiGraderReportBundleV02Schema.safeParse(publicProjection);
+    return publicParsed.success ? publicParsed.data : undefined;
   }
   if (sanitized.schemaVersion === undefined) {
-    return sanitizeLegacyAiGraderPublicReportBundleForRead(sanitized, publicAssets);
+    return finalAiGraderPublicReadRecord(sanitizeLegacyAiGraderPublicReportBundleForRead(sanitized, publicAssets));
   }
   if (sanitized.schemaVersion !== AI_GRADER_REPORT_BUNDLE_V01_VERSION) return undefined;
   const legacyParsed = aiGraderReportBundleV01Schema.safeParse({
@@ -2033,7 +2163,9 @@ export function sanitizeAiGraderPublicReportBundleForRead(
     publicAssets,
   });
   if (!legacyParsed.success) return undefined;
-  return sanitizeLegacyAiGraderPublicReportBundleForRead(legacyParsed.data as JsonRecord, publicAssets);
+  return finalAiGraderPublicReadRecord(
+    sanitizeLegacyAiGraderPublicReportBundleForRead(legacyParsed.data as JsonRecord, publicAssets),
+  );
 }
 
 /**
