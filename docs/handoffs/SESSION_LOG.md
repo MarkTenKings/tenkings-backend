@@ -26099,6 +26099,18 @@ By enabling Rip It Live, I confirm:
 - The public read boundary now validates canonical storage locators before projection, then recursively removes storage-key/object-reference classes, flat and nested `ai-grader/reports/...` raw keys, object-store URIs, local-path/loopback/bridge values, headers/cookies/JWTs, binary/base64/image payloads, provider-private handles, and unsafe endpoints from v0.2, v0.1, unversioned legacy, public API, and cinematic SSR/browser payloads. Verified public asset URLs and public eBay listing identifiers remain. Latest focused validation: helper geometry `26/26`, warm processing `11/11`, full helper `280/280`, database `74/74`, and public API/cinematic SSR `16/16`.
 - No hardware/camera/lighting/preview action, new capture, Dell update/restart, migration, environment or credential change, production database/storage mutation, deployment, merge, or real-card image commit occurred.
 
+## 2026-07-13 - PR #92 production merge planned action
+
+- Mark approved PR #92 for production merge at exact reviewed head 559ce659b88b2dd8aed6bbc7b61a9042602d44f3. Read-only preflight confirmed base origin/main=814101fa5ce148b5f02c762943f7efc4c00fd591; PR #92 was open, non-draft, CLEAN, MERGEABLE, and pinned to that approved head.
+- Required checks were green: GitHub Install & Build, all eight Docker image jobs, Vercel Preview, and Vercel Preview Comments. The authorized action was one normal GitHub protected merge-commit for that exact head, followed only by observation of automatic main CI and Vercel Production for the resulting merge SHA.
+- Prohibited throughout: Dell helper action/restart, camera/preview/lighting/capture, OCR, Confirm, comps, Publish, CORS/environment/credential changes, migrations, production database/storage writes, deployment reruns, branch-protection bypass, rebase, force push, or changes to PR #89, #90, or #91.
+
+## 2026-07-13 - PR #92 production merge and automatic deployment observed result
+
+- GitHub merged PR #92 at 2026-07-13T18:22:23Z using the normal merge-commit method as 226dcd75b864b4579ff4570714ceca9397e39ed1. Its parents are the exact pre-merge main 814101fa5ce148b5f02c762943f7efc4c00fd591 and the exact approved PR head 559ce659b88b2dd8aed6bbc7b61a9042602d44f3; fetched origin/main matched the merge commit.
+- Automatic main CI run 29274193271 completed successfully for that exact merge SHA: Install & Build plus all eight Docker image jobs passed. Vercel Production for the same SHA reported success with Deployment has completed. No manual deployment, retry, or rerun was triggered.
+- No Dell helper action/restart, hardware/camera/preview/lighting/capture, OCR, Confirm, comps, Publish, CORS/environment/credential change, migration, production database/storage mutation, branch-protection bypass, rebase, force push, or modification/merge of PR #89, #90, or #91 occurred.
+
 ## 2026-07-13 - Production-smoke blocker final validation and public-boundary audit
 
 - Rebuilt the helper and repeated the exact immutable failed-front replay offline after the final geometry amendment. All eleven raw roles remained 2448x2048 and re-hashed unchanged. The captured all-on source identity prefix remained 3a8b9805f74e; it was the only Ready authority under primary_all_on, while accepted profile was safely not detected. The authority produced a lossless 1200x1680 normalized PNG from a 1621x2174 source crop with automatic confidence 0.8994 and rotation 85; all other visible roles were registered through that same captured transform. The replay wrote only temporary derived output and did not touch any raw evidence.
