@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AssemblyName>tenkings-ai-grader-pylon-worker</AssemblyName>
+    <RootNamespace>TenKings.AiGrader.Pylon.Host</RootNamespace>
+    <EnablePylonCompile Condition="'$(EnablePylonCompile)' == ''">false</EnablePylonCompile>
+    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and '$(PylonSdkRoot)' != '' and Exists('$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon\net8.0\x64\Basler.Pylon.dll')">$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon\net8.0\x64\Basler.Pylon.dll</PylonAssemblyPath>
+    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and '$(PylonSdkRoot)' != '' and Exists('$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon\x64\Basler.Pylon.dll')">$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon\x64\Basler.Pylon.dll</PylonAssemblyPath>
+    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and '$(PylonSdkRoot)' != '' and Exists('$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon.dll')">$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon.dll</PylonAssemblyPath>
+    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and Exists('$(ProgramFiles)\Basler\pylon\Development\Assemblies\Basler.Pylon\net8.0\x64\Basler.Pylon.dll')">$(ProgramFiles)\Basler\pylon\Development\Assemblies\Basler.Pylon\net8.0\x64\Basler.Pylon.dll</PylonAssemblyPath>
+    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and Exists('$(ProgramFiles)\Basler\pylon\Development\Assemblies\Basler.Pylon\x64\Basler.Pylon.dll')">$(ProgramFiles)\Basler\pylon\Development\Assemblies\Basler.Pylon\x64\Basler.Pylon.dll</PylonAssemblyPath>
+    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and Exists('$(ProgramFiles)\Basler\pylon 8\Development\Assemblies\Basler.Pylon.dll')">$(ProgramFiles)\Basler\pylon 8\Development\Assemblies\Basler.Pylon.dll</PylonAssemblyPath>
+    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and Exists('$(ProgramFiles)\Basler\pylon 7\Development\Assemblies\Basler.Pylon.dll')">$(ProgramFiles)\Basler\pylon 7\Development\Assemblies\Basler.Pylon.dll</PylonAssemblyPath>
+    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and Exists('$(ProgramFiles)\Basler\pylon 6\Development\Assemblies\Basler.Pylon.dll')">$(ProgramFiles)\Basler\pylon 6\Development\Assemblies\Basler.Pylon.dll</PylonAssemblyPath>
+    <DefineConstants Condition="'$(EnablePylonCompile)' == 'true'">$(DefineConstants);PYLON_SDK</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\TenKings.AiGrader.Worker.Core\TenKings.AiGrader.Worker.Core.csproj" />
+    <ProjectReference Include="..\TenKings.AiGrader.Vision\TenKings.AiGrader.Vision.csproj" />
+    <PackageReference Include="OpenCvSharp4" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(EnablePylonCompile)' == 'true'">
+    <Reference Include="Basler.Pylon">
+      <HintPath>$(PylonAssemblyPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="ValidatePylonSdk" BeforeTargets="ResolveReferences" Condition="'$(EnablePylonCompile)' == 'true'">
+    <Error Condition="'$(PylonAssemblyPath)' == '' or !Exists('$(PylonAssemblyPath)')"
+           Text="Basler.Pylon.dll was not found. Pass -p:EnablePylonCompile=true -p:PylonAssemblyPath=&lt;installed SDK assembly&gt; or -p:PylonSdkRoot=&lt;installed SDK root&gt;. The DLL is never copied into git." />
+  </Target>
+</Project>

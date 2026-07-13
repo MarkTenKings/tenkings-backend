@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>tenkings-ai-grader-native-worker</AssemblyName>
+    <RootNamespace>TenKings.AiGrader.Worker.Host</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\TenKings.AiGrader.Worker.Core\TenKings.AiGrader.Worker.Core.csproj" />
+    <ProjectReference Include="..\TenKings.AiGrader.Vision\TenKings.AiGrader.Vision.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenCvSharp4" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TenKings.AiGrader.Worker.Tests" />
+  </ItemGroup>
+</Project>

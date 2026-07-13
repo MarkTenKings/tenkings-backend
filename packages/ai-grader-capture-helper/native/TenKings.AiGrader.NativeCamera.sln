@@ -1,0 +1,54 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TenKings.AiGrader.Vision", "src\TenKings.AiGrader.Vision\TenKings.AiGrader.Vision.csproj", "{B4CC265C-A476-4D8A-8E23-52AF7C9B5F10}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TenKings.AiGrader.Worker.Core", "src\TenKings.AiGrader.Worker.Core\TenKings.AiGrader.Worker.Core.csproj", "{46D09B3B-727D-47F9-BEF2-D9ECEDCA5DD2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TenKings.AiGrader.Worker.Host", "src\TenKings.AiGrader.Worker.Host\TenKings.AiGrader.Worker.Host.csproj", "{F34FC09A-3D9B-40CA-BEA4-FA7EB1E33BE9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TenKings.AiGrader.Pylon.Host", "src\TenKings.AiGrader.Pylon.Host\TenKings.AiGrader.Pylon.Host.csproj", "{17506F8A-1CB9-4987-B7AD-CF956967D731}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TenKings.AiGrader.Replay", "src\TenKings.AiGrader.Replay\TenKings.AiGrader.Replay.csproj", "{4FE437E8-E42A-487D-958E-7F18D63C8A72}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TenKings.AiGrader.Vision.Tests", "tests\TenKings.AiGrader.Vision.Tests\TenKings.AiGrader.Vision.Tests.csproj", "{C3F4367D-090B-4C0A-A627-4D9F9131C85B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TenKings.AiGrader.Worker.Tests", "tests\TenKings.AiGrader.Worker.Tests\TenKings.AiGrader.Worker.Tests.csproj", "{5DF2194E-BD19-4877-AB55-1B0EF037F2F3}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B4CC265C-A476-4D8A-8E23-52AF7C9B5F10}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B4CC265C-A476-4D8A-8E23-52AF7C9B5F10}.Debug|x64.Build.0 = Debug|Any CPU
+		{B4CC265C-A476-4D8A-8E23-52AF7C9B5F10}.Release|x64.ActiveCfg = Release|Any CPU
+		{B4CC265C-A476-4D8A-8E23-52AF7C9B5F10}.Release|x64.Build.0 = Release|Any CPU
+		{46D09B3B-727D-47F9-BEF2-D9ECEDCA5DD2}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{46D09B3B-727D-47F9-BEF2-D9ECEDCA5DD2}.Debug|x64.Build.0 = Debug|Any CPU
+		{46D09B3B-727D-47F9-BEF2-D9ECEDCA5DD2}.Release|x64.ActiveCfg = Release|Any CPU
+		{46D09B3B-727D-47F9-BEF2-D9ECEDCA5DD2}.Release|x64.Build.0 = Release|Any CPU
+		{F34FC09A-3D9B-40CA-BEA4-FA7EB1E33BE9}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F34FC09A-3D9B-40CA-BEA4-FA7EB1E33BE9}.Debug|x64.Build.0 = Debug|Any CPU
+		{F34FC09A-3D9B-40CA-BEA4-FA7EB1E33BE9}.Release|x64.ActiveCfg = Release|Any CPU
+		{F34FC09A-3D9B-40CA-BEA4-FA7EB1E33BE9}.Release|x64.Build.0 = Release|Any CPU
+		{17506F8A-1CB9-4987-B7AD-CF956967D731}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{17506F8A-1CB9-4987-B7AD-CF956967D731}.Debug|x64.Build.0 = Debug|Any CPU
+		{17506F8A-1CB9-4987-B7AD-CF956967D731}.Release|x64.ActiveCfg = Release|Any CPU
+		{17506F8A-1CB9-4987-B7AD-CF956967D731}.Release|x64.Build.0 = Release|Any CPU
+		{4FE437E8-E42A-487D-958E-7F18D63C8A72}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{4FE437E8-E42A-487D-958E-7F18D63C8A72}.Debug|x64.Build.0 = Debug|Any CPU
+		{4FE437E8-E42A-487D-958E-7F18D63C8A72}.Release|x64.ActiveCfg = Release|Any CPU
+		{4FE437E8-E42A-487D-958E-7F18D63C8A72}.Release|x64.Build.0 = Release|Any CPU
+		{C3F4367D-090B-4C0A-A627-4D9F9131C85B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C3F4367D-090B-4C0A-A627-4D9F9131C85B}.Debug|x64.Build.0 = Debug|Any CPU
+		{C3F4367D-090B-4C0A-A627-4D9F9131C85B}.Release|x64.ActiveCfg = Release|Any CPU
+		{C3F4367D-090B-4C0A-A627-4D9F9131C85B}.Release|x64.Build.0 = Release|Any CPU
+		{5DF2194E-BD19-4877-AB55-1B0EF037F2F3}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{5DF2194E-BD19-4877-AB55-1B0EF037F2F3}.Debug|x64.Build.0 = Debug|Any CPU
+		{5DF2194E-BD19-4877-AB55-1B0EF037F2F3}.Release|x64.ActiveCfg = Release|Any CPU
+		{5DF2194E-BD19-4877-AB55-1B0EF037F2F3}.Release|x64.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

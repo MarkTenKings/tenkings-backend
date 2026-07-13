@@ -26,7 +26,13 @@
     "test": "pnpm run build && node --test tests",
     "health": "node dist/cli.js health",
     "capabilities": "node dist/cli.js capabilities",
-    "serve": "node dist/cli.js serve"
+    "serve": "node dist/cli.js serve",
+    "native:restore": "powershell -NoProfile -ExecutionPolicy Bypass -File native/scripts/restore-locked.ps1",
+    "native:build": "dotnet build native/TenKings.AiGrader.NativeCamera.sln --configuration Release --no-restore --disable-build-servers -m:1",
+    "native:test": "powershell -NoProfile -ExecutionPolicy Bypass -File native/scripts/test-fake-replay.ps1",
+    "native:replay": "dotnet run --project native/src/TenKings.AiGrader.Replay/TenKings.AiGrader.Replay.csproj --configuration Release --no-restore --",
+    "native:build:pylon": "powershell -NoProfile -ExecutionPolicy Bypass -File native/scripts/build-pylon-host.ps1",
+    "native:package": "powershell -NoProfile -ExecutionPolicy Bypass -File native/scripts/publish-workers.ps1"
   },
   "dependencies": {
     "@tenkings/ai-grader-simulator": "workspace:*",

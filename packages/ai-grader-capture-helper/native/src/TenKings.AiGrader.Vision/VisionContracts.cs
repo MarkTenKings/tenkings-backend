@@ -1,0 +1,361 @@
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+
+namespace TenKings.AiGrader.Vision;
+
+public enum CardSide
+{
+    Front,
+    Back,
+}
+
+public enum DetectorMode
+{
+    PcaBaseline,
+    ContourQuad,
+    LineRecovery,
+    Fused,
+}
+
+public enum GeometryStatus
+{
+    NotDetected,
+    AdjustCard,
+    Ready,
+}
+
+public enum GeometryReasonCode
+{
+    None,
+    WarmingUp,
+    EmptyFrame,
+    InvalidFrame,
+    WrongEpoch,
+    StaleFrame,
+    FrozenFrame,
+    NoBoundary,
+    NoGradientSupport,
+    LowConfidence,
+    UnsafeAspect,
+    UnsafeCoverage,
+    ClippedBoundary,
+    ExcessPerspective,
+    InconsistentEvidence,
+}
+
+public enum CardEdge
+{
+    // Image/display ordering only. This never infers the card's printed orientation.
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+public readonly record struct PointD(double X, double Y)
+{
+    public static PointD Lerp(PointD from, PointD to, double amount) =>
+        new(from.X + ((to.X - from.X) * amount), from.Y + ((to.Y - from.Y) * amount));
+}
+
+public sealed record FrameIdentity(
+    string FrameId,
+    long? BlockId,
+    ulong? HardwareTimestamp,
+    DateTimeOffset CaptureTimestampUtc,
+    long ReceiveMonotonicTicks)
+{
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(FrameId) || FrameId.Length > 96)
+        {
+            throw new ArgumentException("FrameId must contain 1-96 safe characters.", nameof(FrameId));
+        }
+
+        if (FrameId.Any(static c => char.IsControl(c) || c is '/' or '\\'))
+        {
+            throw new ArgumentException("FrameId contains unsafe characters.", nameof(FrameId));
+        }
+
+        if (BlockId is < 0 || ReceiveMonotonicTicks < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(BlockId), "Frame counters must be non-negative.");
+        }
+    }
+}
+
+public sealed record FrameEpochs(
+    string SessionEpoch,
+    long WorkerEpoch,
+    long PreviewEpoch,
+    long SideEpoch,
+    CardSide Side)
+{
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(SessionEpoch) || SessionEpoch.Length > 96 ||
+            SessionEpoch.Any(static c => char.IsControl(c) || c is '/' or '\\'))
+        {
+            throw new ArgumentException("SessionEpoch must contain 1-96 safe characters.", nameof(SessionEpoch));
+        }
+
+        if (WorkerEpoch < 0 || PreviewEpoch < 0 || SideEpoch < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(WorkerEpoch), "Epoch counters must be non-negative.");
+        }
+    }
+}
+
+public sealed record NormalizedRoi(double X, double Y, double Width, double Height)
+{
+    public static NormalizedRoi SafeDefault { get; } = new(0.015, 0.015, 0.97, 0.97);
+
+    public void Validate()
+    {
+        if (!double.IsFinite(X) || !double.IsFinite(Y) || !double.IsFinite(Width) || !double.IsFinite(Height) ||
+            X < 0 || Y < 0 || Width <= 0 || Height <= 0 || X + Width > 1 || Y + Height > 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Width), "ROI must be a finite normalized rectangle inside the frame.");
+        }
+    }
+}
+
+public sealed record LensCalibration(
+    IReadOnlyList<double> CameraMatrix,
+    IReadOnlyList<double> DistortionCoefficients)
+{
+    public void Validate()
+    {
+        if (CameraMatrix.Count != 9 || DistortionCoefficients.Count is < 4 or > 14 ||
+            CameraMatrix.Any(static value => !double.IsFinite(value)) ||
+            DistortionCoefficients.Any(static value => !double.IsFinite(value)))
+        {
+            throw new ArgumentException("Lens calibration must have a finite 3x3 matrix and 4-14 distortion coefficients.");
+        }
+    }
+}
+
+public sealed record VisionCalibration(
+    string CalibrationId,
+    NormalizedRoi SafeRoi,
+    LensCalibration? Lens)
+{
+    public static VisionCalibration Uncalibrated { get; } = new("uncalibrated", NormalizedRoi.SafeDefault, null);
+
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(CalibrationId) || CalibrationId.Length > 96 ||
+            CalibrationId.Any(static c => char.IsControl(c) || c is '/' or '\\'))
+        {
+            throw new ArgumentException("CalibrationId must contain 1-96 safe characters.", nameof(CalibrationId));
+        }
+
+        SafeRoi.Validate();
+        Lens?.Validate();
+    }
+}
+
+public sealed record Mono8Frame(
+    ReadOnlyMemory<byte> Buffer,
+    int Width,
+    int Height,
+    int Stride,
+    FrameIdentity Identity,
+    FrameEpochs Epochs,
+    VisionCalibration Calibration,
+    long DroppedFrames)
+{
+    public const int MaxDimension = 8192;
+    public const int MaxBufferBytes = 96 * 1024 * 1024;
+
+    public void Validate()
+    {
+        Identity.Validate();
+        Epochs.Validate();
+        Calibration.Validate();
+        if (Width is < 64 or > MaxDimension || Height is < 64 or > MaxDimension || Stride < Width ||
+            Buffer.Length < checked(Stride * Height) || Buffer.Length > MaxBufferBytes || DroppedFrames < 0)
+        {
+            throw new ArgumentException("Mono8 frame dimensions, stride, buffer, or drop count are invalid.");
+        }
+    }
+}
+
+public sealed record DetectionContext(
+    FrameEpochs ExpectedEpochs,
+    long DetectStartMonotonicTicks,
+    double MonotonicFrequency = 0)
+{
+    public double EffectiveFrequency => MonotonicFrequency > 0 ? MonotonicFrequency : Stopwatch.Frequency;
+}
+
+public sealed record DetectorOptions
+{
+    public DetectorMode Mode { get; init; } = DetectorMode.Fused;
+    public int AnalysisMaxDimension { get; init; } = 1280;
+    public int AdaptiveBlockSize { get; init; } = 31;
+    public double AdaptiveConstant { get; init; } = 5;
+    public double CannyLow { get; init; } = 35;
+    public double CannyHigh { get; init; } = 110;
+    public int MorphologyKernel { get; init; } = 7;
+    public double ExpectedAspectRatio { get; init; } = 1.4;
+    public double MinAspectRatio { get; init; } = 1.18;
+    public double MaxAspectRatio { get; init; } = 1.72;
+    public double MinCoverage { get; init; } = 0.12;
+    public double MaxCoverage { get; init; } = 0.88;
+    public double MinConfidence { get; init; } = 0.58;
+    public double ReadyConfidence { get; init; } = 0.70;
+    public double MinEdgeSupport { get; init; } = 0.30;
+    public double MinClearanceFraction { get; init; } = 0.008;
+    public double MaxPerspectiveSkew { get; init; } = 0.36;
+    public double MaxFrameAgeMs { get; init; } = 250;
+    public int ReadyEvidenceFrames { get; init; } = 3;
+    public double MaxReadyMotionFraction { get; init; } = 0.055;
+    public double DisplaySmoothingAlpha { get; init; } = 0.68;
+    public int NormalizedWidth { get; init; } = 1200;
+    public int NormalizedHeight { get; init; } = 1680;
+
+    public void Validate()
+    {
+        if (AnalysisMaxDimension is < 320 or > 4096 || AdaptiveBlockSize is < 3 or > 101 || AdaptiveBlockSize % 2 == 0 ||
+            MorphologyKernel is < 1 or > 31 || MorphologyKernel % 2 == 0 ||
+            MinCoverage <= 0 || MaxCoverage >= 1 || MinCoverage >= MaxCoverage ||
+            MinConfidence is <= 0 or >= 1 || ReadyConfidence < MinConfidence || ReadyConfidence >= 1 ||
+            MinEdgeSupport is <= 0 or >= 1 || MinAspectRatio <= 0 || MaxAspectRatio <= MinAspectRatio ||
+            ExpectedAspectRatio < MinAspectRatio || ExpectedAspectRatio > MaxAspectRatio ||
+            MinClearanceFraction is < 0 or > 0.1 || MaxPerspectiveSkew is <= 0 or >= 1 ||
+            MaxFrameAgeMs <= 0 || ReadyEvidenceFrames is < 1 or > 12 ||
+            MaxReadyMotionFraction is <= 0 or > 0.5 || DisplaySmoothingAlpha is <= 0 or > 1 ||
+            NormalizedWidth < 100 || NormalizedHeight < 100)
+        {
+            throw new ArgumentException("Detector options are outside bounded safe ranges.");
+        }
+    }
+}
+
+public sealed record FittedLine(
+    CardEdge Edge,
+    PointD Start,
+    PointD End,
+    double A,
+    double B,
+    double C,
+    double ResidualPixels,
+    double GradientSupport,
+    double Continuity);
+
+public sealed record EdgeEvidence(
+    int Index,
+    double LengthPixels,
+    double GradientSupport,
+    double Continuity,
+    double ResidualFraction,
+    double ResidualPixels,
+    double Score);
+
+public sealed record GeometryMetrics(
+    double Confidence,
+    double AspectRatio,
+    double AspectScore,
+    double Coverage,
+    double CoverageScore,
+    double ClearanceFraction,
+    double ClearanceScore,
+    bool FullVisibility,
+    double PerspectiveSkew,
+    double PerspectiveScore,
+    double ConvexityScore,
+    double ResidualScore,
+    double MeanResidualPixels,
+    double EdgeSupportScore,
+    double ContinuityScore,
+    IReadOnlyList<EdgeEvidence> Edges);
+
+public sealed record HysteresisEvidence(
+    int ConsecutiveAccepted,
+    int Required,
+    bool CurrentFrameAccepted,
+    bool EpochReset,
+    double MotionDeltaFraction,
+    bool RemovalFenceSatisfied);
+
+public sealed record GeometryResult(
+    GeometryStatus Status,
+    GeometryReasonCode Reason,
+    string Detector,
+    string DetectorVersion,
+    FrameIdentity Frame,
+    FrameEpochs Epochs,
+    string CalibrationId,
+    int SourceWidth,
+    int SourceHeight,
+    int NormalizedWidth,
+    int NormalizedHeight,
+    IReadOnlyList<PointD> SourceCorners,
+    IReadOnlyList<PointD> DisplayCorners,
+    IReadOnlyList<PointD> NormalizedCorners,
+    IReadOnlyList<FittedLine> FittedLines,
+    IReadOnlyList<double> SourceToNormalizedHomography,
+    PointD CenterSource,
+    double ScaleFraction,
+    double RotationDegrees,
+    GeometryMetrics Metrics,
+    long DetectStartMonotonicTicks,
+    long DetectEndMonotonicTicks,
+    double ProcessingMs,
+    double FrameAgeMs,
+    long DroppedFrames,
+    bool Frozen,
+    bool Stale,
+    HysteresisEvidence Hysteresis)
+{
+    public static GeometryResult Rejected(
+        Mono8Frame frame,
+        DetectionContext context,
+        GeometryReasonCode reason,
+        bool stale = false,
+        bool frozen = false,
+        double frameAgeMs = 0,
+        string detector = "fused")
+    {
+        var now = Stopwatch.GetTimestamp();
+        return new GeometryResult(
+            GeometryStatus.NotDetected,
+            reason,
+            detector,
+            NativeEdgeDetector.DetectorVersion,
+            frame.Identity,
+            frame.Epochs,
+            frame.Calibration.CalibrationId,
+            frame.Width,
+            frame.Height,
+            1200,
+            1680,
+            Array.Empty<PointD>(),
+            Array.Empty<PointD>(),
+            Array.Empty<PointD>(),
+            Array.Empty<FittedLine>(),
+            Array.Empty<double>(),
+            default,
+            0,
+            0,
+            EmptyMetrics,
+            context.DetectStartMonotonicTicks,
+            now,
+            Math.Max(0, (now - context.DetectStartMonotonicTicks) * 1000d / context.EffectiveFrequency),
+            Math.Max(0, frameAgeMs),
+            frame.DroppedFrames,
+            frozen,
+            stale,
+            new HysteresisEvidence(0, 0, false, true, 0, false));
+    }
+
+    public static GeometryMetrics EmptyMetrics { get; } = new(
+        0, 0, 0, 0, 0, 0, 0, false, 1, 0, 0, 0, 0, 0, 0, Array.Empty<EdgeEvidence>());
+}
+
+internal static class ReadOnly
+{
+    public static IReadOnlyList<T> Wrap<T>(IEnumerable<T> values) =>
+        new ReadOnlyCollection<T>(values.ToArray());
+}
