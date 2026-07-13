@@ -1,0 +1,11 @@
+{
+  "name": "@tenkings/ai-grader-nfc-helper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dedicated loopback-only Windows PC/SC helper for Ten Kings NTAG215 programming.",
+  "scripts": {
+    "build": "dotnet build TenKings.AiGrader.NfcHelper.sln --configuration Release -p:UseSharedCompilation=false -nr:false",
+    "test": "dotnet run --project tests/TenKings.AiGrader.NfcHelper.Tests/TenKings.AiGrader.NfcHelper.Tests.csproj --configuration Release -p:UseSharedCompilation=false",
+    "publish:win": "dotnet publish src/TenKings.AiGrader.NfcHelper/TenKings.AiGrader.NfcHelper.csproj --configuration Release --runtime win-x64 --self-contained false"
+  }
+}

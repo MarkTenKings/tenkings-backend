@@ -104,6 +104,14 @@ test("safe label sheet DTOs omit raw payload and unsafe URLs", () => {
     assignedAt: "2026-07-09T12:00:00.000Z",
   };
   const row = sourceRow("report-1", "label-1", assignment);
+  row.nfc = {
+    status: "active",
+    publicTagId: "Abcdefghijklmnopqrstuvwxyz012345",
+    nfcTagUrl: "https://collect.tenkings.co/nfc/Abcdefghijklmnopqrstuvwxyz012345",
+    chipType: "NTAG215",
+    securityMode: "static_url_v1",
+    uidFingerprintSha256: "must-not-leak",
+  };
   row.qrPayloadUrl = "https://storage.example.test/object?X-Amz-Signature=secret";
   row.publicReportUrl = "http://127.0.0.1/report-1";
   const result = buildAiGraderLabelSheetsResult([row]);
@@ -112,6 +120,14 @@ test("safe label sheet DTOs omit raw payload and unsafe URLs", () => {
   assert.equal(result.sheets[0].labels[0].qrPayloadUrl, undefined);
   assert.equal(result.sheets[0].labels[0].publicReportUrl, undefined);
   assert.equal(result.sheets[0].labels[0].confirmedCardIdentity.playerName, "Test Player");
+  assert.deepEqual(result.sheets[0].labels[0].nfc, {
+    status: "active",
+    registrationKind: "registered_link",
+    publicTagId: "Abcdefghijklmnopqrstuvwxyz012345",
+    nfcTagUrl: "https://collect.tenkings.co/nfc/Abcdefghijklmnopqrstuvwxyz012345",
+    chipType: "NTAG215",
+    securityMode: "static_url_v1",
+  });
   assert.equal(safeAiGraderLabelPublicUrl("https://printer.internal/report"), undefined);
   assert.equal(safeAiGraderLabelPublicUrl("https://bridge.localhost/report"), undefined);
   assert.equal(safeAiGraderLabelPublicUrl("https://100.64.0.1/report"), undefined);

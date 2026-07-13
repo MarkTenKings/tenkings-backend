@@ -40,6 +40,12 @@ type FinishQueueItem = {
   publicReportUrl?: string | null;
   labelPreviewUrl?: string | null;
   qrPayloadUrl?: string | null;
+  nfcRequired?: boolean;
+  nfcStatus?: "missing" | "reserved" | "programming" | "verified" | "active" | "revoked" | "error";
+  nfcTagUrl?: string | null;
+  publicTagId?: string | null;
+  chipType?: string | null;
+  securityMode?: string | null;
   publishedAt?: string | null;
   createdAt?: string | null;
   queueStatus: QueueStage;
@@ -80,6 +86,7 @@ type FinishQueueItem = {
 type FinishQueueResult = {
   source: "persisted_records";
   orderedBy: string;
+  nfcRequired: boolean;
   items: FinishQueueItem[];
   stats?: Record<string, number>;
 };
@@ -102,6 +109,7 @@ type ApiError = Error & {
 const emptyQueue: FinishQueueResult = {
   source: "persisted_records",
   orderedBy: "chronological",
+  nfcRequired: false,
   items: [],
 };
 
@@ -198,6 +206,30 @@ function safeHttpsUrl(value?: string | null) {
   }
 }
 
+function safeNfcTagUrl(item?: FinishQueueItem | null) {
+  const publicTagId = item?.publicTagId;
+  if (!publicTagId || !/^[A-Za-z0-9_-]{32}$/.test(publicTagId)) return null;
+  const expected = `https://collect.tenkings.co/nfc/${publicTagId}`;
+  return item?.nfcTagUrl === expected ? expected : null;
+}
+
+function nfcStatusLabel(item: FinishQueueItem) {
+  const state = item.nfcStatus === "active"
+    ? "Active"
+    : item.nfcStatus === "programming"
+      ? "Programming"
+      : item.nfcStatus === "verified"
+        ? "Verified, awaiting activation"
+        : item.nfcStatus === "reserved"
+          ? "Reserved"
+          : item.nfcStatus === "revoked"
+            ? "Revoked"
+            : item.nfcStatus === "error"
+              ? "Error"
+              : "Missing";
+  return item.nfcRequired ? state : `${state} (not required)`;
+}
+
 function compsStatusPending(status?: string | null) {
   return status === "running";
 }
@@ -224,6 +256,9 @@ function actionMessage(item: FinishQueueItem) {
   }
   if (!item.label.printed) {
     return { title: "Label print required", message: "Mark the assigned label sheet printed before the final inventory action." };
+  }
+  if (item.nfcRequired && item.nfcStatus !== "active") {
+    return { title: "Program NFC", message: "Use the dedicated NFC workstation route to program and activate this report link." };
   }
   return { title: "Add to inventory", message: "All required evidence is ready for the final inventory action." };
 }
@@ -281,6 +316,7 @@ export default function AiGraderFinishPage() {
     const result: FinishQueueResult = {
       source: "persisted_records",
       orderedBy: typeof rawResult.orderedBy === "string" ? rawResult.orderedBy : "chronological",
+      nfcRequired: rawResult.nfcRequired === true,
       items: Array.isArray(rawResult.items) ? (rawResult.items as FinishQueueItem[]) : [],
       stats: asRecord(rawResult.stats) as Record<string, number>,
     };
@@ -711,6 +747,10 @@ export default function AiGraderFinishPage() {
   const selectedPublicReportUrl = safeHttpsUrl(selectedItem?.publicReportUrl);
   const selectedLabelPreviewUrl = safeHttpsUrl(selectedItem?.labelPreviewUrl);
   const selectedSearchUrl = safeHttpsUrl(selectedItem?.valuation.searchUrl);
+  const selectedNfcTagUrl = safeNfcTagUrl(selectedItem);
+  const selectedNfcProgrammingHref = selectedItem
+    ? `/ai-grader/nfc?reportId=${encodeURIComponent(selectedItem.reportId)}`
+    : "/ai-grader/nfc";
   const signedIn = authState === "authorized" && Boolean(actor);
 
   return (
@@ -725,6 +765,7 @@ export default function AiGraderFinishPage() {
             <p className="eyebrow">Ten Kings AI Grader</p>
             <h1>Finish queue</h1>
             <p className="subhead">Process cards in the same order as the physical stack.</p>
+            <p className="subhead">{queue.nfcRequired ? "NFC is required before inventory." : "NFC is not required for inventory."}</p>
           </div>
           <div className="account-actions">
             <Link className="button secondary sheets-link" href="/ai-grader/labels/sheets">
@@ -857,7 +898,9 @@ export default function AiGraderFinishPage() {
                       {busyAction === `comps:${selectedItem.reportId}` ? "Starting comps" : "Retry comps"}
                     </button>
                   ) : null}
-                  {selectedItem.queueStatus === "ready_for_inventory" ? (
+                  {selectedItem.queueStatus === "ready_for_inventory" && selectedItem.nfcRequired && selectedItem.nfcStatus !== "active" ? (
+                    <Link className="button primary" href={selectedNfcProgrammingHref}>Open NFC programming</Link>
+                  ) : selectedItem.queueStatus === "ready_for_inventory" ? (
                     <button
                       type="button"
                       className="button primary"
@@ -882,6 +925,10 @@ export default function AiGraderFinishPage() {
                   </li>
                   <li className={selectedItem.inventory.complete ? "done" : selectedItem.queueStatus === "ready_for_inventory" ? "current" : ""}>
                     <span>3</span>
+                    <div><strong>NFC registration</strong><small>{nfcStatusLabel(selectedItem)}</small></div>
+                  </li>
+                  <li className={selectedItem.inventory.complete ? "done" : selectedItem.queueStatus === "ready_for_inventory" ? "current" : ""}>
+                    <span>4</span>
                     <div><strong>Inventory</strong><small>{selectedItem.inventory.complete ? "Complete" : "Pending"}</small></div>
                   </li>
                 </ol>
@@ -890,6 +937,8 @@ export default function AiGraderFinishPage() {
                   {selectedPublicReportUrl ? <a href={selectedPublicReportUrl} target="_blank" rel="noreferrer">Open public report</a> : null}
                   {selectedLabelPreviewUrl ? <a href={selectedLabelPreviewUrl} target="_blank" rel="noreferrer">Open label preview</a> : null}
                   {selectedSearchUrl ? <a href={selectedSearchUrl} target="_blank" rel="noreferrer">Open comps search</a> : null}
+                  {selectedNfcTagUrl ? <a href={selectedNfcTagUrl} target="_blank" rel="noreferrer">Open registered NFC link</a> : null}
+                  <Link href={selectedNfcProgrammingHref}>{selectedItem.nfcStatus === "active" ? "Manage NFC registration" : "Open NFC programming"}</Link>
                 </div>
 
                 <section className={selectedItem.queueStatus === "needs_comps_review" ? "work-section current-section" : "work-section"}>
@@ -1018,7 +1067,14 @@ export default function AiGraderFinishPage() {
                     <div className={selectedItem.valuation.complete ? "gate passed" : "gate"}><span>{selectedItem.valuation.complete ? "Pass" : "Wait"}</span><strong>Selected comps and value</strong></div>
                     <div className={selectedItem.slabPhotos.complete ? "gate passed" : "gate"}><span>{selectedItem.slabPhotos.complete ? "Pass" : "Wait"}</span><strong>Front and back slab photos</strong></div>
                     <div className={selectedItem.label.printed ? "gate passed" : "gate"}><span>{selectedItem.label.printed ? "Pass" : "Wait"}</span><strong>Label sheet marked printed</strong></div>
+                    <div className={!selectedItem.nfcRequired || selectedItem.nfcStatus === "active" ? "gate passed" : "gate"}>
+                      <span>{!selectedItem.nfcRequired ? "Off" : selectedItem.nfcStatus === "active" ? "Pass" : "Wait"}</span>
+                      <strong>{selectedItem.nfcRequired ? `NFC ${nfcStatusLabel(selectedItem).toLowerCase()}` : "NFC not required"}</strong>
+                    </div>
                   </div>
+                  {!selectedItem.inventory.complete && selectedItem.nfcStatus !== "active" ? (
+                    <Link className="button secondary" href={selectedNfcProgrammingHref}>Open dedicated NFC programming route</Link>
+                  ) : null}
                   {!selectedItem.inventory.complete ? (
                     <button
                       type="button"

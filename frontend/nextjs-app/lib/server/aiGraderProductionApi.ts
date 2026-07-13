@@ -26,6 +26,7 @@ import {
   CardEvidenceKind,
   CardReviewStage,
   computeAiGraderValuationStatus,
+  getAiGraderNfcStatus,
   normalizeAiGraderPublicCaptureTiming,
   normalizeAiGraderPublicOcrPrefill,
   sanitizeAiGraderPublicReportBundleForRead,
@@ -79,6 +80,9 @@ import type {
 import {
   effectiveAiGraderOcrModel,
 } from "./aiGraderOcrStructuredExtraction";
+import { aiGraderNfcRequired } from "./aiGraderNfcPolicy";
+import type { AiGraderPublicNfcRegistration } from "./aiGraderNfcPublic";
+import { readAiGraderNfcStatusesForReports } from "./aiGraderNfcReadProjection";
 import {
   AiGraderOcrFailure,
   isAiGraderOcrFailureCode,
@@ -445,6 +449,15 @@ export type AiGraderFinishCardsQueueStatus =
   | "ready_for_inventory"
   | "complete";
 
+export type AiGraderFinishNfcStatus =
+  | "missing"
+  | "reserved"
+  | "programming"
+  | "verified"
+  | "active"
+  | "revoked"
+  | "error";
+
 export type AiGraderFinishCardsQueueItem = {
   reportId: string;
   certId?: string | null;
@@ -455,11 +468,17 @@ export type AiGraderFinishCardsQueueItem = {
   publicReportUrl?: string | null;
   labelPreviewUrl?: string | null;
   qrPayloadUrl?: string | null;
+  nfcRequired: boolean;
+  nfcStatus: AiGraderFinishNfcStatus;
+  nfcTagUrl?: string | null;
+  publicTagId?: string | null;
+  chipType?: string | null;
+  securityMode?: string | null;
   publishedAt?: string | null;
   createdAt?: string | null;
   queueStatus: AiGraderFinishCardsQueueStatus;
   statusText: "Needs Comps Review" | "Needs Slab Photos" | "Ready for Inventory" | "Complete";
-  needs: Array<"Comps Review" | "Slab Photos" | "Add To Inventory">;
+  needs: Array<"Comps Review" | "Slab Photos" | "Program NFC" | "Add To Inventory">;
   label: {
     printed: boolean;
     physicalPrintStatus?: string | null;
@@ -495,6 +514,7 @@ export type AiGraderFinishCardsQueueItem = {
 export type AiGraderFinishCardsQueueResult = {
   source: "persisted_records";
   orderedBy: "labelSheet_asc_slot_asc_createdAt_asc";
+  nfcRequired: boolean;
   items: AiGraderFinishCardsQueueItem[];
   stats: {
     total: number;
@@ -513,11 +533,13 @@ type AiGraderFinishCardsQueueBuildOptions = {
   activeLimit?: number;
   includeCompleted?: boolean;
   recentCompletedLimit?: number;
+  nfcRequired?: boolean;
 };
 
 export type AiGraderPublicReportApiDependencies = {
   env?: EnvLike;
   readPublishedBundle(reportId: string): Promise<AiGraderProductionReportBundleLike | null>;
+  readNfcRegistration?(reportId: string): Promise<AiGraderPublicNfcRegistration | null>;
   publicUrlFor?: (storageKey: string) => string;
 };
 
@@ -549,6 +571,7 @@ export function aiGraderProductionReadiness(env: EnvLike = process.env) {
     effectiveAiGraderModel: effectiveModel,
     ebayCompsEnabled: isEnabled(env, AI_GRADER_EBAY_COMPS_ENABLED_ENV),
     serpApiConfigured: Boolean(String(env.SERPAPI_KEY ?? "").trim()),
+    nfcRequired: aiGraderNfcRequired(env),
   };
 }
 
@@ -2211,6 +2234,42 @@ function compareFinishQueueItems(left: AiGraderFinishCardsQueueItem, right: AiGr
   return timeOrder || left.reportId.localeCompare(right.reportId);
 }
 
+const AI_GRADER_FINISH_NFC_STATUSES = new Set<AiGraderFinishNfcStatus>([
+  "missing",
+  "reserved",
+  "programming",
+  "verified",
+  "active",
+  "revoked",
+  "error",
+]);
+
+function finishNfcProjection(value: unknown) {
+  const nfc = isRecord(value) ? value : {};
+  const rawStatus = optionalString(nfc.status)?.toLowerCase();
+  const status = rawStatus && AI_GRADER_FINISH_NFC_STATUSES.has(rawStatus as AiGraderFinishNfcStatus)
+    ? rawStatus as AiGraderFinishNfcStatus
+    : "missing";
+  const publicTagId = optionalString(nfc.publicTagId);
+  const safePublicTagId = publicTagId && /^[A-Za-z0-9_-]{32}$/.test(publicTagId) ? publicTagId : null;
+  const expectedTagUrl = safePublicTagId ? `https://collect.tenkings.co/nfc/${safePublicTagId}` : null;
+  const nfcTagUrl = optionalString(nfc.nfcTagUrl) === expectedTagUrl ? expectedTagUrl : null;
+  const chipType = optionalString(nfc.chipType);
+  const rawSecurityMode = optionalString(nfc.securityMode);
+  const securityMode = rawSecurityMode === "STATIC_URL_V1"
+    ? "static_url_v1"
+    : rawSecurityMode === "NTAG424_SUN_V1"
+      ? "ntag424_sun_v1"
+      : rawSecurityMode;
+  return {
+    status,
+    publicTagId: safePublicTagId,
+    nfcTagUrl,
+    chipType: chipType === "NTAG215" || chipType === "NTAG424_DNA" ? chipType : null,
+    securityMode: securityMode === "static_url_v1" || securityMode === "ntag424_sun_v1" ? securityMode : null,
+  };
+}
+
 export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: AiGraderFinishCardsQueueBuildOptions = {}): AiGraderFinishCardsQueueResult {
   const allItems = rows.filter(isRecord).map((row): AiGraderFinishCardsQueueItem => {
     const label = firstRecord(row.labels) ?? firstRecord(row.label);
@@ -2252,6 +2311,9 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
     const reviewStage = optionalString(cardAsset?.reviewStage);
     const inventoryComplete = reviewStage === CardReviewStage.INVENTORY_READY_FOR_SALE || optionalString(session?.status) === "inventory_ready";
     const labelPrinted = optionalString(label?.physicalPrintStatus) === "printed";
+    const nfcRequired = options.nfcRequired === true;
+    const nfc = finishNfcProjection(row.nfc);
+    const nfcReady = nfc.status === "active";
     const labelSheetPosition = queueLabelSheetPosition(label);
     const queueStatus: AiGraderFinishCardsQueueStatus = !valuationComplete
       ? "needs_comps_review"
@@ -2263,6 +2325,7 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
     const needs: AiGraderFinishCardsQueueItem["needs"] = [];
     if (!valuationComplete) needs.push("Comps Review");
     if (!slabComplete) needs.push("Slab Photos");
+    if (nfcRequired && !nfcReady && !inventoryComplete) needs.push("Program NFC");
     if (slabComplete && valuationComplete && !inventoryComplete) needs.push("Add To Inventory");
 
     return {
@@ -2277,6 +2340,12 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
         safeAiGraderDownstreamUrl(label?.labelPreviewUrl) ??
         safeAiGraderDownstreamUrl(buildAiGraderLabelPreviewUrl(stringValue(row.reportId, "unknown-report"))),
       qrPayloadUrl: safeAiGraderDownstreamUrl(row.qrPayloadUrl) ?? safeAiGraderDownstreamUrl(label?.qrPayloadUrl),
+      nfcRequired,
+      nfcStatus: nfc.status,
+      nfcTagUrl: nfc.nfcTagUrl,
+      publicTagId: nfc.publicTagId,
+      chipType: nfc.chipType,
+      securityMode: nfc.securityMode,
       publishedAt: dateString(row.publishedAt),
       createdAt: dateString(row.createdAt),
       queueStatus,
@@ -2310,7 +2379,7 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
       inventory: {
         complete: inventoryComplete,
         reviewStage: reviewStage ?? null,
-        canAddToInventory: labelPrinted && slabComplete && valuationComplete && !inventoryComplete,
+        canAddToInventory: labelPrinted && slabComplete && valuationComplete && (!nfcRequired || nfcReady) && !inventoryComplete,
       },
     };
   });
@@ -2329,6 +2398,7 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
   return {
     source: "persisted_records",
     orderedBy: "labelSheet_asc_slot_asc_createdAt_asc",
+    nfcRequired: options.nfcRequired === true,
     items,
     stats: {
       total: items.length,
@@ -2358,6 +2428,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         writesRequireEnv: AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
         publicReportDbReadsEnabled: isEnabled(env, AI_GRADER_PUBLIC_REPORT_DB_ENABLED_ENV),
         liveEbayCompsEnabled: isEnabled(env, AI_GRADER_EBAY_COMPS_ENABLED_ENV),
+        nfcRequired: aiGraderNfcRequired(env),
         actions: [
           "auth-check",
           "publish-init",
@@ -2497,7 +2568,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
         const result = deps.listFinishQueue
           ? await deps.listFinishQueue({ tenantId })
-          : buildAiGraderFinishCardsQueueResult([]);
+          : buildAiGraderFinishCardsQueueResult([], { nfcRequired: aiGraderNfcRequired(env) });
         return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderFinishCardsQueue", result });
       }
       if (key === "label-sheets") {
@@ -3195,12 +3266,16 @@ export function createAiGraderPublicReportApiHandler(deps: AiGraderPublicReportA
       publicUrlFor: deps.publicUrlFor,
     });
     if (!publicBundle) return res.status(500).json({ ok: false, message: "Published AI Grader report is invalid." });
+    const nfcRegistration = deps.readNfcRegistration
+      ? await deps.readNfcRegistration(reportId).catch(() => null)
+      : null;
     return res.status(200).json({
       ok: true,
       reportId,
       bundle: publicBundle,
       readOnly: true,
       noHardwareControls: true,
+      ...(nfcRegistration ? { nfcRegistration } : {}),
     });
   };
 }
@@ -4138,7 +4213,11 @@ function hasPersistedSlabbedSide(asset: unknown, side: "front" | "back") {
   return Boolean(storageKey && publicUrl && byteSize > 0);
 }
 
-export async function validateAiGraderInventoryReadiness(db: any, reportId: string) {
+export async function validateAiGraderInventoryReadiness(
+  db: any,
+  reportId: string,
+  options: { tenantId?: string; env?: EnvLike; nfcRequired?: boolean } = {},
+) {
   const report = await findAiGraderReportForStationAction(db, reportId);
   if (stringValue(report.publicationStatus, "") !== "published") {
     throw aiGraderInventoryGateError("AI Grader report must be published before inventory transition.", "AI_GRADER_REPORT_NOT_PUBLISHED");
@@ -4151,16 +4230,42 @@ export async function validateAiGraderInventoryReadiness(db: any, reportId: stri
       "AI_GRADER_CARD_ITEM_LINK_REQUIRED"
     );
   }
-
   const label = await db.aiGraderLabel?.findFirst?.({
     where: { reportId: report.id },
+    orderBy: { updatedAt: "desc" },
     select: {
       id: true,
+      certId: true,
       physicalPrintStatus: true,
     },
   });
   if (!isRecord(label) || optionalString(label.physicalPrintStatus) !== "printed") {
     throw aiGraderInventoryGateError("AI Grader label must be marked printed before inventory transition.", "AI_GRADER_LABEL_PRINT_REQUIRED");
+  }
+  const nfcRequired = options.nfcRequired ?? aiGraderNfcRequired(options.env ?? process.env);
+  let nfc: Awaited<ReturnType<typeof getAiGraderNfcStatus>> | null = null;
+  if (nfcRequired) {
+    try {
+      nfc = await getAiGraderNfcStatus({
+        tenantId: options.tenantId ?? stringValue(report.tenantId, ""),
+        reportId,
+        cardAssetId,
+        itemId,
+        certId: stringValue(label.certId, ""),
+        dbClient: db,
+      });
+    } catch {
+      throw aiGraderInventoryGateError(
+        "The active NFC registration does not match this report, CardAsset, Item, and grading label.",
+        "AI_GRADER_NFC_LINKAGE_INVALID",
+      );
+    }
+    if (nfc.status !== "active" || nfc.revokedAt) {
+      throw aiGraderInventoryGateError(
+        "An active, non-revoked NFC registration is required before inventory transition.",
+        "AI_GRADER_NFC_ACTIVE_REQUIRED",
+      );
+    }
   }
 
   const slabbedAssets = await db.aiGraderEvidenceAsset?.findMany?.({
@@ -4212,6 +4317,8 @@ export async function validateAiGraderInventoryReadiness(db: any, reportId: stri
     slabbedAssetCount: assets.length,
     valuation,
     valuationMinor,
+    nfcRequired,
+    nfc,
   };
 }
 
@@ -4537,7 +4644,10 @@ export async function addAiGraderCardToInventoryRuntime(input: {
     }
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${input.reportId}))`;
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-label-sheets'), hashtext(${input.tenantId}))`;
-    const readiness = await validateAiGraderInventoryReadiness(tx, input.reportId);
+    const readiness = await validateAiGraderInventoryReadiness(tx, input.reportId, {
+      tenantId: input.tenantId,
+      env: input.env ?? process.env,
+    });
     const report = readiness.report;
     if (optionalString(report.tenantId) !== input.tenantId) {
       const error = new Error("AI Grader report was not found for this tenant.");
@@ -4631,7 +4741,11 @@ const AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT = 100;
 const AI_GRADER_FINISH_QUEUE_PAGE_SIZE = 100;
 const AI_GRADER_FINISH_QUEUE_RECENT_COMPLETED_LIMIT = 10;
 
-async function hydrateAiGraderFinishCardsQueueRows(db: any, reportRows: unknown[]) {
+async function hydrateAiGraderFinishCardsQueueRows(
+  db: any,
+  reportRows: unknown[],
+  options: { tenantId: string },
+) {
   const reports = reportRows.filter(isRecord);
   const cardAssetIds = Array.from(new Set(reports.map((row) => optionalString(row.cardAssetId)).filter((id): id is string => Boolean(id))));
   const itemIds = Array.from(new Set(reports.map((row) => optionalString(row.itemId)).filter((id): id is string => Boolean(id))));
@@ -4666,19 +4780,38 @@ async function hydrateAiGraderFinishCardsQueueRows(db: any, reportRows: unknown[
     : [];
   const cardById = new Map((Array.isArray(cards) ? cards : []).filter(isRecord).map((card) => [optionalString(card.id), card] as const));
   const itemById = new Map((Array.isArray(items) ? items : []).filter(isRecord).map((item) => [optionalString(item.id), item] as const));
+  const nfcByReportId = await readAiGraderNfcStatusesForReports({
+    dbClient: db,
+    tenantId: options.tenantId,
+    reports: reports.flatMap((row) => {
+      const reportId = optionalString(row.reportId);
+      const label = firstRecord(row.labels) ?? firstRecord(row.label);
+      return reportId ? [{
+        reportId,
+        reportRowId: optionalString(row.id),
+        cardAssetId: optionalString(row.cardAssetId),
+        itemId: optionalString(row.itemId),
+        labelId: optionalString(label?.id),
+        certId: optionalString(label?.certId),
+      }] : [];
+    }),
+  });
   return reports.map((row) => ({
     ...row,
     cardAsset: cardById.get(optionalString(row.cardAssetId)),
     item: itemById.get(optionalString(row.itemId)),
+    nfc: nfcByReportId.get(stringValue(row.reportId, "")) ?? { status: "missing" },
   }));
 }
 
 export async function listAiGraderFinishCardsQueueRuntime(input?: {
   tenantId?: string;
+  env?: EnvLike;
 }): Promise<AiGraderFinishCardsQueueResult> {
   const { prisma } = await import("@tenkings/database");
   const db = prisma as any;
   const tenantId = input?.tenantId ?? process.env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+  const nfcRequired = aiGraderNfcRequired(input?.env ?? process.env);
   const hydratedRows: unknown[] = [];
   const reportSelect = {
     id: true,
@@ -4701,6 +4834,7 @@ export async function listAiGraderFinishCardsQueueRuntime(input?: {
       orderBy: { updatedAt: "desc" },
       take: 1,
       select: {
+        id: true,
         certId: true,
         labelPreviewUrl: true,
         qrPayloadUrl: true,
@@ -4754,9 +4888,10 @@ export async function listAiGraderFinishCardsQueueRuntime(input?: {
     const reports = Array.isArray(rows) ? rows : [];
     if (!reports.length) break;
 
-    hydratedRows.push(...(await hydrateAiGraderFinishCardsQueueRows(db, reports)));
+    hydratedRows.push(...(await hydrateAiGraderFinishCardsQueueRows(db, reports, { tenantId })));
     const activeCount = buildAiGraderFinishCardsQueueResult(hydratedRows, {
       activeLimit: AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT,
+      nfcRequired,
     }).items.length;
     if (activeCount >= AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT || reports.length < AI_GRADER_FINISH_QUEUE_PAGE_SIZE) break;
     skip += reports.length;
@@ -4774,11 +4909,12 @@ export async function listAiGraderFinishCardsQueueRuntime(input?: {
     select: reportSelect,
   });
   if (Array.isArray(recentCompletedRows) && recentCompletedRows.length) {
-    hydratedRows.push(...(await hydrateAiGraderFinishCardsQueueRows(db, recentCompletedRows)));
+    hydratedRows.push(...(await hydrateAiGraderFinishCardsQueueRows(db, recentCompletedRows, { tenantId })));
   }
 
   return buildAiGraderFinishCardsQueueResult(hydratedRows, {
     activeLimit: AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT,
     recentCompletedLimit: AI_GRADER_FINISH_QUEUE_RECENT_COMPLETED_LIMIT,
+    nfcRequired,
   });
 }

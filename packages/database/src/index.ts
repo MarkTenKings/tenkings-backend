@@ -36,3 +36,4 @@ export * from "./mint";
 export * from "./batches";
 export * from "./aiGraderService";
 export * from "./aiGraderProductionService";
+export * from "./aiGraderNfcService";

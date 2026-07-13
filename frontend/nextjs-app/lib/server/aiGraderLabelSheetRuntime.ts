@@ -24,6 +24,7 @@ import {
   type AiGraderSafeConfirmedCardIdentity,
 } from "../aiGraderLabelSheets";
 import type { AiGraderProductionActorAudit } from "./aiGraderProductionAuth";
+import { readAiGraderNfcStatusesForReports } from "./aiGraderNfcReadProjection";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -147,7 +148,7 @@ function externalReportId(row: any) {
   return optionalString(row?.report?.reportId) ?? optionalString(row?.externalReportId) ?? optionalString(row?.reportId) ?? "";
 }
 
-function sourceRows(rows: unknown[]): AiGraderLabelSheetSourceRow[] {
+function sourceRows(rows: unknown[], nfcByReportId: Map<string, unknown> = new Map()): AiGraderLabelSheetSourceRow[] {
   return rows.filter(isRecord).map((row) => ({
     id: row.id,
     reportId: externalReportId(row),
@@ -160,6 +161,7 @@ function sourceRows(rows: unknown[]): AiGraderLabelSheetSourceRow[] {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     publicationStatus: isRecord(row.report) ? row.report.publicationStatus : row.publicationStatus,
+    nfc: nfcByReportId.get(externalReportId(row)),
   }));
 }
 
@@ -178,8 +180,11 @@ const labelSheetSelect = {
   updatedAt: true,
   report: {
     select: {
+      id: true,
       reportId: true,
       publicationStatus: true,
+      cardAssetId: true,
+      itemId: true,
     },
   },
 } as const;
@@ -638,8 +643,24 @@ export async function completePublishedAiGraderCardTx(input: {
 export async function listAiGraderLabelSheetsRuntime(input?: { dbClient?: any; tenantId?: string }): Promise<AiGraderLabelSheetsResult> {
   const { prisma } = await import("@tenkings/database");
   const db = input?.dbClient ?? (prisma as any);
-  const rows = await readTenantLabels(db, input?.tenantId ?? "ten-kings");
-  return buildAiGraderLabelSheetsResult(sourceRows(rows));
+  const tenantId = input?.tenantId ?? "ten-kings";
+  const rows = await readTenantLabels(db, tenantId);
+  const nfcByReportId = await readAiGraderNfcStatusesForReports({
+    dbClient: db,
+    tenantId,
+    reports: rows.flatMap((row: any) => {
+      const reportId = externalReportId(row);
+      return reportId && optionalString(row?.report?.publicationStatus) === "published" ? [{
+        reportId,
+        reportRowId: optionalString(row?.report?.id),
+        cardAssetId: optionalString(row?.report?.cardAssetId),
+        itemId: optionalString(row?.report?.itemId),
+        labelId: optionalString(row?.id),
+        certId: optionalString(row?.certId),
+      }] : [];
+    }),
+  });
+  return buildAiGraderLabelSheetsResult(sourceRows(rows, nfcByReportId));
 }
 
 async function mutateSheet(input: {

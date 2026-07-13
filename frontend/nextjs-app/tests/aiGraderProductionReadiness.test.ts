@@ -21,6 +21,7 @@ test("redacted AI Grader readiness reports booleans and the effective dedicated 
     effectiveAiGraderModel: "gpt-5.6-sol",
     ebayCompsEnabled: true,
     serpApiConfigured: true,
+    nfcRequired: false,
   });
   assert.equal(/secret|key/i.test(JSON.stringify(readiness)), false);
 
@@ -30,6 +31,7 @@ test("redacted AI Grader readiness reports booleans and the effective dedicated 
     effectiveAiGraderModel: "gpt-5.6-sol",
     ebayCompsEnabled: false,
     serpApiConfigured: false,
+    nfcRequired: false,
   });
   assert.equal(aiGraderProductionReadiness({ AI_GRADER_OCR_MODEL: "unsafe model value" }).effectiveAiGraderModel,
     "invalid_configuration");

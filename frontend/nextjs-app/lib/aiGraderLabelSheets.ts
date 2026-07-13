@@ -54,7 +54,17 @@ export type AiGraderLabelSheetSourceRow = {
   createdAt?: unknown;
   updatedAt?: unknown;
   publicationStatus?: unknown;
+  nfc?: unknown;
   report?: unknown;
+};
+
+export type AiGraderLabelNfcRegistrationDto = {
+  status: "active";
+  registrationKind: "registered_link";
+  publicTagId: string;
+  nfcTagUrl: string;
+  chipType: "NTAG215";
+  securityMode: "static_url_v1";
 };
 
 export type AiGraderLabelSheetLabelDto = {
@@ -69,6 +79,7 @@ export type AiGraderLabelSheetLabelDto = {
   publicationStatus?: "draft" | "finalized" | "published" | "unpublished" | "revoked" | "error";
   physicalPrintStatus: "not_printed" | "printed";
   confirmedCardIdentity: AiGraderSafeConfirmedCardIdentity;
+  nfc?: AiGraderLabelNfcRegistrationDto;
 };
 
 export type AiGraderLabelSheetDto = {
@@ -249,6 +260,29 @@ function rowPublicationStatus(row: AiGraderLabelSheetSourceRow) {
   return safePublicationStatus(report.publicationStatus ?? row.publicationStatus);
 }
 
+function safeLabelNfcRegistration(value: unknown): AiGraderLabelNfcRegistrationDto | undefined {
+  if (!isRecord(value) || optionalString(value.status)?.toLowerCase() !== "active") return undefined;
+  const publicTagId = optionalString(value.publicTagId);
+  if (!publicTagId || !/^[A-Za-z0-9_-]{32}$/.test(publicTagId)) return undefined;
+  const expectedUrl = `https://collect.tenkings.co/nfc/${publicTagId}`;
+  const securityMode = optionalString(value.securityMode) === "STATIC_URL_V1"
+    ? "static_url_v1"
+    : optionalString(value.securityMode);
+  if (
+    optionalString(value.nfcTagUrl) !== expectedUrl ||
+    optionalString(value.chipType) !== "NTAG215" ||
+    securityMode !== "static_url_v1"
+  ) return undefined;
+  return {
+    status: "active",
+    registrationKind: "registered_link",
+    publicTagId,
+    nfcTagUrl: expectedUrl,
+    chipType: "NTAG215",
+    securityMode: "static_url_v1",
+  };
+}
+
 export function toSafeAiGraderLabelSheetLabel(row: AiGraderLabelSheetSourceRow): AiGraderLabelSheetLabelDto | null {
   const assignment = parseAiGraderLabelSheetAssignment(row.payload);
   const labelId = optionalString(row.id);
@@ -256,6 +290,7 @@ export function toSafeAiGraderLabelSheetLabel(row: AiGraderLabelSheetSourceRow):
   if (!assignment || !labelId || !reportId) return null;
   const payload = isRecord(row.payload) ? row.payload : {};
   const cardIdentity = payload.confirmedCardIdentity ?? payload.confirmedCard ?? payload.cardIdentity;
+  const nfc = safeLabelNfcRegistration(row.nfc);
   return {
     labelId,
     reportId,
@@ -268,6 +303,7 @@ export function toSafeAiGraderLabelSheetLabel(row: AiGraderLabelSheetSourceRow):
     ...(rowPublicationStatus(row) ? { publicationStatus: rowPublicationStatus(row) } : {}),
     physicalPrintStatus: optionalString(row.physicalPrintStatus) === "printed" ? "printed" : "not_printed",
     confirmedCardIdentity: normalizeAiGraderConfirmedCardIdentity(cardIdentity),
+    ...(nfc ? { nfc } : {}),
   };
 }
 
