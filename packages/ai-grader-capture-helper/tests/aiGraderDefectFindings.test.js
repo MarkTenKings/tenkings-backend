@@ -303,6 +303,7 @@ test("projected geometry matches pixels produced by the real rotate-and-crop nor
   const normalized = await detectAndNormalizeCardImage({
     sourceImagePath,
     normalizedOutputPath,
+    detectionPolicy: "captured_evidence_full",
     side: "front",
     manualOverride: {
       action: "manual_capture",
@@ -370,6 +371,7 @@ test("near-limit close-enough normalization keeps canonical finding geometry and
   const normalized = await detectAndNormalizeCardImage({
     sourceImagePath,
     normalizedOutputPath,
+    detectionPolicy: "captured_evidence_full",
     side: "back",
   });
   assert.equal(normalized.geometry.placementState, "ready");

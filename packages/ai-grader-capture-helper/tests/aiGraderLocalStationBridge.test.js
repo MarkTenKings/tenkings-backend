@@ -2,6 +2,7 @@ const os = require("node:os");
 const path = require("node:path");
 const fs = require("node:fs");
 const http = require("node:http");
+const { Worker } = require("node:worker_threads");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const sharp = require("sharp");
@@ -365,9 +366,15 @@ async function assertFinalizedBodyBundleMatchesCanonical(resolved, canonicalDir)
 
 function makeFakeWarmRunner(options = {}) {
   const calls = [];
-  return {
-    calls,
-    runner: {
+  const lifecycleCalls = [];
+  const lifecycle = {
+    active: 0,
+    pending: 0,
+    maxPending: 0,
+    maxConcurrency: 1,
+    closed: false,
+  };
+  const runner = {
       async captureSide(input) {
         calls.push({ type: "capture", side: input.side, input });
         if (options.onCaptureStarted) options.onCaptureStarted(input);
@@ -399,42 +406,77 @@ function makeFakeWarmRunner(options = {}) {
           manualGeometryOverride: input.manualGeometryOverride,
         };
       },
-      async processSide(batch) {
-        calls.push({ type: "process", side: batch.side, batch });
-        if (options.processDelay) await options.processDelay(batch);
-        if (options.processError && (!options.processErrorSide || options.processErrorSide === batch.side)) throw options.processError;
-        return {
-          executionPath: "warm_full_forensic_runner",
-          fallbackUsed: false,
-          packageId: batch.packageId,
-          packageDir: batch.packageDir,
-          manifestPath: path.join(batch.packageDir, "manifest.json"),
-          analysisPath: path.join(batch.packageDir, "analysis.json"),
-          previewReportPath: path.join(batch.packageDir, "preview-report.html"),
-          manifest: {
+      async processSide(batch, context) {
+        calls.push({ type: "process", side: batch.side, batch, context });
+        lifecycle.active += 1;
+        try {
+          if (options.processDelay) await options.processDelay(batch, context);
+          if (options.processError && (!options.processErrorSide || options.processErrorSide === batch.side)) throw options.processError;
+          const defaultIdentity = {
+            protocolVersion: "fixed-rig-geometry-processing-worker-v1",
+            requestId: context.requestId,
+            sessionId: context.sessionId,
+            packageId: batch.packageId,
+            side: batch.side,
+            mode: batch.manualGeometryOverride ? "explicit_manual_capture" : "captured_evidence_worker",
+            ...(batch.manualGeometryOverride ? {} : { sourceSetSha256: "a".repeat(64) }),
+          };
+          const processingWorker = options.processingWorkerIdentity
+            ? options.processingWorkerIdentity(defaultIdentity, batch, context)
+            : defaultIdentity;
+          return {
             executionPath: "warm_full_forensic_runner",
             fallbackUsed: false,
-            evidenceSide: batch.side,
-            geometryPolicy: {
-              mode: batch.manualGeometryOverride ? "manual_capture" : "automatic_detection",
-              manualOverride: batch.manualGeometryOverride,
+            packageId: options.processedPackageId ?? batch.packageId,
+            packageDir: options.processedPackageDir ?? batch.packageDir,
+            manifestPath: path.join(batch.packageDir, "manifest.json"),
+            analysisPath: path.join(batch.packageDir, "analysis.json"),
+            previewReportPath: path.join(batch.packageDir, "preview-report.html"),
+            processingWorker,
+            manifest: {
+              executionPath: "warm_full_forensic_runner",
+              fallbackUsed: false,
+              evidenceSide: options.processedSide ?? batch.side,
+              geometryPolicy: {
+                mode: batch.manualGeometryOverride ? "manual_capture" : "automatic_detection",
+                manualOverride: batch.manualGeometryOverride,
+              },
+              captureTiming: {
+                hardwareMeasurement: options.processedHardwareMeasurement === true || options.hardwareMeasurement === true,
+                lightingProfileChanges: { write: { durationMs: 11 } },
+                frameCaptureMs: 120,
+                fileWritesMs: 230,
+                fileHashMs: 18,
+                gradingForensicRunnerMs: 430,
+              },
+              processingTiming: {
+                totalDurationMs: 75,
+                phases: { cropDeskew: { durationMs: 15 } },
+              },
             },
-            captureTiming: {
-              hardwareMeasurement: options.processedHardwareMeasurement === true || options.hardwareMeasurement === true,
-              lightingProfileChanges: { write: { durationMs: 11 } },
-              frameCaptureMs: 120,
-              fileWritesMs: 230,
-              fileHashMs: 18,
-              gradingForensicRunnerMs: 430,
-            },
-            processingTiming: {
-              totalDurationMs: 75,
-              phases: { cropDeskew: { durationMs: 15 } },
-            },
-          },
-        };
+          };
+        } finally {
+          lifecycle.active -= 1;
+        }
       },
-    },
+      async cancelSession(sessionId, reason) {
+        lifecycleCalls.push({ type: "cancel-session", sessionId, reason });
+        if (options.cancelSession) await options.cancelSession(sessionId, reason);
+      },
+      async shutdownProcessingWorker(reason) {
+        lifecycleCalls.push({ type: "shutdown", reason });
+        lifecycle.closed = true;
+        if (options.shutdownProcessingWorker) await options.shutdownProcessingWorker(reason);
+      },
+      processingWorkerStatus() {
+        return { ...lifecycle };
+      },
+    };
+  return {
+    calls,
+    lifecycleCalls,
+    lifecycle,
+    runner,
   };
 }
 
@@ -447,6 +489,57 @@ const MANUAL_GEOMETRY_RECT = {
   imageHeight: 1680,
   coordinateFrame: "portrait_preview_pixels",
 };
+
+function detectedPreviewGeometry(input, placementState = "ready") {
+  const detected = placementState !== "not_detected";
+  const corners = detected ? {
+    topLeft: { x: 100, y: 100 },
+    topRight: { x: 1100, y: 100 },
+    bottomRight: { x: 1100, y: 1500 },
+    bottomLeft: { x: 100, y: 1500 },
+  } : null;
+  return {
+    version: "ten-kings-card-geometry-v1",
+    detectionPolicy: input.detectionPolicy,
+    side: input.side,
+    placementState,
+    adjustmentReason: placementState === "ready" ? null : "not_detected",
+    geometrySource: detected ? "detected" : "none",
+    captureMode: detected ? "automatic_detection" : "none",
+    confidenceBasis: detected ? "automatic_detection" : "none",
+    detectionUsed: detected,
+    manualOverrideUsed: false,
+    corners,
+    detectedCorners: corners,
+    boundingBox: detected ? { x: 100, y: 100, width: 1000, height: 1400 } : null,
+    rotationDegrees: detected ? 0 : null,
+    skewDegrees: detected ? 0 : null,
+    confidence: detected ? 0.95 : 0,
+    sourceImageId: input.sourceImageId,
+    sourceFrameId: input.sourceFrameId,
+    timestamp: input.timestamp,
+    image: { width: 1200, height: 1680, coordinateFrame: "source_image_pixels" },
+    semanticOrientation: {
+      canonicalOrientation: "portrait",
+      basis: "operator_top_toward_preview_top",
+      contentUprightVerified: false,
+    },
+    placement: {
+      centerOffsetPixels: detected ? { x: 0, y: 0, distance: 0, maxAxis: 0 } : undefined,
+      centerOffsetInches: detected ? { x: 0, y: 0, distance: 0, maxAxis: 0 } : undefined,
+      estimatedPixelsPerInch: detected ? 200 : undefined,
+      maxCenterOffsetInches: 0.5,
+      maxSkewDegrees: 10,
+      maxNormalizationSkewDegrees: 35,
+      minReadyConfidence: 0.72,
+      withinCenterTolerance: detected,
+      withinSkewTolerance: detected,
+      withinNormalizationSkewTolerance: detected,
+      withinFrame: detected,
+      ready: placementState === "ready",
+    },
+  };
+}
 
 function manualCaptureRequest(overrides = {}) {
   return {
@@ -1830,6 +1923,33 @@ test("accepted browser live lighting profile is passed to warm capture", async (
   assert.deepEqual(warm.calls[0].input.activeLightingProfile.selectedChannels, [2, 4, 6, 8]);
 });
 
+test("default bridge processing controllers are fresh, bounded, and inert until captured evidence is submitted", async () => {
+  const first = new RealAiGraderLocalStationBridgeService(
+    mockConfig({ outputDir: outputDir(`fresh-worker-first-${Date.now()}`) }),
+    inertCommandRunner,
+    undefined,
+    inertBridgeDependencies(),
+  );
+  const second = new RealAiGraderLocalStationBridgeService(
+    mockConfig({ outputDir: outputDir(`fresh-worker-second-${Date.now()}`) }),
+    inertCommandRunner,
+    undefined,
+    inertBridgeDependencies(),
+  );
+  assert.notEqual(first.warmRunner, second.warmRunner);
+  assert.deepEqual(first.warmRunner.processingWorkerStatus(), {
+    active: false,
+    pending: 0,
+    maxPending: 1,
+    maxConcurrency: 1,
+    closed: false,
+  });
+  await first.shutdown("fresh controller isolation test");
+  assert.equal(first.warmRunner.processingWorkerStatus().closed, true);
+  assert.equal(second.warmRunner.processingWorkerStatus().closed, false);
+  await second.shutdown("fresh controller isolation test");
+});
+
 test("front capture safe-offs before lock and restores only the exact durably persisted accepted profile after release", async () => {
   const dir = outputDir(`positioning-order-${Date.now()}`);
   let service;
@@ -2754,6 +2874,384 @@ test("persisted rapid queue activation still requires explicit human confirm and
   });
   assert.equal(status.rapidCapture.workflowState, "published");
   assert.equal(status.rapidCaptureQueue.items.find((item) => item.queueItemId === completed.queueItemId).state, "published");
+});
+
+test("CPU-busy worker-thread processing leaves preview, EOF recovery, disconnect cleanup, heartbeat, and watchdog live", async () => {
+  const workerStarted = deferred();
+  const detectorInputs = [];
+  let busyWorker;
+  const warm = makeFakeWarmRunner({
+    async processDelay(batch) {
+      if (batch.side !== "front") return;
+      await new Promise((resolve, reject) => {
+        busyWorker = new Worker(`
+          const { parentPort } = require("node:worker_threads");
+          const deadline = Date.now() + 3500;
+          let checksum = 0;
+          while (Date.now() < deadline) checksum = (checksum + 1) % 1000003;
+          parentPort.postMessage(checksum);
+        `, { eval: true });
+        workerStarted.resolve();
+        busyWorker.once("message", resolve);
+        busyWorker.once("error", reject);
+        busyWorker.once("exit", (code) => {
+          if (code !== 0) reject(new Error(`CPU-busy worker exited with ${code}.`));
+        });
+      });
+    },
+  });
+  const service = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir(`worker-preview-liveness-${Date.now()}`) }),
+    { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } },
+    warm.runner,
+    {
+      async detectPreviewCardGeometry(input) {
+        detectorInputs.push(input);
+        return detectedPreviewGeometry(input);
+      },
+    },
+  );
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  const positioned = await service.action("capture-front", manualCaptureRequest());
+  await workerStarted.promise;
+
+  assert.equal(positioned.currentStep, "prompt_flip_card");
+  assert.equal(positioned.liveLighting.backPositioning.firstFrameGraceMs, 6000);
+  assert.ok(Date.parse(positioned.liveLighting.backPositioning.firstFrameGraceExpiresAt) > Date.now());
+  assert.equal(warm.lifecycle.active, 1);
+  assert.equal(service.warmProcessingJobs.size, 1);
+  const processCall = warm.calls.find((call) => call.type === "process" && call.side === "front");
+  assert.equal(processCall.context.sessionId, positioned.sessionId);
+  assert.match(processCall.context.requestId, /^fixed-rig-processing-/);
+
+  const graceExpiry = service.status().liveLighting.watchdog.expiresAt;
+  await service.heartbeatLiveLighting("worker first-frame grace heartbeat");
+  assert.equal(service.status().liveLighting.watchdog.expiresAt, graceExpiry, "heartbeat extended first-frame grace without a frame");
+
+  const eventLoopTurn = deferred();
+  setImmediate(eventLoopTurn.resolve);
+  await eventLoopTurn.promise;
+  assert.equal(warm.lifecycle.active, 1, "pending processing unexpectedly blocked or completed on the bridge thread");
+
+  const binding = {
+    sessionId: positioned.sessionId,
+    side: "back",
+    sideEpoch: positioned.previewStatus.sideEpoch,
+  };
+  const frameAt = new Date().toISOString();
+  assert.equal(service.notePreviewFrame(238, binding, "worker-live-back-frame", frameAt), true);
+  service.queuePreviewGeometryAnalysis(
+    PNG_BYTES,
+    238,
+    frameAt,
+    "preview_capture_header",
+    "worker-live-back-frame",
+    binding,
+  );
+  const analyzed = await waitFor(
+    () => service.status().previewStatus.cardGeometry.back?.sourceFrameId === "worker-live-back-frame"
+      ? service.status()
+      : undefined,
+    "fast live-preview geometry did not bind while captured processing remained pending",
+  );
+  assert.equal(detectorInputs.length, 1);
+  assert.equal(detectorInputs[0].detectionPolicy, "live_preview_fast");
+  assert.equal(detectorInputs[0].sourceFrameId, "worker-live-back-frame");
+  assert.equal(analyzed.previewStatus.cardGeometry.back.side, "back");
+  assert.equal(analyzed.previewStatus.cardGeometry.back.sessionId, positioned.sessionId);
+  assert.equal(analyzed.previewStatus.cardGeometry.back.sideEpoch, positioned.previewStatus.sideEpoch);
+  assert.equal(analyzed.previewStatus.positioningLightReady, true);
+
+  service.manifest.previewStatus.lastFrameAt = new Date(Date.now() - 1000).toISOString();
+  assert.equal(service.backPositioningCaptureReady(), true, "a frame inside the two-second freshness window was rejected");
+  service.manifest.previewStatus.lastFrameAt = new Date(Date.now() - 3000).toISOString();
+  assert.equal(service.backPositioningCaptureReady(), false, "a frame beyond the two-second freshness window remained capture-ready");
+  service.manifest.previewStatus.lastFrameAt = new Date().toISOString();
+  const beforeFreshHeartbeat = service.status().liveLighting.watchdog.expiresAt;
+  await service.heartbeatLiveLighting("worker liveness heartbeat");
+  assert.equal(service.status().liveLighting.physicalState.state, "positioning_light_verified");
+  assert.ok(Date.parse(service.status().liveLighting.watchdog.expiresAt) >= Date.parse(beforeFreshHeartbeat));
+  assert.equal(warm.lifecycle.active, 1);
+
+  await service.safeOffAfterPreviewLoss("unexpected clean EOF while processing worker remained busy");
+  const eofSafe = service.status();
+  assert.equal(eofSafe.liveLighting.physicalState.state, "safe_off_verified");
+  assert.equal(eofSafe.liveLighting.applied.enabled, false);
+  assert.equal(warm.lifecycle.active, 1, "unexpected EOF cleanup waited for worker completion");
+
+  const eofAttemptCount = eofSafe.liveLighting.backPositioning.attemptCount;
+  const reconnected = await service.retryBackPositioningLight(backPositioningRetryAssertions(service));
+  assert.equal(reconnected.status, "waiting_for_frame");
+  assert.equal(reconnected.attemptCount, eofAttemptCount + 1, "unexpected EOF recovery started more than one restore");
+  assert.equal(warm.lifecycle.active, 1, "reconnect recovery waited for worker completion");
+  noteFreshBackPreviewFrame(service, 239);
+  assert.equal(service.status().liveLighting.physicalState.state, "positioning_light_verified");
+
+  await service.safeOffLiveLightingForOperator("page disconnect while processing worker remained busy");
+  const disconnected = service.status();
+  assert.equal(disconnected.liveLighting.physicalState.state, "safe_off_verified");
+  assert.equal(disconnected.liveLighting.applied.enabled, false);
+  assert.equal(warm.lifecycle.active, 1, "page-disconnect cleanup waited for worker completion");
+
+  const restarted = await service.retryBackPositioningLight(backPositioningRetryAssertions(service));
+  assert.equal(restarted.status, "waiting_for_frame");
+  const restartedGraceExpiry = service.status().liveLighting.watchdog.expiresAt;
+  await service.heartbeatLiveLighting("restarted first-frame grace heartbeat");
+  assert.equal(service.status().liveLighting.watchdog.expiresAt, restartedGraceExpiry, "restarted grace was extended without a fresh frame");
+  assert.equal(warm.lifecycle.active, 1);
+
+  await service.handleLiveLightingWatchdogExpiry("worker liveness deterministic watchdog");
+  const safe = service.status();
+  assert.equal(safe.liveLighting.physicalState.state, "safe_off_verified");
+  assert.equal(safe.liveLighting.applied.enabled, false);
+  assert.equal(safe.liveLighting.backPositioning.captureReady, false);
+  assert.equal(warm.lifecycle.active, 1, "watchdog cleanup incorrectly depended on worker completion");
+
+  await waitFor(() => warm.lifecycle.active === 0 && service.warmProcessingJobs.size === 0, "processing job did not settle and leave the bounded bridge map");
+  assert.ok(busyWorker, "CPU-busy worker thread was never created");
+  await service.shutdown("worker liveness test complete");
+  assert.equal(warm.lifecycle.closed, true);
+  assert.equal(warm.lifecycleCalls.filter((call) => call.type === "shutdown").length, 1);
+});
+
+test("processing worker identity failures are redacted terminal failures with verified cleanup", async () => {
+  const cases = [
+    {
+      label: "request",
+      options: { processingWorkerIdentity: (identity) => ({ ...identity, requestId: "wrong-request" }) },
+    },
+    {
+      label: "session",
+      options: { processingWorkerIdentity: (identity) => ({ ...identity, sessionId: "wrong-session" }) },
+    },
+    {
+      label: "package",
+      options: { processingWorkerIdentity: (identity) => ({ ...identity, packageId: "wrong-package" }) },
+    },
+    {
+      label: "side",
+      options: { processingWorkerIdentity: (identity) => ({ ...identity, side: "back" }) },
+    },
+    {
+      label: "source-set",
+      options: { processingWorkerIdentity: (identity) => ({ ...identity, sourceSetSha256: "invalid" }) },
+    },
+    {
+      label: "mode",
+      options: {
+        processingWorkerIdentity(identity) {
+          const { sourceSetSha256: _sourceSetSha256, ...withoutSource } = identity;
+          return { ...withoutSource, mode: "explicit_manual_capture" };
+        },
+      },
+    },
+    { label: "result-package", options: { processedPackageId: "wrong-result-package" } },
+    { label: "result-side", options: { processedSide: "back" } },
+  ];
+
+  for (const identityCase of cases) {
+    const warm = makeFakeWarmRunner(identityCase.options);
+    const service = new AiGraderLocalStationBridgeService(
+      realConfig({ outputDir: outputDir(`worker-identity-${identityCase.label}-${Date.now()}`) }),
+      { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } },
+      warm.runner,
+    );
+    await service.action("start-session", { captureProfile: "full_forensic" });
+    await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+    await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+    markReadyGeometry(service, "front");
+    const captured = await service.action("capture-front");
+    assert.ok(captured.outputs.frontPackageDir, `${identityCase.label}: raw front evidence was not preserved`);
+    const failed = await waitFor(
+      () => service.status().captureFailure?.stage === "warm_processing" ? service.status() : undefined,
+      `${identityCase.label}: worker identity failure did not become terminal`,
+    );
+    assert.equal(failed.captureFailure.side, "front", identityCase.label);
+    assert.equal(failed.captureFailure.retryRequired, true, identityCase.label);
+    assert.match(failed.captureFailure.message, /identity|package|side|worker/i, identityCase.label);
+    assert.equal(failed.liveLighting.physicalState.state, "safe_off_verified", identityCase.label);
+    assert.equal(failed.liveLighting.applied.enabled, false, identityCase.label);
+    assert.equal(failed.liveLighting.backPositioning.captureReady, false, identityCase.label);
+    assert.equal(failed.previewStatus.status, "error", identityCase.label);
+    assert.equal(failed.previewStatus.cameraOwnership, "released", identityCase.label);
+    assert.equal(warm.calls.filter((call) => call.type === "capture").length, 1, identityCase.label);
+    assert.equal(warm.lifecycleCalls.filter((call) => call.type === "cancel-session").length, 1, identityCase.label);
+    assert.equal(service.warmProcessingJobs.size, 0, identityCase.label);
+    assert.doesNotMatch(JSON.stringify(failed), /169\.254|C:\\\\private|token=|secret=/i, identityCase.label);
+    await service.shutdown(`identity ${identityCase.label} test complete`);
+  }
+});
+
+test("processing failure cleanup keeps missing safe-off acknowledgement physically unknown and visible", async () => {
+  const processingGate = deferred();
+  let failTerminalSafeOff = false;
+  const warm = makeFakeWarmRunner({
+    processError: new Error("captured processing failed at /private/worker endpoint=[::1]:3020 token=hidden"),
+    processErrorSide: "front",
+    async processDelay(batch) {
+      if (batch.side === "front") await processingGate.promise;
+    },
+  });
+  const service = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir(`worker-unknown-safeoff-${Date.now()}`) }),
+    { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } },
+    warm.runner,
+    {
+      async writeLightingFrames(frames) {
+        if (failTerminalSafeOff && frames.length <= 3) {
+          throw new Error("safe-off acknowledgement missing at http://169.254.4.4/private token=hidden");
+        }
+        return frames.map(() => ({ responseKind: "ack", ok: true }));
+      },
+    },
+  );
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  const positioned = await service.action("capture-front", manualCaptureRequest());
+  assert.equal(positioned.liveLighting.physicalState.state, "positioning_light_verified");
+  failTerminalSafeOff = true;
+  processingGate.resolve();
+  const failed = await waitFor(
+    () => service.status().captureFailure?.stage === "warm_processing" && service.terminalLifecyclePending === 0
+      ? service.status()
+      : undefined,
+    "processing failure cleanup did not settle",
+  );
+  assert.equal(failed.liveLighting.physicalState.state, "physical_state_unknown");
+  assert.equal(failed.liveLighting.applied.enabled, undefined);
+  assert.equal(failed.liveLighting.backPositioning.captureReady, false);
+  assert.equal(failed.previewStatus.status, "error");
+  assert.match(failed.previewStatus.lastError, /local endpoint|local path|redacted|acknowledgement/i);
+  assert.doesNotMatch(JSON.stringify(failed), /169\.254\.4\.4|\/private\/worker|\[::1\]|token=hidden/i);
+  const persisted = JSON.parse(fs.readFileSync(failed.outputs.manifestPath, "utf8"));
+  assert.equal(persisted.liveLighting.physicalState.state, "physical_state_unknown");
+  assert.doesNotMatch(JSON.stringify(persisted), /169\.254\.4\.4|\/private\/worker|\[::1\]|token=hidden/i);
+  failTerminalSafeOff = false;
+  await service.shutdown("processing unknown-state test complete");
+});
+
+test("terminal cancellation and shutdown each drain one pending processing job without a second failure lifecycle", async () => {
+  const cancellationGate = deferred();
+  const cancelledWarm = makeFakeWarmRunner({
+    async processDelay(batch) {
+      if (batch.side === "front") await cancellationGate.promise;
+    },
+    async cancelSession() {
+      cancellationGate.reject(new Error("inert worker cancellation"));
+    },
+  });
+  const cancelled = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir(`worker-terminal-cancel-${Date.now()}`) }),
+    { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } },
+    cancelledWarm.runner,
+  );
+  await cancelled.action("start-session", { captureProfile: "full_forensic" });
+  await cancelled.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await cancelled.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await cancelled.action("capture-front", manualCaptureRequest());
+  assert.equal(cancelledWarm.lifecycle.active, 1);
+  const cancelledStatus = await cancelled.action("cancel-session");
+  assert.equal(cancelledStatus.currentStep, "safe_off_end_session");
+  assert.equal(cancelledStatus.warmRunnerStatus.status, "cancelled");
+  assert.equal(cancelledStatus.captureFailure, undefined);
+  assert.equal(cancelledStatus.liveLighting.physicalState.state, "safe_off_verified");
+  assert.equal(cancelledWarm.lifecycle.active, 0);
+  assert.equal(cancelled.warmProcessingJobs.size, 0);
+  assert.equal(cancelledWarm.lifecycleCalls.filter((call) => call.type === "cancel-session").length, 1);
+  assert.equal(
+    cancelledStatus.warmRunnerStatus.queues.processing.some((phase) => phase.id === "process_front_artifacts" && phase.status === "cancelled"),
+    true,
+  );
+
+  const shutdownGate = deferred();
+  const shutdownWarm = makeFakeWarmRunner({
+    async processDelay(batch) {
+      if (batch.side === "front") await shutdownGate.promise;
+    },
+    async shutdownProcessingWorker() {
+      shutdownGate.reject(new Error("inert worker shutdown"));
+    },
+  });
+  const shutdown = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir(`worker-terminal-shutdown-${Date.now()}`) }),
+    { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } },
+    shutdownWarm.runner,
+  );
+  await shutdown.action("start-session", { captureProfile: "full_forensic" });
+  await shutdown.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await shutdown.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await shutdown.action("capture-front", manualCaptureRequest());
+  assert.equal(shutdownWarm.lifecycle.active, 1);
+  await shutdown.shutdown("deterministic pending worker shutdown");
+  const shutdownStatus = shutdown.status();
+  assert.equal(shutdownWarm.lifecycle.active, 0);
+  assert.equal(shutdownWarm.lifecycle.closed, true);
+  assert.equal(shutdownWarm.lifecycleCalls.filter((call) => call.type === "shutdown").length, 1);
+  assert.equal(shutdown.warmProcessingJobs.size, 0);
+  assert.equal(shutdownStatus.captureFailure, undefined);
+  assert.equal(shutdownStatus.liveLighting.physicalState.state, "safe_off_verified");
+  assert.equal(
+    shutdownStatus.warmRunnerStatus.queues.processing.some((phase) => phase.id === "process_front_artifacts" && phase.status === "cancelled"),
+    true,
+  );
+});
+
+test("session end, explicit safe-off, and non-rapid replacement reconcile pending worker sessions once", async () => {
+  for (const terminalAction of ["end-session", "safe-off"]) {
+    const gate = deferred();
+    const warm = makeFakeWarmRunner({
+      async processDelay(batch) {
+        if (batch.side === "front") await gate.promise;
+      },
+      async cancelSession() {
+        gate.reject(new Error(`inert ${terminalAction} cancellation`));
+      },
+    });
+    const service = new AiGraderLocalStationBridgeService(
+      realConfig({ outputDir: outputDir(`worker-${terminalAction}-${Date.now()}`) }),
+      { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } },
+      warm.runner,
+    );
+    await service.action("start-session", { captureProfile: "full_forensic" });
+    await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+    await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+    await service.action("capture-front", manualCaptureRequest());
+    const terminal = await service.action(terminalAction);
+    assert.equal(terminal.currentStep, "safe_off_end_session", terminalAction);
+    assert.equal(terminal.warmRunnerStatus.status, "complete", terminalAction);
+    assert.equal(terminal.captureFailure, undefined, terminalAction);
+    assert.equal(terminal.liveLighting.physicalState.state, "safe_off_verified", terminalAction);
+    assert.equal(warm.lifecycleCalls.filter((call) => call.type === "cancel-session").length, 1, terminalAction);
+    assert.equal(service.warmProcessingJobs.size, 0, terminalAction);
+  }
+
+  const replacementGate = deferred();
+  const replacementWarm = makeFakeWarmRunner({
+    async processDelay(batch) {
+      if (batch.side === "front") await replacementGate.promise;
+    },
+    async cancelSession() {
+      replacementGate.reject(new Error("inert replacement cancellation"));
+    },
+  });
+  const replacement = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir(`worker-session-replacement-${Date.now()}`) }),
+    { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } },
+    replacementWarm.runner,
+  );
+  await replacement.action("start-session", { captureProfile: "full_forensic" });
+  await replacement.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  await replacement.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  const oldSession = await replacement.action("capture-front", manualCaptureRequest());
+  const fresh = await replacement.action("start-session", { captureProfile: "full_forensic" });
+  assert.notEqual(fresh.sessionId, oldSession.sessionId);
+  assert.equal(fresh.captureFailure, undefined);
+  assert.equal(fresh.liveLighting.physicalState.state, "safe_off_verified");
+  assert.equal(replacementWarm.lifecycleCalls.filter((call) => call.type === "cancel-session").length, 1);
+  assert.equal(replacement.warmProcessingJobs.size, 0);
 });
 
 test("side processing failures are terminal and cannot be overwritten or queued", async () => {

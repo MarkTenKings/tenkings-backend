@@ -13,7 +13,6 @@ import {
   FIXED_RIG_SELECTED_EXPOSURE_US,
   FIXED_RIG_SELECTED_GAIN,
   FIXED_RIG_SELECTED_LEIMAC_DUTY,
-  processFixedRigWarmSideBatch,
   type FixedRigActiveLightingProfile,
   type FixedRigCardSide,
   type FixedRigCaptureProfile,
@@ -22,6 +21,11 @@ import {
   type FixedRigWarmEvidencePackageResult,
   type FixedRigWarmSideCaptureBatch,
 } from "./baslerFixedRigV1";
+import {
+  createFixedRigWarmForensicProcessingRunner,
+  type FixedRigWarmProcessingResult,
+} from "./fixedRigProcessingWorker";
+import { FIXED_RIG_PROCESSING_WORKER_PROTOCOL_VERSION } from "./fixedRigProcessingWorkerProtocol";
 import {
   buildLeimacIdmuSafeOffFrames,
   composeLeimacIdmuExplicitChannelWriteFrame,
@@ -969,6 +973,7 @@ export type AiGraderLocalStationRealHardwareBoundary =
   | "preview_process_stop";
 
 export interface AiGraderLocalStationBridgeDependencies {
+  detectPreviewCardGeometry?: typeof detectCardGeometryFromBuffer;
   writeLightingFrames?: (
     frames: readonly LeimacIdmuWriteFrame[]
   ) => Promise<AiGraderLocalStationLightingWriteResult[]>;
@@ -1247,6 +1252,7 @@ function mockPreviewGeometry(
     : null;
   return {
     version: "ten-kings-card-geometry-v1",
+    detectionPolicy: "live_preview_fast",
     side,
     placementState,
     adjustmentReason: placementState === "ready" ? null : placementState === "adjust_card" ? "outside_frame" : "not_detected",
@@ -1964,6 +1970,23 @@ function boundedPreviewLifecycleError(error: unknown) {
   return message || fallback;
 }
 
+function boundedProcessingWorkerError(error: unknown) {
+  const fallback = "Captured evidence processing failed in the isolated worker; the session is terminal and requires a fresh capture.";
+  let message = error instanceof Error ? error.message : typeof error === "string" ? error : fallback;
+  message = message
+    .replace(/[A-Za-z]:[\\/][^\r\n]*/g, "[local path]")
+    .replace(/(?:https?:\/\/|\\\\)[^\s]+/gi, "[local endpoint]")
+    .replace(/(^|[\s=(])\/[^\s,;]+/g, "$1[local path]")
+    .replace(/\[[0-9A-Fa-f:]{2,}\](?::\d{1,5})?/g, "[local address]")
+    .replace(/(?:^|[^0-9A-Fa-f:])(?:0:){7}[01](?:[^0-9A-Fa-f:]|$)/gi, " [local address] ")
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[local address]")
+    .replace(/\b(?:token|secret|authorization|bearer|password)\b\s*[:=]?\s*[^\s,;]*/gi, "[redacted]")
+    .replace(/[\r\n\t]+/g, " ")
+    .trim()
+    .slice(0, BACK_POSITIONING_ERROR_MAX_LENGTH);
+  return message || fallback;
+}
+
 function durableAcceptedPositioningProfile(profile: AiGraderLocalStationAcceptedProfile) {
   const duty = roundDuty(profile.dutyPercent);
   const channels = normalizeLightingChannels(profile.channels, { allowEmpty: false });
@@ -2572,13 +2595,31 @@ function bundleWithProductionRelease(bundle: AiGraderReportBundle, productionRel
 
 export interface AiGraderWarmForensicRunner {
   captureSide(input: FixedRigWarmEvidencePackageInput): Promise<FixedRigWarmSideCaptureBatch>;
-  processSide(batch: FixedRigWarmSideCaptureBatch): Promise<FixedRigWarmEvidencePackageResult>;
+  processSide(
+    batch: FixedRigWarmSideCaptureBatch,
+    context: { requestId: string; sessionId: string }
+  ): Promise<FixedRigWarmProcessingResult>;
+  cancelSession?(sessionId: string, reason?: string): Promise<void>;
+  shutdownProcessingWorker?(reason?: string): Promise<void>;
+  processingWorkerStatus?(): {
+    active: boolean;
+    pending: number;
+    maxPending: number;
+    maxConcurrency: 1;
+    closed: boolean;
+  };
 }
 
-const defaultWarmForensicRunner: AiGraderWarmForensicRunner = {
-  captureSide: captureFixedRigWarmSideBatch,
-  processSide: processFixedRigWarmSideBatch,
-};
+function createDefaultWarmForensicRunner(config: AiGraderLocalStationBridgeConfig): AiGraderWarmForensicRunner {
+  const processing = createFixedRigWarmForensicProcessingRunner({ allowedOutputRoot: config.outputDir });
+  return {
+    captureSide: captureFixedRigWarmSideBatch,
+    processSide: processing.processSide,
+    cancelSession: processing.cancelSession,
+    shutdownProcessingWorker: processing.shutdownProcessingWorker,
+    processingWorkerStatus: processing.processingWorkerStatus,
+  };
+}
 
 const RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
 const RAPID_CAPTURE_QUEUE_LIMIT = 25;
@@ -2674,7 +2715,9 @@ export class AiGraderLocalStationBridgeService {
   private previewProcess?: ChildProcessWithoutNullStreams;
   private previewStop?: (reason: string) => void;
   private captureLock?: { owner: string; acquiredAt: string };
-  private warmProcessingJobs = new Map<string, Promise<FixedRigWarmEvidencePackageResult>>();
+  private warmProcessingJobs = new Map<string, Promise<FixedRigWarmProcessingResult>>();
+  private processingSessionsCancelling = new Set<string>();
+  private processingWorkerShutdown?: Promise<void>;
   private rapidQueue: PersistedAiGraderRapidCaptureQueue;
   private committedRapidQueue: PersistedAiGraderRapidCaptureQueue;
   private queuedManifests = new Map<string, AiGraderLocalStationBridgeManifest>();
@@ -2721,7 +2764,7 @@ export class AiGraderLocalStationBridgeService {
   constructor(
     config: AiGraderLocalStationBridgeConfig,
     runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner(),
-    warmRunner: AiGraderWarmForensicRunner = defaultWarmForensicRunner,
+    warmRunner: AiGraderWarmForensicRunner = createDefaultWarmForensicRunner(config),
     dependencies: AiGraderLocalStationBridgeDependencies = {}
   ) {
     this.config = config;
@@ -3770,13 +3813,15 @@ export class AiGraderLocalStationBridgeService {
         lastStartedAt: startedAt,
       },
     };
-    void detectCardGeometryFromBuffer({
+    const detectPreviewCardGeometry = this.dependencies.detectPreviewCardGeometry ?? detectCardGeometryFromBuffer;
+    void detectPreviewCardGeometry({
       imageBuffer: pending.frame,
       fileName: "preview-frame.jpg",
       side: pending.side,
       sourceImageId: `preview-${pending.side}`,
       sourceFrameId: pending.frameId,
       timestamp: pending.frameCapturedAt,
+      detectionPolicy: "live_preview_fast",
     }).then((geometry) => {
       if (
         pending.epoch !== this.previewGeometryEpoch
@@ -3962,7 +4007,26 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("AI Grader production_fast cannot run with explicit cold debug mode; select full_forensic or enable the warm runner.");
     }
     if (this.manifest.sessionId) {
-      await this.releaseStationRuntimeForReplacement("station session replacement");
+      let processingError: Error | undefined;
+      if (selectionSource !== "rapid_continuation") {
+        try {
+          await this.cancelWarmProcessingSession(this.manifest.sessionId, "station session replacement");
+        } catch (error) {
+          processingError = new Error(boundedProcessingWorkerError(error));
+          this.manifest.warmRunnerStatus.status = "failed";
+          if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
+        }
+      }
+      let runtimeError: Error | undefined;
+      try {
+        await this.releaseStationRuntimeForReplacement("station session replacement");
+      } catch (error) {
+        runtimeError = error instanceof Error ? error : new Error(boundedPreviewLifecycleError(error));
+      }
+      if (processingError || runtimeError) {
+        await writeSessionManifest(this.manifest);
+        throw new Error([runtimeError?.message, processingError?.message].filter(Boolean).join(" "));
+      }
     }
     const { packageId, packageDir } = await createFixedRigPackageDir(this.config.outputDir, "ai-grader-browser-station-session");
     this.releaseFullForensicPreviewHold("new station session started");
@@ -5575,32 +5639,57 @@ export class AiGraderLocalStationBridgeService {
 
   async shutdown(reason = "local bridge server closing"): Promise<void> {
     this.closing = true;
+    const workerShutdown = this.beginProcessingWorkerShutdown(reason).then(
+      () => undefined,
+      (error) => new Error(boundedProcessingWorkerError(error)),
+    );
     const frontCapture = this.frontCaptureTransition?.promise;
     if (frontCapture) await frontCapture.catch(() => undefined);
     const atomic = this.currentAtomicBackCapturePromise();
     if (atomic) await atomic.catch(() => undefined);
-    await this.serializeTerminalLifecycle(async () => {
-      await this.awaitLightingLifecycleIdle();
-      let previewError: unknown;
+    let terminalError: Error | undefined;
+    try {
+      await this.serializeTerminalLifecycle(async () => {
+        await this.awaitLightingLifecycleIdle();
+        let previewError: unknown;
+        try {
+          await this.stopPreviewStream(reason, {
+            waitForRelease: true,
+            requireRelease: true,
+            settleMs: PREVIEW_CAMERA_SETTLE_MS,
+          });
+        } catch (error) {
+          previewError = error;
+        }
+        const inheritedAtomicSafeOff = Boolean(atomic)
+          && this.manifest.liveLighting.physicalState.state === "safe_off_verified";
+        const safeOff = inheritedAtomicSafeOff
+          ? { ok: true, directError: undefined, guardedCleanupError: undefined }
+          : await this.runTerminalSafeOff(reason);
+        this.clearLiveLightingWatchdog();
+        await writeSessionManifest(this.manifest);
+        if (previewError) throw new Error(boundedPreviewLifecycleError(previewError));
+        if (!safeOff.ok) throw new Error(safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Local bridge shutdown safe-off could not be confirmed.");
+      });
+    } catch (error) {
+      terminalError = error instanceof Error ? error : new Error(boundedPreviewLifecycleError(error));
+    }
+    const workerError = await workerShutdown;
+    if (this.warmRunner.shutdownProcessingWorker) {
+      const remainingJobs = [...this.warmProcessingJobs.values()];
+      await Promise.allSettled(remainingJobs);
+      this.warmProcessingJobs.clear();
       try {
-        await this.stopPreviewStream(reason, {
-          waitForRelease: true,
-          requireRelease: true,
-          settleMs: PREVIEW_CAMERA_SETTLE_MS,
-        });
+        await writeSessionManifest(this.manifest);
       } catch (error) {
-        previewError = error;
+        if (!terminalError) terminalError = new Error(boundedPreviewLifecycleError(error));
       }
-      const inheritedAtomicSafeOff = Boolean(atomic)
-        && this.manifest.liveLighting.physicalState.state === "safe_off_verified";
-      const safeOff = inheritedAtomicSafeOff
-        ? { ok: true, directError: undefined, guardedCleanupError: undefined }
-        : await this.runTerminalSafeOff(reason);
-      this.clearLiveLightingWatchdog();
-      await writeSessionManifest(this.manifest);
-      if (previewError) throw new Error(boundedPreviewLifecycleError(previewError));
-      if (!safeOff.ok) throw new Error(safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Local bridge shutdown safe-off could not be confirmed.");
-    });
+    }
+    if (terminalError && workerError) {
+      throw new Error(`${terminalError.message} Processing worker shutdown also failed: ${workerError.message}`);
+    }
+    if (terminalError) throw terminalError;
+    if (workerError) throw workerError;
   }
 
   private async stopPreviewForHardwareAction(action: string) {
@@ -5785,13 +5874,85 @@ export class AiGraderLocalStationBridgeService {
     return `${manifest.sessionId}:${side}`;
   }
 
-  private async awaitWarmProcessing(manifest: AiGraderLocalStationBridgeManifest, side: AiGraderWarmRunnerSide): Promise<FixedRigWarmEvidencePackageResult | undefined> {
+  private beginProcessingWorkerShutdown(reason: string): Promise<void> {
+    if (!this.processingWorkerShutdown) {
+      this.processingWorkerShutdown = Promise.resolve().then(async () => {
+        await this.warmRunner.shutdownProcessingWorker?.(reason);
+      });
+    }
+    return this.processingWorkerShutdown;
+  }
+
+  private async cancelWarmProcessingSession(sessionId: string | undefined, reason: string): Promise<void> {
+    if (!sessionId || !this.warmRunner.cancelSession) return;
+    this.processingSessionsCancelling.add(sessionId);
+    try {
+      await this.warmRunner.cancelSession(sessionId, reason);
+      const matchingJobs = [...this.warmProcessingJobs.entries()]
+        .filter(([key]) => key.startsWith(`${sessionId}:`));
+      await Promise.allSettled(matchingJobs.map(([, job]) => job));
+      for (const [key] of matchingJobs) this.warmProcessingJobs.delete(key);
+    } finally {
+      this.processingSessionsCancelling.delete(sessionId);
+    }
+  }
+
+  private assertWarmProcessingIdentity(input: {
+    requestId: string;
+    sessionId: string;
+    side: AiGraderWarmRunnerSide;
+    batch: FixedRigWarmSideCaptureBatch;
+    processed: FixedRigWarmProcessingResult;
+    manifest: AiGraderLocalStationBridgeManifest;
+  }) {
+    if (input.manifest.sessionId !== input.sessionId) {
+      throw new Error("Warm processing worker session identity changed before its response was accepted.");
+    }
+    if (input.batch.side !== input.side) {
+      throw new Error("Warm processing worker capture-batch side identity is invalid.");
+    }
+    if (input.processed.packageId !== input.batch.packageId) {
+      throw new Error("Warm processing worker response package identity does not match the captured evidence.");
+    }
+    if (path.resolve(input.processed.packageDir) !== path.resolve(input.batch.packageDir)) {
+      throw new Error("Warm processing worker response package directory does not match the captured evidence.");
+    }
+    const processedSide = input.processed.manifest?.evidenceSide;
+    if (processedSide !== undefined && processedSide !== input.side) {
+      throw new Error("Warm processing worker response side identity does not match the captured evidence.");
+    }
+    const workerIdentity = input.processed.processingWorker;
+    const expectedMode = input.batch.manualGeometryOverride
+      ? "explicit_manual_capture"
+      : "captured_evidence_worker";
+    const sourceIdentityMatches = workerIdentity.mode === "captured_evidence_worker"
+      ? /^[a-f0-9]{64}$/i.test(workerIdentity.sourceSetSha256)
+      : workerIdentity.mode === "explicit_manual_capture"
+        ? !("sourceSetSha256" in workerIdentity)
+        : false;
+    if (
+      !workerIdentity
+      || workerIdentity.protocolVersion !== FIXED_RIG_PROCESSING_WORKER_PROTOCOL_VERSION
+      || workerIdentity.requestId !== input.requestId
+      || workerIdentity.sessionId !== input.sessionId
+      || workerIdentity.packageId !== input.batch.packageId
+      || workerIdentity.side !== input.side
+      || workerIdentity.mode !== expectedMode
+      || !sourceIdentityMatches
+    ) {
+      throw new Error("Warm processing worker authority identity does not match the captured evidence request.");
+    }
+  }
+
+  private async awaitWarmProcessing(manifest: AiGraderLocalStationBridgeManifest, side: AiGraderWarmRunnerSide): Promise<FixedRigWarmProcessingResult | undefined> {
     const key = this.warmProcessingKey(manifest, side);
     const job = this.warmProcessingJobs.get(key);
     if (!job) return undefined;
-    const result = await job;
-    this.warmProcessingJobs.delete(key);
-    return result;
+    try {
+      return await job;
+    } finally {
+      this.warmProcessingJobs.delete(key);
+    }
   }
 
   private async runSafeOffCleanup(reason: string): Promise<boolean> {
@@ -6166,7 +6327,21 @@ export class AiGraderLocalStationBridgeService {
             : "Back artifact processing is running before unified report generation.",
       }, sessionManifest);
       const processingKey = this.warmProcessingKey(sessionManifest, side);
-      const processingJob = this.warmRunner.processSide(batch).then(async (processed) => {
+      const processingSessionId = sessionManifest.sessionId;
+      if (!processingSessionId) throw new Error("Warm processing requires an active session identity.");
+      const processingRequestId = `fixed-rig-processing-${crypto.randomUUID()}`;
+      const processingJob = this.warmRunner.processSide(batch, {
+        requestId: processingRequestId,
+        sessionId: processingSessionId,
+      }).then(async (processed) => {
+        this.assertWarmProcessingIdentity({
+          requestId: processingRequestId,
+          sessionId: processingSessionId,
+          side,
+          batch,
+          processed,
+          manifest: sessionManifest,
+        });
         this.recordProcessedSideTiming(sessionManifest, side, processed);
         this.markWarmPhase({
           id: `process_${side}_artifacts`,
@@ -6183,8 +6358,44 @@ export class AiGraderLocalStationBridgeService {
         await this.syncQueuedManifest(sessionManifest);
         return processed;
       }).catch(async (error) => {
-        const message = error instanceof Error ? error.message : `${side} warm artifact processing failed.`;
+        const message = boundedProcessingWorkerError(error);
         const failedAt = new Date().toISOString();
+        const intentionallyCancelled = this.closing
+          || this.processingSessionsCancelling.has(processingSessionId)
+          || sessionManifest.currentStep === "safe_off_end_session";
+        if (intentionallyCancelled) {
+          this.markWarmPhase({
+            id: `process_${side}_artifacts`,
+            label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
+            status: "cancelled",
+            side,
+            startedAt: processingPhase.startedAt,
+            backend: "warm_full_forensic_runner",
+            executionPath: "warm_full_forensic_runner",
+            detail: "Captured-evidence processing was cancelled by the terminal bridge lifecycle.",
+          }, sessionManifest);
+          if (sessionManifest === this.manifest && sessionManifest.currentStep === "safe_off_end_session") {
+            sessionManifest.warmRunnerStatus.status = "cancelled";
+          }
+          sessionManifest.progressLog.push(`${failedAt} ${side} captured-evidence processing worker reconciled with the terminal bridge lifecycle.`);
+          sessionManifest.updatedAt = failedAt;
+          if (!this.closing) {
+            await writeSessionManifest(sessionManifest);
+            await this.syncQueuedManifest(sessionManifest);
+          }
+          throw new Error(message);
+        }
+
+        this.processingSessionsCancelling.add(processingSessionId);
+        let workerReconcileError: Error | undefined;
+        try {
+          await this.warmRunner.cancelSession?.(processingSessionId, `${side} captured-evidence processing failure`);
+        } catch (reconcileError) {
+          workerReconcileError = new Error(boundedProcessingWorkerError(reconcileError));
+        }
+        const terminalMessage = workerReconcileError
+          ? boundedProcessingWorkerError(new Error(`${message} Worker reconciliation also failed: ${workerReconcileError.message}`))
+          : message;
         this.markWarmPhase({
           id: `process_${side}_artifacts`,
           label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
@@ -6193,63 +6404,72 @@ export class AiGraderLocalStationBridgeService {
           startedAt: processingPhase.startedAt,
           backend: "warm_full_forensic_runner",
           executionPath: "warm_full_forensic_runner",
-          detail: message,
+          detail: terminalMessage,
         }, sessionManifest);
         sessionManifest.warmRunnerStatus.status = "failed";
         sessionManifest.captureFailure = {
           side,
           stage: "warm_processing",
-          message,
+          message: terminalMessage,
           at: failedAt,
           retryRequired: true,
           automaticColdFallbackAttempted: false,
         };
-        if (!sessionManifest.warnings.includes(message)) sessionManifest.warnings.push(message);
-        this.transitionRapidWorkflow(sessionManifest, "failed", message);
+        if (!sessionManifest.warnings.includes(terminalMessage)) sessionManifest.warnings.push(terminalMessage);
+        this.transitionRapidWorkflow(sessionManifest, "failed", terminalMessage);
         let terminalCleanupError: Error | undefined;
-        if (sessionManifest === this.manifest) {
-          await this.serializeTerminalLifecycle(async () => {
-            const atomic = this.currentAtomicBackCapturePromise();
-            if (atomic) await atomic.catch(() => undefined);
-            await this.awaitLightingLifecycleIdle();
-            if (sessionManifest !== this.manifest) return;
-            const safeOff = await this.runTerminalSafeOff(`${side} processing failure`);
-            if (!safeOff.ok) {
-              terminalCleanupError = new Error(
-                safeOff.directError?.message
-                  ?? safeOff.guardedCleanupError?.message
-                  ?? `${side} processing failure safe-off could not be verified.`
-              );
-            }
-            let previewReleased = false;
-            try {
-              await this.stopPreviewStream(`${side} processing failure released preview`, {
-                waitForRelease: true,
-                settleMs: PREVIEW_CAMERA_SETTLE_MS,
+        try {
+          if (sessionManifest === this.manifest) {
+            await this.serializeTerminalLifecycle(async () => {
+              const atomic = this.currentAtomicBackCapturePromise();
+              if (atomic) await atomic.catch(() => undefined);
+              await this.awaitLightingLifecycleIdle();
+              if (sessionManifest !== this.manifest) return;
+              const safeOff = await this.runTerminalSafeOff(`${side} processing failure`);
+              if (!safeOff.ok) {
+                terminalCleanupError = new Error(
+                  safeOff.directError?.message
+                    ?? safeOff.guardedCleanupError?.message
+                    ?? `${side} processing failure safe-off could not be verified.`
+                );
+              }
+              let previewReleased = false;
+              try {
+                await this.stopPreviewStream(`${side} processing failure released preview`, {
+                  waitForRelease: true,
+                  settleMs: PREVIEW_CAMERA_SETTLE_MS,
+                });
+                previewReleased = true;
+              } catch (cleanupError) {
+                if (!terminalCleanupError) terminalCleanupError = new Error(boundedPreviewLifecycleError(cleanupError));
+              }
+              const lightVerifiedOff = this.manifest.liveLighting.physicalState.state === "safe_off_verified";
+              this.updatePreviewStatus({
+                status: "error",
+                cameraOwnership: previewReleased ? "released" : this.manifest.previewStatus.cameraOwnership,
+                positioningLightReady: false,
+                lastError: terminalCleanupError?.message ?? terminalMessage,
+                lastStopReason: previewReleased && lightVerifiedOff
+                  ? `${side} processing failed; preview released and positioning light safe-off was verified.`
+                  : `${side} processing failed; terminal cleanup is incomplete and physical/camera state remains authoritative above.`,
               });
-              previewReleased = true;
-            } catch (cleanupError) {
-              if (!terminalCleanupError) terminalCleanupError = new Error(boundedPreviewLifecycleError(cleanupError));
-            }
-            const lightVerifiedOff = this.manifest.liveLighting.physicalState.state === "safe_off_verified";
-            this.updatePreviewStatus({
-              status: "error",
-              cameraOwnership: previewReleased ? "released" : this.manifest.previewStatus.cameraOwnership,
-              positioningLightReady: false,
-              lastError: terminalCleanupError?.message ?? boundedBackPositioningError(error).message,
-              lastStopReason: previewReleased && lightVerifiedOff
-                ? `${side} processing failed; preview released and positioning light safe-off was verified.`
-                : `${side} processing failed; terminal cleanup is incomplete and physical/camera state remains authoritative above.`,
             });
-          });
+          }
+          await writeSessionManifest(sessionManifest);
+          await this.syncQueuedManifest(sessionManifest);
+          if (terminalCleanupError) throw terminalCleanupError;
+          throw new Error(terminalMessage);
+        } finally {
+          this.processingSessionsCancelling.delete(processingSessionId);
         }
-        await writeSessionManifest(sessionManifest);
-        await this.syncQueuedManifest(sessionManifest);
-        if (terminalCleanupError) throw terminalCleanupError;
-        throw error;
       });
-      this.warmProcessingJobs.set(processingKey, processingJob);
-      void processingJob.catch(() => {});
+      const trackedProcessingJob = processingJob.finally(() => {
+        if (this.warmProcessingJobs.get(processingKey) === trackedProcessingJob) {
+          this.warmProcessingJobs.delete(processingKey);
+        }
+      });
+      this.warmProcessingJobs.set(processingKey, trackedProcessingJob);
+      void trackedProcessingJob.catch(() => {});
       this.markWarmPhase({
         id: `process_${side}_artifacts_started`,
         label: `${side === "front" ? "Front" : "Back"} processing started`,
@@ -7251,20 +7471,33 @@ export class AiGraderLocalStationBridgeService {
       const safeOff = await this.runTerminalSafeOff("station cancellation");
       this.releaseFullForensicPreviewHold("station cancellation completed");
       this.manifest.currentStep = "safe_off_end_session";
-      this.manifest.warmRunnerStatus.status = safeOff.ok ? "cancelled" : "failed";
+      let processingError: Error | undefined;
+      try {
+        await this.cancelWarmProcessingSession(this.manifest.sessionId, "station cancellation");
+      } catch (error) {
+        processingError = new Error(boundedProcessingWorkerError(error));
+        if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
+      }
+      const cancelledCleanly = safeOff.ok && !processingError;
+      this.manifest.warmRunnerStatus.status = cancelledCleanly ? "cancelled" : "failed";
       this.markWarmPhase({
         id: "station_cancelled",
         label: "Station cancellation",
-        status: safeOff.ok ? "cancelled" : "failed",
+        status: cancelledCleanly ? "cancelled" : "failed",
         backend: this.manifest.executionPath,
         executionPath: this.manifest.executionPath,
-        detail: safeOff.ok
-          ? "Cancellation completed with controller-acknowledged safe-off."
-          : "Cancellation was requested, but physical safe-off could not be verified; explicit recovery is required.",
+        detail: cancelledCleanly
+          ? "Cancellation completed with controller-acknowledged safe-off and processing-worker reconciliation."
+          : "Cancellation cleanup was incomplete; authoritative physical and processing-worker status remain visible.",
       });
       this.manifest.progressLog.push(`${now} Station session cancelled.`);
       await writeSessionManifest(this.manifest);
-      if (!safeOff.ok) throw new Error(safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Station cancellation safe-off could not be confirmed.");
+      if (!safeOff.ok || processingError) {
+        const safeOffMessage = safeOff.ok
+          ? undefined
+          : safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Station cancellation safe-off could not be confirmed.";
+        throw new Error([safeOffMessage, processingError?.message].filter(Boolean).join(" "));
+      }
       return this.status();
     });
 
@@ -7273,10 +7506,22 @@ export class AiGraderLocalStationBridgeService {
       const safeOff = await this.runTerminalSafeOff("station session end");
       this.releaseFullForensicPreviewHold("station session end completed");
       this.manifest.currentStep = "safe_off_end_session";
-      this.manifest.warmRunnerStatus.status = safeOff.ok ? "complete" : "failed";
+      let processingError: Error | undefined;
+      try {
+        await this.cancelWarmProcessingSession(this.manifest.sessionId, "station session end");
+      } catch (error) {
+        processingError = new Error(boundedProcessingWorkerError(error));
+        if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
+      }
+      this.manifest.warmRunnerStatus.status = safeOff.ok && !processingError ? "complete" : "failed";
       this.manifest.progressLog.push(`${now} Station session ended.`);
       await writeSessionManifest(this.manifest);
-      if (!safeOff.ok) throw new Error(safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Station session-end safe-off could not be confirmed.");
+      if (!safeOff.ok || processingError) {
+        const safeOffMessage = safeOff.ok
+          ? undefined
+          : safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Station session-end safe-off could not be confirmed.";
+        throw new Error([safeOffMessage, processingError?.message].filter(Boolean).join(" "));
+      }
       return this.status();
     });
 
@@ -7288,11 +7533,21 @@ export class AiGraderLocalStationBridgeService {
         && (Boolean(request.confirmations?.finalLightOff) || this.manifest.confirmations.finalLightOff);
       this.manifest.currentStep = "safe_off_end_session";
       this.releaseFullForensicPreviewHold("operator safe-off completed");
-      this.manifest.warmRunnerStatus.status = safeOff.ok ? "complete" : "failed";
-      this.manifest.progressLog.push(`${now} Safe-off ${safeOff.ok ? "completed with final controller acknowledgement" : "failed verification"}.`);
+      let processingError: Error | undefined;
+      try {
+        await this.cancelWarmProcessingSession(this.manifest.sessionId, "operator safe-off action");
+      } catch (error) {
+        processingError = new Error(boundedProcessingWorkerError(error));
+        if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
+      }
+      this.manifest.warmRunnerStatus.status = safeOff.ok && !processingError ? "complete" : "failed";
+      this.manifest.progressLog.push(`${now} Safe-off ${safeOff.ok ? "completed with final controller acknowledgement" : "failed verification"}; processing-worker reconciliation ${processingError ? "failed" : "completed"}.`);
       await writeSessionManifest(this.manifest);
-      if (!safeOff.ok) {
-        throw new Error(safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Operator safe-off could not be verified.");
+      if (!safeOff.ok || processingError) {
+        const safeOffMessage = safeOff.ok
+          ? undefined
+          : safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Operator safe-off could not be verified.";
+        throw new Error([safeOffMessage, processingError?.message].filter(Boolean).join(" "));
       }
       return this.status();
     });
@@ -7602,11 +7857,16 @@ export function createAiGraderLocalStationBridgeHttpServer(
   input: AiGraderLocalStationBridgeConfigInput = {},
   env: NodeJS.ProcessEnv = process.env,
   runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner(),
-  warmRunner: AiGraderWarmForensicRunner = defaultWarmForensicRunner,
+  warmRunner?: AiGraderWarmForensicRunner,
   dependencies: AiGraderLocalStationBridgeDependencies = {}
 ): http.Server {
   const config = buildAiGraderLocalStationBridgeConfig(input, env);
-  const service = new AiGraderLocalStationBridgeService(config, runner, warmRunner, dependencies);
+  const service = new AiGraderLocalStationBridgeService(
+    config,
+    runner,
+    warmRunner ?? createDefaultWarmForensicRunner(config),
+    dependencies,
+  );
   let pairingCodeConsumed = false;
 
   const server = http.createServer(async (req, res) => {
@@ -7861,7 +8121,7 @@ export async function startAiGraderLocalStationBridgeHttpServer(
   input: AiGraderLocalStationBridgeConfigInput = {},
   env: NodeJS.ProcessEnv = process.env,
   runner: AiGraderStationCommandRunner = createAiGraderStationCliRunner(),
-  warmRunner: AiGraderWarmForensicRunner = defaultWarmForensicRunner,
+  warmRunner?: AiGraderWarmForensicRunner,
   dependencies: AiGraderLocalStationBridgeDependencies = {}
 ): Promise<StartedAiGraderLocalStationBridge> {
   const config = buildAiGraderLocalStationBridgeConfig(input, env);

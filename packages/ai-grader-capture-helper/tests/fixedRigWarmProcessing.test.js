@@ -9,10 +9,19 @@ const {
   buildFixedRigSurfaceAnalysis,
   createUnifiedFixedRigDiagnosticCardReport,
   processFixedRigWarmSideBatch,
+  resolveFixedRigFullResolutionGeometryAuthorityInProcess,
 } = require("../dist/drivers/baslerFixedRigV1");
 const { buildAiGraderReportBundle } = require("../dist/drivers/aiGraderReportBundle");
 const { buildAiGraderProductionRelease } = require("../dist/drivers/aiGraderProductionRelease");
 const { buildFixedRigProvisionalGradeStory } = require("../dist/drivers/fixedRigProvisionalGradeStory");
+
+// Production captured-evidence processing is worker-only. These legacy warm
+// processing fixtures exercise the exact authority algorithm in-process only
+// as an explicit test dependency; a separate worker suite proves the compiled
+// thread boundary and terminal failure behavior.
+const TEST_ONLY_CAPTURED_AUTHORITY = {
+  trustedWorkerGeometryAuthorityResolver: resolveFixedRigFullResolutionGeometryAuthorityInProcess,
+};
 
 async function makeCardTiff(filePath, options = {}) {
   const centerX = 700 + (options.offsetX ?? 10);
@@ -190,7 +199,7 @@ test("production_fast warm processing preserves all forensic roles and writes ge
     // A configured fixture rectangle is not permission to override automatic
     // geometry. It must be ignored unless manualGeometryOverride is explicit.
     cardBoundaryRect: { x: 10, y: 10, width: 100, height: 140 },
-  }));
+  }), TEST_ONLY_CAPTURED_AUTHORITY);
 
   const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
   assert.equal(manifest.captureProfile, "production_fast");
@@ -339,6 +348,26 @@ test("production_fast warm processing preserves all forensic roles and writes ge
   assert.match(previewHtml, /front-normalized-card\.png/);
 });
 
+test('automatic captured-evidence processing has no in-process detector fallback', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tenkings-worker-required-'));
+  const packageDir = path.join(root, 'package-front');
+  const sideDir = path.join(packageDir, 'front');
+  fs.mkdirSync(sideDir, { recursive: true });
+  const rawPath = path.join(sideDir, 'front-all-roles.tiff');
+  await makeCardTiff(rawPath);
+
+  await assert.rejects(
+    processFixedRigWarmSideBatch(warmBatchInput({
+      packageId: 'synthetic-worker-required-front',
+      packageDir,
+      sideDir,
+      rawPath,
+    })),
+    /requires the dedicated processing worker; no in-process fallback is permitted/i,
+  );
+  assert.equal(fs.existsSync(path.join(sideDir, 'normalized', 'front-normalized-card.png')), false);
+});
+
 test("full-resolution processing rejects grading-unsafe upscaling even when a small card-shaped region is detected", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-resolution-gate-"));
   const packageDir = path.join(root, "package-front");
@@ -353,7 +382,7 @@ test("full-resolution processing rejects grading-unsafe upscaling even when a sm
       packageDir,
       sideDir,
       rawPath,
-    })),
+    }), TEST_ONLY_CAPTURED_AUTHORITY),
     /failed the grading-resolution gate.*requires at least 1000x1400.*no more than 1\.2x upscaling/i,
   );
 });
@@ -373,7 +402,7 @@ test("legacy fixture boundary cannot silently normalize an undetected card and f
       sideDir,
       rawPath,
       cardBoundaryRect: { x: 100, y: 140, width: 300, height: 420 },
-    })),
+    }), TEST_ONLY_CAPTURED_AUTHORITY),
     /full-resolution geometry authority rejected the primary all-on frame.*no usable card-perimeter gradient/i,
   );
   assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
@@ -393,7 +422,7 @@ test("dark captured all-on perimeter remains the primary full-resolution authori
     packageDir,
     sideDir,
     rawPath,
-  }));
+  }), TEST_ONLY_CAPTURED_AUTHORITY);
   const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
   const authority = manifest.analysisCoordinateSystem.fullResolutionGeometryAuthority;
 
@@ -432,7 +461,7 @@ test("accepted-profile recovery requires an independent agreeing directional cap
     sideDir,
     rawPath: blankPath,
     rolePaths,
-  }));
+  }), TEST_ONLY_CAPTURED_AUTHORITY);
   const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
   const authority = manifest.analysisCoordinateSystem.fullResolutionGeometryAuthority;
 
@@ -485,7 +514,7 @@ test("secondary authority rejects directional roles that each match accepted-pro
       sideDir,
       rawPath: blankPath,
       rolePaths,
-    })),
+    }), TEST_ONLY_CAPTURED_AUTHORITY),
     /full-resolution geometry authority found conflicting secondary captured-role candidates/i,
   );
   assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
@@ -511,7 +540,7 @@ test("conflicting all-on and accepted-profile full-resolution candidates fail be
       sideDir,
       rawPath: allOnPath,
       rolePaths,
-    })),
+    }), TEST_ONLY_CAPTURED_AUTHORITY),
     /full-resolution geometry authority found conflicting all-on and accepted-profile candidates/i,
   );
   assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
@@ -587,7 +616,7 @@ test("normalized grading coordinates are invariant to close-enough translation a
       packageDir,
       sideDir,
       rawPath,
-    }));
+    }), TEST_ONLY_CAPTURED_AUTHORITY);
     assert.deepEqual(fs.readFileSync(rawPath), rawBefore);
     return JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
   };
@@ -655,7 +684,7 @@ test("front and back warm normalized evidence produces a capped unified provisio
       rawPath,
       rolePaths: [rawPath, rawPath, rawPath, ...channelPaths],
       side,
-    }));
+    }), TEST_ONLY_CAPTURED_AUTHORITY);
   };
 
   const front = await processSide("front", { angle: 8, offsetX: 36, offsetY: -22 });
@@ -804,7 +833,7 @@ test("unified normalized grading inspects both side geometry provenances and pen
       rawPath,
       side,
       manualGeometryOverride,
-    }));
+    }), TEST_ONLY_CAPTURED_AUTHORITY);
   };
 
   const front = await runSide("front", { imageOptions: { angle: 5, offsetX: 24, offsetY: -18 } });
