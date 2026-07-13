@@ -17,6 +17,84 @@ const {
   sanitizeAiGraderPublicReportBundleForRead,
 } = require("../dist/database/src/aiGraderProductionService");
 
+function publicStorageLocatorPaths(value, path = "$") {
+  if (Array.isArray(value)) return value.flatMap((entry, index) => publicStorageLocatorPaths(entry, `${path}[${index}]`));
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return (
+      /^(?:s3|gs|az|swift):\/\//i.test(trimmed) ||
+      /^ai-grader\/reports\/[^/?#]+(?:\/|$)/i.test(trimmed) ||
+      /(^|[\s('"=:])(\/Users\/|\/home\/|\/root\/|\/tmp\/|\/var\/|\/app\/|\/workspace\/|\/mnt\/|\/opt\/|\/srv\/|\/etc\/|\/private\/|\/run\/|\/usr\/|\/bin\/|\/sbin\/|\/lib\/|\/lib64\/|\/dev\/|\/proc\/|\/sys\/|\/System\/|\/Library\/|\/Volumes\/)/i.test(trimmed) ||
+      /^(?:(?:authorization\s*:\s*)?(?:bearer|basic)\s+\S{8,}|(?:x[-_]?api[-_]?key|api[-_]?key)\s*[:=]\s*\S{8,})$/i.test(trimmed) ||
+      /^eyJ[a-z0-9_-]*\.[a-z0-9_-]+\.[a-z0-9_-]+$/i.test(trimmed) ||
+      /^(?:iVBORw0KGgo|\/9j\/|R0lGOD|UklGR|SUkq|TU0A)/.test(trimmed)
+    ) ? [path] : [];
+  }
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([key, entry]) => {
+    const compact = key.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const forbidden =
+      compact.endsWith("base64") ||
+      compact.endsWith("payload") ||
+      compact.includes("encoded") ||
+      compact.endsWith("body") ||
+      compact.includes("binary") ||
+      compact.includes("presigned") ||
+      compact.includes("bridge") ||
+      compact.includes("cookie") ||
+      compact.includes("header") ||
+      compact === "jwt" ||
+      compact.endsWith("jwt") ||
+      compact.endsWith("endpoint") ||
+      compact === "sourceurl" ||
+      [
+        "artifactkey",
+        "artifactkeys",
+        "artifactlocator",
+        "artifactlocators",
+        "signedurl",
+        "signeduri",
+        "downloadurl",
+        "downloaduri",
+        "privateurl",
+        "privateuri",
+        "internalurl",
+        "internaluri",
+      ].includes(compact) ||
+      compact.includes("provider") ||
+      compact.includes("openai") ||
+      compact.includes("googlevision") ||
+      compact.includes("serpapi") ||
+      compact.includes("storagekey") ||
+      compact.includes("storageprefix") ||
+      compact.includes("storagepath") ||
+      compact.includes("storagereference") ||
+      compact.includes("storagelocator") ||
+      compact.includes("privatestorage") ||
+      compact.includes("internalstorage") ||
+      compact.includes("privateobject") ||
+      compact.includes("internalobject") ||
+      [
+        "labelpreviewkey",
+        "reportbundlekey",
+        "productionreleasekey",
+        "labeldatakey",
+        "assetmanifestkey",
+        "reporthtmlkey",
+        "publicationmanifestkey",
+        "integrationcontractkey",
+      ].includes(compact) ||
+      (compact.startsWith("storage") &&
+        /(?:key|prefix|path|reference|ref|locator|url|uri|object|objectid|bucket|bucketname|blob|blobid)$/.test(compact)) ||
+      /(?:object|blob|bucket|s3|spaces)(?:key|path|prefix|reference|ref|locator|id|uri|url|name|handle)$/.test(compact) ||
+      compact === "sourcekey";
+    return [
+      ...(forbidden ? [`${path}.${key}`] : []),
+      ...publicStorageLocatorPaths(entry, `${path}.${key}`),
+    ];
+  });
+}
+
 function sampleDefectFinding(overrides = {}) {
   return {
     schemaVersion: "ai-grader-defect-finding-v1",
@@ -1139,6 +1217,175 @@ test("public report read sanitizer returns only integrity-checked storage assets
     ),
     undefined,
   );
+});
+
+test("public report read validates canonical storage locators, then recursively removes them without mutating v0.2 or legacy packages", () => {
+  const bytes = Buffer.from("public-read-normalized-card");
+  const reportBundle = sampleBundle({
+    assets: [{
+      id: "report/front/normalized-card.png",
+      kind: "image",
+      fileName: "normalized-card.png",
+      contentType: "image/png",
+      checksumSha256: aiGraderSha256(bytes),
+      byteSize: bytes.length,
+      side: "front",
+      evidenceRole: "normalized_card",
+    }],
+    geometry: {
+      front: {
+        placementState: "ready",
+        storageKey: "internal-front-geometry-object",
+        storage_key: "internal-front-geometry-object-variant",
+        storageUrl: "https://private-storage.example.test/front",
+        storageObjectId: "internal-front-object-id",
+        storageBucket: "internal-private-bucket",
+        storageBlob: "internal-front-blob",
+        artifactKeys: ["internal-front-artifact-key"],
+        signedUrl: "https://private-storage.example.test/front?signature=private",
+        downloadUrl: "https://private-storage.example.test/download/front",
+        providerPrivateIdentifier: "internal-provider-private-id",
+        serpApiSearchId: "internal-serp-search-id",
+        openAiOperationName: "internal-openai-operation",
+        providerId: "internal-provider-id",
+        helperBridgeUrl: "https://internal-bridge.example.test/session",
+        requestHeaders: {
+          cookie: "internal-cookie",
+          authorization: "internal-authorization-header",
+        },
+        opaquePayload: "cHJpdmF0ZS1vcGFxdWUtcGF5bG9hZA==",
+        encodedImage: "cHJpdmF0ZS1lbmNvZGVkLWltYWdl",
+        rawStorageReference: "ai-grader/reports/report-1/assets/private-hidden-object.png",
+        headerMap: { cookie: "internal-header-cookie" },
+        jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJpbnRlcm5hbCJ9.internal-signature",
+        openAiResponseHandle: "internal-openai-handle",
+        serpApiSearchReference: "internal-serp-reference",
+        source: "s3://internal-bucket/hidden.png",
+        objectHandle: "gs://internal-bucket/hidden.png",
+        sourceKey: "ai-grader/reports/report-1/assets/internal-source-key.png",
+        sourceUrl: "https://internal-bridge.example.test/status",
+        opaqueSource: "ai-grader/reports/report-1/report-bundle.json",
+        reference: "ai-grader/reports/report-1/production-release.json",
+        unixOpaque: "/etc/internal-private-report.json",
+        opaqueEnvironmentValues: {
+          first: "/var/internal-private-report.json",
+          second: "/usr/internal-private-report.json",
+          third: "/proc/internal-private-report.json",
+          fourth: "/dev/internal-private-report.json",
+          fifth: "/bin/internal-private-report.json",
+        },
+        opaqueTransportValues: {
+          first: "Bearer synthetic-internal-bearer-value",
+          second: "Basic c3ludGhldGljLWludGVybmFsLWJhc2ljLXZhbHVl",
+          third: "x-api-key: synthetic-internal-api-key-value",
+        },
+        imageContent: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+        opaqueData: "aW50ZXJuYWwtb3BhcXVlLWVuY29kZWQtYmluYXJ5LXBheWxvYWQtZm9yLXJlYWRib3VuZGFyeS10ZXN0aW5nLW9ubHk=",
+        nested: {
+          reportBundleStorageKey: "internal-report-bundle-object",
+          privateObjectReference: "internal-private-object-reference",
+          objectUri: "s3://internal-bucket/private-object",
+          imageBase64: "internal-image-body",
+          rawBase64: "internal-raw-body",
+          previewBase64: "internal-preview-body",
+        },
+      },
+    },
+  });
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle,
+    productionRelease: sampleRelease(),
+  });
+  const persistedV02 = JSON.parse(plan.artifacts.find((entry) => entry.kind === "report-bundle.json")?.body ?? "{}");
+  const persistedV02BeforeRead = JSON.parse(JSON.stringify(persistedV02));
+  assert.match(persistedV02.publicAssets[0].storageKey, /^ai-grader\/reports\/report-1\/assets\//);
+
+  const publicV02 = sanitizeAiGraderPublicReportBundleForRead(persistedV02, {
+    expectedReportId: "report-1",
+    publicUrlFor: (storageKey) => `https://collect.tenkings.co/storage/${storageKey}`,
+  });
+  assert.equal(publicV02?.schemaVersion, "ai-grader-report-bundle-v0.2");
+  assert.equal(Object.hasOwn(publicV02?.publicAssets[0] ?? {}, "storageKey"), false);
+  assert.equal(
+    publicV02?.publicAssets[0].publicUrl,
+    "https://collect.tenkings.co/storage/ai-grader/reports/report-1/assets/001-normalized-card.png",
+  );
+  const publicV02Serialized = JSON.stringify(publicV02);
+  assert.deepEqual(publicStorageLocatorPaths(JSON.parse(publicV02Serialized)), []);
+  assert.doesNotMatch(publicV02Serialized, /internal-front-|internal-report-bundle|internal-private-object|internal-openai-operation|internal-provider-id|internal-bridge|internal-cookie|internal-authorization-header|cHJpdmF0ZS1vcGFxdWUtcGF5bG9hZA|cHJpdmF0ZS1lbmNvZGVkLWltYWdl|private-hidden-object|internal-header-cookie|internal-openai-handle|internal-serp-reference|internal-bucket|internal-source-key|report-bundle\.json|production-release\.json|\/(?:etc|var|usr|proc|dev|bin)\/internal-private|synthetic-internal-(?:bearer|api-key)-value|c3ludGhldGljLWludGVybmFsLWJhc2ljLXZhbHVl|iVBORw0KGgo|aW50ZXJuYWwtb3BhcXVlLWVuY29kZWQ/);
+  assert.deepEqual(persistedV02, persistedV02BeforeRead, "the canonical persisted bundle remains byte-for-byte equivalent JSON");
+
+  const legacyAsset = {
+    id: "legacy/front.png",
+    kind: "report-image",
+    fileName: "front.png",
+    contentType: "image/png",
+    storageKey: "ai-grader/reports/legacy-report/assets/001-front.png",
+    checksumSha256: aiGraderSha256(bytes),
+    byteSize: bytes.length,
+  };
+  const legacyBundle = {
+    schemaVersion: "ai-grader-report-bundle-v0.1",
+    reportId: "legacy-report",
+    generatedAt: "2026-07-13T12:00:00.000Z",
+    certifiedClaim: false,
+    assets: [legacyAsset],
+    reportBundleStorageKey: "legacy-internal-report-bundle",
+    storageKeyPrefix: "legacy-internal-prefix",
+    productionRelease: {
+      productionReleaseStorageKey: "legacy-internal-production-release",
+      label: {
+        labelDataStorageKey: "legacy-internal-label-data",
+        labelPreviewKey: "legacy-internal-label-preview",
+        nested: { assetManifestStorageKey: "legacy-internal-manifest" },
+      },
+      slabbedPhotoContract: {
+        photos: [{
+          storageKey: "legacy-internal-slab",
+          privateObjectReference: "legacy-internal-slab-reference",
+          publicUrl: "https://collect.tenkings.co/storage/ai-grader/reports/legacy-report/slabbed/front.png",
+        }],
+      },
+    },
+    defectEvidence: {
+      storagePath: "legacy-internal-defect-path",
+      storageObjectId: "legacy-internal-defect-object-id",
+      storageBucket: "legacy-internal-defect-bucket",
+      storageBlob: "legacy-internal-defect-blob",
+      artifactKeys: ["legacy-internal-defect-artifact-key"],
+      signedUrl: "https://private-storage.example.test/defect?signature=private",
+      downloadUrl: "https://private-storage.example.test/download/defect",
+      objectReference: "legacy-internal-defect-reference",
+      googleVisionOperationName: "legacy-internal-google-vision-operation",
+      providerId: "legacy-internal-provider-id",
+      bridgeEndpoint: "https://legacy-internal-bridge.example.test/session",
+      headers: { cookie: "legacy-internal-cookie" },
+      opaquePayload: "bGVnYWN5LWludGVybmFsLXBheWxvYWQ=",
+      encodedImage: "bGVnYWN5LWludGVybmFsLWVuY29kZWQtaW1hZ2U=",
+    },
+    visionLab: { defectFindings: [] },
+  };
+  const legacyBeforeRead = JSON.parse(JSON.stringify(legacyBundle));
+  for (const versionedBundle of [legacyBundle, (() => {
+    const unversioned = JSON.parse(JSON.stringify(legacyBundle));
+    delete unversioned.schemaVersion;
+    return unversioned;
+  })()]) {
+    const publicLegacy = sanitizeAiGraderPublicReportBundleForRead(versionedBundle, {
+      expectedReportId: "legacy-report",
+      publicUrlFor: (storageKey) => `https://collect.tenkings.co/storage/${storageKey}`,
+    });
+    assert.ok(publicLegacy);
+    assert.equal(Object.hasOwn(publicLegacy?.publicAssets[0] ?? {}, "storageKey"), false);
+    assert.equal(
+      publicLegacy?.publicAssets[0].publicUrl,
+      "https://collect.tenkings.co/storage/ai-grader/reports/legacy-report/assets/001-front.png",
+    );
+    const publicLegacySerialized = JSON.stringify(publicLegacy);
+    assert.deepEqual(publicStorageLocatorPaths(JSON.parse(publicLegacySerialized)), []);
+    assert.doesNotMatch(publicLegacySerialized, /legacy-internal-|bGVnYWN5LWludGVybmFsLXBheWxvYWQ|bGVnYWN5LWludGVybmFsLWVuY29kZWQ/);
+  }
+  assert.deepEqual(legacyBundle, legacyBeforeRead, "legacy source data remains untouched by the public projection");
 });
 
 test("public report read keeps v0.1 compatibility and rejects corrupt v0.2 projections", () => {

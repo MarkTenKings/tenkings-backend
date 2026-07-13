@@ -43,6 +43,77 @@ async function writeBlank(filePath) {
   await sharp({ create: { width: 800, height: 1000, channels: 3, background: "#202226" } }).png().toFile(filePath);
 }
 
+/**
+ * Regression fixture for a captured all-on failure mode: the card perimeter
+ * is dark but real, while interior artwork has much stronger contrast. The
+ * solid-plate component must not promote artwork into a card rectangle; the
+ * perimeter authority may pass only after all four captured edges validate.
+ */
+async function writeDarkPerimeterCard(filePath, options = {}) {
+  const width = options.width ?? 1400;
+  const height = options.height ?? 1000;
+  const cardWidth = options.cardWidth ?? 980;
+  const cardHeight = options.cardHeight ?? 700;
+  const centerX = width / 2 + (options.offsetX ?? 0);
+  const centerY = height / 2 + (options.offsetY ?? 0);
+  const angle = options.angle ?? 0;
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+      <rect width="100%" height="100%" fill="#000000"/>
+      <g transform="translate(${centerX} ${centerY}) rotate(${angle})">
+        <rect x="${-cardWidth / 2}" y="${-cardHeight / 2}" width="${cardWidth}" height="${cardHeight}" rx="10" fill="#090b0d"/>
+        <path d="M ${-cardWidth * .32} ${-cardHeight * .15} L 0 ${-cardHeight * .32} L ${cardWidth * .28} ${-cardHeight * .05} L ${cardWidth * .12} ${cardHeight * .27} L ${-cardWidth * .25} ${cardHeight * .2} Z" fill="#b8a765"/>
+        <circle cx="${cardWidth * .17}" cy="${cardHeight * .12}" r="${cardHeight * .16}" fill="#425f79"/>
+        <rect x="${-cardWidth * .38}" y="${cardHeight * .23}" width="${cardWidth * .5}" height="${cardHeight * .12}" fill="#d9d9d9"/>
+      </g>
+    </svg>
+  `);
+  await sharp(svg).png().toFile(filePath);
+}
+
+/**
+ * A dark card under intentionally directional plate illumination. The top and
+ * left exterior strips are brighter than the card while the other two remain
+ * dark, so all four edges stay locally coherent but do not share one global
+ * interior/exterior sign.
+ */
+async function writeDirectionalPerimeterCard(filePath) {
+  const width = 1400;
+  const height = 1000;
+  const cardWidth = 980;
+  const cardHeight = 700;
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+      <rect width="100%" height="100%" fill="#000000"/>
+      <g transform="translate(700 500)">
+        <rect x="${-cardWidth / 2 - 20}" y="${-cardHeight / 2 - 20}" width="${cardWidth + 20}" height="20" fill="#d0d0d0"/>
+        <rect x="${-cardWidth / 2 - 20}" y="${-cardHeight / 2 - 20}" width="20" height="${cardHeight + 20}" fill="#d0d0d0"/>
+        <rect x="${-cardWidth / 2}" y="${-cardHeight / 2}" width="${cardWidth}" height="${cardHeight}" rx="10" fill="#090b0d"/>
+        <path d="M -310 -105 L 0 -230 L 280 -35 L 120 190 L -250 150 Z" fill="#b8a765"/>
+        <circle cx="165" cy="90" r="110" fill="#425f79"/>
+        <rect x="-370" y="180" width="490" height="84" fill="#d9d9d9"/>
+      </g>
+    </svg>
+  `);
+  await sharp(svg).png().toFile(filePath);
+}
+
+async function deterministicTexturedNoCardBuffer(options = {}) {
+  const width = options.width ?? 1400;
+  const height = options.height ?? 1000;
+  const pixels = Buffer.alloc(width * height * 3);
+  let state = 0x6d2b79f5;
+  for (let index = 0; index < width * height; index += 1) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    const value = state >>> 24;
+    const offset = index * 3;
+    pixels[offset] = value;
+    pixels[offset + 1] = value;
+    pixels[offset + 2] = value;
+  }
+  return sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer();
+}
+
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-card-geometry-"));
 }
@@ -339,6 +410,71 @@ test("color-aware plate subtraction detects a low-luma-contrast card", async () 
   assert.equal(geometry.geometrySource, "detected");
   assert.ok(geometry.detectedCorners);
   assert.ok((geometry.detection.backgroundColor?.r ?? 255) < 40);
+});
+
+test("perimeter-gradient authority normalizes a dark captured perimeter without lowering solid-plate thresholds", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "dark-perimeter-captured-frame.png");
+  const normalizedPath = path.join(dir, "dark-perimeter-normalized.png");
+  await writeDarkPerimeterCard(rawPath, { angle: -3, offsetX: 24, offsetY: -12 });
+  const rawBefore = fs.readFileSync(rawPath);
+
+  const result = await detectAndNormalizeCardImage({
+    sourceImagePath: rawPath,
+    normalizedOutputPath: normalizedPath,
+    side: "front",
+  });
+
+  assert.equal(result.geometry.placementState, "ready");
+  assert.equal(result.geometry.geometrySource, "detected");
+  assert.equal(result.geometry.detection.method, "perimeter_gradient_rectangle_v3");
+  assert.ok(result.geometry.detection.perimeterGradientStrength >= 8.4);
+  assert.equal(result.geometry.detection.perimeterSideStrengths.length, 4);
+  assert.equal(result.geometry.detection.perimeterSideStrengths.every((value) => value >= 1.4), true);
+  assert.equal(result.geometry.detection.perimeterSignedSideStrengths.length, 4);
+  assert.equal(result.geometry.detection.perimeterSignedSideStrengths.every((value) => Math.abs(value) >= 1.2), true);
+  assert.equal(result.geometry.detection.perimeterSidePolarityConsistency.every((value) => value >= 0.8), true);
+  assert.ok(result.geometry.detectedCorners);
+  assert.ok(result.normalizedArtifact);
+  assert.deepEqual(fs.readFileSync(rawPath), rawBefore);
+  assert.equal(result.rawEvidencePreserved, true);
+  assert.equal((await sharp(normalizedPath).metadata()).width, NORMALIZED_CARD_WIDTH_PIXELS);
+  assert.equal((await sharp(normalizedPath).metadata()).height, NORMALIZED_CARD_HEIGHT_PIXELS);
+});
+
+test("perimeter-gradient authority accepts independently coherent directional edge signs without requiring a global polarity", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "directional-perimeter.png");
+  const normalizedPath = path.join(dir, "directional-perimeter-normalized.png");
+  await writeDirectionalPerimeterCard(rawPath);
+
+  const result = await detectAndNormalizeCardImage({
+    sourceImagePath: rawPath,
+    normalizedOutputPath: normalizedPath,
+    side: "front",
+  });
+
+  assert.equal(result.geometry.placementState, "ready");
+  assert.equal(result.geometry.detection.method, "perimeter_gradient_rectangle_v3");
+  assert.equal(result.geometry.detection.perimeterSidePolarityConsistency.every((value) => value >= 0.8), true);
+  assert.equal(new Set(result.geometry.detection.perimeterSidePolarity).size > 1, true);
+  assert.ok(result.geometry.detection.perimeterProvisionalCandidateCount > 0);
+  assert.equal((await sharp(normalizedPath).metadata()).width, NORMALIZED_CARD_WIDTH_PIXELS);
+  assert.equal((await sharp(normalizedPath).metadata()).height, NORMALIZED_CARD_HEIGHT_PIXELS);
+});
+
+test("perimeter-gradient authority fails closed on deterministic full-frame texture with no card", async () => {
+  const geometry = await detectCardGeometryFromBuffer({
+    imageBuffer: await deterministicTexturedNoCardBuffer(),
+    side: "front",
+    sourceFrameId: "textured-no-card",
+  });
+
+  assert.equal(geometry.placementState, "not_detected");
+  assert.equal(geometry.detectedCorners, null);
+  assert.equal(geometry.detection.method, "perimeter_gradient_rectangle_v3");
+  assert.match(geometry.warnings.join(" "), /side_polarity_coherence/i);
+  assert.deepEqual(geometry.detection.perimeterClosestRejectedCandidate?.reasons, ["side_polarity_coherence"]);
 });
 
 test("a fully visible card beyond the placement guides is Ready, while a clipped card is Adjust Card", async () => {
