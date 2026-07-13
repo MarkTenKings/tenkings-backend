@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
@@ -3535,7 +3535,7 @@ async function verifyRawCaptureIntegrity(
 
 type FixedRigGeometryAuthorityRole = "all_on" | "accepted_profile" | `channel_${number}`;
 
-interface FixedRigGeometryAuthoritySource {
+export interface FixedRigGeometryAuthoritySource {
   role: FixedRigGeometryAuthorityRole;
   sourceSha256: string;
   sourceByteSize: number;
@@ -3545,7 +3545,7 @@ interface FixedRigGeometryAuthoritySource {
   geometry: CardGeometryMetadata;
 }
 
-interface FixedRigFullResolutionGeometryAuthority {
+export interface FixedRigFullResolutionGeometryAuthority {
   version: "fixed-rig-full-resolution-geometry-authority-v1";
   primaryRole: "all_on";
   authoritativeRole: FixedRigGeometryAuthorityRole;
@@ -3661,7 +3661,7 @@ function authorityInspection(input: {
   };
 }
 
-async function resolveFixedRigFullResolutionGeometryAuthority(input: {
+export async function resolveFixedRigFullResolutionGeometryAuthorityInProcess(input: {
   packageId: string;
   side: FixedRigCardSide;
   allOn: BaslerFixedRigSideBatchResult["captures"]["allOn"];
@@ -3679,6 +3679,7 @@ async function resolveFixedRigFullResolutionGeometryAuthority(input: {
       capture,
       geometry: await detectCardGeometry({
         sourceImagePath: capture.outputFilePath,
+        detectionPolicy: "captured_evidence_full",
         side: input.side,
         sourceImageId: `${input.packageId}-${input.side}-${role}`,
         sourceFrameId: `${input.side}-${role}-${capture.sha256.slice(0, 16)}`,
@@ -3800,7 +3801,24 @@ async function resolveFixedRigFullResolutionGeometryAuthority(input: {
   };
 }
 
-export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSideCaptureBatch): Promise<FixedRigWarmEvidencePackageResult> {
+export type FixedRigFullResolutionGeometryAuthorityInput = Parameters<
+  typeof resolveFixedRigFullResolutionGeometryAuthorityInProcess
+>[0];
+
+/** @internal Test and dedicated worker-runner seam; ordinary callers must not supply geometry authority. */
+export type FixedRigFullResolutionGeometryAuthorityResolver = (
+  input: FixedRigFullResolutionGeometryAuthorityInput,
+) => Promise<FixedRigFullResolutionGeometryAuthority>;
+
+/** @internal Only a response from the revalidated dedicated worker may supply this production seam. */
+export interface FixedRigWarmSideProcessingOptions {
+  trustedWorkerGeometryAuthorityResolver?: FixedRigFullResolutionGeometryAuthorityResolver;
+}
+
+export async function processFixedRigWarmSideBatch(
+  captureBatch: FixedRigWarmSideCaptureBatch,
+  options: FixedRigWarmSideProcessingOptions = {},
+): Promise<FixedRigWarmEvidencePackageResult> {
   const processingStartedAtMs = Date.now();
   const processingStartedAt = new Date(processingStartedAtMs).toISOString();
   const processingTiming: Record<string, { durationMs: number }> = {};
@@ -3890,9 +3908,14 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
     { role: "accepted_profile", capture: batch.captures.acceptedProfile.capture },
     ...orderedChannelRoles.map((role) => ({ role: `channel_${Number(role.channel)}`, capture: role.capture })),
   ]));
+  if (!manualGeometryOverride && !options.trustedWorkerGeometryAuthorityResolver) {
+    throw new Error(
+      `AI Grader ${side} captured-evidence geometry requires the dedicated processing worker; no in-process fallback is permitted.`,
+    );
+  }
   const fullResolutionGeometryAuthority = manualGeometryOverride
     ? undefined
-    : await timed("fullResolutionGeometryAuthority", () => resolveFixedRigFullResolutionGeometryAuthority({
+    : await timed("fullResolutionGeometryAuthority", () => options.trustedWorkerGeometryAuthorityResolver!({
       packageId,
       side,
       allOn: batch.captures.allOn,
@@ -3904,6 +3927,7 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
     if (manualGeometryOverride) {
       return detectAndNormalizeCardImage({
         sourceImagePath: batch.captures.allOn.capture.outputFilePath,
+        detectionPolicy: "captured_evidence_full",
         normalizedOutputPath,
         side,
         sourceImageId: `${packageId}-${side}-all-on`,
@@ -4440,7 +4464,17 @@ export async function processFixedRigWarmSideBatch(captureBatch: FixedRigWarmSid
 }
 
 export async function createFixedRigWarmEvidencePackage(input: FixedRigWarmEvidencePackageInput): Promise<FixedRigWarmEvidencePackageResult> {
-  return processFixedRigWarmSideBatch(await captureFixedRigWarmSideBatch(input));
+  const captureBatch = await captureFixedRigWarmSideBatch(input);
+  const { createFixedRigWarmForensicProcessingRunner } = await import("./fixedRigProcessingWorker");
+  const runner = createFixedRigWarmForensicProcessingRunner({ allowedOutputRoot: path.resolve(input.outputDir) });
+  try {
+    return await runner.processSide(captureBatch, {
+      requestId: `warm-${randomUUID()}`,
+      sessionId: `warm-${randomUUID()}`,
+    });
+  } finally {
+    await runner.shutdownProcessingWorker("warm evidence package processing complete");
+  }
 }
 
 function renderWarmFixedRigEvidencePackageReport(input: {

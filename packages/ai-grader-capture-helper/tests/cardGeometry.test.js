@@ -3,7 +3,9 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { performance } = require("node:perf_hooks");
 const sharp = require("sharp");
+const ts = require("typescript");
 const {
   detectAndNormalizeCardImage,
   detectCardGeometry,
@@ -12,6 +14,9 @@ const {
   NORMALIZED_CARD_WIDTH_PIXELS,
   normalizeCardImageWithGeometry,
 } = require("../dist/drivers");
+
+const CAPTURED_EVIDENCE_POLICY = "captured_evidence_full";
+const LIVE_PREVIEW_POLICY = "live_preview_fast";
 
 async function writeSyntheticCard(filePath, options = {}) {
   const width = options.width ?? 800;
@@ -118,6 +123,72 @@ function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-card-geometry-"));
 }
 
+test("detector declarations require one of the two explicit policies at every entry point", () => {
+  const dir = tempDir();
+  const fixturePath = path.join(dir, "detector-policy-contract.ts");
+  let moduleSpecifier = path.relative(dir, path.join(__dirname, "../dist/drivers")).replaceAll("\\", "/");
+  if (!moduleSpecifier.startsWith(".")) moduleSpecifier = `./${moduleSpecifier}`;
+  fs.writeFileSync(fixturePath, `
+    import {
+      detectAndNormalizeCardImage,
+      detectCardGeometry,
+      detectCardGeometryFromBuffer,
+      type AiGraderCardGeometryDetectionPolicy,
+    } from ${JSON.stringify(moduleSpecifier)};
+    declare const sourceImagePath: string;
+    declare const normalizedOutputPath: string;
+    const live: AiGraderCardGeometryDetectionPolicy = "live_preview_fast";
+    const captured: AiGraderCardGeometryDetectionPolicy = "captured_evidence_full";
+    detectCardGeometry({ sourceImagePath, side: "front", detectionPolicy: live });
+    detectCardGeometryFromBuffer({ imageBuffer: undefined as never, side: "back", detectionPolicy: live });
+    detectAndNormalizeCardImage({ sourceImagePath, normalizedOutputPath, side: "front", detectionPolicy: captured });
+    // @ts-expect-error detectionPolicy is required and has no implicit default.
+    detectCardGeometry({ sourceImagePath, side: "front" });
+    // @ts-expect-error buffer detection independently requires detectionPolicy.
+    detectCardGeometryFromBuffer({ imageBuffer: undefined as never, side: "back" });
+    // @ts-expect-error detect-and-normalize independently requires detectionPolicy.
+    detectAndNormalizeCardImage({ sourceImagePath, normalizedOutputPath, side: "front" });
+    // @ts-expect-error no third detector policy is accepted.
+    detectCardGeometry({ sourceImagePath, side: "front", detectionPolicy: "automatic" });
+  `);
+  const program = ts.createProgram([fixturePath], {
+    target: ts.ScriptTarget.ES2020,
+    module: ts.ModuleKind.CommonJS,
+    moduleResolution: ts.ModuleResolutionKind.Node10,
+    strict: true,
+    skipLibCheck: true,
+    noEmit: true,
+  });
+  const diagnostics = ts.getPreEmitDiagnostics(program).filter(
+    (diagnostic) => diagnostic.file && path.resolve(diagnostic.file.fileName) === path.resolve(fixturePath),
+  );
+  assert.deepEqual(
+    diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")),
+    [],
+  );
+});
+
+test("runtime detector boundaries reject missing or unknown policies before image access", async () => {
+  const missingPath = path.join(tempDir(), "must-not-be-opened.png");
+  await assert.rejects(
+    detectCardGeometry({ sourceImagePath: missingPath, side: "front" }),
+    /detectionPolicy must be live_preview_fast or captured_evidence_full/,
+  );
+  await assert.rejects(
+    detectCardGeometryFromBuffer({ imageBuffer: Buffer.alloc(0), side: "front" }),
+    /detectionPolicy must be live_preview_fast or captured_evidence_full/,
+  );
+  await assert.rejects(
+    detectAndNormalizeCardImage({
+      sourceImagePath: missingPath,
+      normalizedOutputPath: path.join(tempDir(), "must-not-be-written.png"),
+      side: "front",
+      detectionPolicy: "automatic",
+    }),
+    /detectionPolicy must be live_preview_fast or captured_evidence_full/,
+  );
+});
+
 async function imageRegionStats(filePath, rect) {
   const region = await sharp(filePath).extract(rect).png().toBuffer();
   return sharp(region).stats();
@@ -132,6 +203,7 @@ test("detects four front corners within close-enough offset and +10 degree skew,
 
   const result = await detectAndNormalizeCardImage({
     sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     normalizedOutputPath: normalizedPath,
     side: "front",
     sourceImageId: "report-001-front",
@@ -178,6 +250,7 @@ test("detects back geometry at negative skew and reports ready", async () => {
 
   const geometry = await detectCardGeometry({
     sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     side: "back",
     sourceFrameId: "back-frame-7",
   });
@@ -204,6 +277,7 @@ test("accepts a correctly oriented raw landscape card while retaining its right-
 
   const result = await detectAndNormalizeCardImage({
     sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     normalizedOutputPath: normalizedPath,
     side: "front",
   });
@@ -235,6 +309,7 @@ test("Dell landscape normalization follows the clockwise operator preview and pr
 
     const result = await detectAndNormalizeCardImage({
       sourceImagePath: rawPath,
+      detectionPolicy: CAPTURED_EVIDENCE_POLICY,
       normalizedOutputPath: normalizedPath,
       side: "front",
     });
@@ -254,7 +329,11 @@ test("requires adjustment when a card is sideways instead of silently guessing s
   const rawPath = path.join(dir, "portrait-frame-sideways-card.png");
   await writeSyntheticCard(rawPath, { cardWidth: 616, cardHeight: 440 });
 
-  const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "front" });
+  const geometry = await detectCardGeometry({
+    sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
 
   assert.equal(geometry.placementState, "adjust_card");
   assert.ok(Math.abs(Math.abs(geometry.rotationDegrees) - 90) < 1.5);
@@ -272,10 +351,19 @@ test("center offset and ordinary in-plane rotation remain diagnostic and do not 
   await writeSyntheticCard(skewedPath, { angle: 14 });
   await writeSyntheticCard(offsetPath, { angle: 2, offsetX: 115 });
 
-  const skewed = await detectCardGeometry({ sourceImagePath: skewedPath, side: "front" });
-  const offset = await detectCardGeometry({ sourceImagePath: offsetPath, side: "front" });
+  const skewed = await detectCardGeometry({
+    sourceImagePath: skewedPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
+  const offset = await detectCardGeometry({
+    sourceImagePath: offsetPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
   const relaxed = await detectCardGeometry({
     sourceImagePath: skewedPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     side: "front",
     thresholds: { maxSkewDegrees: 15 },
   });
@@ -300,7 +388,11 @@ test("detects solid cards on both matte black and matte white base plates", asyn
   for (const entry of cases) {
     const rawPath = path.join(dir, `${entry.name}.png`);
     await writeSyntheticCard(rawPath, { ...entry, details: false, angle: 7, offsetX: 55 });
-    const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "front" });
+    const geometry = await detectCardGeometry({
+      sourceImagePath: rawPath,
+      detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+      side: "front",
+    });
     assert.equal(geometry.placementState, "ready", `${entry.name} should be Ready`);
     assert.equal(geometry.geometrySource, "detected");
     assert.equal(geometry.detection.method, "solid_plate_color_component_pca_v2");
@@ -324,7 +416,11 @@ test("a card sized to the production 97%-height portrait guide remains inside th
     details: false,
   });
 
-  const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "front" });
+  const geometry = await detectCardGeometry({
+    sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
 
   assert.ok(geometry.placement.cardCoverage > 0.8);
   assert.equal(geometry.placement.withinCoverageTolerance, true);
@@ -344,7 +440,11 @@ test("synthetic outer-corner localization stays close to known rotated-card grou
   const angle = 11;
   await writeSyntheticCard(rawPath, { width, height, cardWidth, cardHeight, offsetX, offsetY, angle, details: false });
 
-  const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "front" });
+  const geometry = await detectCardGeometry({
+    sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
   const radians = angle * Math.PI / 180;
   const cosine = Math.cos(radians);
   const sine = Math.sin(radians);
@@ -383,8 +483,16 @@ test("fixed-rig scale envelope rejects a tiny card or same-color outer border in
   `);
   await sharp(matchingBorderSvg).png().toFile(matchingBorderPath);
 
-  const tiny = await detectCardGeometry({ sourceImagePath: tinyPath, side: "front" });
-  const matchingBorder = await detectCardGeometry({ sourceImagePath: matchingBorderPath, side: "front" });
+  const tiny = await detectCardGeometry({
+    sourceImagePath: tinyPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
+  const matchingBorder = await detectCardGeometry({
+    sourceImagePath: matchingBorderPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
 
   assert.equal(tiny.placementState, "adjust_card");
   assert.equal(tiny.adjustmentReason, "unsafe_scale");
@@ -404,7 +512,11 @@ test("color-aware plate subtraction detects a low-luma-contrast card", async () 
     offsetY: 38,
   });
 
-  const geometry = await detectCardGeometry({ sourceImagePath: rawPath, side: "back" });
+  const geometry = await detectCardGeometry({
+    sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "back",
+  });
 
   assert.equal(geometry.placementState, "ready");
   assert.equal(geometry.geometrySource, "detected");
@@ -421,6 +533,7 @@ test("perimeter-gradient authority normalizes a dark captured perimeter without 
 
   const result = await detectAndNormalizeCardImage({
     sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     normalizedOutputPath: normalizedPath,
     side: "front",
   });
@@ -450,6 +563,7 @@ test("perimeter-gradient authority accepts independently coherent directional ed
 
   const result = await detectAndNormalizeCardImage({
     sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     normalizedOutputPath: normalizedPath,
     side: "front",
   });
@@ -466,6 +580,7 @@ test("perimeter-gradient authority accepts independently coherent directional ed
 test("perimeter-gradient authority fails closed on deterministic full-frame texture with no card", async () => {
   const geometry = await detectCardGeometryFromBuffer({
     imageBuffer: await deterministicTexturedNoCardBuffer(),
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     side: "front",
     sourceFrameId: "textured-no-card",
   });
@@ -484,8 +599,16 @@ test("a fully visible card beyond the placement guides is Ready, while a clipped
   await writeSyntheticCard(flexiblePath, { angle: 17, offsetX: 90 });
   await writeSyntheticCard(clippedPath, { angle: 0, offsetX: -227 });
 
-  const flexible = await detectCardGeometry({ sourceImagePath: flexiblePath, side: "front" });
-  const clipped = await detectCardGeometry({ sourceImagePath: clippedPath, side: "front" });
+  const flexible = await detectCardGeometry({
+    sourceImagePath: flexiblePath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
+  const clipped = await detectCardGeometry({
+    sourceImagePath: clippedPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
 
   assert.equal(flexible.placementState, "ready");
   assert.equal(flexible.placement.withinCenterTolerance, false);
@@ -505,8 +628,16 @@ test("the broad rotation envelope allows close-enough placement but fails closed
   await writeSyntheticCard(withinPath, { angle: 34, offsetX: 24 });
   await writeSyntheticCard(beyondPath, { angle: 40 });
 
-  const within = await detectCardGeometry({ sourceImagePath: withinPath, side: "front" });
-  const beyond = await detectCardGeometry({ sourceImagePath: beyondPath, side: "front" });
+  const within = await detectCardGeometry({
+    sourceImagePath: withinPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
+  const beyond = await detectCardGeometry({
+    sourceImagePath: beyondPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
 
   assert.equal(within.placementState, "ready");
   assert.equal(within.placement.withinSkewTolerance, false);
@@ -537,6 +668,7 @@ test("normalization keeps an operator-top marker at the canonical top for allowe
 
   const result = await detectAndNormalizeCardImage({
     sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     normalizedOutputPath: normalizedPath,
     side: "front",
   });
@@ -567,6 +699,7 @@ test("normalization emits the fixed 1200x1680 coordinate space and records inter
 
   const result = await detectAndNormalizeCardImage({
     sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     normalizedOutputPath: normalizedPath,
     side: "front",
   });
@@ -601,7 +734,11 @@ test("reuses one Ready geometry transform on another same-dimension forensic fra
   });
   await writeSyntheticCard(mismatchPath, { width: 810, height: 1000 });
   const channelRawBefore = fs.readFileSync(channelPath);
-  const geometry = await detectCardGeometry({ sourceImagePath: geometryPath, side: "front" });
+  const geometry = await detectCardGeometry({
+    sourceImagePath: geometryPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+  });
 
   const result = await normalizeCardImageWithGeometry({
     sourceImagePath: channelPath,
@@ -625,7 +762,79 @@ test("reuses one Ready geometry transform on another same-dimension forensic fra
   );
 });
 
-test("preview-buffer geometry stays within a practical software latency budget", async () => {
+test("live preview uses only the fast detector while captured evidence preserves perimeter v3", async () => {
+  const dir = tempDir();
+  const darkPerimeterPath = path.join(dir, "policy-dark-perimeter.png");
+  await writeDarkPerimeterCard(darkPerimeterPath, { angle: -3, offsetX: 24, offsetY: -12 });
+  const imageBuffer = fs.readFileSync(darkPerimeterPath);
+  const liveAttempts = [];
+  const capturedAttempts = [];
+
+  const live = await detectCardGeometryFromBuffer({
+    imageBuffer,
+    detectionPolicy: LIVE_PREVIEW_POLICY,
+    side: "front",
+    sourceFrameId: "live-policy-frame",
+    onDetectionAttempt: (observation) => liveAttempts.push(observation),
+  });
+  const captured = await detectCardGeometryFromBuffer({
+    imageBuffer,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    side: "front",
+    sourceFrameId: "captured-policy-frame",
+    onDetectionAttempt: (observation) => capturedAttempts.push(observation),
+  });
+
+  assert.equal(live.detectionPolicy, LIVE_PREVIEW_POLICY);
+  assert.equal(live.placementState, "not_detected");
+  assert.equal(live.detection.method, "solid_plate_color_component_pca_v2");
+  assert.deepEqual(liveAttempts.map(({ method }) => method), ["solid_plate_color_component_pca_v2"]);
+  assert.equal(captured.detectionPolicy, CAPTURED_EVIDENCE_POLICY);
+  assert.equal(captured.placementState, "ready");
+  assert.equal(captured.detection.method, "perimeter_gradient_rectangle_v3");
+  assert.deepEqual(capturedAttempts.map(({ method }) => method), [
+    "solid_plate_color_component_pca_v2",
+    "perimeter_gradient_rectangle_v3",
+  ]);
+  for (const observation of [...liveAttempts, ...capturedAttempts]) {
+    assert.equal(Number.isFinite(observation.elapsedMs), true);
+    assert.ok(observation.elapsedMs >= 0);
+    assert.ok(observation.elapsedMs <= 300_000);
+    assert.equal(Object.isFrozen(observation), true);
+  }
+});
+
+test("detector timing observation is non-authoritative and has no wall-clock acceptance threshold", async () => {
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1680">
+      <rect width="1200" height="1680" fill="#08090a"/>
+      <g transform="translate(650 820) rotate(12)">
+        <rect x="-350" y="-490" width="700" height="980" rx="12" fill="#eeeae0"/>
+        <rect x="-290" y="-420" width="580" height="840" fill="#315079"/>
+      </g>
+    </svg>
+  `);
+  const previewJpeg = await sharp(svg).jpeg({ quality: 72 }).toBuffer();
+  let observationCount = 0;
+  const geometry = await detectCardGeometryFromBuffer({
+    imageBuffer: previewJpeg,
+    detectionPolicy: LIVE_PREVIEW_POLICY,
+    side: "front",
+    sourceFrameId: "observer-does-not-control-result",
+    thresholds: { analysisMaxDimension: 768 },
+    onDetectionAttempt: () => {
+      observationCount += 1;
+      throw new Error("diagnostic observers cannot alter results");
+    },
+  });
+
+  assert.equal(geometry.placementState, "ready");
+  assert.equal(geometry.detectionPolicy, LIVE_PREVIEW_POLICY);
+  assert.equal(observationCount, 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(geometry, "timing"), false);
+});
+
+test("live_preview_fast stays within the practical preview software budget", async (t) => {
   const svg = Buffer.from(`
     <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1680">
       <rect width="1200" height="1680" fill="#08090a"/>
@@ -638,6 +847,7 @@ test("preview-buffer geometry stays within a practical software latency budget",
   const previewJpeg = await sharp(svg).jpeg({ quality: 72 }).toBuffer();
   await detectCardGeometryFromBuffer({
     imageBuffer: previewJpeg,
+    detectionPolicy: LIVE_PREVIEW_POLICY,
     side: "front",
     thresholds: { analysisMaxDimension: 768 },
   });
@@ -646,15 +856,19 @@ test("preview-buffer geometry stays within a practical software latency budget",
   for (let index = 0; index < 3; index += 1) {
     results.push(await detectCardGeometryFromBuffer({
       imageBuffer: previewJpeg,
+      detectionPolicy: LIVE_PREVIEW_POLICY,
       side: "front",
-      sourceFrameId: `latency-${index}`,
+      sourceFrameId: `fast-preview-${index}`,
       thresholds: { analysisMaxDimension: 768 },
     }));
   }
   const elapsedMs = performance.now() - startedAt;
+  const averageMs = elapsedMs / results.length;
 
   assert.ok(results.every((geometry) => geometry.placementState === "ready"));
-  assert.ok(elapsedMs < 1500, `three preview detections took ${elapsedMs.toFixed(1)} ms`);
+  assert.ok(results.every((geometry) => geometry.detection.method === "solid_plate_color_component_pca_v2"));
+  assert.ok(elapsedMs < 1500, `three fast preview detections took ${elapsedMs.toFixed(1)} ms`);
+  t.diagnostic(`software timing: live_preview_fast average=${averageMs.toFixed(1)}ms total=${elapsedMs.toFixed(1)}ms over 3 frames`);
 });
 
 test("empty black, white, and gently shaded solid plates remain fail-closed Not Detected", async () => {
@@ -672,7 +886,11 @@ test("empty black, white, and gently shaded solid plates remain fail-closed Not 
   `)).png().toFile(shadedPath);
 
   for (const sourceImagePath of [blackPath, whitePath, shadedPath]) {
-    const geometry = await detectCardGeometry({ sourceImagePath, side: "front" });
+    const geometry = await detectCardGeometry({
+      sourceImagePath,
+      detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+      side: "front",
+    });
     assert.equal(geometry.placementState, "not_detected");
     assert.equal(geometry.geometrySource, "none");
     assert.equal(geometry.detectionUsed, false);
@@ -687,6 +905,7 @@ test("returns not_detected without emitting a normalized artifact or honoring le
 
   const result = await detectAndNormalizeCardImage({
     sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     normalizedOutputPath: normalizedPath,
     side: "front",
     // This legacy property is deliberately ignored. Manual geometry now needs
@@ -708,12 +927,15 @@ test("requires an explicit manual_capture override and saves an artifact without
   const dir = tempDir();
   const rawPath = path.join(dir, "manual-source.png");
   const normalizedPath = path.join(dir, "manual-normalized.png");
+  const detectorAttempts = [];
   await writeBlank(rawPath);
 
   const result = await detectAndNormalizeCardImage({
     sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     normalizedOutputPath: normalizedPath,
     side: "back",
+    onDetectionAttempt: (observation) => detectorAttempts.push(observation),
     manualOverride: {
       action: "manual_capture",
       confirmed: true,
@@ -727,6 +949,9 @@ test("requires an explicit manual_capture override and saves an artifact without
   assert.equal(result.geometry.confidenceBasis, "operator_confirmation");
   assert.equal(result.geometry.detectionUsed, false);
   assert.equal(result.geometry.manualOverrideUsed, true);
+  assert.equal(result.geometry.detectionPolicy, CAPTURED_EVIDENCE_POLICY);
+  assert.equal(result.geometry.detection.method, "manual_override_no_automatic_detection");
+  assert.deepEqual(detectorAttempts, []);
   assert.equal(Object.prototype.hasOwnProperty.call(result.geometry, "manualFallbackUsed"), false);
   assert.equal(result.geometry.confidence, 0);
   assert.equal(result.geometry.detectedCorners, null);
@@ -748,6 +973,7 @@ test("reuses coherent explicit manual geometry without converting it into automa
   await sharp({ create: { width: 800, height: 1000, channels: 3, background: "#4d6075" } }).png().toFile(channelPath);
   const manual = await detectAndNormalizeCardImage({
     sourceImagePath: sourcePath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     normalizedOutputPath: firstNormalizedPath,
     side: "front",
     manualOverride: {
@@ -780,6 +1006,7 @@ test("manual landscape override records a right-angle rotation and writes a port
 
   const result = await detectAndNormalizeCardImage({
     sourceImagePath: rawPath,
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
     normalizedOutputPath: normalizedPath,
     side: "back",
     manualOverride: {
@@ -800,13 +1027,16 @@ test("manual landscape override records a right-angle rotation and writes a port
 test("rejects a manual rectangle that is not an explicitly confirmed manual_capture action", async () => {
   const dir = tempDir();
   const rawPath = path.join(dir, "unconfirmed-manual-source.png");
+  const detectorAttempts = [];
   await writeBlank(rawPath);
 
   await assert.rejects(
     detectAndNormalizeCardImage({
       sourceImagePath: rawPath,
+      detectionPolicy: CAPTURED_EVIDENCE_POLICY,
       normalizedOutputPath: path.join(dir, "must-not-exist.png"),
       side: "front",
+      onDetectionAttempt: (observation) => detectorAttempts.push(observation),
       manualOverride: {
         action: "manual_capture",
         confirmed: false,
@@ -815,4 +1045,5 @@ test("rejects a manual rectangle that is not an explicitly confirmed manual_capt
     }),
     /action=manual_capture and confirmed=true/,
   );
+  assert.deepEqual(detectorAttempts, []);
 });

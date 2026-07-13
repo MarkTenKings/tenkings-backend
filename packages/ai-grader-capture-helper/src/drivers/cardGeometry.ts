@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import sharp from "sharp";
 
 export const CARD_GEOMETRY_VERSION = "ten-kings-card-geometry-v1";
@@ -21,6 +22,15 @@ export type CardGeometryAdjustmentReason =
   | "manual_capture_selected";
 export type CardGeometrySource = "detected" | "manual_override" | "none";
 export type CardGeometryCaptureMode = "automatic_detection" | "manual_capture" | "none";
+export type AiGraderCardGeometryDetectionPolicy = "live_preview_fast" | "captured_evidence_full";
+
+export interface CardGeometryDetectionAttemptObservation {
+  detectionPolicy: AiGraderCardGeometryDetectionPolicy;
+  method: "solid_plate_color_component_pca_v2" | "perimeter_gradient_rectangle_v3";
+  outcome: "candidate" | "no_candidate";
+  /** Non-authoritative diagnostic duration, never persisted in geometry metadata. */
+  elapsedMs: number;
+}
 
 export interface CardGeometryPoint {
   x: number;
@@ -61,7 +71,8 @@ export interface CardGeometryDetectionDiagnostics {
   method:
     | "adaptive_border_contrast_connected_component_pca_v1"
     | "solid_plate_color_component_pca_v2"
-    | "perimeter_gradient_rectangle_v3";
+    | "perimeter_gradient_rectangle_v3"
+    | "manual_override_no_automatic_detection";
   backgroundLuma: number;
   backgroundColor?: { r: number; g: number; b: number };
   backgroundNoise?: number;
@@ -148,6 +159,8 @@ export interface CardGeometryPlacementEvaluation {
  */
 export interface CardGeometryMetadata {
   version: typeof CARD_GEOMETRY_VERSION;
+  /** Path-free audit evidence for the explicitly selected detector policy. */
+  detectionPolicy: AiGraderCardGeometryDetectionPolicy;
   side: CardGeometrySide;
   placementState: CardPlacementState;
   adjustmentReason: CardGeometryAdjustmentReason | null;
@@ -195,12 +208,16 @@ export interface CardGeometryManualOverride {
 
 export interface DetectCardGeometryInput {
   sourceImagePath: string;
+  /** Required at every detector boundary; there is deliberately no default. */
+  detectionPolicy: AiGraderCardGeometryDetectionPolicy;
   side: CardGeometrySide;
   sourceImageId?: string;
   sourceFrameId?: string;
   timestamp?: string;
   thresholds?: Partial<CardGeometryThresholds>;
   manualOverride?: CardGeometryManualOverride;
+  /** Test/diagnostic observability only. Exceptions cannot alter detector results. */
+  onDetectionAttempt?: (observation: CardGeometryDetectionAttemptObservation) => void;
 }
 
 export interface DetectCardGeometryBufferInput extends Omit<DetectCardGeometryInput, "sourceImagePath"> {
@@ -311,6 +328,33 @@ const DEFAULT_THRESHOLDS: CardGeometryThresholds = {
 // Sub-pixel antialiasing can move a PCA edge estimate by a few tenths of a
 // degree. Keep the operator boundary inclusive at the configured threshold.
 const SKEW_ESTIMATION_EPSILON_DEGREES = 0.25;
+const MAX_REPORTED_DETECTION_ATTEMPT_MS = 300_000;
+
+function requireDetectionPolicy(value: unknown): AiGraderCardGeometryDetectionPolicy {
+  if (value !== "live_preview_fast" && value !== "captured_evidence_full") {
+    throw new Error("detectionPolicy must be live_preview_fast or captured_evidence_full.");
+  }
+  return value;
+}
+
+function reportDetectionAttempt(
+  observer: DetectCardGeometryInput["onDetectionAttempt"],
+  observation: Omit<CardGeometryDetectionAttemptObservation, "elapsedMs">,
+  startedAt: number,
+): void {
+  if (!observer) return;
+  const measured = performance.now() - startedAt;
+  const elapsedMs = round(
+    Number.isFinite(measured) ? clamp(measured, 0, MAX_REPORTED_DETECTION_ATTEMPT_MS) : 0,
+    3,
+  );
+  try {
+    observer(Object.freeze({ ...observation, elapsedMs }));
+  } catch {
+    // Observability is deliberately non-authoritative and cannot change a
+    // detector result, capture decision, or evidence artifact.
+  }
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -1423,14 +1467,52 @@ async function attemptPerimeterGradientDetection(prepared: PreparedImage, thresh
   };
 }
 
-async function attemptDetection(prepared: PreparedImage, thresholds: CardGeometryThresholds): Promise<DetectionAttempt> {
+async function attemptDetection(
+  prepared: PreparedImage,
+  thresholds: CardGeometryThresholds,
+  detectionPolicy: AiGraderCardGeometryDetectionPolicy,
+  observer: DetectCardGeometryInput["onDetectionAttempt"],
+): Promise<DetectionAttempt> {
+  const solidPlateStartedAt = performance.now();
   const solidPlate = await attemptSolidPlateDetection(prepared, thresholds);
+  reportDetectionAttempt(observer, {
+    detectionPolicy,
+    method: "solid_plate_color_component_pca_v2",
+    outcome: solidPlate.candidate ? "candidate" : "no_candidate",
+  }, solidPlateStartedAt);
   if (solidPlate.candidate) return solidPlate;
+
+  // The live preview policy is deliberately bounded to the fast solid-plate
+  // detector. Full-resolution perimeter v3 is captured-evidence-only work.
+  if (detectionPolicy === "live_preview_fast") return solidPlate;
+
+  const perimeterStartedAt = performance.now();
   const perimeter = await attemptPerimeterGradientDetection(prepared, thresholds);
+  reportDetectionAttempt(observer, {
+    detectionPolicy,
+    method: "perimeter_gradient_rectangle_v3",
+    outcome: perimeter.candidate ? "candidate" : "no_candidate",
+  }, perimeterStartedAt);
   if (perimeter.candidate) return perimeter;
   return {
     diagnostics: perimeter.diagnostics,
     reason: perimeter.reason ?? solidPlate.reason ?? "No reliable captured-frame card geometry was detected.",
+  };
+}
+
+function manualOverrideDiagnostics(
+  prepared: PreparedImage,
+  thresholds: CardGeometryThresholds,
+): CardGeometryDetectionDiagnostics {
+  return {
+    method: "manual_override_no_automatic_detection",
+    backgroundLuma: 0,
+    contrastRange: 0,
+    foregroundThreshold: 0,
+    foregroundPixelFraction: 0,
+    expectedAspectRatio: thresholds.expectedAspectRatio,
+    analysisWidth: prepared.orientedWidth,
+    analysisHeight: prepared.orientedHeight,
   };
 }
 
@@ -1583,9 +1665,9 @@ function placementWarnings(placement: CardGeometryPlacementEvaluation, source: C
 }
 
 async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedImage): Promise<CardGeometryMetadata> {
+  const detectionPolicy = requireDetectionPolicy(input.detectionPolicy);
   const thresholds = normalizeThresholds(input.thresholds);
   const timestamp = normalizeTimestamp(input.timestamp);
-  const detection = await attemptDetection(prepared, thresholds);
 
   if (input.manualOverride) {
     const override = validateManualOverride(input.manualOverride, prepared.orientedWidth, prepared.orientedHeight);
@@ -1603,34 +1685,14 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
       imageHeight: prepared.orientedHeight,
       thresholds,
     });
-    let automaticCandidateWasOutsideThresholds = false;
-    if (detection.candidate && detection.candidate.confidence >= thresholds.minDetectionConfidence) {
-      const automaticPlacement = placementEvaluation({
-        corners: detection.candidate.corners,
-        boundingBox: detection.candidate.boundingBox,
-        shortSidePixels: detection.candidate.shortSidePixels,
-        longSidePixels: detection.candidate.longSidePixels,
-        skewDegrees: placementSkewDegrees(
-          detection.candidate.rotationDegrees,
-          prepared.orientedWidth,
-          prepared.orientedHeight,
-        ),
-        confidence: detection.candidate.confidence,
-        relativeAspectError: detection.candidate.relativeAspectError,
-        cardCoverage: detection.candidate.cardCoverage,
-        imageWidth: prepared.orientedWidth,
-        imageHeight: prepared.orientedHeight,
-        thresholds,
-      });
-      automaticCandidateWasOutsideThresholds = placementState(automaticPlacement) === "adjust_card";
-    }
     return {
       version: CARD_GEOMETRY_VERSION,
+      detectionPolicy,
       side: input.side,
       // Ready is reserved for confident automatic detection. A manual capture
       // may still normalize an operator-confirmed rectangle, but never claims
       // automatic placement readiness.
-      placementState: automaticCandidateWasOutsideThresholds ? "adjust_card" : "not_detected",
+      placementState: "not_detected",
       adjustmentReason: "manual_capture_selected",
       geometrySource: "manual_override",
       captureMode: "manual_capture",
@@ -1653,15 +1715,18 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
         contentUprightVerified: false,
       },
       placement,
-      detection: detection.diagnostics,
+      detection: manualOverrideDiagnostics(prepared, thresholds),
       warnings: placementWarnings(placement, "manual_override"),
     };
   }
+
+  const detection = await attemptDetection(prepared, thresholds, detectionPolicy, input.onDetectionAttempt);
 
   const candidate = detection.candidate;
   if (!candidate || candidate.confidence < thresholds.minDetectionConfidence) {
     return {
       version: CARD_GEOMETRY_VERSION,
+      detectionPolicy,
       side: input.side,
       placementState: "not_detected",
       adjustmentReason: "not_detected",
@@ -1706,6 +1771,7 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
   });
   return {
     version: CARD_GEOMETRY_VERSION,
+    detectionPolicy,
     side: input.side,
     placementState: placementState(placement),
     adjustmentReason: placementAdjustmentReason(placement),
@@ -1739,11 +1805,13 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
 }
 
 export async function detectCardGeometry(input: DetectCardGeometryInput): Promise<CardGeometryMetadata> {
+  requireDetectionPolicy(input.detectionPolicy);
   const prepared = await prepareImage(input.sourceImagePath);
   return buildGeometry(input, prepared);
 }
 
 export async function detectCardGeometryFromBuffer(input: DetectCardGeometryBufferInput): Promise<CardGeometryMetadata> {
+  requireDetectionPolicy(input.detectionPolicy);
   if (!Buffer.isBuffer(input.imageBuffer) || input.imageBuffer.length < 1) {
     throw new Error("imageBuffer must contain an encoded image.");
   }
@@ -1784,7 +1852,7 @@ function normalizationDeskewDegrees(
 }
 
 async function normalizePreparedImage(
-  input: DetectAndNormalizeCardImageInput,
+  input: Pick<DetectAndNormalizeCardImageInput, "sourceImagePath" | "normalizedOutputPath" | "pngCompressionLevel">,
   prepared: PreparedImage,
   geometry: CardGeometryMetadata,
 ): Promise<CardGeometryNormalizedArtifact | undefined> {
@@ -1872,6 +1940,7 @@ async function normalizePreparedImage(
 export async function detectAndNormalizeCardImage(
   input: DetectAndNormalizeCardImageInput,
 ): Promise<CardGeometryNormalizationResult> {
+  requireDetectionPolicy(input.detectionPolicy);
   const prepared = await prepareImage(input.sourceImagePath);
   const geometry = await buildGeometry(input, prepared);
   const normalizedArtifact = await normalizePreparedImage(input, prepared, geometry);
@@ -1941,7 +2010,6 @@ export async function normalizeCardImageWithGeometry(
     {
       sourceImagePath: input.sourceImagePath,
       normalizedOutputPath: input.normalizedOutputPath,
-      side: input.geometry.side,
       pngCompressionLevel: input.pngCompressionLevel,
     },
     prepared,
