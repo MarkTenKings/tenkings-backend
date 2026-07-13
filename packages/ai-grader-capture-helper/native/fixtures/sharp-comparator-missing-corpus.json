@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "tenkings.ai-grader.sharp-comparator-manifest.v1",
+  "corpusKind": "private",
+  "missingRealCorpusCategories": [
+    "Approved full-resolution Dell Basler front and back fixtures",
+    "Human-reviewed full-resolution foil, glare, shadow, and worn-corner fixtures",
+    "Approved full-resolution no-card, hand, ruler, and wrong-object negatives"
+  ],
+  "cases": []
+}

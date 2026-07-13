@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tenkings.local/schemas/ai-grader-sharp-comparator-manifest-v1.json",
+  "title": "Ten Kings offline TypeScript/Sharp full-resolution comparator manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "corpusKind", "missingRealCorpusCategories", "cases"],
+  "properties": {
+    "schemaVersion": { "const": "tenkings.ai-grader.sharp-comparator-manifest.v1" },
+    "corpusKind": { "enum": ["safe", "private", "mixed"] },
+    "missingRealCorpusCategories": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 .,_+%()-]{0,159}$" }
+    },
+    "cases": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "pairId",
+          "side",
+          "category",
+          "expectedCard",
+          "expectedDetection",
+          "expectedReady",
+          "relativeFile",
+          "permittedSha256",
+          "imageWidth",
+          "imageHeight",
+          "groundTruthCorners"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$" },
+          "pairId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$" },
+          "side": { "enum": ["front", "back"] },
+          "category": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$" },
+          "expectedCard": { "type": "boolean" },
+          "expectedDetection": { "type": "boolean" },
+          "expectedReady": { "type": "boolean" },
+          "relativeFile": { "type": "string", "minLength": 1, "maxLength": 240 },
+          "permittedSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "imageWidth": { "type": "integer", "minimum": 64, "maximum": 8192 },
+          "imageHeight": { "type": "integer", "minimum": 64, "maximum": 8192 },
+          "groundTruthCorners": {
+            "type": ["array", "null"],
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["x", "y"],
+              "properties": {
+                "x": { "type": "number" },
+                "y": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

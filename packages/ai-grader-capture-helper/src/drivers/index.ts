@@ -6,6 +6,13 @@ export * from "./grblStage";
 export * from "./cardGeometry";
 export * from "./aiGraderCaptureTiming";
 export * from "./dinoliteBridgeClient";
+export * from "./nativeCameraProtocol";
+export * from "./nativeCameraWorkerClient";
+export * from "./nativeCameraGeometryAdapter";
+export * from "./nativeCameraLightingCoordinator";
+export * from "./nativeCameraReplayRunner";
+export * from "./nativeCameraHealth";
+export * from "./nativeCameraSharpComparator";
 export type {
   LeimacIdmuClientConfig,
   LeimacIdmuCommandMetadata,

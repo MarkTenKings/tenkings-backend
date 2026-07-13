@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>TenKings.AiGrader.Worker.Core</AssemblyName>
+    <RootNamespace>TenKings.AiGrader.Worker.Core</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TenKings.AiGrader.Worker.Tests" />
+  </ItemGroup>
+</Project>

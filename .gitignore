@@ -24,6 +24,15 @@ frontend/nextjs-app/tsconfig.tsbuildinfo
 # Local .NET build artifacts
 **/bin/
 **/obj/
+**/TestResults/
+*.dmp
+
+# Native AI Grader local-only caches, private replay frames, and packaging output
+packages/ai-grader-capture-helper/native/.packages/
+packages/ai-grader-capture-helper/native/private-fixtures/
+packages/ai-grader-capture-helper/native/artifacts/
+packages/ai-grader-capture-helper/native/publish/
+packages/ai-grader-capture-helper/native/reports/generated/
 
 # Generated variant pipeline artifact
 data/variants/sports.auto.csv

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <AssemblyName>TenKings.AiGrader.Worker.Tests</AssemblyName>
+    <RootNamespace>TenKings.AiGrader.Worker.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TenKings.AiGrader.Worker.Core\TenKings.AiGrader.Worker.Core.csproj" />
+    <ProjectReference Include="..\..\src\TenKings.AiGrader.Worker.Host\TenKings.AiGrader.Worker.Host.csproj" />
+    <ProjectReference Include="..\..\src\TenKings.AiGrader.Pylon.Host\TenKings.AiGrader.Pylon.Host.csproj" />
+  </ItemGroup>
+</Project>
