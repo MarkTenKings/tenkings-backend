@@ -38,6 +38,12 @@ export type AiGraderStationBridgeActionRequestBody = {
   manualGeometryRect?: AiGraderManualGeometryRect;
   rapidCaptureEnabled?: boolean;
   queueItemId?: string;
+  idempotencyKey?: string;
+  expectedSessionId?: string;
+  expectedReportId?: string;
+  expectedSide?: "back";
+  expectedSideEpoch?: string;
+  expectedFrameId?: string;
 };
 
 export type AiGraderManualGeometryRect = {
@@ -312,7 +318,14 @@ export async function stopAiGraderStationPreview(input: {
 }
 
 async function bridgePostJson<T>(
-  input: { baseUrl: string; stationToken: string; path: string; body?: Record<string, unknown>; keepalive?: boolean },
+  input: {
+    baseUrl: string;
+    stationToken: string;
+    path: string;
+    body?: Record<string, unknown>;
+    keepalive?: boolean;
+    assertionHeaders?: Record<string, string>;
+  },
   fetchImpl: typeof fetch = fetch
 ): Promise<T> {
   const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
@@ -324,6 +337,7 @@ async function bridgePostJson<T>(
     headers: {
       "content-type": "application/json",
       "x-ai-grader-station-token": input.stationToken,
+      ...(input.assertionHeaders ?? {}),
     },
     body: JSON.stringify(input.body ?? {}),
     keepalive: input.keepalive,
@@ -428,18 +442,26 @@ export type AiGraderBackPositioningRetryResult = {
   firstFrameGraceMs: number;
   lastError?: { code: string; message: string };
   positioningLightReady: boolean;
-  appliedEnabled: boolean;
+  appliedEnabled?: boolean;
 };
 
 export async function retryAiGraderBackPositioningLight(input: {
   baseUrl: string;
   stationToken: string;
+  expectedSessionId: string;
+  expectedSide: "back";
+  expectedSideEpoch: string;
 }, fetchImpl: typeof fetch = fetch): Promise<AiGraderBackPositioningRetryResult> {
   return bridgePostJson<AiGraderBackPositioningRetryResult>({
     baseUrl: input.baseUrl,
     stationToken: input.stationToken,
     path: "/lighting/retry-back-positioning",
     body: {},
+    assertionHeaders: {
+      "X-AI-Grader-Session-Id": input.expectedSessionId,
+      "X-AI-Grader-Preview-Side": input.expectedSide,
+      "X-AI-Grader-Preview-Epoch": input.expectedSideEpoch,
+    },
   }, fetchImpl);
 }
 

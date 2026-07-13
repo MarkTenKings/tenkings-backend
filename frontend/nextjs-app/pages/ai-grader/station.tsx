@@ -42,30 +42,50 @@ import {
   heartbeatAiGraderLiveLighting,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
-  retryAiGraderBackPositioningLight,
   safeOffAiGraderLiveLighting,
   stopAiGraderStationPreview,
   type AiGraderManualGeometryRect,
 } from "../../lib/aiGraderStationBridgeClient";
 import {
-  advanceAiGraderPreviewEpoch,
+  aiGraderLocalBackCaptureIntentMatches,
+  aiGraderPreviewBackCaptureReady,
+  aiGraderPreviewBindingChanged,
   aiGraderPreviewBindingMatches,
   aiGraderPreviewDetectedCaptureReady,
-  aiGraderPreviewGeometryMatchesEpoch,
+  aiGraderPreviewDisplayedSnapshot,
   aiGraderPreviewManualCaptureReady,
   aiGraderPreviewStatusBinding,
   beginAiGraderPreviewReader,
   createAiGraderPreviewEpochState,
   createAiGraderPreviewReconnectState,
   finishAiGraderPreviewReader,
+  isAiGraderBackPositioningRetryReady,
+  isAiGraderConfirmedBackCaptureTransitionFailure,
+  isAiGraderIntentionalBackCaptureEof,
   isAiGraderPreviewReconnectEligible,
   noteAiGraderPreviewFrameForReconnect,
+  projectAiGraderPreviewLossPhysicalStateUnknown,
+  projectAiGraderPreviewLossSafeOffPending,
+  reduceAiGraderBackPositioningRetryUiState,
   releaseAiGraderPreviewReconnectTimer,
+  runAiGraderPreviewLossRecovery,
   sanitizeAiGraderPreviewFrameBinding,
+  transitionAiGraderPreviewEpoch,
+  type AiGraderBackPositioningRetryUiState,
+  type AiGraderLocalBackCaptureIntent,
   type AiGraderPreviewEpochEvent,
+  type AiGraderPreviewEpochBinding,
   type AiGraderPreviewEpochState,
-  type AiGraderPreviewFrameBinding,
 } from "../../lib/aiGraderPreviewLifecycle";
+import {
+  aiGraderBackCaptureAssertionFromFrame,
+  aiGraderBackCaptureAttemptSignature,
+  createAiGraderBackCaptureAttempt,
+  runAiGraderBackPositioningRetryRecovery,
+  runAiGraderStationBackCaptureOrchestration,
+  type AiGraderBackCaptureAttempt,
+  type AiGraderBackCaptureMode,
+} from "../../lib/aiGraderStationOperations";
 import {
   AI_GRADER_AUTO_CAPTURE_STABLE_MS,
   advanceAiGraderAutoCapture,
@@ -108,9 +128,10 @@ type RapidOcrPrefetchStatus = {
 type ManualCaptureConfirmation = {
   side: AiGraderPreviewGeometrySide;
 };
-type BackPositioningRetryState = {
-  status: "idle" | "retrying" | "waiting_for_frame" | "ready" | "error";
-  message?: string;
+type PreviewRestartWaiter = {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeout: number;
 };
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
@@ -636,15 +657,15 @@ export default function AiGraderStationPage() {
   const [bridgeConnected, setBridgeConnected] = useState(false);
   const [bridgeConnectionState, setBridgeConnectionState] = useState<BridgeConnectionState>("checking");
   const [previewStatus, setPreviewStatus] = useState(status.previewStatus);
-  const [previewFrameUrl, setPreviewFrameUrl] = useState<string | null>(null);
-  const [previewFrameBinding, setPreviewFrameBinding] = useState<AiGraderPreviewFrameBinding | undefined>(undefined);
   const [previewFreshnessNow, setPreviewFreshnessNow] = useState(() => Date.now());
-  const previewFrameUrlRef = useRef<string | null>(null);
-  const previewFrameBindingRef = useRef<AiGraderPreviewFrameBinding | undefined>(undefined);
   const previewLastLiveFrameAtRef = useRef(0);
   const previewControllerRef = useRef<AbortController | null>(null);
   const previewReaderPromiseRef = useRef<Promise<unknown> | null>(null);
   const previewAttemptGenerationRef = useRef(0);
+  const previewReconnectTimerRef = useRef<number | undefined>(undefined);
+  const previewReconnectStateRef = useRef(createAiGraderPreviewReconnectState());
+  const [previewRestartGeneration, setPreviewRestartGeneration] = useState(0);
+  const previewRestartWaiterRef = useRef<PreviewRestartWaiter | null>(null);
   const initialPreviewBinding = aiGraderPreviewStatusBinding(status.previewStatus);
   const [previewEpochState, setPreviewEpochState] = useState<AiGraderPreviewEpochState>(() =>
     createAiGraderPreviewEpochState(initialPreviewBinding)
@@ -688,12 +709,14 @@ export default function AiGraderStationPage() {
   const [stationCaptureProfile, setStationCaptureProfile] = useState<AiGraderCaptureProfile>(status.captureProfile);
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
   const [manualCaptureConfirmation, setManualCaptureConfirmation] = useState<ManualCaptureConfirmation | null>(null);
-  const [backPositioningRetry, setBackPositioningRetry] = useState<BackPositioningRetryState>({ status: "idle" });
+  const [backPositioningRetry, setBackPositioningRetry] = useState<AiGraderBackPositioningRetryUiState>({ status: "idle" });
+  const backCaptureAttemptRef = useRef<AiGraderBackCaptureAttempt | null>(null);
+  const intentionalBackCaptureRef = useRef<AiGraderLocalBackCaptureIntent | null>(null);
   const pageExitSafetyRef = useRef({ bridgeConnected, bridgeUrl, stationToken });
   pageExitSafetyRef.current = { bridgeConnected, bridgeUrl, stationToken };
   const autoCaptureMachineRef = useRef<AiGraderAutoCaptureState | undefined>(undefined);
   const startGradingRef = useRef<((mode: AiGraderCaptureTriggerMode) => Promise<void>) | null>(null);
-  const confirmFlipAndContinueRef = useRef<((mode: AiGraderCaptureTriggerMode) => Promise<void>) | null>(null);
+  const confirmFlipAndContinueRef = useRef<((mode: AiGraderCaptureTriggerMode, captureMode?: AiGraderBackCaptureMode) => Promise<void>) | null>(null);
   const [autoCaptureUi, setAutoCaptureUi] = useState<AutoCaptureUiState>({ phase: "disabled", readyStableMs: 0 });
   const [identityStatus, setIdentityStatus] = useState<StepState>({
     status: "idle",
@@ -743,48 +766,67 @@ export default function AiGraderStationPage() {
   });
 
   const applyPreviewEpochEvent = (event: AiGraderPreviewEpochEvent) => {
-    const next = advanceAiGraderPreviewEpoch(previewEpochStateRef.current, event);
-    previewEpochStateRef.current = next;
-    setPreviewEpochState(next);
-    return next;
+    const previousDisplayedFrameId = previewEpochStateRef.current.displayedFrameId;
+    const transition = transitionAiGraderPreviewEpoch(previewEpochStateRef.current, event);
+    for (const objectUrl of transition.revokeObjectUrls) {
+      window.URL.revokeObjectURL(objectUrl);
+    }
+    previewEpochStateRef.current = transition.state;
+    setPreviewEpochState(transition.state);
+    if (transition.state.displayedFrameId !== previousDisplayedFrameId) {
+      setManualCaptureConfirmation(null);
+    }
+    const displayed = aiGraderPreviewDisplayedSnapshot(transition.state);
+    setPreviewImageSize(
+      displayed?.imageWidth && displayed.imageHeight
+        ? { width: displayed.imageWidth, height: displayed.imageHeight }
+        : null
+    );
+    return transition;
   };
 
-  const clearPreviewDisplay = () => {
-    if (previewFrameUrlRef.current) {
-      window.URL.revokeObjectURL(previewFrameUrlRef.current);
-      previewFrameUrlRef.current = null;
-    }
-    previewFrameBindingRef.current = undefined;
-    setPreviewFrameBinding(undefined);
+  const clearPreviewDisplay = (statusOverride?: AiGraderLocalStationStatus["previewStatus"]["status"]) => {
+    applyPreviewEpochEvent({ type: "clear", ...(statusOverride ? { status: statusOverride } : {}) });
     previewLastLiveFrameAtRef.current = 0;
-    setPreviewFrameUrl(null);
-    setPreviewImageSize(null);
     setManualCaptureConfirmation(null);
   };
 
   const safeOffAfterPreviewLoss = async (reason: string) => {
     const safety = pageExitSafetyRef.current;
-    if (!safety.bridgeConnected || !safety.stationToken.trim()) return;
-    const next = await safeOffAiGraderLiveLighting({
-      baseUrl: safety.bridgeUrl,
-      stationToken: safety.stationToken,
-      reason,
-      keepalive: true,
-    });
-    setLiveLighting(next);
+    setLiveLighting((current) => projectAiGraderPreviewLossSafeOffPending(current));
+    if (!safety.bridgeConnected || !safety.stationToken.trim()) {
+      setLiveLighting((current) => projectAiGraderPreviewLossPhysicalStateUnknown(current));
+      throw new Error("Preview-loss positioning light safe-off could not be acknowledged while the bridge is disconnected.");
+    }
+    try {
+      const next = await safeOffAiGraderLiveLighting({
+        baseUrl: safety.bridgeUrl,
+        stationToken: safety.stationToken,
+        reason,
+        keepalive: true,
+      });
+      setLiveLighting(next);
+    } catch (safeOffError) {
+      setLiveLighting((current) => projectAiGraderPreviewLossPhysicalStateUnknown(current));
+      throw safeOffError;
+    }
   };
 
   const reconcileBridgePreviewStatus = (nextStatus: AiGraderLocalStationStatus["previewStatus"]) => {
     const binding = aiGraderPreviewStatusBinding(nextStatus);
-    if (!aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, binding)) {
+    if (aiGraderPreviewBindingChanged(previewEpochStateRef.current.binding, binding)) {
+      backCaptureAttemptRef.current = null;
+      intentionalBackCaptureRef.current = null;
       previewAttemptGenerationRef.current += 1;
       previewControllerRef.current?.abort();
       previewControllerRef.current = null;
       clearPreviewDisplay();
       applyPreviewEpochEvent({ type: "bind", binding });
-      setBackPositioningRetry(binding?.side === "back"
-        ? { status: "waiting_for_frame", message: "Waiting for positioning light and a fresh back preview frame." }
-        : { status: "idle" });
+      setPreviewRestartGeneration((current) => current + 1);
+      setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
+        type: "reset",
+        backPositioningActive: binding?.side === "back",
+      }));
     }
     if (nextStatus.status !== "live" && nextStatus.status !== "starting") {
       previewAttemptGenerationRef.current += 1;
@@ -828,6 +870,11 @@ export default function AiGraderStationPage() {
     setHistory(await fetchAiGraderStationReportHistory({ baseUrl: targetBridgeUrl, stationToken: targetStationToken }));
     return next;
   };
+
+  const previewBrowserCaptureActionActive =
+    busy === "start-grading" ||
+    busy === "capture-front" ||
+    busy === "safe-off";
 
   useEffect(() => {
     reconcileBridgePreviewStatus(status.previewStatus);
@@ -926,21 +973,37 @@ export default function AiGraderStationPage() {
 
   useEffect(() => {
     return () => {
-      if (previewFrameUrlRef.current) {
-        window.URL.revokeObjectURL(previewFrameUrlRef.current);
-        previewFrameUrlRef.current = null;
-      }
+      const cleared = transitionAiGraderPreviewEpoch(previewEpochStateRef.current, { type: "clear", status: "stopped" });
+      for (const objectUrl of cleared.revokeObjectUrls) window.URL.revokeObjectURL(objectUrl);
+      previewEpochStateRef.current = cleared.state;
     };
   }, []);
 
   useEffect(() => {
-    if (!bridgeConnected || !stationToken.trim() || !liveLighting.applied.enabled) return;
+    if (
+      !bridgeConnected ||
+      !stationToken.trim() ||
+      liveLighting.applied.enabled !== true ||
+      liveLighting.applied.verificationState !== "verified" ||
+      liveLighting.applied.verificationComplete !== true ||
+      liveLighting.physicalState.state !== "positioning_light_verified" ||
+      liveLighting.physicalState.complete !== true
+    ) return;
     const timer = setInterval(() => {
       if (Date.now() - previewLastLiveFrameAtRef.current > PREVIEW_GEOMETRY_MAX_AGE_MS) return;
       void heartbeatAiGraderLiveLighting({ baseUrl: bridgeUrl, stationToken }).then(setLiveLighting).catch(() => {});
     }, 4000);
     return () => clearInterval(timer);
-  }, [bridgeConnected, bridgeUrl, liveLighting.applied.enabled, stationToken]);
+  }, [
+    bridgeConnected,
+    bridgeUrl,
+    liveLighting.applied.enabled,
+    liveLighting.applied.verificationState,
+    liveLighting.applied.verificationComplete,
+    liveLighting.physicalState.state,
+    liveLighting.physicalState.complete,
+    stationToken,
+  ]);
 
   useEffect(() => {
     const handlePageExit = () => {
@@ -966,12 +1029,16 @@ export default function AiGraderStationPage() {
 
   useEffect(() => {
     if (previewStatus.status !== "live") return;
-    const timer = window.setInterval(() => setPreviewFreshnessNow(Date.now()), 250);
+    const timer = window.setInterval(() => {
+      const nowMs = Date.now();
+      setPreviewFreshnessNow(nowMs);
+      applyPreviewEpochEvent({ type: "tick", nowMs });
+    }, 250);
     return () => window.clearInterval(timer);
   }, [previewStatus.status]);
 
   useEffect(() => {
-    const backPositioningActive = status.currentStep === "prompt_flip_card" && busy !== "capture-back";
+    const backPositioningActive = status.currentStep === "prompt_flip_card";
     const previewHeldForFullForensicRun = status.warmRunnerStatus.previewPolicy.holdActive === true && !backPositioningActive;
     const previewSuspendedForRapidReview = Boolean(status.rapidCaptureQueue.activeQueueItemId);
     const positioningStepActive = !status.sessionManifest.backCaptured && (
@@ -982,7 +1049,7 @@ export default function AiGraderStationPage() {
       hasStationToken: Boolean(stationToken.trim()),
       mounted: true,
       aborted: false,
-      captureActionActive: busy === "start-grading" || busy === "capture-front" || busy === "capture-back" || busy === "safe-off",
+      captureActionActive: previewBrowserCaptureActionActive,
       captureLockHeld: status.warmRunnerStatus.captureLock.held,
       runnerCapturing: status.warmRunnerStatus.status === "capturing",
       previewHoldActive: previewHeldForFullForensicRun,
@@ -990,7 +1057,13 @@ export default function AiGraderStationPage() {
       terminalOrSafeOff: !positioningStepActive || status.currentStep === "safe_off_end_session",
     });
     if (!previewEligible) {
+      if (previewRestartWaiterRef.current) {
+        clearTimeout(previewRestartWaiterRef.current.timeout);
+        previewRestartWaiterRef.current.reject(new Error("Back preview is no longer eligible for positioning-light recovery."));
+        previewRestartWaiterRef.current = null;
+      }
       previewAttemptGenerationRef.current += 1;
+      intentionalBackCaptureRef.current = null;
       previewControllerRef.current?.abort();
       previewControllerRef.current = null;
       clearPreviewDisplay();
@@ -1012,22 +1085,31 @@ export default function AiGraderStationPage() {
 
     const expectedBinding = previewEpochStateRef.current.binding;
     if (!expectedBinding) {
+      if (previewRestartWaiterRef.current) {
+        clearTimeout(previewRestartWaiterRef.current.timeout);
+        previewRestartWaiterRef.current.reject(new Error("Preview session/side epoch is unavailable."));
+        previewRestartWaiterRef.current = null;
+      }
       setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "error", cameraOwnership: "released", lastError: "Preview session/side epoch is unavailable." }));
       return;
     }
     let cancelled = false;
-    let reconnectTimer: number | undefined;
-    let reconnectState = createAiGraderPreviewReconnectState();
+    previewReconnectStateRef.current = createAiGraderPreviewReconnectState();
     const generation = ++previewAttemptGenerationRef.current;
     const isCurrent = () => !cancelled && previewAttemptGenerationRef.current === generation;
+    const hasOutstandingAtomicBackIntent = () => aiGraderLocalBackCaptureIntentMatches({
+      expectedBinding,
+      localIntent: intentionalBackCaptureRef.current,
+    });
 
     const runPreviewReader = async (): Promise<void> => {
-      const begin = beginAiGraderPreviewReader(reconnectState, isCurrent());
-      reconnectState = begin.state;
+      const begin = beginAiGraderPreviewReader(previewReconnectStateRef.current, isCurrent());
+      previewReconnectStateRef.current = begin.state;
       if (!begin.startReader) return;
       const controller = new AbortController();
       previewControllerRef.current = controller;
-      let endReason: "eof" | "error" | "abort" | "authoritative_state" = "error";
+      let endReason: "eof" | "error" | "abort" | "authoritative_state" | "intentional_capture_transition" = "error";
+      let atomicTransitionFailureConfirmed = false;
       try {
         const authoritative = await fetchAiGraderStationPreviewStatus({ baseUrl: bridgeUrl, stationToken });
         if (!isCurrent()) return;
@@ -1047,22 +1129,42 @@ export default function AiGraderStationPage() {
               signal: controller.signal,
               onOpen() {
                 if (!isCurrent()) return;
+                if (previewRestartWaiterRef.current) {
+                  clearTimeout(previewRestartWaiterRef.current.timeout);
+                  previewRestartWaiterRef.current.resolve();
+                  previewRestartWaiterRef.current = null;
+                }
                 setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "starting", implementationType: "mjpeg_fetch_stream" }));
               },
               onFrame(frame) {
                 if (!isCurrent()) return;
                 const frameBinding = sanitizeAiGraderPreviewFrameBinding(frame);
                 if (!frameBinding || !aiGraderPreviewBindingMatches(frameBinding, expectedBinding)) return;
-                reconnectState = noteAiGraderPreviewFrameForReconnect(reconnectState);
-                applyPreviewEpochEvent({ type: "frame", frame: frameBinding });
                 const objectUrl = window.URL.createObjectURL(frame.blob);
-                if (previewFrameUrlRef.current) window.URL.revokeObjectURL(previewFrameUrlRef.current);
-                previewFrameUrlRef.current = objectUrl;
-                previewFrameBindingRef.current = frameBinding;
-                previewLastLiveFrameAtRef.current = Date.now();
-                setPreviewFreshnessNow(Date.now());
-                setPreviewFrameBinding(frameBinding);
-                setPreviewFrameUrl(objectUrl);
+                const receivedAtMs = Date.now();
+                const transition = applyPreviewEpochEvent({
+                  type: "frame",
+                  frame: frameBinding,
+                  objectUrl,
+                  receivedAtMs,
+                  capturedAt: frame.capturedAt,
+                });
+                if (!transition.accepted) return;
+                previewReconnectStateRef.current = noteAiGraderPreviewFrameForReconnect(previewReconnectStateRef.current);
+                const previewImage = new window.Image();
+                previewImage.onload = () => {
+                  if (!isCurrent()) return;
+                  applyPreviewEpochEvent({
+                    type: "image_loaded",
+                    frame: frameBinding,
+                    loadedAtMs: Date.now(),
+                    width: previewImage.naturalWidth,
+                    height: previewImage.naturalHeight,
+                  });
+                };
+                previewImage.src = objectUrl;
+                previewLastLiveFrameAtRef.current = receivedAtMs;
+                setPreviewFreshnessNow(receivedAtMs);
                 setPreviewStatus((currentStatus) => ({
                   ...currentStatus,
                   status: "live",
@@ -1077,10 +1179,9 @@ export default function AiGraderStationPage() {
                 }));
               },
               onEof() {
-                if (!isCurrent()) return;
-                clearPreviewDisplay();
-                applyPreviewEpochEvent({ type: "non_live", status: "stopped" });
-                setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "stopped", cameraOwnership: "released", lastStopReason: "Preview stream reached clean EOF." }));
+                // EOF is classified after an authoritative status read. The
+                // bridge may have ended this exact stream intentionally while
+                // atomically taking ownership for back capture.
               },
               onAbort() {
                 if (!isCurrent()) return;
@@ -1093,6 +1194,7 @@ export default function AiGraderStationPage() {
               },
               onError(streamError) {
                 if (!isCurrent()) return;
+                if (hasOutstandingAtomicBackIntent()) return;
                 clearPreviewDisplay();
                 applyPreviewEpochEvent({ type: "non_live", status: "error" });
                 setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "error", lastError: streamError.message, cameraOwnership: "released" }));
@@ -1103,6 +1205,52 @@ export default function AiGraderStationPage() {
           try {
             const result = await readerPromise;
             endReason = result.kind;
+            if (result.kind === "eof" && isCurrent()) {
+              const localIntent = intentionalBackCaptureRef.current;
+              let authoritativeAfterEof: AiGraderLocalStationStatus["previewStatus"] | undefined;
+              try {
+                authoritativeAfterEof = await fetchAiGraderStationPreviewStatus({ baseUrl: bridgeUrl, stationToken });
+              } catch {
+                // A failed status read cannot prove an intentional ownership
+                // handoff, so this remains an unexpected EOF.
+              }
+              const bridgeIntent = authoritativeAfterEof?.intentionalTransition;
+              const confirmedTransitionFailure = expectedBinding.side === "back" && isAiGraderConfirmedBackCaptureTransitionFailure({
+                expectedBinding: { ...expectedBinding, side: "back" },
+                localIntent,
+                authoritativeBinding: authoritativeAfterEof
+                  ? aiGraderPreviewStatusBinding(authoritativeAfterEof)
+                  : undefined,
+                bridgeIntent,
+              });
+              const intentionalCaptureTransition = expectedBinding.side === "back" && isAiGraderIntentionalBackCaptureEof({
+                expectedBinding: { ...expectedBinding, side: "back" },
+                localIntent,
+                authoritativeBinding: authoritativeAfterEof
+                  ? aiGraderPreviewStatusBinding(authoritativeAfterEof)
+                  : undefined,
+                bridgeIntent,
+              });
+              if (confirmedTransitionFailure && authoritativeAfterEof) {
+                if (intentionalBackCaptureRef.current === localIntent) intentionalBackCaptureRef.current = null;
+                atomicTransitionFailureConfirmed = true;
+                reconcileBridgePreviewStatus(authoritativeAfterEof);
+              } else if (intentionalCaptureTransition && authoritativeAfterEof) {
+                if (intentionalBackCaptureRef.current === localIntent) intentionalBackCaptureRef.current = null;
+                endReason = "intentional_capture_transition";
+                reconcileBridgePreviewStatus(authoritativeAfterEof);
+              } else if (!aiGraderLocalBackCaptureIntentMatches({ expectedBinding, localIntent })) {
+                if (intentionalBackCaptureRef.current === localIntent) intentionalBackCaptureRef.current = null;
+                clearPreviewDisplay("stopped");
+                applyPreviewEpochEvent({ type: "non_live", status: "stopped" });
+                setPreviewStatus((currentStatus) => ({
+                  ...currentStatus,
+                  status: "stopped",
+                  cameraOwnership: "released",
+                  lastStopReason: "Preview stream reached unexpected clean EOF.",
+                }));
+              }
+            }
           } finally {
             if (previewReaderPromiseRef.current === readerPromise) previewReaderPromiseRef.current = null;
           }
@@ -1110,6 +1258,7 @@ export default function AiGraderStationPage() {
       } catch (requestError) {
         if (!isCurrent() || controller.signal.aborted) return;
         endReason = "error";
+        if (hasOutstandingAtomicBackIntent()) return;
         clearPreviewDisplay();
         applyPreviewEpochEvent({ type: "non_live", status: "error" });
         setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "error", lastError: requestError instanceof Error ? requestError.message : "AI Grader preview stream is unavailable.", cameraOwnership: "released" }));
@@ -1117,29 +1266,44 @@ export default function AiGraderStationPage() {
         if (previewControllerRef.current === controller) previewControllerRef.current = null;
       }
       if (!isCurrent()) return;
-      if (endReason === "eof" || endReason === "error") {
-        try {
-          await safeOffAfterPreviewLoss(`${endReason} preview loss; positioning light safe-off`);
-        } catch (safeOffError) {
-          const message = safeOffError instanceof Error ? safeOffError.message : "Preview-loss positioning light safe-off failed.";
-          setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "error", lastError: message, cameraOwnership: "released" }));
-          setError(message);
-          return;
-        }
+      try {
+        await runAiGraderPreviewLossRecovery({
+          reason: endReason,
+          expectedBinding,
+          localIntent: intentionalBackCaptureRef.current,
+          atomicTransitionFailureConfirmed,
+          reconnectEligible: isCurrent(),
+        }, {
+          safeOff: () => safeOffAfterPreviewLoss(`${endReason} preview loss; positioning light safe-off`),
+          reconnect: () => {
+            const decision = finishAiGraderPreviewReader({
+              state: previewReconnectStateRef.current,
+              eligible: isCurrent(),
+              reason: endReason,
+            });
+            previewReconnectStateRef.current = decision.state;
+            if (decision.reconnectDelayMs === undefined) return;
+            previewReconnectTimerRef.current = window.setTimeout(() => {
+              previewReconnectTimerRef.current = undefined;
+              previewReconnectStateRef.current = releaseAiGraderPreviewReconnectTimer(previewReconnectStateRef.current);
+              void runPreviewReader();
+            }, decision.reconnectDelayMs);
+          },
+        });
+      } catch (safeOffError) {
+        const message = safeOffError instanceof Error ? safeOffError.message : "Preview-loss positioning light safe-off failed.";
+        setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "error", lastError: message, cameraOwnership: "released" }));
+        setError(message);
       }
-      const decision = finishAiGraderPreviewReader({ state: reconnectState, eligible: true, reason: endReason });
-      reconnectState = decision.state;
-      if (decision.reconnectDelayMs === undefined) return;
-      reconnectTimer = window.setTimeout(() => {
-        reconnectState = releaseAiGraderPreviewReconnectTimer(reconnectState);
-        void runPreviewReader();
-      }, decision.reconnectDelayMs);
     };
     void runPreviewReader();
 
     return () => {
       cancelled = true;
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      if (previewReconnectTimerRef.current !== undefined) {
+        window.clearTimeout(previewReconnectTimerRef.current);
+        previewReconnectTimerRef.current = undefined;
+      }
       previewAttemptGenerationRef.current += 1;
       previewControllerRef.current?.abort();
       previewControllerRef.current = null;
@@ -1147,7 +1311,8 @@ export default function AiGraderStationPage() {
   }, [
     bridgeConnected,
     bridgeUrl,
-    busy,
+    previewBrowserCaptureActionActive,
+    previewRestartGeneration,
     stationToken,
     status.warmRunnerStatus.captureLock.held,
     status.warmRunnerStatus.previewPolicy.holdActive,
@@ -1179,22 +1344,36 @@ export default function AiGraderStationPage() {
           !binding ||
           !aiGraderPreviewBindingMatches(aiGraderPreviewStatusBinding(latest), binding)
         ) {
-          if (binding && aiGraderPreviewBindingMatches(aiGraderPreviewStatusBinding(latest), binding)) {
-            reconcileBridgePreviewStatus(latest);
-          }
+          reconcileBridgePreviewStatus(latest);
           return;
         }
         const geometryBySide = mergePreviewCardGeometry(undefined, latest.cardGeometry);
         const activeGeometry = geometryBySide?.[binding.side];
-        if (aiGraderPreviewGeometryMatchesEpoch({
-          geometry: activeGeometry,
+        const geometryObservedAtMs = Date.now();
+        applyPreviewEpochEvent({
+          type: "geometry",
           binding,
-          acceptedFrameIds: previewEpochStateRef.current.acceptedFrameIds,
-        })) {
-          applyPreviewEpochEvent({ type: "geometry", binding, sourceFrameId: activeGeometry?.sourceFrameId });
-        }
-        if (binding.side === "back" && latest.positioningLightReady === true) {
-          setBackPositioningRetry({ status: "ready", message: "Positioning light and fresh back preview are ready." });
+          geometry: activeGeometry,
+          observedAtMs: geometryObservedAtMs,
+        });
+        if (
+          binding.side === "back" &&
+          latest.positioningLightReady === true &&
+          liveLighting.applied.enabled === true &&
+          liveLighting.applied.verificationState === "verified" &&
+          liveLighting.applied.verificationComplete === true &&
+          liveLighting.physicalState.state === "positioning_light_verified" &&
+          liveLighting.physicalState.complete === true &&
+          aiGraderPreviewBackCaptureReady({
+            state: previewEpochStateRef.current,
+            mode: "manual_capture",
+            positioningVerifiedAt: liveLighting.physicalState.verifiedAt,
+            nowMs: geometryObservedAtMs,
+          })
+        ) {
+          setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
+            type: "fresh_frame_ready",
+          }));
         }
         setPreviewStatus((currentStatus) => ({
           ...latest,
@@ -1216,7 +1395,18 @@ export default function AiGraderStationPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [bridgeConnected, bridgeUrl, previewStatus.status, stationToken]);
+  }, [
+    bridgeConnected,
+    bridgeUrl,
+    liveLighting.applied.enabled,
+    liveLighting.applied.verificationState,
+    liveLighting.applied.verificationComplete,
+    liveLighting.physicalState.state,
+    liveLighting.physicalState.complete,
+    liveLighting.physicalState.verifiedAt,
+    previewStatus.status,
+    stationToken,
+  ]);
 
   const currentStep = useMemo(
     () => AI_GRADER_STATION_STEPS.find((step) => step.id === status.currentStep) ?? AI_GRADER_STATION_STEPS[0],
@@ -1442,44 +1632,78 @@ export default function AiGraderStationPage() {
         height: `${reportOverlayContainedFrame.height}px`,
       }
     : undefined;
-  const safePreviewCardGeometry = sanitizeAiGraderPreviewCardGeometryBySide(previewStatus.cardGeometry);
+  const displayedPreviewSnapshot = aiGraderPreviewDisplayedSnapshot(previewEpochState);
+  const previewFrameUrl = displayedPreviewSnapshot?.objectUrl ?? null;
+  const previewFrameBinding = displayedPreviewSnapshot?.frame;
   const previewGeometrySide = previewEpochState.binding?.side ??
     (status.currentStep === "prompt_flip_card" || status.currentStep === "capture_back" ? "back" : "front");
-  const candidatePreviewCardGeometry = safePreviewCardGeometry?.activeSide === previewGeometrySide
-    ? safePreviewCardGeometry[previewGeometrySide]
-    : undefined;
-  const activePreviewCardGeometry = aiGraderPreviewGeometryMatchesEpoch({
-    geometry: candidatePreviewCardGeometry,
-    binding: previewEpochState.binding,
-    acceptedFrameIds: previewEpochState.acceptedFrameIds,
-  }) ? candidatePreviewCardGeometry : undefined;
+  const activePreviewCardGeometry =
+    displayedPreviewSnapshot?.frame.side === previewGeometrySide
+      ? displayedPreviewSnapshot.geometry
+      : undefined;
   const cardPlacementState = activePreviewCardGeometry?.placementState ?? "not_detected";
   const cardPlacementLabel = aiGraderCardPlacementLabel(cardPlacementState);
   const activeGeometryTimestampMs = Date.parse(activePreviewCardGeometry?.timestamp ?? "");
   const activeGeometryAgeMs = previewFreshnessNow - activeGeometryTimestampMs;
   const previewFrameFresh =
     previewStatus.status === "live" &&
-    previewLastLiveFrameAtRef.current > 0 &&
-    previewFreshnessNow - previewLastLiveFrameAtRef.current >= 0 &&
-    previewFreshnessNow - previewLastLiveFrameAtRef.current <= PREVIEW_GEOMETRY_MAX_AGE_MS;
+    Boolean(displayedPreviewSnapshot) &&
+    previewFreshnessNow - (displayedPreviewSnapshot?.receivedAtMs ?? 0) >= 0 &&
+    previewFreshnessNow - (displayedPreviewSnapshot?.receivedAtMs ?? 0) <= PREVIEW_GEOMETRY_MAX_AGE_MS;
   const detectedGeometryFresh =
     Number.isFinite(activeGeometryTimestampMs) &&
     activeGeometryAgeMs >= -250 &&
     activeGeometryAgeMs <= PREVIEW_GEOMETRY_MAX_AGE_MS;
+  const backPositioningPhysicallyVerified =
+    previewStatus.positioningLightReady === true &&
+    liveLighting.applied.enabled === true &&
+    liveLighting.applied.verificationState === "verified" &&
+    liveLighting.applied.verificationComplete === true &&
+    liveLighting.physicalState.state === "positioning_light_verified" &&
+    liveLighting.physicalState.complete === true;
+  const detectedPreviewCaptureReady = previewGeometrySide === "back"
+    ? aiGraderPreviewBackCaptureReady({
+        state: previewEpochState,
+        mode: "detected_geometry",
+        positioningVerifiedAt: liveLighting.physicalState.verifiedAt,
+        nowMs: previewFreshnessNow,
+      })
+    : aiGraderPreviewDetectedCaptureReady(previewEpochState, previewFreshnessNow);
+  const manualPreviewCaptureReady = previewGeometrySide === "back"
+    ? aiGraderPreviewBackCaptureReady({
+        state: previewEpochState,
+        mode: "manual_capture",
+        positioningVerifiedAt: liveLighting.physicalState.verifiedAt,
+        nowMs: previewFreshnessNow,
+      })
+    : aiGraderPreviewManualCaptureReady(previewEpochState, previewFreshnessNow);
+  const backPositioningRetryReady = previewGeometrySide === "back" && isAiGraderBackPositioningRetryReady({
+    state: previewEpochState,
+    positioningPhysicallyVerified: backPositioningPhysicallyVerified,
+    positioningVerifiedAt: liveLighting.physicalState.verifiedAt,
+    nowMs: previewFreshnessNow,
+  });
+  useEffect(() => {
+    if (backPositioningRetry.status !== "ready" || backPositioningRetryReady) return;
+    setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
+      type: "reset",
+      backPositioningActive: showFlipScrim,
+    }));
+  }, [backPositioningRetry.status, backPositioningRetryReady, showFlipScrim]);
   const detectedGeometryReady =
     cardPlacementState === "ready" &&
     activePreviewCardGeometry?.geometrySource === "detected" &&
     activePreviewCardGeometry.detectionUsed === true &&
     previewFrameFresh &&
     detectedGeometryFresh &&
-    aiGraderPreviewDetectedCaptureReady(previewEpochState) &&
-    (previewGeometrySide !== "back" || previewStatus.positioningLightReady === true);
+    detectedPreviewCaptureReady &&
+    (previewGeometrySide !== "back" || backPositioningPhysicallyVerified);
   const manualOverlayAvailable =
     previewStatus.status === "live" &&
     previewFrameFresh &&
     Boolean(previewImageSize) &&
-    aiGraderPreviewManualCaptureReady(previewEpochState) &&
-    (previewGeometrySide !== "back" || previewStatus.positioningLightReady === true);
+    manualPreviewCaptureReady &&
+    (previewGeometrySide !== "back" || backPositioningPhysicallyVerified);
   const cardGeometryCorners = activePreviewCardGeometry?.corners ?? activePreviewCardGeometry?.detectedCorners ?? null;
   const cardGeometryFrameSize = activePreviewCardGeometry?.image ?? reportOverlayFrameSize;
   const cardGeometryPolygonPoints = cardGeometryCorners
@@ -1531,8 +1755,8 @@ export default function AiGraderStationPage() {
     previewFreshnessNow - Date.parse(autoCaptureGeometryCandidate.timestamp ?? "") >= -250 &&
     previewFreshnessNow - Date.parse(autoCaptureGeometryCandidate.timestamp ?? "") <= PREVIEW_GEOMETRY_MAX_AGE_MS &&
     previewFrameFresh &&
-    aiGraderPreviewDetectedCaptureReady(previewEpochState) &&
-    (activeAutoCaptureSide !== "back" || previewStatus.positioningLightReady === true)
+    detectedPreviewCaptureReady &&
+    (activeAutoCaptureSide !== "back" || backPositioningPhysicallyVerified)
       ? autoCaptureGeometryCandidate
       : undefined;
   const autoCaptureSessionId = `${status.sessionManifest.gradingSessionId}:${status.sessionManifest.reportId}`;
@@ -1629,9 +1853,30 @@ export default function AiGraderStationPage() {
     liveLighting.controlsEnabled &&
     !warmRunner.captureLock.held &&
     warmRunner.status !== "capturing";
-  const liveLightingAppliedLabel = liveLighting.applied.enabled
+  const liveLightingSafeOffVerified =
+    liveLighting.applied.enabled === false &&
+    liveLighting.applied.verificationState === "verified" &&
+    liveLighting.applied.verificationComplete === true &&
+    liveLighting.physicalState.state === "safe_off_verified" &&
+    liveLighting.physicalState.complete === true;
+  const liveLightingPositioningVerified =
+    liveLighting.applied.enabled === true &&
+    liveLighting.applied.verificationState === "verified" &&
+    liveLighting.applied.verificationComplete === true &&
+    liveLighting.physicalState.state === "positioning_light_verified" &&
+    liveLighting.physicalState.complete === true;
+  const liveLightingAppliedLabel = liveLightingPositioningVerified
     ? `${liveLighting.applied.dutyPercent}% / PWM ${String(liveLighting.applied.actualLeimacPwmStep).padStart(4, "0")} / Ch ${liveLighting.applied.channels.join(", ")}`
-    : "off";
+    : liveLightingSafeOffVerified
+      ? "off (verified)"
+      : "physical state unknown";
+  const liveLightingSafeOffLabel = liveLightingSafeOffVerified
+    ? "Off (verified)"
+    : liveLightingPositioningVerified
+      ? "Armed (verified)"
+      : liveLighting.physicalState.state === "safe_off_pending"
+        ? "Verification pending"
+        : "Physical state unknown";
   const warmEvidenceCounts = {
     front: warmRunner.evidencePlan.rolesBySide.front.filter((role) => role.status === "completed").length,
     back: warmRunner.evidencePlan.rolesBySide.back.filter((role) => role.status === "completed").length,
@@ -2074,27 +2319,162 @@ export default function AiGraderStationPage() {
     throw new Error(`AI Grader preview did not release the Basler camera before capture. Current preview owner: ${latest.cameraOwnership}.`);
   };
 
+  const restartBackPreviewForRetry = async (
+    binding: AiGraderPreviewEpochBinding & { side: "back" },
+  ) => {
+    intentionalBackCaptureRef.current = null;
+    if (!aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, binding)) {
+      throw new Error("Back preview binding changed before positioning-light recovery.");
+    }
+    previewAttemptGenerationRef.current += 1;
+    if (previewReconnectTimerRef.current !== undefined) {
+      window.clearTimeout(previewReconnectTimerRef.current);
+      previewReconnectTimerRef.current = undefined;
+    }
+    previewReconnectStateRef.current = createAiGraderPreviewReconnectState();
+    const previousReader = previewReaderPromiseRef.current;
+    previewControllerRef.current?.abort();
+    previewControllerRef.current = null;
+    clearPreviewDisplay("starting");
+    if (previousReader) {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timeout);
+          if (error) reject(error);
+          else resolve();
+        };
+        const timeout = window.setTimeout(
+          () => finish(new Error("Previous back preview reader did not drain after abort.")),
+          1000,
+        );
+        void previousReader.then(() => finish(), () => finish());
+      });
+    }
+    if (!aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, binding)) {
+      throw new Error("Back preview binding changed while the previous reader was released.");
+    }
+    if (previewRestartWaiterRef.current) {
+      clearTimeout(previewRestartWaiterRef.current.timeout);
+      previewRestartWaiterRef.current.reject(new Error("A newer back-preview recovery replaced this request."));
+      previewRestartWaiterRef.current = null;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        if (previewRestartWaiterRef.current?.timeout === timeout) previewRestartWaiterRef.current = null;
+        reject(new Error("Back preview reader did not restart within the bounded recovery window."));
+      }, 3000);
+      previewRestartWaiterRef.current = { resolve, reject, timeout };
+      setPreviewRestartGeneration((current) => current + 1);
+    });
+  };
+
   const retryBackPositioningLight = async () => {
-    setBackPositioningRetry({ status: "retrying", message: "Restoring the accepted positioning profile." });
+    if (backPositioningRetryReady) return;
+    setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
+      type: "retry_started",
+    }));
     setError(null);
+    let retryBinding: (AiGraderPreviewEpochBinding & { side: "back" }) | undefined;
     try {
-      const next = await retryAiGraderBackPositioningLight({ baseUrl: bridgeUrl, stationToken });
-      setLiveLighting(await fetchAiGraderLiveLightingStatus({ baseUrl: bridgeUrl, stationToken }));
+      const binding = previewEpochStateRef.current.binding;
+      if (
+        !binding ||
+        binding.side !== "back" ||
+        status.currentStep !== "prompt_flip_card" ||
+        status.warmRunnerStatus.captureLock.held ||
+        Boolean(status.rapidCaptureQueue.activeQueueItemId)
+      ) {
+        throw new Error("Positioning-light retry is obsolete or unavailable for the active back preview.");
+      }
+      retryBinding = { ...binding, side: "back" };
+      const verificationInvalidatedAt = new Date().toISOString();
+      setLiveLighting((current) => ({
+        ...current,
+        status: "applying",
+        applied: {
+          ...current.applied,
+          enabled: undefined,
+          verificationState: "pending",
+          expectedWriteCount: 0,
+          acknowledgedWriteCount: 0,
+          verificationComplete: false,
+          verifiedAt: undefined,
+        },
+        physicalState: {
+          ...current.physicalState,
+          state: "physical_state_unknown",
+          reason: "Positioning-light retry is awaiting a fresh controller acknowledgement.",
+          changedAt: verificationInvalidatedAt,
+          expectedWriteCount: 0,
+          acknowledgedWriteCount: 0,
+          complete: false,
+          verifiedAt: undefined,
+          lastError: undefined,
+        },
+      }));
+      const next = await runAiGraderBackPositioningRetryRecovery({
+        baseUrl: bridgeUrl,
+        stationToken,
+        expectedBinding: { ...binding, side: "back" },
+        getCurrentBinding: () => previewEpochStateRef.current.binding,
+        restartPreview: restartBackPreviewForRetry,
+      });
+      if (!aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, retryBinding)) {
+        throw new Error("Positioning-light retry response is obsolete for the current preview binding.");
+      }
+      if (next.sessionId !== binding.sessionId || next.sideEpoch !== binding.sideEpoch) {
+        throw new Error("Positioning-light retry response does not match the active back preview.");
+      }
+      // Frames received while the reader was opening may predate the restore
+      // acknowledgement. Keep that reader, but require a subsequent exact
+      // frame/geometry pair before either Back Capture mode can become ready.
+      clearPreviewDisplay("starting");
+      setPreviewStatus((current) => ({
+        ...current,
+        status: "starting",
+        latestFrameId: undefined,
+        positioningLightReady: false,
+        lastStopReason: "Positioning light acknowledged; waiting for a fresh post-restore back frame.",
+        cardGeometry: current.cardGeometry
+          ? { ...current.cardGeometry, activeSide: "back", back: undefined }
+          : current.cardGeometry,
+      }));
+      const verifiedLighting = await fetchAiGraderLiveLightingStatus({ baseUrl: bridgeUrl, stationToken });
+      if (!aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, retryBinding)) return;
+      setLiveLighting(verifiedLighting);
       if (next.status === "failed") {
-        setBackPositioningRetry({ status: "error", message: next.lastError?.message ?? "Positioning light restore failed safely." });
+        setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
+          type: "retry_failed",
+          message: next.lastError?.message,
+        }));
         return;
       }
-      setBackPositioningRetry({
-        status: next.captureReady ? "ready" : "waiting_for_frame",
-        message: next.captureReady
-          ? "Positioning light and fresh back preview are ready."
-          : "Positioning light restored. Waiting for a fresh back preview frame.",
+      const physicallyVerified =
+        verifiedLighting.applied.enabled === true &&
+        verifiedLighting.applied.verificationState === "verified" &&
+        verifiedLighting.applied.verificationComplete === true &&
+        verifiedLighting.physicalState.state === "positioning_light_verified" &&
+        verifiedLighting.physicalState.complete === true;
+      const postVerificationFrameReady = aiGraderPreviewBackCaptureReady({
+        state: previewEpochStateRef.current,
+        mode: "manual_capture",
+        positioningVerifiedAt: verifiedLighting.physicalState.verifiedAt,
       });
+      setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
+        type: "restore_completed",
+        bridgeCaptureReady: next.captureReady,
+        physicallyVerified,
+        postVerificationFrameReady,
+      }));
     } catch (requestError) {
-      setBackPositioningRetry({
-        status: "error",
-        message: requestError instanceof Error ? requestError.message : "Positioning light restore failed safely.",
-      });
+      if (retryBinding && !aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, retryBinding)) return;
+      setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
+        type: "retry_failed",
+        message: requestError instanceof Error ? requestError.message : undefined,
+      }));
     }
   };
 
@@ -2104,27 +2484,61 @@ export default function AiGraderStationPage() {
   ) => {
     const epochState = previewEpochStateRef.current;
     const binding = epochState.binding;
+    const displayed = aiGraderPreviewDisplayedSnapshot(epochState);
+    const nowMs = Date.now();
+    const localCaptureReady = side === "back"
+      ? aiGraderPreviewBackCaptureReady({
+          state: epochState,
+          mode: manual ? "manual_capture" : "detected_geometry",
+          positioningVerifiedAt: liveLighting.physicalState.verifiedAt,
+          nowMs,
+        })
+      : manual
+        ? aiGraderPreviewManualCaptureReady(epochState, nowMs)
+        : aiGraderPreviewDetectedCaptureReady(epochState, nowMs);
     if (
       !binding ||
       binding.side !== side ||
       epochState.phase !== "live" ||
-      !epochState.latestFrame ||
-      Date.now() - previewLastLiveFrameAtRef.current > PREVIEW_GEOMETRY_MAX_AGE_MS ||
-      !(manual ? aiGraderPreviewManualCaptureReady(epochState) : aiGraderPreviewDetectedCaptureReady(epochState))
+      !displayed ||
+      !localCaptureReady
     ) {
       throw new Error(`AI Grader ${side} capture requires the current fresh displayed ${side} frame${manual ? "" : " and matching Ready geometry"}.`);
     }
-    if (!bridgeConnected) return;
+    if (!bridgeConnected) return displayed;
     const authoritative = await fetchAiGraderStationPreviewStatus({ baseUrl: bridgeUrl, stationToken });
     if (
       authoritative.status !== "live" ||
       !aiGraderPreviewBindingMatches(aiGraderPreviewStatusBinding(authoritative), binding) ||
-      authoritative.latestFrameId !== epochState.latestFrame.frameId ||
-      (side === "back" && authoritative.positioningLightReady !== true)
+      authoritative.intentionalTransition.active ||
+      (side === "back" && (
+        authoritative.positioningLightReady !== true ||
+        liveLighting.applied.enabled !== true ||
+        liveLighting.applied.verificationState !== "verified" ||
+        liveLighting.applied.verificationComplete !== true ||
+        liveLighting.physicalState.state !== "positioning_light_verified" ||
+        liveLighting.physicalState.complete !== true
+      ))
     ) {
       reconcileBridgePreviewStatus(authoritative);
       throw new Error(`AI Grader ${side} capture requires a fresh authoritative preview frame${side === "back" ? " and ready positioning light" : ""}.`);
     }
+    const currentEpochState = previewEpochStateRef.current;
+    const currentDisplayed = aiGraderPreviewDisplayedSnapshot(currentEpochState);
+    if (
+      !currentDisplayed ||
+      currentDisplayed.frame.frameId !== displayed.frame.frameId ||
+      !aiGraderPreviewBindingMatches(currentDisplayed.frame, displayed.frame) ||
+      (side === "back" && !aiGraderPreviewBackCaptureReady({
+        state: currentEpochState,
+        mode: manual ? "manual_capture" : "detected_geometry",
+        positioningVerifiedAt: liveLighting.physicalState.verifiedAt,
+        nowMs: Date.now(),
+      }))
+    ) {
+      throw new Error("AI Grader " + side + " preview changed while capture eligibility was checked.");
+    }
+    return displayed;
   };
 
   const ensureLiveLightingSession = async () => {
@@ -2356,21 +2770,63 @@ export default function AiGraderStationPage() {
 
   const confirmFlipAndContinue = async (
     captureTriggerMode: AiGraderCaptureTriggerMode = "operator",
-    manualGeometryRect?: AiGraderManualGeometryRect
+    geometryCaptureMode: AiGraderBackCaptureMode = "detected_geometry",
   ) => {
-    const captureTriggerAt = new Date().toISOString();
     setBusy("capture-back");
     setError(null);
     try {
-      await assertFreshPreviewCaptureEligibility("back", Boolean(manualGeometryRect));
-      await runAction("confirm-flip", { confirmations: { flipComplete: true } });
-      await waitForPreviewReleaseBeforeCapture(`${captureTriggerMode} starting back ${stationCaptureProfile} capture`);
-      const captured = await runAction("capture-back", {
-        confirmations: { flipComplete: true, lightIdleOff: true, fixtureRulersVisible: true },
-        ...(manualGeometryRect
-          ? buildAiGraderManualGeometryCaptureRequest({ captureTriggerAt, manualGeometryRect })
-          : buildAiGraderDetectedGeometryCaptureRequest({ captureTriggerAt, captureTriggerMode })),
+      const displayed = await assertFreshPreviewCaptureEligibility(
+        "back",
+        geometryCaptureMode === "manual_capture",
+      );
+      const assertion = aiGraderBackCaptureAssertionFromFrame({
+        frame: displayed.frame,
+        reportId: status.sessionManifest.reportId,
+        geometryCaptureMode,
+        captureTriggerMode,
       });
+      const signature = aiGraderBackCaptureAttemptSignature(assertion);
+      const attempt =
+        backCaptureAttemptRef.current?.signature === signature
+          ? backCaptureAttemptRef.current
+          : createAiGraderBackCaptureAttempt(assertion);
+      backCaptureAttemptRef.current = attempt;
+      const captured = await runAiGraderStationBackCaptureOrchestration({
+        baseUrl: bridgeUrl,
+        stationToken,
+        assertion,
+        attempt,
+        onIntent(intent) {
+          intentionalBackCaptureRef.current = intent;
+        },
+        onConfirmedPreTransitionFailure({ intent, previewStatus: authoritativePreviewStatus }) {
+          const currentIntent = intentionalBackCaptureRef.current;
+          if (
+            !aiGraderLocalBackCaptureIntentMatches({ expectedBinding: intent.binding, localIntent: currentIntent }) ||
+            currentIntent?.frameId !== intent.frameId
+          ) return;
+          intentionalBackCaptureRef.current = null;
+          reconcileBridgePreviewStatus(authoritativePreviewStatus);
+          const recoveryEligible =
+            bridgeConnected &&
+            Boolean(stationToken.trim()) &&
+            status.currentStep === "prompt_flip_card" &&
+            !status.sessionManifest.backCaptured &&
+            !status.warmRunnerStatus.captureLock.held &&
+            !status.rapidCaptureQueue.activeQueueItemId &&
+            aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, intent.binding);
+          if (recoveryEligible) setPreviewRestartGeneration((current) => current + 1);
+        },
+      });
+      setStatus(captured);
+      reconcileBridgePreviewStatus(captured.previewStatus);
+      setLiveLighting(captured.liveLighting);
+      setProfileDraft({
+        dutyPercent: captured.acceptedProfile.dutyPercent,
+        exposureUs: captured.acceptedProfile.exposureUs,
+        gain: captured.acceptedProfile.gain,
+      });
+      backCaptureAttemptRef.current = null;
       if (stationCaptureMode === "rapid" && captured.rapidCapture.enabled) {
         await runAction("queue-current-card", {});
         resetPerCardUiState();
@@ -2401,7 +2857,7 @@ export default function AiGraderStationPage() {
     };
     setManualCaptureConfirmation(null);
     if (side === "front") await startGrading("operator", manualGeometryRect);
-    else await confirmFlipAndContinue("operator", manualGeometryRect);
+    else await confirmFlipAndContinue("operator", "manual_capture");
   };
 
   const activateRapidQueueItem = async (queueItemId: string) => {
@@ -4088,23 +4544,6 @@ export default function AiGraderStationPage() {
                 className="preview-image"
                 src={previewFrameUrl}
                 alt="Live AI Grader Basler preview"
-                onLoad={(event) => {
-                  if (
-                    previewFrameUrlRef.current !== previewFrameUrl ||
-                    !previewFrameBinding ||
-                    !aiGraderPreviewBindingMatches(previewFrameBinding, previewEpochStateRef.current.binding)
-                  ) return;
-                  const loadedFrame = previewFrameBinding;
-                  const nextEpochState = applyPreviewEpochEvent({ type: "image_loaded", frame: loadedFrame });
-                  if (nextEpochState.imageReadyFrameId !== loadedFrame.frameId) return;
-                  const { naturalWidth, naturalHeight } = event.currentTarget;
-                  if (naturalWidth <= 0 || naturalHeight <= 0) return;
-                  setPreviewImageSize((current) =>
-                    current?.width === naturalWidth && current.height === naturalHeight
-                      ? current
-                      : { width: naturalWidth, height: naturalHeight }
-                  );
-                }}
               />
             ) : (
               <div className="preview-placeholder">
@@ -4277,6 +4716,7 @@ export default function AiGraderStationPage() {
                   disabled={
                     busy !== null ||
                     backPositioningRetry.status === "retrying" ||
+                    backPositioningRetryReady ||
                     status.warmRunnerStatus.captureLock.held ||
                     Boolean(status.rapidCaptureQueue.activeQueueItemId)
                   }
@@ -4312,7 +4752,9 @@ export default function AiGraderStationPage() {
                 <p className="eyebrow">Explicit Manual Capture</p>
                 <h2 id="manual-capture-title">Use Fixed Overlay for {manualCaptureConfirmation.side === "front" ? "Front" : "Back"}?</h2>
                 <p>
-                  Automatic geometry will not be claimed. The yellow card rectangle ({Math.round(reportOverlayTemplate.width)} x {Math.round(reportOverlayTemplate.height)} preview pixels) will be sent to the local bridge as an operator-confirmed manual boundary. Raw forensic images remain unchanged.
+                  {manualCaptureConfirmation.side === "back"
+                    ? "Automatic geometry will not be claimed. The browser sends only the displayed session, back side, epoch, frame, and manual-mode assertions. The local bridge snapshots authoritative frame dimensions and records the explicit manual decision; no browser rectangle is sent. Raw forensic images remain unchanged."
+                    : `Automatic geometry will not be claimed. The yellow card rectangle (${Math.round(reportOverlayTemplate.width)} x ${Math.round(reportOverlayTemplate.height)} preview pixels) will be sent to the local bridge as an operator-confirmed manual boundary. Raw forensic images remain unchanged.`}
                 </p>
                 <div className="action-row">
                   <button type="button" onClick={() => setManualCaptureConfirmation(null)} disabled={busy !== null}>Cancel</button>
@@ -4673,7 +5115,7 @@ export default function AiGraderStationPage() {
               </div>
               <div>
                 <span>Safe Off</span>
-                <strong>{liveLighting.applied.enabled ? "Armed" : "Off"}</strong>
+                <strong>{liveLightingSafeOffLabel}</strong>
               </div>
               <div>
                 <span>Capture Profile</span>

@@ -1,7 +1,7 @@
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE, type AiGraderReportBundle } from "./aiGraderReportBundle";
 import type { AiGraderProductionRelease } from "./aiGraderProductionRelease";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.6";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.8";
 export const AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION = "ai-grader-report-producer-v0.2";
 
 export type AiGraderStationStepId =
@@ -1139,6 +1139,17 @@ export type AiGraderLocalStationPreviewStatus = {
   sideEpoch?: string;
   latestFrameId?: string;
   positioningLightReady?: boolean;
+  intentionalTransition: {
+    active: boolean;
+    kind?: "capture_back";
+    sessionId?: string;
+    side?: "back";
+    sideEpoch?: string;
+    frameId?: string;
+    startedAt?: string;
+    completedAt?: string;
+    outcome?: "capture_started" | "transition_failed";
+  };
   cardGeometry?: AiGraderPreviewCardGeometryBySide;
   fps?: number;
   startedAt?: string;
@@ -1170,18 +1181,33 @@ export type AiGraderLiveLightingStatus = {
     dutyPercent: number;
     actualLeimacPwmStep: number;
     channels: number[];
-    source: "browser_live_tuning" | "default";
+    source: "browser_live_tuning" | "accepted_station_profile" | "default";
     acceptedForCapture: boolean;
     acceptedAt?: string;
   };
   applied: {
-    enabled: boolean;
+    enabled?: boolean;
     dutyPercent: number;
     actualLeimacPwmStep: number;
     channels: number[];
     appliedAt?: string;
     lastApplyLatencyMs?: number;
     lastResponseKinds?: string[];
+    verificationState: "pending" | "verified" | "unknown";
+    expectedWriteCount: number;
+    acknowledgedWriteCount: number;
+    verificationComplete: boolean;
+    verifiedAt?: string;
+  };
+  physicalState: {
+    state: "safe_off_pending" | "safe_off_verified" | "positioning_light_verified" | "physical_state_unknown";
+    reason: string;
+    changedAt: string;
+    expectedWriteCount: number;
+    acknowledgedWriteCount: number;
+    complete: boolean;
+    verifiedAt?: string;
+    lastError?: string;
   };
   watchdog: {
     enabled: true;
@@ -1288,7 +1314,7 @@ export const AI_GRADER_STATION_STEPS: AiGraderStationStep[] = [
   { id: "lighting_exposure_tune", label: "Lighting / Exposure Tune", operatorAction: "Tune duty/exposure until clipping is acceptable.", primaryAction: "accept-profile", hardwareCapable: true },
   { id: "accept_capture_profile", label: "Accept Capture Profile", operatorAction: "Lock the software capture profile for this card.", primaryAction: "accept-profile", hardwareCapable: false },
   { id: "capture_front", label: "Capture Front", operatorAction: "Capture front fixed-rig evidence.", primaryAction: "capture-front", hardwareCapable: true },
-  { id: "prompt_flip_card", label: "Prompt Flip Card", operatorAction: "Pause for the operator to flip and seat the card.", primaryAction: "confirm-flip", hardwareCapable: false },
+  { id: "prompt_flip_card", label: "Prompt Flip Card", operatorAction: "Pause for the operator to flip and seat the card.", primaryAction: "capture-back", hardwareCapable: false },
   { id: "capture_back", label: "Capture Back", operatorAction: "Capture back fixed-rig evidence after flip confirmation.", primaryAction: "capture-back", hardwareCapable: true },
   { id: "run_provisional_diagnostics", label: "Run Provisional Diagnostics", operatorAction: "Generate the unified provisional diagnostic report.", primaryAction: "run-diagnostics", hardwareCapable: false },
   { id: "view_unified_report", label: "View Unified Report", operatorAction: "Open the local report and review Vision Lab.", primaryAction: "latest-report", hardwareCapable: false },
@@ -1331,7 +1357,7 @@ const NEXT_ACTION_BY_STEP: Record<AiGraderStationStepId, AiGraderStationAction> 
   lighting_exposure_tune: "accept-profile",
   accept_capture_profile: "capture-front",
   capture_front: "capture-front",
-  prompt_flip_card: "confirm-flip",
+  prompt_flip_card: "capture-back",
   capture_back: "capture-back",
   run_provisional_diagnostics: "run-diagnostics",
   view_unified_report: "calculate-final-grade",
@@ -1489,6 +1515,7 @@ function defaultPreviewStatus(): AiGraderLocalStationPreviewStatus {
     cameraOwnership: "idle",
     frameSource: "mock_station_preview",
     frameCount: 0,
+    intentionalTransition: { active: false },
     cardGeometry: {
       activeSide: "front",
       front: {
@@ -1537,7 +1564,7 @@ function defaultPreviewStatus(): AiGraderLocalStationPreviewStatus {
 
 function defaultLiveLightingStatus(): AiGraderLiveLightingStatus {
   return {
-    status: "off",
+    status: "unavailable",
     mode: "browser_live_tuning",
     localOnly: true,
     tokenRequired: true,
@@ -1552,10 +1579,21 @@ function defaultLiveLightingStatus(): AiGraderLiveLightingStatus {
       acceptedForCapture: false,
     },
     applied: {
-      enabled: false,
       dutyPercent: 0,
       actualLeimacPwmStep: 0,
       channels: [],
+      verificationState: "unknown",
+      expectedWriteCount: 0,
+      acknowledgedWriteCount: 0,
+      verificationComplete: false,
+    },
+    physicalState: {
+      state: "physical_state_unknown",
+      reason: "Contract preview has no controller acknowledgement for physical light state.",
+      changedAt: new Date(0).toISOString(),
+      expectedWriteCount: 0,
+      acknowledgedWriteCount: 0,
+      complete: false,
     },
     watchdog: {
       enabled: true,
