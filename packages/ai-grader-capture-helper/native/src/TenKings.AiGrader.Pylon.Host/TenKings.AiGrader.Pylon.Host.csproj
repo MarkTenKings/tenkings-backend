@@ -6,14 +6,6 @@
     <AssemblyName>tenkings-ai-grader-pylon-worker</AssemblyName>
     <RootNamespace>TenKings.AiGrader.Pylon.Host</RootNamespace>
     <EnablePylonCompile Condition="'$(EnablePylonCompile)' == ''">false</EnablePylonCompile>
-    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and '$(PylonSdkRoot)' != '' and Exists('$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon\net8.0\x64\Basler.Pylon.dll')">$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon\net8.0\x64\Basler.Pylon.dll</PylonAssemblyPath>
-    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and '$(PylonSdkRoot)' != '' and Exists('$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon\x64\Basler.Pylon.dll')">$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon\x64\Basler.Pylon.dll</PylonAssemblyPath>
-    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and '$(PylonSdkRoot)' != '' and Exists('$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon.dll')">$(PylonSdkRoot)\Development\Assemblies\Basler.Pylon.dll</PylonAssemblyPath>
-    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and Exists('$(ProgramFiles)\Basler\pylon\Development\Assemblies\Basler.Pylon\net8.0\x64\Basler.Pylon.dll')">$(ProgramFiles)\Basler\pylon\Development\Assemblies\Basler.Pylon\net8.0\x64\Basler.Pylon.dll</PylonAssemblyPath>
-    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and Exists('$(ProgramFiles)\Basler\pylon\Development\Assemblies\Basler.Pylon\x64\Basler.Pylon.dll')">$(ProgramFiles)\Basler\pylon\Development\Assemblies\Basler.Pylon\x64\Basler.Pylon.dll</PylonAssemblyPath>
-    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and Exists('$(ProgramFiles)\Basler\pylon 8\Development\Assemblies\Basler.Pylon.dll')">$(ProgramFiles)\Basler\pylon 8\Development\Assemblies\Basler.Pylon.dll</PylonAssemblyPath>
-    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and Exists('$(ProgramFiles)\Basler\pylon 7\Development\Assemblies\Basler.Pylon.dll')">$(ProgramFiles)\Basler\pylon 7\Development\Assemblies\Basler.Pylon.dll</PylonAssemblyPath>
-    <PylonAssemblyPath Condition="'$(PylonAssemblyPath)' == '' and Exists('$(ProgramFiles)\Basler\pylon 6\Development\Assemblies\Basler.Pylon.dll')">$(ProgramFiles)\Basler\pylon 6\Development\Assemblies\Basler.Pylon.dll</PylonAssemblyPath>
     <DefineConstants Condition="'$(EnablePylonCompile)' == 'true'">$(DefineConstants);PYLON_SDK</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
@@ -22,14 +14,32 @@
     <PackageReference Include="OpenCvSharp4" />
     <PackageReference Include="OpenCvSharp4.runtime.win" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TenKings.AiGrader.Worker.Tests" />
+  </ItemGroup>
   <ItemGroup Condition="'$(EnablePylonCompile)' == 'true'">
     <Reference Include="Basler.Pylon">
       <HintPath>$(PylonAssemblyPath)</HintPath>
-      <Private>false</Private>
+      <!-- Managed wrapper is copied only to ignored build/publish output.
+           The installed licensed native Pylon runtime remains an external prerequisite. -->
+      <Private>true</Private>
     </Reference>
   </ItemGroup>
   <Target Name="ValidatePylonSdk" BeforeTargets="ResolveReferences" Condition="'$(EnablePylonCompile)' == 'true'">
     <Error Condition="'$(PylonAssemblyPath)' == '' or !Exists('$(PylonAssemblyPath)')"
-           Text="Basler.Pylon.dll was not found. Pass -p:EnablePylonCompile=true -p:PylonAssemblyPath=&lt;installed SDK assembly&gt; or -p:PylonSdkRoot=&lt;installed SDK root&gt;. The DLL is never copied into git." />
+           Text="Basler.Pylon.dll was not resolved. Use the guarded build/package script with one explicit or unambiguous installed SDK assembly. The DLL is never copied into git." />
+  </Target>
+  <Target Name="ValidatePylonPublishDependencies"
+          AfterTargets="Publish"
+          Condition="'$(EnablePylonCompile)' == 'true'">
+    <ItemGroup>
+      <_PublishedOpenCvNative Include="$(PublishDir)**\OpenCvSharpExtern.dll" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(PublishDir)Basler.Pylon.dll')"
+           Text="Published Pylon package is missing the installed managed Basler.Pylon dependency." />
+    <Error Condition="!Exists('$(PublishDir)OpenCvSharp.dll')"
+           Text="Published Pylon package is missing OpenCvSharp.dll." />
+    <Error Condition="'@(_PublishedOpenCvNative)' == ''"
+           Text="Published Pylon package is missing the pinned Windows OpenCvSharp native runtime." />
   </Target>
 </Project>

@@ -5,7 +5,7 @@ internal sealed class GeometryTracker
     private readonly DetectorOptions _options;
     private FrameEpochs? _epochs;
     private string? _frameId;
-    private long? _blockId;
+    private ulong? _blockId;
     private PointD[]? _displayCorners;
     private PointD[]? _lastSourceCorners;
     private int _acceptedFrames;
@@ -31,6 +31,23 @@ internal sealed class GeometryTracker
         {
             ClearEvidence(keepIdentity: true);
             return Reject(current, GeometryReasonCode.FrozenFrame, frozen: true, epochReset: epochReset);
+        }
+
+        if (!current.CurrentFrameAuthority.CaptureReady)
+        {
+            _absenceFrames = current.Status == GeometryStatus.NotDetected && current.Reason == GeometryReasonCode.NoBoundary
+                ? _absenceFrames + 1
+                : 0;
+            _removalObserved |= _absenceFrames >= 2;
+            ClearEvidence(keepIdentity: true, keepRemoval: true);
+            var detectedForDisplay = current.SourceCorners.Count == 4 && current.DisplayCorners.Count == 4 &&
+                !current.Stale && !current.Frozen;
+            return current with
+            {
+                Status = detectedForDisplay ? GeometryStatus.AdjustCard : GeometryStatus.NotDetected,
+                Reason = detectedForDisplay ? AuthorityReason(current) : current.Reason,
+                Hysteresis = new HysteresisEvidence(0, _options.ReadyEvidenceFrames, false, epochReset, 0, _removalObserved),
+            };
         }
 
         if (current.Stale || current.Frozen || current.Status == GeometryStatus.NotDetected ||
@@ -59,7 +76,7 @@ internal sealed class GeometryTracker
         _acceptedFrames++;
         _absenceFrames = 0;
         _lastSourceCorners = source;
-        _displayCorners = Smooth(_displayCorners, source, _options.DisplaySmoothingAlpha);
+        _displayCorners = Smooth(_displayCorners, current.DisplayCorners, _options.DisplaySmoothingAlpha);
         var ready = current.Metrics.Confidence >= _options.ReadyConfidence && _acceptedFrames >= _options.ReadyEvidenceFrames;
         if (current.Metrics.Confidence < _options.ReadyConfidence)
         {
@@ -117,6 +134,25 @@ internal sealed class GeometryTracker
         }
 
         if (!keepRemoval) _removalObserved = false;
+    }
+
+    private static GeometryReasonCode AuthorityReason(GeometryResult current)
+    {
+        var rejections = current.CurrentFrameAuthority.RejectionCodes;
+        if (rejections.Contains(GeometryAuthorityRejectionCode.Uncalibrated)) return GeometryReasonCode.Uncalibrated;
+        if (rejections.Contains(GeometryAuthorityRejectionCode.InvalidOrientation)) return GeometryReasonCode.InvalidOrientation;
+        if (rejections.Contains(GeometryAuthorityRejectionCode.UnsupportedLensTransform)) return GeometryReasonCode.InvalidHomography;
+        if (rejections.Contains(GeometryAuthorityRejectionCode.UnsupportedEdge)) return GeometryReasonCode.UnsupportedEdge;
+        if (rejections.Contains(GeometryAuthorityRejectionCode.UnsafeContinuity)) return GeometryReasonCode.UnsafeContinuity;
+        if (rejections.Contains(GeometryAuthorityRejectionCode.ExcessResidual)) return GeometryReasonCode.ExcessResidual;
+        if (rejections.Contains(GeometryAuthorityRejectionCode.LowConfidence)) return GeometryReasonCode.LowConfidence;
+        if (rejections.Contains(GeometryAuthorityRejectionCode.InvalidHomography) ||
+            rejections.Contains(GeometryAuthorityRejectionCode.InvalidSourceDimensions) ||
+            rejections.Contains(GeometryAuthorityRejectionCode.InvalidCorners) ||
+            rejections.Contains(GeometryAuthorityRejectionCode.InvalidLines) ||
+            rejections.Contains(GeometryAuthorityRejectionCode.InvalidNormalization))
+            return GeometryReasonCode.InvalidHomography;
+        return current.Reason == GeometryReasonCode.None ? GeometryReasonCode.InconsistentEvidence : current.Reason;
     }
 
     private static PointD[] Smooth(IReadOnlyList<PointD>? previous, IReadOnlyList<PointD> current, double alpha)

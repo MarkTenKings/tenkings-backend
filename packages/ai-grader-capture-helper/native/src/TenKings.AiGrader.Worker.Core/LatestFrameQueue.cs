@@ -36,13 +36,24 @@ public sealed class LatestFrameQueue<T> : IDisposable where T : class
 
     public async ValueTask<T> ReadAsync(CancellationToken cancellationToken)
     {
-        await _available.WaitAsync(cancellationToken).ConfigureAwait(false);
-        lock (_gate)
+        while (true)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            var value = _latest ?? throw new InvalidOperationException("Latest-frame slot was signaled without a value.");
-            _latest = null;
-            return value;
+            await _available.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_latest is null)
+                {
+                    // Clear can consume the value after a waiting reader acquires
+                    // the single permit but before it takes the gate. Treat that
+                    // as a drained generation, not a corrupt queue signal.
+                    continue;
+                }
+
+                var value = _latest;
+                _latest = null;
+                return value;
+            }
         }
     }
 

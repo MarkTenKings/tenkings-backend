@@ -7,7 +7,9 @@ import {
   NativeCameraNdjsonParser,
   NativeCameraProtocolValidationError,
   encodeNativeCameraProtocolMessage,
+  parseNativeCameraGeometry,
   parseNativeCameraPreviewPayload,
+  parseNativeCameraRigAttestation,
   type NativeCameraCommand,
   type NativeCameraCommandName,
   type NativeCameraEpochs,
@@ -16,6 +18,7 @@ import {
   type NativeCameraPreviewFramePayload,
   type NativeCameraProtocolMessage,
   type NativeCameraResult,
+  type NativeCameraRigAttestation,
   type NativeCameraSide,
   type NativeCameraWorkerState,
 } from "./nativeCameraProtocol";
@@ -37,7 +40,7 @@ import {
 } from "./nativeCameraHealth";
 
 export interface NativeCameraWorkerProcess {
-  stdin: Pick<Writable, "write" | "end">;
+  stdin: Pick<Writable, "write" | "end" | "on">;
   stdout: Pick<Readable, "on">;
   stderr: Pick<Readable, "on">;
   on(event: "error", listener: (error: Error) => void): this;
@@ -53,7 +56,8 @@ export interface NativeCameraWorkerClientOptions {
   sessionId: string;
   sessionEpoch: number;
   configurationId: string;
-  calibrationId?: string;
+  /** Canonical SHA-256 of the protected host-owned rig configuration. */
+  configurationSha256: string;
   spawnWorker: NativeCameraWorkerSpawner;
   lighting?: NativeCameraLightingCoordinator;
   defaultTimeoutMs?: number;
@@ -80,8 +84,12 @@ interface ActiveCapture {
   rolesRequested: Set<NativeCameraForensicRole>;
   authorizations: Map<NativeCameraForensicRole, ActiveLightingRole>;
   rolesCompleted: Set<NativeCameraForensicRole>;
+  completedFrameIds: Set<string>;
+  completedBlockIds: Set<string>;
   safeOffConfirmed: boolean;
 }
+
+const NATIVE_CAMERA_MAX_IN_FLIGHT_COMMANDS = 32;
 
 export class NativeCameraWorkerClientError extends Error {
   constructor(
@@ -172,6 +180,7 @@ export class NativeCameraWorkerClient {
   private epochs: NativeCameraEpochs;
   private outboundSequence = 0;
   private inboundSequence = 0;
+  private previewTransition: { kind: "starting_preview"; requestId: string } | null = null;
   private latestPreview: NativeCameraPreviewFramePayload | null = null;
   private lastPreviewFrameId: string | null = null;
   private clientDroppedPreviewFrames = 0;
@@ -186,6 +195,8 @@ export class NativeCameraWorkerClient {
   private activeSafeOffRequestId: string | null = null;
   private safeIdleSafeOffConfirmed = false;
   private shutdownSafeOffConfirmed = false;
+  private rigAttestation: NativeCameraRigAttestation | null = null;
+  private lightingEventChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: NativeCameraWorkerClientOptions) {
     this.feature = options.feature ?? { ...DEFAULT_NATIVE_CAMERA_FEATURE_CONFIG };
@@ -196,7 +207,9 @@ export class NativeCameraWorkerClient {
     this.requestIdFactory = options.requestIdFactory ?? ((sequence) => `native-${sequence}`);
     validateSafeId(options.sessionId, "sessionId", 128);
     validateSafeId(options.configurationId, "configurationId", 128);
-    if (options.calibrationId) validateSafeId(options.calibrationId, "calibrationId", 128);
+    if (!/^[a-f0-9]{64}$/.test(options.configurationSha256)) {
+      throw clientError("INVALID_CLIENT_CONFIGURATION", "configurationSha256 must be a lowercase SHA-256 digest.");
+    }
     assertInteger(options.sessionEpoch, "sessionEpoch", 1);
     assertInteger(this.defaultTimeoutMs, "defaultTimeoutMs", 1, 120_000);
     assertInteger(this.maxFrameAgeMs, "maxFrameAgeMs", 1, 60_000);
@@ -220,12 +233,19 @@ export class NativeCameraWorkerClient {
       this.child = this.options.spawnWorker();
       this.attachProcess(this.child);
       const payload: Record<string, unknown> = {
-        backend: this.feature.selection,
         configurationId: this.options.configurationId,
+        configurationSha256: this.options.configurationSha256,
       };
-      if (this.options.calibrationId) payload.calibrationId = this.options.calibrationId;
       const result = await this.request("initialize", payload, this.defaultTimeoutMs);
       if (resultState(result) !== "idle_safe") throw clientError("INVALID_INITIAL_STATE", "Worker did not initialize into idle_safe.");
+      const attestation = parseNativeCameraRigAttestation(result.payload?.rigConfiguration);
+      if (
+        attestation.configurationId !== this.options.configurationId ||
+        attestation.configurationSha256 !== this.options.configurationSha256
+      ) {
+        throw clientError("RIG_ATTESTATION_MISMATCH", "Worker did not attest the expected protected rig configuration.");
+      }
+      this.rigAttestation = attestation;
       this.state = "idle_safe";
       this.lifecycle = "running";
     } catch (error) {
@@ -244,7 +264,7 @@ export class NativeCameraWorkerClient {
     return this.request("capabilities", {}, timeoutMs);
   }
 
-  public async startPreview(input: { previewEpoch: number; maxFps: number; jpegQuality: number; timeoutMs?: number }): Promise<void> {
+  public async startPreview(input: { previewEpoch: number; timeoutMs?: number }): Promise<void> {
     this.assertState("idle_safe");
     if (input.previewEpoch <= this.epochs.previewEpoch) {
       throw this.activeFailure("INVALID_EPOCH", "Preview epoch must advance.", "invalid_epoch");
@@ -254,14 +274,19 @@ export class NativeCameraWorkerClient {
     this.lastPreviewFrameId = null;
     const requestId = this.nextRequestId();
     this.previewRequestId = requestId;
-    const result = await this.requestWithId(
-      requestId,
-      "start_preview",
-      { maxFps: input.maxFps, jpegQuality: input.jpegQuality },
-      input.timeoutMs ?? this.defaultTimeoutMs,
-    );
-    if (resultState(result) !== "previewing") throw await this.failTransition("start_preview", resultState(result));
-    this.state = "previewing";
+    this.previewTransition = { kind: "starting_preview", requestId };
+    try {
+      const result = await this.requestWithId(
+        requestId,
+        "start_preview",
+        {},
+        input.timeoutMs ?? this.defaultTimeoutMs,
+      );
+      if (resultState(result) !== "previewing") throw await this.failTransition("start_preview", resultState(result));
+      this.state = "previewing";
+    } finally {
+      this.previewTransition = null;
+    }
   }
 
   public async stopAndDrain(timeoutMs = this.defaultTimeoutMs): Promise<void> {
@@ -307,6 +332,8 @@ export class NativeCameraWorkerClient {
       rolesRequested: new Set(),
       authorizations: new Map(),
       rolesCompleted: new Set(),
+      completedFrameIds: new Set(),
+      completedBlockIds: new Set(),
       safeOffConfirmed: false,
     };
     this.state = "capturing";
@@ -341,7 +368,7 @@ export class NativeCameraWorkerClient {
     }
   }
 
-  public async resumePreview(input: { previewEpoch: number; maxFps: number; jpegQuality: number; timeoutMs?: number }): Promise<void> {
+  public async resumePreview(input: { previewEpoch: number; timeoutMs?: number }): Promise<void> {
     this.assertState("idle_safe");
     if (input.previewEpoch <= this.epochs.previewEpoch) {
       throw this.activeFailure("INVALID_EPOCH", "Resume preview epoch must advance.", "invalid_epoch");
@@ -353,7 +380,7 @@ export class NativeCameraWorkerClient {
     const result = await this.requestWithId(
       requestId,
       "resume_preview",
-      { maxFps: input.maxFps, jpegQuality: input.jpegQuality },
+      {},
       input.timeoutMs ?? this.defaultTimeoutMs,
     );
     if (resultState(result) !== "previewing") throw await this.failTransition("resume_preview", resultState(result));
@@ -437,7 +464,22 @@ export class NativeCameraWorkerClient {
         this.parser.end();
       } catch (error) {
         void this.terminalFault("TRUNCATED_PROTOCOL", error, "malformed_protocol");
+        return;
       }
+      if (!this.expectedExit && this.lifecycle !== "shutdown") {
+        void this.terminalFault(
+          "WORKER_STDOUT_EOF",
+          clientError("WORKER_STDOUT_EOF", "Native worker protocol output closed unexpectedly."),
+          "worker_exit",
+        );
+      }
+    });
+    child.stdout.on("error", (error: Error) => {
+      void this.terminalFault("WORKER_STDOUT_ERROR", error, "worker_exit");
+    });
+    child.stdin.on("error", (error: Error) => {
+      if (this.expectedExit) return;
+      void this.terminalFault("WORKER_STDIN_ERROR", error, "worker_exit");
     });
     child.stderr.on("data", (chunk: Buffer | string) => this.handleStderrChunk(chunk));
     child.stderr.on("end", () => this.flushStderr());
@@ -458,8 +500,8 @@ export class NativeCameraWorkerClient {
     if (message.kind === "command") {
       throw clientError("UNEXPECTED_WORKER_COMMAND", "Worker cannot issue command envelopes to the client.");
     }
-    if (message.sequence <= this.inboundSequence) {
-      void this.terminalFault("OUT_OF_ORDER_MESSAGE", clientError("OUT_OF_ORDER_MESSAGE", "Worker sequence did not advance."), "invalid_order");
+    if (message.sequence !== this.inboundSequence + 1) {
+      void this.terminalFault("OUT_OF_ORDER_MESSAGE", clientError("OUT_OF_ORDER_MESSAGE", "Worker sequence was not exactly contiguous."), "invalid_order");
       return;
     }
     this.inboundSequence = message.sequence;
@@ -490,6 +532,14 @@ export class NativeCameraWorkerClient {
       result.deadlineUnixMs !== expected.deadlineUnixMs
     ) {
       void this.terminalFault("RESULT_CORRELATION", clientError("RESULT_CORRELATION", "Worker result did not match its command envelope."), "invalid_epoch");
+      return;
+    }
+    if (result.deadlineUnixMs < this.nowUnixMs()) {
+      void this.terminalFault(
+        "EXPIRED_RESULT",
+        clientError("EXPIRED_RESULT", "Worker returned a result after its command deadline."),
+        "worker_timeout",
+      );
       return;
     }
     clearTimeout(pending.timer);
@@ -530,17 +580,32 @@ export class NativeCameraWorkerClient {
     }
     if (event.event === "preview_frame") {
       this.handlePreview(event);
-    } else if (event.event === "lighting_profile_requested") {
-      void this.handleLightingProfileRequested(event);
-    } else if (event.event === "lighting_grab_completed") {
-      void this.handleLightingGrabCompleted(event);
     } else {
-      void this.handleSafeOffRequested(event);
+      this.enqueueLightingEvent(event);
     }
   }
 
+  private enqueueLightingEvent(event: NativeCameraEvent): void {
+    this.lightingEventChain = this.lightingEventChain
+      .then(async () => {
+        if (this.terminalStarted) return;
+        if (event.event === "lighting_profile_requested") {
+          await this.handleLightingProfileRequested(event);
+        } else if (event.event === "lighting_grab_completed") {
+          await this.handleLightingGrabCompleted(event);
+        } else {
+          await this.handleSafeOffRequested(event);
+        }
+      })
+      .catch(async (error: unknown) => {
+        await this.terminalFault("LIGHTING_COORDINATION_FAILED", error, "capture_failure");
+      });
+  }
+
   private handlePreview(event: NativeCameraEvent): void {
-    if (this.state !== "previewing" && this.state !== "resuming" && this.state !== "draining") {
+    const startingThisPreview =
+      this.previewTransition?.kind === "starting_preview" && this.previewTransition.requestId === event.requestId;
+    if (!startingThisPreview && this.state !== "previewing" && this.state !== "resuming" && this.state !== "draining") {
       void this.terminalFault("PREVIEW_OUT_OF_ORDER", clientError("PREVIEW_OUT_OF_ORDER", "Preview arrived outside preview state."), "invalid_order");
       return;
     }
@@ -556,6 +621,14 @@ export class NativeCameraWorkerClient {
     const actualSha = createHash("sha256").update(Buffer.from(preview.jpeg.base64, "base64")).digest("hex");
     if (actualSha !== preview.jpeg.sha256) {
       void this.terminalFault("JPEG_HASH_MISMATCH", clientError("JPEG_HASH_MISMATCH", "Preview JPEG hash is incoherent."), "malformed_protocol");
+      return;
+    }
+    if (!this.geometryMatchesAttestedRig(preview.geometry)) {
+      void this.terminalFault(
+        "PREVIEW_RIG_MISMATCH",
+        clientError("PREVIEW_RIG_MISMATCH", "Preview geometry did not match the initialized calibration and orientation."),
+        "invalid_epoch",
+      );
       return;
     }
     const repeated = this.lastPreviewFrameId === preview.frame.frameId;
@@ -600,7 +673,12 @@ export class NativeCameraWorkerClient {
       ) {
         throw clientError("LIGHTING_OUT_OF_ORDER", "Lighting request did not match the active capture.");
       }
-      if (NATIVE_CAMERA_FORENSIC_ROLES[ordinal] !== role || capture.rolesRequested.size !== ordinal || capture.rolesRequested.has(role)) {
+      if (
+        NATIVE_CAMERA_FORENSIC_ROLES[ordinal] !== role ||
+        capture.rolesRequested.size !== ordinal ||
+        capture.rolesCompleted.size !== ordinal ||
+        capture.rolesRequested.has(role)
+      ) {
         throw clientError("LIGHTING_OUT_OF_ORDER", "Lighting roles were requested out of canonical order or more than once.");
       }
       const context: NativeCameraLightingContext = {
@@ -611,10 +689,25 @@ export class NativeCameraWorkerClient {
         role,
       };
       capture.rolesRequested.add(role);
-      const receipt = await this.lighting.requestEvidenceRoleProfile({ ...context, requestedAtUnixMs: this.nowUnixMs() });
+      const receipt = await this.awaitInjectedOperation(
+        event.deadlineUnixMs,
+        "LIGHTING_COORDINATION_TIMEOUT",
+        () => this.lighting.requestEvidenceRoleProfile({ ...context, requestedAtUnixMs: this.nowUnixMs() }),
+      );
+      this.assertLightingCaptureActive(capture, event);
       if (!receipt || receipt.accepted !== true) throw clientError("LIGHTING_PROFILE_REJECTED", "Lighting profile request was not accepted.");
-      const stable = await this.lighting.waitForStableLight(context, receipt);
-      const authorization = await this.lighting.authorizeOneGrab(context, stable);
+      const stable = await this.awaitInjectedOperation(
+        event.deadlineUnixMs,
+        "LIGHTING_COORDINATION_TIMEOUT",
+        () => this.lighting.waitForStableLight(context, receipt),
+      );
+      this.assertLightingCaptureActive(capture, event);
+      const authorization = await this.awaitInjectedOperation(
+        event.deadlineUnixMs,
+        "LIGHTING_COORDINATION_TIMEOUT",
+        () => this.lighting.authorizeOneGrab(context, stable),
+      );
+      this.assertLightingCaptureActive(capture, event);
       assertStableLightingAuthorization(stable, authorization, this.nowUnixMs());
       capture.authorizations.set(role, { context, authorization });
       const authorizationTimeoutMs = Math.floor(authorization.expiresAtUnixMs - this.nowUnixMs());
@@ -643,6 +736,7 @@ export class NativeCameraWorkerClient {
       const role = event.payload.role as NativeCameraForensicRole;
       const authorizationId = String(event.payload.authorizationId);
       const active = capture?.authorizations.get(role);
+      const completedFrame = event.payload.frame as Record<string, unknown>;
       if (
         typeof event.payload.captureRequestId !== "string" ||
         typeof event.payload.role !== "string" ||
@@ -658,15 +752,37 @@ export class NativeCameraWorkerClient {
       ) {
         throw clientError("GRAB_AUTHORIZATION_MISMATCH", "Grab completion did not match its one-grab authorization.");
       }
-      const frame = event.payload.frame as Record<string, unknown>;
-      const frameId = String(frame.frameId);
-      await this.lighting.completeEvidenceRole({
-        ...active.context,
-        authorizationId,
-        frameId,
-        completedAtUnixMs: this.nowUnixMs(),
-      });
+      const frameId = String(completedFrame.frameId);
+      const blockId = completedFrame.blockId;
+      if (
+        completedFrame.workerEpoch !== event.workerEpoch ||
+        completedFrame.sessionEpoch !== event.sessionEpoch ||
+        completedFrame.previewEpoch !== event.previewEpoch ||
+        completedFrame.sideEpoch !== event.sideEpoch ||
+        completedFrame.side !== event.side ||
+        blockId === null ||
+        typeof blockId !== "string" ||
+        capture.completedFrameIds.has(frameId) ||
+        capture.completedBlockIds.has(blockId)
+      ) {
+        throw clientError("GRAB_FRAME_MISMATCH", "Grab completion frame identity, BlockID, side, or epochs were stale or reused.");
+      }
+      // Reserve before the injected side effect so concurrent duplicate events
+      // cannot complete the same authorized role or frame twice.
       capture.rolesCompleted.add(role);
+      capture.completedFrameIds.add(frameId);
+      capture.completedBlockIds.add(blockId);
+      await this.awaitInjectedOperation(
+        event.deadlineUnixMs,
+        "LIGHTING_COORDINATION_TIMEOUT",
+        () => this.lighting.completeEvidenceRole({
+          ...active.context,
+          authorizationId,
+          frameId,
+          completedAtUnixMs: this.nowUnixMs(),
+        }),
+      );
+      this.assertLightingCaptureActive(capture, event);
       await this.request(
         "lighting_completion",
         { captureRequestId, role, authorizationId, completedAtUnixMs: this.nowUnixMs() },
@@ -703,8 +819,13 @@ export class NativeCameraWorkerClient {
       }
 
       this.activeSafeOffRequestId = safeOffRequestId;
-      const safe = await this.lighting.safeOff(reason);
-      if (!safe || safe.safe !== true || !Number.isSafeInteger(safe.completedAtUnixMs)) {
+      const safe = await this.awaitInjectedOperation(
+        event.deadlineUnixMs,
+        "SAFE_OFF_TIMEOUT",
+        () => this.lighting.safeOff(reason),
+      );
+      if (this.terminalStarted) throw clientError("SAFE_OFF_FAILED", "The native attempt faulted while safe-off was pending.");
+      if (!safe || safe.safe !== true || !Number.isSafeInteger(safe.completedAtUnixMs) || safe.completedAtUnixMs < 0) {
         throw clientError("SAFE_OFF_FAILED", "Injected lighting coordination did not confirm safe-off.");
       }
       if (reason === "capture_complete" && this.activeCapture) this.activeCapture.safeOffConfirmed = true;
@@ -726,6 +847,42 @@ export class NativeCameraWorkerClient {
     return this.requestWithId(this.nextRequestId(), command, payload, timeoutMs);
   }
 
+  private async awaitInjectedOperation<T>(
+    deadlineUnixMs: number,
+    timeoutCode: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const remainingMs = Math.min(this.defaultTimeoutMs, deadlineUnixMs - this.nowUnixMs());
+    if (!Number.isSafeInteger(remainingMs) || remainingMs < 1) {
+      throw clientError(timeoutCode, "Injected native-camera coordination exceeded its bounded deadline.");
+    }
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(operation),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(clientError(timeoutCode, "Injected native-camera coordination exceeded its bounded deadline.")),
+            remainingMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private assertLightingCaptureActive(capture: ActiveCapture, event: NativeCameraEvent): void {
+    if (
+      this.terminalStarted ||
+      this.state !== "capturing" ||
+      this.activeCapture !== capture ||
+      event.deadlineUnixMs < this.nowUnixMs()
+    ) {
+      throw clientError("LIGHTING_COORDINATION_STALE", "Lighting coordination outlived its active capture or deadline.");
+    }
+  }
+
   private requestWithId(
     requestId: string,
     command: NativeCameraCommandName,
@@ -736,6 +893,11 @@ export class NativeCameraWorkerClient {
     assertInteger(timeoutMs, "timeoutMs", 1, 120_000);
     if (this.pending.has(requestId) || this.completedRequestIds.has(requestId)) {
       return Promise.reject(clientError("DUPLICATE_REQUEST_ID", "Request ID was already used."));
+    }
+    if (this.pending.size >= NATIVE_CAMERA_MAX_IN_FLIGHT_COMMANDS) {
+      const error = clientError("CLIENT_COMMAND_LIMIT", "Native camera command concurrency limit was exceeded.");
+      void this.terminalFault("CLIENT_COMMAND_LIMIT", error, "invalid_order");
+      return Promise.reject(error);
     }
     const commandMessage: NativeCameraCommand = {
       protocolVersion: NATIVE_CAMERA_PROTOCOL_VERSION,
@@ -767,12 +929,19 @@ export class NativeCameraWorkerClient {
       }, timeoutMs);
       this.pending.set(requestId, { command: commandMessage, resolve, reject, timer });
       try {
-        this.child?.stdin.write(bytes);
+        const accepted = this.child?.stdin.write(bytes);
+        if (accepted !== true) {
+          throw clientError("WORKER_STDIN_BACKPRESSURE", "Native worker command channel rejected bounded backpressure.");
+        }
       } catch (error) {
         clearTimeout(timer);
         this.pending.delete(requestId);
         reject(error instanceof Error ? error : clientError("WORKER_WRITE_FAILED", "Worker stdin write failed."));
-        void this.terminalFault("WORKER_WRITE_FAILED", error, "worker_exit");
+        const terminalCode =
+          error instanceof NativeCameraWorkerClientError && error.code === "WORKER_STDIN_BACKPRESSURE"
+            ? error.code
+            : "WORKER_WRITE_FAILED";
+        void this.terminalFault(terminalCode, error, "worker_exit");
       }
     });
   }
@@ -844,6 +1013,10 @@ export class NativeCameraWorkerClient {
     if (result.payload?.captureId !== captureId || result.payload?.forensicProfile !== forensicProfile) {
       throw clientError("CAPTURE_RESULT_CORRELATION", "Forensic output did not match its capture ID and profile.");
     }
+    const resultRig = parseNativeCameraRigAttestation(result.payload.rigConfiguration);
+    if (!this.rigAttestation || JSON.stringify(resultRig) !== JSON.stringify(this.rigAttestation)) {
+      throw clientError("FORENSIC_RIG_MISMATCH", "Forensic output did not match the initialized rig attestation.");
+    }
     const artifacts = result.payload.artifacts;
     if (!Array.isArray(artifacts)) throw clientError("INCOMPLETE_FORENSIC_OUTPUT", "Forensic artifacts are absent.");
     const frameIds = new Set<string>();
@@ -864,12 +1037,46 @@ export class NativeCameraWorkerClient {
       const frameId = String(frame.frameId);
       if (frameIds.has(frameId)) throw clientError("DUPLICATE_FORENSIC_FRAME", "Forensic roles reused a frame identity.");
       frameIds.add(frameId);
-      if (frame.blockId !== null) {
-        const blockId = String(frame.blockId);
-        if (blockIds.has(blockId)) throw clientError("DUPLICATE_FORENSIC_BLOCK", "Forensic roles reused a Pylon BlockID.");
-        blockIds.add(blockId);
+      if (frame.blockId === null || frame.blockId === undefined) {
+        throw clientError("MISSING_FORENSIC_BLOCK", "Every forensic role requires an exact Pylon BlockID.");
       }
+      const blockId = String(frame.blockId);
+      if (blockIds.has(blockId)) throw clientError("DUPLICATE_FORENSIC_BLOCK", "Forensic roles reused a Pylon BlockID.");
+      blockIds.add(blockId);
     }
+    const allOn = artifacts.find((value) => (value as Record<string, unknown>).role === "all_on") as
+      | Record<string, unknown>
+      | undefined;
+    if (!allOn) throw clientError("INCOMPLETE_FORENSIC_OUTPUT", "Forensic output omitted all_on.");
+    const authoritative = parseNativeCameraGeometry(result.payload.authoritativeAllOnGeometry);
+    const allOnFrame = allOn.frame as Record<string, unknown>;
+    if (
+      authoritative.status !== "ready" ||
+      authoritative.reasonCodes.length !== 1 ||
+      authoritative.reasonCodes[0] !== "none" ||
+      !authoritative.currentFrameAuthority.normalizationSafe ||
+      !authoritative.currentFrameAuthority.captureReady ||
+      authoritative.currentFrameAuthority.rejectionCodes.length !== 0 ||
+      authoritative.stale ||
+      authoritative.frozen ||
+      authoritative.frame.blockId === null ||
+      allOnFrame.blockId === null ||
+      authoritative.frame.frameId !== allOnFrame.frameId ||
+      authoritative.frame.blockId !== allOnFrame.blockId ||
+      !this.geometryMatchesAttestedRig(authoritative)
+    ) {
+      throw clientError("UNSAFE_AUTHORITATIVE_GEOMETRY", "Forensic output did not contain safe exact-frame all_on authority.");
+    }
+  }
+
+  private geometryMatchesAttestedRig(geometry: NativeCameraPreviewFramePayload["geometry"]): boolean {
+    const attestation = this.rigAttestation;
+    return Boolean(
+      attestation &&
+        geometry.calibration.id === attestation.calibrationId &&
+        geometry.calibration.sha256 === attestation.calibrationSha256 &&
+        JSON.stringify(geometry.sensorOrientation) === JSON.stringify(attestation.sensorOrientation),
+    );
   }
 
   private async failTransition(command: string, actual: string): Promise<NativeCameraWorkerClientError> {
@@ -885,6 +1092,7 @@ export class NativeCameraWorkerClient {
     this.lastError = { code, message };
     this.lifecycle = "faulted";
     this.state = "faulted";
+    this.previewTransition = null;
     for (const [requestId, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(clientError(code, message));
@@ -897,7 +1105,14 @@ export class NativeCameraWorkerClient {
     }
     this.terminalPromise = (async () => {
       try {
-        await this.lighting.safeOff(reason);
+        const safe = await this.awaitInjectedOperation(
+          this.nowUnixMs() + this.defaultTimeoutMs,
+          "SAFE_OFF_TIMEOUT",
+          () => this.lighting.safeOff(reason),
+        );
+        if (!safe || safe.safe !== true || !Number.isSafeInteger(safe.completedAtUnixMs) || safe.completedAtUnixMs < 0) {
+          throw clientError("SAFE_OFF_FAILED", "Injected lighting coordination did not confirm terminal safe-off.");
+        }
       } catch {
         this.lastError = { code: "SAFE_OFF_FAILED", message: "Injected safe-off coordination failed." };
       }

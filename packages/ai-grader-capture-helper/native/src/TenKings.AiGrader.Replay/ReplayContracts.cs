@@ -28,7 +28,16 @@ public sealed record ReplayCaseSpec(
     long SideEpoch,
     string? FrozenOf,
     string? PrivateFile,
-    string? PermittedSha256);
+    string? PermittedSha256,
+    int SensorRotationDegrees = 0,
+    bool MirrorHorizontal = false,
+    bool MirrorVertical = false,
+    string SequenceKind = "stable",
+    int FrameCount = 5,
+    double MotionStepX = 0,
+    double MotionStepY = 0,
+    bool? ExpectedReady = null,
+    IReadOnlyList<PointD>? GroundTruthCorners = null);
 
 public sealed record GeneratedReplayFrame(Mono8Frame Frame, IReadOnlyList<PointD>? GroundTruthCorners);
 
@@ -40,14 +49,26 @@ public sealed record ReplayCaseResult(
     DetectorMode Mode,
     bool CardPresent,
     bool ExpectedDetection,
+    bool ExpectedReady,
     GeometryStatus Status,
     GeometryReasonCode Reason,
     bool Detected,
+    bool Ready,
     double Confidence,
     double? MeanCornerErrorPixels,
     double ProcessingMs,
     bool Frozen,
-    bool SafetyExpectationMet);
+    bool SafetyExpectationMet,
+    int FramesEvaluated,
+    int DetectedFrames,
+    int QualifiedFrames,
+    int ReadyFrames,
+    int? FirstReadyFrame,
+    bool MotionResetObserved,
+    bool EpochResetObserved,
+    bool FrozenResetObserved,
+    bool OldEpochReadyObserved,
+    bool RemovalFenceObserved);
 
 public sealed record DetectorAggregate(
     DetectorMode Mode,
@@ -58,9 +79,12 @@ public sealed record DetectorAggregate(
     int FalsePositive,
     int TrueNegative,
     int FalseNegative,
+    int FalseDetection,
     int FalseReady,
     double Recall,
     double Precision,
+    double ReadyRecall,
+    double ReadyPrecision,
     double P50ProcessingMs,
     double P95ProcessingMs,
     double? MeanCornerErrorPixels);
@@ -68,6 +92,7 @@ public sealed record DetectorAggregate(
 public sealed record ReplayReport(
     string SchemaVersion,
     string DetectorVersion,
+    string DecisionDigest,
     string CorpusKind,
     bool SyntheticOnly,
     string AccuracyDisclaimer,

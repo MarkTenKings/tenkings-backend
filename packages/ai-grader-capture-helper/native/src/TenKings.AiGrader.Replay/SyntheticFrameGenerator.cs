@@ -9,6 +9,9 @@ public sealed class SyntheticFrameGenerator
 {
     public const int Width = 640;
     public const int Height = 480;
+    public const string SyntheticCalibrationDigest = "a1b98ef8c90f6dc7712a83b698852c4c1a88698c61f081fc57b103b180dd40b6";
+    public const string OfflineReplayCalibrationId = "offline-replay-coordinate-calibration-v1";
+    public const string OfflineReplayCalibrationDigest = "90e4068a4c28764ce1a34d26e0bb96a0495c3b798286acbdc305068c724a73db";
 
     public GeneratedReplayFrame Generate(ReplayCaseSpec spec, int seed)
     {
@@ -37,22 +40,34 @@ public sealed class SyntheticFrameGenerator
             var border = spec.Polarity.Equals("light_on_dark", StringComparison.OrdinalIgnoreCase)
                 ? Math.Clamp(card - contrast, 0, 255)
                 : Math.Clamp(card + contrast, 0, 255);
-            Cv2.Polylines(image, new[] { integerCorners }, true, Scalar.All(border), 4, LineTypes.AntiAlias);
-            if (!spec.Effects.Contains("no_gradient", StringComparer.OrdinalIgnoreCase)) DrawArtwork(image, corners, card, random);
-            ApplyCardEffects(image, spec, corners, background, random);
+            if (!spec.Effects.Contains("no_gradient", StringComparer.OrdinalIgnoreCase))
+            {
+                Cv2.Polylines(image, new[] { integerCorners }, true, Scalar.All(border), 4, LineTypes.AntiAlias);
+                DrawArtwork(image, corners, card, random);
+                ApplyCardEffects(image, spec, corners, background, random);
+            }
         }
 
         ApplyNegativeEffects(image, spec, background);
         var bytes = new byte[Width * Height];
         Marshal.Copy(image.Data, bytes, 0, bytes.Length);
         var identityKey = spec.FrozenOf ?? spec.Id;
-        var blockId = Math.Abs((long)StableHash(identityKey));
+        var blockId = (ulong)StableHash(identityKey);
         var epochs = new FrameEpochs("synthetic-session", 1, spec.PreviewEpoch, spec.SideEpoch, spec.Side);
         var identity = new FrameIdentity(
             $"synthetic-{identityKey}", blockId, (ulong)blockId * 1_000,
-            DateTimeOffset.UnixEpoch.AddMilliseconds(blockId % 1_000_000), blockId * 1_000);
+            DateTimeOffset.UnixEpoch.AddMilliseconds(blockId % 1_000_000), StableHash(identityKey) * 1_000L);
+        var mirrorSupport = (spec.MirrorHorizontal ? SensorMirrorSupport.Horizontal : SensorMirrorSupport.None) |
+            (spec.MirrorVertical ? SensorMirrorSupport.Vertical : SensorMirrorSupport.None);
+        var orientation = new SensorOrientation(spec.SensorRotationDegrees, spec.MirrorHorizontal, spec.MirrorVertical, mirrorSupport);
+        var calibration = new VisionCalibration(
+            "synthetic-coordinate-calibration-v1",
+            NormalizedRoi.SafeDefault,
+            null,
+            SyntheticCalibrationDigest,
+            orientation);
         return new GeneratedReplayFrame(
-            new Mono8Frame(bytes, Width, Height, Width, identity, epochs, VisionCalibration.Uncalibrated, 0),
+            new Mono8Frame(bytes, Width, Height, Width, identity, epochs, calibration, 0),
             truth);
     }
 
@@ -73,7 +88,9 @@ public sealed class SyntheticFrameGenerator
         if (!digest.Equals(spec.PermittedSha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Private fixture hash was not permitted by its redacted manifest.");
         using var decoded = Cv2.ImDecode(bytesOnDisk, ImreadModes.Grayscale);
-        if (decoded.Empty() || decoded.Width > Mono8Frame.MaxDimension || decoded.Height > Mono8Frame.MaxDimension)
+        if (decoded.Empty() || decoded.Width is < 64 or > Mono8Frame.MaxDimension ||
+            decoded.Height is < 64 or > Mono8Frame.MaxDimension ||
+            (long)decoded.Width * decoded.Height > Mono8Frame.MaxBufferBytes)
             throw new InvalidDataException("Private fixture was not a bounded decodable grayscale image.");
         var mono = new byte[decoded.Width * decoded.Height];
         if (decoded.IsContinuous()) Marshal.Copy(decoded.Data, mono, 0, mono.Length);
@@ -84,11 +101,38 @@ public sealed class SyntheticFrameGenerator
         }
 
         var key = spec.FrozenOf ?? spec.Id;
-        var blockId = Math.Abs((long)StableHash(key));
+        var blockId = (ulong)StableHash(key);
         var epochs = new FrameEpochs("private-session", 1, spec.PreviewEpoch, spec.SideEpoch, spec.Side);
-        var identity = new FrameIdentity($"private-{key}", blockId, null, DateTimeOffset.UnixEpoch, blockId * 1_000);
+        var identity = new FrameIdentity($"private-{key}", blockId, null, DateTimeOffset.UnixEpoch, StableHash(key) * 1_000L);
+        var mirrorSupport = (spec.MirrorHorizontal ? SensorMirrorSupport.Horizontal : SensorMirrorSupport.None) |
+            (spec.MirrorVertical ? SensorMirrorSupport.Vertical : SensorMirrorSupport.None);
+        var orientation = new SensorOrientation(spec.SensorRotationDegrees, spec.MirrorHorizontal, spec.MirrorVertical, mirrorSupport);
+        var calibration = new VisionCalibration(
+            OfflineReplayCalibrationId,
+            NormalizedRoi.SafeDefault,
+            null,
+            OfflineReplayCalibrationDigest,
+            orientation);
+        var truth = ValidatePrivateGroundTruth(spec, decoded.Width, decoded.Height);
         return new GeneratedReplayFrame(
-            new Mono8Frame(mono, decoded.Width, decoded.Height, decoded.Width, identity, epochs, VisionCalibration.Uncalibrated, 0), null);
+            new Mono8Frame(mono, decoded.Width, decoded.Height, decoded.Width, identity, epochs, calibration, 0),
+            truth);
+    }
+
+    private static IReadOnlyList<PointD>? ValidatePrivateGroundTruth(ReplayCaseSpec spec, int width, int height)
+    {
+        if (spec.GroundTruthCorners is null)
+        {
+            if (spec.ExpectedCard)
+                throw new InvalidDataException("Expected-card private fixtures require four raw-source ground-truth corners.");
+            return null;
+        }
+
+        if (spec.GroundTruthCorners.Count != 4 || spec.GroundTruthCorners.Any(point =>
+                !double.IsFinite(point.X) || !double.IsFinite(point.Y) ||
+                point.X < 0 || point.X > width - 1 || point.Y < 0 || point.Y > height - 1))
+            throw new InvalidDataException("Private fixture ground truth must be four finite raw-source corners inside the decoded frame.");
+        return spec.GroundTruthCorners.ToArray();
     }
 
     private static Point2f[] CardCorners(ReplayCaseSpec spec)
@@ -184,6 +228,14 @@ public sealed class SyntheticFrameGenerator
 
         if (spec.Effects.Contains("wrong_object", StringComparer.OrdinalIgnoreCase))
             Cv2.Circle(image, new Point(320, 240), 125, Scalar.All(background > 128 ? 35 : 220), -1, LineTypes.AntiAlias);
+
+        if (spec.Effects.Contains("internal_rectangle", StringComparer.OrdinalIgnoreCase))
+        {
+            var artworkTone = background > 128 ? 220 : 36;
+            Cv2.Rectangle(image, new Rect(220, 100, 200, 280), Scalar.All(artworkTone), 4, LineTypes.AntiAlias);
+            Cv2.Line(image, new Point(245, 170), new Point(395, 170), Scalar.All(artworkTone), 2, LineTypes.AntiAlias);
+            Cv2.Line(image, new Point(245, 305), new Point(395, 305), Scalar.All(artworkTone), 2, LineTypes.AntiAlias);
+        }
     }
 
     private static int StableHash(string value)

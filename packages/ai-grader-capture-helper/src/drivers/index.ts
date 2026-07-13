@@ -12,6 +12,7 @@ export * from "./nativeCameraGeometryAdapter";
 export * from "./nativeCameraLightingCoordinator";
 export * from "./nativeCameraReplayRunner";
 export * from "./nativeCameraHealth";
+export * from "./nativeCameraSharpComparator";
 export type {
   LeimacIdmuClientConfig,
   LeimacIdmuCommandMetadata,

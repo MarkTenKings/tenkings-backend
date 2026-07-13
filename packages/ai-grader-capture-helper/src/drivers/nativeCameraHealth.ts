@@ -75,7 +75,7 @@ export interface NativeCameraPublicHealth {
   lastError: { code: string; message: string } | null;
 }
 
-const PATH_OR_SECRET = /(?:[A-Za-z]:\\|\\\\|\/(?:home|root|tmp|var|users?)\/|https?:\/\/|file:\/\/|token|secret|credential|password|device[_ -]?id|serial(?:number)?)/i;
+const PATH_OR_SECRET = /(?:[A-Za-z]:[\\/]|\\\\|\/\/[^\s/]+\/|https?:\/\/|file:\/\/|(?:^|[\s"'=:(])\/[A-Za-z0-9._-]+(?:\/[^\s"'<>]*)?|token|secret|credential|password|device[_ -]?id|serial(?:number)?)/i;
 
 function safeCode(value: string): string {
   return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(value) ? value : "NATIVE_CAMERA_ERROR";

@@ -58,7 +58,7 @@ public sealed class SafetyAndProtocolTests
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var commands = string.Join('\n',
         [
-            Command("initialize", "request-1", 1, now, new { backend = "fake", configurationId = "rig-1" }),
+            Command("initialize", "request-1", 1, now, new { configurationId = "rig-1" }),
             Command("health", "request-2", 2, now, new { }),
             Command("capabilities", "request-3", 3, now, new { }),
             Command("shutdown", "request-4", 4, now, new { }),
@@ -94,7 +94,7 @@ public sealed class SafetyAndProtocolTests
     {
         using var temporary = new TemporaryDirectory();
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var commands = Command("initialize", "request-1", 2, now, new { backend = "fake", configurationId = "rig-1" }) + "\n";
+        var commands = Command("initialize", "request-1", 2, now, new { configurationId = "rig-1" }) + "\n";
         var protocolLighting = new ProtocolLightingCoordinator();
         var camera = new FakeCameraBackend();
         await using var worker = CreateWorker(temporary.Path, protocolLighting, camera);
@@ -111,7 +111,7 @@ public sealed class SafetyAndProtocolTests
     {
         using var temporary = new TemporaryDirectory();
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var initialize = Command("initialize", "request-1", 1, now, new { backend = "fake", configurationId = "rig-1" });
+        var initialize = Command("initialize", "request-1", 1, now, new { configurationId = "rig-1" });
         var commands = initialize + "\n" + initialize + "\n";
         var protocolLighting = new ProtocolLightingCoordinator();
         await using var worker = CreateWorker(temporary.Path, protocolLighting);
@@ -132,7 +132,7 @@ public sealed class SafetyAndProtocolTests
     {
         using var temporary = new TemporaryDirectory();
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 60_000;
-        var commands = Command("initialize", "request-1", 1, now, new { backend = "fake", configurationId = "rig-1" }) + "\n";
+        var commands = Command("initialize", "request-1", 1, now, new { configurationId = "rig-1" }) + "\n";
         var protocolLighting = new ProtocolLightingCoordinator();
         var camera = new FakeCameraBackend();
         await using var worker = CreateWorker(temporary.Path, protocolLighting, camera);
@@ -142,6 +142,155 @@ public sealed class SafetyAndProtocolTests
         Assert.Equal(2, await new NativeCameraProtocolServer(worker, protocolLighting, input, output, TextWriter.Null).RunAsync(CancellationToken.None));
         Assert.Equal(0, camera.OpenCount);
         Assert.Equal(WorkerState.TerminalFault, worker.State);
+    }
+
+    [Fact]
+    public async Task ExpiredAsynchronousCommandIsCaughtSafeOffsAndTerminatesWithoutWaitingForEof()
+    {
+        using var temporary = new TemporaryDirectory();
+        var protocolLighting = new ProtocolLightingCoordinator();
+        var lighting = new GatedSafeOffLightingCoordinator(protocolLighting);
+        await using var worker = CreateWorker(temporary.Path, lighting);
+        await using var input = new FeedableInputStream();
+        await using var output = new LineCaptureStream();
+        var server = new NativeCameraProtocolServer(worker, protocolLighting, input, output, TextWriter.Null);
+        var serverTask = server.RunAsync(CancellationToken.None);
+
+        input.Feed(ProtocolCommand("initialize", "expired-async-init", 1, "none", 0, 0, new { }));
+        var initialized = await ReadResultAsync(output, "expired-async-init");
+        Assert.True(initialized.GetProperty("ok").GetBoolean());
+
+        input.Feed(ProtocolCommand(
+            "safe_idle",
+            "expired-async-safe-idle",
+            2,
+            "none",
+            0,
+            0,
+            new { },
+            DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeMilliseconds()));
+        try
+        {
+            await lighting.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(lighting.SafeOffCalls >= 1);
+            Assert.False(serverTask.IsCompleted);
+            Assert.True(SpinWait.SpinUntil(
+                () => server.ActiveCommandCountForTest == 1,
+                TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            lighting.Release.TrySetResult();
+        }
+        var failed = await ReadResultAsync(output, "expired-async-safe-idle");
+        Assert.False(failed.GetProperty("ok").GetBoolean());
+        Assert.Equal("WORKER_TIMEOUT", failed.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(2, await serverTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(WorkerState.TerminalFault, worker.State);
+        Assert.True(lighting.SafeOffCalls >= 1);
+        Assert.Equal(0, server.ActiveCommandCountForTest);
+        input.Complete();
+    }
+
+    [Fact]
+    public async Task ExactDuplicateAtCapacityIsRejectedWithoutTerminalFault()
+    {
+        using var temporary = new TemporaryDirectory();
+        var protocolLighting = new ProtocolLightingCoordinator();
+        await using var worker = CreateWorker(temporary.Path, protocolLighting);
+        await using var input = new FeedableInputStream();
+        await using var output = new LineCaptureStream();
+        var server = new NativeCameraProtocolServer(worker, protocolLighting, input, output, TextWriter.Null);
+        var serverTask = server.RunAsync(CancellationToken.None);
+        var initialize = ProtocolCommand("initialize", "capacity-init", 1, "none", 0, 0, new { });
+        input.Feed(initialize);
+        _ = await ReadResultAsync(output, "capacity-init");
+
+        var gates = Enumerable.Range(0, NativeCameraProtocolServer.MaximumInFlightCommands)
+            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            .ToArray();
+        foreach (var gate in gates) server.TrackCommandForTest(gate.Task);
+        input.Feed(initialize);
+        var duplicate = await ReadResultAsync(output, "capacity-init");
+        Assert.False(duplicate.GetProperty("ok").GetBoolean());
+        Assert.Equal("DUPLICATE_REQUEST", duplicate.GetProperty("error").GetProperty("code").GetString());
+        Assert.NotEqual(WorkerState.TerminalFault, worker.State);
+
+        foreach (var gate in gates) gate.TrySetResult();
+        Assert.True(SpinWait.SpinUntil(() => server.ActiveCommandCountForTest == 0, TimeSpan.FromSeconds(2)));
+        input.Complete();
+        Assert.Equal(0, await serverTask.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task ExternalProtocolCancellationTerminallySafeOffs()
+    {
+        using var temporary = new TemporaryDirectory();
+        var protocolLighting = new ProtocolLightingCoordinator();
+        var lighting = new CountingSafeOffLightingCoordinator(protocolLighting);
+        await using var worker = CreateWorker(temporary.Path, lighting);
+        await using var input = new FeedableInputStream();
+        await using var output = new LineCaptureStream();
+        using var cancellation = new CancellationTokenSource();
+        var server = new NativeCameraProtocolServer(worker, protocolLighting, input, output, TextWriter.Null);
+        var serverTask = server.RunAsync(cancellation.Token);
+        input.Feed(ProtocolCommand("initialize", "cancel-init", 1, "none", 0, 0, new { }));
+        _ = await ReadResultAsync(output, "cancel-init");
+
+        cancellation.Cancel();
+        Assert.Equal(2, await serverTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(WorkerState.TerminalFault, worker.State);
+        Assert.True(lighting.SafeOffCalls >= 1);
+        Assert.Equal(0, server.ActiveCommandCountForTest);
+    }
+
+    [Fact]
+    public async Task PreviewOutputFailureTerminallySafeOffsWithoutWaitingForInputEof()
+    {
+        using var temporary = new TemporaryDirectory();
+        var protocolLighting = new ProtocolLightingCoordinator();
+        var lighting = new CountingSafeOffLightingCoordinator(protocolLighting);
+        await using var worker = CreateWorker(temporary.Path, lighting);
+        await using var input = new FeedableInputStream();
+        await using var output = new PreviewFailingOutputStream();
+        var server = new NativeCameraProtocolServer(worker, protocolLighting, input, output, TextWriter.Null);
+        var serverTask = server.RunAsync(CancellationToken.None);
+        input.Feed(ProtocolCommand("initialize", "preview-fault-init", 1, "none", 0, 0, new { }));
+        _ = await ReadResultAsync(output.Capture, "preview-fault-init");
+        input.Feed(ProtocolCommand("set_side", "preview-fault-side", 2, "front", 0, 1, new { side = "front" }));
+        _ = await ReadResultAsync(output.Capture, "preview-fault-side");
+        input.Feed(ProtocolCommand("start_preview", "preview-fault-start", 3, "front", 1, 1, new { }));
+        _ = await ReadResultAsync(output.Capture, "preview-fault-start", failOnPreview: true);
+
+        Assert.Equal(2, await serverTask.WaitAsync(TimeSpan.FromSeconds(8)));
+        Assert.Equal(WorkerState.TerminalFault, worker.State);
+        Assert.True(lighting.SafeOffCalls >= 1);
+        Assert.Equal(0, server.ActiveCommandCountForTest);
+    }
+
+    [Fact]
+    public async Task BlockingProtocolOutputCannotDelayTerminalSafeOffOrBoundedExit()
+    {
+        using var temporary = new TemporaryDirectory();
+        var protocolLighting = new ProtocolLightingCoordinator();
+        var lighting = new CountingSafeOffLightingCoordinator(protocolLighting);
+        await using var worker = CreateWorker(temporary.Path, lighting);
+        await using var input = new FeedableInputStream();
+        await using var output = new ToggleBlockingOutputStream();
+        var server = new NativeCameraProtocolServer(worker, protocolLighting, input, output, TextWriter.Null);
+        var serverTask = server.RunAsync(CancellationToken.None);
+        input.Feed(ProtocolCommand("initialize", "blocked-output-init", 1, "none", 0, 0, new { }));
+        _ = await ReadResultAsync(output.Capture, "blocked-output-init");
+        output.Block = true;
+        input.Feed(ProtocolCommand(
+            "safe_idle", "blocked-output-safe-idle", 2, "none", 0, 0, new { },
+            DateTimeOffset.UtcNow.AddSeconds(-1).ToUnixTimeMilliseconds()));
+
+        Assert.True(SpinWait.SpinUntil(() => lighting.SafeOffCalls >= 1, TimeSpan.FromSeconds(2)));
+        Assert.Equal(2, await serverTask.WaitAsync(TimeSpan.FromSeconds(8)));
+        Assert.Equal(WorkerState.TerminalFault, worker.State);
+        Assert.Equal(0, server.ActiveCommandCountForTest);
+        output.Release.TrySetResult();
     }
 
     [Fact]
@@ -221,11 +370,11 @@ public sealed class SafetyAndProtocolTests
         var serverTask = server.RunAsync(CancellationToken.None);
         long sequence = 0;
 
-        input.Feed(ProtocolCommand("initialize", "correlation-init", ++sequence, "none", 0, 0, new { backend = "fake", configurationId = "rig-1" }));
+        input.Feed(ProtocolCommand("initialize", "correlation-init", ++sequence, "none", 0, 0, new { configurationId = "rig-1" }));
         _ = await ReadResultAsync(output, "correlation-init");
         input.Feed(ProtocolCommand("set_side", "correlation-side", ++sequence, "front", 0, 1, new { side = "front" }));
         _ = await ReadResultAsync(output, "correlation-side");
-        input.Feed(ProtocolCommand("start_preview", "correlation-preview", ++sequence, "front", 1, 1, new { maxFps = 15, jpegQuality = 85 }));
+        input.Feed(ProtocolCommand("start_preview", "correlation-preview", ++sequence, "front", 1, 1, new { }));
 
         var startResult = await ReadResultAsync(output, "correlation-preview", failOnPreview: true);
         var preview = await ReadEventAsync(output, "preview_frame");
@@ -334,11 +483,11 @@ public sealed class SafetyAndProtocolTests
             .RunAsync(CancellationToken.None);
         long sequence = 0;
 
-        input.Feed(ProtocolCommand("initialize", "safe-init", ++sequence, "none", 0, 0, new { backend = "fake", configurationId = "rig-1" }));
+        input.Feed(ProtocolCommand("initialize", "safe-init", ++sequence, "none", 0, 0, new { configurationId = "rig-1" }));
         _ = await ReadResultAsync(output, "safe-init");
         input.Feed(ProtocolCommand("set_side", "safe-side", ++sequence, "front", 0, 1, new { side = "front" }));
         _ = await ReadResultAsync(output, "safe-side");
-        input.Feed(ProtocolCommand("start_preview", "safe-preview", ++sequence, "front", 1, 1, new { maxFps = 15, jpegQuality = 85 }));
+        input.Feed(ProtocolCommand("start_preview", "safe-preview", ++sequence, "front", 1, 1, new { }));
         _ = await ReadResultAsync(output, "safe-preview", failOnPreview: true);
         input.Feed(ProtocolCommand("stop_drain", "safe-drain", ++sequence, "front", 1, 1, new { }));
         _ = await ReadResultAsync(output, "safe-drain");
@@ -397,11 +546,11 @@ public sealed class SafetyAndProtocolTests
             .RunAsync(CancellationToken.None);
         long sequence = 0;
 
-        input.Feed(ProtocolCommand("initialize", "unsafe-init", ++sequence, "none", 0, 0, new { backend = "fake", configurationId = "rig-1" }));
+        input.Feed(ProtocolCommand("initialize", "unsafe-init", ++sequence, "none", 0, 0, new { configurationId = "rig-1" }));
         _ = await ReadResultAsync(output, "unsafe-init");
         input.Feed(ProtocolCommand("set_side", "unsafe-side", ++sequence, "front", 0, 1, new { side = "front" }));
         _ = await ReadResultAsync(output, "unsafe-side");
-        input.Feed(ProtocolCommand("start_preview", "unsafe-preview", ++sequence, "front", 1, 1, new { maxFps = 15, jpegQuality = 85 }));
+        input.Feed(ProtocolCommand("start_preview", "unsafe-preview", ++sequence, "front", 1, 1, new { }));
         _ = await ReadResultAsync(output, "unsafe-preview", failOnPreview: true);
         input.Feed(ProtocolCommand("stop_drain", "unsafe-drain", ++sequence, "front", 1, 1, new { }));
         _ = await ReadResultAsync(output, "unsafe-drain");
@@ -443,11 +592,11 @@ public sealed class SafetyAndProtocolTests
         var serverTask = server.RunAsync(CancellationToken.None);
         long sequence = 0;
 
-        input.Feed(ProtocolCommand("initialize", "fault-init", ++sequence, "none", 0, 0, new { backend = "fake", configurationId = "rig-1" }));
+        input.Feed(ProtocolCommand("initialize", "fault-init", ++sequence, "none", 0, 0, new { configurationId = "rig-1" }));
         _ = await ReadResultAsync(output, "fault-init");
         input.Feed(ProtocolCommand("set_side", "fault-side", ++sequence, "front", 0, 1, new { side = "front" }));
         _ = await ReadResultAsync(output, "fault-side");
-        input.Feed(ProtocolCommand("start_preview", "fault-preview", ++sequence, "front", 1, 1, new { maxFps = 15, jpegQuality = 85 }));
+        input.Feed(ProtocolCommand("start_preview", "fault-preview", ++sequence, "front", 1, 1, new { }));
         _ = await ReadResultAsync(output, "fault-preview", failOnPreview: true);
 
         var terminal = await ReadEventAsync(output, "terminal_fault");
@@ -464,9 +613,9 @@ public sealed class SafetyAndProtocolTests
         var camera = new FakeCameraBackend();
         var lighting = new ExpiredAuthorizationLightingCoordinator();
         await using var worker = CreateWorker(temporary.Path, lighting, camera);
-        await worker.InitializeAsync("expired-session", 1, CancellationToken.None);
+        await worker.InitializeAsync("expired-session", 1, RigConfigurationDefaults.SafeFakeExpectation, CancellationToken.None);
         await worker.SetSideAsync(CardSide.Front, 1, CancellationToken.None);
-        await worker.StartPreviewAsync(1, 15, 85, CancellationToken.None);
+        await worker.StartPreviewAsync(1, CancellationToken.None);
         await worker.StopAndDrainAsync(CancellationToken.None);
         var grabsBeforeCapture = camera.GrabCount;
 
@@ -490,7 +639,7 @@ public sealed class SafetyAndProtocolTests
         var frame = new CameraFrame(
             "entropy-frame-1",
             1,
-            "entropy-block-1",
+            "1",
             1234,
             MonotonicClock.NowTicks,
             DateTimeOffset.UtcNow,
@@ -498,7 +647,8 @@ public sealed class SafetyAndProtocolTests
             height,
             width,
             pixels);
-        var encoder = new OpenCvPreviewFrameEncoder(100);
+        var encoder = new OpenCvPreviewFrameEncoder(
+            RigConfigurationDefaults.SafeFakeConfiguration.Preview.JpegQuality);
         var encoded = await encoder.EncodeJpegAsync(frame, CancellationToken.None);
         encoded.Validate();
         Assert.True(encoded.Bytes.Length <= PreviewJpeg.MaximumBytes);
@@ -522,11 +672,11 @@ public sealed class SafetyAndProtocolTests
             .RunAsync(CancellationToken.None);
         long sequence = 0;
 
-        input.Feed(ProtocolCommand("initialize", "entropy-init", ++sequence, "none", 0, 0, new { backend = "fake", configurationId = "rig-1" }));
+        input.Feed(ProtocolCommand("initialize", "entropy-init", ++sequence, "none", 0, 0, new { configurationId = "rig-1" }));
         _ = await ReadResultAsync(output, "entropy-init");
         input.Feed(ProtocolCommand("set_side", "entropy-side", ++sequence, "front", 0, 1, new { side = "front" }));
         _ = await ReadResultAsync(output, "entropy-side");
-        input.Feed(ProtocolCommand("start_preview", "entropy-preview", ++sequence, "front", 1, 1, new { maxFps = 15, jpegQuality = 100 }));
+        input.Feed(ProtocolCommand("start_preview", "entropy-preview", ++sequence, "front", 1, 1, new { }));
         _ = await ReadResultAsync(output, "entropy-preview", failOnPreview: true);
         var previewLine = await output.ReadLineAsync(CancellationToken.None);
         Assert.True(Encoding.UTF8.GetByteCount(previewLine) <= NativeCameraProtocolServer.MaximumMessageBytes);
@@ -535,6 +685,8 @@ public sealed class SafetyAndProtocolTests
         Assert.Equal(encoded.Width, jpeg.GetProperty("width").GetInt32());
         Assert.Equal(encoded.Height, jpeg.GetProperty("height").GetInt32());
 
+        input.Feed(ProtocolCommand("safe_idle", "entropy-idle", ++sequence, "front", 1, 1, new { }));
+        _ = await ReadResultAsync(output, "entropy-idle");
         input.Feed(ProtocolCommand("shutdown", "entropy-shutdown", ++sequence, "front", 1, 1, new { }));
         _ = await ReadResultAsync(output, "entropy-shutdown");
         input.Complete();
@@ -573,11 +725,11 @@ public sealed class SafetyAndProtocolTests
         var serverTask = server.RunAsync(CancellationToken.None);
         long sequence = 0;
 
-        input.Feed(ProtocolCommand("initialize", "drain-init", ++sequence, "none", 0, 0, new { backend = "fake", configurationId = "rig-1" }));
+        input.Feed(ProtocolCommand("initialize", "drain-init", ++sequence, "none", 0, 0, new { configurationId = "rig-1" }));
         _ = await ReadResultAsync(output, "drain-init");
         input.Feed(ProtocolCommand("set_side", "drain-side", ++sequence, "front", 0, 1, new { side = "front" }));
         _ = await ReadResultAsync(output, "drain-side");
-        input.Feed(ProtocolCommand("start_preview", "drain-preview", ++sequence, "front", 1, 1, new { maxFps = 15, jpegQuality = 85 }));
+        input.Feed(ProtocolCommand("start_preview", "drain-preview", ++sequence, "front", 1, 1, new { }));
         var startResult = await ReadResultAsync(output, "drain-preview", failOnPreview: true);
         await emissionCorrelated.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -591,6 +743,8 @@ public sealed class SafetyAndProtocolTests
         Assert.True(preview.GetProperty("sequence").GetInt64() > startResult.GetProperty("sequence").GetInt64());
         Assert.True(preview.GetProperty("sequence").GetInt64() < stopResult.GetProperty("sequence").GetInt64());
 
+        input.Feed(ProtocolCommand("safe_idle", "drain-idle", ++sequence, "front", 1, 1, new { }));
+        _ = await ReadResultAsync(output, "drain-idle");
         input.Feed(ProtocolCommand("shutdown", "drain-shutdown", ++sequence, "front", 1, 1, new { }));
         _ = await ReadResultAsync(output, "drain-shutdown");
         input.Complete();
@@ -617,7 +771,7 @@ public sealed class SafetyAndProtocolTests
             timeoutMs = 30_000,
             deadlineUnixMs = now + 30_000,
             sequence,
-            payload,
+            payload = ProtocolPayload(command, payload),
         });
 
     private static string ProtocolCommand(
@@ -627,7 +781,8 @@ public sealed class SafetyAndProtocolTests
         string side,
         long previewEpoch,
         long sideEpoch,
-        object payload) =>
+        object payload,
+        long? deadlineUnixMs = null) =>
         JsonSerializer.Serialize(new
         {
             protocolVersion = NativeCameraProtocolServer.ProtocolVersion,
@@ -641,10 +796,18 @@ public sealed class SafetyAndProtocolTests
             sideEpoch,
             side,
             timeoutMs = 120_000,
-            deadlineUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 120_000,
+            deadlineUnixMs = deadlineUnixMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 120_000,
             sequence,
-            payload,
+            payload = ProtocolPayload(command, payload),
         });
+
+    private static object ProtocolPayload(string command, object payload) => command == "initialize"
+        ? new
+        {
+            configurationId = RigConfigurationDefaults.SafeFakeAttestation.ConfigurationId,
+            configurationSha256 = RigConfigurationDefaults.SafeFakeAttestation.CanonicalSha256,
+        }
+        : payload;
 
     private static async Task<JsonElement> ReadResultAsync(LineCaptureStream output, string requestId, bool failOnPreview = false)
     {
@@ -733,6 +896,8 @@ public sealed class SafetyAndProtocolTests
             HasHardwareBlockId: true,
             HasHardwareTimestamp: true);
         public IReadOnlyDictionary<string, double> TimingMilliseconds { get; } = new Dictionary<string, double>();
+        public RigConfigurationAttestation LoadedRigConfiguration => RigConfigurationDefaults.SafeFakeAttestation;
+        public RigRuntimePolicy RuntimePolicy => RigConfigurationDefaults.SafeFakeConfiguration.RuntimePolicy;
 
         public ValueTask OpenAndConfigureAsync(CancellationToken cancellationToken)
         {
@@ -789,6 +954,28 @@ public sealed class SafetyAndProtocolTests
             cancellationToken.ThrowIfCancellationRequested();
             SafeOffCalls++;
             return ValueTask.FromResult(new SafeOffResult(true, MonotonicClock.NowTicks, "safe_off_complete"));
+        }
+    }
+
+    private sealed class GatedSafeOffLightingCoordinator(ProtocolLightingCoordinator inner) : ILightingCoordinator, ICaptureScopedLightingCoordinator
+    {
+        public int SafeOffCalls { get; private set; }
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void BeginCapture(string captureRequestId) => inner.BeginCapture(captureRequestId);
+        public ValueTask<LightingRequest> RequestEvidenceRoleProfileAsync(string evidenceRole, CardSide side, Epochs epochs, CancellationToken cancellationToken) => inner.RequestEvidenceRoleProfileAsync(evidenceRole, side, epochs, cancellationToken);
+        public ValueTask<LightingStableAcknowledgement> WaitForStableAcknowledgementAsync(LightingRequest request, CancellationToken cancellationToken) => inner.WaitForStableAcknowledgementAsync(request, cancellationToken);
+        public ValueTask<GrabAuthorization> AuthorizeOneGrabAsync(LightingRequest request, LightingStableAcknowledgement acknowledgement, CancellationToken cancellationToken) => inner.AuthorizeOneGrabAsync(request, acknowledgement, cancellationToken);
+        public ValueTask CompleteAuthorizedGrabAsync(LightingRequest request, GrabAuthorization authorization, CameraFrame frame, CancellationToken cancellationToken) => inner.CompleteAuthorizedGrabAsync(request, authorization, frame, cancellationToken);
+        public async ValueTask<SafeOffResult> SafeOffAsync(string publicReasonCode, CancellationToken cancellationToken)
+        {
+            SafeOffCalls++;
+            Started.TrySetResult();
+            // The test owns release in a finally block so it can deterministically
+            // observe the protocol command while safe-off is still in flight.
+            await Release.Task;
+            cancellationToken.ThrowIfCancellationRequested();
+            return new SafeOffResult(true, MonotonicClock.NowTicks, "safe_off_complete");
         }
     }
 
@@ -883,6 +1070,84 @@ public sealed class SafetyAndProtocolTests
                     }
                 }
             }
+        }
+    }
+
+    private sealed class PreviewFailingOutputStream : Stream
+    {
+        public LineCaptureStream Capture { get; } = new();
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => Capture.Flush();
+        public override Task FlushAsync(CancellationToken cancellationToken) => Capture.FlushAsync(cancellationToken);
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Encoding.UTF8.GetString(buffer.Span).Contains("preview_frame", StringComparison.Ordinal))
+            {
+                return ValueTask.FromException(new IOException("injected_preview_output_failure"));
+            }
+
+            return Capture.WriteAsync(buffer, cancellationToken);
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) Capture.Dispose();
+            base.Dispose(disposing);
+        }
+        public override async ValueTask DisposeAsync()
+        {
+            await Capture.DisposeAsync();
+            await base.DisposeAsync();
+        }
+    }
+
+    private sealed class ToggleBlockingOutputStream : Stream
+    {
+        public LineCaptureStream Capture { get; } = new();
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool Block { get; set; }
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => Capture.Flush();
+        public override Task FlushAsync(CancellationToken cancellationToken) => Capture.FlushAsync(cancellationToken);
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Block)
+            {
+                // Deliberately ignore cancellation to model a wedged pipe. The
+                // server must abandon best-effort diagnostics after its bound.
+                await Release.Task;
+            }
+            await Capture.WriteAsync(buffer, cancellationToken);
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                Release.TrySetResult();
+                Capture.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+        public override async ValueTask DisposeAsync()
+        {
+            Release.TrySetResult();
+            await Capture.DisposeAsync();
+            await base.DisposeAsync();
         }
     }
 }

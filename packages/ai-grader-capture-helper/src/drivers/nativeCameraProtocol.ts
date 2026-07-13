@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { TextDecoder } from "node:util";
 
 export const NATIVE_CAMERA_PROTOCOL_VERSION = "tenkings.ai-grader.native-camera.v1" as const;
 export const NATIVE_CAMERA_MAX_MESSAGE_BYTES = 1024 * 1024;
@@ -144,8 +145,32 @@ export interface NativeCameraGeometryMetrics {
   aspectScore: number;
   coverage: number;
   clearance: number;
+  clearanceFraction: number;
   fullVisibility: boolean;
   perspective: number;
+  perspectiveSkew: number;
+}
+
+export interface NativeCameraSensorOrientation {
+  rotationDegrees: 0 | 90 | 180 | 270;
+  mirrorHorizontal: boolean;
+  mirrorVertical: boolean;
+  supportsMirrorHorizontal: boolean;
+  supportsMirrorVertical: boolean;
+}
+
+export interface NativeCameraRigAttestation {
+  configurationId: string;
+  configurationSha256: string;
+  calibrationId: string;
+  calibrationSha256: string;
+  sensorOrientation: NativeCameraSensorOrientation;
+}
+
+export interface NativeCameraCurrentFrameAuthority {
+  normalizationSafe: boolean;
+  captureReady: boolean;
+  rejectionCodes: string[];
 }
 
 export interface NativeCameraFrameIdentity extends NativeCameraEpochs {
@@ -157,7 +182,8 @@ export interface NativeCameraFrameIdentity extends NativeCameraEpochs {
 }
 
 export interface NativeCameraGeometryResult {
-  detectorVersion: "native_four_edge_v1";
+  detectorVersion: "native_four_edge_v2";
+  detector: "pca_baseline" | "contour_quad" | "line_recovery" | "fused_four_edge";
   status: "not_detected" | "adjust_card" | "ready";
   reasonCodes: string[];
   sourceCorners: NativeCameraCorners | null;
@@ -167,6 +193,10 @@ export interface NativeCameraGeometryResult {
   sourceHeight: number;
   normalizedWidth: 1200;
   normalizedHeight: 1680;
+  sourceToNormalizedHomography: [number, number, number, number, number, number, number, number, number] | null;
+  calibration: { id: string; sha256: string };
+  sensorOrientation: NativeCameraSensorOrientation;
+  currentFrameAuthority: NativeCameraCurrentFrameAuthority;
   center: NativeCameraPoint | null;
   scale: number | null;
   rotationDegrees: number | null;
@@ -178,6 +208,7 @@ export interface NativeCameraGeometryResult {
   frameAgeMs: number;
   droppedFrames: number;
   frozen: boolean;
+  stale: boolean;
   motionDelta: number | null;
   hysteresis: {
     currentEvidenceReady: boolean;
@@ -256,6 +287,14 @@ export interface NativeCameraAuthoritativeTransform {
   reusedByRoles: NativeCameraTransformReuseRole[];
 }
 
+export interface NativeCameraForensicPackage {
+  packageId: string;
+  packageSha256: string;
+  manifestSha256: string;
+  capturePlanSha256: string;
+  idempotent: boolean;
+}
+
 export class NativeCameraProtocolValidationError extends Error {
   constructor(
     public readonly code: string,
@@ -269,11 +308,21 @@ export class NativeCameraProtocolValidationError extends Error {
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const UNSIGNED_DECIMAL_PATTERN = /^(?:0|[1-9][0-9]{0,19})$/;
+const MAX_UNSIGNED_64 = 18_446_744_073_709_551_615n;
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
-const UNSAFE_DIAGNOSTIC_PATTERN = /(?:[A-Za-z]:\\|\\\\|https?:\/\/|file:\/\/|(?:^|\s)\/[A-Za-z0-9._-]+\/|token|secret|credential|password|device[_ -]?id|serial(?:number)?)/i;
+const UNSAFE_DIAGNOSTIC_PATTERN = /(?:[A-Za-z]:[\\/]|\\\\|\/\/[^\s/]+\/|https?:\/\/|file:\/\/|(?:^|[\s"'=:(])\/[A-Za-z0-9._-]+(?:\/[^\s"'<>]*)?|token|secret|credential|password|device[_ -]?id|serial(?:number)?)/i;
 
 function fail(code: string, message: string): never {
   throw new NativeCameraProtocolValidationError(code, message);
+}
+
+function diagnosticMessage(value: unknown, name: string): string {
+  const message = textValue(value, name, 512);
+  if (UNSAFE_DIAGNOSTIC_PATTERN.test(message)) {
+    fail("UNSAFE_DIAGNOSTIC", `${name} is not public-safe.`);
+  }
+  return message;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -397,6 +446,70 @@ function corners(value: unknown, name: string): NativeCameraCorners | null {
   };
 }
 
+function sensorOrientation(value: unknown, name: string): NativeCameraSensorOrientation {
+  const input = record(value, name);
+  exactKeys(input, [
+    "rotationDegrees",
+    "mirrorHorizontal",
+    "mirrorVertical",
+    "supportsMirrorHorizontal",
+    "supportsMirrorVertical",
+  ]);
+  const rotationDegrees = integer(input.rotationDegrees, `${name}.rotationDegrees`, 0, 270);
+  if (rotationDegrees !== 0 && rotationDegrees !== 90 && rotationDegrees !== 180 && rotationDegrees !== 270) {
+    fail("INVALID_ORIENTATION", `${name}.rotationDegrees must be 0, 90, 180, or 270.`);
+  }
+  const result: NativeCameraSensorOrientation = {
+    rotationDegrees,
+    mirrorHorizontal: bool(input.mirrorHorizontal, `${name}.mirrorHorizontal`),
+    mirrorVertical: bool(input.mirrorVertical, `${name}.mirrorVertical`),
+    supportsMirrorHorizontal: bool(input.supportsMirrorHorizontal, `${name}.supportsMirrorHorizontal`),
+    supportsMirrorVertical: bool(input.supportsMirrorVertical, `${name}.supportsMirrorVertical`),
+  };
+  if (
+    (result.mirrorHorizontal && !result.supportsMirrorHorizontal) ||
+    (result.mirrorVertical && !result.supportsMirrorVertical)
+  ) {
+    fail("INVALID_ORIENTATION", `${name} selects an unsupported mirror.`);
+  }
+  return result;
+}
+
+export function parseNativeCameraRigAttestation(
+  value: unknown,
+  name = "rigConfiguration",
+): NativeCameraRigAttestation {
+  const input = record(value, name);
+  exactKeys(input, [
+    "configurationId",
+    "configurationSha256",
+    "calibrationId",
+    "calibrationSha256",
+    "sensorOrientation",
+  ]);
+  return {
+    configurationId: textValue(input.configurationId, `${name}.configurationId`, 128, SAFE_ID_PATTERN),
+    configurationSha256: textValue(input.configurationSha256, `${name}.configurationSha256`, 64, SHA256_PATTERN),
+    calibrationId: textValue(input.calibrationId, `${name}.calibrationId`, 128, SAFE_ID_PATTERN),
+    calibrationSha256: textValue(input.calibrationSha256, `${name}.calibrationSha256`, 64, SHA256_PATTERN),
+    sensorOrientation: sensorOrientation(input.sensorOrientation, `${name}.sensorOrientation`),
+  };
+}
+
+function homography(value: unknown, name: string): NativeCameraGeometryResult["sourceToNormalizedHomography"] {
+  if (value === null) return null;
+  if (!Array.isArray(value) || value.length !== 9) fail("INVALID_HOMOGRAPHY", `${name} must contain nine values.`);
+  const matrix = value.map((entry, index) => finite(entry, `${name}[${index}]`));
+  const determinant =
+    matrix[0]! * (matrix[4]! * matrix[8]! - matrix[5]! * matrix[7]!) -
+    matrix[1]! * (matrix[3]! * matrix[8]! - matrix[5]! * matrix[6]!) +
+    matrix[2]! * (matrix[3]! * matrix[7]! - matrix[4]! * matrix[6]!);
+  if (!Number.isFinite(determinant) || Math.abs(determinant) <= 1e-12) {
+    fail("INVALID_HOMOGRAPHY", `${name} must be finite and nonsingular.`);
+  }
+  return matrix as NativeCameraGeometryResult["sourceToNormalizedHomography"];
+}
+
 function frameIdentity(value: unknown, name: string): NativeCameraFrameIdentity {
   const input = record(value, name);
   exactKeys(input, [
@@ -409,9 +522,15 @@ function frameIdentity(value: unknown, name: string): NativeCameraFrameIdentity 
     "sideEpoch",
     "side",
   ]);
+  const blockId = input.blockId === null
+    ? null
+    : textValue(input.blockId, `${name}.blockId`, 20, UNSIGNED_DECIMAL_PATTERN);
+  if (blockId !== null && BigInt(blockId) > MAX_UNSIGNED_64) {
+    fail("INVALID_BLOCK_ID", `${name}.blockId exceeds unsigned 64-bit Pylon identity bounds.`);
+  }
   return {
     frameId: textValue(input.frameId, `${name}.frameId`, 128, SAFE_ID_PATTERN),
-    blockId: input.blockId === null ? null : textValue(input.blockId, `${name}.blockId`, 128, SAFE_ID_PATTERN),
+    blockId,
     hardwareTimestampTicks:
       input.hardwareTimestampTicks === null
         ? null
@@ -440,8 +559,10 @@ function geometryMetrics(value: unknown): NativeCameraGeometryMetrics {
     "aspectScore",
     "coverage",
     "clearance",
+    "clearanceFraction",
     "fullVisibility",
     "perspective",
+    "perspectiveSkew",
   ]);
   const perEdge = record(input.perEdgeSupport, "geometry.metrics.perEdgeSupport");
   exactKeys(perEdge, ["top", "right", "bottom", "left"]);
@@ -460,8 +581,10 @@ function geometryMetrics(value: unknown): NativeCameraGeometryMetrics {
     aspectScore: finiteUnit(input.aspectScore, "geometry.metrics.aspectScore"),
     coverage: finiteUnit(input.coverage, "geometry.metrics.coverage"),
     clearance: finiteUnit(input.clearance, "geometry.metrics.clearance"),
+    clearanceFraction: finiteUnit(input.clearanceFraction, "geometry.metrics.clearanceFraction"),
     fullVisibility: bool(input.fullVisibility, "geometry.metrics.fullVisibility"),
     perspective: finiteUnit(input.perspective, "geometry.metrics.perspective"),
+    perspectiveSkew: finiteUnit(input.perspectiveSkew, "geometry.metrics.perspectiveSkew"),
   };
 }
 
@@ -469,6 +592,7 @@ export function parseNativeCameraGeometry(value: unknown): NativeCameraGeometryR
   const input = record(value, "geometry");
   exactKeys(input, [
     "detectorVersion",
+    "detector",
     "status",
     "reasonCodes",
     "sourceCorners",
@@ -478,6 +602,10 @@ export function parseNativeCameraGeometry(value: unknown): NativeCameraGeometryR
     "sourceHeight",
     "normalizedWidth",
     "normalizedHeight",
+    "sourceToNormalizedHomography",
+    "calibration",
+    "sensorOrientation",
+    "currentFrameAuthority",
     "center",
     "scale",
     "rotationDegrees",
@@ -489,10 +617,19 @@ export function parseNativeCameraGeometry(value: unknown): NativeCameraGeometryR
     "frameAgeMs",
     "droppedFrames",
     "frozen",
+    "stale",
     "motionDelta",
     "hysteresis",
   ]);
-  if (input.detectorVersion !== "native_four_edge_v1") fail("INVALID_GEOMETRY", "detectorVersion is invalid.");
+  if (input.detectorVersion !== "native_four_edge_v2") fail("INVALID_GEOMETRY", "detectorVersion is invalid.");
+  if (
+    input.detector !== "pca_baseline" &&
+    input.detector !== "contour_quad" &&
+    input.detector !== "line_recovery" &&
+    input.detector !== "fused_four_edge"
+  ) {
+    fail("INVALID_GEOMETRY", "geometry.detector is invalid.");
+  }
   if (input.status !== "not_detected" && input.status !== "adjust_card" && input.status !== "ready") {
     fail("INVALID_GEOMETRY", "geometry.status is invalid.");
   }
@@ -533,8 +670,19 @@ export function parseNativeCameraGeometry(value: unknown): NativeCameraGeometryR
     "requiredReadyFrames",
     "removalFenceSatisfied",
   ]);
+  const calibration = record(input.calibration, "geometry.calibration");
+  exactKeys(calibration, ["id", "sha256"]);
+  const authority = record(input.currentFrameAuthority, "geometry.currentFrameAuthority");
+  exactKeys(authority, ["normalizationSafe", "captureReady", "rejectionCodes"]);
+  if (!Array.isArray(authority.rejectionCodes) || authority.rejectionCodes.length > 32) {
+    fail("INVALID_AUTHORITY", "geometry.currentFrameAuthority.rejectionCodes is invalid.");
+  }
+  const rejectionCodes = authority.rejectionCodes.map((entry, index) =>
+    textValue(entry, `geometry.currentFrameAuthority.rejectionCodes[${index}]`, 64, SAFE_ID_PATTERN),
+  );
   const result: NativeCameraGeometryResult = {
-    detectorVersion: "native_four_edge_v1",
+    detectorVersion: "native_four_edge_v2",
+    detector: input.detector,
     status: input.status,
     reasonCodes,
     sourceCorners: corners(input.sourceCorners, "geometry.sourceCorners"),
@@ -544,6 +692,17 @@ export function parseNativeCameraGeometry(value: unknown): NativeCameraGeometryR
     sourceHeight: integer(input.sourceHeight, "geometry.sourceHeight", 1, 100_000),
     normalizedWidth: integer(input.normalizedWidth, "geometry.normalizedWidth", 1200, 1200) as 1200,
     normalizedHeight: integer(input.normalizedHeight, "geometry.normalizedHeight", 1680, 1680) as 1680,
+    sourceToNormalizedHomography: homography(input.sourceToNormalizedHomography, "geometry.sourceToNormalizedHomography"),
+    calibration: {
+      id: textValue(calibration.id, "geometry.calibration.id", 128, SAFE_ID_PATTERN),
+      sha256: textValue(calibration.sha256, "geometry.calibration.sha256", 64, SHA256_PATTERN),
+    },
+    sensorOrientation: sensorOrientation(input.sensorOrientation, "geometry.sensorOrientation"),
+    currentFrameAuthority: {
+      normalizationSafe: bool(authority.normalizationSafe, "geometry.currentFrameAuthority.normalizationSafe"),
+      captureReady: bool(authority.captureReady, "geometry.currentFrameAuthority.captureReady"),
+      rejectionCodes,
+    },
     center: input.center === null ? null : point(input.center, "geometry.center"),
     scale: input.scale === null ? null : finite(input.scale, "geometry.scale", 0),
     rotationDegrees: input.rotationDegrees === null ? null : finite(input.rotationDegrees, "geometry.rotationDegrees", -180, 180),
@@ -555,6 +714,7 @@ export function parseNativeCameraGeometry(value: unknown): NativeCameraGeometryR
     frameAgeMs: finite(input.frameAgeMs, "geometry.frameAgeMs", 0),
     droppedFrames: integer(input.droppedFrames, "geometry.droppedFrames"),
     frozen: bool(input.frozen, "geometry.frozen"),
+    stale: bool(input.stale, "geometry.stale"),
     motionDelta: input.motionDelta === null ? null : finite(input.motionDelta, "geometry.motionDelta", 0),
     hysteresis: {
       currentEvidenceReady: bool(hysteresis.currentEvidenceReady, "geometry.hysteresis.currentEvidenceReady"),
@@ -563,15 +723,126 @@ export function parseNativeCameraGeometry(value: unknown): NativeCameraGeometryR
       removalFenceSatisfied: bool(hysteresis.removalFenceSatisfied, "geometry.hysteresis.removalFenceSatisfied"),
     },
   };
+  if (result.currentFrameAuthority.captureReady) {
+    if (!result.currentFrameAuthority.normalizationSafe || result.currentFrameAuthority.rejectionCodes.length !== 0) {
+      fail("INVALID_AUTHORITY", "Capture-ready current-frame authority must be normalization-safe without rejections.");
+    }
+  }
   if (result.status === "ready") {
     if (!result.sourceCorners || !result.normalizedCorners || result.fittedLines.length !== 4) {
       fail("INCOHERENT_READY", "Ready geometry requires corners and four fitted lines.");
     }
-    if (result.frozen || !result.hysteresis.currentEvidenceReady || !result.metrics.fullVisibility) {
+    if (
+      result.reasonCodes.length !== 1 ||
+      result.reasonCodes[0] !== "none" ||
+      result.frozen ||
+      result.stale ||
+      !result.hysteresis.currentEvidenceReady ||
+      !result.metrics.fullVisibility ||
+      !result.currentFrameAuthority.captureReady ||
+      !result.sourceToNormalizedHomography
+    ) {
       fail("INCOHERENT_READY", "Frozen, stale, or clipped geometry cannot be Ready.");
     }
+    validateReadyGeometryStructure(result);
   }
   return result;
+}
+
+function validateReadyGeometryStructure(geometry: NativeCameraGeometryResult): void {
+  const source = geometry.sourceCorners
+    ? [
+        geometry.sourceCorners.topLeft,
+        geometry.sourceCorners.topRight,
+        geometry.sourceCorners.bottomRight,
+        geometry.sourceCorners.bottomLeft,
+      ]
+    : [];
+  const normalized = geometry.normalizedCorners
+    ? [
+        geometry.normalizedCorners.topLeft,
+        geometry.normalizedCorners.topRight,
+        geometry.normalizedCorners.bottomRight,
+        geometry.normalizedCorners.bottomLeft,
+      ]
+    : [];
+  if (source.length !== 4 || normalized.length !== 4 || !geometry.sourceToNormalizedHomography) {
+    fail("INCOHERENT_READY", "Ready geometry requires complete projective geometry.");
+  }
+  if (
+    source.some(
+      (point) =>
+        point.x < 0 || point.x > geometry.sourceWidth - 1 ||
+        point.y < 0 || point.y > geometry.sourceHeight - 1,
+    )
+  ) {
+    fail("INCOHERENT_READY", "Ready source corners must remain inside the exact raw source frame.");
+  }
+  let crossSign = 0;
+  for (let index = 0; index < 4; index += 1) {
+    const first = source[index]!;
+    const second = source[(index + 1) % 4]!;
+    const third = source[(index + 2) % 4]!;
+    const cross = (second.x - first.x) * (third.y - second.y) - (second.y - first.y) * (third.x - second.x);
+    if (Math.abs(cross) <= 1e-6 || (crossSign !== 0 && Math.sign(cross) !== crossSign)) {
+      fail("INCOHERENT_READY", "Ready source corners must be finite, ordered, and convex.");
+    }
+    crossSign = Math.sign(cross);
+  }
+  const distance = (first: NativeCameraPoint, second: NativeCameraPoint): number =>
+    Math.hypot(first.x - second.x, first.y - second.y);
+  const physicalWidth = (distance(source[0]!, source[1]!) + distance(source[2]!, source[3]!)) / 2;
+  const physicalHeight = (distance(source[1]!, source[2]!) + distance(source[3]!, source[0]!)) / 2;
+  if (!(physicalHeight > physicalWidth)) {
+    fail("INCOHERENT_READY", "The physical long edge must map to normalized height.");
+  }
+  const expected = [
+    { x: 0, y: 0 },
+    { x: 1199, y: 0 },
+    { x: 1199, y: 1679 },
+    { x: 0, y: 1679 },
+  ];
+  if (normalized.some((point, index) => distance(point, expected[index]!) > 1e-6)) {
+    fail("INCOHERENT_READY", "Ready normalized corners do not match the 1200x1680 contract.");
+  }
+  geometry.fittedLines.forEach((line, index) => {
+    const norm = Math.hypot(line.a, line.b);
+    const first = source[index]!;
+    const second = source[(index + 1) % 4]!;
+    if (
+      Math.abs(norm - 1) > 0.001 ||
+      Math.abs(line.a * first.x + line.b * first.y + line.c) > 1 ||
+      Math.abs(line.a * second.x + line.b * second.y + line.c) > 1
+    ) {
+      fail("INCOHERENT_READY", "Ready fitted lines are not coherent with ordered corners.");
+    }
+  });
+  const matrix = geometry.sourceToNormalizedHomography;
+  source.forEach((point, index) => {
+    const denominator = matrix[6] * point.x + matrix[7] * point.y + matrix[8];
+    if (Math.abs(denominator) <= 1e-12) fail("INVALID_HOMOGRAPHY", "Homography projection is singular.");
+    const projected = {
+      x: (matrix[0] * point.x + matrix[1] * point.y + matrix[2]) / denominator,
+      y: (matrix[3] * point.x + matrix[4] * point.y + matrix[5]) / denominator,
+    };
+    if (distance(projected, normalized[index]!) > 1) {
+      fail("INVALID_HOMOGRAPHY", "Homography does not map exact source corners to normalization corners.");
+    }
+  });
+  if (
+    geometry.confidence < 0.7 ||
+    geometry.metrics.aspectRatio < 1.18 ||
+    geometry.metrics.aspectRatio > 1.72 ||
+    geometry.metrics.coverage < 0.12 ||
+    geometry.metrics.coverage > 0.88 ||
+    geometry.metrics.clearanceFraction < 0.008 ||
+    geometry.metrics.perspectiveSkew > 0.36 ||
+    geometry.fittedLines.some(
+      (line) => line.support < 0.3 || line.continuity < 0.34 || line.residualPixels > 12,
+    )
+  ) {
+    fail("UNSAFE_READY", "Ready geometry does not meet production current-frame thresholds.");
+  }
 }
 
 function parseJpeg(value: unknown): NativeCameraPreviewFramePayload["jpeg"] {
@@ -628,8 +899,21 @@ export function parseNativeCameraPreviewPayload(value: unknown): NativeCameraPre
   };
   const coherentIdentity = JSON.stringify(frame) === JSON.stringify(geometry.frame);
   if (!coherentIdentity) fail("FRAME_COHERENCE", "Preview JPEG and geometry do not identify the same frame.");
-  if (result.telemetry.frozen !== geometry.frozen || result.telemetry.frameAgeMs !== geometry.frameAgeMs) {
+  if (
+    result.telemetry.frozen !== geometry.frozen ||
+    result.telemetry.frameAgeMs !== geometry.frameAgeMs ||
+    result.telemetry.droppedFrames !== geometry.droppedFrames
+  ) {
     fail("FRAME_COHERENCE", "Preview and geometry freshness telemetry disagree.");
+  }
+  if (
+    result.telemetry.receiveMonotonicMs > geometry.detectMonotonicMs ||
+    geometry.detectMonotonicMs > result.telemetry.detectMonotonicMs ||
+    result.telemetry.detectMonotonicMs > result.telemetry.encodeMonotonicMs ||
+    result.telemetry.encodeMonotonicMs > result.telemetry.emitMonotonicMs ||
+    result.telemetry.processingMs < geometry.processingMs
+  ) {
+    fail("FRAME_COHERENCE", "Preview monotonic timing telemetry is incoherent or out of order.");
   }
   return result;
 }
@@ -656,18 +940,13 @@ function validateExactForensicRoles(value: unknown, name: string): NativeCameraF
 function validateCommandPayload(command: NativeCameraCommandName, value: unknown): Record<string, unknown> {
   const payload = record(value, `${command}.payload`);
   if (command === "initialize") {
-    exactKeys(payload, ["backend", "configurationId"], ["calibrationId"]);
-    if (payload.backend !== "fake" && payload.backend !== "replay" && payload.backend !== "pylon") {
-      fail("INVALID_BACKEND", "initialize backend is invalid.");
-    }
+    exactKeys(payload, ["configurationId", "configurationSha256"]);
     textValue(payload.configurationId, "configurationId", 128, SAFE_ID_PATTERN);
-    if (payload.calibrationId !== undefined) textValue(payload.calibrationId, "calibrationId", 128, SAFE_ID_PATTERN);
+    textValue(payload.configurationSha256, "configurationSha256", 64, SHA256_PATTERN);
   } else if (command === "health" || command === "capabilities" || command === "stop_drain" || command === "safe_idle" || command === "shutdown") {
     exactKeys(payload, []);
   } else if (command === "start_preview" || command === "resume_preview") {
-    exactKeys(payload, ["maxFps", "jpegQuality"]);
-    finite(payload.maxFps, "maxFps", 1, 60);
-    integer(payload.jpegQuality, "jpegQuality", 1, 100);
+    exactKeys(payload, []);
   } else if (command === "set_side") {
     exactKeys(payload, ["side"]);
     const selected = side(payload.side);
@@ -708,10 +987,7 @@ function validateError(value: unknown): NativeCameraProtocolError {
   const input = record(value, "error");
   exactKeys(input, ["code", "message", "retryable"]);
   if (input.retryable !== false) fail("INVALID_ERROR", "Native failures are terminal for the attempt.");
-  const message = textValue(input.message, "error.message", 512);
-  if (UNSAFE_DIAGNOSTIC_PATTERN.test(message)) {
-    fail("UNSAFE_DIAGNOSTIC", "Protocol errors must not expose paths, URLs, secrets, or device identifiers.");
-  }
+  const message = diagnosticMessage(input.message, "error.message");
   return {
     code: textValue(input.code, "error.code", 64, SAFE_ID_PATTERN),
     message,
@@ -820,14 +1096,39 @@ function validateAuthoritativeTransform(value: unknown): NativeCameraAuthoritati
   };
 }
 
+function validateForensicPackage(value: unknown): NativeCameraForensicPackage {
+  const input = record(value, "package");
+  exactKeys(input, ["packageId", "packageSha256", "manifestSha256", "capturePlanSha256", "idempotent"]);
+  return {
+    packageId: textValue(input.packageId, "package.packageId", 160, SAFE_ID_PATTERN),
+    packageSha256: textValue(input.packageSha256, "package.packageSha256", 64, SHA256_PATTERN),
+    manifestSha256: textValue(input.manifestSha256, "package.manifestSha256", 64, SHA256_PATTERN),
+    capturePlanSha256: textValue(input.capturePlanSha256, "package.capturePlanSha256", 64, SHA256_PATTERN),
+    idempotent: bool(input.idempotent, "package.idempotent"),
+  };
+}
+
 function validateResultPayload(command: NativeCameraCommandName, value: unknown): Record<string, unknown> {
   const payload = record(value, `${command}.result.payload`);
-  if (command === "health") {
-    exactKeys(payload, ["state", "healthy", "backend", "cameraOpen", "automaticFallbackAttempted", "timing"]);
+  if (command === "initialize") {
+    exactKeys(payload, ["state", "rigConfiguration", "timing"]);
+    workerState(payload.state);
+    parseNativeCameraRigAttestation(payload.rigConfiguration, "rigConfiguration");
+  } else if (command === "health") {
+    exactKeys(payload, [
+      "state",
+      "healthy",
+      "backend",
+      "cameraOpen",
+      "rigConfigurationVerified",
+      "automaticFallbackAttempted",
+      "timing",
+    ]);
     workerState(payload.state);
     bool(payload.healthy, "healthy");
     if (payload.backend !== "fake" && payload.backend !== "replay" && payload.backend !== "pylon") fail("INVALID_BACKEND", "backend is invalid.");
     bool(payload.cameraOpen, "cameraOpen");
+    bool(payload.rigConfigurationVerified, "rigConfigurationVerified");
     if (payload.automaticFallbackAttempted !== false) fail("FALLBACK_FORBIDDEN", "Automatic fallback is forbidden.");
   } else if (command === "capabilities") {
     exactKeys(payload, ["state", "backends", "forensicRoles", "normalizedWidth", "normalizedHeight", "queueDepth", "timing"]);
@@ -847,6 +1148,8 @@ function validateResultPayload(command: NativeCameraCommandName, value: unknown)
       "artifacts",
       "authoritativeAllOnGeometry",
       "authoritativeTransform",
+      "rigConfiguration",
+      "package",
       "captureDurationMs",
       "droppedFrames",
       "timing",
@@ -886,21 +1189,45 @@ function validateResultPayload(command: NativeCameraCommandName, value: unknown)
         fail("DUPLICATE_FORENSIC_FRAME", "Forensic artifacts must use distinct frame IDs.");
       }
       frameIds.add(artifact.frame.frameId);
-      if (artifact.frame.blockId !== null) {
-        if (blockIds.has(artifact.frame.blockId)) {
-          fail("DUPLICATE_FORENSIC_BLOCK", "Forensic artifacts must use distinct non-null BlockIDs.");
-        }
-        blockIds.add(artifact.frame.blockId);
+      if (artifact.frame.blockId === null) {
+        fail("MISSING_FORENSIC_BLOCK", "Every forensic artifact must carry an exact hardware BlockID.");
       }
+      if (blockIds.has(artifact.frame.blockId)) {
+        fail("DUPLICATE_FORENSIC_BLOCK", "Forensic artifacts must use distinct non-null BlockIDs.");
+      }
+      blockIds.add(artifact.frame.blockId);
     }
     const allOn = artifacts.find((artifact) => artifact.role === "all_on");
     if (!allOn) fail("INCOMPLETE_FORENSIC_OUTPUT", "Forensic output omitted all_on.");
     const authoritativeGeometry = parseNativeCameraGeometry(payload.authoritativeAllOnGeometry);
+    if (authoritativeGeometry.frame.blockId === null || allOn.frame.blockId === null) {
+      fail("AUTHORITATIVE_FRAME_MISMATCH", "Authoritative geometry requires the exact non-null all_on BlockID.");
+    }
     if (!nativeCameraFrameIdentityEquals(authoritativeGeometry.frame, allOn.frame)) {
       fail("AUTHORITATIVE_FRAME_MISMATCH", "Authoritative geometry must identify the exact all_on frame.");
     }
     if (authoritativeGeometry.sourceWidth !== allOn.width || authoritativeGeometry.sourceHeight !== allOn.height) {
       fail("AUTHORITATIVE_DIMENSION_MISMATCH", "Authoritative geometry dimensions must match all_on.");
+    }
+    if (
+      authoritativeGeometry.status !== "ready" ||
+      authoritativeGeometry.reasonCodes.length !== 1 ||
+      authoritativeGeometry.reasonCodes[0] !== "none" ||
+      !authoritativeGeometry.currentFrameAuthority.normalizationSafe ||
+      !authoritativeGeometry.currentFrameAuthority.captureReady ||
+      authoritativeGeometry.currentFrameAuthority.rejectionCodes.length !== 0 ||
+      authoritativeGeometry.stale ||
+      authoritativeGeometry.frozen
+    ) {
+      fail("UNSAFE_AUTHORITATIVE_GEOMETRY", "Only exact current-frame Ready geometry may authorize a forensic package.");
+    }
+    const attestation = parseNativeCameraRigAttestation(payload.rigConfiguration, "rigConfiguration");
+    if (
+      authoritativeGeometry.calibration.id !== attestation.calibrationId ||
+      authoritativeGeometry.calibration.sha256 !== attestation.calibrationSha256 ||
+      JSON.stringify(authoritativeGeometry.sensorOrientation) !== JSON.stringify(attestation.sensorOrientation)
+    ) {
+      fail("AUTHORITATIVE_RIG_MISMATCH", "Authoritative geometry does not match the attested calibration and orientation.");
     }
     const authoritativeTransform = validateAuthoritativeTransform(payload.authoritativeTransform);
     if (
@@ -912,6 +1239,15 @@ function validateResultPayload(command: NativeCameraCommandName, value: unknown)
     if (authoritativeTransform.sourceWidth !== allOn.width || authoritativeTransform.sourceHeight !== allOn.height) {
       fail("AUTHORITATIVE_DIMENSION_MISMATCH", "Authoritative transform dimensions must match all_on.");
     }
+    if (
+      !authoritativeGeometry.sourceToNormalizedHomography ||
+      authoritativeTransform.homography.some(
+        (entry, index) => entry !== authoritativeGeometry.sourceToNormalizedHomography![index],
+      )
+    ) {
+      fail("AUTHORITATIVE_HOMOGRAPHY_MISMATCH", "Geometry and transform homographies must match exactly.");
+    }
+    validateForensicPackage(payload.package);
     finite(payload.captureDurationMs, "captureDurationMs", 0);
     integer(payload.droppedFrames, "droppedFrames");
   } else {
@@ -944,7 +1280,7 @@ function validateEventPayload(event: NativeCameraEventName, value: unknown): Rec
   } else {
     exactKeys(payload, ["code", "message"]);
     textValue(payload.code, "code", 64, SAFE_ID_PATTERN);
-    textValue(payload.message, "message", 512);
+    diagnosticMessage(payload.message, "terminal_fault.message");
   }
   return payload;
 }
@@ -1013,6 +1349,150 @@ export function encodeNativeCameraProtocolMessage(message: NativeCameraProtocolM
   return encoded;
 }
 
+const STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+
+function decodeStrictUtf8(value: Uint8Array): string {
+  try {
+    return STRICT_UTF8_DECODER.decode(value);
+  } catch {
+    fail("MALFORMED_UTF8", "Protocol line is not valid UTF-8.");
+  }
+}
+
+/**
+ * JSON.parse intentionally accepts duplicate object members and keeps the last
+ * value. Protocol envelopes must instead have one unambiguous representation,
+ * including nested payload objects and escaped spellings of the same key.
+ */
+function assertNoDuplicateJsonKeys(text: string): void {
+  let offset = 0;
+  let nestingDepth = 0;
+
+  const malformed = (): never => fail("MALFORMED_JSON", "Protocol line is not valid JSON.");
+  const enterContainer = (): void => {
+    nestingDepth += 1;
+    if (nestingDepth > 64) fail("JSON_NESTING_TOO_DEEP", "Protocol JSON nesting exceeds the configured limit.");
+  };
+  const leaveContainer = (): void => {
+    nestingDepth -= 1;
+  };
+  const whitespace = (): void => {
+    while (offset < text.length && /[\u0020\u000a\u000d\u0009]/.test(text[offset]!)) offset += 1;
+  };
+  const stringValue = (): string => {
+    if (text[offset] !== '"') malformed();
+    const start = offset;
+    offset += 1;
+    let escaped = false;
+    while (offset < text.length) {
+      const char = text[offset]!;
+      offset += 1;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char.charCodeAt(0) === 0x5c) {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        try {
+          return JSON.parse(text.slice(start, offset)) as string;
+        } catch {
+          malformed();
+        }
+      }
+      if (char.charCodeAt(0) < 0x20) malformed();
+    }
+    return malformed();
+  };
+  const literal = (expected: string): void => {
+    if (!text.startsWith(expected, offset)) malformed();
+    offset += expected.length;
+  };
+  const numberValue = (): void => {
+    const match = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(offset));
+    if (!match) return malformed();
+    offset += match[0].length;
+  };
+
+  const value = (): void => {
+    whitespace();
+    const char = text[offset];
+    if (char === "{") {
+      objectValue();
+    } else if (char === "[") {
+      arrayValue();
+    } else if (char === '"') {
+      stringValue();
+    } else if (char === "t") {
+      literal("true");
+    } else if (char === "f") {
+      literal("false");
+    } else if (char === "n") {
+      literal("null");
+    } else if (char === "-" || (char !== undefined && char >= "0" && char <= "9")) {
+      numberValue();
+    } else {
+      malformed();
+    }
+  };
+  const objectValue = (): void => {
+    enterContainer();
+    offset += 1;
+    whitespace();
+    if (text[offset] === "}") {
+      offset += 1;
+      leaveContainer();
+      return;
+    }
+    const keys = new Set<string>();
+    for (;;) {
+      whitespace();
+      const key = stringValue();
+      if (keys.has(key)) fail("DUPLICATE_JSON_KEY", "Protocol JSON contains a duplicate object key.");
+      keys.add(key);
+      whitespace();
+      if (text[offset] !== ":") malformed();
+      offset += 1;
+      value();
+      whitespace();
+      if (text[offset] === "}") {
+        offset += 1;
+        leaveContainer();
+        return;
+      }
+      if (text[offset] !== ",") malformed();
+      offset += 1;
+    }
+  };
+  const arrayValue = (): void => {
+    enterContainer();
+    offset += 1;
+    whitespace();
+    if (text[offset] === "]") {
+      offset += 1;
+      leaveContainer();
+      return;
+    }
+    for (;;) {
+      value();
+      whitespace();
+      if (text[offset] === "]") {
+        offset += 1;
+        leaveContainer();
+        return;
+      }
+      if (text[offset] !== ",") malformed();
+      offset += 1;
+    }
+  };
+
+  value();
+  whitespace();
+  if (offset !== text.length) malformed();
+}
+
 export class NativeCameraNdjsonParser {
   private pending = Buffer.alloc(0);
   private ended = false;
@@ -1034,9 +1514,11 @@ export class NativeCameraNdjsonParser {
       this.pending = this.pending.subarray(newline + 1);
       if (line.length > 0 && line[line.length - 1] === 0x0d) line = line.subarray(0, line.length - 1);
       if (line.length === 0) fail("EMPTY_MESSAGE", "Empty protocol lines are forbidden.");
+      const text = decodeStrictUtf8(line);
+      assertNoDuplicateJsonKeys(text);
       let decoded: unknown;
       try {
-        decoded = JSON.parse(line.toString("utf8"));
+        decoded = JSON.parse(text);
       } catch {
         fail("MALFORMED_JSON", "Protocol line is not valid JSON.");
       }
@@ -1050,10 +1532,7 @@ export class NativeCameraNdjsonParser {
     if (this.ended) return [];
     this.ended = true;
     if (this.pending.length === 0) return [];
-    if (this.pending.toString("utf8").trim().length === 0) {
-      this.pending = Buffer.alloc(0);
-      return [];
-    }
+    decodeStrictUtf8(this.pending);
     fail("TRUNCATED_MESSAGE", "Protocol stream ended before a newline-delimited message completed.");
   }
 }

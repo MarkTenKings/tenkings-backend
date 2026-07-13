@@ -6,6 +6,7 @@ internal sealed class VisionWorkspace : IDisposable
 {
     public Mat Source { get; } = new();
     public Mat Corrected { get; } = new();
+    public Mat Oriented { get; } = new();
     public Mat Gray { get; } = new();
     public Mat Denoised { get; } = new();
     public Mat Contrast { get; } = new();
@@ -32,6 +33,7 @@ internal sealed class VisionWorkspace : IDisposable
     {
         Source.Dispose();
         Corrected.Dispose();
+        Oriented.Dispose();
         Gray.Dispose();
         Denoised.Dispose();
         Contrast.Dispose();

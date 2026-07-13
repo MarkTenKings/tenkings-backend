@@ -48,6 +48,10 @@ public sealed record CameraFrame(
     int Stride,
     byte[] Mono8)
 {
+    public const int MaximumDimension = 8192;
+    public const int MaximumBufferBytes = 96 * 1024 * 1024;
+    public long SourceDroppedFrames { get; init; }
+
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(FrameId) || FrameId.Length > 128)
@@ -55,9 +59,28 @@ public sealed record CameraFrame(
             throw new InvalidDataException("Frame identity is missing or too long.");
         }
 
-        if (Width <= 0 || Height <= 0 || Stride < Width || Mono8.Length < checked(Stride * Height))
+        if (SourceDroppedFrames < 0)
+        {
+            throw new InvalidDataException("Source dropped-frame count must be nonnegative.");
+        }
+
+        var requiredBytes = checked((long)Stride * Height);
+        if (Width <= 0 || Width > MaximumDimension || Height <= 0 || Height > MaximumDimension ||
+            Stride < Width || requiredBytes > MaximumBufferBytes || Mono8.LongLength < requiredBytes ||
+            Mono8.LongLength > MaximumBufferBytes)
         {
             throw new InvalidDataException("Invalid Mono8 frame dimensions or buffer length.");
+        }
+
+        if (BlockId is not null &&
+            (!ulong.TryParse(
+                BlockId,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out _) ||
+             (BlockId.Length > 1 && BlockId[0] == '0')))
+        {
+            throw new InvalidDataException("BlockID must be a canonical unsigned 64-bit decimal string.");
         }
     }
 }
@@ -80,13 +103,37 @@ public sealed record GeometryMetrics(
     double ResidualScore,
     double ConvexityScore,
     double ClearanceScore,
-    bool FullVisibility = false);
+    bool FullVisibility = false)
+{
+    public double AspectRatio { get; init; }
+    public double ClearanceFraction { get; init; }
+    public double PerspectiveSkew { get; init; }
+    public double EdgeSupportScore { get; init; }
+    public double ContinuityScore { get; init; }
+    public double MeanResidualPixels { get; init; }
+}
 
 public sealed record HysteresisEvidence(
     int SupportingFrames,
     int RequiredFrames,
     bool CurrentFrameQualifies,
     string ResetReason);
+
+public sealed record SensorOrientationResult(
+    int SensorToPortraitRotationDegrees,
+    bool MirrorHorizontal,
+    bool MirrorVertical,
+    bool SupportsMirrorHorizontal,
+    bool SupportsMirrorVertical);
+
+public sealed record CurrentFrameAuthorityResult(
+    bool NormalizationSafe,
+    bool CaptureReady,
+    IReadOnlyList<string> RejectionCodes)
+{
+    public static CurrentFrameAuthorityResult Unsafe(string reason = "authority_not_evaluated") =>
+        new(false, false, [reason]);
+}
 
 public sealed record GeometryResult(
     string Status,
@@ -114,6 +161,17 @@ public sealed record GeometryResult(
     bool RemovalFenceSatisfied,
     HysteresisEvidence Hysteresis)
 {
+    public string? CalibrationId { get; init; }
+    public string? CalibrationSha256 { get; init; }
+    public SensorOrientationResult? SensorOrientation { get; init; }
+    public CurrentFrameAuthorityResult CurrentFrameAuthority { get; init; } = CurrentFrameAuthorityResult.Unsafe();
+    public string Detector { get; init; } = "unknown";
+    public string DetectorVersion { get; init; } = "unknown";
+    public int SourceWidth { get; init; }
+    public int SourceHeight { get; init; }
+    public int NormalizedWidth { get; init; } = 1200;
+    public int NormalizedHeight { get; init; } = 1680;
+
     public static GeometryResult NotDetected(CameraFrame frame, Epochs epochs, CardSide side, string reason, long drops = 0) =>
         new(
             "not_detected",
@@ -139,7 +197,16 @@ public sealed record GeometryResult(
             false,
             0,
             false,
-            new HysteresisEvidence(0, 1, false, reason));
+            new HysteresisEvidence(0, 1, false, reason))
+        {
+            CalibrationId = RigConfigurationDefaults.SafeFakeAttestation.CalibrationId,
+            CalibrationSha256 = RigConfigurationDefaults.SafeFakeAttestation.CalibrationSha256,
+            SensorOrientation = new SensorOrientationResult(0, false, false, false, false),
+            Detector = "fused_four_edge",
+            DetectorVersion = "native_four_edge_v2",
+            SourceWidth = frame.Width,
+            SourceHeight = frame.Height,
+        };
 }
 
 public sealed record FrameAnalysis(GeometryResult Geometry, byte[] JpegBytes, double EncodeMilliseconds);
@@ -147,6 +214,13 @@ public sealed record FrameAnalysis(GeometryResult Geometry, byte[] JpegBytes, do
 public interface IFrameAnalyzer
 {
     ValueTask<GeometryResult> AnalyzeAsync(
+        CameraFrame frame,
+        Epochs epochs,
+        CardSide side,
+        long droppedFrames,
+        CancellationToken cancellationToken);
+
+    ValueTask<GeometryResult> AnalyzeForensicCurrentFrameAsync(
         CameraFrame frame,
         Epochs epochs,
         CardSide side,
@@ -186,7 +260,19 @@ public interface ICameraBackend : IAsyncDisposable
     CameraCapabilities Capabilities { get; }
     IReadOnlyDictionary<string, double> TimingMilliseconds { get; }
 
+    RigConfigurationAttestation LoadedRigConfiguration { get; }
+    RigRuntimePolicy RuntimePolicy { get; }
+
     ValueTask OpenAndConfigureAsync(CancellationToken cancellationToken);
+
+    ValueTask OpenAndConfigureAsync(
+        RigConfigurationExpectation expectedConfiguration,
+        CancellationToken cancellationToken)
+    {
+        LoadedRigConfiguration.Require(expectedConfiguration);
+        return OpenAndConfigureAsync(cancellationToken);
+    }
+
     ValueTask StartPreviewAsync(CancellationToken cancellationToken);
     ValueTask StopAndDrainAsync(CancellationToken cancellationToken);
     ValueTask<CameraFrame> GrabAsync(CancellationToken cancellationToken);

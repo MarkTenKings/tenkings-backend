@@ -77,7 +77,7 @@ public sealed class NativeEdgeDetectorTests
             temporal: false);
 
         Assert.Equal("line_recovery", result.Detector);
-        Assert.Equal(4, result.SourceCorners.Count);
+        Assert.True(result.SourceCorners.Count == 4, $"status={result.Status}; reason={result.Reason}");
         Assert.All(result.Metrics.Edges, edge => Assert.True(edge.GradientSupport > 0.18));
     }
 
@@ -101,7 +101,7 @@ public sealed class NativeEdgeDetectorTests
         var result = TestFrames.Detect(detector, TestFrames.Generate(TestFrames.Spec(clipping: 0.10)), temporal: true);
 
         Assert.NotEqual(GeometryStatus.Ready, result.Status);
-        Assert.Contains(result.Reason, new[] { GeometryReasonCode.ClippedBoundary, GeometryReasonCode.UnsafeCoverage, GeometryReasonCode.UnsafeAspect, GeometryReasonCode.NoBoundary });
+        Assert.Contains(result.Reason, new[] { GeometryReasonCode.ClippedBoundary, GeometryReasonCode.UnsafeCoverage, GeometryReasonCode.UnsafeAspect, GeometryReasonCode.UnsupportedEdge, GeometryReasonCode.NoBoundary });
     }
 
     [Theory]

@@ -20,8 +20,8 @@ internal static class WorkerProgram
         var lighting = new ProtocolLightingCoordinator();
         await using var worker = new NativeCameraWorker(
             camera,
-            new VisionFrameAnalyzer(),
-            new OpenCvPreviewFrameEncoder(options.JpegQuality),
+            new VisionFrameAnalyzer(RigConfigurationDefaults.SafeFakeConfiguration),
+            new OpenCvPreviewFrameEncoder(camera.RuntimePolicy.Preview.JpegQuality),
             lighting,
             new ForensicCaptureWriter(options.OutputRoot),
             options.WorkerId,
@@ -50,7 +50,6 @@ internal sealed record WorkerOptions(
     string OutputRoot,
     string WorkerId,
     long WorkerEpoch,
-    int JpegQuality,
     bool NativeModeEnabled)
 {
     public static WorkerOptions Parse(string[] args)
@@ -80,6 +79,18 @@ internal sealed record WorkerOptions(
         }
 
         var backend = values.GetValueOrDefault("backend", "disabled");
+        var allowedKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "backend",
+            "replay-manifest",
+            "output-root",
+            "worker-id",
+            "worker-epoch",
+        };
+        if (values.Keys.Any(key => !allowedKeys.Contains(key)))
+        {
+            throw new ArgumentException("Worker argument is not in the fixed host policy.");
+        }
         if (backend is not ("fake" or "replay"))
         {
             throw new ArgumentException("Explicit --backend=fake or --backend=replay is required.");
@@ -99,7 +110,6 @@ internal sealed record WorkerOptions(
 
         var workerId = values.GetValueOrDefault("worker-id", "native-worker-1");
         var workerEpoch = long.Parse(values.GetValueOrDefault("worker-epoch", "1"), System.Globalization.CultureInfo.InvariantCulture);
-        var quality = int.Parse(values.GetValueOrDefault("jpeg-quality", "85"), System.Globalization.CultureInfo.InvariantCulture);
-        return new WorkerOptions(backend, replayManifest, outputRoot, workerId, workerEpoch, quality, enableNative);
+        return new WorkerOptions(backend, replayManifest, outputRoot, workerId, workerEpoch, enableNative);
     }
 }

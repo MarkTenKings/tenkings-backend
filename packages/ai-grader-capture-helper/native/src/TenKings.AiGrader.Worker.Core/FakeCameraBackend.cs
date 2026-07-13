@@ -25,6 +25,8 @@ public sealed class FakeCameraBackend : ICameraBackend
     public bool IsOpen { get; private set; }
     public CameraCapabilities Capabilities { get; }
     public IReadOnlyDictionary<string, double> TimingMilliseconds { get; } = new Dictionary<string, double>();
+    public RigConfigurationAttestation LoadedRigConfiguration => RigConfigurationDefaults.SafeFakeAttestation;
+    public RigRuntimePolicy RuntimePolicy => RigConfigurationDefaults.SafeFakeConfiguration.RuntimePolicy;
     public int OpenCount { get; private set; }
     public int CloseCount { get; private set; }
     public int MaximumConcurrentOwners { get; private set; }
@@ -50,6 +52,14 @@ public sealed class FakeCameraBackend : ICameraBackend
         {
             _owner.Release();
         }
+    }
+
+    public ValueTask OpenAndConfigureAsync(
+        RigConfigurationExpectation expectedConfiguration,
+        CancellationToken cancellationToken)
+    {
+        LoadedRigConfiguration.Require(expectedConfiguration);
+        return OpenAndConfigureAsync(cancellationToken);
     }
 
     public async ValueTask StartPreviewAsync(CancellationToken cancellationToken)
@@ -268,6 +278,8 @@ public sealed class ReplayCameraBackend : ICameraBackend
     public bool IsOpen { get; private set; }
     public CameraCapabilities Capabilities { get; }
     public IReadOnlyDictionary<string, double> TimingMilliseconds { get; } = new Dictionary<string, double>();
+    public RigConfigurationAttestation LoadedRigConfiguration => RigConfigurationDefaults.SafeFakeAttestation;
+    public RigRuntimePolicy RuntimePolicy => RigConfigurationDefaults.SafeFakeConfiguration.RuntimePolicy;
     public int OpenCount { get; private set; }
 
     public async ValueTask OpenAndConfigureAsync(CancellationToken cancellationToken)
@@ -286,6 +298,14 @@ public sealed class ReplayCameraBackend : ICameraBackend
         {
             _owner.Release();
         }
+    }
+
+    public ValueTask OpenAndConfigureAsync(
+        RigConfigurationExpectation expectedConfiguration,
+        CancellationToken cancellationToken)
+    {
+        LoadedRigConfiguration.Require(expectedConfiguration);
+        return OpenAndConfigureAsync(cancellationToken);
     }
 
     public ValueTask StartPreviewAsync(CancellationToken cancellationToken) => EnsureOpenAsync(cancellationToken);
@@ -433,6 +453,14 @@ public sealed class NoCardFrameAnalyzer : IFrameAnalyzer
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult(GeometryResult.NotDetected(frame, epochs, side, "no_gradient_supported_edges", droppedFrames));
     }
+
+    public ValueTask<GeometryResult> AnalyzeForensicCurrentFrameAsync(
+        CameraFrame frame,
+        Epochs epochs,
+        CardSide side,
+        long droppedFrames,
+        CancellationToken cancellationToken) =>
+        AnalyzeAsync(frame, epochs, side, droppedFrames, cancellationToken);
 
     public void Reset(Epochs epochs, CardSide side, string reason)
     {

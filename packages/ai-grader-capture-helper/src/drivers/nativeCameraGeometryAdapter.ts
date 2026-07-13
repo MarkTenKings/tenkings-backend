@@ -10,7 +10,7 @@ export interface NativeCameraAdaptedGeometry {
   geometry: CardGeometryMetadata;
   /** Additive native evidence retained without changing grading algorithms. */
   nativeDetector: {
-    version: "native_four_edge_v1";
+    version: "native_four_edge_v2";
     reasonCodes: string[];
     fittedLines: NativeCameraGeometryResult["fittedLines"];
     normalizedCorners: NativeCameraGeometryResult["normalizedCorners"];
@@ -19,8 +19,12 @@ export interface NativeCameraAdaptedGeometry {
     frameAgeMs: number;
     droppedFrames: number;
     frozen: boolean;
+    stale: boolean;
     motionDelta: number | null;
     hysteresis: NativeCameraGeometryResult["hysteresis"];
+    currentFrameAuthority: NativeCameraGeometryResult["currentFrameAuthority"];
+    calibration: NativeCameraGeometryResult["calibration"];
+    sensorOrientation: NativeCameraGeometryResult["sensorOrientation"];
   };
 }
 
@@ -50,7 +54,12 @@ export function adaptNativeCameraGeometry(
 ): NativeCameraAdaptedGeometry {
   if (native.frame.side === "none") throw new Error("Native geometry requires a front or back side epoch.");
   const detected = native.sourceCorners !== null;
-  const ready = native.status === "ready" && !native.frozen && native.hysteresis.currentEvidenceReady;
+  const ready =
+    native.status === "ready" &&
+    !native.frozen &&
+    !native.stale &&
+    native.hysteresis.currentEvidenceReady &&
+    native.currentFrameAuthority.captureReady;
   const box = boundingBox(native);
   const estimatedPixelsPerInch = box ? Math.min(box.width / 2.5, box.height / 3.5) : undefined;
   const centerX = native.center?.x;
@@ -155,7 +164,7 @@ export function adaptNativeCameraGeometry(
       analysisHeight: native.sourceHeight,
     },
     warnings: [
-      "native_four_edge_v1_authoritative; legacy detection.method is an adapter compatibility slot only",
+      "native_four_edge_v2_authoritative; legacy detection.method is an adapter compatibility slot only",
       ...native.reasonCodes,
       ...(native.frozen ? ["frozen_frame_ready_forbidden"] : []),
     ],
@@ -176,8 +185,15 @@ export function adaptNativeCameraGeometry(
       frameAgeMs: native.frameAgeMs,
       droppedFrames: native.droppedFrames,
       frozen: native.frozen,
+      stale: native.stale,
       motionDelta: native.motionDelta,
       hysteresis: { ...native.hysteresis },
+      currentFrameAuthority: {
+        ...native.currentFrameAuthority,
+        rejectionCodes: [...native.currentFrameAuthority.rejectionCodes],
+      },
+      calibration: { ...native.calibration },
+      sensorOrientation: { ...native.sensorOrientation },
     },
   };
 }

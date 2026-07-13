@@ -135,4 +135,79 @@ public sealed class GeometryTrackerTests
         Assert.True(replacement.Hysteresis.RemovalFenceSatisfied);
         Assert.Equal(GeometryStatus.AdjustCard, replacement.Status);
     }
+
+    [Fact]
+    public void Uncalibrated_display_geometry_never_accumulates_ready_evidence_across_four_frames()
+    {
+        using var detector = TestFrames.Detector(readyFrames: 3);
+        var results = Enumerable.Range(1, 4).Select(index =>
+        {
+            var generated = TestFrames.Generate(TestFrames.Spec(), index);
+            return TestFrames.Detect(
+                detector,
+                generated with { Frame = generated.Frame with { Calibration = VisionCalibration.Uncalibrated } },
+                temporal: true);
+        }).ToArray();
+
+        Assert.All(results, result =>
+        {
+            Assert.Equal(GeometryStatus.AdjustCard, result.Status);
+            Assert.Equal(GeometryReasonCode.Uncalibrated, result.Reason);
+            Assert.False(result.CurrentFrameAuthority.CaptureReady);
+            Assert.False(result.Hysteresis.CurrentFrameAccepted);
+            Assert.Equal(0, result.Hysteresis.ConsecutiveAccepted);
+            Assert.Equal(4, result.SourceCorners.Count);
+            Assert.Equal(4, result.DisplayCorners.Count);
+        });
+    }
+
+    [Fact]
+    public void Missing_sensor_orientation_never_accumulates_ready_evidence_across_four_frames()
+    {
+        using var detector = TestFrames.Detector(readyFrames: 3);
+        var results = Enumerable.Range(1, 4).Select(index =>
+        {
+            var generated = TestFrames.Generate(TestFrames.Spec(), index);
+            var calibration = generated.Frame.Calibration with { Orientation = null };
+            return TestFrames.Detect(
+                detector,
+                generated with { Frame = generated.Frame with { Calibration = calibration } },
+                temporal: true);
+        }).ToArray();
+
+        Assert.All(results, result =>
+        {
+            Assert.Equal(GeometryStatus.AdjustCard, result.Status);
+            Assert.Equal(GeometryReasonCode.InvalidOrientation, result.Reason);
+            Assert.False(result.CurrentFrameAuthority.CaptureReady);
+            Assert.False(result.Hysteresis.CurrentFrameAccepted);
+            Assert.Equal(0, result.Hysteresis.ConsecutiveAccepted);
+            Assert.Equal(4, result.SourceCorners.Count);
+        });
+    }
+
+    [Fact]
+    public void Unsafe_current_frame_clears_prior_hysteresis_before_calibrated_recovery()
+    {
+        using var detector = TestFrames.Detector(readyFrames: 3);
+        _ = TestFrames.Detect(detector, TestFrames.Generate(TestFrames.Spec(), 1), temporal: true);
+        var second = TestFrames.Detect(detector, TestFrames.Generate(TestFrames.Spec(), 2), temporal: true);
+        Assert.Equal(2, second.Hysteresis.ConsecutiveAccepted);
+
+        var unsafeFrame = TestFrames.Generate(TestFrames.Spec(), 3);
+        var rejected = TestFrames.Detect(
+            detector,
+            unsafeFrame with { Frame = unsafeFrame.Frame with { Calibration = VisionCalibration.Uncalibrated } },
+            temporal: true);
+        Assert.Equal(0, rejected.Hysteresis.ConsecutiveAccepted);
+
+        var recovery = Enumerable.Range(4, 3)
+            .Select(index => TestFrames.Detect(detector, TestFrames.Generate(TestFrames.Spec(), index), temporal: true))
+            .ToArray();
+        Assert.Equal(GeometryStatus.AdjustCard, recovery[0].Status);
+        Assert.Equal(1, recovery[0].Hysteresis.ConsecutiveAccepted);
+        Assert.Equal(GeometryStatus.AdjustCard, recovery[1].Status);
+        Assert.Equal(2, recovery[1].Hysteresis.ConsecutiveAccepted);
+        Assert.Equal(GeometryStatus.Ready, recovery[2].Status);
+    }
 }

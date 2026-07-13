@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
-using System.Security.Cryptography;
 
 namespace TenKings.AiGrader.Worker.Core;
 
@@ -63,7 +62,8 @@ public sealed record ForensicSideResult(
     double HashMilliseconds,
     bool SafeOffCompleted,
     GeometryResult AuthoritativeAllOnGeometry,
-    ForensicTransformProvenance AuthoritativeTransform);
+    ForensicTransformProvenance AuthoritativeTransform,
+    ForensicPackageCommitResult Package);
 
 public sealed record ForensicTransformProvenance(
     string SourceRole,
@@ -75,6 +75,41 @@ public sealed record ForensicTransformProvenance(
     int NormalizedHeight,
     IReadOnlyList<double> Homography,
     IReadOnlyList<string> ReusedByRoles);
+
+public sealed record ForensicPackageBinding(
+    string ConfigurationId,
+    string ConfigurationSha256,
+    string CalibrationId,
+    string CalibrationSha256,
+    ForensicSensorOrientationBinding Orientation)
+{
+    public static ForensicPackageBinding FromAttestation(RigConfigurationAttestation attestation) => new(
+        attestation.ConfigurationId,
+        attestation.CanonicalSha256,
+        attestation.CalibrationId,
+        attestation.CalibrationSha256,
+        new ForensicSensorOrientationBinding(
+            attestation.Orientation.RotationDegrees,
+            attestation.Orientation.MirrorX,
+            attestation.Orientation.MirrorY,
+            attestation.Orientation.SupportsMirrorX,
+            attestation.Orientation.SupportsMirrorY));
+}
+
+public sealed record ForensicSensorOrientationBinding(
+    int SensorToPortraitRotationDegrees,
+    bool MirrorHorizontal,
+    bool MirrorVertical,
+    bool SupportsMirrorHorizontal,
+    bool SupportsMirrorVertical);
+
+public sealed record ForensicPackageCommitResult(
+    string PackageId,
+    string PackageSha256,
+    string ManifestSha256,
+    string CapturePlanSha256,
+    bool Idempotent,
+    IReadOnlyList<ForensicArtifact> Artifacts);
 
 public static class ForensicPlanValidator
 {
@@ -126,113 +161,11 @@ public sealed class ForensicCaptureWriter
         _outputRoot = Path.GetFullPath(outputRoot);
     }
 
-    public async ValueTask<ForensicArtifact> WriteAsync(
-        string sessionDirectoryName,
-        CardSide side,
-        string role,
-        ForensicCaptureProfile profile,
-        CameraFrame frame,
-        double grabMilliseconds,
-        CancellationToken cancellationToken)
-    {
-        frame.Validate();
-        ValidateSafeName(sessionDirectoryName, nameof(sessionDirectoryName));
-        if (!ForensicRoles.Required.Contains(role, StringComparer.Ordinal))
-        {
-            throw new InvalidDataException("Unknown forensic role.");
-        }
-
-        var sideName = side switch
-        {
-            CardSide.Front => "front",
-            CardSide.Back => "back",
-            _ => throw new InvalidDataException("Forensic write requires front or back."),
-        };
-
-        var extension = profile == ForensicCaptureProfile.FullForensic ? ".png" : ".tiff";
-        var mimeType = profile == ForensicCaptureProfile.FullForensic ? "image/png" : "image/tiff";
-        var fileName = $"{role}{extension}";
-        var directory = Path.GetFullPath(Path.Combine(_outputRoot, sessionDirectoryName, sideName));
-        EnsureContained(directory, _outputRoot);
-        Directory.CreateDirectory(directory);
-        var finalPath = Path.Combine(directory, fileName);
-        var temporaryPath = Path.Combine(directory, $".{fileName}.{Guid.NewGuid():N}.tmp");
-
-        if (File.Exists(finalPath))
-        {
-            throw new IOException("Immutable forensic artifact already exists.");
-        }
-
-        var encodeStart = MonotonicClock.NowTicks;
-        var bytes = profile == ForensicCaptureProfile.FullForensic
-            ? LosslessMono8Encoder.EncodePng(frame)
-            : LosslessMono8Encoder.EncodeTiff(frame);
-        var encodeMilliseconds = MonotonicClock.ElapsedMilliseconds(encodeStart);
-
-        var hashStart = MonotonicClock.NowTicks;
-        var sha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-        var hashMilliseconds = MonotonicClock.ElapsedMilliseconds(hashStart);
-
-        try
-        {
-            await using (var stream = new FileStream(
-                temporaryPath,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                131_072,
-                FileOptions.Asynchronous | FileOptions.WriteThrough))
-            {
-                await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
-            }
-
-            File.Move(temporaryPath, finalPath, overwrite: false);
-        }
-        catch
-        {
-            if (File.Exists(temporaryPath))
-            {
-                File.Delete(temporaryPath);
-            }
-
-            throw;
-        }
-
-        return new ForensicArtifact(
-            role,
-            fileName,
-            sha256,
-            bytes.LongLength,
-            mimeType,
-            frame.Width,
-            frame.Height,
-            frame.FrameId,
-            frame.BlockId,
-            frame.HardwareTimestampTicks,
-            frame.ReceiveTimestampUtc,
-            grabMilliseconds,
-            encodeMilliseconds,
-            hashMilliseconds);
-    }
-
-    private static void ValidateSafeName(string value, string paramName)
-    {
-        if (string.IsNullOrWhiteSpace(value) || value.Length > 128 || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || value.Contains("..", StringComparison.Ordinal))
-        {
-            throw new ArgumentException("Unsafe output directory name.", paramName);
-        }
-    }
-
-    private static void EnsureContained(string candidate, string root)
-    {
-        var rootedPrefix = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!candidate.StartsWith(rootedPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidDataException("Output escaped the configured root.");
-        }
-    }
+    public ValueTask<ForensicCapturePackage> BeginPackageAsync(
+        string sessionId,
+        ForensicSidePlan plan,
+        CancellationToken cancellationToken) =>
+        ForensicCapturePackage.CreateAsync(_outputRoot, sessionId, plan, cancellationToken);
 }
 
 internal static class LosslessMono8Encoder

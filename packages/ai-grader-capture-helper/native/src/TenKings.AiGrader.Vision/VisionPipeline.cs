@@ -4,12 +4,21 @@ using OpenCvSharp;
 namespace TenKings.AiGrader.Vision;
 
 internal sealed record QuadCandidate(Point2f[] Corners, string Source, double Residual);
-internal sealed record EvaluatedCandidate(Point2f[] Corners, string Source, GeometryMetrics Metrics);
+internal sealed record EvaluatedCandidate(
+    Point2f[] Corners,
+    string Source,
+    GeometryMetrics Metrics,
+    bool ExternalBoundaryCorroborated);
 
 internal sealed class PreprocessedImages : IDisposable
 {
     public required Rect SourceRoi { get; init; }
     public required double AnalysisScale { get; init; }
+    public required int SensorWidth { get; init; }
+    public required int SensorHeight { get; init; }
+    public required int PortraitWidth { get; init; }
+    public required int PortraitHeight { get; init; }
+    public required SensorOrientation Orientation { get; init; }
     public required Mat Gray { get; init; }
     public required Mat BrightMask { get; init; }
     public required Mat DarkMask { get; init; }
@@ -27,8 +36,10 @@ internal static class VisionPipeline
     {
         CopyMono8(frame, workspace.Source);
         ApplyUndistortion(workspace.Source, frame.Calibration.Lens, workspace.Corrected);
-        var roi = ToPixelRoi(frame.Calibration.SafeRoi, workspace.Corrected.Width, workspace.Corrected.Height);
-        using var cropped = new Mat(workspace.Corrected, roi);
+        var orientation = frame.Calibration.Orientation ?? SensorOrientation.Identity;
+        SensorCoordinateTransform.ApplyToImage(workspace.Corrected, workspace.Oriented, orientation);
+        var roi = ToPixelRoi(frame.Calibration.SafeRoi, workspace.Oriented.Width, workspace.Oriented.Height);
+        using var cropped = new Mat(workspace.Oriented, roi);
         var scale = Math.Min(1d, options.AnalysisMaxDimension / (double)Math.Max(cropped.Width, cropped.Height));
         if (scale < 0.999) Cv2.Resize(cropped, workspace.Gray, new Size(), scale, scale, InterpolationFlags.Area);
         else cropped.CopyTo(workspace.Gray);
@@ -41,7 +52,8 @@ internal static class VisionPipeline
 
         Cv2.AdaptiveThreshold(workspace.Contrast, workspace.Bright, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, options.AdaptiveBlockSize, options.AdaptiveConstant);
         Cv2.AdaptiveThreshold(workspace.Contrast, workspace.Dark, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.BinaryInv, options.AdaptiveBlockSize, options.AdaptiveConstant);
-        Cv2.Canny(workspace.Contrast, workspace.Canny, options.CannyLow, options.CannyHigh, 3, true);
+        var (cannyLow, cannyHigh) = DataDrivenCannyThresholds(workspace.Contrast, options);
+        Cv2.Canny(workspace.Contrast, workspace.Canny, cannyLow, cannyHigh, 3, true);
         workspace.EnsureKernel(options.MorphologyKernel);
         Cv2.MorphologyEx(workspace.Bright, workspace.BrightClosed, MorphTypes.Close, workspace.MorphKernel, iterations: 1);
         Cv2.MorphologyEx(workspace.Dark, workspace.DarkClosed, MorphTypes.Close, workspace.MorphKernel, iterations: 1);
@@ -52,6 +64,11 @@ internal static class VisionPipeline
         {
             SourceRoi = roi,
             AnalysisScale = scale,
+            SensorWidth = frame.Width,
+            SensorHeight = frame.Height,
+            PortraitWidth = workspace.Oriented.Width,
+            PortraitHeight = workspace.Oriented.Height,
+            Orientation = orientation,
             Gray = workspace.Gray,
             BrightMask = workspace.BrightClosed,
             DarkMask = workspace.DarkClosed,
@@ -77,7 +94,7 @@ internal static class VisionPipeline
 
     public static EvaluatedCandidate? Evaluate(QuadCandidate candidate, PreprocessedImages images, DetectorOptions options)
     {
-        var corners = VisionMath.OrderCorners(candidate.Corners);
+        var corners = VisionMath.OrderPortraitCorners(candidate.Corners);
         if (corners.Length != 4 || !VisionMath.IsConvex(corners)) return null;
         var evidence = new List<EdgeEvidence>(4);
         var lengths = new double[4];
@@ -118,7 +135,13 @@ internal static class VisionPipeline
             clearance >= options.MinClearanceFraction,
             perspective, perspectiveScore, convexity, residualScore, meanResidualPixels, edgeSupport, continuity,
             ReadOnly.Wrap(evidence));
-        return new EvaluatedCandidate(corners, candidate.Source, metrics);
+        var boundary = SampleExternalBoundary(corners, images, options);
+        return new EvaluatedCandidate(
+            corners,
+            candidate.Source,
+            metrics,
+            boundary.MeanContrast >= options.MinExternalBoundaryContrast &&
+                boundary.Continuity >= options.MinExternalBoundaryContinuity);
     }
 
     private static void AddContours(Mat mask, ICollection<QuadCandidate> candidates)
@@ -192,35 +215,43 @@ internal static class VisionPipeline
 
     private static EdgeSample SampleEdge(Point2f start, Point2f end, PreprocessedImages images, double residual)
     {
+        const int supportRadius = 6;
+        const int tangentRadius = 1;
         var samples = Math.Clamp((int)Math.Round(VisionMath.Distance(start, end)), 32, 240);
         var supportCount = 0;
         var continuityCount = 0;
-        var nx = -(end.Y - start.Y);
-        var ny = end.X - start.X;
-        var normalLength = Math.Max(1e-6, Math.Sqrt((nx * nx) + (ny * ny)));
-        nx /= (float)normalLength;
-        ny /= (float)normalLength;
+        var edgeX = end.X - start.X;
+        var edgeY = end.Y - start.Y;
+        var edgeLength = Math.Max(1e-6, Math.Sqrt((edgeX * edgeX) + (edgeY * edgeY)));
+        var tx = edgeX / (float)edgeLength;
+        var ty = edgeY / (float)edgeLength;
+        var nx = -ty;
+        var ny = tx;
         for (var index = 0; index < samples; index++)
         {
             var amount = (index + 0.5) / samples;
-            var x = (int)Math.Round(start.X + ((end.X - start.X) * amount));
-            var y = (int)Math.Round(start.Y + ((end.Y - start.Y) * amount));
-            if (x < 2 || y < 2 || x >= images.Edges.Width - 2 || y >= images.Edges.Height - 2) continue;
+            var baseX = start.X + (edgeX * amount);
+            var baseY = start.Y + (edgeY * amount);
             var supported = false;
             var continuous = false;
-            for (var oy = -2; oy <= 2; oy++)
+            for (var normalOffset = -supportRadius; normalOffset <= supportRadius; normalOffset++)
             {
-                for (var ox = -2; ox <= 2; ox++)
+                for (var tangentOffset = -tangentRadius; tangentOffset <= tangentRadius; tangentOffset++)
                 {
-                    var gx = images.GradientX.At<float>(y + oy, x + ox);
-                    var gy = images.GradientY.At<float>(y + oy, x + ox);
+                    var x = (int)Math.Round(baseX + (nx * normalOffset) + (tx * tangentOffset));
+                    var y = (int)Math.Round(baseY + (ny * normalOffset) + (ty * tangentOffset));
+                    if (x < 0 || y < 0 || x >= images.Edges.Width || y >= images.Edges.Height) continue;
+                    var gx = images.GradientX.At<float>(y, x);
+                    var gy = images.GradientY.At<float>(y, x);
                     var magnitude = Math.Sqrt((gx * gx) + (gy * gy));
                     if (magnitude > 24)
                     {
-                        supported |= Math.Abs(((gx * nx) + (gy * ny)) / magnitude) >= 0.25;
+                        var aligned = Math.Abs(((gx * nx) + (gy * ny)) / magnitude) >= 0.25;
+                        supported |= aligned;
+                        continuous |= aligned;
                     }
 
-                    continuous |= images.Edges.At<byte>(y + oy, x + ox) > 0;
+                    continuous |= images.Edges.At<byte>(y, x) > 0;
                 }
             }
 
@@ -231,6 +262,61 @@ internal static class VisionPipeline
         var support = supportCount / (double)samples;
         var continuity = continuityCount / (double)samples;
         return new EdgeSample(support, continuity, Math.Clamp((support * 0.58) + (continuity * 0.32) + ((1 - residual) * 0.10), 0, 1));
+    }
+
+    private static BoundarySample SampleExternalBoundary(
+        IReadOnlyList<Point2f> corners,
+        PreprocessedImages images,
+        DetectorOptions options)
+    {
+        var center = new Point2f(
+            corners.Average(static point => point.X),
+            corners.Average(static point => point.Y));
+        double contrastTotal = 0;
+        var supported = 0;
+        var valid = 0;
+        for (var edge = 0; edge < 4; edge++)
+        {
+            var start = corners[edge];
+            var end = corners[(edge + 1) % 4];
+            var dx = end.X - start.X;
+            var dy = end.Y - start.Y;
+            var length = Math.Sqrt((dx * dx) + (dy * dy));
+            if (length <= 1) continue;
+            var nx = (float)(-dy / length);
+            var ny = (float)(dx / length);
+            var midpoint = new Point2f((start.X + end.X) / 2, (start.Y + end.Y) / 2);
+            if (((center.X - midpoint.X) * nx) + ((center.Y - midpoint.Y) * ny) < 0)
+            {
+                nx = -nx;
+                ny = -ny;
+            }
+
+            var offset = Math.Clamp(length * 0.03, 5, 12);
+            var samples = Math.Clamp((int)Math.Round(length * 0.55), 24, 120);
+            for (var index = 0; index < samples; index++)
+            {
+                var amount = 0.08 + (0.84 * (index + 0.5) / samples);
+                var x = start.X + (dx * amount);
+                var y = start.Y + (dy * amount);
+                var insideX = (int)Math.Round(x + (nx * offset));
+                var insideY = (int)Math.Round(y + (ny * offset));
+                var outsideX = (int)Math.Round(x - (nx * offset));
+                var outsideY = (int)Math.Round(y - (ny * offset));
+                if (insideX < 0 || insideY < 0 || outsideX < 0 || outsideY < 0 ||
+                    insideX >= images.Gray.Width || outsideX >= images.Gray.Width ||
+                    insideY >= images.Gray.Height || outsideY >= images.Gray.Height)
+                    continue;
+                var contrast = Math.Abs(images.Gray.At<byte>(insideY, insideX) - images.Gray.At<byte>(outsideY, outsideX));
+                contrastTotal += contrast;
+                supported += contrast >= options.MinExternalBoundaryContrast ? 1 : 0;
+                valid++;
+            }
+        }
+
+        return valid == 0
+            ? new BoundarySample(0, 0)
+            : new BoundarySample(contrastTotal / valid, supported / (double)valid);
     }
 
     private static void CopyMono8(Mono8Frame frame, Mat result)
@@ -286,5 +372,19 @@ internal static class VisionPipeline
         return new Rect(x, y, right - x, bottom - y);
     }
 
+    internal static (double Low, double High) DataDrivenCannyThresholds(Mat mono8, DetectorOptions options)
+    {
+        Cv2.MeanStdDev(mono8, out var mean, out var standardDeviation);
+        var center = Math.Clamp(mean.Val0, 0, 255);
+        var spread = Math.Clamp(standardDeviation.Val0, 0, 127.5);
+        var lowStatistic = center - (spread * (1 + options.CannySigma));
+        var highStatistic = center + (spread * (1 + options.CannySigma));
+        var low = Math.Clamp(lowStatistic, options.CannyLowFloor, options.CannyHigh);
+        var highFloor = Math.Max(options.CannyLow, low + 1);
+        var high = Math.Clamp(highStatistic, highFloor, options.CannyHighCeiling);
+        return (low, high);
+    }
+
     private readonly record struct EdgeSample(double Support, double Continuity, double Score);
+    private readonly record struct BoundarySample(double MeanContrast, double Continuity);
 }

@@ -1,6 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
-
 namespace TenKings.AiGrader.Worker.Core;
 
 public sealed record WorkerHealth(
@@ -47,6 +44,7 @@ public sealed class NativeCameraWorker : IAsyncDisposable
     private readonly ForensicCaptureWriter _writer;
     private readonly LatestFrameQueue<PreviewFrameResult> _previewFrames = new();
     private readonly SemaphoreSlim _stateGate = new(1, 1);
+    private readonly SemaphoreSlim _captureShutdownGate = new(1, 1);
     private readonly long _spawnTicks = MonotonicClock.NowTicks;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, double> _telemetry = new(StringComparer.Ordinal);
     private CancellationTokenSource? _previewCancellation;
@@ -54,12 +52,17 @@ public sealed class NativeCameraWorker : IAsyncDisposable
     private string? _lastPreviewFrameId;
     private string? _lastPreviewBlockId;
     private string _sessionId = string.Empty;
+    private RigConfigurationAttestation? _rigConfiguration;
+    private RigRuntimePolicy? _rigRuntimePolicy;
     private long _previewFrameIntervalTicks;
     private bool _disposed;
     private int _terminalFaultStarted;
+    private int _captureAbortRequested;
+    private long _backendDroppedFrames;
     private readonly TaskCompletionSource _terminalFaultCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Func<string, ValueTask>? TerminalFaulted { get; set; }
+    internal Func<int, CancellationToken, ValueTask>? ForensicRoleStagedTestHook { get; set; }
 
     public NativeCameraWorker(
         ICameraBackend camera,
@@ -88,8 +91,13 @@ public sealed class NativeCameraWorker : IAsyncDisposable
     public bool NativeModeEnabled { get; }
     public string? PublicFaultCode { get; private set; }
     public CameraCapabilities Capabilities => _camera.Capabilities;
+    public RigConfigurationAttestation? RigConfiguration => _rigConfiguration;
 
-    public async ValueTask InitializeAsync(string sessionId, long sessionEpoch, CancellationToken cancellationToken)
+    public async ValueTask InitializeAsync(
+        string sessionId,
+        long sessionEpoch,
+        RigConfigurationExpectation expectedConfiguration,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -108,8 +116,17 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                     throw new InvalidDataException("Session epoch must be nonnegative.");
                 }
 
+                var validatedExpectation = expectedConfiguration.Validate();
+
                 var start = MonotonicClock.NowTicks;
-                await _camera.OpenAndConfigureAsync(cancellationToken).ConfigureAwait(false);
+                await _camera.OpenAndConfigureAsync(validatedExpectation, cancellationToken).ConfigureAwait(false);
+                var attestation = _camera.LoadedRigConfiguration;
+                attestation.Require(validatedExpectation);
+                attestation.Orientation.Validate();
+                var runtimePolicy = _camera.RuntimePolicy;
+                ValidateRuntimePolicy(runtimePolicy);
+                _rigConfiguration = attestation;
+                _rigRuntimePolicy = runtimePolicy;
                 _telemetry["spawn_to_initialize"] = MonotonicClock.ElapsedMilliseconds(_spawnTicks);
                 _telemetry["camera_initialize_open_configure"] = MonotonicClock.ElapsedMilliseconds(start);
                 foreach (var timing in _camera.TimingMilliseconds)
@@ -140,9 +157,9 @@ public sealed class NativeCameraWorker : IAsyncDisposable
         NativeModeEnabled,
         PublicFaultCode,
         new Dictionary<string, double>(_telemetry, StringComparer.Ordinal),
-        _previewFrames.Dropped);
+        TotalDroppedFrames());
 
-    public async ValueTask StartPreviewAsync(long previewEpoch, double maxFramesPerSecond, int jpegQuality, CancellationToken cancellationToken)
+    public async ValueTask StartPreviewAsync(long previewEpoch, CancellationToken cancellationToken)
     {
         try
         {
@@ -151,7 +168,7 @@ public sealed class NativeCameraWorker : IAsyncDisposable
             {
                 RequireState(WorkerState.IdleSafe);
                 RequireNextEpoch(previewEpoch, Epochs.PreviewEpoch, "preview");
-                ConfigurePreviewCadence(maxFramesPerSecond, jpegQuality);
+                ConfigurePreviewCadence();
                 Epochs = Epochs with { PreviewEpoch = previewEpoch };
                 ResetTracking("preview_started");
                 var start = MonotonicClock.NowTicks;
@@ -234,7 +251,7 @@ public sealed class NativeCameraWorker : IAsyncDisposable
             await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                if (State is not (WorkerState.IdleSafe or WorkerState.Previewing or WorkerState.CaptureReady))
+                if (State is not (WorkerState.IdleSafe or WorkerState.CaptureReady))
                 {
                     throw new InvalidOperationException($"invalid_transition:{State}:set_side");
                 }
@@ -263,8 +280,11 @@ public sealed class NativeCameraWorker : IAsyncDisposable
 
     public async ValueTask<ForensicSideResult> ExecuteForensicSidePlanAsync(ForensicSidePlan plan, CancellationToken cancellationToken)
     {
+        var captureGateHeld = false;
         try
         {
+            await _captureShutdownGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            captureGateHeld = true;
             ForensicPlanValidator.Validate(plan);
             if (_lighting is ICaptureScopedLightingCoordinator captureScopedLighting)
             {
@@ -279,6 +299,7 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                     throw new InvalidDataException("Forensic plan side or epochs do not match worker state.");
                 }
 
+                Interlocked.Exchange(ref _captureAbortRequested, 0);
                 State = WorkerState.Capturing;
             }
             finally
@@ -286,6 +307,8 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                 _stateGate.Release();
             }
 
+            var rigConfiguration = _rigConfiguration ?? throw new InvalidOperationException("rig_configuration_not_attested");
+            await using var package = await _writer.BeginPackageAsync(_sessionId, plan, cancellationToken).ConfigureAwait(false);
             var artifacts = new List<ForensicArtifact>(ForensicRoles.Required.Count);
             double acknowledgementMilliseconds = 0;
             double grabMilliseconds = 0;
@@ -301,6 +324,10 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                 foreach (var role in plan.Roles)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (Volatile.Read(ref _captureAbortRequested) != 0)
+                    {
+                        throw new InvalidOperationException("capture_aborted_by_concurrent_shutdown");
+                    }
                     var request = await _lighting.RequestEvidenceRoleProfileAsync(role, Side, Epochs, cancellationToken).ConfigureAwait(false);
                     var acknowledgementStart = MonotonicClock.NowTicks;
                     var acknowledgement = await _lighting.WaitForStableAcknowledgementAsync(request, cancellationToken).ConfigureAwait(false);
@@ -326,6 +353,8 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                     var oneGrabMilliseconds = MonotonicClock.ElapsedMilliseconds(grabStart);
                     grabMilliseconds += oneGrabMilliseconds;
                     frame.Validate();
+                    Interlocked.Exchange(ref _backendDroppedFrames, frame.SourceDroppedFrames);
+                    _telemetry["backend_dropped_frames"] = frame.SourceDroppedFrames;
                     if (artifacts.Count == 0)
                     {
                         _telemetry["first_forensic_frame"] = MonotonicClock.ElapsedMilliseconds(_spawnTicks);
@@ -334,13 +363,13 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                     if (role == "all_on")
                     {
                         _analyzer.Reset(Epochs, Side, "forensic_all_on");
-                        authoritativeGeometry = await _analyzer.AnalyzeAsync(
+                        authoritativeGeometry = await _analyzer.AnalyzeForensicCurrentFrameAsync(
                             frame,
                             Epochs,
                             Side,
-                            _previewFrames.Dropped,
+                            TotalDroppedFrames(frame),
                             cancellationToken).ConfigureAwait(false);
-                        ValidateAuthoritativeGeometry(authoritativeGeometry, frame);
+                        ValidateAuthoritativeGeometry(authoritativeGeometry, frame, plan, rigConfiguration);
                         authoritativeWidth = frame.Width;
                         authoritativeHeight = frame.Height;
                     }
@@ -355,15 +384,16 @@ public sealed class NativeCameraWorker : IAsyncDisposable
 
                     await _lighting.CompleteAuthorizedGrabAsync(request, authorization, frame, cancellationToken).ConfigureAwait(false);
 
-                    var artifact = await _writer.WriteAsync(
-                        SessionDirectoryName(_sessionId),
-                        Side,
+                    var artifact = await package.StageRoleAsync(
                         role,
-                        plan.Profile,
                         frame,
                         oneGrabMilliseconds,
                         cancellationToken).ConfigureAwait(false);
                     artifacts.Add(artifact);
+                    if (ForensicRoleStagedTestHook is not null)
+                    {
+                        await ForensicRoleStagedTestHook(artifacts.Count, cancellationToken).ConfigureAwait(false);
+                    }
                     if (role == "all_on")
                     {
                         authoritativeArtifact = artifact;
@@ -382,7 +412,12 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                     throw new InvalidDataException("forensic_frame_identity_reused");
                 }
 
-                var blockIds = artifacts.Where(static artifact => artifact.BlockId is not null).Select(static artifact => artifact.BlockId!).ToArray();
+                if (artifacts.Any(static artifact => string.IsNullOrWhiteSpace(artifact.BlockId)))
+                {
+                    throw new InvalidDataException("forensic_block_identity_missing");
+                }
+
+                var blockIds = artifacts.Select(static artifact => artifact.BlockId!).ToArray();
                 if (blockIds.Distinct(StringComparer.Ordinal).Count() != blockIds.Length)
                 {
                     throw new InvalidDataException("forensic_block_identity_reused");
@@ -418,9 +453,22 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                 }
 
                 await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                ForensicPackageCommitResult committedPackage;
                 try
                 {
                     RequireState(WorkerState.Capturing);
+                    if (Volatile.Read(ref _captureAbortRequested) != 0)
+                    {
+                        throw new InvalidOperationException("capture_aborted_by_concurrent_shutdown");
+                    }
+
+                    var commitStart = MonotonicClock.NowTicks;
+                    committedPackage = await package.CommitAsync(
+                        ForensicPackageBinding.FromAttestation(rigConfiguration),
+                        authoritativeGeometry,
+                        authoritativeTransform,
+                        cancellationToken).ConfigureAwait(false);
+                    _telemetry["forensic_package_commit"] = MonotonicClock.ElapsedMilliseconds(commitStart);
                     State = WorkerState.IdleSafe;
                 }
                 finally
@@ -444,7 +492,8 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                     hashMilliseconds,
                     safeOffCompleted,
                     authoritativeGeometry,
-                    authoritativeTransform);
+                    authoritativeTransform,
+                    committedPackage);
             }
             finally
             {
@@ -459,28 +508,190 @@ public sealed class NativeCameraWorker : IAsyncDisposable
             await TerminalFaultAsync("forensic_capture_failed").ConfigureAwait(false);
             throw;
         }
+        finally
+        {
+            if (captureGateHeld)
+            {
+                _captureShutdownGate.Release();
+            }
+        }
     }
 
-    private static void ValidateAuthoritativeGeometry(GeometryResult geometry, CameraFrame frame)
+    private static void ValidateAuthoritativeGeometry(
+        GeometryResult geometry,
+        CameraFrame frame,
+        ForensicSidePlan plan,
+        RigConfigurationAttestation rigConfiguration)
     {
         if (!string.Equals(geometry.FrameId, frame.FrameId, StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(frame.BlockId) ||
+            string.IsNullOrWhiteSpace(geometry.BlockId) ||
             !string.Equals(geometry.BlockId, frame.BlockId, StringComparison.Ordinal) ||
+            geometry.Epochs != plan.Epochs ||
+            geometry.Side != plan.Side ||
+            geometry.SourceWidth != frame.Width ||
+            geometry.SourceHeight != frame.Height ||
+            geometry.NormalizedWidth != 1200 ||
+            geometry.NormalizedHeight != 1680 ||
+            !string.Equals(geometry.CalibrationId, rigConfiguration.CalibrationId, StringComparison.Ordinal) ||
+            !string.Equals(geometry.CalibrationSha256, rigConfiguration.CalibrationSha256, StringComparison.Ordinal) ||
+            geometry.SensorOrientation is null ||
+            geometry.SensorOrientation.SensorToPortraitRotationDegrees != rigConfiguration.Orientation.RotationDegrees ||
+            geometry.SensorOrientation.MirrorHorizontal != rigConfiguration.Orientation.MirrorX ||
+            geometry.SensorOrientation.MirrorVertical != rigConfiguration.Orientation.MirrorY ||
+            geometry.SensorOrientation.SupportsMirrorHorizontal != rigConfiguration.Orientation.SupportsMirrorX ||
+            geometry.SensorOrientation.SupportsMirrorVertical != rigConfiguration.Orientation.SupportsMirrorY ||
+            !geometry.CurrentFrameAuthority.NormalizationSafe ||
+            !geometry.CurrentFrameAuthority.CaptureReady ||
+            geometry.CurrentFrameAuthority.RejectionCodes.Count != 0 ||
             geometry.SourceCorners.Count != 4 ||
             geometry.NormalizedCorners.Count != 4 ||
             geometry.FittedLines.Count != 4 ||
             geometry.SourceToNormalizedHomography.Count != 9 ||
             geometry.SourceToNormalizedHomography.Any(static value => !double.IsFinite(value)) ||
-            geometry.Status == "not_detected" ||
+            !string.Equals(geometry.Status, "ready", StringComparison.Ordinal) ||
+            geometry.ReasonCodes.Count != 1 ||
+            !string.Equals(geometry.ReasonCodes[0], "none", StringComparison.Ordinal) ||
             geometry.Stale ||
             geometry.Frozen ||
             !geometry.Metrics.FullVisibility ||
-            geometry.Confidence <= 0)
+            geometry.Confidence < 0.70 ||
+            geometry.Metrics.AspectRatio is < 1.18 or > 1.72 ||
+            geometry.Metrics.Coverage is < 0.12 or > 0.88 ||
+            geometry.Metrics.ClearanceFraction < 0.008 ||
+            geometry.Metrics.PerspectiveSkew > 0.36 ||
+            geometry.Metrics.Edges.Count != 4 ||
+            geometry.Metrics.Edges.Any(static edge =>
+                !double.IsFinite(edge.GradientSupport) || edge.GradientSupport < 0.30 ||
+                !double.IsFinite(edge.Continuity) || edge.Continuity < 0.34 ||
+                !double.IsFinite(edge.Residual) || edge.Residual is < 0 or > 12) ||
+            !CornersAreFiniteOrderedConvex(geometry.SourceCorners) ||
+            !CornersAreInsideSourceFrame(geometry.SourceCorners, frame.Width, frame.Height) ||
+            !CornersAreFiniteOrderedConvex(geometry.NormalizedCorners) ||
+            !PhysicalLongEdgeMapsToNormalizedHeight(geometry.SourceCorners) ||
+            !NormalizedCornersMatchContract(geometry.NormalizedCorners) ||
+            !LinesMatchCorners(geometry.FittedLines, geometry.SourceCorners) ||
+            !HomographyMapsCorners(
+                geometry.SourceToNormalizedHomography,
+                geometry.SourceCorners,
+                geometry.NormalizedCorners))
         {
             throw new InvalidDataException("authoritative_all_on_geometry_incoherent");
         }
     }
 
-    public async ValueTask ResumePreviewAsync(long previewEpoch, double maxFramesPerSecond, int jpegQuality, CancellationToken cancellationToken)
+    private static bool CornersAreInsideSourceFrame(IReadOnlyList<PointD> corners, int width, int height) =>
+        width > 0 && height > 0 && corners.Count == 4 && corners.All(point =>
+            double.IsFinite(point.X) && double.IsFinite(point.Y) &&
+            point.X >= 0 && point.X <= width - 1 &&
+            point.Y >= 0 && point.Y <= height - 1);
+
+    private static bool CornersAreFiniteOrderedConvex(IReadOnlyList<PointD> corners)
+    {
+        if (corners.Count != 4 || corners.Any(static point => !double.IsFinite(point.X) || !double.IsFinite(point.Y)))
+        {
+            return false;
+        }
+
+        double sign = 0;
+        for (var index = 0; index < 4; index++)
+        {
+            var first = corners[index];
+            var second = corners[(index + 1) % 4];
+            var third = corners[(index + 2) % 4];
+            var cross = ((second.X - first.X) * (third.Y - second.Y)) -
+                ((second.Y - first.Y) * (third.X - second.X));
+            if (!double.IsFinite(cross) || Math.Abs(cross) <= 1e-6)
+            {
+                return false;
+            }
+
+            sign = sign == 0 ? Math.Sign(cross) : sign;
+            if (Math.Sign(cross) != Math.Sign(sign))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool PhysicalLongEdgeMapsToNormalizedHeight(IReadOnlyList<PointD> corners)
+    {
+        var width = (Distance(corners[0], corners[1]) + Distance(corners[2], corners[3])) / 2;
+        var height = (Distance(corners[1], corners[2]) + Distance(corners[3], corners[0])) / 2;
+        return double.IsFinite(width) && double.IsFinite(height) && height > width;
+    }
+
+    private static bool NormalizedCornersMatchContract(IReadOnlyList<PointD> corners)
+    {
+        PointD[] expected = [new(0, 0), new(1199, 0), new(1199, 1679), new(0, 1679)];
+        return corners.Select((point, index) => Distance(point, expected[index])).All(static distance => distance <= 1e-6);
+    }
+
+    private static bool LinesMatchCorners(IReadOnlyList<LineD> lines, IReadOnlyList<PointD> corners)
+    {
+        for (var index = 0; index < 4; index++)
+        {
+            var line = lines[index];
+            var first = corners[index];
+            var second = corners[(index + 1) % 4];
+            var norm = Math.Sqrt((line.A * line.A) + (line.B * line.B));
+            if (!double.IsFinite(line.A) || !double.IsFinite(line.B) || !double.IsFinite(line.C) ||
+                norm is < 0.999 or > 1.001 ||
+                Math.Abs((line.A * first.X) + (line.B * first.Y) + line.C) > 1 ||
+                Math.Abs((line.A * second.X) + (line.B * second.Y) + line.C) > 1)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HomographyMapsCorners(
+        IReadOnlyList<double> matrix,
+        IReadOnlyList<PointD> source,
+        IReadOnlyList<PointD> destination)
+    {
+        var determinant =
+            (matrix[0] * ((matrix[4] * matrix[8]) - (matrix[5] * matrix[7]))) -
+            (matrix[1] * ((matrix[3] * matrix[8]) - (matrix[5] * matrix[6]))) +
+            (matrix[2] * ((matrix[3] * matrix[7]) - (matrix[4] * matrix[6])));
+        if (!double.IsFinite(determinant) || Math.Abs(determinant) <= 1e-12)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < 4; index++)
+        {
+            var denominator = (matrix[6] * source[index].X) + (matrix[7] * source[index].Y) + matrix[8];
+            if (!double.IsFinite(denominator) || Math.Abs(denominator) <= 1e-12)
+            {
+                return false;
+            }
+
+            var projected = new PointD(
+                ((matrix[0] * source[index].X) + (matrix[1] * source[index].Y) + matrix[2]) / denominator,
+                ((matrix[3] * source[index].X) + (matrix[4] * source[index].Y) + matrix[5]) / denominator);
+            if (!double.IsFinite(projected.X) || !double.IsFinite(projected.Y) ||
+                Distance(projected, destination[index]) > 1)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static double Distance(PointD first, PointD second)
+    {
+        var x = first.X - second.X;
+        var y = first.Y - second.Y;
+        return Math.Sqrt((x * x) + (y * y));
+    }
+
+    public async ValueTask ResumePreviewAsync(long previewEpoch, CancellationToken cancellationToken)
     {
         try
         {
@@ -489,7 +700,7 @@ public sealed class NativeCameraWorker : IAsyncDisposable
             {
                 RequireState(WorkerState.IdleSafe);
                 RequireNextEpoch(previewEpoch, Epochs.PreviewEpoch, "preview");
-                ConfigurePreviewCadence(maxFramesPerSecond, jpegQuality);
+                ConfigurePreviewCadence();
                 State = WorkerState.Resuming;
                 Epochs = Epochs with { PreviewEpoch = previewEpoch };
                 ResetTracking("preview_resuming");
@@ -558,32 +769,64 @@ public sealed class NativeCameraWorker : IAsyncDisposable
 
     public async ValueTask ShutdownAsync(CancellationToken cancellationToken)
     {
-        if (State == WorkerState.Shutdown)
+        var shutdownGateHeld = false;
+        try
         {
-            return;
-        }
-
-        _previewCancellation?.Cancel();
-        if (_previewTask is not null)
-        {
+            await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                await _previewTask.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
+                if (State == WorkerState.Shutdown)
+                {
+                    return;
+                }
 
-        var safeOff = await _lighting.SafeOffAsync("worker_shutdown", cancellationToken).ConfigureAwait(false);
-        if (!safeOff.Completed)
-        {
-            throw new InvalidOperationException("safe_off_failed");
+                if (State == WorkerState.Capturing)
+                {
+                    Interlocked.Exchange(ref _captureAbortRequested, 1);
+                }
+                else
+                {
+                    RequireState(WorkerState.IdleSafe);
+                }
+            }
+            finally
+            {
+                _stateGate.Release();
+            }
+
+            await _captureShutdownGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            shutdownGateHeld = true;
+            await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                RequireState(WorkerState.IdleSafe);
+                var safeOff = await _lighting.SafeOffAsync("worker_shutdown", cancellationToken).ConfigureAwait(false);
+                if (!safeOff.Completed)
+                {
+                    throw new InvalidOperationException("safe_off_failed");
+                }
+                await _camera.CloseAsync(cancellationToken).ConfigureAwait(false);
+                State = WorkerState.Shutdown;
+                DisposePreviewCancellation();
+                _previewFrames.Clear();
+            }
+            finally
+            {
+                _stateGate.Release();
+            }
         }
-        await _camera.CloseAsync(cancellationToken).ConfigureAwait(false);
-        State = WorkerState.Shutdown;
-        DisposePreviewCancellation();
-        _previewFrames.Clear();
+        catch
+        {
+            await TerminalFaultAsync("shutdown_failed").ConfigureAwait(false);
+            throw;
+        }
+        finally
+        {
+            if (shutdownGateHeld)
+            {
+                _captureShutdownGate.Release();
+            }
+        }
     }
 
     public async ValueTask TerminalFaultAsync(string publicFaultCode)
@@ -601,22 +844,24 @@ public sealed class NativeCameraWorker : IAsyncDisposable
 
         try
         {
-            PublicFaultCode = SanitizePublicCode(publicFaultCode);
-            State = WorkerState.TerminalFault;
-            _previewCancellation?.Cancel();
-            var terminalFaulted = TerminalFaulted;
-            if (terminalFaulted is not null)
+            await _stateGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
             {
-                try
+                if (State == WorkerState.Shutdown)
                 {
-                    await terminalFaulted(PublicFaultCode).ConfigureAwait(false);
+                    return;
                 }
-                catch
-                {
-                    // The process is terminal regardless of whether the protocol
-                    // sink is still writable. The host exits non-zero.
-                }
+
+                PublicFaultCode = SanitizePublicCode(publicFaultCode);
+                State = WorkerState.TerminalFault;
+                _previewCancellation?.Cancel();
             }
+            finally
+            {
+                _stateGate.Release();
+            }
+            // Physical safety coordination precedes best-effort protocol
+            // diagnostics. A wedged stdout sink must never delay safe-off.
             await AttemptSafeOffAsync(PublicFaultCode).ConfigureAwait(false);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             try
@@ -633,6 +878,21 @@ public sealed class NativeCameraWorker : IAsyncDisposable
             }
 
             ResetTracking(PublicFaultCode);
+            var terminalFaulted = TerminalFaulted;
+            if (terminalFaulted is not null)
+            {
+                var notification = terminalFaulted(PublicFaultCode).AsTask();
+                try
+                {
+                    await notification.WaitAsync(TimeSpan.FromMilliseconds(1500)).ConfigureAwait(false);
+                }
+                catch
+                {
+                    ObserveFaultedTask(notification);
+                    // The process is terminal regardless of whether the protocol
+                    // sink is still writable. The host exits non-zero.
+                }
+            }
         }
         finally
         {
@@ -676,6 +936,7 @@ public sealed class NativeCameraWorker : IAsyncDisposable
         await _camera.DisposeAsync().ConfigureAwait(false);
         _previewFrames.Dispose();
         _stateGate.Dispose();
+        _captureShutdownGate.Dispose();
     }
 
     private async Task RunPreviewLoopAsync(CancellationToken cancellationToken)
@@ -690,13 +951,15 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                 await Task.Yield();
                 var frame = await _camera.GrabAsync(cancellationToken).ConfigureAwait(false);
                 frame.Validate();
+                Interlocked.Exchange(ref _backendDroppedFrames, frame.SourceDroppedFrames);
+                var droppedFrames = TotalDroppedFrames(frame);
                 var frozen = string.Equals(_lastPreviewFrameId, frame.FrameId, StringComparison.Ordinal) ||
                     (!string.IsNullOrEmpty(_lastPreviewBlockId) && !string.IsNullOrEmpty(frame.BlockId) && string.Equals(_lastPreviewBlockId, frame.BlockId, StringComparison.Ordinal));
                 _lastPreviewFrameId = frame.FrameId;
                 _lastPreviewBlockId = frame.BlockId;
 
                 var detectStart = MonotonicClock.NowTicks;
-                var geometry = await _analyzer.AnalyzeAsync(frame, Epochs, Side, _previewFrames.Dropped, cancellationToken).ConfigureAwait(false);
+                var geometry = await _analyzer.AnalyzeAsync(frame, Epochs, Side, droppedFrames, cancellationToken).ConfigureAwait(false);
                 var detectEnd = MonotonicClock.NowTicks;
                 if (geometry.FrameId != frame.FrameId || geometry.BlockId != frame.BlockId || geometry.Epochs != Epochs || geometry.Side != Side)
                 {
@@ -707,11 +970,7 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                 if (frozen)
                 {
                     _analyzer.Reset(Epochs, Side, "frozen_frame");
-                    geometry = GeometryResult.NotDetected(frame, Epochs, Side, "frozen_frame", _previewFrames.Dropped) with
-                    {
-                        Frozen = true,
-                        Stale = true,
-                    };
+                    geometry = RejectFrozenGeometry(geometry, droppedFrames);
                 }
 
                 var jpeg = await _previewEncoder.EncodeJpegAsync(frame, cancellationToken).ConfigureAwait(false);
@@ -739,11 +998,13 @@ public sealed class NativeCameraWorker : IAsyncDisposable
                     MonotonicClock.ElapsedMilliseconds(detectStart, detectEnd),
                     MonotonicClock.ElapsedMilliseconds(detectEnd, encodeEnd),
                     MonotonicClock.ElapsedMilliseconds(frame.MonotonicReceiveTicks, encodeEnd),
-                    _previewFrames.Dropped,
+                    droppedFrames,
                     frozen);
                 _previewFrames.Publish(result);
                 _telemetry["detect"] = result.DetectMilliseconds;
                 _telemetry["encode"] = result.EncodeMilliseconds;
+                _telemetry["backend_dropped_frames"] = frame.SourceDroppedFrames;
+                _telemetry["queue_dropped_frames"] = _previewFrames.Dropped;
                 if (firstFrame)
                 {
                     _telemetry["first_preview_frame"] = MonotonicClock.ElapsedMilliseconds(_spawnTicks);
@@ -781,6 +1042,12 @@ public sealed class NativeCameraWorker : IAsyncDisposable
         }
     }
 
+    private static void ObserveFaultedTask(Task task) => _ = task.ContinueWith(
+        static completed => _ = completed.Exception,
+        CancellationToken.None,
+        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+        TaskScheduler.Default);
+
     private void ResetTracking(string reason)
     {
         _lastPreviewFrameId = null;
@@ -788,6 +1055,35 @@ public sealed class NativeCameraWorker : IAsyncDisposable
         _previewFrames.Clear();
         _analyzer.Reset(Epochs, Side, reason);
     }
+
+    private long TotalDroppedFrames(CameraFrame? frame = null)
+    {
+        var backendDrops = frame?.SourceDroppedFrames ?? Interlocked.Read(ref _backendDroppedFrames);
+        return checked(backendDrops + _previewFrames.Dropped);
+    }
+
+    private static GeometryResult RejectFrozenGeometry(GeometryResult geometry, long droppedFrames) =>
+        geometry with
+        {
+            Status = "not_detected",
+            ReasonCodes = ["frozen_frame"],
+            SourceCorners = [],
+            NormalizedCorners = [],
+            FittedLines = [],
+            SourceToNormalizedHomography = [],
+            Center = new PointD(0, 0),
+            Scale = 0,
+            RotationDegrees = 0,
+            Confidence = 0,
+            Metrics = new GeometryMetrics([], 0, 0, 0, 0, 0, 0),
+            DroppedFrames = droppedFrames,
+            Frozen = true,
+            Stale = true,
+            MotionDelta = 0,
+            RemovalFenceSatisfied = false,
+            Hysteresis = new HysteresisEvidence(0, Math.Max(1, geometry.Hysteresis.RequiredFrames), false, "frozen_frame"),
+            CurrentFrameAuthority = CurrentFrameAuthorityResult.Unsafe("frozen_frame"),
+        };
 
     private void RequireState(WorkerState expected)
     {
@@ -797,19 +1093,28 @@ public sealed class NativeCameraWorker : IAsyncDisposable
         }
     }
 
-    private void ConfigurePreviewCadence(double maxFramesPerSecond, int jpegQuality)
+    private void ConfigurePreviewCadence()
     {
-        if (!double.IsFinite(maxFramesPerSecond) || maxFramesPerSecond < 1 || maxFramesPerSecond > _camera.Capabilities.MaxPreviewFramesPerSecond)
+        var policy = _rigRuntimePolicy ?? throw new InvalidOperationException("rig_runtime_policy_unavailable");
+        ValidateRuntimePolicy(policy);
+        _previewFrameIntervalTicks = Math.Max(
+            1,
+            (long)(System.Diagnostics.Stopwatch.Frequency / policy.Preview.FramesPerSecond));
+    }
+
+    private void ValidateRuntimePolicy(RigRuntimePolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        policy.Validate();
+        if (policy.Preview.FramesPerSecond > _camera.Capabilities.MaxPreviewFramesPerSecond)
         {
-            throw new InvalidDataException("preview_frame_rate_out_of_bounds");
+            throw new InvalidDataException("rig_preview_frame_rate_unsupported");
         }
 
-        if (jpegQuality != _previewEncoder.JpegQuality)
+        if (policy.Preview.JpegQuality != _previewEncoder.JpegQuality)
         {
-            throw new InvalidDataException("preview_jpeg_quality_mismatch");
+            throw new InvalidDataException("rig_preview_jpeg_quality_mismatch");
         }
-
-        _previewFrameIntervalTicks = Math.Max(1, (long)(System.Diagnostics.Stopwatch.Frequency / maxFramesPerSecond));
     }
 
     private static void RequireNextEpoch(long candidate, long current, string name)
@@ -829,12 +1134,6 @@ public sealed class NativeCameraWorker : IAsyncDisposable
         }
 
         return value;
-    }
-
-    private static string SessionDirectoryName(string sessionId)
-    {
-        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(sessionId));
-        return $"session-{Convert.ToHexString(digest.AsSpan(0, 12)).ToLowerInvariant()}";
     }
 
     private static string SanitizePublicCode(string value)

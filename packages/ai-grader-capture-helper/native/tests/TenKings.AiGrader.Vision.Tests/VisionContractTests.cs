@@ -36,6 +36,18 @@ public sealed class VisionContractTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new NormalizedRoi(0.9, 0, 0.2, 1).Validate());
         Assert.Throws<ArgumentException>(() => new LensCalibration(new[] { 1d, 2d }, new[] { 0d, 0, 0, 0 }).Validate());
         new LensCalibration(new[] { 1d, 0, 0, 0, 1, 0, 0, 0, 1 }, new[] { 0d, 0, 0, 0 }).Validate();
+
+        var invalidMatrices = new[]
+        {
+            new[] { 500d, 0, 320, 0.1, 500, 240, 0, 0, 1 },
+            new[] { 500d, 0, 320, 0, 500, 240, 0.1, 0, 1 },
+            new[] { 500d, 0, 320, 0, 500, 240, 0, 0.1, 1 },
+            new[] { 500d, 0, 320, 0, 500, 240, 0, 0, 2 },
+            new[] { 0.5d, 0, 320, 0, 500, 240, 0, 0, 1 },
+            new[] { 500d, 0, 9000, 0, 500, 240, 0, 0, 1 },
+        };
+        Assert.All(invalidMatrices, matrix => Assert.Throws<ArgumentException>(() =>
+            new LensCalibration(matrix, new[] { 0d, 0, 0, 0 }).Validate()));
     }
 
     [Fact]

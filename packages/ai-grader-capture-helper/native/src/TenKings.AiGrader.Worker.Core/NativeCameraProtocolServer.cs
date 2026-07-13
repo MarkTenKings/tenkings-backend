@@ -12,6 +12,8 @@ public sealed class NativeCameraProtocolServer
     public const string ProtocolVersion = "tenkings.ai-grader.native-camera.v1";
     public const int MaximumMessageBytes = 1024 * 1024;
     public const int MaximumTimeoutMilliseconds = 120_000;
+    public const int MaximumInFlightCommands = 32;
+    public const int MaximumRememberedRequests = 256;
 
     private static readonly Regex SafeIdentifier = new(
         "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
@@ -32,7 +34,9 @@ public sealed class NativeCameraProtocolServer
     private readonly SemaphoreSlim _previewEmissionGate = new(1, 1);
     private readonly object _requestGate = new();
     private readonly Dictionary<string, RequestRecord> _requests = new(StringComparer.Ordinal);
-    private readonly List<Task> _activeCommands = [];
+    private readonly Queue<string> _requestOrder = new();
+    private readonly HashSet<Task> _activeCommands = [];
+    private readonly HashSet<string> _activeRequestIds = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _lifetime = new();
     private long _lastInputSequence;
     private long _outputSequence;
@@ -44,6 +48,29 @@ public sealed class NativeCameraProtocolServer
     internal Func<CancellationToken, ValueTask>? PreviewEmissionAfterCorrelationTestHook { get; set; }
     internal Action? PreviewDrainStartedTestHook { get; set; }
     internal int TerminalFaultEventCountForTest => Volatile.Read(ref _terminalFaultEventEmitted);
+    internal int ActiveCommandCountForTest
+    {
+        get
+        {
+            lock (_requestGate)
+            {
+                return _activeCommands.Count;
+            }
+        }
+    }
+
+    internal int RememberedRequestCountForTest
+    {
+        get
+        {
+            lock (_requestGate)
+            {
+                return _requests.Count;
+            }
+        }
+    }
+
+    internal void TrackCommandForTest(Task task) => TrackCommand(task, requestId: null);
 
     public NativeCameraProtocolServer(
         NativeCameraWorker worker,
@@ -66,7 +93,7 @@ public sealed class NativeCameraProtocolServer
     public async Task<int> RunAsync(CancellationToken cancellationToken)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
-        var previewTask = EmitPreviewFramesAsync(linked.Token);
+        var previewTask = EmitPreviewFramesWithFaultBoundaryAsync(linked.Token);
         var pendingLine = new MemoryStream();
         var buffer = new byte[8192];
         try
@@ -79,7 +106,7 @@ public sealed class NativeCameraProtocolServer
                     if (pendingLine.Length > 0)
                     {
                         await FaultMalformedAsync("TRUNCATED_MESSAGE", "Protocol input ended before a newline.", linked.Token).ConfigureAwait(false);
-                        return 2;
+                        return await DrainActiveAndReturnTerminalAsync().ConfigureAwait(false);
                     }
 
                     break;
@@ -93,7 +120,7 @@ public sealed class NativeCameraProtocolServer
                         if (pendingLine.Length == 0)
                         {
                             await FaultMalformedAsync("EMPTY_MESSAGE", "Empty protocol lines are forbidden.", linked.Token).ConfigureAwait(false);
-                            return 2;
+                            return await DrainActiveAndReturnTerminalAsync().ConfigureAwait(false);
                         }
 
                         var line = pendingLine.ToArray();
@@ -105,7 +132,7 @@ public sealed class NativeCameraProtocolServer
 
                         if (!await AcceptLineAsync(line, linked.Token).ConfigureAwait(false))
                         {
-                            return 2;
+                            return await DrainActiveAndReturnTerminalAsync().ConfigureAwait(false);
                         }
                     }
                     else
@@ -114,29 +141,30 @@ public sealed class NativeCameraProtocolServer
                         if (pendingLine.Length > MaximumMessageBytes)
                         {
                             await FaultMalformedAsync("MESSAGE_TOO_LARGE", "Protocol line exceeds one MiB.", linked.Token).ConfigureAwait(false);
-                            return 2;
+                            return await DrainActiveAndReturnTerminalAsync().ConfigureAwait(false);
                         }
                     }
                 }
             }
 
-            Task[] active;
-            lock (_requestGate)
-            {
-                active = _activeCommands.ToArray();
-            }
-
-            await Task.WhenAll(active).ConfigureAwait(false);
+            await AwaitActiveCommandsAsync(bounded: false).ConfigureAwait(false);
             return _worker.State == WorkerState.TerminalFault ? 2 : 0;
         }
         catch (OperationCanceledException) when (linked.IsCancellationRequested)
         {
+            if (_worker.State is not (WorkerState.Shutdown or WorkerState.TerminalFault))
+            {
+                await _worker.TerminalFaultAsync("protocol_cancelled").ConfigureAwait(false);
+            }
+
+            await AwaitActiveCommandsAsync(bounded: true).ConfigureAwait(false);
             return _worker.State is WorkerState.Shutdown ? 0 : 2;
         }
         catch (Exception)
         {
             await _diagnostics.WriteLineAsync("native_worker_protocol_fault").ConfigureAwait(false);
             await _worker.TerminalFaultAsync("protocol_server_crash").ConfigureAwait(false);
+            await AwaitActiveCommandsAsync(bounded: true).ConfigureAwait(false);
             return 2;
         }
         finally
@@ -145,10 +173,14 @@ public sealed class NativeCameraProtocolServer
             pendingLine.Dispose();
             try
             {
-                await previewTask.ConfigureAwait(false);
+                await previewTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
+            }
+            catch (TimeoutException)
+            {
+                ObserveTask(previewTask);
             }
         }
     }
@@ -173,41 +205,88 @@ public sealed class NativeCameraProtocolServer
         }
 
         var fingerprint = Convert.ToHexString(SHA256.HashData(line));
+        ProtocolAdmission admission;
         lock (_requestGate)
         {
             if (_requests.TryGetValue(command.RequestId, out var prior))
             {
                 if (!string.Equals(prior.Fingerprint, fingerprint, StringComparison.Ordinal))
                 {
-                    _ = FaultMalformedAsync("DUPLICATE_REQUEST_MISMATCH", "Duplicate request ID changed content.", CancellationToken.None);
-                    return false;
+                    admission = ProtocolAdmission.DuplicateMismatch;
+                }
+                else
+                {
+                    admission = ProtocolAdmission.ExactDuplicate;
+                }
+            }
+            else if (command.Sequence != checked(_lastInputSequence + 1))
+            {
+                admission = ProtocolAdmission.OutOfOrder;
+            }
+            else if (_activeCommands.Count >= MaximumInFlightCommands)
+            {
+                admission = ProtocolAdmission.TooManyInFlight;
+            }
+            else
+            {
+                _lastInputSequence = command.Sequence;
+                _requests.Add(command.RequestId, new RequestRecord(fingerprint));
+                _requestOrder.Enqueue(command.RequestId);
+                _activeRequestIds.Add(command.RequestId);
+                while (_requests.Count > MaximumRememberedRequests)
+                {
+                    var candidates = _requestOrder.Count;
+                    var removed = false;
+                    while (candidates-- > 0)
+                    {
+                        var oldest = _requestOrder.Dequeue();
+                        if (_activeRequestIds.Contains(oldest))
+                        {
+                            _requestOrder.Enqueue(oldest);
+                            continue;
+                        }
+
+                        _requests.Remove(oldest);
+                        removed = true;
+                        break;
+                    }
+
+                    if (!removed)
+                    {
+                        throw new InvalidOperationException("No completed request was available for bounded eviction.");
+                    }
                 }
 
-                var duplicateTask = EmitFailureResultAsync(command, "DUPLICATE_REQUEST", "Request ID was already accepted.", CancellationToken.None).AsTask();
-                _activeCommands.Add(duplicateTask);
-                return true;
+                admission = ProtocolAdmission.Accepted;
             }
+        }
 
-            if (command.Sequence != checked(_lastInputSequence + 1))
-            {
-                _ = FaultMalformedAsync("OUT_OF_ORDER_COMMAND", "Command sequence did not advance by one.", CancellationToken.None);
+        switch (admission)
+        {
+            case ProtocolAdmission.DuplicateMismatch:
+                await FaultMalformedAsync("DUPLICATE_REQUEST_MISMATCH", "Duplicate request ID changed content.", CancellationToken.None).ConfigureAwait(false);
                 return false;
-            }
-
-            _lastInputSequence = command.Sequence;
-            _requests.Add(command.RequestId, new RequestRecord(fingerprint));
-            if (_requests.Count > 256)
-            {
-                var oldest = _requests.Keys.First();
-                _requests.Remove(oldest);
-            }
+            case ProtocolAdmission.OutOfOrder:
+                await FaultMalformedAsync("OUT_OF_ORDER_COMMAND", "Command sequence did not advance by one.", CancellationToken.None).ConfigureAwait(false);
+                return false;
+            case ProtocolAdmission.TooManyInFlight:
+                await FaultMalformedAsync("TOO_MANY_IN_FLIGHT", "Protocol command concurrency exceeded the fixed bound.", CancellationToken.None).ConfigureAwait(false);
+                return false;
+            case ProtocolAdmission.ExactDuplicate:
+                await EmitFailureResultAsync(
+                    command,
+                    "DUPLICATE_REQUEST",
+                    "Request ID was already accepted.",
+                    cancellationToken).ConfigureAwait(false);
+                return true;
+            case ProtocolAdmission.Accepted:
+                break;
+            default:
+                throw new InvalidOperationException("Unknown protocol admission result.");
         }
 
         var task = ExecuteCommandAsync(command, cancellationToken);
-        lock (_requestGate)
-        {
-            _activeCommands.Add(task);
-        }
+        TrackCommand(task, command.RequestId);
 
         if (command.Command is not (
             "execute_forensic_plan" or "lighting_ack" or "lighting_completion" or
@@ -219,21 +298,115 @@ public sealed class NativeCameraProtocolServer
         return _worker.State != WorkerState.TerminalFault;
     }
 
-    private async Task ExecuteCommandAsync(ValidatedCommand command, CancellationToken serverCancellationToken)
+    private async Task AwaitActiveCommandsAsync(bool bounded)
     {
-        using var commandTimeout = CreateCommandTimeout(command, serverCancellationToken);
+        Task[] active;
+        lock (_requestGate)
+        {
+            active = _activeCommands.ToArray();
+        }
+
+        if (active.Length == 0)
+        {
+            return;
+        }
+
+        var all = Task.WhenAll(active);
         try
         {
+            if (bounded)
+            {
+                await all.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+            }
+            else
+            {
+                await all.ConfigureAwait(false);
+            }
+        }
+        catch (TimeoutException)
+        {
+            ObserveTask(all);
+        }
+        catch (Exception) when (bounded)
+        {
+            ObserveTask(all);
+        }
+    }
+
+    private async Task<int> DrainActiveAndReturnTerminalAsync()
+    {
+        await AwaitActiveCommandsAsync(bounded: true).ConfigureAwait(false);
+        return 2;
+    }
+
+    private static void ObserveTask(Task task) => _ = task.ContinueWith(
+        static completed => _ = completed.Exception,
+        CancellationToken.None,
+        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+        TaskScheduler.Default);
+
+    private void TrackCommand(Task task, string? requestId)
+    {
+        lock (_requestGate)
+        {
+            if (_activeCommands.Count >= MaximumInFlightCommands)
+            {
+                throw new InvalidOperationException("Protocol in-flight command bound was exceeded.");
+            }
+
+            if (!_activeCommands.Add(task))
+            {
+                throw new InvalidOperationException("Protocol task was already tracked.");
+            }
+        }
+
+        _ = task.ContinueWith(
+            static (completed, state) =>
+            {
+                var tracked = ((NativeCameraProtocolServer Server, string? RequestId))state!;
+                if (completed.IsFaulted)
+                {
+                    // Reading Exception marks the aggregate observed; command handling normally
+                    // converts failures into terminal results, but no task may become unobserved.
+                    _ = completed.Exception;
+                }
+
+                lock (tracked.Server._requestGate)
+                {
+                    tracked.Server._activeCommands.Remove(completed);
+                    if (tracked.RequestId is not null)
+                    {
+                        tracked.Server._activeRequestIds.Remove(tracked.RequestId);
+                    }
+                }
+            },
+            (this, requestId),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private async Task ExecuteCommandAsync(ValidatedCommand command, CancellationToken serverCancellationToken)
+    {
+        CancellationTokenSource? commandTimeout = null;
+        try
+        {
+            commandTimeout = CreateCommandTimeout(command, serverCancellationToken);
             ValidateCommandAgainstWorker(command);
             object payload;
             SafeOffCompletionPayload? acceptedSafeOff = null;
             switch (command.Command)
             {
                 case "initialize":
-                    ValidateInitializePayload(command.Payload);
+                    var expectedConfiguration = ValidateInitializePayload(command.Payload);
                     _sessionId = command.SessionId;
-                    await _worker.InitializeAsync(command.SessionId, command.SessionEpoch, commandTimeout.Token).ConfigureAwait(false);
-                    payload = StatePayload();
+                    await _worker.InitializeAsync(command.SessionId, command.SessionEpoch, expectedConfiguration, commandTimeout.Token).ConfigureAwait(false);
+                    payload = new
+                    {
+                        state = StateName(_worker.State),
+                        rigConfiguration = RigAttestationPayload(),
+                        timing = TimingPayload(),
+                    };
                     break;
                 case "health":
                     RequireEmptyPayload(command.Payload);
@@ -244,6 +417,7 @@ public sealed class NativeCameraProtocolServer
                         healthy = health.State is not (WorkerState.TerminalFault or WorkerState.Shutdown),
                         backend = health.BackendKind,
                         cameraOpen = health.CameraOpen,
+                        rigConfigurationVerified = _worker.RigConfiguration is not null,
                         automaticFallbackAttempted = false,
                         timing = TimingPayload(),
                     };
@@ -262,8 +436,8 @@ public sealed class NativeCameraProtocolServer
                     };
                     break;
                 case "start_preview":
-                    var startSettings = ParsePreviewPayload(command.Payload);
-                    await _worker.StartPreviewAsync(command.PreviewEpoch, startSettings.MaxFramesPerSecond, startSettings.JpegQuality, commandTimeout.Token).ConfigureAwait(false);
+                    RequireEmptyPayload(command.Payload);
+                    await _worker.StartPreviewAsync(command.PreviewEpoch, commandTimeout.Token).ConfigureAwait(false);
                     payload = StatePayload();
                     break;
                 case "stop_drain":
@@ -322,6 +496,15 @@ public sealed class NativeCameraProtocolServer
                             homography = capture.AuthoritativeTransform.Homography,
                             reusedByRoles = capture.AuthoritativeTransform.ReusedByRoles,
                         },
+                        rigConfiguration = RigAttestationPayload(),
+                        package = new
+                        {
+                            packageId = capture.Package.PackageId,
+                            packageSha256 = capture.Package.PackageSha256,
+                            manifestSha256 = capture.Package.ManifestSha256,
+                            capturePlanSha256 = capture.Package.CapturePlanSha256,
+                            idempotent = capture.Package.Idempotent,
+                        },
                         captureDurationMs = MonotonicClock.ElapsedMilliseconds(captureStart),
                         droppedFrames = _worker.GetHealth().PreviewDrops,
                         timing = TimingPayload(),
@@ -349,8 +532,8 @@ public sealed class NativeCameraProtocolServer
                     payload = StatePayload();
                     break;
                 case "resume_preview":
-                    var resumeSettings = ParsePreviewPayload(command.Payload);
-                    await _worker.ResumePreviewAsync(command.PreviewEpoch, resumeSettings.MaxFramesPerSecond, resumeSettings.JpegQuality, commandTimeout.Token).ConfigureAwait(false);
+                    RequireEmptyPayload(command.Payload);
+                    await _worker.ResumePreviewAsync(command.PreviewEpoch, commandTimeout.Token).ConfigureAwait(false);
                     payload = StatePayload();
                     break;
                 case "safe_idle":
@@ -389,7 +572,45 @@ public sealed class NativeCameraProtocolServer
         {
             var code = exception is OperationCanceledException ? "WORKER_TIMEOUT" : "WORKER_FAILURE";
             await _worker.TerminalFaultAsync(code.ToLowerInvariant()).ConfigureAwait(false);
-            await EmitFailureResultAsync(command, code, "Native command failed terminally.", CancellationToken.None).ConfigureAwait(false);
+            await TryEmitFailureResultAsync(command, code).ConfigureAwait(false);
+        }
+        finally
+        {
+            commandTimeout?.Dispose();
+        }
+    }
+
+    private async Task EmitPreviewFramesWithFaultBoundaryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await EmitPreviewFramesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception)
+        {
+            await _diagnostics.WriteLineAsync("native_worker_preview_protocol_fault").ConfigureAwait(false);
+            await _worker.TerminalFaultAsync("preview_protocol_emission_failed").ConfigureAwait(false);
+        }
+    }
+
+    private async Task TryEmitFailureResultAsync(ValidatedCommand command, string code)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        var emission = EmitFailureResultAsync(
+            command,
+            code,
+            "Native command failed terminally.",
+            timeout.Token).AsTask();
+        try
+        {
+            await emission.WaitAsync(TimeSpan.FromMilliseconds(1500)).ConfigureAwait(false);
+        }
+        catch
+        {
+            ObserveTask(emission);
         }
     }
 
@@ -566,16 +787,19 @@ public sealed class NativeCameraProtocolServer
             return;
         }
 
+        _lifetime.Cancel();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        var emission = EmitTerminalFaultAsync(
+            publicCode.ToUpperInvariant(),
+            "Native worker terminally faulted.",
+            timeout.Token).AsTask();
         try
         {
-            await EmitTerminalFaultAsync(
-                publicCode.ToUpperInvariant(),
-                "Native worker terminally faulted.",
-                CancellationToken.None).ConfigureAwait(false);
+            await emission.WaitAsync(TimeSpan.FromMilliseconds(1500)).ConfigureAwait(false);
         }
-        finally
+        catch
         {
-            _lifetime.Cancel();
+            ObserveTask(emission);
         }
     }
 
@@ -708,7 +932,8 @@ public sealed class NativeCameraProtocolServer
         var aspectRatio = EstimateAspectRatio(geometry.SourceCorners);
         return new
         {
-            detectorVersion = "native_four_edge_v1",
+            detectorVersion = geometry.DetectorVersion,
+            detector = geometry.Detector,
             status = geometry.Status,
             reasonCodes = geometry.ReasonCodes.Take(16),
             sourceCorners,
@@ -718,6 +943,30 @@ public sealed class NativeCameraProtocolServer
             sourceHeight,
             normalizedWidth = 1200,
             normalizedHeight = 1680,
+            sourceToNormalizedHomography = geometry.SourceToNormalizedHomography.Count == 9
+                ? geometry.SourceToNormalizedHomography
+                : null,
+            calibration = new
+            {
+                id = geometry.CalibrationId,
+                sha256 = geometry.CalibrationSha256,
+            },
+            sensorOrientation = geometry.SensorOrientation is null
+                ? null
+                : new
+                {
+                    rotationDegrees = geometry.SensorOrientation.SensorToPortraitRotationDegrees,
+                    mirrorHorizontal = geometry.SensorOrientation.MirrorHorizontal,
+                    mirrorVertical = geometry.SensorOrientation.MirrorVertical,
+                    supportsMirrorHorizontal = geometry.SensorOrientation.SupportsMirrorHorizontal,
+                    supportsMirrorVertical = geometry.SensorOrientation.SupportsMirrorVertical,
+                },
+            currentFrameAuthority = new
+            {
+                normalizationSafe = geometry.CurrentFrameAuthority.NormalizationSafe,
+                captureReady = geometry.CurrentFrameAuthority.CaptureReady,
+                rejectionCodes = geometry.CurrentFrameAuthority.RejectionCodes.Take(32),
+            },
             center = sourceCorners is null ? null : new { x = geometry.Center.X, y = geometry.Center.Y },
             scale = sourceCorners is null ? (double?)null : geometry.Scale,
             rotationDegrees = sourceCorners is null ? (double?)null : geometry.RotationDegrees,
@@ -733,8 +982,10 @@ public sealed class NativeCameraProtocolServer
                 aspectScore = geometry.Metrics.AspectScore,
                 coverage = geometry.Metrics.Coverage,
                 clearance = geometry.Metrics.ClearanceScore,
+                clearanceFraction = geometry.Metrics.ClearanceFraction,
                 fullVisibility = geometry.Metrics.FullVisibility && !geometry.Stale && !frozen,
                 perspective = geometry.Metrics.PerspectiveScore,
+                perspectiveSkew = geometry.Metrics.PerspectiveSkew,
             },
             frame = frameIdentity,
             detectMonotonicMs = TicksToMilliseconds(geometry.DetectionMonotonicTicks),
@@ -742,6 +993,7 @@ public sealed class NativeCameraProtocolServer
             frameAgeMs = frameAgeMilliseconds,
             droppedFrames,
             frozen,
+            stale = geometry.Stale,
             motionDelta = geometry.MotionDelta,
             hysteresis = new
             {
@@ -835,6 +1087,26 @@ public sealed class NativeCameraProtocolServer
     };
 
     private object StatePayload() => new { state = StateName(_worker.State), timing = TimingPayload() };
+
+    private object RigAttestationPayload()
+    {
+        var rig = _worker.RigConfiguration ?? throw new InvalidOperationException("rig_configuration_not_attested");
+        return new
+        {
+            configurationId = rig.ConfigurationId,
+            configurationSha256 = rig.CanonicalSha256,
+            calibrationId = rig.CalibrationId,
+            calibrationSha256 = rig.CalibrationSha256,
+            sensorOrientation = new
+            {
+                rotationDegrees = rig.Orientation.RotationDegrees,
+                mirrorHorizontal = rig.Orientation.MirrorX,
+                mirrorVertical = rig.Orientation.MirrorY,
+                supportsMirrorHorizontal = rig.Orientation.SupportsMirrorX,
+                supportsMirrorVertical = rig.Orientation.SupportsMirrorY,
+            },
+        };
+    }
 
     private object TimingPayload()
     {
@@ -951,28 +1223,17 @@ public sealed class NativeCameraProtocolServer
         "resume_preview", "safe_idle", "shutdown",
     ];
 
-    private void ValidateInitializePayload(JsonElement payload)
+    private RigConfigurationExpectation ValidateInitializePayload(JsonElement payload)
     {
-        RequireExactKeys(payload, ["backend", "configurationId"], ["calibrationId"]);
-        var backend = RequiredString(payload, "backend", 16, safe: true);
-        if (backend != _worker.GetHealth().BackendKind)
+        RequireExactKeys(payload, ["configurationId", "configurationSha256"]);
+        var configurationId = RequiredString(payload, "configurationId", 128, safe: true);
+        var configurationSha256 = RequiredString(payload, "configurationSha256", 64, safe: false);
+        if (configurationSha256.Length != 64 || configurationSha256.Any(static character => character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
         {
-            throw new InvalidDataException("Requested backend does not match this worker process.");
+            throw new InvalidDataException("Configuration SHA-256 must be canonical lowercase hex.");
         }
 
-        RequiredString(payload, "configurationId", 128, safe: true);
-        if (payload.TryGetProperty("calibrationId", out var calibration))
-        {
-            ValidateString(calibration, 128, safe: true);
-        }
-    }
-
-    private static PreviewSettings ParsePreviewPayload(JsonElement payload)
-    {
-        RequireExactKeys(payload, ["maxFps", "jpegQuality"]);
-        return new PreviewSettings(
-            RequiredNumber(payload, "maxFps", 1, 60),
-            checked((int)RequiredInteger(payload, "jpegQuality", 1, 100)));
+        return new RigConfigurationExpectation(configurationId, configurationSha256);
     }
 
     private static CardSide ParseSetSidePayload(JsonElement payload)
@@ -1159,7 +1420,6 @@ public sealed class NativeCameraProtocolServer
         JsonElement Payload);
 
     private sealed record CapturePayload(string CaptureId, ForensicCaptureProfile Profile, IReadOnlyList<string> Roles);
-    private sealed record PreviewSettings(double MaxFramesPerSecond, int JpegQuality);
     private sealed record LightingAcknowledgementPayload(
         string CaptureRequestId,
         string Role,
@@ -1169,4 +1429,13 @@ public sealed class NativeCameraProtocolServer
     private sealed record LightingCompletionPayload(string CaptureRequestId, string Role, string AuthorizationId);
     private sealed record SafeOffCompletionPayload(string SafeOffRequestId, bool Safe);
     private sealed record RequestRecord(string Fingerprint);
+
+    private enum ProtocolAdmission
+    {
+        Accepted,
+        ExactDuplicate,
+        DuplicateMismatch,
+        OutOfOrder,
+        TooManyInFlight,
+    }
 }

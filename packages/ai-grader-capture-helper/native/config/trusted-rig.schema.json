@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tenkings.local/schemas/ai-grader-trusted-rig-v1.json",
+  "title": "Ten Kings AI Grader trusted rig contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "version", "configurationId", "canonicalSha256", "camera", "settings",
+    "preview", "queue", "output", "calibration", "orientation", "timeouts"
+  ],
+  "properties": {
+    "schema": { "const": "tenkings.ai-grader.trusted-rig" },
+    "version": { "const": 1 },
+    "configurationId": { "$ref": "#/$defs/identifier" },
+    "canonicalSha256": { "$ref": "#/$defs/sha256" },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selectorKind", "selectorValue", "expectedVendor", "expectedModel", "expectedDeviceType", "expectedTransport"],
+      "properties": {
+        "selectorKind": { "enum": ["serial_number", "user_defined_name"] },
+        "selectorValue": { "$ref": "#/$defs/identifier" },
+        "expectedVendor": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "expectedModel": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "expectedDeviceType": { "const": "BaslerGigE" },
+        "expectedTransport": { "const": "GEV" }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pixelFormat", "sensorWidth", "sensorHeight", "offsetX", "offsetY",
+        "exposureMicroseconds", "gain", "exposureAuto", "gainAuto", "acquisitionMode",
+        "triggerSelector", "triggerMode", "triggerSource", "lineSelector", "lineMode",
+        "lineInverter", "lineSource"
+      ],
+      "properties": {
+        "pixelFormat": { "const": "Mono8" },
+        "sensorWidth": { "type": "integer", "minimum": 64, "maximum": 8192 },
+        "sensorHeight": { "type": "integer", "minimum": 64, "maximum": 8192 },
+        "offsetX": { "type": "integer", "minimum": 0, "maximum": 8192 },
+        "offsetY": { "type": "integer", "minimum": 0, "maximum": 8192 },
+        "exposureMicroseconds": { "type": "number", "minimum": 1, "maximum": 100000 },
+        "gain": { "type": "number", "minimum": -24, "maximum": 48 },
+        "exposureAuto": { "const": "Off" },
+        "gainAuto": { "const": "Off" },
+        "acquisitionMode": { "const": "Continuous" },
+        "triggerSelector": { "const": "FrameStart" },
+        "triggerMode": { "const": "Off" },
+        "triggerSource": { "const": "Software" },
+        "lineSelector": { "const": "Line2" },
+        "lineMode": { "const": "Output" },
+        "lineInverter": { "type": "boolean" },
+        "lineSource": { "const": "ExposureActive" }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["framesPerSecond", "jpegQuality"],
+      "properties": {
+        "framesPerSecond": { "type": "number", "minimum": 1, "maximum": 60 },
+        "jpegQuality": { "type": "integer", "minimum": 40, "maximum": 95 }
+      }
+    },
+    "queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outputQueueSize", "previewGrabStrategy", "forensicGrabStrategy"],
+      "properties": {
+        "outputQueueSize": { "const": 1 },
+        "previewGrabStrategy": { "const": "LatestImages" },
+        "forensicGrabStrategy": { "const": "OneByOne" }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formats", "losslessMono8", "normalizedWidth", "normalizedHeight"],
+      "properties": {
+        "formats": { "const": ["png", "tiff"] },
+        "losslessMono8": { "const": true },
+        "normalizedWidth": { "const": 1200 },
+        "normalizedHeight": { "const": 1680 }
+      }
+    },
+    "calibration": { "$ref": "#/$defs/calibration" },
+    "orientation": { "$ref": "#/$defs/orientation" },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "initializeMilliseconds", "openMilliseconds", "configureMilliseconds",
+        "grabMilliseconds", "drainMilliseconds", "shutdownMilliseconds"
+      ],
+      "properties": {
+        "initializeMilliseconds": { "$ref": "#/$defs/timeout" },
+        "openMilliseconds": { "$ref": "#/$defs/timeout" },
+        "configureMilliseconds": { "$ref": "#/$defs/timeout" },
+        "grabMilliseconds": { "$ref": "#/$defs/timeout" },
+        "drainMilliseconds": { "$ref": "#/$defs/timeout" },
+        "shutdownMilliseconds": { "$ref": "#/$defs/timeout" }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timeout": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 30000
+    },
+    "orientation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rotationDegrees", "mirrorX", "mirrorY", "supportsMirrorX", "supportsMirrorY"],
+      "properties": {
+        "rotationDegrees": { "enum": [0, 90, 180, 270] },
+        "mirrorX": { "type": "boolean" },
+        "mirrorY": { "type": "boolean" },
+        "supportsMirrorX": { "type": "boolean" },
+        "supportsMirrorY": { "type": "boolean" }
+      }
+    },
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calibrationId", "calibrationSha256", "safeRoi", "lens", "orientation"],
+      "properties": {
+        "calibrationId": { "$ref": "#/$defs/identifier" },
+        "calibrationSha256": { "$ref": "#/$defs/sha256" },
+        "safeRoi": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "width", "height"],
+          "properties": {
+            "x": { "type": "number", "minimum": 0, "maximum": 1 },
+            "y": { "type": "number", "minimum": 0, "maximum": 1 },
+            "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+            "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+          }
+        },
+        "lens": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["cameraMatrix", "distortionCoefficients"],
+              "properties": {
+                "cameraMatrix": {
+                  "type": "array",
+                  "minItems": 9,
+                  "maxItems": 9,
+                  "items": { "type": "number" }
+                },
+                "distortionCoefficients": {
+                  "type": "array",
+                  "minItems": 4,
+                  "maxItems": 12,
+                  "items": { "type": "number" }
+                }
+              }
+            }
+          ]
+        },
+        "orientation": { "$ref": "#/$defs/orientation" }
+      }
+    }
+  }
+}

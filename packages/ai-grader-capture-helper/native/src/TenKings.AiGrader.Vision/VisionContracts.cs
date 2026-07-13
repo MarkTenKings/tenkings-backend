@@ -41,6 +41,42 @@ public enum GeometryReasonCode
     ClippedBoundary,
     ExcessPerspective,
     InconsistentEvidence,
+    Uncalibrated,
+    InvalidOrientation,
+    InvalidHomography,
+    UnsupportedEdge,
+    UnsafeContinuity,
+    ExcessResidual,
+}
+
+public enum GeometryAuthorityRejectionCode
+{
+    FrameIdentityMismatch,
+    BlockIdentityMismatch,
+    EpochMismatch,
+    SideMismatch,
+    CalibrationMismatch,
+    Uncalibrated,
+    InvalidOrientation,
+    RejectedStatus,
+    FailedReason,
+    StaleFrame,
+    FrozenFrame,
+    InvalidSourceDimensions,
+    InvalidCorners,
+    InvalidLines,
+    InvalidHomography,
+    UnsafeVisibility,
+    UnsafeClearance,
+    UnsafeAspect,
+    UnsafeCoverage,
+    ExcessPerspective,
+    LowConfidence,
+    UnsupportedEdge,
+    UnsafeContinuity,
+    ExcessResidual,
+    UnsupportedLensTransform,
+    InvalidNormalization,
 }
 
 public enum CardEdge
@@ -60,7 +96,7 @@ public readonly record struct PointD(double X, double Y)
 
 public sealed record FrameIdentity(
     string FrameId,
-    long? BlockId,
+    ulong? BlockId,
     ulong? HardwareTimestamp,
     DateTimeOffset CaptureTimestampUtc,
     long ReceiveMonotonicTicks)
@@ -77,9 +113,9 @@ public sealed record FrameIdentity(
             throw new ArgumentException("FrameId contains unsafe characters.", nameof(FrameId));
         }
 
-        if (BlockId is < 0 || ReceiveMonotonicTicks < 0)
+        if (ReceiveMonotonicTicks < 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(BlockId), "Frame counters must be non-negative.");
+            throw new ArgumentOutOfRangeException(nameof(ReceiveMonotonicTicks), "Receive monotonic ticks must be non-negative.");
         }
     }
 }
@@ -126,11 +162,52 @@ public sealed record LensCalibration(
 {
     public void Validate()
     {
+        const double maximumFocalLength = Mono8Frame.MaxDimension * 16d;
         if (CameraMatrix.Count != 9 || DistortionCoefficients.Count is < 4 or > 14 ||
             CameraMatrix.Any(static value => !double.IsFinite(value)) ||
-            DistortionCoefficients.Any(static value => !double.IsFinite(value)))
+            DistortionCoefficients.Any(static value => !double.IsFinite(value)) ||
+            CameraMatrix[0] is < 1 or > maximumFocalLength || CameraMatrix[4] is < 1 or > maximumFocalLength ||
+            Math.Abs(CameraMatrix[1]) > Mono8Frame.MaxDimension ||
+            CameraMatrix[2] is < 0 or > Mono8Frame.MaxDimension ||
+            Math.Abs(CameraMatrix[3]) > 1e-12 || CameraMatrix[5] is < 0 or > Mono8Frame.MaxDimension ||
+            Math.Abs(CameraMatrix[6]) > 1e-12 || Math.Abs(CameraMatrix[7]) > 1e-12 ||
+            Math.Abs(CameraMatrix[8] - 1) > 1e-12 ||
+            (DistortionCoefficients.Count > 12 && DistortionCoefficients.Skip(12).Any(static value => Math.Abs(value) > 1e-12)))
         {
-            throw new ArgumentException("Lens calibration must have a finite 3x3 matrix and 4-14 distortion coefficients.");
+            throw new ArgumentException("Lens calibration must use a bounded canonical OpenCV camera matrix and supported 4-12 coefficient model; tilt coefficients must be zero.");
+        }
+    }
+}
+
+[Flags]
+public enum SensorMirrorSupport
+{
+    None = 0,
+    Horizontal = 1,
+    Vertical = 2,
+}
+
+/// <summary>
+/// Declares the fixed transform from raw sensor pixels to the calibrated portrait display frame.
+/// It describes rig mounting only and never infers a card's printed top/bottom from artwork.
+/// Mirrors are legal only when the trusted calibration explicitly declares support for that axis.
+/// </summary>
+public sealed record SensorOrientation(
+    int SensorToPortraitRotationDegrees,
+    bool MirrorHorizontal,
+    bool MirrorVertical,
+    SensorMirrorSupport SupportedMirrors)
+{
+    public static SensorOrientation Identity { get; } = new(0, false, false, SensorMirrorSupport.None);
+
+    public void Validate()
+    {
+        if (SensorToPortraitRotationDegrees is not (0 or 90 or 180 or 270) ||
+            (SupportedMirrors & ~(SensorMirrorSupport.Horizontal | SensorMirrorSupport.Vertical)) != 0 ||
+            (MirrorHorizontal && !SupportedMirrors.HasFlag(SensorMirrorSupport.Horizontal)) ||
+            (MirrorVertical && !SupportedMirrors.HasFlag(SensorMirrorSupport.Vertical)))
+        {
+            throw new ArgumentException("Sensor orientation is not a supported bounded rig transform.");
         }
     }
 }
@@ -138,9 +215,16 @@ public sealed record LensCalibration(
 public sealed record VisionCalibration(
     string CalibrationId,
     NormalizedRoi SafeRoi,
-    LensCalibration? Lens)
+    LensCalibration? Lens,
+    string? CalibrationDigest = null,
+    SensorOrientation? Orientation = null)
 {
-    public static VisionCalibration Uncalibrated { get; } = new("uncalibrated", NormalizedRoi.SafeDefault, null);
+    public static VisionCalibration Uncalibrated { get; } = new("uncalibrated", NormalizedRoi.SafeDefault, null, null, null);
+
+    public bool IsAuthorityCalibrated =>
+        !CalibrationId.Equals("uncalibrated", StringComparison.OrdinalIgnoreCase) &&
+        IsCanonicalSha256(CalibrationDigest) &&
+        Orientation is not null;
 
     public void Validate()
     {
@@ -152,7 +236,16 @@ public sealed record VisionCalibration(
 
         SafeRoi.Validate();
         Lens?.Validate();
+        Orientation?.Validate();
+        if (CalibrationDigest is not null && !IsCanonicalSha256(CalibrationDigest))
+        {
+            throw new ArgumentException("CalibrationDigest must be a canonical lowercase SHA-256 digest.", nameof(CalibrationDigest));
+        }
     }
+
+    private static bool IsCanonicalSha256(string? value) =>
+        value is { Length: 64 } && value.All(static character =>
+            character is >= '0' and <= '9' or >= 'a' and <= 'f');
 }
 
 public sealed record Mono8Frame(
@@ -197,6 +290,9 @@ public sealed record DetectorOptions
     public double AdaptiveConstant { get; init; } = 5;
     public double CannyLow { get; init; } = 35;
     public double CannyHigh { get; init; } = 110;
+    public double CannySigma { get; init; } = 0.33;
+    public double CannyLowFloor { get; init; } = 20;
+    public double CannyHighCeiling { get; init; } = 180;
     public int MorphologyKernel { get; init; } = 7;
     public double ExpectedAspectRatio { get; init; } = 1.4;
     public double MinAspectRatio { get; init; } = 1.18;
@@ -206,6 +302,10 @@ public sealed record DetectorOptions
     public double MinConfidence { get; init; } = 0.58;
     public double ReadyConfidence { get; init; } = 0.70;
     public double MinEdgeSupport { get; init; } = 0.30;
+    public double MinEdgeContinuity { get; init; } = 0.34;
+    public double MinExternalBoundaryContrast { get; init; } = 10;
+    public double MinExternalBoundaryContinuity { get; init; } = 0.45;
+    public double MaxMeanResidualPixels { get; init; } = 12;
     public double MinClearanceFraction { get; init; } = 0.008;
     public double MaxPerspectiveSkew { get; init; } = 0.36;
     public double MaxFrameAgeMs { get; init; } = 250;
@@ -219,9 +319,14 @@ public sealed record DetectorOptions
     {
         if (AnalysisMaxDimension is < 320 or > 4096 || AdaptiveBlockSize is < 3 or > 101 || AdaptiveBlockSize % 2 == 0 ||
             MorphologyKernel is < 1 or > 31 || MorphologyKernel % 2 == 0 ||
+            CannyLow is <= 0 or >= 255 || CannyHigh <= CannyLow || CannyHigh > 255 ||
+            CannySigma is <= 0 or > 1 || CannyLowFloor is <= 0 or >= 255 ||
+            CannyHighCeiling <= CannyLowFloor || CannyHighCeiling > 255 ||
             MinCoverage <= 0 || MaxCoverage >= 1 || MinCoverage >= MaxCoverage ||
             MinConfidence is <= 0 or >= 1 || ReadyConfidence < MinConfidence || ReadyConfidence >= 1 ||
-            MinEdgeSupport is <= 0 or >= 1 || MinAspectRatio <= 0 || MaxAspectRatio <= MinAspectRatio ||
+            MinEdgeSupport is <= 0 or >= 1 || MinEdgeContinuity is <= 0 or >= 1 ||
+            MinExternalBoundaryContrast is <= 0 or > 128 || MinExternalBoundaryContinuity is <= 0 or >= 1 ||
+            MaxMeanResidualPixels is <= 0 or > 100 || MinAspectRatio <= 0 || MaxAspectRatio <= MinAspectRatio ||
             ExpectedAspectRatio < MinAspectRatio || ExpectedAspectRatio > MaxAspectRatio ||
             MinClearanceFraction is < 0 or > 0.1 || MaxPerspectiveSkew is <= 0 or >= 1 ||
             MaxFrameAgeMs <= 0 || ReadyEvidenceFrames is < 1 or > 12 ||
@@ -279,6 +384,24 @@ public sealed record HysteresisEvidence(
     double MotionDeltaFraction,
     bool RemovalFenceSatisfied);
 
+public sealed record GeometryAuthorityExpectation(
+    string FrameId,
+    ulong? BlockId,
+    FrameEpochs Epochs,
+    CardSide Side,
+    string CalibrationId,
+    string CalibrationDigest,
+    SensorOrientation Orientation);
+
+public sealed record CurrentFrameAuthority(
+    bool NormalizationSafe,
+    bool CaptureReady,
+    IReadOnlyList<GeometryAuthorityRejectionCode> RejectionCodes)
+{
+    public static CurrentFrameAuthority Unsafe(params GeometryAuthorityRejectionCode[] reasons) =>
+        new(false, false, ReadOnly.Wrap(reasons.Length == 0 ? new[] { GeometryAuthorityRejectionCode.RejectedStatus } : reasons));
+}
+
 public sealed record GeometryResult(
     GeometryStatus Status,
     GeometryReasonCode Reason,
@@ -309,6 +432,19 @@ public sealed record GeometryResult(
     bool Stale,
     HysteresisEvidence Hysteresis)
 {
+    public string? CalibrationDigest { get; init; }
+    public SensorOrientation? SensorOrientation { get; init; }
+    /// <summary>
+    /// True when detection was performed in an undistorted image but source
+    /// coordinates were mapped back through a non-linear lens model. A single
+    /// projective homography cannot describe that transform for interior
+    /// points, so this result is display-only until the protocol carries an
+    /// explicit non-linear normalization chain.
+    /// </summary>
+    public bool NonlinearLensCalibrationApplied { get; init; }
+    public bool ExternalBoundaryCorroborated { get; init; }
+    public CurrentFrameAuthority CurrentFrameAuthority { get; init; } = CurrentFrameAuthority.Unsafe();
+
     public static GeometryResult Rejected(
         Mono8Frame frame,
         DetectionContext context,
@@ -347,7 +483,12 @@ public sealed record GeometryResult(
             frame.DroppedFrames,
             frozen,
             stale,
-            new HysteresisEvidence(0, 0, false, true, 0, false));
+            new HysteresisEvidence(0, 0, false, true, 0, false))
+        {
+            CalibrationDigest = frame.Calibration.CalibrationDigest,
+            SensorOrientation = frame.Calibration.Orientation,
+            NonlinearLensCalibrationApplied = frame.Calibration.Lens is not null,
+        };
     }
 
     public static GeometryMetrics EmptyMetrics { get; } = new(

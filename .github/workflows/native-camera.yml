@@ -1,0 +1,114 @@
+name: Native Camera (Dormant)
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/native-camera.yml"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "packages/ai-grader-capture-helper/package.json"
+      - "packages/ai-grader-capture-helper/native/**"
+      - "packages/ai-grader-capture-helper/src/drivers/nativeCamera*.ts"
+      - "packages/ai-grader-capture-helper/tests/nativeCamera*.test.js"
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/native-camera.yml"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "packages/ai-grader-capture-helper/package.json"
+      - "packages/ai-grader-capture-helper/native/**"
+      - "packages/ai-grader-capture-helper/src/drivers/nativeCamera*.ts"
+      - "packages/ai-grader-capture-helper/tests/nativeCamera*.test.js"
+
+permissions:
+  contents: read
+
+jobs:
+  fake-replay:
+    name: Windows x64 fake/replay (SDK disabled)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+      NUGET_XMLDOC_MODE: skip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Assert hardware SDK boundary
+        shell: pwsh
+        run: |
+          if ($env:PYLON_SDK_ROOT -or $env:PYLON_ASSEMBLY_PATH -or $env:BASLER_PYLON_PATH) {
+            throw "Pylon/Basler SDK environment is forbidden in dormant native CI."
+          }
+          if (Test-Path Env:AI_GRADER_STATION_BRIDGE_TOKEN) {
+            throw "Station credentials are forbidden in dormant native CI."
+          }
+
+      - name: Install repository dependencies (locked)
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore native solution (locked)
+        shell: pwsh
+        run: ./packages/ai-grader-capture-helper/native/scripts/restore-locked.ps1
+
+      - name: Build native solution without Pylon SDK
+        run: >-
+          dotnet build packages/ai-grader-capture-helper/native/TenKings.AiGrader.NativeCamera.sln
+          --configuration Release
+          --no-restore
+          --disable-build-servers
+          -m:1
+          -warnaserror
+          -p:Platform=x64
+          -p:EnablePylonCompile=false
+          -p:ContinuousIntegrationBuild=true
+
+      - name: Test fake/replay native projects
+        run: >-
+          dotnet test packages/ai-grader-capture-helper/native/TenKings.AiGrader.NativeCamera.sln
+          --configuration Release
+          --no-build
+          --no-restore
+          --disable-build-servers
+          -m:1
+          -p:Platform=x64
+          -p:EnablePylonCompile=false
+          -p:ContinuousIntegrationBuild=true
+
+      - name: Verify production-threshold replay decision baseline
+        shell: pwsh
+        run: ./packages/ai-grader-capture-helper/native/scripts/verify-replay-report.ps1
+
+      - name: Build capture helper TypeScript
+        run: pnpm --filter @tenkings/ai-grader-capture-helper build
+
+      - name: Test native TypeScript seam
+        run: >-
+          node --test
+          packages/ai-grader-capture-helper/tests/nativeCameraProtocol.test.js
+          packages/ai-grader-capture-helper/tests/nativeCameraWorkerClient.test.js
+          packages/ai-grader-capture-helper/tests/nativeCameraSharpComparator.test.js
+
+      - name: Publish and statically verify SDK-disabled package
+        shell: pwsh
+        run: ./packages/ai-grader-capture-helper/native/scripts/publish-workers.ps1
+
+      - name: Reject lock, baseline, report, or generated source drift
+        run: git diff --exit-code

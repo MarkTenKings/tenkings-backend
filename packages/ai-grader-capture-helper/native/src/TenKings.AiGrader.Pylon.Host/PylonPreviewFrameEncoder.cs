@@ -5,18 +5,27 @@ namespace TenKings.AiGrader.Pylon.Host;
 
 internal sealed class PylonPreviewFrameEncoder : IPreviewFrameEncoder
 {
-    public int JpegQuality => 85;
+    private readonly int _quality;
+
+    internal PylonPreviewFrameEncoder(int quality)
+    {
+        _quality = quality is >= 40 and <= 95
+            ? quality
+            : throw new ArgumentOutOfRangeException(nameof(quality));
+    }
+
+    public int JpegQuality => _quality;
     public ValueTask<PreviewJpeg> EncodeJpegAsync(CameraFrame frame, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         frame.Validate();
         using var source = Mat.FromPixelData(frame.Height, frame.Width, MatType.CV_8UC1, frame.Mono8, frame.Stride);
-        return ValueTask.FromResult(EncodeBounded(source, cancellationToken));
+        return ValueTask.FromResult(EncodeBounded(source, _quality, cancellationToken));
     }
 
-    private static PreviewJpeg EncodeBounded(Mat source, CancellationToken cancellationToken)
+    private static PreviewJpeg EncodeBounded(Mat source, int requestedQuality, CancellationToken cancellationToken)
     {
-        var quality = 85;
+        var quality = requestedQuality;
         Mat current = source;
         var ownsCurrent = false;
         try

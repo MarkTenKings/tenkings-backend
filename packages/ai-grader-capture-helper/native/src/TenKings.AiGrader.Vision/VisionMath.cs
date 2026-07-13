@@ -15,6 +15,20 @@ internal static class VisionMath
         return Enumerable.Range(0, 4).Select(offset => ordered[(index + offset) % 4]).ToArray();
     }
 
+    public static Point2f[] OrderPortraitCorners(IEnumerable<Point2f> input)
+    {
+        var ordered = OrderCorners(input);
+        if (ordered.Length != 4) return ordered;
+        var firstPair = (Distance(ordered[0], ordered[1]) + Distance(ordered[2], ordered[3])) / 2;
+        var secondPair = (Distance(ordered[1], ordered[2]) + Distance(ordered[3], ordered[0])) / 2;
+        if (firstPair > secondPair) ordered = Rotate(ordered, 1);
+
+        var firstShortEdgeY = (ordered[0].Y + ordered[1].Y) / 2;
+        var oppositeShortEdgeY = (ordered[2].Y + ordered[3].Y) / 2;
+        if (oppositeShortEdgeY < firstShortEdgeY) ordered = Rotate(ordered, 2);
+        return ordered;
+    }
+
     public static bool IsConvex(IReadOnlyList<Point2f> points)
     {
         double sign = 0;
@@ -76,7 +90,7 @@ internal static class VisionMath
             refined[index] = best;
         }
 
-        return OrderCorners(refined);
+        return OrderPortraitCorners(refined);
     }
 
     public static double[] ComputeHomography(IReadOnlyList<PointD> source, IReadOnlyList<PointD> destination)
@@ -133,4 +147,7 @@ internal static class VisionMath
         var amount = denominator <= 1e-6 ? 0 : Math.Clamp((((point.X - start.X) * dx) + ((point.Y - start.Y) * dy)) / denominator, 0, 1);
         return Distance(point, new Point2f(start.X + (dx * amount), start.Y + (dy * amount)));
     }
+
+    private static Point2f[] Rotate(IReadOnlyList<Point2f> points, int offset) =>
+        Enumerable.Range(0, points.Count).Select(index => points[(index + offset) % points.Count]).ToArray();
 }

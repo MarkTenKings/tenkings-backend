@@ -36,7 +36,29 @@
           "sideEpoch": { "type": "integer", "minimum": 0 },
           "frozenOf": { "type": ["string", "null"], "maxLength": 96 },
           "privateFile": { "type": ["string", "null"], "maxLength": 240 },
-          "permittedSha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" }
+          "permittedSha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+          "sensorRotationDegrees": { "enum": [0, 90, 180, 270] },
+          "mirrorHorizontal": { "type": "boolean" },
+          "mirrorVertical": { "type": "boolean" },
+          "sequenceKind": { "enum": ["stable", "slow_drift", "sudden_motion", "epoch_transition", "wrong_epoch", "wrong_side", "removal_replacement", "frozen"] },
+          "frameCount": { "type": "integer", "minimum": 3, "maximum": 20 },
+          "motionStepX": { "type": "number", "minimum": -0.5, "maximum": 0.5 },
+          "motionStepY": { "type": "number", "minimum": -0.5, "maximum": 0.5 },
+          "expectedReady": { "type": ["boolean", "null"] },
+          "groundTruthCorners": {
+            "type": ["array", "null"],
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["x", "y"],
+              "properties": {
+                "x": { "type": "number" },
+                "y": { "type": "number" }
+              }
+            }
+          }
         }
       }
     }

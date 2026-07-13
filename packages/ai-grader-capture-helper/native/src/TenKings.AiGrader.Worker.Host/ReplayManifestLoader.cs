@@ -61,7 +61,7 @@ internal static class ReplayManifestLoader
             var blockIdElement = frame.GetProperty("blockId");
             var blockId = blockIdElement.ValueKind == JsonValueKind.Null
                 ? null
-                : ValidateSafeId(blockIdElement, "blockId");
+                : ValidateBlockId(blockIdElement);
             var cameraFrame = new CameraFrame(
                 frameId,
                 frames.Count + 1,
@@ -91,6 +91,27 @@ internal static class ReplayManifestLoader
         if (text.Length is < 1 or > 128 || !SafeIdentifier.IsMatch(text))
         {
             throw new InvalidDataException($"Replay {name} is not a bounded safe identifier.");
+        }
+
+        return text;
+    }
+
+    private static string ValidateBlockId(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            throw new InvalidDataException("Replay BlockID must be a decimal string or null.");
+        }
+
+        var text = value.GetString() ?? string.Empty;
+        if (!ulong.TryParse(
+                text,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out _) ||
+            (text.Length > 1 && text[0] == '0'))
+        {
+            throw new InvalidDataException("Replay BlockID must be canonical unsigned 64-bit decimal.");
         }
 
         return text;
