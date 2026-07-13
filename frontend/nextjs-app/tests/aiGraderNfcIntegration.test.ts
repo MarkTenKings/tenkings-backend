@@ -27,6 +27,11 @@ function publicRow(overrides: Record<string, unknown> = {}) {
     aiGraderLabelId: "label-1",
     certId: "TK-AIG-1",
     ndefPayloadVersion: 1,
+    uidFingerprintSha256: "f".repeat(64),
+    attestationChallenge: "must-not-leak",
+    workstationKeyId: "e".repeat(64),
+    signature: "must-not-leak",
+    readbackEvidence: { workstationOperationalAttestation: true },
     activatedAt: new Date("2026-07-12T20:00:00.000Z"),
     report: {
       id: "report-row-1",
@@ -70,7 +75,20 @@ test("public NFC active projection is DB-backed, exact-linkage-only, and honest 
     grade: 8.6,
   });
   const json = JSON.stringify(tap);
-  for (const forbidden of ["uidFingerprint", "cardAssetId", "itemId", "storageKey", "localPath", "presigned", "helper", "PCSC"]) {
+  for (const forbidden of [
+    "uidFingerprint",
+    "cardAssetId",
+    "itemId",
+    "storageKey",
+    "localPath",
+    "presigned",
+    "helper",
+    "PCSC",
+    "attestationChallenge",
+    "workstationKeyId",
+    "signature",
+    "readbackEvidence",
+  ]) {
     assert.equal(json.includes(forbidden), false);
   }
   assert.equal(json.includes("cryptographically_verified"), false);
@@ -199,7 +217,27 @@ test("dedicated programming and public tap pages keep hardware controls out of F
   ]);
   assert.match(nfcPage, /Program NFC/);
   assert.match(nfcPage, /not cryptographic authentication/i);
-  assert.match(nfcPage, /-overwrite-\$\{overwriteConfirmation\.observedPayloadSha256\.slice\(0, 12\)\}/);
+  assert.match(nfcPage, /-overwrite-\$\{overwriteDigest\.slice\(0, 12\)\}/);
+  assert.match(nfcPage, /Retry Current Attempt/);
+  assert.match(nfcPage, /getOrCreateAiGraderNfcInitIdempotencyKey/);
+  assert.match(nfcPage, /const attemptIdempotencyKey = getOrCreateAiGraderNfcInitIdempotencyKey\(reportId\)/);
+  assert.match(nfcPage, /Program authorized replacement/);
+  assert.match(nfcPage, /request\.idempotencyKey !== attemptIdempotencyKey/);
+  assert.match(nfcPage, /const programmingReady = Boolean/);
+  assert.match(nfcPage, /disabled=\{!programmingReady\}/);
+  assert.match(nfcPage, /disabled or incomplete/);
+  assert.match(nfcPage, /operationalAttestation/);
+  assert.match(nfcPage, /hosted\?\.canAdmin/);
+  assert.ok(nfcPage.indexOf("setReservation(currentReservation)") < nfcPage.indexOf("await writeAiGraderNfcTag"));
+  const completionRetry = nfcPage.slice(
+    nfcPage.indexOf("const retryHostedVerification"),
+    nfcPage.indexOf("const retryCurrentAttempt"),
+  );
+  assert.match(completionRetry, /completeHosted\(pending\)/);
+  assert.doesNotMatch(completionRetry, /writeAiGraderNfcTag|writeReservation/);
+  const disabledGate = nfcPage.indexOf("if (!result.nfcProgrammingEnabled)");
+  const helperStatusCall = nfcPage.indexOf("getAiGraderNfcHelperStatus", disabledGate);
+  assert.ok(disabledGate >= 0 && helperStatusCall > disabledGate);
   assert.match(finishPage, /Open dedicated NFC programming route/);
   for (const forbidden of ["aiGraderStationBridgeClient", "Basler", "Leimac", "Manual APDU", "camera preview", "station token"]) {
     assert.equal(finishPage.includes(forbidden), false);

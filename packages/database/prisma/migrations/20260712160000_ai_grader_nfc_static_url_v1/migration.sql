@@ -91,6 +91,9 @@ CREATE TABLE "AiGraderNfcProgrammingAttempt" (
     "idempotencyKeyHash" TEXT NOT NULL,
     "completionIdempotencyKeyHash" TEXT,
     "tokenHash" TEXT NOT NULL,
+    "attestationChallengeHash" TEXT NOT NULL,
+    "expectedAttestationAlgorithm" TEXT NOT NULL,
+    "completedWorkstationKeyId" TEXT,
     "state" "AiGraderNfcProgrammingAttemptState" NOT NULL DEFAULT 'initialized',
     "requestedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "expiresAt" TIMESTAMP(3) NOT NULL,
@@ -100,8 +103,15 @@ CREATE TABLE "AiGraderNfcProgrammingAttempt" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     CONSTRAINT "AiGraderNfcProgrammingAttempt_pkey" PRIMARY KEY ("id"),
-    CONSTRAINT "AiGraderNfcProgrammingAttempt_id_shape" CHECK ("id" ~ '^nfc_attempt_[A-Za-z0-9_-]{24}$'),
+    CONSTRAINT "AiGraderNfcProgrammingAttempt_id_shape" CHECK ("id" ~ '^nfc_attempt_[A-Za-z0-9_-]{43}$'),
     CONSTRAINT "AiGraderNfcProgrammingAttempt_token_hash_shape" CHECK ("tokenHash" ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT "AiGraderNfcProgrammingAttempt_challenge_hash_shape" CHECK ("attestationChallengeHash" ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT "AiGraderNfcProgrammingAttempt_attestation_algorithm" CHECK (
+      "expectedAttestationAlgorithm" = 'ecdsa-p256-sha256-p1363'
+    ),
+    CONSTRAINT "AiGraderNfcProgrammingAttempt_workstation_key_shape" CHECK (
+      "completedWorkstationKeyId" IS NULL OR "completedWorkstationKeyId" ~ '^[a-f0-9]{64}$'
+    ),
     CONSTRAINT "AiGraderNfcProgrammingAttempt_idempotency_hash_shape" CHECK ("idempotencyKeyHash" ~ '^[a-f0-9]{64}$'),
     CONSTRAINT "AiGraderNfcProgrammingAttempt_completion_idempotency_hash_shape" CHECK (
       "completionIdempotencyKeyHash" IS NULL OR "completionIdempotencyKeyHash" ~ '^[a-f0-9]{64}$'
@@ -114,8 +124,67 @@ CREATE TABLE "AiGraderNfcProgrammingAttempt" (
       ("state" <> 'consumed' AND "consumedAt" IS NULL)
     ),
     CONSTRAINT "AiGraderNfcProgrammingAttempt_failure_state" CHECK (
-      "failureCode" IS NULL OR
-      ("state" IN ('failed', 'expired') AND char_length("failureCode") BETWEEN 1 AND 80)
+      ("state" IN ('failed', 'expired') AND "failureCode" IS NOT NULL AND char_length("failureCode") BETWEEN 1 AND 80) OR
+      ("state" NOT IN ('failed', 'expired') AND "failureCode" IS NULL)
+    ),
+    CONSTRAINT "AiGraderNfcProgrammingAttempt_completion_state" CHECK (
+      ("state" IN ('verified', 'consumed') AND
+       "completionIdempotencyKeyHash" IS NOT NULL AND
+       "completedWorkstationKeyId" IS NOT NULL AND
+       "readbackEvidence" IS NOT NULL) OR
+      ("state" NOT IN ('verified', 'consumed') AND
+       "completionIdempotencyKeyHash" IS NULL AND
+       "completedWorkstationKeyId" IS NULL AND
+       "readbackEvidence" IS NULL)
+    ),
+    CONSTRAINT "AiGraderNfcProgrammingAttempt_attestation_evidence" CHECK (
+      "readbackEvidence" IS NULL OR (
+        jsonb_typeof("readbackEvidence") = 'object' AND
+        "readbackEvidence" ?& ARRAY[
+          'schemaVersion',
+          'workstationKeyId',
+          'algorithm',
+          'statementSha256',
+          'signature',
+          'observedAt',
+          'helperProtocolVersion',
+          'readerResultCode',
+          'cryptographicTagAuthentication',
+          'workstationOperationalAttestation'
+        ] AND
+        jsonb_typeof("readbackEvidence"->'schemaVersion') = 'string' AND
+        jsonb_typeof("readbackEvidence"->'workstationKeyId') = 'string' AND
+        jsonb_typeof("readbackEvidence"->'algorithm') = 'string' AND
+        jsonb_typeof("readbackEvidence"->'statementSha256') = 'string' AND
+        jsonb_typeof("readbackEvidence"->'signature') = 'string' AND
+        jsonb_typeof("readbackEvidence"->'observedAt') = 'string' AND
+        jsonb_typeof("readbackEvidence"->'helperProtocolVersion') = 'string' AND
+        jsonb_typeof("readbackEvidence"->'readerResultCode') = 'string' AND
+        jsonb_typeof("readbackEvidence"->'cryptographicTagAuthentication') = 'boolean' AND
+        jsonb_typeof("readbackEvidence"->'workstationOperationalAttestation') = 'boolean' AND
+        "readbackEvidence"->>'schemaVersion' = 'ai-grader-nfc-helper-attestation-v1' AND
+        "readbackEvidence"->>'workstationKeyId' = "completedWorkstationKeyId" AND
+        "readbackEvidence"->>'algorithm' = "expectedAttestationAlgorithm" AND
+        "readbackEvidence"->>'statementSha256' ~ '^[a-f0-9]{64}$' AND
+        "readbackEvidence"->>'signature' ~ '^[A-Za-z0-9_-]{86}$' AND
+        "readbackEvidence"->>'observedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$' AND
+        "readbackEvidence"->>'helperProtocolVersion' = 'tenkings-ai-grader-nfc-loopback-v2' AND
+        "readbackEvidence"->>'readerResultCode' IN ('write_verified_pcsc_readback', 'already_programmed_exact') AND
+        "readbackEvidence"->'cryptographicTagAuthentication' = 'false'::jsonb AND
+        "readbackEvidence"->'workstationOperationalAttestation' = 'true'::jsonb AND
+        "readbackEvidence" = jsonb_build_object(
+          'schemaVersion', 'ai-grader-nfc-helper-attestation-v1',
+          'workstationKeyId', "completedWorkstationKeyId",
+          'algorithm', "expectedAttestationAlgorithm",
+          'statementSha256', "readbackEvidence"->>'statementSha256',
+          'signature', "readbackEvidence"->>'signature',
+          'observedAt', "readbackEvidence"->>'observedAt',
+          'helperProtocolVersion', 'tenkings-ai-grader-nfc-loopback-v2',
+          'readerResultCode', "readbackEvidence"->>'readerResultCode',
+          'cryptographicTagAuthentication', false,
+          'workstationOperationalAttestation', true
+        )
+      )
     ),
     CONSTRAINT "AiGraderNfcProgrammingAttempt_evidence_bound" CHECK (
       "readbackEvidence" IS NULL OR pg_column_size("readbackEvidence") <= 4096
@@ -169,6 +238,9 @@ CREATE UNIQUE INDEX "AiGraderNfcProgrammingAttempt_tenantId_requestedByUserId_id
   ON "AiGraderNfcProgrammingAttempt"("tenantId", "requestedByUserId", "idempotencyKeyHash");
 CREATE INDEX "AiGraderNfcProgrammingAttempt_tagId_state_expiresAt_idx" ON "AiGraderNfcProgrammingAttempt"("tagId", "state", "expiresAt");
 CREATE INDEX "AiGraderNfcProgrammingAttempt_tenantId_reportId_state_idx" ON "AiGraderNfcProgrammingAttempt"("tenantId", "reportId", "state");
+CREATE UNIQUE INDEX "AiGraderNfcProgrammingAttempt_one_live_per_tag"
+  ON "AiGraderNfcProgrammingAttempt"("tagId")
+  WHERE "state" IN ('initialized', 'writing', 'verified');
 CREATE INDEX "AiGraderNfcAuditEvent_tagId_createdAt_idx" ON "AiGraderNfcAuditEvent"("tagId", "createdAt");
 CREATE INDEX "AiGraderNfcAuditEvent_attemptId_createdAt_idx" ON "AiGraderNfcAuditEvent"("attemptId", "createdAt");
 CREATE INDEX "AiGraderNfcAuditEvent_tenantId_reportId_createdAt_idx" ON "AiGraderNfcAuditEvent"("tenantId", "reportId", "createdAt");

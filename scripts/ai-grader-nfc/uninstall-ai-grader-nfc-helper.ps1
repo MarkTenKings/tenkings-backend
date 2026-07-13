@@ -29,4 +29,5 @@ if ($RemoveConfig -and $config -and (Test-Path -LiteralPath ([string]$config.pai
   shortcutRemoved = $true
   publishedHelperRemoved = [bool]$RemovePublishedHelper
   configRemoved = [bool]$RemoveConfig
+  workstationAttestationKeyPreserved = $true
 } | ConvertTo-Json

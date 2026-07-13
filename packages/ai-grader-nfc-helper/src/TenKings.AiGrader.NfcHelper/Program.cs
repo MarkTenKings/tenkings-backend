@@ -12,6 +12,10 @@ internal static class Program
         {
             if (args is ["--hardware-gate-test"])
                 return await RunHardwareGateTestAsync();
+            if (args is ["--ensure-workstation-attestation-key"])
+                return RunEnsureWorkstationAttestationKey();
+            if (args is ["--export-workstation-attestation-public-key"])
+                return RunExportWorkstationAttestationPublicKey();
 
             var backendName = ResolveBackend(args);
             INfcReaderBackend backend = backendName switch
@@ -20,9 +24,16 @@ internal static class Program
                 "fake" => new FakeNfcReaderBackend(),
                 _ => throw new NfcHelperException("invalid_helper_config", "The NFC helper backend must be pcsc or fake.")
             };
+            using IWorkstationAttestationSigner signer = backendName == "pcsc"
+                ? ResolveProductionSigner()
+                : new EphemeralTestWorkstationAttestationSigner();
             var logger = new ConsoleSafeLogger();
             var timeout = ResolveOperationTimeout();
-            var operations = new NfcOperationsService(backend, logger, timeout);
+            var operations = new NfcOperationsService(
+                backend,
+                signer,
+                logger,
+                timeout);
             var options = NfcHttpServerOptions.FromEnvironment();
             await using var server = new NfcHttpServer(options, operations, logger);
             using var shutdown = new CancellationTokenSource();
@@ -57,10 +68,36 @@ internal static class Program
         if (Environment.GetEnvironmentVariable("TENKINGS_NFC_HARDWARE_GATE_CONFIRMED") != "true")
             throw new NfcHelperException("hardware_gate_approval_required", "The separate typed hardware-gate authorization is required.");
         var confirmOverwrite = Environment.GetEnvironmentVariable("TENKINGS_NFC_HARDWARE_GATE_OVERWRITE_CONFIRMED") == "true";
-        var operations = new NfcOperationsService(new WindowsPcscNfcReaderBackend(), new ConsoleSafeLogger(), ResolveOperationTimeout());
+        var operations = new NfcOperationsService(
+            new WindowsPcscNfcReaderBackend(),
+            logger: new ConsoleSafeLogger(),
+            operationTimeoutMs: ResolveOperationTimeout());
         var result = await operations.RunHardwareGateTestAsync(confirmOverwrite, "hardware_gate", CancellationToken.None);
         Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.HardwareGateResult));
         return result.OverwriteConfirmationRequired ? 4 : 0;
+    }
+
+    private static int RunEnsureWorkstationAttestationKey()
+    {
+        var metadata = WindowsCngWorkstationAttestationSigner.EnsureNamedKey();
+        Console.WriteLine(JsonSerializer.Serialize(metadata, NfcJsonContext.Default.WorkstationKeyMetadata));
+        return 0;
+    }
+
+    private static int RunExportWorkstationAttestationPublicKey()
+    {
+        var expectedKeyId = Environment.GetEnvironmentVariable("TENKINGS_NFC_WORKSTATION_KEY_ID")?.Trim() ?? string.Empty;
+        var keyName = Environment.GetEnvironmentVariable("TENKINGS_NFC_WORKSTATION_KEY_NAME")?.Trim() ?? string.Empty;
+        var exported = WindowsCngWorkstationAttestationSigner.ExportPublicKey(keyName, expectedKeyId);
+        Console.WriteLine(JsonSerializer.Serialize(exported, NfcJsonContext.Default.WorkstationPublicKeyExport));
+        return 0;
+    }
+
+    private static WindowsCngWorkstationAttestationSigner ResolveProductionSigner()
+    {
+        var expectedKeyId = Environment.GetEnvironmentVariable("TENKINGS_NFC_WORKSTATION_KEY_ID")?.Trim() ?? string.Empty;
+        var keyName = Environment.GetEnvironmentVariable("TENKINGS_NFC_WORKSTATION_KEY_NAME")?.Trim() ?? string.Empty;
+        return WindowsCngWorkstationAttestationSigner.Open(keyName, expectedKeyId);
     }
 
     private static string ResolveBackend(string[] args)

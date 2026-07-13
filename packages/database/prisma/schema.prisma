@@ -3155,6 +3155,9 @@ model AiGraderNfcProgrammingAttempt {
   idempotencyKeyHash     String
   completionIdempotencyKeyHash String?
   tokenHash              String                                  @unique
+  attestationChallengeHash String
+  expectedAttestationAlgorithm String
+  completedWorkstationKeyId String?
   state                  AiGraderNfcProgrammingAttemptState      @default(initialized)
   requestedAt            DateTime                                @default(now())
   expiresAt              DateTime

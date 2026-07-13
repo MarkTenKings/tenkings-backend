@@ -20,7 +20,17 @@ if (-not (Test-Path -LiteralPath $InstallDirectory)) {
 & dotnet publish $project --configuration Release --self-contained false --output $InstallDirectory
 if ($LASTEXITCODE -ne 0) { throw "The NFC helper publish failed; no task was installed." }
 
-$config = Initialize-NfcConfig -Path $ConfigPath -RotatePairingCode
+$dll = Join-Path $InstallDirectory "TenKings.AiGrader.NfcHelper.dll"
+$keyOutput = @(& dotnet $dll --ensure-workstation-attestation-key)
+if ($LASTEXITCODE -ne 0) { throw "The named current-user NFC workstation attestation key could not be created or reopened." }
+$keyMetadata = ($keyOutput -join [Environment]::NewLine) | ConvertFrom-Json
+if ($keyMetadata.keyName -cne $script:NfcAttestationKeyName -or
+    $keyMetadata.algorithm -cne $script:NfcAttestationAlgorithm -or
+    [string]$keyMetadata.keyId -cnotmatch '^[a-f0-9]{64}$') {
+  throw "The NFC helper returned invalid workstation attestation-key metadata."
+}
+
+$config = Initialize-NfcConfig -Path $ConfigPath -RotatePairingCode -WorkstationKeyName ([string]$keyMetadata.keyName) -WorkstationKeyId ([string]$keyMetadata.keyId)
 $config.installDirectory = $InstallDirectory
 Save-NfcConfig -Config $config -Path $ConfigPath
 
@@ -42,6 +52,8 @@ if ($StartNow) { Start-ScheduledTask -TaskName $TaskName }
   tokenFingerprint = Get-NfcSecretFingerprint -Value ([string]$config.workstationToken)
   pairingFingerprint = Get-NfcSecretFingerprint -Value ([string]$config.pairingCode)
   pairingExpiresAt = $config.pairingCodeExpiresAt
+  workstationAttestationConfigured = $true
+  workstationAttestationAlgorithm = $script:NfcAttestationAlgorithm
   driverAction = "detection_only"
   started = [bool]$StartNow
   shortcutCreated = [bool]$CreateShortcut

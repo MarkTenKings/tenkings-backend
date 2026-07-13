@@ -30,6 +30,9 @@ if ($config) {
   scheduledTaskState = if ($task) { $task.State } else { $null }
   helperReachable = [bool]$result
   helperProtocolVersion = if ($result) { $result.helperProtocolVersion } else { $null }
+  workstationAttestationConfigured = [bool]($config -and
+    [string]$config.workstationKeyName -ceq $script:NfcAttestationKeyName -and
+    [string]$config.workstationKeyId -cmatch '^[a-f0-9]{64}$')
   readerConnected = if ($result) { $result.readerConnected } else { $false }
   pcscReady = if ($result) { $result.pcscReady } else { $false }
   tagState = if ($result) { $result.tagState } else { "unknown" }

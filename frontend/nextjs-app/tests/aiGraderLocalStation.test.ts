@@ -2596,7 +2596,12 @@ test("production auth-check verifies current bearer session against AI Grader op
       effectiveAiGraderModel: "gpt-5.6-sol",
       ebayCompsEnabled: false,
       serpApiConfigured: false,
+      nfcProgrammingEnabled: false,
       nfcRequired: false,
+      nfcAttemptTokenConfigured: false,
+      nfcWorkstationAttestationConfigured: false,
+      nfcWorkstationKeyCount: 0,
+      expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
     },
   });
 });

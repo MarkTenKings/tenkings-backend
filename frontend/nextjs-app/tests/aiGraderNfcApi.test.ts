@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createAiGraderNfcApiHandler, type AiGraderNfcApiDependencies } from "../lib/server/aiGraderNfcApi";
@@ -52,6 +53,14 @@ function deps(overrides: Partial<AiGraderNfcApiDependencies> = {}) {
       AI_GRADER_OPERATOR_USER_IDS: "operator-1",
     },
     disableRateLimitForTests: true,
+    readiness: () => ({
+      nfcProgrammingEnabled: true,
+      nfcRequired: false,
+      nfcAttemptTokenConfigured: true,
+      nfcWorkstationAttestationConfigured: true,
+      nfcWorkstationKeyCount: 1,
+      expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+    }),
     requireUserSession: async () => ({
       id: "session-1",
       tokenHash: "redacted-session-hash",
@@ -74,7 +83,21 @@ test("NFC status uses explicit human NFC scope and returns only the runtime safe
   await handler(request({ method: "GET", action: "status", query: { reportId: "report-1" } }), output.res);
   const result = output.read();
   assert.equal(result.statusCode, 200);
-  assert.deepEqual(result.payload, { ok: true, operation: "aiGraderNfcStatus", result: { status: "missing" } });
+  assert.deepEqual(result.payload, {
+    ok: true,
+    operation: "aiGraderNfcStatus",
+    result: {
+      status: "missing",
+      nfcProgrammingEnabled: true,
+      nfcRequired: false,
+      nfcAttemptTokenConfigured: true,
+      nfcWorkstationAttestationConfigured: true,
+      nfcWorkstationKeyCount: 1,
+      expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+      canProgram: true,
+      canAdmin: false,
+    },
+  });
   assert.equal(result.headers.get("cache-control"), "no-store");
   assert.equal(runtime.calls[0].input.actorUserId, "operator-1");
   assert.equal(runtime.calls[0].input.tenantId, "ten-kings");
@@ -118,7 +141,15 @@ test("NFC complete rejects open redirects, query strings, wrong chip type, and m
     uidFingerprintSha256: "a".repeat(64),
     readbackPayloadSha256: "b".repeat(64),
     readerResultCode: "write_verified_pcsc_readback",
-    helperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v1",
+    helperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+    operationalAttestation: {
+      schemaVersion: "ai-grader-nfc-helper-attestation-v1",
+      workstationKeyId: "c".repeat(64),
+      algorithm: "ecdsa-p256-sha256-p1363",
+      attestationChallenge: "A".repeat(43),
+      observedAt: "2026-07-13T12:00:00.000Z",
+      signature: "S".repeat(86),
+    },
   };
   for (const patch of [
     { normalizedUrl: "https://attacker.invalid/nfc/Abcdefghijklmnopqrstuvwxyz012345" },
@@ -158,7 +189,15 @@ test("NFC complete forwards fixed local PCSC human-readback evidence only", asyn
         uidFingerprintSha256: "a".repeat(64),
         readbackPayloadSha256: "b".repeat(64),
         readerResultCode: "write_verified_pcsc_readback",
-        helperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v1",
+        helperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+        operationalAttestation: {
+          schemaVersion: "ai-grader-nfc-helper-attestation-v1",
+          workstationKeyId: "c".repeat(64),
+          algorithm: "ecdsa-p256-sha256-p1363",
+          attestationChallenge: "A".repeat(43),
+          observedAt: "2026-07-13T12:00:00.000Z",
+          signature: "S".repeat(86),
+        },
         rawUid: "04AABBCC",
         localPath: "C:\\secret",
       },
@@ -166,13 +205,68 @@ test("NFC complete forwards fixed local PCSC human-readback evidence only", asyn
     output.res,
   );
   assert.equal(output.read().statusCode, 200);
-  assert.equal(runtime.calls[0].input.evidenceType, "local_pcsc_readback_human_operator");
+  assert.equal((runtime.calls[0].input.operationalAttestation as Record<string, unknown>).algorithm, "ecdsa-p256-sha256-p1363");
   assert.equal("rawUid" in runtime.calls[0].input, false);
   assert.equal("localPath" in runtime.calls[0].input, false);
 });
 
-test("NFC mutations require bounded reasons and reject oversized JSON before runtime calls", async () => {
+test("NFC complete requires the strict signed helper result contract before runtime activation", async () => {
+  const publicTagId = "Abcdefghijklmnopqrstuvwxyz012345";
+  const base = {
+    reportId: "report-1",
+    cardAssetId: "card-1",
+    itemId: "item-1",
+    certId: "TK-AIG-1",
+    publicTagId,
+    attemptId: "AttemptAbcdefghijklmnop",
+    attemptToken: "TokenTokenTokenTokenTokenTokenTokenToken",
+    idempotencyKey: "complete-report-1",
+    chipType: "NTAG215",
+    normalizedUrl: `https://collect.tenkings.co/nfc/${publicTagId}`,
+    uidFingerprintSha256: "a".repeat(64),
+    readbackPayloadSha256: "b".repeat(64),
+    readerResultCode: "write_verified_pcsc_readback",
+    helperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+    operationalAttestation: {
+      schemaVersion: "ai-grader-nfc-helper-attestation-v1",
+      workstationKeyId: "c".repeat(64),
+      algorithm: "ecdsa-p256-sha256-p1363",
+      attestationChallenge: "A".repeat(43),
+      observedAt: "2026-07-13T12:00:00.000Z",
+      signature: "S".repeat(86),
+    },
+  };
+  for (const patch of [
+    { operationalAttestation: undefined },
+    { operationalAttestation: { ...base.operationalAttestation, algorithm: "caller-asserted" } },
+    { operationalAttestation: { ...base.operationalAttestation, signature: "short" } },
+    { readerResultCode: "overwrite_confirmation_required" },
+  ]) {
+    const runtime = deps();
+    const output = response();
+    await createAiGraderNfcApiHandler(runtime.value)(request({ action: "complete", body: { ...base, ...patch } }), output.res);
+    assert.equal(output.read().statusCode, 400);
+    assert.equal(runtime.calls.length, 0);
+  }
   const runtime = deps();
+  const output = response();
+  await createAiGraderNfcApiHandler(runtime.value)(request({
+    action: "complete",
+    body: { ...base, helperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v1" },
+  }), output.res);
+  assert.equal(output.read().statusCode, 409);
+  assert.equal(runtime.calls.length, 0);
+});
+
+test("NFC mutations require bounded reasons and reject oversized JSON before runtime calls", async () => {
+  const runtime = deps({
+    env: { AI_GRADER_PRODUCTION_TENANT_ID: "ten-kings", AI_GRADER_ADMIN_USER_IDS: "admin-1" },
+    requireUserSession: async () => ({
+      id: "session-admin",
+      tokenHash: "redacted-session-hash",
+      user: { id: "admin-1", phone: null, displayName: "Admin", avatarUrl: null },
+    }),
+  });
   const short = response();
   await createAiGraderNfcApiHandler(runtime.value)(
     request({ action: "revoke", body: { reportId: "report-1", reason: "no", idempotencyKey: "revoke-report-1" } }),
@@ -190,7 +284,17 @@ test("NFC mutations require bounded reasons and reject oversized JSON before run
 });
 
 test("NFC replacement is pinned to the operator-visible public tag identity for idempotent retry", async () => {
-  const runtime = deps();
+  const runtime = deps({
+    env: {
+      AI_GRADER_PRODUCTION_TENANT_ID: "ten-kings",
+      AI_GRADER_ADMIN_USER_IDS: "admin-1",
+    },
+    requireUserSession: async () => ({
+      id: "session-admin",
+      tokenHash: "redacted-session-hash",
+      user: { id: "admin-1", phone: null, displayName: "Admin", avatarUrl: null },
+    }),
+  });
   const output = response();
   await createAiGraderNfcApiHandler(runtime.value)(
     request({
@@ -208,20 +312,135 @@ test("NFC replacement is pinned to the operator-visible public tag identity for 
   assert.equal(runtime.calls[0].input.replacedPublicTagId, "Abcdefghijklmnopqrstuvwxyz012345");
 });
 
-test("NFC service accounts fail closed because programming requires a human operator", async () => {
+test("NFC authorization is server-enforced for operators, admins, and client role spoofing", async () => {
+  for (const action of ["revoke", "replace"] as const) {
+    const runtime = deps();
+    const output = response();
+    await createAiGraderNfcApiHandler(runtime.value)(request({
+      action,
+      body: action === "revoke"
+        ? { reportId: "report-1", reason: "Operator cannot revoke", idempotencyKey: "revoke-report-1", role: "ai_grader_admin" }
+        : {
+            reportId: "report-1",
+            replacedPublicTagId: "Abcdefghijklmnopqrstuvwxyz012345",
+            reason: "Operator cannot replace",
+            idempotencyKey: "replace-report-1",
+            role: "ai_grader_admin",
+          },
+    }), output.res);
+    assert.equal(output.read().statusCode, 403);
+    assert.equal((output.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_ADMIN_REQUIRED");
+    assert.equal(runtime.calls.length, 0);
+  }
+
+  const admin = deps({
+    env: { AI_GRADER_PRODUCTION_TENANT_ID: "ten-kings", AI_GRADER_ADMIN_USER_IDS: "admin-1" },
+    requireUserSession: async () => ({
+      id: "session-admin",
+      tokenHash: "redacted-session-hash",
+      user: { id: "admin-1", phone: null, displayName: "Admin", avatarUrl: null },
+    }),
+  });
+  const statusOutput = response();
+  await createAiGraderNfcApiHandler(admin.value)(
+    request({ method: "GET", action: "status", query: { reportId: "report-1" } }),
+    statusOutput.res,
+  );
+  assert.equal(((statusOutput.read().payload as { result: Record<string, unknown> }).result).canAdmin, true);
+  const initOutput = response();
+  await createAiGraderNfcApiHandler(admin.value)(request({
+    action: "init",
+    body: { reportId: "report-1", idempotencyKey: "admin-program-report-1" },
+  }), initOutput.res);
+  assert.equal(initOutput.read().statusCode, 200);
+  assert.equal(admin.calls.some((call) => call.operation === "init"), true);
+});
+
+test("NFC service accounts fail closed for programming and administration even with configured scopes", async () => {
+  const serviceToken = "ServiceNfcTokenServiceNfcToken123456";
   const runtime = deps({
     env: {
       AI_GRADER_PRODUCTION_TENANT_ID: "ten-kings",
       AI_GRADER_SERVICE_ACCOUNT_ID: "service-1",
-      AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256: "0".repeat(64),
-      AI_GRADER_SERVICE_ACCOUNT_SCOPES: "nfc-program",
+      AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256: createHash("sha256").update(serviceToken).digest("hex"),
+      AI_GRADER_SERVICE_ACCOUNT_SCOPES: "nfc-program,nfc-admin",
     },
   });
-  const output = response();
-  await createAiGraderNfcApiHandler(runtime.value)(
-    request({ method: "GET", action: "status", query: { reportId: "report-1" } }),
-    output.res,
-  );
-  assert.equal(output.read().statusCode, 403);
+  for (const input of [
+    { method: "GET", action: "status", query: { reportId: "report-1" } },
+    { action: "init", body: { reportId: "report-1", idempotencyKey: "program-report-1" } },
+    { action: "revoke", body: { reportId: "report-1", reason: "Service cannot revoke", idempotencyKey: "revoke-report-1" } },
+  ]) {
+    const output = response();
+    await createAiGraderNfcApiHandler(runtime.value)(request({ ...input, headers: { "x-ai-grader-service-token": serviceToken } }), output.res);
+    assert.equal(output.read().statusCode, 403);
+    assert.equal((output.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_HUMAN_REQUIRED");
+  }
   assert.equal(runtime.calls.length, 0);
+});
+
+test("NFC programming flag is independent, status/revoke stay available, and readiness is redacted", async () => {
+  const disabled = deps({
+    readiness: () => ({
+      nfcProgrammingEnabled: false,
+      nfcRequired: true,
+      nfcAttemptTokenConfigured: false,
+      nfcWorkstationAttestationConfigured: false,
+      nfcWorkstationKeyCount: 0,
+      expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+    }),
+  });
+  const initOutput = response();
+  await createAiGraderNfcApiHandler(disabled.value)(request({
+    action: "init",
+    body: { reportId: "report-1", idempotencyKey: "program-report-1" },
+  }), initOutput.res);
+  assert.equal(initOutput.read().statusCode, 503);
+  assert.equal((initOutput.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_PROGRAMMING_DISABLED");
+
+  const statusOutput = response();
+  await createAiGraderNfcApiHandler(disabled.value)(
+    request({ method: "GET", action: "status", query: { reportId: "report-1" } }),
+    statusOutput.res,
+  );
+  assert.equal(statusOutput.read().statusCode, 200);
+  const json = JSON.stringify(statusOutput.read().payload);
+  for (const forbidden of ["publicSpki", "signature", "attestationChallenge", "workstationKeyId", "attemptToken", "helperToken", "pairingCode"]) {
+    assert.equal(json.includes(forbidden), false);
+  }
+
+  const disabledAdmin = deps({
+    env: { AI_GRADER_PRODUCTION_TENANT_ID: "ten-kings", AI_GRADER_ADMIN_USER_IDS: "admin-1" },
+    requireUserSession: async () => ({
+      id: "session-admin",
+      tokenHash: "redacted-session-hash",
+      user: { id: "admin-1", phone: null, displayName: "Admin", avatarUrl: null },
+    }),
+    readiness: disabled.value.readiness,
+  });
+  const revokeOutput = response();
+  await createAiGraderNfcApiHandler(disabledAdmin.value)(request({
+    action: "revoke",
+    body: { reportId: "report-1", reason: "Admin revokes while disabled", idempotencyKey: "revoke-report-1" },
+  }), revokeOutput.res);
+  assert.equal(revokeOutput.read().statusCode, 200);
+  assert.equal(disabledAdmin.calls[0].operation, "revoke");
+
+  const misconfigured = deps({
+    readiness: () => ({
+      nfcProgrammingEnabled: true,
+      nfcRequired: false,
+      nfcAttemptTokenConfigured: false,
+      nfcWorkstationAttestationConfigured: false,
+      nfcWorkstationKeyCount: 0,
+      expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+    }),
+  });
+  const missingOutput = response();
+  await createAiGraderNfcApiHandler(misconfigured.value)(request({
+    action: "init",
+    body: { reportId: "report-1", idempotencyKey: "program-report-1" },
+  }), missingOutput.res);
+  assert.equal(missingOutput.read().statusCode, 503);
+  assert.equal((missingOutput.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_PROGRAMMING_NOT_CONFIGURED");
 });

@@ -4,6 +4,10 @@ import {
   type AiGraderProductionActor,
   type AiGraderProductionAuthDependencies,
 } from "./aiGraderProductionAuth";
+import {
+  aiGraderNfcProgrammingReadiness,
+  type AiGraderNfcProgrammingReadiness,
+} from "./aiGraderNfcPolicy";
 
 export const AI_GRADER_NFC_API_BODY_LIMIT_BYTES = 32 * 1024;
 export const AI_GRADER_NFC_ATTEMPT_TTL_SECONDS = 5 * 60;
@@ -17,10 +21,20 @@ type NfcRuntimeInput = {
   actorAudit: AiGraderProductionActor["audit"];
 };
 
+type OperationalAttestationInput = {
+  schemaVersion: "ai-grader-nfc-helper-attestation-v1";
+  workstationKeyId: string;
+  algorithm: "ecdsa-p256-sha256-p1363";
+  attestationChallenge: string;
+  observedAt: string;
+  signature: string;
+};
+
 export type AiGraderNfcApiDependencies = AiGraderProductionAuthDependencies & {
   env?: EnvLike;
   now?: () => number;
   disableRateLimitForTests?: boolean;
+  readiness?: (env: EnvLike, tenantId: string) => AiGraderNfcProgrammingReadiness;
   init(input: NfcRuntimeInput & {
     reportId: string;
     idempotencyKey: string;
@@ -41,7 +55,7 @@ export type AiGraderNfcApiDependencies = AiGraderProductionAuthDependencies & {
     readbackPayloadSha256: string;
     readerResultCode: string;
     helperProtocolVersion: string;
-    evidenceType: "local_pcsc_readback_human_operator";
+    operationalAttestation: OperationalAttestationInput;
   }): Promise<unknown>;
   status(input: NfcRuntimeInput & { reportId: string }): Promise<unknown>;
   revoke(input: NfcRuntimeInput & { reportId: string; reason: string; idempotencyKey: string }): Promise<unknown>;
@@ -89,6 +103,43 @@ function sha256(value: unknown, label: string) {
   return boundedText(value, label, 64, 64, /^[a-f0-9]{64}$/);
 }
 
+function operationalAttestation(value: unknown): OperationalAttestationInput {
+  if (!isRecord(value)) {
+    throw nfcApiError(400, "AI_GRADER_NFC_ATTESTATION_REQUIRED", "A workstation operational attestation is required.");
+  }
+  const expectedKeys = [
+    "algorithm",
+    "attestationChallenge",
+    "observedAt",
+    "schemaVersion",
+    "signature",
+    "workstationKeyId",
+  ];
+  if (Object.keys(value).sort().join("\n") !== expectedKeys.join("\n")) {
+    throw nfcApiError(400, "AI_GRADER_NFC_ATTESTATION_INVALID", "The workstation operational attestation is invalid.");
+  }
+  if (value.schemaVersion !== "ai-grader-nfc-helper-attestation-v1") {
+    throw nfcApiError(400, "AI_GRADER_NFC_ATTESTATION_SCHEMA_INVALID", "The workstation attestation schema is not supported.");
+  }
+  if (value.algorithm !== "ecdsa-p256-sha256-p1363") {
+    throw nfcApiError(400, "AI_GRADER_NFC_ATTESTATION_ALGORITHM_INVALID", "The workstation attestation algorithm is not supported.");
+  }
+  return {
+    schemaVersion: "ai-grader-nfc-helper-attestation-v1",
+    workstationKeyId: boundedText(value.workstationKeyId, "workstationKeyId", 64, 64, /^[a-f0-9]{64}$/),
+    algorithm: "ecdsa-p256-sha256-p1363",
+    attestationChallenge: boundedText(value.attestationChallenge, "attestationChallenge", 43, 43, /^[A-Za-z0-9_-]{43}$/),
+    observedAt: boundedText(
+      value.observedAt,
+      "observedAt",
+      24,
+      24,
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    ),
+    signature: boundedText(value.signature, "signature", 86, 86, /^[A-Za-z0-9_-]{86}$/),
+  };
+}
+
 function assertSmallBody(body: unknown) {
   if (!isRecord(body)) throw nfcApiError(400, "AI_GRADER_NFC_INVALID_REQUEST", "A JSON object body is required.");
   let size = AI_GRADER_NFC_API_BODY_LIMIT_BYTES + 1;
@@ -128,11 +179,23 @@ function exactNfcUrl(value: unknown, publicTagId: string) {
   return text;
 }
 
-function humanActor(actor: AiGraderProductionActor) {
+function humanActor(actor: AiGraderProductionActor, adminOnly: boolean) {
   if (actor.type !== "human_operator" || !actor.user.id) {
     throw nfcApiError(403, "AI_GRADER_NFC_HUMAN_REQUIRED", "A human AI Grader operator session is required.");
   }
+  if (adminOnly && actor.role !== "ai_grader_admin") {
+    throw nfcApiError(403, "AI_GRADER_NFC_ADMIN_REQUIRED", "An AI Grader administrator is required for this NFC action.");
+  }
   return actor;
+}
+
+function requireProgrammingReady(readiness: AiGraderNfcProgrammingReadiness) {
+  if (!readiness.nfcProgrammingEnabled) {
+    throw nfcApiError(503, "AI_GRADER_NFC_PROGRAMMING_DISABLED", "NFC programming is disabled by server policy.");
+  }
+  if (!readiness.nfcAttemptTokenConfigured || !readiness.nfcWorkstationAttestationConfigured || readiness.nfcWorkstationKeyCount < 1) {
+    throw nfcApiError(503, "AI_GRADER_NFC_PROGRAMMING_NOT_CONFIGURED", "NFC programming is not fully configured.");
+  }
 }
 
 function enforceRateLimit(actorUserId: string, action: string, req: NextApiRequest, deps: AiGraderNfcApiDependencies) {
@@ -161,19 +224,19 @@ function nfcApiError(statusCode: number, code: string, message: string) {
 
 function safeError(error: unknown) {
   const source = error as { statusCode?: unknown; code?: unknown; message?: unknown };
-  const statusCode = typeof source?.statusCode === "number" && source.statusCode >= 400 && source.statusCode <= 499
+  const statusCode = typeof source?.statusCode === "number" && source.statusCode >= 400 && source.statusCode <= 599
     ? source.statusCode
     : 500;
   const code =
     typeof source?.code === "string" && /^AI_GRADER_NFC_[A-Z0-9_]+$/.test(source.code)
       ? source.code
-      : statusCode === 500
+      : statusCode >= 500
         ? "AI_GRADER_NFC_INTERNAL_ERROR"
         : "AI_GRADER_NFC_REQUEST_REJECTED";
   const message =
-    statusCode !== 500 && typeof source?.message === "string" && source.message.length <= 240
+    code.startsWith("AI_GRADER_NFC_") && typeof source?.message === "string" && source.message.length <= 240
       ? source.message
-      : statusCode === 500
+      : statusCode >= 500
         ? "The NFC operation failed safely. No tag state was accepted."
         : "The NFC request was rejected.";
   return { statusCode, code, message };
@@ -198,8 +261,12 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
         throw nfcApiError(413, "AI_GRADER_NFC_BODY_TOO_LARGE", "The NFC request body is too large.");
       }
       const authAction = action === "revoke" || action === "replace" ? "nfc-admin" : "nfc-program";
-      const actor = humanActor(await requireAiGraderProductionActor(req, authAction, deps));
+      const actor = humanActor(
+        await requireAiGraderProductionActor(req, authAction, deps),
+        action === "revoke" || action === "replace",
+      );
       enforceRateLimit(actor.user.id, action, req, deps);
+      const readiness = (deps.readiness ?? aiGraderNfcProgrammingReadiness)(env, tenantId);
       const common: NfcRuntimeInput = {
         tenantId,
         actorUserId: actor.user.id,
@@ -209,13 +276,23 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
       if (action === "status") {
         if (req.method !== "GET") throw nfcApiError(405, "AI_GRADER_NFC_METHOD_NOT_ALLOWED", "GET is required.");
         const result = await deps.status({ ...common, reportId: reportId(req.query.reportId) });
-        return res.status(200).json({ ok: true, operation: "aiGraderNfcStatus", result });
+        return res.status(200).json({
+          ok: true,
+          operation: "aiGraderNfcStatus",
+          result: {
+            ...(isRecord(result) ? result : {}),
+            ...readiness,
+            canProgram: true,
+            canAdmin: actor.role === "ai_grader_admin",
+          },
+        });
       }
 
       if (req.method !== "POST") throw nfcApiError(405, "AI_GRADER_NFC_METHOD_NOT_ALLOWED", "POST is required.");
       const body = assertSmallBody(req.body);
 
       if (action === "init") {
+        requireProgrammingReady(readiness);
         const result = await deps.init({
           ...common,
           reportId: reportId(body.reportId),
@@ -226,9 +303,24 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
       }
 
       if (action === "complete") {
+        requireProgrammingReady(readiness);
         const publicTagId = boundedText(body.publicTagId, "publicTagId", 32, 32, /^[A-Za-z0-9_-]+$/);
         if (body.chipType !== "NTAG215") {
           throw nfcApiError(400, "AI_GRADER_NFC_CHIP_UNSUPPORTED", "Only NTAG215 is supported by static_url_v1.");
+        }
+        const readerResultCode = boundedText(body.readerResultCode, "readerResultCode", 1, 64, /^[A-Za-z0-9_:-]+$/);
+        if (readerResultCode !== "write_verified_pcsc_readback" && readerResultCode !== "already_programmed_exact") {
+          throw nfcApiError(400, "AI_GRADER_NFC_READER_RESULT_INVALID", "The NFC reader result is not eligible for activation.");
+        }
+        const helperProtocolVersion = boundedText(
+          body.helperProtocolVersion,
+          "helperProtocolVersion",
+          1,
+          64,
+          /^[A-Za-z0-9._-]+$/,
+        );
+        if (helperProtocolVersion !== readiness.expectedNfcHelperProtocolVersion) {
+          throw nfcApiError(409, "AI_GRADER_NFC_HELPER_PROTOCOL_MISMATCH", "The NFC workstation helper must be updated before programming.");
         }
         const result = await deps.complete({
           ...common,
@@ -244,9 +336,9 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
           normalizedUrl: exactNfcUrl(body.normalizedUrl, publicTagId),
           uidFingerprintSha256: sha256(body.uidFingerprintSha256, "uidFingerprintSha256"),
           readbackPayloadSha256: sha256(body.readbackPayloadSha256, "readbackPayloadSha256"),
-          readerResultCode: boundedText(body.readerResultCode, "readerResultCode", 1, 64, /^[A-Za-z0-9_:-]+$/),
-          helperProtocolVersion: boundedText(body.helperProtocolVersion, "helperProtocolVersion", 1, 64, /^[A-Za-z0-9._-]+$/),
-          evidenceType: "local_pcsc_readback_human_operator",
+          readerResultCode,
+          helperProtocolVersion,
+          operationalAttestation: operationalAttestation(body.operationalAttestation),
         });
         return res.status(200).json({ ok: true, operation: "aiGraderNfcComplete", result });
       }
@@ -262,6 +354,7 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
       }
 
       if (action === "replace") {
+        requireProgrammingReady(readiness);
         const result = await deps.replace({
           ...common,
           reportId: reportId(body.reportId),

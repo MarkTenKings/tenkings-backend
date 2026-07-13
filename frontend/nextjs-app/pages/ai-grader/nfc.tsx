@@ -7,16 +7,21 @@ import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   AiGraderNfcHelperError,
   clearAiGraderNfcHelperPairing,
+  clearAiGraderNfcInitIdempotencyKey,
+  classifyAiGraderNfcHelperWriteRecovery,
   getAiGraderNfcHelperStatus,
+  getOrCreateAiGraderNfcInitIdempotencyKey,
   hasAiGraderNfcHelperPairing,
   pairAiGraderNfcHelper,
+  readAiGraderNfcInitIdempotencyKey,
+  waitForAiGraderNfcHelperIdle,
   writeAiGraderNfcTag,
   type AiGraderNfcHelperStatus,
   type AiGraderNfcHelperWriteResult,
 } from "../../lib/aiGraderNfcHelperClient";
 
 type JsonRecord = Record<string, unknown>;
-type Phase = "loading" | "ready" | "writing" | "verifying" | "overwrite" | "active" | "error";
+type Phase = "loading" | "disabled" | "ready" | "recovering" | "writing" | "verifying" | "overwrite" | "active" | "error";
 
 type HostedStatus = {
   status: "missing" | "reserved" | "programming" | "verified" | "active" | "revoked" | "error";
@@ -31,6 +36,14 @@ type HostedStatus = {
   chipType?: "NTAG215" | null;
   securityMode?: "static_url_v1" | "ntag424_sun_v1" | null;
   registrationSemantics?: "registered_link" | "cryptographically_verified" | null;
+  nfcProgrammingEnabled: boolean;
+  nfcRequired: boolean;
+  nfcAttemptTokenConfigured: boolean;
+  nfcWorkstationAttestationConfigured: boolean;
+  nfcWorkstationKeyCount: number;
+  expectedNfcHelperProtocolVersion: string;
+  canProgram: boolean;
+  canAdmin: boolean;
 };
 
 type Reservation = {
@@ -38,6 +51,7 @@ type Reservation = {
   publicTagId: string;
   attemptId: string;
   attemptToken: string;
+  attestationChallenge: string;
   chipType: "NTAG215";
   securityMode: "static_url_v1";
   reportId?: string;
@@ -58,6 +72,9 @@ type PendingCompletion = {
   idempotencyKey: string;
 };
 
+type WriteRecovery = "definite_prewrite" | "uncertain" | "not_retryable" | null;
+type AdminMutationRequest = { publicTagId: string; reason: string; idempotencyKey: string };
+
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
@@ -75,6 +92,7 @@ function reservationFrom(value: unknown): Reservation {
     publicTagId: typeof row.publicTagId === "string" ? row.publicTagId : "",
     attemptId: typeof row.attemptId === "string" ? row.attemptId : "",
     attemptToken: typeof row.attemptToken === "string" ? row.attemptToken : typeof row.token === "string" ? row.token : "",
+    attestationChallenge: typeof row.attestationChallenge === "string" ? row.attestationChallenge : "",
     chipType: "NTAG215",
     securityMode: "static_url_v1",
     reportId: typeof row.reportId === "string" ? row.reportId : undefined,
@@ -99,11 +117,33 @@ function reservationFrom(value: unknown): Reservation {
     !result.publicTagId ||
     !result.attemptId ||
     !result.attemptToken ||
+    !/^[A-Za-z0-9_-]{43}$/.test(result.attestationChallenge) ||
     result.url !== `https://collect.tenkings.co/nfc/${result.publicTagId}`
   ) {
     throw new Error("The hosted NFC reservation response was incomplete or unsafe.");
   }
   return result;
+}
+
+function assertSignedReadback(reservation: Reservation, write: AiGraderNfcHelperWriteResult) {
+  const attestation = write.operationalAttestation;
+  if (
+    (write.readerResultCode !== "write_verified_pcsc_readback" && write.readerResultCode !== "already_programmed_exact") ||
+    write.normalizedUrl !== reservation.url ||
+    write.chipType !== "NTAG215" ||
+    !/^[a-f0-9]{64}$/.test(write.uidFingerprintSha256 ?? "") ||
+    !/^[a-f0-9]{64}$/.test(write.readbackPayloadSha256 ?? "") ||
+    !attestation ||
+    attestation.schemaVersion !== "ai-grader-nfc-helper-attestation-v1" ||
+    attestation.algorithm !== "ecdsa-p256-sha256-p1363" ||
+    attestation.attestationChallenge !== reservation.attestationChallenge ||
+    !/^[a-f0-9]{64}$/.test(attestation.workstationKeyId) ||
+    !/^[A-Za-z0-9_-]{86}$/.test(attestation.signature) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(attestation.observedAt)
+  ) {
+    throw new Error("The NFC helper did not return a complete signed PC/SC readback.");
+  }
+  return write;
 }
 
 export default function AiGraderNfcProgrammingPage() {
@@ -119,9 +159,22 @@ export default function AiGraderNfcProgrammingPage() {
   const [helper, setHelper] = useState<AiGraderNfcHelperStatus | null>(null);
   const [paired, setPaired] = useState(false);
   const [pairingCode, setPairingCode] = useState("");
+  const [reservation, setReservation] = useState<Reservation | null>(null);
   const [pending, setPending] = useState<PendingCompletion | null>(null);
   const [overwriteDigest, setOverwriteDigest] = useState<string | null>(null);
+  const [writeIdempotencyKey, setWriteIdempotencyKey] = useState<string | null>(null);
+  const [localRetrySequence, setLocalRetrySequence] = useState(0);
+  const [writeRecovery, setWriteRecovery] = useState<WriteRecovery>(null);
+  const [storedAttemptAvailable, setStoredAttemptAvailable] = useState(false);
+  const [replacementRequest, setReplacementRequest] = useState<AdminMutationRequest | null>(null);
+  const [revocationRequest, setRevocationRequest] = useState<AdminMutationRequest | null>(null);
   const [reason, setReason] = useState("");
+  const programmingReady = Boolean(
+    hosted?.nfcProgrammingEnabled &&
+    hosted.nfcAttemptTokenConfigured &&
+    hosted.nfcWorkstationAttestationConfigured &&
+    hosted.nfcWorkstationKeyCount > 0,
+  );
 
   useEffect(() => {
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
@@ -129,19 +182,7 @@ export default function AiGraderNfcProgrammingPage() {
     if (!/^[A-Za-z0-9_-]{8,128}$/.test(code)) return;
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     setPairingCode(code);
-    setMessage("Completing one-time trust pairing with the loopback NFC helper.");
-    void pairAiGraderNfcHelper(code)
-      .then((status) => {
-        setHelper(status);
-        setPaired(true);
-        setPairingCode("");
-        setPhase("ready");
-        setMessage("NFC helper paired. Place one blank NTAG215 on the reader.");
-      })
-      .catch((error) => {
-        setPhase("error");
-        setMessage(errorMessage(error));
-      });
+    setMessage("One-time workstation pairing is ready after hosted programming readiness is confirmed.");
   }, []);
 
   const hostedRequest = useCallback(
@@ -173,19 +214,62 @@ export default function AiGraderNfcProgrammingPage() {
     if (!reportId) return;
     const result = (await hostedRequest("status")) as HostedStatus;
     setHosted(result);
+    if (!result.cardAssetId || !result.itemId || !result.certId) {
+      setHelper(null);
+      setPhase("error");
+      setMessage("This NFC task is not linked to one exact published CardAsset, Item, and certificate.");
+      return;
+    }
+    if (result.status === "active") {
+      clearAiGraderNfcInitIdempotencyKey(reportId);
+      setStoredAttemptAvailable(false);
+      setReservation(null);
+      setPending(null);
+      setOverwriteDigest(null);
+      setWriteIdempotencyKey(null);
+      setWriteRecovery(null);
+      setReplacementRequest(null);
+      setPhase("active");
+      setMessage("NFC is verified and active for this published report.");
+      return;
+    }
+    if (!result.nfcProgrammingEnabled) {
+      setHelper(null);
+      setPhase("disabled");
+      setMessage("NFC programming is disabled by server policy. Status and administrator revocation remain available.");
+      return;
+    }
+    if (!result.nfcAttemptTokenConfigured || !result.nfcWorkstationAttestationConfigured || result.nfcWorkstationKeyCount < 1) {
+      setHelper(null);
+      setPhase("disabled");
+      setMessage("NFC programming is enabled but its server token or approved workstation key allowlist is not ready.");
+      return;
+    }
+    const hasStoredAttempt = Boolean(readAiGraderNfcInitIdempotencyKey(reportId));
+    setStoredAttemptAvailable(hasStoredAttempt);
     const isPaired = hasAiGraderNfcHelperPairing();
     setPaired(isPaired);
     if (isPaired) {
       try {
-        setHelper(await getAiGraderNfcHelperStatus());
+        const helperStatus = await getAiGraderNfcHelperStatus();
+        if (helperStatus.helperProtocolVersion !== result.expectedNfcHelperProtocolVersion) {
+          throw new Error("The NFC workstation helper protocol is out of date. Update it before programming.");
+        }
+        if (hasStoredAttempt && helperStatus.busy) setWriteRecovery("uncertain");
+        setHelper(helperStatus);
       } catch (error) {
         setHelper(null);
+        setPhase("error");
         setMessage(errorMessage(error));
+        return;
       }
     }
-    setPhase(result.status === "active" ? "active" : "ready");
-    if (result.status === "active") setMessage("NFC is verified and active for this published report.");
-    else setMessage("Place one blank NTAG215 on the reader, then program the registered report link.");
+    setPhase("ready");
+    setMessage(
+      hasStoredAttempt
+        ? "A current hosted attempt is available. Use Retry Current Attempt; no second attempt will be allocated."
+        : "Place one blank NTAG215 on the reader, then program the registered report link.",
+    );
   }, [hostedRequest, reportId]);
 
   useEffect(() => {
@@ -228,52 +312,93 @@ export default function AiGraderNfcProgrammingPage() {
         readbackPayloadSha256: completion.write.readbackPayloadSha256,
         readerResultCode: completion.write.readerResultCode,
         helperProtocolVersion: completion.write.helperProtocolVersion,
+        operationalAttestation: completion.write.operationalAttestation,
       });
+      clearAiGraderNfcInitIdempotencyKey(reportId);
       setPending(null);
+      setReservation(null);
       setOverwriteDigest(null);
+      setWriteIdempotencyKey(null);
+      setWriteRecovery(null);
       await refresh();
     },
     [hosted?.cardAssetId, hosted?.certId, hosted?.itemId, hostedRequest, refresh, reportId],
   );
 
   const writeReservation = useCallback(
-    async (reservation: Reservation, overwriteConfirmation?: { confirmed: true; observedPayloadSha256: string }) => {
-      const idempotency = overwriteConfirmation
-        ? `write-${reservation.attemptId}-overwrite-${overwriteConfirmation.observedPayloadSha256.slice(0, 12)}`
-        : `write-${reservation.attemptId}`;
+    async (
+      currentReservation: Reservation,
+      idempotency: string,
+      overwriteConfirmation?: { confirmed: true; observedPayloadSha256: string },
+    ) => {
+      setReservation(currentReservation);
+      setWriteIdempotencyKey(idempotency);
+      setPending(null);
       setPhase("writing");
       setMessage("Writing the NDEF URL, then reading the full payload back from the NTAG215.");
-      const write = await writeAiGraderNfcTag({
-        attemptId: reservation.attemptId,
-        idempotencyKey: idempotency,
-        url: reservation.url,
-        ...(overwriteConfirmation ? { overwriteConfirmation } : {}),
-      });
-      if (write.overwriteRequired) {
-        if (!write.observedPayloadSha256 || !/^[a-f0-9]{64}$/.test(write.observedPayloadSha256)) {
-          throw new Error("The NFC helper returned an invalid overwrite challenge.");
+      try {
+        const write = await writeAiGraderNfcTag({
+          attemptId: currentReservation.attemptId,
+          idempotencyKey: idempotency,
+          publicTagId: currentReservation.publicTagId,
+          attestationChallenge: currentReservation.attestationChallenge,
+          url: currentReservation.url,
+          ...(overwriteConfirmation ? { overwriteConfirmation } : {}),
+        });
+        if (write.overwriteRequired) {
+          if (
+            write.operationalAttestation ||
+            !write.observedPayloadSha256 ||
+            !/^[a-f0-9]{64}$/.test(write.observedPayloadSha256)
+          ) {
+            throw new Error("The NFC helper returned an invalid overwrite challenge.");
+          }
+          setOverwriteDigest(write.observedPayloadSha256);
+          setWriteRecovery(null);
+          setPhase("overwrite");
+          setMessage("This tag contains a different NDEF payload. Confirm once to overwrite this exact observed content.");
+          return;
         }
-        setPending({ reservation, write, idempotencyKey: `complete-${reservation.attemptId}` });
-        setOverwriteDigest(write.observedPayloadSha256);
-        setPhase("overwrite");
-        setMessage("This tag contains a different NDEF payload. Confirm once to overwrite this exact observed content.");
-        return;
+        assertSignedReadback(currentReservation, write);
+        const completion = {
+          reservation: currentReservation,
+          write,
+          idempotencyKey: `complete-${currentReservation.attemptId}`,
+        };
+        setPending(completion);
+        setWriteRecovery(null);
+        await completeHosted(completion);
+      } catch (error) {
+        setWriteRecovery(classifyAiGraderNfcHelperWriteRecovery(error));
+        throw error;
       }
-      const completion = { reservation, write, idempotencyKey: `complete-${reservation.attemptId}` };
-      setPending(completion);
-      await completeHosted(completion);
     },
     [completeHosted],
   );
 
   const program = async () => {
     try {
+      if (!hosted?.nfcProgrammingEnabled) throw new Error("NFC programming is disabled by server policy.");
+      if (!programmingReady) {
+        throw new Error("NFC programming is not fully configured.");
+      }
       if (!paired) throw new Error("Pair the dedicated NFC helper first.");
-      const reservation = reservationFrom(
-        await hostedRequest("init", { reportId, idempotencyKey: `init-${reportId}-${crypto.randomUUID()}` }),
+      const initIdempotencyKey = getOrCreateAiGraderNfcInitIdempotencyKey(reportId);
+      setStoredAttemptAvailable(true);
+      const currentReservation = reservationFrom(
+        await hostedRequest("init", { reportId, idempotencyKey: initIdempotencyKey }),
       );
-      await writeReservation(reservation);
+      setReservation(currentReservation);
+      setLocalRetrySequence(0);
+      const localKey = `write-${currentReservation.attemptId}-try-0`;
+      await writeReservation(currentReservation, localKey);
     } catch (error) {
+      if (error instanceof Error && error.name === "AI_GRADER_NFC_ATTEMPT_EXPIRED") {
+        clearAiGraderNfcInitIdempotencyKey(reportId);
+        setStoredAttemptAvailable(false);
+        setReservation(null);
+        setWriteIdempotencyKey(null);
+      }
       setPhase("error");
       setMessage(errorMessage(error));
     }
@@ -281,8 +406,13 @@ export default function AiGraderNfcProgrammingPage() {
 
   const pair = async () => {
     try {
+      if (!hosted?.nfcProgrammingEnabled) throw new Error("NFC programming is disabled by server policy.");
+      if (!programmingReady) throw new Error("NFC programming is not fully configured.");
       setMessage("Pairing this browser with the loopback-only NFC helper.");
       const status = await pairAiGraderNfcHelper(pairingCode);
+      if (status.helperProtocolVersion !== hosted.expectedNfcHelperProtocolVersion) {
+        throw new Error("The NFC workstation helper protocol is out of date. Update it before programming.");
+      }
       setHelper(status);
       setPaired(true);
       setPairingCode("");
@@ -296,17 +426,37 @@ export default function AiGraderNfcProgrammingPage() {
 
   const replace = async () => {
     try {
-      if (reason.trim().length < 8) throw new Error("Enter a replacement reason of at least 8 characters.");
+      const normalizedReason = reason.trim();
+      const oldPublicTagId = hosted?.publicTagId ?? "";
+      if (normalizedReason.length < 8) throw new Error("Enter a replacement reason of at least 8 characters.");
+      if (!/^[A-Za-z0-9_-]{32}$/.test(oldPublicTagId)) throw new Error("The exact NFC registration to replace is unavailable.");
+      const attemptIdempotencyKey = getOrCreateAiGraderNfcInitIdempotencyKey(reportId);
+      setStoredAttemptAvailable(true);
+      const request = replacementRequest ?? {
+        publicTagId: oldPublicTagId,
+        reason: normalizedReason,
+        idempotencyKey: attemptIdempotencyKey,
+      };
+      if (
+        request.publicTagId !== oldPublicTagId ||
+        request.reason !== normalizedReason ||
+        request.idempotencyKey !== attemptIdempotencyKey
+      ) {
+        throw new Error("Retry the exact same replacement identity and reason, or reload the current status.");
+      }
+      setReplacementRequest(request);
       const reservation = reservationFrom(
         await hostedRequest("replace", {
           reportId,
-          replacedPublicTagId: hosted?.publicTagId,
-          reason: reason.trim(),
-          idempotencyKey: `replace-${reportId}-${crypto.randomUUID()}`,
+          replacedPublicTagId: request.publicTagId,
+          reason: request.reason,
+          idempotencyKey: request.idempotencyKey,
         }),
       );
       setReason("");
-      await writeReservation(reservation);
+      setReservation(reservation);
+      setLocalRetrySequence(0);
+      await writeReservation(reservation, `write-${reservation.attemptId}-try-0`);
     } catch (error) {
       setPhase("error");
       setMessage(errorMessage(error));
@@ -315,13 +465,32 @@ export default function AiGraderNfcProgrammingPage() {
 
   const revoke = async () => {
     try {
-      if (reason.trim().length < 8) throw new Error("Enter a revocation reason of at least 8 characters.");
+      const normalizedReason = reason.trim();
+      const publicTagId = hosted?.publicTagId ?? "";
+      if (normalizedReason.length < 8) throw new Error("Enter a revocation reason of at least 8 characters.");
+      if (!/^[A-Za-z0-9_-]{32}$/.test(publicTagId)) throw new Error("The exact NFC registration to revoke is unavailable.");
+      const request = revocationRequest ?? {
+        publicTagId,
+        reason: normalizedReason,
+        idempotencyKey: `nfc-revoke-${crypto.randomUUID()}`,
+      };
+      if (request.publicTagId !== publicTagId || request.reason !== normalizedReason) {
+        throw new Error("Retry the exact same revocation identity and reason, or reload the current status.");
+      }
+      setRevocationRequest(request);
       await hostedRequest("revoke", {
         reportId,
-        reason: reason.trim(),
-        idempotencyKey: `revoke-${reportId}-${crypto.randomUUID()}`,
+        reason: request.reason,
+        idempotencyKey: request.idempotencyKey,
       });
+      clearAiGraderNfcInitIdempotencyKey(reportId);
+      setStoredAttemptAvailable(false);
+      setReservation(null);
+      setPending(null);
+      setWriteIdempotencyKey(null);
+      setWriteRecovery(null);
       setReason("");
+      setRevocationRequest(null);
       await refresh();
     } catch (error) {
       setPhase("error");
@@ -330,12 +499,14 @@ export default function AiGraderNfcProgrammingPage() {
   };
 
   const confirmOverwrite = async () => {
-    if (!pending || !overwriteDigest) return;
+    if (!reservation || !overwriteDigest) return;
     try {
-      await writeReservation(pending.reservation, {
-        confirmed: true,
-        observedPayloadSha256: overwriteDigest,
-      });
+      const localKey = `write-${reservation.attemptId}-overwrite-${overwriteDigest.slice(0, 12)}`;
+      await writeReservation(
+        reservation,
+        localKey,
+        { confirmed: true, observedPayloadSha256: overwriteDigest },
+      );
     } catch (error) {
       setPhase("error");
       setMessage(errorMessage(error));
@@ -352,7 +523,52 @@ export default function AiGraderNfcProgrammingPage() {
     }
   };
 
-  const busy = phase === "writing" || phase === "verifying" || phase === "loading";
+  const retryCurrentAttempt = async () => {
+    try {
+      if (!hosted?.nfcProgrammingEnabled) throw new Error("NFC programming is disabled by server policy.");
+      if (!programmingReady) throw new Error("NFC programming is not fully configured.");
+      if (!paired) throw new Error("Pair the dedicated NFC helper first.");
+      if (pending) {
+        await completeHosted(pending);
+        return;
+      }
+
+      let currentReservation = reservation;
+      if (!currentReservation) {
+        const initIdempotencyKey = readAiGraderNfcInitIdempotencyKey(reportId);
+        if (!initIdempotencyKey) throw new Error("No current NFC attempt is available to retry.");
+        currentReservation = reservationFrom(await hostedRequest("init", { reportId, idempotencyKey: initIdempotencyKey }));
+        setReservation(currentReservation);
+        setLocalRetrySequence(0);
+      }
+
+      setPhase("recovering");
+      setMessage("Keep the same physical tag on the reader while recovering this hosted attempt without allocating or rewriting another tag identity.");
+      if (writeRecovery === "uncertain") {
+        const status = await waitForAiGraderNfcHelperIdle();
+        setHelper(status);
+      }
+      const nextSequence = writeRecovery === "definite_prewrite" ? localRetrySequence + 1 : localRetrySequence;
+      if (nextSequence > 3) throw new Error("The current NFC attempt reached its bounded local retry limit.");
+      setLocalRetrySequence(nextSequence);
+      const localKey =
+        writeRecovery === "uncertain" && writeIdempotencyKey
+          ? writeIdempotencyKey
+          : `write-${currentReservation.attemptId}-try-${nextSequence}`;
+      await writeReservation(currentReservation, localKey);
+    } catch (error) {
+      if (error instanceof Error && error.name === "AI_GRADER_NFC_ATTEMPT_EXPIRED") {
+        clearAiGraderNfcInitIdempotencyKey(reportId);
+        setStoredAttemptAvailable(false);
+        setReservation(null);
+        setWriteIdempotencyKey(null);
+      }
+      setPhase("error");
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const busy = phase === "writing" || phase === "verifying" || phase === "recovering" || phase === "loading";
 
   return (
     <>
@@ -378,14 +594,19 @@ export default function AiGraderNfcProgrammingPage() {
               <dt>NFC state</dt><dd>{hosted?.status ?? "Loading"}</dd>
               <dt>Chip / mode</dt><dd>{hosted?.chipType ? `${hosted.chipType} / ${hosted.securityMode}` : "NTAG215 / static_url_v1"}</dd>
               <dt>Security meaning</dt><dd>Registered link - not cryptographic authentication</dd>
+              <dt>Programming policy</dt><dd>{hosted?.nfcProgrammingEnabled ? "Enabled" : "Disabled"}</dd>
+              <dt>Inventory policy</dt><dd>{hosted?.nfcRequired ? "NFC required" : "NFC not required"}</dd>
+              <dt>Workstation trust</dt><dd>{hosted?.nfcWorkstationAttestationConfigured ? `${hosted.nfcWorkstationKeyCount} approved key${hosted.nfcWorkstationKeyCount === 1 ? "" : "s"}` : "Not configured"}</dd>
             </dl>
             {hosted?.nfcTagUrl ? <a href={hosted.nfcTagUrl} target="_blank" rel="noreferrer">Open registered tap page</a> : null}
           </article>
 
           <article>
             <p className="eyebrow">Dedicated workstation helper</p>
-            <h2>{paired ? helper?.readerConnected ? "Reader connected" : "Paired / reader unavailable" : "Pair workstation"}</h2>
-            {paired ? (
+            <h2>{!programmingReady ? hosted?.nfcProgrammingEnabled ? "Programming not configured" : "Programming disabled" : paired ? helper?.readerConnected ? "Reader connected" : "Paired / reader unavailable" : "Pair workstation"}</h2>
+            {!programmingReady ? (
+              <p>The browser will not contact the loopback helper while hosted programming is disabled or incomplete.</p>
+            ) : paired ? (
               <>
                 <dl>
                   <dt>PC/SC</dt><dd>{helper?.pcscReady ? "Ready" : "Not ready"}</dd>
@@ -398,7 +619,7 @@ export default function AiGraderNfcProgrammingPage() {
             ) : (
               <div className="pair">
                 <label>Pairing code<input value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} autoComplete="off" /></label>
-                <button type="button" onClick={() => void pair()}>Pair NFC helper</button>
+                <button type="button" disabled={!programmingReady} onClick={() => void pair()}>Pair NFC helper</button>
               </div>
             )}
           </article>
@@ -406,12 +627,24 @@ export default function AiGraderNfcProgrammingPage() {
 
         <section className="program">
           <div><p className="eyebrow">One tag / one report</p><h2>Place one blank NTAG215</h2><p>The helper writes only the exact Ten Kings URL, verifies full readback, and never locks or configures the tag.</p></div>
-          <button type="button" className="primary" disabled={busy || !paired || hosted?.status === "active"} onClick={() => void program()}>
+          <button
+            type="button"
+            className="primary"
+            disabled={
+              busy ||
+              !paired ||
+              hosted?.status === "active" ||
+              !hosted?.canProgram ||
+              !programmingReady ||
+              storedAttemptAvailable
+            }
+            onClick={() => void program()}
+          >
             {phase === "writing" ? "Writing" : phase === "verifying" ? "Verifying" : "Program NFC"}
           </button>
         </section>
 
-        {phase === "overwrite" && pending && overwriteDigest ? (
+        {phase === "overwrite" && reservation && overwriteDigest ? (
           <section className="danger">
             <div><strong>Different content detected</strong><p>Overwrite only this exact observed payload. The existing content is not silently reassigned.</p></div>
             <button type="button" onClick={() => void confirmOverwrite()}>Confirm overwrite once</button>
@@ -422,11 +655,15 @@ export default function AiGraderNfcProgrammingPage() {
           <button type="button" className="secondary retry" onClick={() => void retryHostedVerification()}>Retry hosted verification</button>
         ) : null}
 
-        {hosted?.status === "active" || hosted?.status === "revoked" ? (
+        {!pending && programmingReady && (reservation || storedAttemptAvailable) && (phase === "error" || phase === "ready") ? (
+          <button type="button" className="secondary retry" onClick={() => void retryCurrentAttempt()}>Retry Current Attempt</button>
+        ) : null}
+
+        {hosted?.canAdmin && hosted.publicTagId && hosted.status !== "missing" ? (
           <section className="admin-actions">
             <label>Required audit reason<input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={240} /></label>
-            {hosted.status === "active" ? <button type="button" className="secondary" onClick={() => void replace()}>Revoke and program replacement</button> : null}
-            {hosted.status === "active" ? <button type="button" className="danger-button" onClick={() => void revoke()}>Revoke NFC link</button> : null}
+            {programmingReady ? <button type="button" className="secondary" onClick={() => void replace()}>{hosted.status === "revoked" ? "Program authorized replacement" : "Revoke and program replacement"}</button> : null}
+            {hosted.status !== "revoked" ? <button type="button" className="danger-button" onClick={() => void revoke()}>Revoke NFC link</button> : null}
           </section>
         ) : null}
 

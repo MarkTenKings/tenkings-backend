@@ -1,4 +1,12 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
+import {
+  createHash,
+  createHmac,
+  createPublicKey,
+  randomBytes,
+  timingSafeEqual,
+  verify as verifySignature,
+  type KeyObject,
+} from "crypto";
 import { prisma as defaultPrisma } from "./client";
 import {
   canonicalAiGraderPublishAuthorityJson,
@@ -9,14 +17,29 @@ import {
 export const AI_GRADER_NFC_PUBLIC_ORIGIN = "https://collect.tenkings.co" as const;
 export const AI_GRADER_NFC_NDEF_PAYLOAD_VERSION = 1 as const;
 export const AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET_ENV = "AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET" as const;
+export const AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_ENV = "AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON" as const;
+export const AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV = "AI_GRADER_NFC_PROGRAMMING_ENABLED" as const;
+export const AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION = "tenkings-ai-grader-nfc-loopback-v2" as const;
+export const AI_GRADER_NFC_ATTESTATION_ALGORITHM = "ecdsa-p256-sha256-p1363" as const;
+export const AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION = "ai-grader-nfc-helper-attestation-v1" as const;
 export const AI_GRADER_NFC_DEFAULT_ATTEMPT_TTL_MS = 10 * 60 * 1000;
 
 const PUBLIC_TAG_ID = /^[A-Za-z0-9_-]{32}$/;
-const ATTEMPT_ID = /^nfc_attempt_[A-Za-z0-9_-]{24}$/;
+const ATTEMPT_ID = /^nfc_attempt_[A-Za-z0-9_-]{43}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
+const ATTESTATION_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+const ATTESTATION_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
+const OBSERVED_AT_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const STANDARD_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const SAFE_TENANT_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const SAFE_CODE = /^[A-Z0-9_]{1,80}$/;
 const OPEN_STATUSES = ["reserved", "programming", "verified", "active"] as const;
 const ACTIVE_ATTEMPT_STATES = ["initialized", "writing"] as const;
+const ATTESTATION_CLOCK_SKEW_MS = 2 * 60 * 1000;
+const WORKSTATION_ALLOWLIST_MAX_BYTES = 16 * 1024;
+const WORKSTATION_ALLOWLIST_MAX_ENTRIES = 8;
+const WORKSTATION_ALLOWLIST_ENTRY_FIELDS = ["algorithm", "publicSpkiDerBase64", "tenantId"] as const;
+const REPLACEMENT_AUTHORIZATION = Symbol("ai-grader-nfc-replacement-authorization");
 
 export type AiGraderNfcChipTypeValue = "NTAG215" | "NTAG424_DNA";
 export type AiGraderNfcSecurityModeValue = "static_url_v1" | "ntag424_sun_v1";
@@ -69,6 +92,39 @@ type JsonRecord = Record<string, unknown>;
 type DbClient = any;
 type ExactLinkageInput = { tenantId: string; reportId: string; cardAssetId: string; itemId: string; certId: string };
 type ActorInput = { requestedByUserId: string };
+type ProgrammingRuntimeInput = {
+  tokenSecret?: string;
+  workstationPublicKeysJson?: string;
+  programmingEnabled?: boolean;
+};
+
+export type AiGraderNfcOperationalAttestationInput = {
+  schemaVersion: typeof AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION;
+  workstationKeyId: string;
+  algorithm: typeof AI_GRADER_NFC_ATTESTATION_ALGORITHM;
+  attestationChallenge: string;
+  observedAt: string;
+  signature: string;
+};
+
+export type AiGraderNfcOperationalAttestationStatementInput = {
+  attemptId: string;
+  attestationChallenge: string;
+  publicTagId: string;
+  normalizedUrl: string;
+  uidFingerprintSha256: string;
+  readbackPayloadSha256: string;
+  readerResultCode: string;
+  helperProtocolVersion: string;
+  observedAt: string;
+};
+
+export type AiGraderNfcWorkstationPublicKey = {
+  keyId: string;
+  tenantId: string;
+  algorithm: typeof AI_GRADER_NFC_ATTESTATION_ALGORITHM;
+  publicKey: KeyObject;
+};
 
 export type AiGraderNfcSafeStatus = {
   status: AiGraderNfcTagStatusValue;
@@ -89,9 +145,8 @@ export type AiGraderNfcSafeStatus = {
   errorCode?: string | null;
 };
 
-export type InitAiGraderNfcProgrammingInput = ExactLinkageInput & ActorInput & {
+export type InitAiGraderNfcProgrammingInput = ExactLinkageInput & ActorInput & ProgrammingRuntimeInput & {
   idempotencyKey: string;
-  tokenSecret?: string;
   attemptTtlMs?: number;
   operatorNote?: string | null;
   dbClient?: DbClient;
@@ -103,19 +158,21 @@ export type AiGraderNfcProgrammingInitResult = AiGraderNfcSafeStatus & {
   attemptExpiresAt?: string;
   expectedNdefUrl?: string;
   expectedPayloadSha256?: string;
+  attestationChallenge?: string;
 };
-export type CompleteAiGraderNfcProgrammingInput = ExactLinkageInput & ActorInput & {
+export type CompleteAiGraderNfcProgrammingInput = ExactLinkageInput & ActorInput & ProgrammingRuntimeInput & {
   attemptId: string;
   attemptToken: string;
+  publicTagId: string;
   uidFingerprintSha256: string;
   normalizedNdefUrl: string;
   readbackPayloadSha256: string;
   chipType: AiGraderNfcChipTypeValue;
   securityMode: AiGraderNfcSecurityModeValue;
   idempotencyKey: string;
-  readerCode?: string | null;
-  resultCode?: string | null;
-  helperProtocolVersion?: string | null;
+  readerResultCode: string;
+  helperProtocolVersion: string;
+  operationalAttestation: AiGraderNfcOperationalAttestationInput;
   dbClient?: DbClient;
   now?: Date;
 };
@@ -177,12 +234,115 @@ function boundedCode(value: unknown, fallback: string) {
   const normalized = text(value).toUpperCase();
   return normalized && SAFE_CODE.test(normalized) ? normalized : fallback;
 }
-function sha256(value: string) {
-  return createHash("sha256").update(value, "utf8").digest("hex");
+function sha256(value: string | Buffer) {
+  const hash = createHash("sha256");
+  if (typeof value === "string") hash.update(value, "utf8");
+  else hash.update(value);
+  return hash.digest("hex");
 }
 function safeEqualHex(left: string, right: string) {
   return SHA256.test(left) && SHA256.test(right) && timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
 }
+
+function workstationConfigurationError() {
+  return nfcError(
+    "AI_GRADER_NFC_WORKSTATION_ATTESTATION_UNAVAILABLE",
+    503,
+    "NFC workstation operational attestation is not configured.",
+  );
+}
+
+function strictStandardBase64(value: unknown) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 1024 || !STANDARD_BASE64.test(value)) {
+    throw workstationConfigurationError();
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.length < 64 || decoded.length > 512 || decoded.toString("base64") !== value) {
+    throw workstationConfigurationError();
+  }
+  return decoded;
+}
+
+export function parseAiGraderNfcWorkstationPublicKeys(rawJson: unknown): Map<string, AiGraderNfcWorkstationPublicKey> {
+  const raw = typeof rawJson === "string" ? rawJson : "";
+  if (!raw.trim()) return new Map();
+  if (Buffer.byteLength(raw, "utf8") > WORKSTATION_ALLOWLIST_MAX_BYTES) {
+    throw workstationConfigurationError();
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw workstationConfigurationError();
+  }
+  if (!isRecord(parsed)) throw workstationConfigurationError();
+  const keyIds = Object.keys(parsed);
+  if (keyIds.length > WORKSTATION_ALLOWLIST_MAX_ENTRIES) throw workstationConfigurationError();
+
+  // JSON.parse otherwise silently accepts duplicate properties. Valid key IDs
+  // cannot be escaped and must occur exactly once as top-level property names.
+  const rawKeyIds = Array.from(raw.matchAll(/"([a-f0-9]{64})"\s*:/g), (match) => match[1]);
+  if (rawKeyIds.length !== keyIds.length || new Set(rawKeyIds).size !== rawKeyIds.length) {
+    throw workstationConfigurationError();
+  }
+  // Required entry property names must also be literal and occur exactly once
+  // per entry. JSON.parse would otherwise silently keep only the final duplicate.
+  for (const field of WORKSTATION_ALLOWLIST_ENTRY_FIELDS) {
+    const occurrences = Array.from(raw.matchAll(new RegExp(`"${field}"\\s*:`, "g"))).length;
+    if (occurrences !== keyIds.length) throw workstationConfigurationError();
+  }
+
+  const result = new Map<string, AiGraderNfcWorkstationPublicKey>();
+  for (const keyId of keyIds) {
+    if (!SHA256.test(keyId) || result.has(keyId)) throw workstationConfigurationError();
+    const entry = parsed[keyId];
+    if (!isRecord(entry)) throw workstationConfigurationError();
+    const fields = Object.keys(entry).sort();
+    if (fields.join("\n") !== [...WORKSTATION_ALLOWLIST_ENTRY_FIELDS].sort().join("\n")) {
+      throw workstationConfigurationError();
+    }
+    const tenantId = typeof entry.tenantId === "string" ? entry.tenantId : "";
+    if (!SAFE_TENANT_ID.test(tenantId)) throw workstationConfigurationError();
+    if (entry.algorithm !== AI_GRADER_NFC_ATTESTATION_ALGORITHM) throw workstationConfigurationError();
+    const der = strictStandardBase64(entry.publicSpkiDerBase64);
+    if (sha256(der) !== keyId) throw workstationConfigurationError();
+    let publicKey: KeyObject;
+    try {
+      publicKey = createPublicKey({ key: der, format: "der", type: "spki" });
+      const details = publicKey.asymmetricKeyDetails;
+      const exported = Buffer.from(publicKey.export({ format: "der", type: "spki" }));
+      if (
+        publicKey.asymmetricKeyType !== "ec" ||
+        details?.namedCurve !== "prime256v1" ||
+        !exported.equals(der)
+      ) {
+        throw workstationConfigurationError();
+      }
+    } catch {
+      throw workstationConfigurationError();
+    }
+    result.set(keyId, {
+      keyId,
+      tenantId,
+      algorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
+      publicKey,
+    });
+  }
+  return result;
+}
+
+export function getAiGraderNfcWorkstationKeyReadiness(rawJson: unknown, tenantId: string) {
+  try {
+    const normalizedTenantId = text(tenantId);
+    if (!normalizedTenantId) return { configured: false, keyCount: 0 };
+    const keys = parseAiGraderNfcWorkstationPublicKeys(rawJson);
+    const keyCount = Array.from(keys.values()).filter((entry) => entry.tenantId === normalizedTenantId).length;
+    return { configured: keyCount > 0, keyCount };
+  } catch {
+    return { configured: false, keyCount: 0 };
+  }
+}
+
 function date(value: unknown) {
   if (value instanceof Date) return value;
   const parsed = new Date(String(value));
@@ -209,21 +369,155 @@ function validateIdempotencyKey(value: unknown) {
   return normalized;
 }
 function validateTokenSecret(value: unknown) {
-  const secret = text(value || process.env[AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET_ENV]);
+  const source = value === undefined ? process.env[AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET_ENV] : value;
+  const secret = text(source);
   if (Buffer.byteLength(secret, "utf8") < 32) throw nfcError("AI_GRADER_NFC_TOKEN_SECRET_UNAVAILABLE", 503, "NFC programming token service is not configured.");
   return secret;
+}
+function resolveProgrammingRuntime(input: ProgrammingRuntimeInput, tenantId: string) {
+  const enabled = input.programmingEnabled === undefined
+    ? process.env[AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV] === "true"
+    : input.programmingEnabled === true;
+  if (!enabled) {
+    throw nfcError("AI_GRADER_NFC_PROGRAMMING_DISABLED", 503, "NFC programming is disabled.");
+  }
+  const tokenSecret = validateTokenSecret(input.tokenSecret);
+  const rawKeys = input.workstationPublicKeysJson === undefined
+    ? process.env[AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_ENV]
+    : input.workstationPublicKeysJson;
+  const workstationKeys = parseAiGraderNfcWorkstationPublicKeys(rawKeys);
+  if (!Array.from(workstationKeys.values()).some((entry) => entry.tenantId === tenantId)) {
+    throw workstationConfigurationError();
+  }
+  return { tokenSecret, workstationKeys };
 }
 function attemptTtl(value: unknown) {
   const ttl = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : AI_GRADER_NFC_DEFAULT_ATTEMPT_TTL_MS;
   if (ttl < 60_000 || ttl > 30 * 60_000) throw nfcError("AI_GRADER_NFC_INVALID_ATTEMPT_TTL", 400, "NFC attempt lifetime is outside the allowed range.");
   return ttl;
 }
+
+function strictBase64url(value: unknown, pattern: RegExp, decodedLength: number, code: string) {
+  const normalized = typeof value === "string" ? value : "";
+  if (!pattern.test(normalized)) throw nfcError(code, 400, "NFC workstation operational attestation is invalid.");
+  const decoded = Buffer.from(normalized, "base64url");
+  if (decoded.length !== decodedLength || decoded.toString("base64url") !== normalized) {
+    throw nfcError(code, 400, "NFC workstation operational attestation is invalid.");
+  }
+  return { normalized, decoded };
+}
+
+function validateObservedAt(value: unknown) {
+  const observedAt = typeof value === "string" ? value : "";
+  const parsed = OBSERVED_AT_UTC.test(observedAt) ? new Date(observedAt) : null;
+  if (!parsed || !Number.isFinite(parsed.getTime()) || parsed.toISOString() !== observedAt) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_TIME_INVALID", 400, "NFC workstation attestation time is invalid.");
+  }
+  return { observedAt, parsed };
+}
+
+function validateReaderResultCode(value: unknown) {
+  if (value !== "write_verified_pcsc_readback" && value !== "already_programmed_exact") {
+    throw nfcError("AI_GRADER_NFC_READER_RESULT_REJECTED", 400, "NFC helper readback result is not accepted.");
+  }
+  return value;
+}
+
+function validateHelperProtocolVersion(value: unknown) {
+  if (value !== AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION) {
+    throw nfcError("AI_GRADER_NFC_HELPER_PROTOCOL_REJECTED", 409, "NFC helper protocol version is not accepted.");
+  }
+  return value;
+}
+
+function validateOperationalAttestation(value: unknown): AiGraderNfcOperationalAttestationInput {
+  if (!isRecord(value)) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_INVALID", 400, "NFC workstation operational attestation is required.");
+  }
+  const fields = Object.keys(value).sort();
+  if (
+    fields.join("\n") !==
+    ["algorithm", "attestationChallenge", "observedAt", "schemaVersion", "signature", "workstationKeyId"].join("\n")
+  ) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_INVALID", 400, "NFC workstation operational attestation is invalid.");
+  }
+  if (
+    value.schemaVersion !== AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION ||
+    value.algorithm !== AI_GRADER_NFC_ATTESTATION_ALGORITHM
+  ) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_CONTRACT_REJECTED", 400, "NFC workstation attestation contract is not accepted.");
+  }
+  const workstationKeyId = typeof value.workstationKeyId === "string" ? value.workstationKeyId : "";
+  if (!SHA256.test(workstationKeyId)) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_INVALID", 400, "NFC workstation operational attestation is invalid.");
+  }
+  const attestationChallenge = strictBase64url(
+    value.attestationChallenge,
+    ATTESTATION_CHALLENGE,
+    32,
+    "AI_GRADER_NFC_ATTESTATION_INVALID",
+  ).normalized;
+  const signature = strictBase64url(
+    value.signature,
+    ATTESTATION_SIGNATURE,
+    64,
+    "AI_GRADER_NFC_ATTESTATION_SIGNATURE_INVALID",
+  ).normalized;
+  const observedAt = validateObservedAt(value.observedAt).observedAt;
+  return {
+    schemaVersion: AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION,
+    workstationKeyId,
+    algorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
+    attestationChallenge,
+    observedAt,
+    signature,
+  };
+}
+
+export function buildAiGraderNfcOperationalAttestationStatement(
+  input: AiGraderNfcOperationalAttestationStatementInput,
+) {
+  const attemptId = text(input.attemptId);
+  const publicTagId = text(input.publicTagId);
+  const uidFingerprintSha256 = text(input.uidFingerprintSha256).toLowerCase();
+  const readbackPayloadSha256 = text(input.readbackPayloadSha256).toLowerCase();
+  if (!ATTEMPT_ID.test(attemptId) || !PUBLIC_TAG_ID.test(publicTagId)) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_INVALID", 400, "NFC workstation operational attestation is invalid.");
+  }
+  const attestationChallenge = strictBase64url(
+    input.attestationChallenge,
+    ATTESTATION_CHALLENGE,
+    32,
+    "AI_GRADER_NFC_ATTESTATION_INVALID",
+  ).normalized;
+  if (!SHA256.test(uidFingerprintSha256) || !SHA256.test(readbackPayloadSha256)) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_INVALID", 400, "NFC workstation operational attestation is invalid.");
+  }
+  const normalizedUrl = required(input.normalizedUrl, "normalizedUrl", 512);
+  const readerResultCode = validateReaderResultCode(input.readerResultCode);
+  const helperProtocolVersion = validateHelperProtocolVersion(input.helperProtocolVersion);
+  const observedAt = validateObservedAt(input.observedAt).observedAt;
+  return [
+    AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION,
+    attemptId,
+    attestationChallenge,
+    publicTagId,
+    normalizedUrl,
+    uidFingerprintSha256,
+    readbackPayloadSha256,
+    readerResultCode,
+    helperProtocolVersion,
+    observedAt,
+  ].join("\n");
+}
 function safeMetadata(operatorNote?: string | null) {
   const note = text(operatorNote);
   return {
     schemaVersion: "ai-grader-nfc-safe-metadata-v1",
     workflow: "dedicated_nfc_workstation",
-    evidenceSemantics: "registered_link_not_cryptographic_attestation",
+    evidenceSemantics: "workstation_signed_pcsc_readback_not_tag_authentication",
+    workstationOperationalAttestationRequired: true,
+    cryptographicTagAuthentication: false,
     ...(note ? { operatorNote: note.slice(0, 240) } : {}),
   };
 }
@@ -237,7 +531,7 @@ export function generateAiGraderNfcPublicTagId(random: (size: number) => Buffer 
   return id;
 }
 function generateAttemptId(random: (size: number) => Buffer = randomBytes) {
-  const id = `nfc_attempt_${random(18).toString("base64url")}`;
+  const id = `nfc_attempt_${random(32).toString("base64url")}`;
   if (!ATTEMPT_ID.test(id)) throw nfcError("AI_GRADER_NFC_RANDOM_ID_FAILED", 500, "NFC attempt identity generation failed.");
   return id;
 }
@@ -249,14 +543,39 @@ export function buildAiGraderNfcTagUrl(publicTagId: string) {
 function deriveAttemptToken(secret: string, attemptId: string) {
   return createHmac("sha256", secret).update(`ai-grader-nfc-attempt-v1\n${attemptId}`, "utf8").digest("base64url");
 }
+function deriveAttestationChallenge(secret: string, attemptId: string) {
+  return createHmac("sha256", secret)
+    .update(`ai-grader-nfc-attestation-challenge-v1\n${attemptId}`, "utf8")
+    .digest("base64url");
+}
 function attemptIdempotencyHash(actorUserId: string, idempotencyKey: string) {
-  return sha256(`ai-grader-nfc-init-v1\n${actorUserId}\n${idempotencyKey}`);
+  return sha256(`ai-grader-nfc-attempt-v1\n${actorUserId}\n${idempotencyKey}`);
 }
 function completionIdempotencyHash(actorUserId: string, attemptId: string, idempotencyKey: string) {
   return sha256(`ai-grader-nfc-complete-v1\n${actorUserId}\n${attemptId}\n${idempotencyKey}`);
 }
 function mutationIdempotencyHash(action: string, actorUserId: string, idempotencyKey: string) {
   return sha256(`ai-grader-nfc-${action}-v1\n${actorUserId}\n${idempotencyKey}`);
+}
+function replacementRequestHash(input: {
+  linkage: ExactLinkageInput;
+  actorUserId: string;
+  publicTagId: string;
+  reason: string;
+  idempotencyKey: string;
+}) {
+  return sha256([
+    "ai-grader-nfc-replacement-request-v1",
+    input.linkage.tenantId,
+    input.linkage.reportId,
+    input.linkage.cardAssetId,
+    input.linkage.itemId,
+    input.linkage.certId,
+    input.actorUserId,
+    input.publicTagId,
+    sha256(input.reason),
+    input.idempotencyKey,
+  ].join("\n"));
 }
 function asTagStatus(value: unknown): Exclude<AiGraderNfcTagStatusValue, "missing"> {
   const normalized = text(value) as Exclude<AiGraderNfcTagStatusValue, "missing">;
@@ -453,21 +772,84 @@ async function uniquePublicTagId(tx: DbClient) {
   }
   throw nfcError("AI_GRADER_NFC_RANDOM_ID_COLLISION", 503, "NFC identity allocation could not complete.");
 }
-async function expireAttempt(tx: DbClient, attempt: any, now: Date) {
-  const expiresAt = date(attempt.expiresAt);
-  if (expiresAt && expiresAt.getTime() > now.getTime()) return false;
-  if (ACTIVE_ATTEMPT_STATES.includes(attempt.state)) {
+async function expireTimedOutAttemptsTx(
+  tx: DbClient,
+  input: { tag: any; now: Date; actorUserId: string },
+) {
+  const expiredAttempts = await tx.aiGraderNfcProgrammingAttempt.findMany({
+    where: {
+      tagId: input.tag.id,
+      state: { in: [...ACTIVE_ATTEMPT_STATES] },
+      expiresAt: { lte: input.now },
+    },
+    orderBy: { requestedAt: "asc" },
+  });
+  const expiredAttemptIds = new Set<string>();
+  for (const attempt of expiredAttempts) {
+    expiredAttemptIds.add(text(attempt.id));
     await tx.aiGraderNfcProgrammingAttempt.update({
       where: { id: attempt.id },
-      data: { state: "expired", failureCode: "AI_GRADER_NFC_ATTEMPT_EXPIRED", updatedAt: now },
+      data: {
+        state: "expired",
+        failureCode: "AI_GRADER_NFC_ATTEMPT_EXPIRED",
+        completionIdempotencyKeyHash: null,
+        completedWorkstationKeyId: null,
+        readbackEvidence: null,
+        consumedAt: null,
+        updatedAt: input.now,
+      },
+    });
+    await audit(tx, {
+      tagId: input.tag.id,
+      attemptId: attempt.id,
+      tenantId: text(input.tag.tenantId),
+      reportId: text(input.tag.reportId),
+      action: "programming_attempt_expired",
+      actorUserId: input.actorUserId,
+      reasonCode: "AI_GRADER_NFC_ATTEMPT_EXPIRED",
+      safeDetails: {
+        expiresAt: iso(attempt.expiresAt),
+        programmingTagRecoveryPending: true,
+      },
+      createdAt: input.now,
     });
   }
-  return true;
+  if (!expiredAttemptIds.size) return { tag: input.tag, expiredAttemptIds };
+
+  const remaining = await tx.aiGraderNfcProgrammingAttempt.findFirst({
+    where: {
+      tagId: input.tag.id,
+      state: { in: [...ACTIVE_ATTEMPT_STATES] },
+      expiresAt: { gt: input.now },
+    },
+    orderBy: { requestedAt: "desc" },
+  });
+  if (!remaining && input.tag.status === "programming") {
+    const recoveredTag = await tx.aiGraderNfcTag.update({
+      where: { id: input.tag.id },
+      data: { status: "reserved", errorCode: null, updatedAt: input.now },
+    });
+    await audit(tx, {
+      tagId: input.tag.id,
+      tenantId: text(input.tag.tenantId),
+      reportId: text(input.tag.reportId),
+      action: "programming_attempts_expired_recover_reservation",
+      fromStatus: "programming",
+      toStatus: "reserved",
+      actorUserId: input.actorUserId,
+      reasonCode: "AI_GRADER_NFC_ATTEMPT_EXPIRED",
+      safeDetails: { expiredAttemptCount: expiredAttemptIds.size },
+      createdAt: input.now,
+    });
+    return { tag: recoveredTag, expiredAttemptIds };
+  }
+  return { tag: input.tag, expiredAttemptIds };
 }
 
 async function createProgrammingAttemptTx(tx: DbClient, input: {
   linkage: ExactLinkageInput; authority: ConfirmAuthority; actorUserId: string; idempotencyKey: string;
   tokenSecret: string; ttlMs: number; now: Date; operatorNote?: string | null;
+  replacementAuthorization?: typeof REPLACEMENT_AUTHORIZATION;
 }): Promise<AiGraderNfcProgrammingInitResult | ExpiredAttemptResult> {
   const idempotencyKeyHash = attemptIdempotencyHash(input.actorUserId, input.idempotencyKey);
   const existingAttempt = await tx.aiGraderNfcProgrammingAttempt.findUnique({
@@ -479,16 +861,36 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
   if (existingAttempt) {
     assertAttemptLinkage(existingAttempt, input.linkage, input.actorUserId);
     assertTagLinkage(existingAttempt.tag, input.linkage);
+    if (
+      text(existingAttempt.tag.aiGraderReportId) !== input.authority.reportRowId ||
+      text(existingAttempt.tag.aiGraderLabelId) !== input.authority.labelId
+    ) {
+      throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC internal report and label linkage changed.");
+    }
     if (existingAttempt.state === "consumed") return { ...safeStatus(existingAttempt.tag), attemptId: existingAttempt.id };
-    if (await expireAttempt(tx, existingAttempt, input.now)) return EXPIRED_ATTEMPT_RESULT;
+    if (existingAttempt.state === "expired") return EXPIRED_ATTEMPT_RESULT;
+    const expiry = await expireTimedOutAttemptsTx(tx, {
+      tag: existingAttempt.tag,
+      now: input.now,
+      actorUserId: input.actorUserId,
+    });
+    if (expiry.expiredAttemptIds.has(existingAttempt.id)) return EXPIRED_ATTEMPT_RESULT;
     if (!ACTIVE_ATTEMPT_STATES.includes(existingAttempt.state)) throw nfcError("AI_GRADER_NFC_ATTEMPT_TERMINAL", 409, "NFC programming attempt is no longer usable.");
     const attemptToken = deriveAttemptToken(input.tokenSecret, existingAttempt.id);
+    const attestationChallenge = deriveAttestationChallenge(input.tokenSecret, existingAttempt.id);
     if (!safeEqualHex(sha256(attemptToken), text(existingAttempt.tokenHash))) throw nfcError("AI_GRADER_NFC_TOKEN_STATE_INVALID", 503, "NFC token state is invalid.");
+    if (
+      !safeEqualHex(sha256(attestationChallenge), text(existingAttempt.attestationChallengeHash)) ||
+      existingAttempt.expectedAttestationAlgorithm !== AI_GRADER_NFC_ATTESTATION_ALGORITHM
+    ) {
+      throw nfcError("AI_GRADER_NFC_ATTESTATION_STATE_INVALID", 503, "NFC workstation attestation state is invalid.");
+    }
     return {
       ...safeStatus(existingAttempt.tag), attemptId: existingAttempt.id, attemptToken,
       attemptExpiresAt: iso(existingAttempt.expiresAt) ?? undefined,
       expectedNdefUrl: buildAiGraderNfcTagUrl(existingAttempt.tag.publicTagId),
       expectedPayloadSha256: text(existingAttempt.tag.expectedPayloadSha256),
+      attestationChallenge,
     };
   }
   let tag = await tx.aiGraderNfcTag.findFirst({
@@ -496,18 +898,36 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
     orderBy: { createdAt: "desc" },
   });
   if (tag?.status === "active") return safeStatus(tag);
-  if (!tag) tag = await tx.aiGraderNfcTag.findFirst({
-    where: { tenantId: input.linkage.tenantId, reportId: input.linkage.reportId, status: "error" },
-    orderBy: { createdAt: "desc" },
-  });
   if (tag) {
     assertTagLinkage(tag, input.linkage);
+    tag = (await expireTimedOutAttemptsTx(tx, {
+      tag,
+      now: input.now,
+      actorUserId: input.actorUserId,
+    })).tag;
     const liveAttempt = await tx.aiGraderNfcProgrammingAttempt.findFirst({
       where: { tagId: tag.id, state: { in: [...ACTIVE_ATTEMPT_STATES] }, expiresAt: { gt: input.now } },
       orderBy: { requestedAt: "desc" },
     });
     if (liveAttempt) throw nfcError("AI_GRADER_NFC_ATTEMPT_IN_PROGRESS", 409, "Another NFC programming attempt is already in progress.");
   } else {
+    const priorRevoked = await tx.aiGraderNfcTag.findFirst({
+      where: { tenantId: input.linkage.tenantId, reportId: input.linkage.reportId, status: "revoked" },
+      orderBy: { createdAt: "desc" },
+    });
+    if (priorRevoked && input.replacementAuthorization !== REPLACEMENT_AUTHORIZATION) {
+      throw nfcError(
+        "AI_GRADER_NFC_REPLACEMENT_REQUIRED",
+        409,
+        "A revoked NFC registration requires the authorized replacement workflow.",
+      );
+    }
+    tag = await tx.aiGraderNfcTag.findFirst({
+      where: { tenantId: input.linkage.tenantId, reportId: input.linkage.reportId, status: "error" },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+  if (!tag) {
     const publicTagId = await uniquePublicTagId(tx);
     const expectedUrl = buildAiGraderNfcTagUrl(publicTagId);
     tag = await tx.aiGraderNfcTag.create({ data: {
@@ -531,11 +951,14 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
   }
   const attemptId = generateAttemptId();
   const attemptToken = deriveAttemptToken(input.tokenSecret, attemptId);
+  const attestationChallenge = deriveAttestationChallenge(input.tokenSecret, attemptId);
   const expiresAt = new Date(input.now.getTime() + input.ttlMs);
   const attempt = await tx.aiGraderNfcProgrammingAttempt.create({ data: {
     id: attemptId, tagId: tag.id, tenantId: input.linkage.tenantId, reportId: input.linkage.reportId,
     cardAssetId: input.linkage.cardAssetId, itemId: input.linkage.itemId, certId: input.linkage.certId,
     requestedByUserId: input.actorUserId, idempotencyKeyHash, tokenHash: sha256(attemptToken),
+    attestationChallengeHash: sha256(attestationChallenge),
+    expectedAttestationAlgorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
     state: "initialized", requestedAt: input.now, expiresAt, createdAt: input.now, updatedAt: input.now,
   } });
   const fromStatus = asTagStatus(tag.status);
@@ -545,12 +968,18 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
   await audit(tx, {
     tagId: tag.id, attemptId: attempt.id, tenantId: input.linkage.tenantId, reportId: input.linkage.reportId,
     action: "programming_attempt_initialized", fromStatus, toStatus: "programming", actorUserId: input.actorUserId,
-    safeDetails: { expiresAt: expiresAt.toISOString(), evidenceSemantics: "local_pcsc_readback_not_attestation" },
+    safeDetails: {
+      expiresAt: expiresAt.toISOString(),
+      expectedAttestationAlgorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
+      workstationOperationalAttestationRequired: true,
+      cryptographicTagAuthentication: false,
+    },
     createdAt: input.now,
   });
   return {
     ...safeStatus(tag), attemptId, attemptToken, attemptExpiresAt: expiresAt.toISOString(),
     expectedNdefUrl: buildAiGraderNfcTagUrl(tag.publicTagId), expectedPayloadSha256: text(tag.expectedPayloadSha256),
+    attestationChallenge,
   };
 }
 
@@ -559,14 +988,21 @@ export async function initAiGraderNfcProgramming(input: InitAiGraderNfcProgrammi
   const linkage = validateExactLinkage(input);
   const actorUserId = validateActor(input.requestedByUserId);
   const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
-  const tokenSecret = validateTokenSecret(input.tokenSecret);
+  const { tokenSecret } = resolveProgrammingRuntime(input, linkage.tenantId);
   const ttlMs = attemptTtl(input.attemptTtlMs);
   const now = input.now ?? new Date();
   const result = await transaction(input.dbClient ?? defaultPrisma, async (tx) => {
     await acquireReportLock(tx, linkage.reportId);
     const authority = await loadConfirmAuthority(tx, linkage, { requirePublished: true });
     return createProgrammingAttemptTx(tx, {
-      linkage, authority, actorUserId, idempotencyKey, tokenSecret, ttlMs, now, operatorNote: input.operatorNote,
+      linkage,
+      authority,
+      actorUserId,
+      idempotencyKey,
+      tokenSecret,
+      ttlMs,
+      now,
+      operatorNote: input.operatorNote,
     });
   });
   if (isExpiredAttemptResult(result)) {
@@ -575,15 +1011,111 @@ export async function initAiGraderNfcProgramming(input: InitAiGraderNfcProgrammi
   return result;
 }
 
+function verifyOperationalAttestationForAttempt(input: {
+  attempt: any;
+  workstationKeys: Map<string, AiGraderNfcWorkstationPublicKey>;
+  linkage: ExactLinkageInput;
+  publicTagId: string;
+  normalizedUrl: string;
+  uidFingerprintSha256: string;
+  readbackPayloadSha256: string;
+  readerResultCode: string;
+  helperProtocolVersion: string;
+  operationalAttestation: AiGraderNfcOperationalAttestationInput;
+  now: Date;
+}) {
+  const attestation = input.operationalAttestation;
+  if (
+    input.attempt.expectedAttestationAlgorithm !== AI_GRADER_NFC_ATTESTATION_ALGORITHM ||
+    !safeEqualHex(
+      sha256(attestation.attestationChallenge),
+      text(input.attempt.attestationChallengeHash),
+    )
+  ) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_CHALLENGE_REJECTED", 403, "NFC workstation attestation was rejected.");
+  }
+  const workstationKey = input.workstationKeys.get(attestation.workstationKeyId);
+  if (!workstationKey || workstationKey.tenantId !== input.linkage.tenantId) {
+    throw nfcError("AI_GRADER_NFC_WORKSTATION_KEY_REJECTED", 403, "NFC workstation attestation was rejected.");
+  }
+  const requestedAt = date(input.attempt.requestedAt);
+  const expiresAt = date(input.attempt.expiresAt);
+  const observed = validateObservedAt(attestation.observedAt).parsed;
+  if (
+    !requestedAt ||
+    !expiresAt ||
+    observed.getTime() < requestedAt.getTime() - ATTESTATION_CLOCK_SKEW_MS ||
+    observed.getTime() > expiresAt.getTime() + ATTESTATION_CLOCK_SKEW_MS ||
+    observed.getTime() > input.now.getTime() + ATTESTATION_CLOCK_SKEW_MS
+  ) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_TIME_REJECTED", 409, "NFC workstation attestation time is outside the attempt window.");
+  }
+  const statement = buildAiGraderNfcOperationalAttestationStatement({
+    attemptId: input.attempt.id,
+    attestationChallenge: attestation.attestationChallenge,
+    publicTagId: input.publicTagId,
+    normalizedUrl: input.normalizedUrl,
+    uidFingerprintSha256: input.uidFingerprintSha256,
+    readbackPayloadSha256: input.readbackPayloadSha256,
+    readerResultCode: input.readerResultCode,
+    helperProtocolVersion: input.helperProtocolVersion,
+    observedAt: attestation.observedAt,
+  });
+  const signature = strictBase64url(
+    attestation.signature,
+    ATTESTATION_SIGNATURE,
+    64,
+    "AI_GRADER_NFC_ATTESTATION_SIGNATURE_INVALID",
+  ).decoded;
+  let valid = false;
+  try {
+    valid = verifySignature(
+      "sha256",
+      Buffer.from(statement, "utf8"),
+      { key: workstationKey.publicKey, dsaEncoding: "ieee-p1363" },
+      signature,
+    );
+  } catch {
+    valid = false;
+  }
+  if (!valid) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_SIGNATURE_REJECTED", 403, "NFC workstation attestation was rejected.");
+  }
+  return {
+    schemaVersion: AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION,
+    workstationKeyId: attestation.workstationKeyId,
+    algorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
+    statementSha256: sha256(statement),
+    signature: attestation.signature,
+    observedAt: attestation.observedAt,
+    helperProtocolVersion: input.helperProtocolVersion,
+    readerResultCode: input.readerResultCode,
+    cryptographicTagAuthentication: false,
+    workstationOperationalAttestation: true,
+  };
+}
+
+function exactReadbackEvidenceMatches(value: unknown, expected: JsonRecord) {
+  if (!isRecord(value)) return false;
+  const expectedKeys = Object.keys(expected).sort();
+  const actualKeys = Object.keys(value).sort();
+  return (
+    expectedKeys.join("\n") === actualKeys.join("\n") &&
+    expectedKeys.every((key) => value[key] === expected[key])
+  );
+}
+
 export async function completeAiGraderNfcProgramming(
   input: CompleteAiGraderNfcProgrammingInput,
 ): Promise<AiGraderNfcSafeStatus> {
   if (rawUidWasSupplied(input)) throw nfcError("AI_GRADER_NFC_RAW_UID_REJECTED", 400, "Raw NFC UID input is not accepted.");
   const linkage = validateExactLinkage(input);
+  const { workstationKeys } = resolveProgrammingRuntime(input, linkage.tenantId);
   const actorUserId = validateActor(input.requestedByUserId);
   const attemptId = required(input.attemptId, "attemptId", 64);
   if (!ATTEMPT_ID.test(attemptId)) throw nfcError("AI_GRADER_NFC_INVALID_ATTEMPT", 400, "NFC attempt ID is invalid.");
   const attemptToken = required(input.attemptToken, "attemptToken", 256);
+  const publicTagId = validatePublicTagId(input.publicTagId);
   const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
   const completionHash = completionIdempotencyHash(actorUserId, attemptId, idempotencyKey);
   const uidFingerprintSha256 = text(input.uidFingerprintSha256).toLowerCase();
@@ -593,6 +1125,9 @@ export async function completeAiGraderNfcProgramming(
   }
   assertStaticStrategy(input.chipType, input.securityMode);
   const normalizedNdefUrl = required(input.normalizedNdefUrl, "normalizedNdefUrl", 512);
+  const readerResultCode = validateReaderResultCode(input.readerResultCode);
+  const helperProtocolVersion = validateHelperProtocolVersion(input.helperProtocolVersion);
+  const operationalAttestation = validateOperationalAttestation(input.operationalAttestation);
   const now = input.now ?? new Date();
   try {
     const result = await transaction(input.dbClient ?? defaultPrisma, async (tx) => {
@@ -608,25 +1143,50 @@ export async function completeAiGraderNfcProgramming(
         throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC internal linkage changed.");
       }
       if (!safeEqualHex(sha256(attemptToken), text(attempt.tokenHash))) throw nfcError("AI_GRADER_NFC_TOKEN_REJECTED", 401, "NFC programming token was rejected.");
-      if (attempt.state === "consumed") {
-        if (
-          text(attempt.completionIdempotencyKeyHash) === completionHash &&
-          attempt.tag.status === "active" &&
-          text(attempt.tag.uidFingerprintSha256) === uidFingerprintSha256 &&
-          text(attempt.tag.readbackPayloadSha256) === readbackPayloadSha256 &&
-          normalizedNdefUrl === buildAiGraderNfcTagUrl(attempt.tag.publicTagId)
-        ) return safeStatus(attempt.tag);
-        throw nfcError("AI_GRADER_NFC_TOKEN_REPLAY", 409, "NFC programming token was already consumed.");
-      }
-      if (await expireAttempt(tx, attempt, now)) return EXPIRED_ATTEMPT_RESULT;
-      if (!ACTIVE_ATTEMPT_STATES.includes(attempt.state)) throw nfcError("AI_GRADER_NFC_ATTEMPT_TERMINAL", 409, "NFC programming attempt is no longer usable.");
-      if (attempt.tag.status !== "programming") throw nfcError("AI_GRADER_NFC_STATE_CONTRADICTION", 409, "NFC tag is not in programming state.");
+      if (attempt.state === "expired") return EXPIRED_ATTEMPT_RESULT;
       const expectedUrl = buildAiGraderNfcTagUrl(attempt.tag.publicTagId);
       const expectedDigest = sha256(expectedUrl);
       if (
-        normalizedNdefUrl !== expectedUrl || readbackPayloadSha256 !== expectedDigest ||
+        publicTagId !== text(attempt.tag.publicTagId) ||
+        normalizedNdefUrl !== expectedUrl ||
+        readbackPayloadSha256 !== expectedDigest ||
         text(attempt.tag.expectedPayloadSha256) !== expectedDigest
-      ) throw nfcError("AI_GRADER_NFC_READBACK_MISMATCH", 409, "NFC readback does not match the reserved Ten Kings URL.");
+      ) {
+        throw nfcError("AI_GRADER_NFC_READBACK_MISMATCH", 409, "NFC readback does not match the reserved Ten Kings URL.");
+      }
+      const readbackEvidence = verifyOperationalAttestationForAttempt({
+        attempt,
+        workstationKeys,
+        linkage,
+        publicTagId,
+        normalizedUrl: normalizedNdefUrl,
+        uidFingerprintSha256,
+        readbackPayloadSha256,
+        readerResultCode,
+        helperProtocolVersion,
+        operationalAttestation,
+        now,
+      });
+      if (attempt.state === "consumed") {
+        if (
+          text(attempt.completionIdempotencyKeyHash) === completionHash &&
+          text(attempt.completedWorkstationKeyId) === operationalAttestation.workstationKeyId &&
+          exactReadbackEvidenceMatches(attempt.readbackEvidence, readbackEvidence) &&
+          attempt.tag.status === "active" &&
+          text(attempt.tag.uidFingerprintSha256) === uidFingerprintSha256 &&
+          text(attempt.tag.readbackPayloadSha256) === readbackPayloadSha256 &&
+          normalizedNdefUrl === expectedUrl
+        ) return safeStatus(attempt.tag);
+        throw nfcError("AI_GRADER_NFC_TOKEN_REPLAY", 409, "NFC programming token was already consumed.");
+      }
+      const expiry = await expireTimedOutAttemptsTx(tx, {
+        tag: attempt.tag,
+        now,
+        actorUserId,
+      });
+      if (expiry.expiredAttemptIds.has(attempt.id)) return EXPIRED_ATTEMPT_RESULT;
+      if (!ACTIVE_ATTEMPT_STATES.includes(attempt.state)) throw nfcError("AI_GRADER_NFC_ATTEMPT_TERMINAL", 409, "NFC programming attempt is no longer usable.");
+      if (attempt.tag.status !== "programming") throw nfcError("AI_GRADER_NFC_STATE_CONTRADICTION", 409, "NFC tag is not in programming state.");
       const duplicateUid = await tx.aiGraderNfcTag.findFirst({
         where: { uidFingerprintSha256, status: "active", id: { not: attempt.tag.id } },
         select: { id: true },
@@ -641,19 +1201,12 @@ export async function completeAiGraderNfcProgramming(
         programmedByUserId: actorUserId, verifiedByUserId: actorUserId,
         programmedAt: now, verifiedAt: now, updatedAt: now,
       } });
-      const readbackEvidence = {
-        schemaVersion: "ai-grader-nfc-readback-evidence-v1",
-        source: "local_pcsc_readback_plus_human_operator",
-        cryptographicAttestation: false,
-        payloadSha256: readbackPayloadSha256,
-        readerCode: boundedCode(input.readerCode, "READER_OK"),
-        resultCode: boundedCode(input.resultCode, "WRITE_READBACK_OK"),
-        ...(text(input.helperProtocolVersion) && /^[A-Za-z0-9._-]{1,64}$/.test(text(input.helperProtocolVersion))
-          ? { helperProtocolVersion: text(input.helperProtocolVersion) }
-          : {}),
-      };
       await tx.aiGraderNfcProgrammingAttempt.update({ where: { id: attempt.id }, data: {
-        state: "verified", readbackEvidence, updatedAt: now,
+        state: "verified",
+        completionIdempotencyKeyHash: completionHash,
+        completedWorkstationKeyId: operationalAttestation.workstationKeyId,
+        readbackEvidence,
+        updatedAt: now,
       } });
       await audit(tx, {
         tagId: verifiedTag.id, attemptId: attempt.id, tenantId: linkage.tenantId, reportId: linkage.reportId,
@@ -664,13 +1217,23 @@ export async function completeAiGraderNfcProgramming(
         status: "active", activatedByUserId: actorUserId, activatedAt: now, updatedAt: now,
       } });
       await tx.aiGraderNfcProgrammingAttempt.update({ where: { id: attempt.id }, data: {
-        state: "consumed", completionIdempotencyKeyHash: completionHash,
-        readbackEvidence, consumedAt: now, updatedAt: now,
+        state: "consumed",
+        completionIdempotencyKeyHash: completionHash,
+        completedWorkstationKeyId: operationalAttestation.workstationKeyId,
+        readbackEvidence,
+        consumedAt: now,
+        updatedAt: now,
       } });
       await audit(tx, {
         tagId: activeTag.id, attemptId: attempt.id, tenantId: linkage.tenantId, reportId: linkage.reportId,
         action: "activate_registered_link", fromStatus: "verified", toStatus: "active", actorUserId,
-        safeDetails: { registrationKind: "registered_link", cryptographicAttestation: false }, createdAt: now,
+        safeDetails: {
+          registrationKind: "registered_link",
+          workstationOperationalAttestation: true,
+          cryptographicTagAuthentication: false,
+          statementSha256: readbackEvidence.statementSha256,
+        },
+        createdAt: now,
       });
       return safeStatus(activeTag);
     });
@@ -758,6 +1321,7 @@ async function revokeTagTx(tx: DbClient, input: {
   reason: string;
   reasonCode?: string | null;
   idempotencyKey: string;
+  replacementRequestHash?: string | null;
   now: Date;
 }) {
   const tag = await tx.aiGraderNfcTag.findUnique({ where: { publicTagId: input.publicTagId } });
@@ -768,18 +1332,65 @@ async function revokeTagTx(tx: DbClient, input: {
   if (text(tag.aiGraderReportId) !== input.authority.reportRowId || text(tag.aiGraderLabelId) !== input.authority.labelId) {
     throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC internal report and label linkage changed.");
   }
-  const idempotencyHash = mutationIdempotencyHash("revoke", input.actorUserId, input.idempotencyKey);
+  const mutationAction = input.replacementRequestHash ? "replace" : "revoke";
+  const idempotencyHash = mutationIdempotencyHash(mutationAction, input.actorUserId, input.idempotencyKey);
   const reasonHash = sha256(input.reason);
   if (tag.status === "revoked") {
-    const prior = await tx.aiGraderNfcAuditEvent.findFirst({
+    const priorRevoke = await tx.aiGraderNfcAuditEvent.findFirst({
       where: { tagId: tag.id, action: "revoke" },
       orderBy: { createdAt: "desc" },
       select: { safeDetails: true },
     });
-    const details = record(prior?.safeDetails);
-    if (text(details.idempotencyHash) === idempotencyHash && text(details.reasonHash) === reasonHash) {
+    const priorRevokeDetails = record(priorRevoke?.safeDetails);
+    const matchesExactRequest = (details: JsonRecord) => (
+      text(details.idempotencyHash) === idempotencyHash &&
+      text(details.reasonHash) === reasonHash &&
+      text(details.replacementRequestHash) === text(input.replacementRequestHash)
+    );
+    if (input.replacementRequestHash) {
+      const priorAuthorization = await tx.aiGraderNfcAuditEvent.findFirst({
+        where: { tagId: tag.id, action: "replacement_authorized" },
+        orderBy: { createdAt: "desc" },
+        select: { safeDetails: true },
+      });
+      if (priorAuthorization) {
+        if (matchesExactRequest(record(priorAuthorization.safeDetails))) return tag;
+        throw nfcError(
+          "AI_GRADER_NFC_REPLACEMENT_ALREADY_AUTHORIZED",
+          409,
+          "A different replacement request was already authorized for this NFC registration.",
+        );
+      }
+      if (priorRevokeDetails.replacementAuthorized === true) {
+        if (matchesExactRequest(priorRevokeDetails)) return tag;
+        throw nfcError(
+          "AI_GRADER_NFC_REPLACEMENT_ALREADY_AUTHORIZED",
+          409,
+          "A different replacement request was already authorized for this NFC registration.",
+        );
+      }
+      await audit(tx, {
+        tagId: tag.id,
+        tenantId: input.linkage.tenantId,
+        reportId: input.linkage.reportId,
+        action: "replacement_authorized",
+        fromStatus: "revoked",
+        toStatus: "revoked",
+        actorUserId: input.actorUserId,
+        reasonCode: input.reasonCode ?? "AI_GRADER_NFC_REPLACED",
+        safeDetails: {
+          schemaVersion: "ai-grader-nfc-replacement-authorization-v1",
+          idempotencyHash,
+          reasonHash,
+          replacementRequestHash: input.replacementRequestHash,
+          replacedPublicTagIdHash: sha256(input.publicTagId),
+          priorRevocationPreserved: true,
+        },
+        createdAt: input.now,
+      });
       return tag;
     }
+    if (matchesExactRequest(priorRevokeDetails)) return tag;
     throw nfcError("AI_GRADER_NFC_ALREADY_REVOKED", 409, "NFC registration is already revoked.");
   }
   if (![...OPEN_STATUSES, "error"].includes(tag.status)) {
@@ -809,7 +1420,13 @@ async function revokeTagTx(tx: DbClient, input: {
     toStatus: "revoked",
     actorUserId: input.actorUserId,
     reasonCode: input.reasonCode ?? "AI_GRADER_NFC_OPERATOR_REVOKED",
-    safeDetails: { idempotencyHash, reasonHash, replacementRequiredForNewTag: true },
+    safeDetails: {
+      idempotencyHash,
+      reasonHash,
+      replacementRequiredForNewTag: !input.replacementRequestHash,
+      replacementAuthorized: Boolean(input.replacementRequestHash),
+      ...(input.replacementRequestHash ? { replacementRequestHash: input.replacementRequestHash } : {}),
+    },
     createdAt: input.now,
   });
   return revoked;
@@ -846,9 +1463,16 @@ export async function replaceAiGraderNfcTag(input: ReplaceAiGraderNfcTagInput): 
   const replacedPublicTagId = validatePublicTagId(input.replacedPublicTagId);
   const revocationReason = validateRevocationReason(input.revocationReason);
   const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
-  const tokenSecret = validateTokenSecret(input.tokenSecret);
+  const { tokenSecret } = resolveProgrammingRuntime(input, linkage.tenantId);
   const ttlMs = attemptTtl(input.attemptTtlMs);
   const now = input.now ?? new Date();
+  const exactReplacementRequestHash = replacementRequestHash({
+    linkage,
+    actorUserId,
+    publicTagId: replacedPublicTagId,
+    reason: revocationReason,
+    idempotencyKey,
+  });
   const result = await transaction(input.dbClient ?? defaultPrisma, async (tx) => {
     await acquireReportLock(tx, linkage.reportId);
     const authority = await loadConfirmAuthority(tx, linkage, { requirePublished: true });
@@ -860,6 +1484,7 @@ export async function replaceAiGraderNfcTag(input: ReplaceAiGraderNfcTagInput): 
       reason: revocationReason,
       reasonCode: input.revocationReasonCode ?? "AI_GRADER_NFC_REPLACED",
       idempotencyKey,
+      replacementRequestHash: exactReplacementRequestHash,
       now,
     });
     return createProgrammingAttemptTx(tx, {
@@ -871,6 +1496,7 @@ export async function replaceAiGraderNfcTag(input: ReplaceAiGraderNfcTagInput): 
       ttlMs,
       now,
       operatorNote: input.operatorNote,
+      replacementAuthorization: REPLACEMENT_AUTHORIZATION,
     });
   });
   if (isExpiredAttemptResult(result)) {

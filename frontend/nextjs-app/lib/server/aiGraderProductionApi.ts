@@ -80,7 +80,7 @@ import type {
 import {
   effectiveAiGraderOcrModel,
 } from "./aiGraderOcrStructuredExtraction";
-import { aiGraderNfcRequired } from "./aiGraderNfcPolicy";
+import { aiGraderNfcProgrammingReadiness, aiGraderNfcRequired } from "./aiGraderNfcPolicy";
 import type { AiGraderPublicNfcRegistration } from "./aiGraderNfcPublic";
 import { readAiGraderNfcStatusesForReports } from "./aiGraderNfcReadProjection";
 import {
@@ -571,7 +571,10 @@ export function aiGraderProductionReadiness(env: EnvLike = process.env) {
     effectiveAiGraderModel: effectiveModel,
     ebayCompsEnabled: isEnabled(env, AI_GRADER_EBAY_COMPS_ENABLED_ENV),
     serpApiConfigured: Boolean(String(env.SERPAPI_KEY ?? "").trim()),
-    nfcRequired: aiGraderNfcRequired(env),
+    ...aiGraderNfcProgrammingReadiness(
+      env,
+      String(env.AI_GRADER_PRODUCTION_TENANT_ID ?? "").trim() || "ten-kings",
+    ),
   };
 }
 

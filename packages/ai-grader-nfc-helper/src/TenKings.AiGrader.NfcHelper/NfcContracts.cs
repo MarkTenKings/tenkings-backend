@@ -4,8 +4,11 @@ namespace TenKings.AiGrader.NfcHelper;
 
 public static class NfcProtocol
 {
-    public const string HelperVersion = "tenkings-ai-grader-nfc-helper-v1";
-    public const string ProtocolVersion = "tenkings-ai-grader-nfc-loopback-v1";
+    public const string HelperVersion = "tenkings-ai-grader-nfc-helper-v2";
+    public const string ProtocolVersion = "tenkings-ai-grader-nfc-loopback-v2";
+    public const string AttestationSchemaVersion = "ai-grader-nfc-helper-attestation-v1";
+    public const string AttestationAlgorithm = "ecdsa-p256-sha256-p1363";
+    public const string WorkstationKeyName = "TenKings.AiGrader.Nfc.WorkstationAttestation.v1";
     public const string ChipType = "NTAG215";
     public const string SecurityMode = "static_url_v1";
     public const string ProductionOrigin = "https://collect.tenkings.co";
@@ -49,8 +52,18 @@ public sealed record OverwriteConfirmationRequest(bool Confirmed, string? Observ
 public sealed record NfcWriteRequest(
     string AttemptId,
     string IdempotencyKey,
+    string PublicTagId,
+    string AttestationChallenge,
     string Url,
     OverwriteConfirmationRequest? OverwriteConfirmation = null);
+
+public sealed record NfcOperationalAttestation(
+    string SchemaVersion,
+    string WorkstationKeyId,
+    string Algorithm,
+    string AttestationChallenge,
+    string ObservedAt,
+    string Signature);
 
 public sealed record NfcWriteResponse(
     string HelperProtocolVersion,
@@ -59,8 +72,19 @@ public sealed record NfcWriteResponse(
     string ReadbackPayloadSha256,
     string UidFingerprintSha256,
     string ReaderResultCode,
+    NfcOperationalAttestation? OperationalAttestation = null,
     bool OverwriteRequired = false,
     string? ObservedPayloadSha256 = null);
+
+public sealed record WorkstationKeyMetadata(
+    string KeyName,
+    string KeyId,
+    string Algorithm);
+
+public sealed record WorkstationPublicKeyExport(
+    string KeyId,
+    string Algorithm,
+    string PublicSpkiDerBase64);
 
 public sealed record PairRequest(string PairingCode);
 
@@ -99,10 +123,15 @@ public sealed class NfcHelperException : Exception
     public int HttpStatus { get; }
 }
 
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(PairRequest))]
 [JsonSerializable(typeof(NfcReadRequest))]
 [JsonSerializable(typeof(NfcWriteRequest))]
+[JsonSerializable(typeof(NfcOperationalAttestation))]
+[JsonSerializable(typeof(WorkstationKeyMetadata))]
+[JsonSerializable(typeof(WorkstationPublicKeyExport))]
 [JsonSerializable(typeof(ApiEnvelope<PairResponse>))]
 [JsonSerializable(typeof(ApiEnvelope<HelperStatusResponse>))]
 [JsonSerializable(typeof(ApiEnvelope<NfcReadResponse>))]

@@ -191,7 +191,7 @@ public sealed class NfcHttpServer : IAsyncDisposable
         catch (OperationCanceledException)
         {
             _logger.Error("nfc_http_request_failed", requestId, "request_timeout");
-            await TryWriteErrorAsync(context.Response, "request_timeout", "The NFC helper request timed out.", true, 504, CancellationToken.None);
+            await TryWriteErrorAsync(context.Response, "request_timeout", "The NFC helper request timed out. Keep the same physical tag on the reader and retry the same attempt only after status is no longer busy.", true, 504, CancellationToken.None);
         }
         catch (Exception)
         {

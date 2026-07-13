@@ -8,6 +8,8 @@ $script:NfcHelperUrl = "http://127.0.0.1:47662"
 $script:NfcProgrammingUrl = "https://collect.tenkings.co/ai-grader/nfc"
 $script:NfcAllowedOrigin = "https://collect.tenkings.co"
 $script:NfcShortcutName = "Ten Kings AI Grader NFC.lnk"
+$script:NfcAttestationKeyName = "TenKings.AiGrader.Nfc.WorkstationAttestation.v1"
+$script:NfcAttestationAlgorithm = "ecdsa-p256-sha256-p1363"
 
 function Get-NfcRepoRoot {
   return (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -66,10 +68,15 @@ function Read-NfcConfig {
   param([string]$Path = $script:NfcConfigPath)
   if (-not (Test-Path -LiteralPath $Path)) { return $null }
   $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-  if ($config.schemaVersion -ne "tenkings-ai-grader-nfc-helper-config-v1" -or
+  if ($config.schemaVersion -notin @("tenkings-ai-grader-nfc-helper-config-v1", "tenkings-ai-grader-nfc-helper-config-v2") -or
       $config.host -ne "127.0.0.1" -or [int]$config.port -ne 47662 -or
       $config.allowedOrigin -ne $script:NfcAllowedOrigin) {
     throw "The NFC helper config failed its fixed loopback/origin validation."
+  }
+  if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v2" -and
+      ($config.workstationKeyName -cne $script:NfcAttestationKeyName -or
+       [string]$config.workstationKeyId -cnotmatch '^[a-f0-9]{64}$')) {
+    throw "The NFC helper config failed its workstation attestation-key validation."
   }
   return $config
 }
@@ -93,13 +100,19 @@ function Initialize-NfcConfig {
   param(
     [string]$Path = $script:NfcConfigPath,
     [switch]$RotateToken,
-    [switch]$RotatePairingCode
+    [switch]$RotatePairingCode,
+    [string]$WorkstationKeyName,
+    [string]$WorkstationKeyId
   )
   $now = (Get-Date).ToUniversalTime()
   $config = Read-NfcConfig -Path $Path
   if ($null -eq $config) {
+    if ($WorkstationKeyName -cne $script:NfcAttestationKeyName -or
+        $WorkstationKeyId -cnotmatch '^[a-f0-9]{64}$') {
+      throw "Create or reuse the named NFC workstation attestation key through the installer first."
+    }
     $config = [pscustomobject]@{
-      schemaVersion = "tenkings-ai-grader-nfc-helper-config-v1"
+      schemaVersion = "tenkings-ai-grader-nfc-helper-config-v2"
       createdAt = $now.ToString("o")
       updatedAt = $now.ToString("o")
       host = "127.0.0.1"
@@ -113,7 +126,34 @@ function Initialize-NfcConfig {
       pairingConsumptionPath = "C:\TenKings\config\ai-grader-nfc\pairing-consumed.sha256"
       backend = "pcsc"
       installDirectory = $script:NfcInstallDir
+      workstationKeyName = $WorkstationKeyName
+      workstationKeyId = $WorkstationKeyId
     }
+  }
+  if (-not [string]::IsNullOrWhiteSpace($WorkstationKeyName) -or
+      -not [string]::IsNullOrWhiteSpace($WorkstationKeyId)) {
+    if ($WorkstationKeyName -cne $script:NfcAttestationKeyName -or
+        $WorkstationKeyId -cnotmatch '^[a-f0-9]{64}$') {
+      throw "The installer returned invalid NFC workstation attestation-key metadata."
+    }
+    if ($config.PSObject.Properties["workstationKeyName"] -and
+        -not [string]::IsNullOrWhiteSpace([string]$config.workstationKeyName) -and
+        [string]$config.workstationKeyName -cne $WorkstationKeyName) {
+      throw "The existing NFC workstation key name does not match the named CNG key."
+    }
+    if ($config.PSObject.Properties["workstationKeyId"] -and
+        -not [string]::IsNullOrWhiteSpace([string]$config.workstationKeyId) -and
+        [string]$config.workstationKeyId -cne $WorkstationKeyId) {
+      throw "The existing NFC workstation key ID does not match the named CNG key. Ordinary updates never rotate it."
+    }
+    Set-NfcConfigProperty -Config $config -Name "workstationKeyName" -Value $WorkstationKeyName
+    Set-NfcConfigProperty -Config $config -Name "workstationKeyId" -Value $WorkstationKeyId
+    $config.schemaVersion = "tenkings-ai-grader-nfc-helper-config-v2"
+  }
+  if ($config.schemaVersion -ne "tenkings-ai-grader-nfc-helper-config-v2" -or
+      [string]$config.workstationKeyName -cne $script:NfcAttestationKeyName -or
+      [string]$config.workstationKeyId -cnotmatch '^[a-f0-9]{64}$') {
+    throw "Run the NFC helper installer to attach the existing named workstation attestation key."
   }
   if ($RotateToken) { $config.workstationToken = New-NfcSecret -ByteCount 32 }
   if ($RotatePairingCode) {
@@ -129,6 +169,19 @@ function Initialize-NfcConfig {
   }
   Save-NfcConfig -Config $config -Path $Path
   return $config
+}
+
+function Set-NfcConfigProperty {
+  param(
+    [Parameter(Mandatory = $true)]$Config,
+    [Parameter(Mandatory = $true)][string]$Name,
+    [Parameter(Mandatory = $true)]$Value
+  )
+  if ($Config.PSObject.Properties[$Name]) {
+    $Config.$Name = $Value
+  } else {
+    Add-Member -InputObject $Config -NotePropertyName $Name -NotePropertyValue $Value
+  }
 }
 
 function Get-NfcDesktopShortcutPath {

@@ -1,6 +1,7 @@
 export const AI_GRADER_NFC_HELPER_BASE_URL = "http://127.0.0.1:47662";
 export const AI_GRADER_NFC_HELPER_TOKEN_STORAGE_KEY = "tenkings.aiGrader.nfc.workstationToken.v1";
-export const AI_GRADER_NFC_HELPER_PROTOCOL_VERSION = "tenkings-ai-grader-nfc-loopback-v1";
+export const AI_GRADER_NFC_HELPER_PROTOCOL_VERSION = "tenkings-ai-grader-nfc-loopback-v2";
+export const AI_GRADER_NFC_INIT_IDEMPOTENCY_STORAGE_PREFIX = "tenkings.aiGrader.nfc.initIdempotency.v1:";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const WRITE_TIMEOUT_MS = 45_000;
@@ -35,19 +36,29 @@ export type AiGraderNfcHelperWriteResult = {
   overwriteRequired?: boolean;
   observedPayloadSha256?: string | null;
   existingContentKind?: "blank" | "same" | "different" | "unsupported";
+  operationalAttestation?: {
+    schemaVersion: "ai-grader-nfc-helper-attestation-v1";
+    workstationKeyId: string;
+    algorithm: "ecdsa-p256-sha256-p1363";
+    attestationChallenge: string;
+    observedAt: string;
+    signature: string;
+  } | null;
 };
 
 export class AiGraderNfcHelperError extends Error {
   readonly code: string;
   readonly status: number;
   readonly result?: JsonRecord;
+  readonly retryable: boolean;
 
-  constructor(code: string, message: string, status: number, result?: JsonRecord) {
+  constructor(code: string, message: string, status: number, result?: JsonRecord, retryable = false) {
     super(message);
     this.name = "AiGraderNfcHelperError";
     this.code = code;
     this.status = status;
     this.result = result;
+    this.retryable = retryable;
   }
 }
 
@@ -103,18 +114,27 @@ async function helperRequest<T>(
         typeof error.message === "string" ? error.message : "The local NFC helper rejected the request.",
         response.status,
         record(payload.result),
+        error.retryable === true,
       );
     }
     return record(payload.result) as T;
   } catch (error) {
     if (error instanceof AiGraderNfcHelperError) throw error;
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new AiGraderNfcHelperError("NFC_HELPER_TIMEOUT", "The local NFC helper timed out safely.", 408);
+      throw new AiGraderNfcHelperError(
+        "NFC_HELPER_TIMEOUT",
+        "The local NFC helper response timed out. Keep the same physical tag on the reader and retry the current attempt after the helper is no longer busy.",
+        408,
+        undefined,
+        true,
+      );
     }
     throw new AiGraderNfcHelperError(
       "NFC_HELPER_UNAVAILABLE",
-      "The dedicated NFC helper is not reachable on this workstation.",
+      "The dedicated NFC helper is not reachable. Keep the same physical tag on the reader and retry the current attempt after the helper returns.",
       503,
+      undefined,
+      true,
     );
   } finally {
     clearTimeout(timer);
@@ -154,6 +174,8 @@ export function readAiGraderNfcTag(attemptId: string) {
 export function writeAiGraderNfcTag(input: {
   attemptId: string;
   idempotencyKey: string;
+  publicTagId: string;
+  attestationChallenge: string;
   url: string;
   overwriteConfirmation?: { confirmed: true; observedPayloadSha256: string };
 }) {
@@ -162,10 +184,97 @@ export function writeAiGraderNfcTag(input: {
     body: {
       attemptId: input.attemptId,
       idempotencyKey: input.idempotencyKey,
+      publicTagId: input.publicTagId,
+      attestationChallenge: input.attestationChallenge,
       url: input.url,
       ...(input.overwriteConfirmation ? { overwriteConfirmation: input.overwriteConfirmation } : {}),
     },
     tokenRequired: true,
     timeoutMs: WRITE_TIMEOUT_MS,
   });
+}
+
+type SessionStorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+function initStorageKey(reportId: string) {
+  if (!/^[A-Za-z0-9._:-]{1,160}$/.test(reportId)) {
+    throw new Error("The NFC report identity is invalid.");
+  }
+  return `${AI_GRADER_NFC_INIT_IDEMPOTENCY_STORAGE_PREFIX}${reportId}`;
+}
+
+export function readAiGraderNfcInitIdempotencyKey(reportId: string, storage: SessionStorageLike = window.sessionStorage) {
+  const value = storage.getItem(initStorageKey(reportId))?.trim() ?? "";
+  return /^[A-Za-z0-9._:-]{8,128}$/.test(value) ? value : "";
+}
+
+/** This report-scoped sessionStorage path stores only the init idempotency
+ * key, before init. It never stores a hosted token, challenge, signature, UID
+ * fingerprint, or the separately managed workstation pairing credential. */
+export function getOrCreateAiGraderNfcInitIdempotencyKey(
+  reportId: string,
+  storage: SessionStorageLike = window.sessionStorage,
+  randomUuid: () => string = () => crypto.randomUUID(),
+) {
+  const existing = readAiGraderNfcInitIdempotencyKey(reportId, storage);
+  if (existing) return existing;
+  const generated = `nfc-init-${randomUuid()}`;
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(generated)) throw new Error("The NFC init retry identity could not be created.");
+  storage.setItem(initStorageKey(reportId), generated);
+  return generated;
+}
+
+export function clearAiGraderNfcInitIdempotencyKey(
+  reportId: string,
+  storage: SessionStorageLike = window.sessionStorage,
+) {
+  storage.removeItem(initStorageKey(reportId));
+}
+
+const DEFINITE_PREWRITE_CODES = new Set([
+  "invalid_request_context",
+  "invalid_nfc_url",
+  "invalid_public_tag_id",
+  "pcsc_unavailable",
+  "no_tag",
+  "multiple_tags",
+  "unsupported_tag",
+  "invalid_capability_container",
+  "tag_read_only",
+  "writer_busy",
+  "reader_busy",
+  "overwrite_confirmation_mismatch",
+]);
+
+export function classifyAiGraderNfcHelperWriteRecovery(error: unknown) {
+  if (!(error instanceof AiGraderNfcHelperError)) return "uncertain" as const;
+  if (DEFINITE_PREWRITE_CODES.has(error.code)) return "definite_prewrite" as const;
+  if (error.retryable || ["NFC_HELPER_TIMEOUT", "NFC_HELPER_UNAVAILABLE", "request_cancelled", "reader_timeout"].includes(error.code)) {
+    return "uncertain" as const;
+  }
+  return "not_retryable" as const;
+}
+
+export async function waitForAiGraderNfcHelperIdle(input: {
+  attempts?: number;
+  delayMs?: number;
+  readStatus?: () => Promise<AiGraderNfcHelperStatus>;
+  delay?: (milliseconds: number) => Promise<void>;
+} = {}) {
+  const attempts = Math.max(1, Math.min(40, input.attempts ?? 24));
+  const delayMs = Math.max(25, Math.min(1_000, input.delayMs ?? 250));
+  const readStatus = input.readStatus ?? getAiGraderNfcHelperStatus;
+  const delay = input.delay ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  for (let index = 0; index < attempts; index += 1) {
+    const status = await readStatus();
+    if (!status.busy) return status;
+    if (index + 1 < attempts) await delay(delayMs);
+  }
+  throw new AiGraderNfcHelperError(
+    "NFC_HELPER_STILL_BUSY",
+    "The NFC reader is still finishing the prior operation. Keep the same physical tag on the reader, wait, and retry this same attempt.",
+    409,
+    undefined,
+    true,
+  );
 }

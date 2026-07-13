@@ -18,6 +18,8 @@ $env:TENKINGS_NFC_PAIRING_CONSUMPTION_PATH = [string]$config.pairingConsumptionP
 $env:TENKINGS_NFC_ALLOWED_ORIGIN = [string]$config.allowedOrigin
 $env:TENKINGS_NFC_HELPER_PORT = [string]$config.port
 $env:TENKINGS_NFC_BACKEND = "pcsc"
+$env:TENKINGS_NFC_WORKSTATION_KEY_NAME = [string]$config.workstationKeyName
+$env:TENKINGS_NFC_WORKSTATION_KEY_ID = [string]$config.workstationKeyId
 
 try {
   & dotnet $dll
@@ -30,4 +32,6 @@ try {
   Remove-Item Env:\TENKINGS_NFC_ALLOWED_ORIGIN -ErrorAction SilentlyContinue
   Remove-Item Env:\TENKINGS_NFC_HELPER_PORT -ErrorAction SilentlyContinue
   Remove-Item Env:\TENKINGS_NFC_BACKEND -ErrorAction SilentlyContinue
+  Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY_NAME -ErrorAction SilentlyContinue
+  Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY_ID -ErrorAction SilentlyContinue
 }
