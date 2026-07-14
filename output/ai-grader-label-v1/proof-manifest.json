@@ -6,7 +6,7 @@
     "approvedOn": "2026-07-13",
     "physicalCalibrationStatus": "provisional_not_physically_calibrated"
   },
-  "templateDigestSha256": "1f09999417c37ec24cc55c9bee6f2115e136f1c852e7db5f995ff5e29e0eddf2",
+  "templateDigestSha256": "c64b17df4447eeeb812843caf71c519f83580b9bff615eed536ee1b65ff095af",
   "assets": {
     "logoSource": {
       "assetId": "ten-kings-logo-2026",
