@@ -1,3 +1,10 @@
+import {
+  AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION,
+  AI_GRADER_POKEMON_LABEL_V1_TEMPLATE_ID,
+  AI_GRADER_SPORTS_LABEL_V1_TEMPLATE_ID,
+  type AiGraderLabelV1TemplateId,
+} from "./aiGraderLabelV1";
+
 export const AI_GRADER_LABEL_SHEET_SCHEMA_VERSION = "ai-grader-label-sheet-v1" as const;
 export const AI_GRADER_LABEL_SHEET_COLUMNS = 2;
 export const AI_GRADER_LABEL_SHEET_ROWS = 8;
@@ -69,6 +76,14 @@ export type AiGraderLabelSheetLabelDto = {
   publicationStatus?: "draft" | "finalized" | "published" | "unpublished" | "revoked" | "error";
   physicalPrintStatus: "not_printed" | "printed";
   confirmedCardIdentity: AiGraderSafeConfirmedCardIdentity;
+  labelV1?: {
+    schemaVersion: typeof AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION;
+    templateId: AiGraderLabelV1TemplateId;
+    templateDigestSha256: string;
+    printProfileId: string;
+    cutProfileId: string;
+    physicalCalibrationStatus: "provisional_not_physically_calibrated";
+  };
 };
 
 export type AiGraderLabelSheetDto = {
@@ -249,6 +264,33 @@ function rowPublicationStatus(row: AiGraderLabelSheetSourceRow) {
   return safePublicationStatus(report.publicationStatus ?? row.publicationStatus);
 }
 
+function safeLabelV1Summary(value: unknown): AiGraderLabelSheetLabelDto["labelV1"] {
+  if (!isRecord(value) || value.schemaVersion !== AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION) return undefined;
+  const templateId = optionalString(value.templateId);
+  const templateDigestSha256 = optionalString(value.templateDigestSha256);
+  const calibration = isRecord(value.calibrationProfile) ? value.calibrationProfile : {};
+  const printProfileId = optionalString(calibration.printProfileId);
+  const cutProfileId = optionalString(calibration.cutProfileId);
+  if (
+    (templateId !== AI_GRADER_SPORTS_LABEL_V1_TEMPLATE_ID && templateId !== AI_GRADER_POKEMON_LABEL_V1_TEMPLATE_ID) ||
+    !templateDigestSha256 ||
+    !/^[a-f0-9]{64}$/.test(templateDigestSha256) ||
+    !printProfileId ||
+    !cutProfileId ||
+    calibration.status !== "provisional_not_physically_calibrated"
+  ) {
+    return undefined;
+  }
+  return {
+    schemaVersion: AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION,
+    templateId,
+    templateDigestSha256,
+    printProfileId,
+    cutProfileId,
+    physicalCalibrationStatus: "provisional_not_physically_calibrated",
+  };
+}
+
 export function toSafeAiGraderLabelSheetLabel(row: AiGraderLabelSheetSourceRow): AiGraderLabelSheetLabelDto | null {
   const assignment = parseAiGraderLabelSheetAssignment(row.payload);
   const labelId = optionalString(row.id);
@@ -268,6 +310,7 @@ export function toSafeAiGraderLabelSheetLabel(row: AiGraderLabelSheetSourceRow):
     ...(rowPublicationStatus(row) ? { publicationStatus: rowPublicationStatus(row) } : {}),
     physicalPrintStatus: optionalString(row.physicalPrintStatus) === "printed" ? "printed" : "not_printed",
     confirmedCardIdentity: normalizeAiGraderConfirmedCardIdentity(cardIdentity),
+    ...(safeLabelV1Summary(payload.labelV1) ? { labelV1: safeLabelV1Summary(payload.labelV1) } : {}),
   };
 }
 
@@ -286,7 +329,7 @@ export function buildAiGraderLabelSheetRevision(
       Partial<
         Pick<
           AiGraderLabelSheetLabelDto,
-          "certId" | "grade" | "qrPayloadUrl" | "publicReportUrl" | "confirmedCardIdentity"
+          "certId" | "grade" | "qrPayloadUrl" | "publicReportUrl" | "confirmedCardIdentity" | "labelV1"
         >
       >
   >
@@ -302,6 +345,7 @@ export function buildAiGraderLabelSheetRevision(
         qrPayloadUrl: label.qrPayloadUrl ?? null,
         publicReportUrl: label.publicReportUrl ?? null,
         confirmedCardIdentity: label.confirmedCardIdentity ?? {},
+        labelV1: "labelV1" in label ? label.labelV1 ?? null : null,
       })
     )
     .join("|");

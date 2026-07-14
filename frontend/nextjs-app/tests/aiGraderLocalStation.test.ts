@@ -55,7 +55,12 @@ import {
   sanitizeAiGraderUploadHeadersForResponse,
   validateAiGraderInventoryReadiness,
 } from "../lib/server/aiGraderProductionApi";
-import { completePublishedAiGraderCardTx } from "../lib/server/aiGraderLabelSheetRuntime";
+import {
+  completePublishedAiGraderCardTx,
+  listAiGraderLabelSheetsRuntime,
+  renderAiGraderLabelSheetCutSvgRuntime,
+  renderAiGraderLabelSheetPdfRuntime,
+} from "../lib/server/aiGraderLabelSheetRuntime";
 import {
   AI_GRADER_OPERATOR_USER_IDS_ENV,
   AI_GRADER_SERVICE_ACCOUNT_ID_ENV,
@@ -95,6 +100,7 @@ type MockResponse = NextApiResponse & {
   statusCodeValue: number | null;
   headers: Record<string, string | number | readonly string[]>;
   jsonBody: unknown;
+  sentBody: unknown;
 };
 
 function mockRequest(method: string, action?: string[]): NextApiRequest {
@@ -111,6 +117,7 @@ function mockResponse(): MockResponse {
     statusCodeValue: null,
     headers: {},
     jsonBody: undefined,
+    sentBody: undefined,
     setHeader(this: MockResponse, name: string, value: string | number | readonly string[]) {
       this.headers[name] = value;
       return this;
@@ -121,6 +128,10 @@ function mockResponse(): MockResponse {
     },
     json(this: MockResponse, body: unknown) {
       this.jsonBody = body;
+      return this;
+    },
+    send(this: MockResponse, body: unknown) {
+      this.sentBody = body;
       return this;
     },
   } as unknown as MockResponse;
@@ -3280,6 +3291,28 @@ test("AI Grader label sheet APIs use history reads and human publish mutations",
       assert.equal(input.actorAudit?.action, "publish");
       return { sheet: { ...sheet, status: "printed" }, printedLabelCount: 1, labelIds: ["label-1"] };
     },
+    async renderLabelSheetPdf(input) {
+      calls.push("pdf");
+      assert.equal(input.tenantId, "tenant-1");
+      assert.equal(input.operatorUserId, "admin-1");
+      assert.equal(input.expectedRevision, sheet.revision);
+      return {
+        body: Buffer.from("%PDF-1.3 test"),
+        contentType: "application/pdf",
+        fileName: `${sheet.sheetId}-${sheet.revision}.pdf`,
+        revision: sheet.revision,
+      };
+    },
+    async renderLabelSheetCutSvg(input) {
+      calls.push("cut");
+      assert.equal(input.operatorUserId, "admin-1");
+      return {
+        body: Buffer.from("<svg/>", "utf8"),
+        contentType: "image/svg+xml",
+        fileName: `${sheet.sheetId}-${sheet.revision}-cricut-cut.svg`,
+        revision: sheet.revision,
+      };
+    },
   });
 
   const listRes = mockResponse();
@@ -3298,7 +3331,25 @@ test("AI Grader label sheet APIs use history reads and human publish mutations",
   const markRes = mockResponse();
   await handler(markReq, markRes);
   assert.equal(markRes.statusCodeValue, 200);
-  assert.deepEqual(calls, ["list", "prepare", "mark"]);
+
+  const pdfReq = mockRequest("POST", ["render-label-sheet-pdf"]);
+  pdfReq.body = { sheetId: sheet.sheetId, expectedRevision: sheet.revision };
+  const pdfRes = mockResponse();
+  await handler(pdfReq, pdfRes);
+  assert.equal(pdfRes.statusCodeValue, 200);
+  assert.equal(pdfRes.headers["Content-Type"], "application/pdf");
+  assert.equal(pdfRes.headers["Cache-Control"], "private, no-store, max-age=0");
+  assert.equal(pdfRes.headers["X-Ten-Kings-Label-Revision"], sheet.revision);
+  assert.ok(Buffer.isBuffer(pdfRes.sentBody));
+
+  const cutReq = mockRequest("POST", ["render-label-sheet-cut-svg"]);
+  cutReq.body = { sheetId: sheet.sheetId, expectedRevision: sheet.revision };
+  const cutRes = mockResponse();
+  await handler(cutReq, cutRes);
+  assert.equal(cutRes.statusCodeValue, 200);
+  assert.equal(cutRes.headers["Content-Type"], "image/svg+xml");
+  assert.ok(Buffer.isBuffer(cutRes.sentBody));
+  assert.deepEqual(calls, ["list", "prepare", "mark", "pdf", "cut"]);
 });
 
 test("production card search is admin-gated and returns existing card/item candidates", async () => {
@@ -4261,6 +4312,9 @@ function createPublishedCardTransitionTx(input: {
     replaceConfirmedIdentity(value: Record<string, unknown>) {
       confirmedIdentity = { ...confirmedIdentity, ...value };
     },
+    replaceLabelPublicUrl(value: string) {
+      labelRow = { ...labelRow, publicReportUrl: value, qrPayloadUrl: value };
+    },
     corruptStoredPublishAuthorityDigest() {
       publishAuthority = { ...publishAuthority, digestSha256: "0".repeat(64) };
     },
@@ -4304,8 +4358,67 @@ test("verified Publish promotes the batch and assigns one grading-label slot, wi
   assert.equal(retry.existing, true);
   assert.deepEqual(state.getBatch(), { id: "batch-1", status: "READY", totalCount: 1, processedCount: 1 });
   assert.equal((state.getLabel().payload as any).labelSheet.slot, 1);
+  assert.equal((state.getLabel().payload as any).labelV1.schemaVersion, "ten-kings-label-runtime-v1");
+  assert.equal((state.getLabel().payload as any).labelV1.designApproval.phrase, "Label V1 design approved");
+  assert.equal((state.getLabel().payload as any).labelV1.templateId, "ten-kings-sports-label-v1");
+  assert.match((state.getLabel().payload as any).labelV1.templateDigestSha256, /^[a-f0-9]{64}$/);
+  assert.equal((state.getLabel().payload as any).labelV1.immutableIdentitySnapshot.playerName, "Michael Jordan");
+  assert.equal((state.getLabel().payload as any).labelV1.renderSnapshot.grade, String(productionRelease.label.labelGradeText));
   assert.equal(state.calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "upsert"), false);
   assert.equal(state.calls.some((call) => call.delegate === "qrCode" || call.delegate === "packLabel"), false);
+});
+
+test("approved Label V1 sheet runtime renders only the frozen published snapshot for a human operator", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease });
+  const assignment = await completePublishedAiGraderCardTx(state.input);
+  const listing = await listAiGraderLabelSheetsRuntime({ dbClient: state.db, tenantId: "tenant-1" });
+  const sheet = listing.sheets.find((candidate) => candidate.sheetId === assignment.sheetId);
+  assert.ok(sheet);
+  assert.equal(sheet.labels[0].labelV1?.templateId, "ten-kings-sports-label-v1");
+  assert.equal(sheet.labels[0].labelV1?.physicalCalibrationStatus, "provisional_not_physically_calibrated");
+
+  await assert.rejects(
+    () => renderAiGraderLabelSheetPdfRuntime({
+      tenantId: "tenant-1",
+      sheetId: sheet.sheetId,
+      expectedRevision: sheet.revision,
+      dbClient: state.db,
+    }),
+    (error: any) => error.code === "AI_GRADER_HUMAN_OPERATOR_REQUIRED"
+  );
+  await assert.rejects(
+    () => renderAiGraderLabelSheetPdfRuntime({
+      tenantId: "tenant-1",
+      sheetId: sheet.sheetId,
+      expectedRevision: "stale-revision",
+      operatorUserId: "operator-user-1",
+      dbClient: state.db,
+    }),
+    (error: any) => error.code === "AI_GRADER_LABEL_SHEET_REVISION_MISMATCH"
+  );
+
+  const pdf = await renderAiGraderLabelSheetPdfRuntime({
+    tenantId: "tenant-1",
+    sheetId: sheet.sheetId,
+    expectedRevision: sheet.revision,
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+  });
+  assert.equal(pdf.contentType, "application/pdf");
+  assert.match(pdf.body.toString("latin1"), /\/MediaBox \[0 0 612 864\]/);
+  assert.equal(pdf.revision, sheet.revision);
+
+  const cut = await renderAiGraderLabelSheetCutSvgRuntime({
+    tenantId: "tenant-1",
+    sheetId: sheet.sheetId,
+    expectedRevision: sheet.revision,
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+  });
+  assert.equal(cut.contentType, "image/svg+xml");
+  assert.match(cut.body.toString("utf8"), /width="8\.5in" height="12in" viewBox="0 0 612 864"/);
+  assert.equal((cut.body.toString("utf8").match(/<rect id="slot-/g) ?? []).length, 16);
 });
 
 test("physical grading-label payload resolves identity from durable Confirm state only", async () => {
@@ -4363,6 +4476,19 @@ test("physical grading-label assignment rejects corrupt stored authority before 
   assert.equal(state.calls.some((call) => call.delegate === "cardBatch"), false);
   assert.equal((state.getLabel().payload as any).labelSheet, undefined);
   assert.equal(state.getBatch().status, "UPLOADING");
+});
+
+test("physical grading-label assignment rejects private or signed report URLs before label or batch mutation", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease });
+  state.replaceLabelPublicUrl("https://storage.example.test/report?X-Amz-Signature=secret");
+  await assert.rejects(
+    () => completePublishedAiGraderCardTx(state.input),
+    (error: any) => error.code === "AI_GRADER_PUBLISHED_LABEL_PUBLIC_URL_UNSAFE"
+  );
+  assert.equal(state.calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "update"), false);
+  assert.equal(state.calls.some((call) => call.delegate === "cardBatch" && call.method === "updateMany"), false);
+  assert.equal((state.getLabel().payload as any).labelSheet, undefined);
 });
 
 test("Publish runtime validates deterministic linkage before any persistence call", async () => {

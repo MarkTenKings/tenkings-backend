@@ -1,13 +1,10 @@
 import Head from "next/head";
 import Link from "next/link";
-import QRCode from "qrcode";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "../../../hooks/useSession";
 import { buildAdminHeaders } from "../../../lib/adminHeaders";
 import {
-  AI_GRADER_LABEL_SHEET_CAPACITY,
   type AiGraderLabelSheetDto,
-  type AiGraderLabelSheetLabelDto,
   type AiGraderLabelSheetsResult,
 } from "../../../lib/aiGraderLabelSheets";
 
@@ -47,82 +44,6 @@ function formatMoneylessStatus(status: AiGraderLabelSheetDto["status"]) {
   return "Printed";
 }
 
-function cardLines(label: AiGraderLabelSheetLabelDto) {
-  const card = label.confirmedCardIdentity;
-  const subject = card.playerName ?? card.cardName ?? card.title;
-  const primary = [card.year, card.manufacturer, card.productSet ?? card.productLine, subject].filter(Boolean).join(" ");
-  const secondary = [card.insertSet ?? card.insert, card.parallel, card.cardNumber ? `#${card.cardNumber}` : undefined]
-    .filter(Boolean)
-    .join(" / ");
-  return {
-    primary: primary || "Confirmed card",
-    secondary: secondary || label.reportId,
-  };
-}
-
-function LabelQr({ value }: { value?: string }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const context = canvas.getContext("2d");
-    context?.clearRect(0, 0, canvas.width, canvas.height);
-    if (!value) return;
-    void QRCode.toCanvas(canvas, value, {
-      errorCorrectionLevel: "M",
-      margin: 0,
-      width: 128,
-      color: { dark: "#111111", light: "#ffffff" },
-    });
-  }, [value]);
-
-  return value ? (
-    <canvas ref={canvasRef} width={128} height={128} aria-label="Public report QR code" />
-  ) : (
-    <div className="qr-pending">QR pending</div>
-  );
-}
-
-function PrintedLabel({ label }: { label: AiGraderLabelSheetLabelDto }) {
-  const lines = cardLines(label);
-  return (
-    <div className="printed-label">
-      <div className="grade-block">
-        <span>AI GRADE</span>
-        <strong className={label.grade.length > 4 ? "compact-grade" : undefined}>{label.grade}</strong>
-      </div>
-      <LabelQr value={label.qrPayloadUrl ?? label.publicReportUrl} />
-      <div className="label-copy">
-        <strong>Ten Kings AI Grader</strong>
-        <span className="card-primary">{lines.primary}</span>
-        <span className="card-secondary">{lines.secondary}</span>
-        <span className="cert-line">{label.certId ?? label.reportId}</span>
-      </div>
-    </div>
-  );
-}
-
-function SheetPaper({ sheet }: { sheet: AiGraderLabelSheetDto }) {
-  const bySlot = new Map(sheet.labels.map((label) => [label.slot, label]));
-  return (
-    <section className="sheet-paper" aria-label={`AI Grader label sheet ${sheet.sheetNumber}`}>
-      <div className="label-grid">
-        {Array.from({ length: AI_GRADER_LABEL_SHEET_CAPACITY }, (_, index) => {
-          const slot = index + 1;
-          const label = bySlot.get(slot);
-          return (
-            <div className="label-slot" key={slot}>
-              <span className="slot-number screen-only">{slot}</span>
-              {label ? <PrintedLabel label={label} /> : null}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 export default function AiGraderLabelSheetsPage() {
   const { session, loading: sessionLoading, ensureSession, logout } = useSession();
   const [result, setResult] = useState<AiGraderLabelSheetsResult>(emptyResult);
@@ -130,7 +51,8 @@ export default function AiGraderLabelSheetsPage() {
   const [message, setMessage] = useState("Sign in to load AI Grader label sheets.");
   const [selectedSheetId, setSelectedSheetId] = useState<string | null>(null);
   const [preparedSheet, setPreparedSheet] = useState<AiGraderLabelSheetDto | null>(null);
-  const [busyAction, setBusyAction] = useState<"prepare" | "mark" | null>(null);
+  const [busyAction, setBusyAction] = useState<"prepare" | "mark" | "pdf" | "cut" | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const selectedSheet = useMemo(
     () => result.sheets.find((sheet) => sheet.sheetId === selectedSheetId) ?? null,
@@ -188,11 +110,76 @@ export default function AiGraderLabelSheetsPage() {
     setPreparedSheet(sheet);
   };
 
-  const prepareAndPrint = async () => {
+  const requestRenderedFile = useCallback(
+    async (action: "render-label-sheet-pdf" | "render-label-sheet-cut-svg", sheet: AiGraderLabelSheetDto) => {
+      if (!session?.token) throw new Error("Operator sign-in is required.");
+      const response = await fetch(`/api/admin/ai-grader/production/${action}`, {
+        method: "POST",
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ sheetId: sheet.sheetId, expectedRevision: sheet.revision }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.message ?? "Label V1 file could not be rendered.");
+      }
+      return response.blob();
+    },
+    [session?.token]
+  );
+
+  useEffect(() => {
+    if (!displaySheet || !session?.token || displaySheet.slotConflict) {
+      setPreviewUrl(null);
+      return;
+    }
+    let active = true;
+    let objectUrl: string | null = null;
+    setPreviewUrl(null);
+    void requestRenderedFile("render-label-sheet-pdf", displaySheet)
+      .then((blob) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPreviewUrl(objectUrl);
+      })
+      .catch((error) => {
+        if (active) setMessage(error instanceof Error ? error.message : "Label V1 preview could not be rendered.");
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [displaySheet, requestRenderedFile, session?.token]);
+
+  const downloadRenderedFile = async (
+    action: "render-label-sheet-pdf" | "render-label-sheet-cut-svg",
+    sheet: AiGraderLabelSheetDto
+  ) => {
+    const blob = await requestRenderedFile(action, sheet);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download =
+      action === "render-label-sheet-pdf"
+        ? `${sheet.sheetId}-${sheet.revision}.pdf`
+        : `${sheet.sheetId}-${sheet.revision}-cricut-cut.svg`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  };
+
+  const prepareAndDownloadPdf = async () => {
     if (!displaySheet || !session?.token || displaySheet.slotConflict) return;
     if (displaySheet.status === "printed") {
-      setPreparedSheet(displaySheet);
-      window.setTimeout(() => window.print(), 80);
+      setBusyAction("pdf");
+      try {
+        await downloadRenderedFile("render-label-sheet-pdf", displaySheet);
+        setMessage(`Downloaded the authoritative Label V1 PDF for Sheet ${displaySheet.sheetNumber}.`);
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Label V1 PDF could not be downloaded.");
+      } finally {
+        setBusyAction(null);
+      }
       return;
     }
     setBusyAction("prepare");
@@ -210,11 +197,24 @@ export default function AiGraderLabelSheetsPage() {
       const nextSheet = responseSheet(payload.result);
       if (!nextSheet) throw new Error("Prepared sheet response is incomplete.");
       replaceSheet(nextSheet);
-      setMessage(`Sheet ${nextSheet.sheetNumber} is sealed with ${nextSheet.labelCount} labels.`);
-      window.setTimeout(() => window.print(), 120);
+      await downloadRenderedFile("render-label-sheet-pdf", nextSheet);
+      setMessage(`Sheet ${nextSheet.sheetNumber} is sealed; its authoritative Label V1 PDF was downloaded.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Sheet could not be prepared for printing.");
       await loadSheets().catch(() => undefined);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const downloadCutSvg = async () => {
+    if (!displaySheet || displaySheet.slotConflict) return;
+    setBusyAction("cut");
+    try {
+      await downloadRenderedFile("render-label-sheet-cut-svg", displaySheet);
+      setMessage(`Downloaded the provisional Cricut cut SVG for Sheet ${displaySheet.sheetNumber}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Cricut cut SVG could not be downloaded.");
     } finally {
       setBusyAction(null);
     }
@@ -318,8 +318,15 @@ export default function AiGraderLabelSheetsPage() {
                       <p>Sheet {displaySheet.sheetNumber}</p>
                       <strong>{formatMoneylessStatus(displaySheet.status)} / {displaySheet.labelCount} labels</strong>
                     </div>
-                    <button type="button" onClick={() => void prepareAndPrint()} disabled={busyAction !== null || displaySheet.slotConflict}>
-                      {busyAction === "prepare" ? "Preparing" : displaySheet.status === "printed" ? "Print Copy" : "Print Sheet"}
+                    <button type="button" onClick={() => void prepareAndDownloadPdf()} disabled={busyAction !== null || displaySheet.slotConflict}>
+                      {busyAction === "prepare" || busyAction === "pdf"
+                        ? "Rendering PDF"
+                        : displaySheet.status === "printed"
+                          ? "Download PDF Copy"
+                          : "Prepare + Download PDF"}
+                    </button>
+                    <button type="button" onClick={() => void downloadCutSvg()} disabled={busyAction !== null || displaySheet.slotConflict}>
+                      {busyAction === "cut" ? "Rendering SVG" : "Download Cricut SVG"}
                     </button>
                     <button
                       type="button"
@@ -338,7 +345,18 @@ export default function AiGraderLabelSheetsPage() {
                   </div>
                   {displaySheet.slotConflict ? <p className="conflict screen-only">Duplicate slot data detected. Printing is blocked until the queue is corrected.</p> : null}
                   <div className="sheet-scroll">
-                    <SheetPaper sheet={displaySheet} />
+                    <div className="pdf-authority-note screen-only">
+                      Exact-dimension PDF is the print authority. Print the downloaded file at 100% with every fit or scale option disabled.
+                    </div>
+                    {previewUrl ? (
+                      <iframe
+                        className="sheet-pdf-preview"
+                        src={`${previewUrl}#toolbar=0&navpanes=0&view=FitH`}
+                        title={`Authoritative Label V1 preview for Sheet ${displaySheet.sheetNumber}`}
+                      />
+                    ) : (
+                      <div className="preview-loading">Rendering authenticated Label V1 preview.</div>
+                    )}
                   </div>
                 </>
               ) : (
@@ -388,24 +406,10 @@ export default function AiGraderLabelSheetsPage() {
         .sheet-actions > div { min-width: 180px; margin-right: auto; }
         .sheet-actions .mark-printed { background: #1c5a37; color: #ffffff; border-color: #1c5a37; }
         .conflict { margin: 0 0 12px; padding: 10px; border: 1px solid #b94242; background: #fff1f1; color: #8b2525; font-weight: 700; }
-        .sheet-scroll { max-width: 100%; overflow: auto; padding: 12px; border: 1px solid #cdd2cc; background: #dfe3de; }
-        .sheet-paper { position: relative; width: 8.5in; height: 12in; margin: 0 auto; flex: none; overflow: hidden; background: #ffffff; box-shadow: 0 8px 30px rgba(30, 35, 31, 0.16); print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-        .label-grid { position: absolute; top: 50%; left: 50%; width: 5.46in; height: 6.64in; display: grid; grid-template-columns: repeat(2, 2.73in); grid-template-rows: repeat(8, 0.83in); transform: translate(-50%, -50%); }
-        .label-slot { position: relative; width: 2.73in; height: 0.83in; overflow: hidden; outline: 0.25pt solid #d0d3cf; background: #ffffff; }
-        .slot-number { position: absolute; top: 2px; right: 3px; color: #a6aca7; font-size: 8px; z-index: 2; }
-        .printed-label { width: 100%; height: 100%; padding: 0.045in; display: grid; grid-template-columns: 0.57in 0.62in minmax(0, 1fr); gap: 0.055in; align-items: center; color: #111111; }
-        .grade-block { height: 0.7in; display: grid; align-content: center; justify-items: center; border-right: 0.7pt solid #202320; }
-        .grade-block span { font-size: 5.5pt; font-weight: 900; line-height: 1; }
-        .grade-block strong { font-size: 22pt; line-height: 1; font-variant-numeric: tabular-nums; }
-        .grade-block strong.compact-grade { max-width: 0.52in; overflow: hidden; font-size: 7pt; text-overflow: ellipsis; white-space: nowrap; }
-        .printed-label canvas, .qr-pending { width: 0.62in; height: 0.62in; display: block; }
-        .qr-pending { display: grid; place-items: center; border: 0.5pt solid #777777; color: #555555; font-size: 5.5pt; font-weight: 800; text-align: center; text-transform: uppercase; }
-        .label-copy { min-width: 0; height: 0.7in; display: grid; grid-template-rows: auto auto auto 1fr; align-content: center; overflow: hidden; }
-        .label-copy > strong { font-size: 6.5pt; line-height: 1.1; text-transform: uppercase; }
-        .label-copy > span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .card-primary { margin-top: 2px; font-size: 7pt; font-weight: 800; line-height: 1.15; }
-        .card-secondary { font-size: 6pt; line-height: 1.15; }
-        .cert-line { align-self: end; font-size: 5.5pt; line-height: 1.1; color: #303430; }
+        .sheet-scroll { max-width: 100%; min-height: 760px; overflow: hidden; padding: 12px; border: 1px solid #cdd2cc; background: #dfe3de; }
+        .pdf-authority-note { max-width: 850px; margin: 0 auto 10px; padding: 9px 11px; border: 1px solid #b7bdb7; background: #ffffff; color: #454d47; font-size: 12px; font-weight: 700; }
+        .sheet-pdf-preview { display: block; width: min(100%, 850px); height: 720px; margin: 0 auto; border: 0; background: #ffffff; box-shadow: 0 8px 30px rgba(30, 35, 31, 0.16); }
+        .preview-loading { width: min(100%, 850px); min-height: 720px; margin: 0 auto; display: grid; place-items: center; background: #ffffff; color: #606861; font-weight: 700; }
         .auth-gate, .empty-workarea { max-width: 460px; margin: 80px auto; padding: 24px; border: 1px solid #cdd2cc; border-radius: 6px; background: #ffffff; }
         .auth-gate h2 { margin: 0; font-size: 20px; }
         .auth-gate p { color: #596159; }
@@ -418,16 +422,7 @@ export default function AiGraderLabelSheetsPage() {
           .sheet-actions { align-items: stretch; flex-wrap: wrap; }
           .sheet-actions > div { flex-basis: 100%; }
           .sheet-scroll { padding: 6px; }
-        }
-        @page { size: 8.5in 12in; margin: 0; }
-        @media print {
-          html, body, #__next { width: 8.5in !important; height: 12in !important; margin: 0 !important; padding: 0 !important; background: #ffffff !important; }
-          body * { visibility: hidden !important; }
-          .sheet-paper, .sheet-paper * { visibility: visible !important; }
-          .screen-only { display: none !important; }
-          .page, .workspace, .sheet-workarea, .sheet-scroll { width: 8.5in !important; height: 12in !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: visible !important; background: #ffffff !important; }
-          .sheet-paper { position: absolute !important; top: 0 !important; left: 0 !important; width: 8.5in !important; height: 12in !important; margin: 0 !important; box-shadow: none !important; page-break-after: always; }
-          .label-slot { outline: none; }
+          .sheet-pdf-preview, .preview-loading { height: 620px; }
         }
       `}</style>
     </>

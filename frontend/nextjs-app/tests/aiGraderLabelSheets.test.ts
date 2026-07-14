@@ -119,6 +119,46 @@ test("safe label sheet DTOs omit raw payload and unsafe URLs", () => {
   assert.doesNotMatch(serialized, /must-not-leak|reportHtmlPath|stationToken|X-Amz-Signature|127\.0\.0\.1/);
 });
 
+test("safe sheet DTOs expose only Label V1 version authority and revisions bind it", () => {
+  const assignment: AiGraderLabelSheetAssignment = {
+    schemaVersion: AI_GRADER_LABEL_SHEET_SCHEMA_VERSION,
+    sheetId: "ai-grader-label-sheet-000001",
+    sheetNumber: 1,
+    slot: 1,
+    capacity: AI_GRADER_LABEL_SHEET_CAPACITY,
+    assignedAt: "2026-07-13T12:00:00.000Z",
+  };
+  const row = sourceRow("report-v1", "label-v1", assignment);
+  (row.payload as Record<string, unknown>).labelV1 = {
+    schemaVersion: "ten-kings-label-runtime-v1",
+    templateId: "ten-kings-sports-label-v1",
+    templateDigestSha256: "a".repeat(64),
+    calibrationProfile: {
+      status: "provisional_not_physically_calibrated",
+      printProfileId: "ten-kings-foil-express-provisional-v1",
+      cutProfileId: "ten-kings-cricut-provisional-v1",
+      privateOffset: "must-not-leak",
+    },
+    immutableIdentitySnapshot: { privateField: "must-not-leak" },
+  };
+  const label = buildAiGraderLabelSheetsResult([row]).sheets[0].labels[0];
+  assert.deepEqual(label.labelV1, {
+    schemaVersion: "ten-kings-label-runtime-v1",
+    templateId: "ten-kings-sports-label-v1",
+    templateDigestSha256: "a".repeat(64),
+    printProfileId: "ten-kings-foil-express-provisional-v1",
+    cutProfileId: "ten-kings-cricut-provisional-v1",
+    physicalCalibrationStatus: "provisional_not_physically_calibrated",
+  });
+  assert.doesNotMatch(JSON.stringify(label), /privateOffset|privateField|must-not-leak/);
+  assert.notEqual(
+    buildAiGraderLabelSheetRevision([label]),
+    buildAiGraderLabelSheetRevision([
+      { ...label, labelV1: { ...label.labelV1!, templateDigestSha256: "b".repeat(64) } },
+    ])
+  );
+});
+
 test("confirmed identity and sheet revisions are normalized and deterministic", () => {
   assert.deepEqual(
     normalizeAiGraderConfirmedCardIdentity({
@@ -166,18 +206,19 @@ test("confirmed identity and sheet revisions are normalized and deterministic", 
   );
 });
 
-test("label sheet page fixes physical print dimensions and uses authenticated queue actions", () => {
+test("label sheet page uses authenticated server-rendered PDF authority and explicit human print state", () => {
   const testPath = fileURLToPath(import.meta.url);
   const pagePath = fileURLToPath(new URL("../pages/ai-grader/labels/sheets.tsx", import.meta.url));
   assert.notEqual(testPath, pagePath);
   const source = readFileSync(pagePath, "utf8");
 
-  assert.match(source, /@page \{ size: 8\.5in 12in; margin: 0; \}/);
-  assert.match(source, /grid-template-columns: repeat\(2, 2\.73in\)/);
-  assert.match(source, /grid-template-rows: repeat\(8, 0\.83in\)/);
   assert.match(source, /\/production\/label-sheets/);
   assert.match(source, /\/production\/prepare-label-sheet-print/);
   assert.match(source, /\/production\/mark-label-sheet-printed/);
+  assert.match(source, /render-label-sheet-pdf/);
+  assert.match(source, /render-label-sheet-cut-svg/);
+  assert.match(source, /sheet-pdf-preview/);
+  assert.match(source, /Exact-dimension PDF is the print authority/);
   assert.match(source, /buildAdminHeaders\(session\.token/);
-  assert.doesNotMatch(source, /stationToken|data:image|127\.0\.0\.1/);
+  assert.doesNotMatch(source, /window\.print|QRCode|@page|grid-template-columns: repeat\(2, 2\.73in\)|stationToken|data:image|127\.0\.0\.1/);
 });

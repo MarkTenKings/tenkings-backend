@@ -1,0 +1,7 @@
+frontend/nextjs-app/assets/ai-grader-label-v1/*.png binary
+frontend/nextjs-app/assets/ai-grader-label-v1/references/*.png binary
+frontend/nextjs-app/assets/ai-grader-label-v1/fonts/*.ttf binary
+frontend/nextjs-app/assets/ai-grader-label-v1/fonts/OFL-BebasNeue.txt whitespace=-trailing-space
+output/ai-grader-label-v1/*.png binary
+output/ai-grader-label-v1/rendered/*.png binary
+output/pdf/*.pdf binary

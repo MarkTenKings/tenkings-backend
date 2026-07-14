@@ -1,0 +1,230 @@
+{
+  "status": "design_approved_not_physically_calibrated",
+  "designApproval": {
+    "status": "approved",
+    "phrase": "Label V1 design approved",
+    "approvedOn": "2026-07-13",
+    "physicalCalibrationStatus": "provisional_not_physically_calibrated"
+  },
+  "templateDigestSha256": "1f09999417c37ec24cc55c9bee6f2115e136f1c852e7db5f995ff5e29e0eddf2",
+  "assets": {
+    "logoSource": {
+      "assetId": "ten-kings-logo-2026",
+      "version": "v1",
+      "role": "design_reference",
+      "fileName": "ten-kings-logo-2026-v1.png",
+      "mimeType": "image/png",
+      "sha256": "c7461cc51eefdf5c259c9895eca1ceab870865c660988273cc8241c1ea8ae470",
+      "widthPx": 1500,
+      "heightPx": 1170,
+      "dpi": 300,
+      "approvedForProduction": false
+    },
+    "logo": {
+      "assetId": "ten-kings-logo-2026-monochrome",
+      "version": "v1-derived-from-ten-kings-logo-2026-v1",
+      "role": "logo",
+      "fileName": "ten-kings-logo-2026-monochrome-v1.png",
+      "mimeType": "image/png",
+      "sha256": "801b4071499af546102c3d703f27deb3dabc7a4374d5d621eb8ad672ceeeae88",
+      "widthPx": 1500,
+      "heightPx": 1170,
+      "dpi": 300,
+      "approvedForProduction": true
+    },
+    "crown": {
+      "assetId": "ten-kings-crown-2026-monochrome",
+      "version": "v1-crop-from-ten-kings-logo-2026-v1",
+      "role": "ornament",
+      "fileName": "ten-kings-crown-2026-monochrome-v1.png",
+      "mimeType": "image/png",
+      "sha256": "064156a51ee3e7c49bdf102752bbbd5d21ed41eaf2d58c6be7d5b9994aa307ed",
+      "widthPx": 1206,
+      "heightPx": 784,
+      "dpi": 300,
+      "approvedForProduction": true
+    },
+    "font": {
+      "assetId": "bebas-neue",
+      "version": "regular-400-ofl-v1",
+      "role": "font",
+      "fileName": "fonts/BebasNeue-Regular.ttf",
+      "mimeType": "font/ttf",
+      "sha256": "830ea186acffc2316ed1a4e42319246ba3b46b04e33a211079249bf901193f04",
+      "approvedForProduction": true
+    },
+    "sportsReference": {
+      "assetId": "ten-kings-sports-label-design-reference",
+      "version": "v1",
+      "role": "design_reference",
+      "fileName": "references/ten-kings-sports-label-reference-v1.png",
+      "mimeType": "image/png",
+      "sha256": "0da40a07ad789106af0498a1fd62703d33d98fa1680c4b4a30fd20d634ee01d6",
+      "widthPx": 2559,
+      "heightPx": 778,
+      "dpi": 937.006,
+      "approvedForProduction": false
+    },
+    "pokemonReference": {
+      "assetId": "ten-kings-pokemon-label-design-reference",
+      "version": "v1",
+      "role": "design_reference",
+      "fileName": "references/ten-kings-pokemon-label-reference-v1.png",
+      "mimeType": "image/png",
+      "sha256": "554a99edbec8806e7b03182e00de32f02a3d9dcbfcc29adac3d2d2191997f1a5",
+      "widthPx": 2559,
+      "heightPx": 778,
+      "dpi": 937.006,
+      "approvedForProduction": false
+    }
+  },
+  "coordinates": {
+    "schemaVersion": "ten-kings-label-spec-v1",
+    "coordinateAuthority": "top_left_pdf_points",
+    "pointsPerInch": 72,
+    "paper": {
+      "widthIn": 8.5,
+      "heightIn": 12,
+      "widthPt": 612,
+      "heightPt": 864,
+      "orientation": "portrait"
+    },
+    "label": {
+      "widthIn": 2.73,
+      "heightIn": 0.83,
+      "widthPt": 196.56,
+      "heightPt": 59.76
+    },
+    "sheet": {
+      "columns": 2,
+      "rows": 8,
+      "capacity": 16,
+      "marginLeftPt": 72,
+      "marginTopPt": 72,
+      "marginRightPt": 72,
+      "marginBottomPt": 72,
+      "columnGapPt": 74.88,
+      "rowGapPt": 34.56,
+      "xPositionsPt": [
+        72,
+        343.44
+      ],
+      "yPositionsFromTopPt": [
+        72,
+        166.32,
+        260.64,
+        354.96,
+        449.28,
+        543.6,
+        637.92,
+        732.24
+      ],
+      "slotOrder": "row_major_left_to_right_top_to_bottom"
+    },
+    "labelZones": {
+      "safeInsetPt": 2.52,
+      "logo": {
+        "xPt": 5.04,
+        "yPt": 15.2,
+        "widthPt": 25.92,
+        "heightPt": 20.22,
+        "scaleFromInitialProof": 0.6
+      },
+      "gradingText": {
+        "xPt": 4.2,
+        "yPt": 37.1,
+        "widthPt": 27.6,
+        "fontSizePt": 3.8
+      },
+      "leftSeparator": {
+        "xPt": 36,
+        "yPt": 8,
+        "heightPt": 43.76
+      },
+      "identity": {
+        "xPt": 40,
+        "yPt": 3.5,
+        "widthPt": 89.5,
+        "heightPt": 52.76
+      },
+      "rightSeparator": {
+        "xPt": 132.5,
+        "yPt": 8,
+        "heightPt": 43.76
+      },
+      "nfcReserved": {
+        "xPt": 134.25,
+        "yPt": 14.29,
+        "widthPt": 31.18,
+        "heightPt": 31.18,
+        "orientation": "portrait",
+        "diameterMm": 11,
+        "centerXPt": 149.84,
+        "centerYPt": 29.88,
+        "certTopPt": 47.05,
+        "provisional": true
+      },
+      "grade": {
+        "xPt": 168.25,
+        "widthPt": 26.2,
+        "cardNumberTopPt": 4.2,
+        "glyphCenterYPt": 29.88,
+        "glyphCenterFromTextTopEm": 0.55
+      },
+      "divider": {
+        "yPt": 38.4,
+        "crownWidthPt": 5.7,
+        "crownHeightPt": 3.7
+      },
+      "separatorCrowns": {
+        "centerYPt": 29.88,
+        "widthPt": 3.4,
+        "heightPt": 2.2,
+        "lineGapPt": 0.7
+      }
+    },
+    "pdf": {
+      "coordinateOrigin": "bottom_left",
+      "topLeftToPdfYFormula": "paperHeightPt - topLeftYPt - labelHeightPt"
+    },
+    "svg": {
+      "coordinateOrigin": "top_left",
+      "viewBox": "0 0 612 864"
+    },
+    "calibration": {
+      "status": "provisional_not_physically_calibrated",
+      "printProfileId": "ten-kings-foil-express-provisional-v1",
+      "cutProfileId": "ten-kings-cricut-provisional-v1",
+      "printOffsetXPt": 0,
+      "printOffsetYPt": 0,
+      "printScaleX": 1,
+      "printScaleY": 1,
+      "cutOffsetXPt": 0,
+      "cutOffsetYPt": 0,
+      "cutScaleX": 1,
+      "cutScaleY": 1,
+      "cutRotationDeg": 0
+    }
+  },
+  "files": {
+    "sportsActualPdf": "ten-kings-label-v1-sports-actual.pdf",
+    "pokemonActualPdf": "ten-kings-label-v1-pokemon-actual.pdf",
+    "inspectionPdf": "ten-kings-label-v1-enlarged-inspection.pdf",
+    "fullSheetPdf": "ten-kings-label-v1-full-sheet-proof.pdf",
+    "partialSheetPdf": "ten-kings-label-v1-partial-sheet-proof.pdf",
+    "calibrationPdf": "ten-kings-label-v1-calibration.pdf",
+    "sportsSvg": "ten-kings-label-v1-sports.svg",
+    "pokemonSvg": "ten-kings-label-v1-pokemon.svg",
+    "cutSvg": "ten-kings-label-v1-cricut-cut.svg",
+    "calibrationCutSvg": "ten-kings-label-v1-cricut-calibration.svg"
+  },
+  "notes": [
+    "The supplied Ten Kings artwork is preserved exactly, with Mark-authorized deterministic dark-black recoloring and crown-only crop.",
+    "OFL Bebas Neue Regular weight 400 is embedded from the user-supplied local TTF for PDF/SVG determinism.",
+    "The NFC reserve is an 11 mm circle centered vertically on the label; print and cut offsets remain provisional.",
+    "Whole words wrap to approved fixed tiers; words are never split or truncated.",
+    "No QR is visible in either NFC template.",
+    "Mark approved Label V1 with the exact phrase `Label V1 design approved` on 2026-07-13.",
+    "Physical Foil Express and Cricut calibration remains a separate required gate."
+  ]
+}
