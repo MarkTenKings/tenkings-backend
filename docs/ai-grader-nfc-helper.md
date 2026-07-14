@@ -23,7 +23,7 @@ The schema has an intentionally unimplemented `NTAG424_DNA` / `ntag424_sun_v1` s
 - Report-lifecycle advisory locks and partial unique indexes enforce one open reservation/active link per report, CardAsset, and Item. A separate unique index prevents the same UID fingerprint from being active on more than one card.
 - Hosted endpoints are `/api/admin/ai-grader/nfc/status`, `/init`, `/complete`, `/revoke`, and `/replace`. Status/init/complete require a human `ai_grader_operator` or `ai_grader_admin`; revoke/replace require a human `ai_grader_admin`. Client role fields are ignored and service-account NFC calls fail closed.
 - Ordinary init after any revoked registration fails with `AI_GRADER_NFC_REPLACEMENT_REQUIRED`. Only the admin replace transaction can revoke the exact old registration with its immutable reason/audit tuple and pass the module-private authorization that creates one replacement.
-- `/nfc/[publicTagId]` is a production-database-only public read. Only a fully active, exactly linked, still-published public report resolves. Other states expose no private IDs, UID evidence, local paths, storage/provider details, or hardware controls.
+- `/nfc/[publicTagId]` is a production-database-only public read. Only a fully active, exactly linked, still-published public report resolves. Other states expose no private IDs, UID evidence, local paths, storage/provider details, or hardware controls. If the additive NFC migration is absent or persistence cannot be checked, the route returns a clean, no-store/noindex HTTP 503 unavailable page instead of claiming that a real tag is invalid.
 - `/ai-grader/nfc?reportId=...` is the only browser hardware workflow. `/ai-grader/finish` shows the safe NFC state and links to it but remains usable without local hardware.
 
 The NFC inventory policy is additive and defaults off:
@@ -37,7 +37,9 @@ AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON={<lowercase-sha256-der-spki-key-id>:{
 
 `AI_GRADER_NFC_PROGRAMMING_ENABLED` is independent and also defaults false. While false, authenticated status and admin revocation remain available, but init, complete, and replace return a fixed disabled error and the browser never contacts the helper. When true, the attempt-token secret and at least one valid P-256 key for the exact tenant are mandatory. The JSON allowlist is server-only, limited to 16 KiB/eight exact entries, and contains public SPKI only—never a private key, token, challenge, or signature.
 
-Authenticated readiness returns only `nfcProgrammingEnabled`, `nfcRequired`, `nfcAttemptTokenConfigured`, `nfcWorkstationAttestationConfigured`, `nfcWorkstationKeyCount`, and `expectedNfcHelperProtocolVersion`. When `AI_GRADER_NFC_REQUIRED` is false, the current Finish/QR/inventory workflow is unchanged. When true, Add To Inventory rechecks one exact active non-revoked NFC row inside the existing report-locked transaction. Do not enable it before the migration is applied and the finishing helper is installed and accepted. NFC data is additive to label/report contracts; it does not remove, hide, or replace the existing QR or create another label-sheet slot.
+Authenticated readiness returns only `nfcSchemaReady`, `nfcProgrammingEnabled`, `nfcRequired`, `nfcAttemptTokenConfigured`, `nfcWorkstationAttestationConfigured`, `nfcWorkstationKeyCount`, and `expectedNfcHelperProtocolVersion`. The schema probe distinguishes an unapplied NFC migration from an unexpected database failure without returning database details. NFC status reports unavailable when the schema is absent; NFC mutations return the stable schema-unavailable error, and an unexpected probe failure returns a separate stable check-failed error.
+
+When `AI_GRADER_NFC_REQUIRED` is false, the current Finish/report/Publish/QR/inventory workflow does not depend on the NFC tables and remains operational if the migration has not been applied. When true, Add To Inventory rechecks schema readiness and one exact active non-revoked NFC row inside the existing report-locked transaction; missing or unverifiable persistence fails closed. Do not enable it before the migration is applied and the finishing helper is installed and accepted. NFC data is additive to label/report contracts; it does not remove, hide, or replace the existing QR or create another label-sheet slot.
 
 ## Operational attestation contract
 
@@ -67,8 +69,8 @@ Completion evidence is bounded and internal: schema, key ID, algorithm, statemen
 Primary references:
 
 - [NXP NTAG213/215/216 data sheet](https://www.nxp.com/docs/en/data-sheet/NTAG213_215_216.pdf)
-- [ACS ACR1552U reference manual](https://www.acs.com.hk/download-manual/13473/REF-ACR1552U-Series-1.08.pdf)
-- [ACS ACR1552U product page](https://www.acs.com.hk/en/products/645/acr1552u-usb-nfc-reader-iv/)
+- [ACS ACR1552U reference manual](https://www.acs.com.hk/download-manual/13473/REF-ACR1552U-Series-1.06.pdf)
+- [ACS ACR1552U product page](https://www.acs.com.hk/en/products/575/acr1552u-usb-nfc-reader-iv/)
 
 The helper uses Windows PC/SC (`winscard.dll`) in its standalone .NET 8 Windows process. No PC/SC/native dependency is imported into Next.js, Vercel, or the capture helper.
 
@@ -101,16 +103,25 @@ All native reads and writes share one nonblocking operation gate. A timed-out na
 
 The current protocol is `tenkings-ai-grader-nfc-loopback-v2`. A write request includes the exact attempt ID, public tag ID, challenge, URL, and local idempotency context. Only exact full readback can produce the signed `write_verified_pcsc_readback` or `already_programmed_exact` result. No-tag, reader, overwrite-required, partial-write, timeout, readback-mismatch, or other failure responses contain no signature. Definite failures before any write release their local idempotency entry for a bounded retry; uncertain work keeps its entry and operation gate so the browser can recover the same result without an overlapping or duplicate write. After any uncertain timeout, disconnect, or helper restart, keep the exact same physical tag on the reader, wait until the helper is no longer busy, and use **Retry Current Attempt**. Do not remove or swap the tag during that recovery.
 
-Production signing uses the fixed named current-user Microsoft Software Key Storage Provider key `TenKings.AiGrader.Nfc.WorkstationAttestation.v1`. It must be ECDSA P-256, signing-only, non-ephemeral, and `ExportPolicy=None`. Installer reruns reuse and validate that exact key; ordinary update never rotates it. Protected helper JSON contains only the bounded key name and derived key ID. The private key never leaves Windows CNG or appears in JSON, logs, arguments, browser data, Vercel, or the database.
+Production signing uses the fixed named current-user Microsoft Software Key Storage Provider key `TenKings.AiGrader.Nfc.WorkstationAttestation.v1`. It must be ECDSA P-256, signing-only, non-ephemeral, and `ExportPolicy=None`. First install creates or reuses that exact key; ordinary update validates its public identity and never rotates it. Protected helper JSON contains only the bounded key name and derived key ID. The private key never leaves Windows CNG or appears in JSON, logs, arguments, browser data, Vercel, or the database.
 
 ## Build and hardware-free verification
 
 ```powershell
 pnpm --filter @tenkings/ai-grader-nfc-helper build
 pnpm --filter @tenkings/ai-grader-nfc-helper test
+pnpm --filter @tenkings/ai-grader-nfc-helper test:maintenance
 ```
 
-The fake backend covers blank/exact/different NDEF, CC/version/page bounds, reader absent, no/multiple/unsupported tag, disconnect/partial write, timeout, read/write contention, readback corruption, idempotency, pairing replay, Origin/Host/token/body limits, and log redaction. These tests do not prove behavior on physical hardware.
+The fake backend covers blank/exact/different NDEF, CC/version/page bounds, reader absent, no/multiple/unsupported tag, disconnect/partial write, timeout, read/write contention, readback corruption, idempotency, pairing replay, Origin/Host/token/body limits, and log redaction. The maintenance test uses temporary directories only to exercise containment, successful replacement, injected replacement failure, and rollback. It never reads the production helper config, Scheduled Task, CNG key, PC/SC reader, or tag. These tests do not prove behavior on physical hardware.
+
+The packaged migration proof is destructive only to the disposable database it creates. It refuses a remote Docker context or missing acknowledgement, publishes PostgreSQL on loopback only, uses tmpfs storage, validates schema absence before deploy, applies the complete migration chain, verifies the exact NFC catalog and real compiled service lifecycle, proves a second deploy leaves the complete migration ledger unchanged, and always runs scoped container/volume teardown:
+
+```powershell
+pnpm --filter @tenkings/database validate:nfc:migration:disposable -- --ack-disposable-local-postgres
+```
+
+Never point this command or its validation sentinel at an existing, staging, or production database.
 
 ## Installation workflow (after rollout approval)
 
@@ -125,18 +136,47 @@ scripts\ai-grader-nfc\export-ai-grader-nfc-workstation-public-key.ps1
 scripts\ai-grader-nfc\open-ai-grader-nfc-workstation.ps1
 ```
 
-The install creates or reuses the named current-user non-exportable Windows CNG signing key, then creates only the dedicated `TenKingsAiGraderNfcHelper` scheduled task, `C:\TenKings\tools\ai-grader-nfc-helper`, protected `C:\TenKings\config\ai-grader-nfc`, and optional **Ten Kings AI Grader NFC** desktop shortcut. It does not change the Dell capture-helper Startup shortcut/task or camera/light software. The export command emits only one server-allowlist entry with public DER SPKI, derived key ID, tenant, and algorithm; it cannot export private key material.
+The install creates or reuses the named current-user non-exportable Windows CNG signing key, then creates only the dedicated `TenKingsAiGraderNfcHelper` scheduled task, `C:\TenKings\tools\ai-grader-nfc-helper`, protected `C:\TenKings\config\ai-grader-nfc`, and optional **Ten Kings AI Grader NFC** desktop shortcut. If the shared `C:\TenKings\tools` root is missing, install creates and protects it; if it already exists, install does not rewrite its ACL or any sibling tool. The dedicated helper subtree is always protected. It does not change the Dell capture-helper Startup shortcut/task or camera/light software. The export command emits only one server-allowlist entry with public DER SPKI, derived key ID, tenant, and algorithm; it cannot export private key material.
+
+The installer is first-install only. If the protected config, dedicated install directory, or dedicated Scheduled Task already exists, it fails closed and directs the operator to the ordinary update command. Rerunning install is not an update mechanism and cannot silently recreate credentials, replace a running binary, or re-register the task. A failed first install removes only the install/config/task/shortcut artifacts that invocation created and reports any incomplete cleanup. It deliberately preserves the named non-exportable CNG key if key creation succeeded; the next reviewed install reuses and validates it instead of rotating it.
+
+The task and shortcut do not point into the source checkout. Install copies bounded operational launchers into `C:\TenKings\tools\ai-grader-nfc-helper\maintenance`; the task uses the installed `start-ai-grader-nfc-helper.ps1`, and the shortcut uses the installed `open-ai-grader-nfc-workstation.ps1`, both with the stable install directory as their working directory. Hardware acceptance may therefore install from an isolated reviewed worktree without leaving the stopped task dependent on that worktree. Retain the worktree through review/acceptance; after a successful install its removal does not orphan start/open. A later ordinary update must still be launched from a fresh reviewed checkout because it builds the replacement and refreshes the stable maintenance payload.
+
+## Ordinary helper update
+
+Run only when no NFC programming operation is active:
+
+```powershell
+scripts\ai-grader-nfc\update-ai-grader-nfc-helper.ps1
+```
+
+Ordinary update is restricted to the exact `C:\TenKings\config\ai-grader-nfc\helper.json`, `C:\TenKings\tools\ai-grader-nfc-helper`, and `TenKingsAiGraderNfcHelper` task identity. It rejects traversal, alternate roots, and reparse points. Before reading protected config it verifies the ACL allowlist. The current user, local Administrators, and SYSTEM are the only accepted full-control principals; the config and helper trees may not inherit broader access.
+
+The update sequence is fail-closed:
+
+1. Validate the current executable, protocol, protected ACLs, fixed paths, task identity, and existing named CNG public-key digest.
+2. Publish the replacement and stable operational launchers into a random contained staging directory, apply and verify its protected ACL tree, and run `--verify-build`. That maintenance mode exercises URL/NDEF and fake P-256/P1363 code only and reports `hardwareAccessed=false` and `productionKeyAccessed=false`.
+3. Use the staged binary to export and re-hash only the existing public SPKI. This validates the configured key ID without creating, replacing, exporting, or rotating private key material.
+4. If the helper was running, require an authenticated current-protocol, non-busy loopback status. A busy writer prevents the update before any stop or file replacement.
+5. Only after all staged checks pass, stop the dedicated NFC task/process and snapshot hashes of the exact config bytes and ACL, config-directory ACL, pairing-consumption state and ACL, CNG key name/ID metadata, exported task XML identity, and shortcut presence/content.
+6. Rename the prior install to a contained rollback directory, activate the staged directory, re-run build/key/ACL/state checks, and restore the prior running state. The task is not re-registered and the shortcut is not recreated; both continue to address the same stable installed launcher paths.
+7. On any activation, validation, or readiness failure, stop the replacement, restore the prior directory, revalidate it, restore its prior running state, and return an explicit failure. A successful update removes the rollback directory when safe; a cleanup failure is reported as `rollbackBackupRemoved=false` and leaves only old binaries under the dedicated tools root.
+
+Ordinary update never calls config initialization or key provisioning. It preserves the workstation token, pairing code and expiry, pairing-consumption marker, complete config bytes, key name/ID and private CNG key, config ACLs, Scheduled Task registration/principal/triggers/settings, shortcut state, and whether the helper was running. It does not install drivers or firmware and never references, stops, updates, or restarts the camera capture helper.
 
 Maintenance commands:
 
 ```powershell
-scripts\ai-grader-nfc\stop-ai-grader-nfc-helper.ps1
-scripts\ai-grader-nfc\start-ai-grader-nfc-helper.ps1
-scripts\ai-grader-nfc\rotate-ai-grader-nfc-helper-token.ps1 -RestartHelper
-scripts\ai-grader-nfc\uninstall-ai-grader-nfc-helper.ps1
+C:\TenKings\tools\ai-grader-nfc-helper\maintenance\stop-ai-grader-nfc-helper.ps1
+C:\TenKings\tools\ai-grader-nfc-helper\maintenance\start-ai-grader-nfc-helper.ps1
+C:\TenKings\tools\ai-grader-nfc-helper\maintenance\rotate-ai-grader-nfc-helper-token.ps1 -RotatePairingCode -RestartHelper
+C:\TenKings\tools\ai-grader-nfc-helper\maintenance\rotate-ai-grader-nfc-helper-token.ps1 -RotateToken -RotatePairingCode -RestartHelper
+C:\TenKings\tools\ai-grader-nfc-helper\maintenance\uninstall-ai-grader-nfc-helper.ps1
 ```
 
-Uninstall preserves published binaries/config by default; removal switches are explicit. Treat those switches as workstation-destructive maintenance and review their paths before use.
+Credential maintenance requires at least one explicit `-RotateToken` or `-RotatePairingCode` switch; invoking it without a choice fails. `-RotateToken` is accepted only together with `-RotatePairingCode`, ensuring the new token and a fresh one-time pairing code are persisted in the same maintenance action so consumed browser trust cannot be stranded. Pairing-code-only rotation remains available. Rotation is never part of ordinary update. Uninstall validates the dedicated Scheduled Task and any existing **Ten Kings AI Grader NFC** desktop shortcut against their fixed installed launchers before mutation; it refuses to delete an unexpected shortcut. Uninstall preserves published binaries/config by default, and removal switches are explicit. Treat those switches as workstation-destructive maintenance and review their fixed paths before use.
+
+The normal workstation shortcut/open command reads but never rewrites protected config. It starts the dedicated task only when the helper is not already running and never restarts a healthy helper. Before the first successful pairing it may place the existing unexpired one-time code in the browser fragment; after the persisted consumption marker matches, it opens without any pairing code. An expired unconsumed code fails closed and requires the explicit `-RotatePairingCode -RestartHelper` maintenance action above.
 
 ## Deployment order
 
@@ -151,6 +191,10 @@ Uninstall preserves published binaries/config by default; removal switches are e
 
 Do not program a real report tag before those prerequisites and a specific production-operation approval.
 
+## Production rollback plan
+
+If NFC rollout must be rolled back, first set both `AI_GRADER_NFC_PROGRAMMING_ENABLED=false` and `AI_GRADER_NFC_REQUIRED=false` through the separately approved environment-change process. Roll back the hosted application behavior without deleting or rebinding NFC records. The additive NFC tables and immutable audit history should normally remain in place so existing registrations and evidence are preserved. Removing tables or NFC data later would require a separate reviewed destructive migration, dry-run impact evidence, and explicit destructive-operation approval.
+
 ## Separate hardware-validation authorization
 
 Software completion does not authorize hardware access. The required exact approval is:
@@ -162,8 +206,8 @@ Only after that approval may the existing driver be used to detect one reader/ta
 After approval and helper installation, stop the dedicated helper and invoke the one-shot, non-HTTP maintenance command with the exact authorization as `-Authorization`:
 
 ```powershell
-scripts\ai-grader-nfc\stop-ai-grader-nfc-helper.ps1
-scripts\ai-grader-nfc\validate-ai-grader-nfc-sacrificial-tag.ps1 -Authorization '<exact sentence above>'
+C:\TenKings\tools\ai-grader-nfc-helper\maintenance\stop-ai-grader-nfc-helper.ps1
+C:\TenKings\tools\ai-grader-nfc-helper\maintenance\validate-ai-grader-nfc-sacrificial-tag.ps1 -Authorization '<exact sentence above>'
 ```
 
-If the sacrificial tag is nonblank, the first run returns only `overwrite_confirmation_required` and performs no write. After the operator confirms that exact sacrificial tag may be overwritten, repeat with `-ConfirmOverwrite`. The CLI permits only the exact `/nfc/test` URL, returns redacted booleans/fixed result code, exposes no HTTP route, UID, URL details, device identifier, or arbitrary command, and does not lock/configure the tag. Restart the helper only after recording the redacted outcome.
+If the sacrificial tag is nonblank, the first run returns only `overwrite_confirmation_required` and performs no write. After the operator confirms that exact sacrificial tag may be overwritten, repeat with `-ConfirmOverwrite`. The CLI permits only the exact `/nfc/test` URL, returns redacted booleans/fixed result code, exposes no HTTP route, UID, URL details, device identifier, or arbitrary command, and does not lock/configure the tag. After acceptance, leave the dedicated NFC helper installed but stopped until production rollout is separately approved.
