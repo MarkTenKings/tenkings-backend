@@ -355,8 +355,11 @@ function inventoryReadinessDb(overrides: {
 
 test("local station contract exposes workflow status with no login, DB, or hardware actions", () => {
   const status = buildAiGraderLocalStationStatus({ action: "status", now: "test" });
+  const backPositioningStatus = buildAiGraderLocalStationStatus({ action: "capture-front", now: "test" });
 
   assert.equal(status.bridgeVersion, AI_GRADER_LOCAL_STATION_BRIDGE_VERSION);
+  assert.equal(backPositioningStatus.currentStep, "prompt_flip_card");
+  assert.equal(backPositioningStatus.nextAction, "capture-back");
   assert.equal(status.loginRequired, false);
   assert.equal(status.hardwareActionsEnabled, false);
   assert.equal(status.safety.databaseWrites, false);
@@ -6153,7 +6156,7 @@ test("AI Grader station source opens reports inline without popup dependency", (
   assert.equal(stationSource.includes("backPositioningActive"), true);
   assert.equal(stationSource.includes('busy === "back"'), false);
   assert.equal(stationSource.includes('busy === "capture-back"'), true);
-  assert.equal(stationSource.includes("Live Preview Is Active"), true);
+  assert.equal(stationSource.includes("Starting Back Preview"), true);
   assert.equal(stationSource.includes("Capture Back"), true);
   assert.equal(stationSource.includes("selectedFinishItem.slabPhotos.frontUploaded"), true);
   assert.equal(stationSource.includes("setSlabUploads({"), true);
@@ -6440,6 +6443,86 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
   assert.match(source, /Confirm Manual Capture/);
   assert.match(source, /Automatic geometry will not be claimed/);
   assert.match(source, /manualCaptureConfirmation\.side/);
+  assert.match(source, /no browser rectangle is sent/);
+  const previewIneligibleSource = source.slice(
+    source.indexOf("if (!previewEligible)"),
+    source.indexOf("const expectedBinding = previewEpochStateRef.current.binding"),
+  );
+  assert.ok(
+    previewIneligibleSource.indexOf("previewAttemptGenerationRef.current += 1")
+      < previewIneligibleSource.indexOf("intentionalBackCaptureRef.current = null"),
+  );
+  const previewEofSource = source.slice(
+    source.indexOf('if (result.kind === "eof" && isCurrent())'),
+    source.indexOf("if (intentionalCaptureTransition && authoritativeAfterEof)"),
+  );
+  assert.ok(
+    previewEofSource.indexOf("const localIntent = intentionalBackCaptureRef.current")
+      < previewEofSource.indexOf("await fetchAiGraderStationPreviewStatus"),
+  );
+  const atomicBackSource = source.slice(
+    source.indexOf("const confirmFlipAndContinue = async"),
+    source.indexOf("const confirmManualOverlayCapture = async"),
+  );
+  assert.equal(atomicBackSource.match(/runAiGraderStationBackCaptureOrchestration/g)?.length, 1);
+  assert.doesNotMatch(atomicBackSource, /runAiGraderAtomicBackCapture/);
+  assert.doesNotMatch(atomicBackSource, /runAction\("confirm-flip"/);
+  assert.doesNotMatch(atomicBackSource, /stopAiGraderStationPreview/);
+  assert.doesNotMatch(atomicBackSource, /safeOffAiGraderLiveLighting/);
+  assert.doesNotMatch(atomicBackSource, /\/preview\/stop/);
+  assert.doesNotMatch(atomicBackSource, /\/lighting\/safe-off/);
+  assert.match(atomicBackSource, /onConfirmedPreTransitionFailure[\s\S]*intentionalBackCaptureRef\.current = null/);
+  assert.doesNotMatch(
+    atomicBackSource.slice(atomicBackSource.indexOf("setStatus(captured)")),
+    /intentionalBackCaptureRef\.current = null/,
+  );
+  assert.equal(source.includes('else void confirmFlipAndContinueRef.current?.("auto");'), true);
+  assert.equal(source.includes('confirmFlipAndContinueRef.current?.("auto", "manual_capture")'), false);
+  assert.equal(source.includes('else await confirmFlipAndContinue("operator", "manual_capture");'), true);
+  const previewReconcileSource = source.slice(
+    source.indexOf("const reconcileBridgePreviewStatus"),
+    source.indexOf("const connectBridgeWithCredentials"),
+  );
+  assert.equal(previewReconcileSource.match(/setPreviewRestartGeneration/g)?.length, 1);
+  assert.ok(
+    previewReconcileSource.indexOf('applyPreviewEpochEvent({ type: "bind", binding })')
+      < previewReconcileSource.indexOf("setPreviewRestartGeneration"),
+  );
+  const previewLossSafeOffSource = source.slice(
+    source.indexOf("const safeOffAfterPreviewLoss"),
+    source.indexOf("const reconcileBridgePreviewStatus"),
+  );
+  assert.ok(
+    previewLossSafeOffSource.indexOf("projectAiGraderPreviewLossSafeOffPending")
+      < previewLossSafeOffSource.indexOf("await safeOffAiGraderLiveLighting"),
+  );
+  assert.match(previewLossSafeOffSource, /catch \(safeOffError\)[\s\S]*projectAiGraderPreviewLossPhysicalStateUnknown[\s\S]*throw safeOffError/);
+  const retryRestartSource = source.slice(
+    source.indexOf("const restartBackPreviewForRetry"),
+    source.indexOf("const retryBackPositioningLight"),
+  );
+  assert.ok(
+    retryRestartSource.indexOf("intentionalBackCaptureRef.current = null")
+      < retryRestartSource.indexOf("previewAttemptGenerationRef.current += 1"),
+  );
+  const retryActionSource = source.slice(
+    source.indexOf("const retryBackPositioningLight"),
+    source.indexOf("const assertFreshPreviewCaptureEligibility"),
+  );
+  assert.ok(
+    retryActionSource.indexOf("const next = await runAiGraderBackPositioningRetryRecovery")
+      < retryActionSource.indexOf('clearPreviewDisplay("starting")'),
+  );
+  assert.match(retryActionSource, /if \(backPositioningRetryReady\) return;/);
+  assert.ok(
+    retryActionSource.indexOf("if (!aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, retryBinding))")
+      < retryActionSource.indexOf('clearPreviewDisplay("starting")'),
+  );
+  assert.ok(
+    retryActionSource.indexOf('clearPreviewDisplay("starting")')
+      < retryActionSource.indexOf("fetchAiGraderLiveLightingStatus"),
+  );
+  assert.match(retryActionSource, /positioningLightReady: false/);
   assert.match(source, /const canStartGrading =\s*!status\.captureFailure &&/);
   assert.match(source, /const detectedGeometryFresh =/);
   assert.match(source, /activeGeometryAgeMs <= PREVIEW_GEOMETRY_MAX_AGE_MS/);
@@ -6460,6 +6543,12 @@ test("station geometry status polling targets 200 ms without overlapping loopbac
   assert.match(source, /requestPending = true;/);
   assert.match(source, /requestPending = false;/);
   assert.match(source, /setInterval\(\(\) => void refreshGeometry\(\), PREVIEW_GEOMETRY_STATUS_POLL_MS\)/);
+  const geometryPollSource = source.slice(
+    source.indexOf("const refreshGeometry"),
+    source.indexOf("const currentStep"),
+  );
+  assert.match(geometryPollSource, /reconcileBridgePreviewStatus\(latest\);\s+return;/);
+  assert.doesNotMatch(geometryPollSource, /if \(binding && aiGraderPreviewBindingMatches/);
   assert.match(source, /A successful bridge poll is authoritative/);
   assert.match(source, /return sanitized;/);
   assert.doesNotMatch(source, /front: sanitized\.front \?\? current\?\.front/);
