@@ -6294,7 +6294,8 @@ test("browser station bridge client checks local bridge health without station o
 test("browser station bridge health fails explicitly when the running helper contract is stale", async () => {
   const staleFetch: typeof fetch = async () => new Response(JSON.stringify({
     ok: true,
-    bridgeVersion: "ai-grader-local-station-bridge-v0.4",
+    bridgeVersion: "ai-grader-local-station-bridge-v0.8",
+    reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
     mode: "real",
     localOnly: true,
     tokenRequired: true,
@@ -6304,7 +6305,7 @@ test("browser station bridge health fails explicitly when the running helper con
 
   await assert.rejects(
     () => fetchAiGraderStationBridgeHealth({ baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL }, staleFetch),
-    new RegExp(`update/restart required.*${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}.*v0\\.4`, "i"),
+    new RegExp(`update/restart required.*Atomic Front Capture.*${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}.*v0\\.8.*Stop before hardware.*documented Dell helper maintenance update.*Startup shortcut`, "i"),
   );
 });
 
@@ -6422,9 +6423,9 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
   );
   assert.doesNotMatch(readyGateSource, /center|withinCenter|withinSkew|maxSkew/i);
   assert.match(source, /!detectedGeometryReady/);
-  assert.match(source, /buildAiGraderDetectedGeometryCaptureRequest/);
-  assert.match(source, /buildAiGraderManualGeometryCaptureRequest/);
-  assert.match(source, /coordinateFrame: "portrait_preview_pixels"/);
+  assert.match(source, /aiGraderCaptureAssertionFromFrame/);
+  assert.match(source, /createAiGraderCaptureAttempt/);
+  assert.match(source, /runAiGraderStationCaptureOrchestration/);
   assert.match(source, /report-framing-overlay\$\{detectedGeometryDominant \? " geometry-dominant"/);
   assert.match(source, /card-geometry-corner-bracket/);
   assert.match(source, /card-geometry-edge-midpoint/);
@@ -6438,38 +6439,67 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
   assert.match(source, /Automatic geometry will not be claimed/);
   assert.match(source, /manualCaptureConfirmation\.side/);
   assert.match(source, /no browser rectangle is sent/);
+  assert.doesNotMatch(source, /yellow card rectangle[^.]*will be sent/i);
   const previewIneligibleSource = source.slice(
     source.indexOf("if (!previewEligible)"),
     source.indexOf("const expectedBinding = previewEpochStateRef.current.binding"),
   );
   assert.ok(
     previewIneligibleSource.indexOf("previewAttemptGenerationRef.current += 1")
-      < previewIneligibleSource.indexOf("intentionalBackCaptureRef.current = null"),
+      < previewIneligibleSource.indexOf("intentionalCaptureRef.current = null"),
   );
   const previewEofSource = source.slice(
-    source.indexOf('if (result.kind === "eof" && isCurrent())'),
-    source.indexOf("if (intentionalCaptureTransition && authoritativeAfterEof)"),
+    source.indexOf("const classifyAtomicReaderEnd = async"),
+    source.indexOf("const bridgeIntent = authoritativeAfterEnd", source.indexOf("const classifyAtomicReaderEnd = async")),
   );
   assert.ok(
-    previewEofSource.indexOf("const localIntent = intentionalBackCaptureRef.current")
+    previewEofSource.indexOf("const localIntent = intentionalCaptureRef.current")
       < previewEofSource.indexOf("await fetchAiGraderStationPreviewStatus"),
   );
-  const atomicBackSource = source.slice(
+  const atomicCaptureSource = source.slice(
+    source.indexOf("const runStationAtomicCapture = async"),
+    source.indexOf("const changeAutoCaptureEnabled = async"),
+  );
+  assert.equal(atomicCaptureSource.match(/runAiGraderStationCaptureOrchestration/g)?.length, 1);
+  assert.doesNotMatch(atomicCaptureSource, /await fetchAiGraderStationPreviewStatus/);
+  assert.doesNotMatch(atomicCaptureSource, /runAction\("confirm-(?:flip|light-idle-off|fixture-rulers)"/);
+  assert.doesNotMatch(atomicCaptureSource, /runAction\("accept-profile"/);
+  assert.doesNotMatch(atomicCaptureSource, /stopAiGraderStationPreview|safeOffAiGraderLiveLighting|\/preview\/stop|\/lighting\/safe-off/);
+  assert.match(atomicCaptureSource, /catch \(captureError\)[\s\S]*ambiguityReconcileSchedulerRef\.current\?\.\(intentionalCaptureRef\.current\)/);
+  assert.ok(
+    atomicCaptureSource.indexOf("intentionalCaptureRef.current = preparedIntent")
+      < atomicCaptureSource.indexOf("setBusy("),
+  );
+  const atomicFrontSource = source.slice(
+    source.indexOf("const startGrading = async"),
     source.indexOf("const confirmFlipAndContinue = async"),
-    source.indexOf("const confirmManualOverlayCapture = async"),
   );
-  assert.equal(atomicBackSource.match(/runAiGraderStationBackCaptureOrchestration/g)?.length, 1);
-  assert.doesNotMatch(atomicBackSource, /runAiGraderAtomicBackCapture/);
-  assert.doesNotMatch(atomicBackSource, /runAction\("confirm-flip"/);
-  assert.doesNotMatch(atomicBackSource, /stopAiGraderStationPreview/);
-  assert.doesNotMatch(atomicBackSource, /safeOffAiGraderLiveLighting/);
-  assert.doesNotMatch(atomicBackSource, /\/preview\/stop/);
-  assert.doesNotMatch(atomicBackSource, /\/lighting\/safe-off/);
-  assert.match(atomicBackSource, /onConfirmedPreTransitionFailure[\s\S]*intentionalBackCaptureRef\.current = null/);
-  assert.doesNotMatch(
-    atomicBackSource.slice(atomicBackSource.indexOf("setStatus(captured)")),
-    /intentionalBackCaptureRef\.current = null/,
+  assert.equal(atomicFrontSource.match(/runStationAtomicCapture/g)?.length, 1);
+  assert.doesNotMatch(atomicFrontSource, /confirm-light-idle-off|confirm-fixture-rulers|accept-profile|preview\/stop|lighting\/safe-off/);
+  const previewBusySource = source.slice(
+    source.indexOf("const previewBrowserCaptureActionActive"),
+    source.indexOf("useEffect(() => {", source.indexOf("const previewBrowserCaptureActionActive")),
   );
+  assert.doesNotMatch(previewBusySource, /start-grading|capture-back|capture-front/);
+  const pageExitSource = source.slice(
+    source.indexOf("const handlePageExit = () =>"),
+    source.indexOf('window.addEventListener("pagehide"'),
+  );
+  assert.ok(
+    pageExitSource.indexOf("aiGraderSubmittedCaptureIntentMatches")
+      < pageExitSource.indexOf("safeOffAiGraderLiveLighting"),
+  );
+  const ambiguousIntentSource = source.slice(
+    source.indexOf("const scheduleAmbiguousIntentReconciliation"),
+    source.indexOf("const runPreviewReader = async"),
+  );
+  assert.match(ambiguousIntentSource, /AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS/);
+  assert.match(ambiguousIntentSource, /fetchAiGraderStationPreviewStatus/);
+  assert.match(ambiguousIntentSource, /safeOffAfterPreviewLoss/);
+  assert.match(ambiguousIntentSource, /setPreviewRestartGeneration/);
+  assert.match(ambiguousIntentSource, /reconcileDecision\.kind === "poll_active"[\s\S]*scheduleCheck\(reconcileDecision\.delayMs, reconcileDecision\.nextActiveChecksRemaining\)/);
+  assert.match(ambiguousIntentSource, /scheduleCheck\(initialDelayMs, AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS\)/);
+  assert.match(ambiguousIntentSource, /callAiGraderStationBridge\(\{[\s\S]*action: "status"/);
   assert.equal(source.includes('else void confirmFlipAndContinueRef.current?.("auto");'), true);
   assert.equal(source.includes('confirmFlipAndContinueRef.current?.("auto", "manual_capture")'), false);
   assert.equal(source.includes('else await confirmFlipAndContinue("operator", "manual_capture");'), true);
@@ -6496,12 +6526,12 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
     source.indexOf("const retryBackPositioningLight"),
   );
   assert.ok(
-    retryRestartSource.indexOf("intentionalBackCaptureRef.current = null")
+    retryRestartSource.indexOf("intentionalCaptureRef.current = null")
       < retryRestartSource.indexOf("previewAttemptGenerationRef.current += 1"),
   );
   const retryActionSource = source.slice(
     source.indexOf("const retryBackPositioningLight"),
-    source.indexOf("const assertFreshPreviewCaptureEligibility"),
+    source.indexOf("const ensureLiveLightingSession"),
   );
   assert.ok(
     retryActionSource.indexOf("const next = await runAiGraderBackPositioningRetryRecovery")
@@ -6521,6 +6551,13 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
   assert.match(source, /const detectedGeometryFresh =/);
   assert.match(source, /activeGeometryAgeMs <= PREVIEW_GEOMETRY_MAX_AGE_MS/);
   assert.match(source, /This capture session is terminal; select Start New Card to retry\./);
+  const autoCaptureArmingSource = source.slice(
+    source.indexOf("const changeAutoCaptureEnabled"),
+    source.indexOf("const startGrading = async"),
+  );
+  assert.match(autoCaptureArmingSource, /runAction\("confirm-fixture-rulers", \{ confirmations: \{ fixtureRulersVisible: true \} \}\)/);
+  assert.match(source, /Enabling Auto Capture explicitly confirms the fixed fixture and metric rulers are visible/);
+  assert.match(source, /if \(autoCaptureEnabled\) \{\s+await runAction\("confirm-fixture-rulers"/);
   assert.doesNotMatch(source, /Full Forensic is the fallback/);
   assert.doesNotMatch(source, /Cold Fallback/);
 });

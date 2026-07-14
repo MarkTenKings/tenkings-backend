@@ -11,11 +11,11 @@ import {
   type AiGraderStationBridgeActionRequestBody,
 } from "./aiGraderStationBridgeClient";
 import {
-  aiGraderLocalBackCaptureIntentMatches,
+  aiGraderLocalCaptureIntentMatches,
   aiGraderPreviewBindingMatches,
   aiGraderPreviewStatusBinding,
-  isAiGraderConfirmedBackCaptureTransitionFailure,
-  type AiGraderLocalBackCaptureIntent,
+  isAiGraderConfirmedCaptureTransitionFailure,
+  type AiGraderLocalCaptureIntent,
   type AiGraderPreviewEpochBinding,
   type AiGraderPreviewFrameBinding,
 } from "./aiGraderPreviewLifecycle";
@@ -42,25 +42,73 @@ function hash32(value: string, seed: number) {
   return hash.toString(16).padStart(8, "0");
 }
 
+export type AiGraderCaptureSide = "front" | "back";
 export type AiGraderBackCaptureMode = "detected_geometry" | "manual_capture";
+export type AiGraderCaptureMode = AiGraderBackCaptureMode;
 
-export type AiGraderBackCaptureAssertion = {
+export type AiGraderCaptureAssertion<Side extends AiGraderCaptureSide = AiGraderCaptureSide> = {
   expectedSessionId: string;
   expectedReportId: string;
-  expectedSide: "back";
+  expectedSide: Side;
   expectedSideEpoch: string;
   expectedFrameId: string;
-  geometryCaptureMode: AiGraderBackCaptureMode;
+  geometryCaptureMode: AiGraderCaptureMode;
   captureTriggerMode: AiGraderCaptureTriggerMode;
 };
+export type AiGraderBackCaptureAssertion = AiGraderCaptureAssertion<"back">;
+export type AiGraderFrontCaptureAssertion = AiGraderCaptureAssertion<"front">;
 
-export type AiGraderBackCaptureAttempt = {
+export type AiGraderCaptureAttempt = {
   signature: string;
   idempotencyKey: string;
   captureTriggerAt: string;
 };
+export type AiGraderBackCaptureAttempt = AiGraderCaptureAttempt;
+export type AiGraderFrontCaptureAttempt = AiGraderCaptureAttempt;
 
-export function aiGraderBackCaptureAttemptSignature(input: AiGraderBackCaptureAssertion) {
+export type AiGraderCaptureOperationGate = {
+  run<T>(signature: string, operation: () => Promise<T>): Promise<T>;
+  activeSignature(): string | undefined;
+};
+
+export function createAiGraderCaptureOperationGate(): AiGraderCaptureOperationGate {
+  let active: { signature: string; promise: Promise<unknown> } | undefined;
+  return {
+    run<T>(signature: string, operation: () => Promise<T>): Promise<T> {
+      const boundedSignature = signature.trim();
+      if (
+        !boundedSignature ||
+        boundedSignature.length > 1024 ||
+        /[\r\n]/.test(boundedSignature) ||
+        /token|secret|bearer|presign|x-amz|localhost/i.test(boundedSignature)
+      ) {
+        return Promise.reject(new Error("AI Grader capture operation signature is missing or unsafe."));
+      }
+      if (active) {
+        if (active.signature !== boundedSignature) {
+          return Promise.reject(new Error("A different AI Grader capture operation is already active."));
+        }
+        return active.promise as Promise<T>;
+      }
+      const promise = Promise.resolve().then(operation);
+      active = { signature: boundedSignature, promise };
+      void promise.then(
+        () => {
+          if (active?.promise === promise) active = undefined;
+        },
+        () => {
+          if (active?.promise === promise) active = undefined;
+        },
+      );
+      return promise;
+    },
+    activeSignature() {
+      return active?.signature;
+    },
+  };
+}
+
+export function aiGraderCaptureAttemptSignature(input: AiGraderCaptureAssertion) {
   return [
     assertionId(input.expectedSessionId, "expected session ID"),
     assertionId(input.expectedReportId, "expected report ID"),
@@ -72,11 +120,11 @@ export function aiGraderBackCaptureAttemptSignature(input: AiGraderBackCaptureAs
   ].join("|");
 }
 
-export function createAiGraderBackCaptureAttempt(
-  input: AiGraderBackCaptureAssertion,
+export function createAiGraderCaptureAttempt(
+  input: AiGraderCaptureAssertion,
   captureTriggerAt = new Date().toISOString(),
-): AiGraderBackCaptureAttempt {
-  const signature = aiGraderBackCaptureAttemptSignature(input);
+): AiGraderCaptureAttempt {
+  const signature = aiGraderCaptureAttemptSignature(input);
   const timestampMs = Date.parse(captureTriggerAt);
   if (!Number.isFinite(timestampMs)) {
     throw new Error("AI Grader capture trigger timestamp is invalid.");
@@ -84,22 +132,22 @@ export function createAiGraderBackCaptureAttempt(
   return {
     signature,
     idempotencyKey:
-      "capture-back-v0.8-" +
+      `capture-${input.expectedSide}-v0.9-` +
       hash32(signature, 0x811c9dc5) +
       hash32(signature, 0x9e3779b9),
     captureTriggerAt: new Date(timestampMs).toISOString(),
   };
 }
 
-export function buildAiGraderAtomicBackCaptureRequest(input: {
-  assertion: AiGraderBackCaptureAssertion;
-  attempt: AiGraderBackCaptureAttempt;
+export function buildAiGraderAtomicCaptureRequest(input: {
+  assertion: AiGraderCaptureAssertion;
+  attempt: AiGraderCaptureAttempt;
 }): AiGraderStationBridgeActionRequestBody {
-  const signature = aiGraderBackCaptureAttemptSignature(input.assertion);
+  const signature = aiGraderCaptureAttemptSignature(input.assertion);
   if (input.attempt.signature !== signature) {
-    throw new Error("AI Grader back-capture attempt does not match the displayed preview snapshot.");
+    throw new Error(`AI Grader ${input.assertion.expectedSide}-capture attempt does not match the displayed preview snapshot.`);
   }
-  const idempotencyKey = assertionId(input.attempt.idempotencyKey, "back-capture idempotency key");
+  const idempotencyKey = assertionId(input.attempt.idempotencyKey, `${input.assertion.expectedSide}-capture idempotency key`);
   const captureTriggerAtMs = Date.parse(input.attempt.captureTriggerAt);
   if (!Number.isFinite(captureTriggerAtMs)) {
     throw new Error("AI Grader capture trigger timestamp is invalid.");
@@ -108,7 +156,7 @@ export function buildAiGraderAtomicBackCaptureRequest(input: {
     idempotencyKey,
     expectedSessionId: assertionId(input.assertion.expectedSessionId, "expected session ID"),
     expectedReportId: assertionId(input.assertion.expectedReportId, "expected report ID"),
-    expectedSide: "back",
+    expectedSide: input.assertion.expectedSide,
     expectedSideEpoch: assertionId(input.assertion.expectedSideEpoch, "expected side epoch"),
     expectedFrameId: assertionId(input.assertion.expectedFrameId, "expected frame ID"),
     geometryCaptureMode: input.assertion.geometryCaptureMode,
@@ -117,22 +165,22 @@ export function buildAiGraderAtomicBackCaptureRequest(input: {
   };
 }
 
-export async function runAiGraderAtomicBackCapture(input: {
+export async function runAiGraderAtomicCapture(input: {
   baseUrl: string;
   stationToken: string;
-  assertion: AiGraderBackCaptureAssertion;
-  attempt: AiGraderBackCaptureAttempt;
+  assertion: AiGraderCaptureAssertion;
+  attempt: AiGraderCaptureAttempt;
 }, fetchImpl: typeof fetch = fetch): Promise<AiGraderLocalStationStatus> {
   return callAiGraderStationBridge({
     baseUrl: input.baseUrl,
     stationToken: input.stationToken,
-    action: "capture-back",
-    body: buildAiGraderAtomicBackCaptureRequest(input),
+    action: input.assertion.expectedSide === "front" ? "capture-front" : "capture-back",
+    body: buildAiGraderAtomicCaptureRequest(input),
   }, fetchImpl);
 }
 
-function confirmsAiGraderBackCapturePreTransitionFailure(input: {
-  intent: AiGraderLocalBackCaptureIntent;
+function confirmsAiGraderCapturePreTransitionFailure(input: {
+  intent: AiGraderLocalCaptureIntent;
   previewStatus: AiGraderLocalStationPreviewStatus;
   capturePostResponseReceived: boolean;
 }) {
@@ -140,7 +188,7 @@ function confirmsAiGraderBackCapturePreTransitionFailure(input: {
   if (
     !authoritativeBinding ||
     !aiGraderPreviewBindingMatches(authoritativeBinding, input.intent.binding) ||
-    !aiGraderLocalBackCaptureIntentMatches({
+    !aiGraderLocalCaptureIntentMatches({
       expectedBinding: authoritativeBinding,
       localIntent: input.intent,
     }) ||
@@ -148,7 +196,7 @@ function confirmsAiGraderBackCapturePreTransitionFailure(input: {
     input.previewStatus.intentionalTransition.outcome === "capture_started" ||
     input.previewStatus.cameraOwnership === "capture_action"
   ) return false;
-  if (isAiGraderConfirmedBackCaptureTransitionFailure({
+  if (isAiGraderConfirmedCaptureTransitionFailure({
     expectedBinding: input.intent.binding,
     localIntent: input.intent,
     authoritativeBinding,
@@ -162,24 +210,25 @@ function confirmsAiGraderBackCapturePreTransitionFailure(input: {
   );
 }
 
-export async function runAiGraderStationBackCaptureOrchestration(input: {
+export async function runAiGraderStationCaptureOrchestration<Side extends AiGraderCaptureSide>(input: {
   baseUrl: string;
   stationToken: string;
-  assertion: AiGraderBackCaptureAssertion;
-  attempt: AiGraderBackCaptureAttempt;
-  onIntent: (intent: AiGraderLocalBackCaptureIntent) => void;
+  assertion: AiGraderCaptureAssertion<Side>;
+  attempt: AiGraderCaptureAttempt;
+  onIntent: (intent: AiGraderLocalCaptureIntent<Side>) => void;
   onConfirmedPreTransitionFailure?: (input: {
-    intent: AiGraderLocalBackCaptureIntent;
+    intent: AiGraderLocalCaptureIntent<Side>;
     previewStatus: AiGraderLocalStationPreviewStatus;
   }) => void | Promise<void>;
 }, fetchImpl: typeof fetch = fetch): Promise<AiGraderLocalStationStatus> {
-  const intent: AiGraderLocalBackCaptureIntent = {
+  const intent: AiGraderLocalCaptureIntent<Side> = {
     binding: {
       sessionId: input.assertion.expectedSessionId,
-      side: "back",
+      side: input.assertion.expectedSide,
       sideEpoch: input.assertion.expectedSideEpoch,
     },
     frameId: input.assertion.expectedFrameId,
+    submittedAtMs: Date.now(),
   };
   input.onIntent(intent);
   let capturePostResponseReceived = false;
@@ -189,7 +238,7 @@ export async function runAiGraderStationBackCaptureOrchestration(input: {
     return response;
   };
   try {
-    return await runAiGraderAtomicBackCapture(input, captureFetch);
+    return await runAiGraderAtomicCapture(input, captureFetch);
   } catch (captureError) {
     let previewStatus: AiGraderLocalStationPreviewStatus;
     try {
@@ -200,7 +249,7 @@ export async function runAiGraderStationBackCaptureOrchestration(input: {
     } catch {
       throw captureError;
     }
-    if (confirmsAiGraderBackCapturePreTransitionFailure({
+    if (confirmsAiGraderCapturePreTransitionFailure({
       intent,
       previewStatus,
       capturePostResponseReceived,
@@ -210,6 +259,38 @@ export async function runAiGraderStationBackCaptureOrchestration(input: {
     throw captureError;
   }
 }
+
+export const aiGraderBackCaptureAttemptSignature = (input: AiGraderBackCaptureAssertion) =>
+  aiGraderCaptureAttemptSignature(input);
+
+export const createAiGraderBackCaptureAttempt = (
+  input: AiGraderBackCaptureAssertion,
+  captureTriggerAt = new Date().toISOString(),
+) => createAiGraderCaptureAttempt(input, captureTriggerAt);
+
+export const buildAiGraderAtomicBackCaptureRequest = (input: {
+  assertion: AiGraderBackCaptureAssertion;
+  attempt: AiGraderBackCaptureAttempt;
+}) => buildAiGraderAtomicCaptureRequest(input);
+
+export const runAiGraderAtomicBackCapture = (input: {
+  baseUrl: string;
+  stationToken: string;
+  assertion: AiGraderBackCaptureAssertion;
+  attempt: AiGraderBackCaptureAttempt;
+}, fetchImpl: typeof fetch = fetch) => runAiGraderAtomicCapture(input, fetchImpl);
+
+export const runAiGraderStationBackCaptureOrchestration = (input: {
+  baseUrl: string;
+  stationToken: string;
+  assertion: AiGraderBackCaptureAssertion;
+  attempt: AiGraderBackCaptureAttempt;
+  onIntent: (intent: AiGraderLocalCaptureIntent<"back">) => void;
+  onConfirmedPreTransitionFailure?: (input: {
+    intent: AiGraderLocalCaptureIntent<"back">;
+    previewStatus: AiGraderLocalStationPreviewStatus;
+  }) => void | Promise<void>;
+}, fetchImpl: typeof fetch = fetch) => runAiGraderStationCaptureOrchestration(input, fetchImpl);
 
 export async function runAiGraderBackPositioningRetryRecovery(input: {
   baseUrl: string;
@@ -246,6 +327,35 @@ export async function runAiGraderBackPositioningRetryRecovery(input: {
   return result;
 }
 
+export function aiGraderCaptureAssertionFromFrame<Side extends AiGraderCaptureSide>(input: {
+  frame: AiGraderPreviewFrameBinding & { side: Side };
+  reportId: string;
+  geometryCaptureMode: AiGraderCaptureMode;
+  captureTriggerMode: AiGraderCaptureTriggerMode;
+}): AiGraderCaptureAssertion<Side> {
+  return {
+    expectedSessionId: input.frame.sessionId,
+    expectedReportId: input.reportId,
+    expectedSide: input.frame.side,
+    expectedSideEpoch: input.frame.sideEpoch,
+    expectedFrameId: input.frame.frameId,
+    geometryCaptureMode: input.geometryCaptureMode,
+    captureTriggerMode: input.captureTriggerMode,
+  };
+}
+
+export function aiGraderFrontCaptureAssertionFromFrame(input: {
+  frame: AiGraderPreviewFrameBinding;
+  reportId: string;
+  geometryCaptureMode: AiGraderCaptureMode;
+  captureTriggerMode: AiGraderCaptureTriggerMode;
+}): AiGraderFrontCaptureAssertion {
+  if (input.frame.side !== "front") {
+    throw new Error("AI Grader atomic front capture requires a displayed front preview snapshot.");
+  }
+  return aiGraderCaptureAssertionFromFrame({ ...input, frame: { ...input.frame, side: "front" } });
+}
+
 export function aiGraderBackCaptureAssertionFromFrame(input: {
   frame: AiGraderPreviewFrameBinding;
   reportId: string;
@@ -255,13 +365,5 @@ export function aiGraderBackCaptureAssertionFromFrame(input: {
   if (input.frame.side !== "back") {
     throw new Error("AI Grader atomic back capture requires a displayed back preview snapshot.");
   }
-  return {
-    expectedSessionId: input.frame.sessionId,
-    expectedReportId: input.reportId,
-    expectedSide: "back",
-    expectedSideEpoch: input.frame.sideEpoch,
-    expectedFrameId: input.frame.frameId,
-    geometryCaptureMode: input.geometryCaptureMode,
-    captureTriggerMode: input.captureTriggerMode,
-  };
+  return aiGraderCaptureAssertionFromFrame({ ...input, frame: { ...input.frame, side: "back" } });
 }
