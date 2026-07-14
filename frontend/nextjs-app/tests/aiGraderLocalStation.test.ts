@@ -6520,7 +6520,7 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
     previewLossSafeOffSource.indexOf("projectAiGraderPreviewLossSafeOffPending")
       < previewLossSafeOffSource.indexOf("await safeOffAiGraderLiveLighting"),
   );
-  assert.match(previewLossSafeOffSource, /catch \(safeOffError\)[\s\S]*projectAiGraderPreviewLossPhysicalStateUnknown[\s\S]*throw safeOffError/);
+  assert.match(previewLossSafeOffSource, /catch \(safeOffError\)[\s\S]*await reconcileLightingMutationFailure\(safeOffError, 'Preview-loss safe-off', \{[\s\S]*requireSafeOff: true,[\s\S]*throw safeOffError/);
   const retryRestartSource = source.slice(
     source.indexOf("const restartBackPreviewForRetry"),
     source.indexOf("const retryBackPositioningLight"),
@@ -6547,7 +6547,7 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
       < retryActionSource.indexOf("fetchAiGraderLiveLightingStatus"),
   );
   assert.match(retryActionSource, /positioningLightReady: false/);
-  assert.match(source, /const canStartGrading =\s*!status\.captureFailure &&/);
+  assert.match(source, /const canStartGrading = frontStartReadiness\.ready/);
   assert.match(source, /const detectedGeometryFresh =/);
   assert.match(source, /activeGeometryAgeMs <= PREVIEW_GEOMETRY_MAX_AGE_MS/);
   assert.match(source, /This capture session is terminal; select Start New Card to retry\./);
@@ -6555,9 +6555,61 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
     source.indexOf("const changeAutoCaptureEnabled"),
     source.indexOf("const startGrading = async"),
   );
-  assert.match(autoCaptureArmingSource, /runAction\("confirm-fixture-rulers", \{ confirmations: \{ fixtureRulersVisible: true \} \}\)/);
-  assert.match(source, /Enabling Auto Capture explicitly confirms the fixed fixture and metric rulers are visible/);
-  assert.match(source, /if \(autoCaptureEnabled\) \{\s+await runAction\("confirm-fixture-rulers"/);
+  assert.doesNotMatch(autoCaptureArmingSource, /confirm-fixture-rulers|fixtureRulersVisible/);
+  const fixtureConfirmationSource = source.slice(
+    source.indexOf("const confirmFrontFixtureAndRulers = async"),
+    source.indexOf("const changeStationCaptureMode = async"),
+  );
+  assert.ok(
+    fixtureConfirmationSource.indexOf("const latest = await runAction('status')")
+      < fixtureConfirmationSource.indexOf("aiGraderFrontWorkflowAssertionFromStatus(latest)"),
+  );
+  assert.match(fixtureConfirmationSource, /runAction\('confirm-fixture-rulers', request\)/);
+  assert.match(fixtureConfirmationSource, /await runAction\('status'\)/);
+  assert.doesNotMatch(fixtureConfirmationSource, /confirmations:|fixtureRulersVisible/);
+  assert.match(source, /Confirm Fixture & Rulers/);
+  assert.match(source, /Auto Capture still requires the separate exact-session Confirm Fixture &amp; Rulers action and authoritative Front readiness/);
+  assert.match(source, /<p className='status-note'>\{frontStartReadiness\.message\}<\/p>/);
+  assert.match(source, /Hardware safety interlock: \{hardwareSafetyMessage\} Use the explicit Safe Off recovery before continuing/);
+  const physicalSafetySource = source.slice(
+    source.indexOf('const physicalSafetyBlocked'),
+    source.indexOf('const liveLightingAvailable'),
+  );
+  assert.match(physicalSafetySource, /physical_state_unknown/);
+  assert.match(physicalSafetySource, /const hardwareSafetyBlocked = physicalSafetyBlocked \|\| liveLightingRequestPending/);
+  const recoveryGateSource = physicalSafetySource.slice(
+    physicalSafetySource.indexOf('const safeOffRecoveryAllowed'),
+  );
+  assert.doesNotMatch(recoveryGateSource, /hardwareSafetyBlocked|physicalSafetyBlocked/);
+  assert.match(source, /onClick=\{startNewCard\} disabled=\{busy !== null \|\| hardwareSafetyBlocked\}/);
+  assert.match(source, /className="safe" onClick=\{safeOff\} disabled=\{!safeOffRecoveryAllowed\}/);
+  const stationSafeOffSource = source.slice(
+    source.indexOf('const safeOff = async () =>'),
+    source.indexOf('const openReport = async'),
+  );
+  assert.match(stationSafeOffSource, /runAction\('safe-off'\)/);
+  assert.doesNotMatch(stationSafeOffSource, /confirmations:|lightIdleOff|acceptedProfile|dutyPercent|channels/);
+  const runActionSource = source.slice(
+    source.indexOf('const runAction = async'),
+    source.indexOf('const restartBackPreviewForRetry'),
+  );
+  assert.match(
+    runActionSource,
+    /setLiveLighting\(next\.liveLighting\);\s+if \(lightingPhysicalStateAcknowledged\(next\.liveLighting\)\) \{\s+setSafetyError\(null\);\s+\}/,
+  );
+  assert.doesNotMatch(
+    runActionSource,
+    /if \(!lightingPhysicalStateAcknowledged\(next\.liveLighting\)\)[\s\S]*setSafetyError\(null\)/,
+  );
+  assert.match(source, /disabled=\{busy !== null \|\| !canStartGrading/);
+  assert.ok(
+    atomicCaptureSource.indexOf("captureStatus = await runAction('status')")
+      < atomicCaptureSource.indexOf("const refreshedReadiness = deriveAiGraderFrontStartReadiness"),
+  );
+  assert.ok(
+    atomicCaptureSource.indexOf("if (!refreshedReadiness.ready)")
+      < atomicCaptureSource.indexOf("runAiGraderStationCaptureOrchestration"),
+  );
   assert.doesNotMatch(source, /Full Forensic is the fallback/);
   assert.doesNotMatch(source, /Cold Fallback/);
 });
@@ -6754,6 +6806,7 @@ test("browser station bridge preview status and stream use local station token o
       channels: [1, 3, 5],
       source: "browser_live_tuning",
       acceptedForCapture: true,
+      candidateProfileIdentity: `candidate-${"c".repeat(32)}`,
     },
     applied: {
       enabled: true,
@@ -6851,6 +6904,29 @@ test("browser station bridge preview status and stream use local station token o
       } else {
         assert.equal(init?.method, "POST");
       }
+      if (String(input).endsWith("/lighting/accept")) {
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+          idempotencyKey: "front-workflow-accept-profile-0001",
+          expectedSessionId: "session-123",
+          expectedReportId: "report-123",
+          expectedSide: "front",
+          expectedSideEpoch: "front-epoch-1",
+          expectedCandidateProfileIdentity: `candidate-${"c".repeat(32)}`,
+        });
+        const station = buildAiGraderLocalStationStatus({ action: "accept-profile" });
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            ...station,
+            liveLighting: {
+              ...station.liveLighting,
+              ...lightingResult,
+              profile: { ...station.liveLighting.profile, ...lightingResult.profile },
+              applied: { ...station.liveLighting.applied, ...lightingResult.applied },
+            },
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
       return new Response(JSON.stringify({
         ok: true,
         result: String(input).endsWith("/lighting/safe-off")
@@ -6922,12 +6998,16 @@ test("browser station bridge preview status and stream use local station token o
   const acceptedLighting = await acceptAiGraderLiveLightingProfile({
     baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
     stationToken: "browser-local-station-token",
-    dutyPercent: 1.4,
-    channels: [1, 3, 5],
-    exposureUs: 47000,
-    gain: 0,
+    assertion: {
+      idempotencyKey: "front-workflow-accept-profile-0001",
+      expectedSessionId: "session-123",
+      expectedReportId: "report-123",
+      expectedSide: "front",
+      expectedSideEpoch: "front-epoch-1",
+      expectedCandidateProfileIdentity: `candidate-${"c".repeat(32)}`,
+    },
   }, fetchImpl);
-  assert.equal(acceptedLighting.profile.acceptedForCapture, true);
+  assert.equal(acceptedLighting.liveLighting.profile.acceptedForCapture, true);
 
   const safeOffLighting = await safeOffAiGraderLiveLighting({
     baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
