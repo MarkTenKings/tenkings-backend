@@ -79,7 +79,7 @@ import {
   type AiGraderCaptureTriggerMode,
 } from "./aiGraderCaptureTiming";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.8";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.9";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
@@ -89,10 +89,12 @@ const BACK_POSITIONING_FIRST_FRAME_GRACE_MS = 6000;
 const BACK_POSITIONING_LIVE_FRAME_MAX_AGE_MS = 2000;
 const BACK_POSITIONING_EVENT_LIMIT = 20;
 const BACK_POSITIONING_ERROR_MAX_LENGTH = 240;
-const BACK_CAPTURE_AUTHORIZATION_MS = 10000;
+const ATOMIC_CAPTURE_AUTHORIZATION_MS = 10000;
 const PREVIEW_OBSERVATION_LIMIT = 8;
-const BACK_CAPTURE_IDEMPOTENCY_LIMIT = 64;
-const BACK_CAPTURE_IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
+const ATOMIC_CAPTURE_IDEMPOTENCY_LIMIT = 64;
+const ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
+const ATOMIC_CAPTURE_ASSERTION_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const ATOMIC_CAPTURE_PRIVATE_ASSERTION_RE = /(?:token|secret|bearer|authorization|presign|x-amz|localhost|(?:\d{1,3}\.){3}\d{1,3})/i;
 // The Basler preview runs at roughly 4-5 fps on the Dell. Geometry analysis is
 // latest-frame-only, so a 125 ms cadence can inspect every delivered frame
 // without building a queue while avoiding the former fixed half-second lag.
@@ -657,9 +659,9 @@ export interface AiGraderLocalStationPreviewStatus {
   lastStopReason?: string;
   intentionalTransition: {
     active: boolean;
-    kind?: "capture_back";
+    kind?: "capture_front" | "capture_back";
     sessionId?: string;
-    side?: "back";
+    side?: CardGeometrySide;
     sideEpoch?: string;
     frameId?: string;
     startedAt?: string;
@@ -749,12 +751,34 @@ interface AiGraderBackCaptureSnapshot {
   snapshottedAt: string;
 }
 
+interface AiGraderFrontCaptureSnapshot {
+  sessionId: string;
+  reportId: string;
+  side: "front";
+  sideEpoch: string;
+  frameId: string;
+  captureMode: AiGraderGeometryCaptureMode;
+  captureTriggerMode: AiGraderCaptureTriggerMode;
+  capturedAt: string;
+  receivedAt: string;
+  geometry: CardGeometryMetadata & { sessionId: string; sideEpoch: string };
+  geometrySha256: string;
+  acceptedProfileIdentity: string;
+  fixtureAuditSource: "atomic_front_capture_operator_action" | "preexisting_operator_fixture_confirmation";
+  fixtureAuditSha256: string;
+  manualBoundaryRect?: { x: number; y: number; width: number; height: number; coordinateFrame: "basler_sensor_pixels" };
+  manualGeometrySource?: { coordinateFrame: AiGraderManualGeometryRect["coordinateFrame"]; imageWidth: number; imageHeight: number };
+  snapshottedAt: string;
+}
+
 interface AiGraderBackCaptureOperation {
   fingerprint: string;
   promise: Promise<AiGraderLocalStationBridgeStatus>;
   result?: AiGraderLocalStationBridgeStatus;
   consumed: boolean;
 }
+
+type AiGraderFrontCaptureOperation = AiGraderBackCaptureOperation;
 
 export interface AiGraderBackPositioningLightEvent {
   at: string;
@@ -949,7 +973,7 @@ export interface AiGraderLocalStationBridgeActionRequest {
   idempotencyKey?: string;
   expectedSessionId?: string;
   expectedReportId?: string;
-  expectedSide?: "back";
+  expectedSide?: CardGeometrySide;
   expectedSideEpoch?: string;
   expectedFrameId?: string;
 }
@@ -2133,6 +2157,13 @@ function assertRealReady(config: AiGraderLocalStationBridgeConfig, manifest: AiG
   if (!manifest.confirmations.lightIdleOff) throw new Error("Mark must confirm physical ring light is idle/off before hardware actions.");
 }
 
+function assertAtomicFrontRealReady(config: AiGraderLocalStationBridgeConfig) {
+  if (config.mode !== "real") return;
+  if (!config.apply || !config.markPresent || !config.wiringConfirmed || !config.leimacStatusGreen || !config.leimacHost) {
+    throw new Error("Real AI Grader station bridge is not armed with required apply/Mark/wiring/Leimac flags.");
+  }
+}
+
 function assertFixtureVisible(manifest: AiGraderLocalStationBridgeManifest) {
   if (!manifest.confirmations.fixtureRulersVisible) {
     throw new Error("Mark must confirm fixture/rulers are visible before capture actions.");
@@ -2240,7 +2271,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "confirm-fixture-rulers", hardwareAccess: false, description: "Record operator fixture/ruler visibility confirmation." },
     { method: "POST", action: "launch-preview", hardwareAccess: true, description: "Run the existing Basler live preview/focus/framing command." },
     { method: "POST", action: "accept-profile", hardwareAccess: false, description: "Accept the current software capture profile." },
-    { method: "POST", action: "capture-front", hardwareAccess: true, description: "Run front fixed-rig evidence capture." },
+    { method: "POST", action: "capture-front", hardwareAccess: true, description: "Atomically validate the exact front preview snapshot, drain preview, verify safe-off, and capture front evidence." },
     { method: "POST", action: "confirm-flip", hardwareAccess: false, description: "Compatibility-only advisory flip acknowledgement; does not authorize capture." },
     { method: "POST", action: "capture-back", hardwareAccess: true, description: "Atomically audit flip/capture intent, drain preview, verify safe-off, and capture back evidence." },
     { method: "POST", action: "run-diagnostics", hardwareAccess: false, description: "Generate the unified provisional diagnostic report." },
@@ -2744,6 +2775,8 @@ export class AiGraderLocalStationBridgeService {
   private leimacClient?: LeimacIdmuClient;
   private lightingWriteChain: Promise<void> = Promise.resolve();
   private previewObservations: AiGraderPreviewObservation[] = [];
+  private frontCaptureOperations = new Map<string, AiGraderFrontCaptureOperation>();
+  private frontCaptureInFlightKey?: string;
   private backCaptureOperations = new Map<string, AiGraderBackCaptureOperation>();
   private backCaptureInFlightKey?: string;
   private frontCaptureTransition?: {
@@ -2755,6 +2788,7 @@ export class AiGraderLocalStationBridgeService {
     promise: Promise<AiGraderBackPositioningRetryResult>;
   };
   private atomicBackCaptureContext?: { owner: string; snapshot: AiGraderBackCaptureSnapshot };
+  private atomicFrontCaptureContext?: { owner: string; snapshot: AiGraderFrontCaptureSnapshot };
   private closing = false;
   private terminalLifecycleChain: Promise<void> = Promise.resolve();
   private terminalLifecyclePending = 0;
@@ -3199,21 +3233,9 @@ export class AiGraderLocalStationBridgeService {
     return this.backCaptureOperations.get(this.backCaptureInFlightKey)?.promise;
   }
 
-  private runFrontCaptureTransition(
-    operation: () => Promise<AiGraderLocalStationBridgeStatus>
-  ): Promise<AiGraderLocalStationBridgeStatus> {
-    if (this.frontCaptureTransition) {
-      throw new Error("Front Capture already owns the serialized pre-lock camera/light handoff.");
-    }
-    const reservation = {
-      owner: `front-capture-transition:${this.manifest.sessionId ?? "unbound"}`,
-    } as NonNullable<AiGraderLocalStationBridgeService["frontCaptureTransition"]>;
-    this.frontCaptureTransition = reservation;
-    const tracked = operation().finally(() => {
-      if (this.frontCaptureTransition === reservation) this.frontCaptureTransition = undefined;
-    });
-    reservation.promise = tracked;
-    return tracked;
+  private currentAtomicFrontCapturePromise() {
+    if (!this.frontCaptureInFlightKey) return undefined;
+    return this.frontCaptureOperations.get(this.frontCaptureInFlightKey)?.promise;
   }
 
   private serializeLightingLifecycle<T>(operation: () => Promise<T>): Promise<T> {
@@ -3333,11 +3355,11 @@ export class AiGraderLocalStationBridgeService {
     return true;
   }
 
-  private previewObservation(frameId: string) {
+  private previewObservation(side: CardGeometrySide, frameId: string) {
     this.prunePreviewObservations();
     return this.previewObservations.find((observation) =>
       observation.sessionId === this.manifest.sessionId
-      && observation.side === "back"
+      && observation.side === side
       && observation.sideEpoch === this.manifest.previewStatus.sideEpoch
       && observation.frameId === frameId
     );
@@ -3345,7 +3367,7 @@ export class AiGraderLocalStationBridgeService {
 
   private postRestoreBackPreviewObservation(frameId: string | undefined) {
     if (!frameId) return undefined;
-    const observation = this.previewObservation(frameId);
+    const observation = this.previewObservation("back", frameId);
     const verifiedAtMs = Date.parse(this.manifest.liveLighting.physicalState.verifiedAt ?? "");
     const capturedAtMs = Date.parse(observation?.capturedAt ?? "");
     const receivedAtMs = Date.parse(observation?.receivedAt ?? "");
@@ -3360,11 +3382,11 @@ export class AiGraderLocalStationBridgeService {
     return observation;
   }
 
-  private bridgeOwnedManualGeometry(geometry: CardGeometryMetadata) {
+  private bridgeOwnedManualGeometry(side: CardGeometrySide, geometry: CardGeometryMetadata) {
     const imageWidth = geometry.image?.width;
     const imageHeight = geometry.image?.height;
     if (!Number.isFinite(imageWidth) || !Number.isFinite(imageHeight) || imageWidth <= 0 || imageHeight <= 0) {
-      throw new Error("Back Capture manual mode requires authoritative frame dimensions.");
+      throw new Error(`Atomic ${side === "front" ? "Front" : "Back"} Capture manual mode requires authoritative frame dimensions.`);
     }
     const height = Math.floor(Math.min(imageHeight * 0.97, imageWidth * 0.97 * 3.5 / 2.5));
     const width = Math.floor(height * 2.5 / 3.5);
@@ -3378,6 +3400,493 @@ export class AiGraderLocalStationBridgeService {
       coordinateFrame: "portrait_preview_pixels",
     };
     return { source, rawRect: normalizeManualGeometryRect(source).rawRect };
+  }
+
+  private validateAtomicFrontCaptureRequest(request: AiGraderLocalStationBridgeActionRequest) {
+    const allowedKeys = new Set([
+      "idempotencyKey",
+      "expectedSessionId",
+      "expectedReportId",
+      "expectedSide",
+      "expectedSideEpoch",
+      "expectedFrameId",
+      "geometryCaptureMode",
+      "captureTriggerMode",
+      "captureTriggerAt",
+    ]);
+    const unexpected = Object.keys(request as Record<string, unknown>).filter((key) => !allowedKeys.has(key));
+    if (unexpected.length > 0) {
+      throw new Error("Atomic Front Capture accepts only bounded idempotency, session/report/side/epoch/frame, mode, and trigger assertions.");
+    }
+    if (
+      !request.idempotencyKey
+      || !ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE.test(request.idempotencyKey)
+      || ATOMIC_CAPTURE_PRIVATE_ASSERTION_RE.test(request.idempotencyKey)
+    ) {
+      throw new Error("Atomic Front Capture requires a 16-128 character bounded idempotency key.");
+    }
+    const requiredStrings = [request.expectedSessionId, request.expectedReportId, request.expectedSideEpoch, request.expectedFrameId];
+    if (requiredStrings.some((value) =>
+      typeof value !== "string"
+      || !ATOMIC_CAPTURE_ASSERTION_RE.test(value)
+      || ATOMIC_CAPTURE_PRIVATE_ASSERTION_RE.test(value)
+    )) {
+      throw new Error("Atomic Front Capture requires path-free bounded expected session/report/epoch/frame assertions.");
+    }
+    if (request.expectedSide !== "front") throw new Error("Atomic Front Capture expectedSide must be front.");
+    if (request.geometryCaptureMode !== "detected_geometry" && request.geometryCaptureMode !== "manual_capture") {
+      throw new Error("Atomic Front Capture requires detected_geometry or manual_capture mode.");
+    }
+    if (request.captureTriggerMode !== "operator" && request.captureTriggerMode !== "auto") {
+      throw new Error("Atomic Front Capture requires an explicit operator or auto captureTriggerMode assertion.");
+    }
+    const captureTriggerMode = parseCaptureTriggerMode(request.captureTriggerMode);
+    if (request.geometryCaptureMode === "manual_capture" && captureTriggerMode !== "operator") {
+      throw new Error("Atomic Front Capture manual mode requires an explicit operator trigger.");
+    }
+    if (
+      typeof request.captureTriggerAt !== "string"
+      || request.captureTriggerAt.length > 40
+      || !Number.isFinite(Date.parse(request.captureTriggerAt))
+      || new Date(request.captureTriggerAt).toISOString() !== request.captureTriggerAt
+    ) {
+      throw new Error("Atomic Front Capture requires an explicit canonical ISO captureTriggerAt assertion.");
+    }
+    return {
+      idempotencyKey: request.idempotencyKey,
+      expectedSessionId: request.expectedSessionId!,
+      expectedReportId: request.expectedReportId!,
+      expectedSide: "front" as const,
+      expectedSideEpoch: request.expectedSideEpoch!,
+      expectedFrameId: request.expectedFrameId!,
+      geometryCaptureMode: request.geometryCaptureMode,
+      captureTriggerMode,
+      captureTriggerAt: request.captureTriggerAt,
+    };
+  }
+
+  private frontCaptureFingerprint(request: ReturnType<AiGraderLocalStationBridgeService["validateAtomicFrontCaptureRequest"]>) {
+    return crypto.createHash("sha256").update(JSON.stringify(request)).digest("hex");
+  }
+
+  private durableAcceptedCaptureProfile() {
+    const accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
+    const acceptedAt = Date.parse(this.manifest.acceptedProfile.acceptedAt ?? "");
+    const live = this.manifest.liveLighting.profile;
+    if (
+      !Number.isFinite(acceptedAt)
+      || live.acceptedForCapture !== true
+      || live.acceptedAt !== this.manifest.acceptedProfile.acceptedAt
+      || live.dutyPercent !== accepted.profile.dutyPercent
+      || live.actualLeimacPwmStep !== accepted.profile.actualLeimacPwmStep
+      || live.channels.join(",") !== accepted.profile.channels.join(",")
+    ) {
+      throw new Error("Atomic Front Capture requires a previously accepted durable station profile with matching bridge acceptance evidence.");
+    }
+    return accepted;
+  }
+
+  private frontFixtureAuditSha256(input: {
+    sessionId: string;
+    reportId: string;
+    sideEpoch: string;
+    frameId: string;
+    acceptedProfileIdentity: string;
+    captureTriggerMode: AiGraderCaptureTriggerMode;
+    auditSource: AiGraderFrontCaptureSnapshot["fixtureAuditSource"];
+  }) {
+    return crypto.createHash("sha256").update(JSON.stringify({
+      ...input,
+      fixtureRulersVisible: true,
+    })).digest("hex");
+  }
+
+  private snapshotAtomicFrontCapture(
+    request: ReturnType<AiGraderLocalStationBridgeService["validateAtomicFrontCaptureRequest"]>
+  ): AiGraderFrontCaptureSnapshot {
+    assertAtomicFrontRealReady(this.config);
+    if (this.activeQueueItemId) throw new Error("Atomic Front Capture is disabled while a rapid queue item is under review.");
+    if (this.manifest.captureFailure || this.manifest.rapidCapture.workflowState === "failed") {
+      throw new Error("Atomic Front Capture is blocked after a capture or processing failure.");
+    }
+    if (this.manifest.outputs.frontPackageDir || this.manifest.outputs.backPackageDir) {
+      throw new Error("Atomic Front Capture requires a fresh session with no persisted side evidence.");
+    }
+    if (
+      this.manifest.currentStep !== "capture_front"
+      || request.expectedSessionId !== this.manifest.sessionId
+      || request.expectedReportId !== this.manifest.reportId
+      || request.expectedSideEpoch !== this.manifest.previewStatus.sideEpoch
+      || this.manifest.previewStatus.activeSide !== "front"
+    ) {
+      throw new Error("Atomic Front Capture assertions are stale for the active session/report/front epoch.");
+    }
+    if (
+      this.manifest.previewStatus.status !== "live"
+      || this.manifest.previewStatus.cameraOwnership !== "preview_stream"
+      || this.manifest.previewStatus.sessionId !== request.expectedSessionId
+    ) {
+      throw new Error("Atomic Front Capture requires the current session-bound live preview to own the camera.");
+    }
+    this.assertPhysicalStateKnown("Atomic Front Capture");
+    const accepted = this.durableAcceptedCaptureProfile();
+    const fixtureAuditSource = request.captureTriggerMode === "operator"
+      ? "atomic_front_capture_operator_action"
+      : "preexisting_operator_fixture_confirmation";
+    if (request.captureTriggerMode === "auto" && this.manifest.confirmations.fixtureRulersVisible !== true) {
+      throw new Error("Automatic Front Capture requires a pre-existing explicit operator fixture/ruler confirmation.");
+    }
+    const observation = this.previewObservation("front", request.expectedFrameId);
+    if (!observation?.geometry) {
+      throw new Error("Atomic Front Capture requires an exact retained frame/geometry observation.");
+    }
+    const geometry = observation.geometry;
+    if (
+      geometry.sessionId !== request.expectedSessionId
+      || geometry.side !== "front"
+      || geometry.sideEpoch !== request.expectedSideEpoch
+      || geometry.sourceFrameId !== request.expectedFrameId
+    ) {
+      throw new Error("Atomic Front Capture geometry does not match the asserted session/side/epoch/frame.");
+    }
+    const nowMs = Date.now();
+    const capturedAtMs = Date.parse(observation.capturedAt);
+    const receivedAtMs = Date.parse(observation.receivedAt);
+    const geometryAtMs = Date.parse(geometry.timestamp);
+    if (
+      !Number.isFinite(capturedAtMs)
+      || capturedAtMs > nowMs
+      || nowMs - capturedAtMs > PREVIEW_GEOMETRY_MAX_AGE_MS
+      || !Number.isFinite(receivedAtMs)
+      || receivedAtMs > nowMs
+      || nowMs - receivedAtMs > PREVIEW_GEOMETRY_MAX_AGE_MS
+      || !Number.isFinite(geometryAtMs)
+      || geometryAtMs > nowMs
+      || nowMs - geometryAtMs > PREVIEW_GEOMETRY_MAX_AGE_MS
+    ) {
+      throw new Error("Atomic Front Capture retained frame/geometry observation is stale or future-dated.");
+    }
+    if (request.geometryCaptureMode === "detected_geometry") {
+      const corners = geometry.detectedCorners ?? geometry.corners;
+      if (
+        geometry.placementState !== "ready"
+        || geometry.geometrySource !== "detected"
+        || geometry.detectionUsed !== true
+        || geometry.manualOverrideUsed === true
+        || !corners
+        || !geometry.boundingBox
+      ) {
+        throw new Error(`Atomic Front Capture detected mode requires exact authoritative Ready geometry; current state is ${geometry.placementState}.`);
+      }
+    }
+    const manual = request.geometryCaptureMode === "manual_capture"
+      ? this.bridgeOwnedManualGeometry("front", geometry)
+      : undefined;
+    return {
+      sessionId: request.expectedSessionId,
+      reportId: request.expectedReportId,
+      side: "front",
+      sideEpoch: request.expectedSideEpoch,
+      frameId: request.expectedFrameId,
+      captureMode: request.geometryCaptureMode,
+      captureTriggerMode: request.captureTriggerMode,
+      capturedAt: observation.capturedAt,
+      receivedAt: observation.receivedAt,
+      geometry: structuredClone(geometry),
+      geometrySha256: crypto.createHash("sha256").update(JSON.stringify(geometry)).digest("hex"),
+      acceptedProfileIdentity: accepted.identity,
+      fixtureAuditSource,
+      fixtureAuditSha256: this.frontFixtureAuditSha256({
+        sessionId: request.expectedSessionId,
+        reportId: request.expectedReportId,
+        sideEpoch: request.expectedSideEpoch,
+        frameId: request.expectedFrameId,
+        acceptedProfileIdentity: accepted.identity,
+        captureTriggerMode: request.captureTriggerMode,
+        auditSource: fixtureAuditSource,
+      }),
+      ...(manual ? { manualBoundaryRect: manual.rawRect, manualGeometrySource: manual.source } : {}),
+      snapshottedAt: new Date().toISOString(),
+    };
+  }
+
+  private recordAtomicFrontCaptureDecision(snapshot: AiGraderFrontCaptureSnapshot, captureTriggerAt: string) {
+    if (snapshot.captureTriggerMode === "operator") {
+      this.manifest.confirmations.fixtureRulersVisible = true;
+    }
+    this.manifest.geometryCaptureDecisions.front = {
+      mode: snapshot.captureMode,
+      placementState: snapshot.geometry.placementState,
+      timestamp: captureTriggerAt,
+      explicitOperatorAction: snapshot.captureMode === "manual_capture",
+      detectionUsed: snapshot.captureMode === "detected_geometry",
+      manualOverrideUsed: snapshot.captureMode === "manual_capture",
+      ...(snapshot.manualBoundaryRect ? { manualBoundaryRect: snapshot.manualBoundaryRect } : {}),
+      ...(snapshot.manualGeometrySource ? { manualGeometrySource: snapshot.manualGeometrySource } : {}),
+      sourceFrameId: snapshot.frameId,
+    };
+    this.manifest.progressLog.push(
+      `${captureTriggerAt} Front fixture/profile/capture audit recorded for ${snapshot.captureTriggerMode} trigger from ${snapshot.fixtureAuditSource} using bridge-authoritative ${snapshot.captureMode} snapshot (${snapshot.acceptedProfileIdentity}).`
+    );
+    this.recordCaptureTimingEvent(this.manifest, {
+      id: "capture_trigger",
+      side: "front",
+      triggerMode: snapshot.captureTriggerMode,
+      at: captureTriggerAt,
+    });
+  }
+
+  private async executeAtomicFrontCapture(
+    request: ReturnType<AiGraderLocalStationBridgeService["validateAtomicFrontCaptureRequest"]>,
+    operation: AiGraderFrontCaptureOperation
+  ) {
+    const owner = `atomic-capture-front:${request.idempotencyKey}`;
+    const priorWarmRunnerStatus = this.manifest.warmRunnerStatus.status;
+    this.acquireCaptureLock(owner);
+    let snapshot: AiGraderFrontCaptureSnapshot | undefined;
+    let transitionStarted = false;
+    let previewDrainVerified = false;
+    let transitionSafeOffAttempted = false;
+    let completed = false;
+    let transitionStartedAt: string | undefined;
+    let outcomeError: unknown;
+    try {
+      snapshot = this.snapshotAtomicFrontCapture(request);
+      const captureTriggerAt = validatedCaptureTriggerAt(request.captureTriggerAt, new Date().toISOString());
+      if (captureTriggerAt !== request.captureTriggerAt) {
+        throw new Error("Atomic Front Capture captureTriggerAt is stale or future-dated for this request.");
+      }
+      transitionStarted = true;
+      transitionStartedAt = new Date().toISOString();
+      this.atomicFrontCaptureContext = { owner, snapshot };
+      this.recordAtomicFrontCaptureDecision(snapshot, captureTriggerAt);
+      this.updatePreviewStatus({
+        intentionalTransition: {
+          active: true,
+          kind: "capture_front",
+          sessionId: snapshot.sessionId,
+          side: "front",
+          sideEpoch: snapshot.sideEpoch,
+          frameId: snapshot.frameId,
+          startedAt: transitionStartedAt,
+        },
+      });
+      this.activateFullForensicPreviewHold("atomic front capture transition");
+      await this.stopPreviewStream("intentional atomic front capture transition", {
+        waitForRelease: true,
+        requireRelease: true,
+        settleMs: PREVIEW_CAMERA_SETTLE_MS,
+        captureOwner: true,
+      });
+      previewDrainVerified = true;
+      transitionSafeOffAttempted = true;
+      await this.safeOffLiveLighting("atomic front capture camera handoff", "capture_start_safe_off", { force: true });
+      if (this.manifest.liveLighting.physicalState.state !== "safe_off_verified") {
+        throw new Error("Atomic Front Capture requires verified safe-off before forensic camera ownership.");
+      }
+      this.manifest.confirmations.lightIdleOff = true;
+      this.manifest.progressLog.push(`${new Date().toISOString()} Atomic Front Capture recorded controller-acknowledged initial safe-off.`);
+      const accepted = this.durableAcceptedCaptureProfile();
+      if (
+        operation.consumed
+        || this.captureLock?.owner !== owner
+        || this.manifest.sessionId !== snapshot.sessionId
+        || this.manifest.reportId !== snapshot.reportId
+        || this.manifest.currentStep !== "capture_front"
+        || Boolean(this.manifest.captureFailure)
+        || Boolean(this.manifest.outputs.frontPackageDir)
+        || this.manifest.previewStatus.activeSide !== "front"
+        || this.manifest.previewStatus.sideEpoch !== snapshot.sideEpoch
+        || this.atomicFrontCaptureContext?.snapshot !== snapshot
+        || snapshot.geometry.sessionId !== snapshot.sessionId
+        || snapshot.geometry.side !== "front"
+        || snapshot.geometry.sideEpoch !== snapshot.sideEpoch
+        || snapshot.geometry.sourceFrameId !== snapshot.frameId
+        || crypto.createHash("sha256").update(JSON.stringify(snapshot.geometry)).digest("hex") !== snapshot.geometrySha256
+        || accepted.identity !== snapshot.acceptedProfileIdentity
+        || this.manifest.confirmations.fixtureRulersVisible !== true
+        || this.manifest.confirmations.lightIdleOff !== true
+        || this.frontFixtureAuditSha256({
+          sessionId: snapshot.sessionId,
+          reportId: snapshot.reportId,
+          sideEpoch: snapshot.sideEpoch,
+          frameId: snapshot.frameId,
+          acceptedProfileIdentity: snapshot.acceptedProfileIdentity,
+          captureTriggerMode: snapshot.captureTriggerMode,
+          auditSource: snapshot.fixtureAuditSource,
+        }) !== snapshot.fixtureAuditSha256
+        || Date.now() - Date.parse(snapshot.snapshottedAt) > ATOMIC_CAPTURE_AUTHORIZATION_MS
+      ) {
+        throw new Error("Atomic Front Capture authorization changed before camera ownership; capture was not consumed.");
+      }
+      operation.consumed = true;
+      const result = await this.runWarmSideCapture("front");
+      this.manifest.outputs.frontPackageDir = extractPackageDir(result.payload);
+      if (!this.manifest.outputs.frontPackageDir) {
+        throw new Error("Atomic Front Capture did not return a persisted front evidence package.");
+      }
+      if (this.manifest.rapidCapture.workflowState === "failed") {
+        completed = true;
+        if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+        this.releaseFullForensicPreviewHold("front raw capture persisted but processing failed; positioning remains disabled");
+        this.manifest.progressLog.push(`${new Date().toISOString()} Front raw capture completed, but processing failed; back positioning was not started.`);
+        await writeSessionManifest(this.manifest);
+        return this.status();
+      }
+      this.manifest.currentStep = "prompt_flip_card";
+      this.transitionPreviewSide("back", { preserveFrontGeometry: true });
+      this.updatePreviewStatus({
+        intentionalTransition: {
+          active: true,
+          kind: "capture_front",
+          sessionId: snapshot.sessionId,
+          side: "front",
+          sideEpoch: snapshot.sideEpoch,
+          frameId: snapshot.frameId,
+          startedAt: transitionStartedAt,
+        },
+      });
+      if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+      this.releaseFullForensicPreviewHold("front capture complete; operator can position back with live preview");
+      this.transitionRapidWorkflow(this.manifest, "front_captured", "Front raw evidence package is safely persisted.");
+      this.transitionRapidWorkflow(this.manifest, "front_processing", "Front artifact processing started while the operator flips the card.");
+      this.transitionRapidWorkflow(this.manifest, "back_positioning", "Back preview and positioning may proceed while front processing continues.");
+      this.recordCaptureTimingEvent(this.manifest, { id: "back_positioning_started", side: "back" });
+      this.manifest.progressLog.push(`${new Date().toISOString()} Front evidence captured by one bridge-authoritative atomic operation.`);
+      await writeSessionManifest(this.manifest);
+      if (this.closing) {
+        this.updateBackPositioningLight({ status: "safe_off", captureReady: false, captureAuthorization: undefined });
+        this.manifest.progressLog.push(`${new Date().toISOString()} Back-positioning restore was skipped because bridge shutdown is pending.`);
+        await writeSessionManifest(this.manifest);
+      } else {
+        try {
+          await this.serializeLightingLifecycle(() => this.restoreBackPositioningLightUnlocked("front_capture"));
+        } catch (error) {
+          const lastError = boundedBackPositioningError(error);
+          this.updateBackPositioningLight({ status: "failed", captureReady: false, lastError });
+          this.recordBackPositioningLightEvent({
+            type: "restore_failure",
+            trigger: "front_capture",
+            profileIdentity: this.manifest.liveLighting.backPositioning.profileIdentity,
+            error: lastError,
+          });
+          await writeSessionManifest(this.manifest);
+        }
+      }
+      completed = true;
+    } catch (error) {
+      outcomeError = error;
+      if (transitionStarted && !transitionSafeOffAttempted) {
+        transitionSafeOffAttempted = true;
+        try {
+          await this.safeOffLiveLighting("atomic front capture transition failure", "failure_safe_off", { force: true });
+        } catch (cleanupError) {
+          const original = boundedBackPositioningError(error).message;
+          const cleanup = boundedBackPositioningError(cleanupError).message;
+          outcomeError = new Error(`${original} Failure safe-off also could not be verified: ${cleanup}`);
+          if (!this.manifest.warnings.includes(original)) this.manifest.warnings.push(original);
+        }
+      }
+      if (transitionStarted && !this.manifest.captureFailure) {
+        this.manifest.currentStep = "capture_front";
+        this.manifest.warmRunnerStatus.status = this.manifest.liveLighting.physicalState.state === "safe_off_verified"
+          ? "safe_off"
+          : "failed";
+        const lastError = boundedPreviewLifecycleError(outcomeError);
+        const currentOwnership = this.manifest.previewStatus.cameraOwnership;
+        const failedDrainOwnership = currentOwnership === "released" ? "preview_stream" : currentOwnership;
+        this.updatePreviewStatus({
+          status: "error",
+          cameraOwnership: previewDrainVerified ? "released" : failedDrainOwnership,
+          positioningLightReady: false,
+          lastError,
+          lastStopReason: "Atomic Front Capture transition failed; a fresh preview/frame is required before retry.",
+        });
+      }
+    } finally {
+      this.atomicFrontCaptureContext = undefined;
+      if (transitionStarted && snapshot) {
+        this.updatePreviewStatus({
+          intentionalTransition: {
+            active: false,
+            kind: "capture_front",
+            sessionId: snapshot.sessionId,
+            side: "front",
+            sideEpoch: snapshot.sideEpoch,
+            frameId: snapshot.frameId,
+            startedAt: transitionStartedAt,
+            completedAt: new Date().toISOString(),
+            outcome: completed ? "capture_started" : "transition_failed",
+          },
+        });
+      }
+      if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+      if (!transitionStarted) this.manifest.warmRunnerStatus.status = priorWarmRunnerStatus;
+      if (transitionStarted && !completed) {
+        if (previewDrainVerified) {
+          this.releaseFullForensicPreviewHold("atomic front capture transition failed; explicit preview recovery is available");
+        } else {
+          this.manifest.progressLog.push(`${new Date().toISOString()} Atomic Front Capture drain failed with preview ownership unreleased; forensic preview hold remains active and automatic restart is blocked.`);
+        }
+      }
+      try {
+        await writeSessionManifest(this.manifest);
+      } catch (error) {
+        if (!outcomeError) outcomeError = error;
+      }
+    }
+    if (outcomeError) throw outcomeError;
+    return this.status();
+  }
+
+  private atomicFrontCapture(requestValue: AiGraderLocalStationBridgeActionRequest) {
+    if (this.closing) throw new Error("Atomic Front Capture is unavailable while the local bridge is closing.");
+    if (this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
+      throw new Error("Atomic Front Capture is blocked while a lighting or terminal lifecycle operation is pending.");
+    }
+    if (this.activeQueueItemId) {
+      throw new Error("Start a fresh station session before running capture actions while a rapid queue item is under human review.");
+    }
+    if (!this.manifest.sessionId) {
+      throw new Error("Start a station session before running AI Grader station actions.");
+    }
+    const request = this.validateAtomicFrontCaptureRequest(requestValue);
+    const fingerprint = this.frontCaptureFingerprint(request);
+    const existing = this.frontCaptureOperations.get(request.idempotencyKey);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) throw new Error("Atomic Front Capture idempotency key conflicts with a different request.");
+      return existing.result ? Promise.resolve(structuredClone(existing.result)) : existing.promise;
+    }
+    if (this.frontCaptureInFlightKey && this.frontCaptureInFlightKey !== request.idempotencyKey) {
+      throw new Error("A different Atomic Front Capture operation already owns the serialized lifecycle.");
+    }
+    if (this.currentAtomicBackCapturePromise()) {
+      throw new Error("Atomic Front Capture is blocked while Atomic Back Capture owns the serialized lifecycle.");
+    }
+    this.frontCaptureInFlightKey = request.idempotencyKey;
+    const operation = {} as AiGraderFrontCaptureOperation;
+    operation.fingerprint = fingerprint;
+    operation.consumed = false;
+    const reservation = {
+      owner: `atomic-capture-front:${request.idempotencyKey}`,
+    } as NonNullable<AiGraderLocalStationBridgeService["frontCaptureTransition"]>;
+    const tracked = Promise.resolve().then(() => this.executeAtomicFrontCapture(request, operation)).then((result) => {
+      operation.result = structuredClone(result);
+      return structuredClone(operation.result);
+    }).finally(() => {
+      if (this.frontCaptureInFlightKey === request.idempotencyKey) this.frontCaptureInFlightKey = undefined;
+      if (this.frontCaptureTransition === reservation) this.frontCaptureTransition = undefined;
+    });
+    operation.promise = tracked;
+    reservation.promise = tracked;
+    this.frontCaptureOperations.set(request.idempotencyKey, operation);
+    this.frontCaptureTransition = reservation;
+    while (this.frontCaptureOperations.size > ATOMIC_CAPTURE_IDEMPOTENCY_LIMIT) {
+      const oldest = this.frontCaptureOperations.keys().next().value;
+      if (!oldest || oldest === this.frontCaptureInFlightKey) break;
+      this.frontCaptureOperations.delete(oldest);
+    }
+    return tracked;
   }
 
   private validateAtomicBackCaptureRequest(request: AiGraderLocalStationBridgeActionRequest) {
@@ -3396,7 +3905,7 @@ export class AiGraderLocalStationBridgeService {
     if (unexpected.length > 0) {
       throw new Error("Atomic Back Capture accepts only bounded idempotency, session/report/side/epoch/frame, mode, and trigger assertions.");
     }
-    if (!request.idempotencyKey || !BACK_CAPTURE_IDEMPOTENCY_KEY_RE.test(request.idempotencyKey)) {
+    if (!request.idempotencyKey || !ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE.test(request.idempotencyKey)) {
       throw new Error("Atomic Back Capture requires a 16-128 character bounded idempotency key.");
     }
     const requiredStrings = [request.expectedSessionId, request.expectedReportId, request.expectedSideEpoch, request.expectedFrameId];
@@ -3452,7 +3961,7 @@ export class AiGraderLocalStationBridgeService {
     if (!this.backPositioningCaptureReady()) {
       throw new Error("Atomic Back Capture requires the verified durable positioning light and a recent live back preview frame.");
     }
-    const observation = this.previewObservation(request.expectedFrameId);
+    const observation = this.previewObservation("back", request.expectedFrameId);
     if (!observation?.geometry) {
       throw new Error("Atomic Back Capture requires an exact retained frame/geometry observation.");
     }
@@ -3500,7 +4009,7 @@ export class AiGraderLocalStationBridgeService {
       }
     }
     const manual = request.geometryCaptureMode === "manual_capture"
-      ? this.bridgeOwnedManualGeometry(geometry)
+      ? this.bridgeOwnedManualGeometry("back", geometry)
       : undefined;
     return {
       sessionId: request.expectedSessionId,
@@ -3597,7 +4106,7 @@ export class AiGraderLocalStationBridgeService {
         || snapshot.geometry.sideEpoch !== snapshot.sideEpoch
         || snapshot.geometry.sourceFrameId !== snapshot.frameId
         || crypto.createHash("sha256").update(JSON.stringify(snapshot.geometry)).digest("hex") !== snapshot.geometrySha256
-        || Date.now() - Date.parse(snapshot.snapshottedAt) > BACK_CAPTURE_AUTHORIZATION_MS
+        || Date.now() - Date.parse(snapshot.snapshottedAt) > ATOMIC_CAPTURE_AUTHORIZATION_MS
       ) {
         throw new Error("Atomic Back Capture authorization changed before camera ownership; capture was not consumed.");
       }
@@ -3678,7 +4187,7 @@ export class AiGraderLocalStationBridgeService {
   private atomicBackCapture(requestValue: AiGraderLocalStationBridgeActionRequest) {
     if (this.closing) throw new Error("Atomic Back Capture is unavailable while the local bridge is closing.");
     if (this.frontCaptureTransition) {
-      throw new Error("Atomic Back Capture is blocked while Front Capture owns the serialized pre-lock handoff.");
+      throw new Error("Atomic Back Capture is blocked while Front Capture owns the serialized lifecycle reservation.");
     }
     if (this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
       throw new Error("Atomic Back Capture is blocked while a lighting or terminal lifecycle operation is pending.");
@@ -3704,7 +4213,7 @@ export class AiGraderLocalStationBridgeService {
     }).finally(() => {
       if (this.backCaptureInFlightKey === request.idempotencyKey) this.backCaptureInFlightKey = undefined;
     });
-    while (this.backCaptureOperations.size > BACK_CAPTURE_IDEMPOTENCY_LIMIT) {
+    while (this.backCaptureOperations.size > ATOMIC_CAPTURE_IDEMPOTENCY_LIMIT) {
       const oldest = this.backCaptureOperations.keys().next().value;
       if (!oldest || oldest === this.backCaptureInFlightKey) break;
       this.backCaptureOperations.delete(oldest);
@@ -4050,6 +4559,8 @@ export class AiGraderLocalStationBridgeService {
     manifest.warmRunnerStatus.sessionId = manifest.sessionId;
     manifest.warmRunnerStatus.status = "warming";
     this.manifest = manifest;
+    this.frontCaptureOperations.clear();
+    this.frontCaptureInFlightKey = undefined;
     this.backCaptureOperations.clear();
     this.backCaptureInFlightKey = undefined;
     this.backPositioningRetryInFlight = undefined;
@@ -5084,7 +5595,7 @@ export class AiGraderLocalStationBridgeService {
       frameId,
       profileIdentity: positioning.profileIdentity!,
       authorizedAt,
-      expiresAt: new Date(Date.now() + BACK_CAPTURE_AUTHORIZATION_MS).toISOString(),
+      expiresAt: new Date(Date.now() + ATOMIC_CAPTURE_AUTHORIZATION_MS).toISOString(),
     };
     this.updateBackPositioningLight({ captureAuthorization });
     return captureAuthorization;
@@ -6046,7 +6557,7 @@ export class AiGraderLocalStationBridgeService {
     backAuthorization?: NonNullable<AiGraderBackPositioningLightStatus["captureAuthorization"]>
   ): Promise<AiGraderStationCommandResult> {
     const stepId = side === "front" ? "capture_front" : "capture_back";
-    const atomicContext = side === "back" ? this.atomicBackCaptureContext : undefined;
+    const atomicContext = side === "front" ? this.atomicFrontCaptureContext : this.atomicBackCaptureContext;
     const owner = atomicContext?.owner ?? `cold-debug-${stepId}`;
     const phaseId = `capture_${side}`;
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
@@ -6062,7 +6573,7 @@ export class AiGraderLocalStationBridgeService {
         this.updateBackPositioningLight({ captureAuthorization: undefined });
       }
       if (!atomicContext) this.acquireCaptureLock(owner);
-      else if (this.captureLock?.owner !== owner) throw new Error("Atomic Back Capture lost capture ownership before cold forensic capture.");
+      else if (this.captureLock?.owner !== owner) throw new Error(`Atomic ${side === "front" ? "Front" : "Back"} Capture lost capture ownership before cold forensic capture.`);
       this.updateEvidenceRoles(side, "active");
       phase = this.markWarmPhase({
         id: phaseId,
@@ -6181,7 +6692,7 @@ export class AiGraderLocalStationBridgeService {
   ): Promise<AiGraderStationCommandResult> {
     const sessionManifest = this.manifest;
     const stepId = side === "front" ? "capture_front" : "capture_back";
-    const atomicContext = side === "back" ? this.atomicBackCaptureContext : undefined;
+    const atomicContext = side === "front" ? this.atomicFrontCaptureContext : this.atomicBackCaptureContext;
     const owner = atomicContext?.owner ?? `warm-${stepId}`;
     const phaseId = `capture_${side}`;
     const label = `${side === "front" ? "Front" : "Back"} full forensic capture stack`;
@@ -6200,7 +6711,7 @@ export class AiGraderLocalStationBridgeService {
         this.updateBackPositioningLight({ captureAuthorization: undefined });
       }
       if (!atomicContext) this.acquireCaptureLock(owner);
-      else if (this.captureLock?.owner !== owner) throw new Error("Atomic Back Capture lost capture ownership before warm forensic capture.");
+      else if (this.captureLock?.owner !== owner) throw new Error(`Atomic ${side === "front" ? "Front" : "Back"} Capture lost capture ownership before warm forensic capture.`);
       this.setExecutionPath("warm_full_forensic_runner", undefined, sessionManifest);
       this.updateEvidenceRoles(side, "active", sessionManifest);
       phase = this.markWarmPhase({
@@ -6421,6 +6932,8 @@ export class AiGraderLocalStationBridgeService {
         try {
           if (sessionManifest === this.manifest) {
             await this.serializeTerminalLifecycle(async () => {
+              const frontAtomic = this.currentAtomicFrontCapturePromise();
+              if (frontAtomic) await frontAtomic.catch(() => undefined);
               const atomic = this.currentAtomicBackCapturePromise();
               if (atomic) await atomic.catch(() => undefined);
               await this.awaitLightingLifecycleIdle();
@@ -6644,7 +7157,7 @@ export class AiGraderLocalStationBridgeService {
         {
           ok: false,
           code: "AI_GRADER_LIFECYCLE_BUSY",
-          message: "Preview is unavailable during the serialized Front Capture pre-lock handoff.",
+          message: "Preview is unavailable during the serialized Front Capture lifecycle reservation.",
           result: this.previewStatus(),
         },
         origin,
@@ -6782,8 +7295,12 @@ export class AiGraderLocalStationBridgeService {
         if (settled) return;
         settled = true;
         const intentionalCaptureTransition = this.manifest.previewStatus.intentionalTransition.active
-          && this.manifest.previewStatus.intentionalTransition.kind === "capture_back"
+          && (
+            this.manifest.previewStatus.intentionalTransition.kind === "capture_front"
+            || this.manifest.previewStatus.intentionalTransition.kind === "capture_back"
+          )
           && this.manifest.previewStatus.intentionalTransition.sessionId === binding.sessionId
+          && this.manifest.previewStatus.intentionalTransition.side === binding.side
           && this.manifest.previewStatus.intentionalTransition.sideEpoch === binding.sideEpoch;
         if (mockPreviewTimer) {
           clearInterval(mockPreviewTimer);
@@ -7342,6 +7859,9 @@ export class AiGraderLocalStationBridgeService {
   }
 
   async action(action: AiGraderLocalStationBridgeAction, request: AiGraderLocalStationBridgeActionRequest = {}): Promise<AiGraderLocalStationBridgeStatus> {
+    if (action === "capture-front") {
+      return this.atomicFrontCapture(request);
+    }
     if (action === "capture-back") {
       return this.atomicBackCapture(request);
     }
@@ -7400,7 +7920,6 @@ export class AiGraderLocalStationBridgeService {
       "confirm-fixture-rulers",
       "launch-preview",
       "accept-profile",
-      "capture-front",
       "confirm-flip",
       "run-diagnostics",
     ]).has(action)) {
@@ -7409,10 +7928,6 @@ export class AiGraderLocalStationBridgeService {
 
     if (!this.manifest.sessionId && action !== "safe-off" && action !== "end-session") {
       throw new Error("Start a station session before running AI Grader station actions.");
-    }
-
-    if (this.manifest.captureFailure && action === "capture-front") {
-      throw new Error(`The ${this.manifest.captureFailure.side} capture failed and requires a new start-session retry before any further capture.`);
     }
 
     if (action === "confirm-light-idle-off") {
@@ -7437,7 +7952,21 @@ export class AiGraderLocalStationBridgeService {
       if (this.manifest.outputs.frontPackageDir || this.manifest.currentStep === "prompt_flip_card" || this.manifest.currentStep === "capture_back") {
         throw new Error("Capture profile changes are disabled after front evidence is persisted; start a new session to accept a different profile.");
       }
+      if (!request.acceptedProfile) {
+        throw new Error("Capture profile acceptance requires an explicit bounded station profile.");
+      }
       this.manifest.acceptedProfile = validateProfile(request.acceptedProfile, this.manifest.acceptedProfile);
+      this.updateLiveLightingStatus({
+        profile: {
+          enabled: true,
+          dutyPercent: this.manifest.acceptedProfile.dutyPercent,
+          actualLeimacPwmStep: this.manifest.acceptedProfile.actualLeimacPwmStep,
+          channels: [...this.manifest.acceptedProfile.channels],
+          source: "accepted_station_profile",
+          acceptedForCapture: true,
+          acceptedAt: this.manifest.acceptedProfile.acceptedAt,
+        },
+      });
       this.manifest.currentStep = "capture_front";
       this.manifest.progressLog.push(`${now} Accepted profile ${this.manifest.acceptedProfile.dutyPercent}% / ${this.manifest.acceptedProfile.exposureUs} us.`);
       await writeSessionManifest(this.manifest);
@@ -7575,61 +8104,6 @@ export class AiGraderLocalStationBridgeService {
       this.manifest.progressLog.push(`${now} Basler live preview completed; profile available for acceptance.`);
       await writeSessionManifest(this.manifest);
       return this.status();
-    }
-
-    if (action === "capture-front") {
-      return this.runFrontCaptureTransition(async () => {
-        assertFixtureVisible(this.manifest);
-        this.assertPhysicalStateKnown("Front Capture");
-        const captureTriggerAt = validatedCaptureTriggerAt(request.captureTriggerAt, now);
-        this.recordGeometryCaptureDecision(this.manifest, "front", request, captureTriggerAt);
-        this.recordCaptureTimingEvent(this.manifest, {
-          id: "capture_trigger",
-          side: "front",
-          triggerMode: parseCaptureTriggerMode(request.captureTriggerMode),
-          at: captureTriggerAt,
-        });
-        const result = await this.runWarmSideCapture("front");
-        this.manifest.outputs.frontPackageDir = extractPackageDir(result.payload);
-        if (this.manifest.rapidCapture.workflowState === "failed") {
-          this.manifest.progressLog.push(`${new Date().toISOString()} Front raw capture completed, but processing failed; back positioning was not started.`);
-          await writeSessionManifest(this.manifest);
-          return this.status();
-        }
-        this.manifest.currentStep = "prompt_flip_card";
-        this.transitionPreviewSide("back", { preserveFrontGeometry: true });
-        this.releaseFullForensicPreviewHold("front capture complete; operator can position back with live preview");
-        this.transitionRapidWorkflow(this.manifest, "front_captured", "Front raw evidence package is safely persisted.");
-        this.transitionRapidWorkflow(this.manifest, "front_processing", "Front artifact processing started while the operator flips the card.");
-        this.transitionRapidWorkflow(this.manifest, "back_positioning", "Back preview and positioning may proceed while front processing continues.");
-        this.recordCaptureTimingEvent(this.manifest, { id: "back_positioning_started", side: "back" });
-        this.manifest.progressLog.push(`${now} Front evidence captured with warm-runner orchestration.`);
-        await writeSessionManifest(this.manifest);
-        if (this.closing) {
-          this.updateBackPositioningLight({
-            status: "safe_off",
-            captureReady: false,
-            captureAuthorization: undefined,
-          });
-          this.manifest.progressLog.push(`${new Date().toISOString()} Back-positioning restore was skipped because bridge shutdown is pending.`);
-          await writeSessionManifest(this.manifest);
-        } else {
-          try {
-            await this.serializeLightingLifecycle(() => this.restoreBackPositioningLightUnlocked("front_capture"));
-          } catch (error) {
-            const lastError = boundedBackPositioningError(error);
-            this.updateBackPositioningLight({ status: "failed", captureReady: false, lastError });
-            this.recordBackPositioningLightEvent({
-              type: "restore_failure",
-              trigger: "front_capture",
-              profileIdentity: this.manifest.liveLighting.backPositioning.profileIdentity,
-              error: lastError,
-            });
-            await writeSessionManifest(this.manifest);
-          }
-        }
-        return this.status();
-      });
     }
 
     if (action === "run-diagnostics") {

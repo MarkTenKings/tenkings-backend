@@ -1,7 +1,7 @@
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE, type AiGraderReportBundle } from "./aiGraderReportBundle";
 import type { AiGraderProductionRelease } from "./aiGraderProductionRelease";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.8";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.9";
 export const AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION = "ai-grader-report-producer-v0.2";
 
 export type AiGraderStationStepId =
@@ -1141,9 +1141,9 @@ export type AiGraderLocalStationPreviewStatus = {
   positioningLightReady?: boolean;
   intentionalTransition: {
     active: boolean;
-    kind?: "capture_back";
+    kind?: "capture_front" | "capture_back";
     sessionId?: string;
-    side?: "back";
+    side?: AiGraderPreviewGeometrySide;
     sideEpoch?: string;
     frameId?: string;
     startedAt?: string;
@@ -1395,9 +1395,9 @@ function bridgeEndpoints() {
     { method: "POST", action: "confirm-fixture-rulers", description: "Record operator confirmation that the fixture/rulers are visible." },
     { method: "POST", action: "launch-preview", description: "Contract endpoint for launching Basler live preview." },
     { method: "POST", action: "accept-profile", description: "Accept the current capture profile." },
-    { method: "POST", action: "capture-front", description: "Contract endpoint for front capture." },
+    { method: "POST", action: "capture-front", description: "Atomically validate the exact front frame, drain preview, verify safe-off, and capture front evidence." },
     { method: "POST", action: "confirm-flip", description: "Record operator flip confirmation." },
-    { method: "POST", action: "capture-back", description: "Contract endpoint for back capture." },
+    { method: "POST", action: "capture-back", description: "Atomically validate the exact back frame, drain preview, verify safe-off, and capture back evidence." },
     { method: "POST", action: "run-diagnostics", description: "Generate or attach the provisional report." },
     { method: "POST", action: "export-report-bundle", description: "Export report-bundle.json, asset manifest, and checksums." },
     { method: "POST", action: "calculate-final-grade", description: "Calculate Final AI-Grader Grade V0 from the report bundle." },

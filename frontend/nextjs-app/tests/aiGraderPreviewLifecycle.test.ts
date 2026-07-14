@@ -3,6 +3,11 @@ import test from "node:test";
 import {
   AI_GRADER_PREVIEW_MAX_CONSECUTIVE_RECONNECTS,
   AI_GRADER_PREVIEW_SNAPSHOT_LIMIT,
+  AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS,
+  AI_GRADER_ACTIVE_CAPTURE_RECONCILE_INTERVAL_MS,
+  AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS,
+  AI_GRADER_INTENTIONAL_TRANSITION_MAX_AGE_MS,
+  aiGraderAtomicIntentReconcileDecision,
   aiGraderPreviewBackCaptureReady,
   aiGraderPreviewBindingChanged,
   aiGraderPreviewDetectedCaptureReady,
@@ -13,7 +18,9 @@ import {
   createAiGraderPreviewReconnectState,
   finishAiGraderPreviewReader,
   isAiGraderBackPositioningRetryReady,
+  isAiGraderConfirmedCaptureTransitionFailure,
   isAiGraderConfirmedBackCaptureTransitionFailure,
+  isAiGraderIntentionalCaptureEof,
   isAiGraderIntentionalBackCaptureEof,
   isAiGraderPreviewReconnectEligible,
   noteAiGraderPreviewFrameForReconnect,
@@ -36,9 +43,14 @@ import {
 } from "../lib/aiGraderStationBridgeClient";
 import { buildAiGraderLocalStationStatus } from "../lib/aiGraderLocalStation";
 import {
+  aiGraderCaptureAssertionFromFrame,
+  buildAiGraderAtomicCaptureRequest,
   aiGraderBackCaptureAssertionFromFrame,
   buildAiGraderAtomicBackCaptureRequest,
+  createAiGraderCaptureAttempt,
+  createAiGraderCaptureOperationGate,
   createAiGraderBackCaptureAttempt,
+  runAiGraderAtomicCapture,
   runAiGraderAtomicBackCapture,
   runAiGraderBackPositioningRetryRecovery,
   runAiGraderStationBackCaptureOrchestration,
@@ -152,7 +164,7 @@ test("preview-loss safe-off failure projects pending then unknown and cannot ret
 });
 
 test("completed exact atomic transition remains an intentional EOF only inside its bounded identity window", () => {
-  const localIntent = { binding: backEpoch, frameId: "frame-completed" };
+  const localIntent = { binding: backEpoch, frameId: "frame-completed", submittedAtMs: baseMs };
   const completedAt = new Date(baseMs).toISOString();
   const exact = {
     active: false,
@@ -190,7 +202,7 @@ test("completed exact atomic transition remains an intentional EOF only inside i
     localIntent,
     authoritativeBinding: backEpoch,
     bridgeIntent: exact,
-    nowMs: baseMs + 10_001,
+    nowMs: baseMs + AI_GRADER_INTENTIONAL_TRANSITION_MAX_AGE_MS + 1,
   }), false);
   assert.equal(isAiGraderIntentionalBackCaptureEof({
     expectedBinding: backEpoch,
@@ -218,6 +230,96 @@ test("completed exact atomic transition remains an intentional EOF only inside i
     localIntent,
     authoritativeBinding: backEpoch,
     bridgeIntent: { ...exact, active: true, completedAt: undefined, outcome: undefined },
+    nowMs: baseMs + AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS + 1,
+  }), true);
+});
+
+test("quick completed marker survives first ambiguity check and active authority spans the bounded poll horizon", () => {
+  const localIntent = { binding: frontEpoch, frameId: "front-timestamp-bound", submittedAtMs: baseMs };
+  const marker = {
+    active: false,
+    kind: "capture_front" as const,
+    sessionId: frontEpoch.sessionId,
+    side: "front" as const,
+    sideEpoch: frontEpoch.sideEpoch,
+    frameId: localIntent.frameId,
+    completedAt: new Date(baseMs + 2_000).toISOString(),
+    outcome: "capture_started" as const,
+  };
+  const firstReconcileAt = baseMs + AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS;
+  const completedRecognized = isAiGraderIntentionalCaptureEof({
+    expectedBinding: frontEpoch,
+    localIntent,
+    authoritativeBinding: frontEpoch,
+    bridgeIntent: marker,
+    nowMs: firstReconcileAt,
+  });
+  assert.equal(completedRecognized, true);
+  assert.deepEqual(aiGraderAtomicIntentReconcileDecision({
+    exactCaptureAuthority: completedRecognized,
+    exactTransitionFailure: false,
+    bridgeTransitionActive: false,
+    activeChecksRemaining: AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS,
+  }), { kind: "recover_full_status" });
+  const failureRecognized = isAiGraderConfirmedCaptureTransitionFailure({
+    expectedBinding: frontEpoch,
+    localIntent,
+    authoritativeBinding: frontEpoch,
+    bridgeIntent: { ...marker, outcome: "transition_failed" },
+    nowMs: firstReconcileAt,
+  });
+  assert.equal(failureRecognized, true);
+  assert.deepEqual(aiGraderAtomicIntentReconcileDecision({
+    exactCaptureAuthority: false,
+    exactTransitionFailure: failureRecognized,
+    bridgeTransitionActive: false,
+    activeChecksRemaining: AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS,
+  }), { kind: "recover_full_status" });
+
+  const activePollHorizon = firstReconcileAt +
+    AI_GRADER_ACTIVE_CAPTURE_RECONCILE_INTERVAL_MS * AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS;
+  assert.equal(isAiGraderIntentionalCaptureEof({
+    expectedBinding: frontEpoch,
+    localIntent,
+    authoritativeBinding: frontEpoch,
+    bridgeIntent: { ...marker, active: true, completedAt: undefined, outcome: undefined },
+    nowMs: activePollHorizon,
+  }), true);
+  assert.ok(AI_GRADER_INTENTIONAL_TRANSITION_MAX_AGE_MS > activePollHorizon - baseMs);
+});
+
+test("exact intentional capture markers are side-generic and reject cross-side identities", () => {
+  const localIntent = { binding: frontEpoch, frameId: "preview-front-intent", submittedAtMs: Date.now() };
+  const exact = {
+    active: true,
+    kind: "capture_front" as const,
+    sessionId: frontEpoch.sessionId,
+    side: "front" as const,
+    sideEpoch: frontEpoch.sideEpoch,
+    frameId: localIntent.frameId,
+  };
+  assert.equal(isAiGraderIntentionalCaptureEof({
+    expectedBinding: frontEpoch,
+    localIntent,
+    authoritativeBinding: frontEpoch,
+    bridgeIntent: exact,
+  }), true);
+  assert.equal(isAiGraderIntentionalCaptureEof({
+    expectedBinding: frontEpoch,
+    localIntent,
+    authoritativeBinding: frontEpoch,
+    bridgeIntent: { ...exact, kind: "capture_back", side: "back" },
+  }), false);
+  assert.equal(isAiGraderConfirmedCaptureTransitionFailure({
+    expectedBinding: frontEpoch,
+    localIntent,
+    authoritativeBinding: frontEpoch,
+    bridgeIntent: {
+      ...exact,
+      active: false,
+      completedAt: new Date(baseMs).toISOString(),
+      outcome: "transition_failed",
+    },
     nowMs: baseMs + 1,
   }), true);
 });
@@ -644,12 +746,13 @@ test("ready positioning retry is a repeat no-op and becomes retryable when truth
   }).status, "waiting_for_frame");
 });
 
-test("atomic intent suppresses preview-loss safe-off and reconnect until failure is confirmed", async () => {
-  const localIntent = { binding: backEpoch, frameId: "preview-back-atomic-pending" };
+test("atomic intent suppresses preview-loss recovery only inside its bounded submitted window", async () => {
+  const localIntent = { binding: backEpoch, frameId: "preview-back-atomic-pending", submittedAtMs: baseMs };
   const observe = async (input: {
     reason: "eof" | "error" | "abort";
     withIntent: boolean;
     atomicTransitionFailureConfirmed?: boolean;
+    nowMs?: number;
   }) => {
     let safeOffCalls = 0;
     let reconnectCalls = 0;
@@ -659,6 +762,7 @@ test("atomic intent suppresses preview-loss safe-off and reconnect until failure
       localIntent: input.withIntent ? localIntent : null,
       atomicTransitionFailureConfirmed: input.atomicTransitionFailureConfirmed,
       reconnectEligible: true,
+      nowMs: input.nowMs ?? baseMs + 1,
     }, {
       async safeOff() {
         safeOffCalls += 1;
@@ -676,6 +780,14 @@ test("atomic intent suppresses preview-loss safe-off and reconnect until failure
     assert.equal(pending.safeOffCalls, 0, reason);
     assert.equal(pending.reconnectCalls, 0, reason);
   }
+  const expired = await observe({
+    reason: "eof",
+    withIntent: true,
+    nowMs: baseMs + AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS + 1,
+  });
+  assert.equal(expired.disposition.preserveLocalIntent, false);
+  assert.equal(expired.safeOffCalls, 1);
+  assert.equal(expired.reconnectCalls, 1);
   const busyAbort = await observe({ reason: "abort", withIntent: true });
   assert.equal(busyAbort.safeOffCalls, 0);
   assert.equal(busyAbort.reconnectCalls, 0);
@@ -874,6 +986,114 @@ test("retry uses empty body and exact token-gated binding headers", async () => 
     },
   );
   assert.equal(result.status, "waiting_for_frame");
+});
+
+test("synchronous capture gate coalesces rapid identical operations and rejects a conflicting capture", async () => {
+  const gate = createAiGraderCaptureOperationGate();
+  let calls = 0;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const operation = async () => {
+    calls += 1;
+    await held;
+    return "captured";
+  };
+  const signature = "session-1|report-1|front|front-1|frame-1|detected_geometry|operator";
+  const first = gate.run(signature, operation);
+  const second = gate.run(signature, operation);
+  assert.equal(first, second);
+  assert.equal(gate.activeSignature(), signature);
+  await assert.rejects(
+    gate.run("session-1|report-1|back|back-2|frame-2|detected_geometry|operator", operation),
+    /different.*capture operation/i,
+  );
+  release();
+  assert.equal(await first, "captured");
+  assert.equal(calls, 1);
+});
+
+test("ambiguous capture reconciliation polls exact active authority sequentially to a hard bound", () => {
+  const first = aiGraderAtomicIntentReconcileDecision({
+    exactCaptureAuthority: true,
+    exactTransitionFailure: false,
+    bridgeTransitionActive: true,
+    activeChecksRemaining: AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS,
+  });
+  assert.deepEqual(first, {
+    kind: "poll_active",
+    delayMs: AI_GRADER_ACTIVE_CAPTURE_RECONCILE_INTERVAL_MS,
+    nextActiveChecksRemaining: AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS - 1,
+  });
+  assert.deepEqual(aiGraderAtomicIntentReconcileDecision({
+    exactCaptureAuthority: true,
+    exactTransitionFailure: false,
+    bridgeTransitionActive: true,
+    activeChecksRemaining: 0,
+  }), { kind: "active_deadline" });
+  assert.deepEqual(aiGraderAtomicIntentReconcileDecision({
+    exactCaptureAuthority: true,
+    exactTransitionFailure: false,
+    bridgeTransitionActive: false,
+    activeChecksRemaining: 0,
+  }), { kind: "recover_full_status" });
+  assert.deepEqual(aiGraderAtomicIntentReconcileDecision({
+    exactCaptureAuthority: false,
+    exactTransitionFailure: true,
+    bridgeTransitionActive: false,
+    activeChecksRemaining: 0,
+  }), { kind: "recover_full_status" });
+  assert.deepEqual(aiGraderAtomicIntentReconcileDecision({
+    exactCaptureAuthority: false,
+    exactTransitionFailure: false,
+    bridgeTransitionActive: false,
+    activeChecksRemaining: 0,
+  }), { kind: "safe_off_reconnect" });
+});
+
+test("Station atomic Front helper emits one v0.9 assertion-only mutation with a stable key", async () => {
+  const assertion = aiGraderCaptureAssertionFromFrame({
+    frame: frame(frontEpoch, "preview-front-atomic"),
+    reportId: "report-1",
+    geometryCaptureMode: "manual_capture",
+    captureTriggerMode: "operator",
+  });
+  const firstAttempt = createAiGraderCaptureAttempt(assertion, "2026-07-13T12:00:01.000Z");
+  const retryAttempt = createAiGraderCaptureAttempt(assertion, "2026-07-13T12:00:02.000Z");
+  assert.equal(firstAttempt.idempotencyKey, retryAttempt.idempotencyKey);
+  assert.match(firstAttempt.idempotencyKey, /^capture-front-v0\.9-[a-f0-9]{16}$/);
+  const body = buildAiGraderAtomicCaptureRequest({ assertion, attempt: firstAttempt });
+  assert.deepEqual(Object.keys(body).sort(), [
+    "captureTriggerAt",
+    "captureTriggerMode",
+    "expectedFrameId",
+    "expectedReportId",
+    "expectedSessionId",
+    "expectedSide",
+    "expectedSideEpoch",
+    "geometryCaptureMode",
+    "idempotencyKey",
+  ]);
+  assert.equal("manualGeometryRect" in body, false);
+  assert.equal("confirmations" in body, false);
+  assert.equal("acceptedProfile" in body, false);
+
+  let calls = 0;
+  const result = await runAiGraderAtomicCapture({
+    baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+    stationToken: "station-token",
+    assertion,
+    attempt: firstAttempt,
+  }, async (input, init) => {
+    calls += 1;
+    assert.equal(String(input), DEFAULT_AI_GRADER_STATION_BRIDGE_URL + "/actions/capture-front");
+    assert.deepEqual(JSON.parse(String(init?.body)), body);
+    return new Response(JSON.stringify({
+      ok: true,
+      result: buildAiGraderLocalStationStatus({ action: "capture-front" }),
+    }), { status: 200 });
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.currentStep, "prompt_flip_card");
 });
 
 test("Station atomic helper performs one capture mutation and keeps manual mode assertion-only", async () => {
