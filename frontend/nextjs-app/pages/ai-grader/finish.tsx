@@ -41,7 +41,7 @@ type FinishQueueItem = {
   labelPreviewUrl?: string | null;
   qrPayloadUrl?: string | null;
   nfcRequired?: boolean;
-  nfcStatus?: "missing" | "reserved" | "programming" | "verified" | "active" | "revoked" | "error";
+  nfcStatus?: "missing" | "reserved" | "programming" | "verified" | "active" | "revoked" | "unavailable" | "error";
   nfcTagUrl?: string | null;
   publicTagId?: string | null;
   chipType?: string | null;
@@ -224,6 +224,8 @@ function nfcStatusLabel(item: FinishQueueItem) {
           ? "Reserved"
           : item.nfcStatus === "revoked"
             ? "Revoked"
+            : item.nfcStatus === "unavailable"
+              ? "Unavailable"
             : item.nfcStatus === "error"
               ? "Error"
               : "Missing";

@@ -9,10 +9,12 @@ import {
 type Props = { tap: AiGraderNfcPublicTapData };
 
 export const getServerSideProps: GetServerSideProps<Props> = async (context) => {
+  context.res.setHeader("Cache-Control", "no-store");
   const publicTagId = Array.isArray(context.params?.publicTagId)
     ? context.params?.publicTagId[0]
     : context.params?.publicTagId;
   const tap = await readAiGraderNfcPublicTap(typeof publicTagId === "string" ? publicTagId : "");
+  if (tap.state === "unavailable") context.res.statusCode = 503;
   return {
     props: { tap },
   };
@@ -22,6 +24,8 @@ export default function AiGraderNfcTapPage({ tap }: Props) {
   const active = tap.state === "active" ? tap : null;
   const title = active
     ? "Registered Ten Kings NFC link"
+    : tap.state === "unavailable"
+      ? "NFC link temporarily unavailable"
     : tap.state === "revoked"
       ? "NFC link revoked"
       : "NFC link not valid";
@@ -53,6 +57,8 @@ export default function AiGraderNfcTapPage({ tap }: Props) {
             <p className="lead">
               {tap.state === "revoked"
                 ? "This Ten Kings NFC link has been revoked and no longer resolves to a valid report registration."
+                : tap.state === "unavailable"
+                  ? "Ten Kings NFC registration lookup is temporarily unavailable. Please try again later."
                 : "This NFC link is not an active Ten Kings report registration."}
             </p>
           )}

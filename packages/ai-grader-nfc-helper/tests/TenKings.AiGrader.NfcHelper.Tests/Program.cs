@@ -15,6 +15,7 @@ const string OtherChallenge = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 
 var tests = new (string Name, Func<Task> Run)[]
 {
+    ("hardware-free staged build verification", TestBuildVerification),
     ("operational attestation canonical signing and tamper", TestAttestation),
     ("NDEF URI/TLV and URL digest", TestNdef),
     ("NTAG215 CC and APDU safety", TestLayoutAndCommands),
@@ -45,6 +46,19 @@ foreach (var test in tests)
 }
 Console.WriteLine($"{tests.Length - failed}/{tests.Length} NFC helper test groups passed");
 return failed == 0 ? 0 : 1;
+
+static Task TestBuildVerification()
+{
+    var result = NfcBuildVerification.Verify();
+    True(result.Ok);
+    Equal(NfcProtocol.HelperVersion, result.HelperVersion);
+    Equal(NfcProtocol.ProtocolVersion, result.HelperProtocolVersion);
+    Equal(NfcProtocol.AttestationSchemaVersion, result.AttestationSchemaVersion);
+    Equal(NfcProtocol.AttestationAlgorithm, result.AttestationAlgorithm);
+    False(result.HardwareAccessed);
+    False(result.ProductionKeyAccessed);
+    return Task.CompletedTask;
+}
 
 static Task TestAttestation()
 {
@@ -667,14 +681,49 @@ static Task TestProvisioningContracts()
     var common = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "ai-grader-nfc-helper-common.ps1"));
     var start = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "start-ai-grader-nfc-helper.ps1"));
     var export = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "export-ai-grader-nfc-workstation-public-key.ps1"));
+    var update = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "update-ai-grader-nfc-helper.ps1"));
+    var rotate = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "rotate-ai-grader-nfc-helper-token.ps1"));
     True(install.Contains("--ensure-workstation-attestation-key", StringComparison.Ordinal));
     True(common.Contains("workstationKeyName", StringComparison.Ordinal));
     True(common.Contains("workstationKeyId", StringComparison.Ordinal));
     True(start.Contains("TENKINGS_NFC_WORKSTATION_KEY_NAME", StringComparison.Ordinal));
     True(start.Contains("TENKINGS_NFC_WORKSTATION_KEY_ID", StringComparison.Ordinal));
     True(export.Contains("--export-workstation-attestation-public-key", StringComparison.Ordinal));
+    True(update.Contains("Invoke-NfcWithWorkstationKeyEnvironment", StringComparison.Ordinal));
+    True(export.Contains("Invoke-NfcWithWorkstationKeyEnvironment", StringComparison.Ordinal));
+    False(update.Contains(@"Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY", StringComparison.Ordinal));
+    False(export.Contains(@"Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY", StringComparison.Ordinal));
+    True(common.Contains("GetEnvironmentVariable", StringComparison.Ordinal));
+    True(common.Contains("SetEnvironmentVariable", StringComparison.Ordinal));
     False(install.Contains("attestation-key --rotate", StringComparison.OrdinalIgnoreCase));
     False(export.Contains("private", StringComparison.OrdinalIgnoreCase));
+    var publishIndex = update.IndexOf("& dotnet publish", StringComparison.Ordinal);
+    var stagedVerifyIndex = update.IndexOf("Invoke-NfcBuildVerification -DllPath $stagedDll", StringComparison.Ordinal);
+    var preStopMarkerIndex = update.IndexOf("Everything above is hardware-free", StringComparison.Ordinal);
+    var stopIndex = update.IndexOf("Stop-NfcUpdateProcess -Config $config", preStopMarkerIndex, StringComparison.Ordinal);
+    True(publishIndex >= 0 && publishIndex < stagedVerifyIndex && stagedVerifyIndex < preStopMarkerIndex && preStopMarkerIndex < stopIndex);
+    True(update.Contains("Get-NfcPreservedStateSnapshot", StringComparison.Ordinal));
+    True(update.Contains("Assert-NfcPreservedState", StringComparison.Ordinal));
+    True(update.Contains("Invoke-NfcInstallDirectoryReplacement", StringComparison.Ordinal));
+    True(update.Contains("Copy-NfcStableMaintenancePayload", StringComparison.Ordinal));
+    True(update.Contains("--export-workstation-attestation-public-key", StringComparison.Ordinal));
+    False(update.Contains("Initialize-NfcConfig", StringComparison.Ordinal));
+    False(update.Contains("--ensure-workstation-attestation-key", StringComparison.Ordinal));
+    False(update.Contains("RotateToken", StringComparison.Ordinal));
+    False(update.Contains("RotatePairingCode", StringComparison.Ordinal));
+    False(update.Contains("capture-helper", StringComparison.OrdinalIgnoreCase));
+    True(install.Contains("Use update-ai-grader-nfc-helper.ps1", StringComparison.Ordinal));
+    False(install.Contains("-RotatePairingCode", StringComparison.Ordinal));
+    True(install.Contains("newly created files/config/task/shortcut were removed", StringComparison.Ordinal));
+    True(install.Contains("CNG key, if created, was preserved", StringComparison.Ordinal));
+    True(install.Contains("$script:NfcStableStartScript", StringComparison.Ordinal));
+    True(install.Contains("$script:NfcStableOpenScript", StringComparison.Ordinal));
+    True(rotate.Contains("-not $RotateToken -and -not $RotatePairingCode", StringComparison.Ordinal));
+    True(common.Contains("Assert-NfcPathWithinRoot", StringComparison.Ordinal));
+    True(common.Contains("Assert-NfcProtectedAcl", StringComparison.Ordinal));
+    True(common.Contains("Copy-NfcStableMaintenancePayload", StringComparison.Ordinal));
+    True(common.Contains("Assert-NfcScheduledTaskDefinition", StringComparison.Ordinal));
+    True(common.Contains("the prior working install was restored", StringComparison.Ordinal));
 
     var publicOnly = JsonSerializer.Serialize(
         new WorkstationPublicKeyExport(new string('a', 64), NfcProtocol.AttestationAlgorithm, "public-spki-only"),

@@ -86,6 +86,15 @@ public sealed record WorkstationPublicKeyExport(
     string Algorithm,
     string PublicSpkiDerBase64);
 
+public sealed record NfcBuildVerificationResult(
+    bool Ok,
+    string HelperVersion,
+    string HelperProtocolVersion,
+    string AttestationSchemaVersion,
+    string AttestationAlgorithm,
+    bool HardwareAccessed,
+    bool ProductionKeyAccessed);
+
 public sealed record PairRequest(string PairingCode);
 
 public sealed record PairResponse(
@@ -132,6 +141,7 @@ public sealed class NfcHelperException : Exception
 [JsonSerializable(typeof(NfcOperationalAttestation))]
 [JsonSerializable(typeof(WorkstationKeyMetadata))]
 [JsonSerializable(typeof(WorkstationPublicKeyExport))]
+[JsonSerializable(typeof(NfcBuildVerificationResult))]
 [JsonSerializable(typeof(ApiEnvelope<PairResponse>))]
 [JsonSerializable(typeof(ApiEnvelope<HelperStatusResponse>))]
 [JsonSerializable(typeof(ApiEnvelope<NfcReadResponse>))]

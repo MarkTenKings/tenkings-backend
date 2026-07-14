@@ -15,15 +15,16 @@ if ($null -eq $config) { throw "Install the dedicated NFC helper before exportin
 $dll = Join-Path ([string]$config.installDirectory) "TenKings.AiGrader.NfcHelper.dll"
 if (-not (Test-Path -LiteralPath $dll)) { throw "The published NFC helper is missing." }
 
-$env:TENKINGS_NFC_WORKSTATION_KEY_NAME = [string]$config.workstationKeyName
-$env:TENKINGS_NFC_WORKSTATION_KEY_ID = [string]$config.workstationKeyId
-try {
-  $keyOutput = @(& dotnet $dll --export-workstation-attestation-public-key)
-  if ($LASTEXITCODE -ne 0) { throw "The named NFC workstation public key could not be exported." }
-} finally {
-  Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY_NAME -ErrorAction SilentlyContinue
-  Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY_ID -ErrorAction SilentlyContinue
-}
+$keyOutput = @(Invoke-NfcWithWorkstationKeyEnvironment `
+  -KeyName ([string]$config.workstationKeyName) `
+  -KeyId ([string]$config.workstationKeyId) `
+  -ArgumentList @($dll) `
+  -Action {
+    param($candidateDll)
+    $result = @(& dotnet $candidateDll --export-workstation-attestation-public-key)
+    if ($LASTEXITCODE -ne 0) { throw "The named NFC workstation public key could not be exported." }
+    return $result
+  })
 
 $exported = ($keyOutput -join [Environment]::NewLine) | ConvertFrom-Json
 if ([string]$exported.keyId -cne [string]$config.workstationKeyId -or

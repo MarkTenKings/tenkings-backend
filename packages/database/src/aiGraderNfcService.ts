@@ -7,6 +7,7 @@ import {
   verify as verifySignature,
   type KeyObject,
 } from "crypto";
+import { Prisma } from "@prisma/client";
 import { prisma as defaultPrisma } from "./client";
 import {
   canonicalAiGraderPublishAuthorityJson,
@@ -745,7 +746,12 @@ async function loadConfirmAuthority(
 
 async function acquireReportLock(tx: DbClient, reportId: string) {
   if (typeof tx.$queryRaw !== "function") throw nfcError("AI_GRADER_NFC_LOCK_UNAVAILABLE", 503, "NFC report lifecycle locking is unavailable.");
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${reportId}))`;
+  // Prisma 5 cannot deserialize PostgreSQL's `void` lock result. Selecting a
+  // constant from the locking function preserves transaction-scoped blocking.
+  await tx.$queryRaw`
+    SELECT 1 AS "lockAcquired"
+    FROM pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${reportId}))
+  `;
 }
 async function transaction<T>(db: DbClient, callback: (tx: DbClient) => Promise<T>) {
   if (!db || typeof db.$transaction !== "function") throw nfcError("AI_GRADER_NFC_TRANSACTION_UNAVAILABLE", 503, "NFC transaction service is unavailable.");
@@ -794,7 +800,7 @@ async function expireTimedOutAttemptsTx(
         failureCode: "AI_GRADER_NFC_ATTEMPT_EXPIRED",
         completionIdempotencyKeyHash: null,
         completedWorkstationKeyId: null,
-        readbackEvidence: null,
+        readbackEvidence: Prisma.DbNull,
         consumedAt: null,
         updatedAt: input.now,
       },

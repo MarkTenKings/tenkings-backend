@@ -2599,6 +2599,7 @@ test("production auth-check verifies current bearer session against AI Grader op
       effectiveAiGraderModel: "gpt-5.6-sol",
       ebayCompsEnabled: false,
       serpApiConfigured: false,
+      nfcSchemaReady: false,
       nfcProgrammingEnabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: false,

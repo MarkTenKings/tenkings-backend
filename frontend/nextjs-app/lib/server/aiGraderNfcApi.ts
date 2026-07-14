@@ -35,6 +35,7 @@ export type AiGraderNfcApiDependencies = AiGraderProductionAuthDependencies & {
   now?: () => number;
   disableRateLimitForTests?: boolean;
   readiness?: (env: EnvLike, tenantId: string) => AiGraderNfcProgrammingReadiness;
+  schemaReadiness?: () => Promise<boolean>;
   init(input: NfcRuntimeInput & {
     reportId: string;
     idempotencyKey: string;
@@ -58,6 +59,14 @@ export type AiGraderNfcApiDependencies = AiGraderProductionAuthDependencies & {
     operationalAttestation: OperationalAttestationInput;
   }): Promise<unknown>;
   status(input: NfcRuntimeInput & { reportId: string }): Promise<unknown>;
+  publishedLinkage(input: NfcRuntimeInput & { reportId: string }): Promise<{
+    reportId: string;
+    cardAssetId: string;
+    itemId: string;
+    certId: string;
+    cardTitle?: string;
+    cardSet?: string;
+  }>;
   revoke(input: NfcRuntimeInput & { reportId: string; reason: string; idempotencyKey: string }): Promise<unknown>;
   replace(input: NfcRuntimeInput & {
     reportId: string;
@@ -190,12 +199,28 @@ function humanActor(actor: AiGraderProductionActor, adminOnly: boolean) {
 }
 
 function requireProgrammingReady(readiness: AiGraderNfcProgrammingReadiness) {
+  requireSchemaReady(readiness);
   if (!readiness.nfcProgrammingEnabled) {
     throw nfcApiError(503, "AI_GRADER_NFC_PROGRAMMING_DISABLED", "NFC programming is disabled by server policy.");
   }
   if (!readiness.nfcAttemptTokenConfigured || !readiness.nfcWorkstationAttestationConfigured || readiness.nfcWorkstationKeyCount < 1) {
     throw nfcApiError(503, "AI_GRADER_NFC_PROGRAMMING_NOT_CONFIGURED", "NFC programming is not fully configured.");
   }
+}
+
+function requireSchemaReady(readiness: AiGraderNfcProgrammingReadiness) {
+  if (!readiness.nfcSchemaReady) {
+    throw nfcApiError(
+      503,
+      "AI_GRADER_NFC_SCHEMA_UNAVAILABLE",
+      "NFC persistence is unavailable until the approved database migration is applied.",
+    );
+  }
+}
+
+async function defaultSchemaReadiness() {
+  const { prisma, readCachedAiGraderNfcSchemaReadiness } = await import("@tenkings/database");
+  return (await readCachedAiGraderNfcSchemaReadiness(prisma as any)).ready;
 }
 
 function enforceRateLimit(actorUserId: string, action: string, req: NextApiRequest, deps: AiGraderNfcApiDependencies) {
@@ -266,7 +291,20 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
         action === "revoke" || action === "replace",
       );
       enforceRateLimit(actor.user.id, action, req, deps);
-      const readiness = (deps.readiness ?? aiGraderNfcProgrammingReadiness)(env, tenantId);
+      let nfcSchemaReady: boolean;
+      try {
+        nfcSchemaReady = await (deps.schemaReadiness ?? defaultSchemaReadiness)();
+      } catch {
+        throw nfcApiError(
+          503,
+          "AI_GRADER_NFC_SCHEMA_CHECK_FAILED",
+          "NFC persistence readiness could not be verified. No NFC state was changed.",
+        );
+      }
+      const readiness = {
+        ...(deps.readiness ?? aiGraderNfcProgrammingReadiness)(env, tenantId),
+        nfcSchemaReady,
+      };
       const common: NfcRuntimeInput = {
         tenantId,
         actorUserId: actor.user.id,
@@ -275,7 +313,15 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
 
       if (action === "status") {
         if (req.method !== "GET") throw nfcApiError(405, "AI_GRADER_NFC_METHOD_NOT_ALLOWED", "GET is required.");
-        const result = await deps.status({ ...common, reportId: reportId(req.query.reportId) });
+        const requestedReportId = reportId(req.query.reportId);
+        const result = nfcSchemaReady
+          ? await deps.status({ ...common, reportId: requestedReportId })
+          : {
+              ...(await deps.publishedLinkage({ ...common, reportId: requestedReportId })),
+              status: "unavailable",
+              registrationKind: "not_active",
+              cryptographicallyVerified: false,
+            };
         return res.status(200).json({
           ok: true,
           operation: "aiGraderNfcStatus",
@@ -344,6 +390,7 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
       }
 
       if (action === "revoke") {
+        requireSchemaReady(readiness);
         const result = await deps.revoke({
           ...common,
           reportId: reportId(body.reportId),

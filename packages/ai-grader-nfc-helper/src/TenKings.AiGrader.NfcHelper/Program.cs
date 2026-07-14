@@ -16,6 +16,8 @@ internal static class Program
                 return RunEnsureWorkstationAttestationKey();
             if (args is ["--export-workstation-attestation-public-key"])
                 return RunExportWorkstationAttestationPublicKey();
+            if (args is ["--verify-build"])
+                return RunVerifyBuild();
 
             var backendName = ResolveBackend(args);
             INfcReaderBackend backend = backendName switch
@@ -98,6 +100,13 @@ internal static class Program
         var expectedKeyId = Environment.GetEnvironmentVariable("TENKINGS_NFC_WORKSTATION_KEY_ID")?.Trim() ?? string.Empty;
         var keyName = Environment.GetEnvironmentVariable("TENKINGS_NFC_WORKSTATION_KEY_NAME")?.Trim() ?? string.Empty;
         return WindowsCngWorkstationAttestationSigner.Open(keyName, expectedKeyId);
+    }
+
+    private static int RunVerifyBuild()
+    {
+        var result = NfcBuildVerification.Verify();
+        Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.NfcBuildVerificationResult));
+        return 0;
     }
 
     private static string ResolveBackend(string[] args)

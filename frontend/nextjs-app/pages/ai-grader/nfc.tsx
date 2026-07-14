@@ -24,7 +24,7 @@ type JsonRecord = Record<string, unknown>;
 type Phase = "loading" | "disabled" | "ready" | "recovering" | "writing" | "verifying" | "overwrite" | "active" | "error";
 
 type HostedStatus = {
-  status: "missing" | "reserved" | "programming" | "verified" | "active" | "revoked" | "error";
+  status: "missing" | "reserved" | "programming" | "verified" | "active" | "revoked" | "unavailable" | "error";
   reportId: string;
   cardAssetId?: string | null;
   itemId?: string | null;
@@ -36,6 +36,7 @@ type HostedStatus = {
   chipType?: "NTAG215" | null;
   securityMode?: "static_url_v1" | "ntag424_sun_v1" | null;
   registrationSemantics?: "registered_link" | "cryptographically_verified" | null;
+  nfcSchemaReady: boolean;
   nfcProgrammingEnabled: boolean;
   nfcRequired: boolean;
   nfcAttemptTokenConfigured: boolean;
@@ -170,7 +171,8 @@ export default function AiGraderNfcProgrammingPage() {
   const [revocationRequest, setRevocationRequest] = useState<AdminMutationRequest | null>(null);
   const [reason, setReason] = useState("");
   const programmingReady = Boolean(
-    hosted?.nfcProgrammingEnabled &&
+    hosted?.nfcSchemaReady &&
+    hosted.nfcProgrammingEnabled &&
     hosted.nfcAttemptTokenConfigured &&
     hosted.nfcWorkstationAttestationConfigured &&
     hosted.nfcWorkstationKeyCount > 0,
@@ -214,6 +216,12 @@ export default function AiGraderNfcProgrammingPage() {
     if (!reportId) return;
     const result = (await hostedRequest("status")) as HostedStatus;
     setHosted(result);
+    if (!result.nfcSchemaReady) {
+      setHelper(null);
+      setPhase("disabled");
+      setMessage("NFC persistence is unavailable until the approved database migration is applied.");
+      return;
+    }
     if (!result.cardAssetId || !result.itemId || !result.certId) {
       setHelper(null);
       setPhase("error");
@@ -524,6 +532,7 @@ export default function AiGraderNfcProgrammingPage() {
   };
 
   const retryCurrentAttempt = async () => {
+    if (writeRecovery === "not_retryable") return;
     try {
       if (!hosted?.nfcProgrammingEnabled) throw new Error("NFC programming is disabled by server policy.");
       if (!programmingReady) throw new Error("NFC programming is not fully configured.");
@@ -569,6 +578,12 @@ export default function AiGraderNfcProgrammingPage() {
   };
 
   const busy = phase === "writing" || phase === "verifying" || phase === "recovering" || phase === "loading";
+  const canRetryCurrentAttempt =
+    !pending &&
+    programmingReady &&
+    (reservation !== null || storedAttemptAvailable) &&
+    (phase === "error" || phase === "ready") &&
+    writeRecovery !== "not_retryable";
 
   return (
     <>
@@ -594,6 +609,7 @@ export default function AiGraderNfcProgrammingPage() {
               <dt>NFC state</dt><dd>{hosted?.status ?? "Loading"}</dd>
               <dt>Chip / mode</dt><dd>{hosted?.chipType ? `${hosted.chipType} / ${hosted.securityMode}` : "NTAG215 / static_url_v1"}</dd>
               <dt>Security meaning</dt><dd>Registered link - not cryptographic authentication</dd>
+              <dt>Database schema</dt><dd>{hosted?.nfcSchemaReady ? "Ready" : "Unavailable"}</dd>
               <dt>Programming policy</dt><dd>{hosted?.nfcProgrammingEnabled ? "Enabled" : "Disabled"}</dd>
               <dt>Inventory policy</dt><dd>{hosted?.nfcRequired ? "NFC required" : "NFC not required"}</dd>
               <dt>Workstation trust</dt><dd>{hosted?.nfcWorkstationAttestationConfigured ? `${hosted.nfcWorkstationKeyCount} approved key${hosted.nfcWorkstationKeyCount === 1 ? "" : "s"}` : "Not configured"}</dd>
@@ -655,7 +671,7 @@ export default function AiGraderNfcProgrammingPage() {
           <button type="button" className="secondary retry" onClick={() => void retryHostedVerification()}>Retry hosted verification</button>
         ) : null}
 
-        {!pending && programmingReady && (reservation || storedAttemptAvailable) && (phase === "error" || phase === "ready") ? (
+        {canRetryCurrentAttempt ? (
           <button type="button" className="secondary retry" onClick={() => void retryCurrentAttempt()}>Retry Current Attempt</button>
         ) : null}
 

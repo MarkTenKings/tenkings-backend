@@ -15,7 +15,7 @@ export type AiGraderNfcPublicTapData =
       cardSet?: string;
       grade?: number;
     }
-  | { state: "revoked" | "not_valid" };
+  | { state: "revoked" | "not_valid" | "contradictory_linkage" | "unavailable" };
 
 type PublicNfcDb = {
   aiGraderNfcTag?: {
@@ -50,12 +50,25 @@ export function buildAiGraderNfcPublicTagUrl(publicTagId: string) {
 
 export async function readAiGraderNfcPublicTap(
   publicTagId: string,
-  options: { dbClient?: PublicNfcDb } = {},
+  options: { dbClient?: PublicNfcDb; schemaReadiness?: () => Promise<boolean> } = {},
 ): Promise<AiGraderNfcPublicTapData> {
   if (!isValidAiGraderNfcPublicTagId(publicTagId)) return { state: "not_valid" };
 
-  const db = options.dbClient ?? ((await import("@tenkings/database")).prisma as unknown as PublicNfcDb);
-  const row = await db.aiGraderNfcTag?.findUnique({
+  const database = await import("@tenkings/database");
+  const db = options.dbClient ?? (database.prisma as unknown as PublicNfcDb);
+  try {
+    const schemaReady = options.schemaReadiness
+      ? await options.schemaReadiness()
+      : options.dbClient
+        ? true
+        : (await database.readCachedAiGraderNfcSchemaReadiness(database.prisma as any)).ready;
+    if (!schemaReady) return { state: "unavailable" };
+  } catch {
+    return { state: "unavailable" };
+  }
+  let row: unknown;
+  try {
+    row = await db.aiGraderNfcTag?.findUnique({
     where: { publicTagId },
     select: {
       id: true,
@@ -95,34 +108,41 @@ export async function readAiGraderNfcPublicTap(
         },
       },
     },
-  });
+    });
+  } catch {
+    // The public boundary must not disclose database/schema internals. A
+    // failed read is unavailable, never a false invalid-registration claim.
+    return { state: "unavailable" };
+  }
   if (!isRecord(row)) return { state: "not_valid" };
   if (text(row.status)?.toLowerCase() === "revoked") return { state: "revoked" };
 
   const report = isRecord(row.report) ? row.report : undefined;
   const item = isRecord(row.item) ? row.item : undefined;
   const label = isRecord(row.label) ? row.label : undefined;
-  const linked =
+  const activeRegistrationShape =
     text(row.status)?.toLowerCase() === "active" &&
     !row.revokedAt &&
     row.chipType === "NTAG215" &&
-    text(row.securityMode)?.toLowerCase() === "static_url_v1" &&
-    report?.publicationStatus === "published" &&
-    report.visibilityStatus === "public" &&
+    text(row.securityMode)?.toLowerCase() === "static_url_v1";
+  if (!activeRegistrationShape) return { state: "not_valid" };
+  const exactLinkage =
     text(row.publicTagId) === publicTagId &&
-    text(row.aiGraderReportId) === text(report.id) &&
-    text(row.reportId) === text(report.reportId) &&
-    text(row.cardAssetId) === text(report.cardAssetId) &&
-    text(row.itemId) === text(report.itemId) &&
+    text(row.aiGraderReportId) === text(report?.id) &&
+    text(row.reportId) === text(report?.reportId) &&
+    text(row.cardAssetId) === text(report?.cardAssetId) &&
+    text(row.itemId) === text(report?.itemId) &&
     text(row.itemId) === text(item?.id) &&
     text(row.aiGraderLabelId) === text(label?.id) &&
     text(row.certId) === text(label?.certId);
+  if (!exactLinkage) return { state: "contradictory_linkage" };
+  const publiclyPublished = report?.publicationStatus === "published" && report?.visibilityStatus === "public";
   const reportId = text(report?.reportId);
   const certId = text(label?.certId);
   const cardTitle = text(item?.name);
-  if (!linked || !reportId || !certId || !cardTitle) return { state: "not_valid" };
+  if (!publiclyPublished || !reportId || !certId || !cardTitle) return { state: "not_valid" };
 
-  const grade = typeof report.finalOverallGrade === "number" && Number.isFinite(report.finalOverallGrade)
+  const grade = typeof report?.finalOverallGrade === "number" && Number.isFinite(report.finalOverallGrade)
     ? report.finalOverallGrade
     : undefined;
   return {
@@ -143,14 +163,27 @@ export async function readAiGraderNfcPublicTap(
 
 export async function readAiGraderPublicNfcRegistration(
   reportId: string,
-  options: { dbClient?: PublicNfcDb } = {},
+  options: { dbClient?: PublicNfcDb; schemaReadiness?: () => Promise<boolean> } = {},
 ): Promise<AiGraderPublicNfcRegistration | null> {
   if (!reportId || reportId.length > 200) return null;
-  const db = options.dbClient ?? ((await import("@tenkings/database")).prisma as unknown as PublicNfcDb);
-  const match = await db.aiGraderNfcTag?.findFirst({
-    where: { reportId, status: "active" },
-    select: { publicTagId: true },
-  });
+  const database = await import("@tenkings/database");
+  const db = options.dbClient ?? (database.prisma as unknown as PublicNfcDb);
+  const schemaReady = options.schemaReadiness
+    ? await options.schemaReadiness()
+    : options.dbClient
+      ? true
+      : (await database.readCachedAiGraderNfcSchemaReadiness(database.prisma as any)).ready;
+  if (!schemaReady) return null;
+  let match: unknown;
+  try {
+    match = await db.aiGraderNfcTag?.findFirst({
+      where: { reportId, status: "active" },
+      select: { publicTagId: true },
+    });
+  } catch (error) {
+    if (database.isAiGraderNfcSchemaMissingError(error)) return null;
+    throw error;
+  }
   const publicTagId = isRecord(match) ? text(match.publicTagId) : undefined;
   if (!publicTagId) return null;
   const tap = await readAiGraderNfcPublicTap(publicTagId, { dbClient: db });

@@ -3168,7 +3168,7 @@ model AiGraderNfcProgrammingAttempt {
   updatedAt              DateTime                                @updatedAt
   auditEvents            AiGraderNfcAuditEvent[]
 
-  @@unique([tenantId, requestedByUserId, idempotencyKeyHash])
+  @@unique([tenantId, requestedByUserId, idempotencyKeyHash], map: "AiGraderNfcAttempt_request_idempotency_key")
   @@index([tagId, state, expiresAt])
   @@index([tenantId, reportId, state])
 }

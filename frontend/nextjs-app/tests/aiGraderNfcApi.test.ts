@@ -53,7 +53,9 @@ function deps(overrides: Partial<AiGraderNfcApiDependencies> = {}) {
       AI_GRADER_OPERATOR_USER_IDS: "operator-1",
     },
     disableRateLimitForTests: true,
+    schemaReadiness: async () => true,
     readiness: () => ({
+      nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
       nfcRequired: false,
       nfcAttemptTokenConfigured: true,
@@ -68,6 +70,13 @@ function deps(overrides: Partial<AiGraderNfcApiDependencies> = {}) {
     }),
     init: operation("init") as AiGraderNfcApiDependencies["init"],
     complete: operation("complete") as AiGraderNfcApiDependencies["complete"],
+    publishedLinkage: async ({ reportId }) => ({
+      reportId,
+      cardAssetId: "card-1",
+      itemId: "item-1",
+      certId: "cert-1",
+      cardTitle: "Published Card",
+    }),
     status: operation("status") as AiGraderNfcApiDependencies["status"],
     revoke: operation("revoke") as AiGraderNfcApiDependencies["revoke"],
     replace: operation("replace") as AiGraderNfcApiDependencies["replace"],
@@ -88,6 +97,7 @@ test("NFC status uses explicit human NFC scope and returns only the runtime safe
     operation: "aiGraderNfcStatus",
     result: {
       status: "missing",
+      nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
       nfcRequired: false,
       nfcAttemptTokenConfigured: true,
@@ -382,6 +392,7 @@ test("NFC service accounts fail closed for programming and administration even w
 test("NFC programming flag is independent, status/revoke stay available, and readiness is redacted", async () => {
   const disabled = deps({
     readiness: () => ({
+      nfcSchemaReady: true,
       nfcProgrammingEnabled: false,
       nfcRequired: true,
       nfcAttemptTokenConfigured: false,
@@ -428,6 +439,7 @@ test("NFC programming flag is independent, status/revoke stay available, and rea
 
   const misconfigured = deps({
     readiness: () => ({
+      nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
       nfcRequired: false,
       nfcAttemptTokenConfigured: false,
@@ -443,4 +455,101 @@ test("NFC programming flag is independent, status/revoke stay available, and rea
   }), missingOutput.res);
   assert.equal(missingOutput.read().statusCode, 503);
   assert.equal((missingOutput.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_PROGRAMMING_NOT_CONFIGURED");
+});
+
+test("NFC schema absence is redacted, status remains available, and every mutation fails with the stable gate", async () => {
+  const runtime = deps({ schemaReadiness: async () => false });
+  const statusOutput = response();
+  await createAiGraderNfcApiHandler(runtime.value)(
+    request({ method: "GET", action: "status", query: { reportId: "report-1" } }),
+    statusOutput.res,
+  );
+  assert.equal(statusOutput.read().statusCode, 200);
+  assert.deepEqual((statusOutput.read().payload as { result: Record<string, unknown> }).result, {
+    status: "unavailable",
+    reportId: "report-1",
+    cardAssetId: "card-1",
+    itemId: "item-1",
+    certId: "cert-1",
+    cardTitle: "Published Card",
+    registrationKind: "not_active",
+    cryptographicallyVerified: false,
+    nfcSchemaReady: false,
+    nfcProgrammingEnabled: true,
+    nfcRequired: false,
+    nfcAttemptTokenConfigured: true,
+    nfcWorkstationAttestationConfigured: true,
+    nfcWorkstationKeyCount: 1,
+    expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+    canProgram: true,
+    canAdmin: false,
+  });
+  assert.equal(runtime.calls.length, 0);
+
+  const initOutput = response();
+  await createAiGraderNfcApiHandler(runtime.value)(request({
+    action: "init",
+    body: { reportId: "report-1", idempotencyKey: "program-report-1" },
+  }), initOutput.res);
+  assert.equal(initOutput.read().statusCode, 503);
+  assert.equal((initOutput.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_SCHEMA_UNAVAILABLE");
+  assert.equal(runtime.calls.length, 0);
+
+  const admin = deps({
+    schemaReadiness: async () => false,
+    env: { AI_GRADER_PRODUCTION_TENANT_ID: "ten-kings", AI_GRADER_ADMIN_USER_IDS: "admin-1" },
+    requireUserSession: async () => ({
+      id: "session-admin",
+      tokenHash: "redacted-session-hash",
+      user: { id: "admin-1", phone: null, displayName: "Admin", avatarUrl: null },
+    }),
+  });
+  const revokeOutput = response();
+  await createAiGraderNfcApiHandler(admin.value)(request({
+    action: "revoke",
+    body: { reportId: "report-1", reason: "Schema unavailable test", idempotencyKey: "revoke-report-1" },
+  }), revokeOutput.res);
+  assert.equal(revokeOutput.read().statusCode, 503);
+  assert.equal((revokeOutput.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_SCHEMA_UNAVAILABLE");
+  assert.equal(admin.calls.length, 0);
+});
+
+test("schema-absent status still requires durable published linkage", async () => {
+  for (const code of [
+    "AI_GRADER_NFC_REPORT_NOT_FOUND",
+    "AI_GRADER_NFC_REPORT_NOT_PUBLISHED",
+    "AI_GRADER_NFC_CONFIRM_AUTHORITY_MISMATCH",
+  ]) {
+    const runtime = deps({
+      schemaReadiness: async () => false,
+      publishedLinkage: async () => {
+        throw Object.assign(new Error("NFC published linkage was rejected."), { statusCode: 409, code });
+      },
+    });
+    const output = response();
+    await createAiGraderNfcApiHandler(runtime.value)(
+      request({ method: "GET", action: "status", query: { reportId: "report-1" } }),
+      output.res,
+    );
+    assert.equal(output.read().statusCode, 409);
+    assert.equal((output.read().payload as Record<string, unknown>).code, code);
+    assert.equal(runtime.calls.length, 0);
+  }
+});
+
+test("unexpected NFC schema-check failures are never mislabeled as an unapplied migration", async () => {
+  const runtime = deps({
+    schemaReadiness: async () => {
+      throw Object.assign(new Error("database connection sentinel"), { code: "P1001" });
+    },
+  });
+  const output = response();
+  await createAiGraderNfcApiHandler(runtime.value)(request({
+    action: "init",
+    body: { reportId: "report-1", idempotencyKey: "program-report-1" },
+  }), output.res);
+  assert.equal(output.read().statusCode, 503);
+  assert.equal((output.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_SCHEMA_CHECK_FAILED");
+  assert.equal(JSON.stringify(output.read().payload).includes("connection sentinel"), false);
+  assert.equal(runtime.calls.length, 0);
 });

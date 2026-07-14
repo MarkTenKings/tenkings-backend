@@ -20,6 +20,11 @@ const {
   replaceAiGraderNfcTag,
   revokeAiGraderNfcTag,
 } = require("../dist/database/src/aiGraderNfcService");
+const {
+  isAiGraderNfcSchemaMissingError,
+  readCachedAiGraderNfcSchemaReadiness,
+  readAiGraderNfcSchemaReadiness,
+} = require("../dist/database/src/aiGraderNfcSchemaReadiness");
 
 const TOKEN_SECRET = "nfc-test-token-secret-32-bytes-minimum-value";
 const NOW = new Date("2026-07-12T20:00:00.000Z");
@@ -68,6 +73,236 @@ const PROGRAMMING_RUNTIME = {
   tokenSecret: TOKEN_SECRET,
   workstationPublicKeysJson: WORKSTATION.json,
 };
+
+test("NFC schema readiness checks every migrated runtime column and exact catalog safety objects", async () => {
+  let sql = "";
+  let queries = 0;
+  const ready = await readAiGraderNfcSchemaReadiness({
+    async $queryRaw(strings) {
+      queries += 1;
+      sql += strings.join("");
+      if (queries === 1) return [{
+        migrationLedgerReady: true,
+        tagTableReady: true,
+        attemptTableReady: true,
+        auditTableReady: true,
+      }];
+      return [{ ready: true }];
+    },
+  });
+  assert.deepEqual(ready, { ready: true });
+  assert.equal(queries, 2);
+  const expectedColumns = {
+    AiGraderNfcTag: [
+      "id", "tenantId", "publicTagId", "chipType", "securityMode", "status",
+      "uidFingerprintSha256", "ndefPayloadVersion", "expectedPayloadSha256",
+      "readbackPayloadSha256", "aiGraderReportId", "reportId", "cardAssetId",
+      "itemId", "aiGraderLabelId", "certId", "createdByUserId",
+      "programmedByUserId", "verifiedByUserId", "activatedByUserId",
+      "revokedByUserId", "programmedAt", "verifiedAt", "activatedAt",
+      "revokedAt", "revocationReason", "errorCode", "metadata", "createdAt", "updatedAt",
+    ],
+    AiGraderNfcProgrammingAttempt: [
+      "id", "tagId", "tenantId", "reportId", "cardAssetId", "itemId", "certId",
+      "requestedByUserId", "idempotencyKeyHash", "completionIdempotencyKeyHash",
+      "tokenHash", "attestationChallengeHash", "expectedAttestationAlgorithm",
+      "completedWorkstationKeyId", "state", "requestedAt", "expiresAt", "failureCode",
+      "readbackEvidence", "consumedAt", "createdAt", "updatedAt",
+    ],
+    AiGraderNfcAuditEvent: [
+      "id", "tagId", "attemptId", "tenantId", "reportId", "action", "fromStatus",
+      "toStatus", "actorUserId", "reasonCode", "safeDetails", "createdAt",
+    ],
+  };
+  for (const [tableName, columnNames] of Object.entries(expectedColumns)) {
+    for (const columnName of columnNames) {
+      assert.equal(sql.includes(`('${tableName}', '${columnName}')`), true, `${tableName}.${columnName}`);
+    }
+  }
+  for (const expected of [
+    "AiGraderNfcTag",
+    "AiGraderNfcProgrammingAttempt",
+    "AiGraderNfcAuditEvent",
+    "attestationChallengeHash",
+    "completedWorkstationKeyId",
+    "readbackEvidence",
+    "20260712160000_ai_grader_nfc_static_url_v1",
+    "AiGraderNfcTag_publicTagId_key",
+    "AiGraderNfcProgrammingAttempt_tokenHash_key",
+    "AiGraderNfcAttempt_request_idempotency_key",
+    "AiGraderNfcTag_one_open_report",
+    "AiGraderNfcTag_one_open_card",
+    "AiGraderNfcTag_one_open_item",
+    "AiGraderNfcTag_one_active_uid",
+    "AiGraderNfcProgrammingAttempt_one_live_per_tag",
+    "AiGraderNfcTag_aiGraderReportId_fkey",
+    "AiGraderNfcAuditEvent_attemptId_fkey",
+    "AiGraderNfcProgrammingAttempt_completion_state",
+    "AiGraderNfcProgrammingAttempt_attestation_evidence",
+    "AiGraderNfcAuditEvent_immutable_update",
+    "AiGraderNfcAuditEvent_immutable_delete",
+    "expected_indexes",
+    "normalizedPredicate",
+    "index_row.indkey",
+    "expected_fks",
+    "sourceColumns",
+    "targetColumns",
+    "confdeltype",
+    "confupdtype",
+    "pg_get_constraintdef",
+    "expected_constraint_fragments",
+    "expected_triggers",
+    "actual_triggers",
+    "trigger_row.tgtype",
+    "trigger_row.tgenabled",
+    "trigger_function.proname",
+    "trigger_function.prosrc",
+  ]) assert.match(sql, new RegExp(expected));
+  for (const exactDefinitionEvidence of [
+    "'AiGraderNfcTag_publicTagId_key', 'AiGraderNfcTag', ARRAY['publicTagId']::text[], NULL::text",
+    "'AiGraderNfcProgrammingAttempt_tokenHash_key', 'AiGraderNfcProgrammingAttempt', ARRAY['tokenHash']::text[], NULL::text",
+    "'AiGraderNfcAttempt_request_idempotency_key', 'AiGraderNfcProgrammingAttempt', ARRAY['tenantId', 'requestedByUserId', 'idempotencyKeyHash']::text[], NULL::text",
+    "ARRAY['tenantId', 'aiGraderReportId']::text[]",
+    "ARRAY['uidFingerprintSha256']::text[]",
+    "status=anyarray[''reserved'',''programming'',''verified'',''active'']",
+    "state=anyarray[''initialized'',''writing'',''verified'']",
+    "'AiGraderNfcTag_aiGraderReportId_fkey', 'AiGraderNfcTag', ARRAY['aiGraderReportId']::text[], 'AiGraderReport', ARRAY['id']::text[], 'r', 'c'",
+    "'AiGraderNfcAuditEvent_attemptId_fkey', 'AiGraderNfcAuditEvent', ARRAY['attemptId']::text[], 'AiGraderNfcProgrammingAttempt', ARRAY['id']::text[], 'r', 'c'",
+    "completionidempotencykeyhashisnotnull",
+    "completionidempotencykeyhashisnull",
+    "readbackevidenceisnullor",
+    "readbackevidence->>''observedat''~''^[0-9]{4}-[0-9]{2}-[0-9]{2}t[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}z$''",
+    "readbackevidence=jsonb_build_object",
+    "cryptographictagauthentication'',false",
+    "workstationoperationalattestation'',true",
+    "'AiGraderNfcAuditEvent_immutable_update', 19, 'reject_ai_grader_nfc_audit_mutation'",
+    "'AiGraderNfcAuditEvent_immutable_delete', 11, 'reject_ai_grader_nfc_audit_mutation'",
+    "beginraiseexception''aigradernfcauditeventrowsareimmutable''end",
+    'actual."normalizedPredicate" IS NOT DISTINCT FROM expected."normalizedPredicate"',
+  ]) assert.equal(sql.includes(exactDefinitionEvidence), true, exactDefinitionEvidence);
+
+  const requiredOrdinaryUniqueIndexDefinitions = [
+    "('AiGraderNfcTag_publicTagId_key', 'AiGraderNfcTag', ARRAY['publicTagId']::text[], NULL::text)",
+    "('AiGraderNfcProgrammingAttempt_tokenHash_key', 'AiGraderNfcProgrammingAttempt', ARRAY['tokenHash']::text[], NULL::text)",
+    "('AiGraderNfcAttempt_request_idempotency_key', 'AiGraderNfcProgrammingAttempt', ARRAY['tenantId', 'requestedByUserId', 'idempotencyKeyHash']::text[], NULL::text)",
+  ];
+  const assertReadinessRequiresOrdinaryUniqueIndexes = (candidateSql) => {
+    for (const requiredDefinition of requiredOrdinaryUniqueIndexDefinitions) {
+      assert.equal(
+        candidateSql.includes(requiredDefinition),
+        true,
+        `${requiredDefinition} must remain schema-readiness required`,
+      );
+    }
+  };
+  assert.doesNotThrow(() => assertReadinessRequiresOrdinaryUniqueIndexes(sql));
+  for (const removedDefinition of requiredOrdinaryUniqueIndexDefinitions) {
+    assert.throws(() => assertReadinessRequiresOrdinaryUniqueIndexes(sql.replace(removedDefinition, "")));
+  }
+
+  let absentQueries = 0;
+  assert.deepEqual(await readAiGraderNfcSchemaReadiness({
+    async $queryRaw() {
+      absentQueries += 1;
+      return [{
+        migrationLedgerReady: false,
+        tagTableReady: false,
+        attemptTableReady: false,
+        auditTableReady: false,
+      }];
+    },
+  }), { ready: false });
+  assert.equal(absentQueries, 1);
+  await assert.rejects(readAiGraderNfcSchemaReadiness({
+    async $queryRaw() { throw Object.assign(new Error("database unavailable"), { code: "P1001" }); },
+  }), /database unavailable/);
+  let detailQueries = 0;
+  await assert.rejects(readAiGraderNfcSchemaReadiness({
+    async $queryRaw() {
+      detailQueries += 1;
+      if (detailQueries === 1) return [{
+        migrationLedgerReady: true,
+        tagTableReady: true,
+        attemptTableReady: true,
+        auditTableReady: true,
+      }];
+      throw Object.assign(new Error("catalog read failed"), { code: "P1001" });
+    },
+  }), /catalog read failed/);
+  assert.equal(detailQueries, 2);
+});
+
+test("NFC schema readiness cache coalesces probes, expires briefly, and never caches failures", async () => {
+  let now = 1_000;
+  let queries = 0;
+  const db = {
+    async $queryRaw() {
+      queries += 1;
+      await Promise.resolve();
+      return queries % 2 === 1
+        ? [{ migrationLedgerReady: true, tagTableReady: true, attemptTableReady: true, auditTableReady: true }]
+        : [{ ready: true }];
+    },
+  };
+  const options = { now: () => now, readyTtlMs: 100, unavailableTtlMs: 20 };
+  const [first, concurrent] = await Promise.all([
+    readCachedAiGraderNfcSchemaReadiness(db, options),
+    readCachedAiGraderNfcSchemaReadiness(db, options),
+  ]);
+  assert.deepEqual(first, { ready: true });
+  assert.deepEqual(concurrent, first);
+  assert.equal(queries, 2);
+  assert.deepEqual(await readCachedAiGraderNfcSchemaReadiness(db, options), first);
+  assert.equal(queries, 2);
+  now += 100;
+  assert.deepEqual(await readCachedAiGraderNfcSchemaReadiness(db, options), first);
+  assert.equal(queries, 4);
+
+  let absentQueries = 0;
+  const absentDb = {
+    async $queryRaw() {
+      absentQueries += 1;
+      return [{ migrationLedgerReady: false, tagTableReady: false, attemptTableReady: false, auditTableReady: false }];
+    },
+  };
+  assert.deepEqual(await readCachedAiGraderNfcSchemaReadiness(absentDb, options), { ready: false });
+  assert.deepEqual(await readCachedAiGraderNfcSchemaReadiness(absentDb, options), { ready: false });
+  assert.equal(absentQueries, 1);
+  now += 20;
+  assert.deepEqual(await readCachedAiGraderNfcSchemaReadiness(absentDb, options), { ready: false });
+  assert.equal(absentQueries, 2);
+
+  let failures = 0;
+  const failedDb = {
+    async $queryRaw() {
+      failures += 1;
+      throw new Error("catalog probe unavailable");
+    },
+  };
+  await assert.rejects(readCachedAiGraderNfcSchemaReadiness(failedDb, options), /catalog probe unavailable/);
+  await assert.rejects(readCachedAiGraderNfcSchemaReadiness(failedDb, options), /catalog probe unavailable/);
+  assert.equal(failures, 2);
+});
+
+test("NFC missing-schema classification never masks unrelated database failures", () => {
+  assert.equal(isAiGraderNfcSchemaMissingError({
+    code: "P2021", meta: { table: "public.AiGraderNfcTag" },
+  }), true);
+  assert.equal(isAiGraderNfcSchemaMissingError({
+    code: "42P01", table: "AiGraderNfcProgrammingAttempt",
+  }), true);
+  assert.equal(isAiGraderNfcSchemaMissingError({
+    code: "P2010",
+    meta: { code: "42P01", message: 'relation "AiGraderNfcAuditEvent" does not exist' },
+  }), true);
+  assert.equal(isAiGraderNfcSchemaMissingError({
+    code: "P2010",
+    meta: { code: "42P01", message: 'relation "Item" does not exist' },
+  }), false);
+  assert.equal(isAiGraderNfcSchemaMissingError({ code: "P2021", meta: { table: "Item" } }), false);
+  assert.equal(isAiGraderNfcSchemaMissingError({ code: "P1001", meta: { table: "AiGraderNfcTag" } }), false);
+  assert.equal(isAiGraderNfcSchemaMissingError(new Error("relation AiGraderNfcTag does not exist")), false);
+});
 
 function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");

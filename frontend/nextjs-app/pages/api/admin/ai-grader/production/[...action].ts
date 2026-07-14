@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { prisma, readCachedAiGraderNfcSchemaReadiness } from "@tenkings/database";
 import {
   getS3ObjectAcl,
   headStorageObject,
@@ -43,6 +44,7 @@ export const config = {
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const runtime = createAiGraderProductionApiHandler({
+    nfcSchemaReadiness: async () => (await readCachedAiGraderNfcSchemaReadiness(prisma as any)).ready,
     requireAdminSession,
     requireUserSession,
     publicUrlFor,

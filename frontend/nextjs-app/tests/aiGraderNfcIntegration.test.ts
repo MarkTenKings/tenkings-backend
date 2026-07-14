@@ -7,6 +7,7 @@ import {
 } from "../lib/server/aiGraderProductionApi";
 import {
   isValidAiGraderNfcPublicTagId,
+  readAiGraderPublicNfcRegistration,
   readAiGraderNfcPublicTap,
 } from "../lib/server/aiGraderNfcPublic";
 import { readAiGraderNfcStatusesForReports } from "../lib/server/aiGraderNfcReadProjection";
@@ -95,19 +96,46 @@ test("public NFC active projection is DB-backed, exact-linkage-only, and honest 
 });
 
 test("public NFC revoked/missing/unpublished/mismatched states never resolve a report", async () => {
-  for (const row of [
-    publicRow({ status: "revoked" }),
-    null,
-    publicRow({ report: { ...publicRow().report as Record<string, unknown>, publicationStatus: "draft" } }),
-    publicRow({ itemId: "other-item" }),
-    publicRow({ aiGraderLabelId: "other-label" }),
-    publicRow({ revokedAt: new Date("2026-07-12T21:00:00.000Z") }),
-  ]) {
+  const cases: Array<[Record<string, unknown> | null, "revoked" | "not_valid" | "contradictory_linkage"]> = [
+    [publicRow({ status: "revoked" }), "revoked"],
+    [null, "not_valid"],
+    [publicRow({ report: { ...publicRow().report as Record<string, unknown>, publicationStatus: "draft" } }), "not_valid"],
+    [publicRow({ itemId: "other-item" }), "contradictory_linkage"],
+    [publicRow({ aiGraderLabelId: "other-label" }), "contradictory_linkage"],
+    [publicRow({ revokedAt: new Date("2026-07-12T21:00:00.000Z") }), "not_valid"],
+  ];
+  for (const [row, expectedState] of cases) {
     const db = { aiGraderNfcTag: { async findUnique() { return row; }, async findFirst() { return null; } } };
     const tap = await readAiGraderNfcPublicTap(PUBLIC_TAG_ID, { dbClient: db });
-    assert.notEqual(tap.state, "active");
+    assert.equal(tap.state, expectedState);
     assert.equal("reportUrl" in tap, false);
   }
+});
+
+test("public NFC distinguishes unavailable persistence from invalid tags without leaking database details", async () => {
+  let reads = 0;
+  const db = { aiGraderNfcTag: {
+    async findUnique() { reads += 1; return publicRow(); },
+    async findFirst() { reads += 1; return publicRow(); },
+  } };
+  assert.deepEqual(await readAiGraderNfcPublicTap(PUBLIC_TAG_ID, {
+    dbClient: db,
+    schemaReadiness: async () => false,
+  }), { state: "unavailable" });
+  assert.equal(reads, 0);
+  assert.deepEqual(await readAiGraderNfcPublicTap(PUBLIC_TAG_ID, {
+    dbClient: db,
+    schemaReadiness: async () => { throw new Error("private database sentinel"); },
+  }), { state: "unavailable" });
+  assert.equal(reads, 0);
+  assert.equal(await readAiGraderPublicNfcRegistration("report-1", {
+    dbClient: db,
+    schemaReadiness: async () => false,
+  }), null);
+  await assert.rejects(readAiGraderPublicNfcRegistration("report-1", {
+    dbClient: db,
+    schemaReadiness: async () => { throw new Error("unexpected database failure"); },
+  }), /unexpected database failure/);
 });
 
 test("batched Finish/label NFC read uses one query and fails closed on exact linkage mismatch", async () => {
@@ -122,6 +150,7 @@ test("batched Finish/label NFC read uses one query and fails closed on exact lin
   } } };
   const good = await readAiGraderNfcStatusesForReports({
     dbClient: db, tenantId: "ten-kings",
+    schemaReadiness: async () => true,
     reports: [{ reportId: "report-1", reportRowId: "report-row-1", cardAssetId: "card-1", itemId: "item-1", labelId: "label-1", certId: "TK-AIG-1" }],
   });
   assert.equal(calls, 1);
@@ -129,9 +158,32 @@ test("batched Finish/label NFC read uses one query and fails closed on exact lin
   assert.equal(good.get("report-1")?.registrationKind, "registered_link");
   const mismatch = await readAiGraderNfcStatusesForReports({
     dbClient: db, tenantId: "ten-kings",
+    schemaReadiness: async () => true,
     reports: [{ reportId: "report-1", reportRowId: "report-row-1", cardAssetId: "other-card", itemId: "item-1", labelId: "label-1", certId: "TK-AIG-1" }],
   });
   assert.equal(mismatch.get("report-1")?.status, "error");
+});
+
+test("Finish NFC projection treats absent schema as unavailable and unexpected database failure as error", async () => {
+  let reads = 0;
+  const db = { aiGraderNfcTag: { async findMany() { reads += 1; return []; } } };
+  const reports = [{ reportId: "report-1", reportRowId: "report-row-1", cardAssetId: "card-1", itemId: "item-1" }];
+  const absent = await readAiGraderNfcStatusesForReports({
+    dbClient: db,
+    tenantId: "ten-kings",
+    reports,
+    schemaReadiness: async () => false,
+  });
+  assert.equal(absent.get("report-1")?.status, "unavailable");
+  assert.equal(reads, 0);
+  const failed = await readAiGraderNfcStatusesForReports({
+    dbClient: db,
+    tenantId: "ten-kings",
+    reports,
+    schemaReadiness: async () => { throw new Error("database unavailable"); },
+  });
+  assert.equal(failed.get("report-1")?.status, "error");
+  assert.equal(reads, 0);
 });
 
 function finishRow(nfc: Record<string, unknown>) {
@@ -172,13 +224,29 @@ test("Finish inventory gate requires exact active NFC only when policy is enable
   assert.equal(requiredActive.items[0].nfcStatus, "active");
 });
 
-function inventoryDb(nfcTag: Record<string, unknown> | null) {
+function inventoryDb(
+  nfcTag: Record<string, unknown> | null,
+  schema: "ready" | "missing" | "failed" = "ready",
+  nfcStatus: "ready" | "failed" = "ready",
+) {
+  let schemaQueries = 0;
   const report = {
     id: "report-row-1", tenantId: "ten-kings", sessionId: "session-1", reportId: "report-1",
     publicationStatus: "published", cardAssetId: "card-1", itemId: "item-1",
     labels: [{ id: "label-1", certId: "TK-AIG-1" }],
   };
   return {
+    async $queryRaw() {
+      schemaQueries += 1;
+      if (schema === "failed") throw new Error("private database sentinel");
+      if (schemaQueries === 1) return [{
+        migrationLedgerReady: schema === "ready",
+        tagTableReady: schema === "ready",
+        attemptTableReady: schema === "ready",
+        auditTableReady: schema === "ready",
+      }];
+      return [{ ready: schema === "ready" }];
+    },
     aiGraderReport: { async findUnique() { return report; } },
     aiGraderLabel: { async findFirst() { return { id: "label-1", physicalPrintStatus: "printed" }; } },
     aiGraderEvidenceAsset: { async findMany() { return [
@@ -186,7 +254,10 @@ function inventoryDb(nfcTag: Record<string, unknown> | null) {
       { id: "back", side: "back", storageKey: "back", publicUrl: "https://cdn.example/back", byteSize: 10 },
     ]; } },
     aiGraderValuation: { async findFirst() { return { id: "valuation", status: "completed", valuationMinor: 1000 }; } },
-    aiGraderNfcTag: { async findFirst() { return nfcTag; } },
+    aiGraderNfcTag: { async findFirst() {
+      if (nfcStatus === "failed") throw new Error("private NFC status database sentinel");
+      return nfcTag;
+    } },
   };
 }
 
@@ -204,7 +275,27 @@ test("server inventory readiness enforces active non-revoked exact NFC inside th
   await assert.rejects(validateAiGraderInventoryReadiness(inventoryDb({ ...active, itemId: "wrong-item" }), "report-1", {
     tenantId: "ten-kings", nfcRequired: true,
   }), (error: unknown) => error instanceof Error && (error as Error & { code?: string }).code === "AI_GRADER_NFC_LINKAGE_INVALID");
+  await assert.rejects(validateAiGraderInventoryReadiness(inventoryDb(null, "ready", "failed"), "report-1", {
+    tenantId: "ten-kings", nfcRequired: true,
+  }), (error: unknown) => error instanceof Error &&
+    (error as Error & { code?: string; statusCode?: number }).code === "AI_GRADER_NFC_STATUS_CHECK_FAILED" &&
+    (error as Error & { statusCode?: number }).statusCode === 503 &&
+    !error.message.includes("private NFC status database sentinel"));
   assert.equal((await validateAiGraderInventoryReadiness(inventoryDb(null), "report-1", {
+    tenantId: "ten-kings", nfcRequired: false,
+  })).nfcRequired, false);
+  await assert.rejects(validateAiGraderInventoryReadiness(inventoryDb(null, "missing"), "report-1", {
+    tenantId: "ten-kings", nfcRequired: true,
+  }), (error: unknown) => error instanceof Error &&
+    (error as Error & { code?: string; statusCode?: number }).code === "AI_GRADER_NFC_SCHEMA_UNAVAILABLE" &&
+    (error as Error & { statusCode?: number }).statusCode === 503);
+  await assert.rejects(validateAiGraderInventoryReadiness(inventoryDb(null, "failed"), "report-1", {
+    tenantId: "ten-kings", nfcRequired: true,
+  }), (error: unknown) => error instanceof Error &&
+    (error as Error & { code?: string; statusCode?: number }).code === "AI_GRADER_NFC_SCHEMA_CHECK_FAILED" &&
+    (error as Error & { statusCode?: number }).statusCode === 503 &&
+    !error.message.includes("private database sentinel"));
+  assert.equal((await validateAiGraderInventoryReadiness(inventoryDb(null, "missing"), "report-1", {
     tenantId: "ten-kings", nfcRequired: false,
   })).nfcRequired, false);
 });
@@ -235,9 +326,17 @@ test("dedicated programming and public tap pages keep hardware controls out of F
   );
   assert.match(completionRetry, /completeHosted\(pending\)/);
   assert.doesNotMatch(completionRetry, /writeAiGraderNfcTag|writeReservation/);
+  const currentAttemptRetry = nfcPage.slice(
+    nfcPage.indexOf("const retryCurrentAttempt"),
+    nfcPage.indexOf("const busy"),
+  );
+  assert.match(currentAttemptRetry, /if \(writeRecovery === "not_retryable"\) return;/);
+  assert.match(nfcPage, /const canRetryCurrentAttempt =[\s\S]*writeRecovery !== "not_retryable";/);
+  assert.match(nfcPage, /\{canRetryCurrentAttempt \? \(/);
+  const schemaGate = nfcPage.indexOf("if (!result.nfcSchemaReady)");
   const disabledGate = nfcPage.indexOf("if (!result.nfcProgrammingEnabled)");
   const helperStatusCall = nfcPage.indexOf("getAiGraderNfcHelperStatus", disabledGate);
-  assert.ok(disabledGate >= 0 && helperStatusCall > disabledGate);
+  assert.ok(schemaGate >= 0 && disabledGate > schemaGate && helperStatusCall > disabledGate);
   assert.match(finishPage, /Open dedicated NFC programming route/);
   for (const forbidden of ["aiGraderStationBridgeClient", "Basler", "Leimac", "Manual APDU", "camera preview", "station token"]) {
     assert.equal(finishPage.includes(forbidden), false);
@@ -245,6 +344,9 @@ test("dedicated programming and public tap pages keep hardware controls out of F
   }
   assert.equal(publicPage.includes("sample"), false);
   assert.match(publicPage, /Registered Ten Kings NFC link/);
+  assert.match(publicPage, /statusCode = 503/);
+  assert.match(publicPage, /Cache-Control.*no-store/);
+  assert.match(publicPage, /temporarily unavailable/i);
   assert.match(publicPage, /not cryptographic authentication/i);
 });
 

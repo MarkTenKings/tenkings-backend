@@ -19,6 +19,7 @@ export function aiGraderNfcRequired(env: EnvLike = process.env) {
 }
 
 export type AiGraderNfcProgrammingReadiness = {
+  nfcSchemaReady: boolean;
   nfcProgrammingEnabled: boolean;
   nfcRequired: boolean;
   nfcAttemptTokenConfigured: boolean;
@@ -35,6 +36,7 @@ export type AiGraderNfcProgrammingReadiness = {
 export function aiGraderNfcProgrammingReadiness(
   env: EnvLike = process.env,
   tenantId = env.AI_GRADER_PRODUCTION_TENANT_ID?.trim() || "ten-kings",
+  nfcSchemaReady = false,
 ): AiGraderNfcProgrammingReadiness {
   const secret = String(env[AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET_ENV] ?? "").trim();
   let workstation = { configured: false, keyCount: 0 };
@@ -48,6 +50,7 @@ export function aiGraderNfcProgrammingReadiness(
     // intentionally does not disclose why key material was rejected.
   }
   return {
+    nfcSchemaReady,
     nfcProgrammingEnabled: env[AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV] === "true",
     nfcRequired: aiGraderNfcRequired(env),
     nfcAttemptTokenConfigured: Buffer.byteLength(secret, "utf8") >= 32,

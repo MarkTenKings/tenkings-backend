@@ -1,3 +1,5 @@
+import { readCachedAiGraderNfcSchemaReadiness } from "@tenkings/database";
+
 export type AiGraderNfcReadStatus =
   | "missing"
   | "reserved"
@@ -5,6 +7,7 @@ export type AiGraderNfcReadStatus =
   | "verified"
   | "active"
   | "revoked"
+  | "unavailable"
   | "error";
 
 export type AiGraderNfcSafeReadProjection = {
@@ -77,6 +80,7 @@ export async function readAiGraderNfcStatusesForReports(input: {
   dbClient: any;
   tenantId: string;
   reports: ExpectedLink[];
+  schemaReadiness?: () => Promise<boolean>;
 }) {
   const expected = new Map<string, ExpectedLink>();
   for (const link of input.reports) {
@@ -86,6 +90,23 @@ export async function readAiGraderNfcStatusesForReports(input: {
   const result = new Map<string, AiGraderNfcSafeReadProjection>();
   for (const reportId of expected.keys()) result.set(reportId, { status: "missing" });
   if (!expected.size) return result;
+
+  try {
+    const schemaReady = input.schemaReadiness
+      ? await input.schemaReadiness()
+      : (await readCachedAiGraderNfcSchemaReadiness(input.dbClient)).ready;
+    // Missing additive NFC tables are explicitly unavailable, while unrelated
+    // Finish/label workflows remain operational when the policy is disabled.
+    if (!schemaReady) {
+      for (const reportId of expected.keys()) result.set(reportId, { status: "unavailable" });
+      return result;
+    }
+  } catch {
+    // Connectivity/authorization/timeouts remain distinct from an unapplied
+    // migration: callers receive an error projection and may fail closed.
+    for (const reportId of expected.keys()) result.set(reportId, { status: "error" });
+    return result;
+  }
 
   let rows: unknown[];
   try {

@@ -234,7 +234,7 @@ CREATE UNIQUE INDEX "AiGraderNfcTag_one_active_uid"
   WHERE "status" = 'active' AND "uidFingerprintSha256" IS NOT NULL;
 
 CREATE UNIQUE INDEX "AiGraderNfcProgrammingAttempt_tokenHash_key" ON "AiGraderNfcProgrammingAttempt"("tokenHash");
-CREATE UNIQUE INDEX "AiGraderNfcProgrammingAttempt_tenantId_requestedByUserId_idempotencyKeyHash_key"
+CREATE UNIQUE INDEX "AiGraderNfcAttempt_request_idempotency_key"
   ON "AiGraderNfcProgrammingAttempt"("tenantId", "requestedByUserId", "idempotencyKeyHash");
 CREATE INDEX "AiGraderNfcProgrammingAttempt_tagId_state_expiresAt_idx" ON "AiGraderNfcProgrammingAttempt"("tagId", "state", "expiresAt");
 CREATE INDEX "AiGraderNfcProgrammingAttempt_tenantId_reportId_state_idx" ON "AiGraderNfcProgrammingAttempt"("tenantId", "reportId", "state");

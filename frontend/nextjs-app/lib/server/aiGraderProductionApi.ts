@@ -27,6 +27,7 @@ import {
   CardReviewStage,
   computeAiGraderValuationStatus,
   getAiGraderNfcStatus,
+  readCachedAiGraderNfcSchemaReadiness,
   normalizeAiGraderPublicCaptureTiming,
   normalizeAiGraderPublicOcrPrefill,
   sanitizeAiGraderPublicReportBundleForRead,
@@ -280,6 +281,7 @@ export type AiGraderAddToInventoryResult = {
 
 export type AiGraderProductionApiDependencies = {
   env?: EnvLike;
+  nfcSchemaReadiness?: () => Promise<boolean>;
   requireAdminSession(req: NextApiRequest): Promise<AdminSession>;
   requireUserSession?(req: NextApiRequest): Promise<UserSession>;
   requireProductionActor?(
@@ -456,6 +458,7 @@ export type AiGraderFinishNfcStatus =
   | "verified"
   | "active"
   | "revoked"
+  | "unavailable"
   | "error";
 
 export type AiGraderFinishCardsQueueItem = {
@@ -558,7 +561,7 @@ function isEnabled(env: EnvLike | undefined, key: string) {
   return env?.[key] === "true";
 }
 
-export function aiGraderProductionReadiness(env: EnvLike = process.env) {
+export function aiGraderProductionReadiness(env: EnvLike = process.env, nfcSchemaReady = false) {
   let effectiveModel: string;
   try {
     effectiveModel = effectiveAiGraderOcrModel(env);
@@ -574,6 +577,7 @@ export function aiGraderProductionReadiness(env: EnvLike = process.env) {
     ...aiGraderNfcProgrammingReadiness(
       env,
       String(env.AI_GRADER_PRODUCTION_TENANT_ID ?? "").trim() || "ten-kings",
+      nfcSchemaReady,
     ),
   };
 }
@@ -2244,6 +2248,7 @@ const AI_GRADER_FINISH_NFC_STATUSES = new Set<AiGraderFinishNfcStatus>([
   "verified",
   "active",
   "revoked",
+  "unavailable",
   "error",
 ]);
 
@@ -2546,6 +2551,13 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       const authorizedActor = await actor;
       const admin = adminSessionForActor(authorizedActor);
       if (key === "auth-check") {
+        let nfcSchemaReady = false;
+        try {
+          nfcSchemaReady = deps.nfcSchemaReadiness ? await deps.nfcSchemaReadiness() : false;
+        } catch {
+          // Authenticated readiness stays redacted. NFC mutations use their
+          // stricter schema check and distinguish absent from failed probes.
+        }
         const displayName =
           authorizedActor.type === "human_operator"
             ? authorizedActor.user.displayName || authorizedActor.user.phone || "Ten Kings operator"
@@ -2559,7 +2571,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             role: authorizedActor.role,
             displayName,
             action: authorizedActor.audit.action,
-            readiness: aiGraderProductionReadiness(env),
+            readiness: aiGraderProductionReadiness(env, nfcSchemaReady),
           },
         });
       }
@@ -4200,9 +4212,9 @@ function mergeJsonDetails(existing: unknown, patch: Record<string, unknown>): Pr
   } as Prisma.InputJsonValue;
 }
 
-function aiGraderInventoryGateError(message: string, code: string) {
+function aiGraderInventoryGateError(message: string, code: string, statusCode = 400) {
   const error = new Error(message);
-  (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+  (error as Error & { statusCode?: number; code?: string }).statusCode = statusCode;
   (error as Error & { statusCode?: number; code?: string }).code = code;
   return error;
 }
@@ -4248,6 +4260,23 @@ export async function validateAiGraderInventoryReadiness(
   const nfcRequired = options.nfcRequired ?? aiGraderNfcRequired(options.env ?? process.env);
   let nfc: Awaited<ReturnType<typeof getAiGraderNfcStatus>> | null = null;
   if (nfcRequired) {
+    let schemaReady: boolean;
+    try {
+      schemaReady = (await readCachedAiGraderNfcSchemaReadiness(db)).ready;
+    } catch {
+      throw aiGraderInventoryGateError(
+        "NFC persistence readiness could not be verified. Inventory remains blocked.",
+        "AI_GRADER_NFC_SCHEMA_CHECK_FAILED",
+        503,
+      );
+    }
+    if (!schemaReady) {
+      throw aiGraderInventoryGateError(
+        "NFC persistence is unavailable until the approved database migration is applied.",
+        "AI_GRADER_NFC_SCHEMA_UNAVAILABLE",
+        503,
+      );
+    }
     try {
       nfc = await getAiGraderNfcStatus({
         tenantId: options.tenantId ?? stringValue(report.tenantId, ""),
@@ -4257,10 +4286,22 @@ export async function validateAiGraderInventoryReadiness(
         certId: stringValue(label.certId, ""),
         dbClient: db,
       });
-    } catch {
+    } catch (error) {
+      const code = isRecord(error) ? optionalString(error.code) : null;
+      if (
+        code === "AI_GRADER_NFC_CONFIRM_AUTHORITY_MISMATCH" ||
+        code === "AI_GRADER_NFC_LINKAGE_MISMATCH" ||
+        code === "AI_GRADER_NFC_LINKAGE_INVALID"
+      ) {
+        throw aiGraderInventoryGateError(
+          "The active NFC registration does not match this report, CardAsset, Item, and grading label.",
+          "AI_GRADER_NFC_LINKAGE_INVALID",
+        );
+      }
       throw aiGraderInventoryGateError(
-        "The active NFC registration does not match this report, CardAsset, Item, and grading label.",
-        "AI_GRADER_NFC_LINKAGE_INVALID",
+        "NFC registration status could not be verified. Inventory remains blocked.",
+        "AI_GRADER_NFC_STATUS_CHECK_FAILED",
+        503,
       );
     }
     if (nfc.status !== "active" || nfc.revokedAt) {

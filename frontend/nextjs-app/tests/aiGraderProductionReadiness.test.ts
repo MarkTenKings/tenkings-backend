@@ -21,6 +21,7 @@ test("redacted AI Grader readiness reports booleans and the effective dedicated 
     effectiveAiGraderModel: "gpt-5.6-sol",
     ebayCompsEnabled: true,
     serpApiConfigured: true,
+    nfcSchemaReady: false,
     nfcProgrammingEnabled: false,
     nfcRequired: false,
     nfcAttemptTokenConfigured: false,
@@ -36,6 +37,7 @@ test("redacted AI Grader readiness reports booleans and the effective dedicated 
     effectiveAiGraderModel: "gpt-5.6-sol",
     ebayCompsEnabled: false,
     serpApiConfigured: false,
+    nfcSchemaReady: false,
     nfcProgrammingEnabled: false,
     nfcRequired: false,
     nfcAttemptTokenConfigured: false,
@@ -51,6 +53,7 @@ test("redacted AI Grader readiness reports booleans and the effective dedicated 
   assert.equal(aiGraderProductionReadiness({
     AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET: ` ${"x".repeat(32)} `,
   }).nfcAttemptTokenConfigured, true);
+  assert.equal(aiGraderProductionReadiness({}, true).nfcSchemaReady, true);
 });
 
 test("readiness is authenticated and remains available when writes are disabled", async () => {
@@ -80,6 +83,9 @@ test("readiness is authenticated and remains available when writes are disabled"
     async persist() {
       throw new Error("not used");
     },
+    async nfcSchemaReadiness() {
+      return true;
+    },
   });
   const req = {
     method: "GET",
@@ -98,5 +104,6 @@ test("readiness is authenticated and remains available when writes are disabled"
   assert.equal(response.body.result.readiness.googleVisionConfigured, true);
   assert.equal(response.body.result.readiness.openAiConfigured, true);
   assert.equal(response.body.result.readiness.serpApiConfigured, true);
+  assert.equal(response.body.result.readiness.nfcSchemaReady, true);
   assert.equal(/secret-.*sentinel/.test(JSON.stringify(response.body)), false);
 });

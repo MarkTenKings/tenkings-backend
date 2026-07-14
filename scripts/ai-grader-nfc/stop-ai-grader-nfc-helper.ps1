@@ -7,7 +7,16 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "ai-grader-nfc-helper-common.ps1")
 
-Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+$layout = Assert-NfcProductionLayout -ConfigPath $ConfigPath -TaskName $TaskName
+$ConfigPath = $layout.ConfigPath
+$TaskName = $layout.TaskName
+$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($task) {
+  Assert-NfcScheduledTaskDefinition -TaskName $TaskName | Out-Null
+  if ([string]$task.State -ceq "Running") {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+  }
+}
 $config = Read-NfcConfig -Path $ConfigPath
 $stopped = 0
 if ($config) {

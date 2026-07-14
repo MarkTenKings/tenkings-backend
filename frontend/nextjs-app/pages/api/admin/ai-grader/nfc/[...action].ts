@@ -64,6 +64,31 @@ async function resolvePublishedLinkage(tenantId: string, reportId: string) {
   };
 }
 
+async function resolvePublishedStatusLinkage(tenantId: string, reportId: string) {
+  const linkage = await resolvePublishedLinkage(tenantId, reportId);
+  const item = await (prisma as any).item.findUnique({
+    where: { id: linkage.itemId },
+    select: { name: true, set: true },
+  });
+  if (!item || typeof item.name !== "string" || !item.name.trim()) {
+    const error = new Error("NFC requires the exact published Item linkage.") as Error & {
+      statusCode?: number;
+      code?: string;
+    };
+    error.statusCode = 409;
+    error.code = "AI_GRADER_NFC_CONFIRM_AUTHORITY_MISMATCH";
+    throw error;
+  }
+  return {
+    reportId: linkage.reportId,
+    cardAssetId: linkage.cardAssetId,
+    itemId: linkage.itemId,
+    certId: linkage.certId,
+    cardTitle: item.name,
+    ...(typeof item.set === "string" && item.set.trim() ? { cardSet: item.set } : {}),
+  };
+}
+
 function requireExistingRegistration(status: AiGraderNfcSafeStatus) {
   if (!status.publicTagId || !status.cardAssetId || !status.itemId || !status.certId) {
     const error = new Error("No NFC registration exists for this published report.") as Error & {
@@ -86,6 +111,9 @@ function requireExistingRegistration(status: AiGraderNfcSafeStatus) {
 const runtime = createAiGraderNfcApiHandler({
   requireAdminSession,
   requireUserSession,
+  publishedLinkage(input) {
+    return resolvePublishedStatusLinkage(input.tenantId, input.reportId);
+  },
   async init(input) {
     const linkage = await resolvePublishedLinkage(input.tenantId, input.reportId);
     return initAiGraderNfcProgramming({
