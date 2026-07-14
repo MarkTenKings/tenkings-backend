@@ -199,6 +199,76 @@ export interface AiGraderLocalStationAcceptedProfile {
   acceptedAt?: string;
 }
 
+export interface AiGraderFrontWorkflowBinding {
+  sessionId: string;
+  reportId: string;
+  side: 'front';
+  sideEpoch: string;
+}
+
+interface AiGraderFrontWorkflowRequestEvidence {
+  idempotencyKey: string;
+  requestFingerprint: string;
+}
+
+interface AiGraderFrontWorkflowAssertion extends AiGraderFrontWorkflowRequestEvidence {
+  expectedSessionId: string;
+  expectedReportId: string;
+  expectedSide: 'front';
+  expectedSideEpoch: string;
+  expectedCandidateProfileIdentity?: string;
+  binding: AiGraderFrontWorkflowBinding;
+}
+
+export interface AiGraderFrontWorkflowAuthority {
+  schemaVersion: 'ten-kings-ai-grader-front-workflow-authority-v1';
+  lightIdleOff?: AiGraderFrontWorkflowBinding & AiGraderFrontWorkflowRequestEvidence & {
+    confirmedAt: string;
+    physicalStateVerifiedAt: string;
+  };
+  fixtureRulers?: AiGraderFrontWorkflowBinding & AiGraderFrontWorkflowRequestEvidence & {
+    confirmedAt: string;
+  };
+  acceptedProfile?: AiGraderFrontWorkflowBinding & AiGraderFrontWorkflowRequestEvidence & {
+    acceptedAt: string;
+    profileDigestSha256: string;
+    profileIdentity: string;
+    candidateProfileIdentity?: string;
+  };
+  invalidatedAcceptedProfileRequests?: Array<AiGraderFrontWorkflowBinding & AiGraderFrontWorkflowRequestEvidence & {
+    acceptedAt: string;
+    profileDigestSha256: string;
+    profileIdentity: string;
+    invalidatedAt: string;
+  }>;
+  transition?: AiGraderFrontWorkflowBinding & {
+    transitionedAt: string;
+    profileIdentity: string;
+  };
+}
+
+export type AiGraderFrontCaptureReadinessCode =
+  | 'ready'
+  | 'session_required'
+  | 'capture_blocked'
+  | 'safety_state_unverified'
+  | 'lifecycle_pending'
+  | 'accepted_profile_required'
+  | 'light_idle_off_required'
+  | 'fixture_rulers_required'
+  | 'workflow_transition_required'
+  | 'current_step_not_capture_front'
+  | 'front_binding_stale'
+  | 'live_preview_required';
+
+export interface AiGraderFrontCaptureReadiness {
+  ready: boolean;
+  code: AiGraderFrontCaptureReadinessCode;
+  message: string;
+  binding?: AiGraderFrontWorkflowBinding;
+  profileIdentity?: string;
+}
+
 export type AiGraderWarmRunnerSide = "front" | "back";
 export type AiGraderGeometryCaptureMode = "detected_geometry" | "manual_capture";
 export interface AiGraderManualGeometryRect {
@@ -418,6 +488,7 @@ export interface AiGraderLocalStationBridgeManifest {
   createdAt?: string;
   updatedAt: string;
   acceptedProfile: AiGraderLocalStationAcceptedProfile;
+  frontWorkflowAuthority: AiGraderFrontWorkflowAuthority;
   captureProfile: FixedRigCaptureProfile;
   captureProfileGuard: {
     stationSettingRequired: true;
@@ -531,6 +602,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
   localOnly: true;
   loginRequired: false;
   hardwareActionsEnabled: boolean;
+  frontCaptureReadiness: AiGraderFrontCaptureReadiness;
   stationUrl: string;
   nextAction: AiGraderLocalStationBridgeAction;
   nextActionLabel: string;
@@ -713,6 +785,7 @@ export interface AiGraderLiveLightingProfile {
   source: "browser_live_tuning" | "accepted_station_profile" | "default";
   acceptedForCapture: boolean;
   acceptedAt?: string;
+  candidateProfileIdentity?: string;
 }
 
 export interface AiGraderLiveLightingSafetyEvent {
@@ -764,7 +837,7 @@ interface AiGraderFrontCaptureSnapshot {
   geometry: CardGeometryMetadata & { sessionId: string; sideEpoch: string };
   geometrySha256: string;
   acceptedProfileIdentity: string;
-  fixtureAuditSource: "atomic_front_capture_operator_action" | "preexisting_operator_fixture_confirmation";
+  fixtureAuditSource: "preexisting_operator_fixture_confirmation";
   fixtureAuditSha256: string;
   manualBoundaryRect?: { x: number; y: number; width: number; height: number; coordinateFrame: "basler_sensor_pixels" };
   manualGeometrySource?: { coordinateFrame: AiGraderManualGeometryRect["coordinateFrame"]; imageWidth: number; imageHeight: number };
@@ -779,6 +852,13 @@ interface AiGraderBackCaptureOperation {
 }
 
 type AiGraderFrontCaptureOperation = AiGraderBackCaptureOperation;
+
+interface AiGraderFrontWorkflowMutation {
+  operation: "confirm-light-idle-off" | "confirm-fixture-rulers" | "accept-profile" | "lighting-accept";
+  idempotencyKey: string;
+  fingerprint: string;
+  promise: Promise<AiGraderLocalStationBridgeStatus>;
+}
 
 export interface AiGraderBackPositioningLightEvent {
   at: string;
@@ -975,6 +1055,7 @@ export interface AiGraderLocalStationBridgeActionRequest {
   expectedReportId?: string;
   expectedSide?: CardGeometrySide;
   expectedSideEpoch?: string;
+  expectedCandidateProfileIdentity?: string;
   expectedFrameId?: string;
 }
 
@@ -1012,6 +1093,9 @@ export interface AiGraderLocalStationBridgeDependencies {
     refreshIntervalMs: number;
     jpegQuality: number;
   }) => ChildProcessWithoutNullStreams;
+  beforeFrontWorkflowManifestWrite?: (
+    manifest: AiGraderLocalStationBridgeManifest
+  ) => Promise<void>;
   onRealHardwareBoundary?: (boundary: AiGraderLocalStationRealHardwareBoundary) => void;
 }
 
@@ -1663,6 +1747,9 @@ function newManifest(config: AiGraderLocalStationBridgeConfig, rapidCaptureEnabl
     mode: config.mode,
     updatedAt: startedAt,
     acceptedProfile: defaultProfile(config),
+    frontWorkflowAuthority: {
+      schemaVersion: 'ten-kings-ai-grader-front-workflow-authority-v1',
+    },
     captureProfile,
     captureProfileGuard: {
       stationSettingRequired: true,
@@ -1925,17 +2012,6 @@ function defaultLiveLightingStatus(config: AiGraderLocalStationBridgeConfig): Ai
   };
 }
 
-function mergeConfirmations(
-  manifest: AiGraderLocalStationBridgeManifest,
-  confirmations: Partial<AiGraderLocalStationBridgeManifest["confirmations"]> | undefined
-) {
-  if (!confirmations) return;
-  manifest.confirmations = {
-    ...manifest.confirmations,
-    ...Object.fromEntries(Object.entries(confirmations).filter(([, value]) => typeof value === "boolean")),
-  };
-}
-
 function validateProfile(profile: Partial<AiGraderLocalStationAcceptedProfile> | undefined, current: AiGraderLocalStationAcceptedProfile): AiGraderLocalStationAcceptedProfile {
   if (!profile) return current;
   const requestedDuty = typeof profile.dutyPercent === "number" ? profile.dutyPercent : current.dutyPercent;
@@ -2011,7 +2087,84 @@ function boundedProcessingWorkerError(error: unknown) {
   return message || fallback;
 }
 
+function acceptedProfileDigestSha256(profile: AiGraderLocalStationAcceptedProfile) {
+  const duty = roundDuty(profile.dutyPercent);
+  const channels = normalizeLightingChannels(profile.channels, { allowEmpty: false });
+  const allowedSources = new Set<AiGraderLocalStationAcceptedProfile['source']>([
+    'operator_preview',
+    'browser_live_tuning',
+    'default',
+    'cli_override',
+    'bridge_operator',
+  ]);
+  if (
+    duty.dutyPercent <= 0
+    || duty.dutyPercent > LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT
+    || duty.actualLeimacPwmStep !== profile.actualLeimacPwmStep
+    || !Number.isInteger(profile.exposureUs)
+    || profile.exposureUs <= 0
+    || profile.exposureUs > 100000
+    || !Number.isFinite(profile.gain)
+    || profile.gain < 0
+    || !allowedSources.has(profile.source)
+  ) {
+    throw new Error('The durable accepted station profile is invalid for guarded capture.');
+  }
+  return crypto.createHash('sha256').update(JSON.stringify({
+    dutyPercent: duty.dutyPercent,
+    actualLeimacPwmStep: duty.actualLeimacPwmStep,
+    exposureUs: profile.exposureUs,
+    gain: profile.gain,
+    channels,
+    source: profile.source,
+  })).digest('hex');
+}
+
+function frontWorkflowProfileIdentity(binding: AiGraderFrontWorkflowBinding, profileDigestSha256: string, acceptedAt: string) {
+  const digest = crypto.createHash('sha256').update(JSON.stringify({
+    schemaVersion: 'ten-kings-ai-grader-front-workflow-authority-v1',
+    ...binding,
+    profileDigestSha256,
+    acceptedAt,
+  })).digest('hex');
+  return `accepted-${digest.slice(0, 16)}`;
+}
+
+function frontCandidateProfileIdentity(
+  binding: AiGraderFrontWorkflowBinding,
+  profile: Pick<AiGraderLiveLightingProfile, 'dutyPercent' | 'actualLeimacPwmStep' | 'channels'>,
+  exposureUs: number,
+  gain: number,
+  appliedAt: string,
+  revisionNonce: string
+) {
+  if (!Number.isFinite(Date.parse(appliedAt)) || new Date(appliedAt).toISOString() !== appliedAt) {
+    throw new Error('The bridge candidate profile revision requires a canonical controller-verified timestamp.');
+  }
+  const profileDigestSha256 = acceptedProfileDigestSha256({
+    dutyPercent: profile.dutyPercent,
+    actualLeimacPwmStep: profile.actualLeimacPwmStep,
+    exposureUs,
+    gain,
+    channels: [...profile.channels],
+    source: 'browser_live_tuning',
+  });
+  const digest = crypto.createHash('sha256').update(JSON.stringify({
+    schemaVersion: 'ten-kings-ai-grader-front-profile-candidate-v1',
+    ...binding,
+    profileDigestSha256,
+    appliedAt,
+    revisionNonce,
+  })).digest('hex');
+  return `candidate-${digest.slice(0, 32)}`;
+}
+
 function durableAcceptedPositioningProfile(profile: AiGraderLocalStationAcceptedProfile) {
+  const profileDigestSha256 = acceptedProfileDigestSha256(profile);
+  const acceptedAt = profile.acceptedAt;
+  if (typeof acceptedAt !== 'string' || !Number.isFinite(Date.parse(acceptedAt)) || new Date(acceptedAt).toISOString() !== acceptedAt) {
+    throw new Error('The durable accepted station profile has no valid bridge acceptance timestamp.');
+  }
   const duty = roundDuty(profile.dutyPercent);
   const channels = normalizeLightingChannels(profile.channels, { allowEmpty: false });
   const allowedSources = new Set<AiGraderLocalStationAcceptedProfile["source"]>([
@@ -2030,11 +2183,8 @@ function durableAcceptedPositioningProfile(profile: AiGraderLocalStationAccepted
     throw new Error("The durable accepted station profile is invalid for guarded back positioning.");
   }
   const identityInput = JSON.stringify({
-    dutyPercent: duty.dutyPercent,
-    actualLeimacPwmStep: duty.actualLeimacPwmStep,
-    channels,
-    source: profile.source,
-    acceptedAt: profile.acceptedAt ?? null,
+    profileDigestSha256,
+    acceptedAt,
   });
   return {
     profile: {
@@ -2044,8 +2194,9 @@ function durableAcceptedPositioningProfile(profile: AiGraderLocalStationAccepted
       channels,
       source: "accepted_station_profile" as const,
       acceptedForCapture: true,
-      acceptedAt: profile.acceptedAt,
+      acceptedAt,
     },
+    profileDigestSha256,
     identity: `accepted-${crypto.createHash("sha256").update(identityInput).digest("hex").slice(0, 16)}`,
   };
 }
@@ -2149,19 +2300,21 @@ function stepById(config: AiGraderLocalStationBridgeConfig, manifest: AiGraderLo
   return step;
 }
 
-function assertRealReady(config: AiGraderLocalStationBridgeConfig, manifest: AiGraderLocalStationBridgeManifest) {
+function assertRealBridgeArmed(config: AiGraderLocalStationBridgeConfig) {
   if (config.mode !== "real") return;
   if (!config.apply || !config.markPresent || !config.wiringConfirmed || !config.leimacStatusGreen || !config.leimacHost) {
     throw new Error("Real AI Grader station bridge is not armed with required apply/Mark/wiring/Leimac flags.");
   }
+}
+
+function assertRealReady(config: AiGraderLocalStationBridgeConfig, manifest: AiGraderLocalStationBridgeManifest) {
+  assertRealBridgeArmed(config);
+  if (config.mode !== "real") return;
   if (!manifest.confirmations.lightIdleOff) throw new Error("Mark must confirm physical ring light is idle/off before hardware actions.");
 }
 
 function assertAtomicFrontRealReady(config: AiGraderLocalStationBridgeConfig) {
-  if (config.mode !== "real") return;
-  if (!config.apply || !config.markPresent || !config.wiringConfirmed || !config.leimacStatusGreen || !config.leimacHost) {
-    throw new Error("Real AI Grader station bridge is not armed with required apply/Mark/wiring/Leimac flags.");
-  }
+  assertRealBridgeArmed(config);
 }
 
 function assertFixtureVisible(manifest: AiGraderLocalStationBridgeManifest) {
@@ -2777,6 +2930,7 @@ export class AiGraderLocalStationBridgeService {
   private previewObservations: AiGraderPreviewObservation[] = [];
   private frontCaptureOperations = new Map<string, AiGraderFrontCaptureOperation>();
   private frontCaptureInFlightKey?: string;
+  private frontWorkflowMutation?: AiGraderFrontWorkflowMutation;
   private backCaptureOperations = new Map<string, AiGraderBackCaptureOperation>();
   private backCaptureInFlightKey?: string;
   private frontCaptureTransition?: {
@@ -2812,6 +2966,455 @@ export class AiGraderLocalStationBridgeService {
     void this.recoverPersistedRapidFinalization().catch(() => {});
   }
 
+  private ensureFrontWorkflowAuthority(manifest: AiGraderLocalStationBridgeManifest = this.manifest) {
+    manifest.frontWorkflowAuthority ??= {
+      schemaVersion: 'ten-kings-ai-grader-front-workflow-authority-v1',
+    };
+    return manifest.frontWorkflowAuthority;
+  }
+
+  private currentFrontWorkflowBinding(): AiGraderFrontWorkflowBinding | undefined {
+    if (!this.manifest.sessionId || !this.manifest.reportId) return undefined;
+    return {
+      sessionId: this.manifest.sessionId,
+      reportId: this.manifest.reportId,
+      side: 'front',
+      sideEpoch: this.manifest.previewStatus.sideEpoch,
+    };
+  }
+
+  private frontWorkflowBindingMatches(
+    evidence: Partial<AiGraderFrontWorkflowBinding> | undefined,
+    binding: AiGraderFrontWorkflowBinding
+  ) {
+    return evidence?.sessionId === binding.sessionId
+      && evidence.reportId === binding.reportId
+      && evidence.side === 'front'
+      && evidence.sideEpoch === binding.sideEpoch;
+  }
+
+  private validateFrontWorkflowAssertion(
+    request: AiGraderLocalStationBridgeActionRequest,
+    operation: 'confirm-light-idle-off' | 'confirm-fixture-rulers' | 'accept-profile' | 'lighting-accept'
+  ) {
+    const allowedKeys = new Set([
+      'idempotencyKey',
+      'expectedSessionId',
+      'expectedReportId',
+      'expectedSide',
+      'expectedSideEpoch',
+      'expectedCandidateProfileIdentity',
+    ]);
+    const unexpected = Object.keys(request as Record<string, unknown>).filter((key) => !allowedKeys.has(key));
+    if (unexpected.length > 0) {
+      throw new Error(`${operation} accepts only bounded idempotency and session/report/front epoch assertions.`);
+    }
+    if (!request.idempotencyKey || !ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE.test(request.idempotencyKey) || ATOMIC_CAPTURE_PRIVATE_ASSERTION_RE.test(request.idempotencyKey)) {
+      throw new Error(`${operation} requires a 16-128 character bounded idempotency key.`);
+    }
+    const values = [request.expectedSessionId, request.expectedReportId, request.expectedSideEpoch];
+    if (values.some((value) => typeof value !== 'string' || !ATOMIC_CAPTURE_ASSERTION_RE.test(value) || ATOMIC_CAPTURE_PRIVATE_ASSERTION_RE.test(value))) {
+      throw new Error(`${operation} requires path-free bounded session/report/front epoch assertions.`);
+    }
+    if (request.expectedSide !== 'front') throw new Error(`${operation} expectedSide must be front.`);
+    const binding = this.currentFrontWorkflowBinding();
+    if (
+      !binding
+      || request.expectedSessionId !== binding.sessionId
+      || request.expectedReportId !== binding.reportId
+      || request.expectedSideEpoch !== binding.sideEpoch
+      || this.manifest.previewStatus.activeSide !== 'front'
+    ) {
+      throw new Error(`${operation} assertions are stale for the active session/report/front epoch.`);
+    }
+    const candidateAcceptance = operation === 'lighting-accept';
+    const currentCandidate = this.manifest.liveLighting.profile.candidateProfileIdentity;
+    if (candidateAcceptance) {
+      if (
+        typeof request.expectedCandidateProfileIdentity !== 'string'
+        || !/^candidate-[a-f0-9]{32}$/.test(request.expectedCandidateProfileIdentity)
+        || request.expectedCandidateProfileIdentity !== currentCandidate
+      ) {
+        throw new Error(`${operation} candidate profile revision is missing or stale for the current bridge-observed profile.`);
+      }
+    } else if (request.expectedCandidateProfileIdentity !== undefined) {
+      throw new Error(`${operation} does not accept a candidate profile revision.`);
+    }
+    const normalized = {
+      idempotencyKey: request.idempotencyKey,
+      expectedSessionId: request.expectedSessionId,
+      expectedReportId: request.expectedReportId,
+      expectedSide: 'front' as const,
+      expectedSideEpoch: request.expectedSideEpoch,
+      ...(candidateAcceptance ? { expectedCandidateProfileIdentity: request.expectedCandidateProfileIdentity } : {}),
+    };
+    return {
+      ...normalized,
+      binding,
+      requestFingerprint: crypto.createHash('sha256').update(JSON.stringify({ operation, ...normalized })).digest('hex'),
+    };
+  }
+
+  private assertFrontWorkflowRetryCompatible(
+    existing: AiGraderFrontWorkflowRequestEvidence | undefined,
+    assertion: AiGraderFrontWorkflowAssertion,
+    operation: string
+  ) {
+    if (existing?.idempotencyKey === assertion.idempotencyKey && existing.requestFingerprint !== assertion.requestFingerprint) {
+      throw new Error(`${operation} idempotency key conflicts with a different assertion.`);
+    }
+  }
+
+  private runFrontWorkflowMutation(
+    operation: AiGraderFrontWorkflowMutation["operation"],
+    assertion: AiGraderFrontWorkflowAssertion,
+    mutate: () => void
+  ): Promise<AiGraderLocalStationBridgeStatus> {
+    const existing = this.frontWorkflowMutation;
+    if (existing) {
+      if (existing.operation !== operation || existing.idempotencyKey !== assertion.idempotencyKey) {
+        return Promise.reject(new Error('Another authoritative Front workflow mutation is pending.'));
+      }
+      if (existing.fingerprint !== assertion.requestFingerprint) {
+        return Promise.reject(new Error(`${operation} idempotency key conflicts with a different assertion.`));
+      }
+      return existing.promise;
+    }
+
+    const rollback = {
+      acceptedProfile: structuredClone(this.manifest.acceptedProfile),
+      frontWorkflowAuthority: structuredClone(this.ensureFrontWorkflowAuthority()),
+      confirmations: structuredClone(this.manifest.confirmations),
+      currentStep: this.manifest.currentStep,
+      progressLog: [...this.manifest.progressLog],
+      liveLightingProfile: structuredClone(this.manifest.liveLighting.profile),
+    };
+    const reservation = {
+      operation,
+      idempotencyKey: assertion.idempotencyKey,
+      fingerprint: assertion.requestFingerprint,
+    } as AiGraderFrontWorkflowMutation;
+    const work = Promise.resolve().then(async () => {
+      try {
+        mutate();
+        await this.dependencies.beforeFrontWorkflowManifestWrite?.(cloneManifest(this.manifest));
+        await writeSessionManifest(this.manifest);
+      } catch (error) {
+        this.manifest.acceptedProfile = rollback.acceptedProfile;
+        this.manifest.frontWorkflowAuthority = rollback.frontWorkflowAuthority;
+        this.manifest.confirmations = rollback.confirmations;
+        this.manifest.currentStep = rollback.currentStep;
+        this.manifest.progressLog = rollback.progressLog;
+        this.manifest.liveLighting.profile = rollback.liveLightingProfile;
+        throw error;
+      }
+    });
+    const tracked = work.then(
+      () => {
+        if (this.frontWorkflowMutation === reservation) this.frontWorkflowMutation = undefined;
+        return this.status();
+      },
+      (error) => {
+        if (this.frontWorkflowMutation === reservation) this.frontWorkflowMutation = undefined;
+        throw error;
+      },
+    );
+    reservation.promise = tracked;
+    this.frontWorkflowMutation = reservation;
+    return tracked;
+  }
+
+  private assertFrontProfileAcceptanceKeyAvailable(assertion: AiGraderFrontWorkflowAssertion) {
+    if (this.ensureFrontWorkflowAuthority().invalidatedAcceptedProfileRequests?.some(
+      (request) => request.idempotencyKey === assertion.idempotencyKey
+    )) {
+      throw new Error('Front profile acceptance idempotency key was already consumed by an invalidated profile and cannot authorize a replacement profile.');
+    }
+  }
+
+  private initialSessionLightAssertion(binding: AiGraderFrontWorkflowBinding): AiGraderFrontWorkflowAssertion {
+    const idempotencyKey = `front-light-start-${crypto.createHash('sha256').update(JSON.stringify(binding)).digest('hex').slice(0, 24)}`;
+    const normalized = {
+      idempotencyKey,
+      expectedSessionId: binding.sessionId,
+      expectedReportId: binding.reportId,
+      expectedSide: 'front' as const,
+      expectedSideEpoch: binding.sideEpoch,
+    };
+    return {
+      ...normalized,
+      binding,
+      requestFingerprint: crypto.createHash('sha256').update(JSON.stringify({ operation: 'confirm-light-idle-off', ...normalized })).digest('hex'),
+    };
+  }
+
+  private bindFrontLightIdleOff(assertion: AiGraderFrontWorkflowAssertion) {
+    const authority = this.ensureFrontWorkflowAuthority();
+    this.assertFrontWorkflowRetryCompatible(authority.lightIdleOff, assertion, 'confirm-light-idle-off');
+    if (this.frontWorkflowBindingMatches(authority.lightIdleOff, assertion.binding)) {
+      this.manifest.confirmations.lightIdleOff = true;
+      return false;
+    }
+    const physical = this.manifest.liveLighting.physicalState;
+    if (
+      !this.safeOffLightingVerificationComplete()
+      || typeof physical.verifiedAt !== 'string'
+      || !Number.isFinite(Date.parse(physical.verifiedAt))
+    ) {
+      throw new Error('Light-idle/off evidence requires complete controller acknowledgement of safe_off_verified.');
+    }
+    const confirmedAt = new Date().toISOString();
+    authority.lightIdleOff = {
+      ...assertion.binding,
+      idempotencyKey: assertion.idempotencyKey,
+      requestFingerprint: assertion.requestFingerprint,
+      confirmedAt,
+      physicalStateVerifiedAt: physical.verifiedAt,
+    };
+    this.manifest.confirmations.lightIdleOff = true;
+    this.manifest.progressLog.push(`${confirmedAt} Initial controller-acknowledged light-idle/off evidence bound to the exact front session/report/epoch.`);
+    return true;
+  }
+
+  private bindFrontFixtureRulers(assertion: AiGraderFrontWorkflowAssertion) {
+    const authority = this.ensureFrontWorkflowAuthority();
+    this.assertFrontWorkflowRetryCompatible(authority.fixtureRulers, assertion, 'confirm-fixture-rulers');
+    if (this.frontWorkflowBindingMatches(authority.fixtureRulers, assertion.binding)) {
+      this.manifest.confirmations.fixtureRulersVisible = true;
+      return false;
+    }
+    const confirmedAt = new Date().toISOString();
+    authority.fixtureRulers = {
+      ...assertion.binding,
+      idempotencyKey: assertion.idempotencyKey,
+      requestFingerprint: assertion.requestFingerprint,
+      confirmedAt,
+    };
+    this.manifest.confirmations.fixtureRulersVisible = true;
+    this.manifest.progressLog.push(`${confirmedAt} Operator fixture/ruler confirmation bound to the exact front session/report/epoch.`);
+    return true;
+  }
+
+  private bindFrontAcceptedProfile(assertion: AiGraderFrontWorkflowAssertion, profile: AiGraderLocalStationAcceptedProfile) {
+    if (profile.source !== 'browser_live_tuning' && profile.source !== 'operator_preview') {
+      throw new Error('Front profile authority requires bridge-observed live tuning or an authoritative operator preview result.');
+    }
+    const acceptedAt = profile.acceptedAt;
+    if (typeof acceptedAt !== 'string' || !Number.isFinite(Date.parse(acceptedAt))) {
+      throw new Error('Front profile authority requires a bridge acceptance timestamp.');
+    }
+    const profileDigestSha256 = acceptedProfileDigestSha256(profile);
+    const profileIdentity = frontWorkflowProfileIdentity(assertion.binding, profileDigestSha256, acceptedAt);
+    const authority = this.ensureFrontWorkflowAuthority();
+    this.assertFrontWorkflowRetryCompatible(authority.acceptedProfile, assertion, 'accept-profile');
+    this.assertFrontProfileAcceptanceKeyAvailable(assertion);
+    if (
+      authority.acceptedProfile?.idempotencyKey === assertion.idempotencyKey
+      && (
+        authority.acceptedProfile.profileDigestSha256 !== profileDigestSha256
+        || authority.acceptedProfile.profileIdentity !== profileIdentity
+      )
+    ) {
+      throw new Error('Front profile acceptance idempotency key conflicts with a different bridge-held profile.');
+    }
+    if (
+      this.frontWorkflowBindingMatches(authority.acceptedProfile, assertion.binding)
+      && authority.acceptedProfile?.profileDigestSha256 === profileDigestSha256
+      && authority.acceptedProfile.profileIdentity === profileIdentity
+    ) return false;
+    authority.acceptedProfile = {
+      ...assertion.binding,
+      idempotencyKey: assertion.idempotencyKey,
+      requestFingerprint: assertion.requestFingerprint,
+      acceptedAt,
+      profileDigestSha256,
+      profileIdentity,
+      ...(assertion.expectedCandidateProfileIdentity
+        ? { candidateProfileIdentity: assertion.expectedCandidateProfileIdentity }
+        : {}),
+    };
+    delete authority.transition;
+    this.manifest.progressLog.push(`${acceptedAt} Accepted profile ${profileIdentity} persisted for the exact front session/report/epoch.`);
+    return true;
+  }
+
+  private invalidateFrontAcceptedProfile(reason: string) {
+    const authority = this.ensureFrontWorkflowAuthority();
+    const hadAuthority = Boolean(authority.acceptedProfile || authority.transition);
+    if (authority.acceptedProfile) {
+      const invalidatedAt = new Date().toISOString();
+      const priorInvalidations = authority.invalidatedAcceptedProfileRequests ?? [];
+      if (
+        priorInvalidations.length >= 128
+        && !priorInvalidations.some((request) => request.idempotencyKey === authority.acceptedProfile?.idempotencyKey)
+      ) {
+        throw new Error('This session exhausted its bounded Front profile-acceptance history; start a new session before another retune.');
+      }
+      authority.invalidatedAcceptedProfileRequests = [
+        ...priorInvalidations.filter(
+          (request) => request.idempotencyKey !== authority.acceptedProfile?.idempotencyKey
+        ),
+        { ...authority.acceptedProfile, invalidatedAt },
+      ];
+    }
+    delete authority.acceptedProfile;
+    delete authority.transition;
+    const { acceptedAt: _acceptedAt, ...acceptedProfile } = this.manifest.acceptedProfile;
+    this.manifest.acceptedProfile = acceptedProfile;
+    this.updateLiveLightingStatus({
+      profile: {
+        acceptedForCapture: false,
+        acceptedAt: undefined,
+      },
+    });
+    if (this.manifest.currentStep === 'capture_front' && !this.manifest.outputs.frontPackageDir) {
+      this.manifest.currentStep = 'verify_fixture_rulers';
+    }
+    if (hadAuthority) this.manifest.progressLog.push(`${new Date().toISOString()} Front accepted-profile authority invalidated: ${reason}.`);
+  }
+
+  private acceptedFrontWorkflowEvidence(binding: AiGraderFrontWorkflowBinding) {
+    const evidence = this.ensureFrontWorkflowAuthority().acceptedProfile;
+    if (!evidence || !this.frontWorkflowBindingMatches(evidence, binding)) return undefined;
+    if (this.manifest.acceptedProfile.source !== 'browser_live_tuning' && this.manifest.acceptedProfile.source !== 'operator_preview') return undefined;
+    let accepted: ReturnType<typeof durableAcceptedPositioningProfile>;
+    try {
+      accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
+    } catch {
+      return undefined;
+    }
+    const identity = frontWorkflowProfileIdentity(binding, accepted.profileDigestSha256, evidence.acceptedAt);
+    const live = this.manifest.liveLighting.profile;
+    if (
+      evidence.acceptedAt !== this.manifest.acceptedProfile.acceptedAt
+      || evidence.profileDigestSha256 !== accepted.profileDigestSha256
+      || evidence.profileIdentity !== identity
+      || live.acceptedForCapture !== true
+      || live.acceptedAt !== evidence.acceptedAt
+      || live.dutyPercent !== accepted.profile.dutyPercent
+      || live.actualLeimacPwmStep !== accepted.profile.actualLeimacPwmStep
+      || live.channels.join(',') !== accepted.profile.channels.join(',')
+    ) return undefined;
+    return { evidence, accepted: { ...accepted, identity } };
+  }
+
+  private reconcileFrontWorkflowTransition() {
+    const binding = this.currentFrontWorkflowBinding();
+    if (!binding || this.manifest.previewStatus.activeSide !== 'front') return false;
+    if (!new Set<AiGraderLocalStationStepId>([
+      'verify_fixture_rulers',
+      'live_preview_focus_framing',
+      'lighting_exposure_tune',
+      'accept_capture_profile',
+      'capture_front',
+    ]).has(this.manifest.currentStep)) return false;
+    const authority = this.ensureFrontWorkflowAuthority();
+    const accepted = this.acceptedFrontWorkflowEvidence(binding);
+    const lightReady = this.frontWorkflowBindingMatches(authority.lightIdleOff, binding)
+      && this.manifest.confirmations.lightIdleOff === true
+      && Number.isFinite(Date.parse(authority.lightIdleOff?.physicalStateVerifiedAt ?? ''));
+    const fixtureReady = this.frontWorkflowBindingMatches(authority.fixtureRulers, binding)
+      && this.manifest.confirmations.fixtureRulersVisible === true;
+    if (!accepted || !lightReady || !fixtureReady) return false;
+    if (
+      authority.transition
+      && this.frontWorkflowBindingMatches(authority.transition, binding)
+      && authority.transition.profileIdentity === accepted.evidence.profileIdentity
+    ) {
+      if (this.manifest.currentStep !== 'capture_front' && !this.manifest.outputs.frontPackageDir) {
+        this.manifest.currentStep = 'capture_front';
+      }
+      return false;
+    }
+    if (this.manifest.outputs.frontPackageDir || this.manifest.outputs.backPackageDir) return false;
+    const transitionedAt = new Date().toISOString();
+    authority.transition = {
+      ...binding,
+      profileIdentity: accepted.evidence.profileIdentity,
+      transitionedAt,
+    };
+    this.manifest.currentStep = 'capture_front';
+    this.manifest.progressLog.push(`${transitionedAt} Exact-bound light, fixture/ruler, and accepted-profile evidence advanced the authoritative workflow to capture_front.`);
+    return true;
+  }
+
+  private deriveFrontCaptureReadiness(): AiGraderFrontCaptureReadiness {
+    const binding = this.currentFrontWorkflowBinding();
+    const result = (
+      code: AiGraderFrontCaptureReadinessCode,
+      message: string,
+      ready = false,
+      profileIdentity?: string
+    ): AiGraderFrontCaptureReadiness => ({
+      ready,
+      code,
+      message,
+      ...(binding ? { binding } : {}),
+      ...(profileIdentity ? { profileIdentity } : {}),
+    });
+    if (!binding) return result('session_required', 'Start New Card to create an authoritative station session and report.');
+    if (this.manifest.captureFailure || this.manifest.rapidCapture.workflowState === 'failed' || this.manifest.outputs.frontPackageDir) {
+      return result('capture_blocked', 'Front capture is unavailable because this session already has evidence or a terminal capture/processing failure.');
+    }
+    if (
+      this.closing
+      || this.frontCaptureTransition
+      || this.frontCaptureInFlightKey
+      || this.frontWorkflowMutation
+      || this.captureLock
+      || this.manifest.previewStatus.intentionalTransition.active
+      || this.terminalLifecyclePending > 0
+      || this.lightingLifecyclePending > 0
+    ) {
+      return result('lifecycle_pending', 'Wait for the current transition, capture, cleanup, lighting, or safe-off request to finish.');
+    }
+    const physicalState = this.manifest.liveLighting.physicalState.state;
+    if (physicalState === 'physical_state_unknown' || physicalState === 'safe_off_pending') {
+      return result('safety_state_unverified', `Start Grading is blocked because lighting is ${physicalState}; complete an acknowledged safe-off recovery.`);
+    }
+    const authority = this.ensureFrontWorkflowAuthority();
+    const accepted = this.acceptedFrontWorkflowEvidence(binding);
+    if (!accepted) return result('accepted_profile_required', 'Use This Profile For Capture to persist a current, controller-verified profile for this session.');
+    const profileIdentity = accepted.evidence.profileIdentity;
+    if (!this.positioningLightingVerificationComplete(accepted.accepted.profile)) {
+      return result(
+        'safety_state_unverified',
+        'Start Grading requires complete controller acknowledgement of the exact accepted positioning-light profile.',
+        false,
+        profileIdentity
+      );
+    }
+    if (!this.frontWorkflowBindingMatches(authority.lightIdleOff, binding) || this.manifest.confirmations.lightIdleOff !== true) {
+      return result('light_idle_off_required', 'The initial controller-acknowledged light-idle/off confirmation is incomplete for this session.', false, profileIdentity);
+    }
+    if (!this.frontWorkflowBindingMatches(authority.fixtureRulers, binding) || this.manifest.confirmations.fixtureRulersVisible !== true) {
+      return result('fixture_rulers_required', 'Confirm that the fixture and rulers are visible for this exact front session.', false, profileIdentity);
+    }
+    if (
+      !this.frontWorkflowBindingMatches(authority.transition, binding)
+      || authority.transition?.profileIdentity !== profileIdentity
+    ) {
+      return result('workflow_transition_required', 'Wait for the bridge to persist the authoritative transition to Front Capture.', false, profileIdentity);
+    }
+    if (this.manifest.currentStep !== 'capture_front') {
+      return result('current_step_not_capture_front', `Start Grading requires bridge step capture_front; current step is ${this.manifest.currentStep}.`, false, profileIdentity);
+    }
+    if (
+      this.manifest.previewStatus.activeSide !== 'front'
+      || this.manifest.previewStatus.sessionId !== binding.sessionId
+      || this.manifest.previewStatus.sideEpoch !== binding.sideEpoch
+    ) {
+      return result('front_binding_stale', 'The live preview does not match the accepted session/report/front epoch. Reconnect to the current bridge state.', false, profileIdentity);
+    }
+    if (
+      this.manifest.previewStatus.status !== 'live'
+      || this.manifest.previewStatus.cameraOwnership !== 'preview_stream'
+    ) {
+      return result('live_preview_required', 'Wait for the current session-bound Front preview to become live before Start Grading.', false, profileIdentity);
+    }
+    return result('ready', 'Authoritative Front workflow prerequisites are complete.', true, profileIdentity);
+  }
+
   status(): AiGraderLocalStationBridgeStatus {
     this.refreshPreviewGeometryActiveSide();
     const nextAction = NEXT_ACTION_BY_STEP[this.manifest.currentStep];
@@ -2825,6 +3428,7 @@ export class AiGraderLocalStationBridgeService {
       reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
       localOnly: true,
       loginRequired: false,
+      frontCaptureReadiness: this.deriveFrontCaptureReadiness(),
       hardwareActionsEnabled: this.config.mode === "real",
       stationUrl: this.stationUrl,
       nextAction,
@@ -3220,8 +3824,19 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private serializeTerminalLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    // Front workflow mutations stage capture-authorizing evidence in the live
+    // manifest until their atomic manifest write completes. Reserve the
+    // terminal lane immediately, then wait for the exact outstanding commit
+    // (or its rollback) before any safe-off/cleanup path can write that
+    // manifest. This fences watchdog, preview-loss, operator-stop, shutdown,
+    // and every other terminal writer without delaying a newly-started Front
+    // mutation behind itself.
+    const frontWorkflowCommit = this.frontWorkflowMutation?.promise;
     this.terminalLifecyclePending += 1;
-    const run = this.terminalLifecycleChain.catch(() => {}).then(operation);
+    const run = this.terminalLifecycleChain.catch(() => {}).then(async () => {
+      if (frontWorkflowCommit) await frontWorkflowCommit.catch(() => undefined);
+      return operation();
+    });
     this.terminalLifecycleChain = run.then(() => undefined, () => undefined);
     return run.finally(() => {
       this.terminalLifecyclePending = Math.max(0, this.terminalLifecyclePending - 1);
@@ -3469,21 +4084,48 @@ export class AiGraderLocalStationBridgeService {
     return crypto.createHash("sha256").update(JSON.stringify(request)).digest("hex");
   }
 
-  private durableAcceptedCaptureProfile() {
+  private durableAcceptedCaptureProfile(options: { requireActiveFrontBinding?: boolean } = {}) {
+    if (this.manifest.acceptedProfile.source !== 'browser_live_tuning' && this.manifest.acceptedProfile.source !== 'operator_preview') {
+      throw new Error('Capture authority cannot use a default, CLI override, or browser-manufactured profile source.');
+    }
     const accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
-    const acceptedAt = Date.parse(this.manifest.acceptedProfile.acceptedAt ?? "");
+    const evidence = this.ensureFrontWorkflowAuthority().acceptedProfile;
+    if (!evidence) {
+      throw new Error('Capture requires persisted accepted-profile authority for the active session.');
+    }
+    const binding: AiGraderFrontWorkflowBinding = {
+      sessionId: evidence.sessionId,
+      reportId: evidence.reportId,
+      side: 'front',
+      sideEpoch: evidence.sideEpoch,
+    };
+    const activeBinding = this.currentFrontWorkflowBinding();
+    const identity = frontWorkflowProfileIdentity(binding, accepted.profileDigestSha256, evidence.acceptedAt);
     const live = this.manifest.liveLighting.profile;
+    const authority = this.ensureFrontWorkflowAuthority();
     if (
-      !Number.isFinite(acceptedAt)
+      evidence.sessionId !== this.manifest.sessionId
+      || evidence.reportId !== this.manifest.reportId
+      || evidence.side !== 'front'
+      || (options.requireActiveFrontBinding !== false && (!activeBinding || !this.frontWorkflowBindingMatches(evidence, activeBinding)))
+      || evidence.profileDigestSha256 !== accepted.profileDigestSha256
+      || evidence.profileIdentity !== identity
+      || evidence.acceptedAt !== this.manifest.acceptedProfile.acceptedAt
+      || !this.frontWorkflowBindingMatches(authority.lightIdleOff, binding)
+      || !this.frontWorkflowBindingMatches(authority.fixtureRulers, binding)
+      || !this.frontWorkflowBindingMatches(authority.transition, binding)
+      || authority.transition?.profileIdentity !== identity
+      || this.manifest.confirmations.lightIdleOff !== true
+      || this.manifest.confirmations.fixtureRulersVisible !== true
       || live.acceptedForCapture !== true
-      || live.acceptedAt !== this.manifest.acceptedProfile.acceptedAt
+      || live.acceptedAt !== evidence.acceptedAt
       || live.dutyPercent !== accepted.profile.dutyPercent
       || live.actualLeimacPwmStep !== accepted.profile.actualLeimacPwmStep
-      || live.channels.join(",") !== accepted.profile.channels.join(",")
+      || live.channels.join(',') !== accepted.profile.channels.join(',')
     ) {
-      throw new Error("Atomic Front Capture requires a previously accepted durable station profile with matching bridge acceptance evidence.");
+      throw new Error('Capture requires exact-bound light, fixture/ruler, transition, and accepted-profile authority for this session/report/front epoch.');
     }
-    return accepted;
+    return { ...accepted, identity };
   }
 
   private frontFixtureAuditSha256(input: {
@@ -3530,9 +4172,10 @@ export class AiGraderLocalStationBridgeService {
     }
     this.assertPhysicalStateKnown("Atomic Front Capture");
     const accepted = this.durableAcceptedCaptureProfile();
-    const fixtureAuditSource = request.captureTriggerMode === "operator"
-      ? "atomic_front_capture_operator_action"
-      : "preexisting_operator_fixture_confirmation";
+    if (!this.positioningLightingVerificationComplete(accepted.profile)) {
+      throw new Error('Atomic Front Capture requires complete controller acknowledgement of the exact accepted positioning-light profile.');
+    }
+    const fixtureAuditSource = "preexisting_operator_fixture_confirmation" as const;
     if (request.captureTriggerMode === "auto" && this.manifest.confirmations.fixtureRulersVisible !== true) {
       throw new Error("Automatic Front Capture requires a pre-existing explicit operator fixture/ruler confirmation.");
     }
@@ -3611,9 +4254,6 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private recordAtomicFrontCaptureDecision(snapshot: AiGraderFrontCaptureSnapshot, captureTriggerAt: string) {
-    if (snapshot.captureTriggerMode === "operator") {
-      this.manifest.confirmations.fixtureRulersVisible = true;
-    }
     this.manifest.geometryCaptureDecisions.front = {
       mode: snapshot.captureMode,
       placementState: snapshot.geometry.placementState,
@@ -3681,7 +4321,7 @@ export class AiGraderLocalStationBridgeService {
       previewDrainVerified = true;
       transitionSafeOffAttempted = true;
       await this.safeOffLiveLighting("atomic front capture camera handoff", "capture_start_safe_off", { force: true });
-      if (this.manifest.liveLighting.physicalState.state !== "safe_off_verified") {
+      if (!this.safeOffLightingVerificationComplete()) {
         throw new Error("Atomic Front Capture requires verified safe-off before forensic camera ownership.");
       }
       this.manifest.confirmations.lightIdleOff = true;
@@ -3783,8 +4423,9 @@ export class AiGraderLocalStationBridgeService {
         } catch (cleanupError) {
           const original = boundedBackPositioningError(error).message;
           const cleanup = boundedBackPositioningError(cleanupError).message;
-          outcomeError = new Error(`${original} Failure safe-off also could not be verified: ${cleanup}`);
+          const cleanupMessage = `Failure safe-off also could not be verified: ${cleanup}`;
           if (!this.manifest.warnings.includes(original)) this.manifest.warnings.push(original);
+          if (!this.manifest.warnings.includes(cleanupMessage)) this.manifest.warnings.push(cleanupMessage);
         }
       }
       if (transitionStarted && !this.manifest.captureFailure) {
@@ -3840,22 +4481,22 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private atomicFrontCapture(requestValue: AiGraderLocalStationBridgeActionRequest) {
-    if (this.closing) throw new Error("Atomic Front Capture is unavailable while the local bridge is closing.");
-    if (this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
-      throw new Error("Atomic Front Capture is blocked while a lighting or terminal lifecycle operation is pending.");
-    }
-    if (this.activeQueueItemId) {
-      throw new Error("Start a fresh station session before running capture actions while a rapid queue item is under human review.");
-    }
-    if (!this.manifest.sessionId) {
-      throw new Error("Start a station session before running AI Grader station actions.");
-    }
     const request = this.validateAtomicFrontCaptureRequest(requestValue);
     const fingerprint = this.frontCaptureFingerprint(request);
     const existing = this.frontCaptureOperations.get(request.idempotencyKey);
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new Error("Atomic Front Capture idempotency key conflicts with a different request.");
       return existing.result ? Promise.resolve(structuredClone(existing.result)) : existing.promise;
+    }
+    if (this.closing) throw new Error("Atomic Front Capture is unavailable while the local bridge is closing.");
+    if (this.frontWorkflowMutation || this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
+      throw new Error("Atomic Front Capture is blocked while a Front workflow, lighting, or terminal lifecycle operation is pending.");
+    }
+    if (this.activeQueueItemId) {
+      throw new Error("Start a fresh station session before running capture actions while a rapid queue item is under human review.");
+    }
+    if (!this.manifest.sessionId) {
+      throw new Error("Start a station session before running AI Grader station actions.");
     }
     if (this.frontCaptureInFlightKey && this.frontCaptureInFlightKey !== request.idempotencyKey) {
       throw new Error("A different Atomic Front Capture operation already owns the serialized lifecycle.");
@@ -4088,7 +4729,7 @@ export class AiGraderLocalStationBridgeService {
       });
       transitionSafeOffAttempted = true;
       await this.safeOffLiveLighting("atomic back capture camera handoff", "capture_start_safe_off", { force: true });
-      if (this.manifest.liveLighting.physicalState.state !== "safe_off_verified") {
+      if (!this.safeOffLightingVerificationComplete()) {
         throw new Error("Atomic Back Capture requires verified safe-off before forensic camera ownership.");
       }
       if (
@@ -4128,8 +4769,9 @@ export class AiGraderLocalStationBridgeService {
         } catch (cleanupError) {
           const original = boundedBackPositioningError(error).message;
           const cleanup = boundedBackPositioningError(cleanupError).message;
-          outcomeError = new Error(`${original} Failure safe-off also could not be verified: ${cleanup}`);
+          const cleanupMessage = `Failure safe-off also could not be verified: ${cleanup}`;
           if (!this.manifest.warnings.includes(original)) this.manifest.warnings.push(original);
+          if (!this.manifest.warnings.includes(cleanupMessage)) this.manifest.warnings.push(cleanupMessage);
         }
       }
       if (transitionStarted && !this.manifest.captureFailure) {
@@ -4586,6 +5228,9 @@ export class AiGraderLocalStationBridgeService {
     let initialSafeOffError: unknown;
     try {
       await this.safeOffLiveLighting("new station session initial verified safe-off", "safe_off", { force: true });
+      const binding = this.currentFrontWorkflowBinding();
+      if (!binding) throw new Error('New station session did not establish an exact front workflow binding.');
+      this.bindFrontLightIdleOff(this.initialSessionLightAssertion(binding));
     } catch (error) {
       initialSafeOffError = error;
       manifest.progressLog.push(`${new Date().toISOString()} New station session initial safe-off was not acknowledged; physical state remains unknown.`);
@@ -5129,13 +5774,62 @@ export class AiGraderLocalStationBridgeService {
     };
   }
 
+  private lightingVerificationCountsComplete() {
+    const applied = this.manifest.liveLighting.applied;
+    const physical = this.manifest.liveLighting.physicalState;
+    const expected = applied.expectedWriteCount;
+    const responses = applied.lastResponseKinds ?? [];
+    return Number.isInteger(expected)
+      && expected > 0
+      && applied.acknowledgedWriteCount === expected
+      && physical.expectedWriteCount === expected
+      && physical.acknowledgedWriteCount === expected
+      && responses.length === expected
+      && responses.every((kind) => kind === 'ack' || (this.config.mode === 'mock' && kind === 'mock'))
+      && applied.verificationState === 'verified'
+      && applied.verificationComplete === true
+      && physical.complete === true
+      && Number.isFinite(Date.parse(applied.verifiedAt ?? ''))
+      && Number.isFinite(Date.parse(physical.verifiedAt ?? ''))
+      && applied.verifiedAt === physical.verifiedAt
+      && physical.lastError === undefined
+      && this.manifest.liveLighting.lastError === undefined
+      && (this.manifest.liveLighting.connection.state === 'idle' || this.manifest.liveLighting.connection.state === 'mock');
+  }
+
+  private positioningLightingVerificationComplete(
+    profile: Pick<AiGraderLocalStationAcceptedProfile, 'dutyPercent' | 'actualLeimacPwmStep' | 'channels'>
+  ) {
+    const live = this.manifest.liveLighting;
+    return this.lightingVerificationCountsComplete()
+      && live.status === 'on'
+      && live.physicalState.state === 'positioning_light_verified'
+      && live.applied.enabled === true
+      && live.applied.dutyPercent === profile.dutyPercent
+      && live.applied.actualLeimacPwmStep === profile.actualLeimacPwmStep
+      && live.applied.channels.join(',') === profile.channels.join(',');
+  }
+
+  private safeOffLightingVerificationComplete() {
+    const live = this.manifest.liveLighting;
+    return this.lightingVerificationCountsComplete()
+      && live.status === 'safe_off'
+      && live.physicalState.state === 'safe_off_verified'
+      && live.applied.enabled === false
+      && live.applied.dutyPercent === 0
+      && live.applied.actualLeimacPwmStep === 0
+      && live.applied.channels.length === 0;
+  }
+
   private markPhysicalStateUnknown(reason: string, error: unknown, expectedWriteCount = 0, acknowledgedWriteCount = 0) {
     const message = boundedBackPositioningError(
       error instanceof Error ? error : new Error("Leimac physical state could not be verified.")
     ).message;
     const changedAt = new Date().toISOString();
+    this.manifest.confirmations.finalLightOff = false;
     this.updateLiveLightingStatus({
       status: "error",
+      profile: { candidateProfileIdentity: undefined },
       applied: {
         enabled: undefined,
         verificationState: "unknown",
@@ -5170,6 +5864,7 @@ export class AiGraderLocalStationBridgeService {
   private markForensicLightingOwnership(side: AiGraderWarmRunnerSide) {
     const changedAt = new Date().toISOString();
     this.clearLiveLightingWatchdog();
+    this.manifest.confirmations.finalLightOff = false;
     this.updateLiveLightingStatus({
       status: "unavailable",
       applied: {
@@ -5199,6 +5894,7 @@ export class AiGraderLocalStationBridgeService {
 
   private markLightingWritePending(reason: string, expectedWriteCount: number, targetEnabled: boolean) {
     const changedAt = new Date().toISOString();
+    this.manifest.confirmations.finalLightOff = false;
     this.updateLiveLightingStatus({
       status: "applying",
       applied: {
@@ -5260,7 +5956,7 @@ export class AiGraderLocalStationBridgeService {
 
   private async restoreBackPositioningLightUnlocked(trigger: "front_capture" | "operator_retry") {
     this.assertBackPositioningRestoreEligible();
-    const accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
+    const accepted = this.durableAcceptedCaptureProfile({ requireActiveFrontBinding: false });
     const current = this.manifest.liveLighting.backPositioning;
     const applied = this.manifest.liveLighting.applied;
     const sameActiveProfile = current.sessionId === this.manifest.sessionId
@@ -5371,7 +6067,10 @@ export class AiGraderLocalStationBridgeService {
         profileIdentity: accepted.identity,
         error: lastError,
       });
-      if (cleanupError) failureToThrow = cleanupError;
+      if (cleanupError) {
+        const cleanup = boundedBackPositioningError(cleanupError).message;
+        failureToThrow = new Error(`${lastError.message} Failure safe-off also could not be verified: ${cleanup}`);
+      }
     }
     this.manifest.progressLog.push(`${startedAt} Back-positioning restore attempt ${attemptCount} completed with status ${this.manifest.liveLighting.backPositioning.status}.`);
     try {
@@ -5494,7 +6193,7 @@ export class AiGraderLocalStationBridgeService {
       }
       return this.backPositioningRetryInFlight.promise;
     }
-    const accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
+    const accepted = this.durableAcceptedCaptureProfile({ requireActiveFrontBinding: false });
     const positioning = this.manifest.liveLighting.backPositioning;
     const applied = this.manifest.liveLighting.applied;
     const retryStateStillHealthy = positioning.status === "ready"
@@ -5552,7 +6251,7 @@ export class AiGraderLocalStationBridgeService {
     const frameAgeMs = Date.now() - lastFrameMs;
     let accepted: ReturnType<typeof durableAcceptedPositioningProfile> | undefined;
     try {
-      accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
+      accepted = this.durableAcceptedCaptureProfile({ requireActiveFrontBinding: false });
     } catch {
       return false;
     }
@@ -5608,7 +6307,7 @@ export class AiGraderLocalStationBridgeService {
     const current = this.manifest.liveLighting.backPositioning.captureAuthorization;
     let accepted: ReturnType<typeof durableAcceptedPositioningProfile> | undefined;
     try {
-      accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
+      accepted = this.durableAcceptedCaptureProfile({ requireActiveFrontBinding: false });
     } catch {}
     if (
       !authorization
@@ -5646,6 +6345,7 @@ export class AiGraderLocalStationBridgeService {
     if (
       this.closing
       || this.frontCaptureTransition
+      || this.frontWorkflowMutation
       || this.terminalLifecyclePending > 0
       || this.captureLock
       || this.manifest.previewStatus.intentionalTransition.active
@@ -5669,10 +6369,40 @@ export class AiGraderLocalStationBridgeService {
       currentApplied.enabled === profile.enabled &&
       currentApplied.dutyPercent === profile.dutyPercent &&
       currentApplied.channels.join(",") === profile.channels.join(",");
+    const binding = this.currentFrontWorkflowBinding();
+    const accepted = binding ? this.acceptedFrontWorkflowEvidence(binding) : undefined;
+    const sameAsAccepted = Boolean(
+      accepted
+      && profile.enabled
+      && profile.dutyPercent === accepted.accepted.profile.dutyPercent
+      && profile.actualLeimacPwmStep === accepted.accepted.profile.actualLeimacPwmStep
+      && profile.channels.join(',') === accepted.accepted.profile.channels.join(',')
+    );
+    if (this.ensureFrontWorkflowAuthority().acceptedProfile && !sameAsAccepted) {
+      this.invalidateFrontAcceptedProfile('the live lighting profile was retuned');
+    }
+    const nextProfile = sameAsAccepted && accepted
+      ? {
+          ...profile,
+          acceptedForCapture: true,
+          acceptedAt: accepted.evidence.acceptedAt,
+        }
+      : profile;
 
     if (sameAsApplied) {
       if (profile.enabled) this.scheduleLiveLightingWatchdog("no-op apply");
-      this.updateLiveLightingStatus({ profile });
+      const candidateProfileIdentity = profile.enabled && binding
+        ? this.manifest.liveLighting.profile.candidateProfileIdentity
+          ?? frontCandidateProfileIdentity(
+            binding,
+            profile,
+            this.manifest.acceptedProfile.exposureUs,
+            this.manifest.acceptedProfile.gain,
+            currentApplied.verifiedAt ?? currentApplied.appliedAt ?? new Date().toISOString(),
+            crypto.randomUUID(),
+          )
+        : undefined;
+      this.updateLiveLightingStatus({ profile: { ...nextProfile, candidateProfileIdentity } });
       this.recordLiveLightingEvent({ type: "heartbeat", reason: "live lighting request matched current applied state", ok: true });
       await writeSessionManifest(this.manifest);
       return this.liveLightingStatus();
@@ -5680,7 +6410,7 @@ export class AiGraderLocalStationBridgeService {
 
     const startedAtMs = Date.now();
     const frames = this.liveLightingFrames(profile);
-    this.updateLiveLightingStatus({ profile });
+    this.updateLiveLightingStatus({ profile: nextProfile });
     this.markLightingWritePending(
       String(request.reason ?? "browser live lighting apply awaiting acknowledgement"),
       frames.length,
@@ -5691,8 +6421,19 @@ export class AiGraderLocalStationBridgeService {
       const verification = this.strictLightingAcknowledgements(frames, writes);
       const appliedAt = new Date().toISOString();
       const lastApplyLatencyMs = Math.max(0, Date.now() - startedAtMs);
+      const candidateProfileIdentity = profile.enabled && binding
+        ? frontCandidateProfileIdentity(
+          binding,
+          profile,
+          this.manifest.acceptedProfile.exposureUs,
+          this.manifest.acceptedProfile.gain,
+          appliedAt,
+          crypto.randomUUID(),
+        )
+        : undefined;
       this.updateLiveLightingStatus({
         status: profile.enabled ? "on" : "safe_off",
+        profile: { ...nextProfile, candidateProfileIdentity },
         applied: {
           enabled: profile.enabled,
           dutyPercent: profile.enabled ? profile.dutyPercent : 0,
@@ -5749,6 +6490,7 @@ export class AiGraderLocalStationBridgeService {
     if (
       this.closing
       || this.frontCaptureTransition
+      || this.frontWorkflowMutation
       || this.terminalLifecyclePending > 0
       || this.lightingLifecyclePending > 0
       || this.captureLock
@@ -5810,54 +6552,80 @@ export class AiGraderLocalStationBridgeService {
     return this.liveLightingStatus();
   }
 
-  async acceptLiveLightingForCapture(request: JsonBody = {}): Promise<AiGraderLiveLightingStatus> {
+  async acceptLiveLightingForCapture(request: AiGraderLocalStationBridgeActionRequest = {}): Promise<AiGraderLocalStationBridgeStatus> {
+    const matchingPending = this.frontWorkflowMutation?.operation === 'lighting-accept'
+      && this.frontWorkflowMutation.idempotencyKey === request.idempotencyKey;
     if (
       this.closing
       || this.frontCaptureTransition
       || this.captureLock
       || this.manifest.previewStatus.intentionalTransition.active
       || this.terminalLifecyclePending > 0
+      || this.lightingLifecyclePending > 0
+      || (this.frontWorkflowMutation && !matchingPending)
     ) {
-      throw new Error("Capture profile acceptance is blocked while a serialized capture/terminal lifecycle owns the bridge.");
+      throw new Error('Capture profile acceptance is blocked while a serialized capture, lighting, or terminal lifecycle owns the bridge.');
     }
     if (this.activeQueueItemId) throw new Error("Capture profile changes are disabled while a rapid queue item is under human review.");
     if (!this.manifest.sessionId) throw new Error("Start a station session before accepting a browser live lighting profile.");
     if (this.manifest.outputs.frontPackageDir || this.manifest.currentStep === "prompt_flip_card" || this.manifest.currentStep === "capture_back") {
       throw new Error("Capture profile changes are disabled after front evidence is persisted; back positioning uses only the durable profile accepted before front capture.");
     }
-    const profile = validateLiveLightingRequest({
-      enabled: true,
-      dutyPercent: request.dutyPercent ?? this.manifest.liveLighting.profile.dutyPercent,
-      channels: request.channels ?? this.manifest.liveLighting.profile.channels,
-    }, this.manifest.liveLighting);
-    if (!profile.enabled || profile.channels.length === 0 || profile.dutyPercent <= 0) {
-      throw new Error("Browser live lighting profile must have at least one channel and nonzero duty before it can be accepted for capture.");
-    }
-    this.manifest.acceptedProfile = validateProfile({
-      dutyPercent: profile.dutyPercent,
-      exposureUs: typeof request.exposureUs === "number" ? request.exposureUs : this.manifest.acceptedProfile.exposureUs,
-      gain: typeof request.gain === "number" ? request.gain : this.manifest.acceptedProfile.gain,
-      channels: profile.channels,
-      source: "browser_live_tuning",
-    }, this.manifest.acceptedProfile);
-    const acceptedAt = this.manifest.acceptedProfile.acceptedAt;
-    this.updateLiveLightingStatus({
-      profile: {
-        ...profile,
-        acceptedForCapture: true,
-        acceptedAt,
-      },
+    const assertion = this.validateFrontWorkflowAssertion(request, 'lighting-accept');
+    return this.runFrontWorkflowMutation('lighting-accept', assertion, () => {
+      const existing = this.ensureFrontWorkflowAuthority().acceptedProfile;
+      this.assertFrontWorkflowRetryCompatible(existing, assertion, 'lighting-accept');
+      this.assertFrontProfileAcceptanceKeyAvailable(assertion);
+      if (this.acceptedFrontWorkflowEvidence(assertion.binding)) {
+        this.reconcileFrontWorkflowTransition();
+        return;
+      }
+      const live = this.manifest.liveLighting;
+      const profile = live.profile;
+      const applied = live.applied;
+      if (
+        live.status !== 'on'
+        || profile.enabled !== true
+        || profile.acceptedForCapture === true
+        || profile.channels.length === 0
+        || profile.dutyPercent <= 0
+        || applied.enabled !== true
+        || applied.verificationState !== 'verified'
+        || applied.verificationComplete !== true
+        || live.physicalState.state !== 'positioning_light_verified'
+        || live.physicalState.complete !== true
+        || !this.lightingVerificationCountsComplete()
+        || applied.dutyPercent !== profile.dutyPercent
+        || applied.actualLeimacPwmStep !== profile.actualLeimacPwmStep
+        || applied.channels.join(',') !== profile.channels.join(',')
+      ) {
+        throw new Error('Capture profile acceptance requires the current bridge profile to exactly match controller-acknowledged applied live lighting.');
+      }
+      this.manifest.acceptedProfile = validateProfile({
+        dutyPercent: profile.dutyPercent,
+        exposureUs: this.manifest.acceptedProfile.exposureUs,
+        gain: this.manifest.acceptedProfile.gain,
+        channels: profile.channels,
+        source: 'browser_live_tuning',
+      }, this.manifest.acceptedProfile);
+      const acceptedAt = this.manifest.acceptedProfile.acceptedAt;
+      this.updateLiveLightingStatus({
+        profile: {
+          ...profile,
+          acceptedForCapture: true,
+          acceptedAt,
+        },
+      });
+      this.bindFrontAcceptedProfile(assertion, this.manifest.acceptedProfile);
+      this.reconcileFrontWorkflowTransition();
     });
-    this.manifest.currentStep = "capture_front";
-    this.recordLiveLightingEvent({ type: "accept", reason: "operator accepted browser live lighting profile for capture", ok: true });
-    await writeSessionManifest(this.manifest);
-    return this.liveLightingStatus();
   }
 
   async safeOffLiveLightingForOperator(reason = "operator requested browser live lighting safe-off"): Promise<AiGraderLiveLightingStatus> {
-    if (this.closing || this.frontCaptureTransition || this.terminalLifecyclePending > 0 || this.captureLock || this.manifest.previewStatus.intentionalTransition.active) {
+    if (this.closing || this.frontCaptureTransition || this.frontWorkflowMutation || this.terminalLifecyclePending > 0 || this.captureLock || this.manifest.previewStatus.intentionalTransition.active) {
       throw new Error("Operator safe-off is blocked while a serialized capture transition owns the bridge.");
     }
+    assertRealBridgeArmed(this.config);
     return this.serializeTerminalLifecycle(async () => {
       await this.awaitLightingLifecycleIdle();
       await this.safeOffLiveLighting(reason, "safe_off");
@@ -5872,10 +6640,7 @@ export class AiGraderLocalStationBridgeService {
     options: { force?: boolean; preserveBackCaptureAuthorization?: boolean } = {}
   ): Promise<void> {
     const safeOffFrames = buildLeimacIdmuSafeOffFrames(this.config.leimacUnit ?? 1);
-    const alreadyVerified = this.manifest.liveLighting.physicalState.state === "safe_off_verified"
-      && this.manifest.liveLighting.applied.enabled === false
-      && this.manifest.liveLighting.applied.verificationState === "verified"
-      && this.manifest.liveLighting.applied.verificationComplete;
+    const alreadyVerified = this.safeOffLightingVerificationComplete();
     const shouldSend = options.force === true || !alreadyVerified;
     const positioningWasActive = this.manifest.liveLighting.backPositioning.status !== "inactive"
       && this.manifest.liveLighting.backPositioning.status !== "safe_off";
@@ -5895,6 +6660,7 @@ export class AiGraderLocalStationBridgeService {
       return;
     }
     const pendingAt = new Date().toISOString();
+    this.manifest.confirmations.finalLightOff = false;
     this.updateLiveLightingStatus({
       status: "applying",
       applied: {
@@ -5930,6 +6696,7 @@ export class AiGraderLocalStationBridgeService {
         profile: {
           enabled: false,
           acceptedForCapture: this.manifest.liveLighting.profile.acceptedForCapture,
+          candidateProfileIdentity: undefined,
         },
         applied: {
           enabled: false,
@@ -6544,7 +7311,7 @@ export class AiGraderLocalStationBridgeService {
     return {
       ok: guardedCleanupOk
         && !directError
-        && this.manifest.liveLighting.physicalState.state === "safe_off_verified",
+        && this.safeOffLightingVerificationComplete(),
       directError,
       guardedCleanupOk,
       guardedCleanupError,
@@ -7135,6 +7902,25 @@ export class AiGraderLocalStationBridgeService {
   }
 
   async streamPreview(req: http.IncomingMessage, res: http.ServerResponse, origin: string | undefined): Promise<void> {
+    const physicalState = this.manifest.liveLighting.physicalState.state;
+    if (physicalState === 'physical_state_unknown' || physicalState === 'safe_off_pending') {
+      sendJson(
+        res,
+        409,
+        {
+          ok: false,
+          code: 'AI_GRADER_PHYSICAL_STATE_UNVERIFIED',
+          message: `Preview camera acquisition is blocked because lighting safety is pending or unknown (${physicalState}); only status and explicit bounded safe-off recovery are allowed.`,
+          result: {
+            preview: this.previewStatus(),
+            liveLighting: this.liveLightingStatus(),
+          },
+        },
+        origin,
+        this.config,
+      );
+      return Promise.resolve();
+    }
     if (this.closing || this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
       sendJson(
         res,
@@ -7324,8 +8110,11 @@ export class AiGraderLocalStationBridgeService {
             || reason === "preview epoch replaced"
           )
         ) {
+          const primaryPreviewError = this.manifest.previewStatus.lastError;
           void this.safeOffAfterPreviewLoss("preview loss").catch((error) => {
-            this.updatePreviewStatus({ status: "error", lastError: boundedPreviewLifecycleError(error) });
+            const cleanupError = boundedPreviewLifecycleError(error);
+            if (!this.manifest.warnings.includes(cleanupError)) this.manifest.warnings.push(cleanupError);
+            this.updatePreviewStatus({ status: "error", lastError: primaryPreviewError ?? cleanupError });
           });
         }
         try {
@@ -7874,6 +8663,11 @@ export class AiGraderLocalStationBridgeService {
       "end-session",
       "safe-off",
     ]).has(action);
+    const matchingFrontWorkflowMutation = Boolean(
+      this.frontWorkflowMutation
+      && this.frontWorkflowMutation.operation === action
+      && this.frontWorkflowMutation.idempotencyKey === request.idempotencyKey
+    );
     if (
       this.closing
       || this.frontCaptureTransition
@@ -7881,11 +8675,9 @@ export class AiGraderLocalStationBridgeService {
       || this.manifest.previewStatus.intentionalTransition.active
       || this.terminalLifecyclePending > 0
       || (this.lightingLifecyclePending > 0 && !terminalAction)
+      || (this.frontWorkflowMutation && !matchingFrontWorkflowMutation)
     ) {
       throw new Error("Station mutation is blocked while another serialized capture/terminal lifecycle owns the bridge.");
-    }
-    if (action !== "confirm-flip" && action !== "confirm-light-idle-off") {
-      mergeConfirmations(this.manifest, request.confirmations);
     }
     const now = new Date().toISOString();
     this.manifest.updatedAt = now;
@@ -7911,6 +8703,7 @@ export class AiGraderLocalStationBridgeService {
       if (!request.captureProfile) {
         throw new Error("AI Grader start-session requires an explicit captureProfile of full_forensic or production_fast.");
       }
+      assertRealBridgeArmed(this.config);
       await this.createFreshSession({ reportId: request.reportId, captureProfile: request.captureProfile }, now);
       return this.status();
     }
@@ -7931,46 +8724,59 @@ export class AiGraderLocalStationBridgeService {
     }
 
     if (action === "confirm-light-idle-off") {
+      const assertion = this.validateFrontWorkflowAssertion(request, 'confirm-light-idle-off');
+      const existing = this.ensureFrontWorkflowAuthority().lightIdleOff;
+      this.assertFrontWorkflowRetryCompatible(existing, assertion, 'confirm-light-idle-off');
       return this.serializeTerminalLifecycle(async () => {
         await this.awaitLightingLifecycleIdle();
-        await this.safeOffLiveLighting("explicit initial station safe-off recovery", "safe_off", { force: true });
-        this.manifest.confirmations.lightIdleOff = true;
-        this.manifest.progressLog.push(`${now} Operator confirmation recorded after controller-acknowledged initial safe-off.`);
-        await writeSessionManifest(this.manifest);
-        return this.status();
+        if (!this.safeOffLightingVerificationComplete()) {
+          await this.safeOffLiveLighting('explicit initial station safe-off recovery', 'safe_off');
+        }
+        return this.runFrontWorkflowMutation('confirm-light-idle-off', assertion, () => {
+          this.bindFrontLightIdleOff(assertion);
+          this.reconcileFrontWorkflowTransition();
+        });
       });
     }
 
     if (action === "confirm-fixture-rulers") {
-      this.manifest.confirmations.fixtureRulersVisible = true;
-      this.manifest.progressLog.push(`${now} Operator confirmed fixture/rulers visible.`);
-      await writeSessionManifest(this.manifest);
-      return this.status();
+      const assertion = this.validateFrontWorkflowAssertion(request, 'confirm-fixture-rulers');
+      return this.runFrontWorkflowMutation('confirm-fixture-rulers', assertion, () => {
+        this.bindFrontFixtureRulers(assertion);
+        this.reconcileFrontWorkflowTransition();
+      });
     }
 
     if (action === "accept-profile") {
       if (this.manifest.outputs.frontPackageDir || this.manifest.currentStep === "prompt_flip_card" || this.manifest.currentStep === "capture_back") {
         throw new Error("Capture profile changes are disabled after front evidence is persisted; start a new session to accept a different profile.");
       }
-      if (!request.acceptedProfile) {
-        throw new Error("Capture profile acceptance requires an explicit bounded station profile.");
-      }
-      this.manifest.acceptedProfile = validateProfile(request.acceptedProfile, this.manifest.acceptedProfile);
-      this.updateLiveLightingStatus({
-        profile: {
-          enabled: true,
-          dutyPercent: this.manifest.acceptedProfile.dutyPercent,
-          actualLeimacPwmStep: this.manifest.acceptedProfile.actualLeimacPwmStep,
-          channels: [...this.manifest.acceptedProfile.channels],
-          source: "accepted_station_profile",
-          acceptedForCapture: true,
-          acceptedAt: this.manifest.acceptedProfile.acceptedAt,
-        },
+      const assertion = this.validateFrontWorkflowAssertion(request, 'accept-profile');
+      return this.runFrontWorkflowMutation('accept-profile', assertion, () => {
+        const existing = this.ensureFrontWorkflowAuthority().acceptedProfile;
+        this.assertFrontWorkflowRetryCompatible(existing, assertion, 'accept-profile');
+        this.assertFrontProfileAcceptanceKeyAvailable(assertion);
+        if (this.acceptedFrontWorkflowEvidence(assertion.binding)) {
+          this.reconcileFrontWorkflowTransition();
+          return;
+        }
+        if (this.manifest.acceptedProfile.source !== 'operator_preview' || !this.manifest.acceptedProfile.acceptedAt) {
+          throw new Error('accept-profile requires an authoritative bridge operator-preview result; browser profile values are not accepted.');
+        }
+        this.updateLiveLightingStatus({
+          profile: {
+            enabled: true,
+            dutyPercent: this.manifest.acceptedProfile.dutyPercent,
+            actualLeimacPwmStep: this.manifest.acceptedProfile.actualLeimacPwmStep,
+            channels: [...this.manifest.acceptedProfile.channels],
+            source: 'accepted_station_profile',
+            acceptedForCapture: true,
+            acceptedAt: this.manifest.acceptedProfile.acceptedAt,
+          },
+        });
+        this.bindFrontAcceptedProfile(assertion, this.manifest.acceptedProfile);
+        this.reconcileFrontWorkflowTransition();
       });
-      this.manifest.currentStep = "capture_front";
-      this.manifest.progressLog.push(`${now} Accepted profile ${this.manifest.acceptedProfile.dutyPercent}% / ${this.manifest.acceptedProfile.exposureUs} us.`);
-      await writeSessionManifest(this.manifest);
-      return this.status();
     }
 
     if (action === "confirm-flip") {
@@ -7999,7 +8805,6 @@ export class AiGraderLocalStationBridgeService {
       await this.awaitLightingLifecycleIdle();
       const safeOff = await this.runTerminalSafeOff("station cancellation");
       this.releaseFullForensicPreviewHold("station cancellation completed");
-      this.manifest.currentStep = "safe_off_end_session";
       let processingError: Error | undefined;
       try {
         await this.cancelWarmProcessingSession(this.manifest.sessionId, "station cancellation");
@@ -8008,6 +8813,8 @@ export class AiGraderLocalStationBridgeService {
         if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
       }
       const cancelledCleanly = safeOff.ok && !processingError;
+      this.manifest.confirmations.finalLightOff = safeOff.ok;
+      if (cancelledCleanly) this.manifest.currentStep = "safe_off_end_session";
       this.manifest.warmRunnerStatus.status = cancelledCleanly ? "cancelled" : "failed";
       this.markWarmPhase({
         id: "station_cancelled",
@@ -8034,7 +8841,6 @@ export class AiGraderLocalStationBridgeService {
       await this.awaitLightingLifecycleIdle();
       const safeOff = await this.runTerminalSafeOff("station session end");
       this.releaseFullForensicPreviewHold("station session end completed");
-      this.manifest.currentStep = "safe_off_end_session";
       let processingError: Error | undefined;
       try {
         await this.cancelWarmProcessingSession(this.manifest.sessionId, "station session end");
@@ -8042,7 +8848,10 @@ export class AiGraderLocalStationBridgeService {
         processingError = new Error(boundedProcessingWorkerError(error));
         if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
       }
-      this.manifest.warmRunnerStatus.status = safeOff.ok && !processingError ? "complete" : "failed";
+      const endedCleanly = safeOff.ok && !processingError;
+      this.manifest.confirmations.finalLightOff = safeOff.ok;
+      if (endedCleanly) this.manifest.currentStep = "safe_off_end_session";
+      this.manifest.warmRunnerStatus.status = endedCleanly ? "complete" : "failed";
       this.manifest.progressLog.push(`${now} Station session ended.`);
       await writeSessionManifest(this.manifest);
       if (!safeOff.ok || processingError) {
@@ -8054,36 +8863,47 @@ export class AiGraderLocalStationBridgeService {
       return this.status();
     });
 
-    if (action === "safe-off") return this.serializeTerminalLifecycle(async () => {
-      await this.awaitLightingLifecycleIdle();
-      assertRealReady(this.config, this.manifest);
-      const safeOff = await this.runTerminalSafeOff("operator safe-off action");
-      this.manifest.confirmations.finalLightOff = safeOff.ok
-        && (Boolean(request.confirmations?.finalLightOff) || this.manifest.confirmations.finalLightOff);
-      this.manifest.currentStep = "safe_off_end_session";
-      this.releaseFullForensicPreviewHold("operator safe-off completed");
-      let processingError: Error | undefined;
-      try {
-        await this.cancelWarmProcessingSession(this.manifest.sessionId, "operator safe-off action");
-      } catch (error) {
-        processingError = new Error(boundedProcessingWorkerError(error));
-        if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
+    if (action === "safe-off") {
+      const unexpected = Object.keys(request as Record<string, unknown>);
+      if (unexpected.length > 0) {
+        throw new Error('safe-off accepts no browser confirmation, profile, or hardware values; controller acknowledgement is the sole final-light authority.');
       }
-      this.manifest.warmRunnerStatus.status = safeOff.ok && !processingError ? "complete" : "failed";
-      this.manifest.progressLog.push(`${now} Safe-off ${safeOff.ok ? "completed with final controller acknowledgement" : "failed verification"}; processing-worker reconciliation ${processingError ? "failed" : "completed"}.`);
-      await writeSessionManifest(this.manifest);
-      if (!safeOff.ok || processingError) {
-        const safeOffMessage = safeOff.ok
-          ? undefined
-          : safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Operator safe-off could not be verified.";
-        throw new Error([safeOffMessage, processingError?.message].filter(Boolean).join(" "));
-      }
-      return this.status();
-    });
+      return this.serializeTerminalLifecycle(async () => {
+        await this.awaitLightingLifecycleIdle();
+        // Safe-off is the recovery authority for an unknown initial physical
+        // state. It requires immutable bridge launch arming, but cannot require
+        // session-bound lightIdleOff evidence that only a verified safe-off can
+        // establish.
+        assertRealBridgeArmed(this.config);
+        const safeOff = await this.runTerminalSafeOff("operator safe-off action");
+        this.manifest.confirmations.finalLightOff = safeOff.ok;
+        let processingError: Error | undefined;
+        try {
+          await this.cancelWarmProcessingSession(this.manifest.sessionId, "operator safe-off action");
+        } catch (error) {
+          processingError = new Error(boundedProcessingWorkerError(error));
+          if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
+        }
+        const safeOffCompleted = safeOff.ok && !processingError;
+        if (safeOffCompleted) this.manifest.currentStep = "safe_off_end_session";
+        this.releaseFullForensicPreviewHold(safeOffCompleted ? "operator safe-off completed" : "operator safe-off failed verification");
+        this.manifest.warmRunnerStatus.status = safeOffCompleted ? "complete" : "failed";
+        this.manifest.progressLog.push(`${now} Safe-off ${safeOff.ok ? "completed with final controller acknowledgement" : "failed verification"}; processing-worker reconciliation ${processingError ? "failed" : "completed"}.`);
+        await writeSessionManifest(this.manifest);
+        if (!safeOff.ok || processingError) {
+          const safeOffMessage = safeOff.ok
+            ? undefined
+            : safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Operator safe-off could not be verified.";
+          throw new Error([safeOffMessage, processingError?.message].filter(Boolean).join(" "));
+        }
+        return this.status();
+      });
+    }
 
     assertRealReady(this.config, this.manifest);
 
     if (action === "launch-preview") {
+      this.assertPhysicalStateKnown('Native preview camera acquisition');
       assertFixtureVisible(this.manifest);
       await this.stopPreviewForHardwareAction("native-preview");
       const result = await runStepOrMock(this.config, this.manifest, this.runner, stepById(this.config, this.manifest, "operator_preview"));
@@ -8459,7 +9279,7 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for /lighting/accept." }, origin, config);
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         const body = await readJsonBody(req);
-        return sendJson(res, 200, { ok: true, operation: "lighting-accept", result: await service.acceptLiveLightingForCapture(body) }, origin, config);
+        return sendJson(res, 200, { ok: true, operation: "lighting-accept", result: await service.acceptLiveLightingForCapture(actionRequestFromJson(body)) }, origin, config);
       }
 
       if (url.pathname === "/lighting/heartbeat") {

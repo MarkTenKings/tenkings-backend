@@ -648,21 +648,93 @@ function noteFreshBackPreviewFrame(service, frameIndex = 1) {
 
 let atomicBackCaptureSequence = 0;
 let atomicFrontCaptureSequence = 0;
+let frontWorkflowMutationSequence = 0;
 
-async function atomicFrontCaptureRequest(service, overrides = {}) {
+function frontWorkflowMutationRequest(service, operation, overrides = {}) {
+  const status = service.status();
+  return {
+    idempotencyKey: "front-workflow-" + operation + "-" + (++frontWorkflowMutationSequence),
+    expectedSessionId: status.sessionId,
+    expectedReportId: status.reportId,
+    expectedSide: "front",
+    expectedSideEpoch: status.previewStatus.sideEpoch,
+    ...(operation.startsWith("lighting-accept")
+      ? { expectedCandidateProfileIdentity: status.liveLighting.profile.candidateProfileIdentity }
+      : {}),
+    ...overrides,
+  };
+}
+
+function frontWorkflowEvidenceMatches(status, evidence) {
+  return Boolean(
+    evidence
+    && evidence.sessionId === status.sessionId
+    && evidence.reportId === status.reportId
+    && evidence.side === "front"
+    && evidence.sideEpoch === status.previewStatus.sideEpoch
+  );
+}
+
+async function completeFrontWorkflowPrerequisites(service) {
   let status = service.status();
-  if (status.currentStep !== "capture_front") {
-    await service.action("accept-profile", {
-      acceptedProfile: {
-        dutyPercent: 3,
-        exposureUs: 8000,
-        gain: 0,
-        channels: [1, 2, 3, 4, 5, 6, 7, 8],
-        source: "bridge_operator",
-      },
+  if (!frontWorkflowEvidenceMatches(status, status.frontWorkflowAuthority?.lightIdleOff)) {
+    await service.action(
+      "confirm-light-idle-off",
+      frontWorkflowMutationRequest(service, "confirm-light-idle-off"),
+    );
+  }
+  status = service.status();
+  if (!frontWorkflowEvidenceMatches(status, status.frontWorkflowAuthority?.fixtureRulers)) {
+    await service.action(
+      "confirm-fixture-rulers",
+      frontWorkflowMutationRequest(service, "confirm-fixture-rulers"),
+    );
+  }
+  status = service.status();
+  if (!frontWorkflowEvidenceMatches(status, status.frontWorkflowAuthority?.acceptedProfile)) {
+    await service.applyLiveLighting({
+      enabled: true,
+      dutyPercent: 3,
+      channels: [1, 2, 3, 4, 5, 6, 7, 8],
+    });
+    await service.acceptLiveLightingForCapture(
+      frontWorkflowMutationRequest(service, "lighting-accept"),
+    );
+  }
+  status = service.status();
+  const applied = status.liveLighting.applied;
+  const accepted = status.acceptedProfile;
+  const acceptedProfileApplied = applied.enabled === true
+    && applied.verificationState === "verified"
+    && applied.verificationComplete === true
+    && applied.expectedWriteCount === applied.acknowledgedWriteCount
+    && applied.dutyPercent === accepted.dutyPercent
+    && applied.actualLeimacPwmStep === accepted.actualLeimacPwmStep
+    && applied.channels.join(",") === accepted.channels.join(",");
+  if (
+    frontWorkflowEvidenceMatches(status, status.frontWorkflowAuthority?.acceptedProfile)
+    && !acceptedProfileApplied
+    && status.liveLighting.physicalState.state !== "physical_state_unknown"
+    && status.liveLighting.physicalState.state !== "safe_off_pending"
+  ) {
+    await service.applyLiveLighting({
+      enabled: true,
+      dutyPercent: accepted.dutyPercent,
+      channels: accepted.channels,
     });
     status = service.status();
   }
+  assert.equal(status.currentStep, "capture_front");
+  return status;
+}
+
+async function atomicFrontCaptureRequest(service, overrides = {}) {
+  let status = service.status();
+  assert.equal(status.currentStep, "capture_front");
+  assert.equal(
+    frontWorkflowEvidenceMatches(status, status.frontWorkflowAuthority?.acceptedProfile),
+    true,
+  );
   const geometryCaptureMode = overrides.geometryCaptureMode ?? "manual_capture";
   let geometry = status.previewStatus.cardGeometry?.front;
   if (
@@ -694,6 +766,8 @@ async function atomicFrontCaptureRequest(service, overrides = {}) {
     assert.equal(service.retainPreviewGeometryObservation(geometry), true);
     status = service.status();
   }
+  assert.equal(status.frontCaptureReadiness.ready, true);
+  assert.equal(status.frontCaptureReadiness.code, "ready");
   return {
     idempotencyKey: `capture-front-v0.9-${++atomicFrontCaptureSequence}`,
     expectedSessionId: status.sessionId,
@@ -706,6 +780,11 @@ async function atomicFrontCaptureRequest(service, overrides = {}) {
     captureTriggerAt: new Date().toISOString(),
     ...overrides,
   };
+}
+
+async function preparedAtomicFrontCaptureRequest(service, overrides = {}) {
+  await completeFrontWorkflowPrerequisites(service);
+  return atomicFrontCaptureRequest(service, overrides);
 }
 
 function atomicFrontCaptureRequestFromStatus(status, overrides = {}) {
@@ -723,6 +802,37 @@ function atomicFrontCaptureRequestFromStatus(status, overrides = {}) {
     captureTriggerAt: new Date().toISOString(),
     ...overrides,
   };
+}
+
+async function completeHttpFrontWorkflowPrerequisites(input) {
+  const assertion = (operation, candidateProfileIdentity) => ({
+    idempotencyKey: "http-front-workflow-" + operation + "-" + (++frontWorkflowMutationSequence),
+    expectedSessionId: input.status.sessionId,
+    expectedReportId: input.status.reportId,
+    expectedSide: "front",
+    expectedSideEpoch: input.status.previewStatus.sideEpoch,
+    ...(candidateProfileIdentity ? { expectedCandidateProfileIdentity: candidateProfileIdentity } : {}),
+  });
+  await input.postAction("confirm-fixture-rulers", assertion("fixture-rulers"));
+  const applyResponse = await fetch(input.startedUrl + "/lighting/apply", {
+    method: "POST",
+    headers: input.headers,
+    body: JSON.stringify({
+      enabled: true,
+      dutyPercent: input.dutyPercent ?? 1.2,
+      channels: input.channels ?? [1, 2, 3, 4, 5, 6, 7, 8],
+    }),
+  });
+  assert.equal(applyResponse.status, 200);
+  const applied = await applyResponse.json();
+  const acceptResponse = await fetch(input.startedUrl + "/lighting/accept", {
+    method: "POST",
+    headers: input.headers,
+    body: JSON.stringify(assertion("lighting-accept", applied.result.profile.candidateProfileIdentity)),
+  });
+  const payload = await acceptResponse.json();
+  assert.equal(acceptResponse.status, 200);
+  return payload.result;
 }
 
 function atomicBackCaptureRequest(service, overrides = {}) {
@@ -754,7 +864,7 @@ function backPositioningRetryAssertions(service) {
 
 async function prepareBackPositioning(service) {
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
   noteFreshBackPreviewFrame(service);
   return service.status();
 }
@@ -1183,11 +1293,28 @@ test("mock live preview reports deterministic path-free front and back geometry 
     assert.equal(startedSession.previewStatus.cardGeometry.analysis.throttleMs, 125);
     assert.equal(startedSession.previewStatus.cardGeometry.front, undefined);
     assert.equal(startedSession.previewStatus.cardGeometry.back, undefined);
-    await post("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-    await post("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-    await post("accept-profile", {
-      acceptedProfile: { dutyPercent: 3, exposureUs: 8000, gain: 0, channels: [1, 2, 3, 4, 5, 6, 7, 8], source: "bridge_operator" },
+    const assertion = (operation, candidateProfileIdentity) => ({
+      idempotencyKey: "preview-geometry-" + operation + "-0001",
+      expectedSessionId: startedSession.sessionId,
+      expectedReportId: startedSession.reportId,
+      expectedSide: "front",
+      expectedSideEpoch: startedSession.previewStatus.sideEpoch,
+      ...(candidateProfileIdentity ? { expectedCandidateProfileIdentity: candidateProfileIdentity } : {}),
     });
+    await post("confirm-fixture-rulers", assertion("fixture-rulers"));
+    const applyResponse = await fetch(started.url + "/lighting/apply", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ enabled: true, dutyPercent: 3, channels: [1, 2, 3, 4, 5, 6, 7, 8] }),
+    });
+    assert.equal(applyResponse.status, 200);
+    const appliedProfile = await applyResponse.json();
+    const acceptResponse = await fetch(started.url + "/lighting/accept", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(assertion("lighting-accept", appliedProfile.result.profile.candidateProfileIdentity)),
+    });
+    assert.equal(acceptResponse.status, 200);
 
     frontStream = openStream();
     const notDetectedFront = await waitForAsync(async () => {
@@ -1281,11 +1408,11 @@ test("capture geometry gating rejects contradictory Ready state and passes expli
     },
   }, warm.runner);
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
 
   await assert.rejects(
-    () => atomicFrontCaptureRequest(service, { geometryCaptureMode: "detected_geometry" })
+    () => preparedAtomicFrontCaptureRequest(service, { geometryCaptureMode: "detected_geometry" })
       .then((request) => service.action("capture-front", request)),
     /authoritative Ready geometry.*not_detected/i
   );
@@ -1296,19 +1423,19 @@ test("capture geometry gating rejects contradictory Ready state and passes expli
   service.manifest.previewStatus.cardGeometry.front.manualOverrideUsed = true;
   assert.equal(service.retainPreviewGeometryObservation(service.manifest.previewStatus.cardGeometry.front), true);
   await assert.rejects(
-    () => atomicFrontCaptureRequest(service, { geometryCaptureMode: "detected_geometry" })
+    () => preparedAtomicFrontCaptureRequest(service, { geometryCaptureMode: "detected_geometry" })
       .then((request) => service.action("capture-front", request)),
     /authoritative Ready geometry/i
   );
   assert.equal(service.status().geometryCaptureDecisions.front, undefined);
   await assert.rejects(
-    () => atomicFrontCaptureRequest(service, { captureTriggerMode: "auto" })
+    () => preparedAtomicFrontCaptureRequest(service, { captureTriggerMode: "auto" })
       .then((request) => service.action("capture-front", request)),
     /manual mode requires an explicit operator trigger/i
   );
   assert.equal(service.status().geometryCaptureDecisions.front, undefined);
 
-  const status = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  const status = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
   assert.deepEqual(status.geometryCaptureDecisions.front.manualBoundaryRect, {
     x: 25,
     y: 19,
@@ -1352,15 +1479,15 @@ test("capture geometry gating rejects a stale Ready frame instead of reusing old
     },
   }, warm.runner);
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
   markReadyGeometry(service, "front");
   service.manifest.previewStatus.cardGeometry.front.timestamp = new Date(Date.now() - 3000).toISOString();
   service.previewObservations.find((observation) => observation.side === "front").geometry.timestamp =
     service.manifest.previewStatus.cardGeometry.front.timestamp;
 
   await assert.rejects(
-    () => atomicFrontCaptureRequest(service, { geometryCaptureMode: "detected_geometry" })
+    () => preparedAtomicFrontCaptureRequest(service, { geometryCaptureMode: "detected_geometry" })
       .then((request) => service.action("capture-front", request)),
     /retained frame\/geometry observation is stale/i,
   );
@@ -1377,20 +1504,104 @@ test("capture geometry freshness is frozen at a recent operator click during bou
     },
   }, warm.runner);
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
   markReadyGeometry(service, "front");
   const clickAt = new Date(Date.now() - 1000).toISOString();
   service.manifest.previewStatus.cardGeometry.front.timestamp = new Date(Date.parse(clickAt) - 500).toISOString();
   assert.equal(service.retainPreviewGeometryObservation(service.manifest.previewStatus.cardGeometry.front), true);
 
-  const status = await service.action("capture-front", await atomicFrontCaptureRequest(service, {
+  const status = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service, {
     geometryCaptureMode: "detected_geometry",
     captureTriggerAt: clickAt,
   }));
 
   assert.equal(status.geometryCaptureDecisions.front.timestamp, clickAt);
   assert.equal(warm.calls.some((call) => call.type === "capture" && call.side === "front"), true);
+});
+
+test("preview stream fails before camera acquisition while lighting safety is pending or unknown", async () => {
+  const applyGate = deferred();
+  let holdApply = false;
+  let failSafeOff = false;
+  let applyReachedWrite = false;
+  const token = "preview-safety-gate-token";
+  const started = await startAiGraderLocalStationBridgeHttpServer(
+    {
+      ...realConfig({
+        stationToken: token,
+        port: 0,
+        outputDir: outputDir("preview-safety-gate-" + Date.now()),
+        allowedOrigins: ["https://collect.tenkings.co"],
+      }),
+    },
+    {},
+    {
+      async run(step) {
+        return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+      },
+    },
+    undefined,
+    {
+      ...fakePreviewDependencies(),
+      async writeLightingFrames(frames) {
+        if (holdApply && frames.length > 3) {
+          applyReachedWrite = true;
+          await applyGate.promise;
+        }
+        if (failSafeOff && frames.length <= 3) {
+          return frames.slice(0, -1).map(() => ({ responseKind: "ack", ok: true }));
+        }
+        return frames.map(() => ({ responseKind: "ack", ok: true }));
+      },
+    },
+  );
+  const headers = {
+    Origin: "https://collect.tenkings.co",
+    "x-ai-grader-station-token": token,
+    "content-type": "application/json",
+  };
+  const previewStarts = hardwareIsolation.fakePreviewStarts;
+  try {
+    const session = await fetch(started.url + "/actions/start-session", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ captureProfile: "full_forensic" }),
+    });
+    assert.equal(session.status, 200);
+    holdApply = true;
+    const apply = fetch(started.url + "/lighting/apply", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ enabled: true, dutyPercent: 1.2, channels: [1] }),
+    });
+    await waitFor(() => applyReachedWrite, "live lighting never reached its pending fake write");
+    let preview = await fetch(started.url + "/preview/stream", { headers });
+    assert.equal(preview.status, 409);
+    assert.match(await preview.text(), /safe_off_pending|lighting.*pending/i);
+    assert.equal(hardwareIsolation.fakePreviewStarts, previewStarts);
+    applyGate.resolve();
+    assert.equal((await apply).status, 200);
+
+    failSafeOff = true;
+    const safeOff = await fetch(started.url + "/lighting/safe-off", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    assert.equal(safeOff.status, 400);
+    preview = await fetch(started.url + "/preview/stream", { headers });
+    assert.equal(preview.status, 409);
+    assert.match(await preview.text(), /physical_state_unknown|lighting safety/i);
+    assert.equal(hardwareIsolation.fakePreviewStarts, previewStarts);
+  } finally {
+    applyGate.resolve();
+    failSafeOff = false;
+    if (typeof started.server.closeAllConnections === "function") {
+      started.server.closeAllConnections();
+    }
+    await closeServer(started.server);
+  }
 });
 
 test("station bridge live lighting endpoints are token-gated and validate duty and channels", async () => {
@@ -1483,13 +1694,25 @@ test("station bridge live lighting endpoints are token-gated and validate duty a
     assert.equal(heartbeat.status, 200);
     const heartbeatBody = await heartbeat.json();
     assert.ok(heartbeatBody.result.watchdog.expiresAt);
+    const currentLightingStation = (
+      await (await fetch(started.url + "/status", { headers })).json()
+    ).result;
 
     const accepted = await fetch(`${started.url}/lighting/accept`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ dutyPercent: 1.4, channels: [1, 3, 5], exposureUs: 47000, gain: 0 }),
+      body: JSON.stringify({
+        idempotencyKey: "live-lighting-accept-http-0001",
+        expectedSessionId: currentLightingStation.sessionId,
+        expectedReportId: currentLightingStation.reportId,
+        expectedSide: "front",
+        expectedSideEpoch: currentLightingStation.previewStatus.sideEpoch,
+        expectedCandidateProfileIdentity: currentLightingStation.liveLighting.profile.candidateProfileIdentity,
+      }),
     });
     assert.equal(accepted.status, 200);
+    const acceptedBody = await accepted.json();
+    assert.equal(acceptedBody.result.acceptedProfile.source, "browser_live_tuning");
     const stationStatus = await fetch(`${started.url}/status`, { headers });
     const stationStatusBody = await stationStatus.json();
     assert.equal(stationStatusBody.result.acceptedProfile.source, "browser_live_tuning");
@@ -1578,20 +1801,21 @@ test("mock station bridge runs staged workflow without claiming hardware", async
 
   await assert.rejects(() => service.action("launch-preview"), /fixture\/rulers/);
 
-  status = await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  status = await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
   assert.equal(status.confirmations.lightIdleOff, true);
-  status = await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  status = await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
   assert.equal(status.confirmations.fixtureRulersVisible, true);
   status = await service.action("launch-preview");
   assert.equal(status.outputs.previewPackageDir?.includes("mock-operator_preview"), true);
 
-  status = await service.action("accept-profile", {
-    acceptedProfile: { dutyPercent: 1.4, exposureUs: 45000, gain: 0, channels: [1, 2, 3, 4, 5, 6, 7, 8] },
-  });
-  assert.equal(status.acceptedProfile.dutyPercent, 1.4);
-  assert.equal(status.acceptedProfile.actualLeimacPwmStep, 14);
+  status = await service.action(
+    "accept-profile",
+    frontWorkflowMutationRequest(service, "accept-profile"),
+  );
+  assert.equal(status.acceptedProfile.dutyPercent, 1.2);
+  assert.equal(status.acceptedProfile.actualLeimacPwmStep, 12);
 
-  status = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  status = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
   assert.equal(status.sessionManifest.frontCaptured, true);
   assert.equal(status.warmRunnerStatus.captureLock.held, false);
   assert.equal(status.warmRunnerStatus.previewPolicy.holdActive, false);
@@ -2007,11 +2231,13 @@ test("browser live lighting safe-offs before front capture and only then restore
 
   await service.action("start-session", { captureProfile: "full_forensic" });
   await service.applyLiveLighting({ enabled: true, dutyPercent: 1.2, channels: [1, 2, 3] });
-  await service.acceptLiveLightingForCapture({ dutyPercent: 1.2, channels: [1, 2, 3], exposureUs: 8000, gain: 0 });
+  await service.acceptLiveLightingForCapture(
+    frontWorkflowMutationRequest(service, "lighting-accept"),
+  );
   assert.equal(service.status().liveLighting.applied.enabled, true);
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  const status = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
+  const status = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
 
   assert.equal(status.liveLighting.applied.enabled, true);
   assert.equal(status.liveLighting.backPositioning.status, "waiting_for_frame");
@@ -2046,10 +2272,13 @@ test("accepted browser live lighting profile is passed to warm capture", async (
   }), runner, warm.runner);
 
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.acceptLiveLightingForCapture({ dutyPercent: 1.7, channels: [2, 4, 6, 8], exposureUs: 46000, gain: 0 });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  const status = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.applyLiveLighting({ enabled: true, dutyPercent: 1.7, channels: [2, 4, 6, 8] });
+  await service.acceptLiveLightingForCapture(
+    frontWorkflowMutationRequest(service, "lighting-accept"),
+  );
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
+  const status = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
 
   assert.equal(status.acceptedProfile.source, "browser_live_tuning");
   assert.equal(status.acceptedProfile.dutyPercent, 1.7);
@@ -2125,10 +2354,12 @@ test("front capture locks before verified safe-off and restores only the exact d
 
   await service.action("start-session", { captureProfile: "full_forensic" });
   await service.applyLiveLighting({ enabled: true, dutyPercent: 5, channels: [8, 2, 4] });
-  await service.acceptLiveLightingForCapture({ dutyPercent: 5, channels: [8, 2, 4], exposureUs: 47000, gain: 0 });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  const status = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.acceptLiveLightingForCapture(
+    frontWorkflowMutationRequest(service, "lighting-accept"),
+  );
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
+  const status = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
 
   assert.equal(status.currentStep, "prompt_flip_card");
   assert.equal(status.liveLighting.backPositioning.status, "waiting_for_frame");
@@ -2154,19 +2385,22 @@ test("failed front never restores; restore failure preserves front and retry is 
   const runner = { async run(step) { return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } }; } };
   const failedWarm = makeFakeWarmRunner({ captureError: new Error("front capture failed") });
   let failedRestoreWrites = 0;
+  let trackFailedRestoreWrites = false;
   const failed = new AiGraderLocalStationBridgeService(realConfig({
     outputDir: outputDir(`front-no-restore-${Date.now()}`),
   }), runner, failedWarm.runner, {
     async writeLightingFrames(frames) {
-      if (frames.length > 3) failedRestoreWrites += 1;
+      if (trackFailedRestoreWrites && frames.length > 3) failedRestoreWrites += 1;
       return frames.map(() => ({ responseKind: "ack", ok: true }));
     },
   });
   await failed.action("start-session", { captureProfile: "full_forensic" });
-  await failed.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await failed.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await failed.action("confirm-light-idle-off", frontWorkflowMutationRequest(failed, "confirm-light-idle-off"));
+  await failed.action("confirm-fixture-rulers", frontWorkflowMutationRequest(failed, "confirm-fixture-rulers"));
+  const failedFrontRequest = await preparedAtomicFrontCaptureRequest(failed);
+  trackFailedRestoreWrites = true;
   await assert.rejects(
-    () => atomicFrontCaptureRequest(failed).then((request) => failed.action("capture-front", request)),
+    () => failed.action("capture-front", failedFrontRequest),
     /front capture failed/
   );
   assert.equal(failed.status().outputs.frontPackageDir, undefined);
@@ -2176,12 +2410,13 @@ test("failed front never restores; restore failure preserves front and retry is 
 
   let failRestore = true;
   let restoreWrites = 0;
+  let trackRestoreWrites = false;
   const service = new AiGraderLocalStationBridgeService(realConfig({
     outputDir: outputDir(`restore-failure-${Date.now()}`),
   }), runner, makeFakeWarmRunner().runner, {
     async writeLightingFrames(frames) {
       const isRestore = frames.length > 3;
-      if (isRestore) {
+      if (trackRestoreWrites && isRestore) {
         restoreWrites += 1;
         if (failRestore) {
           throw new Error("Timed out at http://169.254.191.156/C:\\private\\profile.json token=do-not-log");
@@ -2191,12 +2426,19 @@ test("failed front never restores; restore failure preserves front and retry is 
     },
   });
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("accept-profile", {
-    acceptedProfile: { dutyPercent: 1.7, exposureUs: 46000, gain: 0, channels: [2, 4, 6, 8] },
+  await service.applyLiveLighting({
+    enabled: true,
+    dutyPercent: 1.7,
+    channels: [2, 4, 6, 8],
   });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  const front = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.acceptLiveLightingForCapture(
+    frontWorkflowMutationRequest(service, "lighting-accept"),
+  );
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
+  const frontRequest = await preparedAtomicFrontCaptureRequest(service);
+  trackRestoreWrites = true;
+  const front = await service.action("capture-front", frontRequest);
   assert.ok(front.outputs.frontPackageDir);
   assert.equal(front.currentStep, "prompt_flip_card");
   assert.equal(front.liveLighting.applied.enabled, false);
@@ -2260,10 +2502,37 @@ test("retry route is token-gated, accepts no caller profile, and returns only ac
     });
     assert.equal(unauthorized.status, 401);
     await unauthorized.text();
-    assert.equal((await post("/actions/start-session", { captureProfile: "full_forensic" })).status, 200);
-    assert.equal((await post("/actions/accept-profile", {
+    const startedResponse = await post("/actions/start-session", { captureProfile: "full_forensic" });
+    assert.equal(startedResponse.status, 200);
+    const startedStation = (await startedResponse.json()).result;
+    const rejectedProfile = await post("/actions/accept-profile", {
       acceptedProfile: { dutyPercent: 1.2, exposureUs: 8000, gain: 0, channels: [1, 2, 3, 4, 5, 6, 7, 8], source: "bridge_operator" },
-    })).status, 200);
+    });
+    assert.equal(rejectedProfile.status, 400);
+    assert.match(await rejectedProfile.text(), /only bounded idempotency/i);
+    const workflowAssertion = (operation, candidateProfileIdentity) => ({
+      idempotencyKey: "retry-route-" + operation + "-0001",
+      expectedSessionId: startedStation.sessionId,
+      expectedReportId: startedStation.reportId,
+      expectedSide: "front",
+      expectedSideEpoch: startedStation.previewStatus.sideEpoch,
+      ...(candidateProfileIdentity ? { expectedCandidateProfileIdentity: candidateProfileIdentity } : {}),
+    });
+    assert.equal((await post(
+      "/actions/confirm-fixture-rulers",
+      workflowAssertion("fixture-rulers"),
+    )).status, 200);
+    const applyProfileResponse = await post("/lighting/apply", {
+      enabled: true,
+      dutyPercent: 1.2,
+      channels: [1, 2, 3, 4, 5, 6, 7, 8],
+    });
+    assert.equal(applyProfileResponse.status, 200);
+    const appliedProfile = await applyProfileResponse.json();
+    assert.equal((await post(
+      "/lighting/accept",
+      workflowAssertion("lighting-accept", appliedProfile.result.profile.candidateProfileIdentity),
+    )).status, 200);
     await new Promise((resolve, reject) => {
       frontPreviewRequest = http.request(`${started.url}/preview/stream`, { headers }, (response) => {
         assert.equal(response.statusCode, 200);
@@ -2373,9 +2642,9 @@ test("back positioning requires a current frame, heartbeat cannot outlive it, an
     outputDir: outputDir(`epoch-heartbeat-${Date.now()}`),
   }));
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
+  await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
   const positioned = service.status();
   const backEpoch = positioned.previewStatus.sideEpoch;
   assert.equal(positioned.previewStatus.activeSide, "back");
@@ -2473,9 +2742,9 @@ test("first-frame watchdog and failed preview-loss safe-off both fail closed", a
     outputDir: outputDir(`first-frame-watchdog-${Date.now()}`),
   }));
   await watchdog.action("start-session", { captureProfile: "full_forensic" });
-  await watchdog.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await watchdog.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  await watchdog.action("capture-front", await atomicFrontCaptureRequest(watchdog));
+  await watchdog.action("confirm-light-idle-off", frontWorkflowMutationRequest(watchdog, "confirm-light-idle-off"));
+  await watchdog.action("confirm-fixture-rulers", frontWorkflowMutationRequest(watchdog, "confirm-fixture-rulers"));
+  await watchdog.action("capture-front", await preparedAtomicFrontCaptureRequest(watchdog));
   assert.equal(watchdog.status().liveLighting.backPositioning.status, "waiting_for_frame");
   await watchdog.handleLiveLightingWatchdogExpiry("deterministic first-frame grace test");
   assert.equal(watchdog.status().liveLighting.applied.enabled, false);
@@ -2664,6 +2933,159 @@ test("lighting writes serialize and shutdown waits for the final safe-off", asyn
   assert.equal(shutdown.status().liveLighting.applied.enabled, false);
 });
 
+test("fresh real startup can recover safe-off without circular session evidence and only complete controller ACK authorizes it", async () => {
+  const commandSteps = [];
+  const service = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir(`fresh-safe-off-recovery-${Date.now()}`) }),
+    {
+      async run(step) {
+        commandSteps.push(step.id);
+        return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+      },
+    },
+    undefined,
+    {
+      async writeLightingFrames(frames) {
+        return frames.map(() => ({ responseKind: "ack", ok: true }));
+      },
+    },
+  );
+
+  const initial = service.status();
+  assert.equal(initial.sessionId, undefined);
+  assert.equal(initial.confirmations.lightIdleOff, false);
+  assert.equal(initial.confirmations.finalLightOff, false);
+  assert.equal(initial.liveLighting.physicalState.state, "physical_state_unknown");
+
+  const recovered = await service.action("safe-off", {});
+  const expectedWrites = recovered.liveLighting.applied.expectedWriteCount;
+  assert.deepEqual(commandSteps, ["safe_off"]);
+  assert.ok(Number.isInteger(expectedWrites) && expectedWrites > 0);
+  assert.equal(recovered.confirmations.lightIdleOff, false, "recovery must not manufacture session-bound Front authority");
+  assert.equal(recovered.confirmations.finalLightOff, true);
+  assert.equal(recovered.currentStep, "safe_off_end_session");
+  assert.equal(recovered.liveLighting.status, "safe_off");
+  assert.equal(recovered.liveLighting.applied.enabled, false);
+  assert.equal(recovered.liveLighting.applied.verificationComplete, true);
+  assert.equal(recovered.liveLighting.applied.acknowledgedWriteCount, expectedWrites);
+  assert.equal(recovered.liveLighting.physicalState.expectedWriteCount, expectedWrites);
+  assert.equal(recovered.liveLighting.physicalState.acknowledgedWriteCount, expectedWrites);
+  assert.equal(recovered.liveLighting.physicalState.complete, true);
+  assert.equal(recovered.liveLighting.physicalState.state, "safe_off_verified");
+  assert.deepEqual(recovered.liveLighting.applied.lastResponseKinds, Array(expectedWrites).fill("ack"));
+
+  const failed = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir(`fresh-safe-off-incomplete-${Date.now()}`) }),
+    {
+      async run(step) {
+        return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+      },
+    },
+    undefined,
+    {
+      async writeLightingFrames(frames) {
+        return frames.slice(0, -1).map(() => ({ responseKind: "ack", ok: true }));
+      },
+    },
+  );
+  await assert.rejects(() => failed.action("safe-off", {}), /acknowledgement incomplete/i);
+  const unknown = failed.status();
+  assert.equal(unknown.confirmations.lightIdleOff, false);
+  assert.equal(unknown.confirmations.finalLightOff, false);
+  assert.equal(unknown.currentStep, "start_new_card");
+  assert.equal(unknown.liveLighting.applied.enabled, undefined);
+  assert.equal(unknown.liveLighting.applied.verificationComplete, false);
+  assert.equal(unknown.liveLighting.physicalState.complete, false);
+  assert.equal(unknown.liveLighting.physicalState.state, "physical_state_unknown");
+});
+
+test("fresh real safe-off recovery still requires immutable bridge launch arming", async () => {
+  let lightingWrites = 0;
+  const unarmedConfig = realConfig({
+    outputDir: outputDir(`fresh-safe-off-unarmed-${Date.now()}`),
+  });
+  unarmedConfig.apply = false;
+  const service = new AiGraderLocalStationBridgeService(
+    unarmedConfig,
+    {
+      async run(step) {
+        return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+      },
+    },
+    undefined,
+    {
+      async writeLightingFrames(frames) {
+        lightingWrites += 1;
+        return frames.map(() => ({ responseKind: "ack", ok: true }));
+      },
+    },
+  );
+
+  await assert.rejects(() => service.action("safe-off", {}), /not armed with required apply\/Mark\/wiring\/Leimac flags/i);
+  assert.equal(lightingWrites, 0);
+  assert.equal(service.status().liveLighting.physicalState.state, "physical_state_unknown");
+  assert.equal(service.status().confirmations.finalLightOff, false);
+});
+
+test("safe-off derives final confirmation only from complete controller ACK and failed safe-off does not advance", async () => {
+  let failSafeOff = false;
+  const service = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir("safe-off-authority-" + Date.now()) }),
+    {
+      async run(step) {
+        return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+      },
+    },
+    undefined,
+    {
+      async writeLightingFrames(frames) {
+        if (failSafeOff && frames.length <= 3) {
+          return frames.slice(0, -1).map(() => ({ responseKind: "ack", ok: true }));
+        }
+        return frames.map(() => ({ responseKind: "ack", ok: true }));
+      },
+    },
+  );
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await assert.rejects(
+    () => service.action("safe-off", { confirmations: { finalLightOff: true } }),
+    /accepts no browser .*confirmation.*sole final-light authority/i,
+  );
+  await assert.rejects(
+    () => service.action("safe-off", { acceptedProfile: { dutyPercent: 1 } }),
+    /accepts no browser .*confirmation.*sole final-light authority/i,
+  );
+  failSafeOff = true;
+  await assert.rejects(
+    () => service.action("safe-off", {}),
+    /acknowledgement incomplete/i,
+  );
+  let status = service.status();
+  assert.equal(status.confirmations.finalLightOff, false);
+  assert.equal(status.currentStep, "verify_fixture_rulers");
+  assert.equal(status.liveLighting.physicalState.state, "physical_state_unknown");
+
+  failSafeOff = false;
+  status = await service.action("safe-off", {});
+  assert.equal(status.confirmations.finalLightOff, true);
+  assert.equal(status.currentStep, "safe_off_end_session");
+  assert.equal(status.liveLighting.physicalState.state, "safe_off_verified");
+
+  await service.applyLiveLighting({ enabled: true, dutyPercent: 1.2, channels: [1] });
+  status = service.status();
+  assert.equal(status.confirmations.finalLightOff, false);
+  assert.equal(status.liveLighting.physicalState.state, "positioning_light_verified");
+
+  failSafeOff = true;
+  await assert.rejects(
+    () => service.action("safe-off", {}),
+    /acknowledgement incomplete/i,
+  );
+  status = service.status();
+  assert.equal(status.confirmations.finalLightOff, false);
+  assert.equal(status.liveLighting.physicalState.state, "physical_state_unknown");
+});
+
 test("cancel and end preserve physical-state unknown when the final controller acknowledgement fails", async () => {
   for (const action of ["cancel-session", "end-session"]) {
     const cleanupCalls = [];
@@ -2687,13 +3109,13 @@ test("cancel and end preserve physical-state unknown when the final controller a
     await assert.rejects(() => service.action(action), /safe-off|physical state|Leimac/i);
     const status = service.status();
     assert.deepEqual(cleanupCalls, ["safe_off"]);
-    assert.equal(status.currentStep, "safe_off_end_session");
+    assert.equal(status.currentStep, "verify_fixture_rulers");
     assert.equal(status.liveLighting.applied.enabled, undefined);
     assert.equal(status.liveLighting.physicalState.state, "physical_state_unknown");
     assert.equal(status.warmRunnerStatus.status, "failed");
     assert.doesNotMatch(JSON.stringify(status.warnings), /C:\\|private|do-not-log/i);
     const persisted = JSON.parse(fs.readFileSync(status.outputs.manifestPath, "utf8"));
-    assert.equal(persisted.currentStep, "safe_off_end_session");
+    assert.equal(persisted.currentStep, "verify_fixture_rulers");
   }
 });
 
@@ -2733,10 +3155,10 @@ test("real station bridge uses warm full forensic runner by default with fake ru
   const service = new AiGraderLocalStationBridgeService(realConfig(), runner, warm.runner);
   await service.action("start-session", { captureProfile: "full_forensic" });
   await assert.rejects(() => service.action("capture-front"), /idempotency key/i);
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
   await service.action("launch-preview");
-  await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
   noteFreshBackPreviewFrame(service);
   await service.action("capture-back", atomicBackCaptureRequest(service));
   const status = await service.action("run-diagnostics");
@@ -2772,13 +3194,13 @@ test("capture timing includes validated browser click-to-action delay", async ()
     outputDir: outputDir(`capture-trigger-at-${Date.now()}`),
   }));
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
   const captureTriggerAt = new Date(Date.now() - 1200).toISOString();
   markReadyGeometry(service, "front");
   service.manifest.previewStatus.cardGeometry.front.timestamp = new Date(Date.parse(captureTriggerAt) - 100).toISOString();
   assert.equal(service.retainPreviewGeometryObservation(service.manifest.previewStatus.cardGeometry.front), true);
-  const status = await service.action("capture-front", await atomicFrontCaptureRequest(service, {
+  const status = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service, {
     geometryCaptureMode: "detected_geometry",
     captureTriggerMode: "auto",
     captureTriggerAt,
@@ -2801,11 +3223,11 @@ test("capture timing includes validated browser click-to-action delay", async ()
     outputDir: outputDir(`capture-trigger-future-${Date.now()}`),
   }));
   await futureService.action("start-session", { captureProfile: "full_forensic" });
-  await futureService.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await futureService.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await futureService.action("confirm-light-idle-off", frontWorkflowMutationRequest(futureService, "confirm-light-idle-off"));
+  await futureService.action("confirm-fixture-rulers", frontWorkflowMutationRequest(futureService, "confirm-fixture-rulers"));
   const futureTriggerAt = new Date(Date.now() + 2000).toISOString();
   await assert.rejects(
-    () => atomicFrontCaptureRequest(futureService, { captureTriggerAt: futureTriggerAt })
+    () => preparedAtomicFrontCaptureRequest(futureService, { captureTriggerAt: futureTriggerAt })
       .then((request) => futureService.action("capture-front", request)),
     /future-dated/i
   );
@@ -2844,10 +3266,10 @@ test("rapid capture overlaps front processing with back positioning and isolates
   let status = await service.action("start-session", { captureProfile: "full_forensic" });
   const firstSessionId = status.sessionId;
   const firstManifestPath = status.outputs.manifestPath;
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
 
-  status = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  status = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
   assert.equal(status.rapidCapture.workflowState, "back_positioning");
   assert.deepEqual(
     status.rapidCapture.workflowHistory.slice(-3).map((event) => event.state),
@@ -2867,7 +3289,7 @@ test("rapid capture overlaps front processing with back positioning and isolates
   assert.equal(status.outputs.frontPackageDir, undefined);
   assert.equal(status.outputs.backPackageDir, undefined);
   assert.equal(status.outputs.unifiedReportPath, undefined);
-  assert.equal(status.confirmations.lightIdleOff, false);
+  assert.equal(status.confirmations.lightIdleOff, true);
   assert.equal(status.confirmations.fixtureRulersVisible, false);
   assert.equal(status.confirmations.flipComplete, false);
   assert.deepEqual(status.commandResults, []);
@@ -2947,9 +3369,9 @@ test("persisted rapid queue activation still requires explicit human confirm and
   const producer = new AiGraderLocalStationBridgeService(config, runner, warm.runner);
   await producer.action("configure-rapid-capture", { rapidCaptureEnabled: true });
   await producer.action("start-session", { captureProfile: "full_forensic" });
-  await producer.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await producer.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  await producer.action("capture-front", await atomicFrontCaptureRequest(producer));
+  await producer.action("confirm-light-idle-off", frontWorkflowMutationRequest(producer, "confirm-light-idle-off"));
+  await producer.action("confirm-fixture-rulers", frontWorkflowMutationRequest(producer, "confirm-fixture-rulers"));
+  await producer.action("capture-front", await preparedAtomicFrontCaptureRequest(producer));
   noteFreshBackPreviewFrame(producer);
   await producer.action("capture-back", atomicBackCaptureRequest(producer));
   await producer.action("queue-current-card");
@@ -2998,7 +3420,9 @@ test("persisted rapid queue activation still requires explicit human confirm and
     const rejectedCapture = await fetch(`${activationServer.url}/actions/capture-front`, {
       method: "POST",
       headers: activationHeaders,
-      body: "{}",
+      body: JSON.stringify(atomicFrontCaptureRequestFromStatus(activatedBody.result, {
+        expectedFrameId: "rapid-queue-review-front-frame",
+      })),
     });
     assert.equal(rejectedCapture.status, 400);
     assert.match((await rejectedCapture.json()).message, /fresh station session/i);
@@ -3078,9 +3502,9 @@ test("CPU-busy worker-thread processing leaves preview, EOF recovery, disconnect
     },
   );
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  const positioned = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
+  const positioned = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
   await workerStarted.promise;
 
   assert.equal(positioned.currentStep, "prompt_flip_card");
@@ -3225,10 +3649,10 @@ test("processing worker identity failures are redacted terminal failures with ve
       warm.runner,
     );
     await service.action("start-session", { captureProfile: "full_forensic" });
-    await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-    await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+    await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+    await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
     markReadyGeometry(service, "front");
-    const captured = await service.action("capture-front", await atomicFrontCaptureRequest(service, {
+    const captured = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service, {
       geometryCaptureMode: "detected_geometry",
     }));
     assert.ok(captured.outputs.frontPackageDir, `${identityCase.label}: raw front evidence was not preserved`);
@@ -3279,9 +3703,9 @@ test("processing failure cleanup keeps missing safe-off acknowledgement physical
     },
   );
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  const positioned = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
+  const positioned = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
   assert.equal(positioned.liveLighting.physicalState.state, "positioning_light_verified");
   failTerminalSafeOff = true;
   processingGate.resolve();
@@ -3291,7 +3715,10 @@ test("processing failure cleanup keeps missing safe-off acknowledgement physical
       : undefined,
     "processing failure cleanup did not settle",
   );
+  assert.match(failed.captureFailure.message, /captured processing failed/i);
+  assert.doesNotMatch(failed.captureFailure.message, /safe-off acknowledgement missing/i);
   assert.equal(failed.liveLighting.physicalState.state, "physical_state_unknown");
+  assert.match(failed.liveLighting.physicalState.lastError, /safe-off|acknowledgement|local endpoint/i);
   assert.equal(failed.liveLighting.applied.enabled, undefined);
   assert.equal(failed.liveLighting.backPositioning.captureReady, false);
   assert.equal(failed.previewStatus.status, "error");
@@ -3320,9 +3747,9 @@ test("terminal cancellation and shutdown each drain one pending processing job w
     cancelledWarm.runner,
   );
   await cancelled.action("start-session", { captureProfile: "full_forensic" });
-  await cancelled.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await cancelled.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  await cancelled.action("capture-front", await atomicFrontCaptureRequest(cancelled));
+  await cancelled.action("confirm-light-idle-off", frontWorkflowMutationRequest(cancelled, "confirm-light-idle-off"));
+  await cancelled.action("confirm-fixture-rulers", frontWorkflowMutationRequest(cancelled, "confirm-fixture-rulers"));
+  await cancelled.action("capture-front", await preparedAtomicFrontCaptureRequest(cancelled));
   assert.equal(cancelledWarm.lifecycle.active, 1);
   const cancelledStatus = await cancelled.action("cancel-session");
   assert.equal(cancelledStatus.currentStep, "safe_off_end_session");
@@ -3352,9 +3779,9 @@ test("terminal cancellation and shutdown each drain one pending processing job w
     shutdownWarm.runner,
   );
   await shutdown.action("start-session", { captureProfile: "full_forensic" });
-  await shutdown.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await shutdown.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  await shutdown.action("capture-front", await atomicFrontCaptureRequest(shutdown));
+  await shutdown.action("confirm-light-idle-off", frontWorkflowMutationRequest(shutdown, "confirm-light-idle-off"));
+  await shutdown.action("confirm-fixture-rulers", frontWorkflowMutationRequest(shutdown, "confirm-fixture-rulers"));
+  await shutdown.action("capture-front", await preparedAtomicFrontCaptureRequest(shutdown));
   assert.equal(shutdownWarm.lifecycle.active, 1);
   await shutdown.shutdown("deterministic pending worker shutdown");
   const shutdownStatus = shutdown.status();
@@ -3387,9 +3814,9 @@ test("session end, explicit safe-off, and non-rapid replacement reconcile pendin
       warm.runner,
     );
     await service.action("start-session", { captureProfile: "full_forensic" });
-    await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-    await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-    await service.action("capture-front", await atomicFrontCaptureRequest(service));
+    await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+    await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
+    await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
     const terminal = await service.action(terminalAction);
     assert.equal(terminal.currentStep, "safe_off_end_session", terminalAction);
     assert.equal(terminal.warmRunnerStatus.status, "complete", terminalAction);
@@ -3414,9 +3841,9 @@ test("session end, explicit safe-off, and non-rapid replacement reconcile pendin
     replacementWarm.runner,
   );
   await replacement.action("start-session", { captureProfile: "full_forensic" });
-  await replacement.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await replacement.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  const oldSession = await replacement.action("capture-front", await atomicFrontCaptureRequest(replacement));
+  await replacement.action("confirm-light-idle-off", frontWorkflowMutationRequest(replacement, "confirm-light-idle-off"));
+  await replacement.action("confirm-fixture-rulers", frontWorkflowMutationRequest(replacement, "confirm-fixture-rulers"));
+  const oldSession = await replacement.action("capture-front", await preparedAtomicFrontCaptureRequest(replacement));
   const fresh = await replacement.action("start-session", { captureProfile: "full_forensic" });
   assert.notEqual(fresh.sessionId, oldSession.sessionId);
   assert.equal(fresh.captureFailure, undefined);
@@ -3430,8 +3857,8 @@ test("side processing failures are terminal and cannot be overwritten or queued"
   const prepare = async (service) => {
     await service.action("configure-rapid-capture", { rapidCaptureEnabled: true });
     await service.action("start-session", { captureProfile: "full_forensic" });
-    await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-    await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+    await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+    await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
   };
 
   const immediateWarm = makeFakeWarmRunner({ processError: new Error("front processing failed"), processErrorSide: "front" });
@@ -3441,7 +3868,7 @@ test("side processing failures are terminal and cannot be overwritten or queued"
     immediateWarm.runner
   );
   await prepare(immediate);
-  await immediate.action("capture-front", await atomicFrontCaptureRequest(immediate));
+  await immediate.action("capture-front", await preparedAtomicFrontCaptureRequest(immediate));
   const immediateFailed = await waitFor(
     () => immediate.status().rapidCapture.workflowState === "failed"
       && immediate.status().previewStatus.status === "error"
@@ -3475,7 +3902,7 @@ test("side processing failures are terminal and cannot be overwritten or queued"
     delayedWarm.runner
   );
   await prepare(delayed);
-  const positioned = await delayed.action("capture-front", await atomicFrontCaptureRequest(delayed));
+  const positioned = await delayed.action("capture-front", await preparedAtomicFrontCaptureRequest(delayed));
   assert.equal(positioned.rapidCapture.workflowState, "back_positioning");
   delayedFailure.resolve();
   const delayedFailed = await waitFor(
@@ -3523,7 +3950,7 @@ test("side processing failures are terminal and cannot be overwritten or queued"
     backWarm.runner
   );
   await prepare(back);
-  await back.action("capture-front", await atomicFrontCaptureRequest(back));
+  await back.action("capture-front", await preparedAtomicFrontCaptureRequest(back));
   noteFreshBackPreviewFrame(back);
   await back.action("capture-back", atomicBackCaptureRequest(back));
   const backFailed = await waitFor(
@@ -3563,9 +3990,9 @@ test("restart marks an interrupted rapid finalization as explicit retryable fail
   const original = new AiGraderLocalStationBridgeService(config, runner, warm.runner);
   await original.action("configure-rapid-capture", { rapidCaptureEnabled: true });
   await original.action("start-session", { captureProfile: "full_forensic" });
-  await original.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await original.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  await original.action("capture-front", await atomicFrontCaptureRequest(original));
+  await original.action("confirm-light-idle-off", frontWorkflowMutationRequest(original, "confirm-light-idle-off"));
+  await original.action("confirm-fixture-rulers", frontWorkflowMutationRequest(original, "confirm-fixture-rulers"));
+  await original.action("capture-front", await preparedAtomicFrontCaptureRequest(original));
   noteFreshBackPreviewFrame(original);
   await original.action("capture-back", atomicBackCaptureRequest(original));
   const queued = await original.action("queue-current-card");
@@ -3616,9 +4043,9 @@ test("cold command fallback requires explicit warm runner disable flag", async (
     /production_fast.*cold debug/i
   );
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  status = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
+  status = await service.action("capture-front", await preparedAtomicFrontCaptureRequest(service));
 
   assert.deepEqual(calls.map((step) => step.id), ["capture_front", "safe_off"]);
   assert.deepEqual(warm.calls, []);
@@ -3641,7 +4068,7 @@ test("cold command fallback requires explicit warm runner disable flag", async (
   assert.equal(status.captureProfileGuard.fiveSecondTargetProven, false);
 });
 
-test("warm runner capture lock blocks preview stream until capture releases", async () => {
+test("warm runner capture lock and forensic-lighting ownership block preview stream until capture releases", async () => {
   let releaseCapture;
   let captureStarted;
   const captureStartedPromise = new Promise((resolve) => {
@@ -3690,9 +4117,12 @@ test("warm runner capture lock blocks preview stream until capture releases", as
 
   let activeFrontPreview;
   try {
-    await postAction("start-session", { captureProfile: "full_forensic" });
-    await postAction("accept-profile", {
-      acceptedProfile: { dutyPercent: 1.2, exposureUs: 8000, gain: 0, channels: [1, 2, 3, 4, 5, 6, 7, 8], source: "bridge_operator" },
+    const startedStatus = await postAction("start-session", { captureProfile: "full_forensic" });
+    await completeHttpFrontWorkflowPrerequisites({
+      startedUrl: started.url,
+      headers,
+      status: startedStatus,
+      postAction,
     });
     await new Promise((resolve, reject) => {
       activeFrontPreview = http.request(`${started.url}/preview/stream`, { headers }, (response) => {
@@ -3707,13 +4137,15 @@ test("warm runner capture lock blocks preview stream until capture releases", as
       return status.previewStatus.cardGeometry.front?.sourceFrameId ? status : undefined;
     }, "fake front preview geometry was not retained");
     const capturePromise = postAction("capture-front", atomicFrontCaptureRequestFromStatus(frontReady));
+    capturePromise.catch(() => undefined);
     await captureStartedPromise;
 
     const blockedPreview = await fetch(`${started.url}/preview/stream`, { headers });
     assert.equal(blockedPreview.status, 409);
     const blockedPayload = await blockedPreview.json();
-    assert.equal(blockedPayload.code, "AI_GRADER_CAPTURE_LOCK_HELD");
-    assert.equal(blockedPayload.result.status, "paused_for_capture");
+    assert.equal(blockedPayload.code, "AI_GRADER_PHYSICAL_STATE_UNVERIFIED");
+    assert.equal(blockedPayload.result.preview.status, "paused_for_capture");
+    assert.equal(blockedPayload.result.liveLighting.physicalState.state, "physical_state_unknown");
 
     releaseCapture();
     const captureStatus = await capturePromise;
@@ -3784,9 +4216,12 @@ test("front capture releases preview for flip/back positioning while back captur
   let activeReq;
 
   try {
-    await postAction("start-session", { captureProfile: "full_forensic" });
-    await postAction("accept-profile", {
-      acceptedProfile: { dutyPercent: 1.2, exposureUs: 8000, gain: 0, channels: [1, 2, 3, 4, 5, 6, 7, 8], source: "bridge_operator" },
+    const startedStatus = await postAction("start-session", { captureProfile: "full_forensic" });
+    await completeHttpFrontWorkflowPrerequisites({
+      startedUrl: started.url,
+      headers,
+      status: startedStatus,
+      postAction,
     });
 
     const activeStreamClosed = new Promise((resolve, reject) => {
@@ -3877,10 +4312,10 @@ test("warm runner runs safe-off cleanup on failure, cancellation, and session en
   const failureWarm = makeFakeWarmRunner({ captureError: failureError });
   const failureService = new AiGraderLocalStationBridgeService(realConfig({ outputDir: outputDir(`failure-${Date.now()}`) }), failureRunner, failureWarm.runner);
   await failureService.action("start-session", { captureProfile: "full_forensic" });
-  await failureService.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await failureService.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await failureService.action("confirm-light-idle-off", frontWorkflowMutationRequest(failureService, "confirm-light-idle-off"));
+  await failureService.action("confirm-fixture-rulers", frontWorkflowMutationRequest(failureService, "confirm-fixture-rulers"));
 
-  const failedFrontRequest = await atomicFrontCaptureRequest(failureService);
+  const failedFrontRequest = await preparedAtomicFrontCaptureRequest(failureService);
   await assert.rejects(() => failureService.action("capture-front", failedFrontRequest), /front boom/);
   const failureStatus = failureService.status();
   assert.deepEqual(failureCalls, ["safe_off"]);
@@ -3914,8 +4349,10 @@ test("warm runner runs safe-off cleanup on failure, cancellation, and session en
   assert.equal(failedManifest.previewStatus.cameraOwnership, "released");
   assert.equal(Object.prototype.hasOwnProperty.call(failedManifest, "fallbackUsed"), false);
   await assert.rejects(
-    () => atomicFrontCaptureRequest(failureService)
-      .then((request) => failureService.action("capture-front", request)),
+    () => failureService.action("capture-front", {
+      ...failedFrontRequest,
+      idempotencyKey: "capture-front-after-terminal-failure",
+    }),
     /blocked after a capture or processing failure/i
   );
   const freshRetry = await failureService.action("start-session", { captureProfile: "full_forensic" });
@@ -4170,9 +4607,9 @@ test("initial safe-off confirmation waits for an in-flight lighting write and bl
   blockApply = true;
   const apply = service.applyLiveLighting({ enabled: true, dutyPercent: 1.2, channels: [1] });
   await waitFor(() => events.includes("apply-pending"), "lighting apply never reached the fake acknowledgement gate");
-  const confirmation = service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
+  const confirmation = service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
   await waitFor(() => service.terminalLifecyclePending > 0, "initial safe-off did not reserve the terminal lifecycle");
-  assert.equal(service.status().confirmations.lightIdleOff, false);
+  assert.equal(service.status().confirmations.lightIdleOff, true);
   await assert.rejects(
     () => service.applyLiveLighting({ enabled: true, dutyPercent: 1.3, channels: [2] }),
     /serialized capture\/terminal lifecycle/i,
@@ -4187,6 +4624,329 @@ test("initial safe-off confirmation waits for an in-flight lighting write and bl
   assert.deepEqual(events, ["apply-pending", "apply-acknowledged", "confirmation-safeoff-acknowledged"]);
 });
 
+test("Front workflow authority is durable, exact-bound, retry-idempotent, and advances once", async () => {
+  const service = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir("front-workflow-authority-" + Date.now()),
+  }));
+  let status = await service.action("start-session", { captureProfile: "full_forensic" });
+  const firstBinding = {
+    sessionId: status.sessionId,
+    reportId: status.reportId,
+    side: "front",
+    sideEpoch: status.previewStatus.sideEpoch,
+  };
+  assert.equal(status.currentStep, "verify_fixture_rulers");
+  assert.equal(status.frontCaptureReadiness.ready, false);
+  assert.equal(status.frontCaptureReadiness.code, "accepted_profile_required");
+  assert.deepEqual(
+    {
+      sessionId: status.frontWorkflowAuthority.lightIdleOff.sessionId,
+      reportId: status.frontWorkflowAuthority.lightIdleOff.reportId,
+      side: status.frontWorkflowAuthority.lightIdleOff.side,
+      sideEpoch: status.frontWorkflowAuthority.lightIdleOff.sideEpoch,
+    },
+    firstBinding,
+  );
+  await assert.rejects(
+    () => service.action("confirm-fixture-rulers", {
+      confirmations: { fixtureRulersVisible: true },
+    }),
+    /only bounded idempotency/i,
+  );
+  await assert.rejects(
+    () => service.action("accept-profile", {
+      acceptedProfile: {
+        dutyPercent: 5,
+        exposureUs: 8000,
+        gain: 0,
+        channels: [1],
+        source: "bridge_operator",
+      },
+    }),
+    /only bounded idempotency/i,
+  );
+
+  const doomed = atomicFrontCaptureRequestFromStatus(status, {
+    expectedFrameId: "front-frame-before-authority",
+  });
+  await assert.rejects(
+    () => service.action("capture-front", doomed),
+    /stale for the active session\/report\/front epoch/i,
+  );
+
+  await service.applyLiveLighting({
+    enabled: true,
+    dutyPercent: 2.1,
+    channels: [1, 3, 5, 7],
+  });
+  const acceptance = frontWorkflowMutationRequest(service, "lighting-accept");
+  status = await service.acceptLiveLightingForCapture(acceptance);
+  assert.equal(status.currentStep, "verify_fixture_rulers");
+  assert.equal(status.frontCaptureReadiness.code, "fixture_rulers_required");
+  const acceptedEvidence = structuredClone(status.frontWorkflowAuthority.acceptedProfile);
+  assert.deepEqual(
+    {
+      sessionId: acceptedEvidence.sessionId,
+      reportId: acceptedEvidence.reportId,
+      side: acceptedEvidence.side,
+      sideEpoch: acceptedEvidence.sideEpoch,
+    },
+    firstBinding,
+  );
+  assert.match(acceptedEvidence.profileDigestSha256, /^[a-f0-9]{64}$/);
+  assert.match(acceptedEvidence.profileIdentity, /^accepted-[a-f0-9]{16}$/);
+
+  status = await service.acceptLiveLightingForCapture(structuredClone(acceptance));
+  assert.deepEqual(status.frontWorkflowAuthority.acceptedProfile, acceptedEvidence);
+  assert.equal(status.frontWorkflowAuthority.transition, undefined);
+
+  const fixture = frontWorkflowMutationRequest(service, "confirm-fixture-rulers");
+  status = await service.action("confirm-fixture-rulers", fixture);
+  const transition = structuredClone(status.frontWorkflowAuthority.transition);
+  assert.equal(status.currentStep, "capture_front");
+  assert.ok(transition);
+  assert.equal(transition.profileIdentity, acceptedEvidence.profileIdentity);
+  status = await service.action("confirm-fixture-rulers", structuredClone(fixture));
+  assert.deepEqual(status.frontWorkflowAuthority.transition, transition);
+  const persistedAuthority = JSON.parse(
+    fs.readFileSync(status.outputs.manifestPath, "utf8"),
+  ).frontWorkflowAuthority;
+  assert.deepEqual(persistedAuthority.acceptedProfile, acceptedEvidence);
+  assert.deepEqual(persistedAuthority.transition, transition);
+  for (const evidence of [
+    persistedAuthority.lightIdleOff,
+    persistedAuthority.fixtureRulers,
+    persistedAuthority.acceptedProfile,
+    persistedAuthority.transition,
+  ]) {
+    assert.equal(evidence.sessionId, firstBinding.sessionId);
+    assert.equal(evidence.reportId, firstBinding.reportId);
+    assert.equal(evidence.side, "front");
+    assert.equal(evidence.sideEpoch, firstBinding.sideEpoch);
+  }
+
+  await atomicFrontCaptureRequest(service);
+  const refreshed = service.status();
+  assert.equal(refreshed.frontCaptureReadiness.ready, true);
+  assert.equal(refreshed.frontCaptureReadiness.code, "ready");
+  assert.deepEqual(service.status().frontCaptureReadiness, refreshed.frontCaptureReadiness);
+
+  const acknowledgedWrites = service.manifest.liveLighting.applied.acknowledgedWriteCount;
+  service.manifest.liveLighting.applied.acknowledgedWriteCount = acknowledgedWrites - 1;
+  status = service.status();
+  assert.equal(status.frontCaptureReadiness.ready, false);
+  assert.equal(status.frontCaptureReadiness.code, "safety_state_unverified");
+  service.manifest.liveLighting.applied.acknowledgedWriteCount = acknowledgedWrites;
+
+  const acceptedDuty = service.manifest.liveLighting.profile.dutyPercent;
+  service.manifest.liveLighting.applied.dutyPercent = acceptedDuty + 0.1;
+  status = service.status();
+  assert.equal(status.frontCaptureReadiness.ready, false);
+  assert.equal(status.frontCaptureReadiness.code, "safety_state_unverified");
+  service.manifest.liveLighting.applied.dutyPercent = acceptedDuty;
+  assert.equal(service.status().frontCaptureReadiness.ready, true);
+
+  status = await service.action("start-session", { captureProfile: "full_forensic" });
+  assert.notEqual(status.sessionId, firstBinding.sessionId);
+  assert.equal(status.frontWorkflowAuthority.acceptedProfile, undefined);
+  assert.equal(status.frontCaptureReadiness.ready, false);
+  await assert.rejects(
+    () => service.acceptLiveLightingForCapture(acceptance),
+    /stale for the active session\/report\/front epoch/i,
+  );
+});
+
+test("Front authority stays non-capturable while persistence is pending and rolls back failed profile and fixture commits", async () => {
+  let writeGate;
+  let failWrite = false;
+  const service = new AiGraderLocalStationBridgeService(
+    mockConfig({ outputDir: outputDir("front-workflow-persistence-" + Date.now()) }),
+    undefined,
+    undefined,
+    {
+      async beforeFrontWorkflowManifestWrite() {
+        if (writeGate) await writeGate.promise;
+        if (failWrite) throw new Error("injected Front workflow manifest persistence failure");
+      },
+    },
+  );
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.applyLiveLighting({ enabled: true, dutyPercent: 2.3, channels: [1, 3, 5, 7] });
+
+  const acceptance = frontWorkflowMutationRequest(service, "lighting-accept-persistence");
+  writeGate = deferred();
+  failWrite = true;
+  const pendingAcceptance = service.acceptLiveLightingForCapture(acceptance);
+  await waitFor(() => service.frontWorkflowMutation ? true : undefined, "profile acceptance never reserved its persistence mutation");
+  let pending = service.status();
+  assert.equal(pending.frontCaptureReadiness.ready, false);
+  assert.equal(pending.frontCaptureReadiness.code, "lifecycle_pending");
+  assert.ok(pending.frontWorkflowAuthority.acceptedProfile);
+  await assert.rejects(
+    () => service.action("capture-front", atomicFrontCaptureRequestFromStatus(pending, {
+      expectedFrameId: "front-persistence-pending-frame",
+      captureTriggerAt: new Date().toISOString(),
+    })),
+    /Front workflow.*pending/i,
+  );
+  writeGate.resolve();
+  await assert.rejects(() => pendingAcceptance, /injected Front workflow manifest persistence failure/i);
+  let rolledBack = service.status();
+  assert.equal(rolledBack.frontWorkflowAuthority.acceptedProfile, undefined);
+  assert.equal(rolledBack.liveLighting.profile.acceptedForCapture, false);
+  assert.equal(rolledBack.currentStep, "verify_fixture_rulers");
+  assert.equal(rolledBack.frontCaptureReadiness.ready, false);
+
+  writeGate = undefined;
+  failWrite = false;
+  const accepted = await service.acceptLiveLightingForCapture(structuredClone(acceptance));
+  assert.ok(accepted.frontWorkflowAuthority.acceptedProfile);
+  assert.equal(accepted.frontCaptureReadiness.code, "fixture_rulers_required");
+
+  const fixture = frontWorkflowMutationRequest(service, "confirm-fixture-rulers-persistence");
+  writeGate = deferred();
+  failWrite = true;
+  const pendingFixture = service.action("confirm-fixture-rulers", fixture);
+  await waitFor(() => service.frontWorkflowMutation ? true : undefined, "fixture confirmation never reserved its persistence mutation");
+  pending = service.status();
+  assert.equal(pending.currentStep, "capture_front");
+  assert.equal(pending.frontCaptureReadiness.ready, false);
+  assert.equal(pending.frontCaptureReadiness.code, "lifecycle_pending");
+  await assert.rejects(
+    () => service.action("capture-front", atomicFrontCaptureRequestFromStatus(pending, {
+      expectedFrameId: "front-fixture-pending-frame",
+      captureTriggerAt: new Date().toISOString(),
+    })),
+    /Front workflow.*pending/i,
+  );
+  writeGate.resolve();
+  await assert.rejects(() => pendingFixture, /injected Front workflow manifest persistence failure/i);
+  rolledBack = service.status();
+  assert.equal(rolledBack.frontWorkflowAuthority.fixtureRulers, undefined);
+  assert.equal(rolledBack.frontWorkflowAuthority.transition, undefined);
+  assert.equal(rolledBack.confirmations.fixtureRulersVisible, false);
+  assert.equal(rolledBack.currentStep, "verify_fixture_rulers");
+  assert.equal(rolledBack.frontCaptureReadiness.code, "fixture_rulers_required");
+
+  writeGate = undefined;
+  failWrite = false;
+  const committed = await service.action("confirm-fixture-rulers", structuredClone(fixture));
+  assert.equal(committed.currentStep, "capture_front");
+  await atomicFrontCaptureRequest(service);
+  assert.equal(service.status().frontCaptureReadiness.ready, true);
+  const persisted = JSON.parse(fs.readFileSync(service.status().outputs.manifestPath, "utf8"));
+  assert.deepEqual(persisted.frontWorkflowAuthority.fixtureRulers, service.status().frontWorkflowAuthority.fixtureRulers);
+  assert.deepEqual(persisted.frontWorkflowAuthority.transition, service.status().frontWorkflowAuthority.transition);
+});
+
+test("Front workflow commit fences heartbeat and preview-loss safe-off manifest writers", async () => {
+  let writeGate;
+  let failWrite = false;
+  const service = new AiGraderLocalStationBridgeService(
+    mockConfig({ outputDir: outputDir("front-workflow-writer-fence-" + Date.now()) }),
+    undefined,
+    undefined,
+    {
+      async beforeFrontWorkflowManifestWrite() {
+        if (writeGate) await writeGate.promise;
+        if (failWrite) throw new Error("injected fenced Front workflow persistence failure");
+      },
+    },
+  );
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.applyLiveLighting({ enabled: true, dutyPercent: 2.4, channels: [1, 3, 5, 7] });
+
+  const acceptance = frontWorkflowMutationRequest(service, "lighting-accept-writer-fence");
+  writeGate = deferred();
+  failWrite = true;
+  const pendingAcceptance = service.acceptLiveLightingForCapture(acceptance);
+  await waitFor(() => service.frontWorkflowMutation ? true : undefined, "profile acceptance never reserved the writer fence");
+
+  await assert.rejects(
+    () => service.heartbeatLiveLighting("heartbeat during held Front workflow commit"),
+    /serialized capture transition/i,
+  );
+  let previewLossSettled = false;
+  const previewLossSafeOff = service.safeOffAfterPreviewLoss("preview loss during held Front workflow commit")
+    .finally(() => { previewLossSettled = true; });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(previewLossSettled, false, "preview-loss safe-off bypassed the held Front workflow commit");
+  const beforeRelease = JSON.parse(fs.readFileSync(service.status().outputs.manifestPath, "utf8"));
+  assert.equal(beforeRelease.frontWorkflowAuthority.acceptedProfile, undefined);
+  assert.equal(beforeRelease.currentStep, "verify_fixture_rulers");
+
+  writeGate.resolve();
+  await assert.rejects(() => pendingAcceptance, /injected fenced Front workflow persistence failure/i);
+  await previewLossSafeOff;
+  const afterCleanup = JSON.parse(fs.readFileSync(service.status().outputs.manifestPath, "utf8"));
+  assert.equal(afterCleanup.frontWorkflowAuthority.acceptedProfile, undefined);
+  assert.equal(afterCleanup.currentStep, "verify_fixture_rulers");
+  assert.equal(afterCleanup.liveLighting.physicalState.state, "safe_off_verified");
+  assert.equal(afterCleanup.liveLighting.physicalState.complete, true);
+});
+
+test("material profile retune tombstones the consumed acceptance key and requires a fresh key", async () => {
+  const service = new AiGraderLocalStationBridgeService(mockConfig({
+    outputDir: outputDir("front-profile-retune-idempotency-" + Date.now()),
+  }));
+  let status = await service.action("start-session", { captureProfile: "full_forensic" });
+  await service.applyLiveLighting({
+    enabled: true,
+    dutyPercent: 2.1,
+    channels: [1, 3, 5, 7],
+  });
+  const acceptedProfileARequest = frontWorkflowMutationRequest(service, "lighting-accept-a");
+  assert.match(acceptedProfileARequest.expectedCandidateProfileIdentity, /^candidate-[a-f0-9]{32}$/);
+  status = await service.acceptLiveLightingForCapture(acceptedProfileARequest);
+  const acceptedProfileA = structuredClone(status.frontWorkflowAuthority.acceptedProfile);
+
+  const lostResponseReplay = await service.acceptLiveLightingForCapture(
+    structuredClone(acceptedProfileARequest),
+  );
+  assert.deepEqual(lostResponseReplay.frontWorkflowAuthority.acceptedProfile, acceptedProfileA);
+
+  await service.applyLiveLighting({
+    enabled: true,
+    dutyPercent: 2.2,
+    channels: [2, 4, 6, 8],
+  });
+  status = service.status();
+  assert.match(status.liveLighting.profile.candidateProfileIdentity, /^candidate-[a-f0-9]{32}$/);
+  assert.notEqual(status.liveLighting.profile.candidateProfileIdentity, acceptedProfileARequest.expectedCandidateProfileIdentity);
+  assert.equal(status.frontWorkflowAuthority.acceptedProfile, undefined);
+  assert.equal(status.frontCaptureReadiness.ready, false);
+  assert.equal(status.frontWorkflowAuthority.invalidatedAcceptedProfileRequests.length, 1);
+  assert.equal(
+    status.frontWorkflowAuthority.invalidatedAcceptedProfileRequests[0].idempotencyKey,
+    acceptedProfileARequest.idempotencyKey,
+  );
+  assert.equal(
+    status.frontWorkflowAuthority.invalidatedAcceptedProfileRequests[0].profileDigestSha256,
+    acceptedProfileA.profileDigestSha256,
+  );
+
+  await assert.rejects(
+    () => service.acceptLiveLightingForCapture(structuredClone(acceptedProfileARequest)),
+    /candidate profile revision is missing or stale/i,
+  );
+  assert.equal(service.status().frontWorkflowAuthority.acceptedProfile, undefined);
+
+  const acceptedProfileBRequest = frontWorkflowMutationRequest(service, "lighting-accept-b");
+  status = await service.acceptLiveLightingForCapture(acceptedProfileBRequest);
+  assert.equal(
+    status.frontWorkflowAuthority.acceptedProfile.idempotencyKey,
+    acceptedProfileBRequest.idempotencyKey,
+  );
+  assert.notEqual(
+    status.frontWorkflowAuthority.acceptedProfile.profileDigestSha256,
+    acceptedProfileA.profileDigestSha256,
+  );
+
+  status = await service.action("start-session", { captureProfile: "full_forensic" });
+  assert.deepEqual(status.frontWorkflowAuthority.invalidatedAcceptedProfileRequests ?? [], []);
+  assert.equal(status.frontWorkflowAuthority.acceptedProfile, undefined);
+});
+
 test("atomic Front Capture rejects caller authority, private IDs, stale bindings, and missing durable acceptance before one explicit manual grab", async () => {
   const warm = makeFakeWarmRunner();
   const service = new AiGraderLocalStationBridgeService(
@@ -4195,7 +4955,7 @@ test("atomic Front Capture rejects caller authority, private IDs, stale bindings
     warm.runner,
   );
   await service.action("start-session", { captureProfile: "full_forensic" });
-  const request = await atomicFrontCaptureRequest(service);
+  const request = await preparedAtomicFrontCaptureRequest(service);
   const variants = [
     [{ ...request, idempotencyKey: "capture-front-v0.9-no-trigger", captureTriggerMode: undefined }, /explicit operator or auto/i],
     [{ ...request, idempotencyKey: "capture-front-v0.9-no-time", captureTriggerAt: undefined }, /canonical ISO captureTriggerAt/i],
@@ -4219,10 +4979,13 @@ test("atomic Front Capture rejects caller authority, private IDs, stale bindings
   service.manifest.liveLighting.profile.acceptedAt = new Date(Date.now() - 1000).toISOString();
   await assert.rejects(
     () => service.action("capture-front", { ...request, idempotencyKey: "capture-front-v0.9-profile-mismatch" }),
-    /matching bridge acceptance evidence/i,
+    /exact-bound light, fixture\/ruler, transition, and accepted-profile authority/i,
   );
   service.manifest.liveLighting.profile.acceptedAt = acceptedAt;
 
+  const fixtureEvidence = structuredClone(service.manifest.frontWorkflowAuthority.fixtureRulers);
+  delete service.manifest.frontWorkflowAuthority.fixtureRulers;
+  service.manifest.confirmations.fixtureRulersVisible = false;
   await assert.rejects(
     () => service.action("capture-front", {
       ...request,
@@ -4230,13 +4993,15 @@ test("atomic Front Capture rejects caller authority, private IDs, stale bindings
       geometryCaptureMode: "detected_geometry",
       captureTriggerMode: "auto",
     }),
-    /pre-existing explicit operator fixture\/ruler confirmation/i,
+    /exact-bound light, fixture\/ruler, transition, and accepted-profile authority/i,
   );
   assert.equal(service.status().confirmations.fixtureRulersVisible, false);
   assert.equal(
     service.status().progressLog.some((entry) => entry.includes("preexisting_operator_fixture_confirmation")),
     false,
   );
+  service.manifest.frontWorkflowAuthority.fixtureRulers = fixtureEvidence;
+  service.manifest.confirmations.fixtureRulersVisible = true;
 
   const captured = await service.action("capture-front", request);
   assert.equal(warm.calls.filter((call) => call.type === "capture" && call.side === "front").length, 1);
@@ -4244,6 +5009,98 @@ test("atomic Front Capture rejects caller authority, private IDs, stale bindings
   assert.equal(captured.geometryCaptureDecisions.front.explicitOperatorAction, true);
   assert.equal(captured.geometryCaptureDecisions.front.sourceFrameId, request.expectedFrameId);
   assert.notDeepEqual(captured.geometryCaptureDecisions.front.manualBoundaryRect, MANUAL_GEOMETRY_RECT);
+});
+
+test("one accepted Front Start request captures once and completed identical retries replay", async () => {
+  let frontGrabs = 0;
+  const warm = makeFakeWarmRunner({
+    onCaptureStarted(input) {
+      if (input.side === "front") frontGrabs += 1;
+    },
+  });
+  const service = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir("front-completed-replay-" + Date.now()) }),
+    {
+      async run(step) {
+        return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+      },
+    },
+    warm.runner,
+  );
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  const request = await preparedAtomicFrontCaptureRequest(service);
+  const first = await service.action("capture-front", request);
+  const replay = await service.action("capture-front", structuredClone(request));
+  assert.deepEqual(replay, first);
+  assert.equal(frontGrabs, 1);
+  await assert.rejects(
+    () => service.action("capture-front", {
+      ...request,
+      expectedFrameId: "conflicting-completed-front-frame",
+    }),
+    /idempotency key conflicts/i,
+  );
+  assert.equal(frontGrabs, 1);
+});
+
+test("identical Atomic Front retry coalesces through delayed back-positioning restore and conflict still fails closed", async () => {
+  const restoreGate = deferred();
+  let holdRestore = false;
+  let restoreReached = false;
+  let frontGrabs = 0;
+  const warm = makeFakeWarmRunner({
+    onCaptureStarted(input) {
+      if (input.side === "front") frontGrabs += 1;
+    },
+  });
+  const service = new AiGraderLocalStationBridgeService(
+    realConfig({ outputDir: outputDir("front-restore-retry-" + Date.now()) }),
+    {
+      async run(step) {
+        return { stepId: step.id, ok: true, exitCode: 0, payload: { ok: true } };
+      },
+    },
+    warm.runner,
+    {
+      async writeLightingFrames(frames) {
+        if (holdRestore && frames.length > 3) {
+          restoreReached = true;
+          await restoreGate.promise;
+        }
+        return frames.map(() => ({ responseKind: "ack", ok: true }));
+      },
+    },
+  );
+  await service.action("start-session", { captureProfile: "full_forensic" });
+  const request = await preparedAtomicFrontCaptureRequest(service);
+  const fixtureEvidence = structuredClone(service.status().frontWorkflowAuthority.fixtureRulers);
+  holdRestore = true;
+  const first = service.action("capture-front", request);
+  await waitFor(() => restoreReached ? true : undefined, "Front capture never reached delayed back-positioning restore");
+  let retrySettled = false;
+  const retry = service.action("capture-front", structuredClone(request)).then((result) => {
+    retrySettled = true;
+    return result;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(retrySettled, false);
+  await assert.rejects(
+    () => service.action("capture-front", { ...request, expectedFrameId: "conflicting-delayed-restore-frame" }),
+    /idempotency key conflicts/i,
+  );
+  restoreGate.resolve();
+  const [firstResult, retryResult] = await Promise.all([first, retry]);
+  assert.deepEqual(retryResult, firstResult);
+  assert.equal(frontGrabs, 1);
+  assert.deepEqual(firstResult.frontWorkflowAuthority.fixtureRulers, fixtureEvidence);
+  assert.equal(
+    firstResult.progressLog.some((entry) => entry.includes("operator trigger from preexisting_operator_fixture_confirmation")),
+    true,
+  );
+  assert.equal(
+    firstResult.progressLog.some((entry) => entry.includes("atomic_front_capture_operator_action")),
+    false,
+  );
 });
 
 test("atomic Front Capture rejects stale, future, and evicted retained frame bindings before capture", async () => {
@@ -4256,7 +5113,7 @@ test("atomic Front Capture rejects stale, future, and evicted retained frame bin
       warm.runner,
     );
     await service.action("start-session", { captureProfile: "full_forensic" });
-    const request = await atomicFrontCaptureRequest(service);
+    const request = await preparedAtomicFrontCaptureRequest(service);
     const observation = service.previewObservations.find((candidate) => candidate.frameId === request.expectedFrameId);
     assert.ok(observation);
     if (frameCase === "stale") {
@@ -4307,7 +5164,7 @@ test("atomic Front Capture fails closed on drain and safe-off acknowledgement fa
       },
     );
     await service.action("start-session", { captureProfile: "full_forensic" });
-    const request = await atomicFrontCaptureRequest(service);
+    const request = await preparedAtomicFrontCaptureRequest(service);
     if (failure === "drain") {
       service.previewStop = () => {
         service.manifest.previewStatus.cameraOwnership = "capture_action";
@@ -4381,8 +5238,8 @@ test("atomic Front Capture reserves every mutation and shutdown waits without re
     },
   );
   await service.action("start-session", { captureProfile: "full_forensic" });
+  const frontRequest = await preparedAtomicFrontCaptureRequest(service);
   gateFrontSafeOff = true;
-  const frontRequest = await atomicFrontCaptureRequest(service);
   service.previewStop = () => events.push("intentional-reader-stop");
   const capture = service.action("capture-front", frontRequest);
   const duplicate = service.action("capture-front", structuredClone(frontRequest));
@@ -4405,7 +5262,7 @@ test("atomic Front Capture reserves every mutation and shutdown waits without re
   );
   await assert.rejects(() => service.heartbeatLiveLighting("racing front heartbeat"), /serialized capture transition/i);
   await assert.rejects(
-    () => service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } }),
+    () => service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off")),
     /another serialized capture\/terminal lifecycle/i,
   );
   await assert.rejects(() => service.safeOffLiveLightingForOperator("racing disconnect"), /serialized capture transition/i);
@@ -4566,9 +5423,9 @@ test("lighting acknowledgement is truthful while pending and missing acknowledge
   const unknown = service.status();
   assert.equal(unknown.liveLighting.physicalState.state, "physical_state_unknown");
   assert.equal(unknown.liveLighting.applied.enabled, undefined);
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
   await assert.rejects(
-    () => atomicFrontCaptureRequest(service).then((request) => service.action("capture-front", request)),
+    () => preparedAtomicFrontCaptureRequest(service).then((request) => service.action("capture-front", request)),
     /physical state is physical_state_unknown/i,
   );
 });
@@ -4633,6 +5490,7 @@ test("live-lighting apply failures are redacted in HTTP, status, safety events, 
 
 test("restore plus cleanup failure preserves front evidence, persists redacted unknown state, and retry coalesces one fresh restore", async () => {
   let restoreFailureEnabled = true;
+  let trackRestoreFailure = false;
   let cleanupMustFail = false;
   let restoreWrites = 0;
   const runner = {
@@ -4646,7 +5504,7 @@ test("restore plus cleanup failure preserves front evidence, persists redacted u
     makeFakeWarmRunner().runner,
     {
       async writeLightingFrames(frames) {
-        if (frames.length > 3) {
+        if (trackRestoreFailure && frames.length > 3) {
           restoreWrites += 1;
           if (restoreFailureEnabled) {
             cleanupMustFail = true;
@@ -4661,9 +5519,11 @@ test("restore plus cleanup failure preserves front evidence, persists redacted u
     },
   );
   await service.action("start-session", { captureProfile: "full_forensic" });
-  await service.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await service.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-  const front = await service.action("capture-front", await atomicFrontCaptureRequest(service));
+  await service.action("confirm-light-idle-off", frontWorkflowMutationRequest(service, "confirm-light-idle-off"));
+  await service.action("confirm-fixture-rulers", frontWorkflowMutationRequest(service, "confirm-fixture-rulers"));
+  const frontRequest = await preparedAtomicFrontCaptureRequest(service);
+  trackRestoreFailure = true;
+  const front = await service.action("capture-front", frontRequest);
   assert.ok(front.outputs.frontPackageDir);
   assert.equal(front.currentStep, "prompt_flip_card");
   assert.equal(front.liveLighting.physicalState.state, "physical_state_unknown");
@@ -4850,10 +5710,10 @@ test("watchdog, session replacement, shutdown, and capture failure preserve unkn
     },
   );
   await captureFailure.action("start-session", { captureProfile: "full_forensic" });
-  await captureFailure.action("confirm-light-idle-off", { confirmations: { lightIdleOff: true } });
-  await captureFailure.action("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
+  await captureFailure.action("confirm-light-idle-off", frontWorkflowMutationRequest(captureFailure, "confirm-light-idle-off"));
+  await captureFailure.action("confirm-fixture-rulers", frontWorkflowMutationRequest(captureFailure, "confirm-fixture-rulers"));
   await assert.rejects(
-    () => atomicFrontCaptureRequest(captureFailure).then((request) => captureFailure.action("capture-front", request)),
+    () => preparedAtomicFrontCaptureRequest(captureFailure).then((request) => captureFailure.action("capture-front", request)),
     /front camera grab failed.*capture cleanup ACK missing/i,
   );
   const failedCaptureStatus = captureFailure.status();

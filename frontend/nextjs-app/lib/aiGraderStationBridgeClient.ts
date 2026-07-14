@@ -25,8 +25,6 @@ export type AiGraderStationBridgeCallInput = {
 };
 
 export type AiGraderStationBridgeActionRequestBody = {
-  acceptedProfile?: Partial<AiGraderLocalStationStatus["acceptedProfile"]>;
-  confirmations?: Partial<NonNullable<AiGraderLocalStationStatus["confirmations"]>>;
   reportId?: string;
   operatorId?: string;
   warningsAccepted?: boolean;
@@ -43,8 +41,33 @@ export type AiGraderStationBridgeActionRequestBody = {
   expectedReportId?: string;
   expectedSide?: "front" | "back";
   expectedSideEpoch?: string;
+  expectedCandidateProfileIdentity?: string;
   expectedFrameId?: string;
 };
+
+export type AiGraderFrontWorkflowAssertionRequest = {
+  idempotencyKey: string;
+  expectedSessionId: string;
+  expectedReportId: string;
+  expectedSide: 'front';
+  expectedSideEpoch: string;
+  expectedCandidateProfileIdentity?: string;
+};
+
+export function buildAiGraderFrontWorkflowAssertionRequest(
+  input: AiGraderFrontWorkflowAssertionRequest,
+): AiGraderFrontWorkflowAssertionRequest {
+  return {
+    idempotencyKey: input.idempotencyKey,
+    expectedSessionId: input.expectedSessionId,
+    expectedReportId: input.expectedReportId,
+    expectedSide: 'front',
+    expectedSideEpoch: input.expectedSideEpoch,
+    ...(input.expectedCandidateProfileIdentity
+      ? { expectedCandidateProfileIdentity: input.expectedCandidateProfileIdentity }
+      : {}),
+  };
+}
 
 export type AiGraderManualGeometryRect = {
   x: number;
@@ -399,22 +422,15 @@ export async function safeOffAiGraderLiveLighting(input: {
 export async function acceptAiGraderLiveLightingProfile(input: {
   baseUrl: string;
   stationToken: string;
-  dutyPercent: number;
-  channels: number[];
-  exposureUs: number;
-  gain: number;
-}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLiveLightingStatus> {
-  return bridgePostJson<AiGraderLiveLightingStatus>({
+  assertion: AiGraderFrontWorkflowAssertionRequest;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLocalStationStatus> {
+  const status = await bridgePostJson<AiGraderLocalStationStatus>({
     baseUrl: input.baseUrl,
     stationToken: input.stationToken,
     path: "/lighting/accept",
-    body: {
-      dutyPercent: input.dutyPercent,
-      channels: input.channels,
-      exposureUs: input.exposureUs,
-      gain: input.gain,
-    },
+    body: buildAiGraderFrontWorkflowAssertionRequest(input.assertion),
   }, fetchImpl);
+  return sanitizeAiGraderLocalStationStatusForDisplay(status);
 }
 
 export async function heartbeatAiGraderLiveLighting(input: {
