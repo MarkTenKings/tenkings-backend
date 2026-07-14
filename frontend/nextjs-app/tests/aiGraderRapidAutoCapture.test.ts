@@ -178,7 +178,14 @@ test("station rapid flow keeps capture, review, OCR, and publish gates explicit"
   const source = fs.readFileSync(stationPath, "utf8");
   assert.match(source, /nowMs: Date\.now\(\)/);
   assert.doesNotMatch(source, /nowMs: performance\.now\(\)/);
-  assert.match(source, /captureTriggerAt/);
+  const operationsPath = [
+    path.join(process.cwd(), 'lib', 'aiGraderStationOperations.ts'),
+    path.join(process.cwd(), 'frontend', 'nextjs-app', 'lib', 'aiGraderStationOperations.ts'),
+  ].find((candidate) => fs.existsSync(candidate));
+  assert.ok(operationsPath);
+  const operationsSource = fs.readFileSync(operationsPath, 'utf8');
+  assert.match(source, /createAiGraderCaptureAttempt/);
+  assert.match(operationsSource, /captureTriggerAt/);
   assert.match(source, /captureTriggerMode/);
   assert.match(source, /queue-current-card/);
   assert.match(source, /previewSuspendedForRapidReview/);

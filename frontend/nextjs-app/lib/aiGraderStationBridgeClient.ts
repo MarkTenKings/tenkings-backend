@@ -41,7 +41,7 @@ export type AiGraderStationBridgeActionRequestBody = {
   idempotencyKey?: string;
   expectedSessionId?: string;
   expectedReportId?: string;
-  expectedSide?: "back";
+  expectedSide?: "front" | "back";
   expectedSideEpoch?: string;
   expectedFrameId?: string;
 };
@@ -201,7 +201,7 @@ export async function fetchAiGraderStationBridgeHealth(
       ? payload.bridgeVersion.trim()
       : "unknown";
     throw new Error(
-      `Dell local bridge update/restart required. Production expects ${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}; the running bridge is ${runningVersion}. Launch the Ten Kings AI Grader Station desktop shortcut, then re-export the existing report. No hardware recapture is required.`,
+      `Dell local bridge update/restart required. Atomic Front Capture expects ${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}; the running bridge is ${runningVersion}. Stop before hardware, perform the documented Dell helper maintenance update, preserve its protected local configuration, and restart it through the existing Ten Kings AI Grader Station Startup shortcut.`,
     );
   }
   if (payload.reportProducerContractVersion !== AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION) {
