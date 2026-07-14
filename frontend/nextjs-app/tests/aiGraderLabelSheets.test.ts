@@ -218,7 +218,30 @@ test("label sheet page uses authenticated server-rendered PDF authority and expl
   assert.match(source, /render-label-sheet-pdf/);
   assert.match(source, /render-label-sheet-cut-svg/);
   assert.match(source, /sheet-pdf-preview/);
+  assert.match(source, /!productionOutputReady/);
+  assert.match(source, /OPEN SHEET — NOT AUTHORIZED FOR PRINT/);
+  assert.match(source, /Print Current Sheet/);
   assert.match(source, /Exact-dimension PDF is the print authority/);
   assert.match(source, /buildAdminHeaders\(session\.token/);
   assert.doesNotMatch(source, /window\.print|QRCode|@page|grid-template-columns: repeat\(2, 2\.73in\)|stationToken|data:image|127\.0\.0\.1/);
+});
+
+test("legacy per-card QR printing is retired and operator links target authenticated Label Sheets", () => {
+  const legacyPage = readFileSync(
+    fileURLToPath(new URL("../pages/ai-grader/labels/[reportId].tsx", import.meta.url)),
+    "utf8"
+  );
+  const workflow = readFileSync(fileURLToPath(new URL("../lib/aiGraderOperatorWorkflow.ts", import.meta.url)), "utf8");
+  const finish = readFileSync(fileURLToPath(new URL("../pages/ai-grader/finish.tsx", import.meta.url)), "utf8");
+  const station = readFileSync(fileURLToPath(new URL("../pages/ai-grader/station.tsx", import.meta.url)), "utf8");
+
+  assert.match(legacyPage, /href="\/ai-grader\/labels\/sheets"/);
+  assert.match(legacyPage, /physical NFC tag/);
+  assert.doesNotMatch(legacyPage, /qrcode|QRCode|<canvas|window\.print|Print Label|print-ready|@media print/i);
+  assert.match(workflow, /\/ai-grader\/labels\/sheets/);
+  assert.doesNotMatch(workflow, /\/ai-grader\/labels\/\$\{encodeURIComponent/);
+  assert.match(finish, /Open label sheets/);
+  assert.doesNotMatch(finish, />Open label preview</i);
+  assert.match(station, />Label Sheets</);
+  assert.doesNotMatch(station, />Label Preview</i);
 });

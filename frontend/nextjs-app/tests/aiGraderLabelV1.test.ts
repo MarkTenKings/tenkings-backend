@@ -10,16 +10,41 @@ import {
   buildAiGraderLabelV1RuntimeRecord,
   buildAiGraderLabelV1Content,
   parseAiGraderLabelV1RuntimeRecord,
+  strictAiGraderLabelV1JsonEqual,
   type AiGraderLabelV1Snapshot,
 } from "../lib/aiGraderLabelV1";
 import {
   aiGraderLabelV1TemplateDigest,
+  aiGraderLabelV1CutTransformMatrix,
   assertAiGraderLabelV1Assets,
   renderAiGraderLabelSheetCutSvg,
   renderAiGraderLabelSheetV1Pdf,
   renderAiGraderLabelV1Pdf,
   renderAiGraderLabelV1Svg,
 } from "../lib/server/aiGraderLabelV1Renderer";
+
+const sheetAssignment = {
+  sheetId: "ai-grader-label-sheet-000001",
+  sheetNumber: 1,
+  slot: 1,
+  assignedAt: "2026-07-13T12:00:00.000Z",
+};
+
+function jsonClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function recursivelyReverseJsonObjectKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(recursivelyReverseJsonObjectKeys);
+  if (!value || typeof value !== "object") return value;
+  return Object.keys(value as Record<string, unknown>)
+    .sort()
+    .reverse()
+    .reduce<Record<string, unknown>>((result, key) => {
+      result[key] = recursivelyReverseJsonObjectKeys((value as Record<string, unknown>)[key]);
+      return result;
+    }, {});
+}
 
 const sports: AiGraderLabelV1Snapshot = {
   templateId: AI_GRADER_SPORTS_LABEL_V1_TEMPLATE_ID,
@@ -121,6 +146,7 @@ test("approved runtime records freeze template, assets, calibration, identity, a
     grade: sports.grade,
     publicReportUrl: sports.publicReportUrl,
     identity: sports.identity,
+    sheetAssignment,
   });
   assert.deepEqual(record.designApproval, AI_GRADER_LABEL_V1_DESIGN_APPROVAL);
   assert.equal(record.templateId, AI_GRADER_SPORTS_LABEL_V1_TEMPLATE_ID);
@@ -131,6 +157,7 @@ test("approved runtime records freeze template, assets, calibration, identity, a
     AI_GRADER_LABEL_V1_ASSETS.font.assetId,
   ]);
   assert.equal(record.calibrationProfile.status, "provisional_not_physically_calibrated");
+  assert.deepEqual(record.immutableSheetAssignment, sheetAssignment);
   assert.deepEqual(record.immutableIdentitySnapshot, sports.identity);
   assert.deepEqual(record.renderSnapshot, { ...sports, grade: "10" });
   assert.deepEqual(parseAiGraderLabelV1RuntimeRecord(record, digest), record);
@@ -150,9 +177,45 @@ test("approved runtime records freeze template, assets, calibration, identity, a
       grade: 9,
       publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/unsupported",
       identity: { category: "tcg", game: "Magic", cardName: "Black Lotus", year: "1993", productSet: "Alpha" },
+      sheetAssignment,
     }),
     /supports Sports and Pokemon cards only/
   );
+});
+
+test("Label V1 JSONB validation ignores object-key order but remains exact and array-order sensitive", () => {
+  const digest = aiGraderLabelV1TemplateDigest();
+  const record = buildAiGraderLabelV1RuntimeRecord({
+    templateDigestSha256: digest,
+    reportId: sports.reportId,
+    certId: sports.certId,
+    grade: sports.grade,
+    publicReportUrl: sports.publicReportUrl,
+    identity: sports.identity,
+    sheetAssignment,
+  });
+  const jsonbReload = recursivelyReverseJsonObjectKeys(record);
+  assert.equal(strictAiGraderLabelV1JsonEqual(record, jsonbReload), true);
+  assert.deepEqual(parseAiGraderLabelV1RuntimeRecord(jsonbReload, digest), record);
+
+  const mutations: Array<[string, (value: any) => void]> = [
+    ["missing field", (value) => delete value.renderSnapshot.reportId],
+    ["extra field", (value) => { value.unexpected = true; }],
+    ["identity", (value) => { value.immutableIdentitySnapshot.year = "2004"; }],
+    ["asset", (value) => { value.renderAssets[0].sha256 = "0".repeat(64); }],
+    ["asset array order", (value) => { value.renderAssets.reverse(); }],
+    ["template", (value) => { value.templateId = AI_GRADER_POKEMON_LABEL_V1_TEMPLATE_ID; }],
+    ["calibration", (value) => { value.calibrationProfile.printOffsetXPt = 1; }],
+  ];
+  for (const [label, mutate] of mutations) {
+    const changed = jsonClone(record) as any;
+    mutate(changed);
+    assert.equal(parseAiGraderLabelV1RuntimeRecord(changed, digest), null, label);
+  }
+
+  assert.equal(strictAiGraderLabelV1JsonEqual({ a: 1, b: [1, 2] }, { b: [1, 2], a: 1 }), true);
+  assert.equal(strictAiGraderLabelV1JsonEqual({ a: [1, 2] }, { a: [2, 1] }), false);
+  assert.equal(strictAiGraderLabelV1JsonEqual({ a: 1 }, { a: "1" }), false);
 });
 
 test("label SVG preserves whole words without truncation and has no visible QR or local paths", () => {
@@ -263,5 +326,31 @@ test("Cricut cut SVG uses the same 16-slot manifest and carries no browser scali
     );
   }
   assert.equal((svg.match(/<rect id="slot-/g) ?? []).length, 16);
-  assert.doesNotMatch(svg, /transform=|scale\(|\/Users\/|127\.0\.0\.1|localhost/);
+  assert.match(svg, /id="cut-calibration-transform" transform="matrix\(1 0 0 1 0 0\)"/);
+  assert.doesNotMatch(svg, /scale\(|\/Users\/|127\.0\.0\.1|localhost/);
+});
+
+test("synthetic calibration applies print and cut transforms in the documented order", async () => {
+  const calibration = {
+    ...AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.calibration,
+    printOffsetXPt: 4,
+    printOffsetYPt: -3,
+    printScaleX: 1.01,
+    printScaleY: 0.99,
+    cutOffsetXPt: 4,
+    cutOffsetYPt: 5,
+    cutScaleX: 2,
+    cutScaleY: 3,
+    cutRotationDeg: 90,
+  };
+  const pdf = await renderAiGraderLabelSheetV1Pdf({
+    entries: [{ slot: 1, snapshot: sports }],
+    title: "synthetic calibration",
+    calibration,
+  });
+  assert.match(pdf.toString("latin1"), /1\.01 0 0 0\.99 4 -3 cm/);
+
+  assert.deepEqual(aiGraderLabelV1CutTransformMatrix(calibration), ["0", "2", "-3", "0", "4", "5"]);
+  const svg = renderAiGraderLabelSheetCutSvg({ calibration });
+  assert.match(svg, /transform="matrix\(0 2 -3 0 4 5\)"/);
 });

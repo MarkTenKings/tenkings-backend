@@ -45,7 +45,12 @@ All base geometry is expressed once in top-left PDF points, at 72 points per inc
 
 The exact-dimension PDF is the print authority. The same manifest creates the individual label, 16-slot sheet, and Cricut SVG. The operator browser requests and previews the authenticated server-rendered PDF; browser HTML/CSS never becomes a second geometry authority.
 
-Print and cut calibration are separate, versioned, provisional profiles with zero offsets, scale 1.0, and zero rotation. Those values are placeholders until measured Foil Express and Cricut trials are completed from this branch.
+Print and cut calibration are separate, versioned, provisional profiles with zero offsets, scale 1.0, and zero rotation. Those values are placeholders until measured Foil Express and Cricut trials are completed from this branch. Both renderers start from the same top-left, 612 x 864-point sheet coordinate manifest:
+
+- PDF calibration uses the top-left sheet origin. Base coordinates are scaled on X/Y first, then translated by `printOffsetXPt` / `printOffsetYPt` in top-left point space.
+- Cricut SVG calibration also uses the top-left sheet origin. Base coordinates are scaled first, rotated by `cutRotationDeg` (positive values are clockwise in SVG's downward-positive Y axis), and then translated by `cutOffsetXPt` / `cutOffsetYPt`.
+
+Synthetic non-zero renderer tests assert the emitted PDF transform and Cricut SVG matrix. The provisional zero profile therefore leaves the approved base geometry unchanged while proving measured values will affect the output once authorized calibration supplies them.
 
 ## Label zones
 
@@ -55,7 +60,7 @@ Print and cut calibration are separate, versioned, provisional profiles with zer
 - Far-right grade: final numeric grade with the actual Bebas Neue digit glyph bounds centered on the label centerline; Sports card number is set in small text above the grade when present.
 - Center divider: one horizontal rule with the exact derived Ten Kings crown separates the name block from the optional descriptor. There is no horizontal rule beneath `HOLO`, `REFRACTOR / ROOKIE`, or any other descriptor.
 - Section separators: both vertical rules are interrupted at the label centerline by the exact derived Ten Kings crown, with no `TEN KINGS` lettering.
-- No visible QR is rendered in either Label V1 template. Existing internal QR and inventory behavior remains outside this design proof.
+- No visible QR is rendered in either Label V1 template or production proof. The former per-card QR print page is retired as a production authority and directs operators to authenticated Label Sheets. Public report links and existing internal inventory QR behavior remain separate systems.
 
 ## Provisional field hierarchy
 
@@ -110,6 +115,12 @@ Generated proof files are under `output/pdf` and `output/ai-grader-label-v1`. Th
 The supplied logo treatment, `GRADING` lockup, 40% reduction, Bebas Neue package, 11 mm NFC diameter and vertical position, certificate placement, crown dividers, Sports/Pokemon mappings, and whole-word overflow behavior were approved by Mark with the exact phrase `Label V1 design approved` on 2026-07-13.
 
 Runtime records freeze the template digest, approved render asset versions/hashes, provisional calibration profile, durable confirmed identity, certificate ID, final grade, report ID, and public report URL at verified Publish. Rendering fails closed if the record is missing, altered, from a legacy assignment, or no longer matches the persisted published row. Server-rendered PDF/SVG routes require an authenticated human operator and an exact sheet revision. Preparing a sheet seals it; marking it printed remains a separate explicit human action.
+
+The immutable runtime record also freezes the first verified Publish assignment: sheet ID, sheet number, slot number, and assignment time. It intentionally excludes mutable sealed time, printed time, and current revision. Rendering validates all four frozen assignment values against the persisted assignment before producing output.
+
+Because PostgreSQL stores the record as JSONB, runtime validation compares objects recursively without depending on key order. It remains strict: object key sets, types, and values must match exactly; missing or extra fields fail; and arrays (including `renderAssets`) remain order-sensitive. The same rule protects the complete Label V1 record, design approval, identity snapshot, verified-Publish retry, and render-time authority checks.
+
+Open and full sheets are not production-print authorities. `Print Current Sheet` seals the exact current revision with any 1–16 assigned labels, after which only sealed or already-printed sheets can return the production PDF/SVG. Empty positions remain blank, future verified Publish assignments use another digital sheet, repeated sealed downloads are deterministic and do not mutate state, and `Mark Sheet Printed` remains a distinct human action after a successful physical print.
 
 Physical print/cut accuracy remains a separate gate. The 11 mm NFC circle represents the stated tag diameter, but the actual tag, Foil Express output, stock, and Cricut cut require measured physical calibration before production use.
 

@@ -258,6 +258,12 @@ export type AiGraderLabelV1RuntimeRecord = {
     sha256: string;
   }>;
   calibrationProfile: typeof AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.calibration;
+  immutableSheetAssignment: {
+    sheetId: string;
+    sheetNumber: number;
+    slot: number;
+    assignedAt: string;
+  };
   immutableIdentitySnapshot: AiGraderLabelV1Identity;
   renderSnapshot: AiGraderLabelV1Snapshot;
 };
@@ -286,6 +292,60 @@ function joinParts(values: Array<unknown>, separator = " ") {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function strictAiGraderLabelV1JsonEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((value, index) => strictAiGraderLabelV1JsonEqual(value, right[index]));
+  }
+  if (isRecord(left) || isRecord(right)) {
+    if (!isRecord(left) || !isRecord(right)) return false;
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    if (leftKeys.length !== rightKeys.length || leftKeys.some((key, index) => key !== rightKeys[index])) return false;
+    return leftKeys.every((key) => strictAiGraderLabelV1JsonEqual(left[key], right[key]));
+  }
+  return false;
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!isRecord(value)) return value;
+  return Object.keys(value)
+    .sort()
+    .reduce<Record<string, unknown>>((result, key) => {
+      result[key] = stableJsonValue(value[key]);
+      return result;
+    }, {});
+}
+
+function immutableSheetAssignment(value: {
+  sheetId: string;
+  sheetNumber: number;
+  slot: number;
+  assignedAt: string;
+}) {
+  const sheetId = clean(value.sheetId);
+  const assignedAtDate = typeof value.assignedAt === "string" ? new Date(value.assignedAt) : new Date(Number.NaN);
+  if (
+    !sheetId ||
+    !Number.isInteger(value.sheetNumber) ||
+    value.sheetNumber < 1 ||
+    !Number.isInteger(value.slot) ||
+    value.slot < 1 ||
+    value.slot > 16 ||
+    !Number.isFinite(assignedAtDate.getTime())
+  ) {
+    throw new Error("Label V1 requires one valid immutable sheet assignment.");
+  }
+  return {
+    sheetId,
+    sheetNumber: value.sheetNumber,
+    slot: value.slot,
+    assignedAt: assignedAtDate.toISOString(),
+  };
 }
 
 function stableIdentity(value: unknown): AiGraderLabelV1Identity {
@@ -343,6 +403,12 @@ export function buildAiGraderLabelV1RuntimeRecord(input: {
   grade: string | number;
   publicReportUrl: string;
   identity: AiGraderLabelV1Identity;
+  sheetAssignment: {
+    sheetId: string;
+    sheetNumber: number;
+    slot: number;
+    assignedAt: string;
+  };
 }): AiGraderLabelV1RuntimeRecord {
   if (!/^[a-f0-9]{64}$/.test(input.templateDigestSha256)) throw new Error("Label V1 template digest must be SHA-256 hex.");
   const identity = stableIdentity(input.identity);
@@ -366,6 +432,7 @@ export function buildAiGraderLabelV1RuntimeRecord(input: {
     templateDigestSha256: input.templateDigestSha256,
     renderAssets: renderAssetReferences(),
     calibrationProfile: AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.calibration,
+    immutableSheetAssignment: immutableSheetAssignment(input.sheetAssignment),
     immutableIdentitySnapshot: identity,
     renderSnapshot,
   };
@@ -374,9 +441,10 @@ export function buildAiGraderLabelV1RuntimeRecord(input: {
 export function parseAiGraderLabelV1RuntimeRecord(value: unknown, expectedTemplateDigestSha256: string) {
   if (!isRecord(value) || value.schemaVersion !== AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION) return null;
   if (value.templateDigestSha256 !== expectedTemplateDigestSha256) return null;
-  if (JSON.stringify(value.designApproval) !== JSON.stringify(AI_GRADER_LABEL_V1_DESIGN_APPROVAL)) return null;
+  if (!strictAiGraderLabelV1JsonEqual(value.designApproval, AI_GRADER_LABEL_V1_DESIGN_APPROVAL)) return null;
   const snapshot = isRecord(value.renderSnapshot) ? value.renderSnapshot : {};
   const identity = stableIdentity(snapshot.identity);
+  const assignment = isRecord(value.immutableSheetAssignment) ? value.immutableSheetAssignment : {};
   let rebuilt: AiGraderLabelV1RuntimeRecord;
   try {
     rebuilt = buildAiGraderLabelV1RuntimeRecord({
@@ -386,15 +454,21 @@ export function parseAiGraderLabelV1RuntimeRecord(value: unknown, expectedTempla
       grade: snapshot.grade as string,
       publicReportUrl: snapshot.publicReportUrl as string,
       identity,
+      sheetAssignment: {
+        sheetId: assignment.sheetId as string,
+        sheetNumber: assignment.sheetNumber as number,
+        slot: assignment.slot as number,
+        assignedAt: assignment.assignedAt as string,
+      },
     });
   } catch {
     return null;
   }
-  return JSON.stringify(value) === JSON.stringify(rebuilt) ? rebuilt : null;
+  return strictAiGraderLabelV1JsonEqual(value, rebuilt) ? rebuilt : null;
 }
 
 export function canonicalAiGraderLabelV1RuntimeRecord(value: AiGraderLabelV1RuntimeRecord) {
-  return JSON.stringify(value);
+  return JSON.stringify(stableJsonValue(value));
 }
 
 export function formatAiGraderLabelV1Grade(value: string | number) {

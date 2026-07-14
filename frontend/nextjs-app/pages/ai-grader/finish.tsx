@@ -888,7 +888,7 @@ export default function AiGraderFinishPage() {
 
                 <div className="resource-links">
                   {selectedPublicReportUrl ? <a href={selectedPublicReportUrl} target="_blank" rel="noreferrer">Open public report</a> : null}
-                  {selectedLabelPreviewUrl ? <a href={selectedLabelPreviewUrl} target="_blank" rel="noreferrer">Open label preview</a> : null}
+                  {selectedLabelPreviewUrl ? <a href={selectedLabelPreviewUrl}>Open label sheets</a> : null}
                   {selectedSearchUrl ? <a href={selectedSearchUrl} target="_blank" rel="noreferrer">Open comps search</a> : null}
                 </div>
 

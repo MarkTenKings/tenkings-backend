@@ -2286,9 +2286,7 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
       cardAssetId: optionalString(row.cardAssetId),
       itemId: optionalString(row.itemId),
       publicReportUrl: safeAiGraderDownstreamUrl(row.publicReportUrl),
-      labelPreviewUrl:
-        safeAiGraderDownstreamUrl(label?.labelPreviewUrl) ??
-        safeAiGraderDownstreamUrl(buildAiGraderLabelPreviewUrl(stringValue(row.reportId, "unknown-report"))),
+      labelPreviewUrl: safeAiGraderDownstreamUrl(buildAiGraderLabelPreviewUrl(stringValue(row.reportId, "unknown-report"))),
       qrPayloadUrl: safeAiGraderDownstreamUrl(row.qrPayloadUrl) ?? safeAiGraderDownstreamUrl(label?.qrPayloadUrl),
       publishedAt: dateString(row.publishedAt),
       createdAt: dateString(row.createdAt),

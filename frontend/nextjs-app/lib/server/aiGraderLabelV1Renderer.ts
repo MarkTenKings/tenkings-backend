@@ -6,6 +6,7 @@ import {
   AI_GRADER_LABEL_V1_ASSETS,
   AI_GRADER_LABEL_V1_COORDINATE_MANIFEST,
   AI_GRADER_LABEL_V1_DESIGN_APPROVAL,
+  AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION,
   AI_GRADER_LABEL_V1_SCHEMA_VERSION,
   AI_GRADER_LABEL_V1_SHEET_SLOTS,
   AI_GRADER_LABEL_V1_TEXT_TIERS,
@@ -39,6 +40,18 @@ type LabelLayout = {
   cardNumber?: FittedBlock;
   topStartY: number;
   descriptorStartY?: number;
+};
+
+type AiGraderLabelV1CalibrationTransform = {
+  printOffsetXPt: number;
+  printOffsetYPt: number;
+  printScaleX: number;
+  printScaleY: number;
+  cutOffsetXPt: number;
+  cutOffsetYPt: number;
+  cutScaleX: number;
+  cutScaleY: number;
+  cutRotationDeg: number;
 };
 
 export type AiGraderLabelV1SheetEntry = {
@@ -98,6 +111,7 @@ export function aiGraderLabelV1TemplateDigest() {
   return sha256(
     JSON.stringify({
       schemaVersion: AI_GRADER_LABEL_V1_SCHEMA_VERSION,
+      runtimeSchemaVersion: AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION,
       designApproval: AI_GRADER_LABEL_V1_DESIGN_APPROVAL,
       assets: aiGraderLabelV1AssetList().map((asset) => ({
         assetId: asset.assetId,
@@ -109,6 +123,7 @@ export function aiGraderLabelV1TemplateDigest() {
       textTiers: AI_GRADER_LABEL_V1_TEXT_TIERS,
       fieldMappingVersion: "ten-kings-label-field-map-approved-v1",
       overflowPolicyVersion: "balanced-whole-word-hyphen-approved-v1",
+      assignmentFreezePolicyVersion: "sheet-id-number-slot-assigned-at-v1",
     })
   );
 }
@@ -421,6 +436,59 @@ function fillPageWhite(doc: PdfDoc, widthPt: number, heightPt: number) {
   doc.save().rect(0, 0, widthPt, heightPt).fill("#ffffff").restore();
 }
 
+function assertCalibrationTransform(calibration: AiGraderLabelV1CalibrationTransform) {
+  for (const value of [
+    calibration.printOffsetXPt,
+    calibration.printOffsetYPt,
+    calibration.printScaleX,
+    calibration.printScaleY,
+    calibration.cutOffsetXPt,
+    calibration.cutOffsetYPt,
+    calibration.cutScaleX,
+    calibration.cutScaleY,
+    calibration.cutRotationDeg,
+  ]) {
+    if (!Number.isFinite(value)) throw new Error("Label V1 calibration transforms must be finite numbers.");
+  }
+  if (calibration.printScaleX <= 0 || calibration.printScaleY <= 0 || calibration.cutScaleX <= 0 || calibration.cutScaleY <= 0) {
+    throw new Error("Label V1 calibration scales must be greater than zero.");
+  }
+}
+
+function applyPrintCalibrationTransform(doc: PdfDoc, calibration: AiGraderLabelV1CalibrationTransform) {
+  assertCalibrationTransform(calibration);
+  // Top-left page origin. Base coordinates are scaled first, then translated by the measured point offsets.
+  doc.transform(
+    calibration.printScaleX,
+    0,
+    0,
+    calibration.printScaleY,
+    calibration.printOffsetXPt,
+    calibration.printOffsetYPt
+  );
+}
+
+function cleanTransformNumber(value: number) {
+  const rounded = Math.abs(value) < 0.0000005 ? 0 : Math.round(value * 1_000_000) / 1_000_000;
+  return String(rounded);
+}
+
+export function aiGraderLabelV1CutTransformMatrix(calibration: AiGraderLabelV1CalibrationTransform) {
+  assertCalibrationTransform(calibration);
+  const radians = calibration.cutRotationDeg * Math.PI / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  // Top-left page origin. Base coordinates are scaled, then positive degrees rotate clockwise in SVG space, then offsets translate.
+  return [
+    cosine * calibration.cutScaleX,
+    sine * calibration.cutScaleX,
+    -sine * calibration.cutScaleY,
+    cosine * calibration.cutScaleY,
+    calibration.cutOffsetXPt,
+    calibration.cutOffsetYPt,
+  ].map(cleanTransformNumber);
+}
+
 async function collectPdf(doc: PdfDoc): Promise<Buffer> {
   const chunks: Buffer[] = [];
   doc.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
@@ -460,6 +528,7 @@ export async function renderAiGraderLabelSheetV1Pdf(input: {
   entries: readonly AiGraderLabelV1SheetEntry[];
   title: string;
   proofMarks?: boolean;
+  calibration?: AiGraderLabelV1CalibrationTransform;
 }) {
   assertAiGraderLabelV1Assets();
   validateSheetEntries(input.entries);
@@ -467,6 +536,9 @@ export async function renderAiGraderLabelSheetV1Pdf(input: {
   const doc = createPdf([manifest.paper.widthPt, manifest.paper.heightPt], input.title);
   const images = openVerifiedImages(doc);
   fillPageWhite(doc, manifest.paper.widthPt, manifest.paper.heightPt);
+  const calibration = input.calibration ?? manifest.calibration;
+  doc.save();
+  applyPrintCalibrationTransform(doc, calibration);
   const bySlot = new Map(input.entries.map((entry) => [entry.slot, entry]));
   for (const slot of AI_GRADER_LABEL_V1_SHEET_SLOTS) {
     const topY = pdfKitTopYFromPdfBottomY(slot.pdfYPt);
@@ -485,6 +557,7 @@ export async function renderAiGraderLabelSheetV1Pdf(input: {
       });
     }
   }
+  doc.restore();
   return collectPdf(doc);
 }
 
@@ -539,6 +612,8 @@ export async function renderAiGraderLabelV1CalibrationPdf() {
     43,
     { width: 468, align: "center" }
   );
+  doc.save();
+  applyPrintCalibrationTransform(doc, manifest.calibration);
   for (const slot of AI_GRADER_LABEL_V1_SHEET_SLOTS) {
     const topY = pdfKitTopYFromPdfBottomY(slot.pdfYPt);
     doc.rect(slot.xPt, topY, manifest.label.widthPt, manifest.label.heightPt).lineWidth(0.35).stroke("#000000");
@@ -546,6 +621,7 @@ export async function renderAiGraderLabelV1CalibrationPdf() {
     doc.moveTo(slot.xPt - 4, topY).lineTo(slot.xPt + 4, topY).stroke();
     doc.moveTo(slot.xPt, topY - 4).lineTo(slot.xPt, topY + 4).stroke();
   }
+  doc.restore();
   doc.font("TKLabelRegular").fontSize(6).text(
     "Source geometry: 8.50in x 12.00in portrait; labels 2.73in x 0.83in; 2 columns x 8 rows; provisional 1.00in margins. Print at 100% with all fit/scale options disabled.",
     72,
@@ -643,8 +719,13 @@ export function renderAiGraderLabelV1Svg(snapshot: AiGraderLabelV1Snapshot, inpu
   ].filter((line): line is string => Boolean(line)).join("\n");
 }
 
-export function renderAiGraderLabelSheetCutSvg(input?: { calibrationMarks?: boolean }) {
+export function renderAiGraderLabelSheetCutSvg(input?: {
+  calibrationMarks?: boolean;
+  calibration?: AiGraderLabelV1CalibrationTransform;
+}) {
   const manifest = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST;
+  const calibrationProfile = input?.calibration ?? manifest.calibration;
+  const transform = aiGraderLabelV1CutTransformMatrix(calibrationProfile);
   const rectangles = AI_GRADER_LABEL_V1_SHEET_SLOTS.map(
     (slot) => `<rect id="slot-${slot.slot}" x="${slot.xPt}" y="${slot.yFromTopPt}" width="${manifest.label.widthPt}" height="${manifest.label.heightPt}" rx="0" ry="0"/>`
   ).join("\n  ");
@@ -655,11 +736,13 @@ export function renderAiGraderLabelSheetCutSvg(input?: { calibrationMarks?: bool
     `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="8.5in" height="12in" viewBox="0 0 612 864">
   <title>Ten Kings Label V1 Cricut cut geometry</title>
-  <desc>Provisional 2 column by 8 row cut paths. Physical Cricut calibration is required.</desc>
+  <desc>Provisional 2 column by 8 row cut paths. Transform order is scale, clockwise rotation in top-left SVG space, then translation. Physical Cricut calibration is required.</desc>
+  <g id="cut-calibration-transform" transform="matrix(${transform.join(" ")})">
   <g id="cut-paths" fill="none" stroke="#000000" stroke-width="0.25">
   ${rectangles}
   </g>`,
     calibration ? `  ${calibration}` : undefined,
-    `</svg>`,
+    `  </g>
+</svg>`,
   ].filter((line): line is string => Boolean(line)).join("\n");
 }

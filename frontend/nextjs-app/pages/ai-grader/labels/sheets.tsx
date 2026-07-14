@@ -59,7 +59,7 @@ export default function AiGraderLabelSheetsPage() {
     [result.sheets, selectedSheetId]
   );
   const displaySheet = preparedSheet?.sheetId === selectedSheetId ? preparedSheet : selectedSheet;
-  const selectedPrintPrepared = Boolean(displaySheet && preparedSheet?.sheetId === displaySheet.sheetId);
+  const productionOutputReady = displaySheet?.status === "sealed" || displaySheet?.status === "printed";
 
   const loadSheets = useCallback(async () => {
     if (!session?.token) return;
@@ -128,7 +128,7 @@ export default function AiGraderLabelSheetsPage() {
   );
 
   useEffect(() => {
-    if (!displaySheet || !session?.token || displaySheet.slotConflict) {
+    if (!displaySheet || !session?.token || displaySheet.slotConflict || !productionOutputReady) {
       setPreviewUrl(null);
       return;
     }
@@ -148,7 +148,7 @@ export default function AiGraderLabelSheetsPage() {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [displaySheet, requestRenderedFile, session?.token]);
+  }, [displaySheet, productionOutputReady, requestRenderedFile, session?.token]);
 
   const downloadRenderedFile = async (
     action: "render-label-sheet-pdf" | "render-label-sheet-cut-svg",
@@ -170,7 +170,7 @@ export default function AiGraderLabelSheetsPage() {
 
   const prepareAndDownloadPdf = async () => {
     if (!displaySheet || !session?.token || displaySheet.slotConflict) return;
-    if (displaySheet.status === "printed") {
+    if (displaySheet.status === "sealed" || displaySheet.status === "printed") {
       setBusyAction("pdf");
       try {
         await downloadRenderedFile("render-label-sheet-pdf", displaySheet);
@@ -208,7 +208,7 @@ export default function AiGraderLabelSheetsPage() {
   };
 
   const downloadCutSvg = async () => {
-    if (!displaySheet || displaySheet.slotConflict) return;
+    if (!displaySheet || displaySheet.slotConflict || !productionOutputReady) return;
     setBusyAction("cut");
     try {
       await downloadRenderedFile("render-label-sheet-cut-svg", displaySheet);
@@ -221,7 +221,7 @@ export default function AiGraderLabelSheetsPage() {
   };
 
   const markPrinted = async () => {
-    if (!displaySheet || !session?.token || displaySheet.status === "open" || displaySheet.slotConflict) return;
+    if (!displaySheet || !session?.token || displaySheet.status !== "sealed" || displaySheet.slotConflict) return;
     setBusyAction("mark");
     setMessage(`Marking Sheet ${displaySheet.sheetNumber} printed.`);
     try {
@@ -323,9 +323,11 @@ export default function AiGraderLabelSheetsPage() {
                         ? "Rendering PDF"
                         : displaySheet.status === "printed"
                           ? "Download PDF Copy"
-                          : "Prepare + Download PDF"}
+                          : displaySheet.status === "sealed"
+                            ? "Download PDF Copy"
+                            : "Print Current Sheet"}
                     </button>
-                    <button type="button" onClick={() => void downloadCutSvg()} disabled={busyAction !== null || displaySheet.slotConflict}>
+                    <button type="button" onClick={() => void downloadCutSvg()} disabled={busyAction !== null || displaySheet.slotConflict || !productionOutputReady}>
                       {busyAction === "cut" ? "Rendering SVG" : "Download Cricut SVG"}
                     </button>
                     <button
@@ -334,9 +336,7 @@ export default function AiGraderLabelSheetsPage() {
                       onClick={() => void markPrinted()}
                       disabled={
                         busyAction !== null ||
-                        !selectedPrintPrepared ||
-                        displaySheet.status === "open" ||
-                        displaySheet.status === "printed" ||
+                        displaySheet.status !== "sealed" ||
                         displaySheet.slotConflict
                       }
                     >
@@ -345,10 +345,26 @@ export default function AiGraderLabelSheetsPage() {
                   </div>
                   {displaySheet.slotConflict ? <p className="conflict screen-only">Duplicate slot data detected. Printing is blocked until the queue is corrected.</p> : null}
                   <div className="sheet-scroll">
-                    <div className="pdf-authority-note screen-only">
+                    {productionOutputReady ? <div className="pdf-authority-note screen-only">
                       Exact-dimension PDF is the print authority. Print the downloaded file at 100% with every fit or scale option disabled.
-                    </div>
-                    {previewUrl ? (
+                    </div> : null}
+                    {!productionOutputReady ? (
+                      <div className="open-sheet-summary screen-only">
+                        <strong>OPEN SHEET — NOT AUTHORIZED FOR PRINT</strong>
+                        <p>
+                          This sheet currently contains {displaySheet.labelCount} of {displaySheet.capacity} labels. Choose Print Current Sheet to freeze these exact assignments; every unused position will remain blank.
+                        </p>
+                        <ol>
+                          {displaySheet.labels.map((label) => (
+                            <li key={label.labelId}>
+                              <span>Slot {label.slot}</span>
+                              <strong>{label.confirmedCardIdentity.playerName ?? label.confirmedCardIdentity.cardName ?? label.confirmedCardIdentity.title ?? label.reportId}</strong>
+                              <small>{label.certId ?? label.reportId} / Grade {label.grade}</small>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    ) : previewUrl ? (
                       <iframe
                         className="sheet-pdf-preview"
                         src={`${previewUrl}#toolbar=0&navpanes=0&view=FitH`}
@@ -410,6 +426,14 @@ export default function AiGraderLabelSheetsPage() {
         .pdf-authority-note { max-width: 850px; margin: 0 auto 10px; padding: 9px 11px; border: 1px solid #b7bdb7; background: #ffffff; color: #454d47; font-size: 12px; font-weight: 700; }
         .sheet-pdf-preview { display: block; width: min(100%, 850px); height: 720px; margin: 0 auto; border: 0; background: #ffffff; box-shadow: 0 8px 30px rgba(30, 35, 31, 0.16); }
         .preview-loading { width: min(100%, 850px); min-height: 720px; margin: 0 auto; display: grid; place-items: center; background: #ffffff; color: #606861; font-weight: 700; }
+        .open-sheet-summary { width: min(100%, 850px); min-height: 520px; margin: 0 auto; padding: 28px; background: #ffffff; }
+        .open-sheet-summary > strong { display: block; color: #8b2525; font-size: 18px; letter-spacing: 0.03em; }
+        .open-sheet-summary > p { max-width: 680px; color: #535b55; line-height: 1.55; }
+        .open-sheet-summary ol { margin: 22px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; list-style: none; }
+        .open-sheet-summary li { min-height: 64px; padding: 9px 11px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; border: 1px solid #d9ddd7; border-radius: 5px; }
+        .open-sheet-summary li span { color: #526056; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+        .open-sheet-summary li strong { overflow-wrap: anywhere; }
+        .open-sheet-summary li small { grid-column: 2; color: #656d66; }
         .auth-gate, .empty-workarea { max-width: 460px; margin: 80px auto; padding: 24px; border: 1px solid #cdd2cc; border-radius: 6px; background: #ffffff; }
         .auth-gate h2 { margin: 0; font-size: 20px; }
         .auth-gate p { color: #596159; }
@@ -423,6 +447,7 @@ export default function AiGraderLabelSheetsPage() {
           .sheet-actions > div { flex-basis: 100%; }
           .sheet-scroll { padding: 6px; }
           .sheet-pdf-preview, .preview-loading { height: 620px; }
+          .open-sheet-summary ol { grid-template-columns: 1fr; }
         }
       `}</style>
     </>

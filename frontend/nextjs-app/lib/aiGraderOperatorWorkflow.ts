@@ -7,7 +7,7 @@ export const AI_GRADER_NORMAL_OPERATOR_ACTION_LABELS = [
   "Review Report",
   "Publish to Ten Kings",
   "View Public Report",
-  "Print Label",
+  "Open Label Sheets",
   "Run eBay Comps",
   "Card History Reports",
 ] as const;
@@ -60,8 +60,8 @@ export function buildAiGraderPublicReportUrl(reportId: string, baseUrl = DEFAULT
   return `${publicBase(baseUrl)}/ai-grader/reports/${encodeURIComponent(reportId)}`;
 }
 
-export function buildAiGraderLabelPreviewUrl(reportId: string, baseUrl = DEFAULT_PUBLIC_BASE_URL) {
-  return `${publicBase(baseUrl)}/ai-grader/labels/${encodeURIComponent(reportId)}`;
+export function buildAiGraderLabelPreviewUrl(_reportId: string, baseUrl = DEFAULT_PUBLIC_BASE_URL) {
+  return `${publicBase(baseUrl)}/ai-grader/labels/sheets`;
 }
 
 function releaseFrom(bundle?: AiGraderReportBundle | null, release?: AiGraderProductionRelease | null) {
