@@ -9,7 +9,12 @@ export const AI_GRADER_PREVIEW_RECONNECT_DELAYS_MS = [250, 500, 1000, 2000] as c
 export const AI_GRADER_PREVIEW_MAX_CONSECUTIVE_RECONNECTS = 5;
 export const AI_GRADER_PREVIEW_SNAPSHOT_LIMIT = 8;
 export const AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS = 2000;
-export const AI_GRADER_INTENTIONAL_TRANSITION_MAX_AGE_MS = 10_000;
+export const AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS = 15_000;
+export const AI_GRADER_ACTIVE_CAPTURE_RECONCILE_INTERVAL_MS = 2_000;
+export const AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS = 20;
+export const AI_GRADER_INTENTIONAL_TRANSITION_MAX_AGE_MS =
+  AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS +
+  AI_GRADER_ACTIVE_CAPTURE_RECONCILE_INTERVAL_MS * (AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS + 1);
 
 export type AiGraderPreviewEpochBinding = {
   sessionId: string;
@@ -116,20 +121,22 @@ export type AiGraderPreviewEligibilityInput = {
   terminalOrSafeOff: boolean;
 };
 
-export type AiGraderLocalBackCaptureIntent = {
-  binding: AiGraderPreviewEpochBinding & { side: "back" };
+export type AiGraderLocalCaptureIntent<Side extends AiGraderPreviewGeometrySide = AiGraderPreviewGeometrySide> = {
+  binding: AiGraderPreviewEpochBinding & { side: Side };
   frameId: string;
+  submittedAtMs: number;
 };
+export type AiGraderLocalBackCaptureIntent = AiGraderLocalCaptureIntent<"back">;
 
-export type AiGraderIntentionalBackCaptureEofInput = {
-  expectedBinding: AiGraderPreviewEpochBinding & { side: "back" };
-  localIntent?: AiGraderLocalBackCaptureIntent | null;
+export type AiGraderIntentionalCaptureEofInput<Side extends AiGraderPreviewGeometrySide = AiGraderPreviewGeometrySide> = {
+  expectedBinding: AiGraderPreviewEpochBinding & { side: Side };
+  localIntent?: AiGraderLocalCaptureIntent<Side> | null;
   authoritativeBinding?: AiGraderPreviewEpochBinding;
   bridgeIntent?: {
     active: boolean;
-    kind?: "capture_back";
+    kind?: "capture_front" | "capture_back";
     sessionId?: string;
-    side?: "back";
+    side?: AiGraderPreviewGeometrySide;
     sideEpoch?: string;
     frameId?: string;
     completedAt?: string;
@@ -137,6 +144,7 @@ export type AiGraderIntentionalBackCaptureEofInput = {
   };
   nowMs?: number;
 };
+export type AiGraderIntentionalBackCaptureEofInput = AiGraderIntentionalCaptureEofInput<"back">;
 
 export type AiGraderPreviewReaderEndReason =
   | "eof"
@@ -667,34 +675,74 @@ export function isAiGraderPreviewReconnectEligible(input: AiGraderPreviewEligibi
     !input.terminalOrSafeOff;
 }
 
-export function aiGraderLocalBackCaptureIntentMatches(input: {
+export function aiGraderLocalCaptureIntentMatches(input: {
   expectedBinding: AiGraderPreviewEpochBinding;
-  localIntent?: AiGraderLocalBackCaptureIntent | null;
+  localIntent?: AiGraderLocalCaptureIntent | null;
 }) {
-  return input.expectedBinding.side === "back" && Boolean(
+  return Boolean(
     input.localIntent &&
     aiGraderPreviewBindingMatches(input.localIntent.binding, input.expectedBinding) &&
     safePreviewId(input.localIntent.frameId)
   );
 }
 
-function bridgeBackCaptureIntentMatches(input: AiGraderIntentionalBackCaptureEofInput) {
+export function aiGraderAtomicIntentReconcileDecision(input: {
+  exactCaptureAuthority: boolean;
+  exactTransitionFailure: boolean;
+  bridgeTransitionActive: boolean;
+  activeChecksRemaining: number;
+}):
+  | { kind: "poll_active"; delayMs: number; nextActiveChecksRemaining: number }
+  | { kind: "active_deadline" }
+  | { kind: "recover_full_status" }
+  | { kind: "safe_off_reconnect" } {
+  if (input.exactCaptureAuthority && input.bridgeTransitionActive) {
+    return input.activeChecksRemaining > 0
+      ? {
+          kind: "poll_active",
+          delayMs: AI_GRADER_ACTIVE_CAPTURE_RECONCILE_INTERVAL_MS,
+          nextActiveChecksRemaining: input.activeChecksRemaining - 1,
+        }
+      : { kind: "active_deadline" };
+  }
+  if (input.exactCaptureAuthority || input.exactTransitionFailure) return { kind: "recover_full_status" };
+  return { kind: "safe_off_reconnect" };
+}
+
+export function aiGraderSubmittedCaptureIntentMatches(input: {
+  expectedBinding: AiGraderPreviewEpochBinding;
+  localIntent?: AiGraderLocalCaptureIntent | null;
+  nowMs?: number;
+}) {
+  if (!aiGraderLocalCaptureIntentMatches(input)) return false;
+  const submittedAtMs = input.localIntent?.submittedAtMs;
+  const ageMs = (input.nowMs ?? Date.now()) - (submittedAtMs ?? Number.NaN);
+  return Number.isFinite(submittedAtMs) && ageMs >= 0 && ageMs <= AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS;
+}
+
+export function aiGraderLocalBackCaptureIntentMatches(input: {
+  expectedBinding: AiGraderPreviewEpochBinding;
+  localIntent?: AiGraderLocalBackCaptureIntent | null;
+}) {
+  return input.expectedBinding.side === "back" && aiGraderLocalCaptureIntentMatches(input);
+}
+
+function bridgeCaptureIntentMatches(input: AiGraderIntentionalCaptureEofInput) {
   const localIntent = input.localIntent;
   const bridgeIntent = input.bridgeIntent;
   return Boolean(
     localIntent &&
     bridgeIntent &&
-    aiGraderLocalBackCaptureIntentMatches({ expectedBinding: input.expectedBinding, localIntent }) &&
-    aiGraderPreviewBindingMatches(input.authoritativeBinding, input.expectedBinding) &&
-    bridgeIntent.kind === "capture_back" &&
+    aiGraderLocalCaptureIntentMatches({ expectedBinding: input.expectedBinding, localIntent }) &&
+    bridgeIntent.kind === `capture_${input.expectedBinding.side}` &&
     bridgeIntent.sessionId === input.expectedBinding.sessionId &&
-    bridgeIntent.side === "back" &&
+    bridgeIntent.side === input.expectedBinding.side &&
     bridgeIntent.sideEpoch === input.expectedBinding.sideEpoch &&
     bridgeIntent.frameId === localIntent.frameId
   );
 }
 
-function completedBridgeIntentIsCurrent(input: AiGraderIntentionalBackCaptureEofInput) {
+function completedBridgeIntentIsCurrent(input: AiGraderIntentionalCaptureEofInput) {
   const completedAtMs = Date.parse(input.bridgeIntent?.completedAt ?? "");
   const ageMs = (input.nowMs ?? Date.now()) - completedAtMs;
   return Number.isFinite(completedAtMs) &&
@@ -702,28 +750,37 @@ function completedBridgeIntentIsCurrent(input: AiGraderIntentionalBackCaptureEof
     ageMs <= AI_GRADER_INTENTIONAL_TRANSITION_MAX_AGE_MS;
 }
 
-export function isAiGraderIntentionalBackCaptureEof(input: AiGraderIntentionalBackCaptureEofInput) {
+export function isAiGraderIntentionalCaptureEof(input: AiGraderIntentionalCaptureEofInput) {
   const bridgeIntent = input.bridgeIntent;
-  if (!bridgeIntent || !bridgeBackCaptureIntentMatches(input)) return false;
+  if (!bridgeIntent || !bridgeCaptureIntentMatches(input)) return false;
   if (bridgeIntent.active === true) return true;
   return bridgeIntent.outcome === "capture_started" && completedBridgeIntentIsCurrent(input);
 }
 
-export function isAiGraderConfirmedBackCaptureTransitionFailure(
-  input: AiGraderIntentionalBackCaptureEofInput,
+export function isAiGraderConfirmedCaptureTransitionFailure(
+  input: AiGraderIntentionalCaptureEofInput,
 ) {
   return input.bridgeIntent?.active === false &&
     input.bridgeIntent.outcome === "transition_failed" &&
-    bridgeBackCaptureIntentMatches(input) &&
+    aiGraderPreviewBindingMatches(input.authoritativeBinding, input.expectedBinding) &&
+    bridgeCaptureIntentMatches(input) &&
     completedBridgeIntentIsCurrent(input);
 }
+
+export const isAiGraderIntentionalBackCaptureEof = (input: AiGraderIntentionalBackCaptureEofInput) =>
+  isAiGraderIntentionalCaptureEof(input);
+
+export const isAiGraderConfirmedBackCaptureTransitionFailure = (
+  input: AiGraderIntentionalBackCaptureEofInput,
+) => isAiGraderConfirmedCaptureTransitionFailure(input);
 
 export function aiGraderPreviewLossDisposition(input: {
   reason: AiGraderPreviewReaderEndReason;
   expectedBinding: AiGraderPreviewEpochBinding;
-  localIntent?: AiGraderLocalBackCaptureIntent | null;
+  localIntent?: AiGraderLocalCaptureIntent | null;
   atomicTransitionFailureConfirmed?: boolean;
   reconnectEligible: boolean;
+  nowMs?: number;
 }): AiGraderPreviewLossDisposition {
   if (input.reason !== "eof" && input.reason !== "error") {
     return { safeOff: false, reconnect: false, preserveLocalIntent: false };
@@ -731,9 +788,10 @@ export function aiGraderPreviewLossDisposition(input: {
   if (input.atomicTransitionFailureConfirmed) {
     return { safeOff: false, reconnect: input.reconnectEligible, preserveLocalIntent: false };
   }
-  if (aiGraderLocalBackCaptureIntentMatches({
+  if (aiGraderSubmittedCaptureIntentMatches({
     expectedBinding: input.expectedBinding,
     localIntent: input.localIntent,
+    nowMs: input.nowMs,
   })) {
     return { safeOff: false, reconnect: false, preserveLocalIntent: true };
   }
@@ -743,9 +801,10 @@ export function aiGraderPreviewLossDisposition(input: {
 export async function runAiGraderPreviewLossRecovery(input: {
   reason: AiGraderPreviewReaderEndReason;
   expectedBinding: AiGraderPreviewEpochBinding;
-  localIntent?: AiGraderLocalBackCaptureIntent | null;
+  localIntent?: AiGraderLocalCaptureIntent | null;
   atomicTransitionFailureConfirmed?: boolean;
   reconnectEligible: boolean;
+  nowMs?: number;
 }, operations: {
   safeOff: () => Promise<void>;
   reconnect: () => void | Promise<void>;

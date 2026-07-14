@@ -14,9 +14,9 @@ import {
   type AiGraderStationPreviewFrame,
 } from "../lib/aiGraderStationBridgeClient";
 import {
-  aiGraderBackCaptureAssertionFromFrame,
-  createAiGraderBackCaptureAttempt,
-  runAiGraderStationBackCaptureOrchestration,
+  aiGraderCaptureAssertionFromFrame,
+  createAiGraderCaptureAttempt,
+  runAiGraderStationCaptureOrchestration,
 } from "../lib/aiGraderStationOperations";
 
 type StartedBridge = {
@@ -39,29 +39,22 @@ type RawCapturePayload = {
   result?: {
     commandResults?: Array<{ stepId?: string }>;
     geometryCaptureDecisions?: {
-      back?: {
-        mode?: string;
-        placementState?: string;
-        timestamp?: string;
-        explicitOperatorAction?: boolean;
-        detectionUsed?: boolean;
-        manualOverrideUsed?: boolean;
-        sourceFrameId?: string;
-        manualBoundaryRect?: { coordinateFrame?: string };
-        manualGeometrySource?: { imageWidth?: number; imageHeight?: number; coordinateFrame?: string };
-      };
+      front?: GeometryCaptureAudit;
+      back?: GeometryCaptureAudit;
     };
   };
 };
 
-const MANUAL_GEOMETRY_RECT = {
-  x: 100,
-  y: 100,
-  width: 1000,
-  height: 1400,
-  imageWidth: 1200,
-  imageHeight: 1680,
-  coordinateFrame: "portrait_preview_pixels" as const,
+type GeometryCaptureAudit = {
+  mode?: string;
+  placementState?: string;
+  timestamp?: string;
+  explicitOperatorAction?: boolean;
+  detectionUsed?: boolean;
+  manualOverrideUsed?: boolean;
+  sourceFrameId?: string;
+  manualBoundaryRect?: { coordinateFrame?: string };
+  manualGeometrySource?: { imageWidth?: number; imageHeight?: number; coordinateFrame?: string };
 };
 
 function builtBridgeModule(): BuiltBridgeModule {
@@ -101,14 +94,14 @@ async function waitFor<T>(
   throw new Error(message);
 }
 
-test("Station atomic Back Capture reaches the actual built v0.8 loopback bridge in one mutation", async () => {
+test("Station atomic Front then Back Capture reaches the actual built v0.9 loopback bridge in one mutation per side", async () => {
   const bridge = builtBridgeModule();
-  assert.equal(bridge.AI_GRADER_LOCAL_STATION_BRIDGE_VERSION, "ai-grader-local-station-bridge-v0.8");
+  assert.equal(bridge.AI_GRADER_LOCAL_STATION_BRIDGE_VERSION, "ai-grader-local-station-bridge-v0.9");
 
   const tempBase = process.platform === "win32" ? "C:\\tmp" : os.tmpdir();
   await mkdir(tempBase, { recursive: true });
-  const tempRoot = await mkdtemp(path.join(tempBase, "tenkings-station-v08-integration-"));
-  const token = "station-v08-integration-token";
+  const tempRoot = await mkdtemp(path.join(tempBase, "tenkings-station-v09-integration-"));
+  const token = "station-v09-integration-token";
   let realHardwareBoundaries = 0;
   let lightingWriteBatches = 0;
   const started = await bridge.startAiGraderLocalStationBridgeHttpServer(
@@ -156,172 +149,232 @@ test("Station atomic Back Capture reaches the actual built v0.8 loopback bridge 
     },
   );
 
-  const streamAbort = new AbortController();
-  let streamPromise: ReturnType<typeof openAiGraderStationPreviewStream> | undefined;
+  const streamRuns: Array<{
+    abort: AbortController;
+    promise: ReturnType<typeof openAiGraderStationPreviewStream>;
+    eofCount: number;
+    error?: Error;
+  }> = [];
   try {
     const health = await fetchAiGraderStationBridgeHealth({ baseUrl: started.url });
-    assert.equal(health.bridgeVersion, "ai-grader-local-station-bridge-v0.8");
+    assert.equal(health.bridgeVersion, "ai-grader-local-station-bridge-v0.9");
 
-    await callAiGraderStationBridge({
+    const initial = await callAiGraderStationBridge({
       baseUrl: started.url,
       stationToken: token,
       action: "start-session",
       body: { captureProfile: "full_forensic" },
     });
-    await callAiGraderStationBridge({
+    const positionedFront = await callAiGraderStationBridge({
       baseUrl: started.url,
       stationToken: token,
-      action: "confirm-light-idle-off",
-      body: { confirmations: { lightIdleOff: true } },
-    });
-    await callAiGraderStationBridge({
-      baseUrl: started.url,
-      stationToken: token,
-      action: "confirm-fixture-rulers",
-      body: { confirmations: { fixtureRulersVisible: true } },
-    });
-    const front = await callAiGraderStationBridge({
-      baseUrl: started.url,
-      stationToken: token,
-      action: "capture-front",
+      action: "accept-profile",
       body: {
-        captureTriggerMode: "operator",
-        geometryCaptureMode: "manual_capture",
-        manualGeometryRect: MANUAL_GEOMETRY_RECT,
-      },
-    });
-    assert.equal(front.currentStep, "prompt_flip_card");
-    assert.equal(front.sessionManifest.frontCaptured, true);
-    assert.equal(front.sessionManifest.backCaptured, false);
-    assert.equal(front.previewStatus.activeSide, "back");
-    assert.ok(front.previewStatus.sideEpoch);
-
-    let streamEofCount = 0;
-    let streamError: Error | undefined;
-    let resolveReadyFrame!: (frame: AiGraderStationPreviewFrame) => void;
-    const readyFramePromise = new Promise<AiGraderStationPreviewFrame>((resolve) => {
-      resolveReadyFrame = resolve;
-    });
-    streamPromise = openAiGraderStationPreviewStream(
-      { baseUrl: started.url, stationToken: token },
-      {
-        signal: streamAbort.signal,
-        onFrame(frame) {
-          if (frame.side === "back" && (frame.frameIndex ?? 0) >= 3) resolveReadyFrame(frame);
-        },
-        onEof() {
-          streamEofCount += 1;
-        },
-        onError(error) {
-          streamError = error;
+        acceptedProfile: {
+          dutyPercent: 3,
+          exposureUs: 8000,
+          gain: 0,
+          channels: [1, 2, 3, 4, 5, 6, 7, 8],
+          source: "bridge_operator",
         },
       },
-    );
-
-    const readyFrame = await Promise.race([
-      readyFramePromise,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Back preview did not reach a fresh Ready frame.")), 3000)),
-    ]);
-    assert.equal(readyFrame.sessionId, front.sessionManifest.gradingSessionId);
-    assert.equal(readyFrame.sideEpoch, front.previewStatus.sideEpoch);
-    assert.ok(readyFrame.frameId);
-
-    const boundPreview = await waitFor(async () => {
-      const preview = await fetchAiGraderStationPreviewStatus({ baseUrl: started.url, stationToken: token });
-      const geometry = preview.cardGeometry?.back;
-      return preview.status === "live"
-        && preview.positioningLightReady === true
-        && preview.sessionId === readyFrame.sessionId
-        && preview.activeSide === "back"
-        && preview.sideEpoch === readyFrame.sideEpoch
-        && preview.latestFrameId === readyFrame.frameId
-        && geometry !== undefined
-        && geometry.sessionId === readyFrame.sessionId
-        && geometry.sideEpoch === readyFrame.sideEpoch
-        && geometry.sourceFrameId === readyFrame.frameId
-        && geometry.placementState === "ready"
-        ? preview
-        : undefined;
-    }, "The built bridge did not publish an exact live back frame/geometry/light binding.");
-    assert.equal(boundPreview.cardGeometry?.back?.side, "back");
-
-    const assertion = aiGraderBackCaptureAssertionFromFrame({
-      frame: {
-        sessionId: readyFrame.sessionId!,
-        side: "back",
-        sideEpoch: readyFrame.sideEpoch!,
-        frameId: readyFrame.frameId!,
-      },
-      reportId: front.sessionManifest.reportId,
-      geometryCaptureMode: "manual_capture",
-      captureTriggerMode: "operator",
     });
-    const captureTriggerAt = new Date().toISOString();
-    const attempt = createAiGraderBackCaptureAttempt(assertion, captureTriggerAt);
+    assert.equal(initial.sessionManifest.gradingSessionId, positionedFront.sessionManifest.gradingSessionId);
+    assert.equal(positionedFront.currentStep, "capture_front");
+    assert.equal(positionedFront.previewStatus.activeSide, "front");
+
+    const openBoundSide = async (side: "front" | "back", sideEpoch: string) => {
+      const frames = new Map<string, AiGraderStationPreviewFrame>();
+      const run = {
+        abort: new AbortController(),
+        promise: undefined as unknown as ReturnType<typeof openAiGraderStationPreviewStream>,
+        eofCount: 0,
+        error: undefined as Error | undefined,
+      };
+      run.promise = openAiGraderStationPreviewStream(
+        { baseUrl: started.url, stationToken: token },
+        {
+          signal: run.abort.signal,
+          onFrame(frame) {
+            if (frame.side === side && frame.frameId) frames.set(frame.frameId, frame);
+          },
+          onEof() {
+            run.eofCount += 1;
+          },
+          onError(error) {
+            run.error = error;
+          },
+        },
+      );
+      streamRuns.push(run);
+      return waitFor(async () => {
+        const preview = await fetchAiGraderStationPreviewStatus({ baseUrl: started.url, stationToken: token });
+        const geometry = preview.cardGeometry?.[side];
+        const frame = geometry?.sourceFrameId ? frames.get(geometry.sourceFrameId) : undefined;
+        return preview.status === "live"
+          && (side === "front" || preview.positioningLightReady === true)
+          && preview.sessionId === positionedFront.sessionManifest.gradingSessionId
+          && preview.activeSide === side
+          && preview.sideEpoch === sideEpoch
+          && preview.latestFrameId === geometry?.sourceFrameId
+          && geometry?.sessionId === preview.sessionId
+          && geometry.sideEpoch === sideEpoch
+          && geometry.placementState === "ready"
+          && frame?.sessionId === preview.sessionId
+          && frame.side === side
+          && frame.sideEpoch === sideEpoch
+          ? { frame, preview, run }
+          : undefined;
+      }, `The built bridge did not publish an exact live ${side} frame/geometry/light binding.`);
+    };
+
     const captureMutationPaths: string[] = [];
-    let captureRequestBody: Record<string, unknown> | undefined;
-    let rawCapturePayload: RawCapturePayload | undefined;
-    let stationIntentCount = 0;
-    const captureResult = await runAiGraderStationBackCaptureOrchestration({
-      baseUrl: started.url,
-      stationToken: token,
-      assertion,
-      attempt,
-      onIntent(intent) {
-        stationIntentCount += 1;
-        assert.equal(intent.binding.sessionId, readyFrame.sessionId);
-        assert.equal(intent.binding.sideEpoch, readyFrame.sideEpoch);
-        assert.equal(intent.frameId, readyFrame.frameId);
-      },
-    }, async (input, init) => {
-      const requestUrl = new URL(String(input));
-      captureMutationPaths.push(requestUrl.pathname);
-      captureRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      const response = await fetch(input, init);
-      rawCapturePayload = await response.clone().json() as RawCapturePayload;
-      return response;
-    });
+    const captureRequestBodies: Record<string, unknown>[] = [];
+    const rawCapturePayloads: RawCapturePayload[] = [];
+    const captureSide = async (input: {
+      side: "front" | "back";
+      frame: AiGraderStationPreviewFrame;
+      reportId: string;
+    }) => {
+      assert.ok(input.frame.sessionId);
+      assert.ok(input.frame.sideEpoch);
+      assert.ok(input.frame.frameId);
+      const assertion = aiGraderCaptureAssertionFromFrame({
+        frame: {
+          sessionId: input.frame.sessionId,
+          side: input.side,
+          sideEpoch: input.frame.sideEpoch,
+          frameId: input.frame.frameId,
+        },
+        reportId: input.reportId,
+        geometryCaptureMode: "manual_capture",
+        captureTriggerMode: "operator",
+      });
+      const captureTriggerAt = new Date().toISOString();
+      const attempt = createAiGraderCaptureAttempt(assertion, captureTriggerAt);
+      assert.match(attempt.idempotencyKey, new RegExp(`^capture-${input.side}-v0\\.9-[a-f0-9]{16}$`));
+      let intentCount = 0;
+      const result = await runAiGraderStationCaptureOrchestration({
+        baseUrl: started.url,
+        stationToken: token,
+        assertion,
+        attempt,
+        onIntent(intent) {
+          intentCount += 1;
+          assert.deepEqual(intent.binding, {
+            sessionId: input.frame.sessionId,
+            side: input.side,
+            sideEpoch: input.frame.sideEpoch,
+          });
+          assert.equal(intent.frameId, input.frame.frameId);
+        },
+      }, async (request, init) => {
+        const requestUrl = new URL(String(request));
+        captureMutationPaths.push(requestUrl.pathname);
+        captureRequestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        const response = await fetch(request, init);
+        rawCapturePayloads.push(await response.clone().json() as RawCapturePayload);
+        return response;
+      });
+      assert.equal(intentCount, 1);
+      return { result, captureTriggerAt };
+    };
 
-    assert.equal(stationIntentCount, 1);
-    assert.deepEqual(captureMutationPaths, ["/actions/capture-back"]);
-    assert.equal("manualGeometryRect" in (captureRequestBody ?? {}), false);
-    assert.equal("confirmations" in (captureRequestBody ?? {}), false);
-    assert.equal(captureResult.sessionManifest.backCaptured, true);
-    assert.equal(captureResult.currentStep, "run_provisional_diagnostics");
+    const frontSideEpoch = positionedFront.previewStatus.sideEpoch;
+    assert.ok(frontSideEpoch);
+    const frontBound = await openBoundSide("front", frontSideEpoch);
+    const frontCapture = await captureSide({
+      side: "front",
+      frame: frontBound.frame,
+      reportId: positionedFront.sessionManifest.reportId,
+    });
+    assert.deepEqual(captureMutationPaths, ["/actions/capture-front"]);
+    assert.equal(frontCapture.result.currentStep, "prompt_flip_card");
+    assert.equal(frontCapture.result.sessionManifest.frontCaptured, true);
+    assert.equal(frontCapture.result.sessionManifest.backCaptured, false);
+    assert.equal(frontCapture.result.previewStatus.activeSide, "back");
+    assert.notEqual(frontCapture.result.previewStatus.sideEpoch, positionedFront.previewStatus.sideEpoch);
+    const frontStreamResult = await frontBound.run.promise;
+    assert.equal(frontStreamResult.kind, "eof");
+    assert.equal(frontBound.run.eofCount, 1);
+    assert.equal(frontBound.run.error, undefined);
+
+    const backSideEpoch = frontCapture.result.previewStatus.sideEpoch;
+    assert.ok(backSideEpoch);
+    const backBound = await openBoundSide("back", backSideEpoch);
+    const backCapture = await captureSide({
+      side: "back",
+      frame: backBound.frame,
+      reportId: frontCapture.result.sessionManifest.reportId,
+    });
+    assert.deepEqual(captureMutationPaths, ["/actions/capture-front", "/actions/capture-back"]);
+    assert.equal(backCapture.result.sessionManifest.backCaptured, true);
+    assert.equal(backCapture.result.currentStep, "run_provisional_diagnostics");
+    const backStreamResult = await backBound.run.promise;
+    assert.equal(backStreamResult.kind, "eof");
+    assert.equal(backBound.run.eofCount, 1);
+    assert.equal(backBound.run.error, undefined);
+
+    const expectedRequestKeys = [
+      "captureTriggerAt",
+      "captureTriggerMode",
+      "expectedFrameId",
+      "expectedReportId",
+      "expectedSessionId",
+      "expectedSide",
+      "expectedSideEpoch",
+      "geometryCaptureMode",
+      "idempotencyKey",
+    ];
+    assert.equal(captureRequestBodies.length, 2);
+    captureRequestBodies.forEach((body) => {
+      assert.deepEqual(Object.keys(body).sort(), expectedRequestKeys);
+      assert.equal("manualGeometryRect" in body, false);
+      assert.equal("confirmations" in body, false);
+      assert.equal("acceptedProfile" in body, false);
+    });
+    assert.equal(rawCapturePayloads.length, 2);
     assert.equal(
-      rawCapturePayload?.result?.commandResults?.filter((result) => result.stepId === "capture_back").length,
+      rawCapturePayloads[0]?.result?.commandResults?.filter((result) => result.stepId === "capture_front").length,
       1,
     );
-    const manualAudit = rawCapturePayload?.result?.geometryCaptureDecisions?.back;
-    assert.equal(manualAudit?.mode, "manual_capture");
-    assert.equal(manualAudit?.placementState, "ready");
-    assert.equal(manualAudit?.timestamp, captureTriggerAt);
-    assert.equal(manualAudit?.explicitOperatorAction, true);
-    assert.equal(manualAudit?.detectionUsed, false);
-    assert.equal(manualAudit?.manualOverrideUsed, true);
-    assert.equal(manualAudit?.sourceFrameId, readyFrame.frameId);
-    assert.equal(manualAudit?.manualGeometrySource?.imageWidth, 900);
-    assert.equal(manualAudit?.manualGeometrySource?.imageHeight, 1260);
-    assert.equal(manualAudit?.manualGeometrySource?.coordinateFrame, "portrait_preview_pixels");
-    assert.equal(manualAudit?.manualBoundaryRect?.coordinateFrame, "basler_sensor_pixels");
-    const streamResult = await streamPromise;
-    assert.equal(streamResult.kind, "eof");
-    assert.equal(streamEofCount, 1);
-    assert.equal(streamError, undefined);
+    assert.equal(
+      rawCapturePayloads[1]?.result?.commandResults?.filter((result) => result.stepId === "capture_back").length,
+      1,
+    );
+    const assertManualAudit = (
+      audit: GeometryCaptureAudit | undefined,
+      frame: AiGraderStationPreviewFrame,
+      captureTriggerAt: string,
+    ) => {
+      assert.equal(audit?.mode, "manual_capture");
+      assert.equal(audit?.placementState, "ready");
+      assert.equal(audit?.timestamp, captureTriggerAt);
+      assert.equal(audit?.explicitOperatorAction, true);
+      assert.equal(audit?.detectionUsed, false);
+      assert.equal(audit?.manualOverrideUsed, true);
+      assert.equal(audit?.sourceFrameId, frame.frameId);
+      assert.equal(audit?.manualGeometrySource?.imageWidth, 900);
+      assert.equal(audit?.manualGeometrySource?.imageHeight, 1260);
+      assert.equal(audit?.manualGeometrySource?.coordinateFrame, "portrait_preview_pixels");
+      assert.equal(audit?.manualBoundaryRect?.coordinateFrame, "basler_sensor_pixels");
+    };
+    assertManualAudit(rawCapturePayloads[0]?.result?.geometryCaptureDecisions?.front, frontBound.frame, frontCapture.captureTriggerAt);
+    assertManualAudit(rawCapturePayloads[1]?.result?.geometryCaptureDecisions?.back, backBound.frame, backCapture.captureTriggerAt);
     assert.equal(realHardwareBoundaries, 0);
-    assert.ok(lightingWriteBatches >= 4, "The inert ACK fake should observe safe-off, restore, and capture-handoff writes.");
+    assert.ok(lightingWriteBatches >= 3, "The inert ACK fake should observe front safe-off, accepted-profile back restore, and back safe-off writes.");
   } finally {
-    streamAbort.abort();
-    if (streamPromise) {
+    for (const run of streamRuns) run.abort.abort();
+    for (const run of streamRuns) {
       await Promise.race([
-        streamPromise.catch(() => undefined),
+        run.promise.catch(() => undefined),
         new Promise<void>((resolve) => setTimeout(resolve, 1000)),
       ]);
     }
     if (typeof started.server.closeAllConnections === "function") started.server.closeAllConnections();
     await closeServer(started.server);
     assert.equal(path.dirname(tempRoot), path.resolve(tempBase));
-    assert.match(path.basename(tempRoot), /^tenkings-station-v08-integration-/);
+    assert.match(path.basename(tempRoot), /^tenkings-station-v09-integration-/);
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
