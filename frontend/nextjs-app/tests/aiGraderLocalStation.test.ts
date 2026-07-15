@@ -4613,7 +4613,7 @@ test("approved Label V1 sheet runtime renders only the frozen published snapshot
     dbClient: state.db,
   });
   assert.equal(pdf.contentType, "application/pdf");
-  assert.match(pdf.body.toString("latin1"), /\/MediaBox \[0 0 612 864\]/);
+  assert.match(pdf.body.toString("latin1"), /\/MediaBox \[0 0 612 792\]/);
   assert.equal(pdf.revision, prepared.sheet.revision);
   const repeatedPdf = await renderAiGraderLabelSheetPdfRuntime({
     tenantId: "tenant-1",
@@ -4634,7 +4634,7 @@ test("approved Label V1 sheet runtime renders only the frozen published snapshot
     dbClient: state.db,
   });
   assert.equal(cut.contentType, "image/svg+xml");
-  assert.match(cut.body.toString("utf8"), /width="8\.5in" height="12in" viewBox="0 0 612 864"/);
+  assert.match(cut.body.toString("utf8"), /width="8\.5in" height="11in" viewBox="0 0 612 792"/);
   assert.equal((cut.body.toString("utf8").match(/<rect id="slot-/g) ?? []).length, 16);
 
   const printed = await markAiGraderLabelSheetPrintedRuntime({

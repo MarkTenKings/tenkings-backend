@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   AI_GRADER_LABEL_V1_ASSETS,
@@ -18,11 +19,34 @@ import {
   renderAiGraderLabelV1Pdf,
   renderAiGraderLabelV1Svg,
 } from "../lib/server/aiGraderLabelV1Renderer";
+import { AI_GRADER_LABEL_V1_NFC_FIT_TEST_CARDS } from "./ai-grader-label-v1-nfc-fit-test-data";
 
 function repoRoot() {
   return process.cwd().endsWith(path.join("frontend", "nextjs-app"))
     ? path.resolve(process.cwd(), "..", "..")
     : process.cwd();
+}
+
+function sha256(value: Buffer | string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function assertNfcFitTestCards() {
+  if (AI_GRADER_LABEL_V1_NFC_FIT_TEST_CARDS.length !== 16) {
+    throw new Error("Label V1 NFC-fit test sheet must contain exactly 16 fixtures.");
+  }
+  const certIds = new Set<string>();
+  for (const [index, card] of AI_GRADER_LABEL_V1_NFC_FIT_TEST_CARDS.entries()) {
+    if (card.slot !== index + 1) throw new Error("Label V1 NFC-fit test fixtures must use row-major slots 1 through 16.");
+    if (!/^TEST-[SP]\d{2}$/.test(card.snapshot.certId)) {
+      throw new Error("Label V1 NFC-fit test fixtures must use visible TEST certificate IDs.");
+    }
+    if (!card.snapshot.publicReportUrl.startsWith("https://example.invalid/")) {
+      throw new Error("Label V1 NFC-fit test fixtures must not use live report URLs.");
+    }
+    if (certIds.has(card.snapshot.certId)) throw new Error("Label V1 NFC-fit test certificate IDs must be unique.");
+    certIds.add(card.snapshot.certId);
+  }
 }
 
 const sports: AiGraderLabelV1Snapshot = {
@@ -118,6 +142,7 @@ const fullSheetSnapshots = Array.from({ length: 16 }, (_, index) => {
 
 async function main() {
   assertAiGraderLabelV1Assets();
+  assertNfcFitTestCards();
   const root = repoRoot();
   const pdfDir = path.join(root, "output", "pdf");
   const proofDir = path.join(root, "output", "ai-grader-label-v1");
@@ -130,6 +155,7 @@ async function main() {
     inspectionPdf: "ten-kings-label-v1-enlarged-inspection.pdf",
     fullSheetPdf: "ten-kings-label-v1-full-sheet-proof.pdf",
     partialSheetPdf: "ten-kings-label-v1-partial-sheet-proof.pdf",
+    nfcFitTestPdf: "ten-kings-label-v1-nfc-fit-test-sheet.pdf",
     calibrationPdf: "ten-kings-label-v1-calibration.pdf",
     sportsSvg: "ten-kings-label-v1-sports.svg",
     pokemonSvg: "ten-kings-label-v1-pokemon.svg",
@@ -154,29 +180,83 @@ async function main() {
       entries: fullSheetSnapshots.slice(0, 5).map((snapshot, index) => ({ slot: index + 1, snapshot })),
     })
   );
+  const nfcFitTestPdf = await renderAiGraderLabelSheetV1Pdf({
+    title: "Ten Kings Label V1 NFC fit test - synthetic records - not for production",
+    entries: AI_GRADER_LABEL_V1_NFC_FIT_TEST_CARDS.map(({ slot, snapshot }) => ({ slot, snapshot })),
+  });
+  writeFileSync(path.join(pdfDir, files.nfcFitTestPdf), nfcFitTestPdf);
+  const nfcFitTestPdfSha256 = sha256(nfcFitTestPdf);
   writeFileSync(path.join(pdfDir, files.calibrationPdf), await renderAiGraderLabelV1CalibrationPdf());
   writeFileSync(path.join(proofDir, files.sportsSvg), renderAiGraderLabelV1Svg(sports));
   writeFileSync(path.join(proofDir, files.pokemonSvg), renderAiGraderLabelV1Svg(pokemon));
   writeFileSync(path.join(proofDir, files.cutSvg), renderAiGraderLabelSheetCutSvg());
   writeFileSync(path.join(proofDir, files.calibrationCutSvg), renderAiGraderLabelSheetCutSvg({ calibrationMarks: true }));
+  const pdfArtifactKeys = new Set([
+    "sportsActualPdf",
+    "pokemonActualPdf",
+    "inspectionPdf",
+    "fullSheetPdf",
+    "partialSheetPdf",
+    "nfcFitTestPdf",
+    "calibrationPdf",
+  ]);
+  const artifacts = Object.fromEntries(
+    Object.entries(files).map(([key, fileName]) => {
+      const filePath = path.join(pdfArtifactKeys.has(key) ? pdfDir : proofDir, fileName);
+      const bytes = readFileSync(filePath);
+      return [key, { fileName, byteLength: bytes.length, sha256: sha256(bytes) }];
+    })
+  );
   writeFileSync(
     path.join(proofDir, "proof-manifest.json"),
     `${JSON.stringify(
       {
-        status: "design_approved_not_physically_calibrated",
+        status: "barlow_readability_revision_physical_reprint_pending",
         designApproval: AI_GRADER_LABEL_V1_DESIGN_APPROVAL,
         templateDigestSha256: aiGraderLabelV1TemplateDigest(),
         assets: AI_GRADER_LABEL_V1_ASSETS,
         coordinates: AI_GRADER_LABEL_V1_COORDINATE_MANIFEST,
         files,
+        artifacts,
+        determinism: {
+          algorithm: "sha256",
+          requiredIndependentGenerations: 2,
+          acceptanceRule: "Every artifact and this manifest must be byte-identical between both same-environment generations.",
+        },
+        acceptedPhysicalObservations: {
+          printer: "FoilXpress AP (Auto-Positioning)",
+          media: "8.5 x 11 inch AP paper",
+          measuredLabelWidthIn: 2.73,
+          measuredLabelHeightIn: 0.83,
+          observedPrintScaleX: 1,
+          observedPrintScaleY: 1,
+          topRightSlotTopEdgeIn: 1.125,
+          topRightSlotRightEdgeIn: 1.375,
+          observedHorizontalShiftFromPdfPt: -27,
+          observedVerticalShiftFromPdfPt: 9,
+          correctiveTransformApplied: false,
+          operatorAcceptedPlacement: true,
+          cricutOperatorAttestation: "handled and accepted by Mark; numeric cut offsets, scale, and rotation not reported",
+          realNfcInlayFit: "fits perfectly inside the centered 11 mm logical reserve",
+          nfcProgrammed: false,
+        },
+        nfcFitTest: {
+          status: "test_only_not_issued_not_for_production",
+          pdfSha256: nfcFitTestPdfSha256,
+          realFields: ["card identity", "year", "manufacturer/set", "card number", "variant/descriptor"],
+          syntheticFields: ["grade", "certificate ID", "report ID", "public report URL"],
+          records: AI_GRADER_LABEL_V1_NFC_FIT_TEST_CARDS,
+        },
         notes: [
-          "The supplied Ten Kings artwork is preserved exactly, with Mark-authorized deterministic dark-black recoloring and crown-only crop.",
-          "OFL Bebas Neue Regular weight 400 is embedded from the user-supplied local TTF for PDF/SVG determinism.",
-          "The NFC reserve is an 11 mm circle centered vertically on the label; print and cut offsets remain provisional.",
+          "The exact supplied crown artwork remains byte-unchanged and is rendered from the approved crop at 120 percent of its prior visible label size; it was not redrawn, traced, or AI-generated.",
+          "Names and grades retain embedded OFL Bebas Neue Regular. Metadata, descriptors, card numbers, certificate IDs, NFC, and GRADING use embedded Barlow Regular. The live TEN KINGS wordmark uses embedded Barlow SemiBold at 130 percent of the prior visible cap height, 0.12-point tracking, and a deterministic 0.88 horizontal fit within the widened internal brand lockup.",
+          "The center renders the primary name first and metadata below it. The former center horizontal rule and its center crown are removed; both vertical crown separators remain.",
+          "The logical NFC reserve remains centered at 11 mm. Only the printed circular guide is 9 mm. No NFC hole or NFC programming behavior is added to the Cricut authority.",
+          "The accepted 8.5 x 11-inch sheet, 2.73 x 0.83-inch label, 0.25-inch row gaps, all 16 slot coordinates, calibration PDF, and Cricut cut/calibration SVGs remain unchanged.",
           "Whole words wrap to approved fixed tiers; words are never split or truncated.",
           "No QR is visible in either NFC template.",
-          "Mark approved Label V1 with the exact phrase `Label V1 design approved` on 2026-07-13.",
-          "Physical Foil Express and Cricut calibration remains a separate required gate.",
+          "The NFC-fit sheet uses real reference card identities with visible TEST certificate IDs and synthetic grades; it is an offline physical-fit artifact, not an issued or production-authorized sheet.",
+          "Mark approved the exact font, crown, wordmark, center-order, divider-removal, and 9 mm printed-guide directions on 2026-07-15. The revised populated sheet still requires Mark's actual-size print/readability confirmation before final physical-calibration approval.",
         ],
       },
       null,

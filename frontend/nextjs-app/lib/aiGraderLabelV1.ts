@@ -6,6 +6,9 @@ export const AI_GRADER_LABEL_V1_DESIGN_APPROVAL = {
   status: "approved",
   phrase: "Label V1 design approved",
   approvedOn: "2026-07-13",
+  designRevision: "barlow-readability-v2",
+  designRevisionAuthorizedOn: "2026-07-15",
+  designRevisionPhysicalReprintStatus: "pending_actual_size_confirmation",
   physicalCalibrationStatus: "provisional_not_physically_calibrated",
 } as const;
 
@@ -72,6 +75,24 @@ export const AI_GRADER_LABEL_V1_ASSETS = {
     sha256: "830ea186acffc2316ed1a4e42319246ba3b46b04e33a211079249bf901193f04",
     approvedForProduction: true,
   },
+  smallTextFont: {
+    assetId: "barlow",
+    version: "regular-400-ofl-v1",
+    role: "font",
+    fileName: "fonts/barlow/Barlow-Regular.ttf",
+    mimeType: "font/ttf",
+    sha256: "77fb1ac54d2ceb980e3ebdfa7a9d0f64e85a66e4fdfb7f914a7b0aa08fb33a5d",
+    approvedForProduction: true,
+  },
+  wordmarkFont: {
+    assetId: "barlow",
+    version: "semibold-600-ofl-v1",
+    role: "font",
+    fileName: "fonts/barlow/Barlow-SemiBold.ttf",
+    mimeType: "font/ttf",
+    sha256: "07ea3ff2743cf6716122a520c5e6f1aed0e75c079bc3b75e512fbf1a85caef9b",
+    approvedForProduction: true,
+  },
   sportsReference: {
     assetId: "ten-kings-sports-label-design-reference",
     version: "v1",
@@ -106,9 +127,9 @@ export const AI_GRADER_LABEL_V1_COORDINATE_MANIFEST = {
   pointsPerInch: INCH,
   paper: {
     widthIn: 8.5,
-    heightIn: 12,
+    heightIn: 11,
     widthPt: 612,
-    heightPt: 864,
+    heightPt: 792,
     orientation: "portrait",
   },
   label: {
@@ -124,19 +145,34 @@ export const AI_GRADER_LABEL_V1_COORDINATE_MANIFEST = {
     marginLeftPt: 72,
     marginTopPt: 72,
     marginRightPt: 72,
-    marginBottomPt: 72,
+    marginBottomPt: 115.92,
     columnGapPt: 74.88,
-    rowGapPt: 34.56,
+    rowGapPt: 18,
     xPositionsPt: [72, 343.44],
-    yPositionsFromTopPt: [72, 166.32, 260.64, 354.96, 449.28, 543.6, 637.92, 732.24],
+    yPositionsFromTopPt: [72, 149.76, 227.52, 305.28, 383.04, 460.8, 538.56, 616.32],
     slotOrder: "row_major_left_to_right_top_to_bottom",
   },
   labelZones: {
     safeInsetPt: 2.52,
-    logo: { xPt: 5.04, yPt: 15.2, widthPt: 25.92, heightPt: 20.22, scaleFromInitialProof: 0.6 },
-    gradingText: { xPt: 4.2, yPt: 37.1, widthPt: 27.6, fontSizePt: 3.8 },
-    leftSeparator: { xPt: 36, yPt: 8, heightPt: 43.76 },
-    identity: { xPt: 40, yPt: 3.5, widthPt: 89.5, heightPt: 52.76 },
+    legacyLogoReference: {
+      xPt: 5.04,
+      yPt: 15.2,
+      widthPt: 25.92,
+      heightPt: 20.22,
+      scaleFromInitialProof: 0.6,
+      rendered: false,
+    },
+    brandCrown: {
+      xPt: 9.496192,
+      yPt: 4.5,
+      widthPt: 25.007616,
+      heightPt: 16.258954,
+      scaleFromApprovedLogoCrown: 1.2,
+    },
+    brandWordmark: { xPt: 2.52, yPt: 19.3, widthPt: 38.96 },
+    gradingText: { xPt: 4, yPt: 32.5, widthPt: 36, fontSizePt: 3.8, characterSpacingPt: 0.38 },
+    leftSeparator: { xPt: 44, yPt: 8, heightPt: 43.76 },
+    identity: { xPt: 48, yPt: 3.5, widthPt: 81.5, heightPt: 52.76 },
     rightSeparator: { xPt: 132.5, yPt: 8, heightPt: 43.76 },
     nfcReserved: {
       xPt: 134.25,
@@ -145,9 +181,11 @@ export const AI_GRADER_LABEL_V1_COORDINATE_MANIFEST = {
       heightPt: 31.18,
       orientation: "portrait",
       diameterMm: 11,
+      printedGuideDiameterMm: 9,
+      printedGuideDiameterPt: 25.511811,
       centerXPt: 149.84,
       centerYPt: 29.88,
-      certTopPt: 47.05,
+      certTopPt: 46.25,
       provisional: true,
     },
     grade: {
@@ -157,8 +195,41 @@ export const AI_GRADER_LABEL_V1_COORDINATE_MANIFEST = {
       glyphCenterYPt: 29.88,
       glyphCenterFromTextTopEm: 0.55,
     },
-    divider: { yPt: 38.4, crownWidthPt: 5.7, crownHeightPt: 3.7 },
+    centerDivider: { rendered: false, removedOn: "2026-07-15" },
     separatorCrowns: { centerYPt: 29.88, widthPt: 3.4, heightPt: 2.2, lineGapPt: 0.7 },
+  },
+  typography: {
+    display: {
+      assetKey: "font",
+      family: "Bebas Neue",
+      weight: 400,
+      characterSpacingPt: 0,
+      svgBaselineFromTopEm: 0.84,
+    },
+    small: {
+      assetKey: "smallTextFont",
+      family: "Barlow",
+      weight: 400,
+      characterSpacingPt: 0.12,
+      svgBaselineFromTopEm: 1,
+    },
+    wordmark: {
+      assetKey: "wordmarkFont",
+      family: "Barlow SemiBold",
+      weight: 600,
+      text: "TEN KINGS",
+      fontSizePt: 9.005493,
+      characterSpacingPt: 0.12,
+      referenceVisibleCapHeightPt: 4.959949,
+      visibleCapHeightPt: 6.447933,
+      visibleCapHeightScale: 1.3,
+      horizontalScale: 0.88,
+      svgBaselineFromTopEm: 1,
+    },
+  },
+  layoutPolicy: {
+    centerOrder: ["primary", "metadata", "descriptor"],
+    centerDividerRendered: false,
   },
   pdf: {
     coordinateOrigin: "bottom_left",
@@ -166,12 +237,12 @@ export const AI_GRADER_LABEL_V1_COORDINATE_MANIFEST = {
   },
   svg: {
     coordinateOrigin: "top_left",
-    viewBox: "0 0 612 864",
+    viewBox: "0 0 612 792",
   },
   calibration: {
     status: "provisional_not_physically_calibrated",
-    printProfileId: "ten-kings-foil-express-provisional-v1",
-    cutProfileId: "ten-kings-cricut-provisional-v1",
+    printProfileId: "ten-kings-foilxpress-ap-letter-provisional-v2",
+    cutProfileId: "ten-kings-cricut-explore-5-letter-provisional-v2",
     printOffsetXPt: 0,
     printOffsetYPt: 0,
     printScaleX: 1,
@@ -181,6 +252,7 @@ export const AI_GRADER_LABEL_V1_COORDINATE_MANIFEST = {
     cutScaleX: 1,
     cutScaleY: 1,
     cutRotationDeg: 0,
+    measuredCalibrationFooterDigestPrefix: "fb81a7eba25db2d6",
   },
 } as const;
 
@@ -269,9 +341,9 @@ export type AiGraderLabelV1RuntimeRecord = {
 };
 
 export const AI_GRADER_LABEL_V1_TEXT_TIERS = {
-  metadata: [9, 8, 7, 6],
+  metadata: [9, 8, 7, 6, 5],
   primary: [19, 17, 15, 13, 11],
-  descriptor: [10, 9, 8, 7, 6],
+  descriptor: [10, 9, 8, 7, 6, 5],
   cert: [6.2, 5.6, 5],
   cardNumber: [7, 6.2, 5.5],
   grade: [34, 31, 28, 25, 22, 19],
@@ -389,7 +461,12 @@ export function aiGraderLabelV1TemplateForIdentity(identity: AiGraderLabelV1Iden
 }
 
 function renderAssetReferences() {
-  return [AI_GRADER_LABEL_V1_ASSETS.logo, AI_GRADER_LABEL_V1_ASSETS.crown, AI_GRADER_LABEL_V1_ASSETS.font].map((asset) => ({
+  return [
+    AI_GRADER_LABEL_V1_ASSETS.crown,
+    AI_GRADER_LABEL_V1_ASSETS.font,
+    AI_GRADER_LABEL_V1_ASSETS.smallTextFont,
+    AI_GRADER_LABEL_V1_ASSETS.wordmarkFont,
+  ].map((asset) => ({
     assetId: asset.assetId,
     version: asset.version,
     sha256: asset.sha256,

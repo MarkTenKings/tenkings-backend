@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   AI_GRADER_LABEL_V1_ASSETS,
   AI_GRADER_LABEL_V1_COORDINATE_MANIFEST,
@@ -19,9 +20,11 @@ import {
   assertAiGraderLabelV1Assets,
   renderAiGraderLabelSheetCutSvg,
   renderAiGraderLabelSheetV1Pdf,
+  renderAiGraderLabelV1CalibrationPdf,
   renderAiGraderLabelV1Pdf,
   renderAiGraderLabelV1Svg,
 } from "../lib/server/aiGraderLabelV1Renderer";
+import { AI_GRADER_LABEL_V1_NFC_FIT_TEST_CARDS } from "../scripts/ai-grader-label-v1-nfc-fit-test-data";
 
 const sheetAssignment = {
   sheetId: "ai-grader-label-sheet-000001",
@@ -88,12 +91,23 @@ test("Label V1 fixes exact physical dimensions and all row-major slot coordinate
   const manifest = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST;
   assert.deepEqual(manifest.paper, {
     widthIn: 8.5,
-    heightIn: 12,
+    heightIn: 11,
     widthPt: 612,
-    heightPt: 864,
+    heightPt: 792,
     orientation: "portrait",
   });
   assert.deepEqual(manifest.label, { widthIn: 2.73, heightIn: 0.83, widthPt: 196.56, heightPt: 59.76 });
+  assert.equal(manifest.sheet.columnGapPt, 74.88);
+  assert.equal(manifest.sheet.rowGapPt, 18);
+  assert.equal(manifest.sheet.marginTopPt, 72);
+  assert.equal(manifest.sheet.marginRightPt, 72);
+  assert.equal(manifest.sheet.marginBottomPt, 115.92);
+  assert.deepEqual(manifest.sheet.xPositionsPt, [72, 343.44]);
+  assert.deepEqual(manifest.sheet.yPositionsFromTopPt, [72, 149.76, 227.52, 305.28, 383.04, 460.8, 538.56, 616.32]);
+  assert.equal(Number(((manifest.label.heightPt * 2 + manifest.sheet.rowGapPt) / 72).toFixed(2)), 1.91);
+  assert.equal(manifest.paper.widthPt - (manifest.sheet.xPositionsPt[1] + manifest.label.widthPt), 72);
+  assert.equal(manifest.sheet.yPositionsFromTopPt[0], 72);
+  assert.equal(manifest.sheet.yPositionsFromTopPt[7] + manifest.label.heightPt + manifest.sheet.marginBottomPt, manifest.paper.heightPt);
   assert.equal(AI_GRADER_LABEL_V1_SHEET_SLOTS.length, 16);
   for (const [index, slot] of AI_GRADER_LABEL_V1_SHEET_SLOTS.entries()) {
     assert.equal(slot.slot, index + 1);
@@ -101,8 +115,12 @@ test("Label V1 fixes exact physical dimensions and all row-major slot coordinate
     assert.equal(slot.column, (index % 2) + 1);
     assert.equal(slot.xPt, manifest.sheet.xPositionsPt[index % 2]);
     assert.equal(slot.yFromTopPt, manifest.sheet.yPositionsFromTopPt[Math.floor(index / 2)]);
-    assert.ok(Math.abs(slot.pdfYPt - (864 - slot.yFromTopPt - 59.76)) < 0.0001);
+    assert.ok(Math.abs(slot.pdfYPt - (manifest.paper.heightPt - slot.yFromTopPt - manifest.label.heightPt)) < 0.0001);
   }
+  assert.deepEqual(
+    AI_GRADER_LABEL_V1_SHEET_SLOTS.filter((slot) => slot.column === 1).map((slot) => Number(slot.pdfYPt.toFixed(2))),
+    [660.24, 582.48, 504.72, 426.96, 349.2, 271.44, 193.68, 115.92]
+  );
 });
 
 test("Sports and Pokemon use the approved frozen field hierarchy", () => {
@@ -125,12 +143,20 @@ test("Sports and Pokemon use the approved frozen field hierarchy", () => {
 
 test("hash-bound assets are required and the template digest is stable within a process", () => {
   assertAiGraderLabelV1Assets();
+  assert.equal(AI_GRADER_LABEL_V1_DESIGN_APPROVAL.designRevision, "barlow-readability-v2");
+  assert.equal(AI_GRADER_LABEL_V1_DESIGN_APPROVAL.designRevisionPhysicalReprintStatus, "pending_actual_size_confirmation");
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.font.sha256, "830ea186acffc2316ed1a4e42319246ba3b46b04e33a211079249bf901193f04");
+  assert.equal(AI_GRADER_LABEL_V1_ASSETS.smallTextFont.fileName, "fonts/barlow/Barlow-Regular.ttf");
+  assert.equal(AI_GRADER_LABEL_V1_ASSETS.smallTextFont.sha256, "77fb1ac54d2ceb980e3ebdfa7a9d0f64e85a66e4fdfb7f914a7b0aa08fb33a5d");
+  assert.equal(AI_GRADER_LABEL_V1_ASSETS.wordmarkFont.fileName, "fonts/barlow/Barlow-SemiBold.ttf");
+  assert.equal(AI_GRADER_LABEL_V1_ASSETS.wordmarkFont.sha256, "07ea3ff2743cf6716122a520c5e6f1aed0e75c079bc3b75e512fbf1a85caef9b");
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.logo.sha256, "801b4071499af546102c3d703f27deb3dabc7a4374d5d621eb8ad672ceeeae88");
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.crown.sha256, "064156a51ee3e7c49bdf102752bbbd5d21ed41eaf2d58c6be7d5b9994aa307ed");
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.logo.approvedForProduction, true);
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.crown.approvedForProduction, true);
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.font.approvedForProduction, true);
+  assert.equal(AI_GRADER_LABEL_V1_ASSETS.smallTextFont.approvedForProduction, true);
+  assert.equal(AI_GRADER_LABEL_V1_ASSETS.wordmarkFont.approvedForProduction, true);
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.logoSource.approvedForProduction, false);
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.sportsReference.approvedForProduction, false);
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.pokemonReference.approvedForProduction, false);
@@ -151,11 +177,15 @@ test("approved runtime records freeze template, assets, calibration, identity, a
   assert.deepEqual(record.designApproval, AI_GRADER_LABEL_V1_DESIGN_APPROVAL);
   assert.equal(record.templateId, AI_GRADER_SPORTS_LABEL_V1_TEMPLATE_ID);
   assert.equal(record.templateDigestSha256, digest);
-  assert.deepEqual(record.renderAssets.map((asset) => asset.assetId), [
-    AI_GRADER_LABEL_V1_ASSETS.logo.assetId,
-    AI_GRADER_LABEL_V1_ASSETS.crown.assetId,
-    AI_GRADER_LABEL_V1_ASSETS.font.assetId,
-  ]);
+  assert.deepEqual(
+    record.renderAssets.map((asset) => [asset.assetId, asset.version]),
+    [
+      [AI_GRADER_LABEL_V1_ASSETS.crown.assetId, AI_GRADER_LABEL_V1_ASSETS.crown.version],
+      [AI_GRADER_LABEL_V1_ASSETS.font.assetId, AI_GRADER_LABEL_V1_ASSETS.font.version],
+      [AI_GRADER_LABEL_V1_ASSETS.smallTextFont.assetId, AI_GRADER_LABEL_V1_ASSETS.smallTextFont.version],
+      [AI_GRADER_LABEL_V1_ASSETS.wordmarkFont.assetId, AI_GRADER_LABEL_V1_ASSETS.wordmarkFont.version],
+    ]
+  );
   assert.equal(record.calibrationProfile.status, "provisional_not_physically_calibrated");
   assert.deepEqual(record.immutableSheetAssignment, sheetAssignment);
   assert.deepEqual(record.immutableIdentitySnapshot, sports.identity);
@@ -239,7 +269,17 @@ test("label SVG preserves whole words without truncation and has no visible QR o
     assert.match(structuralSvg, new RegExp(word));
   }
   assert.match(structuralSvg, />NFC<\/text>/);
-  assert.equal((structuralSvg.match(/<image href="data:embedded"/g) ?? []).length, 4);
+  assert.match(structuralSvg, /@font-face \{ font-family: "Bebas Neue";/);
+  assert.match(structuralSvg, /@font-face \{ font-family: "Barlow";/);
+  assert.match(structuralSvg, /@font-face \{ font-family: "Barlow SemiBold";/);
+  assert.match(structuralSvg, /id="brand-crown"[^>]+width="25\.007616"[^>]+height="16\.258954"/);
+  assert.match(structuralSvg, /id="brand-wordmark-transform" transform="translate\(22\.00 0\) scale\(0\.88 1\) translate\(-22\.00 0\)"/);
+  assert.match(structuralSvg, /id="brand-wordmark"[^>]+class="wordmark-font"[^>]*>TEN KINGS<\/text>/);
+  assert.match(structuralSvg, /id="grading-word"[^>]+class="small-font"/);
+  assert.match(structuralSvg, /id="nfc-word"[^>]+class="small-font"/);
+  assert.equal((structuralSvg.match(/<image\b[^>]*href="data:embedded"/g) ?? []).length, 3);
+  assert.ok(structuralSvg.indexOf('id="primary-name"') < structuralSvg.indexOf('id="metadata"'));
+  assert.doesNotMatch(structuralSvg, /center-divider|width="5\.7" height="3\.7"/);
   assert.doesNotMatch(structuralSvg, /54\.30/);
 });
 
@@ -277,33 +317,77 @@ test("decimal grades use an exact fixed tier and are never truncated", () => {
 
 test("grade glyph center is aligned to the label centerline", () => {
   const svg = renderAiGraderLabelV1Svg(sports);
-  const match = svg.match(/<text x="181\.35" y="([\d.]+)"[^>]+font-size="([\d.]+)">10<\/text>/);
+  const match = svg.match(/<text x="181\.35" y="([\d.]+)"[^>]+class="display-font" font-size="([\d.]+)"[^>]*>10<\/text>/);
   assert.ok(match);
   const visualCenter = Number(match[1]) - Number(match[2]) * 0.35;
   assert.ok(Math.abs(visualCenter - AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.label.heightPt / 2) < 0.01);
 });
 
-test("approved proof geometry uses a centered 11 mm NFC circle and a 40 percent smaller logo", () => {
+test("revised proof geometry keeps the 11 mm reserve, prints a 9 mm guide, and freezes the exact crown/wordmark scale", () => {
   const zones = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.labelZones;
-  assert.equal(zones.logo.scaleFromInitialProof, 0.6);
+  const typography = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.typography;
+  assert.equal(zones.legacyLogoReference.scaleFromInitialProof, 0.6);
+  assert.equal(zones.legacyLogoReference.rendered, false);
+  assert.equal(zones.brandCrown.scaleFromApprovedLogoCrown, 1.2);
+  assert.equal(zones.brandCrown.widthPt, 25.007616);
+  assert.equal(zones.brandCrown.heightPt, 16.258954);
+  assert.equal(typography.wordmark.family, "Barlow SemiBold");
+  assert.equal(typography.wordmark.weight, 600);
+  assert.equal(typography.wordmark.characterSpacingPt, 0.12);
+  assert.equal(typography.wordmark.visibleCapHeightScale, 1.3);
+  assert.equal(typography.wordmark.horizontalScale, 0.88);
+  assert.ok(Math.abs(typography.wordmark.visibleCapHeightPt / typography.wordmark.referenceVisibleCapHeightPt - 1.3) < 0.000001);
+  assert.equal(AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.layoutPolicy.centerDividerRendered, false);
   assert.equal(zones.nfcReserved.diameterMm, 11);
+  assert.equal(zones.nfcReserved.printedGuideDiameterMm, 9);
+  assert.equal(zones.nfcReserved.printedGuideDiameterPt, 25.511811);
   assert.equal(zones.nfcReserved.centerYPt, AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.label.heightPt / 2);
+  assert.equal(zones.nfcReserved.certTopPt, 46.25);
+  assert.ok(
+    zones.nfcReserved.certTopPt + 11.5 <= AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.label.heightPt - 2,
+    "two-line certificate IDs retain at least a 2-point geometric bottom safety margin"
+  );
   assert.ok(Math.abs(zones.nfcReserved.widthPt / 72 * 25.4 - 11) < 0.01);
+  assert.ok(Math.abs(zones.nfcReserved.printedGuideDiameterPt / 72 * 25.4 - 9) < 0.0001);
+  const svg = renderAiGraderLabelV1Svg(sports).replace(/data:[^;]+;base64,[A-Za-z0-9+/=]+/g, "data:embedded");
+  assert.match(svg, /<circle id="nfc-printed-guide" cx="149\.84" cy="29\.88" r="12\.7559055"\/>/);
 });
 
 test("individual and sheet PDFs have exact MediaBoxes; duplicate slots fail closed", async () => {
   const labelPdf = await renderAiGraderLabelV1Pdf(sports);
   assert.match(labelPdf.toString("latin1"), /\/MediaBox \[0 0 196\.56 59\.76\]/);
+  assert.match(labelPdf.toString("latin1"), /BebasNeue-Regular/);
+  assert.match(labelPdf.toString("latin1"), /Barlow-Regular/);
+  assert.match(labelPdf.toString("latin1"), /Barlow-SemiBold/);
   const sheetPdf = await renderAiGraderLabelSheetV1Pdf({ entries: [{ slot: 1, snapshot: sports }], title: "partial" });
-  assert.match(sheetPdf.toString("latin1"), /\/MediaBox \[0 0 612 864\]/);
+  assert.match(sheetPdf.toString("latin1"), /\/MediaBox \[0 0 612 792\]/);
   const repeatedSheetPdf = await renderAiGraderLabelSheetV1Pdf({ entries: [{ slot: 1, snapshot: sports }], title: "partial" });
   assert.deepEqual(repeatedSheetPdf, sheetPdf);
   const fullSheetPdf = await renderAiGraderLabelSheetV1Pdf({
     entries: AI_GRADER_LABEL_V1_SHEET_SLOTS.map((slot) => ({ slot: slot.slot, snapshot: slot.slot % 2 ? sports : pokemon })),
     title: "full",
   });
-  assert.match(fullSheetPdf.toString("latin1"), /\/MediaBox \[0 0 612 864\]/);
+  assert.match(fullSheetPdf.toString("latin1"), /\/MediaBox \[0 0 612 792\]/);
+  const calibrationPdf = await renderAiGraderLabelV1CalibrationPdf();
+  assert.match(calibrationPdf.toString("latin1"), /\/MediaBox \[0 0 612 792\]/);
+  assert.match(calibrationPdf.toString("latin1"), /BebasNeue-Regular/);
+  assert.doesNotMatch(calibrationPdf.toString("latin1"), /Barlow-(?:Regular|SemiBold)/);
+  assert.equal(
+    createHash("sha256").update(calibrationPdf).digest("hex"),
+    "23008d9372e252c30f0f89c56ce6478a57c8c40fe10a1094dbe0652a0a42ff92"
+  );
   assert.ok(fullSheetPdf.length > sheetPdf.length);
+  for (let count = 1; count <= 16; count += 1) {
+    const partial = await renderAiGraderLabelSheetV1Pdf({
+      entries: Array.from({ length: count }, (_, index) => ({ slot: index + 1, snapshot: index % 2 ? pokemon : sports })),
+      title: `partial-${count}`,
+    });
+    assert.match(partial.toString("latin1"), /\/MediaBox \[0 0 612 792\]/, `partial sheet count ${count}`);
+  }
+  await assert.rejects(
+    renderAiGraderLabelSheetV1Pdf({ entries: [], title: "empty" }),
+    /require 1 through 16 assigned labels/
+  );
   await assert.rejects(
     renderAiGraderLabelSheetV1Pdf({
       entries: [
@@ -318,7 +402,7 @@ test("individual and sheet PDFs have exact MediaBoxes; duplicate slots fail clos
 
 test("Cricut cut SVG uses the same 16-slot manifest and carries no browser scaling", () => {
   const svg = renderAiGraderLabelSheetCutSvg();
-  assert.match(svg, /width="8\.5in" height="12in" viewBox="0 0 612 864"/);
+  assert.match(svg, /width="8\.5in" height="11in" viewBox="0 0 612 792"/);
   for (const slot of AI_GRADER_LABEL_V1_SHEET_SLOTS) {
     assert.match(
       svg,
@@ -327,7 +411,47 @@ test("Cricut cut SVG uses the same 16-slot manifest and carries no browser scali
   }
   assert.equal((svg.match(/<rect id="slot-/g) ?? []).length, 16);
   assert.match(svg, /id="cut-calibration-transform" transform="matrix\(1 0 0 1 0 0\)"/);
-  assert.doesNotMatch(svg, /scale\(|\/Users\/|127\.0\.0\.1|localhost/);
+  assert.doesNotMatch(svg, /scale\(|\/Users\/|127\.0\.0\.1|localhost|<circle|NFC|<text/i);
+  assert.equal(createHash("sha256").update(svg).digest("hex"), "095f2cc2322a46966818a3df8bf696a790af2665ffd0230f12d4b0c88f6b0df6");
+  const calibrationSvg = renderAiGraderLabelSheetCutSvg({ calibrationMarks: true });
+  assert.match(calibrationSvg, /M 532 676\.08 H 548 M 540 668\.08 V 684\.08/);
+  assert.doesNotMatch(calibrationSvg, /CALIBRATION ONLY|<text/);
+  assert.equal(
+    createHash("sha256").update(calibrationSvg).digest("hex"),
+    "3a69afb0ea776c1233c7380c8ef614a053440c033d5f49b527e9a6ce855b75eb"
+  );
+});
+
+test("NFC-fit fixtures use 16 real card identities with unmistakably synthetic issuance fields", () => {
+  assert.equal(AI_GRADER_LABEL_V1_NFC_FIT_TEST_CARDS.length, 16);
+  assert.deepEqual(AI_GRADER_LABEL_V1_NFC_FIT_TEST_CARDS.map((card) => card.slot), Array.from({ length: 16 }, (_, index) => index + 1));
+  assert.deepEqual(
+    AI_GRADER_LABEL_V1_NFC_FIT_TEST_CARDS.map((card) => card.snapshot.identity.playerName ?? card.snapshot.identity.cardName),
+    [
+      "Michael Jordan",
+      "Kobe Bryant",
+      "Shaquille O'Neal",
+      "Babe Ruth",
+      "Tom Brady",
+      "Barry Sanders",
+      "Wayne Gretzky",
+      "LeBron James",
+      "Charizard",
+      "Pikachu",
+      "Blastoise",
+      "Venusaur",
+      "Mewtwo",
+      "Gengar",
+      "Lugia",
+      "Rayquaza",
+    ]
+  );
+  for (const card of AI_GRADER_LABEL_V1_NFC_FIT_TEST_CARDS) {
+    assert.match(card.snapshot.certId, /^TEST-[SP]\d{2}$/);
+    assert.match(card.snapshot.publicReportUrl, /^https:\/\/example\.invalid\//);
+    assert.ok(card.sourceUrls.length >= 1);
+    assert.doesNotMatch(JSON.stringify(card), /(?:qr|qrcode)/i);
+  }
 });
 
 test("synthetic calibration applies print and cut transforms in the documented order", async () => {
