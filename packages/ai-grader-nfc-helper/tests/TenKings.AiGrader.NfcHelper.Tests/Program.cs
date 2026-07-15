@@ -16,6 +16,7 @@ const string OtherChallenge = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 var tests = new (string Name, Func<Task> Run)[]
 {
     ("hardware-free staged build verification", TestBuildVerification),
+    ("ACR1552 PICC and SAM reader selection", TestPcscReaderSelection),
     ("operational attestation canonical signing and tamper", TestAttestation),
     ("NDEF URI/TLV and URL digest", TestNdef),
     ("NTAG215 CC and APDU safety", TestLayoutAndCommands),
@@ -57,6 +58,41 @@ static Task TestBuildVerification()
     Equal(NfcProtocol.AttestationAlgorithm, result.AttestationAlgorithm);
     False(result.HardwareAccessed);
     False(result.ProductionKeyAccessed);
+    return Task.CompletedTask;
+}
+
+static Task TestPcscReaderSelection()
+{
+    const string Picc = "ACS ACR1552 1S CL Reader PICC 0";
+    const string Sam = "ACS ACR1552 1S CL Reader SAM 0";
+
+    var onePhysicalReader = Pcsc.SelectAcr1552PiccReaders([Picc, Sam]);
+    Equal(1, onePhysicalReader.Count);
+    Equal(Picc, onePhysicalReader[0]);
+
+    var twoPhysicalReaders = Pcsc.SelectAcr1552PiccReaders([
+        Picc,
+        Sam,
+        "ACS ACR1552 1S CL Reader PICC 1",
+        "ACS ACR1552 1S CL Reader SAM 1"
+    ]);
+    Equal(2, twoPhysicalReaders.Count);
+
+    var rejected = Pcsc.SelectAcr1552PiccReaders([
+        Sam,
+        "ACS ACR1252 1S CL Reader PICC 0",
+        "ACS ACR1552 1S CL Reader ICC 0",
+        "ACS ACR15520 1S CL Reader PICC 0",
+        "ACS ACR1552 1S CL Reader PICC SAM 0",
+        ""
+    ]);
+    Equal(0, rejected.Count);
+
+    var caseInsensitive = Pcsc.SelectAcr1552PiccReaders([
+        "acs acr1552 1s cl reader picc 0",
+        "acs acr1552 1s cl reader sam 0"
+    ]);
+    Equal(1, caseInsensitive.Count);
     return Task.CompletedTask;
 }
 

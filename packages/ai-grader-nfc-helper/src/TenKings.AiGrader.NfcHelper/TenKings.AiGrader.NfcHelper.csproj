@@ -9,4 +9,7 @@
     <AssemblyName>TenKings.AiGrader.NfcHelper</AssemblyName>
     <RootNamespace>TenKings.AiGrader.NfcHelper</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TenKings.AiGrader.NfcHelper.Tests" />
+  </ItemGroup>
 </Project>
