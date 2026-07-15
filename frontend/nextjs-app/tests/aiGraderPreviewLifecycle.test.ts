@@ -49,7 +49,13 @@ import {
   buildAiGraderAtomicBackCaptureRequest,
   createAiGraderCaptureAttempt,
   createAiGraderCaptureOperationGate,
+  createAiGraderFrontWorkflowAttempt,
+  createAiGraderFrontWorkflowOperationGate,
   createAiGraderBackCaptureAttempt,
+  deriveAiGraderFrontStartReadiness,
+  aiGraderFrontWorkflowAssertionFromStatus,
+  buildAiGraderFrontWorkflowRequest,
+  preserveAiGraderPrimaryWorkflowError,
   runAiGraderAtomicCapture,
   runAiGraderAtomicBackCapture,
   runAiGraderBackPositioningRetryRecovery,
@@ -67,6 +73,282 @@ const backEpoch: AiGraderPreviewEpochBinding & { side: "back" } = {
   side: "back",
   sideEpoch: "back-2",
 };
+
+function authoritativeFrontReadyFixture() {
+  const status = buildAiGraderLocalStationStatus({ action: "start-session" });
+  const binding = {
+    sessionId: status.sessionManifest.gradingSessionId,
+    reportId: status.sessionManifest.reportId,
+    side: "front" as const,
+    sideEpoch: "front-authority-1",
+  };
+  const acceptedAt = "2026-07-14T12:00:00.000Z";
+  const profileIdentity = "accepted-profile-authority-1";
+  const candidateProfileIdentity = `candidate-${"b".repeat(32)}`;
+  status.currentStep = "capture_front";
+  status.nextAction = "capture-front";
+  status.previewStatus = {
+    ...status.previewStatus,
+    status: "live",
+    cameraOwnership: "preview_stream",
+    sessionId: binding.sessionId,
+    activeSide: "front",
+    sideEpoch: binding.sideEpoch,
+    latestFrameId: "front-authority-frame-1",
+  };
+  status.liveLighting = {
+    ...status.liveLighting,
+    status: "on",
+    profile: {
+      ...status.liveLighting.profile,
+      enabled: true,
+      dutyPercent: 2,
+      actualLeimacPwmStep: 20,
+      channels: [1, 3],
+      acceptedForCapture: true,
+      acceptedAt,
+      candidateProfileIdentity,
+    },
+    applied: {
+      ...status.liveLighting.applied,
+      enabled: true,
+      dutyPercent: 2,
+      actualLeimacPwmStep: 20,
+      channels: [1, 3],
+      verificationState: "verified",
+      expectedWriteCount: 2,
+      acknowledgedWriteCount: 2,
+      lastResponseKinds: ["ack", "ack"],
+      verificationComplete: true,
+      verifiedAt: acceptedAt,
+    },
+    physicalState: {
+      ...status.liveLighting.physicalState,
+      state: "positioning_light_verified",
+      expectedWriteCount: 2,
+      acknowledgedWriteCount: 2,
+      complete: true,
+      verifiedAt: acceptedAt,
+      lastError: undefined,
+    },
+    lastError: undefined,
+  };
+  const evidenceBase = {
+    ...binding,
+    idempotencyKey: "front-workflow-test-key-0001",
+    requestFingerprint: "front-workflow-fingerprint-0001",
+  };
+  status.frontWorkflowAuthority = {
+    schemaVersion: "ten-kings-ai-grader-front-workflow-authority-v1",
+    lightIdleOff: {
+      ...evidenceBase,
+      confirmedAt: acceptedAt,
+      physicalStateVerifiedAt: acceptedAt,
+    },
+    fixtureRulers: { ...evidenceBase, confirmedAt: acceptedAt },
+    acceptedProfile: {
+      ...evidenceBase,
+      acceptedAt,
+      profileDigestSha256: "a".repeat(64),
+      profileIdentity,
+      candidateProfileIdentity,
+    },
+    transition: {
+      ...binding,
+      transitionedAt: acceptedAt,
+      profileIdentity,
+    },
+  };
+  status.frontCaptureReadiness = {
+    ready: true,
+    code: "ready",
+    message: "Authoritative Front workflow is ready.",
+    binding,
+    profileIdentity,
+  };
+  return {
+    status,
+    previewBinding: {
+      sessionId: binding.sessionId,
+      side: binding.side,
+      sideEpoch: binding.sideEpoch,
+    } satisfies AiGraderPreviewEpochBinding,
+  };
+}
+
+test("Front Start readiness rejects verify_fixture_rulers and missing durable accepted-profile evidence", () => {
+  const verifyFixture = authoritativeFrontReadyFixture();
+  verifyFixture.status.currentStep = "verify_fixture_rulers";
+  verifyFixture.status.frontCaptureReadiness = {
+    ready: false,
+    code: "current_step_not_capture_front",
+    message: "Start Grading requires bridge step capture_front; current step is verify_fixture_rulers.",
+  };
+  const invalidStep = deriveAiGraderFrontStartReadiness({
+    ...verifyFixture,
+    bridgeConnected: true,
+  });
+  assert.equal(invalidStep.ready, false);
+  assert.equal(invalidStep.code, "current_step_not_capture_front");
+  assert.match(invalidStep.message, /verify_fixture_rulers/);
+
+  const missingProfile = authoritativeFrontReadyFixture();
+  delete missingProfile.status.frontWorkflowAuthority.acceptedProfile;
+  missingProfile.status.frontCaptureReadiness = {
+    ready: false,
+    code: "accepted_profile_required",
+    message: "Accept the bridge-held profile for this session.",
+  };
+  const missing = deriveAiGraderFrontStartReadiness({
+    ...missingProfile,
+    bridgeConnected: true,
+  });
+  assert.equal(missing.ready, false);
+  assert.equal(missing.code, "accepted_profile_required");
+  assert.match(missing.message, /bridge-held profile/);
+});
+
+test("Front Start becomes ready only from exact refreshed bridge authority and reconnect derives the same result", () => {
+  const first = authoritativeFrontReadyFixture();
+  const firstDecision = deriveAiGraderFrontStartReadiness({
+    ...first,
+    bridgeConnected: true,
+  });
+  const reconnect = authoritativeFrontReadyFixture();
+  const reconnectDecision = deriveAiGraderFrontStartReadiness({
+    ...reconnect,
+    bridgeConnected: true,
+  });
+  assert.deepEqual(firstDecision, {
+    ready: true,
+    code: "ready",
+    message: "Authoritative Front workflow is ready.",
+  });
+  assert.deepEqual(reconnectDecision, firstDecision);
+
+  const pending = deriveAiGraderFrontStartReadiness({
+    ...reconnect,
+    bridgeConnected: true,
+    transitionPending: true,
+  });
+  assert.equal(pending.ready, false);
+  assert.equal(pending.code, "local_operation_pending");
+});
+
+test("Front Start rejects zero, partial, or mismatched controller acknowledgement ledgers", () => {
+  const zero = authoritativeFrontReadyFixture();
+  zero.status.liveLighting.applied.expectedWriteCount = 0;
+  zero.status.liveLighting.applied.acknowledgedWriteCount = 0;
+  zero.status.liveLighting.applied.lastResponseKinds = [];
+  zero.status.liveLighting.physicalState.expectedWriteCount = 0;
+  zero.status.liveLighting.physicalState.acknowledgedWriteCount = 0;
+  assert.equal(deriveAiGraderFrontStartReadiness({
+    ...zero,
+    bridgeConnected: true,
+  }).code, "safety_state_unverified");
+
+  const partial = authoritativeFrontReadyFixture();
+  partial.status.liveLighting.applied.acknowledgedWriteCount = 1;
+  assert.equal(deriveAiGraderFrontStartReadiness({
+    ...partial,
+    bridgeConnected: true,
+  }).code, "safety_state_unverified");
+
+  const mismatched = authoritativeFrontReadyFixture();
+  mismatched.status.liveLighting.applied.lastResponseKinds = ["ack", "timeout"];
+  assert.equal(deriveAiGraderFrontStartReadiness({
+    ...mismatched,
+    bridgeConnected: true,
+  }).code, "safety_state_unverified");
+});
+
+test("old Front session, profile identity, or epoch authority cannot enable Start", () => {
+  const oldSession = authoritativeFrontReadyFixture();
+  oldSession.status.frontWorkflowAuthority.acceptedProfile!.sessionId = "old-session";
+  assert.equal(deriveAiGraderFrontStartReadiness({
+    ...oldSession,
+    bridgeConnected: true,
+  }).code, "accepted_profile_required");
+
+  const oldEpoch = authoritativeFrontReadyFixture();
+  oldEpoch.status.frontWorkflowAuthority.fixtureRulers!.sideEpoch = "old-front-epoch";
+  assert.equal(deriveAiGraderFrontStartReadiness({
+    ...oldEpoch,
+    bridgeConnected: true,
+  }).code, "fixture_rulers_required");
+
+  const oldProfile = authoritativeFrontReadyFixture();
+  oldProfile.status.frontWorkflowAuthority.acceptedProfile!.profileIdentity = "stale-profile";
+  assert.equal(deriveAiGraderFrontStartReadiness({
+    ...oldProfile,
+    bridgeConnected: true,
+  }).code, "workflow_transition_required");
+});
+
+test("Front workflow retries keep one assertion-only request and conflicting pending operations fail closed", async () => {
+  const fixture = authoritativeFrontReadyFixture();
+  const assertion = aiGraderFrontWorkflowAssertionFromStatus(fixture.status);
+  const attempt = createAiGraderFrontWorkflowAttempt("accept-live-profile", assertion);
+  const separateAttempt = createAiGraderFrontWorkflowAttempt("accept-live-profile", assertion);
+  assert.equal(separateAttempt.signature, attempt.signature);
+  assert.notEqual(separateAttempt.idempotencyKey, attempt.idempotencyKey);
+  assert.match(attempt.idempotencyKey, /^front-workflow-accept-live-profile-v1-[a-f0-9]{32}$/);
+  assert.match(separateAttempt.idempotencyKey, /^front-workflow-accept-live-profile-v1-[a-f0-9]{32}$/);
+  const body = buildAiGraderFrontWorkflowRequest({ assertion, attempt });
+  const lostResponseRetryBody = buildAiGraderFrontWorkflowRequest({ assertion, attempt });
+  assert.deepEqual(lostResponseRetryBody, body);
+  assert.notEqual(
+    buildAiGraderFrontWorkflowRequest({ assertion, attempt: separateAttempt }).idempotencyKey,
+    body.idempotencyKey,
+  );
+  assert.deepEqual(Object.keys(body).sort(), [
+    "expectedCandidateProfileIdentity",
+    "expectedReportId",
+    "expectedSessionId",
+    "expectedSide",
+    "expectedSideEpoch",
+    "idempotencyKey",
+  ]);
+  assert.equal("acceptedProfile" in body, false);
+  assert.equal("confirmations" in body, false);
+
+  const gate = createAiGraderFrontWorkflowOperationGate();
+  let release!: () => void;
+  let operationCount = 0;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const first = gate.run(attempt.signature, async () => {
+    operationCount += 1;
+    await held;
+    return "accepted";
+  });
+  const duplicate = gate.run(attempt.signature, async () => "duplicate");
+  assert.equal(first, duplicate);
+  await assert.rejects(
+    gate.run("conflicting-front-workflow-signature", async () => "conflict"),
+    /different Front workflow operation is already active/,
+  );
+  release();
+  assert.deepEqual(await Promise.all([first, duplicate]), ["accepted", "accepted"]);
+  assert.equal(operationCount, 1);
+});
+
+test("the first actionable capture rejection survives cleanup while safe-off failure remains separate", () => {
+  let primaryError: string | null = null;
+  let safetyError: string | null = null;
+  primaryError = preserveAiGraderPrimaryWorkflowError(
+    primaryError,
+    new Error("Atomic Front rejected currentStep verify_fixture_rulers."),
+  );
+  primaryError = preserveAiGraderPrimaryWorkflowError(
+    primaryError,
+    new Error("Preview drain cleanup failed."),
+  );
+  safetyError = "Controller safe-off acknowledgement was incomplete.";
+
+  assert.equal(primaryError, "Atomic Front rejected currentStep verify_fixture_rulers.");
+  assert.equal(safetyError, "Controller safe-off acknowledgement was incomplete.");
+  assert.notEqual(primaryError, safetyError);
+});
 
 test("contract preview never projects an unacknowledged physical light state", () => {
   const status = buildAiGraderLocalStationStatus();

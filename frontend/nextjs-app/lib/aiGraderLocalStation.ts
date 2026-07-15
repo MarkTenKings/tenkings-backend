@@ -323,6 +323,8 @@ export type AiGraderLocalStationStatus = {
   captureProfile: AiGraderCaptureProfile;
   captureProfileGuard: AiGraderCaptureProfileGuard;
   captureTiming: AiGraderCaptureTimingMetadata;
+  frontWorkflowAuthority: AiGraderFrontWorkflowAuthority;
+  frontCaptureReadiness: AiGraderFrontCaptureReadiness;
   acceptedProfile: {
     dutyPercent: number;
     exposureUs: number;
@@ -429,6 +431,64 @@ export type AiGraderLocalStationStatus = {
   productionRelease?: AiGraderProductionRelease;
   rapidCapture: AiGraderRapidCaptureManifestStatus;
   rapidCaptureQueue: AiGraderRapidCaptureQueueStatus;
+};
+
+export const AI_GRADER_FRONT_WORKFLOW_AUTHORITY_SCHEMA_VERSION =
+  'ten-kings-ai-grader-front-workflow-authority-v1' as const;
+
+export type AiGraderFrontWorkflowBinding = {
+  sessionId: string;
+  reportId: string;
+  side: 'front';
+  sideEpoch: string;
+};
+
+type AiGraderFrontWorkflowRequestEvidence = {
+  idempotencyKey: string;
+  requestFingerprint: string;
+};
+
+export type AiGraderFrontWorkflowAuthority = {
+  schemaVersion?: typeof AI_GRADER_FRONT_WORKFLOW_AUTHORITY_SCHEMA_VERSION;
+  lightIdleOff?: AiGraderFrontWorkflowBinding & AiGraderFrontWorkflowRequestEvidence & {
+    confirmedAt: string;
+    physicalStateVerifiedAt: string;
+  };
+  fixtureRulers?: AiGraderFrontWorkflowBinding & AiGraderFrontWorkflowRequestEvidence & {
+    confirmedAt: string;
+  };
+  acceptedProfile?: AiGraderFrontWorkflowBinding & AiGraderFrontWorkflowRequestEvidence & {
+    acceptedAt: string;
+    profileDigestSha256: string;
+    profileIdentity: string;
+    candidateProfileIdentity?: string;
+  };
+  transition?: AiGraderFrontWorkflowBinding & {
+    transitionedAt: string;
+    profileIdentity: string;
+  };
+};
+
+export type AiGraderFrontCaptureReadinessCode =
+  | 'ready'
+  | 'session_required'
+  | 'capture_blocked'
+  | 'safety_state_unverified'
+  | 'lifecycle_pending'
+  | 'accepted_profile_required'
+  | 'light_idle_off_required'
+  | 'fixture_rulers_required'
+  | 'workflow_transition_required'
+  | 'current_step_not_capture_front'
+  | 'front_binding_stale'
+  | 'live_preview_required';
+
+export type AiGraderFrontCaptureReadiness = {
+  ready: boolean;
+  code: AiGraderFrontCaptureReadinessCode;
+  message: string;
+  binding?: AiGraderFrontWorkflowBinding;
+  profileIdentity?: string;
 };
 
 const AI_GRADER_CAPTURE_TIMING_EVENT_IDS: AiGraderCaptureTimingEventId[] = [
@@ -633,6 +693,109 @@ function safeRapidCaptureTimestamp(value: unknown): string | undefined {
   return new Date(value).toISOString();
 }
 
+const AI_GRADER_FRONT_CAPTURE_READINESS_CODES: AiGraderFrontCaptureReadinessCode[] = [
+  'ready', 'session_required', 'capture_blocked', 'safety_state_unverified', 'lifecycle_pending',
+  'accepted_profile_required', 'light_idle_off_required', 'fixture_rulers_required',
+  'workflow_transition_required', 'current_step_not_capture_front', 'front_binding_stale', 'live_preview_required',
+];
+
+function sanitizeAiGraderFrontWorkflowBinding(value: unknown): AiGraderFrontWorkflowBinding | undefined {
+  if (!rapidCaptureRecord(value) || value.side !== 'front') return undefined;
+  const sessionId = safeRapidCaptureId(value.sessionId);
+  const reportId = safeRapidCaptureId(value.reportId);
+  const sideEpoch = safeRapidCaptureId(value.sideEpoch);
+  if (!sessionId || !reportId || !sideEpoch) return undefined;
+  return { sessionId, reportId, side: 'front', sideEpoch };
+}
+
+function sanitizeAiGraderFrontWorkflowAuthority(value: unknown): AiGraderFrontWorkflowAuthority {
+  const record = rapidCaptureRecord(value) ? value : {};
+  if (record.schemaVersion !== AI_GRADER_FRONT_WORKFLOW_AUTHORITY_SCHEMA_VERSION) {
+    return {};
+  }
+  const requestEvidence = (entry: Record<string, unknown>) => {
+    const idempotencyKey = safeRapidCaptureId(entry.idempotencyKey);
+    const requestFingerprint = typeof entry.requestFingerprint === 'string' && /^[a-f0-9]{64}$/.test(entry.requestFingerprint)
+      ? entry.requestFingerprint : undefined;
+    return idempotencyKey && requestFingerprint ? { idempotencyKey, requestFingerprint } : undefined;
+  };
+  const light = rapidCaptureRecord(record.lightIdleOff) ? record.lightIdleOff : undefined;
+  const lightBinding = sanitizeAiGraderFrontWorkflowBinding(light);
+  const lightRequest = light ? requestEvidence(light) : undefined;
+  const confirmedAt = light ? safeRapidCaptureTimestamp(light.confirmedAt) : undefined;
+  const physicalStateVerifiedAt = light ? safeRapidCaptureTimestamp(light.physicalStateVerifiedAt) : undefined;
+  const fixture = rapidCaptureRecord(record.fixtureRulers) ? record.fixtureRulers : undefined;
+  const fixtureBinding = sanitizeAiGraderFrontWorkflowBinding(fixture);
+  const fixtureRequest = fixture ? requestEvidence(fixture) : undefined;
+  const fixtureConfirmedAt = fixture ? safeRapidCaptureTimestamp(fixture.confirmedAt) : undefined;
+  const profile = rapidCaptureRecord(record.acceptedProfile) ? record.acceptedProfile : undefined;
+  const profileBinding = sanitizeAiGraderFrontWorkflowBinding(profile);
+  const profileRequest = profile ? requestEvidence(profile) : undefined;
+  const acceptedAt = profile ? safeRapidCaptureTimestamp(profile.acceptedAt) : undefined;
+  const profileDigestSha256 = typeof profile?.profileDigestSha256 === 'string' && /^[a-f0-9]{64}$/.test(profile.profileDigestSha256)
+    ? profile.profileDigestSha256 : undefined;
+  const profileIdentity = typeof profile?.profileIdentity === 'string' && /^accepted-[a-f0-9]{16}$/.test(profile.profileIdentity)
+    ? profile.profileIdentity : undefined;
+  const candidateProfileIdentity = typeof profile?.candidateProfileIdentity === 'string' && /^candidate-[a-f0-9]{32}$/.test(profile.candidateProfileIdentity)
+    ? profile.candidateProfileIdentity : undefined;
+  const transition = rapidCaptureRecord(record.transition) ? record.transition : undefined;
+  const transitionBinding = sanitizeAiGraderFrontWorkflowBinding(transition);
+  const transitionedAt = transition ? safeRapidCaptureTimestamp(transition.transitionedAt) : undefined;
+  const transitionProfileIdentity = typeof transition?.profileIdentity === 'string' && /^accepted-[a-f0-9]{16}$/.test(transition.profileIdentity)
+    ? transition.profileIdentity : undefined;
+  return {
+    schemaVersion: AI_GRADER_FRONT_WORKFLOW_AUTHORITY_SCHEMA_VERSION,
+    ...(lightBinding && lightRequest && confirmedAt && physicalStateVerifiedAt
+      ? { lightIdleOff: { ...lightBinding, ...lightRequest, confirmedAt, physicalStateVerifiedAt } } : {}),
+    ...(fixtureBinding && fixtureRequest && fixtureConfirmedAt
+      ? { fixtureRulers: { ...fixtureBinding, ...fixtureRequest, confirmedAt: fixtureConfirmedAt } } : {}),
+    ...(profileBinding && profileRequest && acceptedAt && profileDigestSha256 && profileIdentity
+      ? { acceptedProfile: { ...profileBinding, ...profileRequest, acceptedAt, profileDigestSha256, profileIdentity, ...(candidateProfileIdentity ? { candidateProfileIdentity } : {}) } } : {}),
+    ...(transitionBinding && transitionedAt && transitionProfileIdentity
+      ? { transition: { ...transitionBinding, transitionedAt, profileIdentity: transitionProfileIdentity } } : {}),
+  };
+}
+
+function aiGraderFrontWorkflowBindingEquals(
+  left: AiGraderFrontWorkflowBinding | undefined,
+  right: AiGraderFrontWorkflowBinding | undefined,
+) {
+  return Boolean(left && right && left.sessionId === right.sessionId && left.reportId === right.reportId &&
+    left.side === right.side && left.sideEpoch === right.sideEpoch);
+}
+
+function sanitizeAiGraderFrontCaptureReadiness(
+  value: unknown,
+  authority: AiGraderFrontWorkflowAuthority,
+): AiGraderFrontCaptureReadiness {
+  const record = rapidCaptureRecord(value) ? value : {};
+  const candidateCode = typeof record.code === 'string' &&
+    AI_GRADER_FRONT_CAPTURE_READINESS_CODES.includes(record.code as AiGraderFrontCaptureReadinessCode)
+    ? record.code as AiGraderFrontCaptureReadinessCode
+    : 'session_required';
+  const binding = sanitizeAiGraderFrontWorkflowBinding(record.binding);
+  const message = safeRapidCaptureText(record.message) ?? 'Authoritative Front capture prerequisites are incomplete.';
+  const profileIdentity = typeof record.profileIdentity === 'string' && /^accepted-[a-f0-9]{16}$/.test(record.profileIdentity)
+    ? record.profileIdentity : undefined;
+  const accepted = authority.acceptedProfile;
+  const transition = authority.transition;
+  const ready = record.ready === true && candidateCode === 'ready' && Boolean(
+    binding && profileIdentity && accepted && transition &&
+    aiGraderFrontWorkflowBindingEquals(binding, accepted) &&
+    aiGraderFrontWorkflowBindingEquals(binding, transition) &&
+    accepted.profileIdentity === profileIdentity && transition.profileIdentity === profileIdentity
+  );
+  return {
+    ready,
+    code: ready ? 'ready' : candidateCode === 'ready' ? 'front_binding_stale' : candidateCode,
+    message: ready ? message : candidateCode === 'ready'
+      ? 'Authoritative Front workflow evidence is malformed or stale.'
+      : message,
+    ...(binding ? { binding } : {}),
+    ...(profileIdentity ? { profileIdentity } : {}),
+  };
+}
+
 function unsafeRapidCaptureText(value: string) {
   return (
     value.length > 500 ||
@@ -783,6 +946,11 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
   const explicitColdDebugModeUsed =
     status.executionPath === "cold_command_fallback" && status.explicitColdDebugModeUsed === true;
   const unsafeStatus = status as AiGraderLocalStationStatus & Record<string, unknown>;
+  const frontWorkflowAuthority = sanitizeAiGraderFrontWorkflowAuthority(unsafeStatus.frontWorkflowAuthority);
+  const frontCaptureReadiness = sanitizeAiGraderFrontCaptureReadiness(
+    unsafeStatus.frontCaptureReadiness,
+    frontWorkflowAuthority,
+  );
   const {
     fallbackUsed: _legacyFallbackUsed,
     fallbackReason: _legacyFallbackReason,
@@ -838,6 +1006,8 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
         sanitizedCaptureTiming.target.fiveSecondsPerSideProven,
     },
     captureTiming: sanitizedCaptureTiming,
+    frontWorkflowAuthority,
+    frontCaptureReadiness,
     warmRunnerStatus: {
       ...warmRunnerWithoutLegacyFallback,
       explicitColdDebugModeUsed:
@@ -1184,6 +1354,7 @@ export type AiGraderLiveLightingStatus = {
     source: "browser_live_tuning" | "accepted_station_profile" | "default";
     acceptedForCapture: boolean;
     acceptedAt?: string;
+    candidateProfileIdentity?: string;
   };
   applied: {
     enabled?: boolean;
@@ -1667,17 +1838,25 @@ export function buildAiGraderLocalStationStatus(input: {
       fiveSecondTargetProven: false,
     },
     captureTiming: buildDefaultAiGraderCaptureTiming(captureProfile),
+    frontWorkflowAuthority: {
+      schemaVersion: AI_GRADER_FRONT_WORKFLOW_AUTHORITY_SCHEMA_VERSION,
+    },
+    frontCaptureReadiness: {
+      ready: false,
+      code: 'session_required',
+      message: 'Start a bridge-authoritative grading session before Front capture.',
+    },
     acceptedProfile: {
       dutyPercent: 1.3,
       exposureUs: 45000,
       gain: 0,
       channels: [1, 2, 3, 4, 5, 6, 7, 8],
-      source: "operator_preview",
+      source: "mock",
       actualLeimacPwmStep: 13,
     },
     calibrationProfile: {
       referenceType: "fixed_metric_rulers",
-      status: currentStep === "start_new_card" ? "fixture_rulers_pending" : "operator_verified",
+      status: "fixture_rulers_pending",
       isCalibrated: false,
       mmPerPixelX: 0.047037,
       mmPerPixelY: 0.047344,

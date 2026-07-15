@@ -190,7 +190,8 @@ test("station rapid flow keeps capture, review, OCR, and publish gates explicit"
   assert.match(source, /queue-current-card/);
   assert.match(source, /previewSuspendedForRapidReview/);
   assert.match(source, /disabled=\{busy !== null \|\| !canStartGrading \|\| previewGeometrySide !== "front"/);
-  assert.match(source, /const canStartGrading =\s*!status\.captureFailure &&/);
+  assert.match(source, /const canStartGrading = frontStartReadiness\.ready/);
+  assert.match(source, /Auto Capture still requires the separate exact-session Confirm Fixture &amp; Rulers action and authoritative Front readiness/);
   assert.match(source, /report_ready_needs_confirm/);
   assert.match(source, /rapidOcrInFlightReportIdRef/);
   assert.match(source, /Background OCR suggestions loaded/);

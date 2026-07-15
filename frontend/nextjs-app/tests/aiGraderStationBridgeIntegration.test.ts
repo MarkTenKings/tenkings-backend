@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  acceptAiGraderLiveLightingProfile,
+  applyAiGraderLiveLighting,
   callAiGraderStationBridge,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
@@ -14,8 +16,12 @@ import {
   type AiGraderStationPreviewFrame,
 } from "../lib/aiGraderStationBridgeClient";
 import {
+  aiGraderFrontWorkflowAssertionFromStatus,
+  buildAiGraderFrontWorkflowRequest,
   aiGraderCaptureAssertionFromFrame,
   createAiGraderCaptureAttempt,
+  createAiGraderFrontWorkflowAttempt,
+  deriveAiGraderFrontStartReadiness,
   runAiGraderStationCaptureOrchestration,
 } from "../lib/aiGraderStationOperations";
 
@@ -165,23 +171,81 @@ test("Station atomic Front then Back Capture reaches the actual built v0.9 loopb
       action: "start-session",
       body: { captureProfile: "full_forensic" },
     });
+    assert.equal(initial.currentStep, "verify_fixture_rulers");
+    assert.equal(initial.frontCaptureReadiness.ready, false);
+    const frontWorkflowAssertion = aiGraderFrontWorkflowAssertionFromStatus(initial);
+    const fixtureAttempt = createAiGraderFrontWorkflowAttempt(
+      "confirm-fixture-rulers",
+      frontWorkflowAssertion,
+    );
+    const fixtureRequest = buildAiGraderFrontWorkflowRequest({
+      assertion: frontWorkflowAssertion,
+      attempt: fixtureAttempt,
+    });
+    const fixtureConfirmed = await callAiGraderStationBridge({
+      baseUrl: started.url,
+      stationToken: token,
+      action: "confirm-fixture-rulers",
+      body: fixtureRequest,
+    });
+    assert.equal(fixtureConfirmed.currentStep, "verify_fixture_rulers");
+    assert.equal(fixtureConfirmed.frontCaptureReadiness.code, "accepted_profile_required");
+
+    const appliedLighting = await applyAiGraderLiveLighting({
+      baseUrl: started.url,
+      stationToken: token,
+      enabled: true,
+      dutyPercent: 3,
+      channels: [1, 2, 3, 4, 5, 6, 7, 8],
+      reason: "inert integration profile tuning",
+    });
+    assert.equal(appliedLighting.physicalState.state, "positioning_light_verified");
+    assert.match(appliedLighting.profile.candidateProfileIdentity ?? "", /^candidate-[a-f0-9]{32}$/);
+    const acceptanceAssertion = {
+      ...frontWorkflowAssertion,
+      expectedCandidateProfileIdentity: appliedLighting.profile.candidateProfileIdentity,
+    };
+    const acceptanceAttempt = createAiGraderFrontWorkflowAttempt(
+      "accept-live-profile",
+      acceptanceAssertion,
+    );
+    const acceptanceRequest = buildAiGraderFrontWorkflowRequest({
+      assertion: acceptanceAssertion,
+      attempt: acceptanceAttempt,
+    });
+    const acceptedFront = await acceptAiGraderLiveLightingProfile({
+      baseUrl: started.url,
+      stationToken: token,
+      assertion: acceptanceRequest,
+    });
     const positionedFront = await callAiGraderStationBridge({
       baseUrl: started.url,
       stationToken: token,
-      action: "accept-profile",
-      body: {
-        acceptedProfile: {
-          dutyPercent: 3,
-          exposureUs: 8000,
-          gain: 0,
-          channels: [1, 2, 3, 4, 5, 6, 7, 8],
-          source: "bridge_operator",
-        },
-      },
+      action: "status",
     });
     assert.equal(initial.sessionManifest.gradingSessionId, positionedFront.sessionManifest.gradingSessionId);
+    assert.deepEqual(positionedFront.frontWorkflowAuthority, acceptedFront.frontWorkflowAuthority);
     assert.equal(positionedFront.currentStep, "capture_front");
     assert.equal(positionedFront.previewStatus.activeSide, "front");
+    assert.deepEqual(Object.keys(fixtureRequest).sort(), [
+      "expectedReportId",
+      "expectedSessionId",
+      "expectedSide",
+      "expectedSideEpoch",
+      "idempotencyKey",
+    ]);
+    assert.deepEqual(Object.keys(acceptanceRequest).sort(), [
+      "expectedCandidateProfileIdentity",
+      "expectedReportId",
+      "expectedSessionId",
+      "expectedSide",
+      "expectedSideEpoch",
+      "idempotencyKey",
+    ]);
+    for (const request of [fixtureRequest, acceptanceRequest]) {
+      assert.equal("acceptedProfile" in request, false);
+      assert.equal("confirmations" in request, false);
+    }
 
     const openBoundSide = async (side: "front" | "back", sideEpoch: string) => {
       const frames = new Map<string, AiGraderStationPreviewFrame>();
@@ -283,10 +347,39 @@ test("Station atomic Front then Back Capture reaches the actual built v0.9 loopb
     const frontSideEpoch = positionedFront.previewStatus.sideEpoch;
     assert.ok(frontSideEpoch);
     const frontBound = await openBoundSide("front", frontSideEpoch);
+    const authoritativeFrontReady = await callAiGraderStationBridge({
+      baseUrl: started.url,
+      stationToken: token,
+      action: "status",
+    });
+    const previewBinding = {
+      sessionId: authoritativeFrontReady.sessionManifest.gradingSessionId,
+      side: "front" as const,
+      sideEpoch: frontSideEpoch,
+    };
+    const firstReadiness = deriveAiGraderFrontStartReadiness({
+      status: authoritativeFrontReady,
+      previewBinding,
+      bridgeConnected: true,
+    });
+    const reconnectedFrontReady = await callAiGraderStationBridge({
+      baseUrl: started.url,
+      stationToken: token,
+      action: "status",
+    });
+    const reconnectReadiness = deriveAiGraderFrontStartReadiness({
+      status: reconnectedFrontReady,
+      previewBinding,
+      bridgeConnected: true,
+    });
+    assert.equal(firstReadiness.ready, true);
+    assert.equal(firstReadiness.code, "ready");
+    assert.equal(firstReadiness.message, authoritativeFrontReady.frontCaptureReadiness.message);
+    assert.deepEqual(reconnectReadiness, firstReadiness);
     const frontCapture = await captureSide({
       side: "front",
       frame: frontBound.frame,
-      reportId: positionedFront.sessionManifest.reportId,
+      reportId: authoritativeFrontReady.sessionManifest.reportId,
     });
     assert.deepEqual(captureMutationPaths, ["/actions/capture-front"]);
     assert.equal(frontCapture.result.currentStep, "prompt_flip_card");

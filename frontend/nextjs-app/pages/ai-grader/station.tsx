@@ -10,6 +10,7 @@ import {
   buildSampleAiGraderReportHistory,
   sanitizeAiGraderPreviewCardGeometryBySide,
   type AiGraderLocalStationStatus,
+  type AiGraderLiveLightingStatus,
   type AiGraderCaptureProfile,
   type AiGraderCaptureTriggerMode,
   type AiGraderPreviewCardGeometryBySide,
@@ -78,6 +79,13 @@ import {
   type AiGraderPreviewEpochState,
 } from "../../lib/aiGraderPreviewLifecycle";
 import {
+  aiGraderFrontWorkflowAssertionFromStatus,
+  aiGraderFrontWorkflowAttemptSignature,
+  buildAiGraderFrontWorkflowRequest,
+  createAiGraderFrontWorkflowAttempt,
+  createAiGraderFrontWorkflowOperationGate,
+  deriveAiGraderFrontStartReadiness,
+  preserveAiGraderPrimaryWorkflowError,
   aiGraderCaptureAssertionFromFrame,
   aiGraderCaptureAttemptSignature,
   createAiGraderCaptureAttempt,
@@ -86,6 +94,8 @@ import {
   runAiGraderStationCaptureOrchestration,
   type AiGraderCaptureAttempt,
   type AiGraderBackCaptureMode,
+  type AiGraderFrontWorkflowAssertion,
+  type AiGraderFrontWorkflowAttempt,
 } from "../../lib/aiGraderStationOperations";
 import {
   AI_GRADER_AUTO_CAPTURE_STABLE_MS,
@@ -647,12 +657,122 @@ function identityDraftMissingFields(draft: IdentityDraftState) {
   return missing;
 }
 
+function frontWorkflowEvidenceMatchesAttempt(
+  evidence: {
+    sessionId: string;
+    reportId: string;
+    side: 'front';
+    sideEpoch: string;
+    idempotencyKey?: string;
+  } | undefined,
+  assertion: AiGraderFrontWorkflowAssertion,
+  attempt: AiGraderFrontWorkflowAttempt,
+) {
+  return Boolean(evidence && evidence.sessionId === assertion.expectedSessionId &&
+    evidence.reportId === assertion.expectedReportId && evidence.side === assertion.expectedSide &&
+    evidence.sideEpoch === assertion.expectedSideEpoch &&
+    evidence.idempotencyKey === attempt.idempotencyKey);
+}
+
+function frontAcceptedProfileEvidenceIsCurrent(
+  status: AiGraderLocalStationStatus,
+  assertion?: AiGraderFrontWorkflowAssertion,
+) {
+  const evidence = status.frontWorkflowAuthority.acceptedProfile;
+  const profile = status.liveLighting.profile;
+  const expected = assertion ?? (
+    status.previewStatus.sessionId === status.sessionManifest.gradingSessionId &&
+      status.previewStatus.activeSide === 'front' && status.previewStatus.sideEpoch
+      ? {
+          expectedSessionId: status.sessionManifest.gradingSessionId,
+          expectedReportId: status.sessionManifest.reportId,
+          expectedSide: 'front' as const,
+          expectedSideEpoch: status.previewStatus.sideEpoch,
+        }
+      : undefined
+  );
+  return Boolean(expected && evidence &&
+    evidence.sessionId === expected.expectedSessionId &&
+    evidence.reportId === expected.expectedReportId &&
+    evidence.side === expected.expectedSide &&
+    evidence.sideEpoch === expected.expectedSideEpoch &&
+    (!assertion?.expectedCandidateProfileIdentity ||
+      evidence.candidateProfileIdentity === assertion.expectedCandidateProfileIdentity) &&
+    profile.enabled === true &&
+    profile.acceptedForCapture === true &&
+    profile.acceptedAt === evidence.acceptedAt);
+}
+
+function frontFixtureRulersEvidenceIsCurrent(
+  status: AiGraderLocalStationStatus,
+  assertion?: AiGraderFrontWorkflowAssertion,
+) {
+  const evidence = status.frontWorkflowAuthority.fixtureRulers;
+  const expected = assertion ?? (
+    status.previewStatus.sessionId === status.sessionManifest.gradingSessionId &&
+      status.previewStatus.activeSide === 'front' && status.previewStatus.sideEpoch
+      ? {
+          expectedSessionId: status.sessionManifest.gradingSessionId,
+          expectedReportId: status.sessionManifest.reportId,
+          expectedSide: 'front' as const,
+          expectedSideEpoch: status.previewStatus.sideEpoch,
+        }
+      : undefined
+  );
+  return Boolean(expected && evidence &&
+    evidence.sessionId === expected.expectedSessionId &&
+    evidence.reportId === expected.expectedReportId &&
+    evidence.side === expected.expectedSide &&
+    evidence.sideEpoch === expected.expectedSideEpoch);
+}
+
+function lightingPhysicalStateAcknowledged(lighting: AiGraderLiveLightingStatus) {
+  const expected = lighting.applied.expectedWriteCount;
+  const responseKinds = lighting.applied.lastResponseKinds ?? [];
+  const appliedVerifiedAt = lighting.applied.verifiedAt;
+  const physicalVerifiedAt = lighting.physicalState.verifiedAt;
+  const canonicalTimestamp = (value: string | undefined) => Boolean(
+    value && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
+  );
+  return Number.isInteger(expected) && expected > 0 &&
+    lighting.applied.acknowledgedWriteCount === expected &&
+    lighting.physicalState.expectedWriteCount === expected &&
+    lighting.physicalState.acknowledgedWriteCount === expected &&
+    responseKinds.length === expected &&
+    responseKinds.every((kind) => kind === 'ack' || kind === 'mock') &&
+    canonicalTimestamp(appliedVerifiedAt) && canonicalTimestamp(physicalVerifiedAt) &&
+    appliedVerifiedAt === physicalVerifiedAt &&
+    lighting.applied.verificationState === 'verified' &&
+    lighting.applied.verificationComplete === true &&
+    lighting.physicalState.complete === true &&
+    lighting.physicalState.lastError === undefined && lighting.lastError === undefined &&
+    (lighting.connection.state === 'idle' || lighting.connection.state === 'mock') &&
+    (lighting.physicalState.state === 'safe_off_verified' ||
+      lighting.physicalState.state === 'positioning_light_verified');
+}
+
+function lightingSafeOffCompletelyAcknowledged(lighting: AiGraderLiveLightingStatus) {
+  return lightingPhysicalStateAcknowledged(lighting) && lighting.status === 'safe_off' &&
+    lighting.applied.enabled === false && lighting.physicalState.state === 'safe_off_verified';
+}
+
+function lightingPositioningCompletelyAcknowledged(lighting: AiGraderLiveLightingStatus) {
+  return lightingPhysicalStateAcknowledged(lighting) && lighting.status === 'on' &&
+    lighting.profile.enabled === true && lighting.applied.enabled === true &&
+    lighting.applied.dutyPercent === lighting.profile.dutyPercent &&
+    lighting.applied.actualLeimacPwmStep === lighting.profile.actualLeimacPwmStep &&
+    lighting.applied.channels.join(',') === lighting.profile.channels.join(',') &&
+    lighting.physicalState.state === 'positioning_light_verified';
+}
+
 export default function AiGraderStationPage() {
   const { session, loading: sessionLoading, ensureSession, logout } = useSession();
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
   const [workArea, setWorkArea] = useState<StationWorkArea>("grade");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [safetyError, setSafetyError] = useState<string | null>(null);
+  const [frontWorkflowPending, setFrontWorkflowPending] = useState<string | null>(null);
   const [bridgeUrl, setBridgeUrl] = useState(DEFAULT_AI_GRADER_STATION_BRIDGE_URL);
   const [stationToken, setStationToken] = useState("");
   const [bridgeConnected, setBridgeConnected] = useState(false);
@@ -676,6 +796,9 @@ export default function AiGraderStationPage() {
   const [cameraFrameSize, setCameraFrameSize] = useState<PreviewFrameSize>({ width: 0, height: 0 });
   const [previewImageSize, setPreviewImageSize] = useState<PreviewFrameSize | null>(null);
   const [liveLighting, setLiveLighting] = useState(status.liveLighting);
+  const liveLightingAuthorityAcknowledged = lightingPhysicalStateAcknowledged(liveLighting);
+  const [liveLightingRequestPending, setLiveLightingRequestPending] = useState(false);
+  const liveLightingRequestPendingRef = useRef(false);
   const liveLightingApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [manualPairingCode, setManualPairingCode] = useState("");
   const [advancedConnectOpen, setAdvancedConnectOpen] = useState(false);
@@ -716,6 +839,8 @@ export default function AiGraderStationPage() {
   const ambiguityReconcileTimerRef = useRef<number | undefined>(undefined);
   const ambiguityReconcileSchedulerRef = useRef<((intent: AiGraderLocalCaptureIntent) => void) | null>(null);
   const captureOperationGateRef = useRef(createAiGraderCaptureOperationGate());
+  const frontWorkflowOperationGateRef = useRef(createAiGraderFrontWorkflowOperationGate());
+  const frontWorkflowAttemptRef = useRef<Partial<Record<'accept-live-profile' | 'confirm-fixture-rulers', AiGraderFrontWorkflowAttempt>>>({});
   const pageExitSafetyRef = useRef({ bridgeConnected, bridgeUrl, stationToken });
   pageExitSafetyRef.current = { bridgeConnected, bridgeUrl, stationToken };
   const autoCaptureMachineRef = useRef<AiGraderAutoCaptureState | undefined>(undefined);
@@ -795,6 +920,42 @@ export default function AiGraderStationPage() {
     setManualCaptureConfirmation(null);
   };
 
+  const reconcileLightingMutationFailure = async (
+    requestError: unknown,
+    context: string,
+    options: { preservePrimary: boolean; requireSafeOff?: boolean },
+  ) => {
+    if (options.preservePrimary) {
+      setError((current) => preserveAiGraderPrimaryWorkflowError(current, requestError));
+    }
+    const requestMessage = requestError instanceof Error ? requestError.message : `${context} failed.`;
+    const credentials = pageExitSafetyRef.current;
+    if (!credentials.bridgeConnected || !credentials.stationToken.trim()) {
+      setLiveLighting((current) => projectAiGraderPreviewLossPhysicalStateUnknown(current));
+      setSafetyError(`${context}: bridge truth is unavailable after the mutation failure.`);
+      return undefined;
+    }
+    try {
+      const recovered = await callAiGraderStationBridge({
+        baseUrl: credentials.bridgeUrl,
+        stationToken: credentials.stationToken,
+        action: 'status',
+      });
+      setStatus(recovered);
+      setLiveLighting(recovered.liveLighting);
+      const acknowledged = options.requireSafeOff
+        ? lightingSafeOffCompletelyAcknowledged(recovered.liveLighting)
+        : lightingPhysicalStateAcknowledged(recovered.liveLighting);
+      if (acknowledged) setSafetyError(null);
+      else setSafetyError(`${context}: ${recovered.liveLighting.physicalState.lastError ?? recovered.liveLighting.physicalState.reason ?? requestMessage}`);
+      return recovered;
+    } catch {
+      setLiveLighting((current) => projectAiGraderPreviewLossPhysicalStateUnknown(current));
+      setSafetyError(`${context}: authoritative controller state could not be recovered after: ${requestMessage}`);
+      return undefined;
+    }
+  };
+
   const safeOffAfterPreviewLoss = async (reason: string) => {
     const safety = pageExitSafetyRef.current;
     setLiveLighting((current) => projectAiGraderPreviewLossSafeOffPending(current));
@@ -809,9 +970,25 @@ export default function AiGraderStationPage() {
         reason,
         keepalive: true,
       });
-      setLiveLighting(next);
+      if (!lightingSafeOffCompletelyAcknowledged(next)) {
+        throw new Error('The lighting controller did not completely acknowledge physical safe-off.');
+      }
+      const refreshed = await callAiGraderStationBridge({
+        baseUrl: safety.bridgeUrl,
+        stationToken: safety.stationToken,
+        action: 'status',
+      });
+      setStatus(refreshed);
+      setLiveLighting(refreshed.liveLighting);
+      if (!lightingSafeOffCompletelyAcknowledged(refreshed.liveLighting)) {
+        throw new Error('Bridge status did not confirm complete physical safe-off.');
+      }
+      setSafetyError(null);
     } catch (safeOffError) {
-      setLiveLighting((current) => projectAiGraderPreviewLossPhysicalStateUnknown(current));
+      await reconcileLightingMutationFailure(safeOffError, 'Preview-loss safe-off', {
+        preservePrimary: false,
+        requireSafeOff: true,
+      });
       throw safeOffError;
     }
   };
@@ -820,6 +997,7 @@ export default function AiGraderStationPage() {
     const binding = aiGraderPreviewStatusBinding(nextStatus);
     if (aiGraderPreviewBindingChanged(previewEpochStateRef.current.binding, binding)) {
       captureAttemptRef.current = {};
+      frontWorkflowAttemptRef.current = {};
       intentionalCaptureRef.current = null;
       previewAttemptGenerationRef.current += 1;
       previewControllerRef.current?.abort();
@@ -859,6 +1037,15 @@ export default function AiGraderStationPage() {
     setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
     reconcileBridgePreviewStatus(next.previewStatus);
     setLiveLighting(next.liveLighting);
+    if (lightingPhysicalStateAcknowledged(next.liveLighting)) {
+      setSafetyError(null);
+    } else {
+      setSafetyError(
+        next.liveLighting.physicalState.lastError ??
+        next.liveLighting.physicalState.reason ??
+        "Bridge reconnect returned incomplete controller acknowledgement truth."
+      );
+    }
     setBridgeConnected(true);
     setBridgeConnectionState("connected");
     setProfileDraft({
@@ -987,25 +1174,53 @@ export default function AiGraderStationPage() {
     if (
       !bridgeConnected ||
       !stationToken.trim() ||
-      liveLighting.applied.enabled !== true ||
-      liveLighting.applied.verificationState !== "verified" ||
-      liveLighting.applied.verificationComplete !== true ||
-      liveLighting.physicalState.state !== "positioning_light_verified" ||
-      liveLighting.physicalState.complete !== true
+      Boolean(safetyError) ||
+      liveLightingRequestPending ||
+      !lightingPositioningCompletelyAcknowledged(liveLighting)
     ) return;
     const timer = setInterval(() => {
       if (Date.now() - previewLastLiveFrameAtRef.current > PREVIEW_GEOMETRY_MAX_AGE_MS) return;
-      void heartbeatAiGraderLiveLighting({ baseUrl: bridgeUrl, stationToken }).then(setLiveLighting).catch(() => {});
+      void heartbeatAiGraderLiveLighting({ baseUrl: bridgeUrl, stationToken }).then(async (next) => {
+        if (!lightingPhysicalStateAcknowledged(next)) {
+          throw new Error('Lighting heartbeat returned incomplete controller acknowledgement truth.');
+        }
+        const refreshed = await callAiGraderStationBridge({
+          baseUrl: bridgeUrl,
+          stationToken,
+          action: 'status',
+        });
+        setStatus(refreshed);
+        reconcileBridgePreviewStatus(refreshed.previewStatus);
+        setLiveLighting(refreshed.liveLighting);
+        if (lightingPhysicalStateAcknowledged(refreshed.liveLighting)) setSafetyError(null);
+        else setSafetyError('Lighting heartbeat status refresh returned incomplete controller acknowledgement truth.');
+      }).catch((heartbeatError) => {
+        void reconcileLightingMutationFailure(heartbeatError, 'Lighting heartbeat', {
+          preservePrimary: false,
+        });
+      });
     }, 4000);
     return () => clearInterval(timer);
   }, [
     bridgeConnected,
     bridgeUrl,
+    safetyError,
+    liveLightingRequestPending,
     liveLighting.applied.enabled,
+    liveLighting.applied.expectedWriteCount,
+    liveLighting.applied.acknowledgedWriteCount,
+    liveLighting.applied.lastResponseKinds,
     liveLighting.applied.verificationState,
     liveLighting.applied.verificationComplete,
+    liveLighting.applied.verifiedAt,
     liveLighting.physicalState.state,
+    liveLighting.physicalState.expectedWriteCount,
+    liveLighting.physicalState.acknowledgedWriteCount,
     liveLighting.physicalState.complete,
+    liveLighting.physicalState.verifiedAt,
+    liveLighting.physicalState.lastError,
+    liveLighting.lastError,
+    liveLighting.connection.state,
     stationToken,
   ]);
 
@@ -1029,7 +1244,12 @@ export default function AiGraderStationPage() {
         stationToken: safety.stationToken,
         reason: "browser page closed or hidden",
         keepalive: true,
-      }).catch(() => {});
+      }).catch((safeOffError) => {
+        void reconcileLightingMutationFailure(safeOffError, 'Page-exit safe-off', {
+          preservePrimary: false,
+          requireSafeOff: true,
+        });
+      });
     };
     window.addEventListener("pagehide", handlePageExit);
     window.addEventListener("beforeunload", handlePageExit);
@@ -1052,13 +1272,19 @@ export default function AiGraderStationPage() {
 
   useEffect(() => {
     const backPositioningActive = status.currentStep === "prompt_flip_card";
+    const safetyInterlockActive = Boolean(safetyError) ||
+      !liveLightingAuthorityAcknowledged ||
+      liveLighting.status === 'applying' || liveLighting.status === 'error' ||
+      liveLighting.physicalState.state === 'safe_off_pending' ||
+      liveLighting.physicalState.state === 'physical_state_unknown' ||
+      liveLighting.physicalState.complete !== true;
     const previewHeldForFullForensicRun = status.warmRunnerStatus.previewPolicy.holdActive === true && !backPositioningActive;
     const previewSuspendedForRapidReview = Boolean(status.rapidCaptureQueue.activeQueueItemId);
     const positioningStepActive = !status.sessionManifest.backCaptured && (
       backPositioningActive || !status.sessionManifest.frontCaptured
     );
     const previewEligible = isAiGraderPreviewReconnectEligible({
-      connected: bridgeConnected,
+      connected: bridgeConnected && !safetyInterlockActive,
       hasStationToken: Boolean(stationToken.trim()),
       mounted: true,
       aborted: false,
@@ -1162,7 +1388,10 @@ export default function AiGraderStationPage() {
           if (reconcileDecision.kind === "active_deadline") {
             if (authoritativeAfterExpiry) setPreviewStatus(authoritativeAfterExpiry);
             intentionalCaptureRef.current = null;
-            setError("The bridge still owns Atomic Capture after the bounded browser reconciliation window. Do not retry capture; wait for bridge status or refresh the Station.");
+            setError((current) => preserveAiGraderPrimaryWorkflowError(
+              current,
+              "The bridge still owns Atomic Capture after the bounded browser reconciliation window. Do not retry capture; wait for bridge status or refresh the Station.",
+            ));
             return;
           }
           intentionalCaptureRef.current = null;
@@ -1185,19 +1414,19 @@ export default function AiGraderStationPage() {
                 setPreviewRestartGeneration((current) => current + 1);
               }
             } catch (statusError) {
-              setError(statusError instanceof Error
-                ? statusError.message
-                : "Atomic Capture completed, but full Station status recovery failed.");
+              setError((current) => preserveAiGraderPrimaryWorkflowError(
+                current,
+                statusError instanceof Error
+                  ? statusError
+                  : "Atomic Capture completed, but full Station status recovery failed.",
+              ));
             }
             return;
           }
           if (authoritativeAfterExpiry) reconcileBridgePreviewStatus(authoritativeAfterExpiry);
           try {
             await safeOffAfterPreviewLoss("Atomic capture transport ambiguity expired; positioning light safe-off");
-          } catch (safeOffError) {
-            const message = safeOffError instanceof Error ? safeOffError.message : "Expired atomic-capture recovery safe-off failed.";
-            setError(message);
-          }
+          } catch {}
           if (isCurrent()) setPreviewRestartGeneration((current) => current + 1);
           })();
         }, delayMs);
@@ -1417,7 +1646,6 @@ export default function AiGraderStationPage() {
       } catch (safeOffError) {
         const message = safeOffError instanceof Error ? safeOffError.message : "Preview-loss positioning light safe-off failed.";
         setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "error", lastError: message, cameraOwnership: "released" }));
-        setError(message);
       }
     };
     void runPreviewReader();
@@ -1442,6 +1670,11 @@ export default function AiGraderStationPage() {
   }, [
     bridgeConnected,
     bridgeUrl,
+    safetyError,
+    liveLightingAuthorityAcknowledged,
+    liveLighting.status,
+    liveLighting.physicalState.state,
+    liveLighting.physicalState.complete,
     previewBrowserCaptureActionActive,
     previewRestartGeneration,
     stationToken,
@@ -1787,11 +2020,7 @@ export default function AiGraderStationPage() {
     activeGeometryAgeMs <= PREVIEW_GEOMETRY_MAX_AGE_MS;
   const backPositioningPhysicallyVerified =
     previewStatus.positioningLightReady === true &&
-    liveLighting.applied.enabled === true &&
-    liveLighting.applied.verificationState === "verified" &&
-    liveLighting.applied.verificationComplete === true &&
-    liveLighting.physicalState.state === "positioning_light_verified" &&
-    liveLighting.physicalState.complete === true;
+    lightingPositioningCompletelyAcknowledged(liveLighting);
   const detectedPreviewCaptureReady = previewGeometrySide === "back"
     ? aiGraderPreviewBackCaptureReady({
         state: previewEpochState,
@@ -1900,19 +2129,20 @@ export default function AiGraderStationPage() {
     status.sessionManifest.frontCaptured ||
     status.sessionManifest.backCaptured ||
     Boolean(status.rapidCaptureQueue.activeQueueItemId);
-  const canStartGrading =
-    !status.captureFailure &&
-    !status.sessionManifest.frontCaptured &&
-    !status.sessionManifest.backCaptured &&
-    !status.rapidCaptureQueue.activeQueueItemId &&
-    new Set([
-      "start_new_card",
-      "verify_fixture_rulers",
-      "live_preview_focus_framing",
-      "lighting_exposure_tune",
-      "accept_capture_profile",
-      "capture_front",
-    ]).has(status.currentStep);
+  const frontStartReadiness = deriveAiGraderFrontStartReadiness({
+    status,
+    previewBinding: previewEpochState.binding,
+    bridgeConnected,
+    safetyFailure: safetyError,
+    transitionPending: Boolean(frontWorkflowPending),
+    capturePending: busy === 'start-grading' || busy === 'capture-back',
+    cleanupPending: busy === 'safe-off' || liveLighting.status === 'applying' ||
+      liveLighting.physicalState.state === 'safe_off_pending' || liveLightingRequestPending,
+    ambiguousRequestPending: Boolean(intentionalCaptureRef.current || ambiguityReconcileTimerRef.current !== undefined),
+  });
+  const frontAcceptedProfileCurrent = frontAcceptedProfileEvidenceIsCurrent(status);
+  const frontFixtureRulersCurrent = frontFixtureRulersEvidenceIsCurrent(status);
+  const canStartGrading = frontStartReadiness.ready;
   const cardAdjustmentGuidance =
     activePreviewCardGeometry?.adjustmentReason === "outside_frame"
       ? "Move the card until all four corners have clear space from the frame edge."
@@ -1937,7 +2167,7 @@ export default function AiGraderStationPage() {
       : status.rapidCaptureQueue.activeQueueItemId
         ? "Finish the active Confirm Card review before starting another capture."
         : !canStartGrading
-          ? "Select Start New Card to begin."
+          ? frontStartReadiness.message
           : previewGeometrySide !== "front"
             ? "Finish the current back capture before starting another front."
             : cardPlacementGuidance;
@@ -1973,29 +2203,37 @@ export default function AiGraderStationPage() {
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
   const warmRunner = status.warmRunnerStatus;
   const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held || busy === "start-grading" || busy === "capture-back";
+  const physicalSafetyBlocked = Boolean(safetyError) ||
+    !lightingPhysicalStateAcknowledged(liveLighting) ||
+    liveLighting.status === 'applying' || liveLighting.status === 'error' ||
+    liveLighting.physicalState.state === 'safe_off_pending' ||
+    liveLighting.physicalState.state === 'physical_state_unknown' ||
+    liveLighting.physicalState.complete !== true;
+  const hardwareSafetyBlocked = physicalSafetyBlocked || liveLightingRequestPending;
+  const hardwareSafetyMessage = safetyError ?? (
+    physicalSafetyBlocked
+      ? liveLighting.physicalState.reason || 'Controller-acknowledged physical lighting state is required.'
+      : null
+  );
+  const safeOffRecoveryAllowed = bridgeConnected && busy === null &&
+    !warmRunner.captureLock.held && warmRunner.status !== 'capturing' &&
+    !intentionalCaptureRef.current && !liveLightingRequestPending;
   const liveLightingAvailable =
     bridgeConnected &&
+    !hardwareSafetyBlocked &&
     liveLighting.controlsEnabled &&
     previewStatus.status === "live" &&
     !warmRunner.captureLock.held &&
     warmRunner.status !== "capturing";
   const liveLightingCommandable =
     bridgeConnected &&
+    !hardwareSafetyBlocked &&
     liveLighting.controlsEnabled &&
     !warmRunner.captureLock.held &&
     warmRunner.status !== "capturing";
-  const liveLightingSafeOffVerified =
-    liveLighting.applied.enabled === false &&
-    liveLighting.applied.verificationState === "verified" &&
-    liveLighting.applied.verificationComplete === true &&
-    liveLighting.physicalState.state === "safe_off_verified" &&
-    liveLighting.physicalState.complete === true;
+  const liveLightingSafeOffVerified = lightingSafeOffCompletelyAcknowledged(liveLighting);
   const liveLightingPositioningVerified =
-    liveLighting.applied.enabled === true &&
-    liveLighting.applied.verificationState === "verified" &&
-    liveLighting.applied.verificationComplete === true &&
-    liveLighting.physicalState.state === "positioning_light_verified" &&
-    liveLighting.physicalState.complete === true;
+    lightingPositioningCompletelyAcknowledged(liveLighting);
   const liveLightingAppliedLabel = liveLightingPositioningVerified
     ? `${liveLighting.applied.dutyPercent}% / PWM ${String(liveLighting.applied.actualLeimacPwmStep).padStart(4, "0")} / Ch ${liveLighting.applied.channels.join(", ")}`
     : liveLightingSafeOffVerified
@@ -2353,36 +2591,6 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const actionBody = (
-    overrides: Record<string, unknown> = {},
-    sourceStatus: AiGraderLocalStationStatus = status,
-    useDraftProfile = true
-  ) => {
-    const profile = useDraftProfile
-      ? {
-          dutyPercent: Number(profileDraft.dutyPercent),
-          exposureUs: Number(profileDraft.exposureUs),
-          gain: Number(profileDraft.gain),
-          channels: sourceStatus.acceptedProfile.channels,
-          source: "bridge_operator",
-        }
-      : {
-          dutyPercent: sourceStatus.acceptedProfile.dutyPercent,
-          exposureUs: sourceStatus.acceptedProfile.exposureUs,
-          gain: sourceStatus.acceptedProfile.gain,
-          channels: sourceStatus.acceptedProfile.channels,
-          source: sourceStatus.acceptedProfile.source,
-        };
-    return {
-    confirmations: {
-      lightIdleOff: true,
-      fixtureRulersVisible: true,
-      ...overrides,
-    },
-      acceptedProfile: profile,
-    };
-  };
-
   const runAction = async (action: AiGraderStationAction, body?: Record<string, unknown>) => {
     const next = bridgeConnected
       ? await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action, body })
@@ -2394,6 +2602,9 @@ export default function AiGraderStationPage() {
     setStatus(next);
     reconcileBridgePreviewStatus(next.previewStatus);
     setLiveLighting(next.liveLighting);
+    if (lightingPhysicalStateAcknowledged(next.liveLighting)) {
+      setSafetyError(null);
+    }
     setProfileDraft({
       dutyPercent: next.acceptedProfile.dutyPercent,
       exposureUs: next.acceptedProfile.exposureUs,
@@ -2603,26 +2814,48 @@ export default function AiGraderStationPage() {
     reason = "browser live lighting apply"
   ) => {
     if (!bridgeConnected || !stationToken.trim()) throw new Error("Connect the Dell local station bridge before live lighting tuning.");
-    await ensureLiveLightingSession();
-    const next = await applyAiGraderLiveLighting({
-      baseUrl: bridgeUrl,
-      stationToken,
-      enabled: draft.enabled,
-      dutyPercent: Number(draft.dutyPercent),
-      channels: draft.channels,
-      reason,
-    });
-    setLiveLighting(next);
-    return next;
+    if (liveLightingRequestPendingRef.current) {
+      throw new Error('A live lighting controller request is already pending.');
+    }
+    liveLightingRequestPendingRef.current = true;
+    setLiveLightingRequestPending(true);
+    // A browser-requested retune defines a new explicit profile acceptance
+    // attempt. Never replay an ambiguous pre-retune acceptance key.
+    delete frontWorkflowAttemptRef.current['accept-live-profile'];
+    try {
+      await ensureLiveLightingSession();
+      const next = await applyAiGraderLiveLighting({
+        baseUrl: bridgeUrl,
+        stationToken,
+        enabled: draft.enabled,
+        dutyPercent: Number(draft.dutyPercent),
+        channels: draft.channels,
+        reason,
+      });
+      if (!lightingPositioningCompletelyAcknowledged(next)) {
+        throw new Error('The lighting controller did not completely acknowledge the requested physical state.');
+      }
+      const refreshed = await runAction('status');
+      if (!lightingPositioningCompletelyAcknowledged(refreshed.liveLighting)) {
+        throw new Error('Bridge status did not confirm the requested physical lighting state.');
+      }
+      return refreshed.liveLighting;
+    } catch (requestError) {
+      await reconcileLightingMutationFailure(requestError, 'Live lighting apply', {
+        preservePrimary: true,
+      });
+      throw requestError;
+    } finally {
+      liveLightingRequestPendingRef.current = false;
+      setLiveLightingRequestPending(false);
+    }
   };
 
   const scheduleLiveLightingApply = (draft = liveLightingDraft, reason = "browser live lighting adjustment") => {
     if (liveLightingApplyTimerRef.current) clearTimeout(liveLightingApplyTimerRef.current);
     liveLightingApplyTimerRef.current = setTimeout(() => {
       liveLightingApplyTimerRef.current = null;
-      void applyLiveLightingDraft(draft, reason).catch((requestError) => {
-        setError(requestError instanceof Error ? requestError.message : "Live lighting apply failed.");
-      });
+      void applyLiveLightingDraft(draft, reason).catch(() => {});
     }, 120);
   };
 
@@ -2632,39 +2865,145 @@ export default function AiGraderStationPage() {
   };
 
   const safeOffLiveLighting = async (reason = "operator requested browser live lighting safe-off") => {
+    if (liveLightingRequestPendingRef.current) {
+      throw new Error('A live lighting controller request is already pending.');
+    }
     if (liveLightingApplyTimerRef.current) {
       clearTimeout(liveLightingApplyTimerRef.current);
       liveLightingApplyTimerRef.current = null;
     }
     setLiveLightingDraft((current) => ({ ...current, enabled: false }));
-    const next = await safeOffAiGraderLiveLighting({ baseUrl: bridgeUrl, stationToken, reason });
-    setLiveLighting(next);
-    return next;
+    liveLightingRequestPendingRef.current = true;
+    setLiveLightingRequestPending(true);
+    try {
+      const next = await safeOffAiGraderLiveLighting({ baseUrl: bridgeUrl, stationToken, reason });
+      if (!lightingSafeOffCompletelyAcknowledged(next)) {
+        throw new Error('The lighting controller did not completely acknowledge physical safe-off.');
+      }
+      const refreshed = await runAction('status');
+      if (!lightingSafeOffCompletelyAcknowledged(refreshed.liveLighting)) {
+        throw new Error('Bridge status did not confirm complete physical safe-off.');
+      }
+      setSafetyError(null);
+      return refreshed.liveLighting;
+    } catch (requestError) {
+      await reconcileLightingMutationFailure(requestError, 'Operator lighting safe-off', {
+        preservePrimary: false,
+        requireSafeOff: true,
+      });
+      throw requestError;
+    } finally {
+      liveLightingRequestPendingRef.current = false;
+      setLiveLightingRequestPending(false);
+    }
   };
 
   const acceptLiveLightingProfile = async () => {
+    if (hardwareSafetyBlocked || liveLightingRequestPendingRef.current) return;
     setBusy("lighting-accept");
     setError(null);
     try {
-      const nextLighting = await acceptAiGraderLiveLightingProfile({
+      const latest = await runAction('status');
+      const assertion = aiGraderFrontWorkflowAssertionFromStatus(latest);
+      if (frontAcceptedProfileEvidenceIsCurrent(latest, assertion)) {
+        delete frontWorkflowAttemptRef.current['accept-live-profile'];
+        return;
+      }
+      const existingAttempt = frontWorkflowAttemptRef.current['accept-live-profile'];
+      const signature = aiGraderFrontWorkflowAttemptSignature('accept-live-profile', assertion);
+      const attempt = existingAttempt?.signature === signature
+        ? existingAttempt
+        : createAiGraderFrontWorkflowAttempt('accept-live-profile', assertion);
+      frontWorkflowAttemptRef.current['accept-live-profile'] = attempt;
+      const request = buildAiGraderFrontWorkflowRequest({ assertion, attempt });
+      setFrontWorkflowPending(attempt.signature);
+      let nextLighting: AiGraderLocalStationStatus;
+      try {
+        nextLighting = await frontWorkflowOperationGateRef.current.run(attempt.signature, () => acceptAiGraderLiveLightingProfile({
         baseUrl: bridgeUrl,
         stationToken,
-        dutyPercent: Number(liveLightingDraft.dutyPercent),
-        channels: liveLightingDraft.channels,
-        exposureUs: Number(profileDraft.exposureUs),
-        gain: Number(profileDraft.gain),
-      });
-      setLiveLighting(nextLighting);
-      const nextStatus = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action: "status" });
-      setStatus(nextStatus);
+        assertion: request,
+        }));
+      } catch (acceptError) {
+        let recovered: AiGraderLocalStationStatus;
+        try {
+          recovered = await runAction('status');
+        } catch {
+          throw acceptError;
+        }
+        if (!frontWorkflowEvidenceMatchesAttempt(recovered.frontWorkflowAuthority.acceptedProfile, assertion, attempt)) {
+          throw acceptError;
+        }
+        nextLighting = recovered;
+      }
+      setStatus(nextLighting);
+      reconcileBridgePreviewStatus(nextLighting.previewStatus);
+      setLiveLighting(nextLighting.liveLighting);
+      const nextStatus = await runAction('status');
+      if (!frontAcceptedProfileEvidenceIsCurrent(nextStatus, assertion)) {
+        throw new Error('The bridge did not durably acknowledge this exact Front profile acceptance request.');
+      }
       setProfileDraft({
         dutyPercent: nextStatus.acceptedProfile.dutyPercent,
         exposureUs: nextStatus.acceptedProfile.exposureUs,
         gain: nextStatus.acceptedProfile.gain,
       });
+      delete frontWorkflowAttemptRef.current['accept-live-profile'];
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not accept live lighting profile.");
+      setError((current) => preserveAiGraderPrimaryWorkflowError(
+        current,
+        requestError instanceof Error ? requestError : "Could not accept live lighting profile.",
+      ));
     } finally {
+      setFrontWorkflowPending(null);
+      setBusy(null);
+    }
+  };
+
+  const confirmFrontFixtureAndRulers = async () => {
+    if (hardwareSafetyBlocked || liveLightingRequestPendingRef.current) return;
+    setBusy('confirm-fixture-rulers');
+    setError(null);
+    try {
+      const latest = await runAction('status');
+      const assertion = aiGraderFrontWorkflowAssertionFromStatus(latest);
+      if (frontFixtureRulersEvidenceIsCurrent(latest, assertion)) {
+        delete frontWorkflowAttemptRef.current['confirm-fixture-rulers'];
+        return;
+      }
+      const existingAttempt = frontWorkflowAttemptRef.current['confirm-fixture-rulers'];
+      const signature = aiGraderFrontWorkflowAttemptSignature('confirm-fixture-rulers', assertion);
+      const attempt = existingAttempt?.signature === signature
+        ? existingAttempt
+        : createAiGraderFrontWorkflowAttempt('confirm-fixture-rulers', assertion);
+      frontWorkflowAttemptRef.current['confirm-fixture-rulers'] = attempt;
+      const request = buildAiGraderFrontWorkflowRequest({ assertion, attempt });
+      setFrontWorkflowPending(attempt.signature);
+      try {
+        await frontWorkflowOperationGateRef.current.run(
+          attempt.signature,
+          () => runAction('confirm-fixture-rulers', request),
+        );
+      } catch (confirmationError) {
+        let recovered: AiGraderLocalStationStatus;
+        try {
+          recovered = await runAction('status');
+        } catch {
+          throw confirmationError;
+        }
+        if (!frontWorkflowEvidenceMatchesAttempt(recovered.frontWorkflowAuthority.fixtureRulers, assertion, attempt)) {
+          throw confirmationError;
+        }
+      }
+      const nextStatus = await runAction('status');
+      if (!frontFixtureRulersEvidenceIsCurrent(nextStatus, assertion)) {
+        throw new Error('The bridge did not durably acknowledge this exact fixture and ruler confirmation request.');
+      }
+      delete frontWorkflowAttemptRef.current['confirm-fixture-rulers'];
+    } catch (requestError) {
+      setError((current) => preserveAiGraderPrimaryWorkflowError(current, requestError));
+    } finally {
+      setFrontWorkflowPending(null);
       setBusy(null);
     }
   };
@@ -2675,9 +3014,7 @@ export default function AiGraderStationPage() {
     if (enabled) {
       if (liveLightingCommandable) scheduleLiveLightingApply(nextDraft, "browser live lighting enabled");
     } else {
-      void safeOffLiveLighting("browser live lighting disabled").catch((requestError) => {
-        setError(requestError instanceof Error ? requestError.message : "Live lighting safe-off failed.");
-      });
+      void safeOffLiveLighting("browser live lighting disabled").catch(() => {});
     }
   };
 
@@ -2685,9 +3022,7 @@ export default function AiGraderStationPage() {
     const nextDraft = { ...liveLightingDraft, enabled: channels.length > 0, channels };
     setLiveLightingDraft(nextDraft);
     if (channels.length === 0) {
-      void safeOffLiveLighting("browser live lighting all off").catch((requestError) => {
-        setError(requestError instanceof Error ? requestError.message : "Live lighting safe-off failed.");
-      });
+      void safeOffLiveLighting("browser live lighting all off").catch(() => {});
       return;
     }
     if (liveLightingCommandable) scheduleLiveLightingApply(nextDraft, "browser live lighting channels changed");
@@ -2710,6 +3045,7 @@ export default function AiGraderStationPage() {
     identityEditedFieldsRef.current.clear();
     autoCaptureMachineRef.current = undefined;
     captureAttemptRef.current = {};
+    frontWorkflowAttemptRef.current = {};
     intentionalCaptureRef.current = null;
     setManualCaptureConfirmation(null);
     setAutoCaptureUi({ phase: autoCaptureEnabled ? "waiting_for_card_removal" : "disabled", readyStableMs: 0 });
@@ -2733,6 +3069,7 @@ export default function AiGraderStationPage() {
   };
 
   const changeStationCaptureMode = async (nextMode: StationCaptureMode) => {
+    if (hardwareSafetyBlocked || liveLightingRequestPendingRef.current) return;
     if (nextMode === stationCaptureMode) return;
     if (stationSettingsLocked) {
       setError("Finish or queue the active card before changing capture mode.");
@@ -2754,6 +3091,7 @@ export default function AiGraderStationPage() {
   };
 
   const changeStationCaptureProfile = async (nextProfile: AiGraderCaptureProfile) => {
+    if (hardwareSafetyBlocked || liveLightingRequestPendingRef.current) return;
     if (nextProfile === stationCaptureProfile) return;
     if (stationSettingsLocked) {
       setError("Finish or queue the active card before changing capture profile.");
@@ -2763,10 +3101,7 @@ export default function AiGraderStationPage() {
     setError(null);
     try {
       resetPerCardUiState();
-      let next = await runAction("start-session", buildAiGraderCaptureProfileRequest(nextProfile));
-      if (autoCaptureEnabled) {
-        next = await runAction("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-      }
+      const next = await runAction("start-session", buildAiGraderCaptureProfileRequest(nextProfile));
       setStationCaptureProfile(next.captureProfile);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Capture profile could not be updated.");
@@ -2776,6 +3111,7 @@ export default function AiGraderStationPage() {
   };
 
   const startNewCard = async () => {
+    if (hardwareSafetyBlocked || liveLightingRequestPendingRef.current) return;
     setBusy("start");
     setError(null);
     try {
@@ -2785,9 +3121,6 @@ export default function AiGraderStationPage() {
         buildAiGraderRapidCaptureConfigurationRequest(stationCaptureMode === "rapid")
       );
       await runAction("start-session", buildAiGraderCaptureProfileRequest(stationCaptureProfile));
-      if (autoCaptureEnabled) {
-        await runAction("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.");
     } finally {
@@ -2801,13 +3134,35 @@ export default function AiGraderStationPage() {
     geometryCaptureMode: AiGraderBackCaptureMode;
     afterCapture?: (captured: AiGraderLocalStationStatus) => Promise<void>;
   }) => {
+    if (liveLightingRequestPendingRef.current) {
+      throw new Error('Wait for the pending lighting controller request before capture.');
+    }
+    if (hardwareSafetyBlocked) {
+      throw new Error(`Hardware safety interlock: ${hardwareSafetyMessage ?? 'physical state is not verified'}`);
+    }
+    let captureStatus = status;
+    if (input.side === 'front') {
+      captureStatus = await runAction('status');
+      const refreshedReadiness = deriveAiGraderFrontStartReadiness({
+        status: captureStatus,
+        previewBinding: previewEpochStateRef.current.binding,
+        bridgeConnected,
+        safetyFailure: safetyError,
+        transitionPending: Boolean(frontWorkflowPending),
+        cleanupPending: captureStatus.liveLighting.status === 'applying' ||
+          captureStatus.liveLighting.physicalState.state === 'safe_off_pending' ||
+          liveLightingRequestPendingRef.current,
+        ambiguousRequestPending: Boolean(intentionalCaptureRef.current || ambiguityReconcileTimerRef.current !== undefined),
+      });
+      if (!refreshedReadiness.ready) throw new Error(refreshedReadiness.message);
+    }
     const localDisplayed = assertLocalFreshPreviewCaptureEligibility(
       input.side,
       input.geometryCaptureMode === "manual_capture",
     );
     const assertion = aiGraderCaptureAssertionFromFrame({
       frame: localDisplayed.frame,
-      reportId: status.sessionManifest.reportId,
+      reportId: captureStatus.sessionManifest.reportId,
       geometryCaptureMode: input.geometryCaptureMode,
       captureTriggerMode: input.captureTriggerMode,
     });
@@ -2849,19 +3204,35 @@ export default function AiGraderStationPage() {
             }
             intentionalCaptureRef.current = intent;
           },
-          onConfirmedPreTransitionFailure({ intent, previewStatus: authoritativePreviewStatus }) {
+          async onConfirmedPreTransitionFailure({ intent, previewStatus: authoritativePreviewStatus }) {
             const currentIntent = intentionalCaptureRef.current;
             if (
               !aiGraderLocalCaptureIntentMatches({ expectedBinding: intent.binding, localIntent: currentIntent }) ||
               currentIntent?.frameId !== intent.frameId
             ) return;
             intentionalCaptureRef.current = null;
-            reconcileBridgePreviewStatus(authoritativePreviewStatus);
+            let authoritativeStatus: AiGraderLocalStationStatus | undefined;
+            try {
+              authoritativeStatus = await runAction('status');
+              if (!lightingPhysicalStateAcknowledged(authoritativeStatus.liveLighting)) {
+                setSafetyError(
+                  authoritativeStatus.liveLighting.physicalState.lastError ??
+                  authoritativeStatus.liveLighting.physicalState.reason ??
+                  'Atomic capture rejection left controller acknowledgement incomplete.',
+                );
+              }
+            } catch {
+              setSafetyError('Atomic capture rejection could not refresh authoritative controller safety state.');
+            }
+            const reconciledPreviewStatus = authoritativeStatus?.previewStatus ?? authoritativePreviewStatus;
+            reconcileBridgePreviewStatus(reconciledPreviewStatus);
             const recoveryEligible =
+              Boolean(authoritativeStatus) &&
+              lightingPhysicalStateAcknowledged(authoritativeStatus!.liveLighting) &&
               bridgeConnected &&
               Boolean(stationToken.trim()) &&
-              !status.warmRunnerStatus.captureLock.held &&
-              !status.rapidCaptureQueue.activeQueueItemId &&
+              !authoritativeStatus!.warmRunnerStatus.captureLock.held &&
+              !authoritativeStatus!.rapidCaptureQueue.activeQueueItemId &&
               aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, intent.binding);
             if (recoveryEligible) setPreviewRestartGeneration((current) => current + 1);
           },
@@ -2895,24 +3266,6 @@ export default function AiGraderStationPage() {
 
   const changeAutoCaptureEnabled = async (enabled: boolean) => {
     autoCaptureMachineRef.current = undefined;
-    if (
-      enabled &&
-      status.currentStep !== "start_new_card" &&
-      status.currentStep !== "safe_off_end_session"
-    ) {
-      setBusy("arm-auto-capture");
-      setError(null);
-      try {
-        await runAction("confirm-fixture-rulers", { confirmations: { fixtureRulersVisible: true } });
-      } catch (requestError) {
-        setError(requestError instanceof Error ? requestError.message : "Auto Capture fixture/ruler confirmation failed.");
-        setAutoCaptureEnabled(false);
-        setAutoCaptureUi({ phase: "disabled", readyStableMs: 0 });
-        return;
-      } finally {
-        setBusy(null);
-      }
-    }
     setAutoCaptureEnabled(enabled);
     setAutoCaptureUi({
       phase: enabled ? "waiting_for_card_removal" : "disabled",
@@ -2931,7 +3284,10 @@ export default function AiGraderStationPage() {
         geometryCaptureMode,
       });
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Start grading failed.");
+      setError((current) => preserveAiGraderPrimaryWorkflowError(
+        current,
+        requestError instanceof Error ? requestError : "Start grading failed.",
+      ));
     }
   };
 
@@ -2957,7 +3313,10 @@ export default function AiGraderStationPage() {
         },
       });
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Back capture or report generation failed.");
+      setError((current) => preserveAiGraderPrimaryWorkflowError(
+        current,
+        requestError instanceof Error ? requestError : "Back capture or report generation failed.",
+      ));
     }
   };
 
@@ -3023,7 +3382,9 @@ export default function AiGraderStationPage() {
       Boolean(activeAutoCaptureSide) &&
       previewStatus.status === "live" &&
       busy === null &&
-      !warmRunner.captureLock.held;
+      !warmRunner.captureLock.held &&
+      !hardwareSafetyBlocked &&
+      (activeAutoCaptureSide !== 'front' || canStartGrading);
     const decision = advanceAiGraderAutoCapture({
       previous: autoCaptureMachineRef.current,
       enabled: eligible,
@@ -3051,6 +3412,8 @@ export default function AiGraderStationPage() {
     autoCaptureSessionId,
     bridgeConnected,
     busy,
+    canStartGrading,
+    hardwareSafetyBlocked,
     previewStatus.status,
     warmRunner.captureLock.held,
   ]);
@@ -4014,15 +4377,26 @@ export default function AiGraderStationPage() {
   };
 
   const safeOff = async () => {
+    if (liveLightingRequestPendingRef.current) {
+      setError((current) => preserveAiGraderPrimaryWorkflowError(
+        current,
+        'Wait for the pending lighting controller request before Safe Off recovery.',
+      ));
+      return;
+    }
     setBusy("safe-off");
-    setError(null);
     try {
-      if (bridgeConnected && stationToken.trim()) {
-        await safeOffLiveLighting("operator station safe-off");
+      const next = await runAction('safe-off');
+      const lighting = next.liveLighting;
+      if (!lightingSafeOffCompletelyAcknowledged(lighting)) {
+        throw new Error('The lighting controller did not completely acknowledge physical safe-off.');
       }
-      await runAction("safe-off", { confirmations: { finalLightOff: true, lightIdleOff: true } });
+      setSafetyError(null);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Safe Off failed.");
+      await reconcileLightingMutationFailure(requestError, 'Station Safe Off', {
+        preservePrimary: false,
+        requireSafeOff: true,
+      });
     } finally {
       setBusy(null);
     }
@@ -4827,6 +5201,7 @@ export default function AiGraderStationPage() {
                     backPositioningRetry.status === "retrying" ||
                     backPositioningRetryReady ||
                     status.warmRunnerStatus.captureLock.held ||
+                    hardwareSafetyBlocked ||
                     Boolean(status.rapidCaptureQueue.activeQueueItemId)
                   }
                 >
@@ -4839,7 +5214,7 @@ export default function AiGraderStationPage() {
                   type="button"
                   onClick={() => void confirmFlipAndContinue("operator")}
                   aria-describedby="back-geometry-guidance"
-                  disabled={busy !== null || Boolean(status.captureFailure) || previewGeometrySide !== "back" || !detectedGeometryReady}
+                  disabled={busy !== null || hardwareSafetyBlocked || Boolean(status.captureFailure) || previewGeometrySide !== "back" || !detectedGeometryReady}
                 >
                   {busy === "capture-back" ? "Capturing Back" : "Capture Back"}
                 </button>
@@ -4847,7 +5222,7 @@ export default function AiGraderStationPage() {
                   type="button"
                   className="secondary"
                   onClick={() => setManualCaptureConfirmation({ side: "back" })}
-                  disabled={busy !== null || previewGeometrySide !== "back" || !manualOverlayAvailable}
+                  disabled={busy !== null || hardwareSafetyBlocked || previewGeometrySide !== "back" || !manualOverlayAvailable}
                 >
                   Use Manual Overlay
                 </button>
@@ -4867,7 +5242,7 @@ export default function AiGraderStationPage() {
                 </p>
                 <div className="action-row">
                   <button type="button" onClick={() => setManualCaptureConfirmation(null)} disabled={busy !== null}>Cancel</button>
-                  <button type="button" className="primary" onClick={() => void confirmManualOverlayCapture()} disabled={busy !== null || !manualOverlayAvailable}>
+                  <button type="button" className="primary" onClick={() => void confirmManualOverlayCapture()} disabled={busy !== null || hardwareSafetyBlocked || !manualOverlayAvailable}>
                     Confirm Manual Capture
                   </button>
                 </div>
@@ -5056,6 +5431,11 @@ export default function AiGraderStationPage() {
           <section className="next-card">
             <p className="eyebrow">Current Step</p>
             <h2>{activePipelineStep.label}</h2>
+            {hardwareSafetyMessage ? (
+              <div className='error safety-error' role='alert'>
+                Hardware safety interlock: {hardwareSafetyMessage} Use the explicit Safe Off recovery before continuing.
+              </div>
+            ) : null}
             <p>{activePipelineStep.action}</p>
             <ol className="pipeline-steps">
               {gradePipelineSteps.map((step) => (
@@ -5065,7 +5445,7 @@ export default function AiGraderStationPage() {
                 </li>
               ))}
             </ol>
-            <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
+            <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null || hardwareSafetyBlocked}>
               {busy === "start" ? "Starting" : "Start New Card"}
             </button>
             <button
@@ -5104,7 +5484,7 @@ export default function AiGraderStationPage() {
                 <select
                   value={stationCaptureMode}
                   onChange={(event) => void changeStationCaptureMode(event.target.value as StationCaptureMode)}
-                  disabled={!bridgeConnected || busy !== null || stationSettingsLocked}
+                  disabled={!bridgeConnected || busy !== null || stationSettingsLocked || hardwareSafetyBlocked}
                 >
                   <option value="single">Single</option>
                   <option value="rapid">Rapid</option>
@@ -5115,7 +5495,7 @@ export default function AiGraderStationPage() {
                 <select
                   value={stationCaptureProfile}
                   onChange={(event) => void changeStationCaptureProfile(event.target.value as AiGraderCaptureProfile)}
-                  disabled={!bridgeConnected || busy !== null || stationSettingsLocked}
+                  disabled={!bridgeConnected || busy !== null || stationSettingsLocked || hardwareSafetyBlocked}
                 >
                   <option value="full_forensic">Full Forensic</option>
                   <option value="production_fast">Production Fast</option>
@@ -5127,12 +5507,12 @@ export default function AiGraderStationPage() {
                 type="checkbox"
                 checked={autoCaptureEnabled}
                 onChange={(event) => void changeAutoCaptureEnabled(event.target.checked)}
-                disabled={!bridgeConnected || busy !== null}
+                disabled={!bridgeConnected || busy !== null || hardwareSafetyBlocked}
               />
               Auto Capture
               <span>{autoCapturePhaseLabel(autoCaptureUi)}</span>
             </label>
-            <small>Enabling Auto Capture explicitly confirms the fixed fixture and metric rulers are visible for automatic Front Capture.</small>
+            <small>Auto Capture still requires the separate exact-session Confirm Fixture &amp; Rulers action and authoritative Front readiness.</small>
             <p>
               Full Forensic is the previous stable profile. Production Fast is an explicit opt-in and preserves all grading roles; 5 seconds per side is not proven without a Dell hardware run.
             </p>
@@ -5206,7 +5586,7 @@ export default function AiGraderStationPage() {
                 type="button"
                 className={liveLightingDraft.enabled ? "toggle active" : "toggle"}
                 onClick={() => setLiveLightingEnabled(!liveLightingDraft.enabled)}
-                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held}
+                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || hardwareSafetyBlocked}
               >
                 {liveLightingDraft.enabled ? "Live" : "Off"}
               </button>
@@ -5236,7 +5616,7 @@ export default function AiGraderStationPage() {
                   key={channel}
                   className={liveLightingDraft.channels.includes(channel) ? `segment segment-${channel} active` : `segment segment-${channel}`}
                   onClick={() => toggleLiveLightingChannel(channel)}
-                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held}
+                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || hardwareSafetyBlocked}
                   aria-label={`Toggle Leimac channel ${channel}`}
                   title={`Channel ${channel}`}
                 >
@@ -5245,10 +5625,10 @@ export default function AiGraderStationPage() {
               ))}
             </div>
             <div className="mini-actions">
-              <button type="button" onClick={() => setAllLiveLightingChannels([1, 2, 3, 4, 5, 6, 7, 8])} disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held}>
+              <button type="button" onClick={() => setAllLiveLightingChannels([1, 2, 3, 4, 5, 6, 7, 8])} disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || hardwareSafetyBlocked}>
                 All On
               </button>
-              <button type="button" onClick={() => setAllLiveLightingChannels([])} disabled={!bridgeConnected || busy !== null}>
+              <button type="button" onClick={() => setAllLiveLightingChannels([])} disabled={!bridgeConnected || busy !== null || hardwareSafetyBlocked}>
                 All Off
               </button>
             </div>
@@ -5261,7 +5641,7 @@ export default function AiGraderStationPage() {
                 step="0.1"
                 value={liveLightingDraft.dutyPercent}
                 onChange={(event) => setLiveLightingDuty(Number(event.target.value))}
-                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held}
+                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || hardwareSafetyBlocked}
               />
             </label>
             <div className="lighting-inputs">
@@ -5274,18 +5654,19 @@ export default function AiGraderStationPage() {
                   step="0.1"
                   value={liveLightingDraft.dutyPercent}
                   onChange={(event) => setLiveLightingDuty(Number(event.target.value))}
-                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held}
+                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || hardwareSafetyBlocked}
                 />
               </label>
               <label>
-                Exposure us
+                Exposure us (bridge-held)
                 <input
                   type="number"
                   min="1"
                   max="100000"
                   step="1000"
                   value={profileDraft.exposureUs}
-                  onChange={(event) => setProfileDraft((current) => ({ ...current, exposureUs: Number(event.target.value) }))}
+                  readOnly
+                  disabled
                 />
               </label>
             </div>
@@ -5293,10 +5674,28 @@ export default function AiGraderStationPage() {
               type="button"
               className="accept-lighting"
               onClick={acceptLiveLightingProfile}
-              disabled={!bridgeConnected || busy !== null || liveLightingDraft.channels.length === 0 || Number(liveLightingDraft.dutyPercent) <= 0}
+              disabled={!bridgeConnected || busy !== null || hardwareSafetyBlocked ||
+                !liveLightingPositioningVerified || frontAcceptedProfileCurrent}
             >
-              {busy === "lighting-accept" ? "Accepting" : "Use This Profile For Capture"}
+              {busy === "lighting-accept"
+                ? "Accepting"
+                : frontAcceptedProfileCurrent
+                  ? "Profile Accepted"
+                  : "Use This Profile For Capture"}
             </button>
+            <button
+              type='button'
+              className='confirm-fixture-rulers'
+              onClick={confirmFrontFixtureAndRulers}
+              disabled={!bridgeConnected || busy !== null || hardwareSafetyBlocked || frontFixtureRulersCurrent}
+            >
+              {busy === 'confirm-fixture-rulers'
+                ? 'Confirming'
+                : frontFixtureRulersCurrent
+                  ? 'Fixture & Rulers Confirmed'
+                  : 'Confirm Fixture & Rulers'}
+            </button>
+            <p className='status-note'>{frontStartReadiness.message}</p>
             {liveLighting.lastError ? <p className="status-note">{liveLighting.lastError}</p> : null}
           </section>
 
@@ -5488,7 +5887,7 @@ export default function AiGraderStationPage() {
             </div>
             <div>
               <span>Safe Off</span>
-              <strong>{status.confirmations?.finalLightOff ? "Confirmed" : "Available"}</strong>
+              <strong>{liveLightingSafeOffLabel}</strong>
             </div>
             <div>
               <span>Bridge</span>
@@ -5612,7 +6011,7 @@ export default function AiGraderStationPage() {
               {productionPublished ? <Link href="/ai-grader/labels/sheets">Open Label Sheets</Link> : null}
               {productionPublished ? (
                 <>
-                  <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
+                  <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null || hardwareSafetyBlocked}>
                     {busy === "start" ? "Starting" : "Start Next Grade"}
                   </button>
                   <Link href="/ai-grader/finish">Finish Cards</Link>
@@ -5683,7 +6082,7 @@ export default function AiGraderStationPage() {
             <p>Finish queue: {productionPublished ? "available for slab photos and eBay evaluate" : "available after publish"}</p>
           </section>
 
-          <button type="button" className="safe" onClick={safeOff} disabled={busy !== null}>
+          <button type="button" className="safe" onClick={safeOff} disabled={!safeOffRecoveryAllowed}>
             {busy === "safe-off" ? "Safe Off Running" : "Safe Off / End Session"}
           </button>
 
