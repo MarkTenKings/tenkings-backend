@@ -29,6 +29,8 @@ The template digest binds the schema version, asset IDs/versions/hashes, physica
 
 The supplied SIL Open Font License is vendored as `fonts/OFL-BebasNeue.txt` (SHA-256 `5dfb66367e86929261375e6a6cf14410136c3c394962f1a381f0a17cf4c7f81d`). The provided package contains only Bebas Neue Regular 400, so all current proof text uses that exact file. Browser integration may declare the same local font with `@font-face`; print artifacts do not depend on a network request to Google Fonts.
 
+The complete static Barlow family is also vendored under `fonts/barlow/` with its SIL OFL, weight/style map, CSS declarations, and SHA-256 inventory. Barlow is available for subsequent small-label-text revisions, but it is not silently substituted into this approved template. A renderer change must freeze the selected Barlow asset hashes, advance the template digest, regenerate proofs twice, and repeat actual-size/300-DPI inspection.
+
 ## Physical geometry
 
 All base geometry is expressed once in top-left PDF points, at 72 points per inch. PDF rendering converts each top-left Y coordinate to bottom-left PDF space with:
