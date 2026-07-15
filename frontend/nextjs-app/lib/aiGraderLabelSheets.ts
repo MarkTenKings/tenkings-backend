@@ -1,3 +1,10 @@
+import {
+  AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION,
+  AI_GRADER_POKEMON_LABEL_V1_TEMPLATE_ID,
+  AI_GRADER_SPORTS_LABEL_V1_TEMPLATE_ID,
+  type AiGraderLabelV1TemplateId,
+} from "./aiGraderLabelV1";
+
 export const AI_GRADER_LABEL_SHEET_SCHEMA_VERSION = "ai-grader-label-sheet-v1" as const;
 export const AI_GRADER_LABEL_SHEET_COLUMNS = 2;
 export const AI_GRADER_LABEL_SHEET_ROWS = 8;
@@ -54,17 +61,7 @@ export type AiGraderLabelSheetSourceRow = {
   createdAt?: unknown;
   updatedAt?: unknown;
   publicationStatus?: unknown;
-  nfc?: unknown;
   report?: unknown;
-};
-
-export type AiGraderLabelNfcRegistrationDto = {
-  status: "active";
-  registrationKind: "registered_link";
-  publicTagId: string;
-  nfcTagUrl: string;
-  chipType: "NTAG215";
-  securityMode: "static_url_v1";
 };
 
 export type AiGraderLabelSheetLabelDto = {
@@ -80,6 +77,14 @@ export type AiGraderLabelSheetLabelDto = {
   physicalPrintStatus: "not_printed" | "printed";
   confirmedCardIdentity: AiGraderSafeConfirmedCardIdentity;
   nfc?: AiGraderLabelNfcRegistrationDto;
+  labelV1?: {
+    schemaVersion: typeof AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION;
+    templateId: AiGraderLabelV1TemplateId;
+    templateDigestSha256: string;
+    printProfileId: string;
+    cutProfileId: string;
+    physicalCalibrationStatus: "provisional_not_physically_calibrated";
+  };
 };
 
 export type AiGraderLabelSheetDto = {
@@ -265,21 +270,34 @@ function safeLabelNfcRegistration(value: unknown): AiGraderLabelNfcRegistrationD
   const publicTagId = optionalString(value.publicTagId);
   if (!publicTagId || !/^[A-Za-z0-9_-]{32}$/.test(publicTagId)) return undefined;
   const expectedUrl = `https://collect.tenkings.co/nfc/${publicTagId}`;
-  const securityMode = optionalString(value.securityMode) === "STATIC_URL_V1"
-    ? "static_url_v1"
-    : optionalString(value.securityMode);
+  const securityMode = optionalString(value.securityMode) === "STATIC_URL_V1" ? "static_url_v1" : optionalString(value.securityMode);
+  if (optionalString(value.nfcTagUrl) !== expectedUrl || optionalString(value.chipType) !== "NTAG215" || securityMode !== "static_url_v1") return undefined;
+  return { status: "active", registrationKind: "registered_link", publicTagId, nfcTagUrl: expectedUrl, chipType: "NTAG215", securityMode: "static_url_v1" };
+}
+function safeLabelV1Summary(value: unknown): AiGraderLabelSheetLabelDto["labelV1"] {
+  if (!isRecord(value) || value.schemaVersion !== AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION) return undefined;
+  const templateId = optionalString(value.templateId);
+  const templateDigestSha256 = optionalString(value.templateDigestSha256);
+  const calibration = isRecord(value.calibrationProfile) ? value.calibrationProfile : {};
+  const printProfileId = optionalString(calibration.printProfileId);
+  const cutProfileId = optionalString(calibration.cutProfileId);
   if (
-    optionalString(value.nfcTagUrl) !== expectedUrl ||
-    optionalString(value.chipType) !== "NTAG215" ||
-    securityMode !== "static_url_v1"
-  ) return undefined;
+    (templateId !== AI_GRADER_SPORTS_LABEL_V1_TEMPLATE_ID && templateId !== AI_GRADER_POKEMON_LABEL_V1_TEMPLATE_ID) ||
+    !templateDigestSha256 ||
+    !/^[a-f0-9]{64}$/.test(templateDigestSha256) ||
+    !printProfileId ||
+    !cutProfileId ||
+    calibration.status !== "provisional_not_physically_calibrated"
+  ) {
+    return undefined;
+  }
   return {
-    status: "active",
-    registrationKind: "registered_link",
-    publicTagId,
-    nfcTagUrl: expectedUrl,
-    chipType: "NTAG215",
-    securityMode: "static_url_v1",
+    schemaVersion: AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION,
+    templateId,
+    templateDigestSha256,
+    printProfileId,
+    cutProfileId,
+    physicalCalibrationStatus: "provisional_not_physically_calibrated",
   };
 }
 
@@ -304,6 +322,7 @@ export function toSafeAiGraderLabelSheetLabel(row: AiGraderLabelSheetSourceRow):
     physicalPrintStatus: optionalString(row.physicalPrintStatus) === "printed" ? "printed" : "not_printed",
     confirmedCardIdentity: normalizeAiGraderConfirmedCardIdentity(cardIdentity),
     ...(nfc ? { nfc } : {}),
+    ...(safeLabelV1Summary(payload.labelV1) ? { labelV1: safeLabelV1Summary(payload.labelV1) } : {}),
   };
 }
 
@@ -322,7 +341,7 @@ export function buildAiGraderLabelSheetRevision(
       Partial<
         Pick<
           AiGraderLabelSheetLabelDto,
-          "certId" | "grade" | "qrPayloadUrl" | "publicReportUrl" | "confirmedCardIdentity"
+          "certId" | "grade" | "qrPayloadUrl" | "publicReportUrl" | "confirmedCardIdentity" | "labelV1"
         >
       >
   >
@@ -338,6 +357,7 @@ export function buildAiGraderLabelSheetRevision(
         qrPayloadUrl: label.qrPayloadUrl ?? null,
         publicReportUrl: label.publicReportUrl ?? null,
         confirmedCardIdentity: label.confirmedCardIdentity ?? {},
+        labelV1: "labelV1" in label ? label.labelV1 ?? null : null,
       })
     )
     .join("|");

@@ -1,0 +1,875 @@
+import PDFDocument from "pdfkit";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import {
+  AI_GRADER_LABEL_V1_ASSETS,
+  AI_GRADER_LABEL_V1_COORDINATE_MANIFEST,
+  AI_GRADER_LABEL_V1_DESIGN_APPROVAL,
+  AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION,
+  AI_GRADER_LABEL_V1_SCHEMA_VERSION,
+  AI_GRADER_LABEL_V1_SHEET_SLOTS,
+  AI_GRADER_LABEL_V1_TEXT_TIERS,
+  aiGraderLabelV1AssetList,
+  buildAiGraderLabelV1Content,
+  type AiGraderLabelV1Snapshot,
+} from "../aiGraderLabelV1";
+
+type PdfDoc = InstanceType<typeof PDFDocument>;
+type PdfImage = {
+  width: number;
+  height: number;
+  label: string;
+  obj?: unknown;
+  embed(doc: PdfDoc): void;
+};
+
+type LabelFontName = "TKLabelDisplay" | "TKLabelSmall";
+type LabelFontClass = "display-font" | "small-font";
+
+type FittedBlock = {
+  lines: string[];
+  fontSize: number;
+  lineHeight: number;
+  wrapped: boolean;
+  fontName: LabelFontName;
+  fontClass: LabelFontClass;
+  characterSpacingPt: number;
+  svgBaselineFromTopEm: number;
+};
+
+type LabelLayout = {
+  metadata: FittedBlock;
+  primary: FittedBlock;
+  descriptor?: FittedBlock;
+  cert: FittedBlock;
+  grade: FittedBlock;
+  cardNumber?: FittedBlock;
+  topStartY: number;
+  descriptorStartY?: number;
+};
+
+type AiGraderLabelV1CalibrationTransform = {
+  printOffsetXPt: number;
+  printOffsetYPt: number;
+  printScaleX: number;
+  printScaleY: number;
+  cutOffsetXPt: number;
+  cutOffsetYPt: number;
+  cutScaleX: number;
+  cutScaleY: number;
+  cutRotationDeg: number;
+};
+
+export type AiGraderLabelV1SheetEntry = {
+  slot: number;
+  snapshot: AiGraderLabelV1Snapshot;
+};
+
+const FIXED_PDF_DATE = new Date("2026-07-13T00:00:00.000Z");
+const ASSET_DIRECTORY_CANDIDATES = [
+  path.join(process.cwd(), "assets", "ai-grader-label-v1"),
+  path.join(process.cwd(), "frontend", "nextjs-app", "assets", "ai-grader-label-v1"),
+];
+
+function assetDirectory() {
+  const selected = ASSET_DIRECTORY_CANDIDATES.find((candidate) => existsSync(candidate));
+  if (!selected) throw new Error("Label V1 approved-source asset directory is missing.");
+  return selected;
+}
+
+function assetPath(fileName: string) {
+  return path.join(assetDirectory(), fileName);
+}
+
+function sha256(bytes: Buffer | string) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function readApprovedAsset(fileName: string, expectedSha256: string) {
+  const bytes = readFileSync(assetPath(fileName));
+  const actualSha256 = sha256(bytes);
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(`Label V1 asset hash mismatch for ${fileName}.`);
+  }
+  return bytes;
+}
+
+function pngDimensions(bytes: Buffer) {
+  if (bytes.length < 24 || bytes.toString("ascii", 1, 4) !== "PNG") {
+    throw new Error("Label V1 expected a valid PNG asset.");
+  }
+  return { widthPx: bytes.readUInt32BE(16), heightPx: bytes.readUInt32BE(20) };
+}
+
+export function assertAiGraderLabelV1Assets() {
+  for (const asset of aiGraderLabelV1AssetList()) {
+    const bytes = readApprovedAsset(asset.fileName, asset.sha256);
+    if (asset.mimeType === "image/png") {
+      const dimensions = pngDimensions(bytes);
+      if (dimensions.widthPx !== asset.widthPx || dimensions.heightPx !== asset.heightPx) {
+        throw new Error(`Label V1 asset dimensions do not match the manifest for ${asset.fileName}.`);
+      }
+    }
+  }
+}
+
+export function aiGraderLabelV1TemplateDigest() {
+  return sha256(
+    JSON.stringify({
+      schemaVersion: AI_GRADER_LABEL_V1_SCHEMA_VERSION,
+      runtimeSchemaVersion: AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION,
+      designApproval: AI_GRADER_LABEL_V1_DESIGN_APPROVAL,
+      assets: aiGraderLabelV1AssetList().map((asset) => ({
+        assetId: asset.assetId,
+        version: asset.version,
+        sha256: asset.sha256,
+        approvedForProduction: asset.approvedForProduction,
+      })),
+      coordinates: AI_GRADER_LABEL_V1_COORDINATE_MANIFEST,
+      textTiers: AI_GRADER_LABEL_V1_TEXT_TIERS,
+      fieldMappingVersion: "ten-kings-label-field-map-primary-first-barlow-v2",
+      overflowPolicyVersion: "balanced-whole-word-mixed-font-existing-hyphen-v2",
+      assignmentFreezePolicyVersion: "sheet-id-number-slot-assigned-at-v1",
+    })
+  );
+}
+
+function registerFonts(doc: PdfDoc) {
+  const displayFont = readApprovedAsset(AI_GRADER_LABEL_V1_ASSETS.font.fileName, AI_GRADER_LABEL_V1_ASSETS.font.sha256);
+  const smallFont = readApprovedAsset(
+    AI_GRADER_LABEL_V1_ASSETS.smallTextFont.fileName,
+    AI_GRADER_LABEL_V1_ASSETS.smallTextFont.sha256
+  );
+  const wordmarkFont = readApprovedAsset(
+    AI_GRADER_LABEL_V1_ASSETS.wordmarkFont.fileName,
+    AI_GRADER_LABEL_V1_ASSETS.wordmarkFont.sha256
+  );
+  doc.registerFont("TKLabelRegular", displayFont);
+  doc.registerFont("TKLabelBold", displayFont);
+  doc.registerFont("TKLabelDisplay", displayFont);
+  doc.registerFont("TKLabelSmall", smallFont);
+  doc.registerFont("TKLabelWordmark", wordmarkFont);
+}
+
+function openVerifiedImages(doc: PdfDoc) {
+  const openImage = (source: Buffer) => (doc as unknown as { openImage(source: Buffer): PdfImage }).openImage(source);
+  return {
+    crown: openImage(readApprovedAsset(AI_GRADER_LABEL_V1_ASSETS.crown.fileName, AI_GRADER_LABEL_V1_ASSETS.crown.sha256)),
+  };
+}
+
+function measure(doc: PdfDoc, value: string, fontSize: number, fontName: LabelFontName, characterSpacingPt: number) {
+  return doc.font(fontName).fontSize(fontSize).widthOfString(value, { characterSpacing: characterSpacingPt });
+}
+
+type WrapToken = {
+  text: string;
+  attachToPrevious: boolean;
+};
+
+function wrapTokens(value: string, allowNumericHyphenBreaks = false) {
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .flatMap((word) =>
+      word.split(allowNumericHyphenBreaks ? /(?=-[A-Za-z0-9])/g : /(?=-[A-Za-z])/g).map((text, index) => ({
+        text,
+        attachToPrevious: index > 0,
+      }))
+    );
+}
+
+function joinWrapTokens(tokens: readonly WrapToken[]) {
+  return tokens.reduce((line, token) => {
+    if (!line || token.attachToPrevious) return `${line}${token.text}`;
+    return `${line} ${token.text}`;
+  }, "");
+}
+
+function wrapWholeWords(
+  doc: PdfDoc,
+  value: string,
+  widthPt: number,
+  fontSize: number,
+  maxLines: number,
+  fontName: LabelFontName,
+  characterSpacingPt: number,
+  allowNumericHyphenBreaks = false
+) {
+  const text = value.trim().replace(/\s+/g, " ");
+  if (!text) return [];
+  if (measure(doc, text, fontSize, fontName, characterSpacingPt) <= widthPt) return [text];
+  if (maxLines < 2) return undefined;
+
+  const tokens = wrapTokens(text, allowNumericHyphenBreaks);
+  if (!tokens.length || tokens.some((token) => measure(doc, token.text, fontSize, fontName, characterSpacingPt) > widthPt)) {
+    return undefined;
+  }
+
+  const candidates: Array<{ lines: string[]; widths: number[]; tokenCounts: number[]; startsWithHyphen: boolean[] }> = [];
+  const visit = (start: number, lines: string[], widths: number[], tokenCounts: number[], startsWithHyphen: boolean[]) => {
+    for (let end = start + 1; end <= tokens.length; end += 1) {
+      const lineTokens = tokens.slice(start, end);
+      const line = joinWrapTokens(lineTokens);
+      const lineWidth = measure(doc, line, fontSize, fontName, characterSpacingPt);
+      if (lineWidth > widthPt) break;
+      if (end === tokens.length) {
+        candidates.push({
+          lines: [...lines, line],
+          widths: [...widths, lineWidth],
+          tokenCounts: [...tokenCounts, lineTokens.length],
+          startsWithHyphen: [...startsWithHyphen, line.startsWith("-")],
+        });
+      } else if (lines.length + 1 < maxLines) {
+        visit(
+          end,
+          [...lines, line],
+          [...widths, lineWidth],
+          [...tokenCounts, lineTokens.length],
+          [...startsWithHyphen, line.startsWith("-")]
+        );
+      }
+    }
+  };
+  visit(0, [], [], [], []);
+  if (!candidates.length) return undefined;
+
+  candidates.sort((left, right) => {
+    const score = (candidate: (typeof candidates)[number]) => {
+      const orphanCount =
+        tokens.length >= 4
+          ? candidate.tokenCounts.filter((count, index) => count === 1 && !candidate.startsWithHyphen[index]).length
+          : 0;
+      const widest = Math.max(...candidate.widths);
+      const narrowest = Math.min(...candidate.widths);
+      return orphanCount * 1_000_000 + (widest - narrowest) ** 2;
+    };
+    return score(left) - score(right);
+  });
+  return candidates[0].lines;
+}
+
+function fitBlock(
+  doc: PdfDoc,
+  value: string,
+  widthPt: number,
+  tiers: readonly number[],
+  input: {
+    maxLines: number;
+    fontName: LabelFontName;
+    fontClass: LabelFontClass;
+    characterSpacingPt: number;
+    svgBaselineFromTopEm: number;
+    allowNumericHyphenBreaks?: boolean;
+    lineHeightRatio?: number;
+    maxHeightPt?: number;
+  }
+): FittedBlock {
+  for (const fontSize of tiers) {
+    const lines = wrapWholeWords(
+      doc,
+      value,
+      widthPt,
+      fontSize,
+      input.maxLines,
+      input.fontName,
+      input.characterSpacingPt,
+      input.allowNumericHyphenBreaks
+    );
+    const lineHeight = fontSize * (input.lineHeightRatio ?? 0.92);
+    if (lines && (!input.maxHeightPt || lines.length * lineHeight <= input.maxHeightPt)) {
+      return {
+        lines,
+        fontSize,
+        lineHeight,
+        wrapped: lines.length > 1,
+        fontName: input.fontName,
+        fontClass: input.fontClass,
+        characterSpacingPt: input.characterSpacingPt,
+        svgBaselineFromTopEm: input.svgBaselineFromTopEm,
+      };
+    }
+  }
+  throw new Error(`Label V1 cannot fit whole words inside the approved fixed tiers: ${value}`);
+}
+
+function buildLayout(doc: PdfDoc, snapshot: AiGraderLabelV1Snapshot): LabelLayout {
+  const content = buildAiGraderLabelV1Content(snapshot);
+  const manifest = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST;
+  const identityWidth = manifest.labelZones.identity.widthPt;
+  const displayStyle = manifest.typography.display;
+  const smallStyle = manifest.typography.small;
+  let metadata: FittedBlock | undefined;
+  let primary: FittedBlock | undefined;
+  for (const primaryTier of AI_GRADER_LABEL_V1_TEXT_TIERS.primary) {
+    const primaryLines = wrapWholeWords(
+      doc,
+      content.primary,
+      identityWidth,
+      primaryTier,
+      2,
+      "TKLabelDisplay",
+      displayStyle.characterSpacingPt
+    );
+    if (!primaryLines) continue;
+    for (const metadataTier of AI_GRADER_LABEL_V1_TEXT_TIERS.metadata) {
+      const metadataLines = wrapWholeWords(
+        doc,
+        content.metadata,
+        identityWidth,
+        metadataTier,
+        2,
+        "TKLabelSmall",
+        smallStyle.characterSpacingPt
+      );
+      if (!metadataLines || metadataLines.length + primaryLines.length > 4) continue;
+      const candidateMetadata: FittedBlock = {
+        lines: metadataLines,
+        fontSize: metadataTier,
+        lineHeight: metadataTier * 0.95,
+        wrapped: metadataLines.length > 1,
+        fontName: "TKLabelSmall",
+        fontClass: "small-font",
+        characterSpacingPt: smallStyle.characterSpacingPt,
+        svgBaselineFromTopEm: smallStyle.svgBaselineFromTopEm,
+      };
+      const candidatePrimary: FittedBlock = {
+        lines: primaryLines,
+        fontSize: primaryTier,
+        lineHeight: primaryTier * 0.9,
+        wrapped: primaryLines.length > 1,
+        fontName: "TKLabelDisplay",
+        fontClass: "display-font",
+        characterSpacingPt: displayStyle.characterSpacingPt,
+        svgBaselineFromTopEm: displayStyle.svgBaselineFromTopEm,
+      };
+      const totalHeight = candidatePrimary.lines.length * candidatePrimary.lineHeight + 1 + candidateMetadata.lines.length * candidateMetadata.lineHeight;
+      if (totalHeight <= 34.5) {
+        metadata = candidateMetadata;
+        primary = candidatePrimary;
+        break;
+      }
+    }
+    if (metadata && primary) break;
+  }
+  if (!metadata || !primary) throw new Error("Label V1 cannot fit metadata and primary text without splitting or truncating a word.");
+
+  const topHeight = primary.lines.length * primary.lineHeight + 1 + metadata.lines.length * metadata.lineHeight;
+  const topStartY = 2.7 + (34.5 - topHeight) / 2;
+  const descriptor = content.descriptor
+    ? fitBlock(doc, content.descriptor, identityWidth, AI_GRADER_LABEL_V1_TEXT_TIERS.descriptor, {
+        maxLines: 2,
+        fontName: "TKLabelSmall",
+        fontClass: "small-font",
+        characterSpacingPt: smallStyle.characterSpacingPt,
+        svgBaselineFromTopEm: smallStyle.svgBaselineFromTopEm,
+        maxHeightPt: 13,
+      })
+    : undefined;
+  const cert = fitBlock(
+    doc,
+    content.certId,
+    AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.labelZones.nfcReserved.widthPt,
+    AI_GRADER_LABEL_V1_TEXT_TIERS.cert,
+    {
+      maxLines: 2,
+      fontName: "TKLabelSmall",
+      fontClass: "small-font",
+      characterSpacingPt: smallStyle.characterSpacingPt,
+      svgBaselineFromTopEm: smallStyle.svgBaselineFromTopEm,
+      allowNumericHyphenBreaks: true,
+      maxHeightPt: 11.5,
+    }
+  );
+  const grade = fitBlock(
+    doc,
+    content.grade,
+    AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.labelZones.grade.widthPt,
+    AI_GRADER_LABEL_V1_TEXT_TIERS.grade,
+    {
+      maxLines: 1,
+      fontName: "TKLabelDisplay",
+      fontClass: "display-font",
+      characterSpacingPt: displayStyle.characterSpacingPt,
+      svgBaselineFromTopEm: displayStyle.svgBaselineFromTopEm,
+    }
+  );
+  const cardNumber = content.cardNumberAboveGrade
+    ? fitBlock(
+        doc,
+        content.cardNumberAboveGrade,
+        AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.labelZones.grade.widthPt,
+        AI_GRADER_LABEL_V1_TEXT_TIERS.cardNumber,
+        {
+          maxLines: 1,
+          fontName: "TKLabelSmall",
+          fontClass: "small-font",
+          characterSpacingPt: smallStyle.characterSpacingPt,
+          svgBaselineFromTopEm: smallStyle.svgBaselineFromTopEm,
+        }
+      )
+    : undefined;
+  return {
+    metadata,
+    primary,
+    ...(descriptor ? { descriptor, descriptorStartY: 40.2 + (13 - descriptor.lines.length * descriptor.lineHeight) / 2 } : {}),
+    cert,
+    grade,
+    ...(cardNumber ? { cardNumber } : {}),
+    topStartY,
+  };
+}
+
+function drawCenteredBlock(doc: PdfDoc, fitted: FittedBlock, x: number, y: number, width: number) {
+  fitted.lines.forEach((line, index) => {
+    doc.font(fitted.fontName).fontSize(fitted.fontSize).fillColor("#0f0f0f").text(line, x, y + index * fitted.lineHeight, {
+      width,
+      align: "center",
+      characterSpacing: fitted.characterSpacingPt,
+      lineBreak: false,
+    });
+  });
+}
+
+function drawVerticalSeparator(doc: PdfDoc, crown: PdfImage, x: number, y: number, height: number) {
+  const ornament = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.labelZones.separatorCrowns;
+  const crownTop = ornament.centerYPt - ornament.heightPt / 2;
+  const crownBottom = ornament.centerYPt + ornament.heightPt / 2;
+  doc.lineWidth(0.55).strokeColor("#0f0f0f");
+  doc.moveTo(x, y).lineTo(x, crownTop - ornament.lineGapPt).stroke();
+  doc.moveTo(x, crownBottom + ornament.lineGapPt).lineTo(x, y + height).stroke();
+  doc.image(crown as unknown as Parameters<PdfDoc["image"]>[0], x - ornament.widthPt / 2, crownTop, {
+    fit: [ornament.widthPt, ornament.heightPt],
+    align: "center",
+    valign: "center",
+  });
+}
+
+function drawNfcSymbol(doc: PdfDoc) {
+  const zone = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.labelZones.nfcReserved;
+  const smallStyle = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.typography.small;
+  const centerX = zone.centerXPt;
+  const centerY = zone.centerYPt;
+  const radius = zone.printedGuideDiameterPt / 2;
+  doc.lineWidth(0.55).strokeColor("#0f0f0f").circle(centerX, centerY, radius).stroke();
+  doc.path(`M ${centerX - 8.2} ${centerY - 3.3} C ${centerX - 4.7} ${centerY - 8.2}, ${centerX + 4.7} ${centerY - 8.2}, ${centerX + 8.2} ${centerY - 3.3}`).stroke();
+  doc.path(`M ${centerX - 8.2} ${centerY + 3.3} C ${centerX - 4.7} ${centerY + 8.2}, ${centerX + 4.7} ${centerY + 8.2}, ${centerX + 8.2} ${centerY + 3.3}`).stroke();
+  doc.font("TKLabelSmall").fontSize(5.4).fillColor("#0f0f0f").text("NFC", centerX - 8, centerY - 2.7, {
+    width: 16,
+    align: "center",
+    characterSpacing: smallStyle.characterSpacingPt,
+    lineBreak: false,
+  });
+}
+
+function drawLabelPdf(
+  doc: PdfDoc,
+  images: { crown: PdfImage },
+  snapshot: AiGraderLabelV1Snapshot,
+  x: number,
+  y: number,
+  inspectionOutline = false
+) {
+  const manifest = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST;
+  const identity = manifest.labelZones.identity;
+  const layout = buildLayout(doc, snapshot);
+  doc.save().translate(x, y);
+  doc.rect(0, 0, manifest.label.widthPt, manifest.label.heightPt).fill("#ffffff");
+  if (inspectionOutline) {
+    doc.rect(0.25, 0.25, manifest.label.widthPt - 0.5, manifest.label.heightPt - 0.5).lineWidth(0.5).stroke("#c8c8c8");
+  }
+  const brandCrown = manifest.labelZones.brandCrown;
+  doc.image(images.crown as unknown as Parameters<PdfDoc["image"]>[0], brandCrown.xPt, brandCrown.yPt, {
+    fit: [brandCrown.widthPt, brandCrown.heightPt],
+    align: "center",
+    valign: "center",
+  });
+  const wordmarkZone = manifest.labelZones.brandWordmark;
+  const wordmark = manifest.typography.wordmark;
+  const wordmarkCenterX = wordmarkZone.xPt + wordmarkZone.widthPt / 2;
+  const unscaledWordmarkWidth = wordmarkZone.widthPt / wordmark.horizontalScale;
+  const unscaledWordmarkX = wordmarkCenterX - unscaledWordmarkWidth / 2;
+  doc.save().translate(wordmarkCenterX, 0).scale(wordmark.horizontalScale, 1).translate(-wordmarkCenterX, 0);
+  doc.font("TKLabelWordmark").fontSize(wordmark.fontSizePt).fillColor("#0f0f0f").text(wordmark.text, unscaledWordmarkX, wordmarkZone.yPt, {
+    width: unscaledWordmarkWidth,
+    align: "center",
+    characterSpacing: wordmark.characterSpacingPt,
+    lineBreak: false,
+  });
+  doc.restore();
+  const grading = manifest.labelZones.gradingText;
+  doc.font("TKLabelSmall").fontSize(grading.fontSizePt).fillColor("#0f0f0f").text("GRADING", grading.xPt, grading.yPt, {
+    width: grading.widthPt,
+    align: "center",
+    characterSpacing: grading.characterSpacingPt,
+    lineBreak: false,
+  });
+  drawVerticalSeparator(
+    doc,
+    images.crown,
+    manifest.labelZones.leftSeparator.xPt,
+    manifest.labelZones.leftSeparator.yPt,
+    manifest.labelZones.leftSeparator.heightPt
+  );
+  drawVerticalSeparator(
+    doc,
+    images.crown,
+    manifest.labelZones.rightSeparator.xPt,
+    manifest.labelZones.rightSeparator.yPt,
+    manifest.labelZones.rightSeparator.heightPt
+  );
+
+  drawCenteredBlock(doc, layout.primary, identity.xPt, layout.topStartY, identity.widthPt);
+  const metadataY = layout.topStartY + layout.primary.lines.length * layout.primary.lineHeight + 1;
+  drawCenteredBlock(doc, layout.metadata, identity.xPt, metadataY, identity.widthPt);
+  if (layout.descriptor && layout.descriptorStartY !== undefined) {
+    drawCenteredBlock(doc, layout.descriptor, identity.xPt, layout.descriptorStartY, identity.widthPt);
+  }
+  drawNfcSymbol(doc);
+  const nfc = manifest.labelZones.nfcReserved;
+  drawCenteredBlock(doc, layout.cert, nfc.xPt, nfc.certTopPt, nfc.widthPt);
+
+  const grade = manifest.labelZones.grade;
+  if (layout.cardNumber) drawCenteredBlock(doc, layout.cardNumber, grade.xPt, grade.cardNumberTopPt, grade.widthPt);
+  const gradeTop = grade.glyphCenterYPt - layout.grade.fontSize * grade.glyphCenterFromTextTopEm;
+  drawCenteredBlock(doc, layout.grade, grade.xPt, gradeTop, grade.widthPt);
+  doc.restore();
+  return layout;
+}
+
+function createPdf(size: [number, number], title: string) {
+  const doc = new PDFDocument({
+    size,
+    margin: 0,
+    compress: false,
+    info: {
+      Title: title,
+      Author: "Ten Kings",
+      Creator: "Ten Kings Label V1 deterministic renderer",
+      Producer: "Ten Kings Label V1 deterministic renderer",
+      CreationDate: FIXED_PDF_DATE,
+      ModDate: FIXED_PDF_DATE,
+    },
+  });
+  registerFonts(doc);
+  return doc;
+}
+
+function fillPageWhite(doc: PdfDoc, widthPt: number, heightPt: number) {
+  doc.save().rect(0, 0, widthPt, heightPt).fill("#ffffff").restore();
+}
+
+function assertCalibrationTransform(calibration: AiGraderLabelV1CalibrationTransform) {
+  for (const value of [
+    calibration.printOffsetXPt,
+    calibration.printOffsetYPt,
+    calibration.printScaleX,
+    calibration.printScaleY,
+    calibration.cutOffsetXPt,
+    calibration.cutOffsetYPt,
+    calibration.cutScaleX,
+    calibration.cutScaleY,
+    calibration.cutRotationDeg,
+  ]) {
+    if (!Number.isFinite(value)) throw new Error("Label V1 calibration transforms must be finite numbers.");
+  }
+  if (calibration.printScaleX <= 0 || calibration.printScaleY <= 0 || calibration.cutScaleX <= 0 || calibration.cutScaleY <= 0) {
+    throw new Error("Label V1 calibration scales must be greater than zero.");
+  }
+}
+
+function applyPrintCalibrationTransform(doc: PdfDoc, calibration: AiGraderLabelV1CalibrationTransform) {
+  assertCalibrationTransform(calibration);
+  // Top-left page origin. Base coordinates are scaled first, then translated by the measured point offsets.
+  doc.transform(
+    calibration.printScaleX,
+    0,
+    0,
+    calibration.printScaleY,
+    calibration.printOffsetXPt,
+    calibration.printOffsetYPt
+  );
+}
+
+function cleanTransformNumber(value: number) {
+  const rounded = Math.abs(value) < 0.0000005 ? 0 : Math.round(value * 1_000_000) / 1_000_000;
+  return String(rounded);
+}
+
+export function aiGraderLabelV1CutTransformMatrix(calibration: AiGraderLabelV1CalibrationTransform) {
+  assertCalibrationTransform(calibration);
+  const radians = calibration.cutRotationDeg * Math.PI / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  // Top-left page origin. Base coordinates are scaled, then positive degrees rotate clockwise in SVG space, then offsets translate.
+  return [
+    cosine * calibration.cutScaleX,
+    sine * calibration.cutScaleX,
+    -sine * calibration.cutScaleY,
+    cosine * calibration.cutScaleY,
+    calibration.cutOffsetXPt,
+    calibration.cutOffsetYPt,
+  ].map(cleanTransformNumber);
+}
+
+async function collectPdf(doc: PdfDoc): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  doc.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+  const done = new Promise<Buffer>((resolve, reject) => {
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+  });
+  doc.end();
+  return done;
+}
+
+export async function renderAiGraderLabelV1Pdf(snapshot: AiGraderLabelV1Snapshot) {
+  assertAiGraderLabelV1Assets();
+  const label = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.label;
+  const doc = createPdf([label.widthPt, label.heightPt], `${snapshot.templateId} ${snapshot.certId}`);
+  const images = openVerifiedImages(doc);
+  fillPageWhite(doc, label.widthPt, label.heightPt);
+  drawLabelPdf(doc, images, snapshot, 0, 0);
+  return collectPdf(doc);
+}
+
+function pdfKitTopYFromPdfBottomY(pdfYPt: number) {
+  const manifest = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST;
+  return manifest.paper.heightPt - pdfYPt - manifest.label.heightPt;
+}
+
+function validateSheetEntries(entries: readonly AiGraderLabelV1SheetEntry[]) {
+  if (entries.length < 1 || entries.length > AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.sheet.capacity) {
+    throw new Error("Label V1 production sheets require 1 through 16 assigned labels.");
+  }
+  const occupied = new Set<number>();
+  for (const entry of entries) {
+    if (!Number.isInteger(entry.slot) || entry.slot < 1 || entry.slot > 16) throw new Error("Label V1 sheet slot must be 1 through 16.");
+    if (occupied.has(entry.slot)) throw new Error("Label V1 sheet contains a duplicate slot.");
+    occupied.add(entry.slot);
+  }
+}
+
+export async function renderAiGraderLabelSheetV1Pdf(input: {
+  entries: readonly AiGraderLabelV1SheetEntry[];
+  title: string;
+  proofMarks?: boolean;
+  calibration?: AiGraderLabelV1CalibrationTransform;
+}) {
+  assertAiGraderLabelV1Assets();
+  validateSheetEntries(input.entries);
+  const manifest = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST;
+  const doc = createPdf([manifest.paper.widthPt, manifest.paper.heightPt], input.title);
+  const images = openVerifiedImages(doc);
+  fillPageWhite(doc, manifest.paper.widthPt, manifest.paper.heightPt);
+  const calibration = input.calibration ?? manifest.calibration;
+  doc.save();
+  applyPrintCalibrationTransform(doc, calibration);
+  const bySlot = new Map(input.entries.map((entry) => [entry.slot, entry]));
+  for (const slot of AI_GRADER_LABEL_V1_SHEET_SLOTS) {
+    const topY = pdfKitTopYFromPdfBottomY(slot.pdfYPt);
+    if (Math.abs(topY - slot.yFromTopPt) > 0.0001) throw new Error("Label V1 PDF top/bottom coordinate conversion failed.");
+    const entry = bySlot.get(slot.slot);
+    if (entry) drawLabelPdf(doc, images, entry.snapshot, slot.xPt, topY, input.proofMarks === true);
+    if (input.proofMarks) {
+      doc
+        .rect(slot.xPt, topY, manifest.label.widthPt, manifest.label.heightPt)
+        .lineWidth(0.25)
+        .dash(2, { space: 2 })
+        .stroke(entry ? "#8f8f8f" : "#d6d6d6")
+        .undash();
+      doc.font("TKLabelRegular").fontSize(4.5).fillColor("#8f8f8f").text(`SLOT ${slot.slot}`, slot.xPt + 2, topY + 2, {
+        lineBreak: false,
+      });
+    }
+  }
+  doc.restore();
+  return collectPdf(doc);
+}
+
+export async function renderAiGraderLabelV1InspectionPdf(snapshots: readonly AiGraderLabelV1Snapshot[]) {
+  assertAiGraderLabelV1Assets();
+  const doc = createPdf([612, 792], "Ten Kings Label V1 enlarged inspection proofs");
+  const images = openVerifiedImages(doc);
+  const scale = 2.45;
+  snapshots.forEach((snapshot, index) => {
+    if (index > 0) doc.addPage({ size: [612, 792], margin: 0 });
+    fillPageWhite(doc, 612, 792);
+    doc.font("TKLabelBold").fontSize(17).fillColor("#111111").text("LABEL V1 BARLOW READABILITY REVISION - ACTUAL-SIZE PRINT APPROVED", 54, 48, {
+      width: 504,
+      align: "center",
+    });
+    doc.font("TKLabelRegular").fontSize(10).text(`${snapshot.templateId} | ${snapshot.certId}`, 54, 78, { width: 504, align: "center" });
+    const x = (612 - AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.label.widthPt * scale) / 2;
+    const y = 150;
+    doc.save().translate(x, y).scale(scale);
+    drawLabelPdf(doc, images, snapshot, 0, 0, true);
+    doc.restore();
+    doc.font("TKLabelRegular").fontSize(10).fillColor("#333333").text(
+      "Enlarged 2.45x inspection view. Production source remains 2.73in x 0.83in. Exact crown artwork, Bebas Neue display text, Barlow Regular small text, and the Barlow SemiBold wordmark are embedded. The logical NFC reserve remains 11 mm; the printed guide is 9 mm.",
+      72,
+      340,
+      { width: 468, align: "center", lineGap: 4 }
+    );
+    doc.font("TKLabelBold").fontSize(10).fillColor("#8a2d2d").text(
+      "REVISED POPULATED SHEET PRINTED; BARLOW FOIL READABILITY APPROVED BY MARK",
+      72,
+      410,
+      { width: 468, align: "center" }
+    );
+  });
+  return collectPdf(doc);
+}
+
+export async function renderAiGraderLabelV1CalibrationPdf() {
+  assertAiGraderLabelV1Assets();
+  const manifest = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST;
+  const doc = createPdf([manifest.paper.widthPt, manifest.paper.heightPt], "Ten Kings Label V1 calibration sheet");
+  fillPageWhite(doc, manifest.paper.widthPt, manifest.paper.heightPt);
+  doc.save();
+  applyPrintCalibrationTransform(doc, manifest.calibration);
+  for (const slot of AI_GRADER_LABEL_V1_SHEET_SLOTS) {
+    const topY = pdfKitTopYFromPdfBottomY(slot.pdfYPt);
+    doc.rect(slot.xPt, topY, manifest.label.widthPt, manifest.label.heightPt).lineWidth(0.35).stroke("#000000");
+    doc.font("TKLabelBold").fontSize(6).text(String(slot.slot), slot.xPt + 3, topY + 3, { lineBreak: false });
+    doc.moveTo(slot.xPt, topY).lineTo(slot.xPt + 8, topY).stroke();
+    doc.moveTo(slot.xPt, topY).lineTo(slot.xPt, topY + 8).stroke();
+  }
+  doc.restore();
+  const footerX = manifest.sheet.marginLeftPt;
+  const footerWidth = manifest.paper.widthPt - manifest.sheet.marginLeftPt - manifest.sheet.marginRightPt;
+  doc.font("TKLabelRegular").fontSize(5.5).fillColor("#000000").text(
+    `CALIBRATION ONLY - DO NOT MARK SHEET PRINTED | ${manifest.calibration.printProfileId} / ${manifest.calibration.cutProfileId} / ${manifest.calibration.measuredCalibrationFooterDigestPrefix}`,
+    footerX,
+    manifest.paper.heightPt - 52,
+    { width: footerWidth, align: "center" }
+  );
+  doc.font("TKLabelRegular").fontSize(5.5).text(
+    "Source geometry: 8.50in x 11.00in portrait; labels 2.73in x 0.83in; 2 columns x 8 rows; 0.25in row gaps; 1.00in top/left/right margins. Print at 100% with all fit/scale options disabled.",
+    footerX,
+    manifest.paper.heightPt - 38,
+    { width: footerWidth, align: "center" }
+  );
+  return collectPdf(doc);
+}
+
+function escapeXml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[character] ?? character));
+}
+
+function svgBlock(fitted: FittedBlock, x: number, topY: number, width: number) {
+  return fitted.lines
+    .map((line, index) => {
+      const baselineY = topY + index * fitted.lineHeight + fitted.fontSize * fitted.svgBaselineFromTopEm;
+      return `<text x="${(x + width / 2).toFixed(2)}" y="${baselineY.toFixed(2)}" text-anchor="middle" class="${fitted.fontClass}" font-size="${fitted.fontSize}" letter-spacing="${fitted.characterSpacingPt}">${escapeXml(line)}</text>`;
+    })
+    .join("");
+}
+
+function svgVerticalSeparator(x: number, y: number, height: number, crownBase64: string) {
+  const ornament = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST.labelZones.separatorCrowns;
+  const crownTop = ornament.centerYPt - ornament.heightPt / 2;
+  const crownBottom = ornament.centerYPt + ornament.heightPt / 2;
+  return `<path d="M ${x.toFixed(2)} ${y.toFixed(2)} V ${(crownTop - ornament.lineGapPt).toFixed(2)} M ${x.toFixed(2)} ${(crownBottom + ornament.lineGapPt).toFixed(2)} V ${(y + height).toFixed(2)}"/><image href="data:image/png;base64,${crownBase64}" x="${(x - ornament.widthPt / 2).toFixed(2)}" y="${crownTop.toFixed(2)}" width="${ornament.widthPt}" height="${ornament.heightPt}" preserveAspectRatio="xMidYMid meet"/>`;
+}
+
+function svgGrade(fitted: FittedBlock, x: number, width: number, centerYPt: number) {
+  const baselineY = centerYPt + fitted.fontSize * 0.35;
+  return `<text x="${(x + width / 2).toFixed(2)}" y="${baselineY.toFixed(2)}" text-anchor="middle" class="${fitted.fontClass}" font-size="${fitted.fontSize}" letter-spacing="${fitted.characterSpacingPt}">${escapeXml(fitted.lines[0])}</text>`;
+}
+
+export function renderAiGraderLabelV1Svg(snapshot: AiGraderLabelV1Snapshot, input?: { inspectionOutline?: boolean }) {
+  assertAiGraderLabelV1Assets();
+  const measurement = createPdf([10, 10], "Label V1 SVG measurement");
+  const layout = buildLayout(measurement, snapshot);
+  measurement.end();
+  const manifest = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST;
+  const identity = manifest.labelZones.identity;
+  const nfc = manifest.labelZones.nfcReserved;
+  const grade = manifest.labelZones.grade;
+  const crown = readApprovedAsset(AI_GRADER_LABEL_V1_ASSETS.crown.fileName, AI_GRADER_LABEL_V1_ASSETS.crown.sha256).toString("base64");
+  const displayFont = readApprovedAsset(AI_GRADER_LABEL_V1_ASSETS.font.fileName, AI_GRADER_LABEL_V1_ASSETS.font.sha256).toString("base64");
+  const smallFont = readApprovedAsset(AI_GRADER_LABEL_V1_ASSETS.smallTextFont.fileName, AI_GRADER_LABEL_V1_ASSETS.smallTextFont.sha256).toString("base64");
+  const wordmarkFont = readApprovedAsset(AI_GRADER_LABEL_V1_ASSETS.wordmarkFont.fileName, AI_GRADER_LABEL_V1_ASSETS.wordmarkFont.sha256).toString("base64");
+  const centerX = nfc.centerXPt;
+  const centerY = nfc.centerYPt;
+  const metadataY = layout.topStartY + layout.primary.lines.length * layout.primary.lineHeight + 1;
+  const inspectionOutline = input?.inspectionOutline
+    ? `<rect x=".25" y=".25" width="${manifest.label.widthPt - 0.5}" height="${manifest.label.heightPt - 0.5}" fill="none" stroke="#c8c8c8" stroke-width=".5"/>`
+    : undefined;
+  const cardNumber = layout.cardNumber
+    ? svgBlock(layout.cardNumber, grade.xPt, grade.cardNumberTopPt, grade.widthPt)
+    : undefined;
+  const centerContent = [
+    `<g id="primary-name">${svgBlock(layout.primary, identity.xPt, layout.topStartY, identity.widthPt)}</g>`,
+    `<g id="metadata">${svgBlock(layout.metadata, identity.xPt, metadataY, identity.widthPt)}</g>`,
+    layout.descriptor && layout.descriptorStartY !== undefined
+      ? `<g id="descriptor">${svgBlock(layout.descriptor, identity.xPt, layout.descriptorStartY, identity.widthPt)}</g>`
+      : "",
+  ].join("");
+  return [
+    `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2.73in" height="0.83in" viewBox="0 0 ${manifest.label.widthPt} ${manifest.label.heightPt}">
+  <defs>
+    <style>
+      @font-face { font-family: "Bebas Neue"; src: url(data:font/ttf;base64,${displayFont}); font-weight: 400; font-style: normal; }
+      @font-face { font-family: "Barlow"; src: url(data:font/ttf;base64,${smallFont}); font-weight: 400; font-style: normal; }
+      @font-face { font-family: "Barlow SemiBold"; src: url(data:font/ttf;base64,${wordmarkFont}); font-weight: 600; font-style: normal; }
+      text { fill: #0f0f0f; }
+      .display-font { font-family: "Bebas Neue", sans-serif; font-weight: 400; font-style: normal; }
+      .small-font { font-family: "Barlow", sans-serif; font-weight: 400; font-style: normal; }
+      .wordmark-font { font-family: "Barlow SemiBold", sans-serif; font-weight: 600; font-style: normal; }
+      path, circle, line { fill: none; stroke: #0f0f0f; stroke-width: .55; }
+    </style>
+  </defs>
+  <rect width="${manifest.label.widthPt}" height="${manifest.label.heightPt}" fill="#fff"/>`,
+    inspectionOutline ? `  ${inspectionOutline}` : undefined,
+    `  <image id="brand-crown" href="data:image/png;base64,${crown}" x="${manifest.labelZones.brandCrown.xPt}" y="${manifest.labelZones.brandCrown.yPt}" width="${manifest.labelZones.brandCrown.widthPt}" height="${manifest.labelZones.brandCrown.heightPt}" preserveAspectRatio="xMidYMid meet"/>
+  <g id="brand-wordmark-transform" transform="translate(${(manifest.labelZones.brandWordmark.xPt + manifest.labelZones.brandWordmark.widthPt / 2).toFixed(2)} 0) scale(${manifest.typography.wordmark.horizontalScale} 1) translate(-${(manifest.labelZones.brandWordmark.xPt + manifest.labelZones.brandWordmark.widthPt / 2).toFixed(2)} 0)"><text id="brand-wordmark" x="${(manifest.labelZones.brandWordmark.xPt + manifest.labelZones.brandWordmark.widthPt / 2).toFixed(2)}" y="${(manifest.labelZones.brandWordmark.yPt + manifest.typography.wordmark.fontSizePt * manifest.typography.wordmark.svgBaselineFromTopEm).toFixed(2)}" text-anchor="middle" class="wordmark-font" font-size="${manifest.typography.wordmark.fontSizePt}" letter-spacing="${manifest.typography.wordmark.characterSpacingPt}">TEN KINGS</text></g>
+  <text id="grading-word" x="${(manifest.labelZones.gradingText.xPt + manifest.labelZones.gradingText.widthPt / 2).toFixed(2)}" y="${(manifest.labelZones.gradingText.yPt + manifest.labelZones.gradingText.fontSizePt * manifest.typography.small.svgBaselineFromTopEm).toFixed(2)}" text-anchor="middle" class="small-font" font-size="${manifest.labelZones.gradingText.fontSizePt}" letter-spacing="${manifest.labelZones.gradingText.characterSpacingPt}">GRADING</text>
+  ${svgVerticalSeparator(manifest.labelZones.leftSeparator.xPt, manifest.labelZones.leftSeparator.yPt, manifest.labelZones.leftSeparator.heightPt, crown)}
+  ${svgVerticalSeparator(manifest.labelZones.rightSeparator.xPt, manifest.labelZones.rightSeparator.yPt, manifest.labelZones.rightSeparator.heightPt, crown)}
+  ${centerContent}
+  <circle id="nfc-printed-guide" cx="${centerX}" cy="${centerY}" r="${nfc.printedGuideDiameterPt / 2}"/>
+  <path d="M ${centerX - 8.2} ${centerY - 3.3} C ${centerX - 4.7} ${centerY - 8.2}, ${centerX + 4.7} ${centerY - 8.2}, ${centerX + 8.2} ${centerY - 3.3} M ${centerX - 8.2} ${centerY + 3.3} C ${centerX - 4.7} ${centerY + 8.2}, ${centerX + 4.7} ${centerY + 8.2}, ${centerX + 8.2} ${centerY + 3.3}"/>
+  <text id="nfc-word" x="${centerX}" y="${centerY + 1.8}" text-anchor="middle" class="small-font" font-size="5.4" letter-spacing="${manifest.typography.small.characterSpacingPt}">NFC</text>
+  ${svgBlock(layout.cert, nfc.xPt, nfc.certTopPt, nfc.widthPt)}`,
+    cardNumber ? `  ${cardNumber}` : undefined,
+    `  ${svgGrade(layout.grade, grade.xPt, grade.widthPt, grade.glyphCenterYPt)}
+</svg>`,
+  ].filter((line): line is string => Boolean(line)).join("\n");
+}
+
+export function renderAiGraderLabelSheetCutSvg(input?: {
+  calibrationMarks?: boolean;
+  calibration?: AiGraderLabelV1CalibrationTransform;
+}) {
+  const manifest = AI_GRADER_LABEL_V1_COORDINATE_MANIFEST;
+  const calibrationProfile = input?.calibration ?? manifest.calibration;
+  const transform = aiGraderLabelV1CutTransformMatrix(calibrationProfile);
+  const firstSlot = AI_GRADER_LABEL_V1_SHEET_SLOTS[0];
+  const lastSlot = AI_GRADER_LABEL_V1_SHEET_SLOTS[AI_GRADER_LABEL_V1_SHEET_SLOTS.length - 1];
+  const gridRightPt = lastSlot.xPt + manifest.label.widthPt;
+  const gridBottomPt = lastSlot.yFromTopPt + manifest.label.heightPt;
+  const rectangles = AI_GRADER_LABEL_V1_SHEET_SLOTS.map(
+    (slot) => `<rect id="slot-${slot.slot}" x="${slot.xPt}" y="${slot.yFromTopPt}" width="${manifest.label.widthPt}" height="${manifest.label.heightPt}" rx="0" ry="0"/>`
+  ).join("\n  ");
+  const calibration = input?.calibrationMarks
+    ? `<g id="calibration-marks"><path d="M ${firstSlot.xPt - 8} ${firstSlot.yFromTopPt} H ${firstSlot.xPt + 8} M ${firstSlot.xPt} ${firstSlot.yFromTopPt - 8} V ${firstSlot.yFromTopPt + 8} M ${gridRightPt - 8} ${gridBottomPt} H ${gridRightPt + 8} M ${gridRightPt} ${gridBottomPt - 8} V ${gridBottomPt + 8}"/></g>`
+    : "";
+  return [
+    `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${manifest.paper.widthIn}in" height="${manifest.paper.heightIn}in" viewBox="${manifest.svg.viewBox}">
+  <title>Ten Kings Label V1 Cricut cut geometry</title>
+  <desc>Provisional 2 column by 8 row cut paths. Transform order is scale, clockwise rotation in top-left SVG space, then translation. Physical Cricut calibration is required.</desc>
+  <g id="cut-calibration-transform" transform="matrix(${transform.join(" ")})">
+  <g id="cut-paths" fill="none" stroke="#000000" stroke-width="0.25">
+  ${rectangles}
+  </g>`,
+    calibration ? `  ${calibration}` : undefined,
+    `  </g>
+</svg>`,
+  ].filter((line): line is string => Boolean(line)).join("\n");
+}

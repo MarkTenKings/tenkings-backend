@@ -30,6 +30,8 @@ import {
   listAiGraderLabelSheetsRuntime,
   markAiGraderLabelSheetPrintedRuntime,
   prepareAiGraderLabelSheetPrintRuntime,
+  renderAiGraderLabelSheetCutSvgRuntime,
+  renderAiGraderLabelSheetPdfRuntime,
 } from "../../../../../lib/server/aiGraderLabelSheetRuntime";
 import { runAiGraderOcrPrefillRuntime } from "../../../../../lib/server/aiGraderOcrPrefill";
 
@@ -115,6 +117,8 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     persistSelectedComps: persistAiGraderSelectedCompsRuntime,
     prepareLabelSheetPrint: prepareAiGraderLabelSheetPrintRuntime,
     markLabelSheetPrinted: markAiGraderLabelSheetPrintedRuntime,
+    renderLabelSheetPdf: renderAiGraderLabelSheetPdfRuntime,
+    renderLabelSheetCutSvg: renderAiGraderLabelSheetCutSvgRuntime,
     addToInventory: addAiGraderCardToInventoryRuntime,
   });
   return runtime(req, res);

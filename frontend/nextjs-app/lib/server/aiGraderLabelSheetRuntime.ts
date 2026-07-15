@@ -9,12 +9,26 @@ import {
   type Prisma,
 } from "@tenkings/database";
 import {
+  buildAiGraderLabelV1RuntimeRecord,
+  canonicalAiGraderLabelV1RuntimeRecord,
+  parseAiGraderLabelV1RuntimeRecord,
+  strictAiGraderLabelV1JsonEqual,
+  type AiGraderLabelV1RuntimeRecord,
+} from "../aiGraderLabelV1";
+import {
+  aiGraderLabelV1TemplateDigest,
+  renderAiGraderLabelSheetCutSvg,
+  renderAiGraderLabelSheetV1Pdf,
+  type AiGraderLabelV1SheetEntry,
+} from "./aiGraderLabelV1Renderer";
+import {
   buildAiGraderLabelSheetRevision,
   buildAiGraderLabelSheetsResult,
   mergeAiGraderLabelSheetPayload,
   normalizeAiGraderConfirmedCardIdentity,
   parseAiGraderLabelSheetAssignment,
   printAiGraderLabelSheetAssignment,
+  safeAiGraderLabelPublicUrl,
   sealAiGraderLabelSheetAssignment,
   selectNextAiGraderLabelSheetSlot,
   toSafeAiGraderLabelSheetLabel,
@@ -54,6 +68,13 @@ export type AiGraderPrintedLabelSheetResult = {
   sheet: AiGraderLabelSheetDto;
   printedLabelCount: number;
   labelIds: string[];
+};
+
+export type AiGraderRenderedLabelSheetFile = {
+  body: Buffer;
+  contentType: "application/pdf" | "image/svg+xml";
+  fileName: string;
+  revision: string;
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -548,6 +569,13 @@ export async function completePublishedAiGraderCardTx(input: {
       "AI_GRADER_PUBLISHED_LABEL_NOT_READY"
     );
   }
+  if (safeAiGraderLabelPublicUrl(publicReportUrl) !== publicReportUrl) {
+    throw runtimeError(
+      "Verified Publish grading-label evidence does not contain a safe public report URL.",
+      409,
+      "AI_GRADER_PUBLISHED_LABEL_PUBLIC_URL_UNSAFE"
+    );
+  }
 
   const slot = selectNextAiGraderLabelSheetSlot(sources, {
     reportId: input.reportId,
@@ -573,7 +601,42 @@ export async function completePublishedAiGraderCardTx(input: {
     cardAssetId: input.cardAssetId,
     itemId: input.itemId,
   });
-  const initialPayload = mergeAiGraderLabelSheetPayload(basePayload, slot.assignment, identity);
+  const templateDigestSha256 = aiGraderLabelV1TemplateDigest();
+  const labelV1 = buildAiGraderLabelV1RuntimeRecord({
+    templateDigestSha256,
+    reportId: input.reportId,
+    certId,
+    grade: labelGradeText,
+    publicReportUrl,
+    identity,
+    sheetAssignment: {
+      sheetId: slot.assignment.sheetId,
+      sheetNumber: slot.assignment.sheetNumber,
+      slot: slot.assignment.slot,
+      assignedAt: slot.assignment.assignedAt,
+    },
+  });
+  const existingPayload = isRecord(reportLabel.payload) ? reportLabel.payload : {};
+  if (existingPayload.labelV1 !== undefined) {
+    const existingLabelV1 = parseAiGraderLabelV1RuntimeRecord(existingPayload.labelV1, templateDigestSha256);
+    if (!existingLabelV1 || canonicalAiGraderLabelV1RuntimeRecord(existingLabelV1) !== canonicalAiGraderLabelV1RuntimeRecord(labelV1)) {
+      throw runtimeError(
+        "The assigned Label V1 template or immutable confirmed identity changed after assignment.",
+        409,
+        "AI_GRADER_LABEL_V1_IMMUTABLE_SNAPSHOT_MISMATCH"
+      );
+    }
+  } else if (slot.existing) {
+    throw runtimeError(
+      "The existing grading-label assignment predates Label V1 and must be reviewed before conversion.",
+      409,
+      "AI_GRADER_LABEL_V1_LEGACY_ASSIGNMENT_REVIEW_REQUIRED"
+    );
+  }
+  const initialPayload = {
+    ...mergeAiGraderLabelSheetPayload(basePayload, slot.assignment, identity),
+    labelV1,
+  };
   const previousLabel = toSafeAiGraderLabelSheetLabel(sourceRows([reportLabel])[0]);
   const nextLabel = toSafeAiGraderLabelSheetLabel({
     id: labelId,
@@ -599,6 +662,7 @@ export async function completePublishedAiGraderCardTx(input: {
   }
   const payload = {
     ...mergeAiGraderLabelSheetPayload(basePayload, assignment, identity),
+    labelV1,
     ...(invalidatePrintedLabel
       ? {
           physicalPrint: {
@@ -661,6 +725,144 @@ export async function listAiGraderLabelSheetsRuntime(input?: { dbClient?: any; t
     }),
   });
   return buildAiGraderLabelSheetsResult(sourceRows(rows, nfcByReportId));
+}
+
+async function readFrozenLabelV1Sheet(input: {
+  db: any;
+  tenantId: string;
+  sheetId: string;
+  expectedRevision: string;
+}) {
+  const rows = await readTenantLabels(input.db, input.tenantId);
+  const sources = sourceRows(rows);
+  const sheet = buildAiGraderLabelSheetsResult(sources).sheets.find((candidate) => candidate.sheetId === input.sheetId);
+  if (!sheet) throw runtimeError("AI Grader label sheet was not found.", 404, "AI_GRADER_LABEL_SHEET_NOT_FOUND");
+  if (sheet.slotConflict) {
+    throw runtimeError("AI Grader label sheet has a slot conflict and cannot be rendered.", 409, "AI_GRADER_LABEL_SHEET_SLOT_CONFLICT");
+  }
+  if (!input.expectedRevision || sheet.revision !== input.expectedRevision) {
+    throw runtimeError("AI Grader label sheet changed. Refresh it before rendering.", 409, "AI_GRADER_LABEL_SHEET_REVISION_MISMATCH");
+  }
+  if (sheet.status !== "sealed" && sheet.status !== "printed") {
+    throw runtimeError(
+      "Prepare and seal the current AI Grader label sheet before requesting production output.",
+      409,
+      "AI_GRADER_LABEL_SHEET_NOT_SEALED"
+    );
+  }
+
+  const templateDigestSha256 = aiGraderLabelV1TemplateDigest();
+  const rowById = new Map(rows.map((row: any) => [optionalString(row.id), row]));
+  let calibrationProfile: AiGraderLabelV1RuntimeRecord["calibrationProfile"] | undefined;
+  const entries: AiGraderLabelV1SheetEntry[] = sheet.labels.map((label) => {
+    const row = rowById.get(label.labelId);
+    const payload = isRecord(row?.payload) ? row.payload : {};
+    const persistedAssignment = parseAiGraderLabelSheetAssignment(payload);
+    const labelV1 = parseAiGraderLabelV1RuntimeRecord(payload.labelV1, templateDigestSha256);
+    if (!labelV1 || !persistedAssignment) {
+      throw runtimeError(
+        "AI Grader label is missing the approved immutable Label V1 template record.",
+        409,
+        "AI_GRADER_LABEL_V1_TEMPLATE_RECORD_INVALID"
+      );
+    }
+    const snapshot = labelV1.renderSnapshot;
+    if (calibrationProfile && !strictAiGraderLabelV1JsonEqual(calibrationProfile, labelV1.calibrationProfile)) {
+      throw runtimeError(
+        "AI Grader label sheet contains conflicting frozen calibration profiles.",
+        409,
+        "AI_GRADER_LABEL_V1_CALIBRATION_MISMATCH"
+      );
+    }
+    calibrationProfile = labelV1.calibrationProfile;
+    const persistedImmutableAssignment = {
+      sheetId: persistedAssignment.sheetId,
+      sheetNumber: persistedAssignment.sheetNumber,
+      slot: persistedAssignment.slot,
+      assignedAt: persistedAssignment.assignedAt,
+    };
+    if (
+      label.publicationStatus !== "published" ||
+      persistedAssignment.sheetId !== sheet.sheetId ||
+      persistedAssignment.sheetNumber !== sheet.sheetNumber ||
+      persistedAssignment.slot !== label.slot ||
+      persistedAssignment.assignedAt !== label.assignedAt ||
+      !strictAiGraderLabelV1JsonEqual(labelV1.immutableSheetAssignment, persistedImmutableAssignment) ||
+      snapshot.reportId !== label.reportId ||
+      snapshot.certId !== label.certId ||
+      String(snapshot.grade) !== label.grade ||
+      snapshot.publicReportUrl !== label.publicReportUrl ||
+      !strictAiGraderLabelV1JsonEqual(labelV1.immutableIdentitySnapshot, label.confirmedCardIdentity)
+    ) {
+      throw runtimeError(
+        "AI Grader label rows no longer match the immutable approved Label V1 snapshot.",
+        409,
+        "AI_GRADER_LABEL_V1_SNAPSHOT_MISMATCH"
+      );
+    }
+    return { slot: label.slot, snapshot };
+  });
+  if (!calibrationProfile) {
+    throw runtimeError("AI Grader label sheet contains no printable labels.", 409, "AI_GRADER_LABEL_SHEET_EMPTY");
+  }
+  return { sheet, entries, calibrationProfile };
+}
+
+async function labelV1SheetRenderAuthority(input: {
+  tenantId: string;
+  sheetId: string;
+  expectedRevision: string;
+  operatorUserId?: string | null;
+  dbClient?: any;
+}) {
+  if (!input.operatorUserId) {
+    throw runtimeError("A human operator session is required to render an AI Grader label sheet.", 403, "AI_GRADER_HUMAN_OPERATOR_REQUIRED");
+  }
+  const { prisma } = await import("@tenkings/database");
+  return readFrozenLabelV1Sheet({
+    db: input.dbClient ?? (prisma as any),
+    tenantId: input.tenantId,
+    sheetId: input.sheetId,
+    expectedRevision: input.expectedRevision,
+  });
+}
+
+export async function renderAiGraderLabelSheetPdfRuntime(input: {
+  tenantId: string;
+  sheetId: string;
+  expectedRevision: string;
+  operatorUserId?: string | null;
+  dbClient?: any;
+}): Promise<AiGraderRenderedLabelSheetFile> {
+  const authority = await labelV1SheetRenderAuthority(input);
+  const body = await renderAiGraderLabelSheetV1Pdf({
+    entries: authority.entries,
+    title: `Ten Kings Label V1 ${authority.sheet.sheetId} ${authority.sheet.revision}`,
+    calibration: authority.calibrationProfile,
+  });
+  return {
+    body,
+    contentType: "application/pdf",
+    fileName: `${authority.sheet.sheetId}-${authority.sheet.revision}.pdf`,
+    revision: authority.sheet.revision,
+  };
+}
+
+export async function renderAiGraderLabelSheetCutSvgRuntime(input: {
+  tenantId: string;
+  sheetId: string;
+  expectedRevision: string;
+  operatorUserId?: string | null;
+  dbClient?: any;
+}): Promise<AiGraderRenderedLabelSheetFile> {
+  const authority = await labelV1SheetRenderAuthority(input);
+  const body = Buffer.from(renderAiGraderLabelSheetCutSvg({ calibrationMarks: false, calibration: authority.calibrationProfile }), "utf8");
+  return {
+    body,
+    contentType: "image/svg+xml",
+    fileName: `${authority.sheet.sheetId}-${authority.sheet.revision}-cricut-cut.svg`,
+    revision: authority.sheet.revision,
+  };
 }
 
 async function mutateSheet(input: {

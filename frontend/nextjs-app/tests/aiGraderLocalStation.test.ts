@@ -55,7 +55,14 @@ import {
   sanitizeAiGraderUploadHeadersForResponse,
   validateAiGraderInventoryReadiness,
 } from "../lib/server/aiGraderProductionApi";
-import { completePublishedAiGraderCardTx } from "../lib/server/aiGraderLabelSheetRuntime";
+import {
+  completePublishedAiGraderCardTx,
+  listAiGraderLabelSheetsRuntime,
+  markAiGraderLabelSheetPrintedRuntime,
+  prepareAiGraderLabelSheetPrintRuntime,
+  renderAiGraderLabelSheetCutSvgRuntime,
+  renderAiGraderLabelSheetPdfRuntime,
+} from "../lib/server/aiGraderLabelSheetRuntime";
 import {
   AI_GRADER_OPERATOR_USER_IDS_ENV,
   AI_GRADER_SERVICE_ACCOUNT_ID_ENV,
@@ -95,6 +102,7 @@ type MockResponse = NextApiResponse & {
   statusCodeValue: number | null;
   headers: Record<string, string | number | readonly string[]>;
   jsonBody: unknown;
+  sentBody: unknown;
 };
 
 function mockRequest(method: string, action?: string[]): NextApiRequest {
@@ -111,6 +119,7 @@ function mockResponse(): MockResponse {
     statusCodeValue: null,
     headers: {},
     jsonBody: undefined,
+    sentBody: undefined,
     setHeader(this: MockResponse, name: string, value: string | number | readonly string[]) {
       this.headers[name] = value;
       return this;
@@ -121,6 +130,10 @@ function mockResponse(): MockResponse {
     },
     json(this: MockResponse, body: unknown) {
       this.jsonBody = body;
+      return this;
+    },
+    send(this: MockResponse, body: unknown) {
+      this.sentBody = body;
       return this;
     },
   } as unknown as MockResponse;
@@ -980,7 +993,7 @@ test("normal AI Grader operator workflow hides internal pipeline buttons", () =>
     "Review Report",
     "Publish to Ten Kings",
     "View Public Report",
-    "Print Label",
+    "Open Label Sheets",
     "Run eBay Comps",
     "Card History Reports",
   ]);
@@ -1015,7 +1028,7 @@ test("AI Grader publish readiness holds public links until hosted publish succee
   assert.equal(publishedReadiness.status, "published");
   assert.equal(publishedReadiness.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/sample-final-v0");
   assert.equal(publishedReadiness.qrPayloadUrl, publishedReadiness.publicReportUrl);
-  assert.equal(publishedReadiness.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/sample-final-v0");
+  assert.equal(publishedReadiness.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/sheets");
   assert.equal(publishedReadiness.certId, release.label.certId);
 });
 
@@ -1069,7 +1082,7 @@ test("AI Grader comps readiness requires final grade and card identity", () => {
     "not_ready_missing_identity"
   );
   assert.equal(buildAiGraderCompsReadiness({ bundle: finalBundle, productionRelease: release }).status, "ready");
-  assert.equal(buildAiGraderLabelPreviewUrl("report-1"), "https://collect.tenkings.co/ai-grader/labels/report-1");
+  assert.equal(buildAiGraderLabelPreviewUrl("report-1"), "https://collect.tenkings.co/ai-grader/labels/sheets");
 });
 
 test("production publication API is disabled by default and does not require DB access", async () => {
@@ -2833,7 +2846,7 @@ test("production publish finalize updates CardAsset linkage when identity is pre
   assert.equal(body.ok, true);
   assert.equal(body.result.certId, productionRelease.label.certId);
   assert.equal(body.result.publicReportUrl, "https://collect.tenkings.co/ai-grader/reports/sample-final-v0");
-  assert.equal(body.result.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/sample-final-v0");
+  assert.equal(body.result.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/sheets");
   assert.equal(body.result.uploadedAssetCount, 9);
   assert.equal(calls[0], "admin");
   assert.equal(calls.at(-1), "persist");
@@ -3130,7 +3143,7 @@ test("Finish Cards queue removes local, private, and presigned URLs from downstr
   const item = queue.items[0];
   assert.equal(item.publicReportUrl, null);
   assert.equal(item.qrPayloadUrl, null);
-  assert.equal(item.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/report-unsafe-urls");
+  assert.equal(item.labelPreviewUrl, "https://collect.tenkings.co/ai-grader/labels/sheets");
   assert.equal(item.slabPhotos.frontUrl, null);
   assert.equal(item.slabPhotos.backUrl, "https://cdn.tenkings.test/back.png");
   assert.equal(item.valuation.searchUrl, null);
@@ -3287,6 +3300,28 @@ test("AI Grader label sheet APIs use history reads and human publish mutations",
       assert.equal(input.actorAudit?.action, "publish");
       return { sheet: { ...sheet, status: "printed" }, printedLabelCount: 1, labelIds: ["label-1"] };
     },
+    async renderLabelSheetPdf(input) {
+      calls.push("pdf");
+      assert.equal(input.tenantId, "tenant-1");
+      assert.equal(input.operatorUserId, "admin-1");
+      assert.equal(input.expectedRevision, sheet.revision);
+      return {
+        body: Buffer.from("%PDF-1.3 test"),
+        contentType: "application/pdf",
+        fileName: `${sheet.sheetId}-${sheet.revision}.pdf`,
+        revision: sheet.revision,
+      };
+    },
+    async renderLabelSheetCutSvg(input) {
+      calls.push("cut");
+      assert.equal(input.operatorUserId, "admin-1");
+      return {
+        body: Buffer.from("<svg/>", "utf8"),
+        contentType: "image/svg+xml",
+        fileName: `${sheet.sheetId}-${sheet.revision}-cricut-cut.svg`,
+        revision: sheet.revision,
+      };
+    },
   });
 
   const listRes = mockResponse();
@@ -3305,7 +3340,25 @@ test("AI Grader label sheet APIs use history reads and human publish mutations",
   const markRes = mockResponse();
   await handler(markReq, markRes);
   assert.equal(markRes.statusCodeValue, 200);
-  assert.deepEqual(calls, ["list", "prepare", "mark"]);
+
+  const pdfReq = mockRequest("POST", ["render-label-sheet-pdf"]);
+  pdfReq.body = { sheetId: sheet.sheetId, expectedRevision: sheet.revision };
+  const pdfRes = mockResponse();
+  await handler(pdfReq, pdfRes);
+  assert.equal(pdfRes.statusCodeValue, 200);
+  assert.equal(pdfRes.headers["Content-Type"], "application/pdf");
+  assert.equal(pdfRes.headers["Cache-Control"], "private, no-store, max-age=0");
+  assert.equal(pdfRes.headers["X-Ten-Kings-Label-Revision"], sheet.revision);
+  assert.ok(Buffer.isBuffer(pdfRes.sentBody));
+
+  const cutReq = mockRequest("POST", ["render-label-sheet-cut-svg"]);
+  cutReq.body = { sheetId: sheet.sheetId, expectedRevision: sheet.revision };
+  const cutRes = mockResponse();
+  await handler(cutReq, cutRes);
+  assert.equal(cutRes.statusCodeValue, 200);
+  assert.equal(cutRes.headers["Content-Type"], "image/svg+xml");
+  assert.ok(Buffer.isBuffer(cutRes.sentBody));
+  assert.deepEqual(calls, ["list", "prepare", "mark", "pdf", "cut"]);
 });
 
 test("production card search is admin-gated and returns existing card/item candidates", async () => {
@@ -4254,6 +4307,14 @@ function createPublishedCardTransitionTx(input: {
     calls,
     getBatch: () => batch,
     getLabel: () => labelRow,
+    mutateLabel(mutator: (row: any) => void) {
+      const next = {
+        ...labelRow,
+        payload: JSON.parse(JSON.stringify(labelRow.payload)),
+      };
+      mutator(next);
+      labelRow = next;
+    },
     getPublishedCard: () => ({
       status: publicationStatus === "published" ? "READY" : "UPLOADING",
       imageUrl: publicationStatus === "published" ? "https://cdn.tenkings.test/published/front.png" : "",
@@ -4267,6 +4328,9 @@ function createPublishedCardTransitionTx(input: {
     },
     replaceConfirmedIdentity(value: Record<string, unknown>) {
       confirmedIdentity = { ...confirmedIdentity, ...value };
+    },
+    replaceLabelPublicUrl(value: string) {
+      labelRow = { ...labelRow, publicReportUrl: value, qrPayloadUrl: value };
     },
     corruptStoredPublishAuthorityDigest() {
       publishAuthority = { ...publishAuthority, digestSha256: "0".repeat(64) };
@@ -4295,6 +4359,83 @@ function createPublishedCardTransitionTx(input: {
   };
 }
 
+function recursivelyReorderJsonForDb(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(recursivelyReorderJsonForDb);
+  if (!value || typeof value !== "object") return value;
+  return Object.keys(value as Record<string, unknown>)
+    .sort()
+    .reverse()
+    .reduce<Record<string, unknown>>((result, key) => {
+      result[key] = recursivelyReorderJsonForDb((value as Record<string, unknown>)[key]);
+      return result;
+    }, {});
+}
+
+async function createFrozenLabelSheetDb(labelCount: number) {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const seed = createPublishedCardTransitionTx({ reportBundle, productionRelease });
+  await completePublishedAiGraderCardTx(seed.input);
+  const source = seed.getLabel();
+  let rows = Array.from({ length: labelCount }, (_, index) => {
+    const slot = index + 1;
+    const reportId = `partial-report-${slot}`;
+    const certId = `TKG-PARTIAL-${String(slot).padStart(2, "0")}`;
+    const publicReportUrl = `https://collect.tenkings.co/ai-grader/reports/${reportId}`;
+    const assignedAt = new Date(Date.UTC(2026, 6, 14, 12, slot)).toISOString();
+    const row = JSON.parse(JSON.stringify(source));
+    row.id = `partial-label-${slot}`;
+    row.reportId = `partial-report-row-${slot}`;
+    row.certId = certId;
+    row.publicReportUrl = publicReportUrl;
+    row.qrPayloadUrl = publicReportUrl;
+    row.createdAt = assignedAt;
+    row.updatedAt = assignedAt;
+    row.report = { reportId, publicationStatus: "published" };
+    row.payload.labelSheet = {
+      ...row.payload.labelSheet,
+      sheetId: "ai-grader-label-sheet-partial-test",
+      sheetNumber: 1,
+      slot,
+      assignedAt,
+    };
+    row.payload.labelV1.immutableSheetAssignment = {
+      sheetId: "ai-grader-label-sheet-partial-test",
+      sheetNumber: 1,
+      slot,
+      assignedAt,
+    };
+    row.payload.labelV1.renderSnapshot = {
+      ...row.payload.labelV1.renderSnapshot,
+      reportId,
+      certId,
+      publicReportUrl,
+    };
+    return row;
+  });
+  const tx: any = {
+    async $queryRaw() {
+      return [{ pg_advisory_xact_lock: null }];
+    },
+    aiGraderLabel: {
+      async findMany() {
+        return rows;
+      },
+      async update(args: any) {
+        const index = rows.findIndex((row) => row.id === args.where.id);
+        if (index < 0) throw new Error("Partial-sheet test label was not found.");
+        rows[index] = { ...rows[index], ...args.data };
+        return rows[index];
+      },
+    },
+  };
+  return {
+    ...tx,
+    async $transaction(callback: (transaction: any) => Promise<unknown>) {
+      return callback(tx);
+    },
+  };
+}
+
 test("verified Publish promotes the batch and assigns one grading-label slot, with retry repairing partial state idempotently", async () => {
   const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
   const state = createPublishedCardTransitionTx({ reportBundle, productionRelease });
@@ -4311,8 +4452,256 @@ test("verified Publish promotes the batch and assigns one grading-label slot, wi
   assert.equal(retry.existing, true);
   assert.deepEqual(state.getBatch(), { id: "batch-1", status: "READY", totalCount: 1, processedCount: 1 });
   assert.equal((state.getLabel().payload as any).labelSheet.slot, 1);
+  assert.equal((state.getLabel().payload as any).labelV1.schemaVersion, "ten-kings-label-runtime-v1");
+  assert.equal((state.getLabel().payload as any).labelV1.designApproval.phrase, "Label V1 design approved");
+  assert.equal((state.getLabel().payload as any).labelV1.templateId, "ten-kings-sports-label-v1");
+  assert.match((state.getLabel().payload as any).labelV1.templateDigestSha256, /^[a-f0-9]{64}$/);
+  assert.equal((state.getLabel().payload as any).labelV1.immutableIdentitySnapshot.playerName, "Michael Jordan");
+  assert.deepEqual((state.getLabel().payload as any).labelV1.immutableSheetAssignment, {
+    sheetId: first.sheetId,
+    sheetNumber: first.sheetNumber,
+    slot: first.slot,
+    assignedAt: first.assignedAt,
+  });
+  assert.equal("sealedAt" in (state.getLabel().payload as any).labelV1.immutableSheetAssignment, false);
+  assert.equal("printedAt" in (state.getLabel().payload as any).labelV1.immutableSheetAssignment, false);
+  assert.equal("revision" in (state.getLabel().payload as any).labelV1.immutableSheetAssignment, false);
+  assert.equal((state.getLabel().payload as any).labelV1.renderSnapshot.grade, String(productionRelease.label.labelGradeText));
   assert.equal(state.calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "upsert"), false);
   assert.equal(state.calls.some((call) => call.delegate === "qrCode" || call.delegate === "packLabel"), false);
+});
+
+test("JSONB-style recursive object-key reordering survives Publish retry and sealed rendering", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease });
+  const first = await completePublishedAiGraderCardTx(state.input);
+  state.mutateLabel((row) => {
+    row.payload = recursivelyReorderJsonForDb(row.payload);
+  });
+
+  const retry = await completePublishedAiGraderCardTx(state.input);
+  assert.equal(retry.existing, true);
+  assert.equal(retry.sheetId, first.sheetId);
+  assert.equal(retry.slot, first.slot);
+
+  const open = (await listAiGraderLabelSheetsRuntime({ dbClient: state.db, tenantId: "tenant-1" })).sheets[0];
+  const prepared = await prepareAiGraderLabelSheetPrintRuntime({
+    tenantId: "tenant-1",
+    sheetId: open.sheetId,
+    expectedRevision: open.revision,
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+  });
+  state.mutateLabel((row) => {
+    row.payload = recursivelyReorderJsonForDb(row.payload);
+  });
+  const reloaded = (await listAiGraderLabelSheetsRuntime({ dbClient: state.db, tenantId: "tenant-1" })).sheets[0];
+  const rendered = await renderAiGraderLabelSheetPdfRuntime({
+    tenantId: "tenant-1",
+    sheetId: prepared.sheet.sheetId,
+    expectedRevision: reloaded.revision,
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+  });
+  assert.equal(rendered.contentType, "application/pdf");
+});
+
+test("sealed rendering rejects every altered frozen Label V1 authority field", async () => {
+  const mutations: Array<[string, (row: any) => void]> = [
+    ["identity", (row) => { row.payload.labelV1.immutableIdentitySnapshot.year = "1997"; }],
+    ["grade", (row) => { row.payload.labelV1.renderSnapshot.grade = "8"; }],
+    ["certificate", (row) => { row.payload.labelV1.renderSnapshot.certId = "TKG-CHANGED"; }],
+    ["public URL", (row) => { row.payload.labelV1.renderSnapshot.publicReportUrl = "https://collect.tenkings.co/ai-grader/reports/changed"; }],
+    ["report ID", (row) => { row.payload.labelV1.renderSnapshot.reportId = "changed-report"; }],
+    ["asset hash", (row) => { row.payload.labelV1.renderAssets[0].sha256 = "0".repeat(64); }],
+    ["asset order", (row) => { row.payload.labelV1.renderAssets.reverse(); }],
+    ["template", (row) => { row.payload.labelV1.templateId = "ten-kings-pokemon-label-v1"; }],
+    ["calibration", (row) => { row.payload.labelV1.calibrationProfile.printOffsetXPt = 1; }],
+    ["sheet ID", (row) => { row.payload.labelV1.immutableSheetAssignment.sheetId = "changed-sheet"; }],
+    ["sheet number", (row) => { row.payload.labelV1.immutableSheetAssignment.sheetNumber = 2; }],
+    ["slot", (row) => { row.payload.labelV1.immutableSheetAssignment.slot = 2; }],
+    ["assignment time", (row) => { row.payload.labelV1.immutableSheetAssignment.assignedAt = "2026-07-13T12:00:01.000Z"; }],
+  ];
+
+  for (const [label, mutate] of mutations) {
+    const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+    const state = createPublishedCardTransitionTx({ reportBundle, productionRelease });
+    await completePublishedAiGraderCardTx(state.input);
+    const open = (await listAiGraderLabelSheetsRuntime({ dbClient: state.db, tenantId: "tenant-1" })).sheets[0];
+    await prepareAiGraderLabelSheetPrintRuntime({
+      tenantId: "tenant-1",
+      sheetId: open.sheetId,
+      expectedRevision: open.revision,
+      operatorUserId: "operator-user-1",
+      dbClient: state.db,
+    });
+    state.mutateLabel(mutate);
+    const changed = (await listAiGraderLabelSheetsRuntime({ dbClient: state.db, tenantId: "tenant-1" })).sheets[0];
+    await assert.rejects(
+      () => renderAiGraderLabelSheetPdfRuntime({
+        tenantId: "tenant-1",
+        sheetId: changed.sheetId,
+        expectedRevision: changed.revision,
+        operatorUserId: "operator-user-1",
+        dbClient: state.db,
+      }),
+      (error: any) => Boolean(error),
+      label
+    );
+  }
+});
+
+test("approved Label V1 sheet runtime renders only the frozen published snapshot for a human operator", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease });
+  const assignment = await completePublishedAiGraderCardTx(state.input);
+  const listing = await listAiGraderLabelSheetsRuntime({ dbClient: state.db, tenantId: "tenant-1" });
+  const sheet = listing.sheets.find((candidate) => candidate.sheetId === assignment.sheetId);
+  assert.ok(sheet);
+  assert.equal(sheet.labels[0].labelV1?.templateId, "ten-kings-sports-label-v1");
+  assert.equal(sheet.labels[0].labelV1?.physicalCalibrationStatus, "provisional_not_physically_calibrated");
+
+  await assert.rejects(
+    () => renderAiGraderLabelSheetPdfRuntime({
+      tenantId: "tenant-1",
+      sheetId: sheet.sheetId,
+      expectedRevision: sheet.revision,
+      dbClient: state.db,
+    }),
+    (error: any) => error.code === "AI_GRADER_HUMAN_OPERATOR_REQUIRED"
+  );
+  await assert.rejects(
+    () => renderAiGraderLabelSheetPdfRuntime({
+      tenantId: "tenant-1",
+      sheetId: sheet.sheetId,
+      expectedRevision: "stale-revision",
+      operatorUserId: "operator-user-1",
+      dbClient: state.db,
+    }),
+    (error: any) => error.code === "AI_GRADER_LABEL_SHEET_REVISION_MISMATCH"
+  );
+  await assert.rejects(
+    () => renderAiGraderLabelSheetPdfRuntime({
+      tenantId: "tenant-1",
+      sheetId: sheet.sheetId,
+      expectedRevision: sheet.revision,
+      operatorUserId: "operator-user-1",
+      dbClient: state.db,
+    }),
+    (error: any) => error.code === "AI_GRADER_LABEL_SHEET_NOT_SEALED"
+  );
+  await assert.rejects(
+    () => prepareAiGraderLabelSheetPrintRuntime({
+      tenantId: "tenant-1",
+      sheetId: sheet.sheetId,
+      expectedRevision: "stale-revision",
+      operatorUserId: "operator-user-1",
+      dbClient: state.db,
+    }),
+    (error: any) => error.code === "AI_GRADER_LABEL_SHEET_REVISION_MISMATCH"
+  );
+
+  const prepared = await prepareAiGraderLabelSheetPrintRuntime({
+    tenantId: "tenant-1",
+    sheetId: sheet.sheetId,
+    expectedRevision: sheet.revision,
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+  });
+  assert.equal(prepared.sheet.status, "sealed");
+  assert.equal(prepared.sheet.labelCount, 1);
+  assert.equal(prepared.sheet.openSlotCount, 15);
+
+  const pdf = await renderAiGraderLabelSheetPdfRuntime({
+    tenantId: "tenant-1",
+    sheetId: prepared.sheet.sheetId,
+    expectedRevision: prepared.sheet.revision,
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+  });
+  assert.equal(pdf.contentType, "application/pdf");
+  assert.match(pdf.body.toString("latin1"), /\/MediaBox \[0 0 612 792\]/);
+  assert.equal(pdf.revision, prepared.sheet.revision);
+  const repeatedPdf = await renderAiGraderLabelSheetPdfRuntime({
+    tenantId: "tenant-1",
+    sheetId: prepared.sheet.sheetId,
+    expectedRevision: prepared.sheet.revision,
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+  });
+  assert.deepEqual(repeatedPdf.body, pdf.body);
+  assert.equal(state.getLabel().physicalPrintStatus, "not_printed");
+  assert.equal((state.getLabel().payload as any).labelSheet.printedAt, undefined);
+
+  const cut = await renderAiGraderLabelSheetCutSvgRuntime({
+    tenantId: "tenant-1",
+    sheetId: prepared.sheet.sheetId,
+    expectedRevision: prepared.sheet.revision,
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+  });
+  assert.equal(cut.contentType, "image/svg+xml");
+  assert.match(cut.body.toString("utf8"), /width="8\.5in" height="11in" viewBox="0 0 612 792"/);
+  assert.equal((cut.body.toString("utf8").match(/<rect id="slot-/g) ?? []).length, 16);
+
+  const printed = await markAiGraderLabelSheetPrintedRuntime({
+    tenantId: "tenant-1",
+    sheetId: prepared.sheet.sheetId,
+    expectedRevision: prepared.sheet.revision,
+    operatorUserId: "operator-user-1",
+    dbClient: state.db,
+  });
+  assert.equal(printed.sheet.status, "printed");
+  assert.equal(printed.printedLabelCount, 1);
+});
+
+test("partial and full sheets require sealing and preserve exact 8-of-16 and 16-of-16 contents", async () => {
+  for (const labelCount of [8, 16]) {
+    const db = await createFrozenLabelSheetDb(labelCount);
+    const before = (await listAiGraderLabelSheetsRuntime({ dbClient: db, tenantId: "tenant-1" })).sheets[0];
+    assert.equal(before.labelCount, labelCount);
+    assert.equal(before.openSlotCount, 16 - labelCount);
+    assert.equal(before.status, labelCount === 16 ? "full" : "open");
+    await assert.rejects(
+      () => renderAiGraderLabelSheetPdfRuntime({
+        tenantId: "tenant-1",
+        sheetId: before.sheetId,
+        expectedRevision: before.revision,
+        operatorUserId: "operator-user-1",
+        dbClient: db,
+      }),
+      (error: any) => error.code === "AI_GRADER_LABEL_SHEET_NOT_SEALED"
+    );
+
+    const prepared = await prepareAiGraderLabelSheetPrintRuntime({
+      tenantId: "tenant-1",
+      sheetId: before.sheetId,
+      expectedRevision: before.revision,
+      operatorUserId: "operator-user-1",
+      dbClient: db,
+    });
+    assert.equal(prepared.sheet.status, "sealed");
+    assert.equal(prepared.sheet.labelCount, labelCount);
+    assert.equal(prepared.sheet.openSlotCount, 16 - labelCount);
+    const first = await renderAiGraderLabelSheetPdfRuntime({
+      tenantId: "tenant-1",
+      sheetId: prepared.sheet.sheetId,
+      expectedRevision: prepared.sheet.revision,
+      operatorUserId: "operator-user-1",
+      dbClient: db,
+    });
+    const second = await renderAiGraderLabelSheetPdfRuntime({
+      tenantId: "tenant-1",
+      sheetId: prepared.sheet.sheetId,
+      expectedRevision: prepared.sheet.revision,
+      operatorUserId: "operator-user-1",
+      dbClient: db,
+    });
+    assert.deepEqual(second.body, first.body);
+    const afterDownload = (await listAiGraderLabelSheetsRuntime({ dbClient: db, tenantId: "tenant-1" })).sheets[0];
+    assert.equal(afterDownload.status, "sealed");
+    assert.equal(afterDownload.labels.every((label) => label.physicalPrintStatus === "not_printed"), true);
+  }
 });
 
 test("physical grading-label payload resolves identity from durable Confirm state only", async () => {
@@ -4370,6 +4759,19 @@ test("physical grading-label assignment rejects corrupt stored authority before 
   assert.equal(state.calls.some((call) => call.delegate === "cardBatch"), false);
   assert.equal((state.getLabel().payload as any).labelSheet, undefined);
   assert.equal(state.getBatch().status, "UPLOADING");
+});
+
+test("physical grading-label assignment rejects private or signed report URLs before label or batch mutation", async () => {
+  const { reportBundle, productionRelease } = sampleConfirmReadyPackage();
+  const state = createPublishedCardTransitionTx({ reportBundle, productionRelease });
+  state.replaceLabelPublicUrl("https://storage.example.test/report?X-Amz-Signature=secret");
+  await assert.rejects(
+    () => completePublishedAiGraderCardTx(state.input),
+    (error: any) => error.code === "AI_GRADER_PUBLISHED_LABEL_PUBLIC_URL_UNSAFE"
+  );
+  assert.equal(state.calls.some((call) => call.delegate === "aiGraderLabel" && call.method === "update"), false);
+  assert.equal(state.calls.some((call) => call.delegate === "cardBatch" && call.method === "updateMany"), false);
+  assert.equal((state.getLabel().payload as any).labelSheet, undefined);
 });
 
 test("Publish runtime validates deterministic linkage before any persistence call", async () => {
@@ -6527,7 +6929,7 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
     previewLossSafeOffSource.indexOf("projectAiGraderPreviewLossSafeOffPending")
       < previewLossSafeOffSource.indexOf("await safeOffAiGraderLiveLighting"),
   );
-  assert.match(previewLossSafeOffSource, /catch \(safeOffError\)[\s\S]*projectAiGraderPreviewLossPhysicalStateUnknown[\s\S]*throw safeOffError/);
+  assert.match(previewLossSafeOffSource, /catch \(safeOffError\)[\s\S]*await reconcileLightingMutationFailure\(safeOffError, 'Preview-loss safe-off', \{[\s\S]*requireSafeOff: true,[\s\S]*throw safeOffError/);
   const retryRestartSource = source.slice(
     source.indexOf("const restartBackPreviewForRetry"),
     source.indexOf("const retryBackPositioningLight"),
@@ -6554,7 +6956,7 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
       < retryActionSource.indexOf("fetchAiGraderLiveLightingStatus"),
   );
   assert.match(retryActionSource, /positioningLightReady: false/);
-  assert.match(source, /const canStartGrading =\s*!status\.captureFailure &&/);
+  assert.match(source, /const canStartGrading = frontStartReadiness\.ready/);
   assert.match(source, /const detectedGeometryFresh =/);
   assert.match(source, /activeGeometryAgeMs <= PREVIEW_GEOMETRY_MAX_AGE_MS/);
   assert.match(source, /This capture session is terminal; select Start New Card to retry\./);
@@ -6562,9 +6964,61 @@ test("station UI makes detected geometry the live guide while keeping Ready and 
     source.indexOf("const changeAutoCaptureEnabled"),
     source.indexOf("const startGrading = async"),
   );
-  assert.match(autoCaptureArmingSource, /runAction\("confirm-fixture-rulers", \{ confirmations: \{ fixtureRulersVisible: true \} \}\)/);
-  assert.match(source, /Enabling Auto Capture explicitly confirms the fixed fixture and metric rulers are visible/);
-  assert.match(source, /if \(autoCaptureEnabled\) \{\s+await runAction\("confirm-fixture-rulers"/);
+  assert.doesNotMatch(autoCaptureArmingSource, /confirm-fixture-rulers|fixtureRulersVisible/);
+  const fixtureConfirmationSource = source.slice(
+    source.indexOf("const confirmFrontFixtureAndRulers = async"),
+    source.indexOf("const changeStationCaptureMode = async"),
+  );
+  assert.ok(
+    fixtureConfirmationSource.indexOf("const latest = await runAction('status')")
+      < fixtureConfirmationSource.indexOf("aiGraderFrontWorkflowAssertionFromStatus(latest)"),
+  );
+  assert.match(fixtureConfirmationSource, /runAction\('confirm-fixture-rulers', request\)/);
+  assert.match(fixtureConfirmationSource, /await runAction\('status'\)/);
+  assert.doesNotMatch(fixtureConfirmationSource, /confirmations:|fixtureRulersVisible/);
+  assert.match(source, /Confirm Fixture & Rulers/);
+  assert.match(source, /Auto Capture still requires the separate exact-session Confirm Fixture &amp; Rulers action and authoritative Front readiness/);
+  assert.match(source, /<p className='status-note'>\{frontStartReadiness\.message\}<\/p>/);
+  assert.match(source, /Hardware safety interlock: \{hardwareSafetyMessage\} Use the explicit Safe Off recovery before continuing/);
+  const physicalSafetySource = source.slice(
+    source.indexOf('const physicalSafetyBlocked'),
+    source.indexOf('const liveLightingAvailable'),
+  );
+  assert.match(physicalSafetySource, /physical_state_unknown/);
+  assert.match(physicalSafetySource, /const hardwareSafetyBlocked = physicalSafetyBlocked \|\| liveLightingRequestPending/);
+  const recoveryGateSource = physicalSafetySource.slice(
+    physicalSafetySource.indexOf('const safeOffRecoveryAllowed'),
+  );
+  assert.doesNotMatch(recoveryGateSource, /hardwareSafetyBlocked|physicalSafetyBlocked/);
+  assert.match(source, /onClick=\{startNewCard\} disabled=\{busy !== null \|\| hardwareSafetyBlocked\}/);
+  assert.match(source, /className="safe" onClick=\{safeOff\} disabled=\{!safeOffRecoveryAllowed\}/);
+  const stationSafeOffSource = source.slice(
+    source.indexOf('const safeOff = async () =>'),
+    source.indexOf('const openReport = async'),
+  );
+  assert.match(stationSafeOffSource, /runAction\('safe-off'\)/);
+  assert.doesNotMatch(stationSafeOffSource, /confirmations:|lightIdleOff|acceptedProfile|dutyPercent|channels/);
+  const runActionSource = source.slice(
+    source.indexOf('const runAction = async'),
+    source.indexOf('const restartBackPreviewForRetry'),
+  );
+  assert.match(
+    runActionSource,
+    /setLiveLighting\(next\.liveLighting\);\s+if \(lightingPhysicalStateAcknowledged\(next\.liveLighting\)\) \{\s+setSafetyError\(null\);\s+\}/,
+  );
+  assert.doesNotMatch(
+    runActionSource,
+    /if \(!lightingPhysicalStateAcknowledged\(next\.liveLighting\)\)[\s\S]*setSafetyError\(null\)/,
+  );
+  assert.match(source, /disabled=\{busy !== null \|\| !canStartGrading/);
+  assert.ok(
+    atomicCaptureSource.indexOf("captureStatus = await runAction('status')")
+      < atomicCaptureSource.indexOf("const refreshedReadiness = deriveAiGraderFrontStartReadiness"),
+  );
+  assert.ok(
+    atomicCaptureSource.indexOf("if (!refreshedReadiness.ready)")
+      < atomicCaptureSource.indexOf("runAiGraderStationCaptureOrchestration"),
+  );
   assert.doesNotMatch(source, /Full Forensic is the fallback/);
   assert.doesNotMatch(source, /Cold Fallback/);
 });
@@ -6761,6 +7215,7 @@ test("browser station bridge preview status and stream use local station token o
       channels: [1, 3, 5],
       source: "browser_live_tuning",
       acceptedForCapture: true,
+      candidateProfileIdentity: `candidate-${"c".repeat(32)}`,
     },
     applied: {
       enabled: true,
@@ -6858,6 +7313,29 @@ test("browser station bridge preview status and stream use local station token o
       } else {
         assert.equal(init?.method, "POST");
       }
+      if (String(input).endsWith("/lighting/accept")) {
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+          idempotencyKey: "front-workflow-accept-profile-0001",
+          expectedSessionId: "session-123",
+          expectedReportId: "report-123",
+          expectedSide: "front",
+          expectedSideEpoch: "front-epoch-1",
+          expectedCandidateProfileIdentity: `candidate-${"c".repeat(32)}`,
+        });
+        const station = buildAiGraderLocalStationStatus({ action: "accept-profile" });
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            ...station,
+            liveLighting: {
+              ...station.liveLighting,
+              ...lightingResult,
+              profile: { ...station.liveLighting.profile, ...lightingResult.profile },
+              applied: { ...station.liveLighting.applied, ...lightingResult.applied },
+            },
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
       return new Response(JSON.stringify({
         ok: true,
         result: String(input).endsWith("/lighting/safe-off")
@@ -6929,12 +7407,16 @@ test("browser station bridge preview status and stream use local station token o
   const acceptedLighting = await acceptAiGraderLiveLightingProfile({
     baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
     stationToken: "browser-local-station-token",
-    dutyPercent: 1.4,
-    channels: [1, 3, 5],
-    exposureUs: 47000,
-    gain: 0,
+    assertion: {
+      idempotencyKey: "front-workflow-accept-profile-0001",
+      expectedSessionId: "session-123",
+      expectedReportId: "report-123",
+      expectedSide: "front",
+      expectedSideEpoch: "front-epoch-1",
+      expectedCandidateProfileIdentity: `candidate-${"c".repeat(32)}`,
+    },
   }, fetchImpl);
-  assert.equal(acceptedLighting.profile.acceptedForCapture, true);
+  assert.equal(acceptedLighting.liveLighting.profile.acceptedForCapture, true);
 
   const safeOffLighting = await safeOffAiGraderLiveLighting({
     baseUrl: DEFAULT_AI_GRADER_STATION_BRIDGE_URL,

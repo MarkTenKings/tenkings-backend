@@ -1,0 +1,801 @@
+{
+  "status": "barlow_readability_revision_actual_size_print_approved",
+  "designApproval": {
+    "status": "approved",
+    "phrase": "Label V1 design approved",
+    "approvedOn": "2026-07-13",
+    "designRevision": "barlow-readability-v2",
+    "designRevisionAuthorizedOn": "2026-07-15",
+    "designRevisionPhysicalReprintStatus": "actual_size_foil_readability_approved",
+    "physicalCalibrationStatus": "provisional_not_physically_calibrated"
+  },
+  "templateDigestSha256": "a466b1be243195d4f0339796dbec4d1e85862273c2d3e4032e1c0df9675161a3",
+  "assets": {
+    "logoSource": {
+      "assetId": "ten-kings-logo-2026",
+      "version": "v1",
+      "role": "design_reference",
+      "fileName": "ten-kings-logo-2026-v1.png",
+      "mimeType": "image/png",
+      "sha256": "c7461cc51eefdf5c259c9895eca1ceab870865c660988273cc8241c1ea8ae470",
+      "widthPx": 1500,
+      "heightPx": 1170,
+      "dpi": 300,
+      "approvedForProduction": false
+    },
+    "logo": {
+      "assetId": "ten-kings-logo-2026-monochrome",
+      "version": "v1-derived-from-ten-kings-logo-2026-v1",
+      "role": "logo",
+      "fileName": "ten-kings-logo-2026-monochrome-v1.png",
+      "mimeType": "image/png",
+      "sha256": "801b4071499af546102c3d703f27deb3dabc7a4374d5d621eb8ad672ceeeae88",
+      "widthPx": 1500,
+      "heightPx": 1170,
+      "dpi": 300,
+      "approvedForProduction": true
+    },
+    "crown": {
+      "assetId": "ten-kings-crown-2026-monochrome",
+      "version": "v1-crop-from-ten-kings-logo-2026-v1",
+      "role": "ornament",
+      "fileName": "ten-kings-crown-2026-monochrome-v1.png",
+      "mimeType": "image/png",
+      "sha256": "064156a51ee3e7c49bdf102752bbbd5d21ed41eaf2d58c6be7d5b9994aa307ed",
+      "widthPx": 1206,
+      "heightPx": 784,
+      "dpi": 300,
+      "approvedForProduction": true
+    },
+    "font": {
+      "assetId": "bebas-neue",
+      "version": "regular-400-ofl-v1",
+      "role": "font",
+      "fileName": "fonts/BebasNeue-Regular.ttf",
+      "mimeType": "font/ttf",
+      "sha256": "830ea186acffc2316ed1a4e42319246ba3b46b04e33a211079249bf901193f04",
+      "approvedForProduction": true
+    },
+    "smallTextFont": {
+      "assetId": "barlow",
+      "version": "regular-400-ofl-v1",
+      "role": "font",
+      "fileName": "fonts/barlow/Barlow-Regular.ttf",
+      "mimeType": "font/ttf",
+      "sha256": "77fb1ac54d2ceb980e3ebdfa7a9d0f64e85a66e4fdfb7f914a7b0aa08fb33a5d",
+      "approvedForProduction": true
+    },
+    "wordmarkFont": {
+      "assetId": "barlow",
+      "version": "semibold-600-ofl-v1",
+      "role": "font",
+      "fileName": "fonts/barlow/Barlow-SemiBold.ttf",
+      "mimeType": "font/ttf",
+      "sha256": "07ea3ff2743cf6716122a520c5e6f1aed0e75c079bc3b75e512fbf1a85caef9b",
+      "approvedForProduction": true
+    },
+    "sportsReference": {
+      "assetId": "ten-kings-sports-label-design-reference",
+      "version": "v1",
+      "role": "design_reference",
+      "fileName": "references/ten-kings-sports-label-reference-v1.png",
+      "mimeType": "image/png",
+      "sha256": "0da40a07ad789106af0498a1fd62703d33d98fa1680c4b4a30fd20d634ee01d6",
+      "widthPx": 2559,
+      "heightPx": 778,
+      "dpi": 937.006,
+      "approvedForProduction": false
+    },
+    "pokemonReference": {
+      "assetId": "ten-kings-pokemon-label-design-reference",
+      "version": "v1",
+      "role": "design_reference",
+      "fileName": "references/ten-kings-pokemon-label-reference-v1.png",
+      "mimeType": "image/png",
+      "sha256": "554a99edbec8806e7b03182e00de32f02a3d9dcbfcc29adac3d2d2191997f1a5",
+      "widthPx": 2559,
+      "heightPx": 778,
+      "dpi": 937.006,
+      "approvedForProduction": false
+    }
+  },
+  "coordinates": {
+    "schemaVersion": "ten-kings-label-spec-v1",
+    "coordinateAuthority": "top_left_pdf_points",
+    "pointsPerInch": 72,
+    "paper": {
+      "widthIn": 8.5,
+      "heightIn": 11,
+      "widthPt": 612,
+      "heightPt": 792,
+      "orientation": "portrait"
+    },
+    "label": {
+      "widthIn": 2.73,
+      "heightIn": 0.83,
+      "widthPt": 196.56,
+      "heightPt": 59.76
+    },
+    "sheet": {
+      "columns": 2,
+      "rows": 8,
+      "capacity": 16,
+      "marginLeftPt": 72,
+      "marginTopPt": 72,
+      "marginRightPt": 72,
+      "marginBottomPt": 115.92,
+      "columnGapPt": 74.88,
+      "rowGapPt": 18,
+      "xPositionsPt": [
+        72,
+        343.44
+      ],
+      "yPositionsFromTopPt": [
+        72,
+        149.76,
+        227.52,
+        305.28,
+        383.04,
+        460.8,
+        538.56,
+        616.32
+      ],
+      "slotOrder": "row_major_left_to_right_top_to_bottom"
+    },
+    "labelZones": {
+      "safeInsetPt": 2.52,
+      "legacyLogoReference": {
+        "xPt": 5.04,
+        "yPt": 15.2,
+        "widthPt": 25.92,
+        "heightPt": 20.22,
+        "scaleFromInitialProof": 0.6,
+        "rendered": false
+      },
+      "brandCrown": {
+        "xPt": 9.496192,
+        "yPt": 4.5,
+        "widthPt": 25.007616,
+        "heightPt": 16.258954,
+        "scaleFromApprovedLogoCrown": 1.2
+      },
+      "brandWordmark": {
+        "xPt": 2.52,
+        "yPt": 19.3,
+        "widthPt": 38.96
+      },
+      "gradingText": {
+        "xPt": 4,
+        "yPt": 32.5,
+        "widthPt": 36,
+        "fontSizePt": 3.8,
+        "characterSpacingPt": 0.38
+      },
+      "leftSeparator": {
+        "xPt": 44,
+        "yPt": 8,
+        "heightPt": 43.76
+      },
+      "identity": {
+        "xPt": 48,
+        "yPt": 3.5,
+        "widthPt": 81.5,
+        "heightPt": 52.76
+      },
+      "rightSeparator": {
+        "xPt": 132.5,
+        "yPt": 8,
+        "heightPt": 43.76
+      },
+      "nfcReserved": {
+        "xPt": 134.25,
+        "yPt": 14.29,
+        "widthPt": 31.18,
+        "heightPt": 31.18,
+        "orientation": "portrait",
+        "diameterMm": 11,
+        "printedGuideDiameterMm": 9,
+        "printedGuideDiameterPt": 25.511811,
+        "centerXPt": 149.84,
+        "centerYPt": 29.88,
+        "certTopPt": 46.25,
+        "provisional": true
+      },
+      "grade": {
+        "xPt": 168.25,
+        "widthPt": 26.2,
+        "cardNumberTopPt": 4.2,
+        "glyphCenterYPt": 29.88,
+        "glyphCenterFromTextTopEm": 0.55
+      },
+      "centerDivider": {
+        "rendered": false,
+        "removedOn": "2026-07-15"
+      },
+      "separatorCrowns": {
+        "centerYPt": 29.88,
+        "widthPt": 3.4,
+        "heightPt": 2.2,
+        "lineGapPt": 0.7
+      }
+    },
+    "typography": {
+      "display": {
+        "assetKey": "font",
+        "family": "Bebas Neue",
+        "weight": 400,
+        "characterSpacingPt": 0,
+        "svgBaselineFromTopEm": 0.84
+      },
+      "small": {
+        "assetKey": "smallTextFont",
+        "family": "Barlow",
+        "weight": 400,
+        "characterSpacingPt": 0.12,
+        "svgBaselineFromTopEm": 1
+      },
+      "wordmark": {
+        "assetKey": "wordmarkFont",
+        "family": "Barlow SemiBold",
+        "weight": 600,
+        "text": "TEN KINGS",
+        "fontSizePt": 9.005493,
+        "characterSpacingPt": 0.12,
+        "referenceVisibleCapHeightPt": 4.959949,
+        "visibleCapHeightPt": 6.447933,
+        "visibleCapHeightScale": 1.3,
+        "horizontalScale": 0.88,
+        "svgBaselineFromTopEm": 1
+      }
+    },
+    "layoutPolicy": {
+      "centerOrder": [
+        "primary",
+        "metadata",
+        "descriptor"
+      ],
+      "centerDividerRendered": false
+    },
+    "pdf": {
+      "coordinateOrigin": "bottom_left",
+      "topLeftToPdfYFormula": "paperHeightPt - topLeftYPt - labelHeightPt"
+    },
+    "svg": {
+      "coordinateOrigin": "top_left",
+      "viewBox": "0 0 612 792"
+    },
+    "calibration": {
+      "status": "provisional_not_physically_calibrated",
+      "printProfileId": "ten-kings-foilxpress-ap-letter-provisional-v2",
+      "cutProfileId": "ten-kings-cricut-explore-5-letter-provisional-v2",
+      "printOffsetXPt": 0,
+      "printOffsetYPt": 0,
+      "printScaleX": 1,
+      "printScaleY": 1,
+      "cutOffsetXPt": 0,
+      "cutOffsetYPt": 0,
+      "cutScaleX": 1,
+      "cutScaleY": 1,
+      "cutRotationDeg": 0,
+      "measuredCalibrationFooterDigestPrefix": "fb81a7eba25db2d6"
+    }
+  },
+  "files": {
+    "sportsActualPdf": "ten-kings-label-v1-sports-actual.pdf",
+    "pokemonActualPdf": "ten-kings-label-v1-pokemon-actual.pdf",
+    "inspectionPdf": "ten-kings-label-v1-enlarged-inspection.pdf",
+    "fullSheetPdf": "ten-kings-label-v1-full-sheet-proof.pdf",
+    "partialSheetPdf": "ten-kings-label-v1-partial-sheet-proof.pdf",
+    "nfcFitTestPdf": "ten-kings-label-v1-nfc-fit-test-sheet.pdf",
+    "calibrationPdf": "ten-kings-label-v1-calibration.pdf",
+    "sportsSvg": "ten-kings-label-v1-sports.svg",
+    "pokemonSvg": "ten-kings-label-v1-pokemon.svg",
+    "cutSvg": "ten-kings-label-v1-cricut-cut.svg",
+    "calibrationCutSvg": "ten-kings-label-v1-cricut-calibration.svg"
+  },
+  "artifacts": {
+    "sportsActualPdf": {
+      "fileName": "ten-kings-label-v1-sports-actual.pdf",
+      "byteLength": 56039,
+      "sha256": "68a19488de21ecc9c58fa801cfa36498a77087cab282f8c782c5570ebc8bfd7c"
+    },
+    "pokemonActualPdf": {
+      "fileName": "ten-kings-label-v1-pokemon-actual.pdf",
+      "byteLength": 55153,
+      "sha256": "c6b171f504b95a8383a68cce2f4fe862174977e3c62ef2801400e05cb106cf36"
+    },
+    "inspectionPdf": {
+      "fileName": "ten-kings-label-v1-enlarged-inspection.pdf",
+      "byteLength": 84513,
+      "sha256": "2fc8d19df7aac5ab22d43cc948fb2e7eba0d846b88eebda8a8ed945b7830f264"
+    },
+    "fullSheetPdf": {
+      "fileName": "ten-kings-label-v1-full-sheet-proof.pdf",
+      "byteLength": 110075,
+      "sha256": "35508eb88f379530b64f809dc4e9ec88039b8bf2861c040cbbd1bf6db46c7e1e"
+    },
+    "partialSheetPdf": {
+      "fileName": "ten-kings-label-v1-partial-sheet-proof.pdf",
+      "byteLength": 73574,
+      "sha256": "a42b147ab2680bd76f5f5705ce70c4d82fd4d640b6d9bb216794c43b59b971b6"
+    },
+    "nfcFitTestPdf": {
+      "fileName": "ten-kings-label-v1-nfc-fit-test-sheet.pdf",
+      "byteLength": 105177,
+      "sha256": "404e70c93934a03d5360d61f4b5ce6c0e6defc01c30e5748440dbecaedda0881"
+    },
+    "calibrationPdf": {
+      "fileName": "ten-kings-label-v1-calibration.pdf",
+      "byteLength": 17981,
+      "sha256": "23008d9372e252c30f0f89c56ce6478a57c8c40fe10a1094dbe0652a0a42ff92"
+    },
+    "sportsSvg": {
+      "fileName": "ten-kings-label-v1-sports.svg",
+      "byteLength": 487678,
+      "sha256": "7cdd52fd122d2e75c4b74c9be2e8f7da5ed1933c43655908c5df0f6603d4b96d"
+    },
+    "pokemonSvg": {
+      "fileName": "ten-kings-label-v1-pokemon.svg",
+      "byteLength": 487436,
+      "sha256": "8d490aae2e6e16e3da766b22390d8b5c689e5089e3bc1aa45363fdc5588d12a4"
+    },
+    "cutSvg": {
+      "fileName": "ten-kings-label-v1-cricut-cut.svg",
+      "byteLength": 1901,
+      "sha256": "095f2cc2322a46966818a3df8bf696a790af2665ffd0230f12d4b0c88f6b0df6"
+    },
+    "calibrationCutSvg": {
+      "fileName": "ten-kings-label-v1-cricut-calibration.svg",
+      "byteLength": 2012,
+      "sha256": "3a69afb0ea776c1233c7380c8ef614a053440c033d5f49b527e9a6ce855b75eb"
+    }
+  },
+  "determinism": {
+    "algorithm": "sha256",
+    "requiredIndependentGenerations": 2,
+    "acceptanceRule": "Every artifact and this manifest must be byte-identical between both same-environment generations."
+  },
+  "acceptedPhysicalObservations": {
+    "printer": "FoilXpress AP (Auto-Positioning)",
+    "media": "8.5 x 11 inch AP paper",
+    "measuredLabelWidthIn": 2.73,
+    "measuredLabelHeightIn": 0.83,
+    "observedPrintScaleX": 1,
+    "observedPrintScaleY": 1,
+    "topRightSlotTopEdgeIn": 1.125,
+    "topRightSlotRightEdgeIn": 1.375,
+    "observedHorizontalShiftFromPdfPt": -27,
+    "observedVerticalShiftFromPdfPt": 9,
+    "correctiveTransformApplied": false,
+    "operatorAcceptedPlacement": true,
+    "cricutOperatorAttestation": "handled and accepted by Mark; numeric cut offsets, scale, and rotation not reported",
+    "realNfcInlayFit": "fits perfectly inside the centered 11 mm logical reserve",
+    "barlowActualSizePrint": {
+      "printedBy": "Mark",
+      "printedOn": "2026-07-15",
+      "pdfFileName": "ten-kings-label-v1-nfc-fit-test-sheet.pdf",
+      "pdfSha256": "404e70c93934a03d5360d61f4b5ce6c0e6defc01c30e5748440dbecaedda0881",
+      "result": "new font looks great; Barlow foil readability approved"
+    },
+    "nfcProgrammed": false
+  },
+  "nfcFitTest": {
+    "status": "test_only_not_issued_not_for_production",
+    "pdfSha256": "404e70c93934a03d5360d61f4b5ce6c0e6defc01c30e5748440dbecaedda0881",
+    "realFields": [
+      "card identity",
+      "year",
+      "manufacturer/set",
+      "card number",
+      "variant/descriptor"
+    ],
+    "syntheticFields": [
+      "grade",
+      "certificate ID",
+      "report ID",
+      "public report URL"
+    ],
+    "records": [
+      {
+        "slot": 1,
+        "referenceLabel": "1986-87 Fleer Basketball #57 Michael Jordan rookie",
+        "sourceUrls": [
+          "https://www.psacard.com/cardfacts/basketball-cards/1986-fleer/michael-jordan-57/5003"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-sports-label-v1",
+          "reportId": "nfc-fit-test-s01",
+          "certId": "TEST-S01",
+          "grade": 10,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/s01",
+          "identity": {
+            "category": "sport",
+            "year": "1986-87",
+            "manufacturer": "Fleer",
+            "productSet": "Basketball",
+            "playerName": "Michael Jordan",
+            "insert": "Rookie",
+            "cardNumber": "57",
+            "sport": "Basketball"
+          }
+        }
+      },
+      {
+        "slot": 2,
+        "referenceLabel": "1996-97 Topps Chrome Basketball #138 Kobe Bryant rookie",
+        "sourceUrls": [
+          "https://www.psacard.com/cardfacts/basketball-cards/1996-topps-chrome/kobe-bryant-138/5446"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-sports-label-v1",
+          "reportId": "nfc-fit-test-s02",
+          "certId": "TEST-S02",
+          "grade": 9.5,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/s02",
+          "identity": {
+            "category": "sport",
+            "year": "1996-97",
+            "manufacturer": "Topps",
+            "productSet": "Chrome Basketball",
+            "playerName": "Kobe Bryant",
+            "insert": "Rookie",
+            "cardNumber": "138",
+            "sport": "Basketball"
+          }
+        }
+      },
+      {
+        "slot": 3,
+        "referenceLabel": "1992-93 Topps Basketball #362 Shaquille O'Neal rookie",
+        "sourceUrls": [
+          "https://www.psacard.com/priceguide/basketball-card-values/1992-topps/1738"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-sports-label-v1",
+          "reportId": "nfc-fit-test-s03",
+          "certId": "TEST-S03",
+          "grade": 9,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/s03",
+          "identity": {
+            "category": "sport",
+            "year": "1992-93",
+            "manufacturer": "Topps",
+            "productSet": "Basketball",
+            "playerName": "Shaquille O'Neal",
+            "insert": "Rookie",
+            "cardNumber": "362",
+            "sport": "Basketball"
+          }
+        }
+      },
+      {
+        "slot": 4,
+        "referenceLabel": "1933 Goudey Big League Gum #53 Babe Ruth (Yellow Ruth)",
+        "sourceUrls": [
+          "https://www.psacard.com/cardfacts/baseball-cards/1933-goudey/babe-ruth-53/20283"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-sports-label-v1",
+          "reportId": "nfc-fit-test-s04",
+          "certId": "TEST-S04",
+          "grade": 8.5,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/s04",
+          "identity": {
+            "category": "sport",
+            "year": "1933",
+            "manufacturer": "Goudey",
+            "productSet": "Big League Gum",
+            "playerName": "Babe Ruth",
+            "parallel": "Yellow Ruth",
+            "cardNumber": "53",
+            "sport": "Baseball"
+          }
+        }
+      },
+      {
+        "slot": 5,
+        "referenceLabel": "2000 Playoff Contenders Football #144 Tom Brady autographed Rookie Ticket",
+        "sourceUrls": [
+          "https://www.psacard.com/cardfacts/football-cards/2000-playoff-contenders/tom-brady-autographed-144/130232"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-sports-label-v1",
+          "reportId": "nfc-fit-test-s05",
+          "certId": "TEST-S05",
+          "grade": 8,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/s05",
+          "identity": {
+            "category": "sport",
+            "year": "2000",
+            "manufacturer": "Playoff",
+            "productSet": "Contenders Football",
+            "playerName": "Tom Brady",
+            "parallel": "Autographed",
+            "insert": "Rookie Ticket",
+            "cardNumber": "144",
+            "sport": "Football",
+            "autograph": true
+          }
+        }
+      },
+      {
+        "slot": 6,
+        "referenceLabel": "1989 Score Football #257 Barry Sanders rookie",
+        "sourceUrls": [
+          "https://www.psacard.com/cardfacts/football-cards/1989-score/barry-sanders-257/13033"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-sports-label-v1",
+          "reportId": "nfc-fit-test-s06",
+          "certId": "TEST-S06",
+          "grade": 7.5,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/s06",
+          "identity": {
+            "category": "sport",
+            "year": "1989",
+            "manufacturer": "Score",
+            "productSet": "Football",
+            "playerName": "Barry Sanders",
+            "insert": "Rookie",
+            "cardNumber": "257",
+            "sport": "Football"
+          }
+        }
+      },
+      {
+        "slot": 7,
+        "referenceLabel": "1979-80 O-Pee-Chee Hockey #18 Wayne Gretzky rookie",
+        "sourceUrls": [
+          "https://www.psacard.com/cardfacts/hockey-cards/1979-o-pee-chee/wayne-gretzky-18/2583"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-sports-label-v1",
+          "reportId": "nfc-fit-test-s07",
+          "certId": "TEST-S07",
+          "grade": 7,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/s07",
+          "identity": {
+            "category": "sport",
+            "year": "1979-80",
+            "manufacturer": "O-Pee-Chee",
+            "productSet": "Hockey",
+            "playerName": "Wayne Gretzky",
+            "insert": "Rookie",
+            "cardNumber": "18",
+            "sport": "Hockey"
+          }
+        }
+      },
+      {
+        "slot": 8,
+        "referenceLabel": "2003-04 Topps Chrome Basketball #111 LeBron James rookie",
+        "sourceUrls": [
+          "https://www.psacard.com/cardfacts/basketball-cards/2003-topps-chrome/lebron-james-111/112887"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-sports-label-v1",
+          "reportId": "nfc-fit-test-s08",
+          "certId": "TEST-S08",
+          "grade": 6.5,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/s08",
+          "identity": {
+            "category": "sport",
+            "year": "2003-04",
+            "manufacturer": "Topps",
+            "productSet": "Chrome Basketball",
+            "playerName": "LeBron James",
+            "insert": "Rookie",
+            "cardNumber": "111",
+            "sport": "Basketball"
+          }
+        }
+      },
+      {
+        "slot": 9,
+        "referenceLabel": "1999 Pokemon Base Set Charizard #4/102 Holo Rare",
+        "sourceUrls": [
+          "https://www.pokemon.com/uk/pokemon-news/favorite-pokemon-tcg-cards-from-the-kanto-era",
+          "https://www.tcgplayer.com/categories/trading-and-collectible-card-games/pokemon/price-guides/base-set"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-pokemon-label-v1",
+          "reportId": "nfc-fit-test-p01",
+          "certId": "TEST-P01",
+          "grade": 10,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/p01",
+          "identity": {
+            "category": "tcg",
+            "year": "1999",
+            "game": "Pokemon",
+            "productSet": "Base Set",
+            "cardName": "Charizard",
+            "parallel": "Holo Rare",
+            "cardNumber": "4/102",
+            "manufacturer": "Wizards of the Coast"
+          }
+        }
+      },
+      {
+        "slot": 10,
+        "referenceLabel": "1999 Pokemon Base Set Pikachu #58/102 Common (Yellow Cheeks)",
+        "sourceUrls": [
+          "https://www.psacard.com/auctionprices/tcg-cards/1999-pokemon-game/pikachu/1705070"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-pokemon-label-v1",
+          "reportId": "nfc-fit-test-p02",
+          "certId": "TEST-P02",
+          "grade": 9.5,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/p02",
+          "identity": {
+            "category": "tcg",
+            "year": "1999",
+            "game": "Pokemon",
+            "productSet": "Base Set",
+            "cardName": "Pikachu",
+            "parallel": "Common - Yellow Cheeks",
+            "cardNumber": "58/102",
+            "manufacturer": "Wizards of the Coast"
+          }
+        }
+      },
+      {
+        "slot": 11,
+        "referenceLabel": "1999 Pokemon Base Set Blastoise #2/102 Holo Rare",
+        "sourceUrls": [
+          "https://www.pokemon.com/uk/pokemon-news/favorite-pokemon-tcg-cards-from-the-kanto-era"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-pokemon-label-v1",
+          "reportId": "nfc-fit-test-p03",
+          "certId": "TEST-P03",
+          "grade": 9,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/p03",
+          "identity": {
+            "category": "tcg",
+            "year": "1999",
+            "game": "Pokemon",
+            "productSet": "Base Set",
+            "cardName": "Blastoise",
+            "parallel": "Holo Rare",
+            "cardNumber": "2/102",
+            "manufacturer": "Wizards of the Coast"
+          }
+        }
+      },
+      {
+        "slot": 12,
+        "referenceLabel": "1999 Pokemon Base Set Venusaur #15/102 Holo Rare",
+        "sourceUrls": [
+          "https://www.psacard.com/auctionprices/tcg-cards/1999-pokemon-game/venusaur-holo/auction/-5194511980355655319"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-pokemon-label-v1",
+          "reportId": "nfc-fit-test-p04",
+          "certId": "TEST-P04",
+          "grade": 8.5,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/p04",
+          "identity": {
+            "category": "tcg",
+            "year": "1999",
+            "game": "Pokemon",
+            "productSet": "Base Set",
+            "cardName": "Venusaur",
+            "parallel": "Holo Rare",
+            "cardNumber": "15/102",
+            "manufacturer": "Wizards of the Coast"
+          }
+        }
+      },
+      {
+        "slot": 13,
+        "referenceLabel": "1999 Pokemon Base Set Mewtwo #10/102 Holo Rare",
+        "sourceUrls": [
+          "https://www.psacard.com/cardfacts/non-sports-cards/1999-nintendo-pokemon-game/mewtwo-holo-10/605268"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-pokemon-label-v1",
+          "reportId": "nfc-fit-test-p05",
+          "certId": "TEST-P05",
+          "grade": 8,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/p05",
+          "identity": {
+            "category": "tcg",
+            "year": "1999",
+            "game": "Pokemon",
+            "productSet": "Base Set",
+            "cardName": "Mewtwo",
+            "parallel": "Holo Rare",
+            "cardNumber": "10/102",
+            "manufacturer": "Wizards of the Coast"
+          }
+        }
+      },
+      {
+        "slot": 14,
+        "referenceLabel": "1999 Pokemon Fossil Gengar #5/62 Holo Rare",
+        "sourceUrls": [
+          "https://www.psacard.com/cardfacts/non-sports-cards/1999-nintendo-pokemon-fossil/gengar-holo-1st-edition-5/641226"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-pokemon-label-v1",
+          "reportId": "nfc-fit-test-p06",
+          "certId": "TEST-P06",
+          "grade": 7.5,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/p06",
+          "identity": {
+            "category": "tcg",
+            "year": "1999",
+            "game": "Pokemon",
+            "productSet": "Fossil",
+            "cardName": "Gengar",
+            "parallel": "Holo Rare",
+            "cardNumber": "5/62",
+            "manufacturer": "Wizards of the Coast"
+          }
+        }
+      },
+      {
+        "slot": 15,
+        "referenceLabel": "2000 Pokemon Neo Genesis Lugia #9/111 Holo Rare",
+        "sourceUrls": [
+          "https://www.psacard.com/cardfacts/non-sports-cards/2000-nintendo-pokemon-neo-genesis/lugia-holo-9/845690"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-pokemon-label-v1",
+          "reportId": "nfc-fit-test-p07",
+          "certId": "TEST-P07",
+          "grade": 7,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/p07",
+          "identity": {
+            "category": "tcg",
+            "year": "2000",
+            "game": "Pokemon",
+            "productSet": "Neo Genesis",
+            "cardName": "Lugia",
+            "parallel": "Holo Rare",
+            "cardNumber": "9/111",
+            "manufacturer": "Wizards of the Coast"
+          }
+        }
+      },
+      {
+        "slot": 16,
+        "referenceLabel": "2005 Pokemon EX Deoxys Rayquaza #107/107 Gold Star Holo Rare",
+        "sourceUrls": [
+          "https://assets.pokemon.com/assets/cms/pdf/tcg/carddex/EX_Deoxys.pdf",
+          "https://www.psacard.com/cardfacts/non-sports-cards/2005-nintendo-pokemon-ex-deoxys/rayquaza-holo-gold-star-107/753114"
+        ],
+        "snapshot": {
+          "templateId": "ten-kings-pokemon-label-v1",
+          "reportId": "nfc-fit-test-p08",
+          "certId": "TEST-P08",
+          "grade": 6.5,
+          "publicReportUrl": "https://example.invalid/nfc-fit-test/p08",
+          "identity": {
+            "category": "tcg",
+            "year": "2005",
+            "game": "Pokemon",
+            "productSet": "EX Deoxys",
+            "cardName": "Rayquaza",
+            "parallel": "Gold Star - Holo Rare",
+            "cardNumber": "107/107",
+            "manufacturer": "Pokemon USA"
+          }
+        }
+      }
+    ]
+  },
+  "notes": [
+    "The exact supplied crown artwork remains byte-unchanged and is rendered from the approved crop at 120 percent of its prior visible label size; it was not redrawn, traced, or AI-generated.",
+    "Names and grades retain embedded OFL Bebas Neue Regular. Metadata, descriptors, card numbers, certificate IDs, NFC, and GRADING use embedded Barlow Regular. The live TEN KINGS wordmark uses embedded Barlow SemiBold at 130 percent of the prior visible cap height, 0.12-point tracking, and a deterministic 0.88 horizontal fit within the widened internal brand lockup.",
+    "The center renders the primary name first and metadata below it. The former center horizontal rule and its center crown are removed; both vertical crown separators remain.",
+    "The logical NFC reserve remains centered at 11 mm. Only the printed circular guide is 9 mm. No NFC hole or NFC programming behavior is added to the Cricut authority.",
+    "The accepted 8.5 x 11-inch sheet, 2.73 x 0.83-inch label, 0.25-inch row gaps, all 16 slot coordinates, calibration PDF, and Cricut cut/calibration SVGs remain unchanged.",
+    "Whole words wrap to approved fixed tiers; words are never split or truncated.",
+    "No QR is visible in either NFC template.",
+    "The NFC-fit sheet uses real reference card identities with visible TEST certificate IDs and synthetic grades; it is an offline physical-fit artifact, not an issued or production-authorized sheet.",
+    "Mark manually printed the exact populated Barlow sheet on the FoilXpress and reported that the new font looks great, then approved the complete physical handoff on 2026-07-15. This closes the actual-size Barlow foil-readability gate for the unchanged label artwork.",
+    "The overall calibration profile remains provisional because the exact driver/version, exact AP media SKU/material, independently recorded 100-percent Fit/Scale-disabled dialog state, numeric Cricut X/Y/scale/rotation, and measured NFC-inlay diameter were not reported and are not inferred."
+  ]
+}
