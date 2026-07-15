@@ -61,9 +61,18 @@ export type AiGraderLabelSheetSourceRow = {
   createdAt?: unknown;
   updatedAt?: unknown;
   publicationStatus?: unknown;
+  nfc?: unknown;
   report?: unknown;
 };
 
+export type AiGraderLabelNfcRegistrationDto = {
+  status: "active";
+  registrationKind: "registered_link";
+  publicTagId: string;
+  nfcTagUrl: string;
+  chipType: "NTAG215";
+  securityMode: "static_url_v1";
+};
 export type AiGraderLabelSheetLabelDto = {
   labelId: string;
   reportId: string;
