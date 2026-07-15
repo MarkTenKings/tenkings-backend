@@ -211,7 +211,7 @@ async function main() {
     path.join(proofDir, "proof-manifest.json"),
     `${JSON.stringify(
       {
-        status: "barlow_readability_revision_physical_reprint_pending",
+        status: "barlow_readability_revision_actual_size_print_approved",
         designApproval: AI_GRADER_LABEL_V1_DESIGN_APPROVAL,
         templateDigestSha256: aiGraderLabelV1TemplateDigest(),
         assets: AI_GRADER_LABEL_V1_ASSETS,
@@ -238,6 +238,13 @@ async function main() {
           operatorAcceptedPlacement: true,
           cricutOperatorAttestation: "handled and accepted by Mark; numeric cut offsets, scale, and rotation not reported",
           realNfcInlayFit: "fits perfectly inside the centered 11 mm logical reserve",
+          barlowActualSizePrint: {
+            printedBy: "Mark",
+            printedOn: "2026-07-15",
+            pdfFileName: files.nfcFitTestPdf,
+            pdfSha256: nfcFitTestPdfSha256,
+            result: "new font looks great; Barlow foil readability approved",
+          },
           nfcProgrammed: false,
         },
         nfcFitTest: {
@@ -256,7 +263,8 @@ async function main() {
           "Whole words wrap to approved fixed tiers; words are never split or truncated.",
           "No QR is visible in either NFC template.",
           "The NFC-fit sheet uses real reference card identities with visible TEST certificate IDs and synthetic grades; it is an offline physical-fit artifact, not an issued or production-authorized sheet.",
-          "Mark approved the exact font, crown, wordmark, center-order, divider-removal, and 9 mm printed-guide directions on 2026-07-15. The revised populated sheet still requires Mark's actual-size print/readability confirmation before final physical-calibration approval.",
+          "Mark manually printed the exact populated Barlow sheet on the FoilXpress and reported that the new font looks great, then approved the complete physical handoff on 2026-07-15. This closes the actual-size Barlow foil-readability gate for the unchanged label artwork.",
+          "The overall calibration profile remains provisional because the exact driver/version, exact AP media SKU/material, independently recorded 100-percent Fit/Scale-disabled dialog state, numeric Cricut X/Y/scale/rotation, and measured NFC-inlay diameter were not reported and are not inferred.",
         ],
       },
       null,

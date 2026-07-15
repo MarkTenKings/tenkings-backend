@@ -8,7 +8,7 @@ export const AI_GRADER_LABEL_V1_DESIGN_APPROVAL = {
   approvedOn: "2026-07-13",
   designRevision: "barlow-readability-v2",
   designRevisionAuthorizedOn: "2026-07-15",
-  designRevisionPhysicalReprintStatus: "pending_actual_size_confirmation",
+  designRevisionPhysicalReprintStatus: "actual_size_foil_readability_approved",
   physicalCalibrationStatus: "provisional_not_physically_calibrated",
 } as const;
 

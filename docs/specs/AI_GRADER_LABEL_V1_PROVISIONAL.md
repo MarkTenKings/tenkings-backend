@@ -1,6 +1,6 @@
 # Ten Kings AI Grader Label V1 - Approved Geometry / Barlow Readability Revision Specification
 
-Status: original design approved on 2026-07-13; 8.5 x 11-inch FoilXpress geometry physically measured and accepted on 2026-07-14; Barlow readability revision authorized on 2026-07-15 and pending an actual-size populated reprint before final physical-calibration approval.
+Status: original design approved on 2026-07-13; 8.5 x 11-inch FoilXpress geometry physically measured and accepted on 2026-07-14; Barlow readability revision authorized, physically printed at actual size, and approved for foil readability by Mark on 2026-07-15. The overall calibration profile remains provisional because unreported printer/Cricut measurements are not inferred.
 
 Mark provided the exact approval phrase `Label V1 design approved`. That closes the visual design gate and authorizes the scoped runtime integration on `feature/ai-grader-label-v1`. It does not authorize hardware operation, NFC programming, deployment, merge, database changes, or a claim of physical print/cut accuracy.
 
@@ -12,7 +12,7 @@ Mark provided the exact approval phrase `Label V1 design approved`. That closes 
 - Coordinate authority: `frontend/nextjs-app/lib/aiGraderLabelV1.ts`
 - Renderer: `frontend/nextjs-app/lib/server/aiGraderLabelV1Renderer.ts`
 - Proof generator: `frontend/nextjs-app/scripts/render-ai-grader-label-v1-proofs.ts`
-- Current design revision: `barlow-readability-v2`, authorized 2026-07-15, with immutable status `pending_actual_size_confirmation` until Mark prints the exact populated candidate.
+- Current design revision: `barlow-readability-v2`, authorized and physically approved for actual-size foil readability on 2026-07-15, with immutable status `actual_size_foil_readability_approved`.
 - Approval state: the exact derived crown, embedded Bebas Neue display font, embedded Barlow Regular small-text font, and embedded Barlow SemiBold live-wordmark font are the current production render inputs. The former composite raster logo and supplied source/reference images remain provenance only.
 
 The template digest binds the schema version, asset IDs/versions/hashes, physical coordinate manifest, fixed text tiers, and field-mapping version. The renderer verifies asset hashes and PNG dimensions before producing output.
@@ -116,11 +116,11 @@ The proof script creates:
 - Individual label SVGs and provisional Cricut cut/calibration SVGs.
 - A machine-readable proof manifest containing the template digest, approval record, assets, coordinates, exact artifact hashes/byte lengths, deterministic two-pass rule, and accepted physical observations.
 
-Generated proof files are under `output/pdf` and `output/ai-grader-label-v1`. The current Barlow bundle is a physical-reprint candidate; its software proofs do not replace Mark's required actual-size readability confirmation.
+Generated proof files are under `output/pdf` and `output/ai-grader-label-v1`. Mark manually printed the exact populated Barlow NFC-fit PDF and reported that the new font looks great. The recorded physical observation applies to that byte-exact label artwork; software proofs alone are not physical evidence.
 
 ## Approval and remaining gate
 
-The original visual design was approved by Mark with the exact phrase `Label V1 design approved` on 2026-07-13. Mark subsequently accepted the measured 8.5 x 11-inch print geometry and real inlay fit, then explicitly authorized the exact Barlow Regular small text, Barlow SemiBold wordmark, 120-percent crown, 130-percent wordmark cap height, primary-first center order, center-divider removal, and 9 mm printed-guide revision on 2026-07-15. The revised populated sheet still requires an actual-size print/readability confirmation and the final exact phrase `Label V1 physical calibration approved`.
+The original visual design was approved by Mark with the exact phrase `Label V1 design approved` on 2026-07-13. Mark subsequently accepted the measured 8.5 x 11-inch print geometry and real inlay fit, then explicitly authorized the exact Barlow Regular small text, Barlow SemiBold wordmark, 120-percent crown, 130-percent wordmark cap height, primary-first center order, center-divider removal, and 9 mm printed-guide revision on 2026-07-15. Mark manually printed the exact populated Barlow PDF, reported `print with new font looks great. approved!`, and then answered `All of that is approved` when asked for the complete Label V1 physical handoff approval. The actual-size Barlow foil-readability gate is therefore closed.
 
 Runtime records freeze the template digest, approved render asset versions/hashes, provisional calibration profile, durable confirmed identity, certificate ID, final grade, report ID, and public report URL at verified Publish. Rendering fails closed if the record is missing, altered, from a legacy assignment, or no longer matches the persisted published row. Server-rendered PDF/SVG routes require an authenticated human operator and an exact sheet revision. Preparing a sheet seals it; marking it printed remains a separate explicit human action.
 
@@ -130,6 +130,6 @@ Because PostgreSQL stores the record as JSONB, runtime validation compares objec
 
 Open and full sheets are not production-print authorities. `Print Current Sheet` seals the exact current revision with any 1-16 assigned labels, after which only sealed or already-printed sheets can return the production PDF/SVG. Empty positions remain blank, future verified Publish assignments use another digital sheet, repeated sealed downloads are deterministic and do not mutate state, and `Mark Sheet Printed` remains a distinct human action after a successful physical print.
 
-Observed physical evidence now includes exact `2.730 x 0.830-inch` FoilXpress output, accepted slot-2 placement measurements, Mark's separate Cricut acceptance attestation, and a real inlay that fits perfectly within the logical centered 11 mm reserve. Numeric Cricut offsets/scale/rotation remain explicitly unreported rather than assumed. No NFC tag was programmed.
+Observed physical evidence now includes exact `2.730 x 0.830-inch` FoilXpress output, accepted slot-2 placement measurements, Mark's separate Cricut acceptance attestation, a real inlay that fits perfectly within the logical centered 11 mm reserve, and Mark's actual-size Barlow foil-readability approval. Exact driver/version, exact AP media SKU/material, an independently recorded 100-percent Fit/Scale-disabled dialog state, numeric Cricut offsets/scale/rotation, and measured NFC-inlay diameter remain explicitly unreported rather than assumed. The profile therefore remains `provisional_not_physically_calibrated`. No NFC tag was programmed.
 
-Final merge remains gated on Mark's actual-size reprint of the exact Barlow revision, the exact physical-calibration approval phrase, independent Mac architecture approval of the final exact PR head, and fresh required GitHub/Vercel checks. Hardware must not be started automatically, generating a PDF/SVG must never mark a sheet printed, and merge does not authorize deployment.
+Final merge remains gated on independent Mac architecture approval of the final exact PR head and fresh required GitHub/Vercel checks. Hardware must not be started automatically, generating a PDF/SVG must never mark a sheet printed, and merge does not authorize deployment.

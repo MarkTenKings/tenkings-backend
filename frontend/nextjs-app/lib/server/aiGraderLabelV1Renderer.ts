@@ -697,7 +697,7 @@ export async function renderAiGraderLabelV1InspectionPdf(snapshots: readonly AiG
   snapshots.forEach((snapshot, index) => {
     if (index > 0) doc.addPage({ size: [612, 792], margin: 0 });
     fillPageWhite(doc, 612, 792);
-    doc.font("TKLabelBold").fontSize(17).fillColor("#111111").text("LABEL V1 BARLOW READABILITY REVISION - PHYSICAL REPRINT REQUIRED", 54, 48, {
+    doc.font("TKLabelBold").fontSize(17).fillColor("#111111").text("LABEL V1 BARLOW READABILITY REVISION - ACTUAL-SIZE PRINT APPROVED", 54, 48, {
       width: 504,
       align: "center",
     });
@@ -714,7 +714,7 @@ export async function renderAiGraderLabelV1InspectionPdf(snapshots: readonly AiG
       { width: 468, align: "center", lineGap: 4 }
     );
     doc.font("TKLabelBold").fontSize(10).fillColor("#8a2d2d").text(
-      "REVISED POPULATED SHEET REQUIRES ACTUAL-SIZE PRINT / READABILITY CONFIRMATION",
+      "REVISED POPULATED SHEET PRINTED; BARLOW FOIL READABILITY APPROVED BY MARK",
       72,
       410,
       { width: 468, align: "center" }

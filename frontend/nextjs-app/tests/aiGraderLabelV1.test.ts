@@ -144,7 +144,7 @@ test("Sports and Pokemon use the approved frozen field hierarchy", () => {
 test("hash-bound assets are required and the template digest is stable within a process", () => {
   assertAiGraderLabelV1Assets();
   assert.equal(AI_GRADER_LABEL_V1_DESIGN_APPROVAL.designRevision, "barlow-readability-v2");
-  assert.equal(AI_GRADER_LABEL_V1_DESIGN_APPROVAL.designRevisionPhysicalReprintStatus, "pending_actual_size_confirmation");
+  assert.equal(AI_GRADER_LABEL_V1_DESIGN_APPROVAL.designRevisionPhysicalReprintStatus, "actual_size_foil_readability_approved");
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.font.sha256, "830ea186acffc2316ed1a4e42319246ba3b46b04e33a211079249bf901193f04");
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.smallTextFont.fileName, "fonts/barlow/Barlow-Regular.ttf");
   assert.equal(AI_GRADER_LABEL_V1_ASSETS.smallTextFont.sha256, "77fb1ac54d2ceb980e3ebdfa7a9d0f64e85a66e4fdfb7f914a7b0aa08fb33a5d");
