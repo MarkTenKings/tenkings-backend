@@ -14,7 +14,7 @@ public sealed class WindowsPcscNfcReaderBackend : INfcReaderBackend
         try
         {
             Pcsc.ThrowIfFailed(Pcsc.SCardEstablishContext(Pcsc.ScopeUser, 0, 0, out context), "pcsc_unavailable");
-            var readers = Pcsc.ListAcr1552Readers(context);
+            var readers = Pcsc.ListAcr1552PiccReaders(context);
             if (readers.Count == 0) return new(false, true, "unknown", false, "pcsc_selected_card_only", "reader_disconnected");
             if (readers.Count > 1) return new(false, true, "unknown", false, "pcsc_selected_card_only", "multiple_readers");
             var result = Pcsc.SCardConnect(context, readers[0], Pcsc.ShareShared, Pcsc.ProtocolT0 | Pcsc.ProtocolT1, out var card, out _);
@@ -51,7 +51,7 @@ public sealed class WindowsPcscNfcReaderBackend : INfcReaderBackend
             Pcsc.ThrowIfFailed(Pcsc.SCardEstablishContext(Pcsc.ScopeUser, 0, 0, out _context), "pcsc_unavailable");
             try
             {
-                var readers = Pcsc.ListAcr1552Readers(_context);
+                var readers = Pcsc.ListAcr1552PiccReaders(_context);
                 if (readers.Count == 0) throw new NfcHelperException("reader_disconnected", "The ACR1552U reader is disconnected.", true, 503);
                 if (readers.Count > 1) throw new NfcHelperException("multiple_readers", "Connect exactly one ACR1552U reader.", true, 409);
                 var result = Pcsc.SCardConnect(_context, readers[0], Pcsc.ShareExclusive, Pcsc.ProtocolT0 | Pcsc.ProtocolT1, out _card, out _activeProtocol);
@@ -213,7 +213,7 @@ internal static partial class Pcsc
     [LibraryImport("winscard.dll")]
     internal static partial int SCardTransmit(nint card, ref PcscIoRequest sendPci, byte[] sendBuffer, int sendLength, nint receivePci, [Out] byte[] receiveBuffer, ref int receiveLength);
 
-    internal static List<string> ListAcr1552Readers(nint context)
+    internal static List<string> ListAcr1552PiccReaders(nint context)
     {
         var length = 0;
         var first = SCardListReaders(context, null, null, ref length);
@@ -225,8 +225,25 @@ internal static partial class Pcsc
         if (length <= 1) return [];
         var buffer = new char[length];
         ThrowIfFailed(SCardListReaders(context, null, buffer, ref length), "reader_list_failed");
-        return new string(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries)
-            .Where(name => name.Contains("ACR1552", StringComparison.OrdinalIgnoreCase)).ToList();
+        return SelectAcr1552PiccReaders(
+            new string(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    internal static List<string> SelectAcr1552PiccReaders(IEnumerable<string> readerNames)
+    {
+        ArgumentNullException.ThrowIfNull(readerNames);
+        return readerNames.Where(IsAcr1552PiccReader).ToList();
+    }
+
+    private static bool IsAcr1552PiccReader(string readerName)
+    {
+        if (string.IsNullOrWhiteSpace(readerName)) return false;
+        var tokens = readerName.Split(
+            ' ',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return tokens.Contains("ACR1552", StringComparer.OrdinalIgnoreCase) &&
+               tokens.Contains("PICC", StringComparer.OrdinalIgnoreCase) &&
+               !tokens.Contains("SAM", StringComparer.OrdinalIgnoreCase);
     }
 
     internal static bool IsNoCard(int result) => result == NoSmartcard;

@@ -72,7 +72,7 @@ Primary references:
 - [ACS ACR1552U reference manual](https://www.acs.com.hk/download-manual/13473/REF-ACR1552U-Series-1.06.pdf)
 - [ACS ACR1552U product page](https://www.acs.com.hk/en/products/575/acr1552u-usb-nfc-reader-iv/)
 
-The helper uses Windows PC/SC (`winscard.dll`) in its standalone .NET 8 Windows process. No PC/SC/native dependency is imported into Next.js, Vercel, or the capture helper.
+The helper uses Windows PC/SC (`winscard.dll`) in its standalone .NET 8 Windows process. No PC/SC/native dependency is imported into Next.js, Vercel, or the capture helper. One physical ACR1552U can expose both `PICC` and `SAM` PC/SC endpoints. The helper selects only an exact-token `ACR1552` + `PICC` endpoint, explicitly excludes `SAM`, and still fails closed unless exactly one matching PICC endpoint exists. This accepts one physical reader's contactless endpoint without mistaking its SAM endpoint for a second reader; two physical ACR1552U PICC endpoints still produce `multiple_readers`, and ACR1252 endpoints remain unsupported.
 
 For an NTAG215, pages 0-2 contain manufacturer/static-lock data and page 3 is the Capability Container. Although total user memory is 504 bytes, the standard `E1 10 3E 00` CC advertises a 496-byte NDEF data area, so this helper reads/writes NDEF only on pages 4-127. It never writes pages 0-3, user pages outside that advertised NDEF area, dynamic-lock page 130, configuration pages 131-134, OTP, passwords, or irreversible lock state.
 
@@ -113,7 +113,7 @@ pnpm --filter @tenkings/ai-grader-nfc-helper test
 pnpm --filter @tenkings/ai-grader-nfc-helper test:maintenance
 ```
 
-The fake backend covers blank/exact/different NDEF, CC/version/page bounds, reader absent, no/multiple/unsupported tag, disconnect/partial write, timeout, read/write contention, readback corruption, idempotency, pairing replay, Origin/Host/token/body limits, and log redaction. The maintenance test uses temporary directories only to exercise containment, successful replacement, injected replacement failure, and rollback. It never reads the production helper config, Scheduled Task, CNG key, PC/SC reader, or tag. These tests do not prove behavior on physical hardware.
+The fake backend covers blank/exact/different NDEF, CC/version/page bounds, reader absent, no/multiple/unsupported tag, disconnect/partial write, timeout, read/write contention, readback corruption, idempotency, pairing replay, Origin/Host/token/body limits, and log redaction. Pure reader-selection tests cover one ACR1552 PICC plus its SAM endpoint, multiple PICC endpoints, ACR1252 and ambiguous-name rejection, and case-insensitive matching without opening PC/SC hardware. The maintenance test uses temporary directories only to exercise containment, successful replacement, injected replacement failure, and rollback. It never reads the production helper config, Scheduled Task, CNG key, PC/SC reader, or tag. These tests do not prove behavior on physical hardware.
 
 The packaged migration proof is destructive only to the disposable database it creates. It refuses a remote Docker context or missing acknowledgement, publishes PostgreSQL on loopback only, uses tmpfs storage, validates schema absence before deploy, applies the complete migration chain, verifies the exact NFC catalog and real compiled service lifecycle, proves a second deploy leaves the complete migration ledger unchanged, and always runs scoped container/volume teardown:
 
