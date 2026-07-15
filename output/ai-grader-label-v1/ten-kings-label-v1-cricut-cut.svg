@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="8.5in" height="11in" viewBox="0 0 612 792">
+  <title>Ten Kings Label V1 Cricut cut geometry</title>
+  <desc>Provisional 2 column by 8 row cut paths. Transform order is scale, clockwise rotation in top-left SVG space, then translation. Physical Cricut calibration is required.</desc>
+  <g id="cut-calibration-transform" transform="matrix(1 0 0 1 0 0)">
+  <g id="cut-paths" fill="none" stroke="#000000" stroke-width="0.25">
+  <rect id="slot-1" x="72" y="72" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-2" x="343.44" y="72" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-3" x="72" y="149.76" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-4" x="343.44" y="149.76" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-5" x="72" y="227.52" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-6" x="343.44" y="227.52" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-7" x="72" y="305.28" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-8" x="343.44" y="305.28" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-9" x="72" y="383.04" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-10" x="343.44" y="383.04" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-11" x="72" y="460.8" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-12" x="343.44" y="460.8" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-13" x="72" y="538.56" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-14" x="343.44" y="538.56" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-15" x="72" y="616.32" width="196.56" height="59.76" rx="0" ry="0"/>
+  <rect id="slot-16" x="343.44" y="616.32" width="196.56" height="59.76" rx="0" ry="0"/>
+  </g>
+  </g>
+</svg>

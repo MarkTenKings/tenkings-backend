@@ -69,6 +69,7 @@ import {
   type AiGraderPublishedLabelAssignmentResult,
   type AiGraderPreparedLabelSheetResult,
   type AiGraderPrintedLabelSheetResult,
+  type AiGraderRenderedLabelSheetFile,
 } from "./aiGraderLabelSheetRuntime";
 import type {
   AiGraderOcrPrefillResult,
@@ -404,6 +405,18 @@ export type AiGraderProductionApiDependencies = {
     operatorUserId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderPrintedLabelSheetResult>;
+  renderLabelSheetPdf?(input: {
+    tenantId: string;
+    sheetId: string;
+    expectedRevision: string;
+    operatorUserId?: string | null;
+  }): Promise<AiGraderRenderedLabelSheetFile>;
+  renderLabelSheetCutSvg?(input: {
+    tenantId: string;
+    sheetId: string;
+    expectedRevision: string;
+    operatorUserId?: string | null;
+  }): Promise<AiGraderRenderedLabelSheetFile>;
 };
 
 export type AiGraderProductionHistoryItem = {
@@ -2273,9 +2286,7 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
       cardAssetId: optionalString(row.cardAssetId),
       itemId: optionalString(row.itemId),
       publicReportUrl: safeAiGraderDownstreamUrl(row.publicReportUrl),
-      labelPreviewUrl:
-        safeAiGraderDownstreamUrl(label?.labelPreviewUrl) ??
-        safeAiGraderDownstreamUrl(buildAiGraderLabelPreviewUrl(stringValue(row.reportId, "unknown-report"))),
+      labelPreviewUrl: safeAiGraderDownstreamUrl(buildAiGraderLabelPreviewUrl(stringValue(row.reportId, "unknown-report"))),
       qrPayloadUrl: safeAiGraderDownstreamUrl(row.qrPayloadUrl) ?? safeAiGraderDownstreamUrl(label?.qrPayloadUrl),
       publishedAt: dateString(row.publishedAt),
       createdAt: dateString(row.createdAt),
@@ -2368,6 +2379,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           "history",
           "finish-queue",
           "label-sheets",
+          "render-label-sheet-pdf",
+          "render-label-sheet-cut-svg",
           "prepare-label-sheet-print",
           "mark-label-sheet-printed",
           "card-search",
@@ -2409,6 +2422,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       "history",
       "finish-queue",
       "label-sheets",
+      "render-label-sheet-pdf",
+      "render-label-sheet-cut-svg",
       "prepare-label-sheet-print",
       "mark-label-sheet-printed",
       "card-search",
@@ -2451,6 +2466,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         key === "ocr-prefill-init" ||
         key === "ocr-prefill-finalize" ||
         key === "create-card-from-report" ||
+        key === "render-label-sheet-pdf" ||
+        key === "render-label-sheet-cut-svg" ||
         key === "prepare-label-sheet-print" ||
         key === "mark-label-sheet-printed" ||
         key === "add-to-inventory"
@@ -2505,6 +2522,26 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
         const result = await deps.listLabelSheets({ tenantId });
         return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderLabelSheets", result });
+      }
+      if (key === "render-label-sheet-pdf" || key === "render-label-sheet-cut-svg") {
+        const input = parseLabelSheetMutationBody(req.body);
+        const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const common = {
+          tenantId,
+          sheetId: input.sheetId,
+          expectedRevision: input.expectedRevision,
+          operatorUserId: actorOperatorUserId(authorizedActor),
+        };
+        const result =
+          key === "render-label-sheet-pdf"
+            ? await deps.renderLabelSheetPdf?.(common)
+            : await deps.renderLabelSheetCutSvg?.(common);
+        if (!result) throw new Error("AI Grader Label V1 rendering is not configured.");
+        res.setHeader("Content-Type", result.contentType);
+        res.setHeader("Content-Disposition", `attachment; filename="${result.fileName}"`);
+        res.setHeader("Cache-Control", "private, no-store, max-age=0");
+        res.setHeader("X-Ten-Kings-Label-Revision", result.revision);
+        return res.status(200).send(result.body);
       }
       if (key === "card-search") {
         if (!deps.searchCards) throw new Error("AI Grader card/item search is not configured.");

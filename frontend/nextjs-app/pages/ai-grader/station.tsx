@@ -4043,7 +4043,7 @@ export default function AiGraderStationPage() {
         typeof publishedLabelSheet?.sheetNumber !== "number" ||
         typeof publishedLabelSheet?.slot !== "number"
       ) {
-        throw new Error("Publish finalize response did not include the report, label preview, and grading-label assignment.");
+        throw new Error("Publish finalize response did not include the report, Label Sheets link, and grading-label assignment.");
       }
       setProductionPublish((current) => ({ ...current, status: "pending", message: "Verifying public report route and storage-backed images." }));
       const publicVerification = await verifyPublishedReportRoute(publishedReportId);
@@ -4661,7 +4661,7 @@ export default function AiGraderStationPage() {
 
                   <div className="finish-links">
                     {selectedFinishItem.publicReportUrl ? <a href={selectedFinishItem.publicReportUrl} target="_blank" rel="noreferrer">Public Report</a> : null}
-                    {selectedFinishItem.labelPreviewUrl ? <a href={selectedFinishItem.labelPreviewUrl} target="_blank" rel="noreferrer">Label Preview</a> : null}
+                    {selectedFinishItem.labelPreviewUrl ? <a href={selectedFinishItem.labelPreviewUrl}>Label Sheets</a> : null}
                     {selectedFinishItem.cardAssetId ? <span>CardAsset {selectedFinishItem.cardAssetId}</span> : null}
                     {selectedFinishItem.itemId ? <span>Item {selectedFinishItem.itemId}</span> : null}
                   </div>
@@ -6064,9 +6064,9 @@ export default function AiGraderStationPage() {
             ) : null}
             {labelPreviewUrl ? (
               <p className="link-line">
-                <span>Label preview</span>
-                <a href={labelPreviewUrl} target="_blank" rel="noreferrer">{labelPreviewUrl}</a>
-                <button type="button" onClick={() => void copyLink(labelPreviewUrl, "Label preview URL")}>Copy</button>
+                <span>Label sheets</span>
+                <a href={labelPreviewUrl}>{labelPreviewUrl}</a>
+                <button type="button" onClick={() => void copyLink(labelPreviewUrl, "Label sheets URL")}>Copy</button>
               </p>
             ) : null}
             {qrPayloadUrl ? (

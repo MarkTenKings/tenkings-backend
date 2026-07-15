@@ -328,19 +328,29 @@ test("projected geometry matches pixels produced by the real rotate-and-crop nor
   assert.equal(projected.shape.type, "polygon");
 
   const { data, info } = await sharp(normalizedOutputPath).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  const redPixels = [];
+  let redPixelCount = 0;
+  let redMinX = Number.POSITIVE_INFINITY;
+  let redMinY = Number.POSITIVE_INFINITY;
+  let redMaxX = Number.NEGATIVE_INFINITY;
+  let redMaxY = Number.NEGATIVE_INFINITY;
   for (let y = 0; y < info.height; y += 1) {
     for (let x = 0; x < info.width; x += 1) {
       const offset = (y * info.width + x) * info.channels;
-      if (data[offset] > 200 && data[offset + 1] < 30 && data[offset + 2] < 30) redPixels.push({ x, y });
+      if (data[offset] > 200 && data[offset + 1] < 30 && data[offset + 2] < 30) {
+        redPixelCount += 1;
+        redMinX = Math.min(redMinX, x);
+        redMinY = Math.min(redMinY, y);
+        redMaxX = Math.max(redMaxX, x);
+        redMaxY = Math.max(redMaxY, y);
+      }
     }
   }
-  assert.ok(redPixels.length > 0);
+  assert.ok(redPixelCount > 0);
   const actualBounds = {
-    x: Math.min(...redPixels.map((point) => point.x)) / info.width,
-    y: Math.min(...redPixels.map((point) => point.y)) / info.height,
-    right: (Math.max(...redPixels.map((point) => point.x)) + 1) / info.width,
-    bottom: (Math.max(...redPixels.map((point) => point.y)) + 1) / info.height,
+    x: redMinX / info.width,
+    y: redMinY / info.height,
+    right: (redMaxX + 1) / info.width,
+    bottom: (redMaxY + 1) / info.height,
   };
   const projectedBounds = {
     x: Math.min(...projected.shape.points.map((point) => point.x)),

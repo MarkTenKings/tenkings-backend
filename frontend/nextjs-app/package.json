@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "label-v1:derive-assets": "tsx scripts/derive-ai-grader-label-v1-logo-assets.ts",
+    "label-v1:proofs": "tsx scripts/render-ai-grader-label-v1-proofs.ts",
     "ocr:evaluate": "tsx scripts/ai-grader-ocr-evaluate.ts",
     "migrate:images": "ts-node --project tsconfig.scripts.json scripts/migrate-image-variants.ts",
     "migrate:images:dry": "ts-node --project tsconfig.scripts.json scripts/migrate-image-variants.ts --dry-run"
