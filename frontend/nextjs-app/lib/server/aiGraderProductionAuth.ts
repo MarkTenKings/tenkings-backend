@@ -11,7 +11,14 @@ export const AI_GRADER_SERVICE_ACCOUNT_ID_ENV = "AI_GRADER_SERVICE_ACCOUNT_ID";
 export const AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256_ENV = "AI_GRADER_SERVICE_ACCOUNT_TOKEN_SHA256";
 export const AI_GRADER_SERVICE_ACCOUNT_SCOPES_ENV = "AI_GRADER_SERVICE_ACCOUNT_SCOPES";
 
-export type AiGraderProductionAction = "publish" | "history" | "card-search" | "upload-slab-photo" | "run-comps";
+export type AiGraderProductionAction =
+  | "publish"
+  | "history"
+  | "card-search"
+  | "upload-slab-photo"
+  | "run-comps"
+  | "nfc-program"
+  | "nfc-admin";
 export type AiGraderHumanRole = "ai_grader_operator" | "ai_grader_admin";
 export type AiGraderProductionActorType = "human_operator" | "service_account";
 
@@ -72,7 +79,15 @@ class AiGraderProductionAuthError extends Error {
   }
 }
 
-const ALLOWED_ACTIONS: AiGraderProductionAction[] = ["publish", "history", "card-search", "upload-slab-photo", "run-comps"];
+const ALLOWED_ACTIONS: AiGraderProductionAction[] = [
+  "publish",
+  "history",
+  "card-search",
+  "upload-slab-photo",
+  "run-comps",
+  "nfc-program",
+  "nfc-admin",
+];
 const ACTION_SET = new Set<string>(ALLOWED_ACTIONS);
 
 function normalizePhone(value: string) {

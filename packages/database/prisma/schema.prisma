@@ -367,6 +367,34 @@ enum GradingMode {
   FULL_TWO_SCALE     @map("FULL_TWO_SCALE")
 }
 
+enum AiGraderNfcChipType {
+  NTAG215
+  NTAG424_DNA
+}
+
+enum AiGraderNfcSecurityMode {
+  static_url_v1
+  ntag424_sun_v1
+}
+
+enum AiGraderNfcTagStatus {
+  reserved
+  programming
+  verified
+  active
+  revoked
+  error
+}
+
+enum AiGraderNfcProgrammingAttemptState {
+  initialized
+  writing
+  verified
+  failed
+  expired
+  consumed
+}
+
 enum CaptureSide {
   FRONT
   BACK
@@ -854,6 +882,7 @@ model Item {
   cardQrCodeId      String?          @unique
   cardQrCode        QrCode?          @relation("CardQrCode", fields: [cardQrCodeId], references: [id])
   packLabels        PackLabel[]
+  aiGraderNfcTags   AiGraderNfcTag[]
 
   @@index([locationId])
 }
@@ -1661,6 +1690,7 @@ model CardAsset {
   variantDecisions     CardVariantDecision[]
   ocrFeedbackEvents    OcrFeedbackEvent[]
   ocrRegionTeachEvents OcrRegionTeachEvent[]
+  aiGraderNfcTags      AiGraderNfcTag[]
 
   @@index([sportsDbPlayerId])
   @@index([inventoryBatchId])
@@ -2929,6 +2959,7 @@ model AiGraderReport {
   publication    AiGraderPublication?
   evidenceAssets AiGraderEvidenceAsset[]
   valuations     AiGraderValuation[]
+  nfcTags        AiGraderNfcTag[]
 
   @@index([tenantId, publicationStatus, createdAt])
   @@index([cardAssetId])
@@ -3008,6 +3039,7 @@ model AiGraderLabel {
   labelPreviewUrl     String?
   physicalPrintStatus String   @default("not_printed")
   payload             Json
+  nfcTags             AiGraderNfcTag[]
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -3062,6 +3094,104 @@ model AiGraderValuation {
 
   @@index([tenantId, status, updatedAt])
   @@index([reportId])
+}
+
+model AiGraderNfcTag {
+  id                        String                          @id @default(cuid())
+  tenantId                  String
+  publicTagId               String                          @unique
+  chipType                  AiGraderNfcChipType             @default(NTAG215)
+  securityMode              AiGraderNfcSecurityMode         @default(static_url_v1)
+  status                    AiGraderNfcTagStatus             @default(reserved)
+  uidFingerprintSha256      String?
+  ndefPayloadVersion        Int                             @default(1)
+  expectedPayloadSha256     String
+  readbackPayloadSha256     String?
+  aiGraderReportId          String
+  reportId                  String
+  report                    AiGraderReport                  @relation(fields: [aiGraderReportId], references: [id], onDelete: Restrict)
+  cardAssetId               String
+  cardAsset                 CardAsset                       @relation(fields: [cardAssetId], references: [id], onDelete: Restrict)
+  itemId                    String
+  item                      Item                            @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  aiGraderLabelId           String
+  certId                    String
+  label                     AiGraderLabel                   @relation(fields: [aiGraderLabelId], references: [id], onDelete: Restrict)
+  createdByUserId           String
+  programmedByUserId        String?
+  verifiedByUserId          String?
+  activatedByUserId         String?
+  revokedByUserId           String?
+  programmedAt              DateTime?
+  verifiedAt                DateTime?
+  activatedAt               DateTime?
+  revokedAt                 DateTime?
+  revocationReason          String?
+  errorCode                 String?
+  metadata                  Json?
+  createdAt                 DateTime                        @default(now())
+  updatedAt                 DateTime                        @updatedAt
+  attempts                  AiGraderNfcProgrammingAttempt[]
+  auditEvents               AiGraderNfcAuditEvent[]
+
+  @@index([tenantId, reportId, status])
+  @@index([cardAssetId, status])
+  @@index([itemId, status])
+  @@index([uidFingerprintSha256, status])
+  @@index([aiGraderReportId])
+  @@index([aiGraderLabelId])
+}
+
+model AiGraderNfcProgrammingAttempt {
+  id                     String                                  @id
+  tagId                  String
+  tag                    AiGraderNfcTag                         @relation(fields: [tagId], references: [id], onDelete: Restrict)
+  tenantId               String
+  reportId               String
+  cardAssetId            String
+  itemId                 String
+  certId                 String
+  requestedByUserId      String
+  idempotencyKeyHash     String
+  completionIdempotencyKeyHash String?
+  tokenHash              String                                  @unique
+  attestationChallengeHash String
+  expectedAttestationAlgorithm String
+  completedWorkstationKeyId String?
+  state                  AiGraderNfcProgrammingAttemptState      @default(initialized)
+  requestedAt            DateTime                                @default(now())
+  expiresAt              DateTime
+  failureCode            String?
+  readbackEvidence       Json?
+  consumedAt             DateTime?
+  createdAt              DateTime                                @default(now())
+  updatedAt              DateTime                                @updatedAt
+  auditEvents            AiGraderNfcAuditEvent[]
+
+  @@unique([tenantId, requestedByUserId, idempotencyKeyHash], map: "AiGraderNfcAttempt_request_idempotency_key")
+  @@index([tagId, state, expiresAt])
+  @@index([tenantId, reportId, state])
+}
+
+model AiGraderNfcAuditEvent {
+  id             String                    @id @default(cuid())
+  tagId          String
+  tag            AiGraderNfcTag           @relation(fields: [tagId], references: [id], onDelete: Restrict)
+  attemptId      String?
+  attempt        AiGraderNfcProgrammingAttempt? @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  tenantId       String
+  reportId       String
+  action         String
+  fromStatus     AiGraderNfcTagStatus?
+  toStatus       AiGraderNfcTagStatus?
+  actorUserId    String
+  reasonCode     String?
+  safeDetails    Json?
+  createdAt      DateTime                  @default(now())
+
+  @@index([tagId, createdAt])
+  @@index([attemptId, createdAt])
+  @@index([tenantId, reportId, createdAt])
 }
 
 model CustodyEvent {

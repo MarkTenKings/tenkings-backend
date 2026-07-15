@@ -16,6 +16,7 @@
     "generate": "prisma generate --schema prisma/schema.prisma",
     "migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
     "migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "validate:nfc:migration:disposable": "node scripts/runAiGraderNfcMigrationValidation.mjs",
     "db:push": "prisma db push --schema prisma/schema.prisma"
   },
   "dependencies": {

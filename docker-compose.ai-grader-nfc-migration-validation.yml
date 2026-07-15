@@ -1,0 +1,24 @@
+services:
+  ai-grader-nfc-validation-postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${AI_GRADER_NFC_VALIDATION_DB_USER:?set by the validation harness}
+      POSTGRES_PASSWORD: ${AI_GRADER_NFC_VALIDATION_DB_PASSWORD:?set by the validation harness}
+      POSTGRES_DB: ${AI_GRADER_NFC_VALIDATION_DB_NAME:?set by the validation harness}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1::5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=768m
+    restart: "no"
+    labels:
+      com.tenkings.purpose: ai-grader-nfc-disposable-migration-validation
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30

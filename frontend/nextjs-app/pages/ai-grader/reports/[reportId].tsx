@@ -22,6 +22,31 @@ const ELEMENT_LABELS = ["centering", "corners", "edges", "surface"] as const;
 const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Confidence", "Evidence Replay"] as const;
 type LabMode = (typeof LAB_MODES)[number];
 type LabSide = "front" | "back";
+type PublicNfcRegistration = {
+  status: "active";
+  registrationKind: "registered_link";
+  publicTagId: string;
+  chipType: "NTAG215";
+  securityMode: "static_url_v1";
+  nfcTagUrl: string;
+};
+
+function safePublicNfcRegistration(value: unknown): PublicNfcRegistration | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const publicTagId = typeof row.publicTagId === "string" && /^[A-Za-z0-9_-]{32}$/.test(row.publicTagId)
+    ? row.publicTagId
+    : "";
+  const expectedUrl = publicTagId ? `https://collect.tenkings.co/nfc/${publicTagId}` : "";
+  if (
+    row.status !== "active" ||
+    row.registrationKind !== "registered_link" ||
+    row.chipType !== "NTAG215" ||
+    row.securityMode !== "static_url_v1" ||
+    row.nfcTagUrl !== expectedUrl
+  ) return null;
+  return row as PublicNfcRegistration;
+}
 
 function scoreText(score?: number) {
   return typeof score === "number" ? score.toFixed(score % 1 === 0 ? 0 : 2) : "Pending";
@@ -75,6 +100,7 @@ export default function AiGraderReportViewerPage() {
   const fallbackBundle = getAiGraderReportBundle(router.query.reportId);
   const [persistedBundle, setPersistedBundle] = useState<AiGraderCompatibleReportBundle | null>(null);
   const [publicLookupError, setPublicLookupError] = useState<string | null>(null);
+  const [publicNfcRegistration, setPublicNfcRegistration] = useState<PublicNfcRegistration | null>(null);
   const [selectedLabMode, setSelectedLabMode] = useState<LabMode>("True View");
   const [selectedLabSide, setSelectedLabSide] = useState<LabSide>("front");
   const [selectedFindingId, setSelectedFindingId] = useState<string | undefined>();
@@ -139,21 +165,26 @@ export default function AiGraderReportViewerPage() {
     if (isExplicitAiGraderSampleReportId(reportId)) {
       setPersistedBundle(null);
       setPublicLookupError(null);
+      setPublicNfcRegistration(null);
       return;
     }
     setPublicLookupError(null);
+    setPublicNfcRegistration(null);
     fetch(`/api/ai-grader/reports/${encodeURIComponent(reportId)}`)
       .then(async (response) => {
         const payload = await response.json().catch(() => ({}));
         if (response.ok && payload.ok === true && payload.bundle) {
           setPersistedBundle(payload.bundle);
+          setPublicNfcRegistration(safePublicNfcRegistration(payload.nfcRegistration));
           return;
         }
         setPersistedBundle(null);
+        setPublicNfcRegistration(null);
         setPublicLookupError(payload.message ?? "This report was not resolved from persisted production storage.");
       })
       .catch(() => {
         setPersistedBundle(null);
+        setPublicNfcRegistration(null);
         setPublicLookupError("Persisted production report lookup failed.");
       });
     return;
@@ -345,6 +376,14 @@ export default function AiGraderReportViewerPage() {
                 <span>Certified Claim</span>
                 <strong>{productionRelease.certifiedClaim ? "Unexpected" : "Disabled"}</strong>
               </article>
+              {publicNfcRegistration ? (
+                <article>
+                  <span>NFC registration</span>
+                  <strong>Registered Ten Kings NFC link</strong>
+                  <p>Linked to this Ten Kings AI Grader report. This NTAG215 link is not cryptographic authentication.</p>
+                  <a href={publicNfcRegistration.nfcTagUrl}>Open registered NFC link</a>
+                </article>
+              ) : null}
               {slabbedPhotoContract ? (
                 <article>
                   <span>Slab Photos</span>
