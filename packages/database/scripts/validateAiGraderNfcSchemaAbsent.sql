@@ -9,11 +9,13 @@ BEGIN
     FROM (
       SELECT to_regclass('public."AiGraderNfcTag"')::text AS object_name
       UNION ALL SELECT to_regclass('public."AiGraderNfcProgrammingAttempt"')::text
+      UNION ALL SELECT to_regclass('public."AiGraderNfcManualIosAttempt"')::text
       UNION ALL SELECT to_regclass('public."AiGraderNfcAuditEvent"')::text
       UNION ALL SELECT to_regtype('public."AiGraderNfcChipType"')::text
       UNION ALL SELECT to_regtype('public."AiGraderNfcSecurityMode"')::text
       UNION ALL SELECT to_regtype('public."AiGraderNfcTagStatus"')::text
       UNION ALL SELECT to_regtype('public."AiGraderNfcProgrammingAttemptState"')::text
+      UNION ALL SELECT to_regtype('public."AiGraderNfcManualIosAttemptState"')::text
     ) objects
    WHERE object_name IS NOT NULL;
 

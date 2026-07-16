@@ -95,6 +95,38 @@ test("public NFC active projection is DB-backed, exact-linkage-only, and honest 
   assert.equal(json.includes("cryptographically_verified"), false);
 });
 
+test("public NFC keeps Feiju setup taps generic and exposes only honest registered-link wording after activation", async () => {
+  let reads = 0;
+  const setup = await readAiGraderNfcPublicTap(PUBLIC_TAG_ID, {
+    dbClient: { aiGraderNfcTag: { async findUnique() { reads += 1; return publicRow(); }, async findFirst() { return null; } } },
+    observeManualIosTap: async () => ({ state: "setup_verification", stage: "pre_lock" }),
+  });
+  assert.deepEqual(setup, { state: "setup_verification", stage: "pre_lock" });
+  assert.equal(reads, 0);
+  const setupJson = JSON.stringify(setup);
+  for (const forbidden of ["reportId", "cardAssetId", "itemId", "certId", "uid", "phone", "ipAddress", "operator"]) {
+    assert.equal(setupJson.includes(forbidden), false, forbidden);
+  }
+
+  const feiju = publicRow({
+    chipType: "FEIJU_PROPRIETARY_ISODEP",
+    securityMode: "manual_ios_locked_static_url_v1",
+    uidFingerprintSha256: null,
+    readbackEvidence: undefined,
+    workstationKeyId: undefined,
+    signature: undefined,
+  });
+  const active = await readAiGraderNfcPublicTap(PUBLIC_TAG_ID, {
+    dbClient: { aiGraderNfcTag: { async findUnique() { return feiju; }, async findFirst() { return null; } } },
+  });
+  assert.equal(active.state, "active");
+  if (active.state !== "active") throw new Error("expected active Feiju registration");
+  assert.equal(active.chipType, "FEIJU_PROPRIETARY_ISODEP");
+  assert.equal(active.securityMode, "manual_ios_locked_static_url_v1");
+  assert.equal(active.registrationKind, "registered_link");
+  assert.equal(JSON.stringify(active).includes("cryptographically_verified"), false);
+});
+
 test("public NFC revoked/missing/unpublished/mismatched states never resolve a report", async () => {
   const cases: Array<[Record<string, unknown> | null, "revoked" | "not_valid" | "contradictory_linkage"]> = [
     [publicRow({ status: "revoked" }), "revoked"],
@@ -222,6 +254,13 @@ test("Finish inventory gate requires exact active NFC only when policy is enable
   })], { nfcRequired: true });
   assert.equal(requiredActive.items[0].inventory.canAddToInventory, true);
   assert.equal(requiredActive.items[0].nfcStatus, "active");
+
+  const requiredFeiju = buildAiGraderFinishCardsQueueResult([finishRow({
+    status: "active", publicTagId: PUBLIC_TAG_ID, nfcTagUrl: `https://collect.tenkings.co/nfc/${PUBLIC_TAG_ID}`,
+    chipType: "FEIJU_PROPRIETARY_ISODEP", securityMode: "manual_ios_locked_static_url_v1",
+  })], { nfcRequired: true });
+  assert.equal(requiredFeiju.items[0].inventory.canAddToInventory, true);
+  assert.equal(requiredFeiju.items[0].nfcStatus, "active");
 });
 
 function inventoryDb(
@@ -243,6 +282,7 @@ function inventoryDb(
         migrationLedgerReady: schema === "ready",
         tagTableReady: schema === "ready",
         attemptTableReady: schema === "ready",
+        manualIosAttemptTableReady: schema === "ready",
         auditTableReady: schema === "ready",
       }];
       return [{ ready: schema === "ready" }];
@@ -307,6 +347,12 @@ test("dedicated programming and public tap pages keep hardware controls out of F
     readFile(new URL("../pages/nfc/[publicTagId].tsx", import.meta.url), "utf8"),
   ]);
   assert.match(nfcPage, /Program NFC/);
+  assert.match(nfcPage, /Feiju -- iPhone assisted/);
+  assert.match(nfcPage, /NFC Tools by Wakdev/);
+  assert.equal(nfcPage.includes('workflowProfile === "ntag215_pcsc"'), true);
+  assert.match(nfcPage, /Writable: No/);
+  assert.match(nfcPage, /Do not attempt an alternate-URL overwrite/);
+  assert.match(nfcPage, /nfcManualIosEnabled/);
   assert.match(nfcPage, /not cryptographic authentication/i);
   assert.match(nfcPage, /-overwrite-\$\{overwriteDigest\.slice\(0, 12\)\}/);
   assert.match(nfcPage, /Retry Current Attempt/);

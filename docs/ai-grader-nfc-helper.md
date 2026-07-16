@@ -2,7 +2,7 @@
 
 ## Scope and security meaning
 
-The AI Grader NFC feature writes one static NFC Forum URI record to an NTAG215:
+The AI Grader NFC feature supports two separately gated static-link profiles. The original workstation profile writes one static NFC Forum URI record to an NTAG215:
 
 `https://collect.tenkings.co/nfc/{serverGeneratedPublicTagId}`
 
@@ -12,34 +12,39 @@ An NTAG215 static URL is a convenience identity link and can be copied. Approved
 
 Hosted activation additionally requires an ECDSA P-256 operational attestation from an approved finishing-workstation helper. That signature proves only that the allowlisted helper reported a successful PC/SC write/readback (or an exact already-programmed readback) for the locked attempt. It does not make NTAG215 cryptographic hardware, card, or slab authentication and must never be described that way.
 
+The additive Feiju profile is `FEIJU_PROPRIETARY_ISODEP` / `manual_ios_locked_static_url_v1`. It uses NFC Tools by Wakdev on an iPhone, two exact-URL background-tap gates, and an authenticated `Writable: No` confirmation. It records consumer write protection only, with `workstationOperationalAttestation=false`, `cryptographicTagAuthentication=false`, and a clonable static URL. It never collects a UID, adds Feiju APDUs, or uses the PC reader/helper. See `docs/ai-grader-nfc-feiju-ios-profile.md` for its exact classification, workflow, evidence, privacy, and rollout contract.
+
 The schema has an intentionally unimplemented `NTAG424_DNA` / `ntag424_sun_v1` strategy seam. This release has no SUN verifier, counters, keys, originality-signature validation, or cryptographic-success state. Future key material must not be stored in application JSON.
 
 ## Hosted architecture
 
-- `AiGraderNfcTag` owns exact tenant, published report, confirmed CardAsset, Item, certificate, and AiGraderLabel linkage; a SHA-256 UID fingerprint is stored only after successful local readback. Raw UID bytes are not accepted or persisted.
+- `AiGraderNfcTag` owns exact tenant, published report, confirmed CardAsset, Item, certificate, and AiGraderLabel linkage. NTAG215 stores a SHA-256 UID fingerprint only after successful local readback; Feiju requires the UID fingerprint to remain null. Raw UID bytes are not accepted or persisted.
 - `AiGraderNfcProgrammingAttempt` stores a token hash and a SHA-256 challenge hash, never the opaque token or raw attestation challenge, and expires within 30 minutes (the hosted route currently issues five-minute attempts). Init replay with the same actor/report idempotency key reconstructs the same one-time token/challenge; it never allocates a second live attempt.
 - Completion accepts only helper protocol `tenkings-ai-grader-nfc-loopback-v2`, result `write_verified_pcsc_readback` or `already_programmed_exact`, and an ECDSA P-256/SHA-256 IEEE-P1363 signature from the current server allowlist. The database service reconstructs and verifies the canonical statement itself; a browser flag cannot activate a registration.
 - `AiGraderNfcAuditEvent` is append-only through database triggers. Revoke requires a reason; replacement revokes the old row before allocating a new public identity.
 - Report-lifecycle advisory locks and partial unique indexes enforce one open reservation/active link per report, CardAsset, and Item. A separate unique index prevents the same UID fingerprint from being active on more than one card.
-- Hosted endpoints are `/api/admin/ai-grader/nfc/status`, `/init`, `/complete`, `/revoke`, and `/replace`. Status/init/complete require a human `ai_grader_operator` or `ai_grader_admin`; revoke/replace require a human `ai_grader_admin`. Client role fields are ignored and service-account NFC calls fail closed.
+- Hosted endpoints are `/api/admin/ai-grader/nfc/status`, `/init`, `/complete`, `/revoke`, `/replace`, plus `/manual-ios/init`, `/manual-ios/confirm-lock`, `/manual-ios/complete`, and `/manual-ios/replace`. Status/init/complete and the non-replacement manual actions require a human `ai_grader_operator` or `ai_grader_admin`; revoke/replace and manual replacement require a human `ai_grader_admin`. Client role fields are ignored and service-account NFC calls fail closed.
 - Ordinary init after any revoked registration fails with `AI_GRADER_NFC_REPLACEMENT_REQUIRED`. Only the admin replace transaction can revoke the exact old registration with its immutable reason/audit tuple and pass the module-private authorization that creates one replacement.
 - `/nfc/[publicTagId]` is a production-database-only public read. Only a fully active, exactly linked, still-published public report resolves. Other states expose no private IDs, UID evidence, local paths, storage/provider details, or hardware controls. If the additive NFC migration is absent or persistence cannot be checked, the route returns a clean, no-store/noindex HTTP 503 unavailable page instead of claiming that a real tag is invalid.
-- `/ai-grader/nfc?reportId=...` is the only browser hardware workflow. `/ai-grader/finish` shows the safe NFC state and links to it but remains usable without local hardware.
+- `/ai-grader/nfc?reportId=...` is the only browser NFC workflow. The operator must explicitly select either the unchanged NTAG215 workstation path or **Feiju -- iPhone assisted**. `/ai-grader/finish` shows the safe NFC state and links to it but remains usable without local hardware.
 
 The NFC inventory policy is additive and defaults off:
 
 ```dotenv
 AI_GRADER_NFC_REQUIRED=false
 AI_GRADER_NFC_PROGRAMMING_ENABLED=false
+AI_GRADER_NFC_MANUAL_IOS_ENABLED=false
 AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET=<random server-only value of at least 32 bytes>
 AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON={<lowercase-sha256-der-spki-key-id>:{"tenantId":"ten-kings","algorithm":"ecdsa-p256-sha256-p1363","publicSpkiDerBase64":"<standard-base64-der-spki>"}}
 ```
 
-`AI_GRADER_NFC_PROGRAMMING_ENABLED` is independent and also defaults false. While false, authenticated status and admin revocation remain available, but init, complete, and replace return a fixed disabled error and the browser never contacts the helper. When true, the attempt-token secret and at least one valid P-256 key for the exact tenant are mandatory. The JSON allowlist is server-only, limited to 16 KiB/eight exact entries, and contains public SPKI only—never a private key, token, challenge, or signature.
+`AI_GRADER_NFC_PROGRAMMING_ENABLED` is independent and also defaults false. While false, authenticated status and admin revocation remain available, but init, complete, replace, and all manual-iOS mutations return a fixed disabled error. When the NTAG215 workflow is selected, programming additionally requires the attempt-token secret and at least one valid P-256 key for the exact tenant. The JSON allowlist is server-only, limited to 16 KiB/eight exact entries, and contains public SPKI only—never a private key, token, challenge, or signature.
 
-Authenticated readiness returns only `nfcSchemaReady`, `nfcProgrammingEnabled`, `nfcRequired`, `nfcAttemptTokenConfigured`, `nfcWorkstationAttestationConfigured`, `nfcWorkstationKeyCount`, and `expectedNfcHelperProtocolVersion`. The schema probe distinguishes an unapplied NFC migration from an unexpected database failure without returning database details. NFC status reports unavailable when the schema is absent; NFC mutations return the stable schema-unavailable error, and an unexpected probe failure returns a separate stable check-failed error.
+`AI_GRADER_NFC_MANUAL_IOS_ENABLED` is a separate default-off gate. It must be true together with the general programming gate before Feiju init, lock confirmation, completion, or replacement. It does not weaken or bypass the NTAG215 token, helper protocol, or workstation-signature checks.
 
-When `AI_GRADER_NFC_REQUIRED` is false, the current Finish/report/Publish/QR/inventory workflow does not depend on the NFC tables and remains operational if the migration has not been applied. When true, Add To Inventory rechecks schema readiness and one exact active non-revoked NFC row inside the existing report-locked transaction; missing or unverifiable persistence fails closed. Do not enable it before the migration is applied and the finishing helper is installed and accepted. NFC data is additive to label/report contracts; it does not remove, hide, or replace the existing QR or create another label-sheet slot.
+Authenticated readiness returns only `nfcSchemaReady`, `nfcProgrammingEnabled`, `nfcManualIosEnabled`, `nfcRequired`, `nfcAttemptTokenConfigured`, `nfcWorkstationAttestationConfigured`, `nfcWorkstationKeyCount`, and `expectedNfcHelperProtocolVersion`. The schema probe distinguishes an unapplied NFC migration from an unexpected database failure without returning database details. NFC status reports unavailable when the schema is absent; NFC mutations return the stable schema-unavailable error, and an unexpected probe failure returns a separate stable check-failed error.
+
+When `AI_GRADER_NFC_REQUIRED` is false, the current Finish/report/Publish/QR/inventory workflow does not depend on the NFC tables and remains operational if the migration has not been applied. When true, Add To Inventory rechecks schema readiness and one exact active non-revoked NFC row inside the existing report-locked transaction; missing or unverifiable persistence fails closed. Do not enable it before the migration is applied and the selected NFC profile has completed its separately approved operational acceptance. NFC data is additive to label/report contracts; it does not remove, hide, or replace the existing QR or create another label-sheet slot.
 
 ## Operational attestation contract
 
@@ -115,7 +120,7 @@ pnpm --filter @tenkings/ai-grader-nfc-helper test:maintenance
 
 The fake backend covers blank/exact/different NDEF, CC/version/page bounds, reader absent, no/multiple/unsupported tag, disconnect/partial write, timeout, read/write contention, readback corruption, idempotency, pairing replay, Origin/Host/token/body limits, and log redaction. Pure reader-selection tests cover one ACR1552 PICC plus its SAM endpoint, multiple PICC endpoints, ACR1252 and ambiguous-name rejection, and case-insensitive matching without opening PC/SC hardware. The maintenance test uses temporary directories only to exercise containment, successful replacement, injected replacement failure, and rollback. It never reads the production helper config, Scheduled Task, CNG key, PC/SC reader, or tag. These tests do not prove behavior on physical hardware.
 
-The packaged migration proof is destructive only to the disposable database it creates. It refuses a remote Docker context or missing acknowledgement, publishes PostgreSQL on loopback only, uses tmpfs storage, validates schema absence before deploy, applies the complete migration chain, verifies the exact NFC catalog and real compiled service lifecycle, proves a second deploy leaves the complete migration ledger unchanged, and always runs scoped container/volume teardown:
+The packaged migration proof is destructive only to the disposable database it creates. It refuses a remote Docker context or missing acknowledgement, publishes PostgreSQL on loopback only, uses tmpfs storage, validates schema absence before deploy, applies the complete migration chain, verifies the exact NFC catalog plus both NTAG215 and Feiju compiled service lifecycles, proves a second deploy leaves the complete migration ledger unchanged, and always runs scoped container/volume teardown:
 
 ```powershell
 pnpm --filter @tenkings/database validate:nfc:migration:disposable -- --ack-disposable-local-postgres
@@ -180,20 +185,20 @@ The normal workstation shortcut/open command reads but never rewrites protected 
 
 ## Deployment order
 
-1. Review and explicitly approve the migration in `packages/database/prisma/migrations/20260712160000_ai_grader_nfc_static_url_v1/migration.sql`.
-2. Apply it through the normal migration runbook. It is not run by this PR or a Vercel build.
-3. Leave both `AI_GRADER_NFC_PROGRAMMING_ENABLED=false` and `AI_GRADER_NFC_REQUIRED=false`; configure a random server-only `AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET`.
-4. Deploy the hosted code through the normal runbook and verify authenticated redacted readiness, admin revocation availability, and public invalid-state reads without contacting helper hardware.
-5. Approve and install the standalone helper on the dedicated finishing PC, export its public-only allowlist entry, review it, and configure `AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON`. Pair the production-origin browser. Do not provision or rotate a key from an ordinary helper update.
-6. After the migration, secret, and tenant key are ready, separately approve `AI_GRADER_NFC_PROGRAMMING_ENABLED=true` and verify programming readiness before any tag operation.
-7. Complete the separate sacrificial-tag hardware gate below. This is not production report programming.
-8. Only after migration, hosted/helper acceptance, and operator readiness, separately approve changing `AI_GRADER_NFC_REQUIRED=true`.
+1. Review and explicitly approve the base migration `20260712160000_ai_grader_nfc_static_url_v1` and the additive Feiju migrations `20260716190000_ai_grader_nfc_feiju_profile_enums` and `20260716190500_ai_grader_nfc_feiju_ios_profile`.
+2. Apply them through the normal migration runbook. They are not run by this PR or a Vercel build. The Feiju enum migration must commit before the table/constraint migration uses its values.
+3. Leave `AI_GRADER_NFC_PROGRAMMING_ENABLED=false`, `AI_GRADER_NFC_MANUAL_IOS_ENABLED=false`, and `AI_GRADER_NFC_REQUIRED=false`; configure the existing NTAG215 server-only secret/allowlist only through their separate approved rollout.
+4. Deploy the hosted code through the normal runbook and verify authenticated redacted readiness, admin revocation availability, public invalid-state reads, and generic Feiju setup-verification privacy without contacting helper hardware or a tag.
+5. For NTAG215, preserve the approved standalone helper install, public-key allowlist, production-origin pairing, and sacrificial-tag gate. Do not provision or rotate a key from an ordinary helper update.
+6. Separately approve `AI_GRADER_NFC_PROGRAMMING_ENABLED=true` only after the shared persistence/authorization gates are ready.
+7. Separately approve `AI_GRADER_NFC_MANUAL_IOS_ENABLED=true` only after review of the Feiju iPhone-assisted workflow. Enabling it does not authorize programming a real tag.
+8. Only after the selected profile's acceptance and operator readiness, separately consider changing `AI_GRADER_NFC_REQUIRED=true`.
 
 Do not program a real report tag before those prerequisites and a specific production-operation approval.
 
 ## Production rollback plan
 
-If NFC rollout must be rolled back, first set both `AI_GRADER_NFC_PROGRAMMING_ENABLED=false` and `AI_GRADER_NFC_REQUIRED=false` through the separately approved environment-change process. Roll back the hosted application behavior without deleting or rebinding NFC records. The additive NFC tables and immutable audit history should normally remain in place so existing registrations and evidence are preserved. Removing tables or NFC data later would require a separate reviewed destructive migration, dry-run impact evidence, and explicit destructive-operation approval.
+If NFC rollout must be rolled back, first set `AI_GRADER_NFC_MANUAL_IOS_ENABLED=false`, `AI_GRADER_NFC_PROGRAMMING_ENABLED=false`, and `AI_GRADER_NFC_REQUIRED=false` through the separately approved environment-change process. Roll back the hosted application behavior without deleting or rebinding NFC records. The additive NFC tables and immutable audit history should normally remain in place so existing registrations and evidence are preserved. Removing tables or NFC data later would require a separate reviewed destructive migration, dry-run impact evidence, and explicit destructive-operation approval.
 
 ## Separate hardware-validation authorization
 

@@ -370,11 +370,13 @@ enum GradingMode {
 enum AiGraderNfcChipType {
   NTAG215
   NTAG424_DNA
+  FEIJU_PROPRIETARY_ISODEP
 }
 
 enum AiGraderNfcSecurityMode {
   static_url_v1
   ntag424_sun_v1
+  manual_ios_locked_static_url_v1
 }
 
 enum AiGraderNfcTagStatus {
@@ -390,6 +392,16 @@ enum AiGraderNfcProgrammingAttemptState {
   initialized
   writing
   verified
+  failed
+  expired
+  consumed
+}
+
+enum AiGraderNfcManualIosAttemptState {
+  awaiting_prelock_tap
+  awaiting_lock_confirmation
+  awaiting_postlock_tap
+  ready_to_complete
   failed
   expired
   consumed
@@ -3132,6 +3144,7 @@ model AiGraderNfcTag {
   createdAt                 DateTime                        @default(now())
   updatedAt                 DateTime                        @updatedAt
   attempts                  AiGraderNfcProgrammingAttempt[]
+  manualIosAttempts         AiGraderNfcManualIosAttempt[]
   auditEvents               AiGraderNfcAuditEvent[]
 
   @@index([tenantId, reportId, status])
@@ -3173,6 +3186,41 @@ model AiGraderNfcProgrammingAttempt {
   @@index([tenantId, reportId, state])
 }
 
+model AiGraderNfcManualIosAttempt {
+  id                                  String                              @id
+  tagId                               String
+  tag                                 AiGraderNfcTag                     @relation(fields: [tagId], references: [id], onDelete: Restrict)
+  tenantId                            String
+  reportId                            String
+  cardAssetId                         String
+  itemId                              String
+  certId                              String
+  requestedByUserId                   String
+  idempotencyKeyHash                  String
+  completionIdempotencyKeyHash        String?
+  state                               AiGraderNfcManualIosAttemptState    @default(awaiting_prelock_tap)
+  profileVersion                      String
+  qualificationProfile                String
+  expectedPayloadSha256               String
+  readbackPayloadSha256               String?
+  preLockTapObservedAt                DateTime?
+  lockStatusConfirmedAt               DateTime?
+  lockStatusConfirmedByUserId         String?
+  writeProtectionEvidence             String?
+  postLockTapObservedAt               DateTime?
+  workstationOperationalAttestation  Boolean                             @default(false)
+  cryptographicTagAuthentication      Boolean                             @default(false)
+  requestedAt                         DateTime                            @default(now())
+  expiresAt                           DateTime
+  failureCode                         String?
+  consumedAt                          DateTime?
+  createdAt                           DateTime                            @default(now())
+  updatedAt                           DateTime                            @updatedAt
+
+  @@unique([tenantId, requestedByUserId, idempotencyKeyHash], map: "AiGraderNfcManualIosAttempt_request_idempotency_key")
+  @@index([tagId, state, expiresAt])
+  @@index([tenantId, reportId, state])
+}
 model AiGraderNfcAuditEvent {
   id             String                    @id @default(cuid())
   tagId          String

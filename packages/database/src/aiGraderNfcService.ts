@@ -20,6 +20,9 @@ export const AI_GRADER_NFC_NDEF_PAYLOAD_VERSION = 1 as const;
 export const AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET_ENV = "AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET" as const;
 export const AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_ENV = "AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON" as const;
 export const AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV = "AI_GRADER_NFC_PROGRAMMING_ENABLED" as const;
+export const AI_GRADER_NFC_MANUAL_IOS_ENABLED_ENV = "AI_GRADER_NFC_MANUAL_IOS_ENABLED" as const;
+export const AI_GRADER_NFC_FEIJU_PROFILE_VERSION = "feiju_iso_dep_ios_static_v1" as const;
+export const AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_EVIDENCE = "ios_read_only_status_observed" as const;
 export const AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION = "tenkings-ai-grader-nfc-loopback-v2" as const;
 export const AI_GRADER_NFC_ATTESTATION_ALGORITHM = "ecdsa-p256-sha256-p1363" as const;
 export const AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION = "ai-grader-nfc-helper-attestation-v1" as const;
@@ -27,6 +30,7 @@ export const AI_GRADER_NFC_DEFAULT_ATTEMPT_TTL_MS = 10 * 60 * 1000;
 
 const PUBLIC_TAG_ID = /^[A-Za-z0-9_-]{32}$/;
 const ATTEMPT_ID = /^nfc_attempt_[A-Za-z0-9_-]{43}$/;
+const MANUAL_IOS_ATTEMPT_ID = /^nfc_ios_attempt_[A-Za-z0-9_-]{43}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const ATTESTATION_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 const ATTESTATION_SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
@@ -36,14 +40,20 @@ const SAFE_TENANT_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const SAFE_CODE = /^[A-Z0-9_]{1,80}$/;
 const OPEN_STATUSES = ["reserved", "programming", "verified", "active"] as const;
 const ACTIVE_ATTEMPT_STATES = ["initialized", "writing"] as const;
+const ACTIVE_MANUAL_IOS_ATTEMPT_STATES = [
+  "awaiting_prelock_tap",
+  "awaiting_lock_confirmation",
+  "awaiting_postlock_tap",
+  "ready_to_complete",
+] as const;
 const ATTESTATION_CLOCK_SKEW_MS = 2 * 60 * 1000;
 const WORKSTATION_ALLOWLIST_MAX_BYTES = 16 * 1024;
 const WORKSTATION_ALLOWLIST_MAX_ENTRIES = 8;
 const WORKSTATION_ALLOWLIST_ENTRY_FIELDS = ["algorithm", "publicSpkiDerBase64", "tenantId"] as const;
 const REPLACEMENT_AUTHORIZATION = Symbol("ai-grader-nfc-replacement-authorization");
 
-export type AiGraderNfcChipTypeValue = "NTAG215" | "NTAG424_DNA";
-export type AiGraderNfcSecurityModeValue = "static_url_v1" | "ntag424_sun_v1";
+export type AiGraderNfcChipTypeValue = "NTAG215" | "NTAG424_DNA" | "FEIJU_PROPRIETARY_ISODEP";
+export type AiGraderNfcSecurityModeValue = "static_url_v1" | "ntag424_sun_v1" | "manual_ios_locked_static_url_v1";
 export type AiGraderNfcTagStatusValue = "missing" | "reserved" | "programming" | "verified" | "active" | "revoked" | "error";
 export type AiGraderNfcRegistrationKind = "registered_link" | "cryptographically_verified" | "not_active";
 
@@ -53,6 +63,10 @@ export type AiGraderNfcSecurityStrategyDescriptor = {
   implemented: boolean;
   registrationKind: "registered_link" | null;
   cryptographicVerificationAvailable: boolean;
+  consumerWriteProtection?: boolean;
+  cryptographicTagAuthentication?: false;
+  clonableStaticUrl?: true;
+  workstationOperationalAttestation?: boolean;
 };
 
 /** Future seam only; keys and SUN evidence never belong in application JSON. */
@@ -74,6 +88,19 @@ export function describeAiGraderNfcSecurityStrategy(
   }
   if (chipType === "NTAG424_DNA" && securityMode === "ntag424_sun_v1") {
     return { chipType, securityMode, implemented: false, registrationKind: null, cryptographicVerificationAvailable: false };
+  }
+  if (chipType === "FEIJU_PROPRIETARY_ISODEP" && securityMode === "manual_ios_locked_static_url_v1") {
+    return {
+      chipType,
+      securityMode,
+      implemented: true,
+      registrationKind: "registered_link",
+      cryptographicVerificationAvailable: false,
+      consumerWriteProtection: true,
+      cryptographicTagAuthentication: false,
+      clonableStaticUrl: true,
+      workstationOperationalAttestation: false,
+    };
   }
   throw nfcError("AI_GRADER_NFC_STRATEGY_MISMATCH", 400, "NFC chip type and security mode do not match.");
 }
@@ -144,6 +171,7 @@ export type AiGraderNfcSafeStatus = {
   revokedAt?: string | null;
   revocationReason?: string | null;
   errorCode?: string | null;
+  manualIosAttempt?: AiGraderNfcManualIosSafeEvidence;
 };
 
 export type InitAiGraderNfcProgrammingInput = ExactLinkageInput & ActorInput & ProgrammingRuntimeInput & {
@@ -198,6 +226,78 @@ export type ReplaceAiGraderNfcTagInput = InitAiGraderNfcProgrammingInput & {
   revocationReason: string;
   revocationReasonCode?: string | null;
 };
+
+export type AiGraderNfcManualIosAttemptStateValue =
+  | "awaiting_prelock_tap"
+  | "awaiting_lock_confirmation"
+  | "awaiting_postlock_tap"
+  | "ready_to_complete"
+  | "failed"
+  | "expired"
+  | "consumed";
+
+export type AiGraderNfcManualIosSafeEvidence = {
+  attemptId: string;
+  state: AiGraderNfcManualIosAttemptStateValue;
+  profileVersion: typeof AI_GRADER_NFC_FEIJU_PROFILE_VERSION;
+  qualificationProfile: typeof AI_GRADER_NFC_FEIJU_PROFILE_VERSION;
+  attemptExpiresAt: string;
+  preLockTapObserved: boolean;
+  lockStatusConfirmed: boolean;
+  postLockTapObserved: boolean;
+  writeProtectionEvidence?: typeof AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_EVIDENCE;
+  workstationOperationalAttestation: false;
+  cryptographicTagAuthentication: false;
+};
+
+export type InitAiGraderNfcManualIosInput = ExactLinkageInput & ActorInput & {
+  idempotencyKey: string;
+  attemptTtlMs?: number;
+  operatorNote?: string | null;
+  manualIosEnabled?: boolean;
+  programmingEnabled?: boolean;
+  dbClient?: DbClient;
+  now?: Date;
+};
+
+export type AiGraderNfcManualIosInitResult = AiGraderNfcSafeStatus & {
+  attemptId?: string;
+  attemptExpiresAt?: string;
+  expectedNdefUrl?: string;
+  expectedPayloadSha256?: string;
+  manualIosAttempt?: AiGraderNfcManualIosSafeEvidence;
+};
+
+export type ConfirmAiGraderNfcManualIosLockInput = ExactLinkageInput & ActorInput & {
+  attemptId: string;
+  publicTagId: string;
+  writableNoConfirmed: true;
+  manualIosEnabled?: boolean;
+  programmingEnabled?: boolean;
+  dbClient?: DbClient;
+  now?: Date;
+};
+
+export type CompleteAiGraderNfcManualIosInput = ExactLinkageInput & ActorInput & {
+  attemptId: string;
+  publicTagId: string;
+  normalizedNdefUrl: string;
+  idempotencyKey: string;
+  manualIosEnabled?: boolean;
+  programmingEnabled?: boolean;
+  dbClient?: DbClient;
+  now?: Date;
+};
+
+export type ReplaceAiGraderNfcManualIosInput = InitAiGraderNfcManualIosInput & {
+  replacedPublicTagId: string;
+  revocationReason: string;
+  revocationReasonCode?: string | null;
+};
+
+export type ObserveAiGraderNfcManualIosTapResult =
+  | { state: "not_applicable" }
+  | { state: "setup_verification"; stage: "pre_lock" | "lock_confirmation" | "post_lock" | "ready_to_complete" };
 type ConfirmAuthority = {
   tenantId: string;
   reportRowId: string;
@@ -392,6 +492,20 @@ function resolveProgrammingRuntime(input: ProgrammingRuntimeInput, tenantId: str
   }
   return { tokenSecret, workstationKeys };
 }
+function resolveManualIosRuntime(input: { manualIosEnabled?: boolean; programmingEnabled?: boolean }) {
+  const programmingEnabled = input.programmingEnabled === undefined
+    ? process.env[AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV] === "true"
+    : input.programmingEnabled === true;
+  if (!programmingEnabled) {
+    throw nfcError("AI_GRADER_NFC_PROGRAMMING_DISABLED", 503, "NFC programming is disabled.");
+  }
+  const manualIosEnabled = input.manualIosEnabled === undefined
+    ? process.env[AI_GRADER_NFC_MANUAL_IOS_ENABLED_ENV] === "true"
+    : input.manualIosEnabled === true;
+  if (!manualIosEnabled) {
+    throw nfcError("AI_GRADER_NFC_MANUAL_IOS_DISABLED", 503, "The Feiju iPhone-assisted NFC workflow is disabled.");
+  }
+}
 function attemptTtl(value: unknown) {
   const ttl = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : AI_GRADER_NFC_DEFAULT_ATTEMPT_TTL_MS;
   if (ttl < 60_000 || ttl > 30 * 60_000) throw nfcError("AI_GRADER_NFC_INVALID_ATTEMPT_TTL", 400, "NFC attempt lifetime is outside the allowed range.");
@@ -522,6 +636,19 @@ function safeMetadata(operatorNote?: string | null) {
     ...(note ? { operatorNote: note.slice(0, 240) } : {}),
   };
 }
+function safeManualIosMetadata(operatorNote?: string | null) {
+  const note = text(operatorNote);
+  return {
+    schemaVersion: "ai-grader-nfc-safe-metadata-v1",
+    workflow: "manual_ios_locked_static_url_v1",
+    qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+    evidenceSemantics: "consumer_ios_write_protection_not_tag_authentication",
+    workstationOperationalAttestationRequired: false,
+    cryptographicTagAuthentication: false,
+    clonableStaticUrl: true,
+    ...(note ? { operatorNote: note.slice(0, 240) } : {}),
+  };
+}
 function rawUidWasSupplied(input: unknown) {
   return isRecord(input) && Object.keys(input).some((key) => key.toLowerCase().replace(/[^a-z0-9]/g, "") === "rawuid");
 }
@@ -534,6 +661,11 @@ export function generateAiGraderNfcPublicTagId(random: (size: number) => Buffer 
 function generateAttemptId(random: (size: number) => Buffer = randomBytes) {
   const id = `nfc_attempt_${random(32).toString("base64url")}`;
   if (!ATTEMPT_ID.test(id)) throw nfcError("AI_GRADER_NFC_RANDOM_ID_FAILED", 500, "NFC attempt identity generation failed.");
+  return id;
+}
+function generateManualIosAttemptId(random: (size: number) => Buffer = randomBytes) {
+  const id = `nfc_ios_attempt_${random(32).toString("base64url")}`;
+  if (!MANUAL_IOS_ATTEMPT_ID.test(id)) throw nfcError("AI_GRADER_NFC_RANDOM_ID_FAILED", 500, "NFC manual attempt identity generation failed.");
   return id;
 }
 export function buildAiGraderNfcTagUrl(publicTagId: string) {
@@ -554,6 +686,12 @@ function attemptIdempotencyHash(actorUserId: string, idempotencyKey: string) {
 }
 function completionIdempotencyHash(actorUserId: string, attemptId: string, idempotencyKey: string) {
   return sha256(`ai-grader-nfc-complete-v1\n${actorUserId}\n${attemptId}\n${idempotencyKey}`);
+}
+function manualIosAttemptIdempotencyHash(actorUserId: string, idempotencyKey: string) {
+  return sha256(`ai-grader-nfc-manual-ios-attempt-v1\n${actorUserId}\n${idempotencyKey}`);
+}
+function manualIosCompletionIdempotencyHash(actorUserId: string, attemptId: string, idempotencyKey: string) {
+  return sha256(`ai-grader-nfc-manual-ios-complete-v1\n${actorUserId}\n${attemptId}\n${idempotencyKey}`);
 }
 function mutationIdempotencyHash(action: string, actorUserId: string, idempotencyKey: string) {
   return sha256(`ai-grader-nfc-${action}-v1\n${actorUserId}\n${idempotencyKey}`);
@@ -591,10 +729,41 @@ function assertStaticStrategy(chipType: unknown, securityMode: unknown) {
   }
   return describeAiGraderNfcSecurityStrategy("NTAG215", "static_url_v1");
 }
+function assertManualIosStrategy(chipType: unknown, securityMode: unknown) {
+  if (chipType !== "FEIJU_PROPRIETARY_ISODEP" || securityMode !== "manual_ios_locked_static_url_v1") {
+    throw nfcError("AI_GRADER_NFC_STRATEGY_NOT_IMPLEMENTED", 409, "This NFC registration belongs to a different workflow profile.");
+  }
+  return describeAiGraderNfcSecurityStrategy("FEIJU_PROPRIETARY_ISODEP", "manual_ios_locked_static_url_v1");
+}
+function safeManualIosEvidence(attempt: any): AiGraderNfcManualIosSafeEvidence | undefined {
+  if (!attempt || !MANUAL_IOS_ATTEMPT_ID.test(text(attempt.id))) return undefined;
+  const state = text(attempt.state) as AiGraderNfcManualIosAttemptStateValue;
+  if (![...ACTIVE_MANUAL_IOS_ATTEMPT_STATES, "failed", "expired", "consumed"].includes(state as any)) return undefined;
+  const expiresAt = iso(attempt.expiresAt);
+  if (!expiresAt || attempt.profileVersion !== AI_GRADER_NFC_FEIJU_PROFILE_VERSION || attempt.qualificationProfile !== AI_GRADER_NFC_FEIJU_PROFILE_VERSION) return undefined;
+  return {
+    attemptId: text(attempt.id),
+    state,
+    profileVersion: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+    qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+    attemptExpiresAt: expiresAt,
+    preLockTapObserved: Boolean(attempt.preLockTapObservedAt),
+    lockStatusConfirmed: Boolean(attempt.lockStatusConfirmedAt),
+    postLockTapObserved: Boolean(attempt.postLockTapObservedAt),
+    ...(attempt.writeProtectionEvidence === AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_EVIDENCE
+      ? { writeProtectionEvidence: AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_EVIDENCE }
+      : {}),
+    workstationOperationalAttestation: false,
+    cryptographicTagAuthentication: false,
+  };
+}
 function safeStatus(tag: any, fallbackReportId = ""): AiGraderNfcSafeStatus {
   if (!tag) return { status: "missing", reportId: fallbackReportId, registrationKind: "not_active", cryptographicallyVerified: false };
   const status = asTagStatus(tag.status);
   const strategy = describeAiGraderNfcSecurityStrategy(tag.chipType, tag.securityMode);
+  const manualIosAttempt = Array.isArray(tag.manualIosAttempts)
+    ? safeManualIosEvidence(tag.manualIosAttempts[0])
+    : safeManualIosEvidence(tag.manualIosAttempt);
   return {
     status,
     reportId: text(tag.reportId),
@@ -612,6 +781,7 @@ function safeStatus(tag: any, fallbackReportId = ""): AiGraderNfcSafeStatus {
     revokedAt: iso(tag.revokedAt),
     revocationReason: status === "revoked" ? text(tag.revocationReason) || null : null,
     errorCode: status === "error" ? text(tag.errorCode) || null : null,
+    ...(manualIosAttempt ? { manualIosAttempt } : {}),
   };
 }
 
@@ -1286,7 +1456,11 @@ export async function getAiGraderNfcStatus(input: GetAiGraderNfcStatusInput): Pr
     (input.certId && certId !== text(input.certId))
   ) throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC status linkage does not match the report.");
   const tag = await db.aiGraderNfcTag.findFirst({
-    where: { tenantId, reportId }, orderBy: { createdAt: "desc" },
+    where: { tenantId, reportId },
+    orderBy: { createdAt: "desc" },
+    include: {
+      manualIosAttempts: { orderBy: { requestedAt: "desc" }, take: 1 },
+    },
   });
   if (!tag) return {
     ...safeStatus(null, reportId),
@@ -1406,6 +1580,10 @@ async function revokeTagTx(tx: DbClient, input: {
     where: { tagId: tag.id, state: { in: [...ACTIVE_ATTEMPT_STATES] } },
     data: { state: "failed", failureCode: "AI_GRADER_NFC_REVOKED", updatedAt: input.now },
   });
+  await tx.aiGraderNfcManualIosAttempt.updateMany({
+    where: { tagId: tag.id, state: { in: [...ACTIVE_MANUAL_IOS_ATTEMPT_STATES] } },
+    data: { state: "failed", failureCode: "AI_GRADER_NFC_REVOKED", updatedAt: input.now },
+  });
   const revoked = await tx.aiGraderNfcTag.update({
     where: { id: tag.id },
     data: {
@@ -1508,5 +1686,579 @@ export async function replaceAiGraderNfcTag(input: ReplaceAiGraderNfcTagInput): 
   if (isExpiredAttemptResult(result)) {
     throw nfcError("AI_GRADER_NFC_ATTEMPT_EXPIRED", 410, "NFC programming attempt expired.");
   }
+  return result;
+}
+function manualIosResult(tag: any, attempt?: any): AiGraderNfcManualIosInitResult {
+  const manualIosAttempt = safeManualIosEvidence(attempt);
+  return {
+    ...safeStatus({ ...tag, manualIosAttempt: attempt }),
+    ...(attempt ? {
+      attemptId: text(attempt.id),
+      attemptExpiresAt: iso(attempt.expiresAt) ?? undefined,
+      expectedNdefUrl: buildAiGraderNfcTagUrl(tag.publicTagId),
+      expectedPayloadSha256: text(tag.expectedPayloadSha256),
+    } : {}),
+    ...(manualIosAttempt ? { manualIosAttempt } : {}),
+  };
+}
+
+async function expireTimedOutManualIosAttemptsTx(
+  tx: DbClient,
+  input: { tag: any; now: Date; actorUserId: string },
+) {
+  const expiredAttempts = await tx.aiGraderNfcManualIosAttempt.findMany({
+    where: {
+      tagId: input.tag.id,
+      state: { in: [...ACTIVE_MANUAL_IOS_ATTEMPT_STATES] },
+      expiresAt: { lte: input.now },
+    },
+    orderBy: { requestedAt: "asc" },
+  });
+  const expiredAttemptIds = new Set<string>();
+  for (const attempt of expiredAttempts) {
+    expiredAttemptIds.add(text(attempt.id));
+    await tx.aiGraderNfcManualIosAttempt.update({
+      where: { id: attempt.id },
+      data: { state: "expired", failureCode: "AI_GRADER_NFC_ATTEMPT_EXPIRED", updatedAt: input.now },
+    });
+    await audit(tx, {
+      tagId: input.tag.id,
+      tenantId: text(input.tag.tenantId),
+      reportId: text(input.tag.reportId),
+      action: "manual_ios_attempt_expired",
+      actorUserId: input.actorUserId,
+      reasonCode: "AI_GRADER_NFC_ATTEMPT_EXPIRED",
+      safeDetails: {
+        expiresAt: iso(attempt.expiresAt),
+        qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+        programmingTagRecoveryPending: true,
+      },
+      createdAt: input.now,
+    });
+  }
+  if (!expiredAttemptIds.size) return { tag: input.tag, expiredAttemptIds };
+
+  const remaining = await tx.aiGraderNfcManualIosAttempt.findFirst({
+    where: {
+      tagId: input.tag.id,
+      state: { in: [...ACTIVE_MANUAL_IOS_ATTEMPT_STATES] },
+      expiresAt: { gt: input.now },
+    },
+    orderBy: { requestedAt: "desc" },
+  });
+  if (!remaining && input.tag.status === "programming") {
+    const recoveredTag = await tx.aiGraderNfcTag.update({
+      where: { id: input.tag.id },
+      data: { status: "reserved", errorCode: null, updatedAt: input.now },
+    });
+    await audit(tx, {
+      tagId: input.tag.id,
+      tenantId: text(input.tag.tenantId),
+      reportId: text(input.tag.reportId),
+      action: "manual_ios_attempts_expired_recover_reservation",
+      fromStatus: "programming",
+      toStatus: "reserved",
+      actorUserId: input.actorUserId,
+      reasonCode: "AI_GRADER_NFC_ATTEMPT_EXPIRED",
+      safeDetails: {
+        expiredAttemptCount: expiredAttemptIds.size,
+        qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+      },
+      createdAt: input.now,
+    });
+    return { tag: recoveredTag, expiredAttemptIds };
+  }
+  return { tag: input.tag, expiredAttemptIds };
+}
+
+async function createManualIosAttemptTx(tx: DbClient, input: {
+  linkage: ExactLinkageInput;
+  authority: ConfirmAuthority;
+  actorUserId: string;
+  idempotencyKey: string;
+  ttlMs: number;
+  now: Date;
+  operatorNote?: string | null;
+  replacementAuthorization?: typeof REPLACEMENT_AUTHORIZATION;
+}): Promise<AiGraderNfcManualIosInitResult | ExpiredAttemptResult> {
+  const idempotencyKeyHash = manualIosAttemptIdempotencyHash(input.actorUserId, input.idempotencyKey);
+  const existingAttempt = await tx.aiGraderNfcManualIosAttempt.findUnique({
+    where: { tenantId_requestedByUserId_idempotencyKeyHash: {
+      tenantId: input.linkage.tenantId,
+      requestedByUserId: input.actorUserId,
+      idempotencyKeyHash,
+    } },
+    include: { tag: true },
+  });
+  if (existingAttempt) {
+    assertAttemptLinkage(existingAttempt, input.linkage, input.actorUserId);
+    assertTagLinkage(existingAttempt.tag, input.linkage);
+    assertManualIosStrategy(existingAttempt.tag.chipType, existingAttempt.tag.securityMode);
+    if (
+      text(existingAttempt.tag.aiGraderReportId) !== input.authority.reportRowId ||
+      text(existingAttempt.tag.aiGraderLabelId) !== input.authority.labelId
+    ) throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC internal report and label linkage changed.");
+    if (existingAttempt.state === "consumed") return manualIosResult(existingAttempt.tag, existingAttempt);
+    if (existingAttempt.state === "expired") return EXPIRED_ATTEMPT_RESULT;
+    const expiry = await expireTimedOutManualIosAttemptsTx(tx, {
+      tag: existingAttempt.tag,
+      now: input.now,
+      actorUserId: input.actorUserId,
+    });
+    if (expiry.expiredAttemptIds.has(existingAttempt.id)) return EXPIRED_ATTEMPT_RESULT;
+    if (!ACTIVE_MANUAL_IOS_ATTEMPT_STATES.includes(existingAttempt.state)) {
+      throw nfcError("AI_GRADER_NFC_ATTEMPT_TERMINAL", 409, "The Feiju iPhone-assisted attempt is no longer usable.");
+    }
+    return manualIosResult(existingAttempt.tag, existingAttempt);
+  }
+
+  let tag = await tx.aiGraderNfcTag.findFirst({
+    where: { tenantId: input.linkage.tenantId, reportId: input.linkage.reportId, status: { in: [...OPEN_STATUSES] } },
+    orderBy: { createdAt: "desc" },
+  });
+  if (tag?.status === "active") return safeStatus(tag);
+  if (tag) {
+    assertTagLinkage(tag, input.linkage);
+    assertManualIosStrategy(tag.chipType, tag.securityMode);
+    tag = (await expireTimedOutManualIosAttemptsTx(tx, {
+      tag,
+      now: input.now,
+      actorUserId: input.actorUserId,
+    })).tag;
+    const liveAttempt = await tx.aiGraderNfcManualIosAttempt.findFirst({
+      where: { tagId: tag.id, state: { in: [...ACTIVE_MANUAL_IOS_ATTEMPT_STATES] }, expiresAt: { gt: input.now } },
+      orderBy: { requestedAt: "desc" },
+    });
+    if (liveAttempt) throw nfcError("AI_GRADER_NFC_ATTEMPT_IN_PROGRESS", 409, "Another Feiju iPhone-assisted attempt is already in progress.");
+  } else {
+    const priorRevoked = await tx.aiGraderNfcTag.findFirst({
+      where: { tenantId: input.linkage.tenantId, reportId: input.linkage.reportId, status: "revoked" },
+      orderBy: { createdAt: "desc" },
+    });
+    if (priorRevoked && input.replacementAuthorization !== REPLACEMENT_AUTHORIZATION) {
+      throw nfcError("AI_GRADER_NFC_REPLACEMENT_REQUIRED", 409, "A revoked NFC registration requires the authorized replacement workflow.");
+    }
+  }
+  if (!tag) {
+    const publicTagId = await uniquePublicTagId(tx);
+    const expectedUrl = buildAiGraderNfcTagUrl(publicTagId);
+    tag = await tx.aiGraderNfcTag.create({ data: {
+      tenantId: input.linkage.tenantId,
+      publicTagId,
+      chipType: "FEIJU_PROPRIETARY_ISODEP",
+      securityMode: "manual_ios_locked_static_url_v1",
+      status: "reserved",
+      ndefPayloadVersion: AI_GRADER_NFC_NDEF_PAYLOAD_VERSION,
+      expectedPayloadSha256: sha256(expectedUrl),
+      aiGraderReportId: input.authority.reportRowId,
+      reportId: input.linkage.reportId,
+      cardAssetId: input.linkage.cardAssetId,
+      itemId: input.linkage.itemId,
+      aiGraderLabelId: input.authority.labelId,
+      certId: input.linkage.certId,
+      createdByUserId: input.actorUserId,
+      metadata: safeManualIosMetadata(input.operatorNote),
+      createdAt: input.now,
+      updatedAt: input.now,
+    } });
+    await audit(tx, {
+      tagId: tag.id,
+      tenantId: input.linkage.tenantId,
+      reportId: input.linkage.reportId,
+      action: "reserve",
+      toStatus: "reserved",
+      actorUserId: input.actorUserId,
+      safeDetails: {
+        chipType: "FEIJU_PROPRIETARY_ISODEP",
+        securityMode: "manual_ios_locked_static_url_v1",
+        qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+        workstationOperationalAttestation: false,
+        cryptographicTagAuthentication: false,
+      },
+      createdAt: input.now,
+    });
+  }
+  assertManualIosStrategy(tag.chipType, tag.securityMode);
+  if (text(tag.aiGraderReportId) !== input.authority.reportRowId || text(tag.aiGraderLabelId) !== input.authority.labelId) {
+    throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC internal report and label linkage changed.");
+  }
+  const attemptId = generateManualIosAttemptId();
+  const expiresAt = new Date(input.now.getTime() + input.ttlMs);
+  const attempt = await tx.aiGraderNfcManualIosAttempt.create({ data: {
+    id: attemptId,
+    tagId: tag.id,
+    tenantId: input.linkage.tenantId,
+    reportId: input.linkage.reportId,
+    cardAssetId: input.linkage.cardAssetId,
+    itemId: input.linkage.itemId,
+    certId: input.linkage.certId,
+    requestedByUserId: input.actorUserId,
+    idempotencyKeyHash,
+    state: "awaiting_prelock_tap",
+    profileVersion: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+    qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+    expectedPayloadSha256: text(tag.expectedPayloadSha256),
+    workstationOperationalAttestation: false,
+    cryptographicTagAuthentication: false,
+    requestedAt: input.now,
+    expiresAt,
+    createdAt: input.now,
+    updatedAt: input.now,
+  } });
+  const fromStatus = asTagStatus(tag.status);
+  tag = await tx.aiGraderNfcTag.update({
+    where: { id: tag.id },
+    data: { status: "programming", errorCode: null, updatedAt: input.now },
+  });
+  await audit(tx, {
+    tagId: tag.id,
+    tenantId: input.linkage.tenantId,
+    reportId: input.linkage.reportId,
+    action: "manual_ios_attempt_initialized",
+    fromStatus,
+    toStatus: "programming",
+    actorUserId: input.actorUserId,
+    safeDetails: {
+      qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+      expiresAt: expiresAt.toISOString(),
+      workstationOperationalAttestation: false,
+      cryptographicTagAuthentication: false,
+    },
+    createdAt: input.now,
+  });
+  return manualIosResult(tag, attempt);
+}
+
+export async function initAiGraderNfcManualIos(input: InitAiGraderNfcManualIosInput) {
+  if (rawUidWasSupplied(input)) throw nfcError("AI_GRADER_NFC_RAW_UID_REJECTED", 400, "Raw NFC UID input is not accepted.");
+  const linkage = validateExactLinkage(input);
+  const actorUserId = validateActor(input.requestedByUserId);
+  const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
+  resolveManualIosRuntime(input);
+  const ttlMs = attemptTtl(input.attemptTtlMs);
+  const now = input.now ?? new Date();
+  const result = await transaction(input.dbClient ?? defaultPrisma, async (tx) => {
+    await acquireReportLock(tx, linkage.reportId);
+    const authority = await loadConfirmAuthority(tx, linkage, { requirePublished: true });
+    return createManualIosAttemptTx(tx, {
+      linkage,
+      authority,
+      actorUserId,
+      idempotencyKey,
+      ttlMs,
+      now,
+      operatorNote: input.operatorNote,
+    });
+  });
+  if (isExpiredAttemptResult(result)) throw nfcError("AI_GRADER_NFC_ATTEMPT_EXPIRED", 410, "The Feiju iPhone-assisted attempt expired.");
+  return result;
+}
+
+export async function observeAiGraderNfcManualIosTap(input: {
+  publicTagId: string;
+  manualIosEnabled?: boolean;
+  programmingEnabled?: boolean;
+  dbClient?: DbClient;
+  now?: Date;
+}): Promise<ObserveAiGraderNfcManualIosTapResult> {
+  const publicTagId = validatePublicTagId(input.publicTagId);
+  const programmingEnabled = input.programmingEnabled === undefined
+    ? process.env[AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV] === "true"
+    : input.programmingEnabled === true;
+  const manualIosEnabled = input.manualIosEnabled === undefined
+    ? process.env[AI_GRADER_NFC_MANUAL_IOS_ENABLED_ENV] === "true"
+    : input.manualIosEnabled === true;
+  if (!programmingEnabled || !manualIosEnabled) return { state: "not_applicable" };
+  const now = input.now ?? new Date();
+  return transaction(input.dbClient ?? defaultPrisma, async (tx) => {
+    let tag = await tx.aiGraderNfcTag.findUnique({ where: { publicTagId } });
+    if (!tag || tag.status !== "programming" || tag.chipType !== "FEIJU_PROPRIETARY_ISODEP" || tag.securityMode !== "manual_ios_locked_static_url_v1") {
+      return { state: "not_applicable" } as const;
+    }
+    await acquireReportLock(tx, text(tag.reportId));
+    tag = await tx.aiGraderNfcTag.findUnique({ where: { publicTagId } });
+    if (!tag || tag.status !== "programming") return { state: "not_applicable" } as const;
+    const attempt = await tx.aiGraderNfcManualIosAttempt.findFirst({
+      where: { tagId: tag.id, state: { in: [...ACTIVE_MANUAL_IOS_ATTEMPT_STATES] } },
+      orderBy: { requestedAt: "desc" },
+    });
+    if (!attempt) return { state: "not_applicable" } as const;
+    if ((await expireTimedOutManualIosAttemptsTx(tx, { tag, now, actorUserId: "public_nfc_tap" })).expiredAttemptIds.has(attempt.id)) {
+      return { state: "not_applicable" } as const;
+    }
+    if (attempt.state === "awaiting_prelock_tap") {
+      await tx.aiGraderNfcManualIosAttempt.update({
+        where: { id: attempt.id },
+        data: { state: "awaiting_lock_confirmation", preLockTapObservedAt: now, updatedAt: now },
+      });
+      await audit(tx, {
+        tagId: tag.id,
+        tenantId: text(tag.tenantId),
+        reportId: text(tag.reportId),
+        action: "manual_ios_prelock_tap_observed",
+        fromStatus: "programming",
+        toStatus: "programming",
+        actorUserId: "public_nfc_tap",
+        safeDetails: { qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION },
+        createdAt: now,
+      });
+      return { state: "setup_verification", stage: "pre_lock" } as const;
+    }
+    if (attempt.state === "awaiting_postlock_tap") {
+      await tx.aiGraderNfcManualIosAttempt.update({
+        where: { id: attempt.id },
+        data: { state: "ready_to_complete", postLockTapObservedAt: now, updatedAt: now },
+      });
+      await audit(tx, {
+        tagId: tag.id,
+        tenantId: text(tag.tenantId),
+        reportId: text(tag.reportId),
+        action: "manual_ios_postlock_tap_observed",
+        fromStatus: "programming",
+        toStatus: "programming",
+        actorUserId: "public_nfc_tap",
+        safeDetails: {
+          qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+          writeProtectionEvidence: AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_EVIDENCE,
+        },
+        createdAt: now,
+      });
+      return { state: "setup_verification", stage: "post_lock" } as const;
+    }
+    if (attempt.state === "awaiting_lock_confirmation") {
+      return { state: "setup_verification", stage: "lock_confirmation" } as const;
+    }
+    return { state: "setup_verification", stage: "ready_to_complete" } as const;
+  });
+}
+
+export async function confirmAiGraderNfcManualIosLock(
+  input: ConfirmAiGraderNfcManualIosLockInput,
+): Promise<AiGraderNfcSafeStatus> {
+  if (rawUidWasSupplied(input)) throw nfcError("AI_GRADER_NFC_RAW_UID_REJECTED", 400, "Raw NFC UID input is not accepted.");
+  if (input.writableNoConfirmed !== true) {
+    throw nfcError("AI_GRADER_NFC_WRITE_PROTECTION_CONFIRMATION_REQUIRED", 400, "Confirm that NFC Tools reports Writable: No.");
+  }
+  resolveManualIosRuntime(input);
+  const linkage = validateExactLinkage(input);
+  const actorUserId = validateActor(input.requestedByUserId);
+  const attemptId = required(input.attemptId, "attemptId", 80);
+  if (!MANUAL_IOS_ATTEMPT_ID.test(attemptId)) throw nfcError("AI_GRADER_NFC_INVALID_ATTEMPT", 400, "The Feiju iPhone-assisted attempt ID is invalid.");
+  const publicTagId = validatePublicTagId(input.publicTagId);
+  const now = input.now ?? new Date();
+  return transaction(input.dbClient ?? defaultPrisma, async (tx) => {
+    await acquireReportLock(tx, linkage.reportId);
+    const authority = await loadConfirmAuthority(tx, linkage, { requirePublished: true });
+    const attempt = await tx.aiGraderNfcManualIosAttempt.findUnique({ where: { id: attemptId }, include: { tag: true } });
+    if (!attempt) throw nfcError("AI_GRADER_NFC_ATTEMPT_NOT_FOUND", 404, "The Feiju iPhone-assisted attempt was not found.");
+    assertAttemptLinkage(attempt, linkage, actorUserId);
+    assertTagLinkage(attempt.tag, linkage);
+    assertManualIosStrategy(attempt.tag.chipType, attempt.tag.securityMode);
+    if (text(attempt.tag.publicTagId) !== publicTagId || text(attempt.tag.aiGraderReportId) !== authority.reportRowId || text(attempt.tag.aiGraderLabelId) !== authority.labelId) {
+      throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC internal linkage changed.");
+    }
+    if (attempt.state === "consumed") return safeStatus(attempt.tag);
+    if ((await expireTimedOutManualIosAttemptsTx(tx, { tag: attempt.tag, now, actorUserId })).expiredAttemptIds.has(attempt.id)) {
+      throw nfcError("AI_GRADER_NFC_ATTEMPT_EXPIRED", 410, "The Feiju iPhone-assisted attempt expired.");
+    }
+    if (attempt.state === "awaiting_prelock_tap") {
+      throw nfcError("AI_GRADER_NFC_PRELOCK_TAP_REQUIRED", 409, "The exact URL must be opened once before lock confirmation.");
+    }
+    if (attempt.state === "awaiting_lock_confirmation") {
+      const updated = await tx.aiGraderNfcManualIosAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          state: "awaiting_postlock_tap",
+          lockStatusConfirmedAt: now,
+          lockStatusConfirmedByUserId: actorUserId,
+          writeProtectionEvidence: AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_EVIDENCE,
+          updatedAt: now,
+        },
+      });
+      await audit(tx, {
+        tagId: attempt.tag.id,
+        tenantId: linkage.tenantId,
+        reportId: linkage.reportId,
+        action: "manual_ios_write_protection_confirmed",
+        fromStatus: "programming",
+        toStatus: "programming",
+        actorUserId,
+        safeDetails: {
+          qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+          writeProtectionEvidence: AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_EVIDENCE,
+          workstationOperationalAttestation: false,
+          cryptographicTagAuthentication: false,
+        },
+        createdAt: now,
+      });
+      return safeStatus({ ...attempt.tag, manualIosAttempt: updated });
+    }
+    if (["awaiting_postlock_tap", "ready_to_complete"].includes(attempt.state)) {
+      return safeStatus({ ...attempt.tag, manualIosAttempt: attempt });
+    }
+    throw nfcError("AI_GRADER_NFC_ATTEMPT_TERMINAL", 409, "The Feiju iPhone-assisted attempt is no longer usable.");
+  });
+}
+
+export async function completeAiGraderNfcManualIos(
+  input: CompleteAiGraderNfcManualIosInput,
+): Promise<AiGraderNfcSafeStatus> {
+  if (rawUidWasSupplied(input)) throw nfcError("AI_GRADER_NFC_RAW_UID_REJECTED", 400, "Raw NFC UID input is not accepted.");
+  resolveManualIosRuntime(input);
+  const linkage = validateExactLinkage(input);
+  const actorUserId = validateActor(input.requestedByUserId);
+  const attemptId = required(input.attemptId, "attemptId", 80);
+  if (!MANUAL_IOS_ATTEMPT_ID.test(attemptId)) throw nfcError("AI_GRADER_NFC_INVALID_ATTEMPT", 400, "The Feiju iPhone-assisted attempt ID is invalid.");
+  const publicTagId = validatePublicTagId(input.publicTagId);
+  const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
+  const completionHash = manualIosCompletionIdempotencyHash(actorUserId, attemptId, idempotencyKey);
+  const normalizedNdefUrl = required(input.normalizedNdefUrl, "normalizedNdefUrl", 512);
+  const now = input.now ?? new Date();
+  return transaction(input.dbClient ?? defaultPrisma, async (tx) => {
+    await acquireReportLock(tx, linkage.reportId);
+    const authority = await loadConfirmAuthority(tx, linkage, { requirePublished: true });
+    const attempt = await tx.aiGraderNfcManualIosAttempt.findUnique({ where: { id: attemptId }, include: { tag: true } });
+    if (!attempt) throw nfcError("AI_GRADER_NFC_ATTEMPT_NOT_FOUND", 404, "The Feiju iPhone-assisted attempt was not found.");
+    assertAttemptLinkage(attempt, linkage, actorUserId);
+    assertTagLinkage(attempt.tag, linkage);
+    assertManualIosStrategy(attempt.tag.chipType, attempt.tag.securityMode);
+    const expectedUrl = buildAiGraderNfcTagUrl(attempt.tag.publicTagId);
+    const expectedDigest = sha256(expectedUrl);
+    if (
+      publicTagId !== text(attempt.tag.publicTagId) ||
+      normalizedNdefUrl !== expectedUrl ||
+      text(attempt.expectedPayloadSha256) !== expectedDigest ||
+      text(attempt.tag.expectedPayloadSha256) !== expectedDigest ||
+      text(attempt.tag.aiGraderReportId) !== authority.reportRowId ||
+      text(attempt.tag.aiGraderLabelId) !== authority.labelId
+    ) throw nfcError("AI_GRADER_NFC_READBACK_MISMATCH", 409, "The final iPhone tap does not match the reserved Ten Kings URL.");
+    if (attempt.state === "consumed") {
+      if (
+        text(attempt.completionIdempotencyKeyHash) === completionHash &&
+        text(attempt.readbackPayloadSha256) === expectedDigest &&
+        attempt.tag.status === "active" &&
+        text(attempt.tag.readbackPayloadSha256) === expectedDigest
+      ) return safeStatus({ ...attempt.tag, manualIosAttempt: attempt });
+      throw nfcError("AI_GRADER_NFC_TOKEN_REPLAY", 409, "The Feiju iPhone-assisted completion was already consumed.");
+    }
+    if ((await expireTimedOutManualIosAttemptsTx(tx, { tag: attempt.tag, now, actorUserId })).expiredAttemptIds.has(attempt.id)) {
+      throw nfcError("AI_GRADER_NFC_ATTEMPT_EXPIRED", 410, "The Feiju iPhone-assisted attempt expired.");
+    }
+    if (attempt.state !== "ready_to_complete" || !attempt.preLockTapObservedAt || !attempt.lockStatusConfirmedAt || !attempt.postLockTapObservedAt || attempt.writeProtectionEvidence !== AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_EVIDENCE) {
+      throw nfcError("AI_GRADER_NFC_MANUAL_IOS_EVIDENCE_INCOMPLETE", 409, "Both exact URL taps and Writable: No confirmation are required before activation.");
+    }
+    const verifiedTag = await tx.aiGraderNfcTag.update({
+      where: { id: attempt.tag.id },
+      data: {
+        status: "verified",
+        uidFingerprintSha256: null,
+        readbackPayloadSha256: expectedDigest,
+        programmedByUserId: actorUserId,
+        verifiedByUserId: actorUserId,
+        programmedAt: now,
+        verifiedAt: now,
+        updatedAt: now,
+      },
+    });
+    await audit(tx, {
+      tagId: verifiedTag.id,
+      tenantId: linkage.tenantId,
+      reportId: linkage.reportId,
+      action: "manual_ios_locked_static_url_verified",
+      fromStatus: "programming",
+      toStatus: "verified",
+      actorUserId,
+      safeDetails: {
+        payloadSha256: expectedDigest,
+        qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+        writeProtectionEvidence: AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_EVIDENCE,
+        workstationOperationalAttestation: false,
+        cryptographicTagAuthentication: false,
+      },
+      createdAt: now,
+    });
+    const activeTag = await tx.aiGraderNfcTag.update({
+      where: { id: verifiedTag.id },
+      data: { status: "active", activatedByUserId: actorUserId, activatedAt: now, updatedAt: now },
+    });
+    const consumedAttempt = await tx.aiGraderNfcManualIosAttempt.update({
+      where: { id: attempt.id },
+      data: {
+        state: "consumed",
+        completionIdempotencyKeyHash: completionHash,
+        readbackPayloadSha256: expectedDigest,
+        consumedAt: now,
+        updatedAt: now,
+      },
+    });
+    await audit(tx, {
+      tagId: activeTag.id,
+      tenantId: linkage.tenantId,
+      reportId: linkage.reportId,
+      action: "activate_registered_link",
+      fromStatus: "verified",
+      toStatus: "active",
+      actorUserId,
+      safeDetails: {
+        registrationKind: "registered_link",
+        publicWording: "Write-protected registered NFC link",
+        payloadSha256: expectedDigest,
+        qualificationProfile: AI_GRADER_NFC_FEIJU_PROFILE_VERSION,
+        writeProtectionEvidence: AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_EVIDENCE,
+        workstationOperationalAttestation: false,
+        cryptographicTagAuthentication: false,
+        clonableStaticUrl: true,
+      },
+      createdAt: now,
+    });
+    return safeStatus({ ...activeTag, manualIosAttempt: consumedAttempt });
+  });
+}
+
+export async function replaceAiGraderNfcManualIos(
+  input: ReplaceAiGraderNfcManualIosInput,
+): Promise<AiGraderNfcManualIosInitResult> {
+  if (rawUidWasSupplied(input)) throw nfcError("AI_GRADER_NFC_RAW_UID_REJECTED", 400, "Raw NFC UID input is not accepted.");
+  resolveManualIosRuntime(input);
+  const linkage = validateExactLinkage(input);
+  const actorUserId = validateActor(input.requestedByUserId);
+  const replacedPublicTagId = validatePublicTagId(input.replacedPublicTagId);
+  const revocationReason = validateRevocationReason(input.revocationReason);
+  const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
+  const ttlMs = attemptTtl(input.attemptTtlMs);
+  const now = input.now ?? new Date();
+  const exactReplacementRequestHash = replacementRequestHash({
+    linkage,
+    actorUserId,
+    publicTagId: replacedPublicTagId,
+    reason: revocationReason,
+    idempotencyKey,
+  });
+  const result = await transaction(input.dbClient ?? defaultPrisma, async (tx) => {
+    await acquireReportLock(tx, linkage.reportId);
+    const authority = await loadConfirmAuthority(tx, linkage, { requirePublished: true });
+    await revokeTagTx(tx, {
+      linkage,
+      authority,
+      actorUserId,
+      publicTagId: replacedPublicTagId,
+      reason: revocationReason,
+      reasonCode: input.revocationReasonCode ?? "AI_GRADER_NFC_REPLACED",
+      idempotencyKey,
+      replacementRequestHash: exactReplacementRequestHash,
+      now,
+    });
+    return createManualIosAttemptTx(tx, {
+      linkage,
+      authority,
+      actorUserId,
+      idempotencyKey,
+      ttlMs,
+      now,
+      operatorNote: input.operatorNote,
+      replacementAuthorization: REPLACEMENT_AUTHORIZATION,
+    });
+  });
+  if (isExpiredAttemptResult(result)) throw nfcError("AI_GRADER_NFC_ATTEMPT_EXPIRED", 410, "The Feiju iPhone-assisted attempt expired.");
   return result;
 }

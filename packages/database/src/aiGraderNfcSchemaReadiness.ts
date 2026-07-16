@@ -25,6 +25,7 @@ const schemaReadinessCache = new WeakMap<object, SchemaReadinessCacheEntry>();
 const NFC_TABLE_NAMES = [
   "AiGraderNfcTag",
   "AiGraderNfcProgrammingAttempt",
+  "AiGraderNfcManualIosAttempt",
   "AiGraderNfcAuditEvent",
 ] as const;
 
@@ -59,7 +60,7 @@ export function isAiGraderNfcSchemaMissingError(error: unknown) {
 }
 
 /**
- * Verify all three tables and the columns used by the hosted lifecycle. The
+ * Verify all four tables and the columns used by the hosted lifecycle. The
  * SQL is constant. `to_regclass` makes an unapplied migration a normal false
  * result; query failures propagate as unexpected database failures.
  */
@@ -74,6 +75,7 @@ export async function readAiGraderNfcSchemaReadiness(
       to_regclass('public."_prisma_migrations"') IS NOT NULL AS "migrationLedgerReady",
       to_regclass('public."AiGraderNfcTag"') IS NOT NULL AS "tagTableReady",
       to_regclass('public."AiGraderNfcProgrammingAttempt"') IS NOT NULL AS "attemptTableReady",
+      to_regclass('public."AiGraderNfcManualIosAttempt"') IS NOT NULL AS "manualIosAttemptTableReady",
       to_regclass('public."AiGraderNfcAuditEvent"') IS NOT NULL AS "auditTableReady"
   `;
   const presence = Array.isArray(presenceRows) && isRecord(presenceRows[0]) ? presenceRows[0] : undefined;
@@ -81,10 +83,11 @@ export async function readAiGraderNfcSchemaReadiness(
       typeof presence.migrationLedgerReady !== "boolean" ||
       typeof presence.tagTableReady !== "boolean" ||
       typeof presence.attemptTableReady !== "boolean" ||
+      typeof presence.manualIosAttemptTableReady !== "boolean" ||
       typeof presence.auditTableReady !== "boolean") {
     throw new Error("NFC schema presence query returned an invalid result.");
   }
-  if (!presence.migrationLedgerReady || !presence.tagTableReady || !presence.attemptTableReady || !presence.auditTableReady) {
+  if (!presence.migrationLedgerReady || !presence.tagTableReady || !presence.attemptTableReady || !presence.manualIosAttemptTableReady || !presence.auditTableReady) {
     return { ready: false };
   }
 
@@ -143,6 +146,34 @@ export async function readAiGraderNfcSchemaReadiness(
         ('AiGraderNfcProgrammingAttempt', 'consumedAt'),
         ('AiGraderNfcProgrammingAttempt', 'createdAt'),
         ('AiGraderNfcProgrammingAttempt', 'updatedAt'),
+        ('AiGraderNfcManualIosAttempt', 'id'),
+        ('AiGraderNfcManualIosAttempt', 'tagId'),
+        ('AiGraderNfcManualIosAttempt', 'tenantId'),
+        ('AiGraderNfcManualIosAttempt', 'reportId'),
+        ('AiGraderNfcManualIosAttempt', 'cardAssetId'),
+        ('AiGraderNfcManualIosAttempt', 'itemId'),
+        ('AiGraderNfcManualIosAttempt', 'certId'),
+        ('AiGraderNfcManualIosAttempt', 'requestedByUserId'),
+        ('AiGraderNfcManualIosAttempt', 'idempotencyKeyHash'),
+        ('AiGraderNfcManualIosAttempt', 'completionIdempotencyKeyHash'),
+        ('AiGraderNfcManualIosAttempt', 'state'),
+        ('AiGraderNfcManualIosAttempt', 'profileVersion'),
+        ('AiGraderNfcManualIosAttempt', 'qualificationProfile'),
+        ('AiGraderNfcManualIosAttempt', 'expectedPayloadSha256'),
+        ('AiGraderNfcManualIosAttempt', 'readbackPayloadSha256'),
+        ('AiGraderNfcManualIosAttempt', 'preLockTapObservedAt'),
+        ('AiGraderNfcManualIosAttempt', 'lockStatusConfirmedAt'),
+        ('AiGraderNfcManualIosAttempt', 'lockStatusConfirmedByUserId'),
+        ('AiGraderNfcManualIosAttempt', 'writeProtectionEvidence'),
+        ('AiGraderNfcManualIosAttempt', 'postLockTapObservedAt'),
+        ('AiGraderNfcManualIosAttempt', 'workstationOperationalAttestation'),
+        ('AiGraderNfcManualIosAttempt', 'cryptographicTagAuthentication'),
+        ('AiGraderNfcManualIosAttempt', 'requestedAt'),
+        ('AiGraderNfcManualIosAttempt', 'expiresAt'),
+        ('AiGraderNfcManualIosAttempt', 'failureCode'),
+        ('AiGraderNfcManualIosAttempt', 'consumedAt'),
+        ('AiGraderNfcManualIosAttempt', 'createdAt'),
+        ('AiGraderNfcManualIosAttempt', 'updatedAt'),
         ('AiGraderNfcAuditEvent', 'id'),
         ('AiGraderNfcAuditEvent', 'tagId'),
         ('AiGraderNfcAuditEvent', 'attemptId'),
@@ -161,6 +192,8 @@ export async function readAiGraderNfcSchemaReadiness(
         ('AiGraderNfcTag_publicTagId_key', 'AiGraderNfcTag', ARRAY['publicTagId']::text[], NULL::text),
         ('AiGraderNfcProgrammingAttempt_tokenHash_key', 'AiGraderNfcProgrammingAttempt', ARRAY['tokenHash']::text[], NULL::text),
         ('AiGraderNfcAttempt_request_idempotency_key', 'AiGraderNfcProgrammingAttempt', ARRAY['tenantId', 'requestedByUserId', 'idempotencyKeyHash']::text[], NULL::text),
+        ('AiGraderNfcManualIosAttempt_request_idempotency_key', 'AiGraderNfcManualIosAttempt', ARRAY['tenantId', 'requestedByUserId', 'idempotencyKeyHash']::text[], NULL::text),
+        ('AiGraderNfcManualIosAttempt_one_live_per_tag', 'AiGraderNfcManualIosAttempt', ARRAY['tagId']::text[], 'state=anyarray[''awaiting_prelock_tap'',''awaiting_lock_confirmation'',''awaiting_postlock_tap'',''ready_to_complete'']'),
         ('AiGraderNfcTag_one_open_report', 'AiGraderNfcTag', ARRAY['tenantId', 'aiGraderReportId']::text[], 'status=anyarray[''reserved'',''programming'',''verified'',''active'']'),
         ('AiGraderNfcTag_one_open_card', 'AiGraderNfcTag', ARRAY['tenantId', 'cardAssetId']::text[], 'status=anyarray[''reserved'',''programming'',''verified'',''active'']'),
         ('AiGraderNfcTag_one_open_item', 'AiGraderNfcTag', ARRAY['tenantId', 'itemId']::text[], 'status=anyarray[''reserved'',''programming'',''verified'',''active'']'),
@@ -201,6 +234,7 @@ export async function readAiGraderNfcSchemaReadiness(
         ('AiGraderNfcTag_itemId_fkey', 'AiGraderNfcTag', ARRAY['itemId']::text[], 'Item', ARRAY['id']::text[], 'r', 'c'),
         ('AiGraderNfcTag_aiGraderLabelId_fkey', 'AiGraderNfcTag', ARRAY['aiGraderLabelId']::text[], 'AiGraderLabel', ARRAY['id']::text[], 'r', 'c'),
         ('AiGraderNfcProgrammingAttempt_tagId_fkey', 'AiGraderNfcProgrammingAttempt', ARRAY['tagId']::text[], 'AiGraderNfcTag', ARRAY['id']::text[], 'r', 'c'),
+        ('AiGraderNfcManualIosAttempt_tagId_fkey', 'AiGraderNfcManualIosAttempt', ARRAY['tagId']::text[], 'AiGraderNfcTag', ARRAY['id']::text[], 'r', 'c'),
         ('AiGraderNfcAuditEvent_tagId_fkey', 'AiGraderNfcAuditEvent', ARRAY['tagId']::text[], 'AiGraderNfcTag', ARRAY['id']::text[], 'r', 'c'),
         ('AiGraderNfcAuditEvent_attemptId_fkey', 'AiGraderNfcAuditEvent', ARRAY['attemptId']::text[], 'AiGraderNfcProgrammingAttempt', ARRAY['id']::text[], 'r', 'c')
     ),
@@ -247,10 +281,20 @@ export async function readAiGraderNfcSchemaReadiness(
         constraint_row.convalidated AS "isValidated"
       FROM pg_constraint constraint_row
       WHERE constraint_row.contype = 'c'
-        AND constraint_row.conrelid = to_regclass('public."AiGraderNfcProgrammingAttempt"')
+        AND constraint_row.conrelid IN (
+          to_regclass('public."AiGraderNfcProgrammingAttempt"'),
+          to_regclass('public."AiGraderNfcManualIosAttempt"')
+        )
     ),
     expected_constraint_fragments("constraintName", "fragment") AS (
       VALUES
+        ('AiGraderNfcManualIosAttempt_profile', 'profileversion=''feiju_iso_dep_ios_static_v1'''),
+        ('AiGraderNfcManualIosAttempt_profile', 'qualificationprofile=''feiju_iso_dep_ios_static_v1'''),
+        ('AiGraderNfcManualIosAttempt_profile', 'workstationoperationalattestation=false'),
+        ('AiGraderNfcManualIosAttempt_profile', 'cryptographictagauthentication=false'),
+        ('AiGraderNfcManualIosAttempt_state_evidence', 'writeprotectionevidence=''ios_read_only_status_observed'''),
+        ('AiGraderNfcManualIosAttempt_state_evidence', 'readbackpayloadsha256=expectedpayloadsha256'),
+        ('AiGraderNfcManualIosAttempt_state_evidence', 'state=''consumed'''),
         ('AiGraderNfcProgrammingAttempt_completion_state', 'state=anyarray[''verified'',''consumed'']'),
         ('AiGraderNfcProgrammingAttempt_completion_state', 'state<>allarray[''verified'',''consumed'']'),
         ('AiGraderNfcProgrammingAttempt_completion_state', 'completionidempotencykeyhashisnotnull'),
@@ -311,14 +355,18 @@ export async function readAiGraderNfcSchemaReadiness(
         AND trigger_function_namespace.nspname = 'public'
     )
     SELECT (
-      EXISTS (
-        SELECT 1
+      (
+        SELECT count(*)
         FROM "_prisma_migrations"
-        WHERE migration_name = '20260712160000_ai_grader_nfc_static_url_v1'
+        WHERE migration_name IN (
+            '20260712160000_ai_grader_nfc_static_url_v1',
+            '20260716190000_ai_grader_nfc_feiju_profile_enums',
+            '20260716190500_ai_grader_nfc_feiju_ios_profile'
+          )
           AND finished_at IS NOT NULL
           AND rolled_back_at IS NULL
           AND COALESCE(btrim(logs), '') = ''
-      ) AND
+      ) = 3 AND
       NOT EXISTS (
         SELECT 1
         FROM expected_indexes expected
@@ -365,10 +413,12 @@ export async function readAiGraderNfcSchemaReadiness(
         FROM constraint_definitions
         WHERE "constraintName" IN (
           'AiGraderNfcProgrammingAttempt_completion_state',
-          'AiGraderNfcProgrammingAttempt_attestation_evidence'
+          'AiGraderNfcProgrammingAttempt_attestation_evidence',
+          'AiGraderNfcManualIosAttempt_profile',
+          'AiGraderNfcManualIosAttempt_state_evidence'
         )
           AND "isValidated"
-      ) = 2 AND
+      ) = 4 AND
       NOT EXISTS (
         SELECT 1
         FROM expected_constraint_fragments expected

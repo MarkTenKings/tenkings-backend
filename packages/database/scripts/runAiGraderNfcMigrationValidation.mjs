@@ -12,7 +12,7 @@ const ACK = "--ack-disposable-local-postgres";
 const SERVICE = "ai-grader-nfc-validation-postgres";
 const DB_USER = "tenkings_nfc_validation";
 const DB_NAME = "tenkings_ai_grader_nfc_validation";
-const TARGET_MIGRATION = "20260712160000_ai_grader_nfc_static_url_v1";
+const TARGET_MIGRATION = "20260716190500_ai_grader_nfc_feiju_ios_profile";
 const SENTINEL = "AI_GRADER_NFC_DISPOSABLE_VALIDATION";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -160,9 +160,9 @@ function migrationLedgerSnapshot(expectedMigrationCount) {
        WHERE "migration_name" = '${TARGET_MIGRATION}'
          AND "finished_at" IS NOT NULL
          AND "rolled_back_at" IS NULL`,
-    "checking the NFC migration ledger entry",
+    "checking the additive Feiju NFC migration ledger entry",
   );
-  if (targetCount !== "1") fail("The NFC migration must have exactly one successful ledger entry.");
+  if (targetCount !== "1") fail("The additive Feiju NFC migration must have exactly one successful ledger entry.");
   return snapshot;
 }
 

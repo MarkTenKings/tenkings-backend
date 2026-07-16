@@ -22,8 +22,11 @@ export const getServerSideProps: GetServerSideProps<Props> = async (context) => 
 
 export default function AiGraderNfcTapPage({ tap }: Props) {
   const active = tap.state === "active" ? tap : null;
+  const setup = tap.state === "setup_verification" ? tap : null;
   const title = active
     ? "Registered Ten Kings NFC link"
+    : setup
+      ? "NFC setup verification"
     : tap.state === "unavailable"
       ? "NFC link temporarily unavailable"
     : tap.state === "revoked"
@@ -39,7 +42,9 @@ export default function AiGraderNfcTapPage({ tap }: Props) {
         <section className="card">
           <p className="eyebrow">Ten Kings AI Grader</p>
           <h1>{title}</h1>
-          {active ? (
+          {setup ? (
+            <p className="lead">This exact Ten Kings NFC URL was reached during private setup. No report, card, certificate, or owner information is shown until an authenticated operator completes registration.</p>
+          ) : active ? (
             <>
               <p className="lead">Linked to this Ten Kings AI Grader report.</p>
               <dl>
@@ -48,9 +53,9 @@ export default function AiGraderNfcTapPage({ tap }: Props) {
                 {active.grade !== undefined ? <div><dt>AI Grader grade</dt><dd>{active.grade.toFixed(1)}</dd></div> : null}
                 <div><dt>Report</dt><dd>{active.reportId}</dd></div>
                 <div><dt>Certificate ID</dt><dd>{active.certId}</dd></div>
-                <div><dt>NFC status</dt><dd>Registered link</dd></div>
+                <div><dt>NFC status</dt><dd>{active.chipType === "FEIJU_PROPRIETARY_ISODEP" ? "Write-protected registered NFC link" : "Registered Ten Kings NFC link"}</dd></div>
               </dl>
-              <p className="disclosure">This NTAG215 link is a convenience identity link. It is not cryptographic authentication of the chip, slab, or card.</p>
+              <p className="disclosure">{active.chipType === "FEIJU_PROPRIETARY_ISODEP" ? "This write-protected registered NFC link is a clonable static URL. Consumer iPhone write protection is not cryptographic authentication of the chip, slab, or card." : "This NTAG215 link is a convenience identity link. It is not cryptographic authentication of the chip, slab, or card."}</p>
               <Link className="action" href={active.reportUrl}>Open Ten Kings AI Grader report</Link>
             </>
           ) : (
@@ -59,7 +64,7 @@ export default function AiGraderNfcTapPage({ tap }: Props) {
                 ? "This Ten Kings NFC link has been revoked and no longer resolves to a valid report registration."
                 : tap.state === "unavailable"
                   ? "Ten Kings NFC registration lookup is temporarily unavailable. Please try again later."
-                : "This NFC link is not an active Ten Kings report registration."}
+                  : "This NFC link is not an active Ten Kings report registration."}
             </p>
           )}
         </section>

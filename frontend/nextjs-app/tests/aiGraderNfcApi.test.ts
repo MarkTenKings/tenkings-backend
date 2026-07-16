@@ -57,6 +57,7 @@ function deps(overrides: Partial<AiGraderNfcApiDependencies> = {}) {
     readiness: () => ({
       nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
+      nfcManualIosEnabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: true,
       nfcWorkstationAttestationConfigured: true,
@@ -80,6 +81,10 @@ function deps(overrides: Partial<AiGraderNfcApiDependencies> = {}) {
     status: operation("status") as AiGraderNfcApiDependencies["status"],
     revoke: operation("revoke") as AiGraderNfcApiDependencies["revoke"],
     replace: operation("replace") as AiGraderNfcApiDependencies["replace"],
+    manualIosInit: operation("manualIosInit") as NonNullable<AiGraderNfcApiDependencies["manualIosInit"]>,
+    manualIosConfirmLock: operation("manualIosConfirmLock") as NonNullable<AiGraderNfcApiDependencies["manualIosConfirmLock"]>,
+    manualIosComplete: operation("manualIosComplete") as NonNullable<AiGraderNfcApiDependencies["manualIosComplete"]>,
+    manualIosReplace: operation("manualIosReplace") as NonNullable<AiGraderNfcApiDependencies["manualIosReplace"]>,
     ...overrides,
   };
   return { value, calls };
@@ -99,12 +104,14 @@ test("NFC status uses explicit human NFC scope and returns only the runtime safe
       status: "missing",
       nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
+      nfcManualIosEnabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: true,
       nfcWorkstationAttestationConfigured: true,
       nfcWorkstationKeyCount: 1,
       expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
       canProgram: true,
+      canManualIos: false,
       canAdmin: false,
     },
   });
@@ -394,6 +401,7 @@ test("NFC programming flag is independent, status/revoke stay available, and rea
     readiness: () => ({
       nfcSchemaReady: true,
       nfcProgrammingEnabled: false,
+      nfcManualIosEnabled: false,
       nfcRequired: true,
       nfcAttemptTokenConfigured: false,
       nfcWorkstationAttestationConfigured: false,
@@ -441,6 +449,7 @@ test("NFC programming flag is independent, status/revoke stay available, and rea
     readiness: () => ({
       nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
+      nfcManualIosEnabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: false,
       nfcWorkstationAttestationConfigured: false,
@@ -455,6 +464,110 @@ test("NFC programming flag is independent, status/revoke stay available, and rea
   }), missingOutput.res);
   assert.equal(missingOutput.read().statusCode, 503);
   assert.equal((missingOutput.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_PROGRAMMING_NOT_CONFIGURED");
+});
+
+test("Feiju manual iOS API is separately gated, exact-URL-only, requires lock confirmation, and preserves admin replacement authority", async () => {
+  const runtime = deps({
+    readiness: () => ({
+      nfcSchemaReady: true,
+      nfcProgrammingEnabled: true,
+      nfcManualIosEnabled: true,
+      nfcRequired: false,
+      nfcAttemptTokenConfigured: false,
+      nfcWorkstationAttestationConfigured: false,
+      nfcWorkstationKeyCount: 0,
+      expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+    }),
+  });
+  const publicTagId = "A".repeat(32);
+  const attemptId = `nfc_ios_attempt_${"B".repeat(43)}`;
+  const exactUrl = `https://collect.tenkings.co/nfc/${publicTagId}`;
+
+  const initOutput = response();
+  await createAiGraderNfcApiHandler(runtime.value)(request({
+    action: "manual-ios/init",
+    body: {
+      reportId: "report-1",
+      idempotencyKey: "manual-ios-init-1",
+      publicTagId: "caller-selected",
+      uid: "must-be-ignored",
+      apdu: "must-be-ignored",
+    },
+  }), initOutput.res);
+  assert.equal(initOutput.read().statusCode, 200);
+  assert.equal(runtime.calls[0].operation, "manualIosInit");
+  assert.equal("publicTagId" in runtime.calls[0].input, false);
+  assert.equal("uid" in runtime.calls[0].input, false);
+  assert.equal("apdu" in runtime.calls[0].input, false);
+
+  const missingLock = response();
+  await createAiGraderNfcApiHandler(runtime.value)(request({
+    action: "manual-ios/confirm-lock",
+    body: { reportId: "report-1", cardAssetId: "card-1", itemId: "item-1", certId: "cert-1", publicTagId, attemptId },
+  }), missingLock.res);
+  assert.equal(missingLock.read().statusCode, 400);
+  assert.equal((missingLock.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_WRITE_PROTECTION_CONFIRMATION_REQUIRED");
+
+  const confirmed = response();
+  await createAiGraderNfcApiHandler(runtime.value)(request({
+    action: "manual-ios/confirm-lock",
+    body: { reportId: "report-1", cardAssetId: "card-1", itemId: "item-1", certId: "cert-1", publicTagId, attemptId, writableNoConfirmed: true },
+  }), confirmed.res);
+  assert.equal(confirmed.read().statusCode, 200);
+  assert.equal(runtime.calls.at(-1)?.operation, "manualIosConfirmLock");
+  assert.equal(runtime.calls.at(-1)?.input.writableNoConfirmed, true);
+
+  const alteredUrl = response();
+  await createAiGraderNfcApiHandler(runtime.value)(request({
+    action: "manual-ios/complete",
+    body: { reportId: "report-1", cardAssetId: "card-1", itemId: "item-1", certId: "cert-1", publicTagId, attemptId,
+      normalizedUrl: `${exactUrl}?lock-check=1`, idempotencyKey: "manual-ios-complete-1" },
+  }), alteredUrl.res);
+  assert.equal(alteredUrl.read().statusCode, 400);
+  assert.equal((alteredUrl.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_URL_MISMATCH");
+
+  const completeOutput = response();
+  await createAiGraderNfcApiHandler(runtime.value)(request({
+    action: "manual-ios/complete",
+    body: { reportId: "report-1", cardAssetId: "card-1", itemId: "item-1", certId: "cert-1", publicTagId, attemptId,
+      normalizedUrl: exactUrl, idempotencyKey: "manual-ios-complete-1" },
+  }), completeOutput.res);
+  assert.equal(completeOutput.read().statusCode, 200);
+  assert.equal(runtime.calls.at(-1)?.operation, "manualIosComplete");
+  assert.equal(runtime.calls.at(-1)?.input.normalizedUrl, exactUrl);
+
+  const operatorReplace = response();
+  await createAiGraderNfcApiHandler(runtime.value)(request({
+    action: "manual-ios/replace",
+    body: { reportId: "report-1", replacedPublicTagId: publicTagId, reason: "Replace damaged Feiju tag", idempotencyKey: "manual-ios-replace-1" },
+  }), operatorReplace.res);
+  assert.equal(operatorReplace.read().statusCode, 403);
+  assert.equal((operatorReplace.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_ADMIN_REQUIRED");
+
+  const admin = deps({
+    env: { AI_GRADER_PRODUCTION_TENANT_ID: "ten-kings", AI_GRADER_ADMIN_USER_IDS: "admin-1" },
+    requireUserSession: async () => ({ id: "session-admin", tokenHash: "redacted-session-hash", user: { id: "admin-1", phone: null, displayName: "Admin", avatarUrl: null } }),
+    readiness: runtime.value.readiness,
+  });
+  const adminReplace = response();
+  await createAiGraderNfcApiHandler(admin.value)(request({
+    action: "manual-ios/replace",
+    body: { reportId: "report-1", replacedPublicTagId: publicTagId, reason: "Replace damaged Feiju tag", idempotencyKey: "manual-ios-replace-1" },
+  }), adminReplace.res);
+  assert.equal(adminReplace.read().statusCode, 200);
+  assert.equal(admin.calls[0].operation, "manualIosReplace");
+});
+
+test("Feiju manual iOS feature flag defaults off independently of workstation readiness", async () => {
+  const runtime = deps();
+  const output = response();
+  await createAiGraderNfcApiHandler(runtime.value)(request({
+    action: "manual-ios/init",
+    body: { reportId: "report-1", idempotencyKey: "manual-ios-disabled" },
+  }), output.res);
+  assert.equal(output.read().statusCode, 503);
+  assert.equal((output.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_MANUAL_IOS_DISABLED");
+  assert.equal(runtime.calls.length, 0);
 });
 
 test("NFC schema absence is redacted, status remains available, and every mutation fails with the stable gate", async () => {
@@ -476,12 +589,14 @@ test("NFC schema absence is redacted, status remains available, and every mutati
     cryptographicallyVerified: false,
     nfcSchemaReady: false,
     nfcProgrammingEnabled: true,
+    nfcManualIosEnabled: false,
     nfcRequired: false,
     nfcAttemptTokenConfigured: true,
     nfcWorkstationAttestationConfigured: true,
     nfcWorkstationKeyCount: 1,
     expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
     canProgram: true,
+    canManualIos: false,
     canAdmin: false,
   });
   assert.equal(runtime.calls.length, 0);

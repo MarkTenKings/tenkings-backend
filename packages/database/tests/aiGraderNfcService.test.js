@@ -11,13 +11,18 @@ const {
   buildAiGraderNfcOperationalAttestationStatement,
   buildAiGraderNfcTagUrl,
   completeAiGraderNfcProgramming,
+  completeAiGraderNfcManualIos,
+  confirmAiGraderNfcManualIosLock,
   describeAiGraderNfcSecurityStrategy,
   generateAiGraderNfcPublicTagId,
   getAiGraderNfcWorkstationKeyReadiness,
   getAiGraderNfcStatus,
+  initAiGraderNfcManualIos,
   initAiGraderNfcProgramming,
+  observeAiGraderNfcManualIosTap,
   parseAiGraderNfcWorkstationPublicKeys,
   replaceAiGraderNfcTag,
+  replaceAiGraderNfcManualIos,
   revokeAiGraderNfcTag,
 } = require("../dist/database/src/aiGraderNfcService");
 const {
@@ -85,6 +90,7 @@ test("NFC schema readiness checks every migrated runtime column and exact catalo
         migrationLedgerReady: true,
         tagTableReady: true,
         attemptTableReady: true,
+        manualIosAttemptTableReady: true,
         auditTableReady: true,
       }];
       return [{ ready: true }];
@@ -109,6 +115,15 @@ test("NFC schema readiness checks every migrated runtime column and exact catalo
       "completedWorkstationKeyId", "state", "requestedAt", "expiresAt", "failureCode",
       "readbackEvidence", "consumedAt", "createdAt", "updatedAt",
     ],
+    AiGraderNfcManualIosAttempt: [
+      "id", "tagId", "tenantId", "reportId", "cardAssetId", "itemId", "certId",
+      "requestedByUserId", "idempotencyKeyHash", "completionIdempotencyKeyHash", "state",
+      "profileVersion", "qualificationProfile", "expectedPayloadSha256", "readbackPayloadSha256",
+      "preLockTapObservedAt", "lockStatusConfirmedAt", "lockStatusConfirmedByUserId",
+      "writeProtectionEvidence", "postLockTapObservedAt", "workstationOperationalAttestation",
+      "cryptographicTagAuthentication", "requestedAt", "expiresAt", "failureCode",
+      "consumedAt", "createdAt", "updatedAt",
+    ],
     AiGraderNfcAuditEvent: [
       "id", "tagId", "attemptId", "tenantId", "reportId", "action", "fromStatus",
       "toStatus", "actorUserId", "reasonCode", "safeDetails", "createdAt",
@@ -122,6 +137,7 @@ test("NFC schema readiness checks every migrated runtime column and exact catalo
   for (const expected of [
     "AiGraderNfcTag",
     "AiGraderNfcProgrammingAttempt",
+    "AiGraderNfcManualIosAttempt",
     "AiGraderNfcAuditEvent",
     "attestationChallengeHash",
     "completedWorkstationKeyId",
@@ -130,6 +146,8 @@ test("NFC schema readiness checks every migrated runtime column and exact catalo
     "AiGraderNfcTag_publicTagId_key",
     "AiGraderNfcProgrammingAttempt_tokenHash_key",
     "AiGraderNfcAttempt_request_idempotency_key",
+    "AiGraderNfcManualIosAttempt_request_idempotency_key",
+    "AiGraderNfcManualIosAttempt_one_live_per_tag",
     "AiGraderNfcTag_one_open_report",
     "AiGraderNfcTag_one_open_card",
     "AiGraderNfcTag_one_open_item",
@@ -137,6 +155,8 @@ test("NFC schema readiness checks every migrated runtime column and exact catalo
     "AiGraderNfcProgrammingAttempt_one_live_per_tag",
     "AiGraderNfcTag_aiGraderReportId_fkey",
     "AiGraderNfcAuditEvent_attemptId_fkey",
+    "AiGraderNfcManualIosAttempt_profile",
+    "AiGraderNfcManualIosAttempt_state_evidence",
     "AiGraderNfcProgrammingAttempt_completion_state",
     "AiGraderNfcProgrammingAttempt_attestation_evidence",
     "AiGraderNfcAuditEvent_immutable_update",
@@ -208,6 +228,7 @@ test("NFC schema readiness checks every migrated runtime column and exact catalo
         migrationLedgerReady: false,
         tagTableReady: false,
         attemptTableReady: false,
+        manualIosAttemptTableReady: false,
         auditTableReady: false,
       }];
     },
@@ -224,6 +245,7 @@ test("NFC schema readiness checks every migrated runtime column and exact catalo
         migrationLedgerReady: true,
         tagTableReady: true,
         attemptTableReady: true,
+        manualIosAttemptTableReady: true,
         auditTableReady: true,
       }];
       throw Object.assign(new Error("catalog read failed"), { code: "P1001" });
@@ -240,7 +262,7 @@ test("NFC schema readiness cache coalesces probes, expires briefly, and never ca
       queries += 1;
       await Promise.resolve();
       return queries % 2 === 1
-        ? [{ migrationLedgerReady: true, tagTableReady: true, attemptTableReady: true, auditTableReady: true }]
+        ? [{ migrationLedgerReady: true, tagTableReady: true, attemptTableReady: true, manualIosAttemptTableReady: true, auditTableReady: true }]
         : [{ ready: true }];
     },
   };
@@ -262,7 +284,7 @@ test("NFC schema readiness cache coalesces probes, expires briefly, and never ca
   const absentDb = {
     async $queryRaw() {
       absentQueries += 1;
-      return [{ migrationLedgerReady: false, tagTableReady: false, attemptTableReady: false, auditTableReady: false }];
+      return [{ migrationLedgerReady: false, tagTableReady: false, attemptTableReady: false, manualIosAttemptTableReady: false, auditTableReady: false }];
     },
   };
   assert.deepEqual(await readCachedAiGraderNfcSchemaReadiness(absentDb, options), { ready: false });
@@ -336,7 +358,7 @@ function rowMatches(row, where = {}) {
 
 function mockDb() {
   const publishAuthority = authority();
-  const state = { tags: [], attempts: [], audits: [], lockCalls: 0 };
+  const state = { tags: [], attempts: [], manualAttempts: [], audits: [], lockCalls: 0 };
   const report = {
     id: "report-row-1",
     tenantId: "ten-kings",
@@ -371,10 +393,13 @@ function mockDb() {
         if (where.id) return state.tags.find((row) => row.id === where.id) ?? null;
         return null;
       },
-      async findFirst({ where = {}, orderBy } = {}) {
+      async findFirst({ where = {}, orderBy, include } = {}) {
         const rows = state.tags.filter((row) => rowMatches(row, where));
         if (orderBy?.createdAt === "desc") rows.sort((a, b) => b.createdAt - a.createdAt);
-        return rows[0] ?? null;
+        const row = rows[0] ?? null;
+        return row && include?.manualIosAttempts
+          ? { ...row, manualIosAttempts: state.manualAttempts.filter((attempt) => attempt.tagId === row.id).sort((a, b) => b.requestedAt - a.requestedAt).slice(0, 1) }
+          : row;
       },
       async create({ data }) {
         const row = { id: `tag-${state.tags.length + 1}`, uidFingerprintSha256: null, readbackPayloadSha256: null,
@@ -430,6 +455,53 @@ function mockDb() {
         return { count };
       },
     },
+    aiGraderNfcManualIosAttempt: {
+      async findUnique({ where, include }) {
+        let row;
+        if (where.id) row = state.manualAttempts.find((entry) => entry.id === where.id);
+        else if (where.tenantId_requestedByUserId_idempotencyKeyHash) {
+          row = state.manualAttempts.find((entry) => rowMatches(entry, where.tenantId_requestedByUserId_idempotencyKeyHash));
+        }
+        if (!row) return null;
+        return include?.tag ? { ...row, tag: state.tags.find((tag) => tag.id === row.tagId) } : row;
+      },
+      async findFirst({ where = {}, orderBy } = {}) {
+        const rows = state.manualAttempts.filter((row) => rowMatches(row, where));
+        if (orderBy?.requestedAt === "desc") rows.sort((a, b) => b.requestedAt - a.requestedAt);
+        return rows[0] ?? null;
+      },
+      async findMany({ where = {}, orderBy } = {}) {
+        const rows = state.manualAttempts.filter((row) => rowMatches(row, where));
+        if (orderBy?.requestedAt === "asc") rows.sort((a, b) => a.requestedAt - b.requestedAt);
+        return rows;
+      },      async create({ data }) {
+        const row = {
+          completionIdempotencyKeyHash: null,
+          readbackPayloadSha256: null,
+          preLockTapObservedAt: null,
+          lockStatusConfirmedAt: null,
+          lockStatusConfirmedByUserId: null,
+          writeProtectionEvidence: null,
+          postLockTapObservedAt: null,
+          failureCode: null,
+          consumedAt: null,
+          ...data,
+        };
+        state.manualAttempts.push(row);
+        return row;
+      },
+      async update({ where, data }) {
+        const row = state.manualAttempts.find((entry) => entry.id === where.id);
+        if (!row) throw new Error("manual attempt missing");
+        Object.assign(row, data);
+        return row;
+      },
+      async updateMany({ where, data }) {
+        let count = 0;
+        for (const row of state.manualAttempts) if (rowMatches(row, where)) { Object.assign(row, data); count += 1; }
+        return { count };
+      },
+    },
     aiGraderNfcAuditEvent: {
       async create({ data }) { const row = { id: `audit-${state.audits.length + 1}`, ...data }; state.audits.push(row); return row; },
       async findFirst({ where, orderBy }) {
@@ -455,6 +527,20 @@ async function reserve(runtime, idempotencyKey = "init-report-1", overrides = {}
   return initAiGraderNfcProgramming({
     ...linkage, requestedByUserId: "operator-1", idempotencyKey,
     ...PROGRAMMING_RUNTIME,
+    attemptTtlMs: 5 * 60_000,
+    now: NOW,
+    dbClient: runtime.db,
+    ...overrides,
+  });
+}
+
+async function reserveManual(runtime, idempotencyKey = "manual-ios-init-report-1", overrides = {}) {
+  return initAiGraderNfcManualIos({
+    ...linkage,
+    requestedByUserId: "operator-1",
+    idempotencyKey,
+    programmingEnabled: true,
+    manualIosEnabled: true,
     attemptTtlMs: 5 * 60_000,
     now: NOW,
     dbClient: runtime.db,
@@ -1064,6 +1150,187 @@ test("concurrent ordinary init and authorized replace leave at most one open reg
   assert.equal(runtime.state.attempts.filter((attempt) => ["initialized", "writing", "verified"].includes(attempt.state)).length, 1);
 });
 
+test("Feiju iPhone-assisted workflow is separately gated, idempotent, bounded, exact-URL-only, and activates without UID or workstation evidence", async () => {
+  const strategy = describeAiGraderNfcSecurityStrategy("FEIJU_PROPRIETARY_ISODEP", "manual_ios_locked_static_url_v1");
+  assert.deepEqual(strategy, {
+    chipType: "FEIJU_PROPRIETARY_ISODEP",
+    securityMode: "manual_ios_locked_static_url_v1",
+    implemented: true,
+    registrationKind: "registered_link",
+    cryptographicVerificationAvailable: false,
+    consumerWriteProtection: true,
+    cryptographicTagAuthentication: false,
+    clonableStaticUrl: true,
+    workstationOperationalAttestation: false,
+  });
+
+  const disabled = mockDb();
+  await assert.rejects(reserveManual(disabled, "manual-disabled", { manualIosEnabled: false }), {
+    code: "AI_GRADER_NFC_MANUAL_IOS_DISABLED",
+  });
+  await assert.rejects(reserveManual(disabled, "programming-disabled", { programmingEnabled: false }), {
+    code: "AI_GRADER_NFC_PROGRAMMING_DISABLED",
+  });
+  await assert.rejects(reserveManual(disabled, "raw-uid-rejected", { rawUid: "04AABBCC" }), {
+    code: "AI_GRADER_NFC_RAW_UID_REJECTED",
+  });
+
+  const runtime = mockDb();
+  const init = await reserveManual(runtime);
+  const retry = await reserveManual(runtime);
+  assert.equal(retry.attemptId, init.attemptId);
+  assert.equal(retry.publicTagId, init.publicTagId);
+  assert.equal(init.chipType, "FEIJU_PROPRIETARY_ISODEP");
+  assert.equal(init.securityMode, "manual_ios_locked_static_url_v1");
+  assert.equal(init.expectedNdefUrl, `https://collect.tenkings.co/nfc/${init.publicTagId}`);
+  assert.equal(init.expectedPayloadSha256, sha256(init.expectedNdefUrl));
+  assert.equal(runtime.state.tags[0].uidFingerprintSha256, null);
+  assert.equal(runtime.state.manualAttempts.length, 1);
+  assert.equal(runtime.state.manualAttempts[0].profileVersion, "feiju_iso_dep_ios_static_v1");
+  assert.equal(runtime.state.manualAttempts[0].qualificationProfile, "feiju_iso_dep_ios_static_v1");
+  assert.equal(runtime.state.manualAttempts[0].workstationOperationalAttestation, false);
+  assert.equal(runtime.state.manualAttempts[0].cryptographicTagAuthentication, false);
+
+  const completionInput = {
+    ...linkage,
+    requestedByUserId: "operator-1",
+    attemptId: init.attemptId,
+    publicTagId: init.publicTagId,
+    normalizedNdefUrl: init.expectedNdefUrl,
+    idempotencyKey: "manual-ios-complete-report-1",
+    programmingEnabled: true,
+    manualIosEnabled: true,
+    dbClient: runtime.db,
+    now: new Date(NOW.getTime() + 4_000),
+  };
+  await assert.rejects(completeAiGraderNfcManualIos(completionInput), {
+    code: "AI_GRADER_NFC_MANUAL_IOS_EVIDENCE_INCOMPLETE",
+  });
+  assert.deepEqual(await observeAiGraderNfcManualIosTap({
+    publicTagId: "Z".repeat(32), programmingEnabled: true, manualIosEnabled: true, dbClient: runtime.db, now: new Date(NOW.getTime() + 1_000),
+  }), { state: "not_applicable" });
+  assert.deepEqual(await observeAiGraderNfcManualIosTap({
+    publicTagId: init.publicTagId, programmingEnabled: true, manualIosEnabled: true, dbClient: runtime.db, now: new Date(NOW.getTime() + 1_000),
+  }), { state: "setup_verification", stage: "pre_lock" });
+  assert.deepEqual(await observeAiGraderNfcManualIosTap({
+    publicTagId: init.publicTagId, programmingEnabled: true, manualIosEnabled: true, dbClient: runtime.db, now: new Date(NOW.getTime() + 1_500),
+  }), { state: "setup_verification", stage: "lock_confirmation" });
+
+  const lockInput = {
+    ...linkage,
+    requestedByUserId: "operator-1",
+    attemptId: init.attemptId,
+    publicTagId: init.publicTagId,
+    writableNoConfirmed: true,
+    programmingEnabled: true,
+    manualIosEnabled: true,
+    dbClient: runtime.db,
+    now: new Date(NOW.getTime() + 2_000),
+  };
+  await assert.rejects(confirmAiGraderNfcManualIosLock({ ...lockInput, writableNoConfirmed: false }), {
+    code: "AI_GRADER_NFC_WRITE_PROTECTION_CONFIRMATION_REQUIRED",
+  });
+  assert.equal((await confirmAiGraderNfcManualIosLock(lockInput)).manualIosAttempt.state, "awaiting_postlock_tap");
+  assert.equal((await confirmAiGraderNfcManualIosLock(lockInput)).manualIosAttempt.state, "awaiting_postlock_tap");
+  await assert.rejects(completeAiGraderNfcManualIos({ ...completionInput, now: new Date(NOW.getTime() + 2_500) }), {
+    code: "AI_GRADER_NFC_MANUAL_IOS_EVIDENCE_INCOMPLETE",
+  });
+
+  assert.deepEqual(await observeAiGraderNfcManualIosTap({
+    publicTagId: init.publicTagId, programmingEnabled: true, manualIosEnabled: true, dbClient: runtime.db, now: new Date(NOW.getTime() + 3_000),
+  }), { state: "setup_verification", stage: "post_lock" });
+  assert.deepEqual(await observeAiGraderNfcManualIosTap({
+    publicTagId: init.publicTagId, programmingEnabled: true, manualIosEnabled: true, dbClient: runtime.db, now: new Date(NOW.getTime() + 3_500),
+  }), { state: "setup_verification", stage: "ready_to_complete" });
+  await assert.rejects(completeAiGraderNfcManualIos({
+    ...completionInput,
+    normalizedNdefUrl: `${init.expectedNdefUrl}?lock-check=1`,
+  }), { code: "AI_GRADER_NFC_READBACK_MISMATCH" });
+
+  const active = await completeAiGraderNfcManualIos(completionInput);
+  assert.equal(active.status, "active");
+  assert.equal(active.registrationKind, "registered_link");
+  assert.equal(active.cryptographicallyVerified, false);
+  assert.equal(active.manualIosAttempt.state, "consumed");
+  assert.equal(active.manualIosAttempt.writeProtectionEvidence, "ios_read_only_status_observed");
+  assert.equal(active.manualIosAttempt.qualificationProfile, "feiju_iso_dep_ios_static_v1");
+  assert.equal(active.manualIosAttempt.workstationOperationalAttestation, false);
+  assert.equal(active.manualIosAttempt.cryptographicTagAuthentication, false);
+  assert.equal((await completeAiGraderNfcManualIos(completionInput)).status, "active");
+  await assert.rejects(completeAiGraderNfcManualIos({ ...completionInput, idempotencyKey: "manual-ios-replay-changed" }), {
+    code: "AI_GRADER_NFC_TOKEN_REPLAY",
+  });
+
+  const serialized = JSON.stringify({ active, state: runtime.state });
+  for (const forbidden of ["rawUid", "uidFingerprintSha256\":\"", "phoneIdentifier", "ipAddress", "workstationKeyId", "attestationChallenge", "signature", "apdu"]) {
+    assert.equal(serialized.includes(forbidden), false, forbidden);
+  }
+  assert.ok(runtime.state.audits.some((event) => event.action === "manual_ios_prelock_tap_observed"));
+  assert.ok(runtime.state.audits.some((event) => event.action === "manual_ios_write_protection_confirmed"));
+  assert.ok(runtime.state.audits.some((event) => event.action === "manual_ios_postlock_tap_observed"));
+  assert.ok(runtime.state.audits.some((event) => event.action === "manual_ios_locked_static_url_verified"));
+});
+
+test("Feiju iPhone-assisted attempts expire closed and preserve revoke/replace uniqueness", async () => {
+  const expiredRuntime = mockDb();
+  const expired = await reserveManual(expiredRuntime, "manual-expiry", { attemptTtlMs: 60_000 });
+  assert.deepEqual(await observeAiGraderNfcManualIosTap({
+    publicTagId: expired.publicTagId,
+    programmingEnabled: true,
+    manualIosEnabled: true,
+    dbClient: expiredRuntime.db,
+    now: new Date(NOW.getTime() + 60_001),
+  }), { state: "not_applicable" });
+  assert.equal(expiredRuntime.state.manualAttempts[0].state, "expired");
+  assert.equal(expiredRuntime.state.tags[0].status, "reserved");
+  await assert.rejects(reserveManual(expiredRuntime, "manual-expiry", { now: new Date(NOW.getTime() + 60_002) }), {
+    code: "AI_GRADER_NFC_ATTEMPT_EXPIRED",
+  });
+
+  const staleRuntime = mockDb();
+  const stale = await reserveManual(staleRuntime, "manual-stale-original", { attemptTtlMs: 60_000 });
+  const retryAfterTimeout = await reserveManual(staleRuntime, "manual-stale-retry", {
+    attemptTtlMs: 60_000,
+    now: new Date(NOW.getTime() + 60_002),
+  });
+  assert.notEqual(retryAfterTimeout.attemptId, stale.attemptId);
+  assert.equal(retryAfterTimeout.publicTagId, stale.publicTagId);
+  assert.equal(staleRuntime.state.manualAttempts[0].state, "expired");
+  assert.equal(staleRuntime.state.manualAttempts[1].state, "awaiting_prelock_tap");
+  assert.equal(staleRuntime.state.tags[0].status, "programming");
+  assert.equal(staleRuntime.state.manualAttempts.filter((attempt) => ["awaiting_prelock_tap", "awaiting_lock_confirmation", "awaiting_postlock_tap", "ready_to_complete"].includes(attempt.state)).length, 1);
+  assert.ok(staleRuntime.state.audits.some((event) => event.action === "manual_ios_attempts_expired_recover_reservation"));
+  const runtime = mockDb();
+  const init = await reserveManual(runtime, "manual-replace-original");
+  await observeAiGraderNfcManualIosTap({ publicTagId: init.publicTagId, programmingEnabled: true, manualIosEnabled: true, dbClient: runtime.db, now: new Date(NOW.getTime() + 1_000) });
+  await confirmAiGraderNfcManualIosLock({
+    ...linkage, requestedByUserId: "operator-1", attemptId: init.attemptId, publicTagId: init.publicTagId,
+    writableNoConfirmed: true, programmingEnabled: true, manualIosEnabled: true, dbClient: runtime.db, now: new Date(NOW.getTime() + 2_000),
+  });
+  await observeAiGraderNfcManualIosTap({ publicTagId: init.publicTagId, programmingEnabled: true, manualIosEnabled: true, dbClient: runtime.db, now: new Date(NOW.getTime() + 3_000) });
+  await completeAiGraderNfcManualIos({
+    ...linkage, requestedByUserId: "operator-1", attemptId: init.attemptId, publicTagId: init.publicTagId,
+    normalizedNdefUrl: init.expectedNdefUrl, idempotencyKey: "manual-replace-complete",
+    programmingEnabled: true, manualIosEnabled: true, dbClient: runtime.db, now: new Date(NOW.getTime() + 4_000),
+  });
+  const replacement = await replaceAiGraderNfcManualIos({
+    ...linkage,
+    replacedPublicTagId: init.publicTagId,
+    requestedByUserId: "operator-1",
+    revocationReason: "Replace a damaged Feiju registered link",
+    idempotencyKey: "manual-replacement",
+    programmingEnabled: true,
+    manualIosEnabled: true,
+    dbClient: runtime.db,
+    now: new Date(NOW.getTime() + 5_000),
+  });
+  assert.equal(runtime.state.tags[0].status, "revoked");
+  assert.equal(replacement.status, "programming");
+  assert.notEqual(replacement.publicTagId, init.publicTagId);
+  assert.equal(runtime.state.tags.filter((tag) => ["reserved", "programming", "verified", "active"].includes(tag.status)).length, 1);
+  assert.equal(runtime.state.manualAttempts.filter((attempt) => ["awaiting_prelock_tap", "awaiting_lock_confirmation", "awaiting_postlock_tap", "ready_to_complete"].includes(attempt.state)).length, 1);
+});
+
 test("safe status returns exact linkage and no UID fingerprint, token, attempt, path, or helper details", async () => {
   const runtime = mockDb();
   const missing = await getAiGraderNfcStatus({ tenantId: "ten-kings", reportId: "report-1", dbClient: runtime.db });
@@ -1085,6 +1352,50 @@ test("safe status returns exact linkage and no UID fingerprint, token, attempt, 
   assert.equal(json.includes("signature"), false);
   assert.equal(json.includes("workstationKeyId"), false);
   assert.equal(json.includes("readbackEvidence"), false);
+});
+
+test("additive Feiju migration is separate, UID-free, APDU-free, and preserves the NTAG workstation contract", () => {
+  const enumMigration = readFileSync(join(
+    __dirname,
+    "..",
+    "prisma",
+    "migrations",
+    "20260716190000_ai_grader_nfc_feiju_profile_enums",
+    "migration.sql",
+  ), "utf8");
+  const profileMigration = readFileSync(join(
+    __dirname,
+    "..",
+    "prisma",
+    "migrations",
+    "20260716190500_ai_grader_nfc_feiju_ios_profile",
+    "migration.sql",
+  ), "utf8");
+  const migration = `${enumMigration}\n${profileMigration}`;
+  for (const required of [
+    "FEIJU_PROPRIETARY_ISODEP",
+    "manual_ios_locked_static_url_v1",
+    "AiGraderNfcManualIosAttempt",
+    "feiju_iso_dep_ios_static_v1",
+    "qualificationProfile",
+    "ios_read_only_status_observed",
+    "workstationOperationalAttestation",
+    "cryptographicTagAuthentication",
+    "AiGraderNfcManualIosAttempt_profile",
+    "AiGraderNfcManualIosAttempt_state_evidence",
+    "AiGraderNfcManualIosAttempt_request_idempotency_key",
+    "AiGraderNfcManualIosAttempt_one_live_per_tag",
+  ]) assert.equal(migration.includes(required), true, `migration is missing ${required}`);
+  assert.doesNotMatch(migration, /"uid"\s+TEXT/i);
+  assert.doesNotMatch(migration, /"rawUid"\s+TEXT/i);
+  assert.doesNotMatch(migration, /"ip(Address)?"\s+TEXT/i);
+  assert.doesNotMatch(migration, /"phone(Identifier)?"\s+TEXT/i);
+  assert.doesNotMatch(migration, /"apdu"\s+TEXT/i);
+  assert.doesNotMatch(migration, /DROP\s+(TABLE|COLUMN|TYPE)/i);
+  assert.equal(migration.includes("\"chipType\" = 'NTAG424_DNA' AND \"uidFingerprintSha256\" IS NOT NULL"), true);
+  assert.match(migration, /"uidFingerprintSha256" IS NULL/);
+  assert.match(migration, /"workstationOperationalAttestation" BOOLEAN NOT NULL DEFAULT false/);
+  assert.match(migration, /"cryptographicTagAuthentication" BOOLEAN NOT NULL DEFAULT false/);
 });
 
 test("unapplied NFC migration requires operational attestation evidence without forbidden secret material", () => {

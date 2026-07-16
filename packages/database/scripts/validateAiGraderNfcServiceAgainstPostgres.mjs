@@ -24,9 +24,14 @@ const {
   AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
   buildAiGraderNfcOperationalAttestationStatement,
   completeAiGraderNfcProgramming,
+  completeAiGraderNfcManualIos,
+  confirmAiGraderNfcManualIosLock,
   getAiGraderNfcStatus,
   initAiGraderNfcProgramming,
+  initAiGraderNfcManualIos,
+  observeAiGraderNfcManualIosTap,
   replaceAiGraderNfcTag,
+  replaceAiGraderNfcManualIos,
   revokeAiGraderNfcTag,
 } = require("../dist/database/src/aiGraderNfcService");
 
@@ -436,6 +441,95 @@ async function main() {
     });
     requireProof(replacementTag.status === "reserved", "REPLACEMENT_TAG_RECOVERY_STATE");
 
+    const manualRuntime = {
+      dbClient: prisma,
+      programmingEnabled: true,
+      manualIosEnabled: true,
+      attemptTtlMs: 60_000,
+    };
+    const manualReplaceInput = {
+      ...linkage,
+      ...manualRuntime,
+      requestedByUserId: ACTOR_ID,
+      replacedPublicTagId: expiringReplacement.publicTagId,
+      revocationReason: "Disposable validation Feiju profile transition",
+      idempotencyKey: "service-validation-manual-ios-replace",
+      now: new Date(NOW.getTime() + 110_000),
+    };
+    const [manualInit, manualInitRetry] = await Promise.all([
+      replaceAiGraderNfcManualIos(manualReplaceInput),
+      replaceAiGraderNfcManualIos(manualReplaceInput),
+    ]);
+    requireProof(manualInit.status === "programming", "MANUAL_IOS_INIT_STATUS");
+    requireProof(manualInitRetry.attemptId === manualInit.attemptId, "MANUAL_IOS_INIT_IDEMPOTENCY");
+    requireProof(manualInitRetry.publicTagId === manualInit.publicTagId, "MANUAL_IOS_PUBLIC_ID_IDEMPOTENCY");
+    requireProof(manualInit.chipType === "FEIJU_PROPRIETARY_ISODEP", "MANUAL_IOS_CHIP_TYPE");
+    requireProof(manualInit.securityMode === "manual_ios_locked_static_url_v1", "MANUAL_IOS_SECURITY_MODE");
+    requireProof(manualInit.expectedNdefUrl === `https://collect.tenkings.co/nfc/${manualInit.publicTagId}`, "MANUAL_IOS_EXACT_URL");
+    requireProof(!Object.hasOwn(manualInit, "attemptToken"), "MANUAL_IOS_TOKEN_ABSENT");
+    requireProof((await prisma.aiGraderNfcManualIosAttempt.count()) === 1, "MANUAL_IOS_ATTEMPT_COUNT");
+
+    const preLockTap = await observeAiGraderNfcManualIosTap({
+      publicTagId: manualInit.publicTagId,
+      programmingEnabled: true,
+      manualIosEnabled: true,
+      dbClient: prisma,
+      now: new Date(NOW.getTime() + 111_000),
+    });
+    requireProof(preLockTap.state === "setup_verification" && preLockTap.stage === "pre_lock", "MANUAL_IOS_PRELOCK_TAP");
+    await confirmAiGraderNfcManualIosLock({
+      ...linkage,
+      requestedByUserId: ACTOR_ID,
+      attemptId: manualInit.attemptId,
+      publicTagId: manualInit.publicTagId,
+      writableNoConfirmed: true,
+      programmingEnabled: true,
+      manualIosEnabled: true,
+      dbClient: prisma,
+      now: new Date(NOW.getTime() + 112_000),
+    });
+    const postLockTap = await observeAiGraderNfcManualIosTap({
+      publicTagId: manualInit.publicTagId,
+      programmingEnabled: true,
+      manualIosEnabled: true,
+      dbClient: prisma,
+      now: new Date(NOW.getTime() + 113_000),
+    });
+    requireProof(postLockTap.state === "setup_verification" && postLockTap.stage === "post_lock", "MANUAL_IOS_POSTLOCK_TAP");
+    const manualCompleteInput = {
+      ...linkage,
+      requestedByUserId: ACTOR_ID,
+      attemptId: manualInit.attemptId,
+      publicTagId: manualInit.publicTagId,
+      normalizedNdefUrl: manualInit.expectedNdefUrl,
+      idempotencyKey: "service-validation-manual-ios-complete",
+      programmingEnabled: true,
+      manualIosEnabled: true,
+      dbClient: prisma,
+      now: new Date(NOW.getTime() + 114_000),
+    };
+    const [manualActive, manualActiveRetry] = await Promise.all([
+      completeAiGraderNfcManualIos(manualCompleteInput),
+      completeAiGraderNfcManualIos(manualCompleteInput),
+    ]);
+    requireProof(manualActive.status === "active" && manualActiveRetry.status === "active", "MANUAL_IOS_COMPLETE_IDEMPOTENCY");
+    requireProof(manualActive.registrationKind === "registered_link", "MANUAL_IOS_REGISTRATION_KIND");
+    requireProof(manualActive.cryptographicallyVerified === false, "MANUAL_IOS_CRYPTO_FALSE");
+    requireProof(manualActive.manualIosAttempt?.writeProtectionEvidence === "ios_read_only_status_observed", "MANUAL_IOS_WRITE_PROTECTION_EVIDENCE");
+    requireProof(manualActive.manualIosAttempt?.qualificationProfile === "feiju_iso_dep_ios_static_v1", "MANUAL_IOS_QUALIFICATION_PROFILE");
+    requireProof(manualActive.manualIosAttempt?.workstationOperationalAttestation === false, "MANUAL_IOS_WORKSTATION_FALSE");
+    const persistedManualTag = await prisma.aiGraderNfcTag.findUniqueOrThrow({ where: { publicTagId: manualInit.publicTagId } });
+    requireProof(persistedManualTag.uidFingerprintSha256 === null, "MANUAL_IOS_UID_ABSENT");
+    requireProof(persistedManualTag.readbackPayloadSha256 === sha256(manualInit.expectedNdefUrl), "MANUAL_IOS_READBACK_DIGEST");
+    const persistedManualAttempt = await prisma.aiGraderNfcManualIosAttempt.findUniqueOrThrow({ where: { id: manualInit.attemptId } });
+    requireProof(persistedManualAttempt.state === "consumed", "MANUAL_IOS_CONSUMED_STATE");
+    requireProof(persistedManualAttempt.profileVersion === "feiju_iso_dep_ios_static_v1", "MANUAL_IOS_PROFILE_VERSION");
+    requireProof(persistedManualAttempt.qualificationProfile === "feiju_iso_dep_ios_static_v1", "MANUAL_IOS_QUALIFICATION_STORED");
+    requireProof(persistedManualAttempt.readbackPayloadSha256 === persistedManualAttempt.expectedPayloadSha256, "MANUAL_IOS_DIGEST_INTEGRITY");
+    requireProof(persistedManualAttempt.lockStatusConfirmedByUserId === ACTOR_ID, "MANUAL_IOS_OPERATOR_STORED");
+    requireProof(persistedManualAttempt.workstationOperationalAttestation === false, "MANUAL_IOS_NO_WORKSTATION_ATTESTATION");
+    requireProof(persistedManualAttempt.cryptographicTagAuthentication === false, "MANUAL_IOS_NO_TAG_CRYPTO");
+
     const auditActions = await prisma.aiGraderNfcAuditEvent.findMany({
       select: { action: true },
     });
@@ -449,6 +543,11 @@ async function main() {
       "replacement_authorized",
       "programming_attempt_expired",
       "programming_attempts_expired_recover_reservation",
+      "manual_ios_attempt_initialized",
+      "manual_ios_prelock_tap_observed",
+      "manual_ios_write_protection_confirmed",
+      "manual_ios_postlock_tap_observed",
+      "manual_ios_locked_static_url_verified",
     ]) {
       requireProof(actions.has(expected), `AUDIT_ACTION_${expected.toUpperCase()}`);
     }
