@@ -34,7 +34,8 @@ CREATE TEMP TABLE _AiGraderNfcExpectedTagChecks (
   CONSTRAINT AiGraderNfcTag_uid_fingerprint_shape CHECK (uidFingerprintSha256 IS NULL OR uidFingerprintSha256 ~ '^[a-f0-9]{64}$'),
   CONSTRAINT AiGraderNfcTag_strategy_pair CHECK (
     (chipType = 'NTAG215' AND securityMode = 'static_url_v1') OR
-    (chipType = 'NTAG424_DNA' AND securityMode = 'ntag424_sun_v1')
+    (chipType = 'NTAG424_DNA' AND securityMode = 'ntag424_sun_v1') OR
+    (chipType = 'FEIJU_PROPRIETARY_ISODEP' AND securityMode = 'manual_ios_locked_static_url_v1')
   ),
   CONSTRAINT AiGraderNfcTag_payload_version CHECK (ndefPayloadVersion > 0 AND ndefPayloadVersion <= 1000),
   CONSTRAINT AiGraderNfcTag_linkage_bounds CHECK (
@@ -45,8 +46,10 @@ CREATE TEMP TABLE _AiGraderNfcExpectedTagChecks (
   ),
   CONSTRAINT AiGraderNfcTag_verified_evidence CHECK (
     status NOT IN ('verified', 'active') OR
-    (uidFingerprintSha256 IS NOT NULL AND readbackPayloadSha256 IS NOT NULL AND
-     programmedAt IS NOT NULL AND verifiedAt IS NOT NULL)
+    (readbackPayloadSha256 IS NOT NULL AND programmedAt IS NOT NULL AND verifiedAt IS NOT NULL AND
+     ((chipType = 'NTAG215' AND uidFingerprintSha256 IS NOT NULL) OR
+      (chipType = 'NTAG424_DNA' AND uidFingerprintSha256 IS NOT NULL) OR
+      (chipType = 'FEIJU_PROPRIETARY_ISODEP' AND uidFingerprintSha256 IS NULL)))
   ),
   CONSTRAINT AiGraderNfcTag_active_evidence CHECK (
     status <> 'active' OR (activatedAt IS NOT NULL AND activatedByUserId IS NOT NULL)
@@ -223,6 +226,7 @@ DECLARE
 BEGIN
   IF to_regclass('public."AiGraderNfcTag"') IS NULL
      OR to_regclass('public."AiGraderNfcProgrammingAttempt"') IS NULL
+     OR to_regclass('public."AiGraderNfcManualIosAttempt"') IS NULL
      OR to_regclass('public."AiGraderNfcAuditEvent"') IS NULL THEN
     RAISE EXCEPTION 'NFC migration tables are incomplete';
   END IF;
@@ -236,7 +240,7 @@ BEGIN
         JOIN pg_enum e ON e.enumtypid = t.oid
        WHERE n.nspname = 'public' AND t.typname = 'AiGraderNfcChipType'
     ) values_in_order;
-  IF actual_labels IS DISTINCT FROM ARRAY['NTAG215', 'NTAG424_DNA']::text[] THEN
+  IF actual_labels IS DISTINCT FROM ARRAY['NTAG215', 'NTAG424_DNA', 'FEIJU_PROPRIETARY_ISODEP']::text[] THEN
     RAISE EXCEPTION 'AiGraderNfcChipType labels differ: %', actual_labels;
   END IF;
 
@@ -249,7 +253,7 @@ BEGIN
         JOIN pg_enum e ON e.enumtypid = t.oid
        WHERE n.nspname = 'public' AND t.typname = 'AiGraderNfcSecurityMode'
     ) values_in_order;
-  IF actual_labels IS DISTINCT FROM ARRAY['static_url_v1', 'ntag424_sun_v1']::text[] THEN
+  IF actual_labels IS DISTINCT FROM ARRAY['static_url_v1', 'ntag424_sun_v1', 'manual_ios_locked_static_url_v1']::text[] THEN
     RAISE EXCEPTION 'AiGraderNfcSecurityMode labels differ: %', actual_labels;
   END IF;
 
@@ -281,6 +285,21 @@ BEGIN
     RAISE EXCEPTION 'AiGraderNfcProgrammingAttemptState labels differ: %', actual_labels;
   END IF;
 
+  SELECT array_agg(enum_value ORDER BY enum_order)
+    INTO actual_labels
+    FROM (
+      SELECT e.enumlabel::text AS enum_value, e.enumsortorder AS enum_order
+        FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+        JOIN pg_enum e ON e.enumtypid = t.oid
+       WHERE n.nspname = 'public' AND t.typname = 'AiGraderNfcManualIosAttemptState'
+    ) values_in_order;
+  IF actual_labels IS DISTINCT FROM ARRAY[
+    'awaiting_prelock_tap', 'awaiting_lock_confirmation', 'awaiting_postlock_tap',
+    'ready_to_complete', 'failed', 'expired', 'consumed'
+  ]::text[] THEN
+    RAISE EXCEPTION 'AiGraderNfcManualIosAttemptState labels differ: %', actual_labels;
+  END IF;
   SELECT array_agg(a.attname::text ORDER BY a.attnum)
     INTO actual_columns
     FROM pg_attribute a
@@ -654,17 +673,119 @@ BEGIN
   IF (
     SELECT count(*)
       FROM "_prisma_migrations"
-     WHERE "migration_name" = '20260712160000_ai_grader_nfc_static_url_v1'
+     WHERE "migration_name" IN (
+       '20260712160000_ai_grader_nfc_static_url_v1',
+       '20260716190000_ai_grader_nfc_feiju_profile_enums',
+       '20260716190500_ai_grader_nfc_feiju_ios_profile'
+     )
        AND "finished_at" IS NOT NULL
        AND "rolled_back_at" IS NULL
        AND "logs" IS NULL
        AND "applied_steps_count" > 0
-  ) <> 1 THEN
-    RAISE EXCEPTION 'NFC Prisma migration ledger marker is not a clean single success';
+  ) <> 3 THEN
+    RAISE EXCEPTION 'NFC Prisma migration ledger markers are not three clean successes';
   END IF;
 END
 $ai_grader_nfc_catalog$;
 
+DO $ai_grader_nfc_manual_ios_catalog$
+DECLARE
+  actual_columns text[];
+  missing_count integer;
+BEGIN
+  SELECT array_agg(a.attname::text ORDER BY a.attnum)
+    INTO actual_columns
+    FROM pg_attribute a
+   WHERE a.attrelid = 'public."AiGraderNfcManualIosAttempt"'::regclass
+     AND a.attnum > 0 AND NOT a.attisdropped;
+  IF actual_columns IS DISTINCT FROM ARRAY[
+    'id', 'tagId', 'tenantId', 'reportId', 'cardAssetId', 'itemId', 'certId',
+    'requestedByUserId', 'idempotencyKeyHash', 'completionIdempotencyKeyHash',
+    'state', 'profileVersion', 'qualificationProfile', 'expectedPayloadSha256', 'readbackPayloadSha256',
+    'preLockTapObservedAt', 'lockStatusConfirmedAt', 'lockStatusConfirmedByUserId',
+    'writeProtectionEvidence', 'postLockTapObservedAt',
+    'workstationOperationalAttestation', 'cryptographicTagAuthentication',
+    'requestedAt', 'expiresAt', 'failureCode', 'consumedAt', 'createdAt', 'updatedAt'
+  ]::text[] THEN
+    RAISE EXCEPTION 'AiGraderNfcManualIosAttempt columns differ: %', actual_columns;
+  END IF;
+
+  SELECT count(*) INTO missing_count
+    FROM (VALUES
+      ('AiGraderNfcManualIosAttempt_pkey', true, ARRAY['id']::text[]),
+      ('AiGraderNfcManualIosAttempt_request_idempotency_key', true, ARRAY['tenantId', 'requestedByUserId', 'idempotencyKeyHash']::text[]),
+      ('AiGraderNfcManualIosAttempt_tagId_state_expiresAt_idx', false, ARRAY['tagId', 'state', 'expiresAt']::text[]),
+      ('AiGraderNfcManualIosAttempt_tenantId_reportId_state_idx', false, ARRAY['tenantId', 'reportId', 'state']::text[])
+    ) expected(index_name, is_unique, key_columns)
+    LEFT JOIN _AiGraderNfcActualIndexes actual
+      ON actual.index_name = expected.index_name
+     AND actual.table_name = 'AiGraderNfcManualIosAttempt'
+   WHERE actual.index_name IS NULL
+      OR actual.is_unique IS DISTINCT FROM expected.is_unique
+      OR actual.key_columns IS DISTINCT FROM expected.key_columns
+      OR NOT actual.is_valid OR NOT actual.is_ready OR NOT actual.is_live
+      OR NOT actual.has_no_predicate OR NOT actual.has_no_expressions
+      OR NOT actual.has_no_included_columns OR NOT actual.is_not_exclusion
+      OR NOT actual.is_index OR NOT actual.is_table OR actual.access_method <> 'btree';
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Manual iOS NFC ordinary indexes are not exact: % invalid', missing_count;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM _AiGraderNfcActualIndexes
+     WHERE index_name = 'AiGraderNfcManualIosAttempt_one_live_per_tag'
+       AND table_name = 'AiGraderNfcManualIosAttempt'
+       AND is_unique AND is_valid AND is_ready AND is_live
+       AND key_columns = ARRAY['tagId']::text[]
+       AND normalized_predicate = 'state=anyarray[''awaiting_prelock_tap'',''awaiting_lock_confirmation'',''awaiting_postlock_tap'',''ready_to_complete'']'
+  ) THEN
+    RAISE EXCEPTION 'Manual iOS NFC live-attempt index is not exact';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint constraint_object
+      JOIN pg_class child ON child.oid = constraint_object.conrelid
+      JOIN pg_class parent ON parent.oid = constraint_object.confrelid
+     WHERE constraint_object.conname = 'AiGraderNfcManualIosAttempt_tagId_fkey'
+       AND constraint_object.contype = 'f'
+       AND child.relname = 'AiGraderNfcManualIosAttempt'
+       AND parent.relname = 'AiGraderNfcTag'
+       AND constraint_object.confdeltype = 'r'
+       AND constraint_object.confupdtype = 'c'
+       AND constraint_object.convalidated
+  ) THEN
+    RAISE EXCEPTION 'Manual iOS NFC tag foreign key is not exact';
+  END IF;
+
+  SELECT count(*) INTO missing_count
+    FROM (VALUES
+      ('AiGraderNfcManualIosAttempt_id_shape'),
+      ('AiGraderNfcManualIosAttempt_hash_shapes'),
+      ('AiGraderNfcManualIosAttempt_profile'),
+      ('AiGraderNfcManualIosAttempt_expiry_bound'),
+      ('AiGraderNfcManualIosAttempt_state_evidence')
+    ) expected(constraint_name)
+    LEFT JOIN pg_constraint actual
+      ON actual.conname = expected.constraint_name
+     AND actual.conrelid = 'public."AiGraderNfcManualIosAttempt"'::regclass
+     AND actual.contype = 'c'
+     AND actual.convalidated
+   WHERE actual.oid IS NULL;
+  IF missing_count <> 0 THEN
+    RAISE EXCEPTION 'Manual iOS NFC check constraints are incomplete: % invalid', missing_count;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'AiGraderNfcManualIosAttempt'
+       AND lower(column_name) IN ('uid', 'rawuid', 'ipaddress', 'phoneidentifier', 'appsecret', 'arbitrarycontent')
+  ) THEN
+    RAISE EXCEPTION 'Manual iOS NFC table contains forbidden identifying or secret columns';
+  END IF;
+END
+$ai_grader_nfc_manual_ios_catalog$;
 INSERT INTO "User" ("id", "role", "createdAt")
 VALUES ('nfc-validation-user', 'admin', clock_timestamp());
 

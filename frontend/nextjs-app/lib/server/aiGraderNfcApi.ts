@@ -75,6 +75,37 @@ export type AiGraderNfcApiDependencies = AiGraderProductionAuthDependencies & {
     idempotencyKey: string;
     attemptTtlSeconds: number;
   }): Promise<unknown>;
+  manualIosInit?(input: NfcRuntimeInput & {
+    reportId: string;
+    idempotencyKey: string;
+    attemptTtlSeconds: number;
+  }): Promise<unknown>;
+  manualIosConfirmLock?(input: NfcRuntimeInput & {
+    reportId: string;
+    cardAssetId: string;
+    itemId: string;
+    certId: string;
+    publicTagId: string;
+    attemptId: string;
+    writableNoConfirmed: true;
+  }): Promise<unknown>;
+  manualIosComplete?(input: NfcRuntimeInput & {
+    reportId: string;
+    cardAssetId: string;
+    itemId: string;
+    certId: string;
+    publicTagId: string;
+    attemptId: string;
+    normalizedUrl: string;
+    idempotencyKey: string;
+  }): Promise<unknown>;
+  manualIosReplace?(input: NfcRuntimeInput & {
+    reportId: string;
+    replacedPublicTagId: string;
+    reason: string;
+    idempotencyKey: string;
+    attemptTtlSeconds: number;
+  }): Promise<unknown>;
 };
 
 type RateWindow = { startedAt: number; count: number };
@@ -208,6 +239,20 @@ function requireProgrammingReady(readiness: AiGraderNfcProgrammingReadiness) {
   }
 }
 
+function requireManualIosReady(readiness: AiGraderNfcProgrammingReadiness) {
+  requireSchemaReady(readiness);
+  if (!readiness.nfcProgrammingEnabled) {
+    throw nfcApiError(503, "AI_GRADER_NFC_PROGRAMMING_DISABLED", "NFC programming is disabled by server policy.");
+  }
+  if (!readiness.nfcManualIosEnabled) {
+    throw nfcApiError(503, "AI_GRADER_NFC_MANUAL_IOS_DISABLED", "The Feiju iPhone-assisted NFC workflow is disabled by server policy.");
+  }
+}
+
+function requireManualDependency<T>(value: T | undefined): T {
+  if (!value) throw nfcApiError(503, "AI_GRADER_NFC_MANUAL_IOS_UNAVAILABLE", "The Feiju iPhone-assisted NFC workflow is unavailable.");
+  return value;
+}
 function requireSchemaReady(readiness: AiGraderNfcProgrammingReadiness) {
   if (!readiness.nfcSchemaReady) {
     throw nfcApiError(
@@ -285,10 +330,11 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
       if (Number.isFinite(contentLength) && contentLength > AI_GRADER_NFC_API_BODY_LIMIT_BYTES) {
         throw nfcApiError(413, "AI_GRADER_NFC_BODY_TOO_LARGE", "The NFC request body is too large.");
       }
-      const authAction = action === "revoke" || action === "replace" ? "nfc-admin" : "nfc-program";
+      const adminAction = action === "revoke" || action === "replace" || action === "manual-ios/replace";
+      const authAction = adminAction ? "nfc-admin" : "nfc-program";
       const actor = humanActor(
         await requireAiGraderProductionActor(req, authAction, deps),
-        action === "revoke" || action === "replace",
+        adminAction,
       );
       enforceRateLimit(actor.user.id, action, req, deps);
       let nfcSchemaReady: boolean;
@@ -329,6 +375,7 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
             ...(isRecord(result) ? result : {}),
             ...readiness,
             canProgram: true,
+            canManualIos: Boolean(readiness.nfcSchemaReady && readiness.nfcProgrammingEnabled && readiness.nfcManualIosEnabled),
             canAdmin: actor.role === "ai_grader_admin",
           },
         });
@@ -389,6 +436,68 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
         return res.status(200).json({ ok: true, operation: "aiGraderNfcComplete", result });
       }
 
+      if (action === "manual-ios/init") {
+        requireManualIosReady(readiness);
+        const operation = requireManualDependency(deps.manualIosInit);
+        const result = await operation({
+          ...common,
+          reportId: reportId(body.reportId),
+          idempotencyKey: idempotencyKey(body.idempotencyKey),
+          attemptTtlSeconds: AI_GRADER_NFC_ATTEMPT_TTL_SECONDS,
+        });
+        return res.status(200).json({ ok: true, operation: "aiGraderNfcManualIosInit", result });
+      }
+
+      if (action === "manual-ios/confirm-lock") {
+        requireManualIosReady(readiness);
+        const operation = requireManualDependency(deps.manualIosConfirmLock);
+        if (body.writableNoConfirmed !== true) {
+          throw nfcApiError(400, "AI_GRADER_NFC_WRITE_PROTECTION_CONFIRMATION_REQUIRED", "Confirm that NFC Tools reports Writable: No.");
+        }
+        const result = await operation({
+          ...common,
+          reportId: reportId(body.reportId),
+          cardAssetId: linkageId(body.cardAssetId, "cardAssetId"),
+          itemId: linkageId(body.itemId, "itemId"),
+          certId: linkageId(body.certId, "certId"),
+          publicTagId: boundedText(body.publicTagId, "publicTagId", 32, 32, /^[A-Za-z0-9_-]+$/),
+          attemptId: boundedText(body.attemptId, "attemptId", 59, 59, /^nfc_ios_attempt_[A-Za-z0-9_-]{43}$/),
+          writableNoConfirmed: true,
+        });
+        return res.status(200).json({ ok: true, operation: "aiGraderNfcManualIosConfirmLock", result });
+      }
+
+      if (action === "manual-ios/complete") {
+        requireManualIosReady(readiness);
+        const operation = requireManualDependency(deps.manualIosComplete);
+        const publicTagId = boundedText(body.publicTagId, "publicTagId", 32, 32, /^[A-Za-z0-9_-]+$/);
+        const result = await operation({
+          ...common,
+          reportId: reportId(body.reportId),
+          cardAssetId: linkageId(body.cardAssetId, "cardAssetId"),
+          itemId: linkageId(body.itemId, "itemId"),
+          certId: linkageId(body.certId, "certId"),
+          publicTagId,
+          attemptId: boundedText(body.attemptId, "attemptId", 59, 59, /^nfc_ios_attempt_[A-Za-z0-9_-]{43}$/),
+          normalizedUrl: exactNfcUrl(body.normalizedUrl, publicTagId),
+          idempotencyKey: idempotencyKey(body.idempotencyKey),
+        });
+        return res.status(200).json({ ok: true, operation: "aiGraderNfcManualIosComplete", result });
+      }
+
+      if (action === "manual-ios/replace") {
+        requireManualIosReady(readiness);
+        const operation = requireManualDependency(deps.manualIosReplace);
+        const result = await operation({
+          ...common,
+          reportId: reportId(body.reportId),
+          replacedPublicTagId: boundedText(body.replacedPublicTagId, "replacedPublicTagId", 32, 32, /^[A-Za-z0-9_-]+$/),
+          reason: boundedText(body.reason, "reason", 8, 240),
+          idempotencyKey: idempotencyKey(body.idempotencyKey),
+          attemptTtlSeconds: AI_GRADER_NFC_ATTEMPT_TTL_SECONDS,
+        });
+        return res.status(200).json({ ok: true, operation: "aiGraderNfcManualIosReplace", result });
+      }
       if (action === "revoke") {
         requireSchemaReady(readiness);
         const result = await deps.revoke({

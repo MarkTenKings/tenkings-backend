@@ -1,6 +1,7 @@
 import {
   AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
   AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV,
+  AI_GRADER_NFC_MANUAL_IOS_ENABLED_ENV,
   AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_ENV,
   getAiGraderNfcWorkstationKeyReadiness,
 } from "@tenkings/database";
@@ -21,6 +22,7 @@ export function aiGraderNfcRequired(env: EnvLike = process.env) {
 export type AiGraderNfcProgrammingReadiness = {
   nfcSchemaReady: boolean;
   nfcProgrammingEnabled: boolean;
+  nfcManualIosEnabled: boolean;
   nfcRequired: boolean;
   nfcAttemptTokenConfigured: boolean;
   nfcWorkstationAttestationConfigured: boolean;
@@ -52,6 +54,7 @@ export function aiGraderNfcProgrammingReadiness(
   return {
     nfcSchemaReady,
     nfcProgrammingEnabled: env[AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV] === "true",
+    nfcManualIosEnabled: env[AI_GRADER_NFC_MANUAL_IOS_ENABLED_ENV] === "true",
     nfcRequired: aiGraderNfcRequired(env),
     nfcAttemptTokenConfigured: Buffer.byteLength(secret, "utf8") >= 32,
     nfcWorkstationAttestationConfigured: workstation.configured,

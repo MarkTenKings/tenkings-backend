@@ -8,10 +8,19 @@ const { pathToFileURL } = require("node:url");
 const packageRoot = join(__dirname, "..");
 const repositoryRoot = join(packageRoot, "..", "..");
 const scriptsRoot = join(packageRoot, "scripts");
-const migration = readFileSync(
+const baseMigration = readFileSync(
   join(packageRoot, "prisma", "migrations", "20260712160000_ai_grader_nfc_static_url_v1", "migration.sql"),
   "utf8",
 );
+const enumMigration = readFileSync(
+  join(packageRoot, "prisma", "migrations", "20260716190000_ai_grader_nfc_feiju_profile_enums", "migration.sql"),
+  "utf8",
+);
+const additiveMigration = readFileSync(
+  join(packageRoot, "prisma", "migrations", "20260716190500_ai_grader_nfc_feiju_ios_profile", "migration.sql"),
+  "utf8",
+);
+const migration = `${baseMigration}\n${enumMigration}\n${additiveMigration}`;
 const compose = readFileSync(
   join(repositoryRoot, "docker-compose.ai-grader-nfc-migration-validation.yml"),
   "utf8",
@@ -89,10 +98,30 @@ test("live SQL validator names every migrated constraint, index, trigger, enum, 
     ...quotedNames(/CREATE TYPE "([^"]+)"/g),
     ...quotedNames(/CREATE TABLE "([^"]+)"/g),
   ]);
-  assert.ok(expectedNames.size > 50);
+  assert.ok(expectedNames.size > 55);
   for (const name of expectedNames) {
     assert.ok(appliedSql.includes(name), `Live migration validator omits ${name}`);
   }
+});
+
+test("additive migration preserves NTAG authority and adds a UID-free, APDU-free manual iOS evidence table", () => {
+  for (const required of [
+    "FEIJU_PROPRIETARY_ISODEP",
+    "manual_ios_locked_static_url_v1",
+    "AiGraderNfcManualIosAttempt",
+    "qualificationProfile",
+    "feiju_iso_dep_ios_static_v1",
+    "ios_read_only_status_observed",
+    "workstationOperationalAttestation",
+    "cryptographicTagAuthentication",
+    "AiGraderNfcManualIosAttempt_one_live_per_tag",
+  ]) assert.ok(additiveMigration.includes(required), `Additive Feiju migration omits ${required}`);
+  for (const forbidden of [/"uid"\s+TEXT/i, /"rawUid"\s+TEXT/i, /"ipAddress"\s+TEXT/i, /"phoneIdentifier"\s+TEXT/i, /"apdu"\s+TEXT/i]) {
+    assert.doesNotMatch(additiveMigration, forbidden);
+  }
+  assert.doesNotMatch(additiveMigration, /DROP\s+(TABLE|COLUMN|TYPE)/i);
+  assert.match(appliedSql, /Manual iOS NFC table contains forbidden identifying or secret columns/);
+  assert.match(appliedSql, /Manual iOS NFC live-attempt index is not exact/);
 });
 
 test("live SQL validator requires exact ordinary and partial index catalog definitions", () => {
@@ -157,6 +186,13 @@ test("real PostgreSQL phase uses compiled service and ephemeral signed attestati
     "completeAiGraderNfcProgramming",
     "revokeAiGraderNfcTag",
     "replaceAiGraderNfcTag",
+    "initAiGraderNfcManualIos",
+    "observeAiGraderNfcManualIosTap",
+    "confirmAiGraderNfcManualIosLock",
+    "completeAiGraderNfcManualIos",
+    "replaceAiGraderNfcManualIos",
+    "feiju_iso_dep_ios_static_v1",
+    "ios_read_only_status_observed",
     "AI_GRADER_NFC_ATTEMPT_EXPIRED",
     "AI_GRADER_NFC_REAL_SERVICE_VALIDATION_PASS",
   ]) {

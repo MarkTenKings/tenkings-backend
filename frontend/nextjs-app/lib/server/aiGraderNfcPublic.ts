@@ -5,8 +5,8 @@ export type AiGraderNfcPublicTapData =
       state: "active";
       registrationKind: "registered_link";
       publicTagId: string;
-      chipType: "NTAG215";
-      securityMode: "static_url_v1";
+      chipType: "NTAG215" | "FEIJU_PROPRIETARY_ISODEP";
+      securityMode: "static_url_v1" | "manual_ios_locked_static_url_v1";
       nfcTagUrl: string;
       reportId: string;
       reportUrl: string;
@@ -15,6 +15,7 @@ export type AiGraderNfcPublicTapData =
       cardSet?: string;
       grade?: number;
     }
+  | { state: "setup_verification"; stage: "pre_lock" | "lock_confirmation" | "post_lock" | "ready_to_complete" }
   | { state: "revoked" | "not_valid" | "contradictory_linkage" | "unavailable" };
 
 type PublicNfcDb = {
@@ -50,7 +51,11 @@ export function buildAiGraderNfcPublicTagUrl(publicTagId: string) {
 
 export async function readAiGraderNfcPublicTap(
   publicTagId: string,
-  options: { dbClient?: PublicNfcDb; schemaReadiness?: () => Promise<boolean> } = {},
+  options: {
+    dbClient?: PublicNfcDb;
+    schemaReadiness?: () => Promise<boolean>;
+    observeManualIosTap?: (publicTagId: string) => Promise<{ state: "not_applicable" } | { state: "setup_verification"; stage: "pre_lock" | "lock_confirmation" | "post_lock" | "ready_to_complete" }>;
+  } = {},
 ): Promise<AiGraderNfcPublicTapData> {
   if (!isValidAiGraderNfcPublicTagId(publicTagId)) return { state: "not_valid" };
 
@@ -65,6 +70,17 @@ export async function readAiGraderNfcPublicTap(
     if (!schemaReady) return { state: "unavailable" };
   } catch {
     return { state: "unavailable" };
+  }
+  const observeManualIosTap = options.observeManualIosTap ?? (!options.dbClient
+    ? (id: string) => database.observeAiGraderNfcManualIosTap({ publicTagId: id })
+    : undefined);
+  if (observeManualIosTap) {
+    try {
+      const setup = await observeManualIosTap(publicTagId);
+      if (setup.state === "setup_verification") return setup;
+    } catch {
+      return { state: "unavailable" };
+    }
   }
   let row: unknown;
   try {
@@ -120,11 +136,13 @@ export async function readAiGraderNfcPublicTap(
   const report = isRecord(row.report) ? row.report : undefined;
   const item = isRecord(row.item) ? row.item : undefined;
   const label = isRecord(row.label) ? row.label : undefined;
+  const activeStrategy =
+    (row.chipType === "NTAG215" && text(row.securityMode)?.toLowerCase() === "static_url_v1") ||
+    (row.chipType === "FEIJU_PROPRIETARY_ISODEP" && text(row.securityMode)?.toLowerCase() === "manual_ios_locked_static_url_v1");
   const activeRegistrationShape =
     text(row.status)?.toLowerCase() === "active" &&
     !row.revokedAt &&
-    row.chipType === "NTAG215" &&
-    text(row.securityMode)?.toLowerCase() === "static_url_v1";
+    activeStrategy;
   if (!activeRegistrationShape) return { state: "not_valid" };
   const exactLinkage =
     text(row.publicTagId) === publicTagId &&
@@ -149,8 +167,8 @@ export async function readAiGraderNfcPublicTap(
     state: "active",
     registrationKind: "registered_link",
     publicTagId,
-    chipType: "NTAG215",
-    securityMode: "static_url_v1",
+    chipType: row.chipType as "NTAG215" | "FEIJU_PROPRIETARY_ISODEP",
+    securityMode: text(row.securityMode)?.toLowerCase() as "static_url_v1" | "manual_ios_locked_static_url_v1",
     nfcTagUrl: buildAiGraderNfcPublicTagUrl(publicTagId),
     reportId,
     reportUrl: `/ai-grader/reports/${encodeURIComponent(reportId)}`,

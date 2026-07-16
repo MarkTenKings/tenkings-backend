@@ -1,10 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
   completeAiGraderNfcProgramming,
+  completeAiGraderNfcManualIos,
+  confirmAiGraderNfcManualIosLock,
   getAiGraderNfcStatus,
   initAiGraderNfcProgramming,
+  initAiGraderNfcManualIos,
   prisma,
   replaceAiGraderNfcTag,
+  replaceAiGraderNfcManualIos,
   revokeAiGraderNfcTag,
   type AiGraderNfcSafeStatus,
 } from "@tenkings/database";
@@ -124,6 +128,16 @@ const runtime = createAiGraderNfcApiHandler({
       dbClient: prisma,
     });
   },
+  async manualIosInit(input) {
+    const linkage = await resolvePublishedLinkage(input.tenantId, input.reportId);
+    return initAiGraderNfcManualIos({
+      ...linkage,
+      requestedByUserId: input.actorUserId,
+      idempotencyKey: input.idempotencyKey,
+      attemptTtlMs: input.attemptTtlSeconds * 1000,
+      dbClient: prisma,
+    });
+  },
   complete(input) {
     return completeAiGraderNfcProgramming({
       tenantId: input.tenantId,
@@ -144,6 +158,35 @@ const runtime = createAiGraderNfcApiHandler({
       readerResultCode: input.readerResultCode,
       helperProtocolVersion: input.helperProtocolVersion,
       operationalAttestation: input.operationalAttestation,
+      dbClient: prisma,
+    });
+  },
+  manualIosConfirmLock(input) {
+    return confirmAiGraderNfcManualIosLock({
+      tenantId: input.tenantId,
+      reportId: input.reportId,
+      cardAssetId: input.cardAssetId,
+      itemId: input.itemId,
+      certId: input.certId,
+      requestedByUserId: input.actorUserId,
+      attemptId: input.attemptId,
+      publicTagId: input.publicTagId,
+      writableNoConfirmed: true,
+      dbClient: prisma,
+    });
+  },
+  manualIosComplete(input) {
+    return completeAiGraderNfcManualIos({
+      tenantId: input.tenantId,
+      reportId: input.reportId,
+      cardAssetId: input.cardAssetId,
+      itemId: input.itemId,
+      certId: input.certId,
+      requestedByUserId: input.actorUserId,
+      attemptId: input.attemptId,
+      publicTagId: input.publicTagId,
+      normalizedNdefUrl: input.normalizedUrl,
+      idempotencyKey: input.idempotencyKey,
       dbClient: prisma,
     });
   },
@@ -168,6 +211,27 @@ const runtime = createAiGraderNfcApiHandler({
       requestedByUserId: input.actorUserId,
       reason: input.reason,
       idempotencyKey: input.idempotencyKey,
+      dbClient: prisma,
+    });
+  },
+  async manualIosReplace(input) {
+    const status = requireExistingRegistration(await getAiGraderNfcStatus({
+      tenantId: input.tenantId,
+      reportId: input.reportId,
+      dbClient: prisma,
+    }));
+    return replaceAiGraderNfcManualIos({
+      tenantId: input.tenantId,
+      reportId: status.reportId,
+      cardAssetId: status.cardAssetId,
+      itemId: status.itemId,
+      certId: status.certId,
+      requestedByUserId: input.actorUserId,
+      replacedPublicTagId: input.replacedPublicTagId,
+      revocationReason: input.reason,
+      revocationReasonCode: "AI_GRADER_NFC_REPLACED",
+      idempotencyKey: input.idempotencyKey,
+      attemptTtlMs: input.attemptTtlSeconds * 1000,
       dbClient: prisma,
     });
   },

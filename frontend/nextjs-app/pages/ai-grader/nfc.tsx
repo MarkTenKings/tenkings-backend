@@ -22,6 +22,7 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 type Phase = "loading" | "disabled" | "ready" | "recovering" | "writing" | "verifying" | "overwrite" | "active" | "error";
+type WorkflowProfile = "ntag215_pcsc" | "feiju_manual_ios";
 
 type HostedStatus = {
   status: "missing" | "reserved" | "programming" | "verified" | "active" | "revoked" | "unavailable" | "error";
@@ -33,18 +34,33 @@ type HostedStatus = {
   cardSet?: string | null;
   publicTagId?: string | null;
   nfcTagUrl?: string | null;
-  chipType?: "NTAG215" | null;
-  securityMode?: "static_url_v1" | "ntag424_sun_v1" | null;
+  chipType?: "NTAG215" | "FEIJU_PROPRIETARY_ISODEP" | null;
+  securityMode?: "static_url_v1" | "ntag424_sun_v1" | "manual_ios_locked_static_url_v1" | null;
   registrationSemantics?: "registered_link" | "cryptographically_verified" | null;
   nfcSchemaReady: boolean;
   nfcProgrammingEnabled: boolean;
+  nfcManualIosEnabled: boolean;
   nfcRequired: boolean;
   nfcAttemptTokenConfigured: boolean;
   nfcWorkstationAttestationConfigured: boolean;
   nfcWorkstationKeyCount: number;
   expectedNfcHelperProtocolVersion: string;
   canProgram: boolean;
+  canManualIos: boolean;
   canAdmin: boolean;
+  manualIosAttempt?: {
+    attemptId: string;
+    state: "awaiting_prelock_tap" | "awaiting_lock_confirmation" | "awaiting_postlock_tap" | "ready_to_complete" | "failed" | "expired" | "consumed";
+    profileVersion: "feiju_iso_dep_ios_static_v1";
+    qualificationProfile: "feiju_iso_dep_ios_static_v1";
+    attemptExpiresAt: string;
+    preLockTapObserved: boolean;
+    lockStatusConfirmed: boolean;
+    postLockTapObserved: boolean;
+    writeProtectionEvidence?: "ios_read_only_status_observed";
+    workstationOperationalAttestation: false;
+    cryptographicTagAuthentication: false;
+  };
 };
 
 type Reservation = {
@@ -67,6 +83,15 @@ type Reservation = {
   };
 };
 
+type ManualIosReservation = {
+  url: string;
+  publicTagId: string;
+  attemptId: string;
+  reportId: string;
+  cardAssetId: string;
+  itemId: string;
+  certId: string;
+};
 type PendingCompletion = {
   reservation: Reservation;
   write: AiGraderNfcHelperWriteResult;
@@ -126,6 +151,26 @@ function reservationFrom(value: unknown): Reservation {
   return result;
 }
 
+function manualIosReservationFrom(value: unknown, hosted: HostedStatus | null, reportId: string): ManualIosReservation {
+  const row = record(value);
+  const attempt = record(row.manualIosAttempt);
+  const result = {
+    url: typeof row.expectedNdefUrl === "string" ? row.expectedNdefUrl : typeof row.nfcTagUrl === "string" ? row.nfcTagUrl : "",
+    publicTagId: typeof row.publicTagId === "string" ? row.publicTagId : "",
+    attemptId: typeof row.attemptId === "string" ? row.attemptId : typeof attempt.attemptId === "string" ? attempt.attemptId : "",
+    reportId: typeof row.reportId === "string" ? row.reportId : reportId,
+    cardAssetId: typeof row.cardAssetId === "string" ? row.cardAssetId : hosted?.cardAssetId ?? "",
+    itemId: typeof row.itemId === "string" ? row.itemId : hosted?.itemId ?? "",
+    certId: typeof row.certId === "string" ? row.certId : hosted?.certId ?? "",
+  };
+  if (
+    !/^nfc_ios_attempt_[A-Za-z0-9_-]{43}$/.test(result.attemptId) ||
+    !/^[A-Za-z0-9_-]{32}$/.test(result.publicTagId) ||
+    result.url !== `https://collect.tenkings.co/nfc/${result.publicTagId}` ||
+    !result.reportId || !result.cardAssetId || !result.itemId || !result.certId
+  ) throw new Error("The hosted Feiju reservation response was incomplete or unsafe.");
+  return result;
+}
 function assertSignedReadback(reservation: Reservation, write: AiGraderNfcHelperWriteResult) {
   const attestation = write.operationalAttestation;
   if (
@@ -155,6 +200,7 @@ export default function AiGraderNfcProgrammingPage() {
     return typeof value === "string" && /^[A-Za-z0-9._:-]{1,160}$/.test(value) ? value : "";
   }, [router.query.reportId]);
   const [phase, setPhase] = useState<Phase>("loading");
+  const [workflowProfile, setWorkflowProfile] = useState<WorkflowProfile>("ntag215_pcsc");
   const [message, setMessage] = useState("Loading the published NFC task.");
   const [hosted, setHosted] = useState<HostedStatus | null>(null);
   const [helper, setHelper] = useState<AiGraderNfcHelperStatus | null>(null);
@@ -162,6 +208,7 @@ export default function AiGraderNfcProgrammingPage() {
   const [pairingCode, setPairingCode] = useState("");
   const [reservation, setReservation] = useState<Reservation | null>(null);
   const [pending, setPending] = useState<PendingCompletion | null>(null);
+  const [manualReservation, setManualReservation] = useState<ManualIosReservation | null>(null);
   const [overwriteDigest, setOverwriteDigest] = useState<string | null>(null);
   const [writeIdempotencyKey, setWriteIdempotencyKey] = useState<string | null>(null);
   const [localRetrySequence, setLocalRetrySequence] = useState(0);
@@ -177,6 +224,9 @@ export default function AiGraderNfcProgrammingPage() {
     hosted.nfcWorkstationAttestationConfigured &&
     hosted.nfcWorkstationKeyCount > 0,
   );
+  const manualIosReady = Boolean(
+    hosted?.nfcSchemaReady && hosted.nfcProgrammingEnabled && hosted.nfcManualIosEnabled,
+  );
 
   useEffect(() => {
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
@@ -188,7 +238,7 @@ export default function AiGraderNfcProgrammingPage() {
   }, []);
 
   const hostedRequest = useCallback(
-    async (action: "status" | "init" | "complete" | "revoke" | "replace", body?: JsonRecord) => {
+    async (action: "status" | "init" | "complete" | "revoke" | "replace" | "manual-ios/init" | "manual-ios/confirm-lock" | "manual-ios/complete" | "manual-ios/replace", body?: JsonRecord) => {
       const active = await ensureSession();
       const response = await fetch(
         action === "status"
@@ -237,6 +287,7 @@ export default function AiGraderNfcProgrammingPage() {
       setWriteIdempotencyKey(null);
       setWriteRecovery(null);
       setReplacementRequest(null);
+      setManualReservation(null);
       setPhase("active");
       setMessage("NFC is verified and active for this published report.");
       return;
@@ -245,6 +296,48 @@ export default function AiGraderNfcProgrammingPage() {
       setHelper(null);
       setPhase("disabled");
       setMessage("NFC programming is disabled by server policy. Status and administrator revocation remain available.");
+      return;
+    }
+    if (workflowProfile === "feiju_manual_ios") {
+      setHelper(null);
+      setPaired(false);
+      setReservation(null);
+      setPending(null);
+      if (!result.nfcManualIosEnabled) {
+        setPhase("disabled");
+        setMessage("The Feiju iPhone-assisted NFC workflow is disabled by server policy.");
+        return;
+      }
+      if (result.chipType && result.chipType !== "FEIJU_PROPRIETARY_ISODEP" && result.status !== "revoked") {
+        setPhase("error");
+        setMessage("This open NFC registration belongs to the NTAG215 workstation profile.");
+        return;
+      }
+      if (result.manualIosAttempt && result.publicTagId && result.nfcTagUrl) {
+        setManualReservation(manualIosReservationFrom(result, result, reportId));
+      } else {
+        setManualReservation(null);
+      }
+      setPhase("ready");
+      const state = result.manualIosAttempt?.state;
+      setMessage(
+        state === "awaiting_prelock_tap"
+          ? "Write the exact URL with NFC Tools, then open it with a normal iPhone background tap."
+          : state === "awaiting_lock_confirmation"
+            ? "The pre-lock tap was observed. Lock the tag in NFC Tools and confirm it reports Writable: No."
+            : state === "awaiting_postlock_tap"
+              ? "Writable: No was confirmed. Remove and present the tag again for the final background tap."
+              : state === "ready_to_complete"
+                ? "Both exact URL taps and consumer write protection are recorded. Complete activation."
+                : "Reserve a Feiju iPhone-assisted registered link when one unused tag is ready.",
+      );
+      return;
+    }
+    setManualReservation(null);
+    if (result.chipType && result.chipType !== "NTAG215" && result.status !== "revoked") {
+      setHelper(null);
+      setPhase("error");
+      setMessage("This open NFC registration belongs to the Feiju iPhone-assisted profile.");
       return;
     }
     if (!result.nfcAttemptTokenConfigured || !result.nfcWorkstationAttestationConfigured || result.nfcWorkstationKeyCount < 1) {
@@ -278,7 +371,7 @@ export default function AiGraderNfcProgrammingPage() {
         ? "A current hosted attempt is available. Use Retry Current Attempt; no second attempt will be allocated."
         : "Place one blank NTAG215 on the reader, then program the registered report link.",
     );
-  }, [hostedRequest, reportId]);
+  }, [hostedRequest, reportId, workflowProfile]);
 
   useEffect(() => {
     if (!router.isReady || sessionLoading) return;
@@ -432,6 +525,72 @@ export default function AiGraderNfcProgrammingPage() {
     }
   };
 
+  const startManualIos = async () => {
+    try {
+      if (!manualIosReady) throw new Error("The Feiju iPhone-assisted NFC workflow is disabled or unavailable.");
+      const idempotency = getOrCreateAiGraderNfcInitIdempotencyKey(reportId);
+      const result = await hostedRequest("manual-ios/init", { reportId, idempotencyKey: idempotency });
+      setManualReservation(manualIosReservationFrom(result, hosted, reportId));
+      setPhase("ready");
+      setMessage("Copy the exact URL into NFC Tools, write one URI record, then close NFC Tools and tap the tag normally.");
+      await refresh();
+    } catch (error) {
+      setPhase("error");
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const confirmManualIosLock = async () => {
+    const current = manualReservation;
+    if (!current) return;
+    try {
+      await hostedRequest("manual-ios/confirm-lock", {
+        reportId: current.reportId,
+        cardAssetId: current.cardAssetId,
+        itemId: current.itemId,
+        certId: current.certId,
+        publicTagId: current.publicTagId,
+        attemptId: current.attemptId,
+        writableNoConfirmed: true,
+      });
+      setPhase("ready");
+      setMessage("Writable: No is recorded. Remove the tag from the phone field, then tap it normally again to open the exact URL.");
+      await refresh();
+    } catch (error) {
+      setPhase("error");
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const completeManualIos = async () => {
+    const current = manualReservation;
+    if (!current) return;
+    try {
+      setPhase("verifying");
+      setMessage("Activating the write-protected registered NFC link after both exact URL taps.");
+      await hostedRequest("manual-ios/complete", {
+        ...current,
+        normalizedUrl: current.url,
+        idempotencyKey: `complete-${current.attemptId}`,
+      });
+      clearAiGraderNfcInitIdempotencyKey(reportId);
+      setManualReservation(null);
+      await refresh();
+    } catch (error) {
+      setPhase("error");
+      setMessage(errorMessage(error));
+    }
+  };
+
+  const copyManualIosUrl = async () => {
+    if (!manualReservation) return;
+    try {
+      await navigator.clipboard.writeText(manualReservation.url);
+      setMessage("Exact Ten Kings URL copied. In NFC Tools, write one URL/URI record only.");
+    } catch {
+      setMessage("Copy was unavailable. Select the exact URL shown below without changing it.");
+    }
+  };
   const replace = async () => {
     try {
       const normalizedReason = reason.trim();
@@ -453,6 +612,18 @@ export default function AiGraderNfcProgrammingPage() {
         throw new Error("Retry the exact same replacement identity and reason, or reload the current status.");
       }
       setReplacementRequest(request);
+      if (workflowProfile === "feiju_manual_ios") {
+        const result = await hostedRequest("manual-ios/replace", {
+          reportId,
+          replacedPublicTagId: request.publicTagId,
+          reason: request.reason,
+          idempotencyKey: request.idempotencyKey,
+        });
+        setReason("");
+        setManualReservation(manualIosReservationFrom(result, hosted, reportId));
+        await refresh();
+        return;
+      }
       const reservation = reservationFrom(
         await hostedRequest("replace", {
           reportId,
@@ -578,7 +749,9 @@ export default function AiGraderNfcProgrammingPage() {
   };
 
   const busy = phase === "writing" || phase === "verifying" || phase === "recovering" || phase === "loading";
+  const manualState = hosted?.manualIosAttempt?.state;
   const canRetryCurrentAttempt =
+    workflowProfile === "ntag215_pcsc" &&
     !pending &&
     programmingReady &&
     (reservation !== null || storedAttemptAvailable) &&
@@ -597,6 +770,27 @@ export default function AiGraderNfcProgrammingPage() {
         <section className={`notice ${phase}`} aria-live="polite">
           <strong>{phase === "active" ? "Verified / active" : phase.replace(/_/g, " ")}</strong>
           <span>{message}</span>
+        </section>
+        <section className="profile-select">
+          <label>Programming profile
+            <select
+              value={workflowProfile}
+              onChange={(event) => {
+                setWorkflowProfile(event.target.value as WorkflowProfile);
+                setReservation(null);
+                setPending(null);
+                setManualReservation(null);
+                setOverwriteDigest(null);
+                setWriteRecovery(null);
+                setPhase("loading");
+                setMessage("Loading the selected NFC workflow.");
+              }}
+            >
+              <option value="ntag215_pcsc">NTAG215 -- workstation PC/SC</option>
+              <option value="feiju_manual_ios">Feiju -- iPhone assisted</option>
+            </select>
+          </label>
+          <p>{workflowProfile === "feiju_manual_ios" ? "The Feiju profile is a write-protected registered static URL. It is clonable and is not cryptographic tag authentication." : "The NTAG215 profile preserves the approved workstation PC/SC helper and signed readback workflow."}</p>
         </section>
 
         <section className="grid">
@@ -618,9 +812,11 @@ export default function AiGraderNfcProgrammingPage() {
           </article>
 
           <article>
-            <p className="eyebrow">Dedicated workstation helper</p>
-            <h2>{!programmingReady ? hosted?.nfcProgrammingEnabled ? "Programming not configured" : "Programming disabled" : paired ? helper?.readerConnected ? "Reader connected" : "Paired / reader unavailable" : "Pair workstation"}</h2>
-            {!programmingReady ? (
+            <p className="eyebrow">{workflowProfile === "feiju_manual_ios" ? "iPhone-assisted workflow" : "Dedicated workstation helper"}</p>
+            <h2>{workflowProfile === "feiju_manual_ios" ? manualIosReady ? "NFC Tools on iPhone" : "Manual iPhone workflow disabled" : !programmingReady ? hosted?.nfcProgrammingEnabled ? "Programming not configured" : "Programming disabled" : paired ? helper?.readerConnected ? "Reader connected" : "Paired / reader unavailable" : "Pair workstation"}</h2>
+            {workflowProfile === "feiju_manual_ios" ? (
+              <p>No PC reader, UID, helper attestation, or proprietary Feiju command is used. NFC Tools by Wakdev writes and locks the exact server-reserved URL.</p>
+            ) : !programmingReady ? (
               <p>The browser will not contact the loopback helper while hosted programming is disabled or incomplete.</p>
             ) : paired ? (
               <>
@@ -641,7 +837,32 @@ export default function AiGraderNfcProgrammingPage() {
           </article>
         </section>
 
-        <section className="program">
+        {workflowProfile === "feiju_manual_ios" ? (
+          <section className="manual-ios">
+            <div><p className="eyebrow">Feiju -- iPhone assisted</p><h2>One unused Feiju tag / one report</h2></div>
+            <ol>
+              <li className={manualState && manualState !== "awaiting_prelock_tap" ? "done" : ""}>Reserve and copy the exact Ten Kings URL.</li>
+              <li className={hosted?.manualIosAttempt?.preLockTapObserved ? "done" : ""}>In NFC Tools, write exactly one URL record. Close the app and use a normal background tap.</li>
+              <li className={hosted?.manualIosAttempt?.lockStatusConfirmed ? "done" : ""}>NFC Tools &gt; Other &gt; Lock a tag. Confirm only after NFC Tools reports Writable: No.</li>
+              <li className={hosted?.manualIosAttempt?.postLockTapObserved ? "done" : ""}>Remove the tag from the phone field, then use a final normal background tap to the same URL.</li>
+              <li className={hosted?.status === "active" ? "done" : ""}>Complete and activate the write-protected registered NFC link.</li>
+            </ol>
+            {manualReservation ? (
+              <div className="manual-url">
+                <code>{manualReservation.url}</code>
+                <button type="button" className="secondary" onClick={() => void copyManualIosUrl()}>Copy exact URL</button>
+              </div>
+            ) : null}
+            <div className="manual-actions">
+              {!manualReservation && hosted?.status !== "active" ? <button type="button" disabled={!manualIosReady || busy || !hosted?.canManualIos} onClick={() => void startManualIos()}>Reserve Feiju link</button> : null}
+              {manualReservation ? <button type="button" className="secondary" onClick={() => void refresh()}>Refresh tap evidence</button> : null}
+              {manualReservation && manualState === "awaiting_lock_confirmation" ? <button type="button" onClick={() => void confirmManualIosLock()}>Confirm Writable: No</button> : null}
+              {manualReservation && manualState === "ready_to_complete" ? <button type="button" onClick={() => void completeManualIos()}>Complete registration</button> : null}
+            </div>
+            <p className="manual-warning">Do not attempt an alternate-URL overwrite on a real report tag. The destructive discrimination test was completed only on the sacrificial qualification sample.</p>
+          </section>
+        ) : (
+          <section className="program">
           <div><p className="eyebrow">One tag / one report</p><h2>Place one blank NTAG215</h2><p>The helper writes only the exact Ten Kings URL, verifies full readback, and never locks or configures the tag.</p></div>
           <button
             type="button"
@@ -659,6 +880,7 @@ export default function AiGraderNfcProgrammingPage() {
             {phase === "writing" ? "Writing" : phase === "verifying" ? "Verifying" : "Program NFC"}
           </button>
         </section>
+        )}
 
         {phase === "overwrite" && reservation && overwriteDigest ? (
           <section className="danger">
@@ -678,15 +900,15 @@ export default function AiGraderNfcProgrammingPage() {
         {hosted?.canAdmin && hosted.publicTagId && hosted.status !== "missing" ? (
           <section className="admin-actions">
             <label>Required audit reason<input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={240} /></label>
-            {programmingReady ? <button type="button" className="secondary" onClick={() => void replace()}>{hosted.status === "revoked" ? "Program authorized replacement" : "Revoke and program replacement"}</button> : null}
+            {(workflowProfile === "feiju_manual_ios" ? manualIosReady : programmingReady) ? <button type="button" className="secondary" onClick={() => void replace()}>{workflowProfile === "feiju_manual_ios" ? hosted.status === "revoked" ? "Reserve authorized replacement" : "Revoke and reserve replacement" : hosted.status === "revoked" ? "Program authorized replacement" : "Revoke and program replacement"}</button> : null}
             {hosted.status !== "revoked" ? <button type="button" className="danger-button" onClick={() => void revoke()}>Revoke NFC link</button> : null}
           </section>
         ) : null}
 
-        <footer>NTAG215 provides a convenient registered identity link. It does not prove that a chip, slab, or card is cryptographically authentic.</footer>
+        <footer>{workflowProfile === "feiju_manual_ios" ? "The Feiju workflow produces a write-protected registered NFC link. It is a clonable static URL and does not prove cryptographic authenticity." : "NTAG215 provides a convenient registered identity link. It does not prove that a chip, slab, or card is cryptographically authentic."}</footer>
       </main>
       <style jsx>{`
-        :global(body){margin:0;background:#f4f1e9;color:#171612;font-family:Inter,system-ui,sans-serif}.shell{max-width:1120px;margin:0 auto;padding:32px 22px 64px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}h1{font-family:Georgia,serif;font-size:42px;margin:4px 0}h2{font-family:Georgia,serif;margin:6px 0 16px}.eyebrow{text-transform:uppercase;letter-spacing:.15em;font-size:12px;font-weight:800;color:#7d6019}.notice{display:flex;gap:14px;padding:16px 18px;border:1px solid #d6c99f;background:#fff9df;margin-bottom:20px}.notice.active{background:#eaf6ed;border-color:#8fb69a}.notice.error{background:#fff0ed;border-color:#d99b90}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid article,.program,.admin-actions{background:#fff;border:1px solid #d8d2c5;padding:22px;box-shadow:0 8px 24px #3a2d1010}dl{display:grid;grid-template-columns:130px 1fr;gap:9px;margin:18px 0}dt{color:#766f62}dd{margin:0;font-weight:700;overflow-wrap:anywhere}button{border:0;border-radius:4px;padding:12px 17px;background:#1b1a16;color:white;font-weight:800;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#ded8ca;color:#26231c}.primary{font-size:18px;min-width:190px;background:#9b731e}.program{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:18px}.program p{max-width:680px}.pair{display:flex;align-items:end;gap:10px}label{display:grid;gap:7px;font-weight:800;flex:1}input{padding:11px;border:1px solid #bdb4a3;border-radius:3px;font:inherit}.danger,.admin-actions{display:flex;gap:16px;align-items:center;margin-top:18px;padding:18px;background:#fff4ee;border:1px solid #d5997f}.danger div{flex:1}.danger-button,.danger button{background:#922f20}.retry{margin-top:18px}.admin-actions label{min-width:260px}footer{margin-top:28px;padding-top:18px;border-top:1px solid #cfc7b9;color:#655f55}a{color:#77520c;font-weight:800}@media(max-width:760px){.grid{grid-template-columns:1fr}.program,.danger,.admin-actions,header{align-items:stretch;flex-direction:column}h1{font-size:34px}.pair{align-items:stretch;flex-direction:column}}
+        :global(body){margin:0;background:#f4f1e9;color:#171612;font-family:Inter,system-ui,sans-serif}.shell{max-width:1120px;margin:0 auto;padding:32px 22px 64px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}h1{font-family:Georgia,serif;font-size:42px;margin:4px 0}h2{font-family:Georgia,serif;margin:6px 0 16px}.eyebrow{text-transform:uppercase;letter-spacing:.15em;font-size:12px;font-weight:800;color:#7d6019}.notice{display:flex;gap:14px;padding:16px 18px;border:1px solid #d6c99f;background:#fff9df;margin-bottom:20px}.notice.active{background:#eaf6ed;border-color:#8fb69a}.notice.error{background:#fff0ed;border-color:#d99b90}.profile-select{display:flex;align-items:end;gap:18px;padding:18px;background:#fff;border:1px solid #d8d2c5;margin-bottom:18px}.profile-select label{max-width:360px}.profile-select p{margin:0;color:#655f55}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid article,.program,.admin-actions{background:#fff;border:1px solid #d8d2c5;padding:22px;box-shadow:0 8px 24px #3a2d1010}dl{display:grid;grid-template-columns:130px 1fr;gap:9px;margin:18px 0}dt{color:#766f62}dd{margin:0;font-weight:700;overflow-wrap:anywhere}button{border:0;border-radius:4px;padding:12px 17px;background:#1b1a16;color:white;font-weight:800;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#ded8ca;color:#26231c}.primary{font-size:18px;min-width:190px;background:#9b731e}.program{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:18px}.program p{max-width:680px}.pair{display:flex;align-items:end;gap:10px}label{display:grid;gap:7px;font-weight:800;flex:1}input,select{padding:11px;border:1px solid #bdb4a3;border-radius:3px;font:inherit}.danger,.admin-actions{display:flex;gap:16px;align-items:center;margin-top:18px;padding:18px;background:#fff4ee;border:1px solid #d5997f}.danger div{flex:1}.danger-button,.danger button{background:#922f20}.retry{margin-top:18px}.manual-ios{margin-top:18px;padding:22px;background:#fff;border:1px solid #d8d2c5}.manual-ios ol{display:grid;gap:10px;padding-left:24px}.manual-ios li.done{color:#2f6d3e;font-weight:800}.manual-url{display:flex;align-items:center;gap:12px;padding:14px;background:#f5f2e9;overflow-wrap:anywhere}.manual-url code{flex:1}.manual-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.manual-warning{padding:12px;background:#fff4ee;color:#6d2e21}.admin-actions label{min-width:260px}footer{margin-top:28px;padding-top:18px;border-top:1px solid #cfc7b9;color:#655f55}a{color:#77520c;font-weight:800}@media(max-width:760px){.profile-select,.manual-url{align-items:stretch;flex-direction:column}.grid{grid-template-columns:1fr}.program,.danger,.admin-actions,header{align-items:stretch;flex-direction:column}h1{font-size:34px}.pair{align-items:stretch;flex-direction:column}}
       `}</style>
     </>
   );
