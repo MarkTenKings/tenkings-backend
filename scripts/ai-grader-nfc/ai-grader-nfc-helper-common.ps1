@@ -16,6 +16,11 @@ $script:NfcAllowedOrigin = "https://collect.tenkings.co"
 $script:NfcShortcutName = "Ten Kings AI Grader NFC.lnk"
 $script:NfcAttestationKeyName = "TenKings.AiGrader.Nfc.WorkstationAttestation.v1"
 $script:NfcAttestationAlgorithm = "ecdsa-p256-sha256-p1363"
+$script:NfcGoToTagsTemplatePath = "C:\TenKings\tools\ai-grader-nfc-helper\Templates\f8215-gototags-manual-start-v1.json"
+$script:NfcGoToTagsTemplateSha256 = "31bfcca6cfd0e947d5368643a0aeed2ce730b9e0ad2ed9d0a503cfd5e5e05c3d"
+$script:NfcGoToTagsExecutableSha256 = "d21adfdef57393b948ce4e6d8771f6daa215041fa27c777ef33de24057883774"
+$script:NfcGoToTagsRoot = "C:\TenKings\config\ai-grader-nfc\gototags"
+$script:NfcGoToTagsJobRoot = "C:\TenKings\config\ai-grader-nfc\gototags\jobs"
 
 function Get-NfcRepoRoot {
   return (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -113,6 +118,7 @@ function Copy-NfcStableMaintenancePayload {
   New-Item -ItemType Directory -Path $maintenance -ErrorAction Stop | Out-Null
   foreach ($name in @(
       "ai-grader-nfc-helper-common.ps1",
+      "configure-ai-grader-nfc-feiju-f8215.ps1",
       "export-ai-grader-nfc-workstation-public-key.ps1",
       "open-ai-grader-nfc-workstation.ps1",
       "rotate-ai-grader-nfc-helper-token.ps1",
@@ -316,7 +322,7 @@ function Read-NfcConfig {
   Assert-NfcProtectedAcl -Path (Split-Path -Parent $Path)
   Assert-NfcProtectedAcl -Path $Path
   $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-  if ($config.schemaVersion -notin @("tenkings-ai-grader-nfc-helper-config-v1", "tenkings-ai-grader-nfc-helper-config-v2") -or
+  if ($config.schemaVersion -notin @("tenkings-ai-grader-nfc-helper-config-v1", "tenkings-ai-grader-nfc-helper-config-v2", "tenkings-ai-grader-nfc-helper-config-v3") -or
       $config.host -ne "127.0.0.1" -or [int]$config.port -ne 47662 -or
       $config.allowedOrigin -ne $script:NfcAllowedOrigin) {
     throw "The NFC helper config failed its fixed loopback/origin validation."
@@ -338,6 +344,31 @@ function Read-NfcConfig {
       ($config.workstationKeyName -cne $script:NfcAttestationKeyName -or
        [string]$config.workstationKeyId -cnotmatch '^[a-f0-9]{64}$')) {
     throw "The NFC helper config failed its workstation attestation-key validation."
+  }
+  if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v3") {
+    if ($config.workstationKeyName -cne $script:NfcAttestationKeyName -or
+        [string]$config.workstationKeyId -cnotmatch '^[a-f0-9]{64}$' -or
+        $config.feijuF8215Enabled -isnot [bool] -or
+        [string]$config.goToTagsExecutableSha256 -cne $script:NfcGoToTagsExecutableSha256 -or
+        [string]$config.goToTagsTemplateSha256 -cne $script:NfcGoToTagsTemplateSha256 -or
+        -not (Get-NfcCanonicalPath -Path ([string]$config.goToTagsTemplatePath)).Equals(
+          (Get-NfcCanonicalPath -Path $script:NfcGoToTagsTemplatePath),
+          [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Get-NfcCanonicalPath -Path ([string]$config.goToTagsJobRoot)).Equals(
+          (Get-NfcCanonicalPath -Path $script:NfcGoToTagsJobRoot),
+          [StringComparison]::OrdinalIgnoreCase)) {
+      throw "The NFC helper config failed its F8215 adapter validation."
+    }
+    if ([bool]$config.feijuF8215Enabled) {
+      $goToTagsExecutable = Get-NfcCanonicalPath -Path ([string]$config.goToTagsExecutablePath)
+      if (-not (Test-Path -LiteralPath $goToTagsExecutable -PathType Leaf) -or
+          -not (Test-Path -LiteralPath $script:NfcGoToTagsTemplatePath -PathType Leaf) -or
+          -not (Test-Path -LiteralPath $script:NfcGoToTagsJobRoot -PathType Container)) {
+        throw "The enabled F8215 adapter dependencies are unavailable."
+      }
+      Assert-NfcPathWithinRoot -Path $script:NfcGoToTagsJobRoot -AllowedRoot $script:NfcConfigRoot | Out-Null
+      Assert-NfcProtectedTree -Path $script:NfcGoToTagsRoot -AllowedRoot $script:NfcConfigRoot
+    }
   }
   return $config
 }
@@ -374,7 +405,7 @@ function Initialize-NfcConfig {
       throw "Create or reuse the named NFC workstation attestation key through the installer first."
     }
     $config = [pscustomobject]@{
-      schemaVersion = "tenkings-ai-grader-nfc-helper-config-v2"
+      schemaVersion = "tenkings-ai-grader-nfc-helper-config-v3"
       createdAt = $now.ToString("o")
       updatedAt = $now.ToString("o")
       host = "127.0.0.1"
@@ -390,6 +421,12 @@ function Initialize-NfcConfig {
       installDirectory = $script:NfcInstallDir
       workstationKeyName = $WorkstationKeyName
       workstationKeyId = $WorkstationKeyId
+      feijuF8215Enabled = $false
+      goToTagsExecutablePath = ""
+      goToTagsExecutableSha256 = $script:NfcGoToTagsExecutableSha256
+      goToTagsTemplatePath = $script:NfcGoToTagsTemplatePath
+      goToTagsTemplateSha256 = $script:NfcGoToTagsTemplateSha256
+      goToTagsJobRoot = $script:NfcGoToTagsJobRoot
     }
   }
   if (-not [string]::IsNullOrWhiteSpace($WorkstationKeyName) -or
@@ -410,9 +447,11 @@ function Initialize-NfcConfig {
     }
     Set-NfcConfigProperty -Config $config -Name "workstationKeyName" -Value $WorkstationKeyName
     Set-NfcConfigProperty -Config $config -Name "workstationKeyId" -Value $WorkstationKeyId
-    $config.schemaVersion = "tenkings-ai-grader-nfc-helper-config-v2"
+    if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v1") {
+      $config.schemaVersion = "tenkings-ai-grader-nfc-helper-config-v2"
+    }
   }
-  if ($config.schemaVersion -ne "tenkings-ai-grader-nfc-helper-config-v2" -or
+  if ($config.schemaVersion -notin @("tenkings-ai-grader-nfc-helper-config-v2", "tenkings-ai-grader-nfc-helper-config-v3") -or
       [string]$config.workstationKeyName -cne $script:NfcAttestationKeyName -or
       [string]$config.workstationKeyId -cnotmatch '^[a-f0-9]{64}$') {
     throw "Run the NFC helper installer to attach the existing named workstation attestation key."

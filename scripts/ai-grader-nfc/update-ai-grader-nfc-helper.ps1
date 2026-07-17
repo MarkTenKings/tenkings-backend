@@ -14,9 +14,10 @@ function Invoke-NfcBuildVerification {
   if ($LASTEXITCODE -ne 0) { throw "The NFC helper build verification command failed." }
   $result = ($output -join [Environment]::NewLine) | ConvertFrom-Json
   if (-not $result.ok -or
-      $result.helperVersion -cne "tenkings-ai-grader-nfc-helper-v2" -or
+      $result.helperVersion -cne "tenkings-ai-grader-nfc-helper-v3" -or
       $result.helperProtocolVersion -cne "tenkings-ai-grader-nfc-loopback-v2" -or
       $result.attestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v1" -or
+      $result.multiProfileAttestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v2" -or
       $result.attestationAlgorithm -cne $script:NfcAttestationAlgorithm -or
       [bool]$result.hardwareAccessed -or
       [bool]$result.productionKeyAccessed) {
@@ -190,7 +191,7 @@ try {
 
   [pscustomobject]@{
     ok = $true
-    helperVersion = "tenkings-ai-grader-nfc-helper-v2"
+    helperVersion = "tenkings-ai-grader-nfc-helper-v3"
     helperProtocolVersion = "tenkings-ai-grader-nfc-loopback-v2"
     priorRunningStatePreserved = $true
     protectedConfigPreserved = $true

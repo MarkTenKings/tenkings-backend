@@ -69,6 +69,7 @@ public sealed class NfcHttpServer : IAsyncDisposable
     private readonly HttpListener _listener = new();
     private readonly NfcHttpServerOptions _options;
     private readonly NfcOperationsService _operations;
+    private readonly F8215JobCoordinator? _f8215;
     private readonly ISafeLogger _logger;
     private readonly ConcurrentDictionary<long, Task> _requests = new();
     private long _requestSequence;
@@ -76,11 +77,16 @@ public sealed class NfcHttpServer : IAsyncDisposable
     private readonly object _pairingGate = new();
     private bool _started;
 
-    public NfcHttpServer(NfcHttpServerOptions options, NfcOperationsService operations, ISafeLogger? logger = null)
+    public NfcHttpServer(
+        NfcHttpServerOptions options,
+        NfcOperationsService operations,
+        ISafeLogger? logger = null,
+        F8215JobCoordinator? f8215 = null)
     {
         options.Validate();
         _options = options;
         _operations = operations;
+        _f8215 = f8215;
         _logger = logger ?? new ConsoleSafeLogger();
         _listener.Prefixes.Add($"http://127.0.0.1:{options.Port}/");
         _listener.IgnoreWriteExceptions = true;
@@ -138,6 +144,12 @@ public sealed class NfcHttpServer : IAsyncDisposable
         timeout.CancelAfter(TimeSpan.FromSeconds(50));
         try
         {
+            var path = context.Request.Url?.AbsolutePath ?? string.Empty;
+            if (path.StartsWith("/gototags/callback/", StringComparison.Ordinal))
+            {
+                await HandleGoToTagsCallbackAsync(context, path, requestId, timeout.Token);
+                return;
+            }
             ValidateNetworkBoundary(context.Request);
             ApplyCors(context.Response);
             if (string.Equals(context.Request.HttpMethod, "OPTIONS", StringComparison.Ordinal))
@@ -148,7 +160,6 @@ public sealed class NfcHttpServer : IAsyncDisposable
                 return;
             }
 
-            var path = context.Request.Url?.AbsolutePath;
             switch (path)
             {
                 case "/pair":
@@ -159,7 +170,7 @@ public sealed class NfcHttpServer : IAsyncDisposable
                     RequireMethod(context.Request, "GET");
                     RequireToken(context.Request);
                     RequireEmptyBody(context.Request);
-                    await WriteSuccessAsync(context.Response, _operations.Status(), NfcJsonContext.Default.ApiEnvelopeHelperStatusResponse, timeout.Token);
+                    await WriteSuccessAsync(context.Response, Status(), NfcJsonContext.Default.ApiEnvelopeHelperStatusResponse, timeout.Token);
                     break;
                 case "/read":
                     RequireMethod(context.Request, "POST");
@@ -174,6 +185,27 @@ public sealed class NfcHttpServer : IAsyncDisposable
                     var write = await ReadJsonAsync(context.Request, NfcJsonContext.Default.NfcWriteRequest, timeout.Token);
                     var writeResult = await _operations.WriteAsync(write, requestId, timeout.Token);
                     await WriteSuccessAsync(context.Response, writeResult, NfcJsonContext.Default.ApiEnvelopeNfcWriteResponse, timeout.Token);
+                    break;
+                case "/prepare":
+                    RequireMethod(context.Request, "POST");
+                    RequireToken(context.Request);
+                    var prepare = await ReadJsonAsync(context.Request, NfcJsonContext.Default.F8215PrepareRequest, timeout.Token);
+                    var prepareResult = RequireF8215().Prepare(prepare, requestId);
+                    await WriteSuccessAsync(context.Response, prepareResult, NfcJsonContext.Default.ApiEnvelopeF8215PrepareResponse, timeout.Token);
+                    break;
+                case "/operation-status":
+                    RequireMethod(context.Request, "POST");
+                    RequireToken(context.Request);
+                    var operationStatus = await ReadJsonAsync(context.Request, NfcJsonContext.Default.F8215OperationStatusRequest, timeout.Token);
+                    var operationStatusResult = RequireF8215().Status(operationStatus);
+                    await WriteSuccessAsync(context.Response, operationStatusResult, NfcJsonContext.Default.ApiEnvelopeF8215OperationStatusResponse, timeout.Token);
+                    break;
+                case "/operation-ack":
+                    RequireMethod(context.Request, "POST");
+                    RequireToken(context.Request);
+                    var acknowledge = await ReadJsonAsync(context.Request, NfcJsonContext.Default.F8215OperationAcknowledgeRequest, timeout.Token);
+                    var acknowledgeResult = RequireF8215().Acknowledge(acknowledge, requestId);
+                    await WriteSuccessAsync(context.Response, acknowledgeResult, NfcJsonContext.Default.ApiEnvelopeF8215OperationAcknowledgeResponse, timeout.Token);
                     break;
                 default:
                     throw new NfcHelperException("route_not_found", "The NFC helper route does not exist.", false, 404);
@@ -197,6 +229,112 @@ public sealed class NfcHttpServer : IAsyncDisposable
         {
             _logger.Error("nfc_http_request_failed", requestId, "internal_error");
             await TryWriteErrorAsync(context.Response, "internal_error", "The NFC helper could not complete the request.", false, 500, CancellationToken.None);
+        }
+    }
+
+    private HelperStatusResponse Status()
+    {
+        var status = _operations.Status();
+        var inspection = _f8215?.Inspect() ?? new GoToTagsAdapterInspection(false, "feiju_f8215_disabled");
+        return status with
+        {
+            SupportedProfiles =
+            [
+                new SupportedNfcProfile(
+                    NfcProtocol.ChipType,
+                    NfcProtocol.SecurityMode,
+                    NfcProtocol.Ntag215ProgrammingProfile,
+                    "native_pcsc",
+                    true,
+                    false),
+                new SupportedNfcProfile(
+                    NfcProtocol.FeijuChipType,
+                    NfcProtocol.SecurityMode,
+                    NfcProtocol.FeijuProgrammingProfile,
+                    NfcProtocol.FeijuAdapterIdentity,
+                    true,
+                    true),
+                new SupportedNfcProfile(
+                    NfcProtocol.Ntag424ChipType,
+                    "ntag424_sun_v1",
+                    NfcProtocol.Ntag424ProgrammingProfile,
+                    "unimplemented",
+                    false,
+                    false),
+            ],
+            FeijuF8215Enabled = _f8215?.Enabled == true,
+            GoToTagsReady = inspection.Ready,
+            GoToTagsErrorCode = inspection.ErrorCode,
+        };
+    }
+
+    private F8215JobCoordinator RequireF8215() => _f8215 ??
+        throw new NfcHelperException("feiju_f8215_disabled", "Feiju F8215 programming is disabled on this workstation.", false, 403);
+
+    private async Task HandleGoToTagsCallbackAsync(
+        HttpListenerContext context,
+        string path,
+        string requestId,
+        CancellationToken cancellationToken)
+    {
+        ValidateGoToTagsBoundary(context.Request);
+        var identity = path["/gototags/callback/".Length..];
+        if (identity.Length == 0 || identity.Contains('/'))
+            throw new NfcHelperException("gototags_callback_not_found", "The GoToTags callback identity is invalid.", false, 404);
+        var body = await ReadGoToTagsBodyAsync(context.Request, cancellationToken);
+        try
+        {
+            RequireF8215().AcceptCallback(identity, body, requestId);
+            context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+            context.Response.Headers["Cache-Control"] = "no-store";
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            context.Response.Close();
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(body);
+        }
+    }
+
+    private void ValidateGoToTagsBoundary(HttpListenerRequest request)
+    {
+        if (request.RemoteEndPoint is null || !IPAddress.IsLoopback(request.RemoteEndPoint.Address))
+            throw new NfcHelperException("loopback_required", "The GoToTags callback accepts loopback requests only.", false, 403);
+        if (!string.Equals(request.Headers["Host"], $"127.0.0.1:{_options.Port}", StringComparison.Ordinal))
+            throw new NfcHelperException("invalid_host", "The GoToTags callback Host header is not allowed.", false, 403);
+        if (!string.Equals(request.HttpMethod, "POST", StringComparison.Ordinal))
+            throw new NfcHelperException("method_not_allowed", "The GoToTags callback method is not allowed.", false, 405);
+        if (request.Url?.Query.Length > 0)
+            throw new NfcHelperException("query_not_allowed", "The GoToTags callback does not accept query parameters.", false, 400);
+        if (!string.IsNullOrEmpty(request.Headers["Transfer-Encoding"]) || request.ContentLength64 < 1)
+            throw new NfcHelperException("gototags_callback_length_required", "The GoToTags callback requires a bounded content length.", false, 411);
+        if (!string.Equals(request.ContentType?.Split(';', 2)[0].Trim(), "application/json", StringComparison.OrdinalIgnoreCase))
+            throw new NfcHelperException("content_type_required", "The GoToTags callback accepts application/json only.", false, 415);
+    }
+
+    private static async Task<byte[]> ReadGoToTagsBodyAsync(HttpListenerRequest request, CancellationToken cancellationToken)
+    {
+        if (request.ContentLength64 > NfcProtocol.MaxGoToTagsCallbackBytes)
+            throw new NfcHelperException("body_too_large", "The GoToTags callback body is too large.", false, 413);
+        var expected = checked((int)request.ContentLength64);
+        var body = new byte[expected];
+        try
+        {
+            var offset = 0;
+            while (offset < expected)
+            {
+                var read = await request.InputStream.ReadAsync(body.AsMemory(offset, expected - offset), cancellationToken);
+                if (read == 0) throw new NfcHelperException("gototags_callback_truncated", "The GoToTags callback body was incomplete.", false, 400);
+                offset += read;
+            }
+            if (request.InputStream.ReadByte() != -1)
+                throw new NfcHelperException("body_too_large", "The GoToTags callback body is too large.", false, 413);
+            return body;
+        }
+        catch
+        {
+            CryptographicOperations.ZeroMemory(body);
+            throw;
         }
     }
 

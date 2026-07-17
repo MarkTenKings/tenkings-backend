@@ -96,6 +96,7 @@ export async function readAiGraderNfcSchemaReadiness(
         ('AiGraderNfcTag', 'publicTagId'),
         ('AiGraderNfcTag', 'chipType'),
         ('AiGraderNfcTag', 'securityMode'),
+        ('AiGraderNfcTag', 'programmingProfile'),
         ('AiGraderNfcTag', 'status'),
         ('AiGraderNfcTag', 'uidFingerprintSha256'),
         ('AiGraderNfcTag', 'ndefPayloadVersion'),
@@ -259,27 +260,21 @@ export async function readAiGraderNfcSchemaReadiness(
         ('AiGraderNfcProgrammingAttempt_completion_state', 'completedworkstationkeyidisnull'),
         ('AiGraderNfcProgrammingAttempt_completion_state', 'readbackevidenceisnotnull'),
         ('AiGraderNfcProgrammingAttempt_completion_state', 'readbackevidenceisnull'),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidenceisnullor'),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence=''object'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence?&array[''schemaversion'',''workstationkeyid'',''algorithm'',''statementsha256'',''signature'',''observedat'',''helperprotocolversion'',''readerresultcode'',''cryptographictagauthentication'',''workstationoperationalattestation'']'),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence->''schemaversion''=''string'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence->''workstationkeyid''=''string'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence->''algorithm''=''string'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence->''statementsha256''=''string'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence->''signature''=''string'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence->''observedat''=''string'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence->''helperprotocolversion''=''string'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence->''readerresultcode''=''string'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence->''cryptographictagauthentication''=''boolean'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'jsonb_typeofreadbackevidence->''workstationoperationalattestation''=''boolean'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence->>''schemaversion''=''ai-grader-nfc-helper-attestation-v1'''),
+        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidenceisnullorjsonb_typeofreadbackevidence=''object''and'),
+        ('AiGraderNfcProgrammingAttempt_attestation_evidence', '''schemaversion'',''ai-grader-nfc-helper-attestation-v1'''),
+        ('AiGraderNfcProgrammingAttempt_attestation_evidence', '''schemaversion'',''ai-grader-nfc-helper-attestation-v2'''),
         ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence->>''workstationkeyid''=completedworkstationkeyid'),
         ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence->>''algorithm''=expectedattestationalgorithm'),
         ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence->>''statementsha256''~''^[a-f0-9]{64}$'''),
         ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence->>''signature''~''^[a-za-z0-9_-]{86}$'''),
         ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence->>''observedat''~''^[0-9]{4}-[0-9]{2}-[0-9]{2}t[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}z$'''),
         ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence->>''helperprotocolversion''=''tenkings-ai-grader-nfc-loopback-v2'''),
-        ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence->>''readerresultcode''=anyarray[''write_verified_pcsc_readback'',''already_programmed_exact'']'),
+        ('AiGraderNfcProgrammingAttempt_attestation_evidence', '''readerresultcode'',''write_locked_verified_gototags_readback'''),
+        ('AiGraderNfcProgrammingAttempt_attestation_evidence', '''chiptype'',''feiju_f8215'''),
+        ('AiGraderNfcProgrammingAttempt_attestation_evidence', '''programmingprofile'',''gototags_manual_start_v1'''),
+        ('AiGraderNfcProgrammingAttempt_attestation_evidence', '''adapteridentity'',''gototags_desktop'''),
+        ('AiGraderNfcProgrammingAttempt_attestation_evidence', '''adapterversion'',''4.37.0.1'''),
+        ('AiGraderNfcProgrammingAttempt_attestation_evidence', '''writeprotectionstate'',''permanently_read_only_verified'''),
         ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence->''cryptographictagauthentication''=''false'''),
         ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence->''workstationoperationalattestation''=''true'''),
         ('AiGraderNfcProgrammingAttempt_attestation_evidence', 'readbackevidence=jsonb_build_object'),
@@ -315,6 +310,14 @@ export async function readAiGraderNfcSchemaReadiness(
         SELECT 1
         FROM "_prisma_migrations"
         WHERE migration_name = '20260712160000_ai_grader_nfc_static_url_v1'
+          AND finished_at IS NOT NULL
+          AND rolled_back_at IS NULL
+          AND COALESCE(btrim(logs), '') = ''
+      ) AND
+      EXISTS (
+        SELECT 1
+        FROM "_prisma_migrations"
+        WHERE migration_name = '20260716230000_ai_grader_nfc_feiju_f8215_gototags_two_click'
           AND finished_at IS NOT NULL
           AND rolled_back_at IS NULL
           AND COALESCE(btrim(logs), '') = ''

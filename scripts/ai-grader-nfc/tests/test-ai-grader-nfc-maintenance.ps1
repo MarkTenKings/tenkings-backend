@@ -112,6 +112,8 @@ try {
   $install = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\install-ai-grader-nfc-helper.ps1") -Raw
   $open = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\open-ai-grader-nfc-workstation.ps1") -Raw
   $rotate = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\rotate-ai-grader-nfc-helper-token.ps1") -Raw
+  $configureFeiju = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\configure-ai-grader-nfc-feiju-f8215.ps1") -Raw
+  $common = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\ai-grader-nfc-helper-common.ps1") -Raw
   $stop = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\stop-ai-grader-nfc-helper.ps1") -Raw
   $uninstall = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\uninstall-ai-grader-nfc-helper.ps1") -Raw
   $publishIndex = $update.IndexOf("& dotnet publish", [StringComparison]::Ordinal)
@@ -139,8 +141,9 @@ try {
   Assert-True ($install.IndexOf("CNG key, if created, was preserved", [StringComparison]::Ordinal) -ge 0) "Initial install can silently discard its named key identity."
   Assert-True ($install.IndexOf("`$script:NfcStableStartScript", [StringComparison]::Ordinal) -ge 0) "Scheduled Task does not use the stable installed launcher."
   Assert-True ($install.IndexOf("`$script:NfcStableOpenScript", [StringComparison]::Ordinal) -ge 0) "Shortcut does not use the stable installed launcher."
-  Assert-True ($install.IndexOf('helperVersion -cne "tenkings-ai-grader-nfc-helper-v2"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the helper version."
+  Assert-True ($install.IndexOf('helperVersion -cne "tenkings-ai-grader-nfc-helper-v3"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the helper version."
   Assert-True ($install.IndexOf('attestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v1"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the attestation schema."
+  Assert-True ($install.IndexOf('multiProfileAttestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v2"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the multi-profile attestation schema."
   Assert-True ($install.IndexOf("attestationAlgorithm -cne `$script:NfcAttestationAlgorithm", [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the attestation algorithm."
   Assert-True ($open.IndexOf("Initialize-NfcConfig", [StringComparison]::Ordinal) -lt 0) "Ordinary workstation open rewrites protected config."
   Assert-True ($open.IndexOf("Restart-NfcTask", [StringComparison]::Ordinal) -lt 0) "Ordinary workstation open restarts a healthy helper."
@@ -157,6 +160,14 @@ try {
   Assert-True ($rotate.IndexOf("`$RotateToken -and -not `$RotatePairingCode", [StringComparison]::Ordinal) -ge 0) "Token rotation can strand consumed browser pairing trust."
   Assert-True ($rotate.IndexOf("also requires -RotatePairingCode", [StringComparison]::Ordinal) -ge 0) "Token rotation does not explain its mandatory pairing rotation."
   Assert-True ($rotate.IndexOf("Ordinary update rotates neither", [StringComparison]::Ordinal) -ge 0) "Credential maintenance does not document the ordinary-update boundary."
+  Assert-True ($configureFeiju.IndexOf('4.37.0.1', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not pin GoToTags."
+  Assert-True ($common.IndexOf('d21adfdef57393b948ce4e6d8771f6daa215041fa27c777ef33de24057883774', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not pin the approved GoToTags executable bytes."
+  Assert-True ($configureFeiju.IndexOf('Desktopapp_4.37.0.1_x64__14h5dv7m6vvvy', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not pin the approved operation-file association."
+  Assert-True ($configureFeiju.IndexOf('CN=GoToTags, O=GoToTags, S=Washington, C=US', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not pin the publisher."
+  Assert-True ($configureFeiju.IndexOf('CertPropSvc', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not fail closed on Certificate Propagation."
+  Assert-True ($configureFeiju.IndexOf('Set-Service', [StringComparison]::OrdinalIgnoreCase) -lt 0) "F8215 configuration can change Windows services."
+  Assert-True ($configureFeiju.IndexOf('Start-Service', [StringComparison]::OrdinalIgnoreCase) -lt 0) "F8215 configuration can start Windows services."
+  Assert-True ($configureFeiju.IndexOf('feijuF8215Enabled', [StringComparison]::Ordinal) -ge 0) "F8215 configuration lacks its separate local gate."
 
   Write-Output "PASS NFC maintenance path/ACL containment, initial cleanup, stable launchers, rollback, preservation, and explicit-rotation contracts"
 } finally {

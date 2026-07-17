@@ -13,6 +13,11 @@ $layout = Assert-NfcProductionLayout -ConfigPath $ConfigPath -TaskName $TaskName
 $ConfigPath = $layout.ConfigPath
 $TaskName = $layout.TaskName
 $config = Read-NfcConfig -Path $ConfigPath
+$goToTagsRootExists = Test-Path -LiteralPath $script:NfcGoToTagsRoot -PathType Container
+if ($RemoveConfig -and $goToTagsRootExists -and
+    @(Get-ChildItem -LiteralPath $script:NfcGoToTagsJobRoot -Force -ErrorAction SilentlyContinue).Count -ne 0) {
+  throw "The protected GoToTags job directory contains recovery state; uninstall will not delete it."
+}
 $shortcut = Get-NfcDesktopShortcutPath
 $shortcutExisted = Test-Path -LiteralPath $shortcut
 if ($shortcutExisted) {
@@ -38,6 +43,9 @@ if ($RemoveConfig -and (Test-Path -LiteralPath $ConfigPath)) {
 }
 if ($RemoveConfig -and $config -and (Test-Path -LiteralPath ([string]$config.pairingConsumptionPath))) {
   Remove-Item -LiteralPath ([string]$config.pairingConsumptionPath) -Force
+}
+if ($RemoveConfig -and $goToTagsRootExists) {
+  Remove-NfcSafeTree -Path $script:NfcGoToTagsRoot -AllowedRoot $script:NfcConfigRoot
 }
 [pscustomobject]@{
   ok = $true

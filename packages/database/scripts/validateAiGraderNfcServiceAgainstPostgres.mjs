@@ -21,7 +21,13 @@ const {
 const {
   AI_GRADER_NFC_ATTESTATION_ALGORITHM,
   AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION,
+  AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2,
   AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
+  AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE,
+  AI_GRADER_NFC_FEIJU_READER_RESULT,
+  AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_STATE,
+  AI_GRADER_NFC_GOTOTAGS_ADAPTER_IDENTITY,
+  AI_GRADER_NFC_GOTOTAGS_APPROVED_VERSION,
   buildAiGraderNfcOperationalAttestationStatement,
   completeAiGraderNfcProgramming,
   getAiGraderNfcStatus,
@@ -89,7 +95,7 @@ function workstation() {
   };
 }
 
-function signedCompletion(init, runtime, station) {
+function signedCompletion(init, runtime, station, profile = "NTAG215") {
   requireProof(typeof init.attemptId === "string" && init.attemptId.length > 0, "INIT_ATTEMPT_ID_MISSING");
   requireProof(typeof init.attemptToken === "string" && /^[A-Za-z0-9_-]{43}$/.test(init.attemptToken), "INIT_ATTEMPT_TOKEN_INVALID");
   requireProof(typeof init.attestationChallenge === "string" && /^[A-Za-z0-9_-]{43}$/.test(init.attestationChallenge), "INIT_CHALLENGE_INVALID");
@@ -98,8 +104,19 @@ function signedCompletion(init, runtime, station) {
   const observedAt = new Date(NOW.getTime() + 5_000).toISOString();
   const uidFingerprintSha256 = sha256("disposable-fake-reader-uid-fingerprint");
   const readbackPayloadSha256 = sha256(init.expectedNdefUrl);
-  const readerResultCode = "write_verified_pcsc_readback";
+  const feiju = profile === "FEIJU_F8215";
+  const readerResultCode = feiju ? AI_GRADER_NFC_FEIJU_READER_RESULT : "write_verified_pcsc_readback";
+  const schemaVersion = feiju ? AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2 : AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION;
+  const profileEvidence = feiju ? {
+    chipType: "FEIJU_F8215",
+    securityMode: "static_url_v1",
+    programmingProfile: AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE,
+    adapterIdentity: AI_GRADER_NFC_GOTOTAGS_ADAPTER_IDENTITY,
+    adapterVersion: AI_GRADER_NFC_GOTOTAGS_APPROVED_VERSION,
+    writeProtectionState: AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_STATE,
+  } : {};
   const statement = buildAiGraderNfcOperationalAttestationStatement({
+    schemaVersion,
     attemptId: init.attemptId,
     attestationChallenge: init.attestationChallenge,
     publicTagId: init.publicTagId,
@@ -109,6 +126,7 @@ function signedCompletion(init, runtime, station) {
     readerResultCode,
     helperProtocolVersion: AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
     observedAt,
+    ...profileEvidence,
   });
   const signature = sign("sha256", Buffer.from(statement, "utf8"), {
     key: station.privateKey,
@@ -125,13 +143,19 @@ function signedCompletion(init, runtime, station) {
     uidFingerprintSha256,
     normalizedNdefUrl: init.expectedNdefUrl,
     readbackPayloadSha256,
-    chipType: "NTAG215",
+    chipType: feiju ? "FEIJU_F8215" : "NTAG215",
     securityMode: "static_url_v1",
+    programmingProfile: feiju ? AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE : "ntag215_direct_pcsc_v1",
+    ...(feiju ? {
+      adapterIdentity: AI_GRADER_NFC_GOTOTAGS_ADAPTER_IDENTITY,
+      adapterVersion: AI_GRADER_NFC_GOTOTAGS_APPROVED_VERSION,
+      writeProtectionState: AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_STATE,
+    } : {}),
     idempotencyKey: "service-validation-complete",
     readerResultCode,
     helperProtocolVersion: AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
     operationalAttestation: {
-      schemaVersion: AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION,
+      schemaVersion,
       workstationKeyId: station.keyId,
       algorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
       attestationChallenge: init.attestationChallenge,
@@ -275,6 +299,7 @@ async function main() {
     programmingEnabled: true,
     tokenSecret: randomBytes(48).toString("base64url"),
     workstationPublicKeysJson: station.allowlist,
+    feijuF8215Enabled: true,
     attemptTtlMs: 60_000,
   };
 
@@ -368,6 +393,8 @@ async function main() {
       replacedPublicTagId: first.publicTagId,
       revocationReason: "Disposable validation replacement",
       idempotencyKey: "service-validation-replace",
+      chipType: "FEIJU_F8215",
+      programmingProfile: AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE,
       now: new Date(NOW.getTime() + 15_000),
     };
     const [replacement, replacementRetry] = await Promise.all([
@@ -388,7 +415,9 @@ async function main() {
       "REPLACEMENT_OPEN_TAG_COUNT",
     );
 
-    const replacementCompletion = signedCompletion(replacement, runtime, station);
+    requireProof(replacement.chipType === "FEIJU_F8215", "REPLACEMENT_FEIJU_CHIP_TYPE");
+    requireProof(replacement.programmingProfile === AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE, "REPLACEMENT_FEIJU_PROFILE");
+    const replacementCompletion = signedCompletion(replacement, runtime, station, "FEIJU_F8215");
     const [replacementActive, replacementActiveRetry] = await Promise.all([
       completeAiGraderNfcProgramming(replacementCompletion),
       completeAiGraderNfcProgramming(replacementCompletion),
@@ -444,6 +473,7 @@ async function main() {
       "reserve",
       "programming_attempt_initialized",
       "local_pcsc_readback_verified",
+      "local_gototags_readback_lock_verified",
       "activate_registered_link",
       "revoke",
       "replacement_authorized",

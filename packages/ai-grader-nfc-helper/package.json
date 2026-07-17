@@ -2,7 +2,7 @@
   "name": "@tenkings/ai-grader-nfc-helper",
   "version": "0.1.0",
   "private": true,
-  "description": "Dedicated loopback-only Windows PC/SC helper for Ten Kings NTAG215 programming.",
+  "description": "Dedicated loopback-only Windows helper for Ten Kings NTAG215 and reviewed Feiju F8215 programming profiles.",
   "scripts": {
     "build": "dotnet build TenKings.AiGrader.NfcHelper.sln --configuration Release -p:UseSharedCompilation=false -nr:false",
     "test": "dotnet run --project tests/TenKings.AiGrader.NfcHelper.Tests/TenKings.AiGrader.NfcHelper.Tests.csproj --configuration Release -p:UseSharedCompilation=false",

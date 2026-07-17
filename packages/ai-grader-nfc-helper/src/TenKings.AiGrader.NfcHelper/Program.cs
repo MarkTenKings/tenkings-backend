@@ -12,6 +12,8 @@ internal static class Program
         {
             if (args is ["--hardware-gate-test"])
                 return await RunHardwareGateTestAsync();
+            if (args is ["--f8215-hardware-gate-test"])
+                return await RunF8215HardwareGateTestAsync();
             if (args is ["--ensure-workstation-attestation-key"])
                 return RunEnsureWorkstationAttestationKey();
             if (args is ["--export-workstation-attestation-public-key"])
@@ -29,15 +31,25 @@ internal static class Program
             using IWorkstationAttestationSigner signer = backendName == "pcsc"
                 ? ResolveProductionSigner()
                 : new EphemeralTestWorkstationAttestationSigner();
+            using var operationGate = new NfcOperationGate();
             var logger = new ConsoleSafeLogger();
             var timeout = ResolveOperationTimeout();
             var operations = new NfcOperationsService(
                 backend,
                 signer,
                 logger,
-                timeout);
+                timeout,
+                operationGate: operationGate);
             var options = NfcHttpServerOptions.FromEnvironment();
-            await using var server = new NfcHttpServer(options, operations, logger);
+            var coordinator = new F8215JobCoordinator(
+                GoToTagsAdapterOptions.FromEnvironment(),
+                new WindowsGoToTagsAdapterRuntime(),
+                new GoToTagsOperationFactory(),
+                signer,
+                operationGate,
+                options.Port,
+                logger);
+            await using var server = new NfcHttpServer(options, operations, logger, coordinator);
             using var shutdown = new CancellationTokenSource();
             Console.CancelKeyPress += (_, eventArgs) =>
             {
@@ -77,6 +89,13 @@ internal static class Program
         var result = await operations.RunHardwareGateTestAsync(confirmOverwrite, "hardware_gate", CancellationToken.None);
         Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.HardwareGateResult));
         return result.OverwriteConfirmationRequired ? 4 : 0;
+    }
+
+    private static async Task<int> RunF8215HardwareGateTestAsync()
+    {
+        var result = await F8215HardwareGateRunner.RunAsync(CancellationToken.None);
+        Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.F8215HardwareGateResult));
+        return 0;
     }
 
     private static int RunEnsureWorkstationAttestationKey()

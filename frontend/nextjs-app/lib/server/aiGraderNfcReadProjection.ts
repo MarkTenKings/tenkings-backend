@@ -14,7 +14,7 @@ export type AiGraderNfcSafeReadProjection = {
   status: AiGraderNfcReadStatus;
   publicTagId?: string;
   nfcTagUrl?: string;
-  chipType?: "NTAG215" | "NTAG424_DNA";
+  chipType?: "NTAG215" | "FEIJU_F8215" | "NTAG424_DNA";
   securityMode?: "static_url_v1" | "ntag424_sun_v1";
   registrationKind?: "registered_link";
 };
@@ -54,7 +54,9 @@ function status(value: unknown): AiGraderNfcReadStatus {
 function project(row: JsonRecord): AiGraderNfcSafeReadProjection {
   const publicTagId = text(row.publicTagId);
   const safePublicTagId = publicTagId && /^[A-Za-z0-9_-]{32}$/.test(publicTagId) ? publicTagId : undefined;
-  const chipType = row.chipType === "NTAG215" || row.chipType === "NTAG424_DNA" ? row.chipType : undefined;
+  const chipType = row.chipType === "NTAG215" || row.chipType === "FEIJU_F8215" || row.chipType === "NTAG424_DNA"
+    ? row.chipType
+    : undefined;
   const securityMode = row.securityMode === "STATIC_URL_V1" || row.securityMode === "static_url_v1"
     ? "static_url_v1"
     : row.securityMode === "NTAG424_SUN_V1" || row.securityMode === "ntag424_sun_v1"
@@ -70,7 +72,7 @@ function project(row: JsonRecord): AiGraderNfcSafeReadProjection {
     } : {}),
     ...(chipType ? { chipType } : {}),
     ...(securityMode ? { securityMode } : {}),
-    ...(safeStatus === "active" && chipType === "NTAG215" && securityMode === "static_url_v1"
+    ...(safeStatus === "active" && (chipType === "NTAG215" || chipType === "FEIJU_F8215") && securityMode === "static_url_v1"
       ? { registrationKind: "registered_link" as const }
       : {}),
   };

@@ -1,9 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
+using System.IO.Compression;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using TenKings.AiGrader.NfcHelper;
 
 const string TagId = "0123456789abcdefghijklmnopqrstuv";
@@ -18,6 +22,11 @@ var tests = new (string Name, Func<Task> Run)[]
     ("hardware-free staged build verification", TestBuildVerification),
     ("ACR1552 PICC and SAM reader selection", TestPcscReaderSelection),
     ("operational attestation canonical signing and tamper", TestAttestation),
+    ("multi-profile attestation canonical signing and tamper", TestMultiProfileAttestation),
+    ("GoToTags terminal callback strict evidence and redaction", TestGoToTagsCallback),
+    ("F8215 protected job lifecycle and idempotency", TestF8215JobLifecycle),
+    ("F8215 helper restart and terminal callback recovery", TestF8215RestartRecovery),
+    ("F8215 loopback callback HTTP boundary", TestF8215HttpCallback),
     ("NDEF URI/TLV and URL digest", TestNdef),
     ("NTAG215 CC and APDU safety", TestLayoutAndCommands),
     ("blank write/readback and redaction", TestWriteAndReadback),
@@ -27,6 +36,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("single writer, timeout, and idempotency", TestConcurrency),
     ("definite pre-write retry and uncertain failure recovery", TestRetryClassification),
     ("approved one-shot hardware gate contract", TestHardwareGate),
+    ("isolated F8215 hardware gate requires separate approval before dependencies or hardware", TestF8215HardwareGateApproval),
     ("loopback HTTP pairing/auth/origin/bounds", TestHttp),
     ("Windows CNG and installer static safety contracts", TestProvisioningContracts)
 };
@@ -173,6 +183,370 @@ static Task TestAttestation()
         "invalid_attestation_context",
         () => WorkstationAttestation.CanonicalStatement(fields with { ObservedAt = "2026-07-13T12:34:56+00:00" }));
     return Task.CompletedTask;
+}
+
+static Task TestMultiProfileAttestation()
+{
+    using var signer = new EphemeralTestWorkstationAttestationSigner();
+    var fields = new MultiProfileAttestationFields(
+        "nfc_attempt_multi_profile_0001",
+        Challenge,
+        TagId,
+        Url,
+        NfcProtocol.FeijuChipType,
+        NfcProtocol.SecurityMode,
+        NfcProtocol.FeijuProgrammingProfile,
+        NfcProtocol.FeijuAdapterIdentity,
+        NfcProtocol.ApprovedGoToTagsVersion,
+        new string('a', 64),
+        new string('b', 64),
+        NfcProtocol.FeijuWriteProtectionState,
+        NfcProtocol.FeijuReaderResultCode,
+        NfcProtocol.ProtocolVersion,
+        "2026-07-16T22:36:52.279Z");
+    var canonical = MultiProfileWorkstationAttestation.CanonicalStatement(fields);
+    True(canonical.Contains(NfcProtocol.FeijuProgrammingProfile, StringComparison.Ordinal));
+    True(canonical.Contains(NfcProtocol.FeijuWriteProtectionState, StringComparison.Ordinal));
+    var attestation = MultiProfileWorkstationAttestation.Create(signer, fields);
+    Equal(NfcProtocol.MultiProfileAttestationSchemaVersion, attestation.SchemaVersion);
+    var spki = signer.ExportPublicSpki();
+    try
+    {
+        True(MultiProfileWorkstationAttestation.Verify(spki, fields, attestation.Signature));
+        False(MultiProfileWorkstationAttestation.Verify(
+            spki,
+            fields with { AdapterVersion = "4.38.0.0" },
+            attestation.Signature));
+        False(MultiProfileWorkstationAttestation.Verify(
+            spki,
+            fields with { WriteProtectionState = "unknown" },
+            attestation.Signature));
+    }
+    finally
+    {
+        CryptographicOperations.ZeroMemory(spki);
+    }
+    return Task.CompletedTask;
+}
+
+static Task TestGoToTagsCallback()
+{
+    const string correlation = "synthetic_callback_correlation_0001";
+    var body = GoToTagsCallback(correlation, Url);
+    Equal(NfcProtocol.ApprovedGoToTagsVersion, GoToTagsCallbackParser.SafeReportedAppVersion(body));
+    var result = GoToTagsCallbackParser.Parse(body, correlation, Url);
+    var observedVersionBody = GoToTagsCallback(correlation, Url, appVersion: $"v{NfcProtocol.ApprovedGoToTagsVersion}");
+    Equal(NfcProtocol.ApprovedGoToTagsVersion, GoToTagsCallbackParser.SafeReportedAppVersion(observedVersionBody));
+    _ = GoToTagsCallbackParser.Parse(observedVersionBody, correlation, Url);
+    var wrongVersionBody = GoToTagsCallback(correlation, Url, appVersion: $"V{NfcProtocol.ApprovedGoToTagsVersion}");
+    Throws("gototags_version_unapproved", () => GoToTagsCallbackParser.Parse(wrongVersionBody, correlation, Url));
+    True(System.Text.RegularExpressions.Regex.IsMatch(result.UidFingerprintSha256, "^[a-f0-9]{64}$"));
+    True(System.Text.RegularExpressions.Regex.IsMatch(result.ReadbackPayloadSha256, "^[a-f0-9]{64}$"));
+    True(System.Text.RegularExpressions.Regex.IsMatch(result.CallbackBodySha256, "^[a-f0-9]{64}$"));
+    var callbackText = Encoding.UTF8.GetString(body);
+    False(result.ToString().Contains("04112233445566", StringComparison.OrdinalIgnoreCase));
+    Throws("gototags_correlation_mismatch", () => GoToTagsCallbackParser.Parse(body, "synthetic_callback_correlation_0002", Url));
+    var wrongUrl = GoToTagsCallback(correlation, Url, readbackUrl: OtherUrl);
+    Throws("gototags_readback_mismatch", () => GoToTagsCallbackParser.Parse(wrongUrl, correlation, Url));
+    var unlocked = GoToTagsCallback(correlation, Url, locked: false);
+    Throws("gototags_lock_missing", () => GoToTagsCallbackParser.Parse(unlocked, correlation, Url));
+    True(callbackText.Contains("04112233445566", StringComparison.Ordinal));
+    CryptographicOperations.ZeroMemory(body);
+    CryptographicOperations.ZeroMemory(observedVersionBody);
+    CryptographicOperations.ZeroMemory(wrongVersionBody);
+    CryptographicOperations.ZeroMemory(wrongUrl);
+    CryptographicOperations.ZeroMemory(unlocked);
+    return Task.CompletedTask;
+}
+
+static Task TestF8215JobLifecycle()
+{
+    if (!OperatingSystem.IsWindows()) return Task.CompletedTask;
+    var root = CreateProtectedTestDirectory();
+    try
+    {
+        var templatePath = Path.Combine(root, "f8215-gototags-manual-start-v1.json");
+        File.Copy(
+            Path.Combine(FindRepoRoot(), "packages", "ai-grader-nfc-helper", "src", "TenKings.AiGrader.NfcHelper", "Templates", "f8215-gototags-manual-start-v1.json"),
+            templatePath);
+        Equal(NfcProtocol.ApprovedGoToTagsTemplateSha256, Sha256File(templatePath));
+        var options = new GoToTagsAdapterOptions(
+            true,
+            Path.Combine(root, "fake.exe"),
+            templatePath,
+            NfcProtocol.ApprovedGoToTagsTemplateSha256,
+            root);
+        File.WriteAllBytes(options.ExecutablePath, [0x4d, 0x5a]);
+        var runtime = new FakeGoToTagsRuntime();
+        using var signer = new EphemeralTestWorkstationAttestationSigner();
+        using var gate = new NfcOperationGate();
+        var coordinator = new F8215JobCoordinator(
+            options,
+            runtime,
+            new GoToTagsOperationFactory(),
+            signer,
+            gate,
+            47662,
+            new CollectingSafeLogger());
+        var request = new F8215PrepareRequest(
+            "nfc_attempt_f8215_lifecycle_0001",
+            "prepare_idempotency_f8215_0001",
+            TagId,
+            Challenge,
+            Url,
+            DateTimeOffset.UtcNow.AddMinutes(10).ToString("O"),
+            NfcProtocol.FeijuChipType,
+            NfcProtocol.FeijuProgrammingProfile);
+        var prepared = coordinator.Prepare(request, "prepare_test");
+        Equal("awaiting_manual_start", prepared.Phase);
+        True(gate.Busy);
+        Equal(runtime.LaunchedPath, runtime.LaunchedPath is null ? null : Path.GetFullPath(runtime.LaunchedPath));
+        var repeated = coordinator.Prepare(request, "prepare_repeated");
+        Equal("awaiting_manual_start", repeated.Phase);
+        Throws("gototags_job_conflict", () => coordinator.Prepare(
+            request with { AttemptId = "nfc_attempt_f8215_lifecycle_0002" },
+            "prepare_conflict"));
+
+        var generated = ReadGeneratedOperation(runtime.LaunchedPath!);
+        var integrationUrl = generated["integrations"]!.AsArray()[0]!["urlString"]!.GetValue<string>();
+        var callbackIdentity = new Uri(integrationUrl).AbsolutePath.Split('/').Last();
+        var correlation = generated["tags"]!.AsArray()[0]!["encoding"]!["correlationId"]!.GetValue<string>();
+        var body = GoToTagsCallback(correlation, Url);
+        try
+        {
+            coordinator.AcceptCallback(callbackIdentity, body, "callback_test");
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(body);
+        }
+        var status = coordinator.Status(new F8215OperationStatusRequest(request.AttemptId));
+        Equal("completed", status.Phase);
+        True(status.Terminal);
+        True(status.Evidence is not null);
+        Equal(NfcProtocol.FeijuReaderResultCode, status.Evidence!.ReaderResultCode);
+        Equal(NfcProtocol.MultiProfileAttestationSchemaVersion, status.Evidence.OperationalAttestation.SchemaVersion);
+        False(File.Exists(runtime.LaunchedPath));
+        True(File.Exists(Path.Combine(root, "active-job.json")));
+        Throws("gototags_callback_replayed", () => coordinator.AcceptCallback(callbackIdentity, GoToTagsCallback(correlation, Url), "callback_replay"));
+        var acknowledged = coordinator.Acknowledge(new F8215OperationAcknowledgeRequest(request.AttemptId), "ack_test");
+        True(acknowledged.Cleaned);
+        False(gate.Busy);
+        False(File.Exists(Path.Combine(root, "active-job.json")));
+    }
+    finally
+    {
+        Directory.Delete(root, true);
+    }
+    return Task.CompletedTask;
+}
+
+static Task TestF8215RestartRecovery()
+{
+    if (!OperatingSystem.IsWindows()) return Task.CompletedTask;
+    var root = CreateProtectedTestDirectory();
+    try
+    {
+        var templatePath = Path.Combine(root, "f8215-gototags-manual-start-v1.json");
+        File.Copy(
+            Path.Combine(FindRepoRoot(), "packages", "ai-grader-nfc-helper", "src", "TenKings.AiGrader.NfcHelper", "Templates", "f8215-gototags-manual-start-v1.json"),
+            templatePath);
+        var options = new GoToTagsAdapterOptions(
+            true,
+            Path.Combine(root, "fake.exe"),
+            templatePath,
+            NfcProtocol.ApprovedGoToTagsTemplateSha256,
+            root);
+        File.WriteAllBytes(options.ExecutablePath, [0x4d, 0x5a]);
+        var runtime = new FakeGoToTagsRuntime();
+        using var signer = new EphemeralTestWorkstationAttestationSigner();
+        using var firstGate = new NfcOperationGate();
+        var first = new F8215JobCoordinator(
+            options,
+            runtime,
+            new GoToTagsOperationFactory(),
+            signer,
+            firstGate,
+            47662,
+            new CollectingSafeLogger());
+        var request = new F8215PrepareRequest(
+            "nfc_attempt_f8215_restart_0001",
+            "prepare_idempotency_f8215_restart_0001",
+            TagId,
+            Challenge,
+            Url,
+            DateTimeOffset.UtcNow.AddMinutes(10).ToString("O"),
+            NfcProtocol.FeijuChipType,
+            NfcProtocol.FeijuProgrammingProfile);
+        first.Prepare(request, "prepare_restart");
+        var generated = ReadGeneratedOperation(runtime.LaunchedPath!);
+        var integrationUrl = generated["integrations"]!.AsArray()[0]!["urlString"]!.GetValue<string>();
+        var callbackIdentity = new Uri(integrationUrl).AbsolutePath.Split('/').Last();
+        var correlation = generated["tags"]!.AsArray()[0]!["encoding"]!["correlationId"]!.GetValue<string>();
+
+        using var recoveryGate = new NfcOperationGate();
+        var recovered = new F8215JobCoordinator(
+            options,
+            new FakeGoToTagsRuntime(),
+            new GoToTagsOperationFactory(),
+            signer,
+            recoveryGate,
+            47662,
+            new CollectingSafeLogger());
+        Equal("recovering", recovered.Status(new F8215OperationStatusRequest(request.AttemptId)).Phase);
+        Throws("gototags_job_mismatch", () => recovered.Status(new F8215OperationStatusRequest("nfc_attempt_f8215_restart_0002")));
+        var body = GoToTagsCallback(correlation, Url);
+        try
+        {
+            recovered.AcceptCallback(callbackIdentity, body, "callback_after_restart");
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(body);
+        }
+        var completed = recovered.Status(new F8215OperationStatusRequest(request.AttemptId));
+        Equal("completed", completed.Phase);
+        True(completed.Evidence is not null);
+        True(recovered.Acknowledge(new F8215OperationAcknowledgeRequest(request.AttemptId), "ack_after_restart").Cleaned);
+        False(recoveryGate.Busy);
+    }
+    finally
+    {
+        Directory.Delete(root, true);
+    }
+    return Task.CompletedTask;
+}
+
+static async Task TestF8215HttpCallback()
+{
+    if (!OperatingSystem.IsWindows()) return;
+    var root = CreateProtectedTestDirectory();
+    var pairingState = Path.Combine(root, "pairing.state");
+    try
+    {
+        var templatePath = Path.Combine(root, "f8215-gototags-manual-start-v1.json");
+        File.Copy(
+            Path.Combine(FindRepoRoot(), "packages", "ai-grader-nfc-helper", "src", "TenKings.AiGrader.NfcHelper", "Templates", "f8215-gototags-manual-start-v1.json"),
+            templatePath);
+        var adapterOptions = new GoToTagsAdapterOptions(
+            true,
+            Path.Combine(root, "fake.exe"),
+            templatePath,
+            NfcProtocol.ApprovedGoToTagsTemplateSha256,
+            root);
+        File.WriteAllBytes(adapterOptions.ExecutablePath, [0x4d, 0x5a]);
+        var runtime = new FakeGoToTagsRuntime();
+        using var signer = new EphemeralTestWorkstationAttestationSigner();
+        using var gate = new NfcOperationGate();
+        var port = FreePort();
+        var coordinator = new F8215JobCoordinator(
+            adapterOptions,
+            runtime,
+            new GoToTagsOperationFactory(),
+            signer,
+            gate,
+            port,
+            new CollectingSafeLogger());
+        var request = new F8215PrepareRequest(
+            "nfc_attempt_f8215_http_0001",
+            "prepare_idempotency_f8215_http_0001",
+            TagId,
+            Challenge,
+            Url,
+            DateTimeOffset.UtcNow.AddMinutes(10).ToString("O"),
+            NfcProtocol.FeijuChipType,
+            NfcProtocol.FeijuProgrammingProfile);
+        coordinator.Prepare(request, "prepare_http");
+        var generated = ReadGeneratedOperation(runtime.LaunchedPath!);
+        var integrationUrl = generated["integrations"]!.AsArray()[0]!["urlString"]!.GetValue<string>();
+        var callbackPath = new Uri(integrationUrl).AbsolutePath;
+        var correlation = generated["tags"]!.AsArray()[0]!["encoding"]!["correlationId"]!.GetValue<string>();
+        var token = Base64Url(RandomNumberGenerator.GetBytes(32));
+        var options = new NfcHttpServerOptions(
+            port,
+            NfcProtocol.ProductionOrigin,
+            token,
+            null,
+            DateTimeOffset.MinValue,
+            pairingState);
+        var logger = new CollectingSafeLogger();
+        await using var server = new NfcHttpServer(
+            options,
+            new NfcOperationsService(new FakeNfcReaderBackend(), signer, logger, operationGate: gate),
+            logger,
+            coordinator);
+        using var stop = new CancellationTokenSource();
+        var running = server.RunAsync(stop.Token);
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}"), Timeout = TimeSpan.FromSeconds(2) };
+        await WaitHttp(client, running);
+
+        using (var wrongMethod = new HttpRequestMessage(HttpMethod.Get, callbackPath))
+        using (var wrongMethodResponse = await client.SendAsync(wrongMethod))
+            Equal(HttpStatusCode.MethodNotAllowed, wrongMethodResponse.StatusCode);
+
+        var body = GoToTagsCallback(correlation, Url);
+        try
+        {
+            using (var wrongHost = new HttpRequestMessage(HttpMethod.Post, callbackPath)
+            {
+                Content = new ByteArrayContent(body),
+            })
+            {
+                wrongHost.Headers.Host = $"localhost:{port}";
+                wrongHost.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+                using var wrongHostResponse = await client.SendAsync(wrongHost);
+                Equal(HttpStatusCode.Forbidden, wrongHostResponse.StatusCode);
+            }
+            using (var missingType = new HttpRequestMessage(HttpMethod.Post, callbackPath)
+            {
+                Content = new ByteArrayContent(body),
+            })
+            using (var missingTypeResponse = await client.SendAsync(missingType))
+                Equal(HttpStatusCode.UnsupportedMediaType, missingTypeResponse.StatusCode);
+
+            using (var valid = new HttpRequestMessage(HttpMethod.Post, callbackPath)
+            {
+                Content = new ByteArrayContent(body),
+            })
+            {
+                valid.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+                using var validResponse = await client.SendAsync(valid);
+                Equal(HttpStatusCode.NoContent, validResponse.StatusCode);
+            }
+            using (var replay = new HttpRequestMessage(HttpMethod.Post, callbackPath)
+            {
+                Content = new ByteArrayContent(body),
+            })
+            {
+                replay.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+                using var replayResponse = await client.SendAsync(replay);
+                Equal(HttpStatusCode.Conflict, replayResponse.StatusCode);
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(body);
+        }
+
+        using var status = Request(
+            HttpMethod.Post,
+            "/operation-status",
+            token,
+            content: JsonContent.Create(new F8215OperationStatusRequest(request.AttemptId), NfcJsonContext.Default.F8215OperationStatusRequest));
+        using var statusResponse = await client.SendAsync(status);
+        Equal(HttpStatusCode.OK, statusResponse.StatusCode);
+        var statusText = await statusResponse.Content.ReadAsStringAsync();
+        True(statusText.Contains("\"phase\":\"completed\"", StringComparison.Ordinal));
+        False(statusText.Contains("04112233445566", StringComparison.OrdinalIgnoreCase));
+        False(logger.Entries.Any(entry => entry.Contains("04112233445566", StringComparison.OrdinalIgnoreCase)));
+        coordinator.Acknowledge(new F8215OperationAcknowledgeRequest(request.AttemptId), "ack_http");
+        stop.Cancel();
+        await running;
+    }
+    finally
+    {
+        Directory.Delete(root, true);
+    }
 }
 
 static Task TestNdef()
@@ -553,6 +927,22 @@ static async Task TestHardwareGate()
     False(confirmed.OverwriteConfirmationRequired);
 }
 
+static async Task TestF8215HardwareGateApproval()
+{
+    const string name = "TENKINGS_NFC_F8215_HARDWARE_GATE_CONFIRMED";
+    var prior = Environment.GetEnvironmentVariable(name);
+    try
+    {
+        Environment.SetEnvironmentVariable(name, null);
+        await ThrowsAsync("f8215_hardware_gate_approval_required", () =>
+            F8215HardwareGateRunner.RunAsync(CancellationToken.None));
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable(name, prior);
+    }
+}
+
 static async Task TestHttp()
 {
     var port = FreePort();
@@ -719,6 +1109,7 @@ static Task TestProvisioningContracts()
     var export = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "export-ai-grader-nfc-workstation-public-key.ps1"));
     var update = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "update-ai-grader-nfc-helper.ps1"));
     var rotate = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "rotate-ai-grader-nfc-helper-token.ps1"));
+    var configureFeiju = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "configure-ai-grader-nfc-feiju-f8215.ps1"));
     True(install.Contains("--ensure-workstation-attestation-key", StringComparison.Ordinal));
     True(common.Contains("workstationKeyName", StringComparison.Ordinal));
     True(common.Contains("workstationKeyId", StringComparison.Ordinal));
@@ -760,6 +1151,14 @@ static Task TestProvisioningContracts()
     True(common.Contains("Copy-NfcStableMaintenancePayload", StringComparison.Ordinal));
     True(common.Contains("Assert-NfcScheduledTaskDefinition", StringComparison.Ordinal));
     True(common.Contains("the prior working install was restored", StringComparison.Ordinal));
+    True(install.Contains("tenkings-ai-grader-nfc-helper-v3", StringComparison.Ordinal));
+    True(install.Contains(NfcProtocol.MultiProfileAttestationSchemaVersion, StringComparison.Ordinal));
+    True(configureFeiju.Contains(NfcProtocol.ApprovedGoToTagsVersion, StringComparison.Ordinal));
+    True(configureFeiju.Contains("CN=GoToTags, O=GoToTags, S=Washington, C=US", StringComparison.Ordinal));
+    True(configureFeiju.Contains("feijuF8215Enabled", StringComparison.Ordinal));
+    False(configureFeiju.Contains("Set-Service", StringComparison.OrdinalIgnoreCase));
+    True(start.Contains("TENKINGS_NFC_FEIJU_F8215_ENABLED", StringComparison.Ordinal));
+    True(start.Contains("TENKINGS_NFC_GOTOTAGS_JOB_ROOT", StringComparison.Ordinal));
 
     var publicOnly = JsonSerializer.Serialize(
         new WorkstationPublicKeyExport(new string('a', 64), NfcProtocol.AttestationAlgorithm, "public-spki-only"),
@@ -781,6 +1180,94 @@ static NfcWriteRequest WriteRequest(
         ? url[NfcProtocol.ProductionUrlPrefix.Length..]
         : string.Empty;
     return new NfcWriteRequest(attemptId, idempotencyKey, publicTagId, challenge, url, overwrite);
+}
+
+static byte[] GoToTagsCallback(
+    string correlation,
+    string encodedUrl,
+    string? readbackUrl = null,
+    bool locked = true,
+    string? appVersion = null)
+{
+    var record = new JsonObject { ["type"] = "WEBSITE", ["url"] = encodedUrl };
+    var readback = new JsonObject { ["type"] = "WEBSITE", ["url"] = readbackUrl ?? encodedUrl };
+    var root = new JsonObject
+    {
+        ["status"] = "VERIFIED",
+        ["client"] = new JsonObject { ["appVersion"] = appVersion ?? NfcProtocol.ApprovedGoToTagsVersion },
+        ["reader"] = new JsonObject
+        {
+            ["hardware"] = "ACR1552U",
+            ["name"] = "ACS ACR1552U (TEST-READER-0001) (PCSC2)",
+        },
+        ["encoding"] = new JsonObject
+        {
+            ["correlationId"] = correlation,
+            ["lock"] = true,
+            ["ndef"] = new JsonObject
+            {
+                ["lock"] = true,
+                ["records"] = new JsonArray(record),
+            },
+        },
+        ["tag"] = new JsonObject
+        {
+            ["manufacturer"] = "FEIJU",
+            ["chipType"] = "F8215",
+            ["tagType"] = "TYPE_2",
+            ["tech"] = "TYPE2",
+            ["technology"] = "NFC",
+            ["format"] = "NDEF",
+            ["uid"] = "04112233445566",
+            ["locked"] = locked,
+            ["lockedStatic"] = locked,
+            ["cc"] = new JsonObject { ["ndefVersion"] = "V1_0", ["memorySize"] = 496 },
+            ["ndef"] = new JsonObject
+            {
+                ["message"] = new JsonObject { ["records"] = new JsonArray(readback) },
+            },
+        },
+    };
+    return JsonSerializer.SerializeToUtf8Bytes(root);
+}
+
+static string CreateProtectedTestDirectory()
+{
+    var path = Path.Combine(Path.GetTempPath(), $"tenkings-f8215-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(path);
+    var current = WindowsIdentity.GetCurrent().User ?? throw new Exception("Current Windows identity unavailable.");
+    var security = new DirectorySecurity();
+    security.SetAccessRuleProtection(true, false);
+    foreach (var identity in new IdentityReference[]
+    {
+        current,
+        new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+        new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+    })
+    {
+        security.AddAccessRule(new FileSystemAccessRule(
+            identity,
+            FileSystemRights.FullControl,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+            PropagationFlags.None,
+            AccessControlType.Allow));
+    }
+    new DirectoryInfo(path).SetAccessControl(security);
+    return path;
+}
+
+static JsonObject ReadGeneratedOperation(string path)
+{
+    using var stream = File.OpenRead(path);
+    using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+    using var input = archive.GetEntry("file.gototags")!.Open();
+    return JsonNode.Parse(input)!.AsObject();
+}
+
+static string Sha256File(string path)
+{
+    using var stream = File.OpenRead(path);
+    return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
 }
 
 static string FindRepoRoot()
@@ -901,4 +1388,11 @@ static async Task<NfcHelperException> ThrowsAsync(string code, Func<Task> action
         return error;
     }
     throw new Exception($"Expected NFC error {code}.");
+}
+
+sealed class FakeGoToTagsRuntime : IGoToTagsAdapterRuntime
+{
+    public string? LaunchedPath { get; private set; }
+    public GoToTagsAdapterInspection Inspect(GoToTagsAdapterOptions options) => new(true);
+    public void LaunchOperation(GoToTagsAdapterOptions options, string operationPath) => LaunchedPath = Path.GetFullPath(operationPath);
 }

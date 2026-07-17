@@ -369,12 +369,19 @@ enum GradingMode {
 
 enum AiGraderNfcChipType {
   NTAG215
+  FEIJU_F8215
   NTAG424_DNA
 }
 
 enum AiGraderNfcSecurityMode {
   static_url_v1
   ntag424_sun_v1
+}
+
+enum AiGraderNfcProgrammingProfile {
+  ntag215_direct_pcsc_v1
+  gototags_manual_start_v1
+  ntag424_dna_unimplemented
 }
 
 enum AiGraderNfcTagStatus {
@@ -3102,6 +3109,7 @@ model AiGraderNfcTag {
   publicTagId               String                          @unique
   chipType                  AiGraderNfcChipType             @default(NTAG215)
   securityMode              AiGraderNfcSecurityMode         @default(static_url_v1)
+  programmingProfile        AiGraderNfcProgrammingProfile   @default(ntag215_direct_pcsc_v1)
   status                    AiGraderNfcTagStatus             @default(reserved)
   uidFingerprintSha256      String?
   ndefPayloadVersion        Int                             @default(1)

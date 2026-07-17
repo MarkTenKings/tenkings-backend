@@ -12,7 +12,11 @@ const ACK = "--ack-disposable-local-postgres";
 const SERVICE = "ai-grader-nfc-validation-postgres";
 const DB_USER = "tenkings_nfc_validation";
 const DB_NAME = "tenkings_ai_grader_nfc_validation";
-const TARGET_MIGRATION = "20260712160000_ai_grader_nfc_static_url_v1";
+const TARGET_MIGRATIONS = [
+  "20260712160000_ai_grader_nfc_static_url_v1",
+  "20260716225000_ai_grader_nfc_feiju_f8215_chip_type",
+  "20260716230000_ai_grader_nfc_feiju_f8215_gototags_two_click",
+];
 const SENTINEL = "AI_GRADER_NFC_DISPOSABLE_VALIDATION";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -155,14 +159,16 @@ function migrationLedgerSnapshot(expectedMigrationCount) {
     "checking for unfinished disposable migrations",
   );
   if (unfinished !== "0") fail("The disposable database contains an unfinished migration.");
-  const targetCount = queryScalar(
-    `SELECT count(*) FROM "_prisma_migrations"
-       WHERE "migration_name" = '${TARGET_MIGRATION}'
-         AND "finished_at" IS NOT NULL
-         AND "rolled_back_at" IS NULL`,
-    "checking the NFC migration ledger entry",
-  );
-  if (targetCount !== "1") fail("The NFC migration must have exactly one successful ledger entry.");
+  for (const targetMigration of TARGET_MIGRATIONS) {
+    const targetCount = queryScalar(
+      `SELECT count(*) FROM "_prisma_migrations"
+         WHERE "migration_name" = '${targetMigration}'
+           AND "finished_at" IS NOT NULL
+           AND "rolled_back_at" IS NULL`,
+      "checking each NFC migration ledger entry",
+    );
+    if (targetCount !== "1") fail("Each NFC migration must have exactly one successful ledger entry.");
+  }
   return snapshot;
 }
 

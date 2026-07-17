@@ -26,7 +26,7 @@ type PublicNfcRegistration = {
   status: "active";
   registrationKind: "registered_link";
   publicTagId: string;
-  chipType: "NTAG215";
+  chipType: "NTAG215" | "FEIJU_F8215";
   securityMode: "static_url_v1";
   nfcTagUrl: string;
 };
@@ -41,7 +41,7 @@ function safePublicNfcRegistration(value: unknown): PublicNfcRegistration | null
   if (
     row.status !== "active" ||
     row.registrationKind !== "registered_link" ||
-    row.chipType !== "NTAG215" ||
+    (row.chipType !== "NTAG215" && row.chipType !== "FEIJU_F8215") ||
     row.securityMode !== "static_url_v1" ||
     row.nfcTagUrl !== expectedUrl
   ) return null;
@@ -380,7 +380,9 @@ export default function AiGraderReportViewerPage() {
                 <article>
                   <span>NFC registration</span>
                   <strong>Registered Ten Kings NFC link</strong>
-                  <p>Linked to this Ten Kings AI Grader report. This NTAG215 link is not cryptographic authentication.</p>
+                  <p>
+                    Linked to this Ten Kings AI Grader report. This {publicNfcRegistration.chipType === "FEIJU_F8215" ? "write-protected F8215" : "NTAG215"} link is not cryptographic authentication.
+                  </p>
                   <a href={publicNfcRegistration.nfcTagUrl}>Open registered NFC link</a>
                 </article>
               ) : null}

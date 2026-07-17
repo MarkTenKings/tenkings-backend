@@ -7,6 +7,7 @@ const { buildAiGraderPublishAuthorityRecord } = require("../dist/database/src/ai
 const {
   AI_GRADER_NFC_ATTESTATION_ALGORITHM,
   AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION,
+  AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2,
   AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
   buildAiGraderNfcOperationalAttestationStatement,
   buildAiGraderNfcTagUrl,
@@ -95,6 +96,7 @@ test("NFC schema readiness checks every migrated runtime column and exact catalo
   const expectedColumns = {
     AiGraderNfcTag: [
       "id", "tenantId", "publicTagId", "chipType", "securityMode", "status",
+      "programmingProfile",
       "uidFingerprintSha256", "ndefPayloadVersion", "expectedPayloadSha256",
       "readbackPayloadSha256", "aiGraderReportId", "reportId", "cardAssetId",
       "itemId", "aiGraderLabelId", "certId", "createdByUserId",
@@ -127,6 +129,7 @@ test("NFC schema readiness checks every migrated runtime column and exact catalo
     "completedWorkstationKeyId",
     "readbackEvidence",
     "20260712160000_ai_grader_nfc_static_url_v1",
+    "20260716230000_ai_grader_nfc_feiju_f8215_gototags_two_click",
     "AiGraderNfcTag_publicTagId_key",
     "AiGraderNfcProgrammingAttempt_tokenHash_key",
     "AiGraderNfcAttempt_request_idempotency_key",
@@ -510,6 +513,65 @@ function signedCompletionInput(runtime, init, options = {}) {
   };
 }
 
+function signedFeijuCompletionInput(runtime, init, options = {}) {
+  const observedAt = options.observedAt ?? new Date(NOW.getTime() + 5_000).toISOString();
+  const statementInput = {
+    schemaVersion: AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2,
+    attemptId: init.attemptId,
+    attestationChallenge: init.attestationChallenge,
+    publicTagId: init.publicTagId,
+    normalizedUrl: init.expectedNdefUrl,
+    chipType: "FEIJU_F8215",
+    securityMode: "static_url_v1",
+    programmingProfile: "gototags_manual_start_v1",
+    adapterIdentity: "gototags_desktop",
+    adapterVersion: "4.37.0.1",
+    uidFingerprintSha256: options.uidFingerprintSha256 ?? "c".repeat(64),
+    readbackPayloadSha256: sha256(init.expectedNdefUrl),
+    writeProtectionState: "permanently_read_only_verified",
+    readerResultCode: "write_locked_verified_gototags_readback",
+    helperProtocolVersion: AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
+    observedAt,
+    ...(options.statementOverrides ?? {}),
+  };
+  const statement = buildAiGraderNfcOperationalAttestationStatement(statementInput);
+  const signature = sign("sha256", Buffer.from(statement, "utf8"), {
+    key: WORKSTATION.privateKey,
+    dsaEncoding: "ieee-p1363",
+  }).toString("base64url");
+  return {
+    ...linkage,
+    requestedByUserId: "operator-1",
+    attemptId: init.attemptId,
+    attemptToken: init.attemptToken,
+    publicTagId: init.publicTagId,
+    idempotencyKey: "complete-feiju-report-1",
+    uidFingerprintSha256: statementInput.uidFingerprintSha256,
+    normalizedNdefUrl: init.expectedNdefUrl,
+    readbackPayloadSha256: statementInput.readbackPayloadSha256,
+    chipType: "FEIJU_F8215",
+    securityMode: "static_url_v1",
+    programmingProfile: "gototags_manual_start_v1",
+    adapterIdentity: "gototags_desktop",
+    adapterVersion: "4.37.0.1",
+    writeProtectionState: "permanently_read_only_verified",
+    readerResultCode: "write_locked_verified_gototags_readback",
+    helperProtocolVersion: AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
+    operationalAttestation: {
+      schemaVersion: AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2,
+      workstationKeyId: WORKSTATION.keyId,
+      algorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
+      attestationChallenge: init.attestationChallenge,
+      observedAt,
+      signature,
+    },
+    ...PROGRAMMING_RUNTIME,
+    feijuF8215Enabled: true,
+    dbClient: runtime.db,
+    now: new Date(NOW.getTime() + 5_000),
+  };
+}
+
 async function complete(runtime, init, overrides = {}, signedOptions = {}) {
   const base = signedCompletionInput(runtime, init, signedOptions);
   return completeAiGraderNfcProgramming({
@@ -534,10 +596,15 @@ test("NFC publicTagId is 192-bit random, URL-safe, unique, and server constructs
 
 test("NTAG215 is registered-link only and future NTAG424 seam cannot claim crypto success", () => {
   assert.deepEqual(describeAiGraderNfcSecurityStrategy("NTAG215", "static_url_v1"), {
-    chipType: "NTAG215", securityMode: "static_url_v1", implemented: true,
+    chipType: "NTAG215", securityMode: "static_url_v1", programmingProfile: "ntag215_direct_pcsc_v1", implemented: true,
+    registrationKind: "registered_link", cryptographicVerificationAvailable: false,
+  });
+  assert.deepEqual(describeAiGraderNfcSecurityStrategy("FEIJU_F8215", "static_url_v1"), {
+    chipType: "FEIJU_F8215", securityMode: "static_url_v1", programmingProfile: "gototags_manual_start_v1", implemented: true,
     registrationKind: "registered_link", cryptographicVerificationAvailable: false,
   });
   const future = describeAiGraderNfcSecurityStrategy("NTAG424_DNA", "ntag424_sun_v1");
+  assert.equal(future.programmingProfile, "ntag424_dna_unimplemented");
   assert.equal(future.implemented, false);
   assert.equal(future.registrationKind, null);
   assert.equal(future.cryptographicVerificationAvailable, false);
@@ -672,6 +739,70 @@ test("complete activates exactly once, allows only exact idempotent retry, and n
     ...signed,
     idempotencyKey: "different-complete-key",
   }), { code: "AI_GRADER_NFC_TOKEN_REPLAY" });
+});
+
+test("F8215 is separately default-off and activates only with exact v2 lock/readback evidence", async () => {
+  const disabledRuntime = mockDb();
+  await assert.rejects(reserve(disabledRuntime, "init-feiju-disabled", {
+    chipType: "FEIJU_F8215",
+    programmingProfile: "gototags_manual_start_v1",
+  }), { code: "AI_GRADER_NFC_FEIJU_F8215_DISABLED" });
+  assert.equal(disabledRuntime.state.tags.length, 0);
+
+  const runtime = mockDb();
+  const init = await reserve(runtime, "init-feiju-enabled", {
+    chipType: "FEIJU_F8215",
+    programmingProfile: "gototags_manual_start_v1",
+    feijuF8215Enabled: true,
+  });
+  assert.equal(init.chipType, "FEIJU_F8215");
+  assert.equal(init.programmingProfile, "gototags_manual_start_v1");
+  const signed = signedFeijuCompletionInput(runtime, init);
+  const active = await completeAiGraderNfcProgramming(signed);
+  assert.equal(active.status, "active");
+  assert.equal(active.chipType, "FEIJU_F8215");
+  assert.equal(active.programmingProfile, "gototags_manual_start_v1");
+  assert.equal(active.registrationKind, "registered_link");
+  assert.equal(active.cryptographicallyVerified, false);
+  assert.equal("uidFingerprintSha256" in active, false);
+  assert.deepEqual(runtime.state.attempts[0].readbackEvidence, {
+    schemaVersion: AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2,
+    workstationKeyId: WORKSTATION.keyId,
+    algorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
+    statementSha256: runtime.state.attempts[0].readbackEvidence.statementSha256,
+    signature: signed.operationalAttestation.signature,
+    observedAt: signed.operationalAttestation.observedAt,
+    helperProtocolVersion: AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
+    readerResultCode: "write_locked_verified_gototags_readback",
+    cryptographicTagAuthentication: false,
+    workstationOperationalAttestation: true,
+    chipType: "FEIJU_F8215",
+    securityMode: "static_url_v1",
+    programmingProfile: "gototags_manual_start_v1",
+    adapterIdentity: "gototags_desktop",
+    adapterVersion: "4.37.0.1",
+    uidFingerprintSha256: "c".repeat(64),
+    readbackPayloadSha256: sha256(init.expectedNdefUrl),
+    writeProtectionState: "permanently_read_only_verified",
+  });
+
+  let rejectIndex = 0;
+  for (const mutate of [
+    (base) => ({ ...base, adapterVersion: "4.38.0.0" }),
+    (base) => ({ ...base, writeProtectionState: "unknown" }),
+    (base) => ({ ...base, readerResultCode: "write_verified_pcsc_readback" }),
+    (base) => ({ ...base, programmingProfile: "ntag215_direct_pcsc_v1" }),
+  ]) {
+    rejectIndex += 1;
+    const rejectedRuntime = mockDb();
+    const rejectedInit = await reserve(rejectedRuntime, `init-feiju-reject-${rejectIndex}`, {
+      chipType: "FEIJU_F8215",
+      programmingProfile: "gototags_manual_start_v1",
+      feijuF8215Enabled: true,
+    });
+    await assert.rejects(completeAiGraderNfcProgramming(mutate(signedFeijuCompletionInput(rejectedRuntime, rejectedInit))));
+    assert.notEqual(rejectedRuntime.state.tags[0].status, "active");
+  }
 });
 
 test("completion requires a current tenant workstation key and an exact valid P1363 operational signature", async () => {
@@ -1124,5 +1255,41 @@ test("unapplied NFC migration requires operational attestation evidence without 
   assert.doesNotMatch(migration, /"privateKey"\s+TEXT/i);
   assert.doesNotMatch(migration, /"rawUid"\s+TEXT/i);
   assert.doesNotMatch(migration, /"apdu"\s+TEXT/i);
+  assert.doesNotMatch(migration, /DROP\s+(TABLE|COLUMN|TYPE)/i);
+});
+
+test("additive F8215 migration preserves NTAG215 evidence and binds the exact locked profile", () => {
+  const migration = [
+    "20260716225000_ai_grader_nfc_feiju_f8215_chip_type",
+    "20260716230000_ai_grader_nfc_feiju_f8215_gototags_two_click",
+  ].map((migrationName) => readFileSync(join(
+    __dirname,
+    "..",
+    "prisma",
+    "migrations",
+    migrationName,
+    "migration.sql",
+  ), "utf8")).join("\n");
+  for (const required of [
+    "ALTER TYPE \"AiGraderNfcChipType\" ADD VALUE 'FEIJU_F8215'",
+    "CREATE TYPE \"AiGraderNfcProgrammingProfile\"",
+    "\"programmingProfile\" \"AiGraderNfcProgrammingProfile\" NOT NULL",
+    "ntag215_direct_pcsc_v1",
+    "gototags_manual_start_v1",
+    "ntag424_dna_unimplemented",
+    "ai-grader-nfc-helper-attestation-v1",
+    "ai-grader-nfc-helper-attestation-v2",
+    "write_locked_verified_gototags_readback",
+    "gototags_desktop",
+    "4.37.0.1",
+    "permanently_read_only_verified",
+    "uidFingerprintSha256",
+    "readbackPayloadSha256",
+    "cryptographicTagAuthentication",
+    "workstationOperationalAttestation",
+  ]) assert.equal(migration.includes(required), true, `F8215 migration is missing ${required}`);
+  assert.doesNotMatch(migration, /"rawUid"\s+TEXT/i);
+  assert.doesNotMatch(migration, /"ipAddress"\s+TEXT/i);
+  assert.doesNotMatch(migration, /"phoneIdentifier"\s+TEXT/i);
   assert.doesNotMatch(migration, /DROP\s+(TABLE|COLUMN|TYPE)/i);
 });

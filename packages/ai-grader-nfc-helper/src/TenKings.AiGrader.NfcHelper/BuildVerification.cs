@@ -35,6 +35,25 @@ public static class NfcBuildVerification
         {
             if (!WorkstationAttestation.Verify(spki, fields, attestation.Signature))
                 throw VerificationFailed();
+            var multiProfileFields = new MultiProfileAttestationFields(
+                "build_verification_attempt",
+                VerificationChallenge,
+                VerificationTagId,
+                url,
+                NfcProtocol.FeijuChipType,
+                NfcProtocol.SecurityMode,
+                NfcProtocol.FeijuProgrammingProfile,
+                NfcProtocol.FeijuAdapterIdentity,
+                NfcProtocol.ApprovedGoToTagsVersion,
+                new string('b', 64),
+                encoded.PayloadSha256,
+                NfcProtocol.FeijuWriteProtectionState,
+                NfcProtocol.FeijuReaderResultCode,
+                NfcProtocol.ProtocolVersion,
+                "2026-01-01T00:00:00.000Z");
+            var multiProfileAttestation = MultiProfileWorkstationAttestation.Create(signer, multiProfileFields);
+            if (!MultiProfileWorkstationAttestation.Verify(spki, multiProfileFields, multiProfileAttestation.Signature))
+                throw VerificationFailed();
         }
         finally
         {
@@ -46,6 +65,7 @@ public static class NfcBuildVerification
             NfcProtocol.HelperVersion,
             NfcProtocol.ProtocolVersion,
             NfcProtocol.AttestationSchemaVersion,
+            NfcProtocol.MultiProfileAttestationSchemaVersion,
             NfcProtocol.AttestationAlgorithm,
             false,
             false);

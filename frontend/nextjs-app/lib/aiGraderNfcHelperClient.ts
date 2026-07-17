@@ -2,6 +2,7 @@ export const AI_GRADER_NFC_HELPER_BASE_URL = "http://127.0.0.1:47662";
 export const AI_GRADER_NFC_HELPER_TOKEN_STORAGE_KEY = "tenkings.aiGrader.nfc.workstationToken.v1";
 export const AI_GRADER_NFC_HELPER_PROTOCOL_VERSION = "tenkings-ai-grader-nfc-loopback-v2";
 export const AI_GRADER_NFC_INIT_IDEMPOTENCY_STORAGE_PREFIX = "tenkings.aiGrader.nfc.initIdempotency.v1:";
+export const AI_GRADER_NFC_PROFILE_STORAGE_KEY = "tenkings.aiGrader.nfc.profile.v1";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const WRITE_TIMEOUT_MS = 45_000;
@@ -24,20 +25,31 @@ export type AiGraderNfcHelperStatus = {
     tagSelectionEvidence: string;
   } | null;
   errorCode?: string | null;
+  supportedProfiles?: Array<{
+    chipType: "NTAG215" | "FEIJU_F8215" | "NTAG424_DNA";
+    securityMode: "static_url_v1" | "ntag424_sun_v1";
+    programmingProfile: "ntag215_direct_pcsc_v1" | "gototags_manual_start_v1" | "ntag424_dna_unimplemented";
+    adapterIdentity: string;
+    implemented: boolean;
+    permanentlyLocksTag: boolean;
+  }> | null;
+  feijuF8215Enabled?: boolean;
+  goToTagsReady?: boolean;
+  goToTagsErrorCode?: string | null;
 };
 
 export type AiGraderNfcHelperWriteResult = {
   normalizedUrl?: string;
   uidFingerprintSha256?: string;
   readbackPayloadSha256?: string;
-  chipType?: "NTAG215";
+  chipType?: "NTAG215" | "FEIJU_F8215";
   readerResultCode?: string;
   helperProtocolVersion?: string;
   overwriteRequired?: boolean;
   observedPayloadSha256?: string | null;
   existingContentKind?: "blank" | "same" | "different" | "unsupported";
   operationalAttestation?: {
-    schemaVersion: "ai-grader-nfc-helper-attestation-v1";
+    schemaVersion: "ai-grader-nfc-helper-attestation-v1" | "ai-grader-nfc-helper-attestation-v2";
     workstationKeyId: string;
     algorithm: "ecdsa-p256-sha256-p1363";
     attestationChallenge: string;
@@ -45,6 +57,38 @@ export type AiGraderNfcHelperWriteResult = {
     signature: string;
   } | null;
 };
+
+export type AiGraderF8215CompletionEvidence = {
+  helperProtocolVersion: string;
+  chipType: "FEIJU_F8215";
+  securityMode: "static_url_v1";
+  programmingProfile: "gototags_manual_start_v1";
+  adapterIdentity: "gototags_desktop";
+  adapterVersion: "4.37.0.1";
+  normalizedUrl: string;
+  uidFingerprintSha256: string;
+  readbackPayloadSha256: string;
+  writeProtectionState: "permanently_read_only_verified";
+  readerResultCode: "write_locked_verified_gototags_readback";
+  operationalAttestation: NonNullable<AiGraderNfcHelperWriteResult["operationalAttestation"]>;
+};
+
+export type AiGraderF8215OperationStatus = {
+  helperProtocolVersion: string;
+  attemptId: string;
+  chipType: "FEIJU_F8215";
+  programmingProfile: "gototags_manual_start_v1";
+  phase: "preparing" | "awaiting_manual_start" | "recovering" | "encoding" | "verifying" | "locking" | "final_verification" | "completed" | "failed" | "uncertain";
+  terminal: boolean;
+  retryable: boolean;
+  errorCode?: string | null;
+  evidence?: AiGraderF8215CompletionEvidence | null;
+};
+
+export type AiGraderF8215PrepareResult = Pick<
+  AiGraderF8215OperationStatus,
+  "helperProtocolVersion" | "attemptId" | "chipType" | "programmingProfile" | "phase"
+>;
 
 export class AiGraderNfcHelperError extends Error {
   readonly code: string;
@@ -81,7 +125,7 @@ export function clearAiGraderNfcHelperPairing() {
 }
 
 async function helperRequest<T>(
-  path: "/pair" | "/status" | "/read" | "/write",
+  path: "/pair" | "/status" | "/read" | "/write" | "/prepare" | "/operation-status" | "/operation-ack",
   input: { method?: "GET" | "POST"; body?: JsonRecord; tokenRequired?: boolean; timeoutMs?: number } = {},
 ): Promise<T> {
   const token = workstationToken();
@@ -192,6 +236,56 @@ export function writeAiGraderNfcTag(input: {
     tokenRequired: true,
     timeoutMs: WRITE_TIMEOUT_MS,
   });
+}
+
+export function prepareAiGraderF8215Job(input: {
+  attemptId: string;
+  idempotencyKey: string;
+  publicTagId: string;
+  attestationChallenge: string;
+  url: string;
+  attemptExpiresAt: string;
+}) {
+  return helperRequest<AiGraderF8215PrepareResult>("/prepare", {
+    method: "POST",
+    body: {
+      ...input,
+      chipType: "FEIJU_F8215",
+      programmingProfile: "gototags_manual_start_v1",
+    },
+    tokenRequired: true,
+  });
+}
+
+export function getAiGraderF8215OperationStatus(attemptId: string) {
+  return helperRequest<AiGraderF8215OperationStatus>("/operation-status", {
+    method: "POST",
+    body: { attemptId },
+    tokenRequired: true,
+  });
+}
+
+export function acknowledgeAiGraderF8215Operation(attemptId: string) {
+  return helperRequest<{ helperProtocolVersion: string; attemptId: string; cleaned: boolean }>("/operation-ack", {
+    method: "POST",
+    body: { attemptId },
+    tokenRequired: true,
+  });
+}
+
+export type AiGraderNfcSelectedProfile = "NTAG215_DIRECT_PCSC" | "FEIJU_F8215_GOTOTAGS_MANUAL_START";
+
+export function readAiGraderNfcSelectedProfile(storage: Pick<Storage, "getItem"> = window.localStorage): AiGraderNfcSelectedProfile {
+  return storage.getItem(AI_GRADER_NFC_PROFILE_STORAGE_KEY) === "FEIJU_F8215_GOTOTAGS_MANUAL_START"
+    ? "FEIJU_F8215_GOTOTAGS_MANUAL_START"
+    : "NTAG215_DIRECT_PCSC";
+}
+
+export function writeAiGraderNfcSelectedProfile(
+  profile: AiGraderNfcSelectedProfile,
+  storage: Pick<Storage, "setItem"> = window.localStorage,
+) {
+  storage.setItem(AI_GRADER_NFC_PROFILE_STORAGE_KEY, profile);
 }
 
 type SessionStorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;

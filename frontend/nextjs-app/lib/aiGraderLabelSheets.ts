@@ -70,7 +70,7 @@ export type AiGraderLabelNfcRegistrationDto = {
   registrationKind: "registered_link";
   publicTagId: string;
   nfcTagUrl: string;
-  chipType: "NTAG215";
+  chipType: "NTAG215" | "FEIJU_F8215";
   securityMode: "static_url_v1";
 };
 export type AiGraderLabelSheetLabelDto = {
@@ -280,8 +280,9 @@ function safeLabelNfcRegistration(value: unknown): AiGraderLabelNfcRegistrationD
   if (!publicTagId || !/^[A-Za-z0-9_-]{32}$/.test(publicTagId)) return undefined;
   const expectedUrl = `https://collect.tenkings.co/nfc/${publicTagId}`;
   const securityMode = optionalString(value.securityMode) === "STATIC_URL_V1" ? "static_url_v1" : optionalString(value.securityMode);
-  if (optionalString(value.nfcTagUrl) !== expectedUrl || optionalString(value.chipType) !== "NTAG215" || securityMode !== "static_url_v1") return undefined;
-  return { status: "active", registrationKind: "registered_link", publicTagId, nfcTagUrl: expectedUrl, chipType: "NTAG215", securityMode: "static_url_v1" };
+  const chipType = optionalString(value.chipType);
+  if (optionalString(value.nfcTagUrl) !== expectedUrl || (chipType !== "NTAG215" && chipType !== "FEIJU_F8215") || securityMode !== "static_url_v1") return undefined;
+  return { status: "active", registrationKind: "registered_link", publicTagId, nfcTagUrl: expectedUrl, chipType, securityMode: "static_url_v1" };
 }
 function safeLabelV1Summary(value: unknown): AiGraderLabelSheetLabelDto["labelV1"] {
   if (!isRecord(value) || value.schemaVersion !== AI_GRADER_LABEL_V1_RUNTIME_SCHEMA_VERSION) return undefined;

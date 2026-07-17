@@ -5,16 +5,22 @@ import {
   AI_GRADER_NFC_HELPER_PROTOCOL_VERSION,
   AI_GRADER_NFC_INIT_IDEMPOTENCY_STORAGE_PREFIX,
   AI_GRADER_NFC_HELPER_TOKEN_STORAGE_KEY,
+  AI_GRADER_NFC_PROFILE_STORAGE_KEY,
+  acknowledgeAiGraderF8215Operation,
   AiGraderNfcHelperError,
   classifyAiGraderNfcHelperWriteRecovery,
   clearAiGraderNfcHelperPairing,
   clearAiGraderNfcInitIdempotencyKey,
   getOrCreateAiGraderNfcInitIdempotencyKey,
   getAiGraderNfcHelperStatus,
+  getAiGraderF8215OperationStatus,
   pairAiGraderNfcHelper,
+  prepareAiGraderF8215Job,
+  readAiGraderNfcSelectedProfile,
   readAiGraderNfcInitIdempotencyKey,
   waitForAiGraderNfcHelperIdle,
   writeAiGraderNfcTag,
+  writeAiGraderNfcSelectedProfile,
 } from "../lib/aiGraderNfcHelperClient";
 
 function installWindow() {
@@ -94,6 +100,78 @@ test("NFC helper write sends only the fixed operation contract and explicit over
   ]);
   assert.equal("apdu" in (captured ?? {}), false);
   assert.equal("rawUid" in (captured ?? {}), false);
+});
+
+test("F8215 helper client uses bounded prepare/status/ack contracts without URL or UID storage", async () => {
+  const { values } = installWindow();
+  values.set(AI_GRADER_NFC_HELPER_TOKEN_STORAGE_KEY, "NfcTokenNfcTokenNfcTokenNfcToken1234");
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      calls.push({ url, body });
+      const result = url.endsWith("/prepare")
+        ? {
+            helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION,
+            attemptId: body.attemptId,
+            chipType: "FEIJU_F8215",
+            programmingProfile: "gototags_manual_start_v1",
+            phase: "awaiting_manual_start",
+          }
+        : url.endsWith("/operation-status")
+          ? {
+              helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION,
+              attemptId: body.attemptId,
+              chipType: "FEIJU_F8215",
+              programmingProfile: "gototags_manual_start_v1",
+              phase: "awaiting_manual_start",
+              terminal: false,
+              retryable: false,
+            }
+          : { helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION, attemptId: body.attemptId, cleaned: true };
+      return new Response(JSON.stringify({ ok: true, result }), { status: 200 });
+    },
+  });
+  const attemptId = "nfc_attempt_" + "A".repeat(43);
+  await prepareAiGraderF8215Job({
+    attemptId,
+    idempotencyKey: `prepare-${attemptId}`,
+    publicTagId: "Abcdefghijklmnopqrstuvwxyz012345",
+    attestationChallenge: "A".repeat(43),
+    url: "https://collect.tenkings.co/nfc/Abcdefghijklmnopqrstuvwxyz012345",
+    attemptExpiresAt: "2026-07-16T23:50:00.000Z",
+  });
+  await getAiGraderF8215OperationStatus(attemptId);
+  await acknowledgeAiGraderF8215Operation(attemptId);
+  assert.deepEqual(calls.map((call) => call.url), [
+    `${AI_GRADER_NFC_HELPER_BASE_URL}/prepare`,
+    `${AI_GRADER_NFC_HELPER_BASE_URL}/operation-status`,
+    `${AI_GRADER_NFC_HELPER_BASE_URL}/operation-ack`,
+  ]);
+  assert.deepEqual(Object.keys(calls[0].body).sort(), [
+    "attemptExpiresAt",
+    "attemptId",
+    "attestationChallenge",
+    "chipType",
+    "idempotencyKey",
+    "programmingProfile",
+    "publicTagId",
+    "url",
+  ]);
+  assert.equal(calls[0].body.chipType, "FEIJU_F8215");
+  assert.equal(calls[0].body.programmingProfile, "gototags_manual_start_v1");
+  assert.equal("uid" in calls[0].body, false);
+  assert.equal("rawUid" in calls[0].body, false);
+});
+
+test("selected NFC profile remembers only the profile identity locally", () => {
+  const { values } = installWindow();
+  assert.equal(readAiGraderNfcSelectedProfile(), "NTAG215_DIRECT_PCSC");
+  writeAiGraderNfcSelectedProfile("FEIJU_F8215_GOTOTAGS_MANUAL_START");
+  assert.equal(readAiGraderNfcSelectedProfile(), "FEIJU_F8215_GOTOTAGS_MANUAL_START");
+  assert.deepEqual([...values.keys()].sort(), [AI_GRADER_NFC_PROFILE_STORAGE_KEY]);
+  assert.equal(values.get(AI_GRADER_NFC_PROFILE_STORAGE_KEY), "FEIJU_F8215_GOTOTAGS_MANUAL_START");
 });
 
 test("NFC retry storage persists only one report-scoped init idempotency key", () => {

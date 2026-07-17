@@ -2286,7 +2286,7 @@ function finishNfcProjection(value: unknown) {
     status,
     publicTagId: safePublicTagId,
     nfcTagUrl,
-    chipType: chipType === "NTAG215" || chipType === "NTAG424_DNA" ? chipType : null,
+    chipType: chipType === "NTAG215" || chipType === "FEIJU_F8215" || chipType === "NTAG424_DNA" ? chipType : null,
     securityMode: securityMode === "static_url_v1" || securityMode === "ntag424_sun_v1" ? securityMode : null,
   };
 }

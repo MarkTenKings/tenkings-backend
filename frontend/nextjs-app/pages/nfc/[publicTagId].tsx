@@ -23,7 +23,9 @@ export const getServerSideProps: GetServerSideProps<Props> = async (context) => 
 export default function AiGraderNfcTapPage({ tap }: Props) {
   const active = tap.state === "active" ? tap : null;
   const title = active
-    ? "Registered Ten Kings NFC link"
+    ? active.chipType === "FEIJU_F8215"
+      ? "Write-protected registered NFC link"
+      : "Registered Ten Kings NFC link"
     : tap.state === "unavailable"
       ? "NFC link temporarily unavailable"
     : tap.state === "revoked"
@@ -50,7 +52,9 @@ export default function AiGraderNfcTapPage({ tap }: Props) {
                 <div><dt>Certificate ID</dt><dd>{active.certId}</dd></div>
                 <div><dt>NFC status</dt><dd>Registered link</dd></div>
               </dl>
-              <p className="disclosure">This NTAG215 link is a convenience identity link. It is not cryptographic authentication of the chip, slab, or card.</p>
+              <p className="disclosure">
+                This registered link is a convenience identity link. {active.chipType === "FEIJU_F8215" ? "Consumer write protection does not make its static URL unclonable. " : ""}It is not cryptographic authentication of the chip, slab, or card.
+              </p>
               <Link className="action" href={active.reportUrl}>Open Ten Kings AI Grader report</Link>
             </>
           ) : (

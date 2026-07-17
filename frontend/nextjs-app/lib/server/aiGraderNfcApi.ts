@@ -22,7 +22,7 @@ type NfcRuntimeInput = {
 };
 
 type OperationalAttestationInput = {
-  schemaVersion: "ai-grader-nfc-helper-attestation-v1";
+  schemaVersion: "ai-grader-nfc-helper-attestation-v1" | "ai-grader-nfc-helper-attestation-v2";
   workstationKeyId: string;
   algorithm: "ecdsa-p256-sha256-p1363";
   attestationChallenge: string;
@@ -40,6 +40,8 @@ export type AiGraderNfcApiDependencies = AiGraderProductionAuthDependencies & {
     reportId: string;
     idempotencyKey: string;
     attemptTtlSeconds: number;
+    chipType: "NTAG215" | "FEIJU_F8215";
+    programmingProfile: "ntag215_direct_pcsc_v1" | "gototags_manual_start_v1";
   }): Promise<unknown>;
   complete(input: NfcRuntimeInput & {
     reportId: string;
@@ -50,12 +52,16 @@ export type AiGraderNfcApiDependencies = AiGraderProductionAuthDependencies & {
     attemptId: string;
     attemptToken: string;
     idempotencyKey: string;
-    chipType: "NTAG215";
+    chipType: "NTAG215" | "FEIJU_F8215";
+    programmingProfile: "ntag215_direct_pcsc_v1" | "gototags_manual_start_v1";
     normalizedUrl: string;
     uidFingerprintSha256: string;
     readbackPayloadSha256: string;
     readerResultCode: string;
     helperProtocolVersion: string;
+    adapterIdentity?: "gototags_desktop";
+    adapterVersion?: "4.37.0.1";
+    writeProtectionState?: "permanently_read_only_verified";
     operationalAttestation: OperationalAttestationInput;
   }): Promise<unknown>;
   status(input: NfcRuntimeInput & { reportId: string }): Promise<unknown>;
@@ -74,6 +80,8 @@ export type AiGraderNfcApiDependencies = AiGraderProductionAuthDependencies & {
     reason: string;
     idempotencyKey: string;
     attemptTtlSeconds: number;
+    chipType: "NTAG215" | "FEIJU_F8215";
+    programmingProfile: "ntag215_direct_pcsc_v1" | "gototags_manual_start_v1";
   }): Promise<unknown>;
 };
 
@@ -127,14 +135,17 @@ function operationalAttestation(value: unknown): OperationalAttestationInput {
   if (Object.keys(value).sort().join("\n") !== expectedKeys.join("\n")) {
     throw nfcApiError(400, "AI_GRADER_NFC_ATTESTATION_INVALID", "The workstation operational attestation is invalid.");
   }
-  if (value.schemaVersion !== "ai-grader-nfc-helper-attestation-v1") {
+  if (
+    value.schemaVersion !== "ai-grader-nfc-helper-attestation-v1" &&
+    value.schemaVersion !== "ai-grader-nfc-helper-attestation-v2"
+  ) {
     throw nfcApiError(400, "AI_GRADER_NFC_ATTESTATION_SCHEMA_INVALID", "The workstation attestation schema is not supported.");
   }
   if (value.algorithm !== "ecdsa-p256-sha256-p1363") {
     throw nfcApiError(400, "AI_GRADER_NFC_ATTESTATION_ALGORITHM_INVALID", "The workstation attestation algorithm is not supported.");
   }
   return {
-    schemaVersion: "ai-grader-nfc-helper-attestation-v1",
+    schemaVersion: value.schemaVersion,
     workstationKeyId: boundedText(value.workstationKeyId, "workstationKeyId", 64, 64, /^[a-f0-9]{64}$/),
     algorithm: "ecdsa-p256-sha256-p1363",
     attestationChallenge: boundedText(value.attestationChallenge, "attestationChallenge", 43, 43, /^[A-Za-z0-9_-]{43}$/),
@@ -188,6 +199,24 @@ function exactNfcUrl(value: unknown, publicTagId: string) {
   return text;
 }
 
+type RequestedProfile =
+  | { chipType: "NTAG215"; programmingProfile: "ntag215_direct_pcsc_v1" }
+  | { chipType: "FEIJU_F8215"; programmingProfile: "gototags_manual_start_v1" };
+
+function requestedProfile(body: JsonRecord): RequestedProfile {
+  const chipType = body.chipType ?? "NTAG215";
+  const programmingProfile = body.programmingProfile ?? (
+    chipType === "NTAG215" ? "ntag215_direct_pcsc_v1" : undefined
+  );
+  if (chipType === "NTAG215" && programmingProfile === "ntag215_direct_pcsc_v1") {
+    return { chipType, programmingProfile };
+  }
+  if (chipType === "FEIJU_F8215" && programmingProfile === "gototags_manual_start_v1") {
+    return { chipType, programmingProfile };
+  }
+  throw nfcApiError(400, "AI_GRADER_NFC_CHIP_UNSUPPORTED", "The NFC programming profile is not supported.");
+}
+
 function humanActor(actor: AiGraderProductionActor, adminOnly: boolean) {
   if (actor.type !== "human_operator" || !actor.user.id) {
     throw nfcApiError(403, "AI_GRADER_NFC_HUMAN_REQUIRED", "A human AI Grader operator session is required.");
@@ -205,6 +234,13 @@ function requireProgrammingReady(readiness: AiGraderNfcProgrammingReadiness) {
   }
   if (!readiness.nfcAttemptTokenConfigured || !readiness.nfcWorkstationAttestationConfigured || readiness.nfcWorkstationKeyCount < 1) {
     throw nfcApiError(503, "AI_GRADER_NFC_PROGRAMMING_NOT_CONFIGURED", "NFC programming is not fully configured.");
+  }
+}
+
+function requireProfileReady(readiness: AiGraderNfcProgrammingReadiness, profile: RequestedProfile) {
+  requireProgrammingReady(readiness);
+  if (profile.chipType === "FEIJU_F8215" && !readiness.nfcFeijuF8215Enabled) {
+    throw nfcApiError(503, "AI_GRADER_NFC_FEIJU_F8215_DISABLED", "Feiju F8215 programming is disabled by server policy.");
   }
 }
 
@@ -338,9 +374,11 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
       const body = assertSmallBody(req.body);
 
       if (action === "init") {
-        requireProgrammingReady(readiness);
+        const profile = requestedProfile(body);
+        requireProfileReady(readiness, profile);
         const result = await deps.init({
           ...common,
+          ...profile,
           reportId: reportId(body.reportId),
           idempotencyKey: idempotencyKey(body.idempotencyKey),
           attemptTtlSeconds: AI_GRADER_NFC_ATTEMPT_TTL_SECONDS,
@@ -349,13 +387,14 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
       }
 
       if (action === "complete") {
-        requireProgrammingReady(readiness);
+        const profile = requestedProfile(body);
+        requireProfileReady(readiness, profile);
         const publicTagId = boundedText(body.publicTagId, "publicTagId", 32, 32, /^[A-Za-z0-9_-]+$/);
-        if (body.chipType !== "NTAG215") {
-          throw nfcApiError(400, "AI_GRADER_NFC_CHIP_UNSUPPORTED", "Only NTAG215 is supported by static_url_v1.");
-        }
         const readerResultCode = boundedText(body.readerResultCode, "readerResultCode", 1, 64, /^[A-Za-z0-9_:-]+$/);
-        if (readerResultCode !== "write_verified_pcsc_readback" && readerResultCode !== "already_programmed_exact") {
+        const eligibleResult = profile.chipType === "NTAG215"
+          ? readerResultCode === "write_verified_pcsc_readback" || readerResultCode === "already_programmed_exact"
+          : readerResultCode === "write_locked_verified_gototags_readback";
+        if (!eligibleResult) {
           throw nfcApiError(400, "AI_GRADER_NFC_READER_RESULT_INVALID", "The NFC reader result is not eligible for activation.");
         }
         const helperProtocolVersion = boundedText(
@@ -368,8 +407,30 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
         if (helperProtocolVersion !== readiness.expectedNfcHelperProtocolVersion) {
           throw nfcApiError(409, "AI_GRADER_NFC_HELPER_PROTOCOL_MISMATCH", "The NFC workstation helper must be updated before programming.");
         }
+        const attestation = operationalAttestation(body.operationalAttestation);
+        if (
+          (profile.chipType === "NTAG215" && attestation.schemaVersion !== "ai-grader-nfc-helper-attestation-v1") ||
+          (profile.chipType === "FEIJU_F8215" && attestation.schemaVersion !== "ai-grader-nfc-helper-attestation-v2")
+        ) {
+          throw nfcApiError(400, "AI_GRADER_NFC_ATTESTATION_SCHEMA_INVALID", "The workstation attestation schema does not match the NFC profile.");
+        }
+        const f8215Evidence = profile.chipType === "FEIJU_F8215"
+          ? {
+              adapterIdentity: body.adapterIdentity === "gototags_desktop"
+                ? "gototags_desktop" as const
+                : (() => { throw nfcApiError(400, "AI_GRADER_NFC_ADAPTER_EVIDENCE_INVALID", "The Feiju adapter identity is invalid."); })(),
+              adapterVersion: body.adapterVersion === "4.37.0.1"
+                ? "4.37.0.1" as const
+                : (() => { throw nfcApiError(400, "AI_GRADER_NFC_ADAPTER_EVIDENCE_INVALID", "The Feiju adapter version is invalid."); })(),
+              writeProtectionState: body.writeProtectionState === "permanently_read_only_verified"
+                ? "permanently_read_only_verified" as const
+                : (() => { throw nfcApiError(400, "AI_GRADER_NFC_WRITE_PROTECTION_INVALID", "Permanent write protection was not verified."); })(),
+            }
+          : {};
         const result = await deps.complete({
           ...common,
+          ...profile,
+          ...f8215Evidence,
           reportId: reportId(body.reportId),
           cardAssetId: linkageId(body.cardAssetId, "cardAssetId"),
           itemId: linkageId(body.itemId, "itemId"),
@@ -378,13 +439,12 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
           attemptId: boundedText(body.attemptId, "attemptId", 22, 80, /^[A-Za-z0-9_-]+$/),
           attemptToken: boundedText(body.attemptToken, "attemptToken", 32, 160, /^[A-Za-z0-9_-]+$/),
           idempotencyKey: idempotencyKey(body.idempotencyKey),
-          chipType: "NTAG215",
           normalizedUrl: exactNfcUrl(body.normalizedUrl, publicTagId),
           uidFingerprintSha256: sha256(body.uidFingerprintSha256, "uidFingerprintSha256"),
           readbackPayloadSha256: sha256(body.readbackPayloadSha256, "readbackPayloadSha256"),
           readerResultCode,
           helperProtocolVersion,
-          operationalAttestation: operationalAttestation(body.operationalAttestation),
+          operationalAttestation: attestation,
         });
         return res.status(200).json({ ok: true, operation: "aiGraderNfcComplete", result });
       }
@@ -401,9 +461,11 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
       }
 
       if (action === "replace") {
-        requireProgrammingReady(readiness);
+        const profile = requestedProfile(body);
+        requireProfileReady(readiness, profile);
         const result = await deps.replace({
           ...common,
+          ...profile,
           reportId: reportId(body.reportId),
           replacedPublicTagId: boundedText(body.replacedPublicTagId, "replacedPublicTagId", 32, 32, /^[A-Za-z0-9_-]+$/),
           reason: boundedText(body.reason, "reason", 8, 240),

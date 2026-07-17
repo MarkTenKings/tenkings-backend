@@ -11,5 +11,6 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="TenKings.AiGrader.NfcHelper.Tests" />
+    <Content Include="Templates\f8215-gototags-manual-start-v1.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
