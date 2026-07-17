@@ -33,7 +33,6 @@ export type AiGraderNfcHelperStatus = {
     implemented: boolean;
     permanentlyLocksTag: boolean;
   }> | null;
-  feijuF8215Enabled?: boolean;
   goToTagsReady?: boolean;
   goToTagsErrorCode?: string | null;
 };
@@ -78,7 +77,7 @@ export type AiGraderF8215OperationStatus = {
   attemptId: string;
   chipType: "FEIJU_F8215";
   programmingProfile: "gototags_manual_start_v1";
-  phase: "preparing" | "awaiting_manual_start" | "recovering" | "encoding" | "verifying" | "locking" | "final_verification" | "completed" | "failed" | "uncertain";
+  phase: "awaiting_manual_start" | "completed" | "failed" | "uncertain";
   terminal: boolean;
   retryable: boolean;
   errorCode?: string | null;
@@ -393,52 +392,4 @@ export function clearAiGraderNfcInitIdempotencyKey(
   storage: SessionStorageLike = window.sessionStorage,
 ) {
   storage.removeItem(initStorageKey(reportId));
-}
-
-const DEFINITE_PREWRITE_CODES = new Set([
-  "invalid_request_context",
-  "invalid_nfc_url",
-  "invalid_public_tag_id",
-  "pcsc_unavailable",
-  "no_tag",
-  "multiple_tags",
-  "unsupported_tag",
-  "invalid_capability_container",
-  "tag_read_only",
-  "writer_busy",
-  "reader_busy",
-  "overwrite_confirmation_mismatch",
-]);
-
-export function classifyAiGraderNfcHelperWriteRecovery(error: unknown) {
-  if (!(error instanceof AiGraderNfcHelperError)) return "uncertain" as const;
-  if (DEFINITE_PREWRITE_CODES.has(error.code)) return "definite_prewrite" as const;
-  if (error.retryable || ["NFC_HELPER_TIMEOUT", "NFC_HELPER_UNAVAILABLE", "request_cancelled", "reader_timeout"].includes(error.code)) {
-    return "uncertain" as const;
-  }
-  return "not_retryable" as const;
-}
-
-export async function waitForAiGraderNfcHelperIdle(input: {
-  attempts?: number;
-  delayMs?: number;
-  readStatus?: () => Promise<AiGraderNfcHelperStatus>;
-  delay?: (milliseconds: number) => Promise<void>;
-} = {}) {
-  const attempts = Math.max(1, Math.min(40, input.attempts ?? 24));
-  const delayMs = Math.max(25, Math.min(1_000, input.delayMs ?? 250));
-  const readStatus = input.readStatus ?? getAiGraderNfcHelperStatus;
-  const delay = input.delay ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
-  for (let index = 0; index < attempts; index += 1) {
-    const status = await readStatus();
-    if (!status.busy) return status;
-    if (index + 1 < attempts) await delay(delayMs);
-  }
-  throw new AiGraderNfcHelperError(
-    "NFC_HELPER_STILL_BUSY",
-    "The NFC reader is still finishing the prior operation. Keep the same physical tag on the reader, wait, and retry this same attempt.",
-    409,
-    undefined,
-    true,
-  );
 }

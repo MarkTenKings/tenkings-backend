@@ -14,20 +14,20 @@ using System.Security.Cryptography.X509Certificates;
 namespace TenKings.AiGrader.NfcHelper;
 
 public sealed partial record GoToTagsAdapterOptions(
-    bool Enabled,
     string ExecutablePath,
     string TemplatePath,
     string TemplateSha256,
     string JobRoot)
 {
+    public bool IsConfigured =>
+        !string.IsNullOrWhiteSpace(ExecutablePath) &&
+        !string.IsNullOrWhiteSpace(TemplatePath) &&
+        !string.IsNullOrWhiteSpace(TemplateSha256) &&
+        !string.IsNullOrWhiteSpace(JobRoot);
+
     public static GoToTagsAdapterOptions FromEnvironment()
     {
-        var enabled = string.Equals(
-            Environment.GetEnvironmentVariable("TENKINGS_NFC_FEIJU_F8215_ENABLED")?.Trim(),
-            "true",
-            StringComparison.Ordinal);
         var options = new GoToTagsAdapterOptions(
-            enabled,
             Environment.GetEnvironmentVariable("TENKINGS_NFC_GOTOTAGS_EXECUTABLE_PATH")?.Trim() ?? string.Empty,
             Environment.GetEnvironmentVariable("TENKINGS_NFC_GOTOTAGS_TEMPLATE_PATH")?.Trim() ?? string.Empty,
             Environment.GetEnvironmentVariable("TENKINGS_NFC_GOTOTAGS_TEMPLATE_SHA256")?.Trim().ToLowerInvariant() ?? string.Empty,
@@ -38,7 +38,6 @@ public sealed partial record GoToTagsAdapterOptions(
 
     public void ValidateConfiguration()
     {
-        if (!Enabled) return;
         if (!Path.IsPathFullyQualified(ExecutablePath) || !Path.IsPathFullyQualified(TemplatePath) ||
             !Path.IsPathFullyQualified(JobRoot) ||
             !string.Equals(TemplateSha256, NfcProtocol.ApprovedGoToTagsTemplateSha256, StringComparison.Ordinal))
@@ -69,7 +68,7 @@ public sealed class WindowsGoToTagsAdapterRuntime : IGoToTagsAdapterRuntime
 
     public GoToTagsAdapterInspection Inspect(GoToTagsAdapterOptions options)
     {
-        if (!options.Enabled) return new(false, "feiju_f8215_disabled");
+        if (!options.IsConfigured) return new(false, "gototags_configuration_invalid");
         try
         {
             options.ValidateConfiguration();

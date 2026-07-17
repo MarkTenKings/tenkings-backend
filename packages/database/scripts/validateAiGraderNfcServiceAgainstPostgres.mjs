@@ -300,7 +300,6 @@ async function main() {
     programmingEnabled: true,
     tokenSecret: randomBytes(48).toString("base64url"),
     workstationPublicKeysJson: station.allowlist,
-    feijuF8215Enabled: true,
     attemptTtlMs: 60_000,
   };
 

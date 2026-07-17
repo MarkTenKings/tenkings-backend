@@ -30,7 +30,6 @@ public static class NfcProtocol
     public const string Ntag424ProgrammingProfile = "ntag424_dna_unimplemented";
     public const string ProductionOrigin = "https://collect.tenkings.co";
     public const string ProductionUrlPrefix = "https://collect.tenkings.co/nfc/";
-    public const string HardwareGateTestUrl = "https://collect.tenkings.co/nfc/test";
     public const int MaxJsonBytes = 32 * 1024;
     public const int MaxGoToTagsCallbackBytes = 64 * 1024;
     public const int DefaultPort = 47662;
@@ -47,7 +46,6 @@ public sealed record HelperStatusResponse(
     ReaderCapability Capability,
     string? ErrorCode = null,
     IReadOnlyList<SupportedNfcProfile>? SupportedProfiles = null,
-    bool FeijuF8215Enabled = false,
     bool GoToTagsReady = false,
     string? GoToTagsErrorCode = null);
 
@@ -191,23 +189,6 @@ public sealed record PairRequest(string PairingCode);
 public sealed record PairResponse(
     string WorkstationToken);
 
-public sealed record HardwareGateResult(
-    string ResultCode,
-    bool ReaderDetected,
-    bool TagRead,
-    bool WriteAttempted,
-    bool ExactReadbackVerified,
-    bool OverwriteConfirmationRequired);
-
-public sealed record F8215HardwareGateResult(
-    string ResultCode,
-    bool ExactTestUrlReadbackVerified,
-    bool PermanentLockReported,
-    bool PostWriteVerificationReported,
-    bool TerminalCallbackVerified,
-    int CallbackCount,
-    long TotalElapsedMs);
-
 public sealed record ApiEnvelope<T>(bool Ok, T? Result, ApiError? Error)
 {
     public static ApiEnvelope<T> Success(T result) => new(true, result, null);
@@ -254,6 +235,4 @@ public sealed class NfcHelperException : Exception
 [JsonSerializable(typeof(ApiEnvelope<F8215OperationAcknowledgeResponse>))]
 [JsonSerializable(typeof(F8215AbandonedResolutionResult))]
 [JsonSerializable(typeof(ApiEnvelope<object>))]
-[JsonSerializable(typeof(HardwareGateResult))]
-[JsonSerializable(typeof(F8215HardwareGateResult))]
 public partial class NfcJsonContext : JsonSerializerContext;

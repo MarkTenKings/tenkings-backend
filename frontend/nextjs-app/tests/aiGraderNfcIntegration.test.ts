@@ -350,13 +350,8 @@ test("dedicated programming and public tap pages keep hardware controls out of F
   );
   assert.match(completionRetry, /completeHosted\(pending\)/);
   assert.doesNotMatch(completionRetry, /writeAiGraderNfcTag|writeReservation/);
-  const currentAttemptRetry = nfcPage.slice(
-    nfcPage.indexOf("const retryCurrentAttempt"),
-    nfcPage.indexOf("const busy"),
-  );
-  assert.match(currentAttemptRetry, /if \(writeRecovery === "not_retryable"\) return;/);
-  assert.match(nfcPage, /const canRetryCurrentAttempt =[\s\S]*writeRecovery !== "not_retryable";/);
-  assert.match(nfcPage, /\{canRetryCurrentAttempt \? \(/);
+  assert.doesNotMatch(nfcPage, /retryCurrentAttempt|canRetryCurrentAttempt/);
+  assert.match(nfcPage, /failed or uncertain tag.*quarantine/i);
   const schemaGate = nfcPage.indexOf("if (!result.nfcSchemaReady)");
   const disabledGate = nfcPage.indexOf("if (!result.nfcProgrammingEnabled)");
   const helperStatusCall = nfcPage.indexOf("getAiGraderNfcHelperStatus", disabledGate);

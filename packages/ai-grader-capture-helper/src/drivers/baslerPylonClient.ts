@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { LEIMAC_IDMU_MAX_DUTY_PERCENT } from "./leimacIdmuClient";
 
 export type BaslerPylonAction =
   | "readiness"
@@ -289,7 +290,7 @@ export interface BaslerOperatorPreviewWindowResult {
     actualAppliedPwmStep?: number;
     actualAppliedPwmValue?: string;
     defaultV1DutyMarkerPercent: 1.2;
-    maxDutyPercent: 5.0;
+    maxDutyPercent: number;
     selectedChannels: number[];
     channelMappingStatus: "unknown_uncalibrated";
     safeOffOnExit: true;
@@ -652,8 +653,11 @@ export class BaslerPylonClient {
       throw new BaslerPylonClientError("BASLER_FIXED_RIG_CHANNELS_INVALID", "Warm fixed-rig side batch selected channels must be unique integers from 1 to 8.");
     }
     const dutyPercent = options.dutyPercent ?? 1.2;
-    if (!Number.isFinite(dutyPercent) || dutyPercent < 0 || dutyPercent > 5) {
-      throw new BaslerPylonClientError("BASLER_FIXED_RIG_DUTY_INVALID", "Warm fixed-rig side batch duty must be from 0 to 5 percent.");
+    if (!Number.isFinite(dutyPercent) || dutyPercent < 0 || dutyPercent > LEIMAC_IDMU_MAX_DUTY_PERCENT) {
+      throw new BaslerPylonClientError(
+        "BASLER_FIXED_RIG_DUTY_INVALID",
+        `Warm fixed-rig side batch duty must be from 0 to ${LEIMAC_IDMU_MAX_DUTY_PERCENT} percent.`,
+      );
     }
 
     return this.runBridge<BaslerFixedRigSideBatchResult>("fixed-rig-side-batch", [

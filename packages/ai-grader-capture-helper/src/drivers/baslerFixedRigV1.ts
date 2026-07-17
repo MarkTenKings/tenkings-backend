@@ -33,15 +33,13 @@ import {
   NORMALIZED_CARD_HEIGHT_PIXELS,
   NORMALIZED_CARD_WIDTH_PIXELS,
   detectCardGeometry,
-  detectAndNormalizeCardImage,
   normalizeCardImageWithGeometry,
   type CardGeometryMetadata,
-  type CardGeometryManualOverride,
   type CardGeometryNormalizedArtifact,
   type CardGeometryNormalizationResult,
 } from "./cardGeometry";
 import {
-  LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
+  LEIMAC_IDMU_MAX_DUTY_PERCENT,
   buildLeimacIdmuSafeOffFrames,
   composeLeimacIdmuChannelWriteFrame,
   composeLeimacIdmuExplicitChannelWriteFrame,
@@ -757,8 +755,6 @@ export interface FixedRigWarmEvidencePackageInput {
    * automatic geometry or creates a normalized artifact.
    */
   cardBoundaryRect?: { x: number; y: number; width: number; height: number };
-  /** Explicit operator action required to use manual card geometry. */
-  manualGeometryOverride?: CardGeometryManualOverride;
 }
 
 export interface FixedRigWarmSideCaptureBatch {
@@ -788,7 +784,6 @@ export interface FixedRigWarmSideCaptureBatch {
   verticalStartPx?: { x: number; y: number };
   verticalEndPx?: { x: number; y: number };
   cardBoundaryRect?: { x: number; y: number; width: number; height: number };
-  manualGeometryOverride?: CardGeometryManualOverride;
 }
 
 export interface FixedRigWarmEvidencePackageResult {
@@ -859,7 +854,7 @@ export interface LeimacChannelCharacterizationManifest {
     localOnly: true;
     safeOffBeforeEachChannel: true;
     safeOffAfterEachChannel: true;
-    dutyCapPercent: 5;
+    dutyCapPercent: number;
     persistentBaslerSaved: false;
     persistentLeimacSaved: false;
     channelPhysicalMappingInvented: false;
@@ -2852,7 +2847,7 @@ export function buildLeimacChannelCharacterizationManifest(input: {
       localOnly: true,
       safeOffBeforeEachChannel: true,
       safeOffAfterEachChannel: true,
-      dutyCapPercent: LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
+      dutyCapPercent: LEIMAC_IDMU_MAX_DUTY_PERCENT,
       persistentBaslerSaved: false,
       persistentLeimacSaved: false,
       channelPhysicalMappingInvented: false,
@@ -3297,7 +3292,6 @@ export async function captureFixedRigWarmSideBatch(input: FixedRigWarmEvidencePa
     verticalStartPx: input.verticalStartPx,
     verticalEndPx: input.verticalEndPx,
     cardBoundaryRect: input.cardBoundaryRect,
-    manualGeometryOverride: input.manualGeometryOverride,
   };
 }
 
@@ -3337,14 +3331,8 @@ function applyFixedRigNormalizedCardBoundary(
   quality: FixedRigQualityMetrics,
   geometry: CardGeometryMetadata,
 ): FixedRigQualityMetrics {
-  const normalizedGeometrySource =
-    geometry.geometrySource === "manual_override"
-      ? "normalized_from_manual_geometry"
-      : "normalized_from_detected_geometry";
-  const sourceDescription =
-    geometry.geometrySource === "manual_override"
-      ? "explicit operator-confirmed manual geometry"
-      : "automatic detected geometry";
+  const normalizedGeometrySource = "normalized_from_detected_geometry";
+  const sourceDescription = "automatic detected geometry";
   const sourceWarnings = uniqueWarnings([
     ...geometry.warnings,
     FIXED_RIG_SEMANTIC_ORIENTATION_WARNING,
@@ -3412,10 +3400,7 @@ function normalizedCardRoiDefinitions(
   height: number,
   geometry: CardGeometryMetadata,
 ): FixedRigRoiDefinition[] {
-  const sourceDescription =
-    geometry.geometrySource === "manual_override"
-      ? "explicit operator-confirmed manual geometry"
-      : "automatic detected geometry";
+  const sourceDescription = "automatic detected geometry";
   const boundary: FixedRigCardBoundary = {
     status: "detected",
     x: 0,
@@ -3424,10 +3409,7 @@ function normalizedCardRoiDefinitions(
     height,
     coverage: 1,
     confidence: geometry.confidence,
-    source:
-      geometry.geometrySource === "manual_override"
-        ? "normalized_from_manual_geometry"
-        : "normalized_from_detected_geometry",
+    source: "normalized_from_detected_geometry",
     confidenceBasis: geometry.confidenceBasis,
     detectionUsed: geometry.detectionUsed,
     manualOverrideUsed: geometry.manualOverrideUsed,
@@ -3478,7 +3460,6 @@ function normalizedArtifactAsDisplay(
 
 function assertFullResolutionNormalizationUsable(
   normalizedCard: CardGeometryNormalizationResult,
-  manualGeometryOverride: CardGeometryManualOverride | undefined,
   side: FixedRigCardSide,
 ): asserts normalizedCard is CardGeometryNormalizationResult & { normalizedArtifact: CardGeometryNormalizedArtifact } {
   if (!normalizedCard.rawEvidencePreserved) {
@@ -3505,12 +3486,6 @@ function assertFullResolutionNormalizationUsable(
     );
   }
   const geometry = normalizedCard.geometry;
-  if (manualGeometryOverride) {
-    if (geometry.geometrySource !== "manual_override" || geometry.captureMode !== "manual_capture" || geometry.manualOverrideUsed !== true || geometry.detectionUsed !== false) {
-      throw new Error(`AI Grader ${side} explicit manual capture did not produce coherent full-resolution manual geometry; processing stopped.`);
-    }
-    return;
-  }
   if (geometry.geometrySource !== "detected" || geometry.captureMode !== "automatic_detection" || geometry.detectionUsed !== true || geometry.manualOverrideUsed === true || geometry.placementState !== "ready") {
     const reason = geometry.warnings[0] ?? "The captured-frame geometry did not satisfy the Ready gate.";
     throw new Error(
@@ -3549,7 +3524,7 @@ export interface FixedRigFullResolutionGeometryAuthority {
   version: "fixed-rig-full-resolution-geometry-authority-v1";
   primaryRole: "all_on";
   authoritativeRole: FixedRigGeometryAuthorityRole;
-  resolution: "primary_all_on" | "secondary_accepted_profile_consensus" | "explicit_manual_capture";
+  resolution: "primary_all_on" | "secondary_accepted_profile_consensus";
   source: FixedRigGeometryAuthoritySource;
   consensus: {
     required: boolean;
@@ -3854,7 +3829,6 @@ export async function processFixedRigWarmSideBatch(
     verticalStartPx,
     verticalEndPx,
     cardBoundaryRect,
-    manualGeometryOverride,
   } = captureBatch;
   const rawRoleCaptures = [
     batch.captures.darkControl,
@@ -3908,14 +3882,12 @@ export async function processFixedRigWarmSideBatch(
     { role: "accepted_profile", capture: batch.captures.acceptedProfile.capture },
     ...orderedChannelRoles.map((role) => ({ role: `channel_${Number(role.channel)}`, capture: role.capture })),
   ]));
-  if (!manualGeometryOverride && !options.trustedWorkerGeometryAuthorityResolver) {
+  if (!options.trustedWorkerGeometryAuthorityResolver) {
     throw new Error(
       `AI Grader ${side} captured-evidence geometry requires the dedicated processing worker; no in-process fallback is permitted.`,
     );
   }
-  const fullResolutionGeometryAuthority = manualGeometryOverride
-    ? undefined
-    : await timed("fullResolutionGeometryAuthority", () => options.trustedWorkerGeometryAuthorityResolver!({
+  const fullResolutionGeometryAuthority = await timed("fullResolutionGeometryAuthority", () => options.trustedWorkerGeometryAuthorityResolver!({
       packageId,
       side,
       allOn: batch.captures.allOn,
@@ -3924,54 +3896,15 @@ export async function processFixedRigWarmSideBatch(
     }));
   const normalizedCard = await timed("cropDeskew", () => {
     const normalizedOutputPath = path.join(sideDir, "normalized", `${side}-normalized-card.png`);
-    if (manualGeometryOverride) {
-      return detectAndNormalizeCardImage({
-        sourceImagePath: batch.captures.allOn.capture.outputFilePath,
-        detectionPolicy: "captured_evidence_full",
-        normalizedOutputPath,
-        side,
-        sourceImageId: `${packageId}-${side}-all-on`,
-        sourceFrameId: `${side}-all-on-${String(batch.captures.allOn.capture.sha256).slice(0, 16)}`,
-        timestamp: batch.captures.allOn.capture.timestamp,
-        manualOverride: manualGeometryOverride,
-      });
-    }
-    if (!fullResolutionGeometryAuthority) {
-      throw new Error(`AI Grader ${side} full-resolution geometry authority was unavailable; processing stopped.`);
-    }
     return normalizeCardImageWithGeometry({
       sourceImagePath: batch.captures.allOn.capture.outputFilePath,
       normalizedOutputPath,
       geometry: fullResolutionGeometryAuthority.source.geometry,
     });
   });
-  assertFullResolutionNormalizationUsable(normalizedCard, manualGeometryOverride, side);
+  assertFullResolutionNormalizationUsable(normalizedCard, side);
   const authoritativeGeometry: CardGeometryMetadata = normalizedCard.geometry;
-  const recordedGeometryAuthority: FixedRigFullResolutionGeometryAuthority = fullResolutionGeometryAuthority ?? {
-    version: "fixed-rig-full-resolution-geometry-authority-v1",
-    primaryRole: "all_on",
-    authoritativeRole: "all_on",
-    resolution: "explicit_manual_capture",
-    source: geometryAuthoritySource({
-      packageId,
-      side,
-      role: "all_on",
-      capture: batch.captures.allOn.capture,
-      geometry: authoritativeGeometry,
-    }),
-    consensus: {
-      required: false,
-      agreeingRoles: ["all_on"],
-      maximumCornerDeltaPixels: 0,
-      maximumRotationDeltaDegrees: 0,
-    },
-    inspectedRoles: [authorityInspection({
-      role: "all_on",
-      eligibility: "primary",
-      capture: batch.captures.allOn.capture,
-      geometry: authoritativeGeometry,
-    })],
-  };
+  const recordedGeometryAuthority: FixedRigFullResolutionGeometryAuthority = fullResolutionGeometryAuthority;
   const authoritativeGeometryRole = recordedGeometryAuthority.authoritativeRole;
   const transformReusedForRoles = (
     authoritativeGeometryRole === "all_on"
@@ -4150,17 +4083,11 @@ export async function processFixedRigWarmSideBatch(
   });
   const acquisitionReadiness = acquisitionFixtureCalibrationProfile.productionReadiness;
   const normalizedBaseReadiness = normalizedProfileBase.productionReadiness;
-  const sourceGeometryReadinessNote =
-    authoritativeGeometry.geometrySource === "manual_override"
-      ? "Canonical framing came from explicit operator-confirmed manual geometry; automatic detection was not used and detector confidence remains 0."
-      : `Canonical framing came from automatic ${authoritativeGeometryRole} geometry with source confidence ${authoritativeGeometry.confidence} (${authoritativeGeometry.confidenceBasis}) and placement state ${authoritativeGeometry.placementState}.`;
+  const sourceGeometryReadinessNote = `Canonical framing came from automatic ${authoritativeGeometryRole} geometry with source confidence ${authoritativeGeometry.confidence} (${authoritativeGeometry.confidenceBasis}) and placement state ${authoritativeGeometry.placementState}.`;
   const normalizedReadinessBlockers = uniqueWarnings([
     ...(normalizedBaseReadiness?.blockers ?? []).filter(
       (blocker) => !/framing|overlay alignment/i.test(blocker),
     ),
-    authoritativeGeometry.geometrySource === "manual_override"
-      ? "Automatic card geometry was not used; normalization used explicit operator-confirmed manual geometry."
-      : undefined,
   ]);
   const normalizedProductionReadiness: FixedRigProductionReadinessSummary = {
     status: normalizedBaseReadiness?.status ?? "rejected",
@@ -4268,7 +4195,7 @@ export async function processFixedRigWarmSideBatch(
     coordinateFrame: "normalized_card_portrait_pixels" as const,
     authoritativeGeometryRole,
     authoritativeGeometrySource: authoritativeGeometry.geometrySource,
-    fullResolutionGeometryRequired: manualGeometryOverride ? "explicit_manual_capture" : "detected_ready",
+    fullResolutionGeometryRequired: "detected_ready",
     fullResolutionGeometryAuthority: recordedGeometryAuthority,
     transformReusedForRoles,
     acquisitionPlacementExcludedFromGrade: true,
@@ -4379,12 +4306,12 @@ export async function processFixedRigWarmSideBatch(
       note: FIXED_RIG_CAPTURE_PROFILES[captureProfile].note,
     },
     geometryPolicy: {
-      mode: manualGeometryOverride ? "manual_capture" : "automatic_detection",
+      mode: "automatic_detection",
       geometrySource: normalizedCard.geometry.geometrySource,
       detectionUsed: normalizedCard.geometry.detectionUsed,
       manualOverrideUsed: normalizedCard.geometry.manualOverrideUsed === true,
       fullResolutionGeometryAuthority: recordedGeometryAuthority,
-      legacyCardBoundaryRectIgnored: Boolean(cardBoundaryRect && !manualGeometryOverride),
+      legacyCardBoundaryRectIgnored: Boolean(cardBoundaryRect),
       normalizedArtifactCreated: Boolean(normalizedCard.normalizedArtifact),
     },
     analysisCoordinateSystem,

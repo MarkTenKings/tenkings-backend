@@ -266,18 +266,6 @@ function normalizedDetectedGeometryPasses(profile: JsonObject | undefined): bool
   );
 }
 
-function normalizedManualGeometryIsExplicit(profile: JsonObject | undefined): boolean {
-  const geometry = profile?.sourceGeometry;
-  return Boolean(
-    usesNormalizedCardAnalysis(profile) &&
-      geometry?.geometrySource === "manual_override" &&
-      geometry?.captureMode === "manual_capture" &&
-      geometry?.detectionUsed === false &&
-      geometry?.manualOverrideUsed === true &&
-      geometry?.confidence === 0
-  );
-}
-
 function surfaceCandidates(surface: JsonObject | undefined): JsonObject[] {
   return Array.isArray(surface?.candidates) ? surface.candidates : [];
 }
@@ -454,13 +442,6 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
   const normalizedAnalysis = sideFixtureProfiles.every(usesNormalizedCardAnalysis);
   const normalizedAnalysisBasisPass = normalizedAnalysis && sideFixtureProfiles.every(normalizedCardAnalysisBasisPasses);
   const normalizedDetectedGeometryPass = normalizedAnalysis && sideFixtureProfiles.every(normalizedDetectedGeometryPasses);
-  const normalizedManualSides = sideFixtureProfiles
-    .map((profile, index) => (normalizedManualGeometryIsExplicit(profile) ? (index === 0 ? "front" : "back") : undefined))
-    .filter((side): side is "front" | "back" => Boolean(side));
-  const normalizedManualGeometryAccepted =
-    normalizedAnalysis &&
-    normalizedManualSides.length > 0 &&
-    sideFixtureProfiles.every((profile) => normalizedDetectedGeometryPasses(profile) || normalizedManualGeometryIsExplicit(profile));
   const repeatabilityPass = sideFixtureProfiles.every(
     (profile, index) =>
       productionGates[index]?.repeatability === "pass" ||
@@ -514,10 +495,8 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
           gate(
             "normalized_geometry_provenance",
             normalizedDetectedGeometryPass,
-            allowAcceptedWarnings && normalizedManualGeometryAccepted,
-            normalizedManualGeometryAccepted
-              ? `Canonical normalization used explicit operator-confirmed manual capture on ${normalizedManualSides.join(" and ")}; automatic detection was not used on ${normalizedManualSides.length === 2 ? "either side" : "that side"}.`
-              : "Both front and back canonical normalizations must retain coherent Ready automatic geometry provenance, or an explicit operator-confirmed manual capture on each non-detected side.",
+            false,
+            "Both front and back canonical normalizations must retain coherent Ready automatic geometry provenance.",
             [
               "analysis.fixtureCalibrationProfile.sourceGeometry",
               "analysis.front.normalizedCard.geometry",
@@ -698,11 +677,6 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
     : 0;
   const confidenceWarnings = [
     ...acceptedWarnings,
-    ...(normalizedManualGeometryAccepted
-      ? [
-          `Explicit manual geometry on ${normalizedManualSides.join(" and ")} is retained as an accepted warning and reduces confidence by ${ACCEPTED_WARNING_CONFIDENCE_PENALTY}; it is not represented as automatic detection.`,
-        ]
-      : []),
     ...(normalizedPartialScoreReady
       ? [
           `Printed-design centering is unavailable in normalized card coordinates; camera placement was excluded, confidence was reduced by ${NORMALIZED_MISSING_CENTERING_CONFIDENCE_PENALTY}, and the provisional overall grade was capped at ${NORMALIZED_MISSING_CENTERING_GRADE_CAP}.`,

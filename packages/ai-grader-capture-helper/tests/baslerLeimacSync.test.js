@@ -567,9 +567,9 @@ test("Full-rig local smoke manifest separates Basler macro and Dino-Lite detail 
 });
 
 test("Basler/Leimac polarity smoke CLI rejects unsafe diagnostic inputs before hardware", async () => {
-  const tooHighDuty = await runCli(["basler-leimac-polarity-smoke", "--duty", "6"]);
+  const tooHighDuty = await runCli(["basler-leimac-polarity-smoke", "--duty", "100"]);
   assert.equal(tooHighDuty.code, 1);
-  assert.match(tooHighDuty.stderr.error, /capped at 5%/);
+  assert.match(tooHighDuty.stderr.error, /99\.9|range|maximum/i);
 
   const repoOutput = await runCli([
     "basler-leimac-polarity-smoke",
@@ -681,9 +681,9 @@ test("Basler Line2 pulse and image-stat sync CLIs reject unsafe inputs before ha
   assert.equal(missingSupervision.code, 1);
   assert.match(missingSupervision.stderr.error, /--mark-present/);
 
-  const highDuty = await runCli(["basler-leimac-image-stat-sync-smoke", "--duty", "6"]);
+  const highDuty = await runCli(["basler-leimac-image-stat-sync-smoke", "--duty", "100"]);
   assert.equal(highDuty.code, 1);
-  assert.match(highDuty.stderr.error, /capped at 5%/);
+  assert.match(highDuty.stderr.error, /99\.9|range|maximum/i);
 });
 
 test("Basler macro package and full-rig CLIs reject unsafe inputs before hardware", async () => {
@@ -721,9 +721,9 @@ test("Basler macro package and full-rig CLIs reject unsafe inputs before hardwar
   assert.equal(macroMissingConfirmation.code, 1);
   assert.match(macroMissingConfirmation.stderr.error, new RegExp(BASLER_LEIMAC_MACRO_PACKAGE_CONFIRMATION));
 
-  const highDuty = await runCli(["basler-leimac-macro-package", "--duty", "6"]);
+  const highDuty = await runCli(["basler-leimac-macro-package", "--duty", "100"]);
   assert.equal(highDuty.code, 1);
-  assert.match(highDuty.stderr.error, /capped at 5%/);
+  assert.match(highDuty.stderr.error, /99\.9|range|maximum/i);
 
   const fullRigDryRun = await runCli([
     "ai-grader-full-rig-local-smoke",
@@ -2547,9 +2547,9 @@ test("Fixed-rig V1 CLIs reject unsafe inputs before hardware", async () => {
   assert.equal(focusMissingConfirmation.code, 1);
   assert.match(focusMissingConfirmation.stderr.error, new RegExp(BASLER_FIXED_RIG_FOCUS_ASSIST_CONFIRMATION));
 
-  const focusHighDuty = await runCli(["basler-fixed-rig-focus-assist", "--duty", "6"]);
+  const focusHighDuty = await runCli(["basler-fixed-rig-focus-assist", "--duty", "100"]);
   assert.equal(focusHighDuty.code, 1);
-  assert.match(focusHighDuty.stderr.error, /capped at 5%/);
+  assert.match(focusHighDuty.stderr.error, /99\.9|range|maximum/i);
 
   const fixedRigDryRun = await runCli([
     "ai-grader-fixed-rig-v1-local",
@@ -2609,9 +2609,9 @@ test("Fixed-rig V1 CLIs reject unsafe inputs before hardware", async () => {
   assert.equal(fixedRigInvalidFlipDelay.code, 1);
   assert.match(fixedRigInvalidFlipDelay.stderr.error, /--operator-flip-delay-ms/);
 
-  const fixedRigHighDuty = await runCli(["ai-grader-fixed-rig-v1-local", "--duty", "6"]);
+  const fixedRigHighDuty = await runCli(["ai-grader-fixed-rig-v1-local", "--duty", "100"]);
   assert.equal(fixedRigHighDuty.code, 1);
-  assert.match(fixedRigHighDuty.stderr.error, /capped at 5%/);
+  assert.match(fixedRigHighDuty.stderr.error, /99\.9|range|maximum/i);
 
   const evidenceInvalidSide = await runCli(["ai-grader-fixed-rig-v1-evidence-package", "--evidence-side", "left"]);
   assert.equal(evidenceInvalidSide.code, 1);
@@ -2703,10 +2703,10 @@ test("Fixed-rig V1 CLIs reject unsafe inputs before hardware", async () => {
   const channelHighDuty = await runCli([
     "leimac-channel-characterization",
     "--duty",
-    "6",
+    "100",
   ]);
   assert.equal(channelHighDuty.code, 1);
-  assert.match(channelHighDuty.stderr.error, /0 to 5|capped at 5%/);
+  assert.match(channelHighDuty.stderr.error, /99\.9|range|maximum/i);
 
   const channelMissingConfirmation = await runCli([
     "leimac-channel-characterization",

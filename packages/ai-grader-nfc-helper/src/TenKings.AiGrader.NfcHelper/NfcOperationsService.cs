@@ -94,7 +94,7 @@ public sealed partial class NfcOperationsService
                     CancellationToken.None,
                     TaskContinuationOptions.ExecuteSynchronously,
                     TaskScheduler.Default);
-                throw new NfcHelperException("request_cancelled", "The request ended while the NFC read was still running; wait until status is no longer busy before retrying.", true, 409);
+                throw new NfcHelperException("request_cancelled", "The request ended while the NFC read was still running; wait for the operation gate to clear.", true, 409);
             }
         }
         catch (NfcHelperException error)
@@ -122,7 +122,7 @@ public sealed partial class NfcOperationsService
             new IdempotencyEntry(
                 digest,
                 Interlocked.Increment(ref _idempotencySequence),
-                current => ExecuteWriteWithLockAsync(request, requestId, current)));
+                () => ExecuteWriteWithLockAsync(request, requestId)));
         if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(entry.RequestDigest), Encoding.ASCII.GetBytes(digest)))
         {
             throw new NfcHelperException("idempotency_conflict", "The idempotency key was already used for a different NFC write request.", false, 409);
@@ -136,85 +136,18 @@ public sealed partial class NfcOperationsService
         catch (TimeoutException)
         {
             _logger.Error("nfc_write_wait_failed", requestId, "reader_timeout");
-            throw new NfcHelperException("reader_timeout", "The NFC write timed out. Keep the same physical tag on the reader, wait until status is no longer busy, then retry the same attempt.", true, 504);
+            throw new NfcHelperException("reader_timeout", "The NFC write timed out. Remove and quarantine the tag; do not automatically reuse it.", false, 504);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             _logger.Error("nfc_write_wait_failed", requestId, "request_cancelled");
-            throw new NfcHelperException("request_cancelled", "The request ended while the NFC write was still running. Keep the same physical tag on the reader, wait until status is no longer busy, then retry the same attempt.", true, 409);
-        }
-    }
-
-    public async Task<HardwareGateResult> RunHardwareGateTestAsync(
-        bool confirmOverwrite,
-        string requestId,
-        CancellationToken cancellationToken)
-    {
-        if (!await _operationGate.TryEnterAsync(cancellationToken))
-            throw new NfcHelperException("writer_busy", "Another NFC operation is already active.", true, 409);
-        var releaseNow = true;
-        try
-        {
-            var operation = Task.Run(() =>
-            {
-                var request = new NfcWriteRequest(
-                    "hardware_gate_test",
-                    "hardware_gate_test_write",
-                    "hardware_gate_test",
-                    "hardware_gate_test",
-                    NfcProtocol.HardwareGateTestUrl);
-                var result = WriteCore(request, hardwareGateTest: true);
-                if (result.OverwriteRequired && confirmOverwrite && result.ObservedPayloadSha256 is not null)
-                {
-                    request = request with
-                    {
-                        OverwriteConfirmation = new OverwriteConfirmationRequest(true, result.ObservedPayloadSha256)
-                    };
-                    result = WriteCore(request, hardwareGateTest: true);
-                }
-                return new HardwareGateResult(
-                    result.OverwriteRequired ? "overwrite_confirmation_required" : "hardware_gate_exact_readback_verified",
-                    true,
-                    true,
-                    result.ReaderResultCode == "write_verified_pcsc_readback",
-                    !result.OverwriteRequired,
-                    result.OverwriteRequired);
-            }, CancellationToken.None);
-            try
-            {
-                return await operation.WaitAsync(_operationTimeout, cancellationToken);
-            }
-            catch (TimeoutException)
-            {
-                releaseNow = false;
-                _ = operation.ContinueWith(
-                    _ => _operationGate.Exit(),
-                    CancellationToken.None,
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
-                throw new NfcHelperException("reader_timeout", "The NFC hardware-gate operation timed out; wait until the reader is no longer busy.", true, 504);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                releaseNow = false;
-                _ = operation.ContinueWith(
-                    _ => _operationGate.Exit(),
-                    CancellationToken.None,
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
-                throw new NfcHelperException("request_cancelled", "The NFC hardware-gate operation is still finishing; wait until the reader is no longer busy.", true, 409);
-            }
-        }
-        finally
-        {
-            if (releaseNow) _operationGate.Exit();
+            throw new NfcHelperException("request_cancelled", "The request ended while the NFC write was still running. Remove and quarantine the tag; do not automatically reuse it.", false, 409);
         }
     }
 
     private async Task<NfcWriteResponse> ExecuteWriteWithLockAsync(
         NfcWriteRequest request,
-        string requestId,
-        IdempotencyEntry entry)
+        string requestId)
     {
         if (!await _operationGate.TryEnterAsync(CancellationToken.None))
         {
@@ -223,22 +156,16 @@ public sealed partial class NfcOperationsService
 
         try
         {
-            var result = await Task.Run(() => WriteCore(request, entry: entry), CancellationToken.None);
-            entry.MarkExecutionSuccess();
+            var result = await Task.Run(() => WriteCore(request), CancellationToken.None);
             _logger.Info("nfc_write_complete", requestId, result.ReaderResultCode);
             return result;
         }
         catch (NfcHelperException error)
         {
-            entry.MarkExecutionFailure();
             _logger.Error("nfc_write_failed", requestId, error.Code);
             throw;
         }
-        catch
-        {
-            entry.MarkExecutionFailure();
-            throw;
-        }
+        catch { throw; }
         finally
         {
             _operationGate.Exit();
@@ -261,45 +188,15 @@ public sealed partial class NfcOperationsService
             parsed is null ? "blank_ntag215" : "read_verified_pcsc");
     }
 
-    private NfcWriteResponse WriteCore(
-        NfcWriteRequest request,
-        bool hardwareGateTest = false,
-        IdempotencyEntry? entry = null)
+    private NfcWriteResponse WriteCore(NfcWriteRequest request)
     {
-        var target = hardwareGateTest
-            ? NdefCodec.EncodeHardwareGateTestUrl()
-            : NdefCodec.EncodeProductionUrl(request.Url);
+        var target = NdefCodec.EncodeProductionUrl(request.Url);
         var tlv = NdefCodec.EncodeType2Tlv(target);
         using var session = _backend.OpenSession();
         var snapshot = ReadSnapshot(session, requireWritable: true);
         var location = snapshot.Location;
         var observedDigest = ObservedPayloadDigest(snapshot);
-        var recoverableInterruptedWrite =
-            entry?.CanRecoverInterruptedWrite(snapshot.UidFingerprint) == true &&
-            IsRecoverableInterruptedWrite(snapshot, tlv);
-        ParsedNdefUrl? existing = null;
-        if (location.Exists && location.ValueLength > 0)
-        {
-            try
-            {
-                existing = hardwareGateTest
-                    ? NdefCodec.ParseHardwareGateTestUrl(snapshot.DataArea.AsSpan(location.ValueOffset, location.ValueLength))
-                    : NdefCodec.ParseProductionUrl(snapshot.DataArea.AsSpan(location.ValueOffset, location.ValueLength));
-            }
-            catch (NfcHelperException)
-            {
-                // A malformed or non-Ten-Kings NDEF is still nonblank and requires explicit overwrite evidence.
-            }
-        }
-
-        if (existing is not null && existing.Url == target.Url && existing.Message.AsSpan().SequenceEqual(target.Message))
-        {
-            return hardwareGateTest
-                ? UnsignedVerifiedResponse(target, snapshot.UidFingerprint, "already_programmed_exact")
-                : VerifiedResponse(request, target, snapshot.UidFingerprint, "already_programmed_exact");
-        }
-
-        if (IsNonBlank(snapshot) && !recoverableInterruptedWrite)
+        if (IsNonBlank(snapshot))
         {
             var confirmation = request.OverwriteConfirmation;
             if (confirmation is null || !confirmation.Confirmed)
@@ -325,7 +222,7 @@ public sealed partial class NfcOperationsService
             }
         }
 
-        if (location.HasFollowingTlv && !recoverableInterruptedWrite)
+        if (location.HasFollowingTlv)
             throw new NfcHelperException("unsupported_tlv_layout", "The tag contains additional TLVs that this helper will not overwrite.", false, 409);
         var typeOffset = location.TypeOffset;
         if (typeOffset < 0 || typeOffset + tlv.Length > snapshot.DataArea.Length)
@@ -343,7 +240,6 @@ public sealed partial class NfcOperationsService
         interimArea[lengthOffset] = 0;
 
         var firstPage = Ntag215Layout.PageForDataOffset(lengthOffset);
-        entry?.MarkWriteStarted(snapshot.UidFingerprint);
         WriteAreaPage(session, interimArea, firstPage);
         var lastPage = Ntag215Layout.PageForDataOffset(changedEnd - 1);
         for (var page = Ntag215Layout.PageForDataOffset(typeOffset); page <= lastPage; page++)
@@ -359,9 +255,7 @@ public sealed partial class NfcOperationsService
             var readbackLocation = NdefCodec.LocateNdef(readback);
             if (!readbackLocation.Exists || readbackLocation.ValueLength != target.Message.Length)
                 throw ReadbackMismatch();
-            var parsedReadback = hardwareGateTest
-                ? NdefCodec.ParseHardwareGateTestUrl(readback.AsSpan(readbackLocation.ValueOffset, readbackLocation.ValueLength))
-                : NdefCodec.ParseProductionUrl(readback.AsSpan(readbackLocation.ValueOffset, readbackLocation.ValueLength));
+            var parsedReadback = NdefCodec.ParseProductionUrl(readback.AsSpan(readbackLocation.ValueOffset, readbackLocation.ValueLength));
             if (parsedReadback.Url != target.Url ||
                 !parsedReadback.Message.AsSpan().SequenceEqual(target.Message) ||
                 parsedReadback.PayloadSha256 != target.PayloadSha256)
@@ -371,9 +265,7 @@ public sealed partial class NfcOperationsService
         {
             throw ReadbackMismatch();
         }
-        return hardwareGateTest
-            ? UnsignedVerifiedResponse(target, snapshot.UidFingerprint, "write_verified_pcsc_readback")
-            : VerifiedResponse(request, target, snapshot.UidFingerprint, "write_verified_pcsc_readback");
+        return VerifiedResponse(request, target, snapshot.UidFingerprint, "write_verified_pcsc_readback");
     }
 
     private NfcWriteResponse VerifiedResponse(
@@ -408,18 +300,6 @@ public sealed partial class NfcOperationsService
             resultCode,
             attestation);
     }
-
-    private static NfcWriteResponse UnsignedVerifiedResponse(
-        EncodedNdefUrl target,
-        string uidFingerprint,
-        string resultCode) =>
-        new(
-            NfcProtocol.ProtocolVersion,
-            NfcProtocol.ChipType,
-            target.Url,
-            target.PayloadSha256,
-            uidFingerprint,
-            resultCode);
 
     private static TagSnapshot ReadSnapshot(INfcTagSession session, bool requireWritable)
     {
@@ -479,23 +359,6 @@ public sealed partial class NfcOperationsService
         if (snapshot.Location.Exists && snapshot.Location.ValueLength > 0)
             return NdefCodec.Sha256Hex(snapshot.DataArea.AsSpan(snapshot.Location.ValueOffset, snapshot.Location.ValueLength));
         return NdefCodec.Sha256Hex(snapshot.DataArea);
-    }
-
-    private static bool IsRecoverableInterruptedWrite(TagSnapshot snapshot, ReadOnlySpan<byte> targetTlv)
-    {
-        var location = snapshot.Location;
-        if (!location.Exists ||
-            location.ValueLength != 0 ||
-            location.TypeOffset < 0 ||
-            location.LengthOffset != location.TypeOffset + 1 ||
-            location.TypeOffset + 4 > snapshot.DataArea.Length ||
-            targetTlv.Length < 4)
-            return false;
-        var observedPrefix = snapshot.DataArea.AsSpan(location.TypeOffset, 4);
-        return observedPrefix[0] == 0x03 &&
-               observedPrefix[1] == 0x00 &&
-               observedPrefix[2] == targetTlv[2] &&
-               observedPrefix[3] == targetTlv[3];
     }
 
     private static void ValidateWriteRequest(NfcWriteRequest request)
@@ -561,15 +424,13 @@ public sealed partial class NfcOperationsService
     private sealed class IdempotencyEntry
     {
         private readonly object _gate = new();
-        private readonly Func<IdempotencyEntry, Task<NfcWriteResponse>> _operationFactory;
+        private readonly Func<Task<NfcWriteResponse>> _operationFactory;
         private Task<NfcWriteResponse>? _operation;
-        private string? _writeStartedUidFingerprint;
-        private string? _recoveryUidFingerprint;
 
         public IdempotencyEntry(
             string requestDigest,
             long sequence,
-            Func<IdempotencyEntry, Task<NfcWriteResponse>> operation)
+            Func<Task<NfcWriteResponse>> operation)
         {
             RequestDigest = requestDigest;
             Sequence = sequence;
@@ -590,45 +451,8 @@ public sealed partial class NfcOperationsService
         {
             lock (_gate)
             {
-                if (_operation is null || _operation.IsCompleted && !_operation.IsCompletedSuccessfully)
-                {
-                    // A task cannot become completed until ExecuteWriteWithLockAsync has
-                    // released the global writer gate in its finally block. Restarting a
-                    // failed exact request here therefore cannot overlap the prior write.
-                    _writeStartedUidFingerprint = null;
-                    _operation = _operationFactory(this);
-                }
+                _operation ??= _operationFactory();
                 return _operation;
-            }
-        }
-
-        public void MarkWriteStarted(string uidFingerprint)
-        {
-            lock (_gate) _writeStartedUidFingerprint = uidFingerprint;
-        }
-
-        public void MarkExecutionFailure()
-        {
-            lock (_gate)
-            {
-                if (_writeStartedUidFingerprint is not null)
-                    _recoveryUidFingerprint = _writeStartedUidFingerprint;
-            }
-        }
-
-        public void MarkExecutionSuccess()
-        {
-            lock (_gate) _recoveryUidFingerprint = null;
-        }
-
-        public bool CanRecoverInterruptedWrite(string uidFingerprint)
-        {
-            lock (_gate)
-            {
-                if (_recoveryUidFingerprint is null) return false;
-                return CryptographicOperations.FixedTimeEquals(
-                    Encoding.ASCII.GetBytes(_recoveryUidFingerprint),
-                    Encoding.ASCII.GetBytes(uidFingerprint));
             }
         }
     }

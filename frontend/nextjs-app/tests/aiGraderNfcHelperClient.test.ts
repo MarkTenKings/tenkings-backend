@@ -8,7 +8,6 @@ import {
   AI_GRADER_NFC_PROFILE_STORAGE_KEY,
   acknowledgeAiGraderF8215Operation,
   AiGraderNfcHelperError,
-  classifyAiGraderNfcHelperWriteRecovery,
   clearAiGraderNfcHelperPairing,
   clearAiGraderNfcInitIdempotencyKey,
   getOrCreateAiGraderNfcInitIdempotencyKey,
@@ -19,7 +18,6 @@ import {
   reconcileAiGraderF8215HostedActivation,
   readAiGraderNfcSelectedProfile,
   readAiGraderNfcInitIdempotencyKey,
-  waitForAiGraderNfcHelperIdle,
   writeAiGraderNfcTag,
   writeAiGraderNfcSelectedProfile,
 } from "../lib/aiGraderNfcHelperClient";
@@ -272,55 +270,4 @@ test("NFC retry storage persists only one report-scoped init idempotency key", (
   }
   clearAiGraderNfcInitIdempotencyKey("report-1", storage);
   assert.equal(sessionValues.size, 0);
-});
-
-test("NFC helper recovery distinguishes definite pre-write faults and waits boundedly for uncertain completion", async () => {
-  assert.equal(
-    classifyAiGraderNfcHelperWriteRecovery(new AiGraderNfcHelperError("no_tag", "Place a tag", 409, undefined, true)),
-    "definite_prewrite",
-  );
-  assert.equal(
-    classifyAiGraderNfcHelperWriteRecovery(
-      new AiGraderNfcHelperError("reader_disconnected", "A write may have started", 409, undefined, true),
-    ),
-    "uncertain",
-  );
-  assert.equal(
-    classifyAiGraderNfcHelperWriteRecovery(new AiGraderNfcHelperError("reader_timeout", "Wait", 504, undefined, true)),
-    "uncertain",
-  );
-  assert.equal(
-    classifyAiGraderNfcHelperWriteRecovery(
-      new AiGraderNfcHelperError("overwrite_confirmation_mismatch", "Observed content changed", 409, undefined, true),
-    ),
-    "definite_prewrite",
-  );
-  let reads = 0;
-  const status = await waitForAiGraderNfcHelperIdle({
-    attempts: 3,
-    delayMs: 25,
-    delay: async () => undefined,
-    readStatus: async () => ({
-      helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION,
-      readerConnected: true,
-      pcscReady: true,
-      tagState: "present",
-      busy: ++reads < 3,
-    }),
-  });
-  assert.equal(reads, 3);
-  assert.equal(status.busy, false);
-  await assert.rejects(
-    waitForAiGraderNfcHelperIdle({
-      attempts: 1,
-      readStatus: async () => ({
-        helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION,
-        readerConnected: true,
-        pcscReady: true,
-        tagState: "present",
-        busy: true,
-      }),
-    }),
-    (error: unknown) => error instanceof Error && error.message.includes("Keep the same physical tag"),
-  );
 });

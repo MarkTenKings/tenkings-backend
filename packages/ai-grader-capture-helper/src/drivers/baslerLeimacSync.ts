@@ -7,7 +7,7 @@ import type {
   BaslerLine2UserOutputPulseResult,
 } from "./baslerPylonClient";
 import {
-  LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
+  LEIMAC_IDMU_MAX_DUTY_PERCENT,
   type LeimacIdmuCommandResult,
   type LeimacIdmuSettingReadbackResult,
   type LeimacIdmuTriggerActivationMode,
@@ -111,7 +111,7 @@ export interface BaslerLeimacPolaritySmokePlan {
     safeOffAfterCapture: true;
     persistentSaved: false;
     arbitraryWritesAllowed: false;
-    maxDutyPercent: 5;
+    maxDutyPercent: number;
   };
 }
 
@@ -316,13 +316,13 @@ export function normalizeBaslerLeimacPolarityDutyPercent(value: number | string 
   if (!Number.isFinite(numeric) || numeric < 0) {
     throw new BaslerLeimacSyncError(
       "BASLER_LEIMAC_POLARITY_DUTY_INVALID",
-      "--duty must be a number from 0 to 5 for polarity diagnostics."
+      `--duty must be a number from 0 to ${LEIMAC_IDMU_MAX_DUTY_PERCENT} for polarity diagnostics.`
     );
   }
-  if (numeric > LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT) {
+  if (numeric > LEIMAC_IDMU_MAX_DUTY_PERCENT) {
     throw new BaslerLeimacSyncError(
       "BASLER_LEIMAC_POLARITY_DUTY_TOO_HIGH",
-      "Basler/Leimac polarity diagnostics are capped at 5% duty."
+      `Basler/Leimac polarity diagnostics must not exceed the bounded ${LEIMAC_IDMU_MAX_DUTY_PERCENT}% controller range.`
     );
   }
   return numeric;
@@ -353,7 +353,7 @@ export function buildBaslerLeimacPolaritySmokePlan(input: {
       safeOffAfterCapture: true,
       persistentSaved: false,
       arbitraryWritesAllowed: false,
-      maxDutyPercent: LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
+      maxDutyPercent: LEIMAC_IDMU_MAX_DUTY_PERCENT,
     },
   };
 }

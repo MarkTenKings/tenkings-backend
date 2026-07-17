@@ -1302,7 +1302,7 @@ function stripAiGraderUnversionedPhysicalFields(value: unknown): unknown {
   return result;
 }
 
-const PUBLIC_GEOMETRY_CAPTURE_MODES = new Set(["detected_geometry", "manual_capture"]);
+const PUBLIC_GEOMETRY_CAPTURE_MODE = "detected_geometry";
 const PUBLIC_GEOMETRY_PLACEMENT_STATES = new Set(["not_detected", "adjust_card", "ready"]);
 const SAFE_GEOMETRY_SOURCE_FRAME_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -1310,17 +1310,6 @@ function publicGeometryTimestamp(value: unknown) {
   if (typeof value !== "string") return undefined;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
-}
-
-function publicManualBoundaryRect(value: unknown) {
-  if (!isRecord(value) || value.coordinateFrame !== "basler_sensor_pixels") return undefined;
-  const x = numberValue(value.x);
-  const y = numberValue(value.y);
-  const width = numberValue(value.width);
-  const height = numberValue(value.height);
-  if (x === undefined || y === undefined || width === undefined || height === undefined) return undefined;
-  if (x < 0 || y < 0 || width <= 0 || height <= 0) return undefined;
-  return { x, y, width, height, coordinateFrame: "basler_sensor_pixels" as const };
 }
 
 /**
@@ -1332,40 +1321,17 @@ export function normalizeAiGraderPublicGeometryCaptureDecisions(value: unknown):
   const decisions: JsonRecord = {};
   for (const side of ["front", "back"] as const) {
     const raw = value[side];
-    if (!isRecord(raw) || !PUBLIC_GEOMETRY_CAPTURE_MODES.has(String(raw.mode))) continue;
-    const mode = String(raw.mode) as "detected_geometry" | "manual_capture";
+    if (!isRecord(raw) || raw.mode !== PUBLIC_GEOMETRY_CAPTURE_MODE) continue;
+    const mode = PUBLIC_GEOMETRY_CAPTURE_MODE;
     const rawPlacement = PUBLIC_GEOMETRY_PLACEMENT_STATES.has(String(raw.placementState))
       ? String(raw.placementState) as "not_detected" | "adjust_card" | "ready"
       : "not_detected";
-    const placementState = mode === "manual_capture" && rawPlacement === "ready" ? "not_detected" : rawPlacement;
+    const placementState = rawPlacement;
     const timestamp = publicGeometryTimestamp(raw.timestamp);
     const sourceFrameId =
       typeof raw.sourceFrameId === "string" && SAFE_GEOMETRY_SOURCE_FRAME_ID.test(raw.sourceFrameId)
         ? raw.sourceFrameId
         : undefined;
-
-    if (mode === "manual_capture") {
-      const manualBoundaryRect = publicManualBoundaryRect(raw.manualBoundaryRect);
-      if (
-        raw.explicitOperatorAction !== true ||
-        raw.manualOverrideUsed !== true ||
-        raw.detectionUsed !== false ||
-        !manualBoundaryRect
-      ) continue;
-      decisions[side] = {
-        mode,
-        geometrySource: "manual_override",
-        captureMode: "manual_capture",
-        placementState,
-        explicitOperatorAction: true,
-        detectionUsed: false,
-        manualOverrideUsed: true,
-        manualBoundaryRect,
-        ...(timestamp ? { timestamp } : {}),
-        ...(sourceFrameId ? { sourceFrameId } : {}),
-      };
-      continue;
-    }
 
     if (raw.detectionUsed !== true || raw.manualOverrideUsed === true) continue;
     decisions[side] = {

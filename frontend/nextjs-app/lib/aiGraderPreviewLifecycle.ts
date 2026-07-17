@@ -1,20 +1,11 @@
 import type {
-  AiGraderLiveLightingStatus,
   AiGraderLocalStationPreviewStatus,
   AiGraderPreviewCardGeometrySummary,
   AiGraderPreviewGeometrySide,
 } from "./aiGraderLocalStation";
 
-export const AI_GRADER_PREVIEW_RECONNECT_DELAYS_MS = [250, 500, 1000, 2000] as const;
-export const AI_GRADER_PREVIEW_MAX_CONSECUTIVE_RECONNECTS = 5;
 export const AI_GRADER_PREVIEW_SNAPSHOT_LIMIT = 8;
 export const AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS = 2000;
-export const AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS = 15_000;
-export const AI_GRADER_ACTIVE_CAPTURE_RECONCILE_INTERVAL_MS = 2_000;
-export const AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS = 20;
-export const AI_GRADER_INTENTIONAL_TRANSITION_MAX_AGE_MS =
-  AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS +
-  AI_GRADER_ACTIVE_CAPTURE_RECONCILE_INTERVAL_MS * (AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS + 1);
 
 export type AiGraderPreviewEpochBinding = {
   sessionId: string;
@@ -22,9 +13,7 @@ export type AiGraderPreviewEpochBinding = {
   sideEpoch: string;
 };
 
-export type AiGraderPreviewFrameBinding = AiGraderPreviewEpochBinding & {
-  frameId: string;
-};
+export type AiGraderPreviewFrameBinding = AiGraderPreviewEpochBinding & { frameId: string };
 
 export type AiGraderPreviewSnapshot = {
   frame: AiGraderPreviewFrameBinding;
@@ -48,26 +37,9 @@ export type AiGraderPreviewEpochState = {
 export type AiGraderPreviewEpochEvent =
   | { type: "bind"; binding?: AiGraderPreviewEpochBinding }
   | { type: "opened"; binding: AiGraderPreviewEpochBinding }
-  | {
-      type: "frame";
-      frame: AiGraderPreviewFrameBinding;
-      objectUrl: string;
-      receivedAtMs: number;
-      capturedAt?: string;
-    }
-  | {
-      type: "image_loaded";
-      frame: AiGraderPreviewFrameBinding;
-      loadedAtMs: number;
-      width: number;
-      height: number;
-    }
-  | {
-      type: "geometry";
-      binding: AiGraderPreviewEpochBinding;
-      geometry?: AiGraderPreviewCardGeometrySummary;
-      observedAtMs: number;
-    }
+  | { type: "frame"; frame: AiGraderPreviewFrameBinding; objectUrl: string; receivedAtMs: number; capturedAt?: string }
+  | { type: "image_loaded"; frame: AiGraderPreviewFrameBinding; loadedAtMs: number; width: number; height: number }
+  | { type: "geometry"; binding: AiGraderPreviewEpochBinding; geometry?: AiGraderPreviewCardGeometrySummary; observedAtMs: number }
   | { type: "tick"; nowMs: number }
   | { type: "clear"; status?: AiGraderLocalStationPreviewStatus["status"] }
   | { type: "non_live"; status: Exclude<AiGraderLocalStationPreviewStatus["status"], "live"> };
@@ -78,94 +50,12 @@ export type AiGraderPreviewEpochTransition = {
   accepted: boolean;
 };
 
-export type AiGraderPreviewReconnectState = {
-  readerActive: boolean;
-  retryScheduled: boolean;
-  consecutiveFailures: number;
-  exhausted: boolean;
-};
-
-export type AiGraderPreviewReconnectDecision = {
-  state: AiGraderPreviewReconnectState;
-  startReader: boolean;
-  reconnectDelayMs?: number;
-};
-
-export type AiGraderBackPositioningRetryUiState = {
-  status: "idle" | "retrying" | "waiting_for_frame" | "ready" | "error";
-  message?: string;
-};
-
-export type AiGraderBackPositioningRetryUiEvent =
-  | { type: "reset"; backPositioningActive: boolean }
-  | { type: "retry_started" }
-  | { type: "retry_failed"; message?: string }
-  | {
-      type: "restore_completed";
-      bridgeCaptureReady: boolean;
-      physicallyVerified: boolean;
-      postVerificationFrameReady: boolean;
-    }
-  | { type: "fresh_frame_ready" };
-
-export type AiGraderPreviewEligibilityInput = {
-  connected: boolean;
-  hasStationToken: boolean;
-  mounted: boolean;
-  aborted: boolean;
-  captureActionActive: boolean;
-  captureLockHeld: boolean;
-  runnerCapturing: boolean;
-  previewHoldActive: boolean;
-  queueReviewActive: boolean;
-  terminalOrSafeOff: boolean;
-};
-
-export type AiGraderLocalCaptureIntent<Side extends AiGraderPreviewGeometrySide = AiGraderPreviewGeometrySide> = {
-  binding: AiGraderPreviewEpochBinding & { side: Side };
-  frameId: string;
-  submittedAtMs: number;
-};
-export type AiGraderLocalBackCaptureIntent = AiGraderLocalCaptureIntent<"back">;
-
-export type AiGraderIntentionalCaptureEofInput<Side extends AiGraderPreviewGeometrySide = AiGraderPreviewGeometrySide> = {
-  expectedBinding: AiGraderPreviewEpochBinding & { side: Side };
-  localIntent?: AiGraderLocalCaptureIntent<Side> | null;
-  authoritativeBinding?: AiGraderPreviewEpochBinding;
-  bridgeIntent?: {
-    active: boolean;
-    kind?: "capture_front" | "capture_back";
-    sessionId?: string;
-    side?: AiGraderPreviewGeometrySide;
-    sideEpoch?: string;
-    frameId?: string;
-    completedAt?: string;
-    outcome?: "capture_started" | "transition_failed";
-  };
-  nowMs?: number;
-};
-export type AiGraderIntentionalBackCaptureEofInput = AiGraderIntentionalCaptureEofInput<"back">;
-
-export type AiGraderPreviewReaderEndReason =
-  | "eof"
-  | "error"
-  | "abort"
-  | "authoritative_state"
-  | "intentional_capture_transition";
-
-export type AiGraderPreviewLossDisposition = {
-  safeOff: boolean;
-  reconnect: boolean;
-  preserveLocalIntent: boolean;
-};
-
 const SAFE_PREVIEW_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 function safePreviewId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
-  if (!SAFE_PREVIEW_ID.test(trimmed)) return undefined;
-  if (/token|secret|bearer|presign|x-amz|localhost/i.test(trimmed)) return undefined;
+  if (!SAFE_PREVIEW_ID.test(trimmed) || /token|secret|bearer|presign|x-amz|localhost/i.test(trimmed)) return undefined;
   return trimmed;
 }
 
@@ -187,148 +77,33 @@ export function sanitizeAiGraderPreviewFrameBinding(value: unknown): AiGraderPre
 }
 
 export function aiGraderPreviewStatusBinding(
-  status: Pick<AiGraderLocalStationPreviewStatus, "sessionId" | "activeSide" | "sideEpoch">
+  status: Pick<AiGraderLocalStationPreviewStatus, "sessionId" | "activeSide" | "sideEpoch">,
 ): AiGraderPreviewEpochBinding | undefined {
-  return sanitizeAiGraderPreviewEpochBinding({
-    sessionId: status.sessionId,
-    side: status.activeSide,
-    sideEpoch: status.sideEpoch,
-  });
+  return sanitizeAiGraderPreviewEpochBinding({ sessionId: status.sessionId, side: status.activeSide, sideEpoch: status.sideEpoch });
 }
 
-export function aiGraderPreviewBindingMatches(
-  left?: AiGraderPreviewEpochBinding,
-  right?: AiGraderPreviewEpochBinding
-) {
-  return Boolean(
-    left &&
-    right &&
-    left.sessionId === right.sessionId &&
-    left.side === right.side &&
-    left.sideEpoch === right.sideEpoch
-  );
+export function aiGraderPreviewBindingMatches(left?: AiGraderPreviewEpochBinding, right?: AiGraderPreviewEpochBinding) {
+  return Boolean(left && right && left.sessionId === right.sessionId && left.side === right.side && left.sideEpoch === right.sideEpoch);
 }
 
-export function aiGraderPreviewBindingChanged(
-  current?: AiGraderPreviewEpochBinding,
-  next?: AiGraderPreviewEpochBinding,
-) {
+export function aiGraderPreviewBindingChanged(current?: AiGraderPreviewEpochBinding, next?: AiGraderPreviewEpochBinding) {
   if (!current && !next) return false;
   return !aiGraderPreviewBindingMatches(current, next);
 }
 
-export function projectAiGraderPreviewLossSafeOffPending(
-  current: AiGraderLiveLightingStatus,
-  nowMs = Date.now(),
-): AiGraderLiveLightingStatus {
-  const { enabled: _enabled, verifiedAt: _appliedVerifiedAt, ...previousApplied } = current.applied;
-  const { verifiedAt: _physicalVerifiedAt, lastError: _lastError, ...previousPhysicalState } = current.physicalState;
-  const expectedWriteCount = 0;
-  return {
-    ...current,
-    status: "applying",
-    applied: {
-      ...previousApplied,
-      verificationState: "pending",
-      expectedWriteCount,
-      acknowledgedWriteCount: 0,
-      verificationComplete: false,
-    },
-    physicalState: {
-      ...previousPhysicalState,
-      state: "safe_off_pending",
-      reason: "Preview-loss safe-off acknowledgement is pending.",
-      changedAt: new Date(nowMs).toISOString(),
-      expectedWriteCount,
-      acknowledgedWriteCount: 0,
-      complete: false,
-    },
-    connection: { ...current.connection, state: "writing" },
-    ...(current.backPositioning ? {
-      backPositioning: {
-        ...current.backPositioning,
-        captureReady: false,
-      },
-    } : {}),
-  };
+function frameMatches(frame: AiGraderPreviewFrameBinding, binding?: AiGraderPreviewEpochBinding) {
+  return Boolean(binding && aiGraderPreviewBindingMatches(frame, binding));
 }
 
-export function projectAiGraderPreviewLossPhysicalStateUnknown(
-  current: AiGraderLiveLightingStatus,
-  nowMs = Date.now(),
-): AiGraderLiveLightingStatus {
-  const { enabled: _enabled, verifiedAt: _appliedVerifiedAt, ...previousApplied } = current.applied;
-  const { verifiedAt: _physicalVerifiedAt, ...previousPhysicalState } = current.physicalState;
-  const expectedWriteCount = 0;
-  const message = "Preview-loss safe-off was not acknowledged; physical light state is unknown.";
-  return {
-    ...current,
-    status: "error",
-    applied: {
-      ...previousApplied,
-      verificationState: "unknown",
-      expectedWriteCount,
-      acknowledgedWriteCount: 0,
-      verificationComplete: false,
-    },
-    physicalState: {
-      ...previousPhysicalState,
-      state: "physical_state_unknown",
-      reason: message,
-      changedAt: new Date(nowMs).toISOString(),
-      expectedWriteCount,
-      acknowledgedWriteCount: 0,
-      complete: false,
-      lastError: message,
-    },
-    connection: { ...current.connection, state: "error" },
-    ...(current.backPositioning ? {
-      backPositioning: {
-        ...current.backPositioning,
-        status: "failed",
-        captureReady: false,
-        lastError: {
-          code: "PHYSICAL_STATE_UNKNOWN",
-          message,
-        },
-      },
-    } : {}),
-  };
+function geometryMatches(geometry: AiGraderPreviewCardGeometrySummary, binding: AiGraderPreviewEpochBinding | undefined, frameIds: string[]) {
+  return Boolean(
+    binding && geometry.sessionId === binding.sessionId && geometry.side === binding.side &&
+    geometry.sideEpoch === binding.sideEpoch && geometry.sourceFrameId && frameIds.includes(geometry.sourceFrameId),
+  );
 }
 
-export function aiGraderPreviewFrameMatchesEpoch(
-  frame: AiGraderPreviewFrameBinding | undefined,
-  binding: AiGraderPreviewEpochBinding | undefined
-) {
-  return Boolean(frame && aiGraderPreviewBindingMatches(frame, binding));
-}
-
-export function aiGraderPreviewGeometryMatchesEpoch(input: {
-  geometry?: AiGraderPreviewCardGeometrySummary;
-  binding?: AiGraderPreviewEpochBinding;
-  frameIds: readonly string[];
-  observedAtMs: number;
-}) {
-  const { geometry, binding, frameIds, observedAtMs } = input;
-  if (!geometry || !binding || !geometry.sourceFrameId || !geometry.timestamp) return false;
-  if (!Number.isFinite(observedAtMs)) return false;
-  const timestampMs = Date.parse(geometry.timestamp);
-  if (!Number.isFinite(timestampMs) || timestampMs > observedAtMs) return false;
-  if (observedAtMs - timestampMs > AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS) return false;
-  return geometry.sessionId === binding.sessionId &&
-    geometry.side === binding.side &&
-    geometry.sideEpoch === binding.sideEpoch &&
-    frameIds.includes(geometry.sourceFrameId);
-}
-
-export function createAiGraderPreviewEpochState(
-  binding?: AiGraderPreviewEpochBinding
-): AiGraderPreviewEpochState {
-  return {
-    ...(binding ? { binding: { ...binding } } : {}),
-    phase: binding ? "starting" : "not_started",
-    snapshots: [],
-  };
+export function createAiGraderPreviewEpochState(binding?: AiGraderPreviewEpochBinding): AiGraderPreviewEpochState {
+  return { ...(binding ? { binding: { ...binding } } : {}), phase: binding ? "starting" : "not_started", snapshots: [] };
 }
 
 function uniqueUrls(urls: readonly string[]) {
@@ -336,541 +111,103 @@ function uniqueUrls(urls: readonly string[]) {
 }
 
 function snapshotIsFresh(snapshot: AiGraderPreviewSnapshot, nowMs: number) {
-  const capturedAtMs = snapshot.capturedAtMs;
-  return typeof capturedAtMs === "number" &&
-    Number.isFinite(capturedAtMs) &&
-    Number.isFinite(snapshot.receivedAtMs) &&
-    capturedAtMs <= snapshot.receivedAtMs &&
-    snapshot.receivedAtMs - capturedAtMs <= AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS &&
-    nowMs >= snapshot.receivedAtMs &&
-    nowMs >= capturedAtMs &&
-    nowMs - snapshot.receivedAtMs <= AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS &&
-    nowMs - capturedAtMs <= AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS;
+  return typeof snapshot.capturedAtMs === "number" && Number.isFinite(snapshot.receivedAtMs) &&
+    snapshot.capturedAtMs <= snapshot.receivedAtMs && snapshot.receivedAtMs - snapshot.capturedAtMs <= AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS &&
+    nowMs >= snapshot.receivedAtMs && nowMs - snapshot.receivedAtMs <= AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS;
 }
 
 function snapshotHasExactGeometry(snapshot: AiGraderPreviewSnapshot) {
   const geometry = snapshot.geometry;
-  return Boolean(
-    snapshot.imageLoaded &&
-    geometry?.sourceFrameId === snapshot.frame.frameId &&
-    geometry.sessionId === snapshot.frame.sessionId &&
-    geometry.side === snapshot.frame.side &&
-    geometry.sideEpoch === snapshot.frame.sideEpoch
-  );
+  return Boolean(snapshot.imageLoaded && geometry?.sourceFrameId === snapshot.frame.frameId &&
+    geometry.sessionId === snapshot.frame.sessionId && geometry.side === snapshot.frame.side &&
+    geometry.sideEpoch === snapshot.frame.sideEpoch);
 }
 
-function snapshotGeometryIsFresh(snapshot: AiGraderPreviewSnapshot, nowMs: number) {
-  const timestampMs = Date.parse(snapshot.geometry?.timestamp ?? "");
-  return Number.isFinite(timestampMs) &&
-    timestampMs <= nowMs &&
-    nowMs - timestampMs <= AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS;
-}
-
-function chooseDisplayedFrameId(
-  snapshots: readonly AiGraderPreviewSnapshot[],
-  currentDisplayedFrameId?: string,
-) {
-  const currentIndex = currentDisplayedFrameId
-    ? snapshots.findIndex((snapshot) => snapshot.frame.frameId === currentDisplayedFrameId)
-    : -1;
-  const current = currentIndex >= 0 ? snapshots[currentIndex] : undefined;
-  let newestExactIndex = -1;
+function chooseDisplayed(snapshots: AiGraderPreviewSnapshot[]) {
   for (let index = snapshots.length - 1; index >= 0; index -= 1) {
-    if (snapshotHasExactGeometry(snapshots[index])) {
-      newestExactIndex = index;
-      break;
-    }
+    if (snapshotHasExactGeometry(snapshots[index])) return snapshots[index].frame.frameId;
   }
-  if (current && snapshotHasExactGeometry(current)) {
-    return newestExactIndex > currentIndex
-      ? snapshots[newestExactIndex].frame.frameId
-      : current.frame.frameId;
-  }
-  if (newestExactIndex >= 0) return snapshots[newestExactIndex].frame.frameId;
-  for (let index = snapshots.length - 1; index >= 0; index -= 1) {
-    if (snapshots[index].imageLoaded) return snapshots[index].frame.frameId;
-  }
-  return undefined;
+  return snapshots.slice().reverse().find((snapshot) => snapshot.imageLoaded)?.frame.frameId;
 }
 
-function pruneSnapshots(
-  snapshots: readonly AiGraderPreviewSnapshot[],
-  nowMs: number,
-  limit = AI_GRADER_PREVIEW_SNAPSHOT_LIMIT,
-) {
-  const fresh = snapshots.filter((snapshot) => snapshotIsFresh(snapshot, nowMs));
-  const kept = fresh.slice(-limit);
+function prune(snapshots: AiGraderPreviewSnapshot[], nowMs: number) {
+  const kept = snapshots.filter((snapshot) => snapshotIsFresh(snapshot, nowMs)).slice(-AI_GRADER_PREVIEW_SNAPSHOT_LIMIT);
   const keptUrls = new Set(kept.map((snapshot) => snapshot.objectUrl));
-  return {
-    snapshots: kept,
-    revokeObjectUrls: uniqueUrls(
-      snapshots
-        .filter((snapshot) => !keptUrls.has(snapshot.objectUrl))
-        .map((snapshot) => snapshot.objectUrl),
-    ),
-  };
+  return { snapshots: kept, revokeObjectUrls: uniqueUrls(snapshots.filter((snapshot) => !keptUrls.has(snapshot.objectUrl)).map((snapshot) => snapshot.objectUrl)) };
 }
 
-function clearEpochState(
-  current: AiGraderPreviewEpochState,
-  status: AiGraderLocalStationPreviewStatus["status"],
-  binding = current.binding,
-): AiGraderPreviewEpochTransition {
-  return {
-    state: {
-      ...(binding ? { binding: { ...binding } } : {}),
-      phase: status,
-      snapshots: [],
-    },
-    revokeObjectUrls: uniqueUrls(current.snapshots.map((snapshot) => snapshot.objectUrl)),
-    accepted: true,
-  };
-}
-
-export function transitionAiGraderPreviewEpoch(
-  current: AiGraderPreviewEpochState,
-  event: AiGraderPreviewEpochEvent
-): AiGraderPreviewEpochTransition {
+export function transitionAiGraderPreviewEpoch(current: AiGraderPreviewEpochState, event: AiGraderPreviewEpochEvent): AiGraderPreviewEpochTransition {
   if (event.type === "bind") {
-    if (aiGraderPreviewBindingMatches(current.binding, event.binding)) {
-      return { state: current, revokeObjectUrls: [], accepted: false };
-    }
-    return {
-      state: createAiGraderPreviewEpochState(event.binding),
-      revokeObjectUrls: uniqueUrls(current.snapshots.map((snapshot) => snapshot.objectUrl)),
-      accepted: true,
-    };
+    if (aiGraderPreviewBindingMatches(current.binding, event.binding)) return { state: current, revokeObjectUrls: [], accepted: false };
+    return { state: createAiGraderPreviewEpochState(event.binding), revokeObjectUrls: current.snapshots.map((s) => s.objectUrl), accepted: true };
   }
-  if (event.type === "non_live") {
-    return clearEpochState(current, event.status);
-  }
-  if (event.type === "clear") {
-    return clearEpochState(current, event.status ?? (current.binding ? "starting" : "not_started"));
+  if (event.type === "clear" || event.type === "non_live") {
+    const phase = event.type === "clear" ? (event.status ?? (current.binding ? "starting" : "not_started")) : event.status;
+    return { state: { ...(current.binding ? { binding: current.binding } : {}), phase, snapshots: [] }, revokeObjectUrls: current.snapshots.map((s) => s.objectUrl), accepted: true };
   }
   if (event.type === "tick") {
-    const pruned = pruneSnapshots(current.snapshots, event.nowMs);
-    const displayedFrameId = chooseDisplayedFrameId(pruned.snapshots, current.displayedFrameId);
-    return {
-      state: { ...current, snapshots: pruned.snapshots, displayedFrameId },
-      revokeObjectUrls: pruned.revokeObjectUrls,
-      accepted: pruned.revokeObjectUrls.length > 0 || displayedFrameId !== current.displayedFrameId,
-    };
+    const result = prune(current.snapshots, event.nowMs);
+    return { state: { ...current, snapshots: result.snapshots, displayedFrameId: chooseDisplayed(result.snapshots) }, revokeObjectUrls: result.revokeObjectUrls, accepted: true };
   }
   const eventBinding = event.type === "frame" || event.type === "image_loaded" ? event.frame : event.binding;
   if (!aiGraderPreviewBindingMatches(current.binding, eventBinding)) {
-    return {
-      state: current,
-      revokeObjectUrls: event.type === "frame" ? [event.objectUrl] : [],
-      accepted: false,
-    };
+    return { state: current, revokeObjectUrls: event.type === "frame" ? [event.objectUrl] : [], accepted: false };
   }
-  if (event.type === "opened") {
-    return {
-      state: { ...current, phase: current.snapshots.length ? current.phase : "starting" },
-      revokeObjectUrls: [],
-      accepted: true,
-    };
-  }
+  if (event.type === "opened") return { state: { ...current, phase: "starting" }, revokeObjectUrls: [], accepted: true };
   if (event.type === "frame") {
     const capturedAtMs = Date.parse(event.capturedAt ?? "");
-    if (
-      !Number.isFinite(event.receivedAtMs) ||
-      !Number.isFinite(capturedAtMs) ||
-      capturedAtMs > event.receivedAtMs ||
-      event.receivedAtMs - capturedAtMs > AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS
-    ) {
+    if (!Number.isFinite(capturedAtMs) || capturedAtMs > event.receivedAtMs || event.receivedAtMs - capturedAtMs > AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS) {
       return { state: current, revokeObjectUrls: [event.objectUrl], accepted: false };
     }
-    const previous = current.snapshots.find((snapshot) => snapshot.frame.frameId === event.frame.frameId);
-    const withoutDuplicate = current.snapshots.filter((snapshot) => snapshot.frame.frameId !== event.frame.frameId);
-    const nextSnapshot: AiGraderPreviewSnapshot = {
-      frame: { ...event.frame },
-      objectUrl: event.objectUrl,
-      receivedAtMs: event.receivedAtMs,
-      capturedAtMs,
-      imageLoaded: false,
-    };
-    const pruned = pruneSnapshots([...withoutDuplicate, nextSnapshot], event.receivedAtMs);
-    const replacedUrl = previous && previous.objectUrl !== event.objectUrl ? previous.objectUrl : undefined;
-    return {
-      state: {
-        ...current,
-        phase: "live",
-        snapshots: pruned.snapshots,
-        displayedFrameId: chooseDisplayedFrameId(pruned.snapshots, current.displayedFrameId),
-      },
-      revokeObjectUrls: uniqueUrls([...pruned.revokeObjectUrls, ...(replacedUrl ? [replacedUrl] : [])]),
-      accepted: true,
-    };
+    const old = current.snapshots.find((snapshot) => snapshot.frame.frameId === event.frame.frameId);
+    const next = [...current.snapshots.filter((snapshot) => snapshot.frame.frameId !== event.frame.frameId), {
+      frame: event.frame, objectUrl: event.objectUrl, receivedAtMs: event.receivedAtMs, capturedAtMs, imageLoaded: false,
+    }];
+    const result = prune(next, event.receivedAtMs);
+    return { state: { ...current, phase: "live", snapshots: result.snapshots, displayedFrameId: chooseDisplayed(result.snapshots) }, revokeObjectUrls: uniqueUrls([...result.revokeObjectUrls, ...(old && old.objectUrl !== event.objectUrl ? [old.objectUrl] : [])]), accepted: true };
   }
   if (event.type === "image_loaded") {
-    if (!Number.isFinite(event.loadedAtMs) || event.width <= 0 || event.height <= 0) {
-      return { state: current, revokeObjectUrls: [], accepted: false };
-    }
-    const pruned = pruneSnapshots(current.snapshots, event.loadedAtMs);
     let found = false;
-    const snapshots = pruned.snapshots.map((snapshot) => {
+    const snapshots = current.snapshots.map((snapshot) => {
       if (snapshot.frame.frameId !== event.frame.frameId) return snapshot;
       found = true;
       return { ...snapshot, imageLoaded: true, imageWidth: event.width, imageHeight: event.height };
     });
-    const displayedFrameId = chooseDisplayedFrameId(snapshots, current.displayedFrameId);
-    return {
-      state: { ...current, snapshots, displayedFrameId },
-      revokeObjectUrls: pruned.revokeObjectUrls,
-      accepted: found,
-    };
+    return { state: { ...current, snapshots, displayedFrameId: chooseDisplayed(snapshots) }, revokeObjectUrls: [], accepted: found };
   }
-  const geometry = event.geometry;
-  if (!geometry || !aiGraderPreviewGeometryMatchesEpoch({
-    geometry,
-    binding: current.binding,
-    frameIds: current.snapshots.map((snapshot) => snapshot.frame.frameId),
-    observedAtMs: event.observedAtMs,
-  })) {
+  if (!event.geometry || !geometryMatches(event.geometry, current.binding, current.snapshots.map((s) => s.frame.frameId))) {
     return { state: current, revokeObjectUrls: [], accepted: false };
   }
-  const pruned = pruneSnapshots(current.snapshots, event.observedAtMs);
   let found = false;
-  const snapshots = pruned.snapshots.map((snapshot) => {
-    if (snapshot.frame.frameId !== geometry.sourceFrameId) return snapshot;
+  const snapshots = current.snapshots.map((snapshot) => {
+    if (snapshot.frame.frameId !== event.geometry?.sourceFrameId) return snapshot;
     found = true;
-    return { ...snapshot, geometry: { ...geometry }, geometryObservedAtMs: event.observedAtMs };
+    return { ...snapshot, geometry: event.geometry, geometryObservedAtMs: event.observedAtMs };
   });
-  const displayedFrameId = chooseDisplayedFrameId(snapshots, current.displayedFrameId);
-  return {
-    state: { ...current, snapshots, displayedFrameId },
-    revokeObjectUrls: pruned.revokeObjectUrls,
-    accepted: found,
-  };
+  return { state: { ...current, snapshots, displayedFrameId: chooseDisplayed(snapshots) }, revokeObjectUrls: [], accepted: found };
 }
 
 export function aiGraderPreviewDisplayedSnapshot(state: AiGraderPreviewEpochState) {
-  return state.displayedFrameId
-    ? state.snapshots.find((snapshot) => snapshot.frame.frameId === state.displayedFrameId)
-    : undefined;
+  return state.displayedFrameId ? state.snapshots.find((snapshot) => snapshot.frame.frameId === state.displayedFrameId) : undefined;
 }
 
-export function aiGraderPreviewManualCaptureReady(
-  state: AiGraderPreviewEpochState,
-  nowMs = Date.now(),
-) {
+export function aiGraderPreviewDetectedCaptureReady(state: AiGraderPreviewEpochState, nowMs = Date.now()) {
   const displayed = aiGraderPreviewDisplayedSnapshot(state);
-  return state.phase === "live" && Boolean(
-    state.binding &&
-    displayed &&
-    snapshotIsFresh(displayed, nowMs) &&
-    snapshotHasExactGeometry(displayed) &&
-    snapshotGeometryIsFresh(displayed, nowMs) &&
-    aiGraderPreviewFrameMatchesEpoch(displayed.frame, state.binding)
-  );
-}
-
-export function aiGraderPreviewDetectedCaptureReady(
-  state: AiGraderPreviewEpochState,
-  nowMs = Date.now(),
-) {
-  const displayed = aiGraderPreviewDisplayedSnapshot(state);
-  return aiGraderPreviewManualCaptureReady(state, nowMs) && Boolean(
-    displayed?.geometry?.placementState === "ready" &&
-    displayed.geometry.geometrySource === "detected" &&
-    displayed.geometry.detectionUsed === true
-  );
-}
-
-export function aiGraderPreviewSnapshotCapturedAtOrAfterVerification(input: {
-  snapshot?: AiGraderPreviewSnapshot;
-  verifiedAt?: string;
-}) {
-  const capturedAtMs = input.snapshot?.capturedAtMs;
-  const receivedAtMs = input.snapshot?.receivedAtMs;
-  const verifiedAtMs = Date.parse(input.verifiedAt ?? "");
-  return typeof capturedAtMs === "number" &&
-    typeof receivedAtMs === "number" &&
-    Number.isFinite(capturedAtMs) &&
-    Number.isFinite(receivedAtMs) &&
-    Number.isFinite(verifiedAtMs) &&
-    capturedAtMs <= receivedAtMs &&
-    capturedAtMs >= verifiedAtMs;
+  const geometryTime = Date.parse(displayed?.geometry?.timestamp ?? "");
+  return state.phase === "live" && Boolean(displayed && snapshotIsFresh(displayed, nowMs) && snapshotHasExactGeometry(displayed) &&
+    Number.isFinite(geometryTime) && nowMs - geometryTime <= AI_GRADER_PREVIEW_SNAPSHOT_MAX_AGE_MS &&
+    frameMatches(displayed.frame, state.binding) && displayed.geometry?.placementState === "ready" &&
+    displayed.geometry.geometrySource === "detected" && displayed.geometry.detectionUsed === true);
 }
 
 export function aiGraderPreviewBackCaptureReady(input: {
   state: AiGraderPreviewEpochState;
-  mode: "detected_geometry" | "manual_capture";
+  mode: "detected_geometry";
   positioningVerifiedAt?: string;
   nowMs?: number;
 }) {
-  if (input.state.binding?.side !== "back") return false;
-  const nowMs = input.nowMs ?? Date.now();
-  const baseReady = input.mode === "manual_capture"
-    ? aiGraderPreviewManualCaptureReady(input.state, nowMs)
-    : aiGraderPreviewDetectedCaptureReady(input.state, nowMs);
-  return baseReady && aiGraderPreviewSnapshotCapturedAtOrAfterVerification({
-    snapshot: aiGraderPreviewDisplayedSnapshot(input.state),
-    verifiedAt: input.positioningVerifiedAt,
-  });
-}
-
-export function isAiGraderBackPositioningRetryReady(input: {
-  state: AiGraderPreviewEpochState;
-  positioningPhysicallyVerified: boolean;
-  positioningVerifiedAt?: string;
-  nowMs?: number;
-}) {
-  return input.positioningPhysicallyVerified && aiGraderPreviewBackCaptureReady({
-    state: input.state,
-    mode: "manual_capture",
-    positioningVerifiedAt: input.positioningVerifiedAt,
-    nowMs: input.nowMs,
-  });
-}
-
-export function shouldStartAiGraderBackPositioningRetry(input: {
-  state: AiGraderPreviewEpochState;
-  positioningPhysicallyVerified: boolean;
-  positioningVerifiedAt?: string;
-  nowMs?: number;
-}) {
-  return !isAiGraderBackPositioningRetryReady(input);
-}
-
-export function reduceAiGraderBackPositioningRetryUiState(
-  current: AiGraderBackPositioningRetryUiState,
-  event: AiGraderBackPositioningRetryUiEvent,
-): AiGraderBackPositioningRetryUiState {
-  if (event.type === "reset") {
-    return event.backPositioningActive
-      ? { status: "waiting_for_frame", message: "Waiting for positioning light and a fresh back preview frame." }
-      : { status: "idle" };
-  }
-  if (event.type === "retry_started") {
-    return { status: "retrying", message: "Restoring the accepted positioning profile." };
-  }
-  if (event.type === "retry_failed") {
-    return { status: "error", message: event.message ?? "Positioning light restore failed safely." };
-  }
-  if (event.type === "fresh_frame_ready") {
-    return current.status === "idle"
-      ? current
-      : { status: "ready", message: "Positioning light and fresh back preview are ready." };
-  }
-  if (!event.physicallyVerified) {
-    return { status: "error", message: "Positioning light restore did not reach a verified physical state." };
-  }
-  return event.bridgeCaptureReady && event.postVerificationFrameReady
-    ? { status: "ready", message: "Positioning light and fresh back preview are ready." }
-    : { status: "waiting_for_frame", message: "Positioning light restored. Waiting for a fresh back preview frame." };
-}
-
-export function isAiGraderPreviewReconnectEligible(input: AiGraderPreviewEligibilityInput) {
-  return input.connected &&
-    input.hasStationToken &&
-    input.mounted &&
-    !input.aborted &&
-    !input.captureActionActive &&
-    !input.captureLockHeld &&
-    !input.runnerCapturing &&
-    !input.previewHoldActive &&
-    !input.queueReviewActive &&
-    !input.terminalOrSafeOff;
-}
-
-export function aiGraderLocalCaptureIntentMatches(input: {
-  expectedBinding: AiGraderPreviewEpochBinding;
-  localIntent?: AiGraderLocalCaptureIntent | null;
-}) {
-  return Boolean(
-    input.localIntent &&
-    aiGraderPreviewBindingMatches(input.localIntent.binding, input.expectedBinding) &&
-    safePreviewId(input.localIntent.frameId)
-  );
-}
-
-export function aiGraderAtomicIntentReconcileDecision(input: {
-  exactCaptureAuthority: boolean;
-  exactTransitionFailure: boolean;
-  bridgeTransitionActive: boolean;
-  activeChecksRemaining: number;
-}):
-  | { kind: "poll_active"; delayMs: number; nextActiveChecksRemaining: number }
-  | { kind: "active_deadline" }
-  | { kind: "recover_full_status" }
-  | { kind: "safe_off_reconnect" } {
-  if (input.exactCaptureAuthority && input.bridgeTransitionActive) {
-    return input.activeChecksRemaining > 0
-      ? {
-          kind: "poll_active",
-          delayMs: AI_GRADER_ACTIVE_CAPTURE_RECONCILE_INTERVAL_MS,
-          nextActiveChecksRemaining: input.activeChecksRemaining - 1,
-        }
-      : { kind: "active_deadline" };
-  }
-  if (input.exactCaptureAuthority || input.exactTransitionFailure) return { kind: "recover_full_status" };
-  return { kind: "safe_off_reconnect" };
-}
-
-export function aiGraderSubmittedCaptureIntentMatches(input: {
-  expectedBinding: AiGraderPreviewEpochBinding;
-  localIntent?: AiGraderLocalCaptureIntent | null;
-  nowMs?: number;
-}) {
-  if (!aiGraderLocalCaptureIntentMatches(input)) return false;
-  const submittedAtMs = input.localIntent?.submittedAtMs;
-  const ageMs = (input.nowMs ?? Date.now()) - (submittedAtMs ?? Number.NaN);
-  return Number.isFinite(submittedAtMs) && ageMs >= 0 && ageMs <= AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS;
-}
-
-export function aiGraderLocalBackCaptureIntentMatches(input: {
-  expectedBinding: AiGraderPreviewEpochBinding;
-  localIntent?: AiGraderLocalBackCaptureIntent | null;
-}) {
-  return input.expectedBinding.side === "back" && aiGraderLocalCaptureIntentMatches(input);
-}
-
-function bridgeCaptureIntentMatches(input: AiGraderIntentionalCaptureEofInput) {
-  const localIntent = input.localIntent;
-  const bridgeIntent = input.bridgeIntent;
-  return Boolean(
-    localIntent &&
-    bridgeIntent &&
-    aiGraderLocalCaptureIntentMatches({ expectedBinding: input.expectedBinding, localIntent }) &&
-    bridgeIntent.kind === `capture_${input.expectedBinding.side}` &&
-    bridgeIntent.sessionId === input.expectedBinding.sessionId &&
-    bridgeIntent.side === input.expectedBinding.side &&
-    bridgeIntent.sideEpoch === input.expectedBinding.sideEpoch &&
-    bridgeIntent.frameId === localIntent.frameId
-  );
-}
-
-function completedBridgeIntentIsCurrent(input: AiGraderIntentionalCaptureEofInput) {
-  const completedAtMs = Date.parse(input.bridgeIntent?.completedAt ?? "");
-  const ageMs = (input.nowMs ?? Date.now()) - completedAtMs;
-  return Number.isFinite(completedAtMs) &&
-    ageMs >= 0 &&
-    ageMs <= AI_GRADER_INTENTIONAL_TRANSITION_MAX_AGE_MS;
-}
-
-export function isAiGraderIntentionalCaptureEof(input: AiGraderIntentionalCaptureEofInput) {
-  const bridgeIntent = input.bridgeIntent;
-  if (!bridgeIntent || !bridgeCaptureIntentMatches(input)) return false;
-  if (bridgeIntent.active === true) return true;
-  return bridgeIntent.outcome === "capture_started" && completedBridgeIntentIsCurrent(input);
-}
-
-export function isAiGraderConfirmedCaptureTransitionFailure(
-  input: AiGraderIntentionalCaptureEofInput,
-) {
-  return input.bridgeIntent?.active === false &&
-    input.bridgeIntent.outcome === "transition_failed" &&
-    aiGraderPreviewBindingMatches(input.authoritativeBinding, input.expectedBinding) &&
-    bridgeCaptureIntentMatches(input) &&
-    completedBridgeIntentIsCurrent(input);
-}
-
-export const isAiGraderIntentionalBackCaptureEof = (input: AiGraderIntentionalBackCaptureEofInput) =>
-  isAiGraderIntentionalCaptureEof(input);
-
-export const isAiGraderConfirmedBackCaptureTransitionFailure = (
-  input: AiGraderIntentionalBackCaptureEofInput,
-) => isAiGraderConfirmedCaptureTransitionFailure(input);
-
-export function aiGraderPreviewLossDisposition(input: {
-  reason: AiGraderPreviewReaderEndReason;
-  expectedBinding: AiGraderPreviewEpochBinding;
-  localIntent?: AiGraderLocalCaptureIntent | null;
-  atomicTransitionFailureConfirmed?: boolean;
-  reconnectEligible: boolean;
-  nowMs?: number;
-}): AiGraderPreviewLossDisposition {
-  if (input.reason !== "eof" && input.reason !== "error") {
-    return { safeOff: false, reconnect: false, preserveLocalIntent: false };
-  }
-  if (input.atomicTransitionFailureConfirmed) {
-    return { safeOff: false, reconnect: input.reconnectEligible, preserveLocalIntent: false };
-  }
-  if (aiGraderSubmittedCaptureIntentMatches({
-    expectedBinding: input.expectedBinding,
-    localIntent: input.localIntent,
-    nowMs: input.nowMs,
-  })) {
-    return { safeOff: false, reconnect: false, preserveLocalIntent: true };
-  }
-  return { safeOff: true, reconnect: input.reconnectEligible, preserveLocalIntent: false };
-}
-
-export async function runAiGraderPreviewLossRecovery(input: {
-  reason: AiGraderPreviewReaderEndReason;
-  expectedBinding: AiGraderPreviewEpochBinding;
-  localIntent?: AiGraderLocalCaptureIntent | null;
-  atomicTransitionFailureConfirmed?: boolean;
-  reconnectEligible: boolean;
-  nowMs?: number;
-}, operations: {
-  safeOff: () => Promise<void>;
-  reconnect: () => void | Promise<void>;
-}) {
-  const disposition = aiGraderPreviewLossDisposition(input);
-  if (disposition.safeOff) await operations.safeOff();
-  if (disposition.reconnect) await operations.reconnect();
-  return disposition;
-}
-
-export function createAiGraderPreviewReconnectState(): AiGraderPreviewReconnectState {
-  return { readerActive: false, retryScheduled: false, consecutiveFailures: 0, exhausted: false };
-}
-
-export function beginAiGraderPreviewReader(
-  current: AiGraderPreviewReconnectState,
-  eligible: boolean
-): AiGraderPreviewReconnectDecision {
-  if (!eligible || current.readerActive || current.retryScheduled || current.exhausted) {
-    return { state: current, startReader: false };
-  }
-  return {
-    state: { ...current, readerActive: true },
-    startReader: true,
-  };
-}
-
-export function noteAiGraderPreviewFrameForReconnect(
-  current: AiGraderPreviewReconnectState
-): AiGraderPreviewReconnectState {
-  return { ...current, consecutiveFailures: 0, exhausted: false };
-}
-
-export function finishAiGraderPreviewReader(input: {
-  state: AiGraderPreviewReconnectState;
-  eligible: boolean;
-  reason: "eof" | "error" | "abort" | "authoritative_state" | "intentional_capture_transition";
-}): AiGraderPreviewReconnectDecision {
-  const inactive = { ...input.state, readerActive: false };
-  if (
-    !input.eligible ||
-    input.reason === "abort" ||
-    input.reason === "authoritative_state" ||
-    input.reason === "intentional_capture_transition"
-  ) {
-    return { state: { ...inactive, retryScheduled: false }, startReader: false };
-  }
-  const consecutiveFailures = inactive.consecutiveFailures + 1;
-  if (consecutiveFailures > AI_GRADER_PREVIEW_MAX_CONSECUTIVE_RECONNECTS) {
-    return {
-      state: { ...inactive, consecutiveFailures, retryScheduled: false, exhausted: true },
-      startReader: false,
-    };
-  }
-  const reconnectDelayMs = AI_GRADER_PREVIEW_RECONNECT_DELAYS_MS[
-    Math.min(consecutiveFailures - 1, AI_GRADER_PREVIEW_RECONNECT_DELAYS_MS.length - 1)
-  ];
-  return {
-    state: { ...inactive, consecutiveFailures, retryScheduled: true, exhausted: false },
-    startReader: false,
-    reconnectDelayMs,
-  };
-}
-
-export function releaseAiGraderPreviewReconnectTimer(
-  current: AiGraderPreviewReconnectState
-): AiGraderPreviewReconnectState {
-  return { ...current, retryScheduled: false };
+  if (input.state.binding?.side !== "back" || !aiGraderPreviewDetectedCaptureReady(input.state, input.nowMs ?? Date.now())) return false;
+  const capturedAtMs = aiGraderPreviewDisplayedSnapshot(input.state)?.capturedAtMs;
+  const verifiedAtMs = Date.parse(input.positioningVerifiedAt ?? "");
+  return typeof capturedAtMs === "number" && Number.isFinite(verifiedAtMs) && capturedAtMs >= verifiedAtMs;
 }

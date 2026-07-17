@@ -1,8 +1,6 @@
-[CmdletBinding(DefaultParameterSetName = "Enable")]
+[CmdletBinding()]
 param(
-  [Parameter(Mandatory = $true, ParameterSetName = "Enable")][switch]$Enable,
-  [Parameter(Mandatory = $true, ParameterSetName = "Enable")][string]$GoToTagsExecutablePath,
-  [Parameter(Mandatory = $true, ParameterSetName = "Disable")][switch]$Disable,
+  [Parameter(Mandatory = $true)][string]$GoToTagsExecutablePath,
   [string]$ConfigPath = "C:\TenKings\config\ai-grader-nfc\helper.json",
   [string]$TaskName = "TenKingsAiGraderNfcHelper"
 )
@@ -31,20 +29,19 @@ Assert-NfcPathWithinRoot -Path $backupPath -AllowedRoot $script:NfcConfigRoot | 
 Copy-Item -LiteralPath $ConfigPath -Destination $backupPath -ErrorAction Stop
 Protect-NfcPath -Path $backupPath -AllowedRoot $script:NfcConfigRoot
 try {
-  if ($Enable) {
-    $executable = Get-NfcCanonicalPath -Path $GoToTagsExecutablePath
-    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
-      throw "The approved GoToTags executable was not found."
-    }
-    if ((Get-NfcFileFingerprint -Path $executable) -cne $script:NfcGoToTagsExecutableSha256) {
-      throw "The installed GoToTags executable bytes are not the reviewed 4.37.0.1 build."
-    }
-    $signature = Get-AuthenticodeSignature -LiteralPath $executable
-    if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid -or
-        $null -eq $signature.SignerCertificate -or
-        $signature.SignerCertificate.Subject -cne "CN=GoToTags, O=GoToTags, S=Washington, C=US") {
-      throw "The installed GoToTags publisher identity is not approved."
-    }
+  $executable = Get-NfcCanonicalPath -Path $GoToTagsExecutablePath
+  if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+    throw "The approved GoToTags executable was not found."
+  }
+  if ((Get-NfcFileFingerprint -Path $executable) -cne $script:NfcGoToTagsExecutableSha256) {
+    throw "The installed GoToTags executable bytes are not the reviewed 4.37.0.1 build."
+  }
+  $signature = Get-AuthenticodeSignature -LiteralPath $executable
+  if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid -or
+      $null -eq $signature.SignerCertificate -or
+      $signature.SignerCertificate.Subject -cne "CN=GoToTags, O=GoToTags, S=Washington, C=US") {
+    throw "The installed GoToTags publisher identity is not approved."
+  }
     $goToTagsProgId = "AppXtamynr710a4k4xderv2ath0xe29hgtkd"
     $openWith = Get-ItemProperty -Path "Registry::HKEY_CLASSES_ROOT\.gototags\OpenWithProgids" -ErrorAction Stop
     $application = Get-ItemProperty -Path "Registry::HKEY_CLASSES_ROOT\$goToTagsProgId\Application" -ErrorAction Stop
@@ -77,15 +74,7 @@ try {
     }
     Protect-NfcTree -Path $script:NfcGoToTagsRoot -AllowedRoot $script:NfcConfigRoot
     Assert-NfcNoActiveGoToTagsRecovery -JobRoot $script:NfcGoToTagsJobRoot
-    Set-NfcConfigProperty -Config $config -Name "feijuF8215Enabled" -Value $true
-    Set-NfcConfigProperty -Config $config -Name "goToTagsExecutablePath" -Value $executable
-  } else {
-    Assert-NfcNoActiveGoToTagsRecovery -JobRoot $script:NfcGoToTagsJobRoot
-    Set-NfcConfigProperty -Config $config -Name "feijuF8215Enabled" -Value $false
-    if (-not $config.PSObject.Properties["goToTagsExecutablePath"]) {
-      Set-NfcConfigProperty -Config $config -Name "goToTagsExecutablePath" -Value ""
-    }
-  }
+  Set-NfcConfigProperty -Config $config -Name "goToTagsExecutablePath" -Value $executable
   Set-NfcConfigProperty -Config $config -Name "goToTagsTemplatePath" -Value $script:NfcGoToTagsTemplatePath
   Set-NfcConfigProperty -Config $config -Name "goToTagsExecutableSha256" -Value $script:NfcGoToTagsExecutableSha256
   Set-NfcConfigProperty -Config $config -Name "goToTagsTemplateSha256" -Value $script:NfcGoToTagsTemplateSha256
@@ -95,10 +84,10 @@ try {
   $validated = Read-NfcConfig -Path $ConfigPath
   [pscustomobject]@{
     ok = $true
-    feijuF8215Enabled = [bool]$validated.feijuF8215Enabled
-    goToTagsVersion = if ($Enable) { "4.37.0.1" } else { $null }
+    f8215AdapterConfigured = $true
+    goToTagsVersion = "4.37.0.1"
     reviewedExecutableSha256 = $script:NfcGoToTagsExecutableSha256
-    publisherVerified = [bool]$Enable
+    publisherVerified = $true
     reviewedTemplateSha256 = $script:NfcGoToTagsTemplateSha256
     helperRestarted = $false
     windowsServiceChanged = $false

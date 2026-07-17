@@ -383,15 +383,7 @@ export class FixedRigProcessingWorkerController {
 }
 
 export type FixedRigWarmProcessingWorkerIdentity =
-  | (FixedRigProcessingWorkerIdentity & { mode: "captured_evidence_worker" })
-  | {
-      protocolVersion: typeof FIXED_RIG_PROCESSING_WORKER_PROTOCOL_VERSION;
-      requestId: string;
-      sessionId: string;
-      packageId: string;
-      side: "front" | "back";
-      mode: "explicit_manual_capture";
-    };
+  FixedRigProcessingWorkerIdentity & { mode: "captured_evidence_worker" };
 
 export interface FixedRigWarmProcessingResult extends FixedRigWarmEvidencePackageResult {
   processingWorker: FixedRigWarmProcessingWorkerIdentity;
@@ -420,20 +412,6 @@ export function createFixedRigWarmForensicProcessingRunner(
         throw new FixedRigProcessingWorkerError("identity_mismatch", "Captured side metadata could not be snapshotted safely.");
       }
       const contextSnapshot = { requestId: context.requestId, sessionId: context.sessionId };
-      if (captureSnapshot.manualGeometryOverride) {
-        const result = await processFixedRigWarmSideBatch(captureSnapshot);
-        return {
-          ...result,
-          processingWorker: {
-            protocolVersion: FIXED_RIG_PROCESSING_WORKER_PROTOCOL_VERSION,
-            requestId: contextSnapshot.requestId,
-            sessionId: contextSnapshot.sessionId,
-            packageId: captureSnapshot.packageId,
-            side: captureSnapshot.side,
-            mode: "explicit_manual_capture",
-          },
-        };
-      }
       const request = await createFixedRigProcessingWorkerRequest({
         allowedOutputRoot: options.allowedOutputRoot,
         requestId: contextSnapshot.requestId,

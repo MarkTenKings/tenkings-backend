@@ -6,10 +6,8 @@ export const AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION = "ai-grader-report-prod
 
 export type AiGraderStationStepId =
   | "start_new_card"
-  | "verify_fixture_rulers"
   | "live_preview_focus_framing"
   | "lighting_exposure_tune"
-  | "accept_capture_profile"
   | "capture_front"
   | "prompt_flip_card"
   | "capture_back"
@@ -18,17 +16,12 @@ export type AiGraderStationStepId =
   | "calculate_final_grade"
   | "finalize_publish_report"
   | "label_data_ready"
-  | "safe_off_end_session";
+  | "session_complete";
 
 export type AiGraderStationAction =
   | "status"
   | "start-session"
-  | "confirm-light-idle-off"
-  | "confirm-fixture-rulers"
-  | "launch-preview"
-  | "accept-profile"
   | "capture-front"
-  | "confirm-flip"
   | "capture-back"
   | "run-diagnostics"
   | "export-report-bundle"
@@ -36,21 +29,16 @@ export type AiGraderStationAction =
   | "finalize-report"
   | "publish-report"
   | "generate-label-data"
-  | "safe-off"
   | "cancel-session"
   | "latest-report"
-  | "session-manifest"
-  | "end-session"
-  | "configure-rapid-capture"
-  | "queue-current-card"
-  | "activate-queue-item";
+  | "session-manifest";
 
 export type AiGraderCaptureProfile = "full_forensic" | "production_fast";
 
 export const AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION = "ten-kings-ai-grader-capture-timing-v1" as const;
 export type AiGraderCaptureTimingSide = "front" | "back";
 export type AiGraderCaptureTimingProfile = AiGraderCaptureProfile;
-export type AiGraderCaptureTriggerMode = "operator" | "auto";
+export type AiGraderCaptureTriggerMode = "operator";
 export type AiGraderCaptureTimingEventId =
   | "session_started"
   | "preview_stream_started"
@@ -62,8 +50,7 @@ export type AiGraderCaptureTimingEventId =
   | "side_processing_completed"
   | "back_positioning_started"
   | "report_generation_started"
-  | "report_ready"
-  | "safely_queued";
+  | "report_ready";
 export type AiGraderCaptureTimingPhaseId =
   | "lighting_profile"
   | "frame_capture"
@@ -101,7 +88,6 @@ export type AiGraderCaptureTimingSummary = {
   reportGenerationMs?: number;
   totalCardMs?: number;
   reportReadyTotalMs?: number;
-  safeQueueLatencyMs?: number;
 };
 export type AiGraderCaptureTimingMetadata = {
   schemaVersion: typeof AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION;
@@ -122,62 +108,12 @@ export type AiGraderCaptureTimingMetadata = {
 
 export type AiGraderCaptureProfileGuard = {
   stationSettingRequired: true;
-  selectionSource: "bridge_default" | "operator_setting" | "rapid_continuation";
+  selectionSource: "bridge_default" | "operator_setting";
   productionFastOptIn: boolean;
   fullForensicEvidencePreserved: true;
   availableCaptureProfiles: ["full_forensic", "production_fast"];
   previousStableProfile: "full_forensic";
   fiveSecondTargetProven: boolean;
-};
-
-export type AiGraderRapidCaptureWorkflowState =
-  | "front_captured"
-  | "front_processing"
-  | "back_positioning"
-  | "back_captured"
-  | "finalizing"
-  | "report_ready_needs_confirm"
-  | "confirmed_needs_publish"
-  | "published"
-  | "failed";
-
-export type AiGraderRapidCaptureWorkflowEvent = {
-  state: AiGraderRapidCaptureWorkflowState;
-  at: string;
-  detail: string;
-};
-
-export type AiGraderRapidCaptureManifestStatus = {
-  enabled: boolean;
-  queueItemId?: string;
-  workflowState?: AiGraderRapidCaptureWorkflowState;
-  workflowHistory: AiGraderRapidCaptureWorkflowEvent[];
-  safelyQueuedAt?: string;
-  humanConfirmationRequired: true;
-  autoConfirm: false;
-  autoPublish: false;
-};
-
-export type AiGraderRapidCaptureQueueItem = {
-  queueItemId: string;
-  sessionId: string;
-  reportId: string;
-  state: AiGraderRapidCaptureWorkflowState;
-  queuedAt: string;
-  updatedAt: string;
-  history: AiGraderRapidCaptureWorkflowEvent[];
-  humanConfirmationRequired: true;
-  autoConfirmed: false;
-  autoPublished: false;
-  error?: string;
-};
-
-export type AiGraderRapidCaptureQueueStatus = {
-  enabled: boolean;
-  activeQueueItemId?: string;
-  persisted: true;
-  reportWorkerSerialized: true;
-  items: AiGraderRapidCaptureQueueItem[];
 };
 
 export type AiGraderStationStep = {
@@ -192,7 +128,7 @@ export type AiGraderLocalStationBridgeMode = "mock_dev" | "contract_only" | "fut
 
 export type AiGraderWarmRunnerSide = "front" | "back";
 export type AiGraderWarmRunnerPhaseStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
-export type AiGraderWarmRunnerExecutionPath = "warm_full_forensic_runner" | "cold_command_fallback";
+export type AiGraderWarmRunnerExecutionPath = "warm_full_forensic_runner";
 export type AiGraderWarmRunnerStatusName =
   | "idle"
   | "warming"
@@ -240,8 +176,6 @@ export type AiGraderWarmRunnerStatus = {
   mode: "full_forensic";
   backend: AiGraderWarmRunnerExecutionPath;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  explicitColdDebugModeUsed: boolean;
-  explicitColdDebugReason?: string;
   status: AiGraderWarmRunnerStatusName;
   sessionId?: string;
   activeSide?: AiGraderWarmRunnerSide;
@@ -286,18 +220,12 @@ export type AiGraderWarmRunnerStatus = {
     stretchTargetMs: number;
     measuredTotalMs?: number;
   };
-  coldDebugMode: {
-    configured: boolean;
-    active: boolean;
-    reason?: string;
-  };
   safety: {
     captureLock: true;
     watchdogSafeOff: true;
     safeOffOnFailure: true;
     safeOffOnCancellation: true;
     safeOffOnSessionEnd: true;
-    explicitColdDebugModeOnly: true;
     publicRouteExposed: false;
     productionServiceTokenUsed: false;
     persistentBaslerSaved: false;
@@ -318,12 +246,9 @@ export type AiGraderLocalStationStatus = {
   nextAction: AiGraderStationAction;
   nextActionLabel: string;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  explicitColdDebugModeUsed: boolean;
-  explicitColdDebugReason?: string;
   captureProfile: AiGraderCaptureProfile;
   captureProfileGuard: AiGraderCaptureProfileGuard;
   captureTiming: AiGraderCaptureTimingMetadata;
-  frontWorkflowAuthority: AiGraderFrontWorkflowAuthority;
   frontCaptureReadiness: AiGraderFrontCaptureReadiness;
   acceptedProfile: {
     dutyPercent: number;
@@ -333,13 +258,6 @@ export type AiGraderLocalStationStatus = {
     source: "operator_preview" | "browser_live_tuning" | "default" | "mock" | "bridge_operator" | "cli_override";
     actualLeimacPwmStep?: number;
     acceptedAt?: string;
-  };
-  calibrationProfile: {
-    referenceType: "fixed_metric_rulers";
-    status: "fixture_rulers_pending" | "operator_verified";
-    isCalibrated: false;
-    mmPerPixelX?: number;
-    mmPerPixelY?: number;
   };
   latestReport: {
     reportId?: string;
@@ -373,7 +291,7 @@ export type AiGraderLocalStationStatus = {
     endpoints: Array<{
       method: "GET" | "POST";
       path: string;
-      action: AiGraderStationAction | "preview-status" | "preview-stream" | "preview-stop" | "lighting-status" | "lighting-apply" | "lighting-safe-off" | "lighting-accept" | "lighting-heartbeat";
+      action: AiGraderStationAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat";
       hardwareAccess: boolean;
       description: string;
     }>;
@@ -387,17 +305,13 @@ export type AiGraderLocalStationStatus = {
     stage: "warm_capture" | "warm_processing";
     message: string;
     at: string;
-    retryRequired: true;
-    automaticColdFallbackAttempted: false;
   };
   geometryCaptureDecisions: Partial<Record<AiGraderWarmRunnerSide, {
-    mode: "detected_geometry" | "manual_capture";
+    mode: "detected_geometry";
     placementState: AiGraderCardPlacementState;
     timestamp: string;
     explicitOperatorAction: boolean;
     detectionUsed: boolean;
-    manualOverrideUsed: boolean;
-    manualBoundaryRect?: AiGraderPreviewGeometryBoundingBox;
     sourceFrameId?: string;
   }>>;
   reportBundle?: AiGraderReportBundle;
@@ -408,12 +322,6 @@ export type AiGraderLocalStationStatus = {
     host: string;
     port: number;
     rejectsNonLoopback: true;
-  };
-  confirmations?: {
-    lightIdleOff: boolean;
-    fixtureRulersVisible: boolean;
-    flipComplete: boolean;
-    finalLightOff: boolean;
   };
   outputs?: {
     sessionDir?: string;
@@ -429,12 +337,7 @@ export type AiGraderLocalStationStatus = {
   };
   timingSummary?: AiGraderLocalStationTimingSummary;
   productionRelease?: AiGraderProductionRelease;
-  rapidCapture: AiGraderRapidCaptureManifestStatus;
-  rapidCaptureQueue: AiGraderRapidCaptureQueueStatus;
 };
-
-export const AI_GRADER_FRONT_WORKFLOW_AUTHORITY_SCHEMA_VERSION =
-  'ten-kings-ai-grader-front-workflow-authority-v1' as const;
 
 export type AiGraderFrontWorkflowBinding = {
   sessionId: string;
@@ -443,31 +346,6 @@ export type AiGraderFrontWorkflowBinding = {
   sideEpoch: string;
 };
 
-type AiGraderFrontWorkflowRequestEvidence = {
-  idempotencyKey: string;
-  requestFingerprint: string;
-};
-
-export type AiGraderFrontWorkflowAuthority = {
-  schemaVersion?: typeof AI_GRADER_FRONT_WORKFLOW_AUTHORITY_SCHEMA_VERSION;
-  lightIdleOff?: AiGraderFrontWorkflowBinding & AiGraderFrontWorkflowRequestEvidence & {
-    confirmedAt: string;
-    physicalStateVerifiedAt: string;
-  };
-  fixtureRulers?: AiGraderFrontWorkflowBinding & AiGraderFrontWorkflowRequestEvidence & {
-    confirmedAt: string;
-  };
-  acceptedProfile?: AiGraderFrontWorkflowBinding & AiGraderFrontWorkflowRequestEvidence & {
-    acceptedAt: string;
-    profileDigestSha256: string;
-    profileIdentity: string;
-    candidateProfileIdentity?: string;
-  };
-  transition?: AiGraderFrontWorkflowBinding & {
-    transitionedAt: string;
-    profileIdentity: string;
-  };
-};
 
 export type AiGraderFrontCaptureReadinessCode =
   | 'ready'
@@ -475,9 +353,6 @@ export type AiGraderFrontCaptureReadinessCode =
   | 'capture_blocked'
   | 'safety_state_unverified'
   | 'lifecycle_pending'
-  | 'accepted_profile_required'
-  | 'light_idle_off_required'
-  | 'fixture_rulers_required'
   | 'workflow_transition_required'
   | 'current_step_not_capture_front'
   | 'front_binding_stale'
@@ -503,7 +378,6 @@ const AI_GRADER_CAPTURE_TIMING_EVENT_IDS: AiGraderCaptureTimingEventId[] = [
   "back_positioning_started",
   "report_generation_started",
   "report_ready",
-  "safely_queued",
 ];
 
 const AI_GRADER_CAPTURE_TIMING_PHASE_IDS: AiGraderCaptureTimingPhaseId[] = [
@@ -585,7 +459,7 @@ export function sanitizeAiGraderCaptureTiming(
           const at = captureTimingTimestamp(entry.at);
           if (!id || !at) return undefined;
           const side = entry.side === "front" || entry.side === "back" ? entry.side : undefined;
-          const triggerMode = entry.triggerMode === "operator" || entry.triggerMode === "auto" ? entry.triggerMode : undefined;
+          const triggerMode = entry.triggerMode === "operator" ? entry.triggerMode : undefined;
           return { id, at, ...(side ? { side } : {}), ...(triggerMode ? { triggerMode } : {}) };
         })
         .filter((event): event is AiGraderCaptureTimingEvent => Boolean(event))
@@ -657,30 +531,11 @@ export function sanitizeAiGraderCaptureTiming(
     },
   };
 }
-
-const AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES: AiGraderRapidCaptureWorkflowState[] = [
-  "front_captured",
-  "front_processing",
-  "back_positioning",
-  "back_captured",
-  "finalizing",
-  "report_ready_needs_confirm",
-  "confirmed_needs_publish",
-  "published",
-  "failed",
-];
-
-export function parseAiGraderRapidCaptureWorkflowState(value: unknown): AiGraderRapidCaptureWorkflowState | null {
-  return typeof value === "string" && AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES.includes(value as AiGraderRapidCaptureWorkflowState)
-    ? (value as AiGraderRapidCaptureWorkflowState)
-    : null;
-}
-
-function rapidCaptureRecord(value: unknown): value is Record<string, unknown> {
+function stationRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function safeRapidCaptureId(value: unknown): string | undefined {
+function safeStationId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(trimmed)) return undefined;
@@ -688,358 +543,161 @@ function safeRapidCaptureId(value: unknown): string | undefined {
   return trimmed;
 }
 
-function safeRapidCaptureTimestamp(value: unknown): string | undefined {
+function safeStationTimestamp(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length > 64 || !Number.isFinite(Date.parse(value))) return undefined;
   return new Date(value).toISOString();
 }
 
+function safeStationText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 500 || /^data:image/i.test(trimmed) || /[a-z]:[\\/]/i.test(trimmed) ||
+      /(?:station|bridge|service)[_-]?token|pairing[_-]?code|authorization|bearer\s|x-amz-|presigned/i.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 const AI_GRADER_FRONT_CAPTURE_READINESS_CODES: AiGraderFrontCaptureReadinessCode[] = [
-  'ready', 'session_required', 'capture_blocked', 'safety_state_unverified', 'lifecycle_pending',
-  'accepted_profile_required', 'light_idle_off_required', 'fixture_rulers_required',
-  'workflow_transition_required', 'current_step_not_capture_front', 'front_binding_stale', 'live_preview_required',
+  "ready",
+  "session_required",
+  "capture_blocked",
+  "safety_state_unverified",
+  "lifecycle_pending",
+  "workflow_transition_required",
+  "current_step_not_capture_front",
+  "front_binding_stale",
+  "live_preview_required",
 ];
 
 function sanitizeAiGraderFrontWorkflowBinding(value: unknown): AiGraderFrontWorkflowBinding | undefined {
-  if (!rapidCaptureRecord(value) || value.side !== 'front') return undefined;
-  const sessionId = safeRapidCaptureId(value.sessionId);
-  const reportId = safeRapidCaptureId(value.reportId);
-  const sideEpoch = safeRapidCaptureId(value.sideEpoch);
-  if (!sessionId || !reportId || !sideEpoch) return undefined;
-  return { sessionId, reportId, side: 'front', sideEpoch };
+  if (!stationRecord(value) || value.side !== "front") return undefined;
+  const sessionId = safeStationId(value.sessionId);
+  const reportId = safeStationId(value.reportId);
+  const sideEpoch = safeStationId(value.sideEpoch);
+  return sessionId && reportId && sideEpoch ? { sessionId, reportId, side: "front", sideEpoch } : undefined;
 }
 
-function sanitizeAiGraderFrontWorkflowAuthority(value: unknown): AiGraderFrontWorkflowAuthority {
-  const record = rapidCaptureRecord(value) ? value : {};
-  if (record.schemaVersion !== AI_GRADER_FRONT_WORKFLOW_AUTHORITY_SCHEMA_VERSION) {
-    return {};
-  }
-  const requestEvidence = (entry: Record<string, unknown>) => {
-    const idempotencyKey = safeRapidCaptureId(entry.idempotencyKey);
-    const requestFingerprint = typeof entry.requestFingerprint === 'string' && /^[a-f0-9]{64}$/.test(entry.requestFingerprint)
-      ? entry.requestFingerprint : undefined;
-    return idempotencyKey && requestFingerprint ? { idempotencyKey, requestFingerprint } : undefined;
-  };
-  const light = rapidCaptureRecord(record.lightIdleOff) ? record.lightIdleOff : undefined;
-  const lightBinding = sanitizeAiGraderFrontWorkflowBinding(light);
-  const lightRequest = light ? requestEvidence(light) : undefined;
-  const confirmedAt = light ? safeRapidCaptureTimestamp(light.confirmedAt) : undefined;
-  const physicalStateVerifiedAt = light ? safeRapidCaptureTimestamp(light.physicalStateVerifiedAt) : undefined;
-  const fixture = rapidCaptureRecord(record.fixtureRulers) ? record.fixtureRulers : undefined;
-  const fixtureBinding = sanitizeAiGraderFrontWorkflowBinding(fixture);
-  const fixtureRequest = fixture ? requestEvidence(fixture) : undefined;
-  const fixtureConfirmedAt = fixture ? safeRapidCaptureTimestamp(fixture.confirmedAt) : undefined;
-  const profile = rapidCaptureRecord(record.acceptedProfile) ? record.acceptedProfile : undefined;
-  const profileBinding = sanitizeAiGraderFrontWorkflowBinding(profile);
-  const profileRequest = profile ? requestEvidence(profile) : undefined;
-  const acceptedAt = profile ? safeRapidCaptureTimestamp(profile.acceptedAt) : undefined;
-  const profileDigestSha256 = typeof profile?.profileDigestSha256 === 'string' && /^[a-f0-9]{64}$/.test(profile.profileDigestSha256)
-    ? profile.profileDigestSha256 : undefined;
-  const profileIdentity = typeof profile?.profileIdentity === 'string' && /^accepted-[a-f0-9]{16}$/.test(profile.profileIdentity)
-    ? profile.profileIdentity : undefined;
-  const candidateProfileIdentity = typeof profile?.candidateProfileIdentity === 'string' && /^candidate-[a-f0-9]{32}$/.test(profile.candidateProfileIdentity)
-    ? profile.candidateProfileIdentity : undefined;
-  const transition = rapidCaptureRecord(record.transition) ? record.transition : undefined;
-  const transitionBinding = sanitizeAiGraderFrontWorkflowBinding(transition);
-  const transitionedAt = transition ? safeRapidCaptureTimestamp(transition.transitionedAt) : undefined;
-  const transitionProfileIdentity = typeof transition?.profileIdentity === 'string' && /^accepted-[a-f0-9]{16}$/.test(transition.profileIdentity)
-    ? transition.profileIdentity : undefined;
-  return {
-    schemaVersion: AI_GRADER_FRONT_WORKFLOW_AUTHORITY_SCHEMA_VERSION,
-    ...(lightBinding && lightRequest && confirmedAt && physicalStateVerifiedAt
-      ? { lightIdleOff: { ...lightBinding, ...lightRequest, confirmedAt, physicalStateVerifiedAt } } : {}),
-    ...(fixtureBinding && fixtureRequest && fixtureConfirmedAt
-      ? { fixtureRulers: { ...fixtureBinding, ...fixtureRequest, confirmedAt: fixtureConfirmedAt } } : {}),
-    ...(profileBinding && profileRequest && acceptedAt && profileDigestSha256 && profileIdentity
-      ? { acceptedProfile: { ...profileBinding, ...profileRequest, acceptedAt, profileDigestSha256, profileIdentity, ...(candidateProfileIdentity ? { candidateProfileIdentity } : {}) } } : {}),
-    ...(transitionBinding && transitionedAt && transitionProfileIdentity
-      ? { transition: { ...transitionBinding, transitionedAt, profileIdentity: transitionProfileIdentity } } : {}),
-  };
-}
-
-function aiGraderFrontWorkflowBindingEquals(
-  left: AiGraderFrontWorkflowBinding | undefined,
-  right: AiGraderFrontWorkflowBinding | undefined,
-) {
-  return Boolean(left && right && left.sessionId === right.sessionId && left.reportId === right.reportId &&
-    left.side === right.side && left.sideEpoch === right.sideEpoch);
-}
-
-function sanitizeAiGraderFrontCaptureReadiness(
-  value: unknown,
-  authority: AiGraderFrontWorkflowAuthority,
-): AiGraderFrontCaptureReadiness {
-  const record = rapidCaptureRecord(value) ? value : {};
-  const candidateCode = typeof record.code === 'string' &&
+function sanitizeAiGraderFrontCaptureReadiness(value: unknown): AiGraderFrontCaptureReadiness {
+  const record = stationRecord(value) ? value : {};
+  const code = typeof record.code === "string" &&
     AI_GRADER_FRONT_CAPTURE_READINESS_CODES.includes(record.code as AiGraderFrontCaptureReadinessCode)
-    ? record.code as AiGraderFrontCaptureReadinessCode
-    : 'session_required';
+      ? record.code as AiGraderFrontCaptureReadinessCode
+      : "session_required";
   const binding = sanitizeAiGraderFrontWorkflowBinding(record.binding);
-  const message = safeRapidCaptureText(record.message) ?? 'Authoritative Front capture prerequisites are incomplete.';
-  const profileIdentity = typeof record.profileIdentity === 'string' && /^accepted-[a-f0-9]{16}$/.test(record.profileIdentity)
-    ? record.profileIdentity : undefined;
-  const accepted = authority.acceptedProfile;
-  const transition = authority.transition;
-  const ready = record.ready === true && candidateCode === 'ready' && Boolean(
-    binding && profileIdentity && accepted && transition &&
-    aiGraderFrontWorkflowBindingEquals(binding, accepted) &&
-    aiGraderFrontWorkflowBindingEquals(binding, transition) &&
-    accepted.profileIdentity === profileIdentity && transition.profileIdentity === profileIdentity
-  );
+  const profileIdentity = typeof record.profileIdentity === "string" && /^accepted-[a-f0-9]{16}$/.test(record.profileIdentity)
+    ? record.profileIdentity
+    : undefined;
+  const ready = record.ready === true && code === "ready" && Boolean(binding && profileIdentity);
   return {
     ready,
-    code: ready ? 'ready' : candidateCode === 'ready' ? 'front_binding_stale' : candidateCode,
-    message: ready ? message : candidateCode === 'ready'
-      ? 'Authoritative Front workflow evidence is malformed or stale.'
-      : message,
+    code: ready ? "ready" : code === "ready" ? "front_binding_stale" : code,
+    message: safeStationText(record.message) ?? "The exact current Front frame and acknowledged lighting profile are required.",
     ...(binding ? { binding } : {}),
     ...(profileIdentity ? { profileIdentity } : {}),
   };
 }
 
-function unsafeRapidCaptureText(value: string) {
-  return (
-    value.length > 500 ||
-    /^data:image/i.test(value) ||
-    /[a-z]:[\\/]/i.test(value) ||
-    /(?:^|\s)\/(?:users|home|tmp|var|etc|opt)\//i.test(value) ||
-    /https?:\/\/(?:127\.0\.0\.1|localhost|\[?::1\]?|10\.|192\.168\.|169\.254\.)/i.test(value) ||
-    /(?:station|bridge|service)[_-]?token|pairing[_-]?code|authorization|bearer\s|x-amz-|presigned/i.test(value)
-  );
-}
-
-function safeRapidCaptureText(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed && !unsafeRapidCaptureText(trimmed) ? trimmed : undefined;
-}
-
-function sanitizeAiGraderRapidCaptureHistory(value: unknown): AiGraderRapidCaptureWorkflowEvent[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((entry): AiGraderRapidCaptureWorkflowEvent | undefined => {
-      if (!rapidCaptureRecord(entry)) return undefined;
-      const state = parseAiGraderRapidCaptureWorkflowState(entry.state);
-      const at = safeRapidCaptureTimestamp(entry.at);
-      if (!state || !at) return undefined;
-      return {
-        state,
-        at,
-        detail: safeRapidCaptureText(entry.detail) ?? "Rapid capture state updated.",
-      };
-    })
-    .filter((entry): entry is AiGraderRapidCaptureWorkflowEvent => Boolean(entry))
-    .slice(-100);
-}
-
-function sanitizeAiGraderRapidCaptureManifest(value: unknown): AiGraderRapidCaptureManifestStatus {
-  const record = rapidCaptureRecord(value) ? value : {};
-  const queueItemId = safeRapidCaptureId(record.queueItemId);
-  const workflowState = parseAiGraderRapidCaptureWorkflowState(record.workflowState);
-  const safelyQueuedAt = safeRapidCaptureTimestamp(record.safelyQueuedAt);
-  return {
-    enabled: record.enabled === true,
-    ...(queueItemId ? { queueItemId } : {}),
-    ...(workflowState ? { workflowState } : {}),
-    workflowHistory: sanitizeAiGraderRapidCaptureHistory(record.workflowHistory),
-    ...(safelyQueuedAt ? { safelyQueuedAt } : {}),
-    humanConfirmationRequired: true,
-    autoConfirm: false,
-    autoPublish: false,
-  };
-}
-
-function sanitizeAiGraderRapidCaptureQueueItem(value: unknown): AiGraderRapidCaptureQueueItem | undefined {
-  if (!rapidCaptureRecord(value)) return undefined;
-  const queueItemId = safeRapidCaptureId(value.queueItemId);
-  const sessionId = safeRapidCaptureId(value.sessionId);
-  const reportId = safeRapidCaptureId(value.reportId);
-  const state = parseAiGraderRapidCaptureWorkflowState(value.state);
-  const queuedAt = safeRapidCaptureTimestamp(value.queuedAt);
-  const updatedAt = safeRapidCaptureTimestamp(value.updatedAt);
-  if (!queueItemId || !sessionId || !reportId || !state || !queuedAt || !updatedAt) return undefined;
-  const error = safeRapidCaptureText(value.error);
-  return {
-    queueItemId,
-    sessionId,
-    reportId,
-    state,
-    queuedAt,
-    updatedAt,
-    history: sanitizeAiGraderRapidCaptureHistory(value.history),
-    humanConfirmationRequired: true,
-    autoConfirmed: false,
-    autoPublished: false,
-    ...(error ? { error } : {}),
-  };
-}
-
-export function sanitizeAiGraderRapidCaptureQueue(
-  value: unknown,
-  fallbackEnabled = false
-): AiGraderRapidCaptureQueueStatus {
-  const record = rapidCaptureRecord(value) ? value : {};
-  const activeQueueItemId = safeRapidCaptureId(record.activeQueueItemId);
-  const items = Array.isArray(record.items)
-    ? record.items
-        .map(sanitizeAiGraderRapidCaptureQueueItem)
-        .filter((item): item is AiGraderRapidCaptureQueueItem => Boolean(item))
-        .slice(0, 50)
-    : [];
-  return {
-    enabled: typeof record.enabled === "boolean" ? record.enabled : fallbackEnabled,
-    ...(activeQueueItemId ? { activeQueueItemId } : {}),
-    persisted: true,
-    reportWorkerSerialized: true,
-    items,
-  };
-}
-
 function sanitizeGeometryCaptureDecisions(value: unknown): AiGraderLocalStationStatus["geometryCaptureDecisions"] {
-  if (!rapidCaptureRecord(value)) return {};
+  if (!stationRecord(value)) return {};
   const result: AiGraderLocalStationStatus["geometryCaptureDecisions"] = {};
   for (const side of ["front", "back"] as const) {
     const decision = value[side];
-    if (!rapidCaptureRecord(decision)) continue;
-    const mode = decision.mode === "detected_geometry" || decision.mode === "manual_capture" ? decision.mode : undefined;
+    if (!stationRecord(decision) || decision.mode !== "detected_geometry") continue;
     const placementState =
       decision.placementState === "ready" || decision.placementState === "adjust_card" || decision.placementState === "not_detected"
         ? decision.placementState
         : undefined;
-    const timestamp = safeRapidCaptureTimestamp(decision.timestamp);
-    if (!mode || !placementState || !timestamp) continue;
+    const timestamp = safeStationTimestamp(decision.timestamp);
+    if (!placementState || !timestamp || decision.detectionUsed !== true) continue;
     const sourceFrameId = sanitizePreviewGeometrySourceFrameId(decision.sourceFrameId);
-    const manualBoundaryRect = sanitizePreviewGeometryBoundingBox(decision.manualBoundaryRect);
-    const manual = mode === "manual_capture";
-    if (manual && (decision.explicitOperatorAction !== true || decision.manualOverrideUsed !== true || !manualBoundaryRect)) continue;
-    if (!manual && (decision.detectionUsed !== true || decision.manualOverrideUsed === true)) continue;
     result[side] = {
-      mode,
+      mode: "detected_geometry",
       placementState,
       timestamp,
-      explicitOperatorAction: manual,
-      detectionUsed: !manual,
-      manualOverrideUsed: manual,
-      ...(manualBoundaryRect ? { manualBoundaryRect } : {}),
+      explicitOperatorAction: true,
+      detectionUsed: true,
       ...(sourceFrameId ? { sourceFrameId } : {}),
     };
   }
   return result;
 }
 
-/** Keeps the local status useful to the station UI while allowlisting rapid
- * queue fields and refusing an unguarded production_fast profile. */
+/** Sanitizes the exact single capture path. */
 export function sanitizeAiGraderLocalStationStatusForDisplay(
   status: AiGraderLocalStationStatus
 ): AiGraderLocalStationStatus {
-  const rapidCapture = sanitizeAiGraderRapidCaptureManifest(status.rapidCapture);
-  const guardSource = status.captureProfileGuard?.selectionSource;
-  const selectionSource =
-    guardSource === "operator_setting" || guardSource === "rapid_continuation" || guardSource === "bridge_default"
-      ? guardSource
-      : "bridge_default";
-  const productionFastSelected =
-    status.captureProfile === "production_fast" &&
-    status.captureProfileGuard?.productionFastOptIn === true &&
-    (selectionSource === "operator_setting" || selectionSource === "rapid_continuation");
-  const captureProfile: AiGraderCaptureProfile = productionFastSelected ? "production_fast" : "full_forensic";
-  const sanitizedCaptureTiming = sanitizeAiGraderCaptureTiming(status.captureTiming, captureProfile);
-  const explicitColdDebugModeUsed =
-    status.executionPath === "cold_command_fallback" && status.explicitColdDebugModeUsed === true;
-  const unsafeStatus = status as AiGraderLocalStationStatus & Record<string, unknown>;
-  const frontWorkflowAuthority = sanitizeAiGraderFrontWorkflowAuthority(unsafeStatus.frontWorkflowAuthority);
-  const frontCaptureReadiness = sanitizeAiGraderFrontCaptureReadiness(
-    unsafeStatus.frontCaptureReadiness,
-    frontWorkflowAuthority,
-  );
-  const {
-    fallbackUsed: _legacyFallbackUsed,
-    fallbackReason: _legacyFallbackReason,
-    warmRunnerStatus: unsafeWarmRunner,
-    timingSummary: unsafeTimingSummary,
-    ...statusWithoutLegacyFallback
-  } = unsafeStatus;
-  const {
-    fallbackUsed: _legacyWarmFallbackUsed,
-    fallbackReason: _legacyWarmFallbackReason,
-    fallback: _legacyWarmFallback,
-    ...warmRunnerWithoutLegacyFallback
-  } = unsafeWarmRunner as AiGraderWarmRunnerStatus & Record<string, unknown>;
-  const {
-    fallbackToColdPath: _legacyFallbackToColdPath,
-    ...warmSafetyWithoutLegacyFallback
-  } = unsafeWarmRunner.safety as AiGraderWarmRunnerStatus["safety"] & Record<string, unknown>;
-  const timingSummary = unsafeTimingSummary
-    ? (() => {
-        const {
-          fallbackUsed: _legacyTimingFallbackUsed,
-          fallbackReason: _legacyTimingFallbackReason,
-          ...timingWithoutLegacyFallback
-        } = unsafeTimingSummary as AiGraderLocalStationTimingSummary & Record<string, unknown>;
-        return {
-          ...timingWithoutLegacyFallback,
-          explicitColdDebugModeUsed:
-            unsafeTimingSummary.executionPath === "cold_command_fallback" &&
-            unsafeTimingSummary.explicitColdDebugModeUsed === true,
-          ...(safeRapidCaptureText(unsafeTimingSummary.explicitColdDebugReason)
-            ? { explicitColdDebugReason: safeRapidCaptureText(unsafeTimingSummary.explicitColdDebugReason) }
-            : {}),
-        } as AiGraderLocalStationTimingSummary;
-      })()
-    : undefined;
+  const captureProfile: AiGraderCaptureProfile =
+    status.captureProfile === "production_fast" && status.captureProfileGuard?.productionFastOptIn === true
+      ? "production_fast"
+      : "full_forensic";
+  const selectionSource = status.captureProfileGuard?.selectionSource === "operator_setting"
+    ? "operator_setting"
+    : "bridge_default";
   return {
-    ...statusWithoutLegacyFallback,
-    explicitColdDebugModeUsed,
-    ...(safeRapidCaptureText(status.explicitColdDebugReason)
-      ? { explicitColdDebugReason: safeRapidCaptureText(status.explicitColdDebugReason) }
-      : {}),
+    bridgeVersion: status.bridgeVersion,
+    reportProducerContractVersion: status.reportProducerContractVersion,
+    stationId: status.stationId,
+    mode: status.mode,
+    localOnly: true,
+    loginRequired: false,
+    hardwareActionsEnabled: status.hardwareActionsEnabled,
+    currentStep: status.currentStep,
+    nextAction: status.nextAction,
+    nextActionLabel: status.nextActionLabel,
+    executionPath: "warm_full_forensic_runner",
     captureProfile,
     captureProfileGuard: {
       stationSettingRequired: true,
       selectionSource,
-      productionFastOptIn: productionFastSelected,
+      productionFastOptIn: captureProfile === "production_fast",
       fullForensicEvidencePreserved: true,
       availableCaptureProfiles: ["full_forensic", "production_fast"],
       previousStableProfile: "full_forensic",
       fiveSecondTargetProven:
-        !explicitColdDebugModeUsed &&
         status.executionPath === "warm_full_forensic_runner" &&
-        sanitizedCaptureTiming.target.fiveSecondsPerSideProven,
+        sanitizeAiGraderCaptureTiming(status.captureTiming, captureProfile).target.fiveSecondsPerSideProven,
     },
-    captureTiming: sanitizedCaptureTiming,
-    frontWorkflowAuthority,
-    frontCaptureReadiness,
+    captureTiming: sanitizeAiGraderCaptureTiming(status.captureTiming, captureProfile),
+    frontCaptureReadiness: sanitizeAiGraderFrontCaptureReadiness(status.frontCaptureReadiness),
+    acceptedProfile: status.acceptedProfile,
+    latestReport: status.latestReport,
+    sessionManifest: status.sessionManifest,
+    progressLog: status.progressLog,
+    warnings: status.warnings,
+    safety: status.safety,
+    bridgeContract: status.bridgeContract,
+    previewStatus: status.previewStatus,
+    liveLighting: status.liveLighting,
     warmRunnerStatus: {
-      ...warmRunnerWithoutLegacyFallback,
-      explicitColdDebugModeUsed:
-        unsafeWarmRunner.executionPath === "cold_command_fallback" && unsafeWarmRunner.explicitColdDebugModeUsed === true,
-      ...(safeRapidCaptureText(unsafeWarmRunner.explicitColdDebugReason)
-        ? { explicitColdDebugReason: safeRapidCaptureText(unsafeWarmRunner.explicitColdDebugReason) }
-        : {}),
-      coldDebugMode: {
-        configured: unsafeWarmRunner.coldDebugMode?.configured === true,
-        active:
-          unsafeWarmRunner.executionPath === "cold_command_fallback" && unsafeWarmRunner.coldDebugMode?.active === true,
-        ...(safeRapidCaptureText(unsafeWarmRunner.coldDebugMode?.reason)
-          ? { reason: safeRapidCaptureText(unsafeWarmRunner.coldDebugMode?.reason) }
-          : {}),
-      },
-      safety: {
-        ...warmSafetyWithoutLegacyFallback,
-        explicitColdDebugModeOnly: true,
-      },
-    },
+      ...status.warmRunnerStatus,
+      backend: "warm_full_forensic_runner",
+      executionPath: "warm_full_forensic_runner",
+      safety: status.warmRunnerStatus.safety,
+    } as AiGraderWarmRunnerStatus,
+    ...(status.captureFailure ? { captureFailure: status.captureFailure } : {}),
     geometryCaptureDecisions: sanitizeGeometryCaptureDecisions(status.geometryCaptureDecisions),
-    ...(timingSummary ? { timingSummary } : {}),
-    rapidCapture,
-    rapidCaptureQueue: sanitizeAiGraderRapidCaptureQueue(status.rapidCaptureQueue, rapidCapture.enabled),
-  };
+    ...(status.reportBundle ? { reportBundle: status.reportBundle } : {}),
+    ...(status.stationUrl ? { stationUrl: status.stationUrl } : {}),
+    ...(status.bridgeSecurity ? { bridgeSecurity: status.bridgeSecurity } : {}),
+    ...(status.outputs ? { outputs: status.outputs } : {}),
+    ...(status.productionRelease ? { productionRelease: status.productionRelease } : {}),
+    ...(status.timingSummary
+      ? {
+          timingSummary: {
+            ...status.timingSummary,
+            executionPath: "warm_full_forensic_runner",
+          },
+        }
+      : {}),
+  } as AiGraderLocalStationStatus;
 }
+
+
 
 export type AiGraderLocalStationTimingSummary = {
   totalCommandMs: number;
   executionPath: AiGraderWarmRunnerExecutionPath;
-  explicitColdDebugModeUsed: boolean;
-  explicitColdDebugReason?: string;
   bridgeActionOverheadMs: number;
   captureCommandMs: number;
   reportGenerationMs: number;
@@ -1113,12 +771,11 @@ export type AiGraderPreviewCardGeometrySummary = {
   version?: "ten-kings-card-geometry-v1";
   side: AiGraderPreviewGeometrySide;
   placementState: AiGraderCardPlacementState;
-  adjustmentReason?: "not_detected" | "outside_frame" | "unsafe_scale" | "rotate_top_up" | "wrong_aspect" | "low_confidence" | "manual_capture_selected";
-  geometrySource: "detected" | "manual_override" | "none";
-  captureMode: "automatic_detection" | "manual_capture" | "none";
-  confidenceBasis: "automatic_detection" | "operator_confirmation" | "none";
+  adjustmentReason?: "not_detected" | "outside_frame" | "unsafe_scale" | "rotate_top_up" | "wrong_aspect" | "low_confidence";
+  geometrySource: "detected" | "none";
+  captureMode: "automatic_detection" | "none";
+  confidenceBasis: "automatic_detection" | "none";
   detectionUsed: boolean;
-  manualOverrideUsed: boolean;
   corners: AiGraderPreviewGeometryCorners | null;
   detectedCorners: AiGraderPreviewGeometryCorners | null;
   boundingBox: AiGraderPreviewGeometryBoundingBox | null;
@@ -1215,30 +872,25 @@ export function sanitizeAiGraderPreviewCardGeometry(
     "rotate_top_up",
     "wrong_aspect",
     "low_confidence",
-    "manual_capture_selected",
   ]).has(String(value.adjustmentReason))
     ? value.adjustmentReason as AiGraderPreviewCardGeometrySummary["adjustmentReason"]
     : undefined;
   const geometrySource =
-    value.geometrySource === "detected" || value.geometrySource === "manual_override" || value.geometrySource === "none"
+    value.geometrySource === "detected" || value.geometrySource === "none"
       ? value.geometrySource
       : "none";
   const captureMode =
-    value.captureMode === "automatic_detection" || value.captureMode === "manual_capture" || value.captureMode === "none"
+    value.captureMode === "automatic_detection" || value.captureMode === "none"
       ? value.captureMode
       : geometrySource === "detected"
         ? "automatic_detection"
-        : geometrySource === "manual_override"
-          ? "manual_capture"
-          : "none";
+        : "none";
   const confidenceBasis =
-    value.confidenceBasis === "automatic_detection" || value.confidenceBasis === "operator_confirmation" || value.confidenceBasis === "none"
+    value.confidenceBasis === "automatic_detection" || value.confidenceBasis === "none"
       ? value.confidenceBasis
       : captureMode === "automatic_detection"
         ? "automatic_detection"
-        : captureMode === "manual_capture"
-          ? "operator_confirmation"
-          : "none";
+        : "none";
   const corners = sanitizePreviewGeometryCorners(value.corners);
   const detectedCorners = sanitizePreviewGeometryCorners(value.detectedCorners);
   const rotationDegrees = previewGeometryNumber(value.rotationDegrees) ?? null;
@@ -1264,7 +916,6 @@ export function sanitizeAiGraderPreviewCardGeometry(
     captureMode,
     confidenceBasis,
     detectionUsed: value.detectionUsed === true,
-    manualOverrideUsed: value.manualOverrideUsed === true,
     corners,
     detectedCorners,
     boundingBox: sanitizePreviewGeometryBoundingBox(value.boundingBox),
@@ -1371,7 +1022,7 @@ export type AiGraderLiveLightingStatus = {
     verifiedAt?: string;
   };
   physicalState: {
-    state: "safe_off_pending" | "safe_off_verified" | "positioning_light_verified" | "physical_state_unknown";
+    state: "safe_off_pending" | "safe_off_verified" | "positioning_light_verified" | "unverified";
     reason: string;
     changedAt: string;
     expectedWriteCount: number;
@@ -1390,48 +1041,23 @@ export type AiGraderLiveLightingStatus = {
     state: "mock" | "not_configured" | "idle" | "writing" | "error";
     persistentLeimacSession: false;
   };
-  backPositioning?: {
-    status: "inactive" | "restoring" | "waiting_for_frame" | "ready" | "failed" | "safe_off";
-    captureReady: boolean;
-    sessionId?: string;
-    side: "back";
-    sideEpoch: string;
-    profileIdentity?: string;
-    dutyPercent?: number;
-    actualLeimacPwmStep?: number;
-    channels?: number[];
-    attemptCount: number;
-    firstFrameGraceMs: number;
-    firstFrameGraceExpiresAt?: string;
-    lastAttempt?: "front_capture" | "operator_retry";
-    lastError?: { code: string; message: string };
-    events: Array<{
-      at: string;
-      type: "restore_starting" | "restore_success" | "restore_failure" | "fresh_frame_ready" | "safe_off";
-      trigger: "front_capture" | "operator_retry" | "preview_frame" | "safety";
-      profileIdentity?: string;
-      error?: { code: string; message: string };
-    }>;
-  };
   safety: {
     publicRouteExposed: false;
     requiresStationToken: true;
     bindsLoopbackOnly: true;
     productionServiceTokenUsed: false;
-    lowDutyCapEnforced: true;
-    maxDutyPercent: number;
-    safeOffOnAllOff: true;
-    safeOffOnDisconnect: true;
-    safeOffOnTimeout: true;
-    safeOffOnCaptureStart: true;
+    boundedCommands: true;
+    maxDutyPercent: 99.9;
+    watchdogOwnedByBridge: true;
     safeOffOnCaptureFailure: true;
+    safeOffOnCancellation: true;
     safeOffOnSessionEnd: true;
     persistentLeimacSaved: false;
     arbitraryWritesAllowed: false;
   };
   safetyEvents: Array<{
     at: string;
-    type: "apply" | "safe_off" | "accept" | "heartbeat" | "watchdog_safe_off" | "capture_start_safe_off" | "failure_safe_off";
+    type: "apply" | "safe_off" | "heartbeat" | "watchdog_safe_off" | "failure_safe_off";
     reason: string;
     ok: boolean;
   }>;
@@ -1480,30 +1106,15 @@ export type AiGraderLocalReportHistory = {
 
 export const AI_GRADER_STATION_STEPS: AiGraderStationStep[] = [
   { id: "start_new_card", label: "Start New Card", operatorAction: "Create a local grading session.", primaryAction: "start-session", hardwareCapable: false },
-  { id: "verify_fixture_rulers", label: "Verify Fixture/Rulers", operatorAction: "Confirm ring light idle/off, fixture, and rulers before live preview.", primaryAction: "launch-preview", hardwareCapable: true },
-  { id: "live_preview_focus_framing", label: "Live Preview / Focus / Framing", operatorAction: "Use the Basler live preview to align and focus.", primaryAction: "launch-preview", hardwareCapable: true },
-  { id: "lighting_exposure_tune", label: "Lighting / Exposure Tune", operatorAction: "Tune duty/exposure until clipping is acceptable.", primaryAction: "accept-profile", hardwareCapable: true },
-  { id: "accept_capture_profile", label: "Accept Capture Profile", operatorAction: "Lock the software capture profile for this card.", primaryAction: "accept-profile", hardwareCapable: false },
   { id: "capture_front", label: "Capture Front", operatorAction: "Capture front fixed-rig evidence.", primaryAction: "capture-front", hardwareCapable: true },
-  { id: "prompt_flip_card", label: "Prompt Flip Card", operatorAction: "Pause for the operator to flip and seat the card.", primaryAction: "capture-back", hardwareCapable: false },
-  { id: "capture_back", label: "Capture Back", operatorAction: "Capture back fixed-rig evidence after flip confirmation.", primaryAction: "capture-back", hardwareCapable: true },
-  { id: "run_provisional_diagnostics", label: "Run Provisional Diagnostics", operatorAction: "Generate the unified provisional diagnostic report.", primaryAction: "run-diagnostics", hardwareCapable: false },
-  { id: "view_unified_report", label: "View Unified Report", operatorAction: "Open the local report and review Vision Lab.", primaryAction: "latest-report", hardwareCapable: false },
-  { id: "calculate_final_grade", label: "Review Report", operatorAction: "Review the generated diagnostic report and publish readiness.", primaryAction: "calculate-final-grade", hardwareCapable: false },
-  { id: "finalize_publish_report", label: "Ready to Publish", operatorAction: "Publish to Ten Kings when the report is ready.", primaryAction: "finalize-report", hardwareCapable: false },
-  { id: "label_data_ready", label: "Label / QR Ready", operatorAction: "Public report and printable label data are ready after publish.", primaryAction: "generate-label-data", hardwareCapable: false },
-  { id: "safe_off_end_session", label: "Safe Off / End Session", operatorAction: "Run safe-off and end the station session.", primaryAction: "safe-off", hardwareCapable: true },
+  { id: "capture_back", label: "Capture Back", operatorAction: "Capture back fixed-rig evidence.", primaryAction: "capture-back", hardwareCapable: true },
+  { id: "finalize_publish_report", label: "Approve & Publish", operatorAction: "Approve and atomically publish the report, card, label, and inventory linkage.", primaryAction: "publish-report", hardwareCapable: false },
 ];
 
 const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   status: "start_new_card",
-  "start-session": "verify_fixture_rulers",
-  "confirm-light-idle-off": "verify_fixture_rulers",
-  "confirm-fixture-rulers": "verify_fixture_rulers",
-  "launch-preview": "live_preview_focus_framing",
-  "accept-profile": "capture_front",
+  "start-session": "live_preview_focus_framing",
   "capture-front": "prompt_flip_card",
-  "confirm-flip": "capture_back",
   "capture-back": "run_provisional_diagnostics",
   "run-diagnostics": "view_unified_report",
   "export-report-bundle": "view_unified_report",
@@ -1511,31 +1122,24 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "finalize-report": "finalize_publish_report",
   "publish-report": "finalize_publish_report",
   "generate-label-data": "label_data_ready",
-  "safe-off": "safe_off_end_session",
-  "cancel-session": "safe_off_end_session",
+  "cancel-session": "session_complete",
   "latest-report": "view_unified_report",
   "session-manifest": "view_unified_report",
-  "end-session": "safe_off_end_session",
-  "configure-rapid-capture": "start_new_card",
-  "queue-current-card": "start_new_card",
-  "activate-queue-item": "calculate_final_grade",
 };
 
 const NEXT_ACTION_BY_STEP: Record<AiGraderStationStepId, AiGraderStationAction> = {
   start_new_card: "start-session",
-  verify_fixture_rulers: "launch-preview",
-  live_preview_focus_framing: "accept-profile",
-  lighting_exposure_tune: "accept-profile",
-  accept_capture_profile: "capture-front",
+  live_preview_focus_framing: "capture-front",
+  lighting_exposure_tune: "capture-front",
   capture_front: "capture-front",
   prompt_flip_card: "capture-back",
   capture_back: "capture-back",
   run_provisional_diagnostics: "run-diagnostics",
   view_unified_report: "calculate-final-grade",
-  calculate_final_grade: "finalize-report",
+  calculate_final_grade: "publish-report",
   finalize_publish_report: "generate-label-data",
   label_data_ready: "latest-report",
-  safe_off_end_session: "safe-off",
+  session_complete: "latest-report",
 };
 
 function actionLabel(action: AiGraderStationAction) {
@@ -1548,41 +1152,28 @@ function actionLabel(action: AiGraderStationAction) {
 function bridgeEndpoints() {
   const actions: Array<{
     method: "GET" | "POST";
-    action: AiGraderStationAction | "preview-status" | "preview-stream" | "preview-stop" | "lighting-status" | "lighting-apply" | "lighting-safe-off" | "lighting-accept" | "lighting-heartbeat";
+    action: AiGraderStationAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat";
     description: string;
     path?: string;
   }> = [
     { method: "GET", action: "status", description: "Read current local station status." },
     { method: "GET", action: "preview-status", path: "/preview/status", description: "Read embedded browser preview status." },
     { method: "GET", action: "preview-stream", path: "/preview/stream", description: "Open local token-gated embedded preview stream." },
-    { method: "POST", action: "preview-stop", path: "/preview/stop", description: "Stop embedded browser preview and release the Basler camera before capture." },
     { method: "GET", action: "lighting-status", path: "/lighting/status", description: "Read browser live Leimac lighting status." },
-    { method: "POST", action: "lighting-apply", path: "/lighting/apply", description: "Apply low-duty browser live Leimac lighting for preview tuning." },
-    { method: "POST", action: "lighting-safe-off", path: "/lighting/safe-off", description: "Safe-off browser live Leimac lighting." },
-    { method: "POST", action: "lighting-accept", path: "/lighting/accept", description: "Use the browser live lighting profile for capture." },
+    { method: "POST", action: "lighting-apply", path: "/lighting/apply", description: "Apply bounded allowlisted Leimac lighting with exact acknowledgement validation." },
     { method: "POST", action: "lighting-heartbeat", path: "/lighting/heartbeat", description: "Refresh browser live lighting watchdog." },
     { method: "POST", action: "start-session", description: "Start a local station session in mock/contract mode." },
-    { method: "POST", action: "confirm-light-idle-off", description: "Record operator confirmation that the physical ring light is idle/off." },
-    { method: "POST", action: "confirm-fixture-rulers", description: "Record operator confirmation that the fixture/rulers are visible." },
-    { method: "POST", action: "launch-preview", description: "Contract endpoint for launching Basler live preview." },
-    { method: "POST", action: "accept-profile", description: "Accept the current capture profile." },
-    { method: "POST", action: "capture-front", description: "Atomically validate the exact front frame, drain preview, verify safe-off, and capture front evidence." },
-    { method: "POST", action: "confirm-flip", description: "Record operator flip confirmation." },
-    { method: "POST", action: "capture-back", description: "Atomically validate the exact back frame, drain preview, verify safe-off, and capture back evidence." },
+    { method: "POST", action: "capture-front", description: "Validate the exact front frame and acknowledged lighting, serialize camera ownership, and capture front evidence." },
+    { method: "POST", action: "capture-back", description: "Validate the exact back frame and acknowledged lighting, serialize camera ownership, and capture back evidence." },
     { method: "POST", action: "run-diagnostics", description: "Generate or attach the provisional report." },
     { method: "POST", action: "export-report-bundle", description: "Export report-bundle.json, asset manifest, and checksums." },
     { method: "POST", action: "calculate-final-grade", description: "Calculate Final AI-Grader Grade V0 from the report bundle." },
     { method: "POST", action: "finalize-report", description: "Finalize the local report and record operator warning acceptance." },
     { method: "POST", action: "publish-report", description: "Prepare local publication manifest and public URL data." },
     { method: "POST", action: "generate-label-data", description: "Generate label-ready JSON and QR payload URL data." },
-    { method: "POST", action: "safe-off", description: "Contract endpoint for Leimac safe-off." },
     { method: "POST", action: "cancel-session", description: "Cancel a local station session with safe-off cleanup." },
     { method: "GET", action: "latest-report", description: "Read latest report location." },
     { method: "GET", action: "session-manifest", description: "Read station session manifest." },
-    { method: "POST", action: "end-session", description: "End the local station session." },
-    { method: "POST", action: "configure-rapid-capture", description: "Enable or disable persisted rapid capture mode without changing human confirmation or publish gates." },
-    { method: "POST", action: "queue-current-card", description: "Queue safely persisted front/back evidence for serialized background finalization and start a clean next card." },
-    { method: "POST", action: "activate-queue-item", description: "Open a completed queue item in the existing Confirm Card and Publish workflow." },
   ];
   return actions.map((endpoint) => ({
     ...endpoint,
@@ -1614,7 +1205,6 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
     mode: "full_forensic",
     backend: "warm_full_forensic_runner",
     executionPath: "warm_full_forensic_runner",
-    explicitColdDebugModeUsed: false,
     status: "idle",
     captureLock: {
       held: false,
@@ -1652,17 +1242,12 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
       targetTotalMaxMs: 150000,
       stretchTargetMs: 60000,
     },
-    coldDebugMode: {
-      configured: false,
-      active: false,
-    },
     safety: {
       captureLock: true,
       watchdogSafeOff: true,
       safeOffOnFailure: true,
       safeOffOnCancellation: true,
       safeOffOnSessionEnd: true,
-      explicitColdDebugModeOnly: true,
       publicRouteExposed: false,
       productionServiceTokenUsed: false,
       persistentBaslerSaved: false,
@@ -1696,7 +1281,6 @@ function defaultPreviewStatus(): AiGraderLocalStationPreviewStatus {
         captureMode: "none",
         confidenceBasis: "none",
         detectionUsed: false,
-        manualOverrideUsed: false,
         corners: null,
         detectedCorners: null,
         boundingBox: null,
@@ -1711,7 +1295,6 @@ function defaultPreviewStatus(): AiGraderLocalStationPreviewStatus {
         captureMode: "none",
         confidenceBasis: "none",
         detectionUsed: false,
-        manualOverrideUsed: false,
         corners: null,
         detectedCorners: null,
         boundingBox: null,
@@ -1759,7 +1342,7 @@ function defaultLiveLightingStatus(): AiGraderLiveLightingStatus {
       verificationComplete: false,
     },
     physicalState: {
-      state: "physical_state_unknown",
+      state: "unverified",
       reason: "Contract preview has no controller acknowledgement for physical light state.",
       changedAt: new Date(0).toISOString(),
       expectedWriteCount: 0,
@@ -1779,13 +1362,11 @@ function defaultLiveLightingStatus(): AiGraderLiveLightingStatus {
       requiresStationToken: true,
       bindsLoopbackOnly: true,
       productionServiceTokenUsed: false,
-      lowDutyCapEnforced: true,
-      maxDutyPercent: 5,
-      safeOffOnAllOff: true,
-      safeOffOnDisconnect: true,
-      safeOffOnTimeout: true,
-      safeOffOnCaptureStart: true,
+      boundedCommands: true,
+      maxDutyPercent: 99.9,
+      watchdogOwnedByBridge: true,
       safeOffOnCaptureFailure: true,
+      safeOffOnCancellation: true,
       safeOffOnSessionEnd: true,
       persistentLeimacSaved: false,
       arbitraryWritesAllowed: false,
@@ -1800,17 +1381,15 @@ export function buildAiGraderLocalStationStatus(input: {
   mode?: AiGraderLocalStationBridgeMode;
   now?: string;
   captureProfile?: AiGraderCaptureProfile;
-  rapidCaptureEnabled?: boolean;
 } = {}): AiGraderLocalStationStatus {
   const action = input.action ?? "status";
   const captureProfile = input.captureProfile ?? "full_forensic";
-  const rapidCaptureEnabled = input.rapidCaptureEnabled === true;
   const currentStep = ACTION_TO_STEP[action] ?? "start_new_card";
   const nextAction = NEXT_ACTION_BY_STEP[currentStep];
   const reportBundle = SAMPLE_AI_GRADER_REPORT_BUNDLE;
-  const frontCaptured = ["prompt_flip_card", "capture_back", "run_provisional_diagnostics", "view_unified_report", "calculate_final_grade", "finalize_publish_report", "label_data_ready", "safe_off_end_session"].includes(currentStep);
-  const backCaptured = ["run_provisional_diagnostics", "view_unified_report", "calculate_final_grade", "finalize_publish_report", "label_data_ready", "safe_off_end_session"].includes(currentStep);
-  const diagnosticsRun = ["view_unified_report", "calculate_final_grade", "finalize_publish_report", "label_data_ready", "safe_off_end_session"].includes(currentStep);
+  const frontCaptured = ["prompt_flip_card", "capture_back", "run_provisional_diagnostics", "view_unified_report", "calculate_final_grade", "finalize_publish_report", "label_data_ready", "session_complete"].includes(currentStep);
+  const backCaptured = ["run_provisional_diagnostics", "view_unified_report", "calculate_final_grade", "finalize_publish_report", "label_data_ready", "session_complete"].includes(currentStep);
+  const diagnosticsRun = ["view_unified_report", "calculate_final_grade", "finalize_publish_report", "label_data_ready", "session_complete"].includes(currentStep);
   const finalComputed = ["calculate_final_grade", "finalize_publish_report", "label_data_ready"].includes(currentStep);
   const labelReady = currentStep === "label_data_ready";
 
@@ -1826,7 +1405,6 @@ export function buildAiGraderLocalStationStatus(input: {
     nextAction,
     nextActionLabel: actionLabel(nextAction),
     executionPath: "warm_full_forensic_runner",
-    explicitColdDebugModeUsed: false,
     captureProfile,
     captureProfileGuard: {
       stationSettingRequired: true,
@@ -1838,9 +1416,6 @@ export function buildAiGraderLocalStationStatus(input: {
       fiveSecondTargetProven: false,
     },
     captureTiming: buildDefaultAiGraderCaptureTiming(captureProfile),
-    frontWorkflowAuthority: {
-      schemaVersion: AI_GRADER_FRONT_WORKFLOW_AUTHORITY_SCHEMA_VERSION,
-    },
     frontCaptureReadiness: {
       ready: false,
       code: 'session_required',
@@ -1853,13 +1428,6 @@ export function buildAiGraderLocalStationStatus(input: {
       channels: [1, 2, 3, 4, 5, 6, 7, 8],
       source: "mock",
       actualLeimacPwmStep: 13,
-    },
-    calibrationProfile: {
-      referenceType: "fixed_metric_rulers",
-      status: "fixture_rulers_pending",
-      isCalibrated: false,
-      mmPerPixelX: 0.047037,
-      mmPerPixelY: 0.047344,
     },
     latestReport: {
       reportId: reportBundle.reportId,
@@ -1901,8 +1469,7 @@ export function buildAiGraderLocalStationStatus(input: {
       realHardwarePending: [
         "Launch existing Basler live preview from browser action.",
         "Run guarded station workflow command from a local service process.",
-        "Stream command progress and operator confirmations back to the page.",
-        "Run Leimac safe-off from the page only after Mark is present and explicit apply flags are supplied.",
+        "Stream bounded command progress back to the page.",
       ],
     },
     previewStatus: defaultPreviewStatus(),
@@ -1919,7 +1486,6 @@ export function buildAiGraderLocalStationStatus(input: {
     timingSummary: {
       totalCommandMs: 0,
       executionPath: "warm_full_forensic_runner",
-      explicitColdDebugModeUsed: false,
       bridgeActionOverheadMs: 0,
       captureCommandMs: 0,
       reportGenerationMs: 0,
@@ -1928,19 +1494,6 @@ export function buildAiGraderLocalStationStatus(input: {
       detailedEntries: [],
       phaseBreakdown: {},
       targetInterCaptureNote: "Contract preview uses fixture data; real timing appears when connected to the local bridge.",
-    },
-    rapidCapture: {
-      enabled: rapidCaptureEnabled,
-      workflowHistory: [],
-      humanConfirmationRequired: true,
-      autoConfirm: false,
-      autoPublish: false,
-    },
-    rapidCaptureQueue: {
-      enabled: rapidCaptureEnabled,
-      persisted: true,
-      reportWorkerSerialized: true,
-      items: [],
     },
   };
 }
@@ -1990,12 +1543,7 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
   const allowed: AiGraderStationAction[] = [
     "status",
     "start-session",
-    "confirm-light-idle-off",
-    "confirm-fixture-rulers",
-    "launch-preview",
-    "accept-profile",
     "capture-front",
-    "confirm-flip",
     "capture-back",
     "run-diagnostics",
     "export-report-bundle",
@@ -2003,14 +1551,9 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "finalize-report",
     "publish-report",
     "generate-label-data",
-    "safe-off",
     "cancel-session",
     "latest-report",
     "session-manifest",
-    "end-session",
-    "configure-rapid-capture",
-    "queue-current-card",
-    "activate-queue-item",
   ];
   return allowed.includes(raw as AiGraderStationAction) ? (raw as AiGraderStationAction) : null;
 }

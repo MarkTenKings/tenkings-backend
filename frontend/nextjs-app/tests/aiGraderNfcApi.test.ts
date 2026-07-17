@@ -57,7 +57,6 @@ function deps(overrides: Partial<AiGraderNfcApiDependencies> = {}) {
     readiness: () => ({
       nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
-      nfcFeijuF8215Enabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: true,
       nfcWorkstationAttestationConfigured: true,
@@ -100,7 +99,6 @@ test("NFC status uses explicit human NFC scope and returns only the runtime safe
       status: "missing",
       nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
-      nfcFeijuF8215Enabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: true,
       nfcWorkstationAttestationConfigured: true,
@@ -138,34 +136,8 @@ test("NFC init ignores caller redirect/public tag fields and passes server-owned
   assert.equal(runtime.calls[0].input.attemptTtlSeconds, 300);
 });
 
-test("F8215 init is separately default-off and forwards only the exact reviewed profile when enabled", async () => {
-  const disabled = deps();
-  const disabledOutput = response();
-  await createAiGraderNfcApiHandler(disabled.value)(request({
-    action: "init",
-    body: {
-      reportId: "report-1",
-      idempotencyKey: "program-feiju-report-1",
-      chipType: "FEIJU_F8215",
-      programmingProfile: "gototags_manual_start_v1",
-    },
-  }), disabledOutput.res);
-  assert.equal(disabledOutput.read().statusCode, 503);
-  assert.equal((disabledOutput.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_FEIJU_F8215_DISABLED");
-  assert.equal(disabled.calls.length, 0);
-
-  const enabled = deps({
-    readiness: () => ({
-      nfcSchemaReady: true,
-      nfcProgrammingEnabled: true,
-      nfcFeijuF8215Enabled: true,
-      nfcRequired: false,
-      nfcAttemptTokenConfigured: true,
-      nfcWorkstationAttestationConfigured: true,
-      nfcWorkstationKeyCount: 1,
-      expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
-    }),
-  });
+test("F8215 init uses the global programming gate and forwards only the exact reviewed profile", async () => {
+  const enabled = deps();
   const enabledOutput = response();
   await createAiGraderNfcApiHandler(enabled.value)(request({
     action: "init",
@@ -231,7 +203,6 @@ test("F8215 complete requires exact v2 adapter, URL, verification, and permanent
   const ready = () => ({
     nfcSchemaReady: true,
     nfcProgrammingEnabled: true,
-    nfcFeijuF8215Enabled: true,
     nfcRequired: false,
     nfcAttemptTokenConfigured: true,
     nfcWorkstationAttestationConfigured: true,
@@ -522,7 +493,6 @@ test("NFC programming flag is independent, status/revoke stay available, and rea
     readiness: () => ({
       nfcSchemaReady: true,
       nfcProgrammingEnabled: false,
-      nfcFeijuF8215Enabled: false,
       nfcRequired: true,
       nfcAttemptTokenConfigured: false,
       nfcWorkstationAttestationConfigured: false,
@@ -570,7 +540,6 @@ test("NFC programming flag is independent, status/revoke stay available, and rea
     readiness: () => ({
       nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
-      nfcFeijuF8215Enabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: false,
       nfcWorkstationAttestationConfigured: false,
@@ -606,7 +575,6 @@ test("NFC schema absence is redacted, status remains available, and every mutati
     cryptographicallyVerified: false,
     nfcSchemaReady: false,
     nfcProgrammingEnabled: true,
-    nfcFeijuF8215Enabled: false,
     nfcRequired: false,
     nfcAttemptTokenConfigured: true,
     nfcWorkstationAttestationConfigured: true,

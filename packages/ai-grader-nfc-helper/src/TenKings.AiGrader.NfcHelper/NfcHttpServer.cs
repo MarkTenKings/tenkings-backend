@@ -262,14 +262,13 @@ public sealed class NfcHttpServer : IAsyncDisposable
                     false,
                     false),
             ],
-            FeijuF8215Enabled = _f8215?.Enabled == true,
             GoToTagsReady = inspection.Ready,
             GoToTagsErrorCode = inspection.ErrorCode,
         };
     }
 
     private F8215JobCoordinator RequireF8215() => _f8215 ??
-        throw new NfcHelperException("feiju_f8215_disabled", "Feiju F8215 programming is disabled on this workstation.", false, 403);
+        throw new NfcHelperException("gototags_configuration_invalid", "The Feiju encoding adapter is not configured safely.", false, 503);
 
     private async Task HandleGoToTagsCallbackAsync(
         HttpListenerContext context,

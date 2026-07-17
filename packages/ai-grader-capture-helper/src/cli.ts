@@ -389,52 +389,6 @@ type ParsedCommand =
       overrideReason: string | undefined;
     }
   | {
-      command: "ai-grader-station-operator-workflow";
-      config: CaptureHelperConfigInput;
-      outputDir: string | undefined;
-      frontDir: string | undefined;
-      backDir: string | undefined;
-      pylonRoot: string | undefined;
-      pylonTimeoutMs: number | undefined;
-      baslerBridgeScript: string | undefined;
-      cameraIndex: number | undefined;
-      leimacHost: string | undefined;
-      leimacPort: number | undefined;
-      leimacTimeoutMs: number | undefined;
-      leimacUnit: number | undefined;
-      duty: number | undefined;
-      exposureUs: number | undefined;
-      gain: number | undefined;
-      apply: boolean;
-      confirmation: string | undefined;
-      mockRun: boolean;
-      markPresent: boolean;
-      wiringConfirmed: boolean;
-      leimacStatusGreen: boolean;
-      operatorConfirmedLightIdleOff: boolean;
-      operatorFlipConfirmed: boolean;
-      operatorConfirmedFixtureRulersVisible: boolean;
-      operatorConfirmedFinalLightOff: boolean;
-      operatorAcceptedWarnings: boolean;
-      calibrationProfileId: string | undefined;
-      mmPerPixelX: number | undefined;
-      mmPerPixelY: number | undefined;
-      frontClippedFraction: number | undefined;
-      backClippedFraction: number | undefined;
-      framingOverlayPass: boolean;
-      repeatabilityPass: boolean;
-      fixtureLabel: string | undefined;
-      fixtureId: string | undefined;
-      referenceType: string | undefined;
-      horizontalSpanMm: number | undefined;
-      horizontalStartPx: { x: number; y: number } | undefined;
-      horizontalEndPx: { x: number; y: number } | undefined;
-      verticalSpanMm: number | undefined;
-      verticalStartPx: { x: number; y: number } | undefined;
-      verticalEndPx: { x: number; y: number } | undefined;
-      cardBoundaryRect: { x: number; y: number; width: number; height: number } | undefined;
-    }
-  | {
       command: "ai-grader-station-bridge";
       config: CaptureHelperConfigInput;
       host: string | undefined;
@@ -448,7 +402,6 @@ type ParsedCommand =
       allowedOrigins: string[];
       stationBridgeMode: "mock" | "real";
       enableLocalStation: boolean;
-      warmRunnerDisabled: boolean;
       captureProfile: "full_forensic" | "production_fast";
       pylonRoot: string | undefined;
       pylonTimeoutMs: number | undefined;
@@ -596,7 +549,6 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   const allowedOrigins: string[] = [];
   let stationBridgeMode: "mock" | "real" = "mock";
   let enableLocalStation = false;
-  let warmRunnerDisabled = false;
   let captureProfile: "full_forensic" | "production_fast" = "full_forensic";
   let mockRun = false;
   let operatorAcceptedWarnings = false;
@@ -831,9 +783,6 @@ function parseCliArgs(argv: string[]): ParsedCommand {
       }
       case "--enable-local-station":
         enableLocalStation = true;
-        break;
-      case "--disable-warm-runner":
-        warmRunnerDisabled = true;
         break;
       case "--capture-profile": {
         const value = readOption(rest, index, "--capture-profile");
@@ -1443,7 +1392,6 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "ai-grader-fixed-rig-v1-card-report" ||
     command === "ai-grader-report-bundle" ||
     command === "ai-grader-production-release" ||
-    command === "ai-grader-station-operator-workflow" ||
     command === "ai-grader-station-bridge" ||
     command === "fixed-rig-lighting-profile-plan" ||
     command === "leimac-channel-characterization" ||
@@ -1481,7 +1429,6 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         allowedOrigins,
         stationBridgeMode,
         enableLocalStation,
-        warmRunnerDisabled,
         captureProfile,
         pylonRoot,
         pylonTimeoutMs,
@@ -1933,60 +1880,6 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         overrideReason,
       };
     }
-    if (command === "ai-grader-station-operator-workflow") {
-      const leimacHostValue = leimacHost ?? host;
-      const leimacPortValue = leimacPort ?? port;
-      const parsedLeimacPort = leimacPortValue === undefined ? undefined : Number(leimacPortValue);
-      if (parsedLeimacPort !== undefined && (!Number.isInteger(parsedLeimacPort) || parsedLeimacPort <= 0)) {
-        throw new CaptureHelperCommandError("--leimac-port must be a positive integer.");
-      }
-      return {
-        command,
-        config,
-        outputDir,
-        frontDir,
-        backDir,
-        pylonRoot,
-        pylonTimeoutMs,
-        baslerBridgeScript,
-        cameraIndex,
-        leimacHost: leimacHostValue,
-        leimacPort: parsedLeimacPort,
-        leimacTimeoutMs,
-        leimacUnit,
-        duty,
-        exposureUs,
-        gain,
-        apply,
-        confirmation,
-        mockRun,
-        markPresent,
-        wiringConfirmed,
-        leimacStatusGreen,
-        operatorConfirmedLightIdleOff,
-        operatorFlipConfirmed,
-        operatorConfirmedFixtureRulersVisible,
-        operatorConfirmedFinalLightOff,
-        operatorAcceptedWarnings,
-        calibrationProfileId,
-        mmPerPixelX,
-        mmPerPixelY,
-        frontClippedFraction,
-        backClippedFraction,
-        framingOverlayPass,
-        repeatabilityPass,
-        fixtureLabel,
-        fixtureId,
-        referenceType,
-        horizontalSpanMm,
-        horizontalStartPx,
-        horizontalEndPx,
-        verticalSpanMm,
-        verticalStartPx,
-        verticalEndPx,
-        cardBoundaryRect,
-      };
-    }
     if (command === "dinolite-status") return { command, config, deviceIndex };
     if (command === "dinolite-capture-still") return { command, config, deviceIndex, outputDir };
     if (command === "dinolite-capture-package" || command === "dinolite-capture-demo-package") {
@@ -2047,8 +1940,6 @@ function helpPayload() {
       "ai-grader-fixed-rig-v1-card-report --output-dir C:\\TenKings\\capture-data\\fixed-rig-v1 --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
       "ai-grader-report-bundle --report-dir <unified-report-dir> --output-dir C:\\TenKings\\capture-data\\ai-grader-report-bundles --report-id <report-id>",
       "ai-grader-production-release --report-bundle-path <report-bundle.json> --output-dir C:\\TenKings\\capture-data\\ai-grader-production-releases --operator-id mark --operator-accepted-warnings --override-reason \"V0 production release accepted warnings\" --public-report-base-url https://collect.tenkings.co",
-      "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --mock-run --duty 1.2 --exposure-us 45000 --front-clipped-fraction 0.107932 --back-clipped-fraction 0.337672 --calibration-profile-id fixed-ruler-pr39 --framing-overlay-pass --repeatability-pass --front-dir <front-evidence-package-dir> --back-dir <back-evidence-package-dir>",
-      "ai-grader-station-operator-workflow --output-dir C:\\TenKings\\capture-data\\ai-grader-station --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --reference-type fixed_metric_rulers --horizontal-span-mm 50.8 --horizontal-start-px 540,205 --horizontal-end-px 1620,205 --vertical-span-mm 50.8 --vertical-start-px 2295,145 --vertical-end-px 2295,1218 --card-boundary-rect 285,349,1878,1350 --apply --confirm \"RUN AI GRADER STATION OPERATOR WORKFLOW\" --mark-present --wiring-confirmed --leimac-status-green",
       "AI_GRADER_STATION_BRIDGE_TOKEN=<local-secret> ai-grader-station-bridge --enable-local-station --station-bridge-mode mock --host 127.0.0.1 --port 47652 --output-dir C:\\TenKings\\capture-data\\ai-grader-station",
       "AI_GRADER_STATION_BRIDGE_TOKEN=<local-secret> AI_GRADER_STATION_PAIRING_CODE=<local-pairing-code> ai-grader-station-bridge --enable-local-station --station-bridge-mode real --host 127.0.0.1 --port 47652 --allowed-origin https://collect.tenkings.co --output-dir C:\\TenKings\\capture-data\\ai-grader-station --report-bundle-output-dir C:\\TenKings\\capture-data\\ai-grader-report-bundles --leimac-host 169.254.191.156 --leimac-port 1000 --exposure-us 45000 --gain 0 --duty 1.2 --apply --mark-present --wiring-confirmed --leimac-status-green",
       "leimac-channel-characterization --leimac-host 169.254.191.156 --leimac-port 1000 --output-dir C:\\TenKings\\capture-data\\fixed-rig-calibration --duty 1 --exposure-us 45000 --apply --confirm \"RUN LEIMAC CHANNEL CHARACTERIZATION\" --mark-present --wiring-confirmed --leimac-status-green --operator-confirmed-light-idle-off",
@@ -2088,7 +1979,6 @@ function helpPayload() {
       "--allowed-origin",
       "--station-bridge-mode mock|real",
       "--enable-local-station",
-      "--disable-warm-runner",
       "--capture-profile full_forensic|production_fast",
       "--label",
       "--pylon-root",
@@ -3760,149 +3650,6 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       return result.productionRelease.finalGradeComputed ? 0 : 1;
     }
 
-    if (parsed.command === "ai-grader-station-operator-workflow") {
-      const {
-        AI_GRADER_STATION_OPERATOR_WORKFLOW_CONFIRMATION,
-        buildAiGraderStationWorkflowManifest,
-        runAiGraderStationRealWorkflow,
-        writeAiGraderStationWorkflowArtifacts,
-      } = await import("./drivers/aiGraderStationWorkflow");
-      if (parsed.apply) {
-        if (parsed.confirmation !== AI_GRADER_STATION_OPERATOR_WORKFLOW_CONFIRMATION) {
-          throw new CaptureHelperCommandError(`ai-grader-station-operator-workflow --apply requires --confirm "${AI_GRADER_STATION_OPERATOR_WORKFLOW_CONFIRMATION}".`);
-        }
-        if (!parsed.outputDir) {
-          throw new CaptureHelperCommandError("ai-grader-station-operator-workflow --apply requires --output-dir <outside-repo-output-dir>.");
-        }
-        if (!parsed.leimacHost) {
-          throw new CaptureHelperCommandError("ai-grader-station-operator-workflow --apply requires --leimac-host <ip>.");
-        }
-        const realWorkflow = await runAiGraderStationRealWorkflow({
-          outputDir: parsed.outputDir,
-          leimacHost: parsed.leimacHost,
-          leimacPort: parsed.leimacPort,
-          leimacTimeoutMs: parsed.leimacTimeoutMs,
-          leimacUnit: parsed.leimacUnit,
-          pylonRoot: parsed.pylonRoot,
-          pylonTimeoutMs: parsed.pylonTimeoutMs,
-          baslerBridgeScript: parsed.baslerBridgeScript,
-          cameraIndex: parsed.cameraIndex,
-          exposureUs: parsed.exposureUs,
-          gain: parsed.gain,
-          duty: parsed.duty,
-          markPresent: parsed.markPresent,
-          wiringConfirmed: parsed.wiringConfirmed,
-          leimacStatusGreen: parsed.leimacStatusGreen,
-          operatorConfirmedLightIdleOff: parsed.operatorConfirmedLightIdleOff,
-          operatorFlipConfirmed: parsed.operatorFlipConfirmed,
-          operatorConfirmedFixtureRulersVisible: parsed.operatorConfirmedFixtureRulersVisible,
-          operatorConfirmedFinalLightOff: parsed.operatorConfirmedFinalLightOff,
-          operatorPrompter: createCliOperatorPrompter(),
-          fixtureLabel: parsed.fixtureLabel,
-          fixtureId: parsed.fixtureId,
-          referenceType: parsed.referenceType,
-          horizontalSpanMm: parsed.horizontalSpanMm,
-          horizontalStartPx: parsed.horizontalStartPx,
-          horizontalEndPx: parsed.horizontalEndPx,
-          verticalSpanMm: parsed.verticalSpanMm,
-          verticalStartPx: parsed.verticalStartPx,
-          verticalEndPx: parsed.verticalEndPx,
-          cardBoundaryRect: parsed.cardBoundaryRect,
-        });
-        const manifest = await writeAiGraderStationWorkflowArtifacts({
-          outputDir: parsed.outputDir,
-          acceptedDutyPercent: realWorkflow.acceptedLightingProfile?.selectedDutyPercent ?? parsed.duty,
-          exposureUs: parsed.exposureUs,
-          gain: parsed.gain,
-          operatorAcceptedWarnings: parsed.operatorAcceptedWarnings,
-          calibrationProfileId: parsed.calibrationProfileId,
-          mmPerPixelX: parsed.mmPerPixelX,
-          mmPerPixelY: parsed.mmPerPixelY,
-          framingOverlayPass: parsed.framingOverlayPass,
-          repeatabilityPass: parsed.repeatabilityPass,
-          realWorkflow,
-        });
-        writeJson(stdout, {
-          ok: realWorkflow.status === "completed",
-          service: "ai-grader-capture-helper",
-          command: "ai-grader-station-operator-workflow",
-          manifestPath: manifest.manifestPath,
-          reportPath: manifest.reportPath,
-          contractPath: manifest.contractPath,
-          stationSessionOutputFolder: manifest.packageDir,
-          unifiedReportPath: realWorkflow.unifiedReportPath,
-          frontPackageDir: realWorkflow.frontPackageDir,
-          backPackageDir: realWorkflow.backPackageDir,
-          acceptedLightingProfile: realWorkflow.acceptedLightingProfile ?? manifest.acceptedLightingProfile,
-          realWorkflow,
-          manifest,
-          hardwareSmokeStatus: realWorkflow.status === "completed" ? "completed_mark_supervised" : "blocked",
-          safety: manifest.safety,
-        });
-        return realWorkflow.status === "completed" ? 0 : 1;
-      }
-      const common = {
-        mockRun: parsed.mockRun,
-        acceptedDutyPercent: parsed.duty,
-        exposureUs: parsed.exposureUs,
-        gain: parsed.gain,
-        frontClippedFraction: parsed.frontClippedFraction,
-        backClippedFraction: parsed.backClippedFraction,
-        operatorAcceptedWarnings: parsed.operatorAcceptedWarnings,
-        calibrationProfileId: parsed.calibrationProfileId,
-        mmPerPixelX: parsed.mmPerPixelX,
-        mmPerPixelY: parsed.mmPerPixelY,
-        framingOverlayPass: parsed.framingOverlayPass,
-        repeatabilityPass: parsed.repeatabilityPass,
-        frontPackageDir: parsed.frontDir,
-        backPackageDir: parsed.backDir,
-      };
-      if (!parsed.outputDir) {
-        const manifest = buildAiGraderStationWorkflowManifest({
-          mockRun: common.mockRun,
-          acceptedLightingProfile: undefined,
-          exposureUs: common.exposureUs,
-          gain: common.gain,
-          frontMetrics: common.frontClippedFraction === undefined ? undefined : { clippedFraction: common.frontClippedFraction },
-          backMetrics: common.backClippedFraction === undefined ? undefined : { clippedFraction: common.backClippedFraction },
-          operatorAcceptedWarnings: common.operatorAcceptedWarnings,
-          calibrationProfileId: common.calibrationProfileId,
-          mmPerPixelX: common.mmPerPixelX,
-          mmPerPixelY: common.mmPerPixelY,
-          framingOverlayPass: common.framingOverlayPass,
-          repeatabilityPass: common.repeatabilityPass,
-          frontPackageDir: common.frontPackageDir,
-          backPackageDir: common.backPackageDir,
-        });
-        writeJson(stdout, {
-          ok: true,
-          service: "ai-grader-capture-helper",
-          command: "ai-grader-station-operator-workflow",
-          dryRun: true,
-          manifest,
-        });
-        return 0;
-      }
-      const manifest = await writeAiGraderStationWorkflowArtifacts({
-        outputDir: parsed.outputDir,
-        ...common,
-      });
-      writeJson(stdout, {
-        ok: true,
-        service: "ai-grader-capture-helper",
-        command: "ai-grader-station-operator-workflow",
-        manifestPath: manifest.manifestPath,
-        reportPath: manifest.reportPath,
-        contractPath: manifest.contractPath,
-        activeLightingProfilePath: manifest.packageDir
-          ? path.join(manifest.packageDir, "fixed-rig-active-lighting-profile.json")
-          : undefined,
-        manifest,
-        hardwareSmokeStatus: "pending_mark_present",
-        safety: manifest.safety,
-      });
-      return 0;
-    }
 
     if (parsed.command === "basler-fixed-rig-focus-assist") {
       const {
@@ -5067,12 +4814,14 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
         BaslerPylonClient,
       } = await import("./drivers/baslerPylonClient");
-      const { LeimacIdmuClient } = await import("./drivers/leimacIdmuClient");
+      const { LEIMAC_IDMU_MAX_DUTY_PERCENT, LeimacIdmuClient } = await import("./drivers/leimacIdmuClient");
 
       const duty = parsed.duty ?? 1;
       const exposureUs = parsed.exposureUs ?? 45000;
-      if (!Number.isFinite(duty) || duty < 0 || duty > 5) {
-        throw new CaptureHelperCommandError("leimac-channel-characterization --duty must be from 0 to 5.");
+      if (!Number.isFinite(duty) || duty < 0 || duty > LEIMAC_IDMU_MAX_DUTY_PERCENT) {
+        throw new CaptureHelperCommandError(
+          `leimac-channel-characterization --duty must be from 0 to ${LEIMAC_IDMU_MAX_DUTY_PERCENT}.`,
+        );
       }
       if (!Number.isInteger(exposureUs) || exposureUs <= 0 || exposureUs > 100000) {
         throw new CaptureHelperCommandError("leimac-channel-characterization --exposure-us must be from 1 to 100000.");
@@ -5907,7 +5656,6 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           host: parsed.host,
           port: parsed.port,
           mode: parsed.stationBridgeMode,
-          warmRunnerDisabled: parsed.warmRunnerDisabled,
           captureProfile: parsed.captureProfile,
           stationToken: parsed.stationToken,
           stationPairingCode: parsed.stationPairingCode,

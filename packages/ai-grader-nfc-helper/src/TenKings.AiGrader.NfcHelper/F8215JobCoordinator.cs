@@ -63,13 +63,12 @@ public sealed partial class F8215JobCoordinator
         _callbackPort = callbackPort;
         _logger = logger ?? new ConsoleSafeLogger();
         _timeProvider = timeProvider ?? TimeProvider.System;
-        if (!_options.Enabled) return;
+        if (!_options.IsConfigured) return;
         _options.ValidateConfiguration();
         _statePath = ProtectedJobDirectory.ContainedFile(_options.JobRoot, StateFileName);
         RecoverPersistedState();
     }
 
-    public bool Enabled => _options.Enabled;
     public bool HasActiveJob
     {
         get { lock (_sync) return _job is not null; }
@@ -111,7 +110,7 @@ public sealed partial class F8215JobCoordinator
                 callbackIdentity,
                 correlationId,
                 operationFileName,
-                "preparing",
+                "awaiting_manual_start",
                 false,
                 null,
                 null,
@@ -132,9 +131,6 @@ public sealed partial class F8215JobCoordinator
                     _callbackPort,
                     now);
                 _runtime.LaunchOperation(_options, operationPath);
-                job = job with { Phase = "awaiting_manual_start", UpdatedAt = CanonicalUtc(UtcNow()) };
-                _job = job;
-                Persist(job);
                 _logger.Info("gototags_job_prepared", requestId, "awaiting_manual_start");
                 return PrepareResponse(job);
             }
@@ -366,7 +362,7 @@ public sealed partial class F8215JobCoordinator
                 {
                     job = job with
                     {
-                        Phase = "recovering",
+                        Phase = "uncertain",
                         Retryable = false,
                         ErrorCode = "gototags_helper_restarted",
                         UpdatedAt = CanonicalUtc(UtcNow()),
@@ -395,7 +391,7 @@ public sealed partial class F8215JobCoordinator
 
     private void ValidatePrepare(F8215PrepareRequest request)
     {
-        if (!_options.Enabled) throw Error("feiju_f8215_disabled", "Feiju F8215 programming is disabled on this workstation.", false, 403);
+        _options.ValidateConfiguration();
         ValidateContext(request.AttemptId, "attemptId");
         ValidateContext(request.IdempotencyKey, "idempotencyKey");
         WorkstationAttestation.ValidateChallenge(request.AttestationChallenge);
@@ -521,8 +517,7 @@ public sealed partial class F8215JobCoordinator
     private static string CanonicalUtc(DateTimeOffset value) => value.ToUniversalTime().ToString("O");
     private static bool IsTerminal(string phase) => phase is "completed" or "failed" or "uncertain";
     private static bool AllowedPhase(string phase) => phase is
-        "preparing" or "awaiting_manual_start" or "recovering" or "encoding" or "verifying" or "locking" or
-        "final_verification" or "completed" or "failed" or "uncertain";
+        "awaiting_manual_start" or "completed" or "failed" or "uncertain";
     private static void ValidateContext(string value, string field)
     {
         if (!ContextPattern().IsMatch(value)) throw Error("invalid_request_context", $"{field} is invalid.", false, 400);

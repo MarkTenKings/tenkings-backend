@@ -10,10 +10,6 @@ internal static class Program
     {
         try
         {
-            if (args is ["--hardware-gate-test"])
-                return await RunHardwareGateTestAsync();
-            if (args is ["--f8215-hardware-gate-test"])
-                return await RunF8215HardwareGateTestAsync();
             if (args is ["--ensure-workstation-attestation-key"])
                 return RunEnsureWorkstationAttestationKey();
             if (args is ["--export-workstation-attestation-public-key"])
@@ -77,27 +73,6 @@ internal static class Program
             new ConsoleSafeLogger().Error("nfc_helper_start_failed", "startup", "internal_error");
             return 3;
         }
-    }
-
-    private static async Task<int> RunHardwareGateTestAsync()
-    {
-        if (Environment.GetEnvironmentVariable("TENKINGS_NFC_HARDWARE_GATE_CONFIRMED") != "true")
-            throw new NfcHelperException("hardware_gate_approval_required", "The separate typed hardware-gate authorization is required.");
-        var confirmOverwrite = Environment.GetEnvironmentVariable("TENKINGS_NFC_HARDWARE_GATE_OVERWRITE_CONFIRMED") == "true";
-        var operations = new NfcOperationsService(
-            new WindowsPcscNfcReaderBackend(),
-            logger: new ConsoleSafeLogger(),
-            operationTimeoutMs: ResolveOperationTimeout());
-        var result = await operations.RunHardwareGateTestAsync(confirmOverwrite, "hardware_gate", CancellationToken.None);
-        Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.HardwareGateResult));
-        return result.OverwriteConfirmationRequired ? 4 : 0;
-    }
-
-    private static async Task<int> RunF8215HardwareGateTestAsync()
-    {
-        var result = await F8215HardwareGateRunner.RunAsync(CancellationToken.None);
-        Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.F8215HardwareGateResult));
-        return 0;
     }
 
     private static int RunEnsureWorkstationAttestationKey()
