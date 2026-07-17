@@ -432,23 +432,6 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     }
   });
 
-  await t.test("manual mode never creates a worker or source-set identity", async () => {
-    const manualFixture = await createFixture({ packageId: "worker-package-manual", manual: true });
-    const runner = createFixedRigWarmForensicProcessingRunner({
-      allowedOutputRoot: manualFixture.root,
-      workerPath: path.join(manualFixture.root, "must-not-be-created.cjs"),
-    });
-    let result;
-    try {
-      result = await runner.processSide(manualFixture.batch, { requestId: "request-manual", sessionId: "session-manual" });
-    } finally {
-      await runner.shutdownProcessingWorker("manual test complete");
-    }
-    assert.equal(result.processingWorker.mode, "explicit_manual_capture");
-    assert.equal(Object.prototype.hasOwnProperty.call(result.processingWorker, "sourceSetSha256"), false);
-    assert.equal(result.manifest.front.normalizedCard.geometry.captureMode, "manual_capture");
-  });
-
   await t.test("one active plus one pending is bounded and shutdown drains both without overlap", async () => {
     const hangWorker = writeWorker(fixture.root, "hang-worker", `
       const { parentPort } = require("node:worker_threads");

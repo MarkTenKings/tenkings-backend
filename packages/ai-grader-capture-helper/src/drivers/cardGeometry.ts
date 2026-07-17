@@ -18,10 +18,9 @@ export type CardGeometryAdjustmentReason =
   | "unsafe_scale"
   | "rotate_top_up"
   | "wrong_aspect"
-  | "low_confidence"
-  | "manual_capture_selected";
-export type CardGeometrySource = "detected" | "manual_override" | "none";
-export type CardGeometryCaptureMode = "automatic_detection" | "manual_capture" | "none";
+  | "low_confidence";
+export type CardGeometrySource = "detected" | "none";
+export type CardGeometryCaptureMode = "automatic_detection" | "none";
 export type AiGraderCardGeometryDetectionPolicy = "live_preview_fast" | "captured_evidence_full";
 
 export interface CardGeometryDetectionAttemptObservation {
@@ -72,7 +71,7 @@ export interface CardGeometryDetectionDiagnostics {
     | "adaptive_border_contrast_connected_component_pca_v1"
     | "solid_plate_color_component_pca_v2"
     | "perimeter_gradient_rectangle_v3"
-    | "manual_override_no_automatic_detection";
+    ;
   backgroundLuma: number;
   backgroundColor?: { r: number; g: number; b: number };
   backgroundNoise?: number;
@@ -169,7 +168,6 @@ export interface CardGeometryMetadata {
   /** Describes what the numeric confidence represents. */
   confidenceBasis: "automatic_detection" | "operator_confirmation" | "none";
   detectionUsed: boolean;
-  /** Explicit operator-selected manual geometry; never an automatic fallback. */
   manualOverrideUsed: boolean;
   corners: CardGeometryCorners | null;
   detectedCorners: CardGeometryCorners | null;
@@ -200,12 +198,6 @@ export interface CardGeometryMetadata {
   warnings: string[];
 }
 
-export interface CardGeometryManualOverride {
-  action: "manual_capture";
-  confirmed: true;
-  rect: CardGeometryBoundingBox;
-}
-
 export interface DetectCardGeometryInput {
   sourceImagePath: string;
   /** Required at every detector boundary; there is deliberately no default. */
@@ -215,7 +207,6 @@ export interface DetectCardGeometryInput {
   sourceFrameId?: string;
   timestamp?: string;
   thresholds?: Partial<CardGeometryThresholds>;
-  manualOverride?: CardGeometryManualOverride;
   /** Test/diagnostic observability only. Exceptions cannot alter detector results. */
   onDetectionAttempt?: (observation: CardGeometryDetectionAttemptObservation) => void;
 }
@@ -1500,52 +1491,6 @@ async function attemptDetection(
   };
 }
 
-function manualOverrideDiagnostics(
-  prepared: PreparedImage,
-  thresholds: CardGeometryThresholds,
-): CardGeometryDetectionDiagnostics {
-  return {
-    method: "manual_override_no_automatic_detection",
-    backgroundLuma: 0,
-    contrastRange: 0,
-    foregroundThreshold: 0,
-    foregroundPixelFraction: 0,
-    expectedAspectRatio: thresholds.expectedAspectRatio,
-    analysisWidth: prepared.orientedWidth,
-    analysisHeight: prepared.orientedHeight,
-  };
-}
-
-function validateManualOverride(
-  override: CardGeometryManualOverride,
-  imageWidth: number,
-  imageHeight: number,
-): { corners: CardGeometryCorners; boundingBox: CardGeometryBoundingBox; shortSidePixels: number; longSidePixels: number } {
-  if (override.action !== "manual_capture" || override.confirmed !== true) {
-    throw new Error("manualOverride requires action=manual_capture and confirmed=true.");
-  }
-  const rect = override.rect;
-  for (const [name, value] of Object.entries(rect)) {
-    if (!Number.isFinite(value)) throw new Error(`manualOverride.rect.${name} must be finite.`);
-  }
-  if (rect.width <= 0 || rect.height <= 0) throw new Error("manualOverride.rect width and height must be positive.");
-  if (rect.x < 0 || rect.y < 0 || rect.x + rect.width > imageWidth || rect.y + rect.height > imageHeight) {
-    throw new Error("manualOverride.rect must remain inside the source image.");
-  }
-  const corners: CardGeometryCorners = {
-    topLeft: { x: rect.x, y: rect.y },
-    topRight: { x: rect.x + rect.width, y: rect.y },
-    bottomRight: { x: rect.x + rect.width, y: rect.y + rect.height },
-    bottomLeft: { x: rect.x, y: rect.y + rect.height },
-  };
-  return {
-    corners,
-    boundingBox: { ...rect },
-    shortSidePixels: Math.min(rect.width, rect.height),
-    longSidePixels: Math.max(rect.width, rect.height),
-  };
-}
-
 function placementEvaluation(input: {
   corners: CardGeometryCorners;
   boundingBox: CardGeometryBoundingBox;
@@ -1643,11 +1588,8 @@ function placementAdjustmentReason(
   return null;
 }
 
-function placementWarnings(placement: CardGeometryPlacementEvaluation, source: CardGeometrySource): string[] {
+function placementWarnings(placement: CardGeometryPlacementEvaluation, _source: CardGeometrySource): string[] {
   const warnings: string[] = [];
-  if (source === "manual_override") {
-    warnings.push("Automatic geometry was not used; an operator explicitly confirmed manual capture geometry.");
-  }
   if (!placement.withinCenterTolerance) {
     warnings.push("Card is off center, but center offset is diagnostic only when detected geometry can be normalized safely.");
   }
@@ -1668,57 +1610,6 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
   const detectionPolicy = requireDetectionPolicy(input.detectionPolicy);
   const thresholds = normalizeThresholds(input.thresholds);
   const timestamp = normalizeTimestamp(input.timestamp);
-
-  if (input.manualOverride) {
-    const override = validateManualOverride(input.manualOverride, prepared.orientedWidth, prepared.orientedHeight);
-    const measuredAspectRatio = override.longSidePixels / override.shortSidePixels;
-    const relativeAspectError = Math.abs(measuredAspectRatio - thresholds.expectedAspectRatio) / thresholds.expectedAspectRatio;
-    const rotationDegrees = override.boundingBox.width > override.boundingBox.height ? 90 : 0;
-    const skewDegrees = placementSkewDegrees(rotationDegrees, prepared.orientedWidth, prepared.orientedHeight);
-    const placement = placementEvaluation({
-      ...override,
-      skewDegrees,
-      confidence: 0,
-      relativeAspectError,
-      cardCoverage: (override.boundingBox.width * override.boundingBox.height) / Math.max(1, prepared.orientedWidth * prepared.orientedHeight),
-      imageWidth: prepared.orientedWidth,
-      imageHeight: prepared.orientedHeight,
-      thresholds,
-    });
-    return {
-      version: CARD_GEOMETRY_VERSION,
-      detectionPolicy,
-      side: input.side,
-      // Ready is reserved for confident automatic detection. A manual capture
-      // may still normalize an operator-confirmed rectangle, but never claims
-      // automatic placement readiness.
-      placementState: "not_detected",
-      adjustmentReason: "manual_capture_selected",
-      geometrySource: "manual_override",
-      captureMode: "manual_capture",
-      confidenceBasis: "operator_confirmation",
-      detectionUsed: false,
-      manualOverrideUsed: true,
-      corners: override.corners,
-      detectedCorners: null,
-      boundingBox: override.boundingBox,
-      rotationDegrees,
-      skewDegrees: round(skewDegrees, 3),
-      confidence: 0,
-      ...(sanitizeSourceId(input.sourceImageId) ? { sourceImageId: sanitizeSourceId(input.sourceImageId) } : {}),
-      ...(sanitizeSourceId(input.sourceFrameId) ? { sourceFrameId: sanitizeSourceId(input.sourceFrameId) } : {}),
-      timestamp,
-      image: { width: prepared.orientedWidth, height: prepared.orientedHeight, coordinateFrame: "source_image_pixels" },
-      semanticOrientation: {
-        canonicalOrientation: "portrait",
-        basis: "operator_top_toward_preview_top",
-        contentUprightVerified: false,
-      },
-      placement,
-      detection: manualOverrideDiagnostics(prepared, thresholds),
-      warnings: placementWarnings(placement, "manual_override"),
-    };
-  }
 
   const detection = await attemptDetection(prepared, thresholds, detectionPolicy, input.onDetectionAttempt);
 
@@ -1962,20 +1853,13 @@ function assertReusableGeometry(geometry: CardGeometryMetadata, prepared: Prepar
     geometry.confidenceBasis === "automatic_detection" &&
     geometry.detectionUsed === true &&
     geometry.manualOverrideUsed === false;
-  const coherentManualGeometry =
-    geometry.placementState !== "ready" &&
-    geometry.geometrySource === "manual_override" &&
-    geometry.captureMode === "manual_capture" &&
-    geometry.confidenceBasis === "operator_confirmation" &&
-    geometry.detectionUsed === false &&
-    geometry.manualOverrideUsed === true;
   if (
-    (!coherentDetectedGeometry && !coherentManualGeometry) ||
+    !coherentDetectedGeometry ||
     !geometry.corners ||
     geometry.rotationDegrees == null ||
     !Number.isFinite(geometry.rotationDegrees)
   ) {
-    throw new Error("Reusable card geometry must be coherent Ready automatic detection or explicit operator-confirmed manual geometry.");
+    throw new Error("Reusable card geometry must be coherent Ready automatic detection.");
   }
   if (geometry.image.width !== prepared.orientedWidth || geometry.image.height !== prepared.orientedHeight) {
     throw new Error("Reusable card geometry dimensions must exactly match the oriented forensic frame dimensions.");

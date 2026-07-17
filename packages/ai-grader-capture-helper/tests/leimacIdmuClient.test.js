@@ -13,6 +13,7 @@ const {
   composeLeimacIdmuReadCommand,
   composeLeimacIdmuUnsafeWriteCommandForTest,
   normalizeLeimacIdmuDiagnosticReadFrame,
+  normalizeLeimacIdmuDutyPercent,
   normalizeLeimacIdmuHost,
   normalizeLeimacIdmuPort,
 } = require("../dist/drivers/leimacIdmuClient");
@@ -302,7 +303,7 @@ test("Leimac safe-off and trigger-profile frames use command-before-unit channel
   assert.equal(plan.outputTimeWritten, false);
   assert.equal(plan.persistentSaved, false);
   assert.equal(plan.safety.arbitraryWritesAllowed, false);
-  assert.equal(plan.safety.maxDutyPercent, 5);
+  assert.equal(plan.safety.maxDutyPercent, 99.9);
   assert.deepEqual(plan.frames.map((frame) => frame.requestFrame), [
     "W8601010000020000030000040000050000060000070000080000",
     "W8501010000020000030000040000050000060000070000080000",
@@ -340,16 +341,31 @@ test("Leimac safe-off and trigger-profile frames use command-before-unit channel
   );
 });
 
-test("Leimac trigger profile rejects high duty and arbitrary writes", async () => {
-  assert.throws(() => buildLeimacIdmuTriggerProfilePlan({ dutyPercent: 6 }), /capped at 5%/);
+test("Leimac trigger profile permits bounded duty above five percent but rejects out-of-range duty and arbitrary writes", async () => {
+  assert.equal(buildLeimacIdmuTriggerProfilePlan({ dutyPercent: 6 }).dutyPercent, 6);
+  assert.throws(() => buildLeimacIdmuTriggerProfilePlan({ dutyPercent: 100 }), /99\.9|range|maximum/i);
   assert.throws(
     () => composeLeimacIdmuChannelWriteFrame({ name: "factoryDefault", unit: 1, value: "0000", meaning: "unsafe" }),
     /allowlist/
   );
 
-  const cli = await runCli(["leimac-idmu-trigger-profile", "--duty", "6"]);
+  const cli = await runCli(["leimac-idmu-trigger-profile", "--duty", "100"]);
   assert.equal(cli.code, 1);
-  assert.match(cli.stderr.error, /capped at 5%/);
+  assert.match(cli.stderr.error, /99\.9|range|maximum/i);
+});
+
+test("Leimac duty is explicit and accepts the complete controller range without a maximum default", () => {
+  assert.throws(
+    () => normalizeLeimacIdmuDutyPercent(undefined),
+    (error) => error?.code === "LEIMAC_IDMU_DUTY_REQUIRED" && /must be explicit/.test(error.message),
+  );
+  assert.throws(
+    () => normalizeLeimacIdmuDutyPercent(""),
+    (error) => error?.code === "LEIMAC_IDMU_DUTY_REQUIRED",
+  );
+  assert.equal(normalizeLeimacIdmuDutyPercent(0), 0);
+  assert.equal(normalizeLeimacIdmuDutyPercent("99.9"), 99.9);
+  assert.throws(() => normalizeLeimacIdmuDutyPercent(100), /must not exceed/);
 });
 
 test("Leimac trigger profile readbacks use only manual-derived read frames", async () => {

@@ -37,8 +37,6 @@ var tests = new (string Name, Func<Task> Run)[]
     ("partial write and readback mismatch", TestWriteFailures),
     ("single writer, timeout, and idempotency", TestConcurrency),
     ("definite pre-write retry and uncertain failure recovery", TestRetryClassification),
-    ("approved one-shot hardware gate contract", TestHardwareGate),
-    ("isolated F8215 hardware gate requires separate approval before dependencies or hardware", TestF8215HardwareGateApproval),
     ("loopback HTTP pairing/auth/origin/bounds", TestHttp),
     ("Windows CNG and installer static safety contracts", TestProvisioningContracts)
 };
@@ -184,7 +182,10 @@ static async Task TestPcscInitialConnectClassification()
     Equal(0, retryBackend.Writes.Count);
     False(retryService.Busy);
     retryBackend.TagCount = 1;
-    var retryResult = await retryService.WriteAsync(retryRequest, "req_initial_present", CancellationToken.None);
+    var retryResult = await retryService.WriteAsync(
+        WriteRequest("attempt_initial_present_new", "idempotency_initial_present_new"),
+        "req_initial_present",
+        CancellationToken.None);
     Equal("write_verified_pcsc_readback", retryResult.ReaderResultCode);
     True(retryResult.OperationalAttestation is not null);
     Equal(1, retrySigner.SignCount);
@@ -355,7 +356,6 @@ static Task TestF8215JobLifecycle()
             templatePath);
         Equal(NfcProtocol.ApprovedGoToTagsTemplateSha256, Sha256File(templatePath));
         var options = new GoToTagsAdapterOptions(
-            true,
             Path.Combine(root, "fake.exe"),
             templatePath,
             NfcProtocol.ApprovedGoToTagsTemplateSha256,
@@ -443,7 +443,6 @@ static Task TestF8215RestartRecovery()
             Path.Combine(FindRepoRoot(), "packages", "ai-grader-nfc-helper", "src", "TenKings.AiGrader.NfcHelper", "Templates", "f8215-gototags-manual-start-v1.json"),
             templatePath);
         var options = new GoToTagsAdapterOptions(
-            true,
             Path.Combine(root, "fake.exe"),
             templatePath,
             NfcProtocol.ApprovedGoToTagsTemplateSha256,
@@ -461,7 +460,7 @@ static Task TestF8215RestartRecovery()
             47662,
             new CollectingSafeLogger());
         var request = new F8215PrepareRequest(
-            "nfc_attempt_f8215_restart_0001",
+            $"nfc_attempt_{new string('a', 43)}",
             "prepare_idempotency_f8215_restart_0001",
             TagId,
             Challenge,
@@ -484,22 +483,27 @@ static Task TestF8215RestartRecovery()
             recoveryGate,
             47662,
             new CollectingSafeLogger());
-        Equal("recovering", recovered.Status(new F8215OperationStatusRequest(request.AttemptId)).Phase);
-        Throws("gototags_job_mismatch", () => recovered.Status(new F8215OperationStatusRequest("nfc_attempt_f8215_restart_0002")));
+        Equal("uncertain", recovered.Status(new F8215OperationStatusRequest(request.AttemptId)).Phase);
+        Throws("gototags_job_mismatch", () => recovered.Status(new F8215OperationStatusRequest($"nfc_attempt_{new string('b', 43)}")));
         var body = GoToTagsCallback(correlation, Url);
         try
         {
-            recovered.AcceptCallback(callbackIdentity, body, "callback_after_restart");
+            Throws("gototags_job_terminal", () => recovered.AcceptCallback(callbackIdentity, body, "callback_after_restart"));
         }
         finally
         {
             CryptographicOperations.ZeroMemory(body);
         }
-        var completed = recovered.Status(new F8215OperationStatusRequest(request.AttemptId));
-        Equal("completed", completed.Phase);
-        True(completed.Evidence is not null);
-        True(recovered.Acknowledge(new F8215OperationAcknowledgeRequest(request.AttemptId), "ack_after_restart").Cleaned);
-        False(recoveryGate.Busy);
+        var uncertain = recovered.Status(new F8215OperationStatusRequest(request.AttemptId));
+        Equal("uncertain", uncertain.Phase);
+        True(uncertain.Evidence is null);
+        True(recoveryGate.Busy);
+        var resolution = F8215JobCoordinator.ResolveAbandonedJob(
+            root,
+            request.AttemptId,
+            NfcProtocol.FeijuQuarantineConfirmation);
+        Equal("quarantined_abandoned_job_resolved", resolution.Resolution);
+        False(resolution.EncodingSuccessClaimed);
     }
     finally
     {
@@ -519,7 +523,6 @@ static Task TestF8215QuarantineRecovery()
             Path.Combine(FindRepoRoot(), "packages", "ai-grader-nfc-helper", "src", "TenKings.AiGrader.NfcHelper", "Templates", "f8215-gototags-manual-start-v1.json"),
             templatePath);
         var options = new GoToTagsAdapterOptions(
-            true,
             Path.Combine(root, "fake.exe"),
             templatePath,
             NfcProtocol.ApprovedGoToTagsTemplateSha256,
@@ -645,7 +648,6 @@ static async Task TestF8215HttpCallback()
             Path.Combine(FindRepoRoot(), "packages", "ai-grader-nfc-helper", "src", "TenKings.AiGrader.NfcHelper", "Templates", "f8215-gototags-manual-start-v1.json"),
             templatePath);
         var adapterOptions = new GoToTagsAdapterOptions(
-            true,
             Path.Combine(root, "fake.exe"),
             templatePath,
             NfcProtocol.ApprovedGoToTagsTemplateSha256,
@@ -788,7 +790,7 @@ static Task TestNdef()
     Throws("invalid_nfc_url", () => NdefCodec.EncodeProductionUrl("http://collect.tenkings.co/nfc/" + TagId));
     Throws("invalid_nfc_url", () => NdefCodec.EncodeProductionUrl(Url + "?redirect=https://example.com"));
     Throws("invalid_public_tag_id", () => NdefCodec.EncodeProductionUrl(NfcProtocol.ProductionUrlPrefix + TagId[..31]));
-    Throws("invalid_public_tag_id", () => NdefCodec.EncodeProductionUrl(NfcProtocol.HardwareGateTestUrl));
+    Throws("invalid_public_tag_id", () => NdefCodec.EncodeProductionUrl("https://collect.tenkings.co/nfc/test"));
     Throws("unsupported_ndef_record", () => NdefCodec.ParseProductionUrl([0xD1, 0x01, 0x01, 0x54, 0x00]));
     return Task.CompletedTask;
 }
@@ -878,9 +880,9 @@ static async Task TestWriteAndReadback()
         WriteRequest("attempt_0001", "idempotency_exact_again"),
         "req_exact_again",
         CancellationToken.None);
-    Equal("already_programmed_exact", exactAgain.ReaderResultCode);
-    True(exactAgain.OperationalAttestation is not null);
-    Equal(2, signer.SignCount);
+    Equal("overwrite_confirmation_required", exactAgain.ReaderResultCode);
+    True(exactAgain.OperationalAttestation is null);
+    Equal(1, signer.SignCount);
     Equal(writeCount, backend.Writes.Count);
 }
 
@@ -963,13 +965,12 @@ static async Task TestWriteFailures()
     var writesBeforeRecovery = recoverableCorrupt.Writes.Count;
     Equal(0, recoverableCorruptSigner.SignCount);
     recoverableCorrupt.CorruptReadbackAfterWrite = false;
-    var recovered = await recoverableCorruptService.WriteAsync(
+    await ThrowsAsync("readback_mismatch", () => recoverableCorruptService.WriteAsync(
         recoverableCorruptRequest,
         "req_corrupt_exact_retry",
-        CancellationToken.None);
-    Equal("already_programmed_exact", recovered.ReaderResultCode);
+        CancellationToken.None));
     Equal(writesBeforeRecovery, recoverableCorrupt.Writes.Count);
-    Equal(1, recoverableCorruptSigner.SignCount);
+    Equal(0, recoverableCorruptSigner.SignCount);
 }
 
 static async Task TestConcurrency()
@@ -986,8 +987,7 @@ static async Task TestConcurrency()
     await ThrowsAsync("writer_busy", () =>
         service.WriteAsync(WriteRequest("attempt_0005", "idempotency_0008"), "req_contended", CancellationToken.None));
     var timeoutError = await ThrowsAsync("reader_timeout", () => first);
-    True(timeoutError.Message.Contains("Keep the same physical tag", StringComparison.Ordinal));
-    True(!timeoutError.Message.Contains("remove the tag", StringComparison.OrdinalIgnoreCase));
+    True(timeoutError.Message.Contains("quarantine", StringComparison.OrdinalIgnoreCase));
     Equal(0, signer.SignCount);
     True(service.Busy);
     blocker.Set();
@@ -1006,11 +1006,10 @@ static async Task TestConcurrency()
     Equal(recovered, cachedRecovery);
     Equal(recoveredWriteCount, backend.Writes.Count);
     Equal(1, signer.SignCount);
-    var contentionRetry = await service.WriteAsync(
+    await ThrowsAsync("writer_busy", () => service.WriteAsync(
         WriteRequest("attempt_0005", "idempotency_0008"),
         "req_contention_retry",
-        CancellationToken.None);
-    Equal(Url, contentionRetry.NormalizedUrl);
+        CancellationToken.None));
 
     using var cancelBlocker = new ManualResetEventSlim(false);
     var cancelBackend = new FakeNfcReaderBackend { WriteBlocker = cancelBlocker };
@@ -1024,7 +1023,7 @@ static async Task TestConcurrency()
     await WaitUntil(() => cancelService.Busy);
     cancelled.Cancel();
     var cancellationError = await ThrowsAsync("request_cancelled", () => cancelledWrite);
-    True(cancellationError.Message.Contains("Keep the same physical tag", StringComparison.Ordinal));
+    True(cancellationError.Message.Contains("quarantine", StringComparison.OrdinalIgnoreCase));
     True(cancelService.Busy);
     cancelBlocker.Set();
     await WaitUntil(() => !cancelService.Busy);
@@ -1065,10 +1064,16 @@ static async Task TestRetryClassification()
     var definiteRequest = WriteRequest("attempt_retry_0001", "idempotency_retry_0001");
     await ThrowsAsync("no_tag", () =>
         definiteService.WriteAsync(definiteRequest, "req_no_tag", CancellationToken.None));
-    Equal(0, definiteSigner.SignCount);
     definiteBackend.TagCount = 1;
-    var recovered = await definiteService.WriteAsync(definiteRequest, "req_tag_present", CancellationToken.None);
-    Equal("write_verified_pcsc_readback", recovered.ReaderResultCode);
+    await ThrowsAsync("no_tag", () =>
+        definiteService.WriteAsync(definiteRequest, "req_same_attempt_disallowed", CancellationToken.None));
+    Equal(0, definiteBackend.Writes.Count);
+    Equal(0, definiteSigner.SignCount);
+    var newAttempt = await definiteService.WriteAsync(
+        WriteRequest("attempt_retry_new_0001", "idempotency_retry_new_0001"),
+        "req_new_attempt",
+        CancellationToken.None);
+    Equal("write_verified_pcsc_readback", newAttempt.ReaderResultCode);
     Equal(1, definiteSigner.SignCount);
 
     var uncertainBackend = new FakeNfcReaderBackend { DisconnectAfterWriteCount = 1 };
@@ -1081,82 +1086,10 @@ static async Task TestRetryClassification()
     True(writesAfterFailure > 0);
     uncertainBackend.ReaderConnected = true;
     uncertainBackend.DisconnectAfterWriteCount = -1;
-    var recoveredPartial = await uncertainService.WriteAsync(
-        uncertainRequest,
-        "req_partial_exact_retry",
-        CancellationToken.None);
-    Equal("write_verified_pcsc_readback", recoveredPartial.ReaderResultCode);
-    True(recoveredPartial.OperationalAttestation is not null);
-    True(uncertainBackend.Writes.Count > writesAfterFailure);
-    Equal(1, uncertainSigner.SignCount);
-    var recoveredWriteCount = uncertainBackend.Writes.Count;
-    var cachedPartial = await uncertainService.WriteAsync(
-        uncertainRequest,
-        "req_partial_exact_cached",
-        CancellationToken.None);
-    Equal(recoveredPartial, cachedPartial);
-    Equal(recoveredWriteCount, uncertainBackend.Writes.Count);
-    Equal(1, uncertainSigner.SignCount);
-
-    var swappedBackend = new FakeNfcReaderBackend { DisconnectAfterWriteCount = 1 };
-    using var swappedSigner = new EphemeralTestWorkstationAttestationSigner();
-    var swappedService = new NfcOperationsService(swappedBackend, swappedSigner);
-    var swappedRequest = WriteRequest("attempt_retry_0003", "idempotency_retry_0003");
     await ThrowsAsync("tag_removed_mid_write", () =>
-        swappedService.WriteAsync(swappedRequest, "req_swapped_partial", CancellationToken.None));
-    var swappedWrites = swappedBackend.Writes.Count;
-    swappedBackend.ReaderConnected = true;
-    swappedBackend.DisconnectAfterWriteCount = -1;
-    swappedBackend.Uid = [0x04, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22];
-    var swappedTag = await swappedService.WriteAsync(
-        swappedRequest,
-        "req_swapped_uid_retry",
-        CancellationToken.None);
-    True(swappedTag.OverwriteRequired);
-    True(swappedTag.OperationalAttestation is null);
-    Equal(swappedWrites, swappedBackend.Writes.Count);
-    Equal(0, swappedSigner.SignCount);
-}
-
-static async Task TestHardwareGate()
-{
-    var blankBackend = new FakeNfcReaderBackend();
-    var blank = await new NfcOperationsService(blankBackend).RunHardwareGateTestAsync(
-        false,
-        "hardware_gate_blank",
-        CancellationToken.None);
-    Equal("hardware_gate_exact_readback_verified", blank.ResultCode);
-    True(blank.ReaderDetected && blank.TagRead && blank.WriteAttempted && blank.ExactReadbackVerified);
-    False(blank.OverwriteConfirmationRequired);
-    True(blankBackend.Writes.All(write => write.Page is >= 4 and <= 127));
-
-    var nonblankBackend = new FakeNfcReaderBackend();
-    nonblankBackend.LoadUrl(OtherUrl);
-    var service = new NfcOperationsService(nonblankBackend);
-    var blocked = await service.RunHardwareGateTestAsync(false, "hardware_gate_blocked", CancellationToken.None);
-    True(blocked.OverwriteConfirmationRequired);
-    False(blocked.WriteAttempted);
-    Equal(0, nonblankBackend.Writes.Count);
-    var confirmed = await service.RunHardwareGateTestAsync(true, "hardware_gate_confirmed", CancellationToken.None);
-    Equal("hardware_gate_exact_readback_verified", confirmed.ResultCode);
-    True(confirmed.WriteAttempted && confirmed.ExactReadbackVerified);
-    False(confirmed.OverwriteConfirmationRequired);
-}
-
-static async Task TestF8215HardwareGateApproval()
-{
-    const string name = "TENKINGS_NFC_F8215_HARDWARE_GATE_CONFIRMED";
-    var prior = Environment.GetEnvironmentVariable(name);
-    try
-    {
-        Environment.SetEnvironmentVariable(name, null);
-        await ThrowsAsync("f8215_hardware_gate_approval_required", () =>
-            F8215HardwareGateRunner.RunAsync(CancellationToken.None));
-    }
-    finally
-    {
-        Environment.SetEnvironmentVariable(name, prior);
-    }
+        uncertainService.WriteAsync(uncertainRequest, "req_partial_same_attempt_disallowed", CancellationToken.None));
+    Equal(writesAfterFailure, uncertainBackend.Writes.Count);
+    Equal(0, uncertainSigner.SignCount);
 }
 
 static async Task TestHttp()
@@ -1371,9 +1304,9 @@ static Task TestProvisioningContracts()
     True(install.Contains(NfcProtocol.MultiProfileAttestationSchemaVersion, StringComparison.Ordinal));
     True(configureFeiju.Contains(NfcProtocol.ApprovedGoToTagsVersion, StringComparison.Ordinal));
     True(configureFeiju.Contains("CN=GoToTags, O=GoToTags, S=Washington, C=US", StringComparison.Ordinal));
-    True(configureFeiju.Contains("feijuF8215Enabled", StringComparison.Ordinal));
+    False(configureFeiju.Contains("feijuF8215Enabled", StringComparison.Ordinal));
     False(configureFeiju.Contains("Set-Service", StringComparison.OrdinalIgnoreCase));
-    True(start.Contains("TENKINGS_NFC_FEIJU_F8215_ENABLED", StringComparison.Ordinal));
+    False(start.Contains("TENKINGS_NFC_FEIJU_F8215_ENABLED", StringComparison.Ordinal));
     True(start.Contains("TENKINGS_NFC_GOTOTAGS_JOB_ROOT", StringComparison.Ordinal));
 
     var publicOnly = JsonSerializer.Serialize(

@@ -20,7 +20,6 @@ export const AI_GRADER_NFC_NDEF_PAYLOAD_VERSION = 1 as const;
 export const AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET_ENV = "AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET" as const;
 export const AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_ENV = "AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON" as const;
 export const AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV = "AI_GRADER_NFC_PROGRAMMING_ENABLED" as const;
-export const AI_GRADER_NFC_FEIJU_F8215_ENABLED_ENV = "AI_GRADER_NFC_FEIJU_F8215_ENABLED" as const;
 export const AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION = "tenkings-ai-grader-nfc-loopback-v2" as const;
 export const AI_GRADER_NFC_ATTESTATION_ALGORITHM = "ecdsa-p256-sha256-p1363" as const;
 export const AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V1 = "ai-grader-nfc-helper-attestation-v1" as const;
@@ -125,7 +124,6 @@ type ProgrammingRuntimeInput = {
   tokenSecret?: string;
   workstationPublicKeysJson?: string;
   programmingEnabled?: boolean;
-  feijuF8215Enabled?: boolean;
 };
 
 export type AiGraderNfcOperationalAttestationInput = {
@@ -436,10 +434,7 @@ function resolveProgrammingRuntime(input: ProgrammingRuntimeInput, tenantId: str
   if (!Array.from(workstationKeys.values()).some((entry) => entry.tenantId === tenantId)) {
     throw workstationConfigurationError();
   }
-  const feijuF8215Enabled = input.feijuF8215Enabled === undefined
-    ? process.env[AI_GRADER_NFC_FEIJU_F8215_ENABLED_ENV] === "true"
-    : input.feijuF8215Enabled === true;
-  return { tokenSecret, workstationKeys, feijuF8215Enabled };
+  return { tokenSecret, workstationKeys };
 }
 function attemptTtl(value: unknown) {
   const ttl = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : AI_GRADER_NFC_DEFAULT_ATTEMPT_TTL_MS;
@@ -701,11 +696,6 @@ function assertImplementedStrategy(chipType: unknown, securityMode: unknown, pro
     throw nfcError("AI_GRADER_NFC_STRATEGY_NOT_IMPLEMENTED", 409, "This NFC security strategy is not implemented.");
   }
   return strategy;
-}
-function requireProfileEnabled(strategy: AiGraderNfcSecurityStrategyDescriptor, feijuF8215Enabled: boolean) {
-  if (strategy.chipType === "FEIJU_F8215" && !feijuF8215Enabled) {
-    throw nfcError("AI_GRADER_NFC_FEIJU_F8215_DISABLED", 503, "Feiju F8215 programming is disabled by server policy.");
-  }
 }
 function requireFreshInventoryConfirmation(
   strategy: AiGraderNfcSecurityStrategyDescriptor,
@@ -1179,8 +1169,7 @@ export async function initAiGraderNfcProgramming(input: InitAiGraderNfcProgrammi
   if (!strategy.implemented) {
     throw nfcError("AI_GRADER_NFC_STRATEGY_NOT_IMPLEMENTED", 409, "This NFC security strategy is not implemented.");
   }
-  const { tokenSecret, feijuF8215Enabled } = resolveProgrammingRuntime(input, linkage.tenantId);
-  requireProfileEnabled(strategy, feijuF8215Enabled);
+  const { tokenSecret } = resolveProgrammingRuntime(input, linkage.tenantId);
   const operatorFreshInventoryConfirmation = requireFreshInventoryConfirmation(
     strategy,
     input.operatorFreshInventoryConfirmation,
@@ -1340,7 +1329,7 @@ export async function completeAiGraderNfcProgramming(
 ): Promise<AiGraderNfcSafeStatus> {
   if (rawUidWasSupplied(input)) throw nfcError("AI_GRADER_NFC_RAW_UID_REJECTED", 400, "Raw NFC UID input is not accepted.");
   const linkage = validateExactLinkage(input);
-  const { workstationKeys, feijuF8215Enabled } = resolveProgrammingRuntime(input, linkage.tenantId);
+  const { workstationKeys } = resolveProgrammingRuntime(input, linkage.tenantId);
   const actorUserId = validateActor(input.requestedByUserId);
   const attemptId = required(input.attemptId, "attemptId", 64);
   if (!ATTEMPT_ID.test(attemptId)) throw nfcError("AI_GRADER_NFC_INVALID_ATTEMPT", 400, "NFC attempt ID is invalid.");
@@ -1358,7 +1347,6 @@ export async function completeAiGraderNfcProgramming(
     input.securityMode,
     input.programmingProfile ?? (input.chipType === "NTAG215" ? AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE : undefined),
   );
-  requireProfileEnabled(strategy, feijuF8215Enabled);
   const normalizedNdefUrl = required(input.normalizedNdefUrl, "normalizedNdefUrl", 512);
   const readerResultCode = strategy.chipType === "FEIJU_F8215"
     ? input.readerResultCode === AI_GRADER_NFC_FEIJU_READER_RESULT
@@ -1759,8 +1747,7 @@ export async function replaceAiGraderNfcTag(input: ReplaceAiGraderNfcTagInput): 
   if (!strategy.implemented) {
     throw nfcError("AI_GRADER_NFC_STRATEGY_NOT_IMPLEMENTED", 409, "This NFC security strategy is not implemented.");
   }
-  const { tokenSecret, feijuF8215Enabled } = resolveProgrammingRuntime(input, linkage.tenantId);
-  requireProfileEnabled(strategy, feijuF8215Enabled);
+  const { tokenSecret } = resolveProgrammingRuntime(input, linkage.tenantId);
   const operatorFreshInventoryConfirmation = requireFreshInventoryConfirmation(
     strategy,
     input.operatorFreshInventoryConfirmation,

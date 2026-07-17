@@ -566,7 +566,6 @@ function signedFeijuCompletionInput(runtime, init, options = {}) {
       signature,
     },
     ...PROGRAMMING_RUNTIME,
-    feijuF8215Enabled: true,
     dbClient: runtime.db,
     now: new Date(NOW.getTime() + 5_000),
   };
@@ -741,25 +740,16 @@ test("complete activates exactly once, allows only exact idempotent retry, and n
   }), { code: "AI_GRADER_NFC_TOKEN_REPLAY" });
 });
 
-test("F8215 is separately default-off and activates only with exact v2 lock/readback evidence", async () => {
-  const disabledRuntime = mockDb();
-  await assert.rejects(reserve(disabledRuntime, "init-feiju-disabled", {
-    chipType: "FEIJU_F8215",
-    programmingProfile: "gototags_manual_start_v1",
-  }), { code: "AI_GRADER_NFC_FEIJU_F8215_DISABLED" });
-  assert.equal(disabledRuntime.state.tags.length, 0);
-
+test("F8215 uses the global programming gate and activates only with exact v2 lock/readback evidence", async () => {
   const runtime = mockDb();
   await assert.rejects(reserve(runtime, "init-feiju-unconfirmed", {
     chipType: "FEIJU_F8215",
     programmingProfile: "gototags_manual_start_v1",
-    feijuF8215Enabled: true,
   }), { code: "AI_GRADER_NFC_FRESH_INVENTORY_CONFIRMATION_REQUIRED" });
   assert.equal(runtime.state.tags.length, 0);
   const init = await reserve(runtime, "init-feiju-enabled", {
     chipType: "FEIJU_F8215",
     programmingProfile: "gototags_manual_start_v1",
-    feijuF8215Enabled: true,
     operatorFreshInventoryConfirmation: "operator_fresh_inventory_confirmation_v1",
   });
   assert.equal(init.chipType, "FEIJU_F8215");
@@ -810,7 +800,6 @@ test("F8215 is separately default-off and activates only with exact v2 lock/read
     const rejectedInit = await reserve(rejectedRuntime, `init-feiju-reject-${rejectIndex}`, {
       chipType: "FEIJU_F8215",
       programmingProfile: "gototags_manual_start_v1",
-      feijuF8215Enabled: true,
       operatorFreshInventoryConfirmation: "operator_fresh_inventory_confirmation_v1",
     });
     await assert.rejects(completeAiGraderNfcProgramming(mutate(signedFeijuCompletionInput(rejectedRuntime, rejectedInit))));

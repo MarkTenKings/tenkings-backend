@@ -31,9 +31,6 @@ public static partial class NdefCodec
         return EncodeUrl(url, publicTagId, $"collect.tenkings.co/nfc/{publicTagId}");
     }
 
-    internal static EncodedNdefUrl EncodeHardwareGateTestUrl() =>
-        EncodeUrl(NfcProtocol.HardwareGateTestUrl, "test", "collect.tenkings.co/nfc/test");
-
     private static EncodedNdefUrl EncodeUrl(string url, string publicTagId, string remainder)
     {
         var remainderBytes = StrictUtf8.GetBytes(remainder);
@@ -55,9 +52,6 @@ public static partial class NdefCodec
 
     public static ParsedNdefUrl ParseProductionUrl(ReadOnlySpan<byte> message)
         => ParseUrl(message, ValidateProductionUrl);
-
-    internal static ParsedNdefUrl ParseHardwareGateTestUrl(ReadOnlySpan<byte> message)
-        => ParseUrl(message, ValidateHardwareGateTestUrl);
 
     private static ParsedNdefUrl ParseUrl(ReadOnlySpan<byte> message, Func<string, string> validateUrl)
     {
@@ -113,13 +107,6 @@ public static partial class NdefCodec
         }
 
         return publicTagId;
-    }
-
-    private static string ValidateHardwareGateTestUrl(string url)
-    {
-        if (!string.Equals(url, NfcProtocol.HardwareGateTestUrl, StringComparison.Ordinal))
-            throw new NfcHelperException("invalid_hardware_gate_url", "The hardware gate accepts only the fixed non-production NFC test URL.");
-        return "test";
     }
 
     public static Type2NdefLocation LocateNdef(ReadOnlySpan<byte> dataArea)

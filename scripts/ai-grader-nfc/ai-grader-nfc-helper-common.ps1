@@ -170,8 +170,7 @@ function Copy-NfcStableMaintenancePayload {
       "start-ai-grader-nfc-helper.ps1",
       "status-ai-grader-nfc-helper.ps1",
       "stop-ai-grader-nfc-helper.ps1",
-      "uninstall-ai-grader-nfc-helper.ps1",
-      "validate-ai-grader-nfc-sacrificial-tag.ps1")) {
+      "uninstall-ai-grader-nfc-helper.ps1")) {
     $sourceFile = Join-Path $source $name
     if (-not (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
       throw "The NFC stable maintenance payload is incomplete."
@@ -393,7 +392,6 @@ function Read-NfcConfig {
   if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v3") {
     if ($config.workstationKeyName -cne $script:NfcAttestationKeyName -or
         [string]$config.workstationKeyId -cnotmatch '^[a-f0-9]{64}$' -or
-        $config.feijuF8215Enabled -isnot [bool] -or
         [string]$config.goToTagsExecutableSha256 -cne $script:NfcGoToTagsExecutableSha256 -or
         [string]$config.goToTagsTemplateSha256 -cne $script:NfcGoToTagsTemplateSha256 -or
         -not (Get-NfcCanonicalPath -Path ([string]$config.goToTagsTemplatePath)).Equals(
@@ -404,7 +402,7 @@ function Read-NfcConfig {
           [StringComparison]::OrdinalIgnoreCase)) {
       throw "The NFC helper config failed its F8215 adapter validation."
     }
-    if ([bool]$config.feijuF8215Enabled) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$config.goToTagsExecutablePath)) {
       $goToTagsExecutable = Get-NfcCanonicalPath -Path ([string]$config.goToTagsExecutablePath)
       if (-not (Test-Path -LiteralPath $goToTagsExecutable -PathType Leaf) -or
           -not (Test-Path -LiteralPath $script:NfcGoToTagsTemplatePath -PathType Leaf) -or
@@ -466,7 +464,6 @@ function Initialize-NfcConfig {
       installDirectory = $script:NfcInstallDir
       workstationKeyName = $WorkstationKeyName
       workstationKeyId = $WorkstationKeyId
-      feijuF8215Enabled = $false
       goToTagsExecutablePath = ""
       goToTagsExecutableSha256 = $script:NfcGoToTagsExecutableSha256
       goToTagsTemplatePath = $script:NfcGoToTagsTemplatePath

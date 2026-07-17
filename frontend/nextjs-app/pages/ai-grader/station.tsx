@@ -5,6 +5,8 @@ import { useSession, type SessionPayload } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   AI_GRADER_STATION_STEPS,
+  aiGraderApproveAndPublishEligible,
+  aiGraderAuthoritativeLiveLightingDraft,
   aiGraderCardPlacementLabel,
   buildAiGraderLocalStationStatus,
   buildSampleAiGraderReportHistory,
@@ -26,7 +28,6 @@ import {
   AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY,
   AI_GRADER_STATION_TOKEN_STORAGE_KEY,
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
-  acceptAiGraderLiveLightingProfile,
   applyAiGraderLiveLighting,
   buildAiGraderCaptureProfileRequest,
   buildAiGraderRapidCaptureConfigurationRequest,
@@ -41,67 +42,25 @@ import {
   heartbeatAiGraderLiveLighting,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
-  safeOffAiGraderLiveLighting,
 } from "../../lib/aiGraderStationBridgeClient";
 import {
-  AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS,
-  AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS,
-  aiGraderAtomicIntentReconcileDecision,
-  aiGraderLocalCaptureIntentMatches,
-  aiGraderSubmittedCaptureIntentMatches,
   aiGraderPreviewBackCaptureReady,
   aiGraderPreviewBindingChanged,
   aiGraderPreviewBindingMatches,
   aiGraderPreviewDetectedCaptureReady,
   aiGraderPreviewDisplayedSnapshot,
-  aiGraderPreviewManualCaptureReady,
   aiGraderPreviewStatusBinding,
-  beginAiGraderPreviewReader,
   createAiGraderPreviewEpochState,
-  createAiGraderPreviewReconnectState,
-  finishAiGraderPreviewReader,
-  isAiGraderBackPositioningRetryReady,
-  isAiGraderConfirmedCaptureTransitionFailure,
-  isAiGraderIntentionalCaptureEof,
-  isAiGraderPreviewReconnectEligible,
-  noteAiGraderPreviewFrameForReconnect,
-  projectAiGraderPreviewLossPhysicalStateUnknown,
-  projectAiGraderPreviewLossSafeOffPending,
-  reduceAiGraderBackPositioningRetryUiState,
-  releaseAiGraderPreviewReconnectTimer,
-  runAiGraderPreviewLossRecovery,
   sanitizeAiGraderPreviewFrameBinding,
   transitionAiGraderPreviewEpoch,
-  type AiGraderBackPositioningRetryUiState,
-  type AiGraderLocalCaptureIntent,
   type AiGraderPreviewEpochEvent,
   type AiGraderPreviewEpochBinding,
   type AiGraderPreviewEpochState,
 } from "../../lib/aiGraderPreviewLifecycle";
 import {
-  aiGraderFrontWorkflowAssertionFromStatus,
-  aiGraderFrontWorkflowAttemptSignature,
-  buildAiGraderFrontWorkflowRequest,
-  createAiGraderFrontWorkflowAttempt,
-  createAiGraderFrontWorkflowOperationGate,
-  deriveAiGraderFrontStartReadiness,
-  preserveAiGraderPrimaryWorkflowError,
   aiGraderCaptureAssertionFromFrame,
-  aiGraderCaptureAttemptSignature,
-  createAiGraderCaptureAttempt,
-  createAiGraderCaptureOperationGate,
-  runAiGraderBackPositioningRetryRecovery,
-  runAiGraderStationCaptureOrchestration,
-  type AiGraderCaptureAttempt,
-  type AiGraderBackCaptureMode,
-  type AiGraderFrontWorkflowAssertion,
-  type AiGraderFrontWorkflowAttempt,
+  runAiGraderCapture,
 } from "../../lib/aiGraderStationOperations";
-import {
-  AI_GRADER_AUTO_CAPTURE_STABLE_MS,
-  advanceAiGraderAutoCapture,
-  type AiGraderAutoCaptureState,
-} from "../../lib/aiGraderRapidAutoCapture";
 import type { AiGraderReportBundle } from "../../lib/aiGraderReportBundle";
 import {
   AiGraderOcrPrefillStageError,
@@ -121,29 +80,11 @@ import { formatAiGraderPublishStageError } from "../../lib/aiGraderPublishErrors
 import { productionAssetManifest } from "../../lib/aiGraderProductionAssetManifest";
 import { assertAiGraderBrowserRaster } from "../../lib/aiGraderRasterValidation";
 import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
-import { canConfirmAiGraderCardManually } from "../../lib/aiGraderForwardConfirm";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
 type StationWorkArea = "grade" | "finish";
 type StationCaptureMode = "single" | "rapid";
-type AutoCaptureUiState = {
-  phase: "disabled" | "waiting_for_card_removal" | "waiting_for_ready" | "stabilizing" | "triggered";
-  side?: AiGraderPreviewGeometrySide;
-  readyStableMs: number;
-};
-type RapidOcrPrefetchStatus = {
-  status: "running" | "ready" | "failed";
-  reviewCount?: number;
-};
-type ManualCaptureConfirmation = {
-  side: AiGraderPreviewGeometrySide;
-};
-type PreviewRestartWaiter = {
-  resolve: () => void;
-  reject: (error: Error) => void;
-  timeout: number;
-};
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
   message: string;
@@ -578,14 +519,6 @@ const OCR_PREFILL_FIELD_LABELS = {
 const RAPID_REVIEWABLE_STATES = new Set<string>(["report_ready_needs_confirm", "confirmed_needs_publish", "published"]);
 const RAPID_PROCESSING_STATES = new Set<string>(["front_captured", "front_processing", "back_positioning", "back_captured", "finalizing"]);
 
-function autoCapturePhaseLabel(state: AutoCaptureUiState) {
-  if (state.phase === "disabled") return "Off";
-  if (state.phase === "waiting_for_card_removal") return "Remove card once";
-  if (state.phase === "waiting_for_ready") return state.side === "back" ? "Position back" : "Position front";
-  if (state.phase === "stabilizing") return `Ready ${Math.min(AI_GRADER_AUTO_CAPTURE_STABLE_MS, Math.round(state.readyStableMs))} ms`;
-  return "Triggered";
-}
-
 function pointToward(
   from: AiGraderPreviewGeometryPoint,
   toward: AiGraderPreviewGeometryPoint,
@@ -657,75 +590,6 @@ function identityDraftMissingFields(draft: IdentityDraftState) {
   return missing;
 }
 
-function frontWorkflowEvidenceMatchesAttempt(
-  evidence: {
-    sessionId: string;
-    reportId: string;
-    side: 'front';
-    sideEpoch: string;
-    idempotencyKey?: string;
-  } | undefined,
-  assertion: AiGraderFrontWorkflowAssertion,
-  attempt: AiGraderFrontWorkflowAttempt,
-) {
-  return Boolean(evidence && evidence.sessionId === assertion.expectedSessionId &&
-    evidence.reportId === assertion.expectedReportId && evidence.side === assertion.expectedSide &&
-    evidence.sideEpoch === assertion.expectedSideEpoch &&
-    evidence.idempotencyKey === attempt.idempotencyKey);
-}
-
-function frontAcceptedProfileEvidenceIsCurrent(
-  status: AiGraderLocalStationStatus,
-  assertion?: AiGraderFrontWorkflowAssertion,
-) {
-  const evidence = status.frontWorkflowAuthority.acceptedProfile;
-  const profile = status.liveLighting.profile;
-  const expected = assertion ?? (
-    status.previewStatus.sessionId === status.sessionManifest.gradingSessionId &&
-      status.previewStatus.activeSide === 'front' && status.previewStatus.sideEpoch
-      ? {
-          expectedSessionId: status.sessionManifest.gradingSessionId,
-          expectedReportId: status.sessionManifest.reportId,
-          expectedSide: 'front' as const,
-          expectedSideEpoch: status.previewStatus.sideEpoch,
-        }
-      : undefined
-  );
-  return Boolean(expected && evidence &&
-    evidence.sessionId === expected.expectedSessionId &&
-    evidence.reportId === expected.expectedReportId &&
-    evidence.side === expected.expectedSide &&
-    evidence.sideEpoch === expected.expectedSideEpoch &&
-    (!assertion?.expectedCandidateProfileIdentity ||
-      evidence.candidateProfileIdentity === assertion.expectedCandidateProfileIdentity) &&
-    profile.enabled === true &&
-    profile.acceptedForCapture === true &&
-    profile.acceptedAt === evidence.acceptedAt);
-}
-
-function frontFixtureRulersEvidenceIsCurrent(
-  status: AiGraderLocalStationStatus,
-  assertion?: AiGraderFrontWorkflowAssertion,
-) {
-  const evidence = status.frontWorkflowAuthority.fixtureRulers;
-  const expected = assertion ?? (
-    status.previewStatus.sessionId === status.sessionManifest.gradingSessionId &&
-      status.previewStatus.activeSide === 'front' && status.previewStatus.sideEpoch
-      ? {
-          expectedSessionId: status.sessionManifest.gradingSessionId,
-          expectedReportId: status.sessionManifest.reportId,
-          expectedSide: 'front' as const,
-          expectedSideEpoch: status.previewStatus.sideEpoch,
-        }
-      : undefined
-  );
-  return Boolean(expected && evidence &&
-    evidence.sessionId === expected.expectedSessionId &&
-    evidence.reportId === expected.expectedReportId &&
-    evidence.side === expected.expectedSide &&
-    evidence.sideEpoch === expected.expectedSideEpoch);
-}
-
 function lightingPhysicalStateAcknowledged(lighting: AiGraderLiveLightingStatus) {
   const expected = lighting.applied.expectedWriteCount;
   const responseKinds = lighting.applied.lastResponseKinds ?? [];
@@ -770,9 +634,8 @@ export default function AiGraderStationPage() {
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
   const [workArea, setWorkArea] = useState<StationWorkArea>("grade");
   const [busy, setBusy] = useState<string | null>(null);
+  const previewBrowserCaptureActionActive = busy === "start-grading" || busy === "capture-back";
   const [error, setError] = useState<string | null>(null);
-  const [safetyError, setSafetyError] = useState<string | null>(null);
-  const [frontWorkflowPending, setFrontWorkflowPending] = useState<string | null>(null);
   const [bridgeUrl, setBridgeUrl] = useState(DEFAULT_AI_GRADER_STATION_BRIDGE_URL);
   const [stationToken, setStationToken] = useState("");
   const [bridgeConnected, setBridgeConnected] = useState(false);
@@ -783,10 +646,6 @@ export default function AiGraderStationPage() {
   const previewControllerRef = useRef<AbortController | null>(null);
   const previewReaderPromiseRef = useRef<Promise<unknown> | null>(null);
   const previewAttemptGenerationRef = useRef(0);
-  const previewReconnectTimerRef = useRef<number | undefined>(undefined);
-  const previewReconnectStateRef = useRef(createAiGraderPreviewReconnectState());
-  const [previewRestartGeneration, setPreviewRestartGeneration] = useState(0);
-  const previewRestartWaiterRef = useRef<PreviewRestartWaiter | null>(null);
   const initialPreviewBinding = aiGraderPreviewStatusBinding(status.previewStatus);
   const [previewEpochState, setPreviewEpochState] = useState<AiGraderPreviewEpochState>(() =>
     createAiGraderPreviewEpochState(initialPreviewBinding)
@@ -824,29 +683,8 @@ export default function AiGraderStationPage() {
     status: "idle",
     message: "OCR prefill starts after normalized front and back images are ready.",
   });
-  const rapidOcrCacheRef = useRef<Map<string, AiGraderOcrPrefillResult>>(new Map());
-  const rapidOcrAttemptedReportIdsRef = useRef<Set<string>>(new Set());
-  const rapidOcrInFlightReportIdRef = useRef<string | null>(null);
-  const [rapidOcrPrefetchStatus, setRapidOcrPrefetchStatus] = useState<Record<string, RapidOcrPrefetchStatus>>({});
-  const [rapidOcrPrefetchTick, setRapidOcrPrefetchTick] = useState(0);
-  const [stationCaptureMode, setStationCaptureMode] = useState<StationCaptureMode>(status.rapidCapture.enabled ? "rapid" : "single");
   const [stationCaptureProfile, setStationCaptureProfile] = useState<AiGraderCaptureProfile>(status.captureProfile);
-  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
-  const [manualCaptureConfirmation, setManualCaptureConfirmation] = useState<ManualCaptureConfirmation | null>(null);
-  const [backPositioningRetry, setBackPositioningRetry] = useState<AiGraderBackPositioningRetryUiState>({ status: "idle" });
-  const captureAttemptRef = useRef<Partial<Record<AiGraderPreviewGeometrySide, AiGraderCaptureAttempt>>>({});
-  const intentionalCaptureRef = useRef<AiGraderLocalCaptureIntent | null>(null);
-  const ambiguityReconcileTimerRef = useRef<number | undefined>(undefined);
-  const ambiguityReconcileSchedulerRef = useRef<((intent: AiGraderLocalCaptureIntent) => void) | null>(null);
-  const captureOperationGateRef = useRef(createAiGraderCaptureOperationGate());
-  const frontWorkflowOperationGateRef = useRef(createAiGraderFrontWorkflowOperationGate());
-  const frontWorkflowAttemptRef = useRef<Partial<Record<'accept-live-profile' | 'confirm-fixture-rulers', AiGraderFrontWorkflowAttempt>>>({});
-  const pageExitSafetyRef = useRef({ bridgeConnected, bridgeUrl, stationToken });
-  pageExitSafetyRef.current = { bridgeConnected, bridgeUrl, stationToken };
-  const autoCaptureMachineRef = useRef<AiGraderAutoCaptureState | undefined>(undefined);
-  const startGradingRef = useRef<((mode: AiGraderCaptureTriggerMode) => Promise<void>) | null>(null);
-  const confirmFlipAndContinueRef = useRef<((mode: AiGraderCaptureTriggerMode, captureMode?: AiGraderBackCaptureMode) => Promise<void>) | null>(null);
-  const [autoCaptureUi, setAutoCaptureUi] = useState<AutoCaptureUiState>({ phase: "disabled", readyStableMs: 0 });
+  const [stationCaptureMode, setStationCaptureMode] = useState<StationCaptureMode>(status.rapidCapture.enabled ? "rapid" : "single");
   const [identityStatus, setIdentityStatus] = useState<StepState>({
     status: "idle",
     message: "Card identity has not been confirmed.",
@@ -854,7 +692,7 @@ export default function AiGraderStationPage() {
   const [confirmedDownstream, setConfirmedDownstream] = useState<ConfirmedDownstreamState>({
     comps: {
       status: "idle",
-      message: "Comps will queue after Confirm Card.",
+      message: "Comps will queue after Approve & Publish.",
     },
   });
   const [productionAuthState, setProductionAuthState] = useState<StepState>({
@@ -889,22 +727,16 @@ export default function AiGraderStationPage() {
     gain: status.acceptedProfile.gain,
   });
   const [liveLightingDraft, setLiveLightingDraft] = useState({
-    enabled: false,
-    dutyPercent: status.acceptedProfile.dutyPercent,
-    channels: status.acceptedProfile.channels,
+    ...aiGraderAuthoritativeLiveLightingDraft(status.liveLighting),
   });
 
   const applyPreviewEpochEvent = (event: AiGraderPreviewEpochEvent) => {
-    const previousDisplayedFrameId = previewEpochStateRef.current.displayedFrameId;
     const transition = transitionAiGraderPreviewEpoch(previewEpochStateRef.current, event);
     for (const objectUrl of transition.revokeObjectUrls) {
       window.URL.revokeObjectURL(objectUrl);
     }
     previewEpochStateRef.current = transition.state;
     setPreviewEpochState(transition.state);
-    if (transition.state.displayedFrameId !== previousDisplayedFrameId) {
-      setManualCaptureConfirmation(null);
-    }
     const displayed = aiGraderPreviewDisplayedSnapshot(transition.state);
     setPreviewImageSize(
       displayed?.imageWidth && displayed.imageHeight
@@ -917,159 +749,12 @@ export default function AiGraderStationPage() {
   const clearPreviewDisplay = (statusOverride?: AiGraderLocalStationStatus["previewStatus"]["status"]) => {
     applyPreviewEpochEvent({ type: "clear", ...(statusOverride ? { status: statusOverride } : {}) });
     previewLastLiveFrameAtRef.current = 0;
-    setManualCaptureConfirmation(null);
   };
-
-  const reconcileLightingMutationFailure = async (
-    requestError: unknown,
-    context: string,
-    options: { preservePrimary: boolean; requireSafeOff?: boolean },
-  ) => {
-    if (options.preservePrimary) {
-      setError((current) => preserveAiGraderPrimaryWorkflowError(current, requestError));
-    }
-    const requestMessage = requestError instanceof Error ? requestError.message : `${context} failed.`;
-    const credentials = pageExitSafetyRef.current;
-    if (!credentials.bridgeConnected || !credentials.stationToken.trim()) {
-      setLiveLighting((current) => projectAiGraderPreviewLossPhysicalStateUnknown(current));
-      setSafetyError(`${context}: bridge truth is unavailable after the mutation failure.`);
-      return undefined;
-    }
-    try {
-      const recovered = await callAiGraderStationBridge({
-        baseUrl: credentials.bridgeUrl,
-        stationToken: credentials.stationToken,
-        action: 'status',
-      });
-      setStatus(recovered);
-      setLiveLighting(recovered.liveLighting);
-      const acknowledged = options.requireSafeOff
-        ? lightingSafeOffCompletelyAcknowledged(recovered.liveLighting)
-        : lightingPhysicalStateAcknowledged(recovered.liveLighting);
-      if (acknowledged) setSafetyError(null);
-      else setSafetyError(`${context}: ${recovered.liveLighting.physicalState.lastError ?? recovered.liveLighting.physicalState.reason ?? requestMessage}`);
-      return recovered;
-    } catch {
-      setLiveLighting((current) => projectAiGraderPreviewLossPhysicalStateUnknown(current));
-      setSafetyError(`${context}: authoritative controller state could not be recovered after: ${requestMessage}`);
-      return undefined;
-    }
-  };
-
-  const safeOffAfterPreviewLoss = async (reason: string) => {
-    const safety = pageExitSafetyRef.current;
-    setLiveLighting((current) => projectAiGraderPreviewLossSafeOffPending(current));
-    if (!safety.bridgeConnected || !safety.stationToken.trim()) {
-      setLiveLighting((current) => projectAiGraderPreviewLossPhysicalStateUnknown(current));
-      throw new Error("Preview-loss positioning light safe-off could not be acknowledged while the bridge is disconnected.");
-    }
-    try {
-      const next = await safeOffAiGraderLiveLighting({
-        baseUrl: safety.bridgeUrl,
-        stationToken: safety.stationToken,
-        reason,
-        keepalive: true,
-      });
-      if (!lightingSafeOffCompletelyAcknowledged(next)) {
-        throw new Error('The lighting controller did not completely acknowledge physical safe-off.');
-      }
-      const refreshed = await callAiGraderStationBridge({
-        baseUrl: safety.bridgeUrl,
-        stationToken: safety.stationToken,
-        action: 'status',
-      });
-      setStatus(refreshed);
-      setLiveLighting(refreshed.liveLighting);
-      if (!lightingSafeOffCompletelyAcknowledged(refreshed.liveLighting)) {
-        throw new Error('Bridge status did not confirm complete physical safe-off.');
-      }
-      setSafetyError(null);
-    } catch (safeOffError) {
-      await reconcileLightingMutationFailure(safeOffError, 'Preview-loss safe-off', {
-        preservePrimary: false,
-        requireSafeOff: true,
-      });
-      throw safeOffError;
-    }
-  };
-
-  const reconcileBridgePreviewStatus = (nextStatus: AiGraderLocalStationStatus["previewStatus"]) => {
-    const binding = aiGraderPreviewStatusBinding(nextStatus);
-    if (aiGraderPreviewBindingChanged(previewEpochStateRef.current.binding, binding)) {
-      captureAttemptRef.current = {};
-      frontWorkflowAttemptRef.current = {};
-      intentionalCaptureRef.current = null;
-      previewAttemptGenerationRef.current += 1;
-      previewControllerRef.current?.abort();
-      previewControllerRef.current = null;
-      clearPreviewDisplay();
-      applyPreviewEpochEvent({ type: "bind", binding });
-      setPreviewRestartGeneration((current) => current + 1);
-      setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
-        type: "reset",
-        backPositioningActive: binding?.side === "back",
-      }));
-    }
-    if (nextStatus.status !== "live" && nextStatus.status !== "starting") {
-      previewAttemptGenerationRef.current += 1;
-      previewControllerRef.current?.abort();
-      previewControllerRef.current = null;
-      clearPreviewDisplay();
-      applyPreviewEpochEvent({ type: "non_live", status: nextStatus.status });
-      setPreviewStatus(nextStatus);
-      return;
-    }
-    setPreviewStatus({
-      ...nextStatus,
-      status: previewEpochStateRef.current.phase === "live" ? "live" : "starting",
-    });
-  };
-
-  const connectBridgeWithCredentials = async (targetBridgeUrl: string, targetStationToken: string) => {
-    await fetchAiGraderStationBridgeHealth({ baseUrl: targetBridgeUrl });
-    const next = await callAiGraderStationBridge({ baseUrl: targetBridgeUrl, stationToken: targetStationToken, action: "status" });
-    window.localStorage.setItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY, targetBridgeUrl);
-    window.localStorage.setItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY, targetStationToken);
-    setBridgeUrl(targetBridgeUrl);
-    setStationToken(targetStationToken);
-    setStatus(next);
-    setStationCaptureProfile(next.captureProfile);
-    setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
-    reconcileBridgePreviewStatus(next.previewStatus);
-    setLiveLighting(next.liveLighting);
-    if (lightingPhysicalStateAcknowledged(next.liveLighting)) {
-      setSafetyError(null);
-    } else {
-      setSafetyError(
-        next.liveLighting.physicalState.lastError ??
-        next.liveLighting.physicalState.reason ??
-        "Bridge reconnect returned incomplete controller acknowledgement truth."
-      );
-    }
-    setBridgeConnected(true);
-    setBridgeConnectionState("connected");
-    setProfileDraft({
-      dutyPercent: next.acceptedProfile.dutyPercent,
-      exposureUs: next.acceptedProfile.exposureUs,
-      gain: next.acceptedProfile.gain,
-    });
-    setLiveLightingDraft({
-      enabled: next.liveLighting.profile.enabled,
-      dutyPercent: next.liveLighting.profile.dutyPercent,
-      channels: next.liveLighting.profile.channels,
-    });
-    setHistory(await fetchAiGraderStationReportHistory({ baseUrl: targetBridgeUrl, stationToken: targetStationToken }));
-    return next;
-  };
-
-  // Front and Back capture install an exact atomic intent synchronously before
-  // changing UI busy state. Busy rendering must not abort the reader before
-  // the bridge owns and intentionally drains that exact stream.
-  const previewBrowserCaptureActionActive = busy === "safe-off";
 
   useEffect(() => {
     reconcileBridgePreviewStatus(status.previewStatus);
     setLiveLighting(status.liveLighting);
+    setLiveLightingDraft(aiGraderAuthoritativeLiveLightingDraft(status.liveLighting));
   }, [status.previewStatus, status.liveLighting]);
 
   useEffect(() => {
@@ -1174,7 +859,6 @@ export default function AiGraderStationPage() {
     if (
       !bridgeConnected ||
       !stationToken.trim() ||
-      Boolean(safetyError) ||
       liveLightingRequestPending ||
       !lightingPositioningCompletelyAcknowledged(liveLighting)
     ) return;
@@ -1192,19 +876,17 @@ export default function AiGraderStationPage() {
         setStatus(refreshed);
         reconcileBridgePreviewStatus(refreshed.previewStatus);
         setLiveLighting(refreshed.liveLighting);
-        if (lightingPhysicalStateAcknowledged(refreshed.liveLighting)) setSafetyError(null);
-        else setSafetyError('Lighting heartbeat status refresh returned incomplete controller acknowledgement truth.');
+        if (!lightingPhysicalStateAcknowledged(refreshed.liveLighting)) {
+          throw new Error('Lighting heartbeat status refresh returned incomplete controller acknowledgement truth.');
+        }
       }).catch((heartbeatError) => {
-        void reconcileLightingMutationFailure(heartbeatError, 'Lighting heartbeat', {
-          preservePrimary: false,
-        });
+        setError(heartbeatError instanceof Error ? heartbeatError.message : 'Lighting heartbeat failed.');
       });
     }, 4000);
     return () => clearInterval(timer);
   }, [
     bridgeConnected,
     bridgeUrl,
-    safetyError,
     liveLightingRequestPending,
     liveLighting.applied.enabled,
     liveLighting.applied.expectedWriteCount,
@@ -1225,42 +907,6 @@ export default function AiGraderStationPage() {
   ]);
 
   useEffect(() => {
-    const handlePageExit = () => {
-      previewAttemptGenerationRef.current += 1;
-      previewControllerRef.current?.abort();
-      const currentBinding = previewEpochStateRef.current.binding;
-      if (currentBinding && aiGraderSubmittedCaptureIntentMatches({
-        expectedBinding: currentBinding,
-        localIntent: intentionalCaptureRef.current,
-      })) {
-        // The bridge owns drain and verified safe-off for this exact atomic
-        // capture. Stream disconnect cleanup remains bridge-authoritative.
-        return;
-      }
-      const safety = pageExitSafetyRef.current;
-      if (!safety.bridgeConnected || !safety.stationToken.trim()) return;
-      void safeOffAiGraderLiveLighting({
-        baseUrl: safety.bridgeUrl,
-        stationToken: safety.stationToken,
-        reason: "browser page closed or hidden",
-        keepalive: true,
-      }).catch((safeOffError) => {
-        void reconcileLightingMutationFailure(safeOffError, 'Page-exit safe-off', {
-          preservePrimary: false,
-          requireSafeOff: true,
-        });
-      });
-    };
-    window.addEventListener("pagehide", handlePageExit);
-    window.addEventListener("beforeunload", handlePageExit);
-    return () => {
-      window.removeEventListener("pagehide", handlePageExit);
-      window.removeEventListener("beforeunload", handlePageExit);
-      handlePageExit();
-    };
-  }, []);
-
-  useEffect(() => {
     if (previewStatus.status !== "live") return;
     const timer = window.setInterval(() => {
       const nowMs = Date.now();
@@ -1271,421 +917,167 @@ export default function AiGraderStationPage() {
   }, [previewStatus.status]);
 
   useEffect(() => {
-    const backPositioningActive = status.currentStep === "prompt_flip_card";
-    const safetyInterlockActive = Boolean(safetyError) ||
-      !liveLightingAuthorityAcknowledged ||
-      liveLighting.status === 'applying' || liveLighting.status === 'error' ||
-      liveLighting.physicalState.state === 'safe_off_pending' ||
-      liveLighting.physicalState.state === 'physical_state_unknown' ||
-      liveLighting.physicalState.complete !== true;
-    const previewHeldForFullForensicRun = status.warmRunnerStatus.previewPolicy.holdActive === true && !backPositioningActive;
-    const previewSuspendedForRapidReview = Boolean(status.rapidCaptureQueue.activeQueueItemId);
-    const positioningStepActive = !status.sessionManifest.backCaptured && (
-      backPositioningActive || !status.sessionManifest.frontCaptured
-    );
-    const previewEligible = isAiGraderPreviewReconnectEligible({
-      connected: bridgeConnected && !safetyInterlockActive,
-      hasStationToken: Boolean(stationToken.trim()),
-      mounted: true,
-      aborted: false,
-      captureActionActive: previewBrowserCaptureActionActive,
-      captureLockHeld: status.warmRunnerStatus.captureLock.held,
-      runnerCapturing: status.warmRunnerStatus.status === "capturing",
-      previewHoldActive: previewHeldForFullForensicRun,
-      queueReviewActive: previewSuspendedForRapidReview,
-      terminalOrSafeOff: !positioningStepActive || status.currentStep === "safe_off_end_session",
-    });
+    const positioningStepActive = !status.sessionManifest.backCaptured &&
+      (status.currentStep === "prompt_flip_card" || !status.sessionManifest.frontCaptured);
+    const previewEligible = bridgeConnected &&
+      Boolean(stationToken.trim()) &&
+      positioningStepActive &&
+      !previewBrowserCaptureActionActive &&
+      !status.warmRunnerStatus.captureLock.held &&
+      status.warmRunnerStatus.status !== "capturing" &&
+      status.warmRunnerStatus.previewPolicy.holdActive !== true;
     if (!previewEligible) {
-      if (previewRestartWaiterRef.current) {
-        clearTimeout(previewRestartWaiterRef.current.timeout);
-        previewRestartWaiterRef.current.reject(new Error("Back preview is no longer eligible for positioning-light recovery."));
-        previewRestartWaiterRef.current = null;
-      }
       previewAttemptGenerationRef.current += 1;
-      intentionalCaptureRef.current = null;
       previewControllerRef.current?.abort();
       previewControllerRef.current = null;
-      clearPreviewDisplay();
-      if (bridgeConnected && stationToken.trim()) {
-        applyPreviewEpochEvent({ type: "non_live", status: "paused_for_capture" });
-        setPreviewStatus((currentStatus) => ({
-          ...currentStatus,
-          status: "paused_for_capture",
-          cameraOwnership: status.warmRunnerStatus.captureLock.held || status.warmRunnerStatus.status === "capturing" ? "capture_action" : "released",
-          lastStopReason: previewSuspendedForRapidReview
-            ? "Preview suspended while a queued card is under Confirm Card / Publish review."
-            : previewHeldForFullForensicRun
-              ? status.warmRunnerStatus.previewPolicy.holdReason ?? "Preview paused during full forensic capture and report generation."
-              : "Preview suspended outside an eligible positioning state.",
-        }));
-      }
+      clearPreviewDisplay("paused_for_capture");
       return;
     }
 
     const expectedBinding = previewEpochStateRef.current.binding;
     if (!expectedBinding) {
-      if (previewRestartWaiterRef.current) {
-        clearTimeout(previewRestartWaiterRef.current.timeout);
-        previewRestartWaiterRef.current.reject(new Error("Preview session/side epoch is unavailable."));
-        previewRestartWaiterRef.current = null;
-      }
-      setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "error", cameraOwnership: "released", lastError: "Preview session/side epoch is unavailable." }));
+      setPreviewStatus((current) => ({
+        ...current,
+        status: "error",
+        cameraOwnership: "released",
+        lastError: "Preview session/side epoch is unavailable.",
+      }));
       return;
     }
+
     let cancelled = false;
-    previewReconnectStateRef.current = createAiGraderPreviewReconnectState();
     const generation = ++previewAttemptGenerationRef.current;
     const isCurrent = () => !cancelled && previewAttemptGenerationRef.current === generation;
-    const hasOutstandingAtomicCaptureIntent = () => aiGraderSubmittedCaptureIntentMatches({
-      expectedBinding,
-      localIntent: intentionalCaptureRef.current,
-    });
-    const scheduleAmbiguousIntentReconciliation = (localIntent: AiGraderLocalCaptureIntent) => {
-      if (ambiguityReconcileTimerRef.current !== undefined) return;
-      const initialDelayMs = Math.max(
-        0,
-        localIntent.submittedAtMs + AI_GRADER_LOCAL_CAPTURE_INTENT_MAX_AGE_MS - Date.now(),
-      );
-      const scheduleCheck = (delayMs: number, activeChecksRemaining: number) => {
-        ambiguityReconcileTimerRef.current = window.setTimeout(() => {
-          ambiguityReconcileTimerRef.current = undefined;
-          void (async () => {
-          if (!isCurrent() || intentionalCaptureRef.current !== localIntent) return;
-          let authoritativeAfterExpiry: AiGraderLocalStationStatus["previewStatus"] | undefined;
-          try {
-            authoritativeAfterExpiry = await fetchAiGraderStationPreviewStatus({ baseUrl: bridgeUrl, stationToken });
-          } catch {
-            // The bounded recovery below makes physical state truthful even if
-            // transport ambiguity outlives the local intent window.
-          }
-          if (!isCurrent() || intentionalCaptureRef.current !== localIntent) return;
-          const authoritativeBinding = authoritativeAfterExpiry
-            ? aiGraderPreviewStatusBinding(authoritativeAfterExpiry)
-            : undefined;
-          const exactCaptureAuthority = authoritativeAfterExpiry && isAiGraderIntentionalCaptureEof({
-              expectedBinding,
-              localIntent,
-              authoritativeBinding,
-              bridgeIntent: authoritativeAfterExpiry.intentionalTransition,
-            });
-          const exactTransitionFailure = authoritativeAfterExpiry && isAiGraderConfirmedCaptureTransitionFailure({
-              expectedBinding,
-              localIntent,
-              authoritativeBinding,
-              bridgeIntent: authoritativeAfterExpiry.intentionalTransition,
-            });
-          const reconcileDecision = aiGraderAtomicIntentReconcileDecision({
-            exactCaptureAuthority: Boolean(exactCaptureAuthority),
-            exactTransitionFailure: Boolean(exactTransitionFailure),
-            bridgeTransitionActive: authoritativeAfterExpiry?.intentionalTransition.active === true,
-            activeChecksRemaining,
-          });
-          if (reconcileDecision.kind === "poll_active") {
-            if (authoritativeAfterExpiry) setPreviewStatus(authoritativeAfterExpiry);
-            scheduleCheck(reconcileDecision.delayMs, reconcileDecision.nextActiveChecksRemaining);
-            return;
-          }
-          if (reconcileDecision.kind === "active_deadline") {
-            if (authoritativeAfterExpiry) setPreviewStatus(authoritativeAfterExpiry);
-            intentionalCaptureRef.current = null;
-            setError((current) => preserveAiGraderPrimaryWorkflowError(
-              current,
-              "The bridge still owns Atomic Capture after the bounded browser reconciliation window. Do not retry capture; wait for bridge status or refresh the Station.",
-            ));
-            return;
-          }
-          intentionalCaptureRef.current = null;
-          if (reconcileDecision.kind === "recover_full_status") {
-            try {
-              const recovered = await callAiGraderStationBridge({
-                baseUrl: bridgeUrl,
-                stationToken,
-                action: "status",
-              });
-              setStatus(recovered);
-              reconcileBridgePreviewStatus(recovered.previewStatus);
-              setLiveLighting(recovered.liveLighting);
-              setProfileDraft({
-                dutyPercent: recovered.acceptedProfile.dutyPercent,
-                exposureUs: recovered.acceptedProfile.exposureUs,
-                gain: recovered.acceptedProfile.gain,
-              });
-              if (exactTransitionFailure) {
-                setPreviewRestartGeneration((current) => current + 1);
-              }
-            } catch (statusError) {
-              setError((current) => preserveAiGraderPrimaryWorkflowError(
-                current,
-                statusError instanceof Error
-                  ? statusError
-                  : "Atomic Capture completed, but full Station status recovery failed.",
-              ));
-            }
-            return;
-          }
-          if (authoritativeAfterExpiry) reconcileBridgePreviewStatus(authoritativeAfterExpiry);
-          try {
-            await safeOffAfterPreviewLoss("Atomic capture transport ambiguity expired; positioning light safe-off");
-          } catch {}
-          if (isCurrent()) setPreviewRestartGeneration((current) => current + 1);
-          })();
-        }, delayMs);
-      };
-      scheduleCheck(initialDelayMs, AI_GRADER_ACTIVE_CAPTURE_RECONCILE_MAX_CHECKS);
-    };
-    ambiguityReconcileSchedulerRef.current = scheduleAmbiguousIntentReconciliation;
+    const controller = new AbortController();
+    previewControllerRef.current = controller;
 
-    const runPreviewReader = async (): Promise<void> => {
-      const begin = beginAiGraderPreviewReader(previewReconnectStateRef.current, isCurrent());
-      previewReconnectStateRef.current = begin.state;
-      if (!begin.startReader) return;
-      const controller = new AbortController();
-      previewControllerRef.current = controller;
-      let endReason: "eof" | "error" | "abort" | "authoritative_state" | "intentional_capture_transition" = "error";
-      let atomicTransitionFailureConfirmed = false;
-      const classifyAtomicReaderEnd = async () => {
-        const localIntent = intentionalCaptureRef.current;
-        let authoritativeAfterEnd: AiGraderLocalStationStatus["previewStatus"] | undefined;
-        try {
-          authoritativeAfterEnd = await fetchAiGraderStationPreviewStatus({ baseUrl: bridgeUrl, stationToken });
-        } catch {
-          // Without an authoritative exact marker, an outstanding local intent
-          // remains ambiguous and must not trigger a competing reconnect or
-          // browser safe-off.
-        }
-        const bridgeIntent = authoritativeAfterEnd?.intentionalTransition;
-        const authoritativeBinding = authoritativeAfterEnd
-          ? aiGraderPreviewStatusBinding(authoritativeAfterEnd)
-          : undefined;
-        if (isAiGraderConfirmedCaptureTransitionFailure({
-          expectedBinding,
-          localIntent,
-          authoritativeBinding,
-          bridgeIntent,
-        }) && authoritativeAfterEnd) {
-          if (intentionalCaptureRef.current === localIntent) intentionalCaptureRef.current = null;
-          reconcileBridgePreviewStatus(authoritativeAfterEnd);
-          return "confirmed_failure" as const;
-        }
-        if (isAiGraderIntentionalCaptureEof({
-          expectedBinding,
-          localIntent,
-          authoritativeBinding,
-          bridgeIntent,
-        }) && authoritativeAfterEnd) {
-          if (intentionalCaptureRef.current === localIntent) intentionalCaptureRef.current = null;
-          reconcileBridgePreviewStatus(authoritativeAfterEnd);
-          return "intentional_transition" as const;
-        }
-        if (localIntent && aiGraderSubmittedCaptureIntentMatches({ expectedBinding, localIntent })) {
-          scheduleAmbiguousIntentReconciliation(localIntent);
-          return "ambiguous_intent" as const;
-        }
-        return "unexpected_end" as const;
-      };
+    const readPreview = async () => {
       try {
         const authoritative = await fetchAiGraderStationPreviewStatus({ baseUrl: bridgeUrl, stationToken });
         if (!isCurrent()) return;
         if (!aiGraderPreviewBindingMatches(aiGraderPreviewStatusBinding(authoritative), expectedBinding)) {
           reconcileBridgePreviewStatus(authoritative);
-          endReason = "authoritative_state";
-        } else {
-          clearPreviewDisplay();
-          applyPreviewEpochEvent({ type: "opened", binding: expectedBinding });
-          setPreviewStatus({ ...authoritative, status: "starting", cardGeometry: mergePreviewCardGeometry(undefined, authoritative.cardGeometry) });
-          const previousReader = previewReaderPromiseRef.current;
-          if (previousReader) await previousReader.catch(() => undefined);
-          if (!isCurrent()) return;
-          const readerPromise = openAiGraderStationPreviewStream(
-            { baseUrl: bridgeUrl, stationToken },
-            {
-              signal: controller.signal,
-              onOpen() {
-                if (!isCurrent()) return;
-                if (previewRestartWaiterRef.current) {
-                  clearTimeout(previewRestartWaiterRef.current.timeout);
-                  previewRestartWaiterRef.current.resolve();
-                  previewRestartWaiterRef.current = null;
-                }
-                setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "starting", implementationType: "mjpeg_fetch_stream" }));
-              },
-              onFrame(frame) {
-                if (!isCurrent()) return;
-                const frameBinding = sanitizeAiGraderPreviewFrameBinding(frame);
-                if (!frameBinding || !aiGraderPreviewBindingMatches(frameBinding, expectedBinding)) return;
-                const objectUrl = window.URL.createObjectURL(frame.blob);
-                const receivedAtMs = Date.now();
-                const transition = applyPreviewEpochEvent({
-                  type: "frame",
-                  frame: frameBinding,
-                  objectUrl,
-                  receivedAtMs,
-                  capturedAt: frame.capturedAt,
-                });
-                if (!transition.accepted) return;
-                previewReconnectStateRef.current = noteAiGraderPreviewFrameForReconnect(previewReconnectStateRef.current);
-                const previewImage = new window.Image();
-                previewImage.onload = () => {
-                  if (!isCurrent()) return;
-                  applyPreviewEpochEvent({
-                    type: "image_loaded",
-                    frame: frameBinding,
-                    loadedAtMs: Date.now(),
-                    width: previewImage.naturalWidth,
-                    height: previewImage.naturalHeight,
-                  });
-                };
-                previewImage.src = objectUrl;
-                previewLastLiveFrameAtRef.current = receivedAtMs;
-                setPreviewFreshnessNow(receivedAtMs);
-                setPreviewStatus((currentStatus) => ({
-                  ...currentStatus,
-                  status: "live",
-                  sessionId: frameBinding.sessionId,
-                  activeSide: frameBinding.side,
-                  sideEpoch: frameBinding.sideEpoch,
-                  latestFrameId: frameBinding.frameId,
-                  frameCount: frame.frameIndex ?? currentStatus.frameCount + 1,
-                  firstFrameAt: currentStatus.firstFrameAt ?? frame.capturedAt ?? new Date().toISOString(),
-                  lastFrameAt: frame.capturedAt ?? new Date().toISOString(),
-                  cameraOwnership: "preview_stream",
-                }));
-              },
-              onEof() {
-                // EOF is classified after an authoritative status read. The
-                // bridge may have ended this exact stream intentionally while
-                // atomically taking ownership for back capture.
-              },
-              onAbort() {
-                if (!isCurrent()) return;
-                clearPreviewDisplay();
-                applyPreviewEpochEvent({ type: "non_live", status: "stopped" });
-              },
-              onState(stateEvent) {
-                if (!isCurrent()) return;
-                if (stateEvent.previewStatus) reconcileBridgePreviewStatus(stateEvent.previewStatus);
-              },
-              onError(streamError) {
-                if (!isCurrent()) return;
-                if (hasOutstandingAtomicCaptureIntent()) return;
-                clearPreviewDisplay();
-                applyPreviewEpochEvent({ type: "non_live", status: "error" });
-                setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "error", lastError: streamError.message, cameraOwnership: "released" }));
-              },
-            }
-          );
-          previewReaderPromiseRef.current = readerPromise;
-          try {
-            const result = await readerPromise;
-            endReason = result.kind;
-            if (result.kind === "eof" && isCurrent()) {
-              const classification = await classifyAtomicReaderEnd();
-              if (classification === "confirmed_failure") {
-                atomicTransitionFailureConfirmed = true;
-              } else if (classification === "intentional_transition") {
-                endReason = "intentional_capture_transition";
-              } else if (classification === "unexpected_end") {
-                clearPreviewDisplay("stopped");
-                applyPreviewEpochEvent({ type: "non_live", status: "stopped" });
-                setPreviewStatus((currentStatus) => ({
-                  ...currentStatus,
-                  status: "stopped",
-                  cameraOwnership: "released",
-                  lastStopReason: "Preview stream reached unexpected clean EOF.",
-                }));
+          return;
+        }
+        clearPreviewDisplay();
+        applyPreviewEpochEvent({ type: "opened", binding: expectedBinding });
+        const readerPromise = openAiGraderStationPreviewStream(
+          { baseUrl: bridgeUrl, stationToken },
+          {
+            signal: controller.signal,
+            onOpen() {
+              if (isCurrent()) {
+                setPreviewStatus((current) => ({ ...current, status: "starting", implementationType: "mjpeg_fetch_stream" }));
               }
-            }
-          } finally {
-            if (previewReaderPromiseRef.current === readerPromise) previewReaderPromiseRef.current = null;
-          }
+            },
+            onFrame(frame) {
+              if (!isCurrent()) return;
+              const frameBinding = sanitizeAiGraderPreviewFrameBinding(frame);
+              if (!frameBinding || !aiGraderPreviewBindingMatches(frameBinding, expectedBinding)) return;
+              const objectUrl = window.URL.createObjectURL(frame.blob);
+              const receivedAtMs = Date.now();
+              const transition = applyPreviewEpochEvent({
+                type: "frame",
+                frame: frameBinding,
+                objectUrl,
+                receivedAtMs,
+                capturedAt: frame.capturedAt,
+              });
+              if (!transition.accepted) return;
+              const previewImage = new window.Image();
+              previewImage.onload = () => {
+                if (!isCurrent()) return;
+                applyPreviewEpochEvent({
+                  type: "image_loaded",
+                  frame: frameBinding,
+                  loadedAtMs: Date.now(),
+                  width: previewImage.naturalWidth,
+                  height: previewImage.naturalHeight,
+                });
+              };
+              previewImage.src = objectUrl;
+              previewLastLiveFrameAtRef.current = receivedAtMs;
+              setPreviewFreshnessNow(receivedAtMs);
+              setPreviewStatus((current) => ({
+                ...current,
+                status: "live",
+                sessionId: frameBinding.sessionId,
+                activeSide: frameBinding.side,
+                sideEpoch: frameBinding.sideEpoch,
+                latestFrameId: frameBinding.frameId,
+                frameCount: frame.frameIndex ?? current.frameCount + 1,
+                firstFrameAt: current.firstFrameAt ?? frame.capturedAt ?? new Date().toISOString(),
+                lastFrameAt: frame.capturedAt ?? new Date().toISOString(),
+                cameraOwnership: "preview_stream",
+              }));
+            },
+            onEof() {
+              if (!isCurrent()) return;
+              clearPreviewDisplay("stopped");
+              setPreviewStatus((current) => ({
+                ...current,
+                status: "stopped",
+                cameraOwnership: "released",
+                lastStopReason: "Preview stream ended. Start New Card or Capture will establish the next explicit state.",
+              }));
+            },
+            onAbort() {
+              if (isCurrent()) clearPreviewDisplay("stopped");
+            },
+            onState(event) {
+              if (isCurrent() && event.previewStatus) reconcileBridgePreviewStatus(event.previewStatus);
+            },
+            onError(streamError) {
+              if (!isCurrent()) return;
+              clearPreviewDisplay("error");
+              setPreviewStatus((current) => ({
+                ...current,
+                status: "error",
+                cameraOwnership: "released",
+                lastError: streamError.message,
+              }));
+            },
+          },
+        );
+        previewReaderPromiseRef.current = readerPromise;
+        try {
+          await readerPromise;
+        } finally {
+          if (previewReaderPromiseRef.current === readerPromise) previewReaderPromiseRef.current = null;
         }
       } catch (requestError) {
         if (!isCurrent() || controller.signal.aborted) return;
-        endReason = "error";
-        if (hasOutstandingAtomicCaptureIntent()) {
-          const classification = await classifyAtomicReaderEnd();
-          if (classification === "ambiguous_intent") return;
-          if (classification === "confirmed_failure") atomicTransitionFailureConfirmed = true;
-          if (classification === "intentional_transition") endReason = "intentional_capture_transition";
-        }
-        if (endReason === "intentional_capture_transition" || atomicTransitionFailureConfirmed) {
-          // Exact authoritative handling above owns the resulting UI state.
-        } else {
-        clearPreviewDisplay();
-        applyPreviewEpochEvent({ type: "non_live", status: "error" });
-        setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "error", lastError: requestError instanceof Error ? requestError.message : "AI Grader preview stream is unavailable.", cameraOwnership: "released" }));
-        }
+        clearPreviewDisplay("error");
+        setPreviewStatus((current) => ({
+          ...current,
+          status: "error",
+          cameraOwnership: "released",
+          lastError: requestError instanceof Error ? requestError.message : "AI Grader preview stream is unavailable.",
+        }));
       } finally {
         if (previewControllerRef.current === controller) previewControllerRef.current = null;
       }
-      if (!isCurrent()) return;
-      try {
-        await runAiGraderPreviewLossRecovery({
-          reason: endReason,
-          expectedBinding,
-          localIntent: intentionalCaptureRef.current,
-          atomicTransitionFailureConfirmed,
-          reconnectEligible: isCurrent(),
-        }, {
-          safeOff: () => safeOffAfterPreviewLoss(`${endReason} preview loss; positioning light safe-off`),
-          reconnect: () => {
-            const decision = finishAiGraderPreviewReader({
-              state: previewReconnectStateRef.current,
-              eligible: isCurrent(),
-              reason: endReason,
-            });
-            previewReconnectStateRef.current = decision.state;
-            if (decision.reconnectDelayMs === undefined) return;
-            previewReconnectTimerRef.current = window.setTimeout(() => {
-              previewReconnectTimerRef.current = undefined;
-              previewReconnectStateRef.current = releaseAiGraderPreviewReconnectTimer(previewReconnectStateRef.current);
-              void runPreviewReader();
-            }, decision.reconnectDelayMs);
-          },
-        });
-      } catch (safeOffError) {
-        const message = safeOffError instanceof Error ? safeOffError.message : "Preview-loss positioning light safe-off failed.";
-        setPreviewStatus((currentStatus) => ({ ...currentStatus, status: "error", lastError: message, cameraOwnership: "released" }));
-      }
     };
-    void runPreviewReader();
 
+    void readPreview();
     return () => {
       cancelled = true;
-      if (previewReconnectTimerRef.current !== undefined) {
-        window.clearTimeout(previewReconnectTimerRef.current);
-        previewReconnectTimerRef.current = undefined;
-      }
-      if (ambiguityReconcileTimerRef.current !== undefined) {
-        window.clearTimeout(ambiguityReconcileTimerRef.current);
-        ambiguityReconcileTimerRef.current = undefined;
-      }
-      if (ambiguityReconcileSchedulerRef.current === scheduleAmbiguousIntentReconciliation) {
-        ambiguityReconcileSchedulerRef.current = null;
-      }
       previewAttemptGenerationRef.current += 1;
-      previewControllerRef.current?.abort();
-      previewControllerRef.current = null;
+      controller.abort();
+      if (previewControllerRef.current === controller) previewControllerRef.current = null;
     };
   }, [
     bridgeConnected,
     bridgeUrl,
-    safetyError,
-    liveLightingAuthorityAcknowledged,
-    liveLighting.status,
-    liveLighting.physicalState.state,
-    liveLighting.physicalState.complete,
     previewBrowserCaptureActionActive,
-    previewRestartGeneration,
     stationToken,
+    status.currentStep,
+    status.sessionManifest.backCaptured,
+    status.sessionManifest.frontCaptured,
     status.warmRunnerStatus.captureLock.held,
     status.warmRunnerStatus.previewPolicy.holdActive,
-    status.warmRunnerStatus.previewPolicy.holdReason,
     status.warmRunnerStatus.status,
-    status.currentStep,
-    status.rapidCaptureQueue.activeQueueItemId,
   ]);
-
   useEffect(() => {
     if (!bridgeConnected || !stationToken.trim() || previewStatus.status !== "live") return;
     let cancelled = false;
@@ -1720,25 +1112,6 @@ export default function AiGraderStationPage() {
           geometry: activeGeometry,
           observedAtMs: geometryObservedAtMs,
         });
-        if (
-          binding.side === "back" &&
-          latest.positioningLightReady === true &&
-          liveLighting.applied.enabled === true &&
-          liveLighting.applied.verificationState === "verified" &&
-          liveLighting.applied.verificationComplete === true &&
-          liveLighting.physicalState.state === "positioning_light_verified" &&
-          liveLighting.physicalState.complete === true &&
-          aiGraderPreviewBackCaptureReady({
-            state: previewEpochStateRef.current,
-            mode: "manual_capture",
-            positioningVerifiedAt: liveLighting.physicalState.verifiedAt,
-            nowMs: geometryObservedAtMs,
-          })
-        ) {
-          setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
-            type: "fresh_frame_ready",
-          }));
-        }
         setPreviewStatus((currentStatus) => ({
           ...latest,
           status: previewEpochStateRef.current.phase === "live" ? "live" : "starting",
@@ -1748,7 +1121,7 @@ export default function AiGraderStationPage() {
           cardGeometry: geometryBySide,
         }));
       } catch {
-        // Geometry status is advisory. A missed poll must never stop MJPEG or manual capture.
+        // Geometry status is advisory to the preview stream; exact detected geometry is still mandatory for capture.
       } finally {
         requestPending = false;
       }
@@ -1818,13 +1191,13 @@ export default function AiGraderStationPage() {
     !reportReady ? "generated report" : "",
     ...identityDraftMissing,
   ].filter(Boolean);
-  const canCreateCardFromReport = canConfirmAiGraderCardManually({
+  const canApproveAndPublish = aiGraderApproveAndPublishEligible({
     reportReady,
-    identityComplete: identityDraftComplete,
-    linkedCardReady,
-    confirmationPending: identityStatus.status === "pending",
+    finalReady,
+    productionSignedIn,
+    identityReady: linkedCardReady || identityDraftComplete,
+    publishStatus: productionPublish.status,
   });
-  const canPublishToTenKings = linkedCardReady && publishReadiness.ready && productionPublish.status !== "published" && productionPublish.status !== "pending";
   const selectedFinishItem = finishQueue.items.find((item) => item.reportId === selectedFinishReportId) ?? finishQueue.items[0] ?? null;
   const selectedFinishReportIdForActions = selectedFinishItem?.reportId ?? null;
   const selectedFinishSlabReady = Boolean(selectedFinishItem?.slabPhotos.complete) || slabbedPhotosReady;
@@ -1849,16 +1222,10 @@ export default function AiGraderStationPage() {
       action: finalReady ? "Final grade exists." : "Run capture and final grading.",
     },
     {
-      id: "confirm",
-      label: "Confirm Card",
-      done: linkedCardReady,
-      action: linkedCardReady ? "CardAsset and Item are linked." : "Confirm identity and create the Ten Kings card/item.",
-    },
-    {
       id: "publish",
-      label: "Publish + Queue Label",
+      label: "Approve & Publish",
       done: productionPublished,
-      action: productionPublished ? "Public report is live and the label is queued by sheet/slot." : "Publish to Ten Kings DB/storage.",
+      action: productionPublished ? "Public report, durable linkage and label assignment are complete." : "One human authority publishes the exact card.",
     },
   ];
   const finishPipelineSteps = [
@@ -2029,27 +1396,6 @@ export default function AiGraderStationPage() {
         nowMs: previewFreshnessNow,
       })
     : aiGraderPreviewDetectedCaptureReady(previewEpochState, previewFreshnessNow);
-  const manualPreviewCaptureReady = previewGeometrySide === "back"
-    ? aiGraderPreviewBackCaptureReady({
-        state: previewEpochState,
-        mode: "manual_capture",
-        positioningVerifiedAt: liveLighting.physicalState.verifiedAt,
-        nowMs: previewFreshnessNow,
-      })
-    : aiGraderPreviewManualCaptureReady(previewEpochState, previewFreshnessNow);
-  const backPositioningRetryReady = previewGeometrySide === "back" && isAiGraderBackPositioningRetryReady({
-    state: previewEpochState,
-    positioningPhysicallyVerified: backPositioningPhysicallyVerified,
-    positioningVerifiedAt: liveLighting.physicalState.verifiedAt,
-    nowMs: previewFreshnessNow,
-  });
-  useEffect(() => {
-    if (backPositioningRetry.status !== "ready" || backPositioningRetryReady) return;
-    setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
-      type: "reset",
-      backPositioningActive: showFlipScrim,
-    }));
-  }, [backPositioningRetry.status, backPositioningRetryReady, showFlipScrim]);
   const detectedGeometryReady =
     cardPlacementState === "ready" &&
     activePreviewCardGeometry?.geometrySource === "detected" &&
@@ -2057,12 +1403,6 @@ export default function AiGraderStationPage() {
     previewFrameFresh &&
     detectedGeometryFresh &&
     detectedPreviewCaptureReady &&
-    (previewGeometrySide !== "back" || backPositioningPhysicallyVerified);
-  const manualOverlayAvailable =
-    previewStatus.status === "live" &&
-    previewFrameFresh &&
-    Boolean(previewImageSize) &&
-    manualPreviewCaptureReady &&
     (previewGeometrySide !== "back" || backPositioningPhysicallyVerified);
   const cardGeometryCorners = activePreviewCardGeometry?.corners ?? activePreviewCardGeometry?.detectedCorners ?? null;
   const cardGeometryFrameSize = activePreviewCardGeometry?.image ?? reportOverlayFrameSize;
@@ -2078,7 +1418,7 @@ export default function AiGraderStationPage() {
     cardGeometryPolygonPoints.length === 4 &&
     activePreviewCardGeometry?.geometrySource === "detected" &&
     activePreviewCardGeometry.detectionUsed === true;
-  const detectedGeometryDominant = detectedGeometryVisible && manualCaptureConfirmation === null;
+  const detectedGeometryDominant = detectedGeometryVisible;
   const cardGeometryCueLength = Math.max(14, Math.min(cardGeometryFrameSize.width, cardGeometryFrameSize.height) * 0.026);
   const cardGeometryCornerBrackets = cardGeometryPolygonPoints.map((corner, index, points) => ({
     corner,
@@ -2100,49 +1440,13 @@ export default function AiGraderStationPage() {
         centeredAxisLine(cardGeometryCenter, cardGeometryEdgeMidpoints[0], cardGeometryEdgeMidpoints[2], cardGeometryCueLength * 0.72),
       ].filter((axis): axis is NonNullable<typeof axis> => Boolean(axis))
     : [];
-  const activeAutoCaptureSide: AiGraderPreviewGeometrySide | null = !status.sessionManifest.frontCaptured
-    ? "front"
-    : status.sessionManifest.frontCaptured && !status.sessionManifest.backCaptured &&
-        (status.currentStep === "prompt_flip_card" || status.currentStep === "capture_back")
-      ? "back"
-      : null;
-  const autoCaptureGeometryCandidate = activeAutoCaptureSide === previewGeometrySide ? activePreviewCardGeometry : undefined;
-  const autoCaptureGeometry =
-    autoCaptureGeometryCandidate?.placementState === "ready" &&
-    autoCaptureGeometryCandidate.geometrySource === "detected" &&
-    autoCaptureGeometryCandidate.detectionUsed === true &&
-    Number.isFinite(Date.parse(autoCaptureGeometryCandidate.timestamp ?? "")) &&
-    previewFreshnessNow - Date.parse(autoCaptureGeometryCandidate.timestamp ?? "") >= -250 &&
-    previewFreshnessNow - Date.parse(autoCaptureGeometryCandidate.timestamp ?? "") <= PREVIEW_GEOMETRY_MAX_AGE_MS &&
-    previewFrameFresh &&
-    detectedPreviewCaptureReady &&
-    (activeAutoCaptureSide !== "back" || backPositioningPhysicallyVerified)
-      ? autoCaptureGeometryCandidate
-      : undefined;
-  const autoCaptureSessionId = `${status.sessionManifest.gradingSessionId}:${status.sessionManifest.reportId}`;
-  const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 6);
-  const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) => RAPID_PROCESSING_STATES.has(item.state));
-  const rapidOcrQueueSignature = status.rapidCaptureQueue.items
-    .map((item) => `${item.reportId}:${item.state}`)
-    .join("|");
-  const stationSettingsLocked =
-    status.sessionManifest.frontCaptured ||
-    status.sessionManifest.backCaptured ||
-    Boolean(status.rapidCaptureQueue.activeQueueItemId);
-  const frontStartReadiness = deriveAiGraderFrontStartReadiness({
-    status,
-    previewBinding: previewEpochState.binding,
-    bridgeConnected,
-    safetyFailure: safetyError,
-    transitionPending: Boolean(frontWorkflowPending),
-    capturePending: busy === 'start-grading' || busy === 'capture-back',
-    cleanupPending: busy === 'safe-off' || liveLighting.status === 'applying' ||
-      liveLighting.physicalState.state === 'safe_off_pending' || liveLightingRequestPending,
-    ambiguousRequestPending: Boolean(intentionalCaptureRef.current || ambiguityReconcileTimerRef.current !== undefined),
-  });
-  const frontAcceptedProfileCurrent = frontAcceptedProfileEvidenceIsCurrent(status);
-  const frontFixtureRulersCurrent = frontFixtureRulersEvidenceIsCurrent(status);
-  const canStartGrading = frontStartReadiness.ready;
+  const canStartGrading =
+    bridgeConnected &&
+    busy === null &&
+    status.currentStep === "capture_front" &&
+    previewGeometrySide === "front" &&
+    detectedGeometryReady &&
+    lightingPositioningCompletelyAcknowledged(liveLighting);
   const cardAdjustmentGuidance =
     activePreviewCardGeometry?.adjustmentReason === "outside_frame"
       ? "Move the card until all four corners have clear space from the frame edge."
@@ -2164,10 +1468,8 @@ export default function AiGraderStationPage() {
     ? "Capture stopped. Select Start New Card to retry."
     : status.sessionManifest.frontCaptured
       ? "Front captured. Follow the back-card prompt in the camera view."
-      : status.rapidCaptureQueue.activeQueueItemId
-        ? "Finish the active Confirm Card review before starting another capture."
-        : !canStartGrading
-          ? frontStartReadiness.message
+      : !canStartGrading
+          ? "Wait for a fresh detected front frame and exact controller acknowledgement."
           : previewGeometrySide !== "front"
             ? "Finish the current back capture before starting another front."
             : cardPlacementGuidance;
@@ -2177,57 +1479,22 @@ export default function AiGraderStationPage() {
     return matching.length ? matching.reduce((sum, phase) => sum + phase.durationMs, 0) : undefined;
   };
 
-  useEffect(() => {
-    if (!bridgeConnected || !stationToken.trim() || stationCaptureMode !== "rapid" || !rapidQueueHasProcessing) return;
-    let cancelled = false;
-    let pending = false;
-    const refreshRapidQueue = async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action: "status" });
-        if (!cancelled) setStatus(next);
-      } catch {
-        // Background queue polling is advisory; capture and manual controls stay available.
-      } finally {
-        pending = false;
-      }
-    };
-    const timer = window.setInterval(() => void refreshRapidQueue(), 1200);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [bridgeConnected, bridgeUrl, rapidQueueHasProcessing, stationCaptureMode, stationToken]);
-
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
+  const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 6);
+  const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) => RAPID_PROCESSING_STATES.has(item.state));
+  const stationSettingsLocked = status.sessionManifest.frontCaptured || status.sessionManifest.backCaptured || Boolean(status.rapidCaptureQueue.activeQueueItemId);
   const warmRunner = status.warmRunnerStatus;
   const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held || busy === "start-grading" || busy === "capture-back";
-  const physicalSafetyBlocked = Boolean(safetyError) ||
-    !lightingPhysicalStateAcknowledged(liveLighting) ||
-    liveLighting.status === 'applying' || liveLighting.status === 'error' ||
-    liveLighting.physicalState.state === 'safe_off_pending' ||
-    liveLighting.physicalState.state === 'physical_state_unknown' ||
-    liveLighting.physicalState.complete !== true;
-  const hardwareSafetyBlocked = physicalSafetyBlocked || liveLightingRequestPending;
-  const hardwareSafetyMessage = safetyError ?? (
-    physicalSafetyBlocked
-      ? liveLighting.physicalState.reason || 'Controller-acknowledged physical lighting state is required.'
-      : null
-  );
-  const safeOffRecoveryAllowed = bridgeConnected && busy === null &&
-    !warmRunner.captureLock.held && warmRunner.status !== 'capturing' &&
-    !intentionalCaptureRef.current && !liveLightingRequestPending;
   const liveLightingAvailable =
     bridgeConnected &&
-    !hardwareSafetyBlocked &&
+    !liveLightingRequestPending &&
     liveLighting.controlsEnabled &&
     previewStatus.status === "live" &&
     !warmRunner.captureLock.held &&
     warmRunner.status !== "capturing";
   const liveLightingCommandable =
     bridgeConnected &&
-    !hardwareSafetyBlocked &&
+    !liveLightingRequestPending &&
     liveLighting.controlsEnabled &&
     !warmRunner.captureLock.held &&
     warmRunner.status !== "capturing";
@@ -2252,6 +1519,29 @@ export default function AiGraderStationPage() {
     total: warmRunner.evidencePlan.rolesBySide.front.length,
   };
   const latestWarmPhases = [...warmRunner.phases].slice(-4).reverse();
+
+  useEffect(() => {
+    if (!bridgeConnected || !stationToken.trim() || stationCaptureMode !== "rapid" || !rapidQueueHasProcessing) return;
+    let cancelled = false;
+    let pending = false;
+    const refreshRapidQueue = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action: "status" });
+        if (!cancelled) setStatus(next);
+      } catch {
+        // Queue polling is advisory. The explicit capture controls remain authoritative.
+      } finally {
+        pending = false;
+      }
+    };
+    const timer = window.setInterval(() => void refreshRapidQueue(), 1200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [bridgeConnected, bridgeUrl, rapidQueueHasProcessing, stationCaptureMode, stationToken]);
 
   const verifyProductionSession = async (token: string): Promise<ProductionAuthActor> => {
     const response = await fetch("/api/admin/ai-grader/production/auth-check", {
@@ -2368,7 +1658,7 @@ export default function AiGraderStationPage() {
       setOcrPrefillState({
         status: "waiting",
         reportId: ocrPrefillReportId,
-        message: "Sign in to prefill Confirm Card from OCR.",
+        message: "Sign in to prefill the Approve & Publish identity from OCR.",
       });
       return;
     }
@@ -2411,7 +1701,7 @@ export default function AiGraderStationPage() {
           status: "ready",
           reportId: ocrPrefillReportId,
           result,
-          message: `OCR ready. Review ${result.reviewFieldNames.length} field${result.reviewFieldNames.length === 1 ? "" : "s"} before Confirm Card.`,
+          message: `OCR ready. Review ${result.reviewFieldNames.length} field${result.reviewFieldNames.length === 1 ? "" : "s"} before Approve & Publish.`,
         });
       })
       .catch((requestError) => {
@@ -2441,59 +1731,6 @@ export default function AiGraderStationPage() {
     session?.token,
     sessionLoading,
     stationToken,
-  ]);
-
-  useEffect(() => {
-    if (!bridgeConnected || !stationToken.trim() || !productionSignedIn || !session?.token || sessionLoading) return;
-    if (rapidOcrInFlightReportIdRef.current) return;
-    const candidate = status.rapidCaptureQueue.items.find(
-      (item) =>
-        item.state === "report_ready_needs_confirm" &&
-        item.queueItemId !== status.rapidCaptureQueue.activeQueueItemId &&
-        !rapidOcrCacheRef.current.has(item.reportId) &&
-        !rapidOcrAttemptedReportIdsRef.current.has(item.reportId)
-    );
-    if (!candidate) return;
-    rapidOcrInFlightReportIdRef.current = candidate.reportId;
-    rapidOcrAttemptedReportIdsRef.current.add(candidate.reportId);
-    setRapidOcrPrefetchStatus((current) => ({
-      ...current,
-      [candidate.reportId]: { status: "running" },
-    }));
-    void runAiGraderOcrPrefillFromLocalReport({
-      baseUrl: bridgeUrl,
-      stationToken,
-      reportId: candidate.reportId,
-      authHeaders: buildAdminHeaders(session.token),
-    })
-      .then((result) => {
-        rapidOcrCacheRef.current.set(candidate.reportId, result);
-        setRapidOcrPrefetchStatus((current) => ({
-          ...current,
-          [candidate.reportId]: { status: "ready", reviewCount: result.reviewFieldNames.length },
-        }));
-      })
-      .catch(() => {
-        setRapidOcrPrefetchStatus((current) => ({
-          ...current,
-          [candidate.reportId]: { status: "failed" },
-        }));
-      })
-      .finally(() => {
-        rapidOcrInFlightReportIdRef.current = null;
-        setRapidOcrPrefetchTick((current) => current + 1);
-      });
-  }, [
-    bridgeConnected,
-    bridgeUrl,
-    rapidOcrPrefetchTick,
-    rapidOcrQueueSignature,
-    productionSignedIn,
-    session?.token,
-    sessionLoading,
-    stationToken,
-    status.rapidCaptureQueue.activeQueueItemId,
-    status.rapidCaptureQueue.items,
   ]);
 
   const retryOcrPrefill = () => {
@@ -2602,9 +1839,7 @@ export default function AiGraderStationPage() {
     setStatus(next);
     reconcileBridgePreviewStatus(next.previewStatus);
     setLiveLighting(next.liveLighting);
-    if (lightingPhysicalStateAcknowledged(next.liveLighting)) {
-      setSafetyError(null);
-    }
+    setLiveLightingDraft(aiGraderAuthoritativeLiveLightingDraft(next.liveLighting));
     setProfileDraft({
       dutyPercent: next.acceptedProfile.dutyPercent,
       exposureUs: next.acceptedProfile.exposureUs,
@@ -2613,168 +1848,8 @@ export default function AiGraderStationPage() {
     return next;
   };
 
-  const restartBackPreviewForRetry = async (
-    binding: AiGraderPreviewEpochBinding & { side: "back" },
-  ) => {
-    intentionalCaptureRef.current = null;
-    if (!aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, binding)) {
-      throw new Error("Back preview binding changed before positioning-light recovery.");
-    }
-    previewAttemptGenerationRef.current += 1;
-    if (previewReconnectTimerRef.current !== undefined) {
-      window.clearTimeout(previewReconnectTimerRef.current);
-      previewReconnectTimerRef.current = undefined;
-    }
-    previewReconnectStateRef.current = createAiGraderPreviewReconnectState();
-    const previousReader = previewReaderPromiseRef.current;
-    previewControllerRef.current?.abort();
-    previewControllerRef.current = null;
-    clearPreviewDisplay("starting");
-    if (previousReader) {
-      await new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const finish = (error?: Error) => {
-          if (settled) return;
-          settled = true;
-          window.clearTimeout(timeout);
-          if (error) reject(error);
-          else resolve();
-        };
-        const timeout = window.setTimeout(
-          () => finish(new Error("Previous back preview reader did not drain after abort.")),
-          1000,
-        );
-        void previousReader.then(() => finish(), () => finish());
-      });
-    }
-    if (!aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, binding)) {
-      throw new Error("Back preview binding changed while the previous reader was released.");
-    }
-    if (previewRestartWaiterRef.current) {
-      clearTimeout(previewRestartWaiterRef.current.timeout);
-      previewRestartWaiterRef.current.reject(new Error("A newer back-preview recovery replaced this request."));
-      previewRestartWaiterRef.current = null;
-    }
-    await new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(() => {
-        if (previewRestartWaiterRef.current?.timeout === timeout) previewRestartWaiterRef.current = null;
-        reject(new Error("Back preview reader did not restart within the bounded recovery window."));
-      }, 3000);
-      previewRestartWaiterRef.current = { resolve, reject, timeout };
-      setPreviewRestartGeneration((current) => current + 1);
-    });
-  };
-
-  const retryBackPositioningLight = async () => {
-    if (backPositioningRetryReady) return;
-    setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
-      type: "retry_started",
-    }));
-    setError(null);
-    let retryBinding: (AiGraderPreviewEpochBinding & { side: "back" }) | undefined;
-    try {
-      const binding = previewEpochStateRef.current.binding;
-      if (
-        !binding ||
-        binding.side !== "back" ||
-        status.currentStep !== "prompt_flip_card" ||
-        status.warmRunnerStatus.captureLock.held ||
-        Boolean(status.rapidCaptureQueue.activeQueueItemId)
-      ) {
-        throw new Error("Positioning-light retry is obsolete or unavailable for the active back preview.");
-      }
-      retryBinding = { ...binding, side: "back" };
-      const verificationInvalidatedAt = new Date().toISOString();
-      setLiveLighting((current) => ({
-        ...current,
-        status: "applying",
-        applied: {
-          ...current.applied,
-          enabled: undefined,
-          verificationState: "pending",
-          expectedWriteCount: 0,
-          acknowledgedWriteCount: 0,
-          verificationComplete: false,
-          verifiedAt: undefined,
-        },
-        physicalState: {
-          ...current.physicalState,
-          state: "physical_state_unknown",
-          reason: "Positioning-light retry is awaiting a fresh controller acknowledgement.",
-          changedAt: verificationInvalidatedAt,
-          expectedWriteCount: 0,
-          acknowledgedWriteCount: 0,
-          complete: false,
-          verifiedAt: undefined,
-          lastError: undefined,
-        },
-      }));
-      const next = await runAiGraderBackPositioningRetryRecovery({
-        baseUrl: bridgeUrl,
-        stationToken,
-        expectedBinding: { ...binding, side: "back" },
-        getCurrentBinding: () => previewEpochStateRef.current.binding,
-        restartPreview: restartBackPreviewForRetry,
-      });
-      if (!aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, retryBinding)) {
-        throw new Error("Positioning-light retry response is obsolete for the current preview binding.");
-      }
-      if (next.sessionId !== binding.sessionId || next.sideEpoch !== binding.sideEpoch) {
-        throw new Error("Positioning-light retry response does not match the active back preview.");
-      }
-      // Frames received while the reader was opening may predate the restore
-      // acknowledgement. Keep that reader, but require a subsequent exact
-      // frame/geometry pair before either Back Capture mode can become ready.
-      clearPreviewDisplay("starting");
-      setPreviewStatus((current) => ({
-        ...current,
-        status: "starting",
-        latestFrameId: undefined,
-        positioningLightReady: false,
-        lastStopReason: "Positioning light acknowledged; waiting for a fresh post-restore back frame.",
-        cardGeometry: current.cardGeometry
-          ? { ...current.cardGeometry, activeSide: "back", back: undefined }
-          : current.cardGeometry,
-      }));
-      const verifiedLighting = await fetchAiGraderLiveLightingStatus({ baseUrl: bridgeUrl, stationToken });
-      if (!aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, retryBinding)) return;
-      setLiveLighting(verifiedLighting);
-      if (next.status === "failed") {
-        setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
-          type: "retry_failed",
-          message: next.lastError?.message,
-        }));
-        return;
-      }
-      const physicallyVerified =
-        verifiedLighting.applied.enabled === true &&
-        verifiedLighting.applied.verificationState === "verified" &&
-        verifiedLighting.applied.verificationComplete === true &&
-        verifiedLighting.physicalState.state === "positioning_light_verified" &&
-        verifiedLighting.physicalState.complete === true;
-      const postVerificationFrameReady = aiGraderPreviewBackCaptureReady({
-        state: previewEpochStateRef.current,
-        mode: "manual_capture",
-        positioningVerifiedAt: verifiedLighting.physicalState.verifiedAt,
-      });
-      setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
-        type: "restore_completed",
-        bridgeCaptureReady: next.captureReady,
-        physicallyVerified,
-        postVerificationFrameReady,
-      }));
-    } catch (requestError) {
-      if (retryBinding && !aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, retryBinding)) return;
-      setBackPositioningRetry((current) => reduceAiGraderBackPositioningRetryUiState(current, {
-        type: "retry_failed",
-        message: requestError instanceof Error ? requestError.message : undefined,
-      }));
-    }
-  };
-
   const assertLocalFreshPreviewCaptureEligibility = (
     side: AiGraderPreviewGeometrySide,
-    manual: boolean,
   ) => {
     const epochState = previewEpochStateRef.current;
     const binding = epochState.binding;
@@ -2783,13 +1858,11 @@ export default function AiGraderStationPage() {
     const localCaptureReady = side === "back"
       ? aiGraderPreviewBackCaptureReady({
           state: epochState,
-          mode: manual ? "manual_capture" : "detected_geometry",
+          mode: "detected_geometry",
           positioningVerifiedAt: liveLighting.physicalState.verifiedAt,
           nowMs,
         })
-      : manual
-        ? aiGraderPreviewManualCaptureReady(epochState, nowMs)
-        : aiGraderPreviewDetectedCaptureReady(epochState, nowMs);
+      : aiGraderPreviewDetectedCaptureReady(epochState, nowMs);
     if (
       !binding ||
       binding.side !== side ||
@@ -2797,14 +1870,14 @@ export default function AiGraderStationPage() {
       !displayed ||
       !localCaptureReady
     ) {
-      throw new Error(`AI Grader ${side} capture requires the current fresh displayed ${side} frame${manual ? "" : " and matching Ready geometry"}.`);
+      throw new Error(`AI Grader ${side} capture requires the current fresh displayed ${side} frame and matching Ready geometry.`);
     }
     return displayed;
   };
 
   const ensureLiveLightingSession = async () => {
-    if (status.currentStep === "start_new_card" || status.currentStep === "safe_off_end_session") {
-      return runAction("start-session", buildAiGraderCaptureProfileRequest(stationCaptureProfile));
+    if (status.currentStep === "start_new_card" || status.currentStep === "session_complete") {
+      return runAction("start-session", buildAiGraderCaptureProfileRequest("full_forensic"));
     }
     return status;
   };
@@ -2819,9 +1892,6 @@ export default function AiGraderStationPage() {
     }
     liveLightingRequestPendingRef.current = true;
     setLiveLightingRequestPending(true);
-    // A browser-requested retune defines a new explicit profile acceptance
-    // attempt. Never replay an ambiguous pre-retune acceptance key.
-    delete frontWorkflowAttemptRef.current['accept-live-profile'];
     try {
       await ensureLiveLightingSession();
       const next = await applyAiGraderLiveLighting({
@@ -2841,9 +1911,9 @@ export default function AiGraderStationPage() {
       }
       return refreshed.liveLighting;
     } catch (requestError) {
-      await reconcileLightingMutationFailure(requestError, 'Live lighting apply', {
-        preservePrimary: true,
-      });
+      const message = requestError instanceof Error ? requestError.message : "Live lighting apply failed.";
+      await runAction("status").catch(() => undefined);
+      setError(message);
       throw requestError;
     } finally {
       liveLightingRequestPendingRef.current = false;
@@ -2861,171 +1931,18 @@ export default function AiGraderStationPage() {
 
   const updateLiveLightingDraft = (nextDraft: typeof liveLightingDraft, reason: string) => {
     setLiveLightingDraft(nextDraft);
-    if (nextDraft.enabled && liveLightingCommandable) scheduleLiveLightingApply(nextDraft, reason);
-  };
-
-  const safeOffLiveLighting = async (reason = "operator requested browser live lighting safe-off") => {
-    if (liveLightingRequestPendingRef.current) {
-      throw new Error('A live lighting controller request is already pending.');
-    }
-    if (liveLightingApplyTimerRef.current) {
-      clearTimeout(liveLightingApplyTimerRef.current);
-      liveLightingApplyTimerRef.current = null;
-    }
-    setLiveLightingDraft((current) => ({ ...current, enabled: false }));
-    liveLightingRequestPendingRef.current = true;
-    setLiveLightingRequestPending(true);
-    try {
-      const next = await safeOffAiGraderLiveLighting({ baseUrl: bridgeUrl, stationToken, reason });
-      if (!lightingSafeOffCompletelyAcknowledged(next)) {
-        throw new Error('The lighting controller did not completely acknowledge physical safe-off.');
-      }
-      const refreshed = await runAction('status');
-      if (!lightingSafeOffCompletelyAcknowledged(refreshed.liveLighting)) {
-        throw new Error('Bridge status did not confirm complete physical safe-off.');
-      }
-      setSafetyError(null);
-      return refreshed.liveLighting;
-    } catch (requestError) {
-      await reconcileLightingMutationFailure(requestError, 'Operator lighting safe-off', {
-        preservePrimary: false,
-        requireSafeOff: true,
-      });
-      throw requestError;
-    } finally {
-      liveLightingRequestPendingRef.current = false;
-      setLiveLightingRequestPending(false);
-    }
-  };
-
-  const acceptLiveLightingProfile = async () => {
-    if (hardwareSafetyBlocked || liveLightingRequestPendingRef.current) return;
-    setBusy("lighting-accept");
-    setError(null);
-    try {
-      const latest = await runAction('status');
-      const assertion = aiGraderFrontWorkflowAssertionFromStatus(latest);
-      if (frontAcceptedProfileEvidenceIsCurrent(latest, assertion)) {
-        delete frontWorkflowAttemptRef.current['accept-live-profile'];
-        return;
-      }
-      const existingAttempt = frontWorkflowAttemptRef.current['accept-live-profile'];
-      const signature = aiGraderFrontWorkflowAttemptSignature('accept-live-profile', assertion);
-      const attempt = existingAttempt?.signature === signature
-        ? existingAttempt
-        : createAiGraderFrontWorkflowAttempt('accept-live-profile', assertion);
-      frontWorkflowAttemptRef.current['accept-live-profile'] = attempt;
-      const request = buildAiGraderFrontWorkflowRequest({ assertion, attempt });
-      setFrontWorkflowPending(attempt.signature);
-      let nextLighting: AiGraderLocalStationStatus;
-      try {
-        nextLighting = await frontWorkflowOperationGateRef.current.run(attempt.signature, () => acceptAiGraderLiveLightingProfile({
-        baseUrl: bridgeUrl,
-        stationToken,
-        assertion: request,
-        }));
-      } catch (acceptError) {
-        let recovered: AiGraderLocalStationStatus;
-        try {
-          recovered = await runAction('status');
-        } catch {
-          throw acceptError;
-        }
-        if (!frontWorkflowEvidenceMatchesAttempt(recovered.frontWorkflowAuthority.acceptedProfile, assertion, attempt)) {
-          throw acceptError;
-        }
-        nextLighting = recovered;
-      }
-      setStatus(nextLighting);
-      reconcileBridgePreviewStatus(nextLighting.previewStatus);
-      setLiveLighting(nextLighting.liveLighting);
-      const nextStatus = await runAction('status');
-      if (!frontAcceptedProfileEvidenceIsCurrent(nextStatus, assertion)) {
-        throw new Error('The bridge did not durably acknowledge this exact Front profile acceptance request.');
-      }
-      setProfileDraft({
-        dutyPercent: nextStatus.acceptedProfile.dutyPercent,
-        exposureUs: nextStatus.acceptedProfile.exposureUs,
-        gain: nextStatus.acceptedProfile.gain,
-      });
-      delete frontWorkflowAttemptRef.current['accept-live-profile'];
-    } catch (requestError) {
-      setError((current) => preserveAiGraderPrimaryWorkflowError(
-        current,
-        requestError instanceof Error ? requestError : "Could not accept live lighting profile.",
-      ));
-    } finally {
-      setFrontWorkflowPending(null);
-      setBusy(null);
-    }
-  };
-
-  const confirmFrontFixtureAndRulers = async () => {
-    if (hardwareSafetyBlocked || liveLightingRequestPendingRef.current) return;
-    setBusy('confirm-fixture-rulers');
-    setError(null);
-    try {
-      const latest = await runAction('status');
-      const assertion = aiGraderFrontWorkflowAssertionFromStatus(latest);
-      if (frontFixtureRulersEvidenceIsCurrent(latest, assertion)) {
-        delete frontWorkflowAttemptRef.current['confirm-fixture-rulers'];
-        return;
-      }
-      const existingAttempt = frontWorkflowAttemptRef.current['confirm-fixture-rulers'];
-      const signature = aiGraderFrontWorkflowAttemptSignature('confirm-fixture-rulers', assertion);
-      const attempt = existingAttempt?.signature === signature
-        ? existingAttempt
-        : createAiGraderFrontWorkflowAttempt('confirm-fixture-rulers', assertion);
-      frontWorkflowAttemptRef.current['confirm-fixture-rulers'] = attempt;
-      const request = buildAiGraderFrontWorkflowRequest({ assertion, attempt });
-      setFrontWorkflowPending(attempt.signature);
-      try {
-        await frontWorkflowOperationGateRef.current.run(
-          attempt.signature,
-          () => runAction('confirm-fixture-rulers', request),
-        );
-      } catch (confirmationError) {
-        let recovered: AiGraderLocalStationStatus;
-        try {
-          recovered = await runAction('status');
-        } catch {
-          throw confirmationError;
-        }
-        if (!frontWorkflowEvidenceMatchesAttempt(recovered.frontWorkflowAuthority.fixtureRulers, assertion, attempt)) {
-          throw confirmationError;
-        }
-      }
-      const nextStatus = await runAction('status');
-      if (!frontFixtureRulersEvidenceIsCurrent(nextStatus, assertion)) {
-        throw new Error('The bridge did not durably acknowledge this exact fixture and ruler confirmation request.');
-      }
-      delete frontWorkflowAttemptRef.current['confirm-fixture-rulers'];
-    } catch (requestError) {
-      setError((current) => preserveAiGraderPrimaryWorkflowError(current, requestError));
-    } finally {
-      setFrontWorkflowPending(null);
-      setBusy(null);
-    }
+    if (liveLightingCommandable) scheduleLiveLightingApply(nextDraft, reason);
   };
 
   const setLiveLightingEnabled = (enabled: boolean) => {
-    const nextDraft = { ...liveLightingDraft, enabled };
-    setLiveLightingDraft(nextDraft);
-    if (enabled) {
-      if (liveLightingCommandable) scheduleLiveLightingApply(nextDraft, "browser live lighting enabled");
-    } else {
-      void safeOffLiveLighting("browser live lighting disabled").catch(() => {});
-    }
+    updateLiveLightingDraft({ ...liveLightingDraft, enabled }, `browser live lighting ${enabled ? "enabled" : "disabled"}`);
   };
 
   const setAllLiveLightingChannels = (channels: number[]) => {
-    const nextDraft = { ...liveLightingDraft, enabled: channels.length > 0, channels };
-    setLiveLightingDraft(nextDraft);
-    if (channels.length === 0) {
-      void safeOffLiveLighting("browser live lighting all off").catch(() => {});
-      return;
-    }
-    if (liveLightingCommandable) scheduleLiveLightingApply(nextDraft, "browser live lighting channels changed");
+    updateLiveLightingDraft(
+      { ...liveLightingDraft, enabled: channels.length > 0, channels },
+      "browser live lighting channels changed",
+    );
   };
 
   const toggleLiveLightingChannel = (channel: number) => {
@@ -3036,19 +1953,12 @@ export default function AiGraderStationPage() {
   };
 
   const setLiveLightingDuty = (dutyPercent: number) => {
-    const nextDraft = { ...liveLightingDraft, dutyPercent };
-    updateLiveLightingDraft(nextDraft, "browser live lighting duty changed");
+    updateLiveLightingDraft({ ...liveLightingDraft, dutyPercent }, "browser live lighting duty changed");
   };
 
   const resetPerCardUiState = () => {
     ocrPrefillGenerationRef.current += 1;
     identityEditedFieldsRef.current.clear();
-    autoCaptureMachineRef.current = undefined;
-    captureAttemptRef.current = {};
-    frontWorkflowAttemptRef.current = {};
-    intentionalCaptureRef.current = null;
-    setManualCaptureConfirmation(null);
-    setAutoCaptureUi({ phase: autoCaptureEnabled ? "waiting_for_card_removal" : "disabled", readyStableMs: 0 });
     setSelectedCard(null);
     setIdentityDraft(defaultIdentityDraft);
     setOcrPrefillState({
@@ -3059,7 +1969,7 @@ export default function AiGraderStationPage() {
     setConfirmedDownstream({
       comps: {
         status: "idle",
-        message: "Comps will queue after Confirm Card.",
+        message: "Comps will queue after Approve & Publish.",
       },
     });
     setProductionPublish({ status: "idle", message: "Ten Kings DB/storage publish has not been run." });
@@ -3069,10 +1979,9 @@ export default function AiGraderStationPage() {
   };
 
   const changeStationCaptureMode = async (nextMode: StationCaptureMode) => {
-    if (hardwareSafetyBlocked || liveLightingRequestPendingRef.current) return;
     if (nextMode === stationCaptureMode) return;
     if (stationSettingsLocked) {
-      setError("Finish or queue the active card before changing capture mode.");
+      setError("Queue or finish the active card before changing Rapid Capture mode.");
       return;
     }
     setBusy("capture-settings");
@@ -3080,252 +1989,140 @@ export default function AiGraderStationPage() {
     try {
       const next = await runAction(
         "configure-rapid-capture",
-        buildAiGraderRapidCaptureConfigurationRequest(nextMode === "rapid")
+        buildAiGraderRapidCaptureConfigurationRequest(nextMode === "rapid"),
       );
       setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Capture mode could not be updated.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const changeStationCaptureProfile = async (nextProfile: AiGraderCaptureProfile) => {
-    if (hardwareSafetyBlocked || liveLightingRequestPendingRef.current) return;
-    if (nextProfile === stationCaptureProfile) return;
-    if (stationSettingsLocked) {
-      setError("Finish or queue the active card before changing capture profile.");
-      return;
-    }
-    setBusy("capture-settings");
-    setError(null);
-    try {
-      resetPerCardUiState();
-      const next = await runAction("start-session", buildAiGraderCaptureProfileRequest(nextProfile));
-      setStationCaptureProfile(next.captureProfile);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Capture profile could not be updated.");
+      setError(requestError instanceof Error ? requestError.message : "Rapid Capture mode could not be updated.");
     } finally {
       setBusy(null);
     }
   };
 
   const startNewCard = async () => {
-    if (hardwareSafetyBlocked || liveLightingRequestPendingRef.current) return;
+    if (liveLightingRequestPendingRef.current) return;
     setBusy("start");
     setError(null);
     try {
       resetPerCardUiState();
       await runAction(
         "configure-rapid-capture",
-        buildAiGraderRapidCaptureConfigurationRequest(stationCaptureMode === "rapid")
+        buildAiGraderRapidCaptureConfigurationRequest(stationCaptureMode === "rapid"),
       );
-      await runAction("start-session", buildAiGraderCaptureProfileRequest(stationCaptureProfile));
+      await runAction("start-session", buildAiGraderCaptureProfileRequest("full_forensic"));
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.");
+      const message = requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.";
+      await runAction("status").catch(() => undefined);
+      setError(message);
     } finally {
       setBusy(null);
     }
   };
 
-  const runStationAtomicCapture = async (input: {
-    side: AiGraderPreviewGeometrySide;
-    captureTriggerMode: AiGraderCaptureTriggerMode;
-    geometryCaptureMode: AiGraderBackCaptureMode;
-    afterCapture?: (captured: AiGraderLocalStationStatus) => Promise<void>;
-  }) => {
+  const runStationCapture = async (side: AiGraderPreviewGeometrySide) => {
     if (liveLightingRequestPendingRef.current) {
-      throw new Error('Wait for the pending lighting controller request before capture.');
+      throw new Error("Wait for the pending lighting controller request before capture.");
     }
-    if (hardwareSafetyBlocked) {
-      throw new Error(`Hardware safety interlock: ${hardwareSafetyMessage ?? 'physical state is not verified'}`);
-    }
-    let captureStatus = status;
-    if (input.side === 'front') {
-      captureStatus = await runAction('status');
-      const refreshedReadiness = deriveAiGraderFrontStartReadiness({
-        status: captureStatus,
-        previewBinding: previewEpochStateRef.current.binding,
-        bridgeConnected,
-        safetyFailure: safetyError,
-        transitionPending: Boolean(frontWorkflowPending),
-        cleanupPending: captureStatus.liveLighting.status === 'applying' ||
-          captureStatus.liveLighting.physicalState.state === 'safe_off_pending' ||
-          liveLightingRequestPendingRef.current,
-        ambiguousRequestPending: Boolean(intentionalCaptureRef.current || ambiguityReconcileTimerRef.current !== undefined),
-      });
-      if (!refreshedReadiness.ready) throw new Error(refreshedReadiness.message);
-    }
-    const localDisplayed = assertLocalFreshPreviewCaptureEligibility(
-      input.side,
-      input.geometryCaptureMode === "manual_capture",
-    );
+    if (!canUseBridge) throw new Error("Connect the Dell local station bridge before capture.");
+    const captureStatus = await runAction("status");
+    const displayed = assertLocalFreshPreviewCaptureEligibility(side);
     const assertion = aiGraderCaptureAssertionFromFrame({
-      frame: localDisplayed.frame,
+      frame: displayed.frame,
       reportId: captureStatus.sessionManifest.reportId,
-      geometryCaptureMode: input.geometryCaptureMode,
-      captureTriggerMode: input.captureTriggerMode,
+      geometryCaptureMode: "detected_geometry",
+      captureTriggerMode: "operator",
     });
-    const signature = aiGraderCaptureAttemptSignature(assertion);
-    const existingAttempt = captureAttemptRef.current[input.side];
-    const attempt = existingAttempt?.signature === signature
-      ? existingAttempt
-      : createAiGraderCaptureAttempt(assertion);
+    setBusy(side === "front" ? "start-grading" : "capture-back");
+    setError(null);
+    try {
+      const captured = await runAiGraderCapture({
+        baseUrl: bridgeUrl,
+        stationToken,
+        assertion,
+        requestId: `capture-${side}-${crypto.randomUUID()}`,
+      });
+      setStatus(captured);
+      reconcileBridgePreviewStatus(captured.previewStatus);
+      setLiveLighting(captured.liveLighting);
+      setProfileDraft({
+        dutyPercent: captured.acceptedProfile.dutyPercent,
+        exposureUs: captured.acceptedProfile.exposureUs,
+        gain: captured.acceptedProfile.gain,
+      });
+      return captured;
+    } finally {
+      setBusy(null);
+    }
+  };
 
-    return captureOperationGateRef.current.run(signature, async () => {
-      const preparedIntent: AiGraderLocalCaptureIntent = {
-        binding: {
-          sessionId: assertion.expectedSessionId,
-          side: assertion.expectedSide,
-          sideEpoch: assertion.expectedSideEpoch,
-        },
-        frameId: assertion.expectedFrameId,
-        submittedAtMs: Number.NaN,
-      };
-      // Install the exact marker before busy state can render. The bridge, not
-      // a React effect, now owns reader drain and verified safe-off.
-      intentionalCaptureRef.current = preparedIntent;
-      captureAttemptRef.current[input.side] = attempt;
-      setBusy(input.side === "front" ? "start-grading" : "capture-back");
-      setError(null);
-      try {
-        if (!canUseBridge) throw new Error("Connect the Dell local station bridge before starting capture.");
-        const captured = await runAiGraderStationCaptureOrchestration({
-          baseUrl: bridgeUrl,
-          stationToken,
-          assertion,
-          attempt,
-          onIntent(intent) {
-            if (
-              intent.frameId !== preparedIntent.frameId ||
-              !aiGraderPreviewBindingMatches(intent.binding, preparedIntent.binding)
-            ) {
-              throw new Error("AI Grader atomic capture intent changed before submission.");
-            }
-            intentionalCaptureRef.current = intent;
-          },
-          async onConfirmedPreTransitionFailure({ intent, previewStatus: authoritativePreviewStatus }) {
-            const currentIntent = intentionalCaptureRef.current;
-            if (
-              !aiGraderLocalCaptureIntentMatches({ expectedBinding: intent.binding, localIntent: currentIntent }) ||
-              currentIntent?.frameId !== intent.frameId
-            ) return;
-            intentionalCaptureRef.current = null;
-            let authoritativeStatus: AiGraderLocalStationStatus | undefined;
-            try {
-              authoritativeStatus = await runAction('status');
-              if (!lightingPhysicalStateAcknowledged(authoritativeStatus.liveLighting)) {
-                setSafetyError(
-                  authoritativeStatus.liveLighting.physicalState.lastError ??
-                  authoritativeStatus.liveLighting.physicalState.reason ??
-                  'Atomic capture rejection left controller acknowledgement incomplete.',
-                );
-              }
-            } catch {
-              setSafetyError('Atomic capture rejection could not refresh authoritative controller safety state.');
-            }
-            const reconciledPreviewStatus = authoritativeStatus?.previewStatus ?? authoritativePreviewStatus;
-            reconcileBridgePreviewStatus(reconciledPreviewStatus);
-            const recoveryEligible =
-              Boolean(authoritativeStatus) &&
-              lightingPhysicalStateAcknowledged(authoritativeStatus!.liveLighting) &&
-              bridgeConnected &&
-              Boolean(stationToken.trim()) &&
-              !authoritativeStatus!.warmRunnerStatus.captureLock.held &&
-              !authoritativeStatus!.rapidCaptureQueue.activeQueueItemId &&
-              aiGraderPreviewBindingMatches(previewEpochStateRef.current.binding, intent.binding);
-            if (recoveryEligible) setPreviewRestartGeneration((current) => current + 1);
-          },
-        });
-        setStatus(captured);
-        reconcileBridgePreviewStatus(captured.previewStatus);
-        setLiveLighting(captured.liveLighting);
-        setProfileDraft({
-          dutyPercent: captured.acceptedProfile.dutyPercent,
-          exposureUs: captured.acceptedProfile.exposureUs,
-          gain: captured.acceptedProfile.gain,
-        });
-        delete captureAttemptRef.current[input.side];
-        await input.afterCapture?.(captured);
-        return captured;
-      } catch (captureError) {
-        if (intentionalCaptureRef.current === preparedIntent) {
-          intentionalCaptureRef.current = null;
-        } else if (intentionalCaptureRef.current && aiGraderLocalCaptureIntentMatches({
-          expectedBinding: preparedIntent.binding,
-          localIntent: intentionalCaptureRef.current,
-        })) {
-          ambiguityReconcileSchedulerRef.current?.(intentionalCaptureRef.current);
-        }
-        throw captureError;
-      } finally {
-        setBusy(null);
+  const reconcileBridgePreviewStatus = (nextStatus: AiGraderLocalStationStatus["previewStatus"]) => {
+    const binding = aiGraderPreviewStatusBinding(nextStatus);
+    if (aiGraderPreviewBindingChanged(previewEpochStateRef.current.binding, binding)) {
+      previewAttemptGenerationRef.current += 1;
+      previewControllerRef.current?.abort();
+      previewControllerRef.current = null;
+      clearPreviewDisplay();
+      applyPreviewEpochEvent({ type: "bind", binding });
+    }
+    setPreviewStatus(nextStatus);
+  };
+
+  const connectBridgeWithCredentials = async (targetBridgeUrl: string, targetStationToken: string) => {
+    await fetchAiGraderStationBridgeHealth({ baseUrl: targetBridgeUrl });
+    const next = await callAiGraderStationBridge({
+      baseUrl: targetBridgeUrl,
+      stationToken: targetStationToken,
+      action: "status",
+    });
+    window.localStorage.setItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY, targetBridgeUrl);
+    window.localStorage.setItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY, targetStationToken);
+    setBridgeUrl(targetBridgeUrl);
+    setStationToken(targetStationToken);
+    setStatus(next);
+    reconcileBridgePreviewStatus(next.previewStatus);
+    setLiveLighting(next.liveLighting);
+    setLiveLightingDraft(aiGraderAuthoritativeLiveLightingDraft(next.liveLighting));
+    setBridgeConnected(true);
+    setBridgeConnectionState("connected");
+    setProfileDraft({
+      dutyPercent: next.acceptedProfile.dutyPercent,
+      exposureUs: next.acceptedProfile.exposureUs,
+      gain: next.acceptedProfile.gain,
+    });
+    setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
+    setHistory(await fetchAiGraderStationReportHistory({
+      baseUrl: targetBridgeUrl,
+      stationToken: targetStationToken,
+    }));
+    return next;
+  };
+
+
+  const startGrading = async () => {
+    try {
+      await runStationCapture("front");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Capture Front failed.");
+    }
+  };
+
+  const captureBackAndContinue = async () => {
+    try {
+      const captured = await runStationCapture("back");
+      if (stationCaptureMode === "rapid" && captured.rapidCapture.enabled) {
+        await runAction("queue-current-card");
+        resetPerCardUiState();
+        return;
       }
-    });
-  };
-
-  const changeAutoCaptureEnabled = async (enabled: boolean) => {
-    autoCaptureMachineRef.current = undefined;
-    setAutoCaptureEnabled(enabled);
-    setAutoCaptureUi({
-      phase: enabled ? "waiting_for_card_removal" : "disabled",
-      readyStableMs: 0,
-    });
-  };
-
-  const startGrading = async (
-    captureTriggerMode: AiGraderCaptureTriggerMode = "operator",
-    geometryCaptureMode: AiGraderBackCaptureMode = "detected_geometry",
-  ) => {
-    try {
-      await runStationAtomicCapture({
-        side: "front",
-        captureTriggerMode,
-        geometryCaptureMode,
-      });
+      await runAction("run-diagnostics");
+      await runAction("export-report-bundle");
+      await prepareLocalProductionRelease();
+      await refreshHistory();
     } catch (requestError) {
-      setError((current) => preserveAiGraderPrimaryWorkflowError(
-        current,
-        requestError instanceof Error ? requestError : "Start grading failed.",
-      ));
+      const message = requestError instanceof Error ? requestError.message : "Capture Back or report generation failed.";
+      await runAction("status").catch(() => undefined);
+      setError(message);
     }
-  };
-
-  const confirmFlipAndContinue = async (
-    captureTriggerMode: AiGraderCaptureTriggerMode = "operator",
-    geometryCaptureMode: AiGraderBackCaptureMode = "detected_geometry",
-  ) => {
-    try {
-      await runStationAtomicCapture({
-        side: "back",
-        geometryCaptureMode,
-        captureTriggerMode,
-        afterCapture: async (captured) => {
-          if (stationCaptureMode === "rapid" && captured.rapidCapture.enabled) {
-            await runAction("queue-current-card", {});
-            resetPerCardUiState();
-            return;
-          }
-          await runAction("run-diagnostics");
-          await runAction("export-report-bundle");
-          await prepareLocalProductionRelease();
-          await refreshHistory();
-        },
-      });
-    } catch (requestError) {
-      setError((current) => preserveAiGraderPrimaryWorkflowError(
-        current,
-        requestError instanceof Error ? requestError : "Back capture or report generation failed.",
-      ));
-    }
-  };
-
-  const confirmManualOverlayCapture = async () => {
-    const side = manualCaptureConfirmation?.side;
-    if (!side) return;
-    setManualCaptureConfirmation(null);
-    if (side === "front") await startGrading("operator", "manual_capture");
-    else await confirmFlipAndContinue("operator", "manual_capture");
   };
 
   const activateRapidQueueItem = async (queueItemId: string) => {
@@ -3334,90 +2131,14 @@ export default function AiGraderStationPage() {
     try {
       const next = await runAction("activate-queue-item", buildAiGraderRapidQueueActivationRequest(queueItemId));
       resetPerCardUiState();
-      const reportId = next.reportBundle?.reportId ?? next.latestReport.reportId;
-      const cachedOcr = reportId ? rapidOcrCacheRef.current.get(reportId) : undefined;
-      if (cachedOcr && reportId) {
-        ocrAttemptedReportIdsRef.current.add(reportId);
-        setIdentityDraft((current) =>
-          mergeAiGraderOcrPrefillIntoIdentityDraft({
-            current,
-            result: cachedOcr,
-            operatorEditedFields: identityEditedFieldsRef.current,
-          }).draft
-        );
-        setOcrPrefillState({
-          status: "ready",
-          reportId,
-          result: cachedOcr,
-          message: "Background OCR suggestions loaded. Review every field before Confirm Card.",
-        });
-        setStatus((current) =>
-          current.reportBundle?.reportId === reportId
-            ? {
-                ...current,
-                reportBundle: {
-                  ...current.reportBundle,
-                  ocrPrefill: aiGraderOcrPrefillReportMetadata(cachedOcr),
-                },
-              }
-            : current
-        );
-      }
       setStationCaptureProfile(next.captureProfile);
       setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Rapid capture item could not be opened for review.");
+      setError(requestError instanceof Error ? requestError.message : "Rapid Capture report could not be opened.");
     } finally {
       setBusy(null);
     }
   };
-
-  startGradingRef.current = startGrading;
-  confirmFlipAndContinueRef.current = confirmFlipAndContinue;
-
-  useEffect(() => {
-    const eligible =
-      autoCaptureEnabled &&
-      bridgeConnected &&
-      Boolean(activeAutoCaptureSide) &&
-      previewStatus.status === "live" &&
-      busy === null &&
-      !warmRunner.captureLock.held &&
-      !hardwareSafetyBlocked &&
-      (activeAutoCaptureSide !== 'front' || canStartGrading);
-    const decision = advanceAiGraderAutoCapture({
-      previous: autoCaptureMachineRef.current,
-      enabled: eligible,
-      sessionId: autoCaptureSessionId,
-      side: activeAutoCaptureSide ?? "front",
-      geometry: eligible ? autoCaptureGeometry : undefined,
-      nowMs: Date.now(),
-    });
-    autoCaptureMachineRef.current = decision.state;
-    setAutoCaptureUi((current) => {
-      const next = {
-        phase: decision.phase,
-        side: activeAutoCaptureSide ?? undefined,
-        readyStableMs: decision.readyStableMs,
-      };
-      return current.phase === next.phase && current.side === next.side && current.readyStableMs === next.readyStableMs ? current : next;
-    });
-    if (!decision.shouldTrigger || !activeAutoCaptureSide) return;
-    if (activeAutoCaptureSide === "front") void startGradingRef.current?.("auto");
-    else void confirmFlipAndContinueRef.current?.("auto");
-  }, [
-    activeAutoCaptureSide,
-    autoCaptureEnabled,
-    autoCaptureGeometry,
-    autoCaptureSessionId,
-    bridgeConnected,
-    busy,
-    canStartGrading,
-    hardwareSafetyBlocked,
-    previewStatus.status,
-    warmRunner.captureLock.held,
-  ]);
-
   const productionReleaseBody = () => ({
     operatorId: "local-browser-operator",
     warningsAccepted: true,
@@ -3434,7 +2155,10 @@ export default function AiGraderStationPage() {
     return next;
   };
 
-  const buildReportBundleForProduction = (baseBundle: AiGraderReportBundle | undefined = status.reportBundle) => {
+  const buildReportBundleForProduction = (
+    baseBundle: AiGraderReportBundle | undefined = status.reportBundle,
+    cardSelection: CardSelectionState | null = selectedCard,
+  ) => {
     if (!baseBundle) return null;
     const bundleWithOcrPrefill =
       ocrPrefillState.result?.reportId === baseBundle.reportId
@@ -3443,12 +2167,22 @@ export default function AiGraderStationPage() {
             ocrPrefill: aiGraderOcrPrefillReportMetadata(ocrPrefillState.result),
           }
         : baseBundle;
-    if (!selectedCardIdentity) return bundleWithOcrPrefill;
+    const cardIdentity = cardSelection
+      ? {
+          cardAssetId: cardSelection.cardAssetId,
+          itemId: cardSelection.itemId,
+          title: cardSelection.title ?? cardSelection.displayTitle,
+          set: cardSelection.set,
+          cardNumber: cardSelection.cardNumber,
+          source: cardSelection.source,
+        }
+      : null;
+    if (!cardIdentity) return bundleWithOcrPrefill;
     return {
       ...bundleWithOcrPrefill,
       cardIdentity: {
         ...bundleWithOcrPrefill.cardIdentity,
-        ...selectedCardIdentity,
+        ...cardIdentity,
         sideCount: 2 as const,
         futureSlabbedPhotoRefsReserved: true as const,
         futureEbayCompsRefsReserved: true as const,
@@ -3560,7 +2294,7 @@ export default function AiGraderStationPage() {
       });
   };
 
-  const createCardFromConfirmedIdentity = async () => {
+  const createCardFromConfirmedIdentity = async (options: { manageBusy?: boolean } = {}) => {
     setError(null);
     let authHeaders: Record<string, string>;
     try {
@@ -3569,9 +2303,9 @@ export default function AiGraderStationPage() {
       const message = requestError instanceof Error ? requestError.message : "Ten Kings sign-in is required before card creation.";
       setIdentityStatus({ status: "failed", message });
       setError(message);
-      return;
+      throw requestError;
     }
-    setBusy("create-card-from-report");
+    if (options.manageBusy !== false) setBusy("create-card-from-report");
     setIdentityStatus({ status: "pending", message: "Creating Ten Kings CardAsset and Item from confirmed AI Grader identity." });
     try {
       const resolvedPackage = await resolveAiGraderAuthoritativeProductionPackage({
@@ -3719,6 +2453,7 @@ export default function AiGraderStationPage() {
           headers: authHeaders,
         });
       }
+      return nextCard;
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Card creation failed.";
       setIdentityStatus({
@@ -3726,8 +2461,9 @@ export default function AiGraderStationPage() {
         message,
       });
       setError(message);
+      throw requestError;
     } finally {
-      setBusy(null);
+      if (options.manageBusy !== false) setBusy(null);
     }
   };
 
@@ -3798,8 +2534,11 @@ export default function AiGraderStationPage() {
     throw new Error(formatAiGraderPublishStageError({ stage: "public-report-verification", error: new Error(lastMessage) }));
   };
 
-  const publishToTenKingsSystem = async () => {
-    setBusy("ten-kings-publish");
+  const publishToTenKingsSystem = async (
+    cardSelection: CardSelectionState | null = selectedCard,
+    options: { manageBusy?: boolean } = {},
+  ) => {
+    if (options.manageBusy !== false) setBusy("ten-kings-publish");
     setError(null);
     setProductionPublish((current) => ({ ...current, status: "pending", message: "Preparing canonical local publish package." }));
     try {
@@ -3818,7 +2557,7 @@ export default function AiGraderStationPage() {
         explicitlyFinalize: prepareLocalProductionRelease,
       });
       const { latestStatus, reportId, sourceBundle, productionRelease } = resolvedPackage;
-      const reportBundleWithIdentity = buildReportBundleForProduction(sourceBundle);
+      const reportBundleWithIdentity = buildReportBundleForProduction(sourceBundle, cardSelection);
       const readiness = buildAiGraderPublishReadiness({
         bundle: reportBundleWithIdentity,
         productionRelease,
@@ -3838,7 +2577,7 @@ export default function AiGraderStationPage() {
         throw new Error("Publish package is missing storage-ready image asset metadata with SHA-256 checksums and byte sizes.");
       }
       const sanitizedBundle = sanitizeReportBundleForProduction(reportBundleWithIdentity);
-      const sanitizedRelease = sanitizeProductionReleaseForProduction(productionRelease, sanitizedBundle, selectedCard);
+      const sanitizedRelease = sanitizeProductionReleaseForProduction(productionRelease, sanitizedBundle, cardSelection);
       setProductionPublish((current) => ({ ...current, status: "pending", message: "Initializing publish and requesting direct storage upload URLs." }));
       let initResponse: Response;
       try {
@@ -3860,8 +2599,8 @@ export default function AiGraderStationPage() {
                 byteSize: asset.byteSize,
               })),
             },
-            cardAssetId: selectedCard?.cardAssetId ?? sanitizedBundle.cardIdentity.cardAssetId,
-            itemId: selectedCard?.itemId ?? sanitizedBundle.cardIdentity.itemId,
+            cardAssetId: cardSelection?.cardAssetId ?? sanitizedBundle.cardIdentity.cardAssetId,
+            itemId: cardSelection?.itemId ?? sanitizedBundle.cardIdentity.itemId,
           }),
         });
       } catch (error) {
@@ -4012,8 +2751,8 @@ export default function AiGraderStationPage() {
             reportBundle: sanitizedBundle,
             productionRelease: sanitizedRelease,
             uploadManifest: { artifacts: uploadedArtifacts },
-            cardAssetId: selectedCard?.cardAssetId ?? sanitizedBundle.cardIdentity.cardAssetId,
-            itemId: selectedCard?.itemId ?? sanitizedBundle.cardIdentity.itemId,
+            cardAssetId: cardSelection?.cardAssetId ?? sanitizedBundle.cardIdentity.cardAssetId,
+            itemId: cardSelection?.itemId ?? sanitizedBundle.cardIdentity.itemId,
           }),
         });
       } catch (error) {
@@ -4067,19 +2806,11 @@ export default function AiGraderStationPage() {
           capacity: typeof publishedLabelSheet.capacity === "number" ? publishedLabelSheet.capacity : 16,
         },
       }));
-      const activeRapidQueueItem = latestStatus.rapidCaptureQueue.items.find(
-        (item) => item.queueItemId === latestStatus.rapidCaptureQueue.activeQueueItemId && item.reportId === publishedReportId
+      const activeRapidQueueItem = status.rapidCaptureQueue.items.find(
+        (item) => item.queueItemId === status.rapidCaptureQueue.activeQueueItemId && item.reportId === publishedReportId,
       );
       if (activeRapidQueueItem && bridgeConnected && stationToken.trim()) {
-        try {
-          await runAction("publish-report", productionReleaseBody());
-        } catch (queueError) {
-          setError(
-            `Production publish succeeded, but the local rapid queue could not be marked published: ${
-              queueError instanceof Error ? queueError.message : "local queue update failed"
-            }`
-          );
-        }
+        await runAction("publish-report", productionReleaseBody());
       }
       await refreshHistory();
       await refreshFinishQueue(publishedReportId).catch(() => undefined);
@@ -4088,6 +2819,26 @@ export default function AiGraderStationPage() {
         status: "error",
         message: requestError instanceof Error ? requestError.message : "Ten Kings publish failed.",
       });
+      throw requestError;
+    } finally {
+      if (options.manageBusy !== false) setBusy(null);
+    }
+  };
+
+  const approveAndPublish = async () => {
+    setBusy("approve-and-publish");
+    setError(null);
+    try {
+      const cardSelection = linkedCardReady
+        ? selectedCard
+        : await createCardFromConfirmedIdentity({ manageBusy: false });
+      if (!cardSelection?.cardAssetId || !cardSelection.itemId) {
+        throw new Error("Approve & Publish requires one exact CardAsset and Item linkage.");
+      }
+      await publishToTenKingsSystem(cardSelection, { manageBusy: false });
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Approve & Publish failed.";
+      setError(message);
     } finally {
       setBusy(null);
     }
@@ -4370,32 +3121,6 @@ export default function AiGraderStationPage() {
       setInventoryState({
         status: "failed",
         message: requestError instanceof Error ? requestError.message : "Add To Inventory failed.",
-      });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const safeOff = async () => {
-    if (liveLightingRequestPendingRef.current) {
-      setError((current) => preserveAiGraderPrimaryWorkflowError(
-        current,
-        'Wait for the pending lighting controller request before Safe Off recovery.',
-      ));
-      return;
-    }
-    setBusy("safe-off");
-    try {
-      const next = await runAction('safe-off');
-      const lighting = next.liveLighting;
-      if (!lightingSafeOffCompletelyAcknowledged(lighting)) {
-        throw new Error('The lighting controller did not completely acknowledge physical safe-off.');
-      }
-      setSafetyError(null);
-    } catch (requestError) {
-      await reconcileLightingMutationFailure(requestError, 'Station Safe Off', {
-        preservePrimary: false,
-        requireSafeOff: true,
       });
     } finally {
       setBusy(null);
@@ -5035,7 +3760,7 @@ export default function AiGraderStationPage() {
             )}
             <div className="report-overlay-stage" style={reportOverlayStageStyle} aria-hidden="true">
               <svg
-                className={`report-framing-overlay${detectedGeometryDominant ? " geometry-dominant" : ""}${manualCaptureConfirmation ? " manual-active" : ""}`}
+                className={`report-framing-overlay${detectedGeometryDominant ? " geometry-dominant" : ""}`}
                 viewBox={`0 0 ${reportOverlayFrameSize.width} ${reportOverlayFrameSize.height}`}
                 focusable="false"
               >
@@ -5185,70 +3910,21 @@ export default function AiGraderStationPage() {
                     ? "Flip the card and use the fresh back edge outline as the placement guide."
                     : "The previous front image and Ready state were cleared. Waiting for the first fresh back frame."}
                 </p>
-                {liveLighting.backPositioning?.status === "failed" || backPositioningRetry.status === "error" ? (
-                  <p className="status-note failed">
-                    {backPositioningRetry.message ?? liveLighting.backPositioning?.lastError?.message ?? "Positioning light restore failed safely."}
-                  </p>
-                ) : backPositioningRetry.message ? (
-                  <p className="status-note">{backPositioningRetry.message}</p>
-                ) : null}
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => void retryBackPositioningLight()}
-                  disabled={
-                    busy !== null ||
-                    backPositioningRetry.status === "retrying" ||
-                    backPositioningRetryReady ||
-                    status.warmRunnerStatus.captureLock.held ||
-                    hardwareSafetyBlocked ||
-                    Boolean(status.rapidCaptureQueue.activeQueueItemId)
-                  }
-                >
-                  {backPositioningRetry.status === "retrying" ? "Retrying Positioning Light" : "Retry Positioning Light"}
-                </button>
                 <p id="back-geometry-guidance" className={`geometry-action-status ${cardPlacementState}`}>
                   {cardPlacementGuidance}
                 </p>
                 <button
                   type="button"
-                  onClick={() => void confirmFlipAndContinue("operator")}
+                  onClick={() => void captureBackAndContinue()}
                   aria-describedby="back-geometry-guidance"
-                  disabled={busy !== null || hardwareSafetyBlocked || Boolean(status.captureFailure) || previewGeometrySide !== "back" || !detectedGeometryReady}
+                  disabled={busy !== null || Boolean(status.captureFailure) || previewGeometrySide !== "back" || !detectedGeometryReady}
                 >
                   {busy === "capture-back" ? "Capturing Back" : "Capture Back"}
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => setManualCaptureConfirmation({ side: "back" })}
-                  disabled={busy !== null || hardwareSafetyBlocked || previewGeometrySide !== "back" || !manualOverlayAvailable}
-                >
-                  Use Manual Overlay
                 </button>
               </div>
             </div>
           ) : null}
 
-          {manualCaptureConfirmation ? (
-            <div className="manual-capture-scrim" role="dialog" aria-modal="true" aria-labelledby="manual-capture-title">
-              <div>
-                <p className="eyebrow">Explicit Manual Capture</p>
-                <h2 id="manual-capture-title">Use Fixed Overlay for {manualCaptureConfirmation.side === "front" ? "Front" : "Back"}?</h2>
-                <p>
-                  {manualCaptureConfirmation.side === "back"
-                    ? "Automatic geometry will not be claimed. The browser sends only the displayed session, back side, epoch, frame, and manual-mode assertions. The local bridge snapshots authoritative frame dimensions and records the explicit manual decision; no browser rectangle is sent. Raw forensic images remain unchanged."
-                    : "Automatic geometry will not be claimed. The browser sends only the displayed session, front side, epoch, frame, and manual-mode assertions. The local bridge snapshots authoritative frame dimensions and records the explicit manual decision; no browser rectangle is sent. Raw forensic images remain unchanged."}
-                </p>
-                <div className="action-row">
-                  <button type="button" onClick={() => setManualCaptureConfirmation(null)} disabled={busy !== null}>Cancel</button>
-                  <button type="button" className="primary" onClick={() => void confirmManualOverlayCapture()} disabled={busy !== null || hardwareSafetyBlocked || !manualOverlayAvailable}>
-                    Confirm Manual Capture
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
 
           {localReport.open ? (
             <section className="local-report" aria-label="Local AI Grader report viewer">
@@ -5431,11 +4107,6 @@ export default function AiGraderStationPage() {
           <section className="next-card">
             <p className="eyebrow">Current Step</p>
             <h2>{activePipelineStep.label}</h2>
-            {hardwareSafetyMessage ? (
-              <div className='error safety-error' role='alert'>
-                Hardware safety interlock: {hardwareSafetyMessage} Use the explicit Safe Off recovery before continuing.
-              </div>
-            ) : null}
             <p>{activePipelineStep.action}</p>
             <ol className="pipeline-steps">
               {gradePipelineSteps.map((step) => (
@@ -5445,122 +4116,77 @@ export default function AiGraderStationPage() {
                 </li>
               ))}
             </ol>
-            <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null || hardwareSafetyBlocked}>
+            <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
               {busy === "start" ? "Starting" : "Start New Card"}
             </button>
             <button
               type="button"
               className="start-grading"
-              onClick={() => void startGrading("operator")}
+              onClick={() => void startGrading()}
               aria-describedby="front-geometry-guidance"
               disabled={busy !== null || !canStartGrading || previewGeometrySide !== "front" || !detectedGeometryReady}
             >
-              {busy === "start-grading" ? "Working" : "Start Grading"}
+              {busy === "start-grading" ? "Capturing Front" : "Capture Front"}
             </button>
             <p id="front-geometry-guidance" className={`geometry-action-status ${detectedGeometryReady ? "ready" : cardPlacementState}`}>
               {frontStartGuidance}
             </p>
-            <button
-              type="button"
-              className="secondary manual-capture-button"
-              onClick={() => setManualCaptureConfirmation({ side: "front" })}
-              disabled={busy !== null || !canStartGrading || previewGeometrySide !== "front" || !manualOverlayAvailable}
-            >
-              Use Manual Overlay
-            </button>
           </section>
 
           <section className="capture-settings">
             <div className="capture-settings-head">
               <div>
-                <p className="eyebrow">Capture Settings</p>
+                <p className="eyebrow">Capture Pipeline</p>
                 <h3>{stationCaptureMode === "rapid" ? "Rapid Capture" : "Single Card"}</h3>
               </div>
-              <strong>{formatStationValue(stationCaptureProfile)}</strong>
+              <strong>Full Forensic / Detected Geometry</strong>
             </div>
-            <div className="capture-settings-grid">
-              <label>
-                Flow
-                <select
-                  value={stationCaptureMode}
-                  onChange={(event) => void changeStationCaptureMode(event.target.value as StationCaptureMode)}
-                  disabled={!bridgeConnected || busy !== null || stationSettingsLocked || hardwareSafetyBlocked}
-                >
-                  <option value="single">Single</option>
-                  <option value="rapid">Rapid</option>
-                </select>
-              </label>
-              <label>
-                Profile
-                <select
-                  value={stationCaptureProfile}
-                  onChange={(event) => void changeStationCaptureProfile(event.target.value as AiGraderCaptureProfile)}
-                  disabled={!bridgeConnected || busy !== null || stationSettingsLocked || hardwareSafetyBlocked}
-                >
-                  <option value="full_forensic">Full Forensic</option>
-                  <option value="production_fast">Production Fast</option>
-                </select>
-              </label>
-            </div>
-            <label className="capture-auto-toggle">
-              <input
-                type="checkbox"
-                checked={autoCaptureEnabled}
-                onChange={(event) => void changeAutoCaptureEnabled(event.target.checked)}
-                disabled={!bridgeConnected || busy !== null || hardwareSafetyBlocked}
-              />
-              Auto Capture
-              <span>{autoCapturePhaseLabel(autoCaptureUi)}</span>
+            <label>
+              Throughput flow
+              <select
+                value={stationCaptureMode}
+                onChange={(event) => void changeStationCaptureMode(event.target.value as StationCaptureMode)}
+                disabled={!bridgeConnected || busy !== null || stationSettingsLocked}
+              >
+                <option value="single">Single card</option>
+                <option value="rapid">Rapid Capture queue</option>
+              </select>
             </label>
-            <small>Auto Capture still requires the separate exact-session Confirm Fixture &amp; Rulers action and authoritative Front readiness.</small>
-            <p>
-              Full Forensic is the previous stable profile. Production Fast is an explicit opt-in and preserves all grading roles; 5 seconds per side is not proven without a Dell hardware run.
-            </p>
-            {autoCaptureEnabled ? <small>Remove the prior card, then hold detected Ready through 3 fresh frames and 800 ms. Manual capture always requires the separate confirmation above.</small> : null}
+            <p>Capture Front and Capture Back remain explicit operator actions. Rapid Capture queues the completed card for one serialized background report worker; it does not add automatic or alternate capture.</p>
           </section>
 
           {stationCaptureMode === "rapid" || rapidQueueItems.length ? (
             <section className="rapid-queue">
               <div className="rapid-queue-head">
                 <div>
-                  <p className="eyebrow">Recent Captures</p>
-                  <h3>{rapidQueueItems.length ? `${rapidQueueItems.length} queued` : "Queue Empty"}</h3>
+                  <p className="eyebrow">Rapid Capture Queue</p>
+                  <h3>{rapidQueueItems.length ? `${rapidQueueItems.length} recent card(s)` : "Queue Empty"}</h3>
                 </div>
                 <strong>{rapidQueueHasProcessing ? "Processing" : "Ready"}</strong>
               </div>
               <div className="rapid-queue-list">
-                {rapidQueueItems.length ? (
-                  rapidQueueItems.map((item) => {
-                    const reviewable = RAPID_REVIEWABLE_STATES.has(item.state);
-                    const active = item.queueItemId === status.rapidCaptureQueue.activeQueueItemId;
-                    const ocrStatus = rapidOcrPrefetchStatus[item.reportId];
-                    return (
-                      <article key={item.queueItemId} className={active ? "active" : ""}>
-                        <div>
-                          <strong>{formatStationValue(item.state)}</strong>
-                          <small>{item.reportId}</small>
-                          <span>
-                            OCR {ocrStatus?.status ?? (item.state === "report_ready_needs_confirm" ? "queued" : "waiting")}
-                            {ocrStatus?.status === "ready" ? ` / review ${ocrStatus.reviewCount ?? 0}` : ""}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void activateRapidQueueItem(item.queueItemId)}
-                          disabled={!reviewable || active || busy !== null || status.sessionManifest.frontCaptured || status.sessionManifest.backCaptured}
-                        >
-                          {active ? "Active" : reviewable ? "Activate / Review" : "Processing"}
-                        </button>
-                      </article>
-                    );
-                  })
-                ) : (
-                  <p>Captured cards appear here after both raw sides are safely queued.</p>
-                )}
+                {rapidQueueItems.length ? rapidQueueItems.map((item) => {
+                  const reviewable = RAPID_REVIEWABLE_STATES.has(item.state);
+                  const active = item.queueItemId === status.rapidCaptureQueue.activeQueueItemId;
+                  return (
+                    <article key={item.queueItemId} className={active ? "active" : ""}>
+                      <div>
+                        <strong>{formatStationValue(item.state === "report_ready_needs_confirm" ? "ready for Approve & Publish" : item.state)}</strong>
+                        <small>{item.reportId}</small>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void activateRapidQueueItem(item.queueItemId)}
+                        disabled={!reviewable || active || busy !== null || status.sessionManifest.frontCaptured || status.sessionManifest.backCaptured}
+                      >
+                        {active ? "Active" : reviewable ? "Open for Approve & Publish" : "Processing"}
+                      </button>
+                    </article>
+                  );
+                }) : <p>Capture Back queues each completed card here while the next card can begin.</p>}
               </div>
             </section>
           ) : null}
-
           <section className={productionSignedIn ? "production-auth signed-in" : "production-auth"}>
             <div>
               <p className="eyebrow">Production Sign-In</p>
@@ -5584,21 +4210,17 @@ export default function AiGraderStationPage() {
               </div>
               <button
                 type="button"
-                className={liveLightingDraft.enabled ? "toggle active" : "toggle"}
-                onClick={() => setLiveLightingEnabled(!liveLightingDraft.enabled)}
-                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || hardwareSafetyBlocked}
+                className={liveLightingPositioningVerified ? "toggle active" : "toggle"}
+                onClick={() => setLiveLightingEnabled(!liveLightingPositioningVerified)}
+                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
               >
-                {liveLightingDraft.enabled ? "Live" : "Off"}
+                {liveLightingPositioningVerified ? "Live" : "Off"}
               </button>
             </div>
             <div className="lighting-status-grid">
               <div>
                 <span>Applied</span>
                 <strong>{liveLightingAppliedLabel}</strong>
-              </div>
-              <div>
-                <span>Safe Off</span>
-                <strong>{liveLightingSafeOffLabel}</strong>
               </div>
               <div>
                 <span>Capture Profile</span>
@@ -5616,7 +4238,7 @@ export default function AiGraderStationPage() {
                   key={channel}
                   className={liveLightingDraft.channels.includes(channel) ? `segment segment-${channel} active` : `segment segment-${channel}`}
                   onClick={() => toggleLiveLightingChannel(channel)}
-                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || hardwareSafetyBlocked}
+                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
                   aria-label={`Toggle Leimac channel ${channel}`}
                   title={`Channel ${channel}`}
                 >
@@ -5625,10 +4247,10 @@ export default function AiGraderStationPage() {
               ))}
             </div>
             <div className="mini-actions">
-              <button type="button" onClick={() => setAllLiveLightingChannels([1, 2, 3, 4, 5, 6, 7, 8])} disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || hardwareSafetyBlocked}>
+              <button type="button" onClick={() => setAllLiveLightingChannels([1, 2, 3, 4, 5, 6, 7, 8])} disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}>
                 All On
               </button>
-              <button type="button" onClick={() => setAllLiveLightingChannels([])} disabled={!bridgeConnected || busy !== null || hardwareSafetyBlocked}>
+              <button type="button" onClick={() => setAllLiveLightingChannels([])} disabled={!bridgeConnected || busy !== null || liveLightingRequestPending}>
                 All Off
               </button>
             </div>
@@ -5637,11 +4259,11 @@ export default function AiGraderStationPage() {
               <input
                 type="range"
                 min="0"
-                max="5"
+              max="99.9"
                 step="0.1"
                 value={liveLightingDraft.dutyPercent}
                 onChange={(event) => setLiveLightingDuty(Number(event.target.value))}
-                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || hardwareSafetyBlocked}
+                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
               />
             </label>
             <div className="lighting-inputs">
@@ -5650,11 +4272,11 @@ export default function AiGraderStationPage() {
                 <input
                   type="number"
                   min="0"
-                  max="5"
+                  max="99.9"
                   step="0.1"
                   value={liveLightingDraft.dutyPercent}
                   onChange={(event) => setLiveLightingDuty(Number(event.target.value))}
-                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || hardwareSafetyBlocked}
+                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
                 />
               </label>
               <label>
@@ -5670,38 +4292,13 @@ export default function AiGraderStationPage() {
                 />
               </label>
             </div>
-            <button
-              type="button"
-              className="accept-lighting"
-              onClick={acceptLiveLightingProfile}
-              disabled={!bridgeConnected || busy !== null || hardwareSafetyBlocked ||
-                !liveLightingPositioningVerified || frontAcceptedProfileCurrent}
-            >
-              {busy === "lighting-accept"
-                ? "Accepting"
-                : frontAcceptedProfileCurrent
-                  ? "Profile Accepted"
-                  : "Use This Profile For Capture"}
-            </button>
-            <button
-              type='button'
-              className='confirm-fixture-rulers'
-              onClick={confirmFrontFixtureAndRulers}
-              disabled={!bridgeConnected || busy !== null || hardwareSafetyBlocked || frontFixtureRulersCurrent}
-            >
-              {busy === 'confirm-fixture-rulers'
-                ? 'Confirming'
-                : frontFixtureRulersCurrent
-                  ? 'Fixture & Rulers Confirmed'
-                  : 'Confirm Fixture & Rulers'}
-            </button>
-            <p className='status-note'>{frontStartReadiness.message}</p>
+            <p className='status-note'>Every lighting change is bounded and accepted only after exact controller acknowledgement.</p>
             {liveLighting.lastError ? <p className="status-note">{liveLighting.lastError}</p> : null}
           </section>
 
           <section className="card-linkage">
-            <p className="eyebrow">Confirm Card</p>
-            <h3>{selectedCard?.displayTitle ?? "Create From AI Grader"}</h3>
+            <p className="eyebrow">Card Identity</p>
+            <h3>{selectedCard?.displayTitle ?? "Review before Approve & Publish"}</h3>
             <p className={identityStatus.status === "failed" ? "step-message failed" : "step-message"}>
               {identityStatus.status === "idle" ? selectedCard?.subtitle ?? cardSearchMessage : identityStatus.message}
             </p>
@@ -5731,7 +4328,7 @@ export default function AiGraderStationPage() {
                         <span className="review">Review {ocrPrefillState.result.reviewFieldNames.length}</span>
                       ) : null}
                     </div>
-                    <small>Human Confirm Card and Publish actions are still required.</small>
+                    <small>The single Approve & Publish action remains the human authority.</small>
                   </>
                 ) : null}
                 {ocrPrefillState.status === "failed" ? (
@@ -5807,17 +4404,8 @@ export default function AiGraderStationPage() {
               <label><input type="checkbox" checked={identityDraft.autograph} onChange={(event) => updateIdentityDraft("autograph", event.target.checked)} /> Auto</label>
               <label><input type="checkbox" checked={identityDraft.memorabilia} onChange={(event) => updateIdentityDraft("memorabilia", event.target.checked)} /> Mem</label>
             </div>
-            <button type="button" className="primary" onClick={createCardFromConfirmedIdentity} disabled={!canCreateCardFromReport || busy !== null}>
-              {busy === "create-card-from-report"
-                ? "Creating Card"
-                : linkedCardReady
-                  ? "Card Created"
-                  : productionSignedIn
-                    ? "Confirm + Create Card"
-                    : "Sign In + Create Card"}
-            </button>
-            {!linkedCardReady && createCardBlockers.length ? <p className="status-note">Required before create: {createCardBlockers.join(", ")}.</p> : null}
-            {!productionSignedIn && !linkedCardReady ? <p className="status-note">Production sign-in is required before the CardAsset/Item can be created.</p> : null}
+            {!linkedCardReady && createCardBlockers.length ? <p className="status-note">Required before Approve & Publish: {createCardBlockers.join(", ")}.</p> : null}
+            {!productionSignedIn && !linkedCardReady ? <p className="status-note">Production sign-in is required before Approve & Publish.</p> : null}
             {linkedCardReady ? <p className="status-note">CardAsset {selectedCard?.cardAssetId} / Item {selectedCard?.itemId}</p> : null}
             {confirmedDownstream.reportId ? (
               <div className="confirmed-downstream">
@@ -5886,10 +4474,6 @@ export default function AiGraderStationPage() {
               <strong>{finalReady ? "Computed" : "Pending"}</strong>
             </div>
             <div>
-              <span>Safe Off</span>
-              <strong>{liveLightingSafeOffLabel}</strong>
-            </div>
-            <div>
               <span>Bridge</span>
               <strong>{status.mode}</strong>
             </div>
@@ -5910,19 +4494,15 @@ export default function AiGraderStationPage() {
             <div className="warm-grid">
               <div>
                 <span>Execution Path</span>
-                <strong>{warmRunner.executionPath === "cold_command_fallback" ? "Explicit Cold Debug" : "Warm Runner"}</strong>
-              </div>
-              <div>
-                <span>Cold Debug Mode</span>
-                <strong>{warmRunner.explicitColdDebugModeUsed || warmRunner.coldDebugMode.active ? "Explicitly Enabled" : "Off"}</strong>
+                <strong>Warm Runner</strong>
               </div>
               <div>
                 <span>Front Geometry</span>
-                <strong>{status.geometryCaptureDecisions.front?.mode === "manual_capture" ? "Manual Override" : status.geometryCaptureDecisions.front?.mode === "detected_geometry" ? "Detected" : "Pending"}</strong>
+                <strong>{status.geometryCaptureDecisions.front?.mode === "detected_geometry" ? "Detected" : "Pending"}</strong>
               </div>
               <div>
                 <span>Back Geometry</span>
-                <strong>{status.geometryCaptureDecisions.back?.mode === "manual_capture" ? "Manual Override" : status.geometryCaptureDecisions.back?.mode === "detected_geometry" ? "Detected" : "Pending"}</strong>
+                <strong>{status.geometryCaptureDecisions.back?.mode === "detected_geometry" ? "Detected" : "Pending"}</strong>
               </div>
               <div>
                 <span>Capture Lock</span>
@@ -5945,12 +4525,9 @@ export default function AiGraderStationPage() {
                 <strong>{formatMs(warmRunner.timing.targetTotalMinMs)}-{formatMs(warmRunner.timing.targetTotalMaxMs)}</strong>
               </div>
             </div>
-            {(warmRunner.explicitColdDebugModeUsed || warmRunner.coldDebugMode.active) && (
-              <p className="status-note">{warmRunner.explicitColdDebugReason ?? warmRunner.coldDebugMode.reason ?? "Explicit cold debug mode was configured before capture; this run does not count for speed acceptance."}</p>
-            )}
             {status.captureFailure ? (
               <p className="status-note failed">
-                {status.captureFailure.side} warm {status.captureFailure.stage === "warm_processing" ? "processing" : "capture"} failed: {status.captureFailure.message} This capture session is terminal; select Start New Card to retry. No automatic cold capture was attempted.
+                {status.captureFailure.side} warm {status.captureFailure.stage === "warm_processing" ? "processing" : "capture"} failed: {status.captureFailure.message} The bridge ran fatal cleanup; select Start New Card for a clean card session.
               </p>
             ) : null}
             <div className="evidence-side">
@@ -5996,14 +4573,14 @@ export default function AiGraderStationPage() {
 
           <section className="operator-workflow">
             <p className="eyebrow">Operator Workflow</p>
-            <h3>{productionPublish.status === "published" ? "Published Outputs Ready" : "Review and Publish"}</h3>
+            <h3>{productionPublish.status === "published" ? "Published Outputs Ready" : "Approve & Publish"}</h3>
             <p>{publishReadiness.message}</p>
             <div className="action-row">
               <button type="button" onClick={() => void openReport()} disabled={!reportReady || busy !== null}>
                 {busy === "open-report" ? "Opening Report" : "Review Report"}
               </button>
-              <button type="button" className="primary" onClick={publishToTenKingsSystem} disabled={!canPublishToTenKings || busy !== null}>
-                {busy === "ten-kings-publish" ? "Publishing" : "Publish to Ten Kings"}
+              <button type="button" className="primary" onClick={() => void approveAndPublish()} disabled={!canApproveAndPublish || busy !== null}>
+                {busy === "approve-and-publish" ? "Approving & Publishing" : "Approve & Publish"}
               </button>
               {productionPublish.status === "published" && publicReportUrl ? (
                 <a href={publicReportUrl} target="_blank" rel="noreferrer">View Public Report</a>
@@ -6011,7 +4588,7 @@ export default function AiGraderStationPage() {
               {productionPublished ? <Link href="/ai-grader/labels/sheets">Open Label Sheets</Link> : null}
               {productionPublished ? (
                 <>
-                  <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null || hardwareSafetyBlocked}>
+                  <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
                     {busy === "start" ? "Starting" : "Start Next Grade"}
                   </button>
                   <Link href="/ai-grader/finish">Finish Cards</Link>
@@ -6021,7 +4598,7 @@ export default function AiGraderStationPage() {
                 Card History Reports
               </button>
             </div>
-            {!canPublishToTenKings && productionPublish.status !== "published" ? (
+            {!canApproveAndPublish && productionPublish.status !== "published" ? (
               <div className="readiness-warning">
                 <strong>Publish not ready</strong>
                 <p>{publishReadiness.message}</p>
@@ -6082,10 +4659,6 @@ export default function AiGraderStationPage() {
             <p>Finish queue: {productionPublished ? "available for slab photos and eBay evaluate" : "available after publish"}</p>
           </section>
 
-          <button type="button" className="safe" onClick={safeOff} disabled={!safeOffRecoveryAllowed}>
-            {busy === "safe-off" ? "Safe Off Running" : "Safe Off / End Session"}
-          </button>
-
           <section className="paths">
             <p>Station URL: http://127.0.0.1:3020/ai-grader/station</p>
             <p>Bridge: {bridgeUrl}</p>
@@ -6118,8 +4691,6 @@ export default function AiGraderStationPage() {
               <dd>{formatMs(captureTimingSummary.totalCardMs)}</dd>
               <dt>Report-ready total</dt>
               <dd>{formatMs(captureTimingSummary.reportReadyTotalMs)}</dd>
-              <dt>Safe queue latency</dt>
-              <dd>{formatMs(captureTimingSummary.safeQueueLatencyMs)}</dd>
               <dt>Front during flip</dt>
               <dd>
                 {formatMs(captureTimingSummary.frontProcessingDuringFlipMs)}
@@ -6500,14 +5071,6 @@ export default function AiGraderStationPage() {
           stroke-width: 3;
           stroke-dasharray: 14 18;
         }
-        .report-framing-overlay.manual-active {
-          opacity: 0.94;
-          filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.72));
-        }
-        .report-framing-overlay.manual-active .report-overlay-centerline,
-        .report-framing-overlay.manual-active .report-overlay-roi {
-          opacity: 1;
-        }
         .card-geometry-overlay {
           position: absolute;
           inset: 0;
@@ -6644,8 +5207,7 @@ export default function AiGraderStationPage() {
           line-height: 1.5;
         }
         .connect-scrim,
-        .flip-scrim,
-        .manual-capture-scrim {
+        .flip-scrim {
           position: absolute;
           inset: 0;
           display: grid;
@@ -6656,8 +5218,7 @@ export default function AiGraderStationPage() {
           z-index: 5;
         }
         .connect-scrim > div,
-        .flip-scrim > div,
-        .manual-capture-scrim > div {
+        .flip-scrim > div {
           width: min(520px, 92vw);
           border: 1px solid rgba(238, 211, 146, 0.32);
           background: rgba(14, 15, 13, 0.92);
@@ -6674,14 +5235,6 @@ export default function AiGraderStationPage() {
         .flip-scrim > div {
           width: min(430px, 92vw);
           pointer-events: auto;
-        }
-        .manual-capture-scrim {
-          z-index: 7;
-        }
-        .manual-capture-scrim p {
-          margin-top: 10px;
-          color: #cfc7b8;
-          line-height: 1.5;
         }
         h1,
         h2,
@@ -6751,10 +5304,6 @@ export default function AiGraderStationPage() {
           background: #5bff9d;
           color: #06100a;
           box-shadow: 0 0 36px rgba(91, 255, 157, 0.22);
-        }
-        .manual-capture-button {
-          width: 100%;
-          margin-top: 10px;
         }
         .connect-scrim .link-button {
           border-color: rgba(255, 255, 255, 0.18);
@@ -6897,26 +5446,6 @@ export default function AiGraderStationPage() {
         }
         .capture-settings-grid label {
           margin-top: 10px;
-        }
-        .capture-auto-toggle {
-          display: grid;
-          grid-template-columns: 18px minmax(0, 1fr) auto;
-          align-items: center;
-          gap: 7px;
-          margin-top: 11px;
-          padding: 8px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          border-radius: 8px;
-          letter-spacing: 0.04em;
-        }
-        .capture-auto-toggle input {
-          width: 16px;
-          height: 16px;
-          margin: 0;
-        }
-        .capture-auto-toggle span {
-          color: #c9a85f;
-          font-size: 9px;
         }
         .capture-settings p,
         .capture-settings small,

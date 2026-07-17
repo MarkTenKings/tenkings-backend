@@ -23,7 +23,6 @@ test("redacted AI Grader readiness reports booleans and the effective dedicated 
     serpApiConfigured: true,
     nfcSchemaReady: false,
     nfcProgrammingEnabled: false,
-    nfcFeijuF8215Enabled: false,
     nfcRequired: false,
     nfcAttemptTokenConfigured: false,
     nfcWorkstationAttestationConfigured: false,
@@ -40,7 +39,6 @@ test("redacted AI Grader readiness reports booleans and the effective dedicated 
     serpApiConfigured: false,
     nfcSchemaReady: false,
     nfcProgrammingEnabled: false,
-    nfcFeijuF8215Enabled: false,
     nfcRequired: false,
     nfcAttemptTokenConfigured: false,
     nfcWorkstationAttestationConfigured: false,
@@ -108,4 +106,48 @@ test("readiness is authenticated and remains available when writes are disabled"
   assert.equal(response.body.result.readiness.serpApiConfigured, true);
   assert.equal(response.body.result.readiness.nfcSchemaReady, true);
   assert.equal(/secret-.*sentinel/.test(JSON.stringify(response.body)), false);
+});
+
+test("Add To Inventory remains a separate authenticated downstream Finish action", async () => {
+  const calls: any[] = [];
+  const handler = createAiGraderProductionApiHandler({
+    env: { AI_GRADER_PRODUCTION_PUBLISH_ENABLED: "true", AI_GRADER_PRODUCTION_TENANT_ID: "ten-kings" },
+    async requireAdminSession() { throw new Error("not used"); },
+    async requireProductionActor(_req, action) {
+      assert.equal(action, "publish");
+      return {
+        type: "human_operator",
+        role: "operator",
+        user: { id: "operator-1", displayName: "Operator", phone: null },
+        scopes: ["publish"],
+        audit: { actorType: "human_operator", action, requestedAt: "2026-07-17T12:00:00.000Z" },
+      } as any;
+    },
+    publicUrlFor() { return "https://cdn.tenkings.test/redacted"; },
+    async persist() { throw new Error("not used"); },
+    async addToInventory(input) {
+      calls.push(input);
+      return { reportId: input.reportId, inventoryStatus: "complete" } as any;
+    },
+  });
+  const req = {
+    method: "POST",
+    query: { action: ["add-to-inventory"] },
+    headers: { "content-type": "application/json" },
+    body: { reportId: "report-finish-1" },
+  } as unknown as NextApiRequest;
+  const response: { statusCode: number; body: any } = { statusCode: 0, body: null };
+  const res = {
+    setHeader() { return this; },
+    status(code: number) { response.statusCode = code; return this; },
+    json(body: unknown) { response.body = body; return this; },
+  } as unknown as NextApiResponse;
+  await handler(req, res);
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.operation, "aiGraderAddToInventory");
+  assert.deepEqual(calls.map(({ tenantId, reportId, operatorUserId }) => ({ tenantId, reportId, operatorUserId })), [{
+    tenantId: "ten-kings",
+    reportId: "report-finish-1",
+    operatorUserId: "operator-1",
+  }]);
 });

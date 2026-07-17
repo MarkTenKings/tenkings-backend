@@ -3455,20 +3455,19 @@ export async function persistProductionReleaseRuntime(input: {
     productionRelease: canonicalProductionRelease,
     authority,
   });
-  const persisted = await (persistRelease ?? persistAiGraderProductionRelease)(db, {
-    ...persistInput,
-    reportBundle: {
-      ...canonical.reportBundle,
+  const persistAtomically = async (tx: any) => {
+    const persisted = await (persistRelease ?? persistAiGraderProductionRelease)(tx, {
+      ...persistInput,
+      reportBundle: {
+        ...canonical.reportBundle,
+        productionRelease: canonicalProductionRelease,
+      },
       productionRelease: canonicalProductionRelease,
-    },
-    productionRelease: canonicalProductionRelease,
-    cardAssetId,
-    itemId,
-  });
-  if (persisted.publicationStatus !== "published") return persisted;
-
-  const labelSheetAssignment = await db.$transaction((tx: any) =>
-    completePublishedAiGraderCardTx({
+      cardAssetId,
+      itemId,
+    });
+    if (persisted.publicationStatus !== "published") return persisted;
+    const labelSheetAssignment = await completePublishedAiGraderCardTx({
       tx,
       tenantId: input.tenantId,
       gradingSessionId,
@@ -3478,9 +3477,12 @@ export async function persistProductionReleaseRuntime(input: {
       itemId,
       publishAuthority: authority,
       ...(operatorUserId ? { operatorUserId } : {}),
-    })
-  );
-  return { ...persisted, labelSheetAssignment };
+    });
+    return { ...persisted, labelSheetAssignment };
+  };
+  return typeof db.$transaction === "function"
+    ? db.$transaction(persistAtomically)
+    : persistAtomically(db);
 }
 
 function safeStorageSegment(value: string) {

@@ -113,7 +113,7 @@ try {
     pairingExpiresAt = $config.pairingCodeExpiresAt
     workstationAttestationConfigured = $true
     workstationAttestationAlgorithm = $script:NfcAttestationAlgorithm
-    feijuF8215Enabled = $false
+    f8215AdapterConfigured = (-not [string]::IsNullOrWhiteSpace([string]$config.goToTagsExecutablePath))
     stableLaunchersInstalled = $true
     driverAction = "detection_only"
     started = [bool]$StartNow

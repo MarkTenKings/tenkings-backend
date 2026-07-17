@@ -256,11 +256,8 @@ function requireProgrammingReady(readiness: AiGraderNfcProgrammingReadiness) {
   }
 }
 
-function requireProfileReady(readiness: AiGraderNfcProgrammingReadiness, profile: RequestedProfile) {
+function requireProfileReady(readiness: AiGraderNfcProgrammingReadiness) {
   requireProgrammingReady(readiness);
-  if (profile.chipType === "FEIJU_F8215" && !readiness.nfcFeijuF8215Enabled) {
-    throw nfcApiError(503, "AI_GRADER_NFC_FEIJU_F8215_DISABLED", "Feiju F8215 programming is disabled by server policy.");
-  }
 }
 
 function requireSchemaReady(readiness: AiGraderNfcProgrammingReadiness) {
@@ -394,7 +391,7 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
 
       if (action === "init") {
         const profile = requestedProfile(body);
-        requireProfileReady(readiness, profile);
+        requireProfileReady(readiness);
         const result = await deps.init({
           ...common,
           ...profile,
@@ -408,7 +405,7 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
 
       if (action === "complete") {
         const profile = requestedProfile(body);
-        requireProfileReady(readiness, profile);
+        requireProfileReady(readiness);
         const publicTagId = boundedText(body.publicTagId, "publicTagId", 32, 32, /^[A-Za-z0-9_-]+$/);
         const readerResultCode = boundedText(body.readerResultCode, "readerResultCode", 1, 64, /^[A-Za-z0-9_:-]+$/);
         const eligibleResult = profile.chipType === "NTAG215"
@@ -482,7 +479,7 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
 
       if (action === "replace") {
         const profile = requestedProfile(body);
-        requireProfileReady(readiness, profile);
+        requireProfileReady(readiness);
         const result = await deps.replace({
           ...common,
           ...profile,

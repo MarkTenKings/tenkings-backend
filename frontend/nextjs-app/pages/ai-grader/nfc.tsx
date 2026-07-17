@@ -9,7 +9,6 @@ import {
   acknowledgeAiGraderF8215Operation,
   clearAiGraderNfcHelperPairing,
   clearAiGraderNfcInitIdempotencyKey,
-  classifyAiGraderNfcHelperWriteRecovery,
   getAiGraderNfcHelperStatus,
   getAiGraderF8215OperationStatus,
   getOrCreateAiGraderNfcInitIdempotencyKey,
@@ -19,7 +18,6 @@ import {
   readAiGraderNfcSelectedProfile,
   readAiGraderNfcInitIdempotencyKey,
   reconcileAiGraderF8215HostedActivation,
-  waitForAiGraderNfcHelperIdle,
   writeAiGraderNfcTag,
   writeAiGraderNfcSelectedProfile,
   type AiGraderF8215CompletionEvidence,
@@ -33,12 +31,8 @@ type Phase =
   | "loading"
   | "disabled"
   | "ready"
-  | "recovering"
   | "awaiting_manual_start"
-  | "encoding"
   | "verifying"
-  | "locking"
-  | "final_verification"
   | "writing"
   | "overwrite"
   | "active"
@@ -60,7 +54,6 @@ type HostedStatus = {
   registrationSemantics?: "registered_link" | "cryptographically_verified" | null;
   nfcSchemaReady: boolean;
   nfcProgrammingEnabled: boolean;
-  nfcFeijuF8215Enabled: boolean;
   nfcRequired: boolean;
   nfcAttemptTokenConfigured: boolean;
   nfcWorkstationAttestationConfigured: boolean;
@@ -104,7 +97,6 @@ type PendingCompletion = {
   idempotencyKey: string;
 };
 
-type WriteRecovery = "definite_prewrite" | "uncertain" | "not_retryable" | null;
 type AdminMutationRequest = { publicTagId: string; reason: string; idempotencyKey: string };
 
 function record(value: unknown): JsonRecord {
@@ -231,9 +223,6 @@ export default function AiGraderNfcProgrammingPage() {
   const [reservation, setReservation] = useState<Reservation | null>(null);
   const [pending, setPending] = useState<PendingCompletion | null>(null);
   const [overwriteDigest, setOverwriteDigest] = useState<string | null>(null);
-  const [writeIdempotencyKey, setWriteIdempotencyKey] = useState<string | null>(null);
-  const [localRetrySequence, setLocalRetrySequence] = useState(0);
-  const [writeRecovery, setWriteRecovery] = useState<WriteRecovery>(null);
   const [storedAttemptAvailable, setStoredAttemptAvailable] = useState(false);
   const [replacementRequest, setReplacementRequest] = useState<AdminMutationRequest | null>(null);
   const [revocationRequest, setRevocationRequest] = useState<AdminMutationRequest | null>(null);
@@ -248,8 +237,7 @@ export default function AiGraderNfcProgrammingPage() {
   const selectedFeiju = selectedProfile === "FEIJU_F8215_GOTOTAGS_MANUAL_START";
   const selectedProfileReady = Boolean(
     programmingReady &&
-    (!selectedFeiju ||
-      (hosted?.nfcFeijuF8215Enabled && helper?.feijuF8215Enabled && helper.goToTagsReady)),
+    (!selectedFeiju || helper?.goToTagsReady),
   );
 
   useEffect(() => {
@@ -325,8 +313,6 @@ export default function AiGraderNfcProgrammingPage() {
       setReservation(null);
       setPending(null);
       setOverwriteDigest(null);
-      setWriteIdempotencyKey(null);
-      setWriteRecovery(null);
       setReplacementRequest(null);
       setPhase("active");
       setMessage("NFC is verified and active for this published report.");
@@ -354,7 +340,6 @@ export default function AiGraderNfcProgrammingPage() {
         if (helperStatus.helperProtocolVersion !== result.expectedNfcHelperProtocolVersion) {
           throw new Error("The NFC workstation helper protocol is out of date. Update it before programming.");
         }
-        if (hasStoredAttempt && helperStatus.busy) setWriteRecovery("uncertain");
         setHelper(helperStatus);
       } catch (error) {
         setHelper(null);
@@ -432,8 +417,6 @@ export default function AiGraderNfcProgrammingPage() {
       setPending(null);
       setReservation(null);
       setOverwriteDigest(null);
-      setWriteIdempotencyKey(null);
-      setWriteRecovery(null);
       await refresh();
     },
     [hosted?.cardAssetId, hosted?.certId, hosted?.itemId, hostedRequest, refresh, reportId],
@@ -446,7 +429,6 @@ export default function AiGraderNfcProgrammingPage() {
       overwriteConfirmation?: { confirmed: true; observedPayloadSha256: string },
     ) => {
       setReservation(currentReservation);
-      setWriteIdempotencyKey(idempotency);
       setPending(null);
       setPhase("writing");
       setMessage("Writing the NDEF URL, then reading the full payload back from the NTAG215.");
@@ -468,7 +450,6 @@ export default function AiGraderNfcProgrammingPage() {
             throw new Error("The NFC helper returned an invalid overwrite challenge.");
           }
           setOverwriteDigest(write.observedPayloadSha256);
-          setWriteRecovery(null);
           setPhase("overwrite");
           setMessage("This tag contains a different NDEF payload. Confirm once to overwrite this exact observed content.");
           return;
@@ -480,10 +461,8 @@ export default function AiGraderNfcProgrammingPage() {
           idempotencyKey: `complete-${currentReservation.attemptId}`,
         };
         setPending(completion);
-        setWriteRecovery(null);
         await completeHosted(completion);
       } catch (error) {
-        setWriteRecovery(classifyAiGraderNfcHelperWriteRecovery(error));
         throw error;
       }
     },
@@ -493,10 +472,8 @@ export default function AiGraderNfcProgrammingPage() {
   const beginReservation = useCallback(
     async (currentReservation: Reservation) => {
       setReservation(currentReservation);
-      setLocalRetrySequence(0);
       if (currentReservation.chipType === "FEIJU_F8215") {
         setPending(null);
-        setWriteRecovery(null);
         setPhase("loading");
         setMessage("Preparing one protected report-specific F8215 operation. Keep the tag off the reader.");
         const prepared = await prepareAiGraderF8215Job({
@@ -507,7 +484,7 @@ export default function AiGraderNfcProgrammingPage() {
           url: currentReservation.url,
           attemptExpiresAt: currentReservation.attemptExpiresAt,
         });
-        const acceptedPhase = ["awaiting_manual_start", "recovering", "completed"].includes(prepared.phase);
+        const acceptedPhase = ["awaiting_manual_start", "completed"].includes(prepared.phase);
         if (
           prepared.helperProtocolVersion !== "tenkings-ai-grader-nfc-loopback-v2" ||
           prepared.attemptId !== currentReservation.attemptId ||
@@ -517,11 +494,8 @@ export default function AiGraderNfcProgrammingPage() {
         ) {
           throw new Error("The local helper did not prepare the exact F8215 job.");
         }
-        if (prepared.phase === "recovering") {
-          setPhase("recovering");
-          setMessage("Keep the exact F8215 tag separated while this same protected job waits for its terminal callback.");
-        } else if (prepared.phase === "completed") {
-          setPhase("final_verification");
+        if (prepared.phase === "completed") {
+          setPhase("verifying");
           setMessage("The local F8215 operation completed. Verifying and activating this same hosted attempt.");
         } else {
           setPhase("awaiting_manual_start");
@@ -541,7 +515,7 @@ export default function AiGraderNfcProgrammingPage() {
       reservation.chipType !== "FEIJU_F8215" ||
       !paired ||
       pending ||
-      !["awaiting_manual_start", "encoding", "verifying", "locking", "final_verification", "recovering"].includes(phase)
+      !["awaiting_manual_start", "verifying"].includes(phase)
     ) return;
     let cancelled = false;
     let inFlight = false;
@@ -566,7 +540,7 @@ export default function AiGraderNfcProgrammingPage() {
             write: evidence,
             idempotencyKey: `complete-${reservation.attemptId}`,
           };
-          setPhase("final_verification");
+          setPhase("verifying");
           setMessage("Write, exact URL verification, permanent locking, and final readback passed. Activating the registration.");
           setPending(completion);
           await completeHosted(completion);
@@ -579,12 +553,8 @@ export default function AiGraderNfcProgrammingPage() {
               : `The F8215 job failed safely${status.errorCode ? ` (${status.errorCode})` : ""}.`,
           );
         }
-        if (["encoding", "verifying", "locking", "final_verification"].includes(status.phase)) {
-          setPhase(status.phase as "encoding" | "verifying" | "locking" | "final_verification");
-        }
       } catch (error) {
         if (!cancelled) {
-          setWriteRecovery("uncertain");
           setPhase("error");
           setMessage(errorMessage(error));
           return;
@@ -610,10 +580,7 @@ export default function AiGraderNfcProgrammingPage() {
       if (!programmingReady) {
         throw new Error("NFC programming is not fully configured.");
       }
-      if (selectedFeiju && !hosted.nfcFeijuF8215Enabled) {
-        throw new Error("Feiju F8215 programming is disabled by server policy.");
-      }
-      if (selectedFeiju && (!helper?.feijuF8215Enabled || !helper.goToTagsReady)) {
+      if (selectedFeiju && !helper?.goToTagsReady) {
         throw new Error(`The F8215 workstation adapter is not ready${helper?.goToTagsErrorCode ? ` (${helper.goToTagsErrorCode})` : ""}.`);
       }
       if (!paired) throw new Error("Pair the dedicated NFC helper first.");
@@ -639,7 +606,6 @@ export default function AiGraderNfcProgrammingPage() {
         clearAiGraderNfcInitIdempotencyKey(reportId);
         setStoredAttemptAvailable(false);
         setReservation(null);
-        setWriteIdempotencyKey(null);
       }
       setPhase("error");
       setMessage(errorMessage(error));
@@ -742,8 +708,6 @@ export default function AiGraderNfcProgrammingPage() {
       setStoredAttemptAvailable(false);
       setReservation(null);
       setPending(null);
-      setWriteIdempotencyKey(null);
-      setWriteRecovery(null);
       setReason("");
       setRevocationRequest(null);
       await refresh();
@@ -778,116 +742,12 @@ export default function AiGraderNfcProgrammingPage() {
     }
   };
 
-  const retryCurrentAttempt = async () => {
-    if (writeRecovery === "not_retryable") return;
-    try {
-      if (!hosted?.nfcProgrammingEnabled) throw new Error("NFC programming is disabled by server policy.");
-      if (!programmingReady) throw new Error("NFC programming is not fully configured.");
-      if (!paired) throw new Error("Pair the dedicated NFC helper first.");
-      if (selectedFeiju && !selectedProfileReady) throw new Error("The F8215 workstation adapter is not ready.");
-      if (pending) {
-        await completeHosted(pending);
-        return;
-      }
-
-      let currentReservation = reservation;
-      if (!currentReservation) {
-        const initIdempotencyKey = readAiGraderNfcInitIdempotencyKey(reportId);
-        if (!initIdempotencyKey) throw new Error("No current NFC attempt is available to retry.");
-        currentReservation = reservationFrom(
-          await hostedRequest("init", {
-            reportId,
-            idempotencyKey: initIdempotencyKey,
-            ...(selectedProfile === "FEIJU_F8215_GOTOTAGS_MANUAL_START"
-              ? {
-                  chipType: "FEIJU_F8215",
-                  programmingProfile: "gototags_manual_start_v1",
-                  operatorFreshInventoryConfirmation: "operator_fresh_inventory_confirmation_v1",
-                }
-              : { chipType: "NTAG215", programmingProfile: "ntag215_direct_pcsc_v1" }),
-          }),
-          selectedProfile,
-        );
-        setReservation(currentReservation);
-        setLocalRetrySequence(0);
-      }
-
-      setPhase("recovering");
-      if (currentReservation.chipType === "FEIJU_F8215") {
-        const status = await getAiGraderF8215OperationStatus(currentReservation.attemptId);
-        if (status.phase === "completed" && status.evidence) {
-          const evidence = assertF8215Completion(currentReservation, status.evidence);
-          await completeHosted({
-            reservation: currentReservation,
-            write: evidence,
-            idempotencyKey: `complete-${currentReservation.attemptId}`,
-          });
-          return;
-        }
-        if (status.phase === "awaiting_manual_start") {
-          setPhase("awaiting_manual_start");
-          setMessage("GoToTags is waiting. Click Start Encoding once, then place the same fresh F8215 tag on the reader.");
-          return;
-        }
-        if (["recovering", "encoding", "verifying", "locking", "final_verification"].includes(status.phase)) {
-          setPhase(status.phase as "recovering" | "encoding" | "verifying" | "locking" | "final_verification");
-          setMessage(
-            status.phase === "recovering"
-              ? "Waiting for the terminal GoToTags callback for this same protected attempt. Keep the exact tag separated."
-              : "The same protected F8215 job is still running. Do not present another tag.",
-          );
-          return;
-        }
-        throw new Error("Keep the exact F8215 tag separated. This same attempt requires operator recovery before another tag is used.");
-      }
-      setMessage("Keep the same physical tag on the reader while recovering this hosted attempt without allocating or rewriting another tag identity.");
-      if (writeRecovery === "uncertain") {
-        const status = await waitForAiGraderNfcHelperIdle();
-        setHelper(status);
-      }
-      const nextSequence = writeRecovery === "definite_prewrite" ? localRetrySequence + 1 : localRetrySequence;
-      if (nextSequence > 3) throw new Error("The current NFC attempt reached its bounded local retry limit.");
-      setLocalRetrySequence(nextSequence);
-      const localKey =
-        writeRecovery === "uncertain" && writeIdempotencyKey
-          ? writeIdempotencyKey
-          : `write-${currentReservation.attemptId}-try-${nextSequence}`;
-      await writeReservation(currentReservation, localKey);
-    } catch (error) {
-      if (error instanceof Error && error.name === "AI_GRADER_NFC_ATTEMPT_EXPIRED") {
-        clearAiGraderNfcInitIdempotencyKey(reportId);
-        setStoredAttemptAvailable(false);
-        setReservation(null);
-        setWriteIdempotencyKey(null);
-      }
-      setPhase("error");
-      setMessage(errorMessage(error));
-    }
-  };
-
-  const busy = [
-    "writing",
-    "verifying",
-    "recovering",
-    "loading",
-    "encoding",
-    "locking",
-    "final_verification",
-  ].includes(phase);
-  const canRetryCurrentAttempt =
-    !pending &&
-    selectedProfileReady &&
-    (reservation !== null || storedAttemptAvailable) &&
-    (phase === "error" || phase === "ready") &&
-    writeRecovery !== "not_retryable";
-  const f8215TerminalEvidenceReceived = selectedFeiju && (phase === "final_verification" || phase === "active");
+  const busy = ["writing", "verifying", "loading"].includes(phase);
+  const f8215TerminalEvidenceReceived = selectedFeiju && (phase === "verifying" || phase === "active");
   const f8215Progress = [
     { label: "Waiting for GoToTags Start", complete: f8215TerminalEvidenceReceived, current: phase === "awaiting_manual_start" },
-    { label: "Encoding", complete: f8215TerminalEvidenceReceived, current: phase === "encoding" },
-    { label: "Verifying URL", complete: f8215TerminalEvidenceReceived, current: phase === "verifying" },
-    { label: "Permanently locking", complete: f8215TerminalEvidenceReceived, current: phase === "locking" },
-    { label: "Final verification", complete: f8215TerminalEvidenceReceived, current: phase === "final_verification" },
-    { label: "Activating registration", complete: phase === "active", current: phase === "final_verification" },
+    { label: "Verified, permanently locked, and read back", complete: f8215TerminalEvidenceReceived, current: false },
+    { label: "Activating registration", complete: phase === "active", current: phase === "verifying" },
   ];
 
   return (
@@ -935,7 +795,7 @@ export default function AiGraderNfcProgrammingPage() {
                   <dt>Tag</dt><dd>{helper?.tagState ?? "unknown"}</dd>
                   <dt>Reader</dt><dd>{helper?.readerModel ?? "ACR1552U-compatible PC/SC reader"}</dd>
                   <dt>Helper</dt><dd>{helper?.helperProtocolVersion ?? "Checking"}</dd>
-                  <dt>F8215 adapter</dt><dd>{helper?.feijuF8215Enabled ? helper.goToTagsReady ? "Ready" : `Unavailable${helper.goToTagsErrorCode ? ` (${helper.goToTagsErrorCode})` : ""}` : "Disabled"}</dd>
+                  <dt>F8215 adapter</dt><dd>{helper?.goToTagsReady ? "Ready" : `Unavailable${helper?.goToTagsErrorCode ? ` (${helper.goToTagsErrorCode})` : ""}`}</dd>
                 </dl>
                 <button type="button" className="secondary" onClick={() => { clearAiGraderNfcHelperPairing(); setPaired(false); setHelper(null); }}>Forget local pairing</button>
               </>
@@ -971,7 +831,7 @@ export default function AiGraderNfcProgrammingPage() {
             }}
           >
             <option value="NTAG215_DIRECT_PCSC">NTAG215 — native helper</option>
-            <option value="FEIJU_F8215_GOTOTAGS_MANUAL_START" disabled={hosted?.nfcFeijuF8215Enabled !== true}>
+            <option value="FEIJU_F8215_GOTOTAGS_MANUAL_START">
               Feiju F8215 — GoToTags
             </option>
           </select>
@@ -1011,7 +871,7 @@ export default function AiGraderNfcProgrammingPage() {
           >
             {phase === "writing"
               ? "Writing"
-              : phase === "verifying" || phase === "final_verification"
+              : phase === "verifying"
                 ? "Verifying"
                 : phase === "awaiting_manual_start"
                   ? "Waiting for GoToTags Start"
@@ -1042,9 +902,6 @@ export default function AiGraderNfcProgrammingPage() {
           <button type="button" className="secondary retry" onClick={() => void retryHostedVerification()}>Retry hosted verification</button>
         ) : null}
 
-        {canRetryCurrentAttempt ? (
-          <button type="button" className="secondary retry" onClick={() => void retryCurrentAttempt()}>Retry Current Attempt</button>
-        ) : null}
 
         {hosted?.canAdmin && hosted.publicTagId && hosted.status !== "missing" ? (
           <section className="admin-actions">

@@ -27,7 +27,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 $layout = Assert-NfcProductionLayout -ConfigPath $ConfigPath -InstallDirectory $InstallDirectory -TaskName $TaskName
 $config = Read-NfcConfig -Path $layout.ConfigPath
-if ($null -eq $config -or -not [bool]$config.feijuF8215Enabled) {
+if ($null -eq $config -or [string]::IsNullOrWhiteSpace([string]$config.goToTagsExecutablePath)) {
   throw "The installed F8215 helper configuration is unavailable."
 }
 $jobRoot = Assert-NfcPathWithinRoot -Path ([string]$config.goToTagsJobRoot) -AllowedRoot $script:NfcConfigRoot

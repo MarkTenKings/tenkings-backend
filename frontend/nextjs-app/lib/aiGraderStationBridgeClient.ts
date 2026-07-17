@@ -31,52 +31,16 @@ export type AiGraderStationBridgeActionRequestBody = {
   overrideReason?: string;
   captureProfile?: AiGraderCaptureProfile;
   captureTriggerAt?: string;
-  captureTriggerMode?: "operator" | "auto";
-  geometryCaptureMode?: "detected_geometry" | "manual_capture";
-  manualGeometryRect?: AiGraderManualGeometryRect;
-  rapidCaptureEnabled?: boolean;
-  queueItemId?: string;
+  captureTriggerMode?: "operator";
+  geometryCaptureMode?: "detected_geometry";
   idempotencyKey?: string;
   expectedSessionId?: string;
   expectedReportId?: string;
   expectedSide?: "front" | "back";
   expectedSideEpoch?: string;
-  expectedCandidateProfileIdentity?: string;
   expectedFrameId?: string;
-};
-
-export type AiGraderFrontWorkflowAssertionRequest = {
-  idempotencyKey: string;
-  expectedSessionId: string;
-  expectedReportId: string;
-  expectedSide: 'front';
-  expectedSideEpoch: string;
-  expectedCandidateProfileIdentity?: string;
-};
-
-export function buildAiGraderFrontWorkflowAssertionRequest(
-  input: AiGraderFrontWorkflowAssertionRequest,
-): AiGraderFrontWorkflowAssertionRequest {
-  return {
-    idempotencyKey: input.idempotencyKey,
-    expectedSessionId: input.expectedSessionId,
-    expectedReportId: input.expectedReportId,
-    expectedSide: 'front',
-    expectedSideEpoch: input.expectedSideEpoch,
-    ...(input.expectedCandidateProfileIdentity
-      ? { expectedCandidateProfileIdentity: input.expectedCandidateProfileIdentity }
-      : {}),
-  };
-}
-
-export type AiGraderManualGeometryRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  imageWidth: number;
-  imageHeight: number;
-  coordinateFrame: "portrait_preview_pixels";
+  rapidCaptureEnabled?: boolean;
+  queueItemId?: string;
 };
 
 export function buildAiGraderCaptureProfileRequest(captureProfile: AiGraderCaptureProfile) {
@@ -85,40 +49,11 @@ export function buildAiGraderCaptureProfileRequest(captureProfile: AiGraderCaptu
 
 export function buildAiGraderDetectedGeometryCaptureRequest(input: {
   captureTriggerAt: string;
-  captureTriggerMode: "operator" | "auto";
+  captureTriggerMode: "operator";
 }) {
   return {
     ...input,
     geometryCaptureMode: "detected_geometry" as const,
-  } satisfies AiGraderStationBridgeActionRequestBody;
-}
-
-export function buildAiGraderManualGeometryCaptureRequest(input: {
-  captureTriggerAt: string;
-  manualGeometryRect: AiGraderManualGeometryRect;
-}) {
-  const rect = input.manualGeometryRect;
-  const values = [rect.x, rect.y, rect.width, rect.height, rect.imageWidth, rect.imageHeight];
-  if (values.some((value) => !Number.isFinite(value))) {
-    throw new Error("AI Grader manual geometry rectangle values must be finite.");
-  }
-  if (
-    rect.x < 0 ||
-    rect.y < 0 ||
-    rect.width <= 0 ||
-    rect.height <= 0 ||
-    rect.imageWidth <= 0 ||
-    rect.imageHeight <= 0 ||
-    rect.x + rect.width > rect.imageWidth ||
-    rect.y + rect.height > rect.imageHeight
-  ) {
-    throw new Error("AI Grader manual geometry rectangle must remain inside the portrait preview frame.");
-  }
-  return {
-    captureTriggerAt: input.captureTriggerAt,
-    captureTriggerMode: "operator" as const,
-    geometryCaptureMode: "manual_capture" as const,
-    manualGeometryRect: { ...rect },
   } satisfies AiGraderStationBridgeActionRequestBody;
 }
 
@@ -128,7 +63,9 @@ export function buildAiGraderRapidCaptureConfigurationRequest(rapidCaptureEnable
 
 export function buildAiGraderRapidQueueActivationRequest(queueItemId: string) {
   const normalized = queueItemId.trim();
-  if (!normalized) throw new Error("AI Grader rapid capture queue item ID is required.");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(normalized)) {
+    throw new Error("Rapid Capture queue item ID is invalid.");
+  }
   return { queueItemId: normalized } satisfies AiGraderStationBridgeActionRequestBody;
 }
 
@@ -316,30 +253,6 @@ export async function fetchAiGraderStationPreviewStatus(input: {
   }, fetchImpl);
 }
 
-export async function stopAiGraderStationPreview(input: {
-  baseUrl: string;
-  stationToken: string;
-  reason?: string;
-}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLocalStationPreviewStatus> {
-  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
-  if (!input.stationToken.trim()) {
-    throw new Error("AI Grader station bridge token is required.");
-  }
-  const response = await fetchImpl(`${baseUrl}/preview/stop`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-ai-grader-station-token": input.stationToken,
-    },
-    body: JSON.stringify({ reason: input.reason ?? "operator requested preview stop" }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.ok !== true) {
-    throw new Error(payload.message ?? payload.error?.message ?? "AI Grader preview stream could not be stopped.");
-  }
-  return payload.result as AiGraderLocalStationPreviewStatus;
-}
-
 async function bridgePostJson<T>(
   input: {
     baseUrl: string;
@@ -404,35 +317,6 @@ export async function applyAiGraderLiveLighting(input: {
   }, fetchImpl);
 }
 
-export async function safeOffAiGraderLiveLighting(input: {
-  baseUrl: string;
-  stationToken: string;
-  reason?: string;
-  keepalive?: boolean;
-}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLiveLightingStatus> {
-  return bridgePostJson<AiGraderLiveLightingStatus>({
-    baseUrl: input.baseUrl,
-    stationToken: input.stationToken,
-    path: "/lighting/safe-off",
-    body: { reason: input.reason ?? "browser live lighting safe-off" },
-    keepalive: input.keepalive,
-  }, fetchImpl);
-}
-
-export async function acceptAiGraderLiveLightingProfile(input: {
-  baseUrl: string;
-  stationToken: string;
-  assertion: AiGraderFrontWorkflowAssertionRequest;
-}, fetchImpl: typeof fetch = fetch): Promise<AiGraderLocalStationStatus> {
-  const status = await bridgePostJson<AiGraderLocalStationStatus>({
-    baseUrl: input.baseUrl,
-    stationToken: input.stationToken,
-    path: "/lighting/accept",
-    body: buildAiGraderFrontWorkflowAssertionRequest(input.assertion),
-  }, fetchImpl);
-  return sanitizeAiGraderLocalStationStatusForDisplay(status);
-}
-
 export async function heartbeatAiGraderLiveLighting(input: {
   baseUrl: string;
   stationToken: string;
@@ -443,41 +327,6 @@ export async function heartbeatAiGraderLiveLighting(input: {
     stationToken: input.stationToken,
     path: "/lighting/heartbeat",
     body: { reason: input.reason ?? "browser live lighting heartbeat" },
-  }, fetchImpl);
-}
-
-export type AiGraderBackPositioningRetryResult = {
-  status: "inactive" | "restoring" | "waiting_for_frame" | "ready" | "failed" | "safe_off";
-  captureReady: boolean;
-  sessionId?: string;
-  sideEpoch: string;
-  profileIdentity?: string;
-  dutyPercent?: number;
-  channels?: number[];
-  attemptCount: number;
-  firstFrameGraceMs: number;
-  lastError?: { code: string; message: string };
-  positioningLightReady: boolean;
-  appliedEnabled?: boolean;
-};
-
-export async function retryAiGraderBackPositioningLight(input: {
-  baseUrl: string;
-  stationToken: string;
-  expectedSessionId: string;
-  expectedSide: "back";
-  expectedSideEpoch: string;
-}, fetchImpl: typeof fetch = fetch): Promise<AiGraderBackPositioningRetryResult> {
-  return bridgePostJson<AiGraderBackPositioningRetryResult>({
-    baseUrl: input.baseUrl,
-    stationToken: input.stationToken,
-    path: "/lighting/retry-back-positioning",
-    body: {},
-    assertionHeaders: {
-      "X-AI-Grader-Session-Id": input.expectedSessionId,
-      "X-AI-Grader-Preview-Side": input.expectedSide,
-      "X-AI-Grader-Preview-Epoch": input.expectedSideEpoch,
-    },
   }, fetchImpl);
 }
 

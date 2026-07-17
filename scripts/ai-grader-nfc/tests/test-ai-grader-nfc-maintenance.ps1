@@ -181,7 +181,7 @@ try {
   Assert-True ($configureFeiju.IndexOf('CertPropSvc', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not fail closed on Certificate Propagation."
   Assert-True ($configureFeiju.IndexOf('Set-Service', [StringComparison]::OrdinalIgnoreCase) -lt 0) "F8215 configuration can change Windows services."
   Assert-True ($configureFeiju.IndexOf('Start-Service', [StringComparison]::OrdinalIgnoreCase) -lt 0) "F8215 configuration can start Windows services."
-  Assert-True ($configureFeiju.IndexOf('feijuF8215Enabled', [StringComparison]::Ordinal) -ge 0) "F8215 configuration lacks its separate local gate."
+  Assert-True ($configureFeiju.IndexOf('feijuF8215Enabled', [StringComparison]::Ordinal) -lt 0) "F8215 configuration still contains a redundant local profile gate."
   Assert-True ($common.IndexOf('resolve-ai-grader-nfc-abandoned-job.ps1', [StringComparison]::Ordinal) -ge 0) "Stable maintenance payload omits abandoned-job resolution."
   Assert-True ($resolveAbandoned.IndexOf('I removed and quarantined the exact F8215 tag for this attempt.', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution lacks exact physical quarantine confirmation."
   Assert-True ($resolveAbandoned.IndexOf('Get-NfcHelperProcess', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution does not require the helper process to be stopped."

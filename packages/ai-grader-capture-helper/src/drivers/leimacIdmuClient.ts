@@ -6,7 +6,7 @@ export const LEIMAC_IDMU_DISCOVERY_PORT = 50001;
 export const LEIMAC_IDMU_MAX_DIAGNOSTIC_FRAME_LENGTH = 32;
 export const LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION = "APPLY LEIMAC LOW DUTY TRIGGER PROFILE";
 export const LEIMAC_IDMU_SAFE_OFF_CONFIRMATION = "APPLY LEIMAC SAFE OFF";
-export const LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT = 5;
+export const LEIMAC_IDMU_MAX_DUTY_PERCENT = 99.9;
 export const LEIMAC_IDMU_CHANNEL_COUNT_BASE_UNIT = 8;
 
 export type LeimacIdmuReadCommandName =
@@ -166,7 +166,7 @@ export interface LeimacIdmuTriggerProfilePlan {
   triggerActivation: LeimacIdmuTriggerActivationMode;
   dutyPercent: number;
   dutySteps: number;
-  maxDutyPercent: 5;
+  maxDutyPercent: number;
   commandFormat: "Header + CommandNumber + UnitNumber + repeated ChannelNumber/SettingValue data";
   persistentSaved: false;
   outputTimeWritten: false;
@@ -182,7 +182,7 @@ export interface LeimacIdmuTriggerProfilePlan {
     triggerSettingsChanged: boolean;
     persistentSaved: false;
     arbitraryWritesAllowed: false;
-    maxDutyPercent: 5;
+    maxDutyPercent: number;
   };
 }
 
@@ -649,12 +649,24 @@ export function buildLeimacIdmuTriggerSyncPlan(mode = "basler-exposure-active-to
 }
 
 export function normalizeLeimacIdmuDutyPercent(value: number | string | undefined): number {
-  const numeric = value == null || value === "" ? LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT : Number(value);
-  if (!Number.isFinite(numeric) || numeric < 0) {
-    throw new LeimacIdmuClientError("LEIMAC_IDMU_DUTY_INVALID", "--duty must be a number from 0 to 5 for the first smoke.");
+  if (value == null || value === "") {
+    throw new LeimacIdmuClientError(
+      "LEIMAC_IDMU_DUTY_REQUIRED",
+      "Leimac duty must be explicit or supplied by the already-selected production lighting profile.",
+    );
   }
-  if (numeric > LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT) {
-    throw new LeimacIdmuClientError("LEIMAC_IDMU_DUTY_TOO_HIGH", "PR #36 first-smoke duty is capped at 5%.");
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new LeimacIdmuClientError(
+      "LEIMAC_IDMU_DUTY_INVALID",
+      `--duty must be a number from 0 to ${LEIMAC_IDMU_MAX_DUTY_PERCENT} for the first smoke.`,
+    );
+  }
+  if (numeric > LEIMAC_IDMU_MAX_DUTY_PERCENT) {
+    throw new LeimacIdmuClientError(
+      "LEIMAC_IDMU_DUTY_TOO_HIGH",
+      `Leimac duty must not exceed the bounded ${LEIMAC_IDMU_MAX_DUTY_PERCENT}% controller range.`,
+    );
   }
   return numeric;
 }
@@ -855,7 +867,7 @@ export function buildLeimacIdmuTriggerProfilePlan(input: {
     triggerActivation,
     dutyPercent,
     dutySteps,
-    maxDutyPercent: LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
+    maxDutyPercent: LEIMAC_IDMU_MAX_DUTY_PERCENT,
     commandFormat: "Header + CommandNumber + UnitNumber + repeated ChannelNumber/SettingValue data",
     persistentSaved: false,
     outputTimeWritten: false,
@@ -872,7 +884,7 @@ export function buildLeimacIdmuTriggerProfilePlan(input: {
       triggerSettingsChanged: false,
       persistentSaved: false,
       arbitraryWritesAllowed: false,
-      maxDutyPercent: LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
+      maxDutyPercent: LEIMAC_IDMU_MAX_DUTY_PERCENT,
     },
   };
 }

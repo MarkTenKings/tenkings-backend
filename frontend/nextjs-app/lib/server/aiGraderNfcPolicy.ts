@@ -1,6 +1,5 @@
 import {
   AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
-  AI_GRADER_NFC_FEIJU_F8215_ENABLED_ENV,
   AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV,
   AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_ENV,
   getAiGraderNfcWorkstationKeyReadiness,
@@ -22,7 +21,6 @@ export function aiGraderNfcRequired(env: EnvLike = process.env) {
 export type AiGraderNfcProgrammingReadiness = {
   nfcSchemaReady: boolean;
   nfcProgrammingEnabled: boolean;
-  nfcFeijuF8215Enabled: boolean;
   nfcRequired: boolean;
   nfcAttemptTokenConfigured: boolean;
   nfcWorkstationAttestationConfigured: boolean;
@@ -54,7 +52,6 @@ export function aiGraderNfcProgrammingReadiness(
   return {
     nfcSchemaReady,
     nfcProgrammingEnabled: env[AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV] === "true",
-    nfcFeijuF8215Enabled: env[AI_GRADER_NFC_FEIJU_F8215_ENABLED_ENV] === "true",
     nfcRequired: aiGraderNfcRequired(env),
     nfcAttemptTokenConfigured: Buffer.byteLength(secret, "utf8") >= 32,
     nfcWorkstationAttestationConfigured: workstation.configured,

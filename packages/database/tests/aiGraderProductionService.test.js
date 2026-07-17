@@ -181,12 +181,12 @@ function sampleBundle(overrides = {}) {
     geometry: {
       front: {
         side: "front",
-        placementState: "not_detected",
-        geometrySource: "manual_override",
-        captureMode: "manual_capture",
-        confidence: 0,
-        detectionUsed: false,
-        manualOverrideUsed: true,
+        placementState: "ready",
+        geometrySource: "detected",
+        captureMode: "detected_geometry",
+        confidence: 0.91,
+        detectionUsed: true,
+        manualOverrideUsed: false,
         sourceFrameId: "front-frame-safe-1",
         localOutputPath: "C:\\TenKings\\capture-data\\front-normalized.png",
         previewImage: "data:image/png;base64,must-not-survive",
@@ -202,19 +202,12 @@ function sampleBundle(overrides = {}) {
     },
     geometryCaptureDecisions: {
       front: {
-        mode: "manual_capture",
-        placementState: "not_detected",
+        mode: "detected_geometry",
+        placementState: "ready",
         timestamp: "2026-07-02T12:00:01.000Z",
-        explicitOperatorAction: true,
-        detectionUsed: false,
-        manualOverrideUsed: true,
-        manualBoundaryRect: {
-          x: 100,
-          y: 140,
-          width: 300,
-          height: 420,
-          coordinateFrame: "basler_sensor_pixels",
-        },
+        explicitOperatorAction: false,
+        detectionUsed: true,
+        manualOverrideUsed: false,
         sourceFrameId: "front-frame-safe-1",
         localManifestPath: "C:\\TenKings\\capture-data\\station-session.json",
         bridgeUrl: "http://127.0.0.1:47652/status",
@@ -530,7 +523,7 @@ test("production storage plan sanitizes local Dell paths and loopback URLs", () 
   assert.match(combinedBodies, /"publicReportUrl": "https:\/\/collect\.tenkings\.co\/ai-grader\/reports\/report-1"/);
 });
 
-test("production report keeps explicit manual geometry decisions while removing all private station data", () => {
+test("production report keeps only detected geometry decisions while removing all private station data", () => {
   const plan = buildAiGraderProductionStoragePlan({
     reportBundle: sampleBundle(),
     productionRelease: sampleRelease(),
@@ -541,26 +534,20 @@ test("production report keeps explicit manual geometry decisions while removing 
   const frontGeometry = publicBundle.geometry.front;
   const frontDecision = publicBundle.geometryCaptureDecisions.front;
 
-  assert.equal(frontGeometry.geometrySource, "manual_override");
-  assert.equal(frontGeometry.captureMode, "manual_capture");
-  assert.equal(frontGeometry.detectionUsed, false);
-  assert.equal(frontGeometry.manualOverrideUsed, true);
+  assert.equal(frontGeometry.geometrySource, "detected");
+  assert.equal(frontGeometry.captureMode, "detected_geometry");
+  assert.equal(frontGeometry.detectionUsed, true);
+  assert.equal(frontGeometry.manualOverrideUsed, false);
   assert.equal(frontGeometry.marginLeftMm, undefined);
   assert.equal(frontGeometry.dimensions, undefined);
-  assert.equal(frontDecision.mode, "manual_capture");
-  assert.equal(frontDecision.geometrySource, "manual_override");
-  assert.equal(frontDecision.captureMode, "manual_capture");
-  assert.equal(frontDecision.placementState, "not_detected");
-  assert.equal(frontDecision.explicitOperatorAction, true);
-  assert.equal(frontDecision.detectionUsed, false);
-  assert.equal(frontDecision.manualOverrideUsed, true);
-  assert.deepEqual(frontDecision.manualBoundaryRect, {
-    x: 100,
-    y: 140,
-    width: 300,
-    height: 420,
-    coordinateFrame: "basler_sensor_pixels",
-  });
+  assert.equal(frontDecision.mode, "detected_geometry");
+  assert.equal(frontDecision.geometrySource, "detected");
+  assert.equal(frontDecision.captureMode, "automatic_detection");
+  assert.equal(frontDecision.placementState, "ready");
+  assert.equal(frontDecision.explicitOperatorAction, false);
+  assert.equal(frontDecision.detectionUsed, true);
+  assert.equal(frontDecision.manualOverrideUsed, false);
+  assert.equal(frontDecision.manualBoundaryRect, undefined);
   assert.equal(publicBundle.geometryCaptureDecisions.back.mode, "detected_geometry");
   assert.equal(publicBundle.geometryCaptureDecisions.back.geometrySource, "detected");
 
@@ -1805,21 +1792,16 @@ test("production release persistence updates verified durable records and option
   for (const field of ["tenantId", "gradingSessionId", "reportId", "cardAssetId", "itemId", "cardIdentity"]) {
     assert.equal(Object.prototype.hasOwnProperty.call(sessionUpdate.args.data, field), false);
   }
-  assert.equal(sessionUpdate.args.data.captureSummary.geometry.front.placementState, "not_detected");
-  assert.equal(sessionUpdate.args.data.captureSummary.geometry.front.geometrySource, "manual_override");
-  assert.equal(sessionUpdate.args.data.captureSummary.geometry.front.captureMode, "manual_capture");
-  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.mode, "manual_capture");
-  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.geometrySource, "manual_override");
-  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.explicitOperatorAction, true);
-  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.detectionUsed, false);
-  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.manualOverrideUsed, true);
-  assert.deepEqual(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.manualBoundaryRect, {
-    x: 100,
-    y: 140,
-    width: 300,
-    height: 420,
-    coordinateFrame: "basler_sensor_pixels",
-  });
+  assert.equal(sessionUpdate.args.data.captureSummary.geometry.front.placementState, "ready");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometry.front.geometrySource, "detected");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometry.front.captureMode, "detected_geometry");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.mode, "detected_geometry");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.geometrySource, "detected");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.captureMode, "automatic_detection");
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.explicitOperatorAction, false);
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.detectionUsed, true);
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.manualOverrideUsed, false);
+  assert.equal(sessionUpdate.args.data.captureSummary.geometryCaptureDecisions.front.manualBoundaryRect, undefined);
   assert.doesNotMatch(
     JSON.stringify(sessionUpdate.args.data.captureSummary),
     /C:\\TenKings|127\.0\.0\.1|must-not-survive|data:image|X-Amz-Signature|stationToken|bridgeUrl|uploadUrl|hardwareControls|leimacOn/
