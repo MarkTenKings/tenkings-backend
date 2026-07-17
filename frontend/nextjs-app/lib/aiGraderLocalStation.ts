@@ -1217,6 +1217,54 @@ export type AiGraderLiveLightingStatus = {
   note: string;
 };
 
+export function aiGraderAuthoritativeLiveLightingDraft(lighting: AiGraderLiveLightingStatus) {
+  const expected = lighting.applied.expectedWriteCount;
+  const positioningVerified =
+    lighting.status === "on"
+    && lighting.profile.enabled === true
+    && lighting.profile.acceptedForCapture === true
+    && lighting.applied.enabled === true
+    && lighting.applied.verificationState === "verified"
+    && lighting.applied.verificationComplete === true
+    && Number.isInteger(expected)
+    && expected > 0
+    && lighting.applied.acknowledgedWriteCount === expected
+    && lighting.applied.lastResponseKinds?.length === expected
+    && lighting.applied.lastResponseKinds.every((kind) => kind === "ack" || kind === "mock")
+    && lighting.physicalState.state === "positioning_light_verified"
+    && lighting.physicalState.complete === true
+    && lighting.physicalState.expectedWriteCount === expected
+    && lighting.physicalState.acknowledgedWriteCount === expected
+    && Number.isFinite(Date.parse(lighting.applied.verifiedAt ?? ""))
+    && lighting.applied.verifiedAt === lighting.physicalState.verifiedAt
+    && lighting.lastError === undefined
+    && lighting.physicalState.lastError === undefined
+    && (lighting.connection.state === "idle" || lighting.connection.state === "mock")
+    && lighting.applied.dutyPercent === lighting.profile.dutyPercent
+    && lighting.applied.actualLeimacPwmStep === lighting.profile.actualLeimacPwmStep
+    && lighting.applied.channels.join(",") === lighting.profile.channels.join(",");
+  return {
+    enabled: positioningVerified,
+    dutyPercent: lighting.profile.dutyPercent,
+    channels: [...lighting.profile.channels],
+  };
+}
+
+export function aiGraderApproveAndPublishEligible(input: {
+  reportReady: boolean;
+  finalReady: boolean;
+  productionSignedIn: boolean;
+  identityReady: boolean;
+  publishStatus: "idle" | "pending" | "published" | "disabled" | "error";
+}) {
+  return input.reportReady
+    && input.finalReady
+    && input.productionSignedIn
+    && input.identityReady
+    && input.publishStatus !== "published"
+    && input.publishStatus !== "pending";
+}
+
 export type AiGraderLocalReportHistoryItem = {
   reportId: string;
   gradingSessionId: string;

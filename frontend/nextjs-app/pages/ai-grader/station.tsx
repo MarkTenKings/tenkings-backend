@@ -5,6 +5,8 @@ import { useSession, type SessionPayload } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   AI_GRADER_STATION_STEPS,
+  aiGraderApproveAndPublishEligible,
+  aiGraderAuthoritativeLiveLightingDraft,
   aiGraderCardPlacementLabel,
   buildAiGraderLocalStationStatus,
   buildSampleAiGraderReportHistory,
@@ -725,9 +727,7 @@ export default function AiGraderStationPage() {
     gain: status.acceptedProfile.gain,
   });
   const [liveLightingDraft, setLiveLightingDraft] = useState({
-    enabled: false,
-    dutyPercent: status.acceptedProfile.dutyPercent,
-    channels: status.acceptedProfile.channels,
+    ...aiGraderAuthoritativeLiveLightingDraft(status.liveLighting),
   });
 
   const applyPreviewEpochEvent = (event: AiGraderPreviewEpochEvent) => {
@@ -754,6 +754,7 @@ export default function AiGraderStationPage() {
   useEffect(() => {
     reconcileBridgePreviewStatus(status.previewStatus);
     setLiveLighting(status.liveLighting);
+    setLiveLightingDraft(aiGraderAuthoritativeLiveLightingDraft(status.liveLighting));
   }, [status.previewStatus, status.liveLighting]);
 
   useEffect(() => {
@@ -1190,13 +1191,13 @@ export default function AiGraderStationPage() {
     !reportReady ? "generated report" : "",
     ...identityDraftMissing,
   ].filter(Boolean);
-  const canApproveAndPublish =
-    reportReady &&
-    finalReady &&
-    productionSignedIn &&
-    (linkedCardReady || identityDraftComplete) &&
-    productionPublish.status !== "published" &&
-    productionPublish.status !== "pending";
+  const canApproveAndPublish = aiGraderApproveAndPublishEligible({
+    reportReady,
+    finalReady,
+    productionSignedIn,
+    identityReady: linkedCardReady || identityDraftComplete,
+    publishStatus: productionPublish.status,
+  });
   const selectedFinishItem = finishQueue.items.find((item) => item.reportId === selectedFinishReportId) ?? finishQueue.items[0] ?? null;
   const selectedFinishReportIdForActions = selectedFinishItem?.reportId ?? null;
   const selectedFinishSlabReady = Boolean(selectedFinishItem?.slabPhotos.complete) || slabbedPhotosReady;
@@ -1838,6 +1839,7 @@ export default function AiGraderStationPage() {
     setStatus(next);
     reconcileBridgePreviewStatus(next.previewStatus);
     setLiveLighting(next.liveLighting);
+    setLiveLightingDraft(aiGraderAuthoritativeLiveLightingDraft(next.liveLighting));
     setProfileDraft({
       dutyPercent: next.acceptedProfile.dutyPercent,
       exposureUs: next.acceptedProfile.exposureUs,
@@ -1909,7 +1911,9 @@ export default function AiGraderStationPage() {
       }
       return refreshed.liveLighting;
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Live lighting apply failed.");
+      const message = requestError instanceof Error ? requestError.message : "Live lighting apply failed.";
+      await runAction("status").catch(() => undefined);
+      setError(message);
       throw requestError;
     } finally {
       liveLightingRequestPendingRef.current = false;
@@ -2007,7 +2011,9 @@ export default function AiGraderStationPage() {
       );
       await runAction("start-session", buildAiGraderCaptureProfileRequest("full_forensic"));
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.");
+      const message = requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.";
+      await runAction("status").catch(() => undefined);
+      setError(message);
     } finally {
       setBusy(null);
     }
@@ -2075,6 +2081,7 @@ export default function AiGraderStationPage() {
     setStatus(next);
     reconcileBridgePreviewStatus(next.previewStatus);
     setLiveLighting(next.liveLighting);
+    setLiveLightingDraft(aiGraderAuthoritativeLiveLightingDraft(next.liveLighting));
     setBridgeConnected(true);
     setBridgeConnectionState("connected");
     setProfileDraft({
@@ -2083,11 +2090,6 @@ export default function AiGraderStationPage() {
       gain: next.acceptedProfile.gain,
     });
     setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
-    setLiveLightingDraft({
-      enabled: next.liveLighting.profile.enabled,
-      dutyPercent: next.liveLighting.profile.dutyPercent,
-      channels: next.liveLighting.profile.channels,
-    });
     setHistory(await fetchAiGraderStationReportHistory({
       baseUrl: targetBridgeUrl,
       stationToken: targetStationToken,
@@ -2117,7 +2119,9 @@ export default function AiGraderStationPage() {
       await prepareLocalProductionRelease();
       await refreshHistory();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Capture Back or report generation failed.");
+      const message = requestError instanceof Error ? requestError.message : "Capture Back or report generation failed.";
+      await runAction("status").catch(() => undefined);
+      setError(message);
     }
   };
 
@@ -4206,11 +4210,11 @@ export default function AiGraderStationPage() {
               </div>
               <button
                 type="button"
-                className={liveLightingDraft.enabled ? "toggle active" : "toggle"}
-                onClick={() => setLiveLightingEnabled(!liveLightingDraft.enabled)}
+                className={liveLightingPositioningVerified ? "toggle active" : "toggle"}
+                onClick={() => setLiveLightingEnabled(!liveLightingPositioningVerified)}
                 disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
               >
-                {liveLightingDraft.enabled ? "Live" : "Off"}
+                {liveLightingPositioningVerified ? "Live" : "Off"}
               </button>
             </div>
             <div className="lighting-status-grid">

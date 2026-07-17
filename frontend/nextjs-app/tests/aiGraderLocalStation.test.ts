@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AI_GRADER_STATION_STEPS,
+  aiGraderApproveAndPublishEligible,
+  aiGraderAuthoritativeLiveLightingDraft,
   buildAiGraderLocalStationStatus,
   parseAiGraderStationAction,
   sanitizeAiGraderRapidCaptureQueue,
@@ -58,6 +60,78 @@ test("Rapid Capture queue sanitization preserves bounded report state and strips
   assert.equal(queue.items[0].reportId, "report-1");
   assert.equal("manifestPath" in queue.items[0], false);
   assert.equal(queue.items[0].autoConfirmed, false);
+});
+
+test("browser lighting display follows only the authoritative acknowledged bridge state", () => {
+  const status = buildAiGraderLocalStationStatus({ action: "start-session" });
+  status.liveLighting.profile = {
+    ...status.liveLighting.profile,
+    enabled: true,
+    acceptedForCapture: true,
+    source: "accepted_station_profile",
+  };
+  assert.equal(aiGraderAuthoritativeLiveLightingDraft(status.liveLighting).enabled, false);
+
+  status.liveLighting.status = "on";
+  status.liveLighting.applied = {
+    enabled: true,
+    dutyPercent: status.liveLighting.profile.dutyPercent,
+    actualLeimacPwmStep: status.liveLighting.profile.actualLeimacPwmStep,
+    channels: [...status.liveLighting.profile.channels],
+    verificationState: "verified",
+    expectedWriteCount: 5,
+    acknowledgedWriteCount: 4,
+    verificationComplete: false,
+    lastResponseKinds: ["mock", "mock", "mock", "mock"],
+    verifiedAt: "2026-07-17T12:00:00.000Z",
+  };
+  status.liveLighting.physicalState = {
+    state: "unverified",
+    reason: "dynamic test incomplete acknowledgement",
+    changedAt: "2026-07-17T12:00:00.000Z",
+    expectedWriteCount: 5,
+    acknowledgedWriteCount: 4,
+    complete: false,
+    verifiedAt: "2026-07-17T12:00:00.000Z",
+  };
+  assert.equal(aiGraderAuthoritativeLiveLightingDraft(status.liveLighting).enabled, false);
+
+  status.liveLighting.applied.acknowledgedWriteCount = 5;
+  status.liveLighting.applied.verificationComplete = true;
+  status.liveLighting.applied.lastResponseKinds = ["mock", "mock", "mock", "mock", "mock"];
+  status.liveLighting.physicalState.state = "positioning_light_verified";
+  status.liveLighting.physicalState.reason = "dynamic test complete acknowledgement";
+  status.liveLighting.physicalState.acknowledgedWriteCount = 5;
+  status.liveLighting.physicalState.complete = true;
+  assert.deepEqual(aiGraderAuthoritativeLiveLightingDraft(status.liveLighting), {
+    enabled: true,
+    dutyPercent: status.liveLighting.profile.dutyPercent,
+    channels: status.liveLighting.profile.channels,
+  });
+});
+
+test("a prepared Rapid item is eligible for the one Approve & Publish authority only with normal identity and sign-in", () => {
+  assert.equal(aiGraderApproveAndPublishEligible({
+    reportReady: true,
+    finalReady: true,
+    productionSignedIn: true,
+    identityReady: true,
+    publishStatus: "idle",
+  }), true);
+  assert.equal(aiGraderApproveAndPublishEligible({
+    reportReady: true,
+    finalReady: false,
+    productionSignedIn: true,
+    identityReady: true,
+    publishStatus: "idle",
+  }), false);
+  assert.equal(aiGraderApproveAndPublishEligible({
+    reportReady: true,
+    finalReady: true,
+    productionSignedIn: false,
+    identityReady: true,
+    publishStatus: "idle",
+  }), false);
 });
 
 test("manual geometry fallback cannot enter the display contract", () => {

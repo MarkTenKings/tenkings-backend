@@ -11,6 +11,8 @@ The Dell capture helper is the only local owner of the Basler/Pylon camera and L
 
 There are no routine safety/recovery clicks, fixture/ruler confirmations, per-card lighting-profile acceptance steps, flip confirmations, manual capture paths, or separate Confirm and Publish screens. **Add To Inventory** is intentionally retained as a later Finish business action after NFC/slab/valuation/label readiness; it is outside grading. The browser does not own physical shutdown and does not maintain a shadow hardware-safety state.
 
+**Start New Card** automatically applies the configured production positioning-light profile through the existing bounded Leimac path. The session becomes Capture Front lighting-ready only after every expected controller acknowledgement is complete. Rapid continuation applies the same profile to the exact newly created next-card session. A failed application returns one explicit retryable Start New Card error and never claims readiness.
+
 ## Retained physical invariants
 
 The bridge retains only these physical controls:
@@ -30,7 +32,7 @@ Every capture binds the exact station session, report, card, side, preview epoch
 
 The browser submits only an exact match assertion. The bridge owns the current frame and capture authority, acquires the capture lock, serializes the operation, and uses the single Basler/Pylon implementation. There is no cold/debug production capture, warm-to-cold recovery, alternate capture implementation, manual overlay, browser cleanup owner, compatibility flip route, or broad reconnect/retry ladder.
 
-Rapid Capture is the retained production throughput path, not a capture alternative. The operator still performs the same four actions for every card. After **Capture Back**, the bridge durably detaches the exact session/report manifest and front/back packages, records the queue item, runs report generation through one serialized background worker, and starts a clean next-card session without cancelling the detached card's processing. A completed queue item may be opened only for the same **Approve & Publish** authority. Queue status exposes no local manifest path; automatic shutter triggering and automatic publication remain absent.
+Rapid Capture is the retained production throughput path, not a capture alternative. The operator still performs the same four actions for every card. After **Capture Back**, the bridge durably detaches the exact session/report manifest and front/back packages, records the queue item, runs diagnostics/report-bundle generation plus final-grade, finalized-release, and label-data preparation through one serialized background worker, and starts a clean next-card session without cancelling the detached card's processing. A completed queue item may be opened only after those exact artifacts are ready and only for the same **Approve & Publish** authority. Queue status exposes no local manifest path; automatic shutter triggering, approval, publication, and inventory mutation remain absent. A failed item is isolated to its exact queue identity and does not take capture readiness away from the next session.
 
 Front and back immutable evidence, normalized derivatives, checksums, findings, and report identity stay linked to the same session and report. **Approve & Publish** is the one human publication authority. Durable card/report/label/inventory persistence executes atomically; partial publication is not permitted. Existing Label V1 authority remains unchanged.
 
@@ -71,7 +73,7 @@ pnpm --filter @tenkings/ai-grader-capture-helper build
 pnpm --filter @tenkings/ai-grader-capture-helper test
 ```
 
-The full suite uses injected fake boundaries and must report zero real camera, lighting, controller, or external-network access. It covers loopback/origin enforcement, exact acknowledgements, watchdog ownership, serialized capture, capture lock, camera ownership, scoped orphan cleanup, exact frame identity, fresh/stale handling, and the absence of removed routes and fallbacks.
+The full suite uses injected fake boundaries and must report zero real camera, lighting, controller, or external-network access. It covers loopback/origin enforcement, exact acknowledgements, automatic configured-light application and retry, Rapid next-session readiness, serialized final-grade/release/label preparation, watchdog ownership, serialized capture, capture lock, camera ownership, scoped orphan cleanup, exact frame identity, fresh/stale handling, and the absence of removed routes and fallbacks.
 
 Generic simulator/readiness commands remain hardware-free:
 
@@ -86,5 +88,7 @@ Real hardware operation requires the protected installed bridge and normal stati
 ## Failure behavior
 
 A failed capture or processing operation returns one exact terminal error and releases only work whose physical outcome is definite. An ambiguous in-flight physical operation remains owned by the bridge until it terminates; no overlapping retry is allowed. The UI must allow a new clean card/session after terminal cleanup rather than entering a permanently wedged browser state.
+
+If configured positioning-light application fails during Start New Card or Rapid continuation, the browser refreshes the authoritative bridge state, shows that single error, and leaves **Start New Card** available for retry. The visible Live/Off control is derived from complete returned acknowledgement state, not a stale browser draft.
 
 No failure may silently publish partial data, reuse an old report, substitute sample/public-report data, or activate inventory.

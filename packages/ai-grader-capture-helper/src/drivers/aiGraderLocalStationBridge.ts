@@ -1790,7 +1790,7 @@ function defaultLiveLightingStatus(config: AiGraderLocalStationBridgeConfig): Ai
       events: [],
     },
     note:
-      "Browser live lighting tuning is local-only through the paired Dell bridge. Live edits command Leimac for visual tuning only until the operator accepts the profile for capture.",
+      "Lighting is local-only through the paired Dell bridge. Start New Card applies the configured profile, and the exact controller-acknowledged bridge state is authoritative for capture.",
   };
 }
 
@@ -1950,7 +1950,7 @@ function buildFixedRigProfile(profile: AiGraderLocalStationAcceptedProfile): Fix
     selectedChannels: profile.channels,
     profileSource: profile.source === "browser_live_tuning"
       ? "browser_live_tuning"
-      : profile.source === "default"
+      : profile.source === "default" || profile.source === "bridge_operator"
         ? "default"
         : profile.source === "cli_override"
           ? "cli_override"
@@ -3342,8 +3342,12 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private durableAcceptedCaptureProfile() {
-    if (this.manifest.acceptedProfile.source !== 'browser_live_tuning' && this.manifest.acceptedProfile.source !== 'operator_preview') {
-      throw new Error('Capture authority cannot use a default, CLI override, or browser-manufactured profile source.');
+    if (
+      this.manifest.acceptedProfile.source !== 'browser_live_tuning'
+      && this.manifest.acceptedProfile.source !== 'operator_preview'
+      && this.manifest.acceptedProfile.source !== 'bridge_operator'
+    ) {
+      throw new Error('Capture authority requires a controller-acknowledged browser, operator-preview, or bridge-applied configured profile.');
     }
     const accepted = durableAcceptedPositioningProfile(this.manifest.acceptedProfile);
     const identity = crypto.createHash("sha256").update(JSON.stringify({
@@ -4291,11 +4295,28 @@ export class AiGraderLocalStationBridgeService {
           manifest.outputs.assetManifestPath = bundle.assetManifestPath;
           manifest.outputs.checksumsPath = bundle.checksumsPath;
           manifest.reportBundle = bundle.bundle;
-          manifest.currentStep = "view_unified_report";
+          const release = await this.writeProductionReleaseForManifest(manifest, {
+            operatorId: "rapid-background-preparation",
+            warningsAccepted: true,
+            overrideReason: "Canonical Rapid background preparation before the separate authenticated Approve & Publish authority.",
+          });
+          if (
+            release.reportId !== reportId
+            || release.gradingSessionId !== manifest.sessionId
+            || release.finalGradeComputed !== true
+            || release.labelDataGenerated !== true
+            || release.qrPayloadGenerated !== true
+            || release.label.status !== "label_data_ready"
+            || !manifest.outputs.productionReleasePath
+            || !manifest.outputs.labelDataPath
+          ) {
+            throw new Error("Rapid background preparation did not produce the exact final grade and label-ready release for this queued report.");
+          }
+          manifest.currentStep = "label_data_ready";
           this.transitionRapidWorkflow(
             manifest,
             "report_ready_needs_confirm",
-            "Background diagnostics and report bundle are ready for the single Approve & Publish authority.",
+            "Background diagnostics, final grade, finalized release, and label data are ready for the single Approve & Publish authority.",
           );
           await this.syncQueuedManifest(manifest);
         } catch (error) {
@@ -4563,6 +4584,20 @@ export class AiGraderLocalStationBridgeService {
     manifest.warmRunnerStatus.status = "idle";
     manifest.progressLog.push(`${now} Started station session ${manifest.sessionId} with clean per-card state.`);
     await writeSessionManifest(manifest);
+    try {
+      await this.applyConfiguredDefaultLightingUnlocked(
+        selectionSource === "rapid_continuation"
+          ? "Rapid continuation configured positioning light"
+          : "Start New Card configured positioning light",
+      );
+      manifest.progressLog.push(`${new Date().toISOString()} Configured positioning light is controller-acknowledged and Capture Front lighting-ready.`);
+      await writeSessionManifest(manifest);
+    } catch (error) {
+      const message = boundedBackPositioningError(error).message;
+      manifest.progressLog.push(`${new Date().toISOString()} Configured positioning light was not fully acknowledged; this session is not capture-ready.`);
+      await writeSessionManifest(manifest);
+      throw new Error(`Start New Card could not establish the configured positioning light. Retry Start New Card. ${message}`);
+    }
   }
   private updatePreviewStatus(update: Partial<AiGraderLocalStationPreviewStatus>) {
     this.manifest.previewStatus = {
@@ -5334,13 +5369,33 @@ export class AiGraderLocalStationBridgeService {
     return this.serializeLightingLifecycle(() => this.applyLiveLightingUnlocked(request));
   }
 
-  private async applyLiveLightingUnlocked(request: JsonBody = {}): Promise<AiGraderLiveLightingStatus> {
+  private async applyConfiguredDefaultLightingUnlocked(reason: string): Promise<AiGraderLiveLightingStatus> {
+    const configured = this.manifest.acceptedProfile;
+    if (configured.dutyPercent <= 0 || configured.channels.length === 0) {
+      throw new Error("The configured default positioning-light profile must enable at least one channel above zero duty.");
+    }
+    return this.applyLiveLightingUnlocked({
+      enabled: true,
+      dutyPercent: configured.dutyPercent,
+      channels: configured.channels,
+      reason,
+    }, "bridge_operator");
+  }
+
+  private async applyLiveLightingUnlocked(
+    request: JsonBody = {},
+    acceptanceSource: "browser_live_tuning" | "bridge_operator" = "browser_live_tuning",
+  ): Promise<AiGraderLiveLightingStatus> {
     if (this.manifest.currentStep === "prompt_flip_card" || this.manifest.currentStep === "capture_back") {
       throw new Error("Browser hardware/profile values are disabled after Front Capture; the bridge owns Back positioning for the remainder of this card session.");
     }
     this.assertLiveLightingReady();
     if (!this.manifest.sessionId) throw new Error("Start a station session before browser live lighting tuning.");
-    const profile = validateLiveLightingRequest(request, this.manifest.liveLighting);
+    const requestedProfile = validateLiveLightingRequest(request, this.manifest.liveLighting);
+    const profile: AiGraderLiveLightingProfile = {
+      ...requestedProfile,
+      source: acceptanceSource === "bridge_operator" ? "accepted_station_profile" : "browser_live_tuning",
+    };
     const currentApplied = this.manifest.liveLighting.applied;
     const sameAsApplied =
       currentApplied.enabled === profile.enabled &&
@@ -5353,7 +5408,7 @@ export class AiGraderLocalStationBridgeService {
         exposureUs: this.manifest.acceptedProfile.exposureUs,
         gain: this.manifest.acceptedProfile.gain,
         channels: profile.channels,
-        source: "browser_live_tuning",
+        source: acceptanceSource,
       }, this.manifest.acceptedProfile);
       return { ...profile, acceptedForCapture: true, acceptedAt: this.manifest.acceptedProfile.acceptedAt };
     };
@@ -5416,9 +5471,9 @@ export class AiGraderLocalStationBridgeService {
       return this.liveLightingStatus();
     } catch (error) {
       const failure = boundedBackPositioningError(
-        error instanceof Error ? error : new Error("Browser live lighting apply failed.")
+        error instanceof Error ? error : new Error("Capture-ready lighting apply failed.")
       );
-      this.markPhysicalStateUnknown("browser live lighting apply failed", error);
+      this.markPhysicalStateUnknown("capture-ready lighting apply failed", error);
       this.recordLiveLightingEvent({ type: "failure_safe_off", reason: failure.message, ok: false });
       let cleanupError: unknown;
       try {
@@ -7045,28 +7100,43 @@ export class AiGraderLocalStationBridgeService {
     if (!this.manifest.outputs.reportBundlePath) {
       await this.action("export-report-bundle", request);
     }
+    return this.writeProductionReleaseForManifest(this.manifest, request);
+  }
+
+  private async writeProductionReleaseForManifest(
+    manifest: AiGraderLocalStationBridgeManifest,
+    request: AiGraderLocalStationBridgeActionRequest,
+  ): Promise<AiGraderProductionRelease> {
+    const reportId = manifest.reportId;
+    if (!reportId || !manifest.sessionId) {
+      throw new Error("Production release requires one exact report and grading-session identity.");
+    }
+    if (!manifest.outputs.reportBundlePath) {
+      throw new Error("Production release requires an exported report-bundle.json.");
+    }
     return withAiGraderReportPackageOperation(reportId, async () => {
-      const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
+      const reportDir = manifest.outputs.unifiedReportDir ?? dirnameIfFile(manifest.outputs.unifiedReportPath);
       await reconcileAiGraderReportPackageTransaction({
         canonicalDir: publishPackageDir(this.config, reportId),
         reportId,
-        gradingSessionId: this.manifest.sessionId,
+        gradingSessionId: manifest.sessionId,
         reportDir,
       });
-      return this.writeProductionReleaseUnlocked(request, reportId);
+      return this.writeProductionReleaseUnlocked(request, reportId, manifest);
     });
   }
 
   private async writeProductionReleaseUnlocked(
     request: AiGraderLocalStationBridgeActionRequest,
     reportId: string,
+    manifest: AiGraderLocalStationBridgeManifest = this.manifest,
   ): Promise<AiGraderProductionRelease> {
-    if (!this.manifest.outputs.reportBundlePath) {
+    if (!manifest.outputs.reportBundlePath) {
       throw new Error("Production release requires an exported report-bundle.json.");
     }
     const outputDir = publishPackageDir(this.config, reportId);
     const result = await writeAiGraderProductionRelease({
-      reportBundlePath: this.manifest.outputs.reportBundlePath,
+      reportBundlePath: manifest.outputs.reportBundlePath,
       outputDir,
       operatorId: request.operatorId,
       warningsAccepted: request.warningsAccepted,
@@ -7074,17 +7144,23 @@ export class AiGraderLocalStationBridgeService {
       publicBaseUrl: this.config.publicBasePath?.startsWith("http") ? this.config.publicBasePath : undefined,
       publicBasePath: this.config.publicBasePath,
     });
-    this.manifest.outputs.productionReleasePath = result.productionReleasePath;
-    this.manifest.outputs.labelDataPath = result.labelDataPath;
-    this.manifest.outputs.publicationManifestPath = result.publicationManifestPath;
-    this.manifest.outputs.integrationContractPath = result.integrationContractPath;
-    this.manifest.outputs.publishPackageDir = result.outputDir;
-    this.manifest.productionRelease = result.productionRelease;
-    this.manifest.safety.finalGradeComputed = result.productionRelease.finalGradeComputed;
-    this.manifest.safety.labelGenerated = result.productionRelease.labelDataGenerated;
-    this.manifest.safety.qrGenerated = result.productionRelease.qrPayloadGenerated;
-    this.manifest.progressLog.push(`${new Date().toISOString()} Production release artifacts written to ${result.outputDir}.`);
-    await writeSessionManifest(this.manifest);
+    if (
+      result.productionRelease.reportId !== reportId
+      || result.productionRelease.gradingSessionId !== manifest.sessionId
+    ) {
+      throw new Error("Production release identity did not match the exact station report and grading session.");
+    }
+    manifest.outputs.productionReleasePath = result.productionReleasePath;
+    manifest.outputs.labelDataPath = result.labelDataPath;
+    manifest.outputs.publicationManifestPath = result.publicationManifestPath;
+    manifest.outputs.integrationContractPath = result.integrationContractPath;
+    manifest.outputs.publishPackageDir = result.outputDir;
+    manifest.productionRelease = result.productionRelease;
+    manifest.safety.finalGradeComputed = result.productionRelease.finalGradeComputed;
+    manifest.safety.labelGenerated = result.productionRelease.labelDataGenerated;
+    manifest.safety.qrGenerated = result.productionRelease.qrPayloadGenerated;
+    manifest.progressLog.push(`${new Date().toISOString()} Production release artifacts written to ${result.outputDir}.`);
+    await writeSessionManifest(manifest);
     return result.productionRelease;
   }
 
