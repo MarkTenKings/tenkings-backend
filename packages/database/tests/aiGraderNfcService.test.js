@@ -750,13 +750,25 @@ test("F8215 is separately default-off and activates only with exact v2 lock/read
   assert.equal(disabledRuntime.state.tags.length, 0);
 
   const runtime = mockDb();
+  await assert.rejects(reserve(runtime, "init-feiju-unconfirmed", {
+    chipType: "FEIJU_F8215",
+    programmingProfile: "gototags_manual_start_v1",
+    feijuF8215Enabled: true,
+  }), { code: "AI_GRADER_NFC_FRESH_INVENTORY_CONFIRMATION_REQUIRED" });
+  assert.equal(runtime.state.tags.length, 0);
   const init = await reserve(runtime, "init-feiju-enabled", {
     chipType: "FEIJU_F8215",
     programmingProfile: "gototags_manual_start_v1",
     feijuF8215Enabled: true,
+    operatorFreshInventoryConfirmation: "operator_fresh_inventory_confirmation_v1",
   });
   assert.equal(init.chipType, "FEIJU_F8215");
   assert.equal(init.programmingProfile, "gototags_manual_start_v1");
+  assert.equal(runtime.state.tags[0].metadata.operatorFreshInventoryConfirmation, "operator_fresh_inventory_confirmation_v1");
+  assert.equal(
+    runtime.state.audits.find((row) => row.action === "programming_attempt_initialized")?.safeDetails?.operatorFreshInventoryConfirmation,
+    "operator_fresh_inventory_confirmation_v1",
+  );
   const signed = signedFeijuCompletionInput(runtime, init);
   const active = await completeAiGraderNfcProgramming(signed);
   assert.equal(active.status, "active");
@@ -799,6 +811,7 @@ test("F8215 is separately default-off and activates only with exact v2 lock/read
       chipType: "FEIJU_F8215",
       programmingProfile: "gototags_manual_start_v1",
       feijuF8215Enabled: true,
+      operatorFreshInventoryConfirmation: "operator_fresh_inventory_confirmation_v1",
     });
     await assert.rejects(completeAiGraderNfcProgramming(mutate(signedFeijuCompletionInput(rejectedRuntime, rejectedInit))));
     assert.notEqual(rejectedRuntime.state.tags[0].status, "active");
@@ -1195,7 +1208,7 @@ test("concurrent ordinary init and authorized replace leave at most one open reg
   assert.equal(runtime.state.attempts.filter((attempt) => ["initialized", "writing", "verified"].includes(attempt.state)).length, 1);
 });
 
-test("safe status returns exact linkage and no UID fingerprint, token, attempt, path, or helper details", async () => {
+test("authenticated safe status returns exact active attempt recovery identity without UID, token, path, or helper details", async () => {
   const runtime = mockDb();
   const missing = await getAiGraderNfcStatus({ tenantId: "ten-kings", reportId: "report-1", dbClient: runtime.db });
   assert.deepEqual({ status: missing.status, cardAssetId: missing.cardAssetId, itemId: missing.itemId, certId: missing.certId }, {
@@ -1203,11 +1216,13 @@ test("safe status returns exact linkage and no UID fingerprint, token, attempt, 
   });
   const init = await reserve(runtime);
   await complete(runtime, init);
-  const json = JSON.stringify(await getAiGraderNfcStatus({
+  const status = await getAiGraderNfcStatus({
     tenantId: "ten-kings",
     reportId: "report-1",
     dbClient: runtime.db,
-  }));
+  });
+  assert.equal(status.activeAttemptId, init.attemptId);
+  const json = JSON.stringify(status);
   assert.equal(json.includes("uidFingerprint"), false);
   assert.equal(json.includes("rawUid"), false);
   assert.equal(json.includes("localPath"), false);

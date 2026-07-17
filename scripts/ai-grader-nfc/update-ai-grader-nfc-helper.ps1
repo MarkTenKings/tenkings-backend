@@ -8,23 +8,6 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "ai-grader-nfc-helper-common.ps1")
 
-function Invoke-NfcBuildVerification {
-  param([Parameter(Mandatory = $true)][string]$DllPath)
-  $output = @(& dotnet $DllPath --verify-build)
-  if ($LASTEXITCODE -ne 0) { throw "The NFC helper build verification command failed." }
-  $result = ($output -join [Environment]::NewLine) | ConvertFrom-Json
-  if (-not $result.ok -or
-      $result.helperVersion -cne "tenkings-ai-grader-nfc-helper-v3" -or
-      $result.helperProtocolVersion -cne "tenkings-ai-grader-nfc-loopback-v2" -or
-      $result.attestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v1" -or
-      $result.multiProfileAttestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v2" -or
-      $result.attestationAlgorithm -cne $script:NfcAttestationAlgorithm -or
-      [bool]$result.hardwareAccessed -or
-      [bool]$result.productionKeyAccessed) {
-    throw "The NFC helper build verification returned an incompatible or unsafe result."
-  }
-}
-
 function Assert-NfcInstalledKeyIdentity {
   param(
     [Parameter(Mandatory = $true)][string]$DllPath,
@@ -116,7 +99,9 @@ $repoRoot = Get-NfcRepoRoot
 $project = Join-Path $repoRoot "packages\ai-grader-nfc-helper\src\TenKings.AiGrader.NfcHelper\TenKings.AiGrader.NfcHelper.csproj"
 $liveDll = Join-Path $InstallDirectory "TenKings.AiGrader.NfcHelper.dll"
 if (-not (Test-Path -LiteralPath $liveDll -PathType Leaf)) { throw "The current NFC helper executable is missing." }
-Invoke-NfcBuildVerification -DllPath $liveDll
+$priorHelperVersion = Invoke-NfcBuildVerification `
+  -DllPath $liveDll `
+  -AllowedHelperVersion @($script:NfcHelperVersionV2, $script:NfcHelperVersionV3)
 Assert-NfcInstalledKeyIdentity -DllPath $liveDll -Config $config
 
 $wasRunning = $task.State -eq "Running" -or @(Get-NfcHelperProcess -Config $config).Count -gt 0
@@ -139,7 +124,7 @@ try {
   Protect-NfcTree -Path $stagingDirectory -AllowedRoot $script:NfcToolsRoot
   Assert-NfcProtectedTree -Path $stagingDirectory -AllowedRoot $script:NfcToolsRoot
   $stagedDll = Join-Path $stagingDirectory "TenKings.AiGrader.NfcHelper.dll"
-  Invoke-NfcBuildVerification -DllPath $stagedDll
+  Invoke-NfcBuildVerification -DllPath $stagedDll -AllowedHelperVersion @($script:NfcHelperVersionV3) | Out-Null
   Assert-NfcInstalledKeyIdentity -DllPath $stagedDll -Config $config
 
   # Everything above is hardware-free and completes before the working helper is stopped.
@@ -155,7 +140,7 @@ try {
       param($activatedInstall)
       Assert-NfcProtectedTree -Path $activatedInstall -AllowedRoot $script:NfcToolsRoot
       $activatedDll = Join-Path $activatedInstall "TenKings.AiGrader.NfcHelper.dll"
-      Invoke-NfcBuildVerification -DllPath $activatedDll
+      Invoke-NfcBuildVerification -DllPath $activatedDll -AllowedHelperVersion @($script:NfcHelperVersionV3) | Out-Null
       Assert-NfcInstalledKeyIdentity -DllPath $activatedDll -Config $config
       Assert-NfcPreservedState -Expected $preserved -Config $config -ConfigPath $ConfigPath -TaskName $TaskName
       if ($wasRunning) {
@@ -171,7 +156,7 @@ try {
       param($restoredInstall)
       Assert-NfcProtectedTree -Path $restoredInstall -AllowedRoot $script:NfcToolsRoot
       $restoredDll = Join-Path $restoredInstall "TenKings.AiGrader.NfcHelper.dll"
-      Invoke-NfcBuildVerification -DllPath $restoredDll
+      Invoke-NfcBuildVerification -DllPath $restoredDll -AllowedHelperVersion @($priorHelperVersion) | Out-Null
       Assert-NfcInstalledKeyIdentity -DllPath $restoredDll -Config $config
       Assert-NfcPreservedState -Expected $preserved -Config $config -ConfigPath $ConfigPath -TaskName $TaskName
       if ($wasRunning) {
@@ -191,8 +176,9 @@ try {
 
   [pscustomobject]@{
     ok = $true
-    helperVersion = "tenkings-ai-grader-nfc-helper-v3"
-    helperProtocolVersion = "tenkings-ai-grader-nfc-loopback-v2"
+    priorHelperVersion = $priorHelperVersion
+    helperVersion = $script:NfcHelperVersionV3
+    helperProtocolVersion = $script:NfcHelperProtocolVersion
     priorRunningStatePreserved = $true
     protectedConfigPreserved = $true
     workstationKeyIdentityPreserved = $true

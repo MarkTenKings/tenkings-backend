@@ -76,16 +76,11 @@ try {
       New-Item -ItemType Directory -Path $script:NfcGoToTagsJobRoot -ErrorAction Stop | Out-Null
     }
     Protect-NfcTree -Path $script:NfcGoToTagsRoot -AllowedRoot $script:NfcConfigRoot
-    if (@(Get-ChildItem -LiteralPath $script:NfcGoToTagsJobRoot -Force).Count -ne 0) {
-      throw "The protected GoToTags job directory contains recovery state and requires operator review."
-    }
+    Assert-NfcNoActiveGoToTagsRecovery -JobRoot $script:NfcGoToTagsJobRoot
     Set-NfcConfigProperty -Config $config -Name "feijuF8215Enabled" -Value $true
     Set-NfcConfigProperty -Config $config -Name "goToTagsExecutablePath" -Value $executable
   } else {
-    if ((Test-Path -LiteralPath $script:NfcGoToTagsJobRoot -PathType Container) -and
-        @(Get-ChildItem -LiteralPath $script:NfcGoToTagsJobRoot -Force).Count -ne 0) {
-      throw "The protected GoToTags job directory contains recovery state and cannot be disabled automatically."
-    }
+    Assert-NfcNoActiveGoToTagsRecovery -JobRoot $script:NfcGoToTagsJobRoot
     Set-NfcConfigProperty -Config $config -Name "feijuF8215Enabled" -Value $false
     if (-not $config.PSObject.Properties["goToTagsExecutablePath"]) {
       Set-NfcConfigProperty -Config $config -Name "goToTagsExecutablePath" -Value ""

@@ -20,6 +20,8 @@ internal static class Program
                 return RunExportWorkstationAttestationPublicKey();
             if (args is ["--verify-build"])
                 return RunVerifyBuild();
+            if (args is ["--resolve-abandoned-f8215-job"])
+                return RunResolveAbandonedF8215Job();
 
             var backendName = ResolveBackend(args);
             INfcReaderBackend backend = backendName switch
@@ -125,6 +127,16 @@ internal static class Program
     {
         var result = NfcBuildVerification.Verify();
         Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.NfcBuildVerificationResult));
+        return 0;
+    }
+
+    private static int RunResolveAbandonedF8215Job()
+    {
+        var jobRoot = Environment.GetEnvironmentVariable("TENKINGS_NFC_GOTOTAGS_JOB_ROOT")?.Trim() ?? string.Empty;
+        var attemptId = Environment.GetEnvironmentVariable("TENKINGS_NFC_ABANDONED_ATTEMPT_ID")?.Trim() ?? string.Empty;
+        var confirmation = Environment.GetEnvironmentVariable("TENKINGS_NFC_ABANDONED_CONFIRMATION") ?? string.Empty;
+        var result = F8215JobCoordinator.ResolveAbandonedJob(jobRoot, attemptId, confirmation);
+        Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.F8215AbandonedResolutionResult));
         return 0;
     }
 

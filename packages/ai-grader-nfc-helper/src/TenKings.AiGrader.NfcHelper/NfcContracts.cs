@@ -24,6 +24,7 @@ public static class NfcProtocol
     public const string ApprovedGoToTagsDelegateExecute = "{BFEC0C93-0B7D-4F2C-B09C-AFFFC4BDAE78}";
     public const string ApprovedGoToTagsTemplateSha256 = "31bfcca6cfd0e947d5368643a0aeed2ce730b9e0ad2ed9d0a503cfd5e5e05c3d";
     public const string FeijuReaderResultCode = "write_locked_verified_gototags_readback";
+    public const string FeijuQuarantineConfirmation = "I removed and quarantined the exact F8215 tag for this attempt.";
     public const string FeijuWriteProtectionState = "permanently_read_only_verified";
     public const string Ntag424ChipType = "NTAG424_DNA";
     public const string Ntag424ProgrammingProfile = "ntag424_dna_unimplemented";
@@ -156,6 +157,15 @@ public sealed record F8215OperationAcknowledgeResponse(
     string AttemptId,
     bool Cleaned);
 
+public sealed record F8215AbandonedResolutionResult(
+    string HelperProtocolVersion,
+    string AttemptFingerprintSha256,
+    string PriorPhase,
+    string Resolution,
+    bool ProtectedArtifactsRemoved,
+    bool OperationGateReleasedOnNextStart,
+    bool EncodingSuccessClaimed);
+
 public sealed record WorkstationKeyMetadata(
     string KeyName,
     string KeyId,
@@ -242,6 +252,7 @@ public sealed class NfcHelperException : Exception
 [JsonSerializable(typeof(ApiEnvelope<F8215PrepareResponse>))]
 [JsonSerializable(typeof(ApiEnvelope<F8215OperationStatusResponse>))]
 [JsonSerializable(typeof(ApiEnvelope<F8215OperationAcknowledgeResponse>))]
+[JsonSerializable(typeof(F8215AbandonedResolutionResult))]
 [JsonSerializable(typeof(ApiEnvelope<object>))]
 [JsonSerializable(typeof(HardwareGateResult))]
 [JsonSerializable(typeof(F8215HardwareGateResult))]

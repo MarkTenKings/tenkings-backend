@@ -178,13 +178,110 @@ public sealed partial class F8215JobCoordinator
         {
             var job = RequireMatchingJob(request.AttemptId);
             if (!string.Equals(job.Phase, "completed", StringComparison.Ordinal) || job.Evidence is null)
-                throw Error("gototags_job_not_completed", "Only a hosted-activated Feiju job may be acknowledged and cleaned.", false, 409);
+                throw Error("gototags_job_not_completed", "Only an exact completed Feiju job may be acknowledged and cleaned.", false, 409);
             CleanupOperationFile(job.OperationFileName);
             DeleteStateFile();
             _job = null;
             ReleaseOperationGate();
             _logger.Info("gototags_job_acknowledged", requestId, "protected_artifacts_removed");
             return new F8215OperationAcknowledgeResponse(NfcProtocol.ProtocolVersion, request.AttemptId, true);
+        }
+    }
+
+    public static F8215AbandonedResolutionResult ResolveAbandonedJob(
+        string jobRoot,
+        string attemptId,
+        string confirmation,
+        TimeProvider? timeProvider = null)
+    {
+        if (!HostedAttemptPattern().IsMatch(attemptId))
+            throw Error("invalid_request_context", "attemptId is invalid.", false, 400);
+        if (!string.Equals(confirmation, NfcProtocol.FeijuQuarantineConfirmation, StringComparison.Ordinal))
+            throw Error(
+                "gototags_quarantine_confirmation_required",
+                "Exact confirmation that the physical tag was removed and quarantined is required.",
+                false,
+                400);
+        ProtectedJobDirectory.Assert(jobRoot);
+        var statePath = ProtectedJobDirectory.ContainedFile(jobRoot, StateFileName);
+        if (!File.Exists(statePath))
+            throw Error("gototags_job_not_found", "No protected Feiju job exists for this attempt.", false, 404);
+
+        var bytes = File.ReadAllBytes(statePath);
+        F8215PersistedJob job;
+        try
+        {
+            if (bytes.Length is <= 0 or > NfcProtocol.MaxJsonBytes) throw new JsonException();
+            job = JsonSerializer.Deserialize<F8215PersistedJob>(bytes, PersistedJson) ?? throw new JsonException();
+            ValidatePersisted(job);
+        }
+        catch (JsonException)
+        {
+            throw Error("gototags_recovery_state_invalid", "The protected Feiju recovery state requires operator review.", false, 503);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(bytes);
+        }
+
+        if (!SecureEquals(job.AttemptId, attemptId))
+            throw Error("gototags_job_mismatch", "The protected Feiju job belongs to a different hosted attempt.", false, 409);
+        if (job.Phase is not ("failed" or "uncertain"))
+            throw Error(
+                "gototags_abandoned_job_not_resolvable",
+                "Only a failed or uncertain Feiju job may be resolved through quarantine maintenance.",
+                false,
+                409);
+
+        var operationPath = ProtectedJobDirectory.ContainedFile(jobRoot, job.OperationFileName);
+        var auditPath = ProtectedJobDirectory.ContainedFile(jobRoot, "abandoned-job-audit.jsonl");
+        var fingerprint = Sha256(attemptId);
+        AppendResolutionAudit(auditPath, new
+        {
+            schemaVersion = "tenkings-ai-grader-nfc-abandoned-resolution-v1",
+            attemptFingerprintSha256 = fingerprint,
+            priorPhase = job.Phase,
+            errorCode = job.ErrorCode,
+            physicalTagDisposition = "removed_and_quarantined",
+            action = "quarantine_resolution_authorized",
+            encodingSuccessClaimed = false,
+            resolvedAt = CanonicalUtc((timeProvider ?? TimeProvider.System).GetUtcNow()),
+        });
+
+        // The exact local recovery identity is intentionally removed last.
+        // A failed operation-file cleanup leaves state available for a bounded retry.
+        TryDelete(operationPath);
+        TryDelete(statePath);
+        return new F8215AbandonedResolutionResult(
+            NfcProtocol.ProtocolVersion,
+            fingerprint,
+            job.Phase,
+            "quarantined_abandoned_job_resolved",
+            true,
+            true,
+            false);
+    }
+
+    private static void AppendResolutionAudit(string auditPath, object record)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(record, PersistedJson);
+        try
+        {
+            if (bytes.Length > 4096 || File.Exists(auditPath) && new FileInfo(auditPath).Length + bytes.Length + 1 > 1024 * 1024)
+                throw Error("gototags_resolution_audit_full", "The protected quarantine audit reached its reviewed size bound; no cleanup was performed.", false, 503);
+            using var stream = new FileStream(auditPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+            stream.Seek(0, SeekOrigin.End);
+            stream.Write(bytes);
+            stream.WriteByte((byte)'\n');
+            stream.Flush(true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw Error("gototags_resolution_audit_failed", "The protected quarantine audit could not be saved; no cleanup was performed.", false, 503);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(bytes);
         }
     }
 
@@ -446,4 +543,6 @@ public sealed partial class F8215JobCoordinator
     private static partial Regex CallbackPattern();
     [GeneratedRegex("^[a-f0-9]{64}$", RegexOptions.CultureInvariant)]
     private static partial Regex Sha256Pattern();
+    [GeneratedRegex("^nfc_attempt_[A-Za-z0-9_-]{43}$", RegexOptions.CultureInvariant)]
+    private static partial Regex HostedAttemptPattern();
 }

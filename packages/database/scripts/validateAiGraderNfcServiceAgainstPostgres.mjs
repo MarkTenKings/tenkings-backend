@@ -24,6 +24,7 @@ const {
   AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2,
   AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION,
   AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE,
+  AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION,
   AI_GRADER_NFC_FEIJU_READER_RESULT,
   AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_STATE,
   AI_GRADER_NFC_GOTOTAGS_ADAPTER_IDENTITY,
@@ -395,6 +396,7 @@ async function main() {
       idempotencyKey: "service-validation-replace",
       chipType: "FEIJU_F8215",
       programmingProfile: AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE,
+      operatorFreshInventoryConfirmation: AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION,
       now: new Date(NOW.getTime() + 15_000),
     };
     const [replacement, replacementRetry] = await Promise.all([

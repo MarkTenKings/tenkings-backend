@@ -16,6 +16,7 @@ import {
   getAiGraderF8215OperationStatus,
   pairAiGraderNfcHelper,
   prepareAiGraderF8215Job,
+  reconcileAiGraderF8215HostedActivation,
   readAiGraderNfcSelectedProfile,
   readAiGraderNfcInitIdempotencyKey,
   waitForAiGraderNfcHelperIdle,
@@ -172,6 +173,89 @@ test("selected NFC profile remembers only the profile identity locally", () => {
   assert.equal(readAiGraderNfcSelectedProfile(), "FEIJU_F8215_GOTOTAGS_MANUAL_START");
   assert.deepEqual([...values.keys()].sort(), [AI_GRADER_NFC_PROFILE_STORAGE_KEY]);
   assert.equal(values.get(AI_GRADER_NFC_PROFILE_STORAGE_KEY), "FEIJU_F8215_GOTOTAGS_MANUAL_START");
+});
+
+test("browser reload after hosted F8215 completion cleans only the matching completed local attempt", async () => {
+  const attemptId = "nfc_attempt_" + "A".repeat(43);
+  const url = "https://collect.tenkings.co/nfc/Abcdefghijklmnopqrstuvwxyz012345";
+  let acknowledged = "";
+  const result = await reconcileAiGraderF8215HostedActivation(
+    { status: "active", activeAttemptId: attemptId, chipType: "FEIJU_F8215", nfcTagUrl: url },
+    {
+      status: async () => ({
+        helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION,
+        attemptId,
+        chipType: "FEIJU_F8215",
+        programmingProfile: "gototags_manual_start_v1",
+        phase: "completed",
+        terminal: true,
+        retryable: false,
+        evidence: {
+          helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION,
+          chipType: "FEIJU_F8215",
+          securityMode: "static_url_v1",
+          programmingProfile: "gototags_manual_start_v1",
+          adapterIdentity: "gototags_desktop",
+          adapterVersion: "4.37.0.1",
+          normalizedUrl: url,
+          uidFingerprintSha256: "a".repeat(64),
+          readbackPayloadSha256: "b".repeat(64),
+          writeProtectionState: "permanently_read_only_verified",
+          readerResultCode: "write_locked_verified_gototags_readback",
+          operationalAttestation: {
+            schemaVersion: "ai-grader-nfc-helper-attestation-v2",
+            workstationKeyId: "c".repeat(64),
+            algorithm: "ecdsa-p256-sha256-p1363",
+            attestationChallenge: "D".repeat(43),
+            observedAt: "2026-07-16T20:00:00.000Z",
+            signature: "E".repeat(86),
+          },
+        },
+      }),
+      acknowledge: async (exactAttemptId) => {
+        acknowledged = exactAttemptId;
+        return { helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION, attemptId: exactAttemptId, cleaned: true };
+      },
+    },
+  );
+  assert.equal(result, "cleaned");
+  assert.equal(acknowledged, attemptId);
+});
+
+test("hosted activation recovery protects a mismatched local attempt and permits already-clean state", async () => {
+  const attemptId = "nfc_attempt_" + "A".repeat(43);
+  const otherAttemptId = "nfc_attempt_" + "B".repeat(43);
+  const hosted = {
+    status: "active" as const,
+    activeAttemptId: attemptId,
+    chipType: "FEIJU_F8215" as const,
+    nfcTagUrl: "https://collect.tenkings.co/nfc/Abcdefghijklmnopqrstuvwxyz012345",
+  };
+  let acknowledged = false;
+  await assert.rejects(
+    reconcileAiGraderF8215HostedActivation(hosted, {
+      status: async () => ({
+        helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION,
+        attemptId: otherAttemptId,
+        chipType: "FEIJU_F8215",
+        programmingProfile: "gototags_manual_start_v1",
+        phase: "completed",
+        terminal: true,
+        retryable: false,
+        evidence: null,
+      }),
+      acknowledge: async () => {
+        acknowledged = true;
+        return { helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION, attemptId, cleaned: true };
+      },
+    }),
+    (error: unknown) => error instanceof AiGraderNfcHelperError && error.code === "NFC_HOSTED_LOCAL_RECOVERY_MISMATCH",
+  );
+  assert.equal(acknowledged, false);
+  const absent = await reconcileAiGraderF8215HostedActivation(hosted, {
+    status: async () => { throw new AiGraderNfcHelperError("gototags_job_not_found", "missing", 404); },
+  });
+  assert.equal(absent, "already_absent");
 });
 
 test("NFC retry storage persists only one report-scoped init idempotency key", () => {

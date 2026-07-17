@@ -26,6 +26,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("GoToTags terminal callback strict evidence and redaction", TestGoToTagsCallback),
     ("F8215 protected job lifecycle and idempotency", TestF8215JobLifecycle),
     ("F8215 helper restart and terminal callback recovery", TestF8215RestartRecovery),
+    ("F8215 expired and rejected-callback quarantine recovery", TestF8215QuarantineRecovery),
     ("F8215 loopback callback HTTP boundary", TestF8215HttpCallback),
     ("NDEF URI/TLV and URL digest", TestNdef),
     ("NTAG215 CC and APDU safety", TestLayoutAndCommands),
@@ -333,6 +334,13 @@ static Task TestF8215JobLifecycle()
         True(acknowledged.Cleaned);
         False(gate.Busy);
         False(File.Exists(Path.Combine(root, "active-job.json")));
+        var nextRequest = request with
+        {
+            AttemptId = "nfc_attempt_f8215_lifecycle_0002",
+            IdempotencyKey = "prepare_idempotency_f8215_0002",
+        };
+        Equal("awaiting_manual_start", coordinator.Prepare(nextRequest, "prepare_after_ack").Phase);
+        True(gate.Busy);
     }
     finally
     {
@@ -409,6 +417,131 @@ static Task TestF8215RestartRecovery()
         True(completed.Evidence is not null);
         True(recovered.Acknowledge(new F8215OperationAcknowledgeRequest(request.AttemptId), "ack_after_restart").Cleaned);
         False(recoveryGate.Busy);
+    }
+    finally
+    {
+        Directory.Delete(root, true);
+    }
+    return Task.CompletedTask;
+}
+
+static Task TestF8215QuarantineRecovery()
+{
+    if (!OperatingSystem.IsWindows()) return Task.CompletedTask;
+    var root = CreateProtectedTestDirectory();
+    try
+    {
+        var templatePath = Path.Combine(root, "f8215-gototags-manual-start-v1.json");
+        File.Copy(
+            Path.Combine(FindRepoRoot(), "packages", "ai-grader-nfc-helper", "src", "TenKings.AiGrader.NfcHelper", "Templates", "f8215-gototags-manual-start-v1.json"),
+            templatePath);
+        var options = new GoToTagsAdapterOptions(
+            true,
+            Path.Combine(root, "fake.exe"),
+            templatePath,
+            NfcProtocol.ApprovedGoToTagsTemplateSha256,
+            root);
+        File.WriteAllBytes(options.ExecutablePath, [0x4d, 0x5a]);
+        var runtime = new FakeGoToTagsRuntime();
+        using var signer = new EphemeralTestWorkstationAttestationSigner();
+        using var firstGate = new NfcOperationGate();
+        var clock = new MutableTimeProvider(DateTimeOffset.Parse("2026-07-16T20:00:00.000Z"));
+        var first = new F8215JobCoordinator(
+            options,
+            runtime,
+            new GoToTagsOperationFactory(),
+            signer,
+            firstGate,
+            47662,
+            new CollectingSafeLogger(),
+            clock);
+        var quarantineAttemptId = "nfc_attempt_" + new string('Q', 43);
+        var request = new F8215PrepareRequest(
+            quarantineAttemptId,
+            "prepare_idempotency_f8215_quarantine_0001",
+            TagId,
+            Challenge,
+            Url,
+            clock.GetUtcNow().AddMinutes(5).ToString("O"),
+            NfcProtocol.FeijuChipType,
+            NfcProtocol.FeijuProgrammingProfile);
+        first.Prepare(request, "prepare_quarantine");
+        var generated = ReadGeneratedOperation(runtime.LaunchedPath!);
+        var integrationUrl = generated["integrations"]!.AsArray()[0]!["urlString"]!.GetValue<string>();
+        var callbackIdentity = new Uri(integrationUrl).AbsolutePath.Split('/').Last();
+        var wrongCallback = GoToTagsCallback("wrong_correlation_for_quarantine", Url);
+        try
+        {
+            Throws("gototags_correlation_mismatch", () => first.AcceptCallback(callbackIdentity, wrongCallback, "rejected_callback"));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(wrongCallback);
+        }
+        True(File.Exists(Path.Combine(root, "active-job.json")));
+        clock.Advance(TimeSpan.FromMinutes(6));
+        Equal("uncertain", first.Status(new F8215OperationStatusRequest(request.AttemptId)).Phase);
+
+        using var restartGate = new NfcOperationGate();
+        var restarted = new F8215JobCoordinator(
+            options,
+            new FakeGoToTagsRuntime(),
+            new GoToTagsOperationFactory(),
+            signer,
+            restartGate,
+            47662,
+            new CollectingSafeLogger(),
+            clock);
+        Equal("uncertain", restarted.Status(new F8215OperationStatusRequest(request.AttemptId)).Phase);
+        True(restartGate.Busy);
+        Throws("gototags_job_mismatch", () => F8215JobCoordinator.ResolveAbandonedJob(
+            root,
+            "nfc_attempt_" + new string('R', 43),
+            NfcProtocol.FeijuQuarantineConfirmation,
+            clock));
+        Throws("gototags_quarantine_confirmation_required", () => F8215JobCoordinator.ResolveAbandonedJob(
+            root,
+            request.AttemptId,
+            "tag removed",
+            clock));
+        True(File.Exists(Path.Combine(root, "active-job.json")));
+
+        var resolution = F8215JobCoordinator.ResolveAbandonedJob(
+            root,
+            request.AttemptId,
+            NfcProtocol.FeijuQuarantineConfirmation,
+            clock);
+        Equal("uncertain", resolution.PriorPhase);
+        Equal("quarantined_abandoned_job_resolved", resolution.Resolution);
+        True(resolution.ProtectedArtifactsRemoved);
+        False(resolution.EncodingSuccessClaimed);
+        False(File.Exists(Path.Combine(root, "active-job.json")));
+        False(File.Exists(runtime.LaunchedPath));
+        var audit = File.ReadAllText(Path.Combine(root, "abandoned-job-audit.jsonl"));
+        True(audit.Contains("removed_and_quarantined", StringComparison.Ordinal));
+        False(audit.Contains(request.AttemptId, StringComparison.Ordinal));
+
+        using var nextGate = new NfcOperationGate();
+        var nextRuntime = new FakeGoToTagsRuntime();
+        var next = new F8215JobCoordinator(
+            options,
+            nextRuntime,
+            new GoToTagsOperationFactory(),
+            signer,
+            nextGate,
+            47662,
+            new CollectingSafeLogger(),
+            clock);
+        False(next.HasActiveJob);
+        False(nextGate.Busy);
+        var nextRequest = request with
+        {
+            AttemptId = "nfc_attempt_" + new string('S', 43),
+            IdempotencyKey = "prepare_idempotency_f8215_quarantine_0002",
+            AttemptExpiresAt = clock.GetUtcNow().AddMinutes(5).ToString("O"),
+        };
+        Equal("awaiting_manual_start", next.Prepare(nextRequest, "prepare_after_quarantine").Phase);
+        True(nextGate.Busy);
     }
     finally
     {
@@ -1395,4 +1528,11 @@ sealed class FakeGoToTagsRuntime : IGoToTagsAdapterRuntime
     public string? LaunchedPath { get; private set; }
     public GoToTagsAdapterInspection Inspect(GoToTagsAdapterOptions options) => new(true);
     public void LaunchOperation(GoToTagsAdapterOptions options, string operationPath) => LaunchedPath = Path.GetFullPath(operationPath);
+}
+
+sealed class MutableTimeProvider(DateTimeOffset initial) : TimeProvider
+{
+    private DateTimeOffset _utcNow = initial;
+    public override DateTimeOffset GetUtcNow() => _utcNow;
+    public void Advance(TimeSpan duration) => _utcNow = _utcNow.Add(duration);
 }

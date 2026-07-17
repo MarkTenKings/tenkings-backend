@@ -35,6 +35,7 @@ export const AI_GRADER_NFC_GOTOTAGS_ADAPTER_IDENTITY = "gototags_desktop" as con
 export const AI_GRADER_NFC_GOTOTAGS_APPROVED_VERSION = "4.37.0.1" as const;
 export const AI_GRADER_NFC_FEIJU_READER_RESULT = "write_locked_verified_gototags_readback" as const;
 export const AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_STATE = "permanently_read_only_verified" as const;
+export const AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION = "operator_fresh_inventory_confirmation_v1" as const;
 
 const PUBLIC_TAG_ID = /^[A-Za-z0-9_-]{32}$/;
 const ATTEMPT_ID = /^nfc_attempt_[A-Za-z0-9_-]{43}$/;
@@ -180,12 +181,15 @@ export type AiGraderNfcSafeStatus = {
   revokedAt?: string | null;
   revocationReason?: string | null;
   errorCode?: string | null;
+  /** Authenticated operator recovery identity for the exact consumed attempt. Never returned by the public NFC route. */
+  activeAttemptId?: string;
 };
 
 export type InitAiGraderNfcProgrammingInput = ExactLinkageInput & ActorInput & ProgrammingRuntimeInput & {
   idempotencyKey: string;
   chipType?: AiGraderNfcChipTypeValue;
   programmingProfile?: AiGraderNfcProgrammingProfileValue;
+  operatorFreshInventoryConfirmation?: typeof AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION;
   attemptTtlMs?: number;
   operatorNote?: string | null;
   dbClient?: DbClient;
@@ -591,7 +595,11 @@ export function buildAiGraderNfcOperationalAttestationStatement(
     observedAt,
   ].join("\n");
 }
-function safeMetadata(programmingProfile: AiGraderNfcProgrammingProfileValue, operatorNote?: string | null) {
+function safeMetadata(
+  programmingProfile: AiGraderNfcProgrammingProfileValue,
+  operatorNote?: string | null,
+  operatorFreshInventoryConfirmation?: typeof AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION,
+) {
   const note = text(operatorNote);
   return {
     schemaVersion: "ai-grader-nfc-safe-metadata-v1",
@@ -600,6 +608,7 @@ function safeMetadata(programmingProfile: AiGraderNfcProgrammingProfileValue, op
     workstationOperationalAttestationRequired: true,
     cryptographicTagAuthentication: false,
     programmingProfile,
+    ...(operatorFreshInventoryConfirmation ? { operatorFreshInventoryConfirmation } : {}),
     ...(note ? { operatorNote: note.slice(0, 240) } : {}),
   };
 }
@@ -697,6 +706,25 @@ function requireProfileEnabled(strategy: AiGraderNfcSecurityStrategyDescriptor, 
   if (strategy.chipType === "FEIJU_F8215" && !feijuF8215Enabled) {
     throw nfcError("AI_GRADER_NFC_FEIJU_F8215_DISABLED", 503, "Feiju F8215 programming is disabled by server policy.");
   }
+}
+function requireFreshInventoryConfirmation(
+  strategy: AiGraderNfcSecurityStrategyDescriptor,
+  confirmation: unknown,
+): typeof AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION | undefined {
+  if (strategy.chipType !== "FEIJU_F8215") {
+    if (confirmation !== undefined && confirmation !== null && confirmation !== "") {
+      throw nfcError("AI_GRADER_NFC_FRESH_INVENTORY_CONFIRMATION_INVALID", 400, "Fresh F8215 inventory confirmation applies only to the Feiju workflow.");
+    }
+    return undefined;
+  }
+  if (confirmation !== AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION) {
+    throw nfcError(
+      "AI_GRADER_NFC_FRESH_INVENTORY_CONFIRMATION_REQUIRED",
+      400,
+      "The operator must confirm one fresh controlled-inventory F8215 before preparing the job.",
+    );
+  }
+  return AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION;
 }
 function safeStatus(tag: any, fallbackReportId = ""): AiGraderNfcSafeStatus {
   if (!tag) return { status: "missing", reportId: fallbackReportId, registrationKind: "not_active", cryptographicallyVerified: false };
@@ -967,6 +995,7 @@ async function expireTimedOutAttemptsTx(
 async function createProgrammingAttemptTx(tx: DbClient, input: {
   linkage: ExactLinkageInput; authority: ConfirmAuthority; actorUserId: string; idempotencyKey: string;
   tokenSecret: string; ttlMs: number; now: Date; operatorNote?: string | null;
+  operatorFreshInventoryConfirmation?: typeof AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION;
   strategy: AiGraderNfcSecurityStrategyDescriptor;
   replacementAuthorization?: typeof REPLACEMENT_AUTHORIZATION;
 }): Promise<AiGraderNfcProgrammingInitResult | ExpiredAttemptResult> {
@@ -1072,7 +1101,11 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
       expectedPayloadSha256: sha256(expectedUrl), aiGraderReportId: input.authority.reportRowId,
       reportId: input.linkage.reportId, cardAssetId: input.linkage.cardAssetId, itemId: input.linkage.itemId,
       aiGraderLabelId: input.authority.labelId, certId: input.linkage.certId, createdByUserId: input.actorUserId,
-      metadata: safeMetadata(input.strategy.programmingProfile, input.operatorNote), createdAt: input.now, updatedAt: input.now,
+      metadata: safeMetadata(
+        input.strategy.programmingProfile,
+        input.operatorNote,
+        input.operatorFreshInventoryConfirmation,
+      ), createdAt: input.now, updatedAt: input.now,
     } });
     await audit(tx, {
       tagId: tag.id, tenantId: input.linkage.tenantId, reportId: input.linkage.reportId, action: "reserve",
@@ -1081,6 +1114,9 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
         chipType: input.strategy.chipType,
         securityMode: input.strategy.securityMode,
         programmingProfile: input.strategy.programmingProfile,
+        ...(input.operatorFreshInventoryConfirmation
+          ? { operatorFreshInventoryConfirmation: input.operatorFreshInventoryConfirmation }
+          : {}),
         ndefPayloadVersion: 1,
       },
       createdAt: input.now,
@@ -1121,6 +1157,9 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
       expectedAttestationAlgorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
       workstationOperationalAttestationRequired: true,
       cryptographicTagAuthentication: false,
+      ...(input.operatorFreshInventoryConfirmation
+        ? { operatorFreshInventoryConfirmation: input.operatorFreshInventoryConfirmation }
+        : {}),
     },
     createdAt: input.now,
   });
@@ -1142,6 +1181,10 @@ export async function initAiGraderNfcProgramming(input: InitAiGraderNfcProgrammi
   }
   const { tokenSecret, feijuF8215Enabled } = resolveProgrammingRuntime(input, linkage.tenantId);
   requireProfileEnabled(strategy, feijuF8215Enabled);
+  const operatorFreshInventoryConfirmation = requireFreshInventoryConfirmation(
+    strategy,
+    input.operatorFreshInventoryConfirmation,
+  );
   const ttlMs = attemptTtl(input.attemptTtlMs);
   const now = input.now ?? new Date();
   const result = await transaction(input.dbClient ?? defaultPrisma, async (tx) => {
@@ -1156,6 +1199,7 @@ export async function initAiGraderNfcProgramming(input: InitAiGraderNfcProgrammi
       ttlMs,
       now,
       operatorNote: input.operatorNote,
+      operatorFreshInventoryConfirmation,
       strategy,
     });
   });
@@ -1532,7 +1576,17 @@ export async function getAiGraderNfcStatus(input: GetAiGraderNfcStatusInput): Pr
     text(tag.itemId) !== itemId ||
     text(tag.certId) !== certId
   ) throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC status linkage is contradictory.");
-  return safeStatus(tag);
+  const status = safeStatus(tag);
+  if (status.status !== "active") return status;
+  const consumedAttempt = await db.aiGraderNfcProgrammingAttempt?.findFirst?.({
+    where: { tagId: tag.id, tenantId, reportId, state: "consumed" },
+    orderBy: { consumedAt: "desc" },
+    select: { id: true },
+  });
+  return {
+    ...status,
+    ...(ATTEMPT_ID.test(text(consumedAttempt?.id)) ? { activeAttemptId: text(consumedAttempt.id) } : {}),
+  };
 }
 
 function validatePublicTagId(value: unknown) {
@@ -1707,6 +1761,10 @@ export async function replaceAiGraderNfcTag(input: ReplaceAiGraderNfcTagInput): 
   }
   const { tokenSecret, feijuF8215Enabled } = resolveProgrammingRuntime(input, linkage.tenantId);
   requireProfileEnabled(strategy, feijuF8215Enabled);
+  const operatorFreshInventoryConfirmation = requireFreshInventoryConfirmation(
+    strategy,
+    input.operatorFreshInventoryConfirmation,
+  );
   const ttlMs = attemptTtl(input.attemptTtlMs);
   const now = input.now ?? new Date();
   const exactReplacementRequestHash = replacementRequestHash({
@@ -1739,6 +1797,7 @@ export async function replaceAiGraderNfcTag(input: ReplaceAiGraderNfcTagInput): 
       ttlMs,
       now,
       operatorNote: input.operatorNote,
+      operatorFreshInventoryConfirmation,
       strategy,
       replacementAuthorization: REPLACEMENT_AUTHORIZATION,
     });

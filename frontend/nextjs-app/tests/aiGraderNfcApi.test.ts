@@ -174,12 +174,28 @@ test("F8215 init is separately default-off and forwards only the exact reviewed 
       idempotencyKey: "program-feiju-report-1",
       chipType: "FEIJU_F8215",
       programmingProfile: "gototags_manual_start_v1",
-      url: "https://attacker.invalid/",
     },
   }), enabledOutput.res);
-  assert.equal(enabledOutput.read().statusCode, 200);
+  assert.equal(enabledOutput.read().statusCode, 400);
+  assert.equal((enabledOutput.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_FRESH_INVENTORY_CONFIRMATION_REQUIRED");
+  assert.equal(enabled.calls.length, 0);
+
+  const confirmedOutput = response();
+  await createAiGraderNfcApiHandler(enabled.value)(request({
+    action: "init",
+    body: {
+      reportId: "report-1",
+      idempotencyKey: "program-feiju-report-1",
+      chipType: "FEIJU_F8215",
+      programmingProfile: "gototags_manual_start_v1",
+      operatorFreshInventoryConfirmation: "operator_fresh_inventory_confirmation_v1",
+      url: "https://attacker.invalid/",
+    },
+  }), confirmedOutput.res);
+  assert.equal(confirmedOutput.read().statusCode, 200);
   assert.equal(enabled.calls[0].input.chipType, "FEIJU_F8215");
   assert.equal(enabled.calls[0].input.programmingProfile, "gototags_manual_start_v1");
+  assert.equal(enabled.calls[0].input.operatorFreshInventoryConfirmation, "operator_fresh_inventory_confirmation_v1");
   assert.equal("url" in enabled.calls[0].input, false);
 });
 

@@ -273,6 +273,76 @@ export function acknowledgeAiGraderF8215Operation(attemptId: string) {
   });
 }
 
+export type AiGraderF8215HostedActivationRecovery = {
+  status: "active";
+  activeAttemptId?: string | null;
+  chipType?: "NTAG215" | "FEIJU_F8215" | null;
+  nfcTagUrl?: string | null;
+};
+
+/**
+ * Cleans only a completed local F8215 job that matches authenticated hosted
+ * active state. The paired-browser acknowledgment is a local cleanup signal;
+ * it does not independently prove hosted activation.
+ */
+export async function reconcileAiGraderF8215HostedActivation(
+  hosted: AiGraderF8215HostedActivationRecovery,
+  dependencies: {
+    status?: typeof getAiGraderF8215OperationStatus;
+    acknowledge?: typeof acknowledgeAiGraderF8215Operation;
+  } = {},
+): Promise<"cleaned" | "already_absent"> {
+  const attemptId = hosted.activeAttemptId?.trim() ?? "";
+  const normalizedUrl = hosted.nfcTagUrl?.trim() ?? "";
+  if (
+    hosted.status !== "active" ||
+    hosted.chipType !== "FEIJU_F8215" ||
+    !/^nfc_attempt_[A-Za-z0-9_-]{43}$/.test(attemptId) ||
+    !/^https:\/\/collect\.tenkings\.co\/nfc\/[A-Za-z0-9_-]{32}$/.test(normalizedUrl)
+  ) {
+    throw new AiGraderNfcHelperError(
+      "NFC_HOSTED_ACTIVATION_RECOVERY_INVALID",
+      "The authenticated hosted activation does not contain one exact F8215 recovery identity.",
+      409,
+    );
+  }
+  const readStatus = dependencies.status ?? getAiGraderF8215OperationStatus;
+  const acknowledge = dependencies.acknowledge ?? acknowledgeAiGraderF8215Operation;
+  let local: AiGraderF8215OperationStatus;
+  try {
+    local = await readStatus(attemptId);
+  } catch (error) {
+    if (error instanceof AiGraderNfcHelperError && error.code === "gototags_job_not_found") return "already_absent";
+    throw error;
+  }
+  if (
+    local.attemptId !== attemptId ||
+    local.chipType !== "FEIJU_F8215" ||
+    local.programmingProfile !== "gototags_manual_start_v1" ||
+    local.phase !== "completed" ||
+    !local.terminal ||
+    !local.evidence ||
+    local.evidence.normalizedUrl !== normalizedUrl ||
+    local.evidence.writeProtectionState !== "permanently_read_only_verified" ||
+    local.evidence.readerResultCode !== "write_locked_verified_gototags_readback"
+  ) {
+    throw new AiGraderNfcHelperError(
+      "NFC_HOSTED_LOCAL_RECOVERY_MISMATCH",
+      "The completed local F8215 job does not match the authenticated hosted activation.",
+      409,
+    );
+  }
+  const result = await acknowledge(attemptId);
+  if (result.attemptId !== attemptId || !result.cleaned) {
+    throw new AiGraderNfcHelperError(
+      "NFC_HOSTED_LOCAL_CLEANUP_FAILED",
+      "The exact completed local F8215 job was not cleaned.",
+      503,
+    );
+  }
+  return "cleaned";
+}
+
 export type AiGraderNfcSelectedProfile = "NTAG215_DIRECT_PCSC" | "FEIJU_F8215_GOTOTAGS_MANUAL_START";
 
 export function readAiGraderNfcSelectedProfile(storage: Pick<Storage, "getItem"> = window.localStorage): AiGraderNfcSelectedProfile {

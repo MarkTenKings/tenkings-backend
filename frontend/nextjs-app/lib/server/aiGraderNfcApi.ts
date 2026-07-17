@@ -42,6 +42,7 @@ export type AiGraderNfcApiDependencies = AiGraderProductionAuthDependencies & {
     attemptTtlSeconds: number;
     chipType: "NTAG215" | "FEIJU_F8215";
     programmingProfile: "ntag215_direct_pcsc_v1" | "gototags_manual_start_v1";
+    operatorFreshInventoryConfirmation?: "operator_fresh_inventory_confirmation_v1";
   }): Promise<unknown>;
   complete(input: NfcRuntimeInput & {
     reportId: string;
@@ -82,6 +83,7 @@ export type AiGraderNfcApiDependencies = AiGraderProductionAuthDependencies & {
     attemptTtlSeconds: number;
     chipType: "NTAG215" | "FEIJU_F8215";
     programmingProfile: "ntag215_direct_pcsc_v1" | "gototags_manual_start_v1";
+    operatorFreshInventoryConfirmation?: "operator_fresh_inventory_confirmation_v1";
   }): Promise<unknown>;
 };
 
@@ -215,6 +217,23 @@ function requestedProfile(body: JsonRecord): RequestedProfile {
     return { chipType, programmingProfile };
   }
   throw nfcApiError(400, "AI_GRADER_NFC_CHIP_UNSUPPORTED", "The NFC programming profile is not supported.");
+}
+
+function freshInventoryConfirmation(body: JsonRecord, profile: RequestedProfile) {
+  if (profile.chipType !== "FEIJU_F8215") {
+    if (body.operatorFreshInventoryConfirmation !== undefined) {
+      throw nfcApiError(400, "AI_GRADER_NFC_FRESH_INVENTORY_CONFIRMATION_INVALID", "Fresh inventory confirmation applies only to Feiju F8215.");
+    }
+    return undefined;
+  }
+  if (body.operatorFreshInventoryConfirmation !== "operator_fresh_inventory_confirmation_v1") {
+    throw nfcApiError(
+      400,
+      "AI_GRADER_NFC_FRESH_INVENTORY_CONFIRMATION_REQUIRED",
+      "Confirm one fresh controlled-inventory F8215 before preparing the job.",
+    );
+  }
+  return "operator_fresh_inventory_confirmation_v1" as const;
 }
 
 function humanActor(actor: AiGraderProductionActor, adminOnly: boolean) {
@@ -379,6 +398,7 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
         const result = await deps.init({
           ...common,
           ...profile,
+          operatorFreshInventoryConfirmation: freshInventoryConfirmation(body, profile),
           reportId: reportId(body.reportId),
           idempotencyKey: idempotencyKey(body.idempotencyKey),
           attemptTtlSeconds: AI_GRADER_NFC_ATTEMPT_TTL_SECONDS,
@@ -466,6 +486,7 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
         const result = await deps.replace({
           ...common,
           ...profile,
+          operatorFreshInventoryConfirmation: freshInventoryConfirmation(body, profile),
           reportId: reportId(body.reportId),
           replacedPublicTagId: boundedText(body.replacedPublicTagId, "replacedPublicTagId", 32, 32, /^[A-Za-z0-9_-]+$/),
           reason: boundedText(body.reason, "reason", 8, 240),

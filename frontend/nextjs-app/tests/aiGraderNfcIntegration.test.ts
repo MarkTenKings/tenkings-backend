@@ -332,7 +332,11 @@ test("dedicated programming and public tap pages keep hardware controls out of F
   assert.match(nfcPage, /disabled=\{!programmingReady\}/);
   assert.match(nfcPage, /disabled or incomplete/);
   assert.match(nfcPage, /operationalAttestation/);
-  assert.match(nfcPage, /Prepare F8215 NFC Job/);
+  assert.match(nfcPage, /Confirm Fresh F8215 & Prepare/);
+  assert.match(nfcPage, /operator_fresh_inventory_confirmation_v1/);
+  assert.match(nfcPage, /controlled unused-tag supply/);
+  assert.match(nfcPage, /separate quarantine container/);
+  assert.match(nfcPage, /do not electronically prove blankness/);
   assert.match(nfcPage, /GoToTags opened\. Click Start Encoding/);
   assert.match(nfcPage, /window\.addEventListener\("focus", onFocus\)/);
   assert.match(nfcPage, /acknowledgeAiGraderF8215Operation/);

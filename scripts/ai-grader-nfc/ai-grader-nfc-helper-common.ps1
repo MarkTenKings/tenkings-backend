@@ -21,6 +21,50 @@ $script:NfcGoToTagsTemplateSha256 = "31bfcca6cfd0e947d5368643a0aeed2ce730b9e0ad2
 $script:NfcGoToTagsExecutableSha256 = "d21adfdef57393b948ce4e6d8771f6daa215041fa27c777ef33de24057883774"
 $script:NfcGoToTagsRoot = "C:\TenKings\config\ai-grader-nfc\gototags"
 $script:NfcGoToTagsJobRoot = "C:\TenKings\config\ai-grader-nfc\gototags\jobs"
+$script:NfcHelperVersionV2 = "tenkings-ai-grader-nfc-helper-v2"
+$script:NfcHelperVersionV3 = "tenkings-ai-grader-nfc-helper-v3"
+$script:NfcHelperProtocolVersion = "tenkings-ai-grader-nfc-loopback-v2"
+$script:NfcAttestationSchemaVersionV1 = "ai-grader-nfc-helper-attestation-v1"
+$script:NfcMultiProfileAttestationSchemaVersionV2 = "ai-grader-nfc-helper-attestation-v2"
+
+function Assert-NfcHelperBuildVerificationResult {
+  param(
+    [Parameter(Mandatory = $true)]$Result,
+    [Parameter(Mandatory = $true)][ValidateSet(
+      "tenkings-ai-grader-nfc-helper-v2",
+      "tenkings-ai-grader-nfc-helper-v3"
+    )][string[]]$AllowedHelperVersion
+  )
+  $helperVersion = [string]$Result.helperVersion
+  if (-not [bool]$Result.ok -or
+      $AllowedHelperVersion -cnotcontains $helperVersion -or
+      [string]$Result.helperProtocolVersion -cne $script:NfcHelperProtocolVersion -or
+      [string]$Result.attestationSchemaVersion -cne $script:NfcAttestationSchemaVersionV1 -or
+      [string]$Result.attestationAlgorithm -cne $script:NfcAttestationAlgorithm -or
+      [bool]$Result.hardwareAccessed -or
+      [bool]$Result.productionKeyAccessed) {
+    throw "The NFC helper build verification returned an incompatible or unsafe result."
+  }
+  if ($helperVersion -ceq $script:NfcHelperVersionV3 -and
+      [string]$Result.multiProfileAttestationSchemaVersion -cne $script:NfcMultiProfileAttestationSchemaVersionV2) {
+    throw "The NFC helper v3 build is missing its required multi-profile attestation capability."
+  }
+  return $helperVersion
+}
+
+function Invoke-NfcBuildVerification {
+  param(
+    [Parameter(Mandatory = $true)][string]$DllPath,
+    [Parameter(Mandatory = $true)][ValidateSet(
+      "tenkings-ai-grader-nfc-helper-v2",
+      "tenkings-ai-grader-nfc-helper-v3"
+    )][string[]]$AllowedHelperVersion
+  )
+  $output = @(& dotnet $DllPath --verify-build)
+  if ($LASTEXITCODE -ne 0) { throw "The NFC helper build verification command failed." }
+  $result = ($output -join [Environment]::NewLine) | ConvertFrom-Json
+  return Assert-NfcHelperBuildVerificationResult -Result $result -AllowedHelperVersion $AllowedHelperVersion
+}
 
 function Get-NfcRepoRoot {
   return (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -121,6 +165,7 @@ function Copy-NfcStableMaintenancePayload {
       "configure-ai-grader-nfc-feiju-f8215.ps1",
       "export-ai-grader-nfc-workstation-public-key.ps1",
       "open-ai-grader-nfc-workstation.ps1",
+      "resolve-ai-grader-nfc-abandoned-job.ps1",
       "rotate-ai-grader-nfc-helper-token.ps1",
       "start-ai-grader-nfc-helper.ps1",
       "status-ai-grader-nfc-helper.ps1",
@@ -488,6 +533,26 @@ function Set-NfcConfigProperty {
 function Get-NfcFileFingerprint {
   param([Parameter(Mandatory = $true)][string]$Path)
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Assert-NfcNoActiveGoToTagsRecovery {
+  param(
+    [string]$JobRoot = $script:NfcGoToTagsJobRoot,
+    [string]$AllowedRoot = $script:NfcConfigRoot
+  )
+  $root = Assert-NfcPathWithinRoot -Path $JobRoot -AllowedRoot $AllowedRoot
+  if (-not (Test-Path -LiteralPath $root -PathType Container)) { return }
+  $entries = @(Get-ChildItem -LiteralPath $root -Force)
+  $unexpected = @($entries | Where-Object { $_.Name -cne "abandoned-job-audit.jsonl" })
+  if ($unexpected.Count -ne 0) {
+    throw "The protected GoToTags job directory contains active recovery state and requires operator review."
+  }
+  $audit = @($entries | Where-Object { $_.Name -ceq "abandoned-job-audit.jsonl" })
+  if ($audit.Count -gt 1 -or
+      ($audit.Count -eq 1 -and ($audit[0].PSIsContainer -or $audit[0].Length -gt 1MB))) {
+    throw "The protected GoToTags quarantine audit is invalid or outside its size bound."
+  }
+  if ($audit.Count -eq 1) { Assert-NfcProtectedAcl -Path $audit[0].FullName -AllowInheritance }
 }
 
 function Get-NfcPreservedStateSnapshot {

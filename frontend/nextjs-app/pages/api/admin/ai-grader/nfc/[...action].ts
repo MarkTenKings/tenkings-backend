@@ -122,6 +122,7 @@ const runtime = createAiGraderNfcApiHandler({
       idempotencyKey: input.idempotencyKey,
       chipType: input.chipType,
       programmingProfile: input.programmingProfile,
+      operatorFreshInventoryConfirmation: input.operatorFreshInventoryConfirmation,
       attemptTtlMs: input.attemptTtlSeconds * 1000,
       dbClient: prisma,
     });
@@ -196,6 +197,7 @@ const runtime = createAiGraderNfcApiHandler({
       idempotencyKey: input.idempotencyKey,
       chipType: input.chipType,
       programmingProfile: input.programmingProfile,
+      operatorFreshInventoryConfirmation: input.operatorFreshInventoryConfirmation,
       attemptTtlMs: input.attemptTtlSeconds * 1000,
       dbClient: prisma,
     });

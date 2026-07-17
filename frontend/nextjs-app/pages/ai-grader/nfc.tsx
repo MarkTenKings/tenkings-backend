@@ -18,6 +18,7 @@ import {
   prepareAiGraderF8215Job,
   readAiGraderNfcSelectedProfile,
   readAiGraderNfcInitIdempotencyKey,
+  reconcileAiGraderF8215HostedActivation,
   waitForAiGraderNfcHelperIdle,
   writeAiGraderNfcTag,
   writeAiGraderNfcSelectedProfile,
@@ -53,6 +54,7 @@ type HostedStatus = {
   cardSet?: string | null;
   publicTagId?: string | null;
   nfcTagUrl?: string | null;
+  activeAttemptId?: string | null;
   chipType?: "NTAG215" | "FEIJU_F8215" | null;
   securityMode?: "static_url_v1" | "ntag424_sun_v1" | null;
   registrationSemantics?: "registered_link" | "cryptographically_verified" | null;
@@ -302,6 +304,22 @@ export default function AiGraderNfcProgrammingPage() {
       return;
     }
     if (result.status === "active") {
+      const isPaired = hasAiGraderNfcHelperPairing();
+      setPaired(isPaired);
+      if (result.chipType === "FEIJU_F8215") {
+        if (!isPaired) {
+          setPhase("error");
+          setMessage("The hosted F8215 registration is active, but exact local cleanup is pending. Pair this workstation; the local recovery identity was preserved.");
+          return;
+        }
+        try {
+          await reconcileAiGraderF8215HostedActivation(result as HostedStatus & { status: "active" });
+        } catch (error) {
+          setPhase("error");
+          setMessage(`${errorMessage(error)} The hosted registration remains active and the local recovery identity was preserved.`);
+          return;
+        }
+      }
       clearAiGraderNfcInitIdempotencyKey(reportId);
       setStoredAttemptAvailable(false);
       setReservation(null);
@@ -606,7 +624,11 @@ export default function AiGraderNfcProgrammingPage() {
           reportId,
           idempotencyKey: initIdempotencyKey,
           ...(selectedProfile === "FEIJU_F8215_GOTOTAGS_MANUAL_START"
-            ? { chipType: "FEIJU_F8215", programmingProfile: "gototags_manual_start_v1" }
+            ? {
+                chipType: "FEIJU_F8215",
+                programmingProfile: "gototags_manual_start_v1",
+                operatorFreshInventoryConfirmation: "operator_fresh_inventory_confirmation_v1",
+              }
             : { chipType: "NTAG215", programmingProfile: "ntag215_direct_pcsc_v1" }),
         }),
         selectedProfile,
@@ -679,7 +701,11 @@ export default function AiGraderNfcProgrammingPage() {
           reason: request.reason,
           idempotencyKey: request.idempotencyKey,
           ...(selectedProfile === "FEIJU_F8215_GOTOTAGS_MANUAL_START"
-            ? { chipType: "FEIJU_F8215", programmingProfile: "gototags_manual_start_v1" }
+            ? {
+                chipType: "FEIJU_F8215",
+                programmingProfile: "gototags_manual_start_v1",
+                operatorFreshInventoryConfirmation: "operator_fresh_inventory_confirmation_v1",
+              }
             : { chipType: "NTAG215", programmingProfile: "ntag215_direct_pcsc_v1" }),
         }),
         selectedProfile,
@@ -773,7 +799,11 @@ export default function AiGraderNfcProgrammingPage() {
             reportId,
             idempotencyKey: initIdempotencyKey,
             ...(selectedProfile === "FEIJU_F8215_GOTOTAGS_MANUAL_START"
-              ? { chipType: "FEIJU_F8215", programmingProfile: "gototags_manual_start_v1" }
+              ? {
+                  chipType: "FEIJU_F8215",
+                  programmingProfile: "gototags_manual_start_v1",
+                  operatorFreshInventoryConfirmation: "operator_fresh_inventory_confirmation_v1",
+                }
               : { chipType: "NTAG215", programmingProfile: "ntag215_direct_pcsc_v1" }),
           }),
           selectedProfile,
@@ -956,6 +986,15 @@ export default function AiGraderNfcProgrammingPage() {
                 ? "Prepare opens one exact report-specific GoToTags job. In GoToTags, click Start Encoding once and then place the fresh tag. The job writes, verifies, permanently locks, and verifies again. Permanent locking cannot be undone."
                 : "The helper writes only the exact Ten Kings URL, verifies full readback, and never locks or configures the tag."}
             </p>
+            {selectedFeiju ? (
+              <ul className="fresh-sop">
+                <li>Take exactly one unused F8215 from the controlled unused-tag supply.</li>
+                <li>Keep it off the reader until GoToTags requests it.</li>
+                <li>Never return a failed, interrupted, uncertain, previously presented, written, or locked tag to unused inventory.</li>
+                <li>Put every failed or uncertain tag in the separate quarantine container.</li>
+                <li>This confirmation is an audited operator inventory assertion. Ten Kings and GoToTags do not electronically prove blankness.</li>
+              </ul>
+            ) : null}
           </div>
           <button
             type="button"
@@ -977,7 +1016,7 @@ export default function AiGraderNfcProgrammingPage() {
                 : phase === "awaiting_manual_start"
                   ? "Waiting for GoToTags Start"
                   : selectedFeiju
-                    ? "Prepare F8215 NFC Job"
+                    ? "Confirm Fresh F8215 & Prepare"
                     : "Program NFC"}
           </button>
         </section>
@@ -1018,7 +1057,7 @@ export default function AiGraderNfcProgrammingPage() {
         <footer>A registered NFC link is a convenient identity link. F8215 adds permanent consumer write protection; neither profile proves that a chip, slab, or card is cryptographically authentic.</footer>
       </main>
       <style jsx>{`
-        :global(body){margin:0;background:#f4f1e9;color:#171612;font-family:Inter,system-ui,sans-serif}.shell{max-width:1120px;margin:0 auto;padding:32px 22px 64px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}h1{font-family:Georgia,serif;font-size:42px;margin:4px 0}h2{font-family:Georgia,serif;margin:6px 0 16px}.eyebrow{text-transform:uppercase;letter-spacing:.15em;font-size:12px;font-weight:800;color:#7d6019}.notice{display:flex;align-items:center;gap:14px;padding:16px 18px;border:1px solid #d6c99f;background:#fff9df;margin-bottom:20px}.notice.active{background:#eaf6ed;border-color:#5c9f6c}.notice.error{background:#fff0ed;border-color:#d99b90}.success-check{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:#16813a;color:#fff;font-size:34px;font-weight:900}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid article,.program,.profile-select,.admin-actions{background:#fff;border:1px solid #d8d2c5;padding:22px;box-shadow:0 8px 24px #3a2d1010}dl{display:grid;grid-template-columns:130px 1fr;gap:9px;margin:18px 0}dt{color:#766f62}dd{margin:0;font-weight:700;overflow-wrap:anywhere}button{border:0;border-radius:4px;padding:12px 17px;background:#1b1a16;color:white;font-weight:800;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#ded8ca;color:#26231c}.primary{font-size:18px;min-width:220px;background:#9b731e}.program,.profile-select{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:18px}.program p{max-width:680px}.profile-select select{min-width:300px;padding:12px;border:1px solid #bdb4a3;background:#fff;font:inherit;font-weight:800}.f8215-progress{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 0;padding:16px 18px;list-style:none;background:#fff;border:1px solid #d8d2c5}.f8215-progress li{display:flex;align-items:center;gap:8px;color:#716a5e;font-weight:750}.f8215-progress .complete{color:#16813a}.f8215-progress .current{color:#77520c}.pair{display:flex;align-items:end;gap:10px}label{display:grid;gap:7px;font-weight:800;flex:1}input{padding:11px;border:1px solid #bdb4a3;border-radius:3px;font:inherit}.danger,.admin-actions{display:flex;gap:16px;align-items:center;margin-top:18px;padding:18px;background:#fff4ee;border:1px solid #d5997f}.danger div{flex:1}.danger-button,.danger button{background:#922f20}.retry{margin-top:18px}.admin-actions label{min-width:260px}footer{margin-top:28px;padding-top:18px;border-top:1px solid #cfc7b9;color:#655f55}a{color:#77520c;font-weight:800}@media(max-width:760px){.grid{grid-template-columns:1fr}.program,.profile-select,.danger,.admin-actions,header{align-items:stretch;flex-direction:column}.profile-select select{min-width:0;width:100%}.f8215-progress{grid-template-columns:1fr}h1{font-size:34px}.pair{align-items:stretch;flex-direction:column}}
+        :global(body){margin:0;background:#f4f1e9;color:#171612;font-family:Inter,system-ui,sans-serif}.shell{max-width:1120px;margin:0 auto;padding:32px 22px 64px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}h1{font-family:Georgia,serif;font-size:42px;margin:4px 0}h2{font-family:Georgia,serif;margin:6px 0 16px}.eyebrow{text-transform:uppercase;letter-spacing:.15em;font-size:12px;font-weight:800;color:#7d6019}.notice{display:flex;align-items:center;gap:14px;padding:16px 18px;border:1px solid #d6c99f;background:#fff9df;margin-bottom:20px}.notice.active{background:#eaf6ed;border-color:#5c9f6c}.notice.error{background:#fff0ed;border-color:#d99b90}.success-check{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:#16813a;color:#fff;font-size:34px;font-weight:900}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid article,.program,.profile-select,.admin-actions{background:#fff;border:1px solid #d8d2c5;padding:22px;box-shadow:0 8px 24px #3a2d1010}dl{display:grid;grid-template-columns:130px 1fr;gap:9px;margin:18px 0}dt{color:#766f62}dd{margin:0;font-weight:700;overflow-wrap:anywhere}button{border:0;border-radius:4px;padding:12px 17px;background:#1b1a16;color:white;font-weight:800;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#ded8ca;color:#26231c}.primary{font-size:18px;min-width:220px;background:#9b731e}.program,.profile-select{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:18px}.program p{max-width:680px}.fresh-sop{max-width:700px;padding-left:20px;color:#4e483e}.fresh-sop li{margin:5px 0}.profile-select select{min-width:300px;padding:12px;border:1px solid #bdb4a3;background:#fff;font:inherit;font-weight:800}.f8215-progress{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 0;padding:16px 18px;list-style:none;background:#fff;border:1px solid #d8d2c5}.f8215-progress li{display:flex;align-items:center;gap:8px;color:#716a5e;font-weight:750}.f8215-progress .complete{color:#16813a}.f8215-progress .current{color:#77520c}.pair{display:flex;align-items:end;gap:10px}label{display:grid;gap:7px;font-weight:800;flex:1}input{padding:11px;border:1px solid #bdb4a3;border-radius:3px;font:inherit}.danger,.admin-actions{display:flex;gap:16px;align-items:center;margin-top:18px;padding:18px;background:#fff4ee;border:1px solid #d5997f}.danger div{flex:1}.danger-button,.danger button{background:#922f20}.retry{margin-top:18px}.admin-actions label{min-width:260px}footer{margin-top:28px;padding-top:18px;border-top:1px solid #cfc7b9;color:#655f55}a{color:#77520c;font-weight:800}@media(max-width:760px){.grid{grid-template-columns:1fr}.program,.profile-select,.danger,.admin-actions,header{align-items:stretch;flex-direction:column}.profile-select select{min-width:0;width:100%}.f8215-progress{grid-template-columns:1fr}h1{font-size:34px}.pair{align-items:stretch;flex-direction:column}}
       `}</style>
     </>
   );
