@@ -18,10 +18,9 @@ public sealed class WindowsPcscNfcReaderBackend : INfcReaderBackend
             if (readers.Count == 0) return new(false, true, "unknown", false, "pcsc_selected_card_only", "reader_disconnected");
             if (readers.Count > 1) return new(false, true, "unknown", false, "pcsc_selected_card_only", "multiple_readers");
             var result = Pcsc.SCardConnect(context, readers[0], Pcsc.ShareShared, Pcsc.ProtocolT0 | Pcsc.ProtocolT1, out var card, out _);
-            if (Pcsc.IsNoCard(result)) return new(true, true, "absent", false, "pcsc_selected_card_only");
-            Pcsc.ThrowIfFailed(result, "reader_connect_failed");
-            Pcsc.SCardDisconnect(card, Pcsc.LeaveCard);
-            return new(true, true, "present", false, "pcsc_selected_card_only");
+            var status = ClassifyInitialConnectForStatus(result);
+            if (status.TagState == "present") Pcsc.SCardDisconnect(card, Pcsc.LeaveCard);
+            return status;
         }
         catch (NfcHelperException error)
         {
@@ -55,8 +54,7 @@ public sealed class WindowsPcscNfcReaderBackend : INfcReaderBackend
                 if (readers.Count == 0) throw new NfcHelperException("reader_disconnected", "The ACR1552U reader is disconnected.", true, 503);
                 if (readers.Count > 1) throw new NfcHelperException("multiple_readers", "Connect exactly one ACR1552U reader.", true, 409);
                 var result = Pcsc.SCardConnect(_context, readers[0], Pcsc.ShareExclusive, Pcsc.ProtocolT0 | Pcsc.ProtocolT1, out _card, out _activeProtocol);
-                if (Pcsc.IsNoCard(result)) throw new NfcHelperException("no_tag", "Place one NTAG215 on the reader.", true, 409);
-                Pcsc.ThrowIfFailed(result, "reader_connect_failed");
+                RequireInitialSessionConnection(result);
                 Pcsc.ThrowIfFailed(Pcsc.SCardBeginTransaction(_card), "reader_busy");
             }
             catch
@@ -111,8 +109,7 @@ public sealed class WindowsPcscNfcReaderBackend : INfcReaderBackend
                 var responseLength = response.Length;
                 var pci = new PcscIoRequest { Protocol = _activeProtocol, PciLength = checked((uint)Marshal.SizeOf<PcscIoRequest>()) };
                 var result = Pcsc.SCardTransmit(_card, ref pci, command, command.Length, 0, response, ref responseLength);
-                if (Pcsc.IsRemoved(result)) throw new NfcHelperException("tag_removed_mid_operation", "The tag or reader disconnected during the NFC operation.", true, 409);
-                Pcsc.ThrowIfFailed(result, "pcsc_transmit_failed");
+                RequireActiveOperationTransmit(result);
                 if (responseLength < 2 || response[responseLength - 2] != 0x90 || response[responseLength - 1] != 0x00)
                     throw new NfcHelperException("reader_command_failed", "The reader rejected a fixed NTAG215 operation.", true, 409);
                 return response.AsSpan(0, responseLength - 2).ToArray();
@@ -141,6 +138,35 @@ public sealed class WindowsPcscNfcReaderBackend : INfcReaderBackend
         }
 
         private static NfcHelperException Malformed() => new("malformed_reader_response", "The reader returned a malformed tag response.", true, 502);
+    }
+
+    internal static ReaderBackendStatus ClassifyInitialConnectForStatus(int result)
+    {
+        if (Pcsc.IsInitialConnectAbsent(result))
+            return new(true, true, "absent", false, "pcsc_selected_card_only");
+        try
+        {
+            Pcsc.ThrowIfFailed(result, "reader_connect_failed");
+            return new(true, true, "present", false, "pcsc_selected_card_only");
+        }
+        catch (NfcHelperException error)
+        {
+            return new(false, false, "unknown", false, "pcsc_selected_card_only", error.Code);
+        }
+    }
+
+    internal static void RequireInitialSessionConnection(int result)
+    {
+        if (Pcsc.IsInitialConnectAbsent(result))
+            throw new NfcHelperException("no_tag", "Place one NTAG215 on the reader.", true, 409);
+        Pcsc.ThrowIfFailed(result, "reader_connect_failed");
+    }
+
+    internal static void RequireActiveOperationTransmit(int result)
+    {
+        if (Pcsc.IsRemoved(result))
+            throw new NfcHelperException("tag_removed_mid_operation", "The tag or reader disconnected during the NFC operation.", true, 409);
+        Pcsc.ThrowIfFailed(result, "pcsc_transmit_failed");
     }
 }
 
@@ -191,10 +217,10 @@ internal static partial class Pcsc
     internal const uint ProtocolT1 = 2;
     internal const uint LeaveCard = 0;
     internal const uint ResetCard = 1;
-    private const int Success = 0;
-    private const int NoSmartcard = unchecked((int)0x8010000C);
-    private const int RemovedCard = unchecked((int)0x80100069);
-    private const int ReaderUnavailable = unchecked((int)0x80100017);
+    internal const int Success = 0;
+    internal const int NoSmartcard = unchecked((int)0x8010000C);
+    internal const int RemovedCard = unchecked((int)0x80100069);
+    internal const int ReaderUnavailable = unchecked((int)0x80100017);
 
     [LibraryImport("winscard.dll")]
     internal static partial int SCardEstablishContext(uint scope, nint reserved1, nint reserved2, out nint context);
@@ -246,7 +272,7 @@ internal static partial class Pcsc
                !tokens.Contains("SAM", StringComparer.OrdinalIgnoreCase);
     }
 
-    internal static bool IsNoCard(int result) => result == NoSmartcard;
+    internal static bool IsInitialConnectAbsent(int result) => result is NoSmartcard or RemovedCard;
     internal static bool IsRemoved(int result) => result is RemovedCard or ReaderUnavailable;
 
     internal static void ThrowIfFailed(int result, string code)

@@ -21,6 +21,7 @@ var tests = new (string Name, Func<Task> Run)[]
 {
     ("hardware-free staged build verification", TestBuildVerification),
     ("ACR1552 PICC and SAM reader selection", TestPcscReaderSelection),
+    ("ACR1552 initial empty-reader PCSC classification", TestPcscInitialConnectClassification),
     ("operational attestation canonical signing and tamper", TestAttestation),
     ("multi-profile attestation canonical signing and tamper", TestMultiProfileAttestation),
     ("GoToTags terminal callback strict evidence and redaction", TestGoToTagsCallback),
@@ -105,6 +106,88 @@ static Task TestPcscReaderSelection()
     ]);
     Equal(1, caseInsensitive.Count);
     return Task.CompletedTask;
+}
+
+static async Task TestPcscInitialConnectClassification()
+{
+    foreach (var initialEmptyResult in new[] { Pcsc.NoSmartcard, Pcsc.RemovedCard })
+    {
+        True(Pcsc.IsInitialConnectAbsent(initialEmptyResult));
+        var backendStatus = WindowsPcscNfcReaderBackend.ClassifyInitialConnectForStatus(initialEmptyResult);
+        True(backendStatus.Connected);
+        True(backendStatus.PcscReady);
+        Equal("absent", backendStatus.TagState);
+        True(backendStatus.ErrorCode is null);
+
+        using var statusSigner = new EphemeralTestWorkstationAttestationSigner();
+        var initialBackend = new InitialConnectResultBackend(initialEmptyResult);
+        var initialService = new NfcOperationsService(initialBackend, statusSigner);
+        var helperStatus = initialService.Status();
+        True(helperStatus.ReaderConnected);
+        True(helperStatus.PcscReady);
+        Equal("absent", helperStatus.TagState);
+        Equal("ACS ACR1552U", helperStatus.ReaderModel);
+        True(helperStatus.ErrorCode is null);
+        Equal(0, statusSigner.SignCount);
+        False(JsonSerializer.Serialize(helperStatus).Contains("signature", StringComparison.OrdinalIgnoreCase));
+
+        await ThrowsAsync("no_tag", () =>
+            initialService.WriteAsync(
+                WriteRequest($"attempt_initial_{unchecked((uint)initialEmptyResult):x8}", $"idempotency_initial_{unchecked((uint)initialEmptyResult):x8}"),
+                "req_initial_connect_absent",
+                CancellationToken.None));
+        Equal(1, initialBackend.OpenSessionCount);
+        Equal(0, statusSigner.SignCount);
+        False(initialService.Busy);
+
+        try
+        {
+            WindowsPcscNfcReaderBackend.RequireInitialSessionConnection(initialEmptyResult);
+            throw new Exception("Expected initial empty reader to produce no_tag.");
+        }
+        catch (NfcHelperException error)
+        {
+            Equal("no_tag", error.Code);
+            True(error.Retryable);
+            Equal(409, error.HttpStatus);
+        }
+    }
+
+    False(Pcsc.IsInitialConnectAbsent(Pcsc.ReaderUnavailable));
+    var unavailable = WindowsPcscNfcReaderBackend.ClassifyInitialConnectForStatus(Pcsc.ReaderUnavailable);
+    False(unavailable.Connected);
+    False(unavailable.PcscReady);
+    Equal("unknown", unavailable.TagState);
+    Equal("reader_disconnected", unavailable.ErrorCode);
+    Throws("reader_disconnected", () =>
+        WindowsPcscNfcReaderBackend.RequireInitialSessionConnection(Pcsc.ReaderUnavailable));
+
+    True(Pcsc.IsRemoved(Pcsc.RemovedCard));
+    Throws("tag_removed_mid_operation", () =>
+        WindowsPcscNfcReaderBackend.RequireActiveOperationTransmit(Pcsc.RemovedCard));
+
+    var connected = WindowsPcscNfcReaderBackend.ClassifyInitialConnectForStatus(Pcsc.Success);
+    True(connected.Connected);
+    True(connected.PcscReady);
+    Equal("present", connected.TagState);
+    True(connected.ErrorCode is null);
+    WindowsPcscNfcReaderBackend.RequireInitialSessionConnection(Pcsc.Success);
+    WindowsPcscNfcReaderBackend.RequireActiveOperationTransmit(Pcsc.Success);
+
+    var retryBackend = new FakeNfcReaderBackend { TagCount = 0 };
+    using var retrySigner = new EphemeralTestWorkstationAttestationSigner();
+    var retryService = new NfcOperationsService(retryBackend, retrySigner);
+    var retryRequest = WriteRequest("attempt_initial_empty_retry", "idempotency_initial_empty_retry");
+    await ThrowsAsync("no_tag", () =>
+        retryService.WriteAsync(retryRequest, "req_initial_empty", CancellationToken.None));
+    Equal(0, retrySigner.SignCount);
+    Equal(0, retryBackend.Writes.Count);
+    False(retryService.Busy);
+    retryBackend.TagCount = 1;
+    var retryResult = await retryService.WriteAsync(retryRequest, "req_initial_present", CancellationToken.None);
+    Equal("write_verified_pcsc_readback", retryResult.ReaderResultCode);
+    True(retryResult.OperationalAttestation is not null);
+    Equal(1, retrySigner.SignCount);
 }
 
 static Task TestAttestation()
@@ -1528,6 +1611,19 @@ sealed class FakeGoToTagsRuntime : IGoToTagsAdapterRuntime
     public string? LaunchedPath { get; private set; }
     public GoToTagsAdapterInspection Inspect(GoToTagsAdapterOptions options) => new(true);
     public void LaunchOperation(GoToTagsAdapterOptions options, string operationPath) => LaunchedPath = Path.GetFullPath(operationPath);
+}
+
+sealed class InitialConnectResultBackend(int result) : INfcReaderBackend
+{
+    public string Name => "pcsc_initial_connect_test";
+    public int OpenSessionCount { get; private set; }
+    public ReaderBackendStatus GetStatus() => WindowsPcscNfcReaderBackend.ClassifyInitialConnectForStatus(result);
+    public INfcTagSession OpenSession()
+    {
+        OpenSessionCount++;
+        WindowsPcscNfcReaderBackend.RequireInitialSessionConnection(result);
+        throw new InvalidOperationException("A successful PCSC connection is outside this initial-absence test backend.");
+    }
 }
 
 sealed class MutableTimeProvider(DateTimeOffset initial) : TimeProvider
