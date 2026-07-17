@@ -20,6 +20,13 @@ $env:TENKINGS_NFC_HELPER_PORT = [string]$config.port
 $env:TENKINGS_NFC_BACKEND = "pcsc"
 $env:TENKINGS_NFC_WORKSTATION_KEY_NAME = [string]$config.workstationKeyName
 $env:TENKINGS_NFC_WORKSTATION_KEY_ID = [string]$config.workstationKeyId
+if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v3" -and [bool]$config.feijuF8215Enabled) {
+  $env:TENKINGS_NFC_FEIJU_F8215_ENABLED = "true"
+  $env:TENKINGS_NFC_GOTOTAGS_EXECUTABLE_PATH = [string]$config.goToTagsExecutablePath
+  $env:TENKINGS_NFC_GOTOTAGS_TEMPLATE_PATH = [string]$config.goToTagsTemplatePath
+  $env:TENKINGS_NFC_GOTOTAGS_TEMPLATE_SHA256 = [string]$config.goToTagsTemplateSha256
+  $env:TENKINGS_NFC_GOTOTAGS_JOB_ROOT = [string]$config.goToTagsJobRoot
+}
 
 try {
   & dotnet $dll
@@ -34,4 +41,9 @@ try {
   Remove-Item Env:\TENKINGS_NFC_BACKEND -ErrorAction SilentlyContinue
   Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY_NAME -ErrorAction SilentlyContinue
   Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:\TENKINGS_NFC_FEIJU_F8215_ENABLED -ErrorAction SilentlyContinue
+  Remove-Item Env:\TENKINGS_NFC_GOTOTAGS_EXECUTABLE_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:\TENKINGS_NFC_GOTOTAGS_TEMPLATE_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:\TENKINGS_NFC_GOTOTAGS_TEMPLATE_SHA256 -ErrorAction SilentlyContinue
+  Remove-Item Env:\TENKINGS_NFC_GOTOTAGS_JOB_ROOT -ErrorAction SilentlyContinue
 }

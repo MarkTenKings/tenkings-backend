@@ -1,0 +1,47 @@
+{
+  "elapsedTime": "PT0S",
+  "externalId": "<attempt-id>",
+  "chipType": "F8215",
+  "createdAt": "2000-01-01T00:00:00.000Z",
+  "id": "<operation-id>",
+  "integrations": [
+    {
+      "type": "HTTP_POST",
+      "urlString": "http://127.0.0.1:47662/gototags/callback/<callback-id>",
+      "integrationType": "HTTP_POST"
+    }
+  ],
+  "name": "Ten Kings F8215 Manual Start v1",
+  "operationType": "VARIABLE_ENCODE_NFC_TAGS",
+  "options": {
+    "autoSelectNextTag": "TOP_TO_BOTTOM",
+    "enforceTiming": false,
+    "enforceIdOrder": false,
+    "queueIdsOnScan": false,
+    "verify": true
+  },
+  "revision": 3,
+  "tags": [
+    {
+      "encoding": {
+        "correlationId": "<correlation-id>",
+        "dynamic": false,
+        "extra": {},
+        "lock": true,
+        "ndef": {
+          "lock": true,
+          "records": [
+            {
+              "type": "WEBSITE",
+              "url": "https://collect.tenkings.co/nfc/<public-tag-id>"
+            }
+          ]
+        }
+      },
+      "id": "<tag-row-id>",
+      "status": "READY"
+    }
+  ],
+  "type": "VARIABLE_ENCODE_NFC_TAGS",
+  "updatedAt": "2000-01-01T00:00:00.000Z"
+}

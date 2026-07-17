@@ -2614,6 +2614,7 @@ test("production auth-check verifies current bearer session against AI Grader op
       serpApiConfigured: false,
       nfcSchemaReady: false,
       nfcProgrammingEnabled: false,
+      nfcFeijuF8215Enabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: false,
       nfcWorkstationAttestationConfigured: false,

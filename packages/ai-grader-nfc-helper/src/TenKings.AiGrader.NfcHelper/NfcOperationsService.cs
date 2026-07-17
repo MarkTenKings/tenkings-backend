@@ -12,7 +12,7 @@ public sealed partial class NfcOperationsService
     private readonly IWorkstationAttestationSigner? _attestationSigner;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _operationTimeout;
-    private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly NfcOperationGate _operationGate;
     private readonly ConcurrentDictionary<string, IdempotencyEntry> _idempotency = new(StringComparer.Ordinal);
     private ReaderBackendStatus? _lastBackendStatus;
     private long _idempotencySequence;
@@ -22,7 +22,8 @@ public sealed partial class NfcOperationsService
         IWorkstationAttestationSigner? attestationSigner = null,
         ISafeLogger? logger = null,
         int operationTimeoutMs = NfcProtocol.DefaultOperationTimeoutMs,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        NfcOperationGate? operationGate = null)
     {
         if (operationTimeoutMs is < 100 or > 30_000) throw new ArgumentOutOfRangeException(nameof(operationTimeoutMs));
         _backend = backend;
@@ -30,9 +31,10 @@ public sealed partial class NfcOperationsService
         _logger = logger ?? new ConsoleSafeLogger();
         _operationTimeout = TimeSpan.FromMilliseconds(operationTimeoutMs);
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _operationGate = operationGate ?? new NfcOperationGate();
     }
 
-    public bool Busy => _operationGate.CurrentCount == 0;
+    public bool Busy => _operationGate.Busy;
 
     public HelperStatusResponse Status()
     {
@@ -62,7 +64,7 @@ public sealed partial class NfcOperationsService
     public async Task<NfcReadResponse> ReadAsync(NfcReadRequest request, string requestId, CancellationToken cancellationToken)
     {
         ValidateContext(request.AttemptId, "attemptId");
-        if (!await _operationGate.WaitAsync(0, cancellationToken))
+        if (!await _operationGate.TryEnterAsync(cancellationToken))
             throw new NfcHelperException("reader_busy", "Another NFC operation is already active.", true, 409);
         var releaseNow = true;
         try
@@ -78,7 +80,7 @@ public sealed partial class NfcOperationsService
             {
                 releaseNow = false;
                 _ = operation.ContinueWith(
-                    _ => _operationGate.Release(),
+                    _ => _operationGate.Exit(),
                     CancellationToken.None,
                     TaskContinuationOptions.ExecuteSynchronously,
                     TaskScheduler.Default);
@@ -88,7 +90,7 @@ public sealed partial class NfcOperationsService
             {
                 releaseNow = false;
                 _ = operation.ContinueWith(
-                    _ => _operationGate.Release(),
+                    _ => _operationGate.Exit(),
                     CancellationToken.None,
                     TaskContinuationOptions.ExecuteSynchronously,
                     TaskScheduler.Default);
@@ -102,7 +104,7 @@ public sealed partial class NfcOperationsService
         }
         finally
         {
-            if (releaseNow) _operationGate.Release();
+            if (releaseNow) _operationGate.Exit();
         }
     }
 
@@ -148,7 +150,7 @@ public sealed partial class NfcOperationsService
         string requestId,
         CancellationToken cancellationToken)
     {
-        if (!await _operationGate.WaitAsync(0, cancellationToken))
+        if (!await _operationGate.TryEnterAsync(cancellationToken))
             throw new NfcHelperException("writer_busy", "Another NFC operation is already active.", true, 409);
         var releaseNow = true;
         try
@@ -186,7 +188,7 @@ public sealed partial class NfcOperationsService
             {
                 releaseNow = false;
                 _ = operation.ContinueWith(
-                    _ => _operationGate.Release(),
+                    _ => _operationGate.Exit(),
                     CancellationToken.None,
                     TaskContinuationOptions.ExecuteSynchronously,
                     TaskScheduler.Default);
@@ -196,7 +198,7 @@ public sealed partial class NfcOperationsService
             {
                 releaseNow = false;
                 _ = operation.ContinueWith(
-                    _ => _operationGate.Release(),
+                    _ => _operationGate.Exit(),
                     CancellationToken.None,
                     TaskContinuationOptions.ExecuteSynchronously,
                     TaskScheduler.Default);
@@ -205,7 +207,7 @@ public sealed partial class NfcOperationsService
         }
         finally
         {
-            if (releaseNow) _operationGate.Release();
+            if (releaseNow) _operationGate.Exit();
         }
     }
 
@@ -214,7 +216,7 @@ public sealed partial class NfcOperationsService
         string requestId,
         IdempotencyEntry entry)
     {
-        if (!await _operationGate.WaitAsync(0, CancellationToken.None))
+        if (!await _operationGate.TryEnterAsync(CancellationToken.None))
         {
             throw new NfcHelperException("writer_busy", "Another NFC write is already active.", true, 409);
         }
@@ -239,7 +241,7 @@ public sealed partial class NfcOperationsService
         }
         finally
         {
-            _operationGate.Release();
+            _operationGate.Exit();
         }
     }
 

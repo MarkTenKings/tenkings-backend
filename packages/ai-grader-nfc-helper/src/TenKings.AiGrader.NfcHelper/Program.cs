@@ -12,12 +12,16 @@ internal static class Program
         {
             if (args is ["--hardware-gate-test"])
                 return await RunHardwareGateTestAsync();
+            if (args is ["--f8215-hardware-gate-test"])
+                return await RunF8215HardwareGateTestAsync();
             if (args is ["--ensure-workstation-attestation-key"])
                 return RunEnsureWorkstationAttestationKey();
             if (args is ["--export-workstation-attestation-public-key"])
                 return RunExportWorkstationAttestationPublicKey();
             if (args is ["--verify-build"])
                 return RunVerifyBuild();
+            if (args is ["--resolve-abandoned-f8215-job"])
+                return RunResolveAbandonedF8215Job();
 
             var backendName = ResolveBackend(args);
             INfcReaderBackend backend = backendName switch
@@ -29,15 +33,25 @@ internal static class Program
             using IWorkstationAttestationSigner signer = backendName == "pcsc"
                 ? ResolveProductionSigner()
                 : new EphemeralTestWorkstationAttestationSigner();
+            using var operationGate = new NfcOperationGate();
             var logger = new ConsoleSafeLogger();
             var timeout = ResolveOperationTimeout();
             var operations = new NfcOperationsService(
                 backend,
                 signer,
                 logger,
-                timeout);
+                timeout,
+                operationGate: operationGate);
             var options = NfcHttpServerOptions.FromEnvironment();
-            await using var server = new NfcHttpServer(options, operations, logger);
+            var coordinator = new F8215JobCoordinator(
+                GoToTagsAdapterOptions.FromEnvironment(),
+                new WindowsGoToTagsAdapterRuntime(),
+                new GoToTagsOperationFactory(),
+                signer,
+                operationGate,
+                options.Port,
+                logger);
+            await using var server = new NfcHttpServer(options, operations, logger, coordinator);
             using var shutdown = new CancellationTokenSource();
             Console.CancelKeyPress += (_, eventArgs) =>
             {
@@ -79,6 +93,13 @@ internal static class Program
         return result.OverwriteConfirmationRequired ? 4 : 0;
     }
 
+    private static async Task<int> RunF8215HardwareGateTestAsync()
+    {
+        var result = await F8215HardwareGateRunner.RunAsync(CancellationToken.None);
+        Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.F8215HardwareGateResult));
+        return 0;
+    }
+
     private static int RunEnsureWorkstationAttestationKey()
     {
         var metadata = WindowsCngWorkstationAttestationSigner.EnsureNamedKey();
@@ -106,6 +127,16 @@ internal static class Program
     {
         var result = NfcBuildVerification.Verify();
         Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.NfcBuildVerificationResult));
+        return 0;
+    }
+
+    private static int RunResolveAbandonedF8215Job()
+    {
+        var jobRoot = Environment.GetEnvironmentVariable("TENKINGS_NFC_GOTOTAGS_JOB_ROOT")?.Trim() ?? string.Empty;
+        var attemptId = Environment.GetEnvironmentVariable("TENKINGS_NFC_ABANDONED_ATTEMPT_ID")?.Trim() ?? string.Empty;
+        var confirmation = Environment.GetEnvironmentVariable("TENKINGS_NFC_ABANDONED_CONFIRMATION") ?? string.Empty;
+        var result = F8215JobCoordinator.ResolveAbandonedJob(jobRoot, attemptId, confirmation);
+        Console.WriteLine(JsonSerializer.Serialize(result, NfcJsonContext.Default.F8215AbandonedResolutionResult));
         return 0;
     }
 

@@ -20,10 +20,22 @@ export const AI_GRADER_NFC_NDEF_PAYLOAD_VERSION = 1 as const;
 export const AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET_ENV = "AI_GRADER_NFC_ATTEMPT_TOKEN_SECRET" as const;
 export const AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_ENV = "AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON" as const;
 export const AI_GRADER_NFC_PROGRAMMING_ENABLED_ENV = "AI_GRADER_NFC_PROGRAMMING_ENABLED" as const;
+export const AI_GRADER_NFC_FEIJU_F8215_ENABLED_ENV = "AI_GRADER_NFC_FEIJU_F8215_ENABLED" as const;
 export const AI_GRADER_NFC_EXPECTED_HELPER_PROTOCOL_VERSION = "tenkings-ai-grader-nfc-loopback-v2" as const;
 export const AI_GRADER_NFC_ATTESTATION_ALGORITHM = "ecdsa-p256-sha256-p1363" as const;
-export const AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION = "ai-grader-nfc-helper-attestation-v1" as const;
+export const AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V1 = "ai-grader-nfc-helper-attestation-v1" as const;
+export const AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2 = "ai-grader-nfc-helper-attestation-v2" as const;
+/** Backward-compatible export retained for the installed NTAG215 v1 helper. */
+export const AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION = AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V1;
 export const AI_GRADER_NFC_DEFAULT_ATTEMPT_TTL_MS = 10 * 60 * 1000;
+export const AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE = "gototags_manual_start_v1" as const;
+export const AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE = "ntag215_direct_pcsc_v1" as const;
+export const AI_GRADER_NFC_NTAG424_PROGRAMMING_PROFILE = "ntag424_dna_unimplemented" as const;
+export const AI_GRADER_NFC_GOTOTAGS_ADAPTER_IDENTITY = "gototags_desktop" as const;
+export const AI_GRADER_NFC_GOTOTAGS_APPROVED_VERSION = "4.37.0.1" as const;
+export const AI_GRADER_NFC_FEIJU_READER_RESULT = "write_locked_verified_gototags_readback" as const;
+export const AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_STATE = "permanently_read_only_verified" as const;
+export const AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION = "operator_fresh_inventory_confirmation_v1" as const;
 
 const PUBLIC_TAG_ID = /^[A-Za-z0-9_-]{32}$/;
 const ATTEMPT_ID = /^nfc_attempt_[A-Za-z0-9_-]{43}$/;
@@ -42,14 +54,19 @@ const WORKSTATION_ALLOWLIST_MAX_ENTRIES = 8;
 const WORKSTATION_ALLOWLIST_ENTRY_FIELDS = ["algorithm", "publicSpkiDerBase64", "tenantId"] as const;
 const REPLACEMENT_AUTHORIZATION = Symbol("ai-grader-nfc-replacement-authorization");
 
-export type AiGraderNfcChipTypeValue = "NTAG215" | "NTAG424_DNA";
+export type AiGraderNfcChipTypeValue = "NTAG215" | "FEIJU_F8215" | "NTAG424_DNA";
 export type AiGraderNfcSecurityModeValue = "static_url_v1" | "ntag424_sun_v1";
+export type AiGraderNfcProgrammingProfileValue =
+  | typeof AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE
+  | typeof AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE
+  | typeof AI_GRADER_NFC_NTAG424_PROGRAMMING_PROFILE;
 export type AiGraderNfcTagStatusValue = "missing" | "reserved" | "programming" | "verified" | "active" | "revoked" | "error";
 export type AiGraderNfcRegistrationKind = "registered_link" | "cryptographically_verified" | "not_active";
 
 export type AiGraderNfcSecurityStrategyDescriptor = {
   chipType: AiGraderNfcChipTypeValue;
   securityMode: AiGraderNfcSecurityModeValue;
+  programmingProfile: AiGraderNfcProgrammingProfileValue;
   implemented: boolean;
   registrationKind: "registered_link" | null;
   cryptographicVerificationAvailable: boolean;
@@ -68,12 +85,23 @@ export interface AiGraderNtag424SunVerifier {
 export function describeAiGraderNfcSecurityStrategy(
   chipType: AiGraderNfcChipTypeValue,
   securityMode: AiGraderNfcSecurityModeValue,
+  programmingProfile?: AiGraderNfcProgrammingProfileValue,
 ): AiGraderNfcSecurityStrategyDescriptor {
-  if (chipType === "NTAG215" && securityMode === "static_url_v1") {
-    return { chipType, securityMode, implemented: true, registrationKind: "registered_link", cryptographicVerificationAvailable: false };
+  const profile = programmingProfile ?? (
+    chipType === "NTAG215"
+      ? AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE
+      : chipType === "FEIJU_F8215"
+        ? AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE
+        : AI_GRADER_NFC_NTAG424_PROGRAMMING_PROFILE
+  );
+  if (chipType === "NTAG215" && securityMode === "static_url_v1" && profile === AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE) {
+    return { chipType, securityMode, programmingProfile: profile, implemented: true, registrationKind: "registered_link", cryptographicVerificationAvailable: false };
   }
-  if (chipType === "NTAG424_DNA" && securityMode === "ntag424_sun_v1") {
-    return { chipType, securityMode, implemented: false, registrationKind: null, cryptographicVerificationAvailable: false };
+  if (chipType === "FEIJU_F8215" && securityMode === "static_url_v1" && profile === AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE) {
+    return { chipType, securityMode, programmingProfile: profile, implemented: true, registrationKind: "registered_link", cryptographicVerificationAvailable: false };
+  }
+  if (chipType === "NTAG424_DNA" && securityMode === "ntag424_sun_v1" && profile === AI_GRADER_NFC_NTAG424_PROGRAMMING_PROFILE) {
+    return { chipType, securityMode, programmingProfile: profile, implemented: false, registrationKind: null, cryptographicVerificationAvailable: false };
   }
   throw nfcError("AI_GRADER_NFC_STRATEGY_MISMATCH", 400, "NFC chip type and security mode do not match.");
 }
@@ -97,10 +125,11 @@ type ProgrammingRuntimeInput = {
   tokenSecret?: string;
   workstationPublicKeysJson?: string;
   programmingEnabled?: boolean;
+  feijuF8215Enabled?: boolean;
 };
 
 export type AiGraderNfcOperationalAttestationInput = {
-  schemaVersion: typeof AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION;
+  schemaVersion: typeof AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V1 | typeof AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2;
   workstationKeyId: string;
   algorithm: typeof AI_GRADER_NFC_ATTESTATION_ALGORITHM;
   attestationChallenge: string;
@@ -109,6 +138,7 @@ export type AiGraderNfcOperationalAttestationInput = {
 };
 
 export type AiGraderNfcOperationalAttestationStatementInput = {
+  schemaVersion?: typeof AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V1 | typeof AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2;
   attemptId: string;
   attestationChallenge: string;
   publicTagId: string;
@@ -118,6 +148,12 @@ export type AiGraderNfcOperationalAttestationStatementInput = {
   readerResultCode: string;
   helperProtocolVersion: string;
   observedAt: string;
+  chipType?: AiGraderNfcChipTypeValue;
+  securityMode?: AiGraderNfcSecurityModeValue;
+  programmingProfile?: AiGraderNfcProgrammingProfileValue;
+  adapterIdentity?: string;
+  adapterVersion?: string;
+  writeProtectionState?: string;
 };
 
 export type AiGraderNfcWorkstationPublicKey = {
@@ -137,6 +173,7 @@ export type AiGraderNfcSafeStatus = {
   nfcTagUrl?: string;
   chipType?: AiGraderNfcChipTypeValue;
   securityMode?: AiGraderNfcSecurityModeValue;
+  programmingProfile?: AiGraderNfcProgrammingProfileValue;
   ndefPayloadVersion?: number;
   registrationKind: AiGraderNfcRegistrationKind;
   cryptographicallyVerified: false;
@@ -144,10 +181,15 @@ export type AiGraderNfcSafeStatus = {
   revokedAt?: string | null;
   revocationReason?: string | null;
   errorCode?: string | null;
+  /** Authenticated operator recovery identity for the exact consumed attempt. Never returned by the public NFC route. */
+  activeAttemptId?: string;
 };
 
 export type InitAiGraderNfcProgrammingInput = ExactLinkageInput & ActorInput & ProgrammingRuntimeInput & {
   idempotencyKey: string;
+  chipType?: AiGraderNfcChipTypeValue;
+  programmingProfile?: AiGraderNfcProgrammingProfileValue;
+  operatorFreshInventoryConfirmation?: typeof AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION;
   attemptTtlMs?: number;
   operatorNote?: string | null;
   dbClient?: DbClient;
@@ -170,9 +212,13 @@ export type CompleteAiGraderNfcProgrammingInput = ExactLinkageInput & ActorInput
   readbackPayloadSha256: string;
   chipType: AiGraderNfcChipTypeValue;
   securityMode: AiGraderNfcSecurityModeValue;
+  programmingProfile?: AiGraderNfcProgrammingProfileValue;
   idempotencyKey: string;
   readerResultCode: string;
   helperProtocolVersion: string;
+  adapterIdentity?: string;
+  adapterVersion?: string;
+  writeProtectionState?: string;
   operationalAttestation: AiGraderNfcOperationalAttestationInput;
   dbClient?: DbClient;
   now?: Date;
@@ -390,7 +436,10 @@ function resolveProgrammingRuntime(input: ProgrammingRuntimeInput, tenantId: str
   if (!Array.from(workstationKeys.values()).some((entry) => entry.tenantId === tenantId)) {
     throw workstationConfigurationError();
   }
-  return { tokenSecret, workstationKeys };
+  const feijuF8215Enabled = input.feijuF8215Enabled === undefined
+    ? process.env[AI_GRADER_NFC_FEIJU_F8215_ENABLED_ENV] === "true"
+    : input.feijuF8215Enabled === true;
+  return { tokenSecret, workstationKeys, feijuF8215Enabled };
 }
 function attemptTtl(value: unknown) {
   const ttl = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : AI_GRADER_NFC_DEFAULT_ATTEMPT_TTL_MS;
@@ -443,7 +492,8 @@ function validateOperationalAttestation(value: unknown): AiGraderNfcOperationalA
     throw nfcError("AI_GRADER_NFC_ATTESTATION_INVALID", 400, "NFC workstation operational attestation is invalid.");
   }
   if (
-    value.schemaVersion !== AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION ||
+    (value.schemaVersion !== AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V1 &&
+      value.schemaVersion !== AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2) ||
     value.algorithm !== AI_GRADER_NFC_ATTESTATION_ALGORITHM
   ) {
     throw nfcError("AI_GRADER_NFC_ATTESTATION_CONTRACT_REJECTED", 400, "NFC workstation attestation contract is not accepted.");
@@ -466,7 +516,7 @@ function validateOperationalAttestation(value: unknown): AiGraderNfcOperationalA
   ).normalized;
   const observedAt = validateObservedAt(value.observedAt).observedAt;
   return {
-    schemaVersion: AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION,
+    schemaVersion: value.schemaVersion,
     workstationKeyId,
     algorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
     attestationChallenge,
@@ -495,11 +545,16 @@ export function buildAiGraderNfcOperationalAttestationStatement(
     throw nfcError("AI_GRADER_NFC_ATTESTATION_INVALID", 400, "NFC workstation operational attestation is invalid.");
   }
   const normalizedUrl = required(input.normalizedUrl, "normalizedUrl", 512);
-  const readerResultCode = validateReaderResultCode(input.readerResultCode);
+  const schemaVersion = input.schemaVersion ?? AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V1;
+  const readerResultCode = schemaVersion === AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2
+    ? input.readerResultCode === AI_GRADER_NFC_FEIJU_READER_RESULT
+      ? AI_GRADER_NFC_FEIJU_READER_RESULT
+      : (() => { throw nfcError("AI_GRADER_NFC_READER_RESULT_REJECTED", 400, "NFC helper readback result is not accepted."); })()
+    : validateReaderResultCode(input.readerResultCode);
   const helperProtocolVersion = validateHelperProtocolVersion(input.helperProtocolVersion);
   const observedAt = validateObservedAt(input.observedAt).observedAt;
-  return [
-    AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION,
+  if (schemaVersion === AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V1) return [
+    AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V1,
     attemptId,
     attestationChallenge,
     publicTagId,
@@ -510,8 +565,41 @@ export function buildAiGraderNfcOperationalAttestationStatement(
     helperProtocolVersion,
     observedAt,
   ].join("\n");
+  if (
+    input.chipType !== "FEIJU_F8215" ||
+    input.securityMode !== "static_url_v1" ||
+    input.programmingProfile !== AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE ||
+    input.adapterIdentity !== AI_GRADER_NFC_GOTOTAGS_ADAPTER_IDENTITY ||
+    input.adapterVersion !== AI_GRADER_NFC_GOTOTAGS_APPROVED_VERSION ||
+    input.writeProtectionState !== AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_STATE ||
+    readerResultCode !== AI_GRADER_NFC_FEIJU_READER_RESULT
+  ) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_INVALID", 400, "NFC workstation operational attestation is invalid.");
+  }
+  return [
+    AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2,
+    attemptId,
+    attestationChallenge,
+    publicTagId,
+    normalizedUrl,
+    input.chipType,
+    input.securityMode,
+    input.programmingProfile,
+    input.adapterIdentity,
+    input.adapterVersion,
+    uidFingerprintSha256,
+    readbackPayloadSha256,
+    input.writeProtectionState,
+    readerResultCode,
+    helperProtocolVersion,
+    observedAt,
+  ].join("\n");
 }
-function safeMetadata(operatorNote?: string | null) {
+function safeMetadata(
+  programmingProfile: AiGraderNfcProgrammingProfileValue,
+  operatorNote?: string | null,
+  operatorFreshInventoryConfirmation?: typeof AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION,
+) {
   const note = text(operatorNote);
   return {
     schemaVersion: "ai-grader-nfc-safe-metadata-v1",
@@ -519,6 +607,8 @@ function safeMetadata(operatorNote?: string | null) {
     evidenceSemantics: "workstation_signed_pcsc_readback_not_tag_authentication",
     workstationOperationalAttestationRequired: true,
     cryptographicTagAuthentication: false,
+    programmingProfile,
+    ...(operatorFreshInventoryConfirmation ? { operatorFreshInventoryConfirmation } : {}),
     ...(note ? { operatorNote: note.slice(0, 240) } : {}),
   };
 }
@@ -585,16 +675,65 @@ function asTagStatus(value: unknown): Exclude<AiGraderNfcTagStatusValue, "missin
   }
   return normalized;
 }
-function assertStaticStrategy(chipType: unknown, securityMode: unknown) {
-  if (chipType !== "NTAG215" || securityMode !== "static_url_v1") {
+function requestedStrategy(
+  chipType: unknown = "NTAG215",
+  programmingProfile?: unknown,
+) {
+  const profile = programmingProfile ?? (
+    chipType === "NTAG215" ? AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE :
+      chipType === "FEIJU_F8215" ? AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE :
+        chipType === "NTAG424_DNA" ? AI_GRADER_NFC_NTAG424_PROGRAMMING_PROFILE : undefined
+  );
+  if (chipType === "NTAG215" && profile === AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE) {
+    return describeAiGraderNfcSecurityStrategy("NTAG215", "static_url_v1", AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE);
+  }
+  if (chipType === "FEIJU_F8215" && profile === AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE) {
+    return describeAiGraderNfcSecurityStrategy("FEIJU_F8215", "static_url_v1", AI_GRADER_NFC_FEIJU_PROGRAMMING_PROFILE);
+  }
+  if (chipType === "NTAG424_DNA" && profile === AI_GRADER_NFC_NTAG424_PROGRAMMING_PROFILE) {
+    return describeAiGraderNfcSecurityStrategy("NTAG424_DNA", "ntag424_sun_v1", AI_GRADER_NFC_NTAG424_PROGRAMMING_PROFILE);
+  }
+  throw nfcError("AI_GRADER_NFC_STRATEGY_MISMATCH", 400, "NFC chip type and programming profile do not match.");
+}
+function assertImplementedStrategy(chipType: unknown, securityMode: unknown, programmingProfile: unknown) {
+  const strategy = requestedStrategy(chipType, programmingProfile);
+  if (strategy.securityMode !== securityMode || !strategy.implemented) {
     throw nfcError("AI_GRADER_NFC_STRATEGY_NOT_IMPLEMENTED", 409, "This NFC security strategy is not implemented.");
   }
-  return describeAiGraderNfcSecurityStrategy("NTAG215", "static_url_v1");
+  return strategy;
+}
+function requireProfileEnabled(strategy: AiGraderNfcSecurityStrategyDescriptor, feijuF8215Enabled: boolean) {
+  if (strategy.chipType === "FEIJU_F8215" && !feijuF8215Enabled) {
+    throw nfcError("AI_GRADER_NFC_FEIJU_F8215_DISABLED", 503, "Feiju F8215 programming is disabled by server policy.");
+  }
+}
+function requireFreshInventoryConfirmation(
+  strategy: AiGraderNfcSecurityStrategyDescriptor,
+  confirmation: unknown,
+): typeof AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION | undefined {
+  if (strategy.chipType !== "FEIJU_F8215") {
+    if (confirmation !== undefined && confirmation !== null && confirmation !== "") {
+      throw nfcError("AI_GRADER_NFC_FRESH_INVENTORY_CONFIRMATION_INVALID", 400, "Fresh F8215 inventory confirmation applies only to the Feiju workflow.");
+    }
+    return undefined;
+  }
+  if (confirmation !== AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION) {
+    throw nfcError(
+      "AI_GRADER_NFC_FRESH_INVENTORY_CONFIRMATION_REQUIRED",
+      400,
+      "The operator must confirm one fresh controlled-inventory F8215 before preparing the job.",
+    );
+  }
+  return AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION;
 }
 function safeStatus(tag: any, fallbackReportId = ""): AiGraderNfcSafeStatus {
   if (!tag) return { status: "missing", reportId: fallbackReportId, registrationKind: "not_active", cryptographicallyVerified: false };
   const status = asTagStatus(tag.status);
-  const strategy = describeAiGraderNfcSecurityStrategy(tag.chipType, tag.securityMode);
+  const storedProfile = tag.programmingProfile ?? (
+    tag.chipType === "NTAG215" ? AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE :
+      tag.chipType === "NTAG424_DNA" ? AI_GRADER_NFC_NTAG424_PROGRAMMING_PROFILE : undefined
+  );
+  const strategy = describeAiGraderNfcSecurityStrategy(tag.chipType, tag.securityMode, storedProfile);
   return {
     status,
     reportId: text(tag.reportId),
@@ -605,6 +744,7 @@ function safeStatus(tag: any, fallbackReportId = ""): AiGraderNfcSafeStatus {
     nfcTagUrl: buildAiGraderNfcTagUrl(tag.publicTagId),
     chipType: tag.chipType,
     securityMode: tag.securityMode,
+    programmingProfile: strategy.programmingProfile,
     ndefPayloadVersion: Number(tag.ndefPayloadVersion),
     registrationKind: status === "active" && strategy.registrationKind === "registered_link" ? "registered_link" : "not_active",
     cryptographicallyVerified: false,
@@ -855,6 +995,8 @@ async function expireTimedOutAttemptsTx(
 async function createProgrammingAttemptTx(tx: DbClient, input: {
   linkage: ExactLinkageInput; authority: ConfirmAuthority; actorUserId: string; idempotencyKey: string;
   tokenSecret: string; ttlMs: number; now: Date; operatorNote?: string | null;
+  operatorFreshInventoryConfirmation?: typeof AI_GRADER_NFC_FEIJU_FRESH_INVENTORY_CONFIRMATION;
+  strategy: AiGraderNfcSecurityStrategyDescriptor;
   replacementAuthorization?: typeof REPLACEMENT_AUTHORIZATION;
 }): Promise<AiGraderNfcProgrammingInitResult | ExpiredAttemptResult> {
   const idempotencyKeyHash = attemptIdempotencyHash(input.actorUserId, input.idempotencyKey);
@@ -867,6 +1009,14 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
   if (existingAttempt) {
     assertAttemptLinkage(existingAttempt, input.linkage, input.actorUserId);
     assertTagLinkage(existingAttempt.tag, input.linkage);
+    const existingStrategy = assertImplementedStrategy(
+      existingAttempt.tag.chipType,
+      existingAttempt.tag.securityMode,
+      existingAttempt.tag.programmingProfile ?? AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE,
+    );
+    if (existingStrategy.chipType !== input.strategy.chipType || existingStrategy.programmingProfile !== input.strategy.programmingProfile) {
+      throw nfcError("AI_GRADER_NFC_ATTEMPT_PROFILE_MISMATCH", 409, "The existing NFC attempt uses a different programming profile.");
+    }
     if (
       text(existingAttempt.tag.aiGraderReportId) !== input.authority.reportRowId ||
       text(existingAttempt.tag.aiGraderLabelId) !== input.authority.labelId
@@ -906,6 +1056,14 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
   if (tag?.status === "active") return safeStatus(tag);
   if (tag) {
     assertTagLinkage(tag, input.linkage);
+    const existingStrategy = assertImplementedStrategy(
+      tag.chipType,
+      tag.securityMode,
+      tag.programmingProfile ?? AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE,
+    );
+    if (existingStrategy.chipType !== input.strategy.chipType || existingStrategy.programmingProfile !== input.strategy.programmingProfile) {
+      throw nfcError("AI_GRADER_NFC_ATTEMPT_PROFILE_MISMATCH", 409, "The existing NFC reservation uses a different programming profile.");
+    }
     tag = (await expireTimedOutAttemptsTx(tx, {
       tag,
       now: input.now,
@@ -937,21 +1095,41 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
     const publicTagId = await uniquePublicTagId(tx);
     const expectedUrl = buildAiGraderNfcTagUrl(publicTagId);
     tag = await tx.aiGraderNfcTag.create({ data: {
-      tenantId: input.linkage.tenantId, publicTagId, chipType: "NTAG215", securityMode: "static_url_v1",
+      tenantId: input.linkage.tenantId, publicTagId, chipType: input.strategy.chipType,
+      securityMode: input.strategy.securityMode, programmingProfile: input.strategy.programmingProfile,
       status: "reserved", ndefPayloadVersion: AI_GRADER_NFC_NDEF_PAYLOAD_VERSION,
       expectedPayloadSha256: sha256(expectedUrl), aiGraderReportId: input.authority.reportRowId,
       reportId: input.linkage.reportId, cardAssetId: input.linkage.cardAssetId, itemId: input.linkage.itemId,
       aiGraderLabelId: input.authority.labelId, certId: input.linkage.certId, createdByUserId: input.actorUserId,
-      metadata: safeMetadata(input.operatorNote), createdAt: input.now, updatedAt: input.now,
+      metadata: safeMetadata(
+        input.strategy.programmingProfile,
+        input.operatorNote,
+        input.operatorFreshInventoryConfirmation,
+      ), createdAt: input.now, updatedAt: input.now,
     } });
     await audit(tx, {
       tagId: tag.id, tenantId: input.linkage.tenantId, reportId: input.linkage.reportId, action: "reserve",
       toStatus: "reserved", actorUserId: input.actorUserId,
-      safeDetails: { chipType: "NTAG215", securityMode: "static_url_v1", ndefPayloadVersion: 1 },
+      safeDetails: {
+        chipType: input.strategy.chipType,
+        securityMode: input.strategy.securityMode,
+        programmingProfile: input.strategy.programmingProfile,
+        ...(input.operatorFreshInventoryConfirmation
+          ? { operatorFreshInventoryConfirmation: input.operatorFreshInventoryConfirmation }
+          : {}),
+        ndefPayloadVersion: 1,
+      },
       createdAt: input.now,
     });
   }
-  assertStaticStrategy(tag.chipType, tag.securityMode);
+  const tagStrategy = assertImplementedStrategy(
+    tag.chipType,
+    tag.securityMode,
+    tag.programmingProfile ?? AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE,
+  );
+  if (tagStrategy.chipType !== input.strategy.chipType || tagStrategy.programmingProfile !== input.strategy.programmingProfile) {
+    throw nfcError("AI_GRADER_NFC_ATTEMPT_PROFILE_MISMATCH", 409, "The NFC reservation profile changed.");
+  }
   if (text(tag.aiGraderReportId) !== input.authority.reportRowId || text(tag.aiGraderLabelId) !== input.authority.labelId) {
     throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC internal report and label linkage changed.");
   }
@@ -979,6 +1157,9 @@ async function createProgrammingAttemptTx(tx: DbClient, input: {
       expectedAttestationAlgorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
       workstationOperationalAttestationRequired: true,
       cryptographicTagAuthentication: false,
+      ...(input.operatorFreshInventoryConfirmation
+        ? { operatorFreshInventoryConfirmation: input.operatorFreshInventoryConfirmation }
+        : {}),
     },
     createdAt: input.now,
   });
@@ -994,7 +1175,16 @@ export async function initAiGraderNfcProgramming(input: InitAiGraderNfcProgrammi
   const linkage = validateExactLinkage(input);
   const actorUserId = validateActor(input.requestedByUserId);
   const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
-  const { tokenSecret } = resolveProgrammingRuntime(input, linkage.tenantId);
+  const strategy = requestedStrategy(input.chipType, input.programmingProfile);
+  if (!strategy.implemented) {
+    throw nfcError("AI_GRADER_NFC_STRATEGY_NOT_IMPLEMENTED", 409, "This NFC security strategy is not implemented.");
+  }
+  const { tokenSecret, feijuF8215Enabled } = resolveProgrammingRuntime(input, linkage.tenantId);
+  requireProfileEnabled(strategy, feijuF8215Enabled);
+  const operatorFreshInventoryConfirmation = requireFreshInventoryConfirmation(
+    strategy,
+    input.operatorFreshInventoryConfirmation,
+  );
   const ttlMs = attemptTtl(input.attemptTtlMs);
   const now = input.now ?? new Date();
   const result = await transaction(input.dbClient ?? defaultPrisma, async (tx) => {
@@ -1009,6 +1199,8 @@ export async function initAiGraderNfcProgramming(input: InitAiGraderNfcProgrammi
       ttlMs,
       now,
       operatorNote: input.operatorNote,
+      operatorFreshInventoryConfirmation,
+      strategy,
     });
   });
   if (isExpiredAttemptResult(result)) {
@@ -1025,6 +1217,12 @@ function verifyOperationalAttestationForAttempt(input: {
   normalizedUrl: string;
   uidFingerprintSha256: string;
   readbackPayloadSha256: string;
+  chipType: AiGraderNfcChipTypeValue;
+  securityMode: AiGraderNfcSecurityModeValue;
+  programmingProfile: AiGraderNfcProgrammingProfileValue;
+  adapterIdentity?: string;
+  adapterVersion?: string;
+  writeProtectionState?: string;
   readerResultCode: string;
   helperProtocolVersion: string;
   operationalAttestation: AiGraderNfcOperationalAttestationInput;
@@ -1056,7 +1254,15 @@ function verifyOperationalAttestationForAttempt(input: {
   ) {
     throw nfcError("AI_GRADER_NFC_ATTESTATION_TIME_REJECTED", 409, "NFC workstation attestation time is outside the attempt window.");
   }
+  const feiju = input.chipType === "FEIJU_F8215";
+  if (
+    (feiju && attestation.schemaVersion !== AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V2) ||
+    (!feiju && attestation.schemaVersion !== AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION_V1)
+  ) {
+    throw nfcError("AI_GRADER_NFC_ATTESTATION_CONTRACT_REJECTED", 400, "NFC workstation attestation contract is not accepted.");
+  }
   const statement = buildAiGraderNfcOperationalAttestationStatement({
+    schemaVersion: attestation.schemaVersion,
     attemptId: input.attempt.id,
     attestationChallenge: attestation.attestationChallenge,
     publicTagId: input.publicTagId,
@@ -1066,6 +1272,12 @@ function verifyOperationalAttestationForAttempt(input: {
     readerResultCode: input.readerResultCode,
     helperProtocolVersion: input.helperProtocolVersion,
     observedAt: attestation.observedAt,
+    chipType: input.chipType,
+    securityMode: input.securityMode,
+    programmingProfile: input.programmingProfile,
+    adapterIdentity: input.adapterIdentity,
+    adapterVersion: input.adapterVersion,
+    writeProtectionState: input.writeProtectionState,
   });
   const signature = strictBase64url(
     attestation.signature,
@@ -1087,8 +1299,8 @@ function verifyOperationalAttestationForAttempt(input: {
   if (!valid) {
     throw nfcError("AI_GRADER_NFC_ATTESTATION_SIGNATURE_REJECTED", 403, "NFC workstation attestation was rejected.");
   }
-  return {
-    schemaVersion: AI_GRADER_NFC_ATTESTATION_SCHEMA_VERSION,
+  const commonEvidence = {
+    schemaVersion: attestation.schemaVersion,
     workstationKeyId: attestation.workstationKeyId,
     algorithm: AI_GRADER_NFC_ATTESTATION_ALGORITHM,
     statementSha256: sha256(statement),
@@ -1098,6 +1310,18 @@ function verifyOperationalAttestationForAttempt(input: {
     readerResultCode: input.readerResultCode,
     cryptographicTagAuthentication: false,
     workstationOperationalAttestation: true,
+  };
+  if (!feiju) return commonEvidence;
+  return {
+    ...commonEvidence,
+    chipType: input.chipType,
+    securityMode: input.securityMode,
+    programmingProfile: input.programmingProfile,
+    adapterIdentity: input.adapterIdentity,
+    adapterVersion: input.adapterVersion,
+    uidFingerprintSha256: input.uidFingerprintSha256,
+    readbackPayloadSha256: input.readbackPayloadSha256,
+    writeProtectionState: input.writeProtectionState,
   };
 }
 
@@ -1116,7 +1340,7 @@ export async function completeAiGraderNfcProgramming(
 ): Promise<AiGraderNfcSafeStatus> {
   if (rawUidWasSupplied(input)) throw nfcError("AI_GRADER_NFC_RAW_UID_REJECTED", 400, "Raw NFC UID input is not accepted.");
   const linkage = validateExactLinkage(input);
-  const { workstationKeys } = resolveProgrammingRuntime(input, linkage.tenantId);
+  const { workstationKeys, feijuF8215Enabled } = resolveProgrammingRuntime(input, linkage.tenantId);
   const actorUserId = validateActor(input.requestedByUserId);
   const attemptId = required(input.attemptId, "attemptId", 64);
   if (!ATTEMPT_ID.test(attemptId)) throw nfcError("AI_GRADER_NFC_INVALID_ATTEMPT", 400, "NFC attempt ID is invalid.");
@@ -1129,9 +1353,35 @@ export async function completeAiGraderNfcProgramming(
   if (!SHA256.test(uidFingerprintSha256) || !SHA256.test(readbackPayloadSha256)) {
     throw nfcError("AI_GRADER_NFC_INVALID_FINGERPRINT", 400, "NFC readback fingerprints are invalid.");
   }
-  assertStaticStrategy(input.chipType, input.securityMode);
+  const strategy = assertImplementedStrategy(
+    input.chipType,
+    input.securityMode,
+    input.programmingProfile ?? (input.chipType === "NTAG215" ? AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE : undefined),
+  );
+  requireProfileEnabled(strategy, feijuF8215Enabled);
   const normalizedNdefUrl = required(input.normalizedNdefUrl, "normalizedNdefUrl", 512);
-  const readerResultCode = validateReaderResultCode(input.readerResultCode);
+  const readerResultCode = strategy.chipType === "FEIJU_F8215"
+    ? input.readerResultCode === AI_GRADER_NFC_FEIJU_READER_RESULT
+      ? AI_GRADER_NFC_FEIJU_READER_RESULT
+      : (() => { throw nfcError("AI_GRADER_NFC_READER_RESULT_REJECTED", 400, "NFC helper readback result is not accepted."); })()
+    : validateReaderResultCode(input.readerResultCode);
+  const adapterIdentity = strategy.chipType === "FEIJU_F8215"
+    ? required(input.adapterIdentity, "adapterIdentity", 64)
+    : undefined;
+  const adapterVersion = strategy.chipType === "FEIJU_F8215"
+    ? required(input.adapterVersion, "adapterVersion", 32)
+    : undefined;
+  const writeProtectionState = strategy.chipType === "FEIJU_F8215"
+    ? required(input.writeProtectionState, "writeProtectionState", 64)
+    : undefined;
+  if (
+    strategy.chipType === "FEIJU_F8215" &&
+    (adapterIdentity !== AI_GRADER_NFC_GOTOTAGS_ADAPTER_IDENTITY ||
+      adapterVersion !== AI_GRADER_NFC_GOTOTAGS_APPROVED_VERSION ||
+      writeProtectionState !== AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_STATE)
+  ) {
+    throw nfcError("AI_GRADER_NFC_ADAPTER_EVIDENCE_REJECTED", 400, "The Feiju workstation evidence is incomplete.");
+  }
   const helperProtocolVersion = validateHelperProtocolVersion(input.helperProtocolVersion);
   const operationalAttestation = validateOperationalAttestation(input.operationalAttestation);
   const now = input.now ?? new Date();
@@ -1145,6 +1395,18 @@ export async function completeAiGraderNfcProgramming(
       if (!attempt) throw nfcError("AI_GRADER_NFC_ATTEMPT_NOT_FOUND", 404, "NFC programming attempt was not found.");
       assertAttemptLinkage(attempt, linkage, actorUserId);
       assertTagLinkage(attempt.tag, linkage);
+      const reservedStrategy = assertImplementedStrategy(
+        attempt.tag.chipType,
+        attempt.tag.securityMode,
+        attempt.tag.programmingProfile ?? AI_GRADER_NFC_NTAG215_PROGRAMMING_PROFILE,
+      );
+      if (
+        reservedStrategy.chipType !== strategy.chipType ||
+        reservedStrategy.securityMode !== strategy.securityMode ||
+        reservedStrategy.programmingProfile !== strategy.programmingProfile
+      ) {
+        throw nfcError("AI_GRADER_NFC_ATTEMPT_PROFILE_MISMATCH", 409, "The workstation result does not match the reserved NFC profile.");
+      }
       if (text(attempt.tag.aiGraderReportId) !== authority.reportRowId || text(attempt.tag.aiGraderLabelId) !== authority.labelId) {
         throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC internal linkage changed.");
       }
@@ -1168,6 +1430,12 @@ export async function completeAiGraderNfcProgramming(
         normalizedUrl: normalizedNdefUrl,
         uidFingerprintSha256,
         readbackPayloadSha256,
+        chipType: strategy.chipType,
+        securityMode: strategy.securityMode,
+        programmingProfile: strategy.programmingProfile,
+        adapterIdentity,
+        adapterVersion,
+        writeProtectionState,
         readerResultCode,
         helperProtocolVersion,
         operationalAttestation,
@@ -1216,7 +1484,10 @@ export async function completeAiGraderNfcProgramming(
       } });
       await audit(tx, {
         tagId: verifiedTag.id, attemptId: attempt.id, tenantId: linkage.tenantId, reportId: linkage.reportId,
-        action: "local_pcsc_readback_verified", fromStatus: "programming", toStatus: "verified",
+        action: strategy.chipType === "FEIJU_F8215"
+          ? "local_gototags_readback_lock_verified"
+          : "local_pcsc_readback_verified",
+        fromStatus: "programming", toStatus: "verified",
         actorUserId, safeDetails: readbackEvidence, createdAt: now,
       });
       const activeTag = await tx.aiGraderNfcTag.update({ where: { id: verifiedTag.id }, data: {
@@ -1235,6 +1506,11 @@ export async function completeAiGraderNfcProgramming(
         action: "activate_registered_link", fromStatus: "verified", toStatus: "active", actorUserId,
         safeDetails: {
           registrationKind: "registered_link",
+          chipType: strategy.chipType,
+          programmingProfile: strategy.programmingProfile,
+          ...(strategy.chipType === "FEIJU_F8215"
+            ? { writeProtectionState: AI_GRADER_NFC_FEIJU_WRITE_PROTECTION_STATE }
+            : {}),
           workstationOperationalAttestation: true,
           cryptographicTagAuthentication: false,
           statementSha256: readbackEvidence.statementSha256,
@@ -1300,7 +1576,17 @@ export async function getAiGraderNfcStatus(input: GetAiGraderNfcStatusInput): Pr
     text(tag.itemId) !== itemId ||
     text(tag.certId) !== certId
   ) throw nfcError("AI_GRADER_NFC_LINKAGE_MISMATCH", 409, "NFC status linkage is contradictory.");
-  return safeStatus(tag);
+  const status = safeStatus(tag);
+  if (status.status !== "active") return status;
+  const consumedAttempt = await db.aiGraderNfcProgrammingAttempt?.findFirst?.({
+    where: { tagId: tag.id, tenantId, reportId, state: "consumed" },
+    orderBy: { consumedAt: "desc" },
+    select: { id: true },
+  });
+  return {
+    ...status,
+    ...(ATTEMPT_ID.test(text(consumedAttempt?.id)) ? { activeAttemptId: text(consumedAttempt.id) } : {}),
+  };
 }
 
 function validatePublicTagId(value: unknown) {
@@ -1469,7 +1755,16 @@ export async function replaceAiGraderNfcTag(input: ReplaceAiGraderNfcTagInput): 
   const replacedPublicTagId = validatePublicTagId(input.replacedPublicTagId);
   const revocationReason = validateRevocationReason(input.revocationReason);
   const idempotencyKey = validateIdempotencyKey(input.idempotencyKey);
-  const { tokenSecret } = resolveProgrammingRuntime(input, linkage.tenantId);
+  const strategy = requestedStrategy(input.chipType, input.programmingProfile);
+  if (!strategy.implemented) {
+    throw nfcError("AI_GRADER_NFC_STRATEGY_NOT_IMPLEMENTED", 409, "This NFC security strategy is not implemented.");
+  }
+  const { tokenSecret, feijuF8215Enabled } = resolveProgrammingRuntime(input, linkage.tenantId);
+  requireProfileEnabled(strategy, feijuF8215Enabled);
+  const operatorFreshInventoryConfirmation = requireFreshInventoryConfirmation(
+    strategy,
+    input.operatorFreshInventoryConfirmation,
+  );
   const ttlMs = attemptTtl(input.attemptTtlMs);
   const now = input.now ?? new Date();
   const exactReplacementRequestHash = replacementRequestHash({
@@ -1502,6 +1797,8 @@ export async function replaceAiGraderNfcTag(input: ReplaceAiGraderNfcTagInput): 
       ttlMs,
       now,
       operatorNote: input.operatorNote,
+      operatorFreshInventoryConfirmation,
+      strategy,
       replacementAuthorization: REPLACEMENT_AUTHORIZATION,
     });
   });

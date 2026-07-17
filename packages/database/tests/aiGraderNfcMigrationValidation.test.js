@@ -8,10 +8,16 @@ const { pathToFileURL } = require("node:url");
 const packageRoot = join(__dirname, "..");
 const repositoryRoot = join(packageRoot, "..", "..");
 const scriptsRoot = join(packageRoot, "scripts");
-const migration = readFileSync(
+const migration = [readFileSync(
   join(packageRoot, "prisma", "migrations", "20260712160000_ai_grader_nfc_static_url_v1", "migration.sql"),
   "utf8",
-);
+), readFileSync(
+  join(packageRoot, "prisma", "migrations", "20260716225000_ai_grader_nfc_feiju_f8215_chip_type", "migration.sql"),
+  "utf8",
+), readFileSync(
+  join(packageRoot, "prisma", "migrations", "20260716230000_ai_grader_nfc_feiju_f8215_gototags_two_click", "migration.sql"),
+  "utf8",
+)].join("\n");
 const compose = readFileSync(
   join(repositoryRoot, "docker-compose.ai-grader-nfc-migration-validation.yml"),
   "utf8",
@@ -78,6 +84,8 @@ test("orchestrator proves absent/ready runtime states, full deploy, and second-d
   assert.match(harness, /Database schema is up to date/);
   assert.match(absentSql, /AI_GRADER_NFC_SCHEMA_ABSENT_VALIDATION_PASS/);
   assert.match(appliedSql, /AI_GRADER_NFC_MIGRATION_VALIDATION_PASS/);
+  assert.match(harness, /20260716225000_ai_grader_nfc_feiju_f8215_chip_type/);
+  assert.match(harness, /20260716230000_ai_grader_nfc_feiju_f8215_gototags_two_click/);
 });
 
 test("live SQL validator names every migrated constraint, index, trigger, enum, and table", () => {

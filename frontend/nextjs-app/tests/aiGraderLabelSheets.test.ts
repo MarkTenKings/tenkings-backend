@@ -128,6 +128,8 @@ test("safe label sheet DTOs omit raw payload and unsafe URLs", () => {
     chipType: "NTAG215",
     securityMode: "static_url_v1",
   });
+  row.nfc = { ...(row.nfc as Record<string, unknown>), chipType: "FEIJU_F8215" };
+  assert.equal(buildAiGraderLabelSheetsResult([row]).sheets[0].labels[0].nfc?.chipType, "FEIJU_F8215");
   assert.equal(safeAiGraderLabelPublicUrl("https://printer.internal/report"), undefined);
   assert.equal(safeAiGraderLabelPublicUrl("https://bridge.localhost/report"), undefined);
   assert.equal(safeAiGraderLabelPublicUrl("https://100.64.0.1/report"), undefined);

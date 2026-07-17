@@ -120,6 +120,9 @@ const runtime = createAiGraderNfcApiHandler({
       ...linkage,
       requestedByUserId: input.actorUserId,
       idempotencyKey: input.idempotencyKey,
+      chipType: input.chipType,
+      programmingProfile: input.programmingProfile,
+      operatorFreshInventoryConfirmation: input.operatorFreshInventoryConfirmation,
       attemptTtlMs: input.attemptTtlSeconds * 1000,
       dbClient: prisma,
     });
@@ -141,8 +144,12 @@ const runtime = createAiGraderNfcApiHandler({
       readbackPayloadSha256: input.readbackPayloadSha256,
       chipType: input.chipType,
       securityMode: "static_url_v1",
+      programmingProfile: input.programmingProfile,
       readerResultCode: input.readerResultCode,
       helperProtocolVersion: input.helperProtocolVersion,
+      adapterIdentity: input.adapterIdentity,
+      adapterVersion: input.adapterVersion,
+      writeProtectionState: input.writeProtectionState,
       operationalAttestation: input.operationalAttestation,
       dbClient: prisma,
     });
@@ -188,6 +195,9 @@ const runtime = createAiGraderNfcApiHandler({
       revocationReason: input.reason,
       revocationReasonCode: "AI_GRADER_NFC_REPLACED",
       idempotencyKey: input.idempotencyKey,
+      chipType: input.chipType,
+      programmingProfile: input.programmingProfile,
+      operatorFreshInventoryConfirmation: input.operatorFreshInventoryConfirmation,
       attemptTtlMs: input.attemptTtlSeconds * 1000,
       dbClient: prisma,
     });

@@ -5,7 +5,7 @@ export type AiGraderNfcPublicTapData =
       state: "active";
       registrationKind: "registered_link";
       publicTagId: string;
-      chipType: "NTAG215";
+      chipType: "NTAG215" | "FEIJU_F8215";
       securityMode: "static_url_v1";
       nfcTagUrl: string;
       reportId: string;
@@ -123,7 +123,7 @@ export async function readAiGraderNfcPublicTap(
   const activeRegistrationShape =
     text(row.status)?.toLowerCase() === "active" &&
     !row.revokedAt &&
-    row.chipType === "NTAG215" &&
+    (row.chipType === "NTAG215" || row.chipType === "FEIJU_F8215") &&
     text(row.securityMode)?.toLowerCase() === "static_url_v1";
   if (!activeRegistrationShape) return { state: "not_valid" };
   const exactLinkage =
@@ -149,7 +149,7 @@ export async function readAiGraderNfcPublicTap(
     state: "active",
     registrationKind: "registered_link",
     publicTagId,
-    chipType: "NTAG215",
+    chipType: row.chipType as "NTAG215" | "FEIJU_F8215",
     securityMode: "static_url_v1",
     nfcTagUrl: buildAiGraderNfcPublicTagUrl(publicTagId),
     reportId,

@@ -95,6 +95,20 @@ test("public NFC active projection is DB-backed, exact-linkage-only, and honest 
   assert.equal(json.includes("cryptographically_verified"), false);
 });
 
+test("public NFC exposes a Feiju F8215 only as a write-protected registered static link", async () => {
+  const db = { aiGraderNfcTag: { async findUnique() { return publicRow({ chipType: "FEIJU_F8215" }); }, async findFirst() { return null; } } };
+  const tap = await readAiGraderNfcPublicTap(PUBLIC_TAG_ID, { dbClient: db });
+  assert.equal(tap.state, "active");
+  if (tap.state !== "active") return;
+  assert.equal(tap.chipType, "FEIJU_F8215");
+  assert.equal(tap.registrationKind, "registered_link");
+  assert.equal(tap.securityMode, "static_url_v1");
+  const serialized = JSON.stringify(tap);
+  for (const forbidden of ["uid", "workstation", "GoToTags", "adapter", "localPath", "cryptographically_verified"]) {
+    assert.equal(serialized.toLowerCase().includes(forbidden.toLowerCase()), false);
+  }
+});
+
 test("public NFC revoked/missing/unpublished/mismatched states never resolve a report", async () => {
   const cases: Array<[Record<string, unknown> | null, "revoked" | "not_valid" | "contradictory_linkage"]> = [
     [publicRow({ status: "revoked" }), "revoked"],
@@ -318,6 +332,16 @@ test("dedicated programming and public tap pages keep hardware controls out of F
   assert.match(nfcPage, /disabled=\{!programmingReady\}/);
   assert.match(nfcPage, /disabled or incomplete/);
   assert.match(nfcPage, /operationalAttestation/);
+  assert.match(nfcPage, /Confirm Fresh F8215 & Prepare/);
+  assert.match(nfcPage, /operator_fresh_inventory_confirmation_v1/);
+  assert.match(nfcPage, /controlled unused-tag supply/);
+  assert.match(nfcPage, /separate quarantine container/);
+  assert.match(nfcPage, /do not electronically prove blankness/);
+  assert.match(nfcPage, /GoToTags opened\. Click Start Encoding/);
+  assert.match(nfcPage, /window\.addEventListener\("focus", onFocus\)/);
+  assert.match(nfcPage, /acknowledgeAiGraderF8215Operation/);
+  assert.match(nfcPage, /permanently_read_only_verified/);
+  assert.doesNotMatch(nfcPage, /manual_ios|FEIJU_PROPRIETARY_ISODEP|NFC Tools/);
   assert.match(nfcPage, /hosted\?\.canAdmin/);
   assert.ok(nfcPage.indexOf("setReservation(currentReservation)") < nfcPage.indexOf("await writeAiGraderNfcTag"));
   const completionRetry = nfcPage.slice(
@@ -344,6 +368,8 @@ test("dedicated programming and public tap pages keep hardware controls out of F
   }
   assert.equal(publicPage.includes("sample"), false);
   assert.match(publicPage, /Registered Ten Kings NFC link/);
+  assert.match(publicPage, /Write-protected registered NFC link/);
+  assert.match(publicPage, /static URL unclonable/);
   assert.match(publicPage, /statusCode = 503/);
   assert.match(publicPage, /Cache-Control.*no-store/);
   assert.match(publicPage, /temporarily unavailable/i);

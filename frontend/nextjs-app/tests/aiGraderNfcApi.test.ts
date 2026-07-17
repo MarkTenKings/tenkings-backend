@@ -57,6 +57,7 @@ function deps(overrides: Partial<AiGraderNfcApiDependencies> = {}) {
     readiness: () => ({
       nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
+      nfcFeijuF8215Enabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: true,
       nfcWorkstationAttestationConfigured: true,
@@ -99,6 +100,7 @@ test("NFC status uses explicit human NFC scope and returns only the runtime safe
       status: "missing",
       nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
+      nfcFeijuF8215Enabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: true,
       nfcWorkstationAttestationConfigured: true,
@@ -134,6 +136,132 @@ test("NFC init ignores caller redirect/public tag fields and passes server-owned
   assert.equal("redirectUrl" in runtime.calls[0].input, false);
   assert.equal("publicTagId" in runtime.calls[0].input, false);
   assert.equal(runtime.calls[0].input.attemptTtlSeconds, 300);
+});
+
+test("F8215 init is separately default-off and forwards only the exact reviewed profile when enabled", async () => {
+  const disabled = deps();
+  const disabledOutput = response();
+  await createAiGraderNfcApiHandler(disabled.value)(request({
+    action: "init",
+    body: {
+      reportId: "report-1",
+      idempotencyKey: "program-feiju-report-1",
+      chipType: "FEIJU_F8215",
+      programmingProfile: "gototags_manual_start_v1",
+    },
+  }), disabledOutput.res);
+  assert.equal(disabledOutput.read().statusCode, 503);
+  assert.equal((disabledOutput.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_FEIJU_F8215_DISABLED");
+  assert.equal(disabled.calls.length, 0);
+
+  const enabled = deps({
+    readiness: () => ({
+      nfcSchemaReady: true,
+      nfcProgrammingEnabled: true,
+      nfcFeijuF8215Enabled: true,
+      nfcRequired: false,
+      nfcAttemptTokenConfigured: true,
+      nfcWorkstationAttestationConfigured: true,
+      nfcWorkstationKeyCount: 1,
+      expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+    }),
+  });
+  const enabledOutput = response();
+  await createAiGraderNfcApiHandler(enabled.value)(request({
+    action: "init",
+    body: {
+      reportId: "report-1",
+      idempotencyKey: "program-feiju-report-1",
+      chipType: "FEIJU_F8215",
+      programmingProfile: "gototags_manual_start_v1",
+    },
+  }), enabledOutput.res);
+  assert.equal(enabledOutput.read().statusCode, 400);
+  assert.equal((enabledOutput.read().payload as Record<string, unknown>).code, "AI_GRADER_NFC_FRESH_INVENTORY_CONFIRMATION_REQUIRED");
+  assert.equal(enabled.calls.length, 0);
+
+  const confirmedOutput = response();
+  await createAiGraderNfcApiHandler(enabled.value)(request({
+    action: "init",
+    body: {
+      reportId: "report-1",
+      idempotencyKey: "program-feiju-report-1",
+      chipType: "FEIJU_F8215",
+      programmingProfile: "gototags_manual_start_v1",
+      operatorFreshInventoryConfirmation: "operator_fresh_inventory_confirmation_v1",
+      url: "https://attacker.invalid/",
+    },
+  }), confirmedOutput.res);
+  assert.equal(confirmedOutput.read().statusCode, 200);
+  assert.equal(enabled.calls[0].input.chipType, "FEIJU_F8215");
+  assert.equal(enabled.calls[0].input.programmingProfile, "gototags_manual_start_v1");
+  assert.equal(enabled.calls[0].input.operatorFreshInventoryConfirmation, "operator_fresh_inventory_confirmation_v1");
+  assert.equal("url" in enabled.calls[0].input, false);
+});
+
+test("F8215 complete requires exact v2 adapter, URL, verification, and permanent-lock evidence", async () => {
+  const base = {
+    reportId: "report-1",
+    cardAssetId: "card-1",
+    itemId: "item-1",
+    certId: "TK-AIG-1",
+    publicTagId: "Abcdefghijklmnopqrstuvwxyz012345",
+    attemptId: "AttemptAbcdefghijklmnop",
+    attemptToken: "TokenTokenTokenTokenTokenTokenTokenToken",
+    idempotencyKey: "complete-feiju-report-1",
+    chipType: "FEIJU_F8215",
+    programmingProfile: "gototags_manual_start_v1",
+    normalizedUrl: "https://collect.tenkings.co/nfc/Abcdefghijklmnopqrstuvwxyz012345",
+    uidFingerprintSha256: "a".repeat(64),
+    readbackPayloadSha256: "b".repeat(64),
+    readerResultCode: "write_locked_verified_gototags_readback",
+    helperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+    adapterIdentity: "gototags_desktop",
+    adapterVersion: "4.37.0.1",
+    writeProtectionState: "permanently_read_only_verified",
+    operationalAttestation: {
+      schemaVersion: "ai-grader-nfc-helper-attestation-v2",
+      workstationKeyId: "c".repeat(64),
+      algorithm: "ecdsa-p256-sha256-p1363",
+      attestationChallenge: "A".repeat(43),
+      observedAt: "2026-07-16T22:36:52.279Z",
+      signature: "S".repeat(86),
+    },
+  };
+  const ready = () => ({
+    nfcSchemaReady: true,
+    nfcProgrammingEnabled: true,
+    nfcFeijuF8215Enabled: true,
+    nfcRequired: false,
+    nfcAttemptTokenConfigured: true,
+    nfcWorkstationAttestationConfigured: true,
+    nfcWorkstationKeyCount: 1,
+    expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+  });
+  const accepted = deps({ readiness: ready });
+  const acceptedOutput = response();
+  await createAiGraderNfcApiHandler(accepted.value)(request({ action: "complete", body: base }), acceptedOutput.res);
+  assert.equal(acceptedOutput.read().statusCode, 200);
+  assert.equal(accepted.calls[0].input.adapterIdentity, "gototags_desktop");
+  assert.equal(accepted.calls[0].input.writeProtectionState, "permanently_read_only_verified");
+
+  for (const patch of [
+    { operationalAttestation: { ...base.operationalAttestation, schemaVersion: "ai-grader-nfc-helper-attestation-v1" } },
+    { adapterVersion: "4.38.0.0" },
+    { writeProtectionState: "unknown" },
+    { readerResultCode: "write_verified_pcsc_readback" },
+    { programmingProfile: "ntag215_direct_pcsc_v1" },
+    { normalizedUrl: `${base.normalizedUrl}?wrong=1` },
+  ]) {
+    const rejected = deps({ readiness: ready });
+    const rejectedOutput = response();
+    await createAiGraderNfcApiHandler(rejected.value)(
+      request({ action: "complete", body: { ...base, ...patch } }),
+      rejectedOutput.res,
+    );
+    assert.equal(rejectedOutput.read().statusCode, 400);
+    assert.equal(rejected.calls.length, 0);
+  }
 });
 
 test("NFC complete rejects open redirects, query strings, wrong chip type, and malformed UID fingerprints", async () => {
@@ -394,6 +522,7 @@ test("NFC programming flag is independent, status/revoke stay available, and rea
     readiness: () => ({
       nfcSchemaReady: true,
       nfcProgrammingEnabled: false,
+      nfcFeijuF8215Enabled: false,
       nfcRequired: true,
       nfcAttemptTokenConfigured: false,
       nfcWorkstationAttestationConfigured: false,
@@ -441,6 +570,7 @@ test("NFC programming flag is independent, status/revoke stay available, and rea
     readiness: () => ({
       nfcSchemaReady: true,
       nfcProgrammingEnabled: true,
+      nfcFeijuF8215Enabled: false,
       nfcRequired: false,
       nfcAttemptTokenConfigured: false,
       nfcWorkstationAttestationConfigured: false,
@@ -476,6 +606,7 @@ test("NFC schema absence is redacted, status remains available, and every mutati
     cryptographicallyVerified: false,
     nfcSchemaReady: false,
     nfcProgrammingEnabled: true,
+    nfcFeijuF8215Enabled: false,
     nfcRequired: false,
     nfcAttemptTokenConfigured: true,
     nfcWorkstationAttestationConfigured: true,

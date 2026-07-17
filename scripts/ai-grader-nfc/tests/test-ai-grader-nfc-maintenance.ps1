@@ -67,6 +67,19 @@ try {
   Protect-NfcTree -Path $aclTree -AllowedRoot $testRoot
   Assert-NfcProtectedTree -Path $aclTree -AllowedRoot $testRoot
 
+  $recoveryRoot = Join-Path $testRoot "recovery"
+  New-Item -ItemType Directory -Path $recoveryRoot | Out-Null
+  Protect-NfcTree -Path $recoveryRoot -AllowedRoot $testRoot
+  Assert-NfcNoActiveGoToTagsRecovery -JobRoot $recoveryRoot -AllowedRoot $testRoot
+  $auditPath = Join-Path $recoveryRoot "abandoned-job-audit.jsonl"
+  Set-Content -LiteralPath $auditPath -Value '{"outcome":"removed_and_quarantined"}' -Encoding UTF8
+  Assert-NfcNoActiveGoToTagsRecovery -JobRoot $recoveryRoot -AllowedRoot $testRoot
+  Set-Content -LiteralPath (Join-Path $recoveryRoot "active-job.json") -Value '{}' -Encoding ASCII
+  Assert-Throws {
+    Assert-NfcNoActiveGoToTagsRecovery -JobRoot $recoveryRoot -AllowedRoot $testRoot
+  } "Active recovery state did not keep the operation gate closed."
+  Remove-Item -LiteralPath (Join-Path $recoveryRoot "active-job.json") -Force
+
   $live = Join-Path $testRoot "live"
   $staged = Join-Path $testRoot "staged"
   $backup = Join-Path $testRoot "backup"
@@ -112,8 +125,11 @@ try {
   $install = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\install-ai-grader-nfc-helper.ps1") -Raw
   $open = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\open-ai-grader-nfc-workstation.ps1") -Raw
   $rotate = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\rotate-ai-grader-nfc-helper-token.ps1") -Raw
+  $configureFeiju = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\configure-ai-grader-nfc-feiju-f8215.ps1") -Raw
+  $common = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\ai-grader-nfc-helper-common.ps1") -Raw
   $stop = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\stop-ai-grader-nfc-helper.ps1") -Raw
   $uninstall = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\uninstall-ai-grader-nfc-helper.ps1") -Raw
+  $resolveAbandoned = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\resolve-ai-grader-nfc-abandoned-job.ps1") -Raw
   $publishIndex = $update.IndexOf("& dotnet publish", [StringComparison]::Ordinal)
   $stagedVerifyIndex = $update.IndexOf("Invoke-NfcBuildVerification -DllPath `$stagedDll", [StringComparison]::Ordinal)
   $verifiedMarkerIndex = $update.IndexOf("Everything above is hardware-free", [StringComparison]::Ordinal)
@@ -139,8 +155,9 @@ try {
   Assert-True ($install.IndexOf("CNG key, if created, was preserved", [StringComparison]::Ordinal) -ge 0) "Initial install can silently discard its named key identity."
   Assert-True ($install.IndexOf("`$script:NfcStableStartScript", [StringComparison]::Ordinal) -ge 0) "Scheduled Task does not use the stable installed launcher."
   Assert-True ($install.IndexOf("`$script:NfcStableOpenScript", [StringComparison]::Ordinal) -ge 0) "Shortcut does not use the stable installed launcher."
-  Assert-True ($install.IndexOf('helperVersion -cne "tenkings-ai-grader-nfc-helper-v2"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the helper version."
+  Assert-True ($install.IndexOf('helperVersion -cne "tenkings-ai-grader-nfc-helper-v3"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the helper version."
   Assert-True ($install.IndexOf('attestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v1"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the attestation schema."
+  Assert-True ($install.IndexOf('multiProfileAttestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v2"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the multi-profile attestation schema."
   Assert-True ($install.IndexOf("attestationAlgorithm -cne `$script:NfcAttestationAlgorithm", [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the attestation algorithm."
   Assert-True ($open.IndexOf("Initialize-NfcConfig", [StringComparison]::Ordinal) -lt 0) "Ordinary workstation open rewrites protected config."
   Assert-True ($open.IndexOf("Restart-NfcTask", [StringComparison]::Ordinal) -lt 0) "Ordinary workstation open restarts a healthy helper."
@@ -157,8 +174,29 @@ try {
   Assert-True ($rotate.IndexOf("`$RotateToken -and -not `$RotatePairingCode", [StringComparison]::Ordinal) -ge 0) "Token rotation can strand consumed browser pairing trust."
   Assert-True ($rotate.IndexOf("also requires -RotatePairingCode", [StringComparison]::Ordinal) -ge 0) "Token rotation does not explain its mandatory pairing rotation."
   Assert-True ($rotate.IndexOf("Ordinary update rotates neither", [StringComparison]::Ordinal) -ge 0) "Credential maintenance does not document the ordinary-update boundary."
+  Assert-True ($configureFeiju.IndexOf('4.37.0.1', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not pin GoToTags."
+  Assert-True ($common.IndexOf('d21adfdef57393b948ce4e6d8771f6daa215041fa27c777ef33de24057883774', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not pin the approved GoToTags executable bytes."
+  Assert-True ($configureFeiju.IndexOf('Desktopapp_4.37.0.1_x64__14h5dv7m6vvvy', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not pin the approved operation-file association."
+  Assert-True ($configureFeiju.IndexOf('CN=GoToTags, O=GoToTags, S=Washington, C=US', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not pin the publisher."
+  Assert-True ($configureFeiju.IndexOf('CertPropSvc', [StringComparison]::Ordinal) -ge 0) "F8215 configuration does not fail closed on Certificate Propagation."
+  Assert-True ($configureFeiju.IndexOf('Set-Service', [StringComparison]::OrdinalIgnoreCase) -lt 0) "F8215 configuration can change Windows services."
+  Assert-True ($configureFeiju.IndexOf('Start-Service', [StringComparison]::OrdinalIgnoreCase) -lt 0) "F8215 configuration can start Windows services."
+  Assert-True ($configureFeiju.IndexOf('feijuF8215Enabled', [StringComparison]::Ordinal) -ge 0) "F8215 configuration lacks its separate local gate."
+  Assert-True ($common.IndexOf('resolve-ai-grader-nfc-abandoned-job.ps1', [StringComparison]::Ordinal) -ge 0) "Stable maintenance payload omits abandoned-job resolution."
+  Assert-True ($resolveAbandoned.IndexOf('I removed and quarantined the exact F8215 tag for this attempt.', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution lacks exact physical quarantine confirmation."
+  Assert-True ($resolveAbandoned.IndexOf('Get-NfcHelperProcess', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution does not require the helper process to be stopped."
+  Assert-True ($resolveAbandoned.IndexOf('Get-NetTCPConnection', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution does not require the loopback listener to be stopped."
+  Assert-True ($resolveAbandoned.IndexOf('Get-CimInstance Win32_Process', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution does not require GoToTags to be closed."
+  Assert-True ($resolveAbandoned.IndexOf('--resolve-abandoned-f8215-job', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution does not invoke the bounded helper mode."
 
-  Write-Output "PASS NFC maintenance path/ACL containment, initial cleanup, stable launchers, rollback, preservation, and explicit-rotation contracts"
+  $versionedResult = (& (Join-Path $PSScriptRoot "test-ai-grader-nfc-versioned-update.ps1") | Out-String) | ConvertFrom-Json
+  Assert-True ([bool]$versionedResult.ok -and [bool]$versionedResult.filesystemReplacementExecuted) "Versioned update did not execute real filesystem replacement."
+  Assert-True ($versionedResult.scenarios.Count -eq 3) "Versioned update did not cover all required upgrade/rollback paths."
+  Assert-True ($versionedResult.scenarios[0].prior -ceq $script:NfcHelperVersionV2 -and $versionedResult.scenarios[0].final -ceq $script:NfcHelperVersionV3) "Real v2-to-v3 replacement did not pass."
+  Assert-True ([bool]$versionedResult.scenarios[1].rolledBack -and $versionedResult.scenarios[1].final -ceq $script:NfcHelperVersionV2) "Injected v3 activation failure did not restore exact v2."
+  Assert-True ($versionedResult.scenarios[2].prior -ceq $script:NfcHelperVersionV3 -and $versionedResult.scenarios[2].final -ceq $script:NfcHelperVersionV3) "Idempotent v3-to-v3 replacement did not pass."
+
+  Write-Output "PASS NFC maintenance path/ACL containment, v2-to-v3 upgrade/rollback, quarantine recovery, stable launchers, preservation, and explicit-rotation contracts"
 } finally {
   if (Test-Path -LiteralPath $testRoot) {
     Remove-NfcSafeTree -Path $testRoot -AllowedRoot $testParent

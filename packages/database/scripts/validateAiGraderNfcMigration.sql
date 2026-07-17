@@ -13,6 +13,7 @@ CREATE TEMP TABLE _AiGraderNfcExpectedTagChecks (
   uidFingerprintSha256 text,
   chipType text,
   securityMode text,
+  programmingProfile text,
   ndefPayloadVersion integer,
   tenantId text,
   reportId text,
@@ -33,8 +34,9 @@ CREATE TEMP TABLE _AiGraderNfcExpectedTagChecks (
   CONSTRAINT AiGraderNfcTag_readback_digest_shape CHECK (readbackPayloadSha256 IS NULL OR readbackPayloadSha256 ~ '^[a-f0-9]{64}$'),
   CONSTRAINT AiGraderNfcTag_uid_fingerprint_shape CHECK (uidFingerprintSha256 IS NULL OR uidFingerprintSha256 ~ '^[a-f0-9]{64}$'),
   CONSTRAINT AiGraderNfcTag_strategy_pair CHECK (
-    (chipType = 'NTAG215' AND securityMode = 'static_url_v1') OR
-    (chipType = 'NTAG424_DNA' AND securityMode = 'ntag424_sun_v1')
+    (chipType = 'NTAG215' AND securityMode = 'static_url_v1' AND programmingProfile = 'ntag215_direct_pcsc_v1') OR
+    (chipType = 'FEIJU_F8215' AND securityMode = 'static_url_v1' AND programmingProfile = 'gototags_manual_start_v1') OR
+    (chipType = 'NTAG424_DNA' AND securityMode = 'ntag424_sun_v1' AND programmingProfile = 'ntag424_dna_unimplemented')
   ),
   CONSTRAINT AiGraderNfcTag_payload_version CHECK (ndefPayloadVersion > 0 AND ndefPayloadVersion <= 1000),
   CONSTRAINT AiGraderNfcTag_linkage_bounds CHECK (
@@ -117,50 +119,61 @@ CREATE TEMP TABLE _AiGraderNfcExpectedAttemptChecks (
   ),
   CONSTRAINT AiGraderNfcProgrammingAttempt_attestation_evidence CHECK (
     readbackEvidence IS NULL OR (
-      jsonb_typeof(readbackEvidence) = 'object' AND
-      readbackEvidence ?& ARRAY[
-        'schemaVersion',
-        'workstationKeyId',
-        'algorithm',
-        'statementSha256',
-        'signature',
-        'observedAt',
-        'helperProtocolVersion',
-        'readerResultCode',
-        'cryptographicTagAuthentication',
-        'workstationOperationalAttestation'
-      ] AND
-      jsonb_typeof(readbackEvidence->'schemaVersion') = 'string' AND
-      jsonb_typeof(readbackEvidence->'workstationKeyId') = 'string' AND
-      jsonb_typeof(readbackEvidence->'algorithm') = 'string' AND
-      jsonb_typeof(readbackEvidence->'statementSha256') = 'string' AND
-      jsonb_typeof(readbackEvidence->'signature') = 'string' AND
-      jsonb_typeof(readbackEvidence->'observedAt') = 'string' AND
-      jsonb_typeof(readbackEvidence->'helperProtocolVersion') = 'string' AND
-      jsonb_typeof(readbackEvidence->'readerResultCode') = 'string' AND
-      jsonb_typeof(readbackEvidence->'cryptographicTagAuthentication') = 'boolean' AND
-      jsonb_typeof(readbackEvidence->'workstationOperationalAttestation') = 'boolean' AND
-      readbackEvidence->>'schemaVersion' = 'ai-grader-nfc-helper-attestation-v1' AND
+      jsonb_typeof(readbackEvidence) = 'object' AND (
+        (
+          readbackEvidence = jsonb_build_object(
+            'schemaVersion', 'ai-grader-nfc-helper-attestation-v1',
+            'workstationKeyId', completedWorkstationKeyId,
+            'algorithm', expectedAttestationAlgorithm,
+            'statementSha256', readbackEvidence->>'statementSha256',
+            'signature', readbackEvidence->>'signature',
+            'observedAt', readbackEvidence->>'observedAt',
+            'helperProtocolVersion', 'tenkings-ai-grader-nfc-loopback-v2',
+            'readerResultCode', readbackEvidence->>'readerResultCode',
+            'cryptographicTagAuthentication', false,
+            'workstationOperationalAttestation', true
+          ) AND
+          readbackEvidence->>'schemaVersion' = 'ai-grader-nfc-helper-attestation-v1' AND
+          readbackEvidence->>'readerResultCode' IN ('write_verified_pcsc_readback', 'already_programmed_exact')
+        ) OR
+        (
+          readbackEvidence = jsonb_build_object(
+            'schemaVersion', 'ai-grader-nfc-helper-attestation-v2',
+            'workstationKeyId', completedWorkstationKeyId,
+            'algorithm', expectedAttestationAlgorithm,
+            'statementSha256', readbackEvidence->>'statementSha256',
+            'signature', readbackEvidence->>'signature',
+            'observedAt', readbackEvidence->>'observedAt',
+            'helperProtocolVersion', 'tenkings-ai-grader-nfc-loopback-v2',
+            'readerResultCode', 'write_locked_verified_gototags_readback',
+            'chipType', 'FEIJU_F8215',
+            'securityMode', 'static_url_v1',
+            'programmingProfile', 'gototags_manual_start_v1',
+            'adapterIdentity', 'gototags_desktop',
+            'adapterVersion', '4.37.0.1',
+            'uidFingerprintSha256', readbackEvidence->>'uidFingerprintSha256',
+            'readbackPayloadSha256', readbackEvidence->>'readbackPayloadSha256',
+            'writeProtectionState', 'permanently_read_only_verified',
+            'cryptographicTagAuthentication', false,
+            'workstationOperationalAttestation', true
+          ) AND
+          readbackEvidence->>'schemaVersion' = 'ai-grader-nfc-helper-attestation-v2'
+        )
+      ) AND
       readbackEvidence->>'workstationKeyId' = completedWorkstationKeyId AND
       readbackEvidence->>'algorithm' = expectedAttestationAlgorithm AND
       readbackEvidence->>'statementSha256' ~ '^[a-f0-9]{64}$' AND
       readbackEvidence->>'signature' ~ '^[A-Za-z0-9_-]{86}$' AND
       readbackEvidence->>'observedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$' AND
       readbackEvidence->>'helperProtocolVersion' = 'tenkings-ai-grader-nfc-loopback-v2' AND
-      readbackEvidence->>'readerResultCode' IN ('write_verified_pcsc_readback', 'already_programmed_exact') AND
       readbackEvidence->'cryptographicTagAuthentication' = 'false'::jsonb AND
       readbackEvidence->'workstationOperationalAttestation' = 'true'::jsonb AND
-      readbackEvidence = jsonb_build_object(
-        'schemaVersion', 'ai-grader-nfc-helper-attestation-v1',
-        'workstationKeyId', completedWorkstationKeyId,
-        'algorithm', expectedAttestationAlgorithm,
-        'statementSha256', readbackEvidence->>'statementSha256',
-        'signature', readbackEvidence->>'signature',
-        'observedAt', readbackEvidence->>'observedAt',
-        'helperProtocolVersion', 'tenkings-ai-grader-nfc-loopback-v2',
-        'readerResultCode', readbackEvidence->>'readerResultCode',
-        'cryptographicTagAuthentication', false,
-        'workstationOperationalAttestation', true
+      (
+        readbackEvidence->>'schemaVersion' <> 'ai-grader-nfc-helper-attestation-v2' OR
+        (
+          readbackEvidence->>'uidFingerprintSha256' ~ '^[a-f0-9]{64}$' AND
+          readbackEvidence->>'readbackPayloadSha256' ~ '^[a-f0-9]{64}$'
+        )
       )
     )
   ),
@@ -236,8 +249,22 @@ BEGIN
         JOIN pg_enum e ON e.enumtypid = t.oid
        WHERE n.nspname = 'public' AND t.typname = 'AiGraderNfcChipType'
     ) values_in_order;
-  IF actual_labels IS DISTINCT FROM ARRAY['NTAG215', 'NTAG424_DNA']::text[] THEN
+  IF actual_labels IS DISTINCT FROM ARRAY['NTAG215', 'FEIJU_F8215', 'NTAG424_DNA']::text[] THEN
     RAISE EXCEPTION 'AiGraderNfcChipType labels differ: %', actual_labels;
+  END IF;
+
+  SELECT array_agg(enum_value ORDER BY enum_order)
+    INTO actual_labels
+    FROM (
+      SELECT e.enumlabel::text AS enum_value, e.enumsortorder AS enum_order
+        FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+        JOIN pg_enum e ON e.enumtypid = t.oid
+       WHERE n.nspname = 'public' AND t.typname = 'AiGraderNfcProgrammingProfile'
+    ) values_in_order;
+  IF actual_labels IS DISTINCT FROM
+     ARRAY['ntag215_direct_pcsc_v1', 'gototags_manual_start_v1', 'ntag424_dna_unimplemented']::text[] THEN
+    RAISE EXCEPTION 'AiGraderNfcProgrammingProfile labels differ: %', actual_labels;
   END IF;
 
   SELECT array_agg(enum_value ORDER BY enum_order)
@@ -293,7 +320,8 @@ BEGIN
     'itemId', 'aiGraderLabelId', 'certId', 'createdByUserId',
     'programmedByUserId', 'verifiedByUserId', 'activatedByUserId',
     'revokedByUserId', 'programmedAt', 'verifiedAt', 'activatedAt',
-    'revokedAt', 'revocationReason', 'errorCode', 'metadata', 'createdAt', 'updatedAt'
+    'revokedAt', 'revocationReason', 'errorCode', 'metadata', 'createdAt', 'updatedAt',
+    'programmingProfile'
   ]::text[] THEN
     RAISE EXCEPTION 'AiGraderNfcTag columns differ: %', actual_columns;
   END IF;
@@ -412,6 +440,7 @@ BEGIN
       ('AiGraderNfcTag', 'publicTagId', 'text', 'NO'),
       ('AiGraderNfcTag', 'chipType', 'AiGraderNfcChipType', 'NO'),
       ('AiGraderNfcTag', 'securityMode', 'AiGraderNfcSecurityMode', 'NO'),
+      ('AiGraderNfcTag', 'programmingProfile', 'AiGraderNfcProgrammingProfile', 'NO'),
       ('AiGraderNfcTag', 'status', 'AiGraderNfcTagStatus', 'NO'),
       ('AiGraderNfcTag', 'metadata', 'jsonb', 'YES'),
       ('AiGraderNfcTag', 'updatedAt', 'timestamp', 'NO'),
@@ -439,6 +468,10 @@ BEGIN
     SELECT 1 FROM information_schema.columns
      WHERE table_schema = 'public' AND table_name = 'AiGraderNfcTag'
        AND column_name = 'status' AND column_default LIKE '%reserved%'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'AiGraderNfcTag'
+       AND column_name = 'programmingProfile' AND column_default LIKE '%ntag215_direct_pcsc_v1%'
   ) OR NOT EXISTS (
     SELECT 1 FROM information_schema.columns
      WHERE table_schema = 'public' AND table_name = 'AiGraderNfcProgrammingAttempt'
