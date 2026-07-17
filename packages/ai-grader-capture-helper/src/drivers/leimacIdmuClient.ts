@@ -649,7 +649,13 @@ export function buildLeimacIdmuTriggerSyncPlan(mode = "basler-exposure-active-to
 }
 
 export function normalizeLeimacIdmuDutyPercent(value: number | string | undefined): number {
-  const numeric = value == null || value === "" ? LEIMAC_IDMU_MAX_DUTY_PERCENT : Number(value);
+  if (value == null || value === "") {
+    throw new LeimacIdmuClientError(
+      "LEIMAC_IDMU_DUTY_REQUIRED",
+      "Leimac duty must be explicit or supplied by the already-selected production lighting profile.",
+    );
+  }
+  const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric < 0) {
     throw new LeimacIdmuClientError(
       "LEIMAC_IDMU_DUTY_INVALID",

@@ -31,7 +31,10 @@ export type AiGraderStationAction =
   | "generate-label-data"
   | "cancel-session"
   | "latest-report"
-  | "session-manifest";
+  | "session-manifest"
+  | "configure-rapid-capture"
+  | "queue-current-card"
+  | "activate-queue-item";
 
 export type AiGraderCaptureProfile = "full_forensic" | "production_fast";
 
@@ -50,7 +53,8 @@ export type AiGraderCaptureTimingEventId =
   | "side_processing_completed"
   | "back_positioning_started"
   | "report_generation_started"
-  | "report_ready";
+  | "report_ready"
+  | "safely_queued";
 export type AiGraderCaptureTimingPhaseId =
   | "lighting_profile"
   | "frame_capture"
@@ -108,12 +112,62 @@ export type AiGraderCaptureTimingMetadata = {
 
 export type AiGraderCaptureProfileGuard = {
   stationSettingRequired: true;
-  selectionSource: "bridge_default" | "operator_setting";
+  selectionSource: "bridge_default" | "operator_setting" | "rapid_continuation";
   productionFastOptIn: boolean;
   fullForensicEvidencePreserved: true;
   availableCaptureProfiles: ["full_forensic", "production_fast"];
   previousStableProfile: "full_forensic";
   fiveSecondTargetProven: boolean;
+};
+
+export type AiGraderRapidCaptureWorkflowState =
+  | "front_captured"
+  | "front_processing"
+  | "back_positioning"
+  | "back_captured"
+  | "finalizing"
+  | "report_ready_needs_confirm"
+  | "confirmed_needs_publish"
+  | "published"
+  | "failed";
+
+export type AiGraderRapidCaptureWorkflowEvent = {
+  state: AiGraderRapidCaptureWorkflowState;
+  at: string;
+  detail: string;
+};
+
+export type AiGraderRapidCaptureManifestStatus = {
+  enabled: boolean;
+  queueItemId?: string;
+  workflowState?: AiGraderRapidCaptureWorkflowState;
+  workflowHistory: AiGraderRapidCaptureWorkflowEvent[];
+  safelyQueuedAt?: string;
+  humanConfirmationRequired: true;
+  autoConfirm: false;
+  autoPublish: false;
+};
+
+export type AiGraderRapidCaptureQueueItem = {
+  queueItemId: string;
+  sessionId: string;
+  reportId: string;
+  state: AiGraderRapidCaptureWorkflowState;
+  queuedAt: string;
+  updatedAt: string;
+  history: AiGraderRapidCaptureWorkflowEvent[];
+  humanConfirmationRequired: true;
+  autoConfirmed: false;
+  autoPublished: false;
+  error?: string;
+};
+
+export type AiGraderRapidCaptureQueueStatus = {
+  enabled: boolean;
+  activeQueueItemId?: string;
+  persisted: true;
+  reportWorkerSerialized: true;
+  items: AiGraderRapidCaptureQueueItem[];
 };
 
 export type AiGraderStationStep = {
@@ -337,6 +391,8 @@ export type AiGraderLocalStationStatus = {
   };
   timingSummary?: AiGraderLocalStationTimingSummary;
   productionRelease?: AiGraderProductionRelease;
+  rapidCapture: AiGraderRapidCaptureManifestStatus;
+  rapidCaptureQueue: AiGraderRapidCaptureQueueStatus;
 };
 
 export type AiGraderFrontWorkflowBinding = {
@@ -378,6 +434,7 @@ const AI_GRADER_CAPTURE_TIMING_EVENT_IDS: AiGraderCaptureTimingEventId[] = [
   "back_positioning_started",
   "report_generation_started",
   "report_ready",
+  "safely_queued",
 ];
 
 const AI_GRADER_CAPTURE_TIMING_PHASE_IDS: AiGraderCaptureTimingPhaseId[] = [
@@ -558,6 +615,97 @@ function safeStationText(value: unknown): string | undefined {
   return trimmed;
 }
 
+const AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES: AiGraderRapidCaptureWorkflowState[] = [
+  "front_captured",
+  "front_processing",
+  "back_positioning",
+  "back_captured",
+  "finalizing",
+  "report_ready_needs_confirm",
+  "confirmed_needs_publish",
+  "published",
+  "failed",
+];
+
+export function parseAiGraderRapidCaptureWorkflowState(value: unknown): AiGraderRapidCaptureWorkflowState | null {
+  return typeof value === "string" && AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES.includes(value as AiGraderRapidCaptureWorkflowState)
+    ? value as AiGraderRapidCaptureWorkflowState
+    : null;
+}
+
+function sanitizeAiGraderRapidCaptureHistory(value: unknown): AiGraderRapidCaptureWorkflowEvent[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry): AiGraderRapidCaptureWorkflowEvent | undefined => {
+      if (!stationRecord(entry)) return undefined;
+      const state = parseAiGraderRapidCaptureWorkflowState(entry.state);
+      const at = safeStationTimestamp(entry.at);
+      if (!state || !at) return undefined;
+      return { state, at, detail: safeStationText(entry.detail) ?? "Rapid Capture state updated." };
+    })
+    .filter((entry): entry is AiGraderRapidCaptureWorkflowEvent => Boolean(entry))
+    .slice(-100);
+}
+
+function sanitizeAiGraderRapidCaptureManifest(value: unknown): AiGraderRapidCaptureManifestStatus {
+  const record = stationRecord(value) ? value : {};
+  const queueItemId = safeStationId(record.queueItemId);
+  const workflowState = parseAiGraderRapidCaptureWorkflowState(record.workflowState);
+  const safelyQueuedAt = safeStationTimestamp(record.safelyQueuedAt);
+  return {
+    enabled: record.enabled === true,
+    ...(queueItemId ? { queueItemId } : {}),
+    ...(workflowState ? { workflowState } : {}),
+    workflowHistory: sanitizeAiGraderRapidCaptureHistory(record.workflowHistory),
+    ...(safelyQueuedAt ? { safelyQueuedAt } : {}),
+    humanConfirmationRequired: true,
+    autoConfirm: false,
+    autoPublish: false,
+  };
+}
+
+function sanitizeAiGraderRapidCaptureQueueItem(value: unknown): AiGraderRapidCaptureQueueItem | undefined {
+  if (!stationRecord(value)) return undefined;
+  const queueItemId = safeStationId(value.queueItemId);
+  const sessionId = safeStationId(value.sessionId);
+  const reportId = safeStationId(value.reportId);
+  const state = parseAiGraderRapidCaptureWorkflowState(value.state);
+  const queuedAt = safeStationTimestamp(value.queuedAt);
+  const updatedAt = safeStationTimestamp(value.updatedAt);
+  if (!queueItemId || !sessionId || !reportId || !state || !queuedAt || !updatedAt) return undefined;
+  const error = safeStationText(value.error);
+  return {
+    queueItemId,
+    sessionId,
+    reportId,
+    state,
+    queuedAt,
+    updatedAt,
+    history: sanitizeAiGraderRapidCaptureHistory(value.history),
+    humanConfirmationRequired: true,
+    autoConfirmed: false,
+    autoPublished: false,
+    ...(error ? { error } : {}),
+  };
+}
+
+export function sanitizeAiGraderRapidCaptureQueue(value: unknown, fallbackEnabled = false): AiGraderRapidCaptureQueueStatus {
+  const record = stationRecord(value) ? value : {};
+  const activeQueueItemId = safeStationId(record.activeQueueItemId);
+  const items = Array.isArray(record.items)
+    ? record.items.map(sanitizeAiGraderRapidCaptureQueueItem)
+        .filter((item): item is AiGraderRapidCaptureQueueItem => Boolean(item))
+        .slice(0, 50)
+    : [];
+  return {
+    enabled: typeof record.enabled === "boolean" ? record.enabled : fallbackEnabled,
+    ...(activeQueueItemId ? { activeQueueItemId } : {}),
+    persisted: true,
+    reportWorkerSerialized: true,
+    items,
+  };
+}
+
 const AI_GRADER_FRONT_CAPTURE_READINESS_CODES: AiGraderFrontCaptureReadinessCode[] = [
   "ready",
   "session_required",
@@ -633,7 +781,9 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
       : "full_forensic";
   const selectionSource = status.captureProfileGuard?.selectionSource === "operator_setting"
     ? "operator_setting"
-    : "bridge_default";
+    : status.captureProfileGuard?.selectionSource === "rapid_continuation"
+      ? "rapid_continuation"
+      : "bridge_default";
   return {
     bridgeVersion: status.bridgeVersion,
     reportProducerContractVersion: status.reportProducerContractVersion,
@@ -682,6 +832,8 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
     ...(status.bridgeSecurity ? { bridgeSecurity: status.bridgeSecurity } : {}),
     ...(status.outputs ? { outputs: status.outputs } : {}),
     ...(status.productionRelease ? { productionRelease: status.productionRelease } : {}),
+    rapidCapture: sanitizeAiGraderRapidCaptureManifest(status.rapidCapture),
+    rapidCaptureQueue: sanitizeAiGraderRapidCaptureQueue(status.rapidCaptureQueue, status.rapidCapture?.enabled === true),
     ...(status.timingSummary
       ? {
           timingSummary: {
@@ -1108,7 +1260,7 @@ export const AI_GRADER_STATION_STEPS: AiGraderStationStep[] = [
   { id: "start_new_card", label: "Start New Card", operatorAction: "Create a local grading session.", primaryAction: "start-session", hardwareCapable: false },
   { id: "capture_front", label: "Capture Front", operatorAction: "Capture front fixed-rig evidence.", primaryAction: "capture-front", hardwareCapable: true },
   { id: "capture_back", label: "Capture Back", operatorAction: "Capture back fixed-rig evidence.", primaryAction: "capture-back", hardwareCapable: true },
-  { id: "finalize_publish_report", label: "Approve & Publish", operatorAction: "Approve and atomically publish the report, card, label, and inventory linkage.", primaryAction: "publish-report", hardwareCapable: false },
+  { id: "finalize_publish_report", label: "Approve & Publish", operatorAction: "Approve and atomically publish the report, card, label, and durable linkage. Add To Inventory remains a downstream Finish action.", primaryAction: "publish-report", hardwareCapable: false },
 ];
 
 const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
@@ -1125,6 +1277,9 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "cancel-session": "session_complete",
   "latest-report": "view_unified_report",
   "session-manifest": "view_unified_report",
+  "configure-rapid-capture": "start_new_card",
+  "queue-current-card": "start_new_card",
+  "activate-queue-item": "view_unified_report",
 };
 
 const NEXT_ACTION_BY_STEP: Record<AiGraderStationStepId, AiGraderStationAction> = {
@@ -1172,6 +1327,9 @@ function bridgeEndpoints() {
     { method: "POST", action: "publish-report", description: "Prepare local publication manifest and public URL data." },
     { method: "POST", action: "generate-label-data", description: "Generate label-ready JSON and QR payload URL data." },
     { method: "POST", action: "cancel-session", description: "Cancel a local station session with safe-off cleanup." },
+    { method: "POST", action: "configure-rapid-capture", description: "Configure the durable Rapid Capture throughput queue." },
+    { method: "POST", action: "queue-current-card", description: "Queue captured evidence for serialized background report processing." },
+    { method: "POST", action: "activate-queue-item", description: "Open a completed queued report for Approve & Publish." },
     { method: "GET", action: "latest-report", description: "Read latest report location." },
     { method: "GET", action: "session-manifest", description: "Read station session manifest." },
   ];
@@ -1476,6 +1634,19 @@ export function buildAiGraderLocalStationStatus(input: {
     liveLighting: defaultLiveLightingStatus(),
     warmRunnerStatus: defaultWarmRunnerStatus(),
     geometryCaptureDecisions: {},
+    rapidCapture: {
+      enabled: false,
+      workflowHistory: [],
+      humanConfirmationRequired: true,
+      autoConfirm: false,
+      autoPublish: false,
+    },
+    rapidCaptureQueue: {
+      enabled: false,
+      persisted: true,
+      reportWorkerSerialized: true,
+      items: [],
+    },
     reportBundle,
     outputs: {
       productionReleasePath: finalComputed ? "sample-production-release.json" : undefined,
@@ -1554,6 +1725,9 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "cancel-session",
     "latest-report",
     "session-manifest",
+    "configure-rapid-capture",
+    "queue-current-card",
+    "activate-queue-item",
   ];
   return allowed.includes(raw as AiGraderStationAction) ? (raw as AiGraderStationAction) : null;
 }

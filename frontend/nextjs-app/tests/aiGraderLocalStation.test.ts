@@ -4,6 +4,7 @@ import {
   AI_GRADER_STATION_STEPS,
   buildAiGraderLocalStationStatus,
   parseAiGraderStationAction,
+  sanitizeAiGraderRapidCaptureQueue,
   sanitizeAiGraderPreviewCardGeometry,
 } from "../lib/aiGraderLocalStation";
 import {
@@ -17,18 +18,46 @@ test("operator station contract exposes the single retained grading workflow", (
   assert.equal(labels.some((label) => /fixture|accept capture|safe off/i.test(label)), false);
 });
 
-test("removed browser safety, confirmation, queue, and fallback actions are absent", () => {
+test("removed browser safety, confirmation, and fallback actions are absent while Rapid Capture remains", () => {
   for (const action of [
     "safe-off", "confirm-light-idle-off", "confirm-fixture-rulers", "accept-profile", "confirm-flip",
-    "configure-rapid-capture", "queue-current-card", "activate-queue-item",
   ]) assert.equal(parseAiGraderStationAction(action), null);
+  for (const action of ["configure-rapid-capture", "queue-current-card", "activate-queue-item"]) {
+    assert.equal(parseAiGraderStationAction(action), action);
+  }
   const status = buildAiGraderLocalStationStatus();
   const serialized = JSON.stringify(status);
-  for (const removed of ["rapidCapture", "frontWorkflowAuthority", "lightingProfileAccepted", "coldDebugMode", "fallbackUsed"]) {
+  for (const removed of ["frontWorkflowAuthority", "lightingProfileAccepted", "coldDebugMode", "fallbackUsed"]) {
     assert.equal(serialized.includes(removed), false, `${removed} must be absent`);
   }
+  assert.equal(status.rapidCapture.enabled, false);
+  assert.equal(status.rapidCaptureQueue.reportWorkerSerialized, true);
   assert.equal(status.liveLighting.safety.maxDutyPercent, 99.9);
   assert.equal(status.liveLighting.safety.watchdogOwnedByBridge, true);
+});
+
+test("Rapid Capture queue sanitization preserves bounded report state and strips local paths", () => {
+  const queue = sanitizeAiGraderRapidCaptureQueue({
+    enabled: true,
+    activeQueueItemId: "session-1-rapid-card",
+    items: [{
+      queueItemId: "session-1-rapid-card",
+      sessionId: "session-1",
+      reportId: "report-1",
+      state: "report_ready_needs_confirm",
+      queuedAt: "2026-07-17T12:00:00.000Z",
+      updatedAt: "2026-07-17T12:00:01.000Z",
+      history: [],
+      manifestPath: "C:\\TenKings\\private\\station-session.json",
+      autoConfirmed: true,
+    }],
+  });
+  assert.equal(queue.enabled, true);
+  assert.equal(queue.reportWorkerSerialized, true);
+  assert.equal(queue.items.length, 1);
+  assert.equal(queue.items[0].reportId, "report-1");
+  assert.equal("manifestPath" in queue.items[0], false);
+  assert.equal(queue.items[0].autoConfirmed, false);
 });
 
 test("manual geometry fallback cannot enter the display contract", () => {

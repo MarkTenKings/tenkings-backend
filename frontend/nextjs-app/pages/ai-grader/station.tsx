@@ -28,6 +28,8 @@ import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   applyAiGraderLiveLighting,
   buildAiGraderCaptureProfileRequest,
+  buildAiGraderRapidCaptureConfigurationRequest,
+  buildAiGraderRapidQueueActivationRequest,
   callAiGraderStationBridge,
   fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
@@ -80,6 +82,7 @@ import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
 type StationWorkArea = "grade" | "finish";
+type StationCaptureMode = "single" | "rapid";
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
   message: string;
@@ -679,6 +682,7 @@ export default function AiGraderStationPage() {
     message: "OCR prefill starts after normalized front and back images are ready.",
   });
   const [stationCaptureProfile, setStationCaptureProfile] = useState<AiGraderCaptureProfile>(status.captureProfile);
+  const [stationCaptureMode, setStationCaptureMode] = useState<StationCaptureMode>(status.rapidCapture.enabled ? "rapid" : "single");
   const [identityStatus, setIdentityStatus] = useState<StepState>({
     status: "idle",
     message: "Card identity has not been confirmed.",
@@ -1475,6 +1479,9 @@ export default function AiGraderStationPage() {
   };
 
   const canUseBridge = bridgeConnected || contractPreviewEnabled;
+  const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 6);
+  const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) => RAPID_PROCESSING_STATES.has(item.state));
+  const stationSettingsLocked = status.sessionManifest.frontCaptured || status.sessionManifest.backCaptured || Boolean(status.rapidCaptureQueue.activeQueueItemId);
   const warmRunner = status.warmRunnerStatus;
   const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held || busy === "start-grading" || busy === "capture-back";
   const liveLightingAvailable =
@@ -1511,6 +1518,29 @@ export default function AiGraderStationPage() {
     total: warmRunner.evidencePlan.rolesBySide.front.length,
   };
   const latestWarmPhases = [...warmRunner.phases].slice(-4).reverse();
+
+  useEffect(() => {
+    if (!bridgeConnected || !stationToken.trim() || stationCaptureMode !== "rapid" || !rapidQueueHasProcessing) return;
+    let cancelled = false;
+    let pending = false;
+    const refreshRapidQueue = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action: "status" });
+        if (!cancelled) setStatus(next);
+      } catch {
+        // Queue polling is advisory. The explicit capture controls remain authoritative.
+      } finally {
+        pending = false;
+      }
+    };
+    const timer = window.setInterval(() => void refreshRapidQueue(), 1200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [bridgeConnected, bridgeUrl, rapidQueueHasProcessing, stationCaptureMode, stationToken]);
 
   const verifyProductionSession = async (token: string): Promise<ProductionAuthActor> => {
     const response = await fetch("/api/admin/ai-grader/production/auth-check", {
@@ -1944,12 +1974,37 @@ export default function AiGraderStationPage() {
     setInventoryState({ status: "idle", message: "Card has not been added to inventory." });
   };
 
+  const changeStationCaptureMode = async (nextMode: StationCaptureMode) => {
+    if (nextMode === stationCaptureMode) return;
+    if (stationSettingsLocked) {
+      setError("Queue or finish the active card before changing Rapid Capture mode.");
+      return;
+    }
+    setBusy("capture-settings");
+    setError(null);
+    try {
+      const next = await runAction(
+        "configure-rapid-capture",
+        buildAiGraderRapidCaptureConfigurationRequest(nextMode === "rapid"),
+      );
+      setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Rapid Capture mode could not be updated.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const startNewCard = async () => {
     if (liveLightingRequestPendingRef.current) return;
     setBusy("start");
     setError(null);
     try {
       resetPerCardUiState();
+      await runAction(
+        "configure-rapid-capture",
+        buildAiGraderRapidCaptureConfigurationRequest(stationCaptureMode === "rapid"),
+      );
       await runAction("start-session", buildAiGraderCaptureProfileRequest("full_forensic"));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.");
@@ -2027,6 +2082,7 @@ export default function AiGraderStationPage() {
       exposureUs: next.acceptedProfile.exposureUs,
       gain: next.acceptedProfile.gain,
     });
+    setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
     setLiveLightingDraft({
       enabled: next.liveLighting.profile.enabled,
       dutyPercent: next.liveLighting.profile.dutyPercent,
@@ -2050,13 +2106,33 @@ export default function AiGraderStationPage() {
 
   const captureBackAndContinue = async () => {
     try {
-      await runStationCapture("back");
+      const captured = await runStationCapture("back");
+      if (stationCaptureMode === "rapid" && captured.rapidCapture.enabled) {
+        await runAction("queue-current-card");
+        resetPerCardUiState();
+        return;
+      }
       await runAction("run-diagnostics");
       await runAction("export-report-bundle");
       await prepareLocalProductionRelease();
       await refreshHistory();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Capture Back or report generation failed.");
+    }
+  };
+
+  const activateRapidQueueItem = async (queueItemId: string) => {
+    setBusy(`rapid-review:${queueItemId}`);
+    setError(null);
+    try {
+      const next = await runAction("activate-queue-item", buildAiGraderRapidQueueActivationRequest(queueItemId));
+      resetPerCardUiState();
+      setStationCaptureProfile(next.captureProfile);
+      setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Rapid Capture report could not be opened.");
+    } finally {
+      setBusy(null);
     }
   };
   const productionReleaseBody = () => ({
@@ -2726,6 +2802,12 @@ export default function AiGraderStationPage() {
           capacity: typeof publishedLabelSheet.capacity === "number" ? publishedLabelSheet.capacity : 16,
         },
       }));
+      const activeRapidQueueItem = status.rapidCaptureQueue.items.find(
+        (item) => item.queueItemId === status.rapidCaptureQueue.activeQueueItemId && item.reportId === publishedReportId,
+      );
+      if (activeRapidQueueItem && bridgeConnected && stationToken.trim()) {
+        await runAction("publish-report", productionReleaseBody());
+      }
       await refreshHistory();
       await refreshFinishQueue(publishedReportId).catch(() => undefined);
     } catch (requestError) {
@@ -4048,10 +4130,59 @@ export default function AiGraderStationPage() {
           </section>
 
           <section className="capture-settings">
-            <p className="eyebrow">Capture Pipeline</p>
-            <h3>Full Forensic / Detected Geometry</h3>
-            <p>One bridge-owned Basler/Pylon capture path is used for both sides. No alternate or automatic capture path is available.</p>
+            <div className="capture-settings-head">
+              <div>
+                <p className="eyebrow">Capture Pipeline</p>
+                <h3>{stationCaptureMode === "rapid" ? "Rapid Capture" : "Single Card"}</h3>
+              </div>
+              <strong>Full Forensic / Detected Geometry</strong>
+            </div>
+            <label>
+              Throughput flow
+              <select
+                value={stationCaptureMode}
+                onChange={(event) => void changeStationCaptureMode(event.target.value as StationCaptureMode)}
+                disabled={!bridgeConnected || busy !== null || stationSettingsLocked}
+              >
+                <option value="single">Single card</option>
+                <option value="rapid">Rapid Capture queue</option>
+              </select>
+            </label>
+            <p>Capture Front and Capture Back remain explicit operator actions. Rapid Capture queues the completed card for one serialized background report worker; it does not add automatic or alternate capture.</p>
           </section>
+
+          {stationCaptureMode === "rapid" || rapidQueueItems.length ? (
+            <section className="rapid-queue">
+              <div className="rapid-queue-head">
+                <div>
+                  <p className="eyebrow">Rapid Capture Queue</p>
+                  <h3>{rapidQueueItems.length ? `${rapidQueueItems.length} recent card(s)` : "Queue Empty"}</h3>
+                </div>
+                <strong>{rapidQueueHasProcessing ? "Processing" : "Ready"}</strong>
+              </div>
+              <div className="rapid-queue-list">
+                {rapidQueueItems.length ? rapidQueueItems.map((item) => {
+                  const reviewable = RAPID_REVIEWABLE_STATES.has(item.state);
+                  const active = item.queueItemId === status.rapidCaptureQueue.activeQueueItemId;
+                  return (
+                    <article key={item.queueItemId} className={active ? "active" : ""}>
+                      <div>
+                        <strong>{formatStationValue(item.state === "report_ready_needs_confirm" ? "ready for Approve & Publish" : item.state)}</strong>
+                        <small>{item.reportId}</small>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void activateRapidQueueItem(item.queueItemId)}
+                        disabled={!reviewable || active || busy !== null || status.sessionManifest.frontCaptured || status.sessionManifest.backCaptured}
+                      >
+                        {active ? "Active" : reviewable ? "Open for Approve & Publish" : "Processing"}
+                      </button>
+                    </article>
+                  );
+                }) : <p>Capture Back queues each completed card here while the next card can begin.</p>}
+              </div>
+            </section>
+          ) : null}
           <section className={productionSignedIn ? "production-auth signed-in" : "production-auth"}>
             <div>
               <p className="eyebrow">Production Sign-In</p>
@@ -5242,6 +5373,7 @@ export default function AiGraderStationPage() {
         }
         .next-card,
         .capture-settings,
+        .rapid-queue,
         .production-auth,
         .profile,
         .live-lighting,
@@ -5284,17 +5416,20 @@ export default function AiGraderStationPage() {
           color: #bfffd2;
           background: rgba(34, 197, 94, 0.1);
         }
-        .capture-settings-head {
+        .capture-settings-head,
+        .rapid-queue-head {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
           gap: 10px;
         }
-        .capture-settings-head h3 {
+        .capture-settings-head h3,
+        .rapid-queue-head h3 {
           margin: 4px 0 0;
           font-size: 16px;
         }
-        .capture-settings-head > strong {
+        .capture-settings-head > strong,
+        .rapid-queue-head > strong {
           color: #f3db92;
           font-size: 10px;
           letter-spacing: 0.08em;
@@ -5309,12 +5444,50 @@ export default function AiGraderStationPage() {
           margin-top: 10px;
         }
         .capture-settings p,
-        .capture-settings small {
+        .capture-settings small,
+        .rapid-queue p {
           display: block;
           margin: 9px 0 0;
           color: #bdb5a8;
           font-size: 10px;
           line-height: 1.45;
+        }
+        .rapid-queue-list {
+          display: grid;
+          gap: 7px;
+          margin-top: 10px;
+        }
+        .rapid-queue-list article {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 8px;
+          padding: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.03);
+        }
+        .rapid-queue-list article.active {
+          border-color: rgba(91, 255, 157, 0.35);
+          background: rgba(91, 255, 157, 0.07);
+        }
+        .rapid-queue-list article > div {
+          display: grid;
+          min-width: 0;
+          gap: 2px;
+        }
+        .rapid-queue-list small,
+        .rapid-queue-list span {
+          overflow: hidden;
+          color: #aaa69b;
+          font-size: 9px;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .rapid-queue-list button {
+          min-height: 32px;
+          padding: 6px 8px;
+          font-size: 9px;
         }
         .production-auth {
           display: grid;

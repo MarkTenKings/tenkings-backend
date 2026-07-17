@@ -5,8 +5,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   AiGraderPreviewJpegFrameAssembler,
+  AiGraderLocalStationBridgeService,
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
   buildAiGraderLocalStationBridgeConfig,
+  retainAiGraderRapidCaptureQueueItems,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
 
 const sourceRoot = path.resolve(__dirname, "../src");
@@ -31,11 +33,10 @@ test("station bridge remains loopback-only, origin-bounded, token-paired, and ve
   assert.throws(() => buildAiGraderLocalStationBridgeConfig({ ...config, host: "0.0.0.0" }), /loopback/i);
 });
 
-test("removed browser shutdown, confirmation, rapid queue, cold, and manual capture systems are absent", () => {
+test("removed browser shutdown, confirmation, cold, and manual capture systems are absent while Rapid Capture remains", () => {
   for (const removed of [
     "/lighting/safe-off", "/lighting/accept", "/lighting/retry-back-positioning", "/preview/stop",
     "confirm-fixture-rulers", "confirm-light-idle-off", "confirm-flip",
-    "configure-rapid-capture", "queue-current-card", "activate-queue-item",
     "manualGeometryRect", "manual_capture", "hardwareSafetyBlocked", "end-session",
   ]) {
     assert.equal(clientSource.includes(removed), false, `client still contains ${removed}`);
@@ -47,6 +48,79 @@ test("removed browser shutdown, confirmation, rapid queue, cold, and manual capt
   assert.equal(bridgeSource.includes('"end-session"'), false);
   for (const removed of ["AiGraderCaptureAttempt", "createAiGraderCaptureOperationGate", "runAiGraderAtomicCapture"]) {
     assert.equal(operationsSource.includes(removed), false, `browser capture intent system still contains ${removed}`);
+  }
+  for (const retained of ["configure-rapid-capture", "queue-current-card", "activate-queue-item"]) {
+    assert.equal(bridgeSource.includes(retained), true, `bridge missing ${retained}`);
+    assert.equal(pageSource.includes(retained), true, `page missing ${retained}`);
+  }
+  assert.equal(clientSource.includes("buildAiGraderRapidCaptureConfigurationRequest"), true);
+  assert.equal(clientSource.includes("buildAiGraderRapidQueueActivationRequest"), true);
+  assert.equal(pageSource.includes("Auto Capture"), false);
+});
+
+test("Rapid Capture retains every unreviewed item and only trims terminal history", () => {
+  const pending = Array.from({ length: 26 }, (_, index) => ({ queueItemId: `pending-${index}`, state: "finalizing" }));
+  const terminal = Array.from({ length: 8 }, (_, index) => ({ queueItemId: `published-${index}`, state: "published" }));
+  const retained = retainAiGraderRapidCaptureQueueItems([...pending, ...terminal]);
+  assert.deepEqual(retained.map((item) => item.queueItemId), pending.map((item) => item.queueItemId));
+  const mixed = retainAiGraderRapidCaptureQueueItems([
+    ...Array.from({ length: 20 }, (_, index) => ({ queueItemId: `review-${index}`, state: "report_ready_needs_confirm" })),
+    ...terminal,
+  ]);
+  assert.equal(mixed.filter((item) => item.state === "report_ready_needs_confirm").length, 20);
+  assert.equal(mixed.filter((item) => item.state === "published").length, 5);
+});
+
+test("Rapid Capture detaches the exact card and completes its report in the serialized background queue", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-rapid-queue-"));
+  try {
+    const config = buildAiGraderLocalStationBridgeConfig({
+      enabled: true,
+      mode: "mock",
+      host: "127.0.0.1",
+      port: 47652,
+      allowedOrigins: ["https://collect.tenkings.co"],
+      stationToken: "StationTokenStationTokenStationToken1234",
+      outputDir,
+    });
+    const service = new AiGraderLocalStationBridgeService(config);
+    await service.action("configure-rapid-capture", { rapidCaptureEnabled: true });
+    await service.action("start-session", { captureProfile: "full_forensic" });
+    const detached = service.manifest;
+    const detachedSessionId = detached.sessionId;
+    const detachedReportId = detached.reportId;
+    detached.outputs.frontPackageDir = path.join(detached.outputs.sessionDir, "front");
+    detached.outputs.backPackageDir = path.join(detached.outputs.sessionDir, "back");
+    fs.mkdirSync(detached.outputs.frontPackageDir, { recursive: true });
+    fs.mkdirSync(detached.outputs.backPackageDir, { recursive: true });
+    detached.warmRunnerStatus.phases.push(
+      { id: "process_front_artifacts", label: "Front processing", status: "completed", side: "front", backend: "warm_full_forensic_runner", executionPath: "warm_full_forensic_runner" },
+      { id: "process_back_artifacts", label: "Back processing", status: "completed", side: "back", backend: "warm_full_forensic_runner", executionPath: "warm_full_forensic_runner" },
+    );
+
+    const continued = await service.action("queue-current-card");
+    assert.notEqual(continued.sessionId, detachedSessionId);
+    assert.equal(continued.currentStep, "capture_front");
+    assert.equal(continued.rapidCaptureQueue.items[0].sessionId, detachedSessionId);
+    assert.equal(continued.rapidCaptureQueue.items[0].reportId, detachedReportId);
+    assert.equal(continued.rapidCaptureQueue.items[0].state, "finalizing");
+    assert.equal(continued.rapidCaptureQueue.reportWorkerSerialized, true);
+
+    let completed;
+    for (let index = 0; index < 100; index += 1) {
+      const current = service.status().rapidCaptureQueue.items[0];
+      if (current?.state === "report_ready_needs_confirm") {
+        completed = current;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(completed, "serialized background report did not become ready");
+    assert.equal(completed.autoConfirmed, false);
+    assert.equal(completed.autoPublished, false);
+    assert.equal("manifestPath" in completed, false);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
   }
 });
 

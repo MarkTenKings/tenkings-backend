@@ -119,7 +119,52 @@ export type AiGraderLocalStationBridgeAction =
   | "generate-label-data"
   | "cancel-session"
   | "latest-report"
-  | "session-manifest";
+  | "session-manifest"
+  | "configure-rapid-capture"
+  | "queue-current-card"
+  | "activate-queue-item";
+
+export type AiGraderRapidCaptureWorkflowState =
+  | "front_captured"
+  | "front_processing"
+  | "back_positioning"
+  | "back_captured"
+  | "finalizing"
+  | "report_ready_needs_confirm"
+  | "confirmed_needs_publish"
+  | "published"
+  | "failed";
+
+export interface AiGraderRapidCaptureWorkflowEvent {
+  state: AiGraderRapidCaptureWorkflowState;
+  at: string;
+  detail: string;
+}
+
+export interface AiGraderRapidCaptureQueueItem {
+  queueItemId: string;
+  sessionId: string;
+  reportId: string;
+  state: AiGraderRapidCaptureWorkflowState;
+  queuedAt: string;
+  updatedAt: string;
+  history: AiGraderRapidCaptureWorkflowEvent[];
+  humanConfirmationRequired: true;
+  autoConfirmed: false;
+  autoPublished: false;
+  error?: string;
+}
+
+interface PersistedAiGraderRapidCaptureQueueItem extends AiGraderRapidCaptureQueueItem {
+  manifestPath: string;
+}
+
+interface PersistedAiGraderRapidCaptureQueue {
+  schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1";
+  updatedAt: string;
+  rapidCaptureEnabled: boolean;
+  items: PersistedAiGraderRapidCaptureQueueItem[];
+}
 
 export type AiGraderLocalStationStepId =
   | "start_new_card"
@@ -374,7 +419,7 @@ export interface AiGraderLocalStationBridgeManifest {
   captureProfile: FixedRigCaptureProfile;
   captureProfileGuard: {
     stationSettingRequired: true;
-    selectionSource: "bridge_default" | "operator_setting";
+    selectionSource: "bridge_default" | "operator_setting" | "rapid_continuation";
     productionFastOptIn: boolean;
     fullForensicEvidencePreserved: true;
     availableCaptureProfiles: ["full_forensic", "production_fast"];
@@ -443,6 +488,16 @@ export interface AiGraderLocalStationBridgeManifest {
     manualOverrideUsed: boolean;
     sourceFrameId?: string;
   }>>;
+  rapidCapture: {
+    enabled: boolean;
+    queueItemId?: string;
+    workflowState?: AiGraderRapidCaptureWorkflowState;
+    workflowHistory: AiGraderRapidCaptureWorkflowEvent[];
+    safelyQueuedAt?: string;
+    humanConfirmationRequired: true;
+    autoConfirm: false;
+    autoPublish: false;
+  };
 }
 
 export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBridgeManifest {
@@ -490,6 +545,13 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     rejectsNonLoopback: true;
   };
   timingSummary: AiGraderLocalStationTimingSummary;
+  rapidCaptureQueue: {
+    enabled: boolean;
+    activeQueueItemId?: string;
+    persisted: true;
+    reportWorkerSerialized: true;
+    items: AiGraderRapidCaptureQueueItem[];
+  };
 }
 
 export interface AiGraderLocalStationTimingEntry {
@@ -843,6 +905,8 @@ export interface AiGraderLocalStationBridgeActionRequest {
   warningsAccepted?: boolean;
   overrideReason?: string;
   captureProfile?: FixedRigCaptureProfile;
+  rapidCaptureEnabled?: boolean;
+  queueItemId?: string;
   captureTriggerMode?: AiGraderCaptureTriggerMode;
   captureTriggerAt?: string;
   geometryCaptureMode?: AiGraderGeometryCaptureMode;
@@ -1475,7 +1539,11 @@ export function buildAiGraderLocalStationBridgeConfig(
   };
 }
 
-function newManifest(config: AiGraderLocalStationBridgeConfig, startedAt = new Date().toISOString()): AiGraderLocalStationBridgeManifest {
+function newManifest(
+  config: AiGraderLocalStationBridgeConfig,
+  rapidCaptureEnabled = false,
+  startedAt = new Date().toISOString(),
+): AiGraderLocalStationBridgeManifest {
   const captureProfile: FixedRigCaptureProfile = config.captureProfile;
   return {
     schemaVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
@@ -1533,6 +1601,13 @@ function newManifest(config: AiGraderLocalStationBridgeConfig, startedAt = new D
       back: { captureBatch: false, processedManifest: false },
     },
     geometryCaptureDecisions: {},
+    rapidCapture: {
+      enabled: rapidCaptureEnabled,
+      workflowHistory: [],
+      humanConfirmationRequired: true,
+      autoConfirm: false,
+      autoPublish: false,
+    },
   };
 }
 
@@ -2062,7 +2137,7 @@ function bridgeEndpoints() {
     { method: "GET", action: "preview-status", path: "/preview/status", hardwareAccess: false, description: "Read embedded browser preview stream status." },
     { method: "GET", action: "preview-stream", path: "/preview/stream", hardwareAccess: true, description: "Open token-gated local MJPEG browser preview stream." },
     { method: "GET", action: "lighting-status", path: "/lighting/status", hardwareAccess: false, description: "Read browser live Leimac lighting tuning status." },
-    { method: "POST", action: "lighting-apply", path: "/lighting/apply", hardwareAccess: true, description: "Apply low-duty browser live Leimac lighting for preview tuning." },
+    { method: "POST", action: "lighting-apply", path: "/lighting/apply", hardwareAccess: true, description: "Apply an explicit bounded Leimac duty for preview tuning." },
     { method: "POST", action: "lighting-heartbeat", path: "/lighting/heartbeat", hardwareAccess: false, description: "Keep browser live lighting watchdog alive while the operator page is connected." },
     { method: "POST", action: "start-session", hardwareAccess: true, description: "Create a local station session." },
     { method: "POST", action: "capture-front", hardwareAccess: true, description: "Validate the exact front preview snapshot, drain preview, and capture front evidence." },
@@ -2074,6 +2149,9 @@ function bridgeEndpoints() {
     { method: "POST", action: "publish-report", hardwareAccess: false, description: "Prepare local publication manifest and future public report URL data." },
     { method: "POST", action: "generate-label-data", hardwareAccess: false, description: "Write label-ready JSON and QR payload URL data." },
     { method: "POST", action: "cancel-session", hardwareAccess: true, description: "Cancel the local station session and run guarded safe-off cleanup." },
+    { method: "POST", action: "configure-rapid-capture", hardwareAccess: false, description: "Enable or disable the durable Rapid Capture throughput queue." },
+    { method: "POST", action: "queue-current-card", hardwareAccess: false, description: "Queue persisted front/back evidence for serialized background report processing." },
+    { method: "POST", action: "activate-queue-item", hardwareAccess: false, description: "Open one completed queued report for Approve & Publish." },
     { method: "GET", action: "latest-report", hardwareAccess: false, description: "Read latest report location." },
     { method: "GET", action: "session-manifest", hardwareAccess: false, description: "Read station manifest path and state." },
   ];
@@ -2442,6 +2520,63 @@ function cloneManifest(manifest: AiGraderLocalStationBridgeManifest): AiGraderLo
   return structuredClone(manifest);
 }
 
+const RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
+const RAPID_CAPTURE_QUEUE_LIMIT = 25;
+
+export function retainAiGraderRapidCaptureQueueItems<T extends { state: AiGraderRapidCaptureWorkflowState }>(
+  items: T[],
+  limit = RAPID_CAPTURE_QUEUE_LIMIT,
+): T[] {
+  const protectedItems = items.filter((item) => item.state !== "published" && item.state !== "failed");
+  const terminalAllowance = Math.max(0, limit - protectedItems.length);
+  const retainedTerminal = new Set(
+    items
+      .filter((item) => item.state === "published" || item.state === "failed")
+      .slice(0, terminalAllowance),
+  );
+  return items.filter(
+    (item) => (item.state !== "published" && item.state !== "failed") || retainedTerminal.has(item),
+  );
+}
+
+function rapidCaptureQueuePath(config: AiGraderLocalStationBridgeConfig) {
+  return path.join(config.outputDir, "rapid-capture-queue.json");
+}
+
+function readRapidCaptureQueueSync(config: AiGraderLocalStationBridgeConfig): PersistedAiGraderRapidCaptureQueue {
+  const empty = (): PersistedAiGraderRapidCaptureQueue => ({
+    schemaVersion: RAPID_CAPTURE_QUEUE_SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
+    rapidCaptureEnabled: false,
+    items: [],
+  });
+  try {
+    const parsed = JSON.parse(readFileSync(rapidCaptureQueuePath(config), "utf-8")) as Partial<PersistedAiGraderRapidCaptureQueue>;
+    if (parsed.schemaVersion !== RAPID_CAPTURE_QUEUE_SCHEMA_VERSION || !Array.isArray(parsed.items)) return empty();
+    return {
+      schemaVersion: RAPID_CAPTURE_QUEUE_SCHEMA_VERSION,
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+      rapidCaptureEnabled: parsed.rapidCaptureEnabled === true,
+      items: retainAiGraderRapidCaptureQueueItems(parsed.items.filter(
+        (item): item is PersistedAiGraderRapidCaptureQueueItem => Boolean(
+          item
+          && typeof item.queueItemId === "string"
+          && typeof item.sessionId === "string"
+          && typeof item.reportId === "string"
+          && typeof item.manifestPath === "string",
+        ),
+      )),
+    };
+  } catch {
+    return empty();
+  }
+}
+
+function publicRapidCaptureQueueItem(item: PersistedAiGraderRapidCaptureQueueItem): AiGraderRapidCaptureQueueItem {
+  const { manifestPath: _manifestPath, ...publicItem } = item;
+  return publicItem;
+}
+
 function timingRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -2481,6 +2616,12 @@ export class AiGraderLocalStationBridgeService {
   private warmProcessingJobs = new Map<string, Promise<FixedRigWarmProcessingResult>>();
   private processingSessionsCancelling = new Set<string>();
   private processingWorkerShutdown?: Promise<void>;
+  private rapidQueue: PersistedAiGraderRapidCaptureQueue;
+  private committedRapidQueue: PersistedAiGraderRapidCaptureQueue;
+  private queuedManifests = new Map<string, AiGraderLocalStationBridgeManifest>();
+  private reportWorker: Promise<void> = Promise.resolve();
+  private queueWriteChain: Promise<void> = Promise.resolve();
+  private activeQueueItemId?: string;
   private previewGeometryPending?: {
     frame: Buffer;
     frameIndex: number;
@@ -2528,7 +2669,10 @@ export class AiGraderLocalStationBridgeService {
     this.warmRunner = warmRunner;
     this.dependencies = dependencies;
     this.stationUrl = `http://${hostForUrl(config.host)}:${config.port}`;
-    this.manifest = newManifest(config);
+    this.rapidQueue = readRapidCaptureQueueSync(config);
+    this.committedRapidQueue = structuredClone(this.rapidQueue);
+    this.manifest = newManifest(config, this.rapidQueue.rapidCaptureEnabled);
+    void this.recoverPersistedRapidFinalization().catch(() => {});
   }
 
   private currentFrontCaptureBinding(): AiGraderFrontCaptureBinding | undefined {
@@ -2644,6 +2788,13 @@ export class AiGraderLocalStationBridgeService {
         rejectsNonLoopback: true,
       },
       timingSummary: timingSummary(this.manifest.commandResults, this.manifest.warmRunnerStatus),
+      rapidCaptureQueue: {
+        enabled: this.committedRapidQueue.rapidCaptureEnabled,
+        ...(this.activeQueueItemId ? { activeQueueItemId: this.activeQueueItemId } : {}),
+        persisted: true,
+        reportWorkerSerialized: true,
+        items: this.committedRapidQueue.items.map(publicRapidCaptureQueueItem),
+      },
       ...this.manifest,
     };
   }
@@ -4047,6 +4198,264 @@ export class AiGraderLocalStationBridgeService {
       this.pumpPreviewGeometryAnalysis();
     });
   }
+
+  private transitionRapidWorkflow(
+    manifest: AiGraderLocalStationBridgeManifest,
+    state: AiGraderRapidCaptureWorkflowState,
+    detail: string,
+  ) {
+    if (manifest.rapidCapture.workflowState === "failed" && state !== "failed") {
+      manifest.progressLog.push(`${new Date().toISOString()} Ignored rapid workflow transition ${state}; failed is terminal for this card.`);
+      return;
+    }
+    const event: AiGraderRapidCaptureWorkflowEvent = {
+      state,
+      at: new Date().toISOString(),
+      detail,
+    };
+    manifest.rapidCapture.workflowState = state;
+    manifest.rapidCapture.workflowHistory = [...manifest.rapidCapture.workflowHistory, event].slice(-100);
+    manifest.updatedAt = event.at;
+    manifest.progressLog.push(`${event.at} Rapid capture workflow: ${state} - ${detail}`);
+    const queueItemId = manifest.rapidCapture.queueItemId;
+    if (!queueItemId) return;
+    const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item) return;
+    item.state = state;
+    item.updatedAt = event.at;
+    item.history = [...item.history, event].slice(-100);
+    if (state !== "failed") delete item.error;
+    this.queuedManifests.set(queueItemId, manifest);
+  }
+
+  private persistRapidQueue(): Promise<void> {
+    this.rapidQueue.updatedAt = new Date().toISOString();
+    const snapshot = structuredClone(this.rapidQueue);
+    this.queueWriteChain = this.queueWriteChain
+      .catch(() => {})
+      .then(async () => {
+        await writeJsonAtomic(rapidCaptureQueuePath(this.config), snapshot);
+        this.committedRapidQueue = structuredClone(snapshot);
+      });
+    return this.queueWriteChain;
+  }
+
+  private async syncQueuedManifest(manifest: AiGraderLocalStationBridgeManifest) {
+    const queueItemId = manifest.rapidCapture.queueItemId;
+    if (!queueItemId) return;
+    const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item) return;
+    item.state = manifest.rapidCapture.workflowState ?? item.state;
+    item.updatedAt = manifest.updatedAt;
+    item.history = [...manifest.rapidCapture.workflowHistory];
+    item.error = item.state === "failed" ? manifest.warnings.at(-1) ?? item.error : undefined;
+    this.queuedManifests.set(queueItemId, manifest);
+    await writeSessionManifest(manifest);
+    await this.persistRapidQueue();
+  }
+
+  private enqueueRapidFinalization(queueItemId: string) {
+    this.reportWorker = this.reportWorker
+      .catch(() => {})
+      .then(async () => {
+        const manifest = this.queuedManifests.get(queueItemId);
+        const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+        if (!manifest || !item) throw new Error(`Rapid capture queue item ${queueItemId} is no longer available.`);
+        try {
+          const result = await this.runWarmReport(manifest);
+          manifest.outputs.unifiedReportDir = result.payload?.report?.packageDir ?? dirnameIfFile(extractUnifiedReportPath(result.payload));
+          manifest.outputs.unifiedReportPath = extractUnifiedReportPath(result.payload);
+          const reportDir = manifest.outputs.unifiedReportDir ?? dirnameIfFile(manifest.outputs.unifiedReportPath);
+          if (!reportDir) throw new Error("Rapid finalization did not produce a unified report folder.");
+          const reportId = manifest.reportId ?? "local-report";
+          const packageDir = publishPackageDir(this.config, reportId);
+          const bundle = await withAiGraderReportPackageOperation(reportId, async () => {
+            await reconcileAiGraderReportPackageTransaction({
+              canonicalDir: packageDir,
+              reportId,
+              gradingSessionId: manifest.sessionId,
+              reportDir,
+            });
+            return writeAiGraderReportBundle({
+              reportDir,
+              outputDir: packageDir,
+              reportId,
+              gradingSessionId: manifest.sessionId,
+              publicBasePath: this.config.publicBasePath,
+              captureTiming: this.captureTimingSnapshot(manifest),
+              geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(manifest),
+            });
+          });
+          manifest.outputs.reportBundlePath = bundle.bundlePath;
+          manifest.outputs.publishPackageDir = bundle.outputDir;
+          manifest.outputs.assetManifestPath = bundle.assetManifestPath;
+          manifest.outputs.checksumsPath = bundle.checksumsPath;
+          manifest.reportBundle = bundle.bundle;
+          manifest.currentStep = "view_unified_report";
+          this.transitionRapidWorkflow(
+            manifest,
+            "report_ready_needs_confirm",
+            "Background diagnostics and report bundle are ready for the single Approve & Publish authority.",
+          );
+          await this.syncQueuedManifest(manifest);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Rapid background finalization failed.";
+          if (!manifest.warnings.includes(message)) manifest.warnings.push(message);
+          this.transitionRapidWorkflow(manifest, "failed", message);
+          const failedItem = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+          if (failedItem) failedItem.error = message;
+          await this.syncQueuedManifest(manifest);
+        }
+      });
+    void this.reportWorker.catch(() => {});
+  }
+
+  private async recoverPersistedRapidFinalization() {
+    const outputRoot = `${path.resolve(this.config.outputDir).toLowerCase()}${path.sep}`;
+    for (const item of this.rapidQueue.items.filter((candidate) => candidate.state === "finalizing")) {
+      const resolvedManifestPath = path.resolve(item.manifestPath);
+      if (!resolvedManifestPath.toLowerCase().startsWith(outputRoot) || path.basename(resolvedManifestPath) !== "station-session.json") {
+        item.state = "failed";
+        item.error = "Rapid finalization recovery failed because the persisted manifest reference was invalid.";
+        item.updatedAt = new Date().toISOString();
+        continue;
+      }
+      const manifest = await readJsonFile(resolvedManifestPath) as AiGraderLocalStationBridgeManifest | undefined;
+      if (!manifest || manifest.sessionId !== item.sessionId || manifest.reportId !== item.reportId) {
+        item.state = "failed";
+        item.error = "Rapid finalization recovery failed because the persisted session identity did not match the queue item.";
+        item.updatedAt = new Date().toISOString();
+        continue;
+      }
+      manifest.rapidCapture ??= {
+        enabled: true,
+        workflowHistory: [],
+        humanConfirmationRequired: true,
+        autoConfirm: false,
+        autoPublish: false,
+      };
+      manifest.rapidCapture.queueItemId = item.queueItemId;
+      this.ensureCaptureTiming(manifest);
+      this.queuedManifests.set(item.queueItemId, manifest);
+      const sideProcessingComplete = (["front", "back"] as const).every((side) =>
+        manifest.warmRunnerStatus?.phases?.some((phase) => phase.id === `process_${side}_artifacts` && phase.status === "completed"),
+      );
+      if (sideProcessingComplete) {
+        this.enqueueRapidFinalization(item.queueItemId);
+        continue;
+      }
+      const message = "Rapid finalization recovery stopped because the bridge restarted before both side-processing packages completed.";
+      if (!manifest.warnings.includes(message)) manifest.warnings.push(message);
+      this.transitionRapidWorkflow(manifest, "failed", message);
+      item.error = message;
+      await writeSessionManifest(manifest);
+    }
+    await this.persistRapidQueue();
+  }
+
+  private async queueCurrentRapidCard() {
+    if (!this.rapidQueue.rapidCaptureEnabled || !this.manifest.rapidCapture.enabled) {
+      throw new Error("Enable Rapid Capture before queueing the current card.");
+    }
+    if (this.captureLock) {
+      throw new Error(`Cannot queue the current card while capture lock is held by ${this.captureLock.owner}.`);
+    }
+    const { sessionId, reportId } = this.manifest;
+    if (!sessionId || !reportId || !this.manifest.outputs.manifestPath) {
+      throw new Error("Rapid Capture queueing requires an active station session and report identity.");
+    }
+    if (!this.manifest.outputs.frontPackageDir || !this.manifest.outputs.backPackageDir) {
+      throw new Error("Rapid Capture queueing requires persisted front and back capture packages.");
+    }
+    if (this.manifest.captureFailure || this.manifest.rapidCapture.workflowState === "failed") {
+      throw new Error("A failed card cannot enter the Rapid Capture ready queue.");
+    }
+    const snapshot = this.manifest;
+    const queueItemId = `${sessionId}-rapid-card`;
+    snapshot.rapidCapture.queueItemId = queueItemId;
+    snapshot.rapidCapture.safelyQueuedAt = new Date().toISOString();
+    this.recordCaptureTimingEvent(snapshot, { id: "safely_queued", at: snapshot.rapidCapture.safelyQueuedAt });
+    this.transitionRapidWorkflow(
+      snapshot,
+      "finalizing",
+      "Both raw side packages are persisted; one serialized worker is completing the report in the background.",
+    );
+    const item: PersistedAiGraderRapidCaptureQueueItem = {
+      queueItemId,
+      sessionId,
+      reportId,
+      state: "finalizing",
+      queuedAt: snapshot.rapidCapture.safelyQueuedAt,
+      updatedAt: snapshot.updatedAt,
+      history: [...snapshot.rapidCapture.workflowHistory],
+      humanConfirmationRequired: true,
+      autoConfirmed: false,
+      autoPublished: false,
+      manifestPath: snapshot.outputs.manifestPath!,
+    };
+    this.rapidQueue.items = retainAiGraderRapidCaptureQueueItems([
+      item,
+      ...this.rapidQueue.items.filter((candidate) => candidate.queueItemId !== queueItemId),
+    ]);
+    this.queuedManifests.set(queueItemId, snapshot);
+    await writeSessionManifest(snapshot);
+    await this.persistRapidQueue();
+    this.enqueueRapidFinalization(queueItemId);
+    await this.createFreshSession(
+      { captureProfile: snapshot.captureProfile },
+      new Date().toISOString(),
+      "rapid_continuation",
+    );
+  }
+
+  private async activateRapidQueueItem(queueItemId: string) {
+    if (!queueItemId.trim()) throw new Error("Rapid Capture queue item ID is required.");
+    if (this.captureLock) throw new Error(`Cannot activate a queued card while capture lock is held by ${this.captureLock.owner}.`);
+    if (
+      this.previewProcess
+      || this.previewStop
+      || this.manifest.previewStatus.status === "live"
+      || this.manifest.previewStatus.status === "starting"
+      || this.manifest.previewStatus.cameraOwnership === "preview_stream"
+    ) {
+      await this.stopPreviewStream("Rapid Capture review activation", {
+        waitForRelease: true,
+        requireRelease: true,
+        settleMs: PREVIEW_CAMERA_SETTLE_MS,
+      });
+    }
+    if (this.manifest.outputs.frontPackageDir || this.manifest.outputs.backPackageDir) {
+      throw new Error("Queue the active card before opening a completed Rapid Capture report.");
+    }
+    const freshSessionProgressed = Boolean(this.manifest.sessionId) && (
+      this.manifest.currentStep !== "capture_front"
+      || this.manifest.commandResults.length > 0
+      || this.manifest.rapidCapture.workflowHistory.length > 0
+    );
+    if (freshSessionProgressed) {
+      throw new Error("The next card has already started; finish or reset it before opening a queued report.");
+    }
+    const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item) throw new Error(`Rapid Capture queue item ${queueItemId} was not found.`);
+    if (!["report_ready_needs_confirm", "confirmed_needs_publish", "published"].includes(item.state)) {
+      throw new Error(`Rapid Capture queue item ${queueItemId} is not ready for review (state ${item.state}).`);
+    }
+    let manifest = this.queuedManifests.get(queueItemId);
+    if (!manifest) manifest = await readJsonFile(item.manifestPath) as AiGraderLocalStationBridgeManifest | undefined;
+    if (!manifest || manifest.sessionId !== item.sessionId || manifest.reportId !== item.reportId) {
+      throw new Error(`Rapid Capture queue item ${queueItemId} has no matching persisted session manifest.`);
+    }
+    if (this.manifest.sessionId) await this.releaseStationRuntimeForReplacement("Rapid Capture review activation");
+    this.manifest = cloneManifest(manifest);
+    this.releaseFullForensicPreviewHold("Rapid Capture report opened for Approve & Publish");
+    this.manifest.rapidCapture.enabled = this.rapidQueue.rapidCaptureEnabled;
+    this.manifest.rapidCapture.queueItemId = queueItemId;
+    this.activeQueueItemId = queueItemId;
+    this.queuedManifests.set(queueItemId, this.manifest);
+    this.manifest.progressLog.push(`${new Date().toISOString()} Opened Rapid Capture report for the single Approve & Publish authority.`);
+    await writeSessionManifest(this.manifest);
+  }
+
   private async releaseStationRuntimeForReplacement(reason: string) {
     let previewError: unknown;
     let safeOffError: unknown;
@@ -4094,12 +4503,14 @@ export class AiGraderLocalStationBridgeService {
     }
     if (this.manifest.sessionId) {
       let processingError: Error | undefined;
-      try {
-        await this.cancelWarmProcessingSession(this.manifest.sessionId, "station session replacement");
-      } catch (error) {
-        processingError = new Error(boundedProcessingWorkerError(error));
-        this.manifest.warmRunnerStatus.status = "failed";
-        if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
+      if (selectionSource !== "rapid_continuation") {
+        try {
+          await this.cancelWarmProcessingSession(this.manifest.sessionId, "station session replacement");
+        } catch (error) {
+          processingError = new Error(boundedProcessingWorkerError(error));
+          this.manifest.warmRunnerStatus.status = "failed";
+          if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
+        }
       }
       let runtimeError: Error | undefined;
       try {
@@ -4115,7 +4526,7 @@ export class AiGraderLocalStationBridgeService {
     const { packageId, packageDir } = await createFixedRigPackageDir(this.config.outputDir, "ai-grader-browser-station-session");
     this.releaseFullForensicPreviewHold("new station session started");
     this.clearLiveLightingWatchdog();
-    const manifest = newManifest(this.config, now);
+    const manifest = newManifest(this.config, this.rapidQueue.rapidCaptureEnabled, now);
     manifest.captureProfile = parseCaptureProfile(request.captureProfile);
     manifest.captureProfileGuard.selectionSource = selectionSource;
     manifest.captureProfileGuard.productionFastOptIn = request.captureProfile === "production_fast";
@@ -4138,6 +4549,7 @@ export class AiGraderLocalStationBridgeService {
     this.frontCaptureInFlightKey = undefined;
     this.backCaptureOperations.clear();
     this.backCaptureInFlightKey = undefined;
+    this.activeQueueItemId = undefined;
     this.resetPreviewGeometryAnalysis();
     this.setExecutionPath("warm_full_forensic_runner", undefined, manifest);
     this.markWarmPhase({
@@ -6815,6 +7227,23 @@ export class AiGraderLocalStationBridgeService {
     const now = new Date().toISOString();
     this.manifest.updatedAt = now;
 
+    if (action === "configure-rapid-capture") {
+      if (typeof request.rapidCaptureEnabled !== "boolean") {
+        throw new Error("Rapid Capture configuration requires rapidCaptureEnabled true or false.");
+      }
+      this.rapidQueue.rapidCaptureEnabled = request.rapidCaptureEnabled;
+      this.manifest.rapidCapture.enabled = request.rapidCaptureEnabled;
+      this.manifest.progressLog.push(`${now} Rapid Capture ${request.rapidCaptureEnabled ? "enabled" : "disabled"}; Capture Back queues work and Approve & Publish remains the only publication authority.`);
+      await writeSessionManifest(this.manifest);
+      await this.persistRapidQueue();
+      return this.status();
+    }
+
+    if (action === "activate-queue-item") {
+      await this.activateRapidQueueItem(request.queueItemId ?? "");
+      return this.status();
+    }
+
     if (action === "start-session") {
       if (!request.captureProfile) {
         throw new Error("AI Grader start-session requires an explicit captureProfile of full_forensic or production_fast.");
@@ -6826,6 +7255,11 @@ export class AiGraderLocalStationBridgeService {
 
     if (!this.manifest.sessionId) {
       throw new Error("Start a station session before running AI Grader station actions.");
+    }
+
+    if (action === "queue-current-card") {
+      await this.queueCurrentRapidCard();
+      return this.status();
     }
 
     if (
@@ -6924,6 +7358,10 @@ export class AiGraderLocalStationBridgeService {
         this.manifest.currentStep = "label_data_ready";
       }
       this.manifest.progressLog.push(`${now} ${actionLabel(action)} completed with status ${release.reportStatus}.`);
+      if (this.activeQueueItemId && action === "publish-report") {
+        this.transitionRapidWorkflow(this.manifest, "published", "Approve & Publish completed for this queued report.");
+        await this.syncQueuedManifest(this.manifest);
+      }
       await writeSessionManifest(this.manifest);
       return this.status();
     }
@@ -6947,6 +7385,9 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
     "cancel-session",
     "latest-report",
     "session-manifest",
+    "configure-rapid-capture",
+    "queue-current-card",
+    "activate-queue-item",
   ].includes(value);
 }
 

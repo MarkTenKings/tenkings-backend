@@ -9,13 +9,13 @@ The Dell capture helper is the only local owner of the Basler/Pylon camera and L
 3. Flip the card and **Capture Back**
 4. **Approve & Publish**
 
-There are no routine safety/recovery clicks, fixture/ruler confirmations, per-card lighting-profile acceptance steps, flip confirmations, manual capture paths, or separate Confirm/Publish/Inventory screens. The browser does not own physical shutdown and does not maintain a shadow hardware-safety state.
+There are no routine safety/recovery clicks, fixture/ruler confirmations, per-card lighting-profile acceptance steps, flip confirmations, manual capture paths, or separate Confirm and Publish screens. **Add To Inventory** is intentionally retained as a later Finish business action after NFC/slab/valuation/label readiness; it is outside grading. The browser does not own physical shutdown and does not maintain a shadow hardware-safety state.
 
 ## Retained physical invariants
 
 The bridge retains only these physical controls:
 
-- Leimac commands are fixed, allowlisted, bounded to the controller range, and require exact controller acknowledgements. The former fixed 5% ceiling is removed.
+- Leimac commands are fixed, allowlisted, bounded to the controller range, and require exact controller acknowledgements. The former fixed 5% ceiling is removed. A duty-requiring operation must receive an explicit duty or use the already-selected production lighting profile; omitted duty never means maximum brightness.
 - One bridge-owned lighting watchdog owns fatal-failure protection.
 - The bridge automatically sends its existing bounded all-off sequence only on fatal bridge failure, cancellation, or completed session.
 - One capture lock and one serialized hardware-operation gate prevent overlapping capture/lighting work.
@@ -28,7 +28,9 @@ An incomplete controller acknowledgement is reported truthfully as a command fai
 
 Every capture binds the exact station session, report, card, side, preview epoch, and frame identity. The bridge rejects crossed identities, stale frames, duplicate frames, wrong-side frames, and non-current geometry. Failed automatic geometry has no manual or fixture fallback.
 
-The browser submits only an exact match assertion. The bridge owns the current frame and capture authority, acquires the capture lock, serializes the operation, and uses the single Basler/Pylon implementation. There is no cold/debug production capture, warm-to-cold recovery, alternate capture implementation, rapid queue, manual overlay, browser cleanup owner, compatibility flip route, or broad reconnect/retry ladder.
+The browser submits only an exact match assertion. The bridge owns the current frame and capture authority, acquires the capture lock, serializes the operation, and uses the single Basler/Pylon implementation. There is no cold/debug production capture, warm-to-cold recovery, alternate capture implementation, manual overlay, browser cleanup owner, compatibility flip route, or broad reconnect/retry ladder.
+
+Rapid Capture is the retained production throughput path, not a capture alternative. The operator still performs the same four actions for every card. After **Capture Back**, the bridge durably detaches the exact session/report manifest and front/back packages, records the queue item, runs report generation through one serialized background worker, and starts a clean next-card session without cancelling the detached card's processing. A completed queue item may be opened only for the same **Approve & Publish** authority. Queue status exposes no local manifest path; automatic shutter triggering and automatic publication remain absent.
 
 Front and back immutable evidence, normalized derivatives, checksums, findings, and report identity stay linked to the same session and report. **Approve & Publish** is the one human publication authority. Durable card/report/label/inventory persistence executes atomically; partial publication is not permitted. Existing Label V1 authority remains unchanged.
 
@@ -54,7 +56,7 @@ The full-resolution captured-evidence detector remains isolated in its bounded w
 
 ## Lighting behavior
 
-The bridge uses the reviewed Basler Line2/Leimac command definitions and exact response validation. PWM conversion remains bounded to the controller's `0..999` step range (`0..99.9%`). It does not silently substitute a different controller, channel set, camera, or lighting profile.
+The bridge uses the reviewed Basler Line2/Leimac command definitions and exact response validation. PWM conversion remains bounded to the controller's `0..999` step range (`0..99.9%`). Values at zero and the valid maximum are accepted only when explicit (or already selected in the production profile). Missing duty is rejected rather than silently becoming `99.9%`. The bridge does not silently substitute a different controller, channel set, camera, or lighting profile.
 
 The automatic all-off sequence is bridge-owned and limited to fatal bridge failure, cancellation, and completed session. Page close, preview loss, and capture start do not independently command Safe Off. There is no manual Safe Off / End Session control or separate final-light confirmation.
 

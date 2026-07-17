@@ -13,6 +13,7 @@ const {
   composeLeimacIdmuReadCommand,
   composeLeimacIdmuUnsafeWriteCommandForTest,
   normalizeLeimacIdmuDiagnosticReadFrame,
+  normalizeLeimacIdmuDutyPercent,
   normalizeLeimacIdmuHost,
   normalizeLeimacIdmuPort,
 } = require("../dist/drivers/leimacIdmuClient");
@@ -351,6 +352,20 @@ test("Leimac trigger profile permits bounded duty above five percent but rejects
   const cli = await runCli(["leimac-idmu-trigger-profile", "--duty", "100"]);
   assert.equal(cli.code, 1);
   assert.match(cli.stderr.error, /99\.9|range|maximum/i);
+});
+
+test("Leimac duty is explicit and accepts the complete controller range without a maximum default", () => {
+  assert.throws(
+    () => normalizeLeimacIdmuDutyPercent(undefined),
+    (error) => error?.code === "LEIMAC_IDMU_DUTY_REQUIRED" && /must be explicit/.test(error.message),
+  );
+  assert.throws(
+    () => normalizeLeimacIdmuDutyPercent(""),
+    (error) => error?.code === "LEIMAC_IDMU_DUTY_REQUIRED",
+  );
+  assert.equal(normalizeLeimacIdmuDutyPercent(0), 0);
+  assert.equal(normalizeLeimacIdmuDutyPercent("99.9"), 99.9);
+  assert.throws(() => normalizeLeimacIdmuDutyPercent(100), /must not exceed/);
 });
 
 test("Leimac trigger profile readbacks use only manual-derived read frames", async () => {

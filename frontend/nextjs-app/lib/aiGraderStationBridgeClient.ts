@@ -39,6 +39,8 @@ export type AiGraderStationBridgeActionRequestBody = {
   expectedSide?: "front" | "back";
   expectedSideEpoch?: string;
   expectedFrameId?: string;
+  rapidCaptureEnabled?: boolean;
+  queueItemId?: string;
 };
 
 export function buildAiGraderCaptureProfileRequest(captureProfile: AiGraderCaptureProfile) {
@@ -53,6 +55,18 @@ export function buildAiGraderDetectedGeometryCaptureRequest(input: {
     ...input,
     geometryCaptureMode: "detected_geometry" as const,
   } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderRapidCaptureConfigurationRequest(rapidCaptureEnabled: boolean) {
+  return { rapidCaptureEnabled } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderRapidQueueActivationRequest(queueItemId: string) {
+  const normalized = queueItemId.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(normalized)) {
+    throw new Error("Rapid Capture queue item ID is invalid.");
+  }
+  return { queueItemId: normalized } satisfies AiGraderStationBridgeActionRequestBody;
 }
 
 export type AiGraderStationBridgeHealth = {
