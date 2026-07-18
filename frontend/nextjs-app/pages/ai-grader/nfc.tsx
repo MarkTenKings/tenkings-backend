@@ -351,7 +351,7 @@ export default function AiGraderNfcProgrammingPage() {
     setPhase("ready");
     setMessage(
       hasStoredAttempt
-        ? "A current hosted attempt is available. Use Retry Current Attempt; no second attempt will be allocated."
+        ? "A current hosted attempt is reserved. Do not start another tag. If the tag failed or its outcome is uncertain, quarantine that exact tag and have an administrator revoke the current NFC link before programming an authorized replacement."
         : selectedProfile === "FEIJU_F8215_GOTOTAGS_MANUAL_START"
           ? "Keep the tag off the reader. Prepare the exact F8215 job first."
           : "Place one blank NTAG215 on the reader, then program the registered report link.",
@@ -638,6 +638,9 @@ export default function AiGraderNfcProgrammingPage() {
 
   const replace = async () => {
     try {
+      if (hosted?.status !== "revoked") {
+        throw new Error("Revoke the current NFC link before programming an authorized replacement.");
+      }
       if (!selectedProfileReady) {
         throw new Error(selectedFeiju ? "The F8215 workstation adapter is not ready." : "NFC programming is not fully configured.");
       }
@@ -710,6 +713,7 @@ export default function AiGraderNfcProgrammingPage() {
       setPending(null);
       setReason("");
       setRevocationRequest(null);
+      setReplacementRequest(null);
       await refresh();
     } catch (error) {
       setPhase("error");
@@ -906,7 +910,7 @@ export default function AiGraderNfcProgrammingPage() {
         {hosted?.canAdmin && hosted.publicTagId && hosted.status !== "missing" ? (
           <section className="admin-actions">
             <label>Required audit reason<input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={240} /></label>
-            {programmingReady ? <button type="button" className="secondary" onClick={() => void replace()}>{hosted.status === "revoked" ? "Program authorized replacement" : "Revoke and program replacement"}</button> : null}
+            {programmingReady && hosted.status === "revoked" ? <button type="button" className="secondary" onClick={() => void replace()}>Program authorized replacement</button> : null}
             {hosted.status !== "revoked" ? <button type="button" className="danger-button" onClick={() => void revoke()}>Revoke NFC link</button> : null}
           </section>
         ) : null}

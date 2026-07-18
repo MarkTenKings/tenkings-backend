@@ -335,12 +335,18 @@ static Task TestGoToTagsCallback()
     Throws("gototags_readback_mismatch", () => GoToTagsCallbackParser.Parse(wrongUrl, correlation, Url));
     var unlocked = GoToTagsCallback(correlation, Url, locked: false);
     Throws("gototags_lock_missing", () => GoToTagsCallbackParser.Parse(unlocked, correlation, Url));
+    var wrongChip = GoToTagsCallback(correlation, Url, chipType: "FM11NT041");
+    Throws("gototags_chip_mismatch", () => GoToTagsCallbackParser.Parse(wrongChip, correlation, Url));
+    Equal(
+        "I removed and quarantined the exact NFC tag used for this F8215 attempt.",
+        NfcProtocol.FeijuQuarantineConfirmation);
     True(callbackText.Contains("04112233445566", StringComparison.Ordinal));
     CryptographicOperations.ZeroMemory(body);
     CryptographicOperations.ZeroMemory(observedVersionBody);
     CryptographicOperations.ZeroMemory(wrongVersionBody);
     CryptographicOperations.ZeroMemory(wrongUrl);
     CryptographicOperations.ZeroMemory(unlocked);
+    CryptographicOperations.ZeroMemory(wrongChip);
     return Task.CompletedTask;
 }
 
@@ -385,6 +391,8 @@ static Task TestF8215JobLifecycle()
         Equal("awaiting_manual_start", prepared.Phase);
         True(gate.Busy);
         Equal(runtime.LaunchedPath, runtime.LaunchedPath is null ? null : Path.GetFullPath(runtime.LaunchedPath));
+        AssertProtectedLeaf(Path.Combine(root, "active-job.json"));
+        AssertProtectedLeaf(runtime.LaunchedPath!);
         var repeated = coordinator.Prepare(request, "prepare_repeated");
         Equal("awaiting_manual_start", repeated.Phase);
         Throws("gototags_job_conflict", () => coordinator.Prepare(
@@ -412,6 +420,7 @@ static Task TestF8215JobLifecycle()
         Equal(NfcProtocol.MultiProfileAttestationSchemaVersion, status.Evidence.OperationalAttestation.SchemaVersion);
         False(File.Exists(runtime.LaunchedPath));
         True(File.Exists(Path.Combine(root, "active-job.json")));
+        AssertProtectedLeaf(Path.Combine(root, "active-job.json"));
         Throws("gototags_callback_replayed", () => coordinator.AcceptCallback(callbackIdentity, GoToTagsCallback(correlation, Url), "callback_replay"));
         var acknowledged = coordinator.Acknowledge(new F8215OperationAcknowledgeRequest(request.AttemptId), "ack_test");
         True(acknowledged.Cleaned);
@@ -501,9 +510,10 @@ static Task TestF8215RestartRecovery()
         var resolution = F8215JobCoordinator.ResolveAbandonedJob(
             root,
             request.AttemptId,
-            NfcProtocol.FeijuQuarantineConfirmation);
+            NfcProtocol.FeijuInstalledResolverCompatibilityToken);
         Equal("quarantined_abandoned_job_resolved", resolution.Resolution);
         False(resolution.EncodingSuccessClaimed);
+        AssertProtectedLeaf(Path.Combine(root, "abandoned-job-audit.jsonl"));
     }
     finally
     {
@@ -555,18 +565,29 @@ static Task TestF8215QuarantineRecovery()
         var generated = ReadGeneratedOperation(runtime.LaunchedPath!);
         var integrationUrl = generated["integrations"]!.AsArray()[0]!["urlString"]!.GetValue<string>();
         var callbackIdentity = new Uri(integrationUrl).AbsolutePath.Split('/').Last();
-        var wrongCallback = GoToTagsCallback("wrong_correlation_for_quarantine", Url);
+        var correlation = generated["tags"]!.AsArray()[0]!["encoding"]!["correlationId"]!.GetValue<string>();
+        AssertProtectedLeaf(Path.Combine(root, "active-job.json"));
+        AssertProtectedLeaf(runtime.LaunchedPath!);
+        var wrongCallback = GoToTagsCallback(correlation, Url, chipType: "FM11NT041");
         try
         {
-            Throws("gototags_correlation_mismatch", () => first.AcceptCallback(callbackIdentity, wrongCallback, "rejected_callback"));
+            Throws("gototags_chip_mismatch", () => first.AcceptCallback(callbackIdentity, wrongCallback, "rejected_wrong_chip_callback"));
         }
         finally
         {
             CryptographicOperations.ZeroMemory(wrongCallback);
         }
         True(File.Exists(Path.Combine(root, "active-job.json")));
+        var rejectedState = JsonNode.Parse(File.ReadAllBytes(Path.Combine(root, "active-job.json")))!.AsObject();
+        True(rejectedState["evidence"] is null);
+        True(rejectedState["callbackBodySha256"] is null);
+        False(rejectedState.ToJsonString().Contains("FM11NT041", StringComparison.Ordinal));
+        False(rejectedState.ToJsonString().Contains("signature", StringComparison.OrdinalIgnoreCase));
+        AssertProtectedLeaf(Path.Combine(root, "active-job.json"));
+        AssertProtectedLeaf(runtime.LaunchedPath!);
         clock.Advance(TimeSpan.FromMinutes(6));
         Equal("uncertain", first.Status(new F8215OperationStatusRequest(request.AttemptId)).Phase);
+        AssertProtectedLeaf(Path.Combine(root, "active-job.json"));
 
         using var restartGate = new NfcOperationGate();
         var restarted = new F8215JobCoordinator(
@@ -583,7 +604,7 @@ static Task TestF8215QuarantineRecovery()
         Throws("gototags_job_mismatch", () => F8215JobCoordinator.ResolveAbandonedJob(
             root,
             "nfc_attempt_" + new string('R', 43),
-            NfcProtocol.FeijuQuarantineConfirmation,
+            NfcProtocol.FeijuInstalledResolverCompatibilityToken,
             clock));
         Throws("gototags_quarantine_confirmation_required", () => F8215JobCoordinator.ResolveAbandonedJob(
             root,
@@ -591,11 +612,17 @@ static Task TestF8215QuarantineRecovery()
             "tag removed",
             clock));
         True(File.Exists(Path.Combine(root, "active-job.json")));
+        Throws("gototags_quarantine_confirmation_required", () => F8215JobCoordinator.ResolveAbandonedJob(
+            root,
+            request.AttemptId,
+            NfcProtocol.FeijuQuarantineConfirmation,
+            clock));
+        True(File.Exists(Path.Combine(root, "active-job.json")));
 
         var resolution = F8215JobCoordinator.ResolveAbandonedJob(
             root,
             request.AttemptId,
-            NfcProtocol.FeijuQuarantineConfirmation,
+            NfcProtocol.FeijuInstalledResolverCompatibilityToken,
             clock);
         Equal("uncertain", resolution.PriorPhase);
         Equal("quarantined_abandoned_job_resolved", resolution.Resolution);
@@ -606,6 +633,9 @@ static Task TestF8215QuarantineRecovery()
         var audit = File.ReadAllText(Path.Combine(root, "abandoned-job-audit.jsonl"));
         True(audit.Contains("removed_and_quarantined", StringComparison.Ordinal));
         False(audit.Contains(request.AttemptId, StringComparison.Ordinal));
+        False(audit.Contains(NfcProtocol.FeijuQuarantineConfirmation, StringComparison.Ordinal));
+        False(audit.Contains(NfcProtocol.FeijuInstalledResolverCompatibilityToken, StringComparison.Ordinal));
+        AssertProtectedLeaf(Path.Combine(root, "abandoned-job-audit.jsonl"));
 
         using var nextGate = new NfcOperationGate();
         var nextRuntime = new FakeGoToTagsRuntime();
@@ -628,6 +658,8 @@ static Task TestF8215QuarantineRecovery()
         };
         Equal("awaiting_manual_start", next.Prepare(nextRequest, "prepare_after_quarantine").Phase);
         True(nextGate.Busy);
+        AssertProtectedLeaf(Path.Combine(root, "active-job.json"));
+        AssertProtectedLeaf(nextRuntime.LaunchedPath!);
     }
     finally
     {
@@ -1336,7 +1368,9 @@ static byte[] GoToTagsCallback(
     string encodedUrl,
     string? readbackUrl = null,
     bool locked = true,
-    string? appVersion = null)
+    string? appVersion = null,
+    string chipType = "F8215",
+    string manufacturer = "FEIJU")
 {
     var record = new JsonObject { ["type"] = "WEBSITE", ["url"] = encodedUrl };
     var readback = new JsonObject { ["type"] = "WEBSITE", ["url"] = readbackUrl ?? encodedUrl };
@@ -1361,8 +1395,8 @@ static byte[] GoToTagsCallback(
         },
         ["tag"] = new JsonObject
         {
-            ["manufacturer"] = "FEIJU",
-            ["chipType"] = "F8215",
+            ["manufacturer"] = manufacturer,
+            ["chipType"] = chipType,
             ["tagType"] = "TYPE_2",
             ["tech"] = "TYPE2",
             ["technology"] = "NFC",
@@ -1403,6 +1437,31 @@ static string CreateProtectedTestDirectory()
     }
     new DirectoryInfo(path).SetAccessControl(security);
     return path;
+}
+
+static void AssertProtectedLeaf(string path)
+{
+    var info = new FileInfo(path);
+    True(info.Exists);
+    False(info.Attributes.HasFlag(FileAttributes.ReparsePoint));
+    var security = info.GetAccessControl(AccessControlSections.Access);
+    True(security.AreAccessRulesProtected);
+    var allowed = new HashSet<string>(StringComparer.Ordinal)
+    {
+        (WindowsIdentity.GetCurrent().User ?? throw new Exception("Current Windows identity unavailable.")).Value,
+        new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null).Value,
+        new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Value,
+    };
+    var fullControl = new HashSet<string>(StringComparer.Ordinal);
+    foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+    {
+        True(rule.AccessControlType == AccessControlType.Allow);
+        True(allowed.Contains(rule.IdentityReference.Value));
+        False(rule.IsInherited);
+        if ((rule.FileSystemRights & FileSystemRights.FullControl) == FileSystemRights.FullControl)
+            fullControl.Add(rule.IdentityReference.Value);
+    }
+    True(allowed.SetEquals(fullControl));
 }
 
 static JsonObject ReadGeneratedOperation(string path)

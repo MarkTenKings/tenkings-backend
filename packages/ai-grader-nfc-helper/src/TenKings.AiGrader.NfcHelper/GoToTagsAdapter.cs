@@ -147,6 +147,17 @@ public sealed class WindowsGoToTagsAdapterRuntime : IGoToTagsAdapterRuntime
 
 internal static class ProtectedJobDirectory
 {
+    private static IReadOnlyList<SecurityIdentifier> AllowedIdentities()
+    {
+        var current = WindowsIdentity.GetCurrent().User ?? throw Invalid();
+        return
+        [
+            current,
+            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+        ];
+    }
+
     public static void Assert(string root)
     {
         var info = new DirectoryInfo(root);
@@ -154,13 +165,7 @@ internal static class ProtectedJobDirectory
         if (!OperatingSystem.IsWindows()) throw Invalid();
         var security = info.GetAccessControl(AccessControlSections.Access);
         if (!security.AreAccessRulesProtected) throw Invalid();
-        var current = WindowsIdentity.GetCurrent().User?.Value ?? string.Empty;
-        var allowed = new HashSet<string>(StringComparer.Ordinal)
-        {
-            current,
-            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null).Value,
-            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Value,
-        };
+        var allowed = AllowedIdentities().Select(identity => identity.Value).ToHashSet(StringComparer.Ordinal);
         foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
         {
             if (rule.AccessControlType != AccessControlType.Allow || !allowed.Contains(rule.IdentityReference.Value))
@@ -175,6 +180,62 @@ internal static class ProtectedJobDirectory
         var path = Path.GetFullPath(Path.Combine(canonicalRoot, name));
         if (!path.StartsWith(canonicalRoot, StringComparison.OrdinalIgnoreCase)) throw Invalid();
         return path;
+    }
+
+    public static void ProtectContainedLeaf(string root, string path)
+    {
+        Assert(root);
+        var leaf = RequireContainedLeaf(root, path);
+        var inherited = leaf.GetAccessControl(AccessControlSections.Access);
+        AssertAllowedLeafRules(inherited, allowInheritance: true);
+
+        var protectedSecurity = new FileSecurity();
+        protectedSecurity.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        foreach (var identity in AllowedIdentities())
+        {
+            protectedSecurity.AddAccessRule(new FileSystemAccessRule(
+                identity,
+                FileSystemRights.FullControl,
+                InheritanceFlags.None,
+                PropagationFlags.None,
+                AccessControlType.Allow));
+        }
+        leaf.SetAccessControl(protectedSecurity);
+        AssertProtectedContainedLeaf(root, path);
+    }
+
+    public static void AssertProtectedContainedLeaf(string root, string path)
+    {
+        Assert(root);
+        var leaf = RequireContainedLeaf(root, path);
+        AssertAllowedLeafRules(leaf.GetAccessControl(AccessControlSections.Access), allowInheritance: false);
+    }
+
+    private static FileInfo RequireContainedLeaf(string root, string path)
+    {
+        if (!OperatingSystem.IsWindows()) throw Invalid();
+        var fullPath = Path.GetFullPath(path);
+        var contained = ContainedFile(root, Path.GetFileName(fullPath));
+        if (!string.Equals(fullPath, contained, StringComparison.OrdinalIgnoreCase)) throw Invalid();
+        var leaf = new FileInfo(contained);
+        if (!leaf.Exists || leaf.Attributes.HasFlag(FileAttributes.ReparsePoint)) throw Invalid();
+        return leaf;
+    }
+
+    private static void AssertAllowedLeafRules(FileSecurity security, bool allowInheritance)
+    {
+        if (!allowInheritance && !security.AreAccessRulesProtected) throw Invalid();
+        var required = AllowedIdentities().Select(identity => identity.Value).ToHashSet(StringComparer.Ordinal);
+        var fullControl = new HashSet<string>(StringComparer.Ordinal);
+        foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+        {
+            if (rule.AccessControlType != AccessControlType.Allow || !required.Contains(rule.IdentityReference.Value))
+                throw Invalid();
+            if (!allowInheritance && rule.IsInherited) throw Invalid();
+            if ((rule.FileSystemRights & FileSystemRights.FullControl) == FileSystemRights.FullControl)
+                fullControl.Add(rule.IdentityReference.Value);
+        }
+        if (!required.SetEquals(fullControl)) throw Invalid();
     }
 
     private static NfcHelperException Invalid() =>
@@ -241,6 +302,7 @@ public sealed class GoToTagsOperationFactory
         {
             CryptographicOperations.ZeroMemory(bytes);
         }
+        ProtectedJobDirectory.ProtectContainedLeaf(options.JobRoot, operationPath);
         return operationPath;
     }
 

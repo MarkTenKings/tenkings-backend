@@ -80,6 +80,104 @@ try {
   } "Active recovery state did not keep the operation gate closed."
   Remove-Item -LiteralPath (Join-Path $recoveryRoot "active-job.json") -Force
 
+  # Reproduce the legacy v3 defect: the protected job directory is explicit,
+  # but helper-created state/operation/audit leaves inherit that exact DACL.
+  $legacyRecoveryRoot = Join-Path $testRoot "legacy-recovery"
+  New-Item -ItemType Directory -Path $legacyRecoveryRoot | Out-Null
+  Protect-NfcPath -Path $legacyRecoveryRoot -AllowedRoot $testRoot
+  $legacyAttemptId = "nfc_attempt_$('A' * 43)"
+  $legacyPublicTagId = "P" * 32
+  $legacyOperationName = "f8215-$('O' * 22).gototags"
+  $legacyState = [ordered]@{
+    attemptId = $legacyAttemptId
+    requestDigest = "a" * 64
+    publicTagId = $legacyPublicTagId
+    attestationChallenge = "C" * 43
+    url = "https://collect.tenkings.co/nfc/$legacyPublicTagId"
+    attemptExpiresAt = "2026-07-18T12:00:00.0000000Z"
+    callbackIdentity = "B" * 43
+    correlationId = "R" * 43
+    operationFileName = $legacyOperationName
+    phase = "awaiting_manual_start"
+    retryable = $false
+    errorCode = $null
+    callbackBodySha256 = $null
+    evidence = $null
+    createdAt = "2026-07-18T11:00:00.0000000Z"
+    updatedAt = "2026-07-18T11:00:00.0000000Z"
+  }
+  $legacyState | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $legacyRecoveryRoot "active-job.json") -Encoding UTF8
+  Set-Content -LiteralPath (Join-Path $legacyRecoveryRoot $legacyOperationName) -Value "bounded-operation" -Encoding ASCII
+  $legacyAudit = [ordered]@{
+    schemaVersion = "tenkings-ai-grader-nfc-abandoned-resolution-v1"
+    attemptFingerprintSha256 = "d" * 64
+    priorPhase = "uncertain"
+    errorCode = "gototags_helper_restarted"
+    physicalTagDisposition = "removed_and_quarantined"
+    action = "quarantine_resolution_authorized"
+    encodingSuccessClaimed = $false
+    resolvedAt = "2026-07-18T11:30:00.0000000Z"
+  }
+  $legacyAudit | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $legacyRecoveryRoot "abandoned-job-audit.jsonl") -Encoding UTF8
+  Assert-Throws {
+    Assert-NfcProtectedTree -Path $legacyRecoveryRoot -AllowedRoot $testRoot
+  } "Strict validation accepted inherited legacy recovery leaves."
+  Assert-NfcProtectedTree -Path $legacyRecoveryRoot -AllowedRoot $testRoot -AllowInheritedLeafFiles
+  $validatedLegacy = Get-NfcValidatedF8215RecoveryState `
+    -AttemptId $legacyAttemptId `
+    -JobRoot $legacyRecoveryRoot `
+    -AllowedRoot $testRoot `
+    -AllowInheritedLeafFiles
+  Assert-True ($validatedLegacy.Phase -ceq "awaiting_manual_start") "The exact legacy attempt was not validated."
+  Assert-Throws {
+    Get-NfcValidatedF8215RecoveryState `
+      -AttemptId "nfc_attempt_$('Z' * 43)" `
+      -JobRoot $legacyRecoveryRoot `
+      -AllowedRoot $testRoot `
+      -AllowInheritedLeafFiles
+  } "A mismatched hosted attempt was accepted for legacy recovery."
+  Set-Content -LiteralPath (Join-Path $legacyRecoveryRoot "unexpected.txt") -Value "unexpected" -Encoding ASCII
+  Assert-Throws {
+    Get-NfcValidatedF8215RecoveryState `
+      -AttemptId $legacyAttemptId `
+      -JobRoot $legacyRecoveryRoot `
+      -AllowedRoot $testRoot `
+      -AllowInheritedLeafFiles
+  } "An unexpected recovery artifact was accepted."
+  Remove-Item -LiteralPath (Join-Path $legacyRecoveryRoot "unexpected.txt") -Force
+  Protect-NfcValidatedF8215RecoveryArtifacts -Recovery $validatedLegacy -AllowedRoot $testRoot
+  Assert-NfcProtectedTree -Path $legacyRecoveryRoot -AllowedRoot $testRoot
+
+  $inheritedDirectoryRoot = Join-Path $testRoot "inherited-directory-rejected"
+  New-Item -ItemType Directory -Path $inheritedDirectoryRoot | Out-Null
+  Protect-NfcPath -Path $inheritedDirectoryRoot -AllowedRoot $testRoot
+  New-Item -ItemType Directory -Path (Join-Path $inheritedDirectoryRoot "unexpected-directory") | Out-Null
+  Assert-Throws {
+    Assert-NfcProtectedTree `
+      -Path $inheritedDirectoryRoot `
+      -AllowedRoot $testRoot `
+      -AllowInheritedLeafFiles
+  } "Inherited-directory ACL tolerance was incorrectly accepted."
+
+  $foreignAceRoot = Join-Path $testRoot "foreign-ace-rejected"
+  New-Item -ItemType Directory -Path $foreignAceRoot | Out-Null
+  Protect-NfcPath -Path $foreignAceRoot -AllowedRoot $testRoot
+  $foreignAceLeaf = Join-Path $foreignAceRoot "artifact.txt"
+  Set-Content -LiteralPath $foreignAceLeaf -Value "foreign" -Encoding ASCII
+  $foreignAcl = Get-Acl -LiteralPath $foreignAceLeaf
+  $foreignAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+    (New-Object Security.Principal.SecurityIdentifier("S-1-1-0")),
+    "FullControl",
+    "Allow"
+  ))) | Out-Null
+  Set-Acl -LiteralPath $foreignAceLeaf -AclObject $foreignAcl
+  Assert-Throws {
+    Assert-NfcProtectedTree `
+      -Path $foreignAceRoot `
+      -AllowedRoot $testRoot `
+      -AllowInheritedLeafFiles
+  } "Inherited-leaf tolerance accepted a foreign ACE."
+
   $live = Join-Path $testRoot "live"
   $staged = Join-Path $testRoot "staged"
   $backup = Join-Path $testRoot "backup"
@@ -142,6 +240,7 @@ try {
   $stop = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\stop-ai-grader-nfc-helper.ps1") -Raw
   $uninstall = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\uninstall-ai-grader-nfc-helper.ps1") -Raw
   $resolveAbandoned = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\resolve-ai-grader-nfc-abandoned-job.ps1") -Raw
+  $recoverStuck = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\recover-ai-grader-nfc-f8215-stuck-job.ps1") -Raw
   $publishIndex = $update.IndexOf("& dotnet publish", [StringComparison]::Ordinal)
   $templateCopyIndex = $update.IndexOf("Copy-NfcReviewedGoToTagsTemplate", [StringComparison]::Ordinal)
   $stagedVerifyIndex = $update.IndexOf("Invoke-NfcBuildVerification -DllPath `$stagedDll", [StringComparison]::Ordinal)
@@ -196,11 +295,21 @@ try {
   Assert-True ($configureFeiju.IndexOf('Set-Service', [StringComparison]::OrdinalIgnoreCase) -lt 0) "F8215 configuration can change Windows services."
   Assert-True ($configureFeiju.IndexOf('Start-Service', [StringComparison]::OrdinalIgnoreCase) -lt 0) "F8215 configuration can start Windows services."
   Assert-True ($configureFeiju.IndexOf('feijuF8215Enabled', [StringComparison]::Ordinal) -lt 0) "F8215 configuration still contains a redundant local profile gate."
+  Assert-True ($common.IndexOf('recover-ai-grader-nfc-f8215-stuck-job.ps1', [StringComparison]::Ordinal) -ge 0) "Stable maintenance payload omits legacy stuck-job recovery."
   Assert-True ($common.IndexOf('resolve-ai-grader-nfc-abandoned-job.ps1', [StringComparison]::Ordinal) -ge 0) "Stable maintenance payload omits abandoned-job resolution."
-  Assert-True ($resolveAbandoned.IndexOf('I removed and quarantined the exact F8215 tag for this attempt.', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution lacks exact physical quarantine confirmation."
+  $truthfulQuarantineConfirmation = 'I removed and quarantined the exact NFC tag used for this F8215 attempt.'
+  Assert-True ($resolveAbandoned.IndexOf($truthfulQuarantineConfirmation, [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution lacks truthful physical quarantine confirmation."
+  Assert-True ($recoverStuck.IndexOf($truthfulQuarantineConfirmation, [StringComparison]::Ordinal) -ge 0) "Stuck-job recovery lacks truthful physical quarantine confirmation."
+  Assert-True ($recoverStuck.IndexOf('Start-ScheduledTask', [StringComparison]::Ordinal) -ge 0) "Stuck-job recovery does not perform the bounded restart-to-uncertain transition."
+  Assert-True ($recoverStuck.IndexOf('gototags_helper_restarted', [StringComparison]::Ordinal) -ge 0) "Stuck-job recovery does not require the exact restart uncertainty evidence."
+  Assert-True ($recoverStuck.IndexOf('Get-NfcValidatedF8215RecoveryState', [StringComparison]::Ordinal) -ge 0) "Stuck-job recovery does not validate the exact attempt state."
+  Assert-True ($recoverStuck.IndexOf('Protect-NfcValidatedF8215RecoveryArtifacts', [StringComparison]::Ordinal) -ge 0) "Stuck-job recovery does not protect the exact validated legacy leaves."
+  Assert-True ($recoverStuck.IndexOf('Assert-NfcNoActiveGoToTagsRecovery', [StringComparison]::Ordinal) -ge 0) "Stuck-job recovery does not prove the operation gate artifacts are clear."
+  Assert-True ($recoverStuck.IndexOf('Get-NfcExactGoToTagsProcess', [StringComparison]::Ordinal) -ge 0) "Stuck-job recovery does not require the exact GoToTags executable to be closed."
+  Assert-True ($recoverStuck.IndexOf('CommandLine', [StringComparison]::OrdinalIgnoreCase) -lt 0) "Stuck-job recovery can falsely match unrelated process command lines."
   Assert-True ($resolveAbandoned.IndexOf('Get-NfcHelperProcess', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution does not require the helper process to be stopped."
   Assert-True ($resolveAbandoned.IndexOf('Get-NetTCPConnection', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution does not require the loopback listener to be stopped."
-  Assert-True ($resolveAbandoned.IndexOf('Get-CimInstance Win32_Process', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution does not require GoToTags to be closed."
+  Assert-True ($resolveAbandoned.IndexOf('Get-NfcExactGoToTagsProcess', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution does not require the exact GoToTags executable to be closed."
   Assert-True ($resolveAbandoned.IndexOf('--resolve-abandoned-f8215-job', [StringComparison]::Ordinal) -ge 0) "Abandoned-job resolution does not invoke the bounded helper mode."
 
   $versionedResult = (& (Join-Path $PSScriptRoot "test-ai-grader-nfc-versioned-update.ps1") | Out-String) | ConvertFrom-Json
