@@ -233,7 +233,8 @@ try {
   $update = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\update-ai-grader-nfc-helper.ps1") -Raw
   $export = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\export-ai-grader-nfc-workstation-public-key.ps1") -Raw
   $install = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\install-ai-grader-nfc-helper.ps1") -Raw
-  $open = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\open-ai-grader-nfc-workstation.ps1") -Raw
+  $openScriptPath = Join-Path $repoRoot "scripts\ai-grader-nfc\open-ai-grader-nfc-workstation.ps1"
+  $open = Get-Content -LiteralPath $openScriptPath -Raw
   $rotate = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\rotate-ai-grader-nfc-helper-token.ps1") -Raw
   $configureFeiju = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\configure-ai-grader-nfc-feiju-f8215.ps1") -Raw
   $common = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\ai-grader-nfc-helper-common.ps1") -Raw
@@ -241,6 +242,117 @@ try {
   $uninstall = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\uninstall-ai-grader-nfc-helper.ps1") -Raw
   $resolveAbandoned = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\resolve-ai-grader-nfc-abandoned-job.ps1") -Raw
   $recoverStuck = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\recover-ai-grader-nfc-f8215-stuck-job.ps1") -Raw
+
+  # Execute only the exact launcher functions under synthetic Windows snapshots.
+  # This avoids running the production entry point, task, helper, listener, or Chrome.
+  $openTokens = $null
+  $openParseErrors = $null
+  $openAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $openScriptPath,
+    [ref]$openTokens,
+    [ref]$openParseErrors)
+  Assert-True ($openParseErrors.Count -eq 0) "The NFC launcher did not parse for executable function tests."
+  $launcherFunctionNames = @(
+    "Test-NfcHelperLoopbackListenerReady",
+    "Wait-NfcHelperLoopbackListener",
+    "Invoke-NfcAfterHelperLoopbackListenerReady"
+  )
+  $launcherFunctionAsts = @($openAst.FindAll({
+    param($node)
+    return $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+  }, $true))
+  $launcherFunctionDefinitions = @{}
+  foreach ($functionName in $launcherFunctionNames) {
+    $matches = @($launcherFunctionAsts | Where-Object { $_.Name -ceq $functionName })
+    Assert-True ($matches.Count -eq 1) "The NFC launcher function '$functionName' was missing or ambiguous."
+    $launcherFunctionDefinitions[$functionName] = $matches[0].Extent.Text
+  }
+
+  & {
+    param($definitions)
+    foreach ($definition in $definitions.Values) {
+      Invoke-Expression $definition
+    }
+
+    $testTaskName = "TenKingsAiGraderNfcHelper"
+    $testConfig = [pscustomobject]@{ installDirectory = "C:\TenKings\tools\ai-grader-nfc-helper" }
+    $helperProcess = [pscustomobject]@{ ProcessId = 5010 }
+    $directListener = [pscustomobject]@{ LocalAddress = "127.0.0.1"; LocalPort = 47662; State = "Listen"; OwningProcess = 5010 }
+    $httpSysListener = [pscustomobject]@{ LocalAddress = "127.0.0.1"; LocalPort = 47662; State = "Listen"; OwningProcess = 4 }
+    $currentHelperProcesses = @()
+    $currentListeners = @()
+    $taskDefinitionValid = $true
+
+    function Get-NfcHelperProcess {
+      param($Config)
+      return @($currentHelperProcesses)
+    }
+    function Get-NetTCPConnection {
+      param($LocalAddress, $LocalPort, $State, $ErrorAction)
+      return @($currentListeners)
+    }
+    function Assert-NfcScheduledTaskDefinition {
+      param($TaskName)
+      if (-not $taskDefinitionValid -or $TaskName -cne $testTaskName) {
+        throw "injected invalid Scheduled Task"
+      }
+      return [pscustomobject]@{ TaskName = $TaskName }
+    }
+    function Start-Sleep { param($Milliseconds) }
+
+    $listenerCases = @(
+      [pscustomobject]@{ Name = "exact_helper_owner"; Helpers = @($helperProcess); Listeners = @($directListener); TaskValid = $true; Succeeds = $true },
+      [pscustomobject]@{ Name = "http_sys_owner"; Helpers = @($helperProcess); Listeners = @($httpSysListener); TaskValid = $true; Succeeds = $true },
+      [pscustomobject]@{ Name = "http_sys_without_helper"; Helpers = @(); Listeners = @($httpSysListener); TaskValid = $true; Succeeds = $false },
+      [pscustomobject]@{ Name = "helper_without_listener_timeout"; Helpers = @($helperProcess); Listeners = @(); TaskValid = $true; Succeeds = $false },
+      [pscustomobject]@{ Name = "unexpected_owner"; Helpers = @($helperProcess); Listeners = @([pscustomobject]@{ LocalAddress = "127.0.0.1"; LocalPort = 47662; State = "Listen"; OwningProcess = 7777 }); TaskValid = $true; Succeeds = $false },
+      [pscustomobject]@{ Name = "wrong_address"; Helpers = @($helperProcess); Listeners = @([pscustomobject]@{ LocalAddress = "0.0.0.0"; LocalPort = 47662; State = "Listen"; OwningProcess = 4 }); TaskValid = $true; Succeeds = $false },
+      [pscustomobject]@{ Name = "wrong_port"; Helpers = @($helperProcess); Listeners = @([pscustomobject]@{ LocalAddress = "127.0.0.1"; LocalPort = 47663; State = "Listen"; OwningProcess = 4 }); TaskValid = $true; Succeeds = $false },
+      [pscustomobject]@{ Name = "wrong_state"; Helpers = @($helperProcess); Listeners = @([pscustomobject]@{ LocalAddress = "127.0.0.1"; LocalPort = 47662; State = "Closed"; OwningProcess = 4 }); TaskValid = $true; Succeeds = $false },
+      [pscustomobject]@{ Name = "duplicate_helper"; Helpers = @($helperProcess, [pscustomobject]@{ ProcessId = 5011 }); Listeners = @($httpSysListener); TaskValid = $true; Succeeds = $false },
+      [pscustomobject]@{ Name = "duplicate_listener"; Helpers = @($helperProcess); Listeners = @($httpSysListener, $directListener); TaskValid = $true; Succeeds = $false },
+      [pscustomobject]@{ Name = "invalid_task"; Helpers = @($helperProcess); Listeners = @($httpSysListener); TaskValid = $false; Succeeds = $false },
+      [pscustomobject]@{ Name = "malformed_helper_pid"; Helpers = @([pscustomobject]@{ ProcessId = "not-a-pid" }); Listeners = @($httpSysListener); TaskValid = $true; Succeeds = $false },
+      [pscustomobject]@{ Name = "malformed_listener_port"; Helpers = @($helperProcess); Listeners = @([pscustomobject]@{ LocalAddress = "127.0.0.1"; LocalPort = "not-a-port"; State = "Listen"; OwningProcess = 4 }); TaskValid = $true; Succeeds = $false }
+    )
+    foreach ($case in $listenerCases) {
+      $currentHelperProcesses = @($case.Helpers)
+      $currentListeners = @($case.Listeners)
+      $taskDefinitionValid = [bool]$case.TaskValid
+      if ([bool]$case.Succeeds) {
+        Wait-NfcHelperLoopbackListener -Config $testConfig -TaskName $testTaskName -TimeoutMilliseconds 0
+      } else {
+        Assert-Throws {
+          Wait-NfcHelperLoopbackListener -Config $testConfig -TaskName $testTaskName -TimeoutMilliseconds 0
+        } "Listener scenario '$([string]$case.Name)' did not fail closed."
+      }
+    }
+
+    $launchEvents = [Collections.Generic.List[string]]::new()
+    $listenerReady = $false
+    function Wait-NfcHelperLoopbackListener {
+      param($Config, $TaskName)
+      [void]$launchEvents.Add("wait")
+      if (-not $listenerReady) { throw "injected listener readiness failure" }
+    }
+    Assert-Throws {
+      Invoke-NfcAfterHelperLoopbackListenerReady `
+        -Config $testConfig `
+        -TaskName $testTaskName `
+        -Action { [void]$launchEvents.Add("open") }
+    } "Injected listener-readiness failure did not stop the launcher."
+    Assert-True ($launchEvents.Count -eq 1 -and $launchEvents[0] -ceq "wait") "Chrome opened before listener readiness succeeded."
+
+    $launchEvents.Clear()
+    $listenerReady = $true
+    Invoke-NfcAfterHelperLoopbackListenerReady `
+      -Config $testConfig `
+      -TaskName $testTaskName `
+      -Action { [void]$launchEvents.Add("open") }
+    Assert-True ($launchEvents.Count -eq 2 -and
+      $launchEvents[0] -ceq "wait" -and
+      $launchEvents[1] -ceq "open") "The launcher did not open Chrome strictly after listener readiness."
+  } $launcherFunctionDefinitions
   $publishIndex = $update.IndexOf("& dotnet publish", [StringComparison]::Ordinal)
   $templateCopyIndex = $update.IndexOf("Copy-NfcReviewedGoToTagsTemplate", [StringComparison]::Ordinal)
   $stagedVerifyIndex = $update.IndexOf("Invoke-NfcBuildVerification -DllPath `$stagedDll", [StringComparison]::Ordinal)
@@ -288,13 +400,28 @@ try {
   Assert-True ($openResult.IndexOf('pairingCode =', [StringComparison]::Ordinal) -lt 0 -and
     $openResult.IndexOf('url =', [StringComparison]::OrdinalIgnoreCase) -lt 0) "NFC workstation launcher result can expose its one-time pairing URL or code."
   Assert-True ($open.IndexOf('function Wait-NfcHelperLoopbackListener', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not bound helper-listener startup before automatic pairing."
+  Assert-True ($open.IndexOf('function Test-NfcHelperLoopbackListenerReady', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('$HelperProcesses.Count -ne 1', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('$Listeners.Count -ne 1', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not require exactly one configured helper and fixed listener."
   Assert-True ($open.IndexOf('-LocalAddress "127.0.0.1"', [StringComparison]::Ordinal) -ge 0 -and
     $open.IndexOf('-LocalPort 47662', [StringComparison]::Ordinal) -ge 0 -and
-    $open.IndexOf('[int]$_.ProcessId', [StringComparison]::Ordinal) -ge 0 -and
-    $open.IndexOf('$helperProcessIds -contains [int]$_.OwningProcess', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher readiness wait is not bound to the exact helper-owned loopback listener."
-  $listenerWaitIndex = $open.IndexOf('Wait-NfcHelperLoopbackListener -Config $config', [StringComparison]::Ordinal)
-  $openChromeIndex = $open.IndexOf('Open-NfcWorkstationChrome -Url $url', [StringComparison]::Ordinal)
-  Assert-True ($listenerWaitIndex -ge 0 -and $openChromeIndex -gt $listenerWaitIndex) "NFC workstation launcher can open Chrome before the helper listener is ready."
+    $open.IndexOf('[string]$Listeners[0].LocalAddress -cne "127.0.0.1"', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('$listenerPort -ne 47662', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher readiness wait is not bound to the exact fixed loopback endpoint."
+  Assert-True ($open.IndexOf('$listenerOwner -eq $helperProcessId -or $listenerOwner -eq 4', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('Assert-NfcScheduledTaskDefinition -TaskName $TaskName', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('Get-NfcHelperProcess -Config $Config', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not safely bind HTTP.sys PID 4 to the exact configured helper and validated task."
+  Assert-True ($open.IndexOf('Invoke-RestMethod', [StringComparison]::OrdinalIgnoreCase) -lt 0 -and
+    $open.IndexOf('Invoke-WebRequest', [StringComparison]::OrdinalIgnoreCase) -lt 0 -and
+    $open.IndexOf('SCard', [StringComparison]::OrdinalIgnoreCase) -lt 0) "NFC workstation launcher performs an unauthorized HTTP or PC/SC readiness probe."
+  $listenerWaitIndex = $open.IndexOf('Wait-NfcHelperLoopbackListener -Config $Config -TaskName $TaskName', [StringComparison]::Ordinal)
+  $afterReadyActionIndex = $open.IndexOf('& $Action', [StringComparison]::Ordinal)
+  Assert-True ($listenerWaitIndex -ge 0 -and $afterReadyActionIndex -gt $listenerWaitIndex) "NFC workstation launcher can execute its Chrome action before the helper listener is ready."
+  $readyWrapperCallIndex = $open.LastIndexOf('Invoke-NfcAfterHelperLoopbackListenerReady `', [StringComparison]::Ordinal)
+  $pairingStateIndex = $open.LastIndexOf('$pairingConsumed = $false', [StringComparison]::Ordinal)
+  $openChromeIndex = $open.LastIndexOf('Open-NfcWorkstationChrome -Url $url', [StringComparison]::Ordinal)
+  Assert-True ($readyWrapperCallIndex -ge 0 -and
+    $pairingStateIndex -gt $readyWrapperCallIndex -and
+    $openChromeIndex -gt $pairingStateIndex) "NFC workstation launcher does not re-read pairing state and validate expiry after listener readiness and immediately before Chrome."
   Assert-True ($open.IndexOf('#aiGraderNfcLaunch=v1', [StringComparison]::Ordinal) -ge 0 -and
     $open.IndexOf('&aiGraderNfcPair=', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not identify its scrubbed automatic bootstrap fragment."
   Assert-True ($stop.IndexOf("Assert-NfcScheduledTaskDefinition", [StringComparison]::Ordinal) -ge 0) "Stop does not validate the dedicated task before mutation."
@@ -341,7 +468,7 @@ try {
   Assert-True ([bool]$versionedResult.scenarios[1].rolledBack -and $versionedResult.scenarios[1].final -ceq $script:NfcHelperVersionV2) "Injected v3 activation failure did not restore exact v2."
   Assert-True ($versionedResult.scenarios[2].prior -ceq $script:NfcHelperVersionV3 -and $versionedResult.scenarios[2].final -ceq $script:NfcHelperVersionV3) "Idempotent v3-to-v3 replacement did not pass."
 
-  Write-Output "PASS NFC maintenance path/ACL containment, exact GoToTags template bytes, v2-to-v3 upgrade/rollback, quarantine recovery, stable launchers, preservation, and explicit-rotation contracts"
+  Write-Output "PASS NFC maintenance path/ACL containment, exact GoToTags template bytes, v2-to-v3 upgrade/rollback, quarantine recovery, HTTP.sys-aware stable launcher, preservation, and explicit-rotation contracts"
 } finally {
   if (Test-Path -LiteralPath $testRoot) {
     Remove-NfcSafeTree -Path $testRoot -AllowedRoot $testParent
