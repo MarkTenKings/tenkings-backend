@@ -363,6 +363,15 @@ export function createAiGraderNfcApiHandler(deps: AiGraderNfcApiDependencies) {
         actorAudit: actor.audit,
       };
 
+      if (action === "readiness") {
+        if (req.method !== "GET") throw nfcApiError(405, "AI_GRADER_NFC_METHOD_NOT_ALLOWED", "GET is required.");
+        return res.status(200).json({
+          ok: true,
+          operation: "aiGraderNfcReadiness",
+          result: readiness,
+        });
+      }
+
       if (action === "status") {
         if (req.method !== "GET") throw nfcApiError(405, "AI_GRADER_NFC_METHOD_NOT_ALLOWED", "GET is required.");
         const requestedReportId = reportId(req.query.reportId);

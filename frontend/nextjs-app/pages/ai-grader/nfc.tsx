@@ -1,19 +1,19 @@
 import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   AiGraderNfcHelperError,
   acknowledgeAiGraderF8215Operation,
-  clearAiGraderNfcHelperPairing,
+  aiGraderNfcHelperHostedReady,
   clearAiGraderNfcInitIdempotencyKey,
-  getAiGraderNfcHelperStatus,
+  connectAiGraderNfcHelper,
+  consumeAiGraderNfcLauncherFragment,
   getAiGraderF8215OperationStatus,
   getOrCreateAiGraderNfcInitIdempotencyKey,
   hasAiGraderNfcHelperPairing,
-  pairAiGraderNfcHelper,
   prepareAiGraderF8215Job,
   readAiGraderNfcSelectedProfile,
   readAiGraderNfcInitIdempotencyKey,
@@ -21,6 +21,7 @@ import {
   writeAiGraderNfcTag,
   writeAiGraderNfcSelectedProfile,
   type AiGraderF8215CompletionEvidence,
+  type AiGraderNfcHelperHostedReadiness,
   type AiGraderNfcSelectedProfile,
   type AiGraderNfcHelperStatus,
   type AiGraderNfcHelperWriteResult,
@@ -106,6 +107,42 @@ function record(value: unknown): JsonRecord {
 function errorMessage(error: unknown) {
   if (error instanceof AiGraderNfcHelperError) return `${error.code}: ${error.message}`;
   return error instanceof Error ? error.message : "The NFC operation failed safely.";
+}
+
+function pairingInstruction(launchedFromShortcut: boolean) {
+  return launchedFromShortcut
+    ? "This browser opened from the canonical NFC shortcut without transferable trust. Authorized pairing-code-only maintenance is required once; there is no code to enter, and reopening the shortcut alone will not repair it."
+    : "Open the Ten Kings AI Grader NFC desktop shortcut. Pairing is automatic; there is no code to enter. If the shortcut just opened this page and this message remains, stop reopening it and request pairing-code-only maintenance.";
+}
+
+function pairingBootstrapErrorMessage(error: unknown) {
+  if (error instanceof AiGraderNfcHelperError) {
+    if (["workstation_token_invalid", "pairing_code_consumed", "pairing_unavailable", "pairing_code_invalid"].includes(error.code)) {
+      return "This browser cannot recover the helper trust automatically. Authorized pairing-code-only maintenance is required once; there is no code to enter.";
+    }
+    if (error.code === "NFC_HELPER_UNAVAILABLE" || error.code === "NFC_HELPER_TIMEOUT") {
+      return "The local NFC helper is not ready yet. Keep the reader empty and reopen the canonical NFC shortcut; pairing will retry automatically.";
+    }
+  }
+  return errorMessage(error);
+}
+
+function hostedReadinessFrom(value: unknown): AiGraderNfcHelperHostedReadiness {
+  const readiness = record(value);
+  return {
+    nfcSchemaReady: readiness.nfcSchemaReady === true,
+    nfcProgrammingEnabled: readiness.nfcProgrammingEnabled === true,
+    nfcAttemptTokenConfigured: readiness.nfcAttemptTokenConfigured === true,
+    nfcWorkstationAttestationConfigured: readiness.nfcWorkstationAttestationConfigured === true,
+    nfcWorkstationKeyCount:
+      Number.isInteger(readiness.nfcWorkstationKeyCount) && Number(readiness.nfcWorkstationKeyCount) >= 0
+        ? Number(readiness.nfcWorkstationKeyCount)
+        : 0,
+    expectedNfcHelperProtocolVersion:
+      typeof readiness.expectedNfcHelperProtocolVersion === "string"
+        ? readiness.expectedNfcHelperProtocolVersion
+        : "",
+  };
 }
 
 function reservationFrom(value: unknown, selectedProfile: AiGraderNfcSelectedProfile): Reservation {
@@ -219,7 +256,12 @@ export default function AiGraderNfcProgrammingPage() {
   const [helper, setHelper] = useState<AiGraderNfcHelperStatus | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<AiGraderNfcSelectedProfile>("NTAG215_DIRECT_PCSC");
   const [paired, setPaired] = useState(false);
-  const [pairingCode, setPairingCode] = useState("");
+  const [launcherFragmentParsed, setLauncherFragmentParsed] = useState(false);
+  const launcherPairingCodeRef = useRef("");
+  const launcherInvocationRef = useRef(false);
+  const pairingConnectPromiseRef = useRef<ReturnType<typeof connectAiGraderNfcHelper> | null>(null);
+  const genericBootstrapStartedRef = useRef(false);
+  const reportRefreshGenerationRef = useRef(0);
   const [reservation, setReservation] = useState<Reservation | null>(null);
   const [pending, setPending] = useState<PendingCompletion | null>(null);
   const [overwriteDigest, setOverwriteDigest] = useState<string | null>(null);
@@ -239,15 +281,22 @@ export default function AiGraderNfcProgrammingPage() {
     programmingReady &&
     (!selectedFeiju || helper?.goToTagsReady),
   );
+  const helperContactBlocked = reportId ? !programmingReady : phase === "disabled";
 
   useEffect(() => {
     setSelectedProfile(readAiGraderNfcSelectedProfile());
-    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
-    const code = new URLSearchParams(hash).get("aiGraderNfcPair")?.trim() ?? "";
-    if (!/^[A-Za-z0-9_-]{8,128}$/.test(code)) return;
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-    setPairingCode(code);
-    setMessage("One-time workstation pairing is ready after hosted programming readiness is confirmed.");
+    const launcher = consumeAiGraderNfcLauncherFragment({
+      hash: window.location.hash,
+      pathname: window.location.pathname,
+      search: window.location.search,
+      replaceUrl: (url) => window.history.replaceState(null, "", url),
+    });
+    launcherInvocationRef.current = launcherInvocationRef.current || launcher.launchedFromShortcut;
+    if (launcher.pairingCode) {
+      launcherPairingCodeRef.current = launcher.pairingCode;
+      setMessage("Pairing the trusted NFC workstation automatically.");
+    }
+    setLauncherFragmentParsed(true);
   }, []);
 
   const hostedRequest = useCallback(
@@ -275,38 +324,93 @@ export default function AiGraderNfcProgrammingPage() {
     [ensureSession, reportId],
   );
 
+  const connectAfterHostedReadiness = useCallback(async (readiness: AiGraderNfcHelperHostedReadiness) => {
+    if (!aiGraderNfcHelperHostedReady(readiness)) {
+      launcherPairingCodeRef.current = "";
+      return { state: "disabled" } as const;
+    }
+    const existing = pairingConnectPromiseRef.current;
+    if (existing) return existing;
+    const pairingCode = launcherPairingCodeRef.current;
+    const pendingConnection = connectAiGraderNfcHelper({ readiness, pairingCode });
+    pairingConnectPromiseRef.current = pendingConnection;
+    try {
+      return await pendingConnection;
+    } finally {
+      launcherPairingCodeRef.current = "";
+      if (pairingConnectPromiseRef.current === pendingConnection) pairingConnectPromiseRef.current = null;
+    }
+  }, []);
+
+  const loadGenericHostedReadiness = useCallback(async () => {
+    const active = await ensureSession({ message: "Sign in to pair the dedicated NFC workstation." });
+    const response = await fetch("/api/admin/ai-grader/nfc/readiness", {
+      method: "GET",
+      headers: buildAdminHeaders(active.token),
+      cache: "no-store",
+    });
+    const payload = record(await response.json().catch(() => ({})));
+    if (!response.ok || payload.ok !== true) {
+      throw new Error(typeof payload.message === "string" ? payload.message : "Hosted NFC readiness could not be verified.");
+    }
+    return hostedReadinessFrom(payload.result);
+  }, [ensureSession]);
+
   const refresh = useCallback(async () => {
     if (!reportId) return;
+    const generation = ++reportRefreshGenerationRef.current;
+    const isCurrent = () => reportRefreshGenerationRef.current === generation;
     const result = (await hostedRequest("status")) as HostedStatus;
+    if (!isCurrent()) return;
     setHosted(result);
     if (!result.nfcSchemaReady) {
+      launcherPairingCodeRef.current = "";
+      setPaired(false);
       setHelper(null);
       setPhase("disabled");
       setMessage("NFC persistence is unavailable until the approved database migration is applied.");
       return;
     }
     if (!result.cardAssetId || !result.itemId || !result.certId) {
+      launcherPairingCodeRef.current = "";
+      setPaired(false);
       setHelper(null);
       setPhase("error");
       setMessage("This NFC task is not linked to one exact published CardAsset, Item, and certificate.");
       return;
     }
     if (result.status === "active") {
-      const isPaired = hasAiGraderNfcHelperPairing();
-      setPaired(isPaired);
       if (result.chipType === "FEIJU_F8215") {
-        if (!isPaired) {
-          setPhase("error");
-          setMessage("The hosted F8215 registration is active, but exact local cleanup is pending. Pair this workstation; the local recovery identity was preserved.");
+        const connection = await connectAfterHostedReadiness(result);
+        if (!isCurrent()) return;
+        if (connection.state === "disabled") {
+          setPaired(false);
+          setHelper(null);
+          setPhase("disabled");
+          setMessage("The hosted F8215 registration is active, but local cleanup remains paused while NFC programming is disabled or incomplete.");
           return;
         }
+        if (connection.state === "shortcut_required") {
+          setPaired(false);
+          setHelper(null);
+          setPhase("error");
+          setMessage(`The hosted F8215 registration is active, but exact local cleanup is pending. ${pairingInstruction(launcherInvocationRef.current)} The local recovery identity was preserved.`);
+          return;
+        }
+        setPaired(true);
+        setHelper(connection.status);
         try {
           await reconcileAiGraderF8215HostedActivation(result as HostedStatus & { status: "active" });
+          if (!isCurrent()) return;
         } catch (error) {
+          if (!isCurrent()) return;
           setPhase("error");
           setMessage(`${errorMessage(error)} The hosted registration remains active and the local recovery identity was preserved.`);
           return;
         }
+      } else {
+        launcherPairingCodeRef.current = "";
+        setPaired(hasAiGraderNfcHelperPairing());
       }
       clearAiGraderNfcInitIdempotencyKey(reportId);
       setStoredAttemptAvailable(false);
@@ -319,12 +423,16 @@ export default function AiGraderNfcProgrammingPage() {
       return;
     }
     if (!result.nfcProgrammingEnabled) {
+      launcherPairingCodeRef.current = "";
+      setPaired(false);
       setHelper(null);
       setPhase("disabled");
       setMessage("NFC programming is disabled by server policy. Status and administrator revocation remain available.");
       return;
     }
     if (!result.nfcAttemptTokenConfigured || !result.nfcWorkstationAttestationConfigured || result.nfcWorkstationKeyCount < 1) {
+      launcherPairingCodeRef.current = "";
+      setPaired(false);
       setHelper(null);
       setPhase("disabled");
       setMessage("NFC programming is enabled but its server token or approved workstation key allowlist is not ready.");
@@ -332,21 +440,32 @@ export default function AiGraderNfcProgrammingPage() {
     }
     const hasStoredAttempt = Boolean(readAiGraderNfcInitIdempotencyKey(reportId));
     setStoredAttemptAvailable(hasStoredAttempt);
-    const isPaired = hasAiGraderNfcHelperPairing();
-    setPaired(isPaired);
-    if (isPaired) {
-      try {
-        const helperStatus = await getAiGraderNfcHelperStatus();
-        if (helperStatus.helperProtocolVersion !== result.expectedNfcHelperProtocolVersion) {
-          throw new Error("The NFC workstation helper protocol is out of date. Update it before programming.");
-        }
-        setHelper(helperStatus);
-      } catch (error) {
+    try {
+      const connection = await connectAfterHostedReadiness(result);
+      if (!isCurrent()) return;
+      if (connection.state === "disabled") {
+        setPaired(false);
         setHelper(null);
-        setPhase("error");
-        setMessage(errorMessage(error));
+        setPhase("disabled");
+        setMessage("NFC programming is disabled or incomplete; the browser did not contact the local helper.");
         return;
       }
+      if (connection.state === "shortcut_required") {
+        setPaired(false);
+        setHelper(null);
+        setPhase("ready");
+        setMessage(pairingInstruction(launcherInvocationRef.current));
+        return;
+      }
+      setPaired(true);
+      setHelper(connection.status);
+    } catch (error) {
+      if (!isCurrent()) return;
+      setPaired(false);
+      setHelper(null);
+      setPhase("error");
+      setMessage(pairingBootstrapErrorMessage(error));
+      return;
     }
     setPhase("ready");
     setMessage(
@@ -356,13 +475,68 @@ export default function AiGraderNfcProgrammingPage() {
           ? "Keep the tag off the reader. Prepare the exact F8215 job first."
           : "Place one blank NTAG215 on the reader, then program the registered report link.",
     );
-  }, [hostedRequest, reportId, selectedProfile]);
+  }, [connectAfterHostedReadiness, hostedRequest, reportId, selectedProfile]);
 
   useEffect(() => {
-    if (!router.isReady || sessionLoading) return;
+    reportRefreshGenerationRef.current += 1;
+    genericBootstrapStartedRef.current = false;
+    setHosted(null);
+    setHelper(null);
+    setPaired(false);
+    setReservation(null);
+    setPending(null);
+    setOverwriteDigest(null);
+    setStoredAttemptAvailable(false);
+    setReplacementRequest(null);
+    setRevocationRequest(null);
+    setReason("");
+    setPhase("loading");
+    setMessage(reportId ? "Loading the published NFC task." : "Loading the NFC workstation pairing bootstrap.");
+    return () => {
+      reportRefreshGenerationRef.current += 1;
+    };
+  }, [reportId]);
+
+  useEffect(() => {
+    if (!router.isReady || sessionLoading || !launcherFragmentParsed) return;
     if (!reportId) {
-      setPhase("error");
-      setMessage("Open this workstation route from a specific published Finish item.");
+      if (genericBootstrapStartedRef.current) return;
+      if (!launcherPairingCodeRef.current && !hasAiGraderNfcHelperPairing()) {
+        setPhase("ready");
+        setMessage(pairingInstruction(launcherInvocationRef.current));
+        return;
+      }
+      genericBootstrapStartedRef.current = true;
+      const bootstrapGeneration = reportRefreshGenerationRef.current;
+      setPhase("loading");
+      setMessage("Verifying hosted NFC readiness before contacting the local helper.");
+      void (async () => {
+        const readiness = await loadGenericHostedReadiness();
+        if (reportRefreshGenerationRef.current !== bootstrapGeneration) return;
+        const connection = await connectAfterHostedReadiness(readiness);
+        if (reportRefreshGenerationRef.current !== bootstrapGeneration) return;
+        if (connection.state === "disabled") {
+          setPhase("disabled");
+          setMessage("NFC programming is disabled or incomplete; the browser did not contact the local helper.");
+          return;
+        }
+        if (connection.state === "shortcut_required") {
+          setPhase("ready");
+          setMessage(pairingInstruction(launcherInvocationRef.current));
+          return;
+        }
+        setHelper(connection.status);
+        setPaired(true);
+        setPhase("ready");
+        setMessage("NFC workstation paired. Opening the Finish queue.");
+        await router.replace("/ai-grader/finish");
+      })().catch((error) => {
+        if (reportRefreshGenerationRef.current !== bootstrapGeneration) return;
+        setPaired(false);
+        setHelper(null);
+        setPhase("error");
+        setMessage(pairingBootstrapErrorMessage(error));
+      });
       return;
     }
     if (!session?.token) {
@@ -370,11 +544,24 @@ export default function AiGraderNfcProgrammingPage() {
       setMessage("Use the normal Ten Kings sign-in to open this NFC task.");
       return;
     }
-    void refresh().catch((error) => {
+    const pendingRefresh = refresh();
+    const refreshGeneration = reportRefreshGenerationRef.current;
+    void pendingRefresh.catch((error) => {
+      if (reportRefreshGenerationRef.current !== refreshGeneration) return;
       setPhase("error");
-      setMessage(errorMessage(error));
+      setMessage(error instanceof AiGraderNfcHelperError ? pairingBootstrapErrorMessage(error) : errorMessage(error));
     });
-  }, [refresh, reportId, router.isReady, session?.token, sessionLoading]);
+  }, [
+    connectAfterHostedReadiness,
+    launcherFragmentParsed,
+    loadGenericHostedReadiness,
+    refresh,
+    reportId,
+    router,
+    router.isReady,
+    session?.token,
+    sessionLoading,
+  ]);
 
   const completeHosted = useCallback(
     async (completion: PendingCompletion) => {
@@ -612,30 +799,6 @@ export default function AiGraderNfcProgrammingPage() {
     }
   };
 
-  const pair = async () => {
-    try {
-      if (!hosted?.nfcProgrammingEnabled) throw new Error("NFC programming is disabled by server policy.");
-      if (!programmingReady) throw new Error("NFC programming is not fully configured.");
-      setMessage("Pairing this browser with the loopback-only NFC helper.");
-      const status = await pairAiGraderNfcHelper(pairingCode);
-      if (status.helperProtocolVersion !== hosted.expectedNfcHelperProtocolVersion) {
-        throw new Error("The NFC workstation helper protocol is out of date. Update it before programming.");
-      }
-      setHelper(status);
-      setPaired(true);
-      setPairingCode("");
-      setPhase("ready");
-      setMessage(
-        selectedFeiju
-          ? "NFC helper paired. Keep the F8215 tag off the reader until the protected job opens."
-          : "NFC helper paired. Place one blank NTAG215 on the reader.",
-      );
-    } catch (error) {
-      setPhase("error");
-      setMessage(errorMessage(error));
-    }
-  };
-
   const replace = async () => {
     try {
       if (hosted?.status !== "revoked") {
@@ -789,8 +952,8 @@ export default function AiGraderNfcProgrammingPage() {
 
           <article>
             <p className="eyebrow">Dedicated workstation helper</p>
-            <h2>{!programmingReady ? hosted?.nfcProgrammingEnabled ? "Programming not configured" : "Programming disabled" : paired ? helper?.readerConnected ? "Reader connected" : "Paired / reader unavailable" : "Pair workstation"}</h2>
-            {!programmingReady ? (
+            <h2>{helperContactBlocked ? hosted?.nfcProgrammingEnabled ? "Programming not configured" : "Programming disabled" : paired ? helper?.readerConnected ? "Reader connected" : "Paired / reader unavailable" : "Pair workstation"}</h2>
+            {helperContactBlocked ? (
               <p>The browser will not contact the loopback helper while hosted programming is disabled or incomplete.</p>
             ) : paired ? (
               <>
@@ -801,12 +964,12 @@ export default function AiGraderNfcProgrammingPage() {
                   <dt>Helper</dt><dd>{helper?.helperProtocolVersion ?? "Checking"}</dd>
                   <dt>F8215 adapter</dt><dd>{helper?.goToTagsReady ? "Ready" : `Unavailable${helper?.goToTagsErrorCode ? ` (${helper.goToTagsErrorCode})` : ""}`}</dd>
                 </dl>
-                <button type="button" className="secondary" onClick={() => { clearAiGraderNfcHelperPairing(); setPaired(false); setHelper(null); }}>Forget local pairing</button>
+                {!reportId ? <Link href="/ai-grader/finish">Open Finish queue</Link> : null}
               </>
             ) : (
-              <div className="pair">
-                <label>Pairing code<input value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} autoComplete="off" /></label>
-                <button type="button" disabled={!programmingReady} onClick={() => void pair()}>Pair NFC helper</button>
+              <div className="pair-help">
+                <p>{message}</p>
+                {!reportId ? <Link href="/ai-grader/finish">Return to Finish</Link> : null}
               </div>
             )}
           </article>
@@ -918,7 +1081,7 @@ export default function AiGraderNfcProgrammingPage() {
         <footer>A registered NFC link is a convenient identity link. F8215 adds permanent consumer write protection; neither profile proves that a chip, slab, or card is cryptographically authentic.</footer>
       </main>
       <style jsx>{`
-        :global(body){margin:0;background:#f4f1e9;color:#171612;font-family:Inter,system-ui,sans-serif}.shell{max-width:1120px;margin:0 auto;padding:32px 22px 64px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}h1{font-family:Georgia,serif;font-size:42px;margin:4px 0}h2{font-family:Georgia,serif;margin:6px 0 16px}.eyebrow{text-transform:uppercase;letter-spacing:.15em;font-size:12px;font-weight:800;color:#7d6019}.notice{display:flex;align-items:center;gap:14px;padding:16px 18px;border:1px solid #d6c99f;background:#fff9df;margin-bottom:20px}.notice.active{background:#eaf6ed;border-color:#5c9f6c}.notice.error{background:#fff0ed;border-color:#d99b90}.success-check{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:#16813a;color:#fff;font-size:34px;font-weight:900}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid article,.program,.profile-select,.admin-actions{background:#fff;border:1px solid #d8d2c5;padding:22px;box-shadow:0 8px 24px #3a2d1010}dl{display:grid;grid-template-columns:130px 1fr;gap:9px;margin:18px 0}dt{color:#766f62}dd{margin:0;font-weight:700;overflow-wrap:anywhere}button{border:0;border-radius:4px;padding:12px 17px;background:#1b1a16;color:white;font-weight:800;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#ded8ca;color:#26231c}.primary{font-size:18px;min-width:220px;background:#9b731e}.program,.profile-select{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:18px}.program p{max-width:680px}.fresh-sop{max-width:700px;padding-left:20px;color:#4e483e}.fresh-sop li{margin:5px 0}.profile-select select{min-width:300px;padding:12px;border:1px solid #bdb4a3;background:#fff;font:inherit;font-weight:800}.f8215-progress{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 0;padding:16px 18px;list-style:none;background:#fff;border:1px solid #d8d2c5}.f8215-progress li{display:flex;align-items:center;gap:8px;color:#716a5e;font-weight:750}.f8215-progress .complete{color:#16813a}.f8215-progress .current{color:#77520c}.pair{display:flex;align-items:end;gap:10px}label{display:grid;gap:7px;font-weight:800;flex:1}input{padding:11px;border:1px solid #bdb4a3;border-radius:3px;font:inherit}.danger,.admin-actions{display:flex;gap:16px;align-items:center;margin-top:18px;padding:18px;background:#fff4ee;border:1px solid #d5997f}.danger div{flex:1}.danger-button,.danger button{background:#922f20}.retry{margin-top:18px}.admin-actions label{min-width:260px}footer{margin-top:28px;padding-top:18px;border-top:1px solid #cfc7b9;color:#655f55}a{color:#77520c;font-weight:800}@media(max-width:760px){.grid{grid-template-columns:1fr}.program,.profile-select,.danger,.admin-actions,header{align-items:stretch;flex-direction:column}.profile-select select{min-width:0;width:100%}.f8215-progress{grid-template-columns:1fr}h1{font-size:34px}.pair{align-items:stretch;flex-direction:column}}
+        :global(body){margin:0;background:#f4f1e9;color:#171612;font-family:Inter,system-ui,sans-serif}.shell{max-width:1120px;margin:0 auto;padding:32px 22px 64px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}h1{font-family:Georgia,serif;font-size:42px;margin:4px 0}h2{font-family:Georgia,serif;margin:6px 0 16px}.eyebrow{text-transform:uppercase;letter-spacing:.15em;font-size:12px;font-weight:800;color:#7d6019}.notice{display:flex;align-items:center;gap:14px;padding:16px 18px;border:1px solid #d6c99f;background:#fff9df;margin-bottom:20px}.notice.active{background:#eaf6ed;border-color:#5c9f6c}.notice.error{background:#fff0ed;border-color:#d99b90}.success-check{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;background:#16813a;color:#fff;font-size:34px;font-weight:900}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid article,.program,.profile-select,.admin-actions{background:#fff;border:1px solid #d8d2c5;padding:22px;box-shadow:0 8px 24px #3a2d1010}dl{display:grid;grid-template-columns:130px 1fr;gap:9px;margin:18px 0}dt{color:#766f62}dd{margin:0;font-weight:700;overflow-wrap:anywhere}button{border:0;border-radius:4px;padding:12px 17px;background:#1b1a16;color:white;font-weight:800;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.secondary{background:#ded8ca;color:#26231c}.primary{font-size:18px;min-width:220px;background:#9b731e}.program,.profile-select{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-top:18px}.program p{max-width:680px}.fresh-sop{max-width:700px;padding-left:20px;color:#4e483e}.fresh-sop li{margin:5px 0}.profile-select select{min-width:300px;padding:12px;border:1px solid #bdb4a3;background:#fff;font:inherit;font-weight:800}.f8215-progress{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 0;padding:16px 18px;list-style:none;background:#fff;border:1px solid #d8d2c5}.f8215-progress li{display:flex;align-items:center;gap:8px;color:#716a5e;font-weight:750}.f8215-progress .complete{color:#16813a}.f8215-progress .current{color:#77520c}.pair-help{display:grid;gap:10px}.pair-help p{margin:0}label{display:grid;gap:7px;font-weight:800;flex:1}input{padding:11px;border:1px solid #bdb4a3;border-radius:3px;font:inherit}.danger,.admin-actions{display:flex;gap:16px;align-items:center;margin-top:18px;padding:18px;background:#fff4ee;border:1px solid #d5997f}.danger div{flex:1}.danger-button,.danger button{background:#922f20}.retry{margin-top:18px}.admin-actions label{min-width:260px}footer{margin-top:28px;padding-top:18px;border-top:1px solid #cfc7b9;color:#655f55}a{color:#77520c;font-weight:800}@media(max-width:760px){.grid{grid-template-columns:1fr}.program,.profile-select,.danger,.admin-actions,header{align-items:stretch;flex-direction:column}.profile-select select{min-width:0;width:100%}.f8215-progress{grid-template-columns:1fr}h1{font-size:34px}}
       `}</style>
     </>
   );

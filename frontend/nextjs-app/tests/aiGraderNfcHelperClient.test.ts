@@ -7,9 +7,12 @@ import {
   AI_GRADER_NFC_HELPER_TOKEN_STORAGE_KEY,
   AI_GRADER_NFC_PROFILE_STORAGE_KEY,
   acknowledgeAiGraderF8215Operation,
+  aiGraderNfcHelperHostedReady,
   AiGraderNfcHelperError,
   clearAiGraderNfcHelperPairing,
   clearAiGraderNfcInitIdempotencyKey,
+  consumeAiGraderNfcLauncherFragment,
+  connectAiGraderNfcHelper,
   getOrCreateAiGraderNfcInitIdempotencyKey,
   getAiGraderNfcHelperStatus,
   getAiGraderF8215OperationStatus,
@@ -21,6 +24,23 @@ import {
   writeAiGraderNfcTag,
   writeAiGraderNfcSelectedProfile,
 } from "../lib/aiGraderNfcHelperClient";
+
+const readyHostedNfc = {
+  nfcSchemaReady: true,
+  nfcProgrammingEnabled: true,
+  nfcAttemptTokenConfigured: true,
+  nfcWorkstationAttestationConfigured: true,
+  nfcWorkstationKeyCount: 1,
+  expectedNfcHelperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION,
+};
+
+const readyHelperStatus = {
+  helperProtocolVersion: AI_GRADER_NFC_HELPER_PROTOCOL_VERSION,
+  readerConnected: true,
+  pcscReady: true,
+  tagState: "absent" as const,
+  busy: false,
+};
 
 function installWindow() {
   const values = new Map<string, string>();
@@ -67,6 +87,260 @@ test("NFC helper refuses status without a paired local token", async () => {
   await assert.rejects(getAiGraderNfcHelperStatus(), (error: unknown) => {
     return error instanceof Error && error.message.includes("Pair this NFC workstation");
   });
+});
+
+test("launcher fragment is consumed in memory and scrubbed without rendering or persisting its code", () => {
+  let replacement = "";
+  const consumed = consumeAiGraderNfcLauncherFragment({
+    hash: "#aiGraderNfcLaunch=v1&aiGraderNfcPair=FreshPairCode123",
+    pathname: "/ai-grader/nfc",
+    search: "?reportId=report-1",
+    replaceUrl: (url) => { replacement = url; },
+  });
+  assert.deepEqual(consumed, { launchedFromShortcut: true, pairingCode: "FreshPairCode123" });
+  assert.equal(replacement, "/ai-grader/nfc?reportId=report-1");
+
+  replacement = "";
+  assert.deepEqual(
+    consumeAiGraderNfcLauncherFragment({
+      hash: "#aiGraderNfcLaunch=v1&aiGraderNfcPair=not%20valid",
+      pathname: "/ai-grader/nfc",
+      search: "",
+      replaceUrl: (url) => { replacement = url; },
+    }),
+    { launchedFromShortcut: true, pairingCode: "" },
+  );
+  assert.equal(replacement, "/ai-grader/nfc");
+
+  replacement = "";
+  assert.deepEqual(
+    consumeAiGraderNfcLauncherFragment({
+      hash: "#unrelated=value",
+      pathname: "/ai-grader/nfc",
+      search: "",
+      replaceUrl: (url) => { replacement = url; },
+    }),
+    { launchedFromShortcut: false, pairingCode: "" },
+  );
+  assert.equal(replacement, "");
+});
+
+test("hosted readiness is strict and disabled bootstrap makes no local dependency call", async () => {
+  assert.equal(aiGraderNfcHelperHostedReady(readyHostedNfc), true);
+  assert.equal(aiGraderNfcHelperHostedReady({ ...readyHostedNfc, nfcSchemaReady: false }), false);
+  assert.equal(aiGraderNfcHelperHostedReady({ ...readyHostedNfc, nfcProgrammingEnabled: false }), false);
+  assert.equal(aiGraderNfcHelperHostedReady({ ...readyHostedNfc, nfcAttemptTokenConfigured: false }), false);
+  assert.equal(aiGraderNfcHelperHostedReady({ ...readyHostedNfc, nfcWorkstationAttestationConfigured: false }), false);
+  assert.equal(aiGraderNfcHelperHostedReady({ ...readyHostedNfc, nfcWorkstationKeyCount: 0 }), false);
+  assert.equal(aiGraderNfcHelperHostedReady({ ...readyHostedNfc, expectedNfcHelperProtocolVersion: "unexpected" }), false);
+
+  let dependencyCalls = 0;
+  const result = await connectAiGraderNfcHelper(
+    { readiness: { ...readyHostedNfc, nfcProgrammingEnabled: false }, pairingCode: "PairCode123" },
+    {
+      hasPairing: () => { dependencyCalls += 1; return false; },
+      status: async () => { dependencyCalls += 1; return readyHelperStatus; },
+      pair: async () => { dependencyCalls += 1; return readyHelperStatus; },
+    },
+  );
+  assert.deepEqual(result, { state: "disabled" });
+  assert.equal(dependencyCalls, 0);
+});
+
+test("ready bootstrap requires the workstation shortcut when no saved token or code exists", async () => {
+  let statusCalls = 0;
+  let pairCalls = 0;
+  const result = await connectAiGraderNfcHelper(
+    { readiness: readyHostedNfc },
+    {
+      hasPairing: () => false,
+      status: async () => { statusCalls += 1; return readyHelperStatus; },
+      pair: async () => { pairCalls += 1; return readyHelperStatus; },
+    },
+  );
+  assert.deepEqual(result, { state: "shortcut_required" });
+  assert.equal(statusCalls, 0);
+  assert.equal(pairCalls, 0);
+});
+
+test("ready bootstrap validates a saved token through status without pairing again", async () => {
+  let statusCalls = 0;
+  let pairCalls = 0;
+  const result = await connectAiGraderNfcHelper(
+    { readiness: readyHostedNfc, pairingCode: "PairCode123" },
+    {
+      hasPairing: () => true,
+      status: async () => { statusCalls += 1; return readyHelperStatus; },
+      pair: async () => { pairCalls += 1; return readyHelperStatus; },
+    },
+  );
+  assert.deepEqual(result, { state: "connected", status: readyHelperStatus, pairedNow: false });
+  assert.equal(statusCalls, 1);
+  assert.equal(pairCalls, 0);
+});
+
+test("ready bootstrap repairs an invalid saved token only with a valid fresh shortcut code", async () => {
+  let clearCalls = 0;
+  let pairedWith = "";
+  const result = await connectAiGraderNfcHelper(
+    { readiness: readyHostedNfc, pairingCode: "FreshPairCode123" },
+    {
+      hasPairing: () => true,
+      clearPairing: () => { clearCalls += 1; },
+      status: async () => {
+        throw new AiGraderNfcHelperError(
+          "workstation_token_invalid",
+          "Pair this NFC workstation before programming.",
+          401,
+        );
+      },
+      pair: async (pairingCode) => { pairedWith = pairingCode; return readyHelperStatus; },
+    },
+  );
+  assert.deepEqual(result, { state: "connected", status: readyHelperStatus, pairedNow: true });
+  assert.equal(clearCalls, 1);
+  assert.equal(pairedWith, "FreshPairCode123");
+});
+
+test("default bootstrap replaces an invalid saved token without sending it to the pairing route", async () => {
+  const { values } = installWindow();
+  const oldToken = "OldTokenOldTokenOldTokenOldToken1234";
+  const newToken = "NewTokenNewTokenNewTokenNewToken1234";
+  values.set(AI_GRADER_NFC_HELPER_TOKEN_STORAGE_KEY, oldToken);
+  const calls: Array<{ url: string; token: string; body: string }> = [];
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      calls.push({
+        url,
+        token: headers.get("x-tenkings-nfc-token") ?? "",
+        body: typeof init?.body === "string" ? init.body : "",
+      });
+      if (calls.length === 1) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: { code: "workstation_token_invalid", message: "Pair this NFC workstation before programming." },
+        }), { status: 401, headers: { "content-type": "application/json" } });
+      }
+      if (calls.length === 2) {
+        return new Response(JSON.stringify({ ok: true, result: { workstationToken: newToken } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: true, result: readyHelperStatus }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  const result = await connectAiGraderNfcHelper({ readiness: readyHostedNfc, pairingCode: "FreshPairCode123" });
+  assert.deepEqual(result, { state: "connected", status: readyHelperStatus, pairedNow: true });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].url, `${AI_GRADER_NFC_HELPER_BASE_URL}/status`);
+  assert.equal(calls[0].token, oldToken);
+  assert.equal(calls[1].url, `${AI_GRADER_NFC_HELPER_BASE_URL}/pair`);
+  assert.equal(calls[1].token, "");
+  assert.deepEqual(JSON.parse(calls[1].body), { pairingCode: "FreshPairCode123" });
+  assert.equal(calls[2].url, `${AI_GRADER_NFC_HELPER_BASE_URL}/status`);
+  assert.equal(calls[2].token, newToken);
+  assert.equal(values.get(AI_GRADER_NFC_HELPER_TOKEN_STORAGE_KEY), newToken);
+});
+
+test("invalid saved token without a fresh shortcut code requires maintenance without clearing trust", async () => {
+  let clearCalls = 0;
+  let pairCalls = 0;
+  await assert.rejects(
+    connectAiGraderNfcHelper(
+      { readiness: readyHostedNfc },
+      {
+        hasPairing: () => true,
+        clearPairing: () => { clearCalls += 1; },
+        status: async () => {
+          throw new AiGraderNfcHelperError(
+            "workstation_token_invalid",
+            "Pair this NFC workstation before programming.",
+            401,
+          );
+        },
+        pair: async () => { pairCalls += 1; return readyHelperStatus; },
+      },
+    ),
+    (error: unknown) => error instanceof AiGraderNfcHelperError && error.code === "workstation_token_invalid",
+  );
+  assert.equal(clearCalls, 0);
+  assert.equal(pairCalls, 0);
+});
+
+test("ready bootstrap never treats helper unavailability as a token-rotation signal", async () => {
+  let clearCalls = 0;
+  let pairCalls = 0;
+  await assert.rejects(
+    connectAiGraderNfcHelper(
+      { readiness: readyHostedNfc, pairingCode: "FreshPairCode123" },
+      {
+        hasPairing: () => true,
+        clearPairing: () => { clearCalls += 1; },
+        status: async () => {
+          throw new AiGraderNfcHelperError("NFC_HELPER_UNAVAILABLE", "Helper unavailable.", 503, undefined, true);
+        },
+        pair: async () => { pairCalls += 1; return readyHelperStatus; },
+      },
+    ),
+    (error: unknown) => error instanceof AiGraderNfcHelperError && error.code === "NFC_HELPER_UNAVAILABLE",
+  );
+  assert.equal(clearCalls, 0);
+  assert.equal(pairCalls, 0);
+});
+
+test("ready bootstrap automatically pairs only with a valid in-memory shortcut code", async () => {
+  let pairedWith = "";
+  let statusCalls = 0;
+  const result = await connectAiGraderNfcHelper(
+    { readiness: readyHostedNfc, pairingCode: "  PairCode123  " },
+    {
+      hasPairing: () => false,
+      status: async () => { statusCalls += 1; return readyHelperStatus; },
+      pair: async (pairingCode) => { pairedWith = pairingCode; return readyHelperStatus; },
+    },
+  );
+  assert.deepEqual(result, { state: "connected", status: readyHelperStatus, pairedNow: true });
+  assert.equal(pairedWith, "PairCode123");
+  assert.equal(statusCalls, 0);
+});
+
+test("bootstrap rejects a helper protocol mismatch", async () => {
+  await assert.rejects(
+    connectAiGraderNfcHelper(
+      { readiness: readyHostedNfc },
+      {
+        hasPairing: () => true,
+        status: async () => ({ ...readyHelperStatus, helperProtocolVersion: "unexpected" }),
+      },
+    ),
+    (error: unknown) => error instanceof AiGraderNfcHelperError && error.code === "NFC_HELPER_PROTOCOL_MISMATCH",
+  );
+});
+
+test("invalid shortcut pairing code is rejected before fetch", async () => {
+  installWindow();
+  clearAiGraderNfcHelperPairing();
+  let fetchCalls = 0;
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async () => {
+      fetchCalls += 1;
+      throw new Error("fetch must not run");
+    },
+  });
+  await assert.rejects(
+    connectAiGraderNfcHelper({ readiness: readyHostedNfc, pairingCode: "not valid!" }),
+    (error: unknown) => error instanceof AiGraderNfcHelperError && error.code === "NFC_HELPER_PAIRING_CODE_INVALID",
+  );
+  assert.equal(fetchCalls, 0);
 });
 
 test("NFC helper write sends only the fixed operation contract and explicit overwrite challenge", async () => {

@@ -338,7 +338,15 @@ test("dedicated programming and public tap pages keep hardware controls out of F
   assert.match(adminActions, /hosted\.status !== "revoked".*Revoke NFC link/s);
   assert.match(nfcPage, /request\.idempotencyKey !== attemptIdempotencyKey/);
   assert.match(nfcPage, /const programmingReady = Boolean/);
-  assert.match(nfcPage, /disabled=\{!programmingReady\}/);
+  assert.match(nfcPage, /connectAiGraderNfcHelper/);
+  assert.match(nfcPage, /launcherPairingCodeRef = useRef\(""\)/);
+  assert.match(nfcPage, /consumeAiGraderNfcLauncherFragment/);
+  assert.match(nfcPage, /pairingConnectPromiseRef = useRef/);
+  assert.match(nfcPage, /window\.history\.replaceState/);
+  assert.match(nfcPage, /\/api\/admin\/ai-grader\/nfc\/readiness/);
+  assert.match(nfcPage, /Pairing is automatic; there is no code to enter\./);
+  assert.match(nfcPage, /pairing-code-only maintenance is required/);
+  assert.doesNotMatch(nfcPage, /<label>Pairing code|Pair NFC helper|Forget local pairing/);
   assert.match(nfcPage, /disabled or incomplete/);
   assert.match(nfcPage, /operationalAttestation/);
   assert.match(nfcPage, /Confirm Fresh F8215 & Prepare/);
@@ -363,8 +371,11 @@ test("dedicated programming and public tap pages keep hardware controls out of F
   assert.match(nfcPage, /failed or uncertain tag.*quarantine/i);
   const schemaGate = nfcPage.indexOf("if (!result.nfcSchemaReady)");
   const disabledGate = nfcPage.indexOf("if (!result.nfcProgrammingEnabled)");
-  const helperStatusCall = nfcPage.indexOf("getAiGraderNfcHelperStatus", disabledGate);
-  assert.ok(schemaGate >= 0 && disabledGate > schemaGate && helperStatusCall > disabledGate);
+  const helperConnectCall = nfcPage.indexOf("connectAfterHostedReadiness(result)", disabledGate);
+  const genericReadinessCall = nfcPage.indexOf('/api/admin/ai-grader/nfc/readiness');
+  const genericHelperConnectCall = nfcPage.indexOf("connectAfterHostedReadiness(readiness)", genericReadinessCall);
+  assert.ok(schemaGate >= 0 && disabledGate > schemaGate && helperConnectCall > disabledGate);
+  assert.ok(genericReadinessCall >= 0 && genericHelperConnectCall > genericReadinessCall);
   assert.match(finishPage, /Open dedicated NFC programming route/);
   for (const forbidden of ["aiGraderStationBridgeClient", "Basler", "Leimac", "Manual APDU", "camera preview", "station token"]) {
     assert.equal(finishPage.includes(forbidden), false);

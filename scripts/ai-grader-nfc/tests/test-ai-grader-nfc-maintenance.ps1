@@ -275,6 +275,28 @@ try {
   Assert-True ($open.IndexOf("Initialize-NfcConfig", [StringComparison]::Ordinal) -lt 0) "Ordinary workstation open rewrites protected config."
   Assert-True ($open.IndexOf("Restart-NfcTask", [StringComparison]::Ordinal) -lt 0) "Ordinary workstation open restarts a healthy helper."
   Assert-True ($open.IndexOf("pairingConsumed", [StringComparison]::Ordinal) -ge 0) "Ordinary workstation open does not preserve one-time pairing trust."
+  Assert-True ($open.IndexOf('$script:NfcChromeUserDataDir = "C:\TenKings\chrome-ai-grader-profile"', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not pin the canonical AI Grader Chrome profile."
+  Assert-True ($open.IndexOf('function Get-NfcChromePath', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not discover Google Chrome explicitly."
+  Assert-True ($open.IndexOf('"--user-data-dir=$profilePath"', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not bind Chrome to the dedicated profile."
+  Assert-True ($open.IndexOf('"--new-window"', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not open the programming page in a dedicated Chrome window."
+  Assert-True ($open.IndexOf('Start-Process `', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('-FilePath $chromePath', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('-ArgumentList $chromeArguments', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not invoke the explicitly discovered Chrome executable."
+  Assert-True ($open.IndexOf('Start-Process $url', [StringComparison]::Ordinal) -lt 0) "NFC workstation launcher can fall back to the Windows default browser/profile."
+  Assert-True ($open.IndexOf('[string]$ChromeUserDataDir', [StringComparison]::Ordinal) -lt 0) "NFC workstation launcher allows the fixed Chrome profile to be overridden through shortcut arguments."
+  $openResult = $open.Substring($open.LastIndexOf('[pscustomobject]@{', [StringComparison]::Ordinal))
+  Assert-True ($openResult.IndexOf('pairingCode =', [StringComparison]::Ordinal) -lt 0 -and
+    $openResult.IndexOf('url =', [StringComparison]::OrdinalIgnoreCase) -lt 0) "NFC workstation launcher result can expose its one-time pairing URL or code."
+  Assert-True ($open.IndexOf('function Wait-NfcHelperLoopbackListener', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not bound helper-listener startup before automatic pairing."
+  Assert-True ($open.IndexOf('-LocalAddress "127.0.0.1"', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('-LocalPort 47662', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('[int]$_.ProcessId', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('$helperProcessIds -contains [int]$_.OwningProcess', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher readiness wait is not bound to the exact helper-owned loopback listener."
+  $listenerWaitIndex = $open.IndexOf('Wait-NfcHelperLoopbackListener -Config $config', [StringComparison]::Ordinal)
+  $openChromeIndex = $open.IndexOf('Open-NfcWorkstationChrome -Url $url', [StringComparison]::Ordinal)
+  Assert-True ($listenerWaitIndex -ge 0 -and $openChromeIndex -gt $listenerWaitIndex) "NFC workstation launcher can open Chrome before the helper listener is ready."
+  Assert-True ($open.IndexOf('#aiGraderNfcLaunch=v1', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('&aiGraderNfcPair=', [StringComparison]::Ordinal) -ge 0) "NFC workstation launcher does not identify its scrubbed automatic bootstrap fragment."
   Assert-True ($stop.IndexOf("Assert-NfcScheduledTaskDefinition", [StringComparison]::Ordinal) -ge 0) "Stop does not validate the dedicated task before mutation."
   Assert-True ($uninstall.IndexOf("Assert-NfcScheduledTaskDefinition", [StringComparison]::Ordinal) -ge 0) "Uninstall does not validate the dedicated task before removal."
   $uninstallShortcutValidationIndex = $uninstall.IndexOf("Assert-NfcDesktopShortcutDefinition", [StringComparison]::Ordinal)

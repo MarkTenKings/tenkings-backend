@@ -6,6 +6,7 @@ export const AI_GRADER_NFC_PROFILE_STORAGE_KEY = "tenkings.aiGrader.nfc.profile.
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const WRITE_TIMEOUT_MS = 45_000;
+const PAIRING_CODE_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -35,6 +36,32 @@ export type AiGraderNfcHelperStatus = {
   }> | null;
   goToTagsReady?: boolean;
   goToTagsErrorCode?: string | null;
+};
+
+export type AiGraderNfcHelperHostedReadiness = {
+  nfcSchemaReady: boolean;
+  nfcProgrammingEnabled: boolean;
+  nfcAttemptTokenConfigured: boolean;
+  nfcWorkstationAttestationConfigured: boolean;
+  nfcWorkstationKeyCount: number;
+  expectedNfcHelperProtocolVersion: string;
+};
+
+export type AiGraderNfcHelperConnectionResult =
+  | { state: "disabled" }
+  | { state: "shortcut_required" }
+  | { state: "connected"; status: AiGraderNfcHelperStatus; pairedNow: boolean };
+
+export type AiGraderNfcHelperConnectionDependencies = {
+  hasPairing: () => boolean;
+  clearPairing: () => void;
+  status: () => Promise<AiGraderNfcHelperStatus>;
+  pair: (pairingCode: string) => Promise<AiGraderNfcHelperStatus>;
+};
+
+export type AiGraderNfcLauncherFragment = {
+  launchedFromShortcut: boolean;
+  pairingCode: string;
 };
 
 export type AiGraderNfcHelperWriteResult = {
@@ -123,6 +150,24 @@ export function clearAiGraderNfcHelperPairing() {
   if (typeof window !== "undefined") window.localStorage.removeItem(AI_GRADER_NFC_HELPER_TOKEN_STORAGE_KEY);
 }
 
+export function consumeAiGraderNfcLauncherFragment(input: {
+  hash: string;
+  pathname: string;
+  search: string;
+  replaceUrl: (url: string) => void;
+}): AiGraderNfcLauncherFragment {
+  const hash = input.hash.startsWith("#") ? input.hash.slice(1) : input.hash;
+  const values = new URLSearchParams(hash);
+  const rawPairingCode = values.get("aiGraderNfcPair");
+  const launchedFromShortcut = values.get("aiGraderNfcLaunch") === "v1" || rawPairingCode !== null;
+  if (launchedFromShortcut) input.replaceUrl(`${input.pathname}${input.search}`);
+  const pairingCode = rawPairingCode?.trim() ?? "";
+  return {
+    launchedFromShortcut,
+    pairingCode: PAIRING_CODE_PATTERN.test(pairingCode) ? pairingCode : "",
+  };
+}
+
 async function helperRequest<T>(
   path: "/pair" | "/status" | "/read" | "/write" | "/prepare" | "/operation-status" | "/operation-ack",
   input: { method?: "GET" | "POST"; body?: JsonRecord; tokenRequired?: boolean; timeoutMs?: number } = {},
@@ -186,7 +231,7 @@ async function helperRequest<T>(
 
 export async function pairAiGraderNfcHelper(pairingCode: string) {
   const code = pairingCode.trim();
-  if (!/^[A-Za-z0-9_-]{8,128}$/.test(code)) {
+  if (!PAIRING_CODE_PATTERN.test(code)) {
     throw new AiGraderNfcHelperError("NFC_HELPER_PAIRING_CODE_INVALID", "Enter the current NFC helper pairing code.", 400);
   }
   const result = await helperRequest<{ workstationToken?: string }>("/pair", {
@@ -204,6 +249,71 @@ export async function pairAiGraderNfcHelper(pairingCode: string) {
 
 export function getAiGraderNfcHelperStatus() {
   return helperRequest<AiGraderNfcHelperStatus>("/status", { tokenRequired: true });
+}
+
+export function aiGraderNfcHelperHostedReady(readiness: AiGraderNfcHelperHostedReadiness) {
+  return (
+    readiness.nfcSchemaReady === true &&
+    readiness.nfcProgrammingEnabled === true &&
+    readiness.nfcAttemptTokenConfigured === true &&
+    readiness.nfcWorkstationAttestationConfigured === true &&
+    Number.isInteger(readiness.nfcWorkstationKeyCount) &&
+    readiness.nfcWorkstationKeyCount > 0 &&
+    readiness.expectedNfcHelperProtocolVersion === AI_GRADER_NFC_HELPER_PROTOCOL_VERSION
+  );
+}
+
+export async function connectAiGraderNfcHelper(
+  input: { readiness: AiGraderNfcHelperHostedReadiness; pairingCode?: string },
+  dependencies: Partial<AiGraderNfcHelperConnectionDependencies> = {},
+): Promise<AiGraderNfcHelperConnectionResult> {
+  if (!aiGraderNfcHelperHostedReady(input.readiness)) return { state: "disabled" };
+
+  const hasPairing = dependencies.hasPairing ?? hasAiGraderNfcHelperPairing;
+  const clearPairing = dependencies.clearPairing ?? clearAiGraderNfcHelperPairing;
+  const status = dependencies.status ?? getAiGraderNfcHelperStatus;
+  const pair = dependencies.pair ?? pairAiGraderNfcHelper;
+  const pairingCode = input.pairingCode?.trim() ?? "";
+  let helperStatus: AiGraderNfcHelperStatus;
+  let pairedNow = false;
+
+  if (hasPairing()) {
+    try {
+      helperStatus = await status();
+    } catch (error) {
+      if (
+        !(error instanceof AiGraderNfcHelperError) ||
+        error.status !== 401 ||
+        error.code !== "workstation_token_invalid" ||
+        !PAIRING_CODE_PATTERN.test(pairingCode)
+      ) {
+        throw error;
+      }
+      clearPairing();
+      helperStatus = await pair(pairingCode);
+      pairedNow = true;
+    }
+  } else {
+    if (!pairingCode) return { state: "shortcut_required" };
+    if (!PAIRING_CODE_PATTERN.test(pairingCode)) {
+      throw new AiGraderNfcHelperError(
+        "NFC_HELPER_PAIRING_CODE_INVALID",
+        "The NFC workstation shortcut did not provide a valid pairing code.",
+        400,
+      );
+    }
+    helperStatus = await pair(pairingCode);
+    pairedNow = true;
+  }
+
+  if (helperStatus.helperProtocolVersion !== input.readiness.expectedNfcHelperProtocolVersion) {
+    throw new AiGraderNfcHelperError(
+      "NFC_HELPER_PROTOCOL_MISMATCH",
+      "The NFC workstation helper protocol is out of date. Update it before programming.",
+      409,
+    );
+  }
+  return { state: "connected", status: helperStatus, pairedNow };
 }
 
 export function readAiGraderNfcTag(attemptId: string) {
