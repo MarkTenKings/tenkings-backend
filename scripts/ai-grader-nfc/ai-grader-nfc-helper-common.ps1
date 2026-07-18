@@ -179,6 +179,37 @@ function Copy-NfcStableMaintenancePayload {
   }
 }
 
+function Copy-NfcReviewedGoToTagsTemplate {
+  param(
+    [Parameter(Mandatory = $true)][string]$RepoRoot,
+    [Parameter(Mandatory = $true)][string]$DestinationInstallDirectory,
+    [string]$AllowedDestinationRoot = $script:NfcToolsRoot
+  )
+  $repo = Assert-NfcPathWithinRoot -Path $RepoRoot -AllowedRoot $RepoRoot -AllowRoot
+  $sourceTemplate = Assert-NfcPathWithinRoot `
+    -Path (Join-Path $repo "packages\ai-grader-nfc-helper\src\TenKings.AiGrader.NfcHelper\Templates\f8215-gototags-manual-start-v1.json") `
+    -AllowedRoot $repo
+  if (-not (Test-Path -LiteralPath $sourceTemplate -PathType Leaf) -or
+      (Get-NfcFileFingerprint -Path $sourceTemplate) -cne $script:NfcGoToTagsTemplateSha256) {
+    throw "The source GoToTags operation template does not have the reviewed LF-byte identity."
+  }
+
+  $destination = Assert-NfcPathWithinRoot `
+    -Path $DestinationInstallDirectory `
+    -AllowedRoot $AllowedDestinationRoot
+  $templateDirectory = Join-Path $destination "Templates"
+  New-Item -ItemType Directory -Path $templateDirectory -Force -ErrorAction Stop | Out-Null
+  $installedTemplate = Join-Path $templateDirectory "f8215-gototags-manual-start-v1.json"
+
+  # File.Copy is a binary byte-for-byte copy. Never decode/re-encode this reviewed
+  # template because Windows newline conversion changes its approved SHA-256.
+  [IO.File]::Copy($sourceTemplate, $installedTemplate, $true)
+  if ((Get-NfcFileFingerprint -Path $installedTemplate) -cne $script:NfcGoToTagsTemplateSha256) {
+    throw "The staged GoToTags operation template does not have the reviewed byte identity."
+  }
+  return $installedTemplate
+}
+
 function Get-NfcSha256Text {
   param([Parameter(Mandatory = $true)][string]$Value)
   $sha = [Security.Cryptography.SHA256]::Create()

@@ -46,6 +46,9 @@ try {
   New-Item -ItemType Directory -Path $stagingDirectory -ErrorAction Stop | Out-Null
   & dotnet publish $project --configuration Release --self-contained false --output $stagingDirectory
   if ($LASTEXITCODE -ne 0) { throw "The NFC helper publish failed; no task was installed." }
+  Copy-NfcReviewedGoToTagsTemplate `
+    -RepoRoot $repoRoot `
+    -DestinationInstallDirectory $stagingDirectory | Out-Null
   Copy-NfcStableMaintenancePayload -SourceDirectory $PSScriptRoot -DestinationInstallDirectory $stagingDirectory
   Protect-NfcTree -Path $stagingDirectory -AllowedRoot $script:NfcToolsRoot
   $stagedDll = Join-Path $stagingDirectory "TenKings.AiGrader.NfcHelper.dll"

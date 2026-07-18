@@ -109,14 +109,20 @@ async function acquireLabelSheetLock(tx: any, tenantId: string) {
   if (typeof tx.$queryRaw !== "function") {
     throw new Error("AI Grader label sheet transaction locking is unavailable.");
   }
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-label-sheets'), hashtext(${tenantId}))`;
+  await tx.$queryRaw`
+    SELECT 1 AS "lockAcquired"
+    FROM pg_advisory_xact_lock(hashtext('ai-grader-label-sheets'), hashtext(${tenantId}))
+  `;
 }
 
 async function acquireReportLifecycleLock(tx: any, reportId: string) {
   if (typeof tx.$queryRaw !== "function") {
     throw new Error("AI Grader report lifecycle transaction locking is unavailable.");
   }
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${reportId}))`;
+  await tx.$queryRaw`
+    SELECT 1 AS "lockAcquired"
+    FROM pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${reportId}))
+  `;
 }
 
 function confirmedTitle(identity: AiGraderSafeConfirmedCardIdentity) {

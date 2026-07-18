@@ -27,6 +27,10 @@ const absentSql = resolve(scriptDir, "validateAiGraderNfcSchemaAbsent.sql");
 const appliedSql = resolve(scriptDir, "validateAiGraderNfcMigration.sql");
 const serviceValidationScript = resolve(scriptDir, "validateAiGraderNfcServiceAgainstPostgres.mjs");
 const readinessValidationScript = resolve(scriptDir, "validateAiGraderNfcSchemaReadinessAgainstPostgres.mjs");
+const advisoryLockValidationScript = resolve(
+  repositoryRoot,
+  "frontend/nextjs-app/scripts/validate-ai-grader-advisory-locks-postgres.ts",
+);
 const docker = process.platform === "win32" ? "docker.exe" : "docker";
 const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
@@ -47,6 +51,7 @@ for (const requiredPath of [
   appliedSql,
   serviceValidationScript,
   readinessValidationScript,
+  advisoryLockValidationScript,
 ]) {
   if (!existsSync(requiredPath)) fail("NFC migration validation support is incomplete.");
 }
@@ -289,6 +294,17 @@ try {
   });
   if (!serviceResult.includes("AI_GRADER_NFC_REAL_SERVICE_VALIDATION_PASS")) {
     fail("The real NFC service validation did not reach its PASS marker.");
+  }
+  const advisoryLockResult = run(
+    pnpm,
+    ["--filter", "@tenkings/nextjs-app", "exec", "tsx", advisoryLockValidationScript],
+    {
+      env: databaseEnv,
+      label: "running publication, Label V1, comps, inventory, rollback, and advisory locking through real Prisma/PostgreSQL",
+    },
+  );
+  if (!advisoryLockResult.includes("AI_GRADER_ADVISORY_LOCK_REAL_POSTGRES_VALIDATION_PASS")) {
+    fail("The real AI Grader advisory-lock validation did not reach its PASS marker.");
   }
 
   const secondDeploy = run(

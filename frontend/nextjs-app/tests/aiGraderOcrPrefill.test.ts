@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -630,7 +631,7 @@ test("OCR runtime reports catalog infrastructure failure without exposing its ca
 
 test("OCR prefill finalize rejects missing or wrong checksum, byte size, and content type", async () => {
   const failures = [
-    { name: "missing-checksum", patch: { checksumSha256: undefined }, message: /native sha-256 checksum/i },
+    { name: "missing-checksum", patch: { checksumSha256: undefined }, message: /verified sha-256 checksum/i },
     { name: "tampered-checksum", patch: { checksumSha256: "0".repeat(64) }, message: /checksum mismatch/i },
     { name: "missing-size", patch: { byteSize: undefined }, message: /byte size mismatch/i },
     { name: "wrong-size", patch: { byteSize: 999 }, message: /byte size mismatch/i },
@@ -719,24 +720,32 @@ test("OCR prefill finalize rejects missing or wrong checksum, byte size, and con
   }
 });
 
-test("storage checksum verification rejects same-size wrong bytes even when mutable metadata claims the expected hash", () => {
+test("storage checksum verification rejects same-size wrong bytes and streams when the native checksum is absent", async () => {
   const expectedChecksum = sha256("same-size-expected");
   const wrongBytesChecksum = sha256("same-size-tampered");
   const byteSize = Buffer.byteLength("same-size-expected");
   assert.equal(byteSize, Buffer.byteLength("same-size-tampered"));
+  const frontStorageKey = "ai-grader/reports/checksum/ocr-prefill/front.png";
 
-  const verified = verifyStorageObjectIntegrity({
-    storageKey: "ai-grader/reports/checksum/ocr-prefill/front.png",
+  const verified = await verifyStorageObjectIntegrity({
+    storageKey: frontStorageKey,
     expectedByteSize: byteSize,
     expectedChecksumSha256: expectedChecksum,
-    head: {
-      storageKey: "ai-grader/reports/checksum/ocr-prefill/front.png",
-      byteSize,
-      contentType: "image/png",
-      // Object metadata is caller-controlled and deliberately lies. Verification
-      // must use only the storage provider's checksum of the actual object bytes.
-      metadata: { sha256: expectedChecksum },
-      checksumSha256: wrongBytesChecksum,
+  }, {
+    async headObject(storageKey) {
+      return {
+        storageKey,
+        byteSize,
+        contentType: "image/png",
+        // Object metadata is caller-controlled and deliberately lies. Verification
+        // must use only the checksum of the actual stored object bytes.
+        metadata: { sha256: expectedChecksum },
+        checksumSha256: wrongBytesChecksum,
+        nativeChecksumPresent: true,
+      };
+    },
+    async openRead() {
+      throw new Error("native checksum verification must not read the object");
     },
   });
 
@@ -744,20 +753,283 @@ test("storage checksum verification rejects same-size wrong bytes even when muta
   assert.equal(verified.checksumSha256, wrongBytesChecksum);
   assert.match(String(verified.message), /storage-provided sha-256 checksum mismatch/i);
 
-  const missingActualChecksum = verifyStorageObjectIntegrity({
-    storageKey: "ai-grader/reports/checksum/ocr-prefill/back.png",
+  const backStorageKey = "ai-grader/reports/checksum/ocr-prefill/back.png";
+  const streamed = await verifyStorageObjectIntegrity({
+    storageKey: backStorageKey,
     expectedByteSize: byteSize,
     expectedChecksumSha256: expectedChecksum,
-    head: {
-      storageKey: "ai-grader/reports/checksum/ocr-prefill/back.png",
-      byteSize,
-      contentType: "image/png",
-      metadata: { sha256: expectedChecksum },
-      checksumSha256: null,
+  }, {
+    async headObject(storageKey) {
+      return {
+        storageKey,
+        byteSize,
+        contentType: "image/png",
+        metadata: { sha256: wrongBytesChecksum },
+        checksumSha256: null,
+        nativeChecksumPresent: false,
+      };
+    },
+    async openRead(storageKey) {
+      return {
+        storageKey,
+        byteSize,
+        body: Readable.from([Buffer.from("same-size-expected")]),
+      };
     },
   });
-  assert.equal(missingActualChecksum.ok, false);
-  assert.match(String(missingActualChecksum.message), /missing or invalid/i);
+  assert.equal(streamed.ok, true);
+  assert.equal(streamed.checksumSha256, expectedChecksum);
+  assert.equal(streamed.checksumSource, "server_stream");
+});
+
+test("OCR provider remains gated until both missing-native-checksum objects pass streamed integrity", async () => {
+  const frontBytes = Buffer.alloc(2048, 0x11);
+  const backBytes = Buffer.alloc(3072, 0x22);
+  const images = normalizedImages().map((image) => {
+    const bytes = image.side === "front" ? frontBytes : backBytes;
+    return {
+      ...image,
+      byteSize: bytes.byteLength,
+      checksumSha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+  });
+
+  let tamperBack = true;
+  let ocrCalls = 0;
+  const handler = createAiGraderProductionApiHandler({
+    env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
+    async requireAdminSession() {
+      throw new Error("not used");
+    },
+    async requireProductionActor(_req, action) {
+      return {
+        type: "service_account",
+        role: "ai_grader_service",
+        serviceAccountId: "ocr-stream-integrity-test",
+        scopes: ["publish"],
+        audit: { actorType: "service_account", action, requestedAt: "2026-07-17T12:00:00.000Z" },
+      };
+    },
+    publicUrlFor(storageKey) {
+      return `https://cdn.tenkings.test/${storageKey}`;
+    },
+    async presignUpload({ storageKey, contentType, checksumSha256 }) {
+      return {
+        storageKey,
+        uploadUrl: `https://uploads.tenkings.test/${storageKey}`,
+        uploadMethod: "PUT",
+        uploadHeaders: {
+          "Content-Type": contentType,
+          "x-amz-checksum-sha256": sha256HexToBase64(checksumSha256),
+        },
+        publicUrl: `https://cdn.tenkings.test/${storageKey}`,
+      };
+    },
+    async verifyUploadedArtifact(input) {
+      const isBack = input.artifactId.endsWith(":back");
+      const expectedBytes = isBack ? backBytes : frontBytes;
+      const storedBytes = isBack && tamperBack ? Buffer.alloc(expectedBytes.byteLength, 0x33) : expectedBytes;
+      const integrity = await verifyStorageObjectIntegrity({
+        storageKey: input.storageKey,
+        expectedByteSize: input.byteSize,
+        expectedChecksumSha256: input.checksumSha256,
+      }, {
+        async headObject(storageKey) {
+          return {
+            storageKey,
+            byteSize: storedBytes.byteLength,
+            contentType: input.contentType,
+            metadata: { sha256: input.checksumSha256 },
+            checksumSha256: null,
+            nativeChecksumPresent: false,
+          };
+        },
+        async openRead(storageKey) {
+          return {
+            storageKey,
+            byteSize: storedBytes.byteLength,
+            body: Readable.from([storedBytes]),
+          };
+        },
+      });
+      return {
+        ...integrity,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
+      };
+    },
+    async runOcrPrefill(input) {
+      ocrCalls += 1;
+      return {
+        reportId: input.reportId,
+        status: "prefill_ready",
+        humanConfirmationRequired: true,
+        inventoryMutationPerformed: false,
+        publishMutationPerformed: false,
+        sourceSides: ["front", "back"],
+        fields: prefillFields(),
+        reviewFieldNames: ["cardName"],
+        provenance: {
+          ocrEngine: "google_vision_document_text_detection_url_only",
+          attributeExtractor: "@tenkings/shared/extractCardAttributes",
+          structuredExtractor: "openai_responses_strict_json_schema",
+          structuredExtractionModel: "gpt-5.6-sol",
+          setLookupUsed: true,
+          setIdentificationUsed: true,
+        },
+        warnings: ["Human review is required."],
+      } as any;
+    },
+    async persist() {
+      throw new Error("OCR integrity test must not publish");
+    },
+  });
+
+  async function initAndFinalize(reportId: string) {
+    const initRes = mockResponse();
+    await handler(mockRequest("POST", ["ocr-prefill-init"], { reportId, images }), initRes);
+    assert.equal(initRes.statusCodeValue, 200);
+    const finalizeRes = mockResponse();
+    await handler(
+      mockRequest("POST", ["ocr-prefill-finalize"], (initRes.jsonBody as any).result.requiredFinalizeManifest),
+      finalizeRes,
+    );
+    return finalizeRes;
+  }
+
+  const rejected = await initAndFinalize("ocr-streamed-integrity-rejected");
+  assert.notEqual(rejected.statusCodeValue, 200);
+  assert.match(String((rejected.jsonBody as any)?.message ?? ""), /sha-256 checksum mismatch/i);
+  assert.equal(ocrCalls, 0);
+
+  tamperBack = false;
+  const accepted = await initAndFinalize("ocr-streamed-integrity-accepted");
+  assert.equal(accepted.statusCodeValue, 200);
+  assert.equal((accepted.jsonBody as any)?.operation, "aiGraderOcrPrefillFinalize");
+  assert.equal(ocrCalls, 1);
+});
+
+test("slabbed-photo finalize verifies streamed storage integrity before persistence", async () => {
+  const expectedBytes = Buffer.from("slabbed-photo-exact-stored-bytes");
+  const expectedChecksum = createHash("sha256").update(expectedBytes).digest("hex");
+  let tamperStoredBytes = true;
+  let integrityCalls = 0;
+  let finalizeCalls = 0;
+  const handler = createAiGraderProductionApiHandler({
+    env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
+    async requireAdminSession() {
+      throw new Error("not used");
+    },
+    async requireProductionActor(_req, action) {
+      return {
+        type: "service_account",
+        role: "ai_grader_service",
+        serviceAccountId: "slab-integrity-test",
+        scopes: ["upload-slab-photo"],
+        audit: { actorType: "service_account", action, requestedAt: "2026-07-17T12:00:00.000Z" },
+      };
+    },
+    publicUrlFor(storageKey) {
+      return `https://cdn.tenkings.test/${storageKey}`;
+    },
+    async presignUpload({ storageKey, contentType, checksumSha256 }) {
+      return {
+        storageKey,
+        uploadUrl: `https://uploads.tenkings.test/${storageKey}`,
+        uploadMethod: "PUT",
+        uploadHeaders: {
+          "Content-Type": contentType,
+          "x-amz-checksum-sha256": sha256HexToBase64(checksumSha256),
+        },
+        publicUrl: `https://cdn.tenkings.test/${storageKey}`,
+      };
+    },
+    async verifyUploadedArtifact(input) {
+      integrityCalls += 1;
+      const storedBytes = tamperStoredBytes
+        ? Buffer.alloc(expectedBytes.byteLength, 0x7f)
+        : expectedBytes;
+      const integrity = await verifyStorageObjectIntegrity({
+        storageKey: input.storageKey,
+        expectedByteSize: input.byteSize,
+        expectedChecksumSha256: input.checksumSha256,
+      }, {
+        async headObject(storageKey) {
+          return {
+            storageKey,
+            byteSize: storedBytes.byteLength,
+            contentType: input.contentType,
+            metadata: {},
+            checksumSha256: null,
+            nativeChecksumPresent: false,
+          };
+        },
+        async openRead(storageKey) {
+          return {
+            storageKey,
+            byteSize: storedBytes.byteLength,
+            body: Readable.from([storedBytes]),
+          };
+        },
+      });
+      return {
+        ...integrity,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
+      };
+    },
+    async finalizeSlabbedPhotoUpload(input) {
+      finalizeCalls += 1;
+      assert.equal(integrityCalls, 2);
+      return {
+        reportId: input.reportId,
+        side: input.side,
+        storageKey: input.storageKey,
+        publicUrl: input.publicUrl,
+        byteSize: input.byteSize,
+        checksumSha256: input.checksumSha256,
+        widthPx: input.widthPx,
+        heightPx: input.heightPx,
+        persisted: true,
+      };
+    },
+    async persist() {
+      throw new Error("slab integrity test must not publish");
+    },
+  });
+
+  async function initAndFinalize(reportId: string) {
+    const initRes = mockResponse();
+    await handler(mockRequest("POST", ["slabbed-photo-init"], {
+      reportId,
+      side: "front",
+      fileName: "front.png",
+      mimeType: "image/png",
+      checksumSha256: expectedChecksum,
+      byteSize: expectedBytes.byteLength,
+      widthPx: 100,
+      heightPx: 140,
+    }), initRes);
+    assert.equal(initRes.statusCodeValue, 200);
+    const finalizeRes = mockResponse();
+    await handler(
+      mockRequest("POST", ["slabbed-photo-finalize"], (initRes.jsonBody as any).result.requiredFinalizeManifest),
+      finalizeRes,
+    );
+    return finalizeRes;
+  }
+
+  const rejected = await initAndFinalize("slab-integrity-rejected");
+  assert.notEqual(rejected.statusCodeValue, 200);
+  assert.equal(integrityCalls, 1);
+  assert.equal(finalizeCalls, 0);
+
+  tamperStoredBytes = false;
+  const accepted = await initAndFinalize("slab-integrity-accepted");
+  assert.equal(accepted.statusCodeValue, 200);
+  assert.equal(integrityCalls, 2);
+  assert.equal(finalizeCalls, 1);
+  assert.equal((accepted.jsonBody as any)?.result?.persisted, true);
 });
 
 test("OCR upload checksum conversion is strict and round-trips S3 base64 SHA-256", () => {

@@ -101,10 +101,17 @@ try {
 
   Remove-NfcSafeTree -Path $live -AllowedRoot $testRoot
   Remove-NfcSafeTree -Path $staged -AllowedRoot $testRoot
+  $repoRoot = Get-NfcRepoRoot
+  $templateAttribute = "packages/ai-grader-nfc-helper/src/TenKings.AiGrader.NfcHelper/Templates/f8215-gototags-manual-start-v1.json text eol=lf"
+  Assert-True ([IO.File]::ReadAllLines((Join-Path $repoRoot ".gitattributes")) -ccontains $templateAttribute) "The reviewed GoToTags template is not pinned to LF in .gitattributes."
   New-Item -ItemType Directory -Path $live | Out-Null
   New-Item -ItemType Directory -Path $staged | Out-Null
   Set-Content -LiteralPath (Join-Path $live "marker.txt") -Value "old-success" -Encoding ASCII
   Set-Content -LiteralPath (Join-Path $staged "marker.txt") -Value "new-success" -Encoding ASCII
+  Copy-NfcReviewedGoToTagsTemplate `
+    -RepoRoot $repoRoot `
+    -DestinationInstallDirectory $staged `
+    -AllowedDestinationRoot $testRoot | Out-Null
   Invoke-NfcInstallDirectoryReplacement `
     -InstallDirectory $live `
     -StagingDirectory $staged `
@@ -115,11 +122,16 @@ try {
       if ((Get-Content -LiteralPath (Join-Path $activated "marker.txt") -Raw).Trim() -ne "new-success") {
         throw "The staged install was not activated for validation."
       }
+      if ((Get-NfcFileFingerprint -Path (Join-Path $activated "Templates\f8215-gototags-manual-start-v1.json")) -cne $script:NfcGoToTagsTemplateSha256) {
+        throw "The activated install did not retain the reviewed GoToTags template bytes."
+      }
     }
   Assert-True ((Get-Content -LiteralPath (Join-Path $live "marker.txt") -Raw).Trim() -eq "new-success") "Successful replacement did not activate the staged install."
   Assert-True ((Get-Content -LiteralPath (Join-Path $backup "marker.txt") -Raw).Trim() -eq "old-success") "Successful replacement did not retain rollback state until final acceptance."
+  $installedTemplate = Join-Path $live "Templates\f8215-gototags-manual-start-v1.json"
+  Assert-True ((Get-NfcFileFingerprint -Path $installedTemplate) -ceq $script:NfcGoToTagsTemplateSha256) "Windows maintenance did not install the reviewed GoToTags template bytes."
+  Assert-True (-not ([IO.File]::ReadAllBytes($installedTemplate) -contains [byte]13)) "The installed GoToTags template contains a CR byte instead of exact LF line endings."
 
-  $repoRoot = Get-NfcRepoRoot
   $update = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\update-ai-grader-nfc-helper.ps1") -Raw
   $export = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\export-ai-grader-nfc-workstation-public-key.ps1") -Raw
   $install = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\install-ai-grader-nfc-helper.ps1") -Raw
@@ -131,10 +143,11 @@ try {
   $uninstall = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\uninstall-ai-grader-nfc-helper.ps1") -Raw
   $resolveAbandoned = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\resolve-ai-grader-nfc-abandoned-job.ps1") -Raw
   $publishIndex = $update.IndexOf("& dotnet publish", [StringComparison]::Ordinal)
+  $templateCopyIndex = $update.IndexOf("Copy-NfcReviewedGoToTagsTemplate", [StringComparison]::Ordinal)
   $stagedVerifyIndex = $update.IndexOf("Invoke-NfcBuildVerification -DllPath `$stagedDll", [StringComparison]::Ordinal)
   $verifiedMarkerIndex = $update.IndexOf("Everything above is hardware-free", [StringComparison]::Ordinal)
   $stopIndex = $update.IndexOf("Stop-NfcUpdateProcess -Config `$config", $verifiedMarkerIndex, [StringComparison]::Ordinal)
-  Assert-True ($publishIndex -ge 0 -and $publishIndex -lt $stagedVerifyIndex -and $stagedVerifyIndex -lt $verifiedMarkerIndex -and $verifiedMarkerIndex -lt $stopIndex) "Update can stop the working helper before staged-build verification."
+  Assert-True ($publishIndex -ge 0 -and $publishIndex -lt $templateCopyIndex -and $templateCopyIndex -lt $stagedVerifyIndex -and $stagedVerifyIndex -lt $verifiedMarkerIndex -and $verifiedMarkerIndex -lt $stopIndex) "Update can stop the working helper before reviewed-template and staged-build verification."
   Assert-True ($update.IndexOf("Get-NfcPreservedStateSnapshot", [StringComparison]::Ordinal) -ge 0) "Update does not snapshot protected workstation state."
   Assert-True ($update.IndexOf("Assert-NfcPreservedState", [StringComparison]::Ordinal) -ge 0) "Update does not verify protected workstation state after replacement."
   Assert-True ($update.IndexOf("--export-workstation-attestation-public-key", [StringComparison]::Ordinal) -ge 0) "Update does not validate the existing CNG public identity."
@@ -143,6 +156,7 @@ try {
   Assert-True ($update.IndexOf("Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY", [StringComparison]::Ordinal) -lt 0) "Update deletes pre-existing workstation-key environment."
   Assert-True ($export.IndexOf("Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY", [StringComparison]::Ordinal) -lt 0) "Public-only export deletes pre-existing workstation-key environment."
   Assert-True ($update.IndexOf("Invoke-NfcInstallDirectoryReplacement", [StringComparison]::Ordinal) -ge 0) "Update does not use transactional directory replacement."
+  Assert-True ($templateCopyIndex -ge 0) "Update does not stage the reviewed GoToTags template with a byte-exact copy."
   Assert-True ($update.IndexOf("Copy-NfcStableMaintenancePayload", [StringComparison]::Ordinal) -ge 0) "Update does not refresh stable installed launchers."
   Assert-True ($update.IndexOf("Initialize-NfcConfig", [StringComparison]::Ordinal) -lt 0) "Ordinary update can rewrite protected config."
   Assert-True ($update.IndexOf("--ensure-workstation-attestation-key", [StringComparison]::Ordinal) -lt 0) "Ordinary update can create or rotate the CNG key."
@@ -196,7 +210,7 @@ try {
   Assert-True ([bool]$versionedResult.scenarios[1].rolledBack -and $versionedResult.scenarios[1].final -ceq $script:NfcHelperVersionV2) "Injected v3 activation failure did not restore exact v2."
   Assert-True ($versionedResult.scenarios[2].prior -ceq $script:NfcHelperVersionV3 -and $versionedResult.scenarios[2].final -ceq $script:NfcHelperVersionV3) "Idempotent v3-to-v3 replacement did not pass."
 
-  Write-Output "PASS NFC maintenance path/ACL containment, v2-to-v3 upgrade/rollback, quarantine recovery, stable launchers, preservation, and explicit-rotation contracts"
+  Write-Output "PASS NFC maintenance path/ACL containment, exact GoToTags template bytes, v2-to-v3 upgrade/rollback, quarantine recovery, stable launchers, preservation, and explicit-rotation contracts"
 } finally {
   if (Test-Path -LiteralPath $testRoot) {
     Remove-NfcSafeTree -Path $testRoot -AllowedRoot $testParent

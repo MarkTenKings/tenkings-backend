@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, readCachedAiGraderNfcSchemaReadiness } from "@tenkings/database";
 import {
   getS3ObjectAcl,
-  headStorageObject,
   presignUploadUrl,
   publicUrlFor,
   readStoragePrefix,
@@ -72,25 +71,23 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       sourceImageWidthPx,
       sourceImageHeightPx,
     }) => {
-      const head = await headStorageObject(storageKey);
-      const integrity = verifyStorageObjectIntegrity({
+      const integrity = await verifyStorageObjectIntegrity({
         storageKey,
         expectedByteSize: byteSize,
         expectedChecksumSha256: checksumSha256,
-        head,
       });
       if (!integrity.ok || (sourceImageWidthPx === undefined && sourceImageHeightPx === undefined)) {
         return integrity;
       }
       const dimensions = readAiGraderRasterDimensions(
         await readStoragePrefix(storageKey),
-        head.contentType ?? contentType ?? "",
+        integrity.contentType ?? contentType ?? "",
       );
       if (!dimensions) {
         return {
           ...integrity,
           ok: false,
-          message: `Storage image dimensions could not be verified for ${storageKey}.`,
+          message: "Storage image dimensions could not be verified.",
         };
       }
       return { ...integrity, ...dimensions };

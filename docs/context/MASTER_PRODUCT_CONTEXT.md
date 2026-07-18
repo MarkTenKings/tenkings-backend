@@ -54,7 +54,7 @@ Media/Live:
 - Part 2 is `/ai-grader/finish` on a normal authenticated computer: comps review/selection, slab-photo direct upload, label/inventory gates, and inventory completion. It has no local bridge, station token, camera, lighting, or hardware controls.
 - `/ai-grader/labels/sheets` manages the unchanged 16-slot Label V1 physical sheets. Publication must preserve exact report/card/label/inventory linkage.
 - Public report routes are unauthenticated read-only views and must never expose Dell paths, bridge URLs/tokens, presigned URLs, embedded image bodies, credentials, or hardware controls.
-- Large images use direct browser-to-storage PUTs. Vercel receives only small manifests/metadata.
+- Large images use direct browser-to-storage PUTs; browser-to-Vercel request and response bodies remain small manifests/metadata. OCR, publication-asset, and slab-photo finalization require the exact planned object identity, byte size, content type, and SHA-256 before use: accept a valid provider-native checksum when present, otherwise let the server pull and hash the same stored object through one bounded stream. ETag, mutable metadata, filename, caller URL, and unbounded reads are never integrity authority, and downloaded verification bytes are never written to disk.
 - Raw forensic capture evidence remains local and immutable. Derived normalized/crop/deskew assets supplement rather than replace the raw front/back evidence.
 
 ## AI Grader NFC identity architecture (software-ready, not deployed)

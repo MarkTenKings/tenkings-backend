@@ -36,6 +36,8 @@ Rapid Capture is the retained production throughput path, not a capture alternat
 
 Front and back immutable evidence, normalized derivatives, checksums, findings, and report identity stay linked to the same session and report. **Approve & Publish** is the one human publication authority. Durable card/report/label/inventory persistence executes atomically; partial publication is not permitted. Existing Label V1 authority remains unchanged.
 
+Direct-upload integrity uses one server-side verifier for OCR, publication assets, and slab photos. Finalization binds the exact planned storage key, expected byte size, compatible content type, and browser-provided SHA-256. A valid provider-native SHA-256 is accepted; if the provider omits it, the server streams the same object through bounded in-memory SHA-256 calculation without writing verification bytes to disk. The stream is capped at the existing `50 MiB` per-object limit and the exact expected length; oversized, overrun, truncated, mismatched, malformed, or failed reads stop before OCR or persistence. ETag, user metadata, filenames, caller URLs, and image bytes are never integrity authority or log evidence.
+
 ## Security boundary
 
 The station bridge:

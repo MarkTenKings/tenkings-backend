@@ -89,7 +89,7 @@ import {
   AiGraderOcrFailure,
   isAiGraderOcrFailureCode,
 } from "../aiGraderOcrFailure";
-import { sha256Base64ToHex } from "./storage";
+import { AI_GRADER_STORAGE_MAX_OBJECT_BYTES, sha256Base64ToHex } from "./storage";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
@@ -988,8 +988,10 @@ function parseUploadManifest(value: unknown): AiGraderProductionUploadManifest {
       if (!/^[a-f0-9]{64}$/i.test(checksumSha256)) {
         throw new Error(`uploadManifest.artifacts[${index}].checksumSha256 must be a SHA-256 hex digest.`);
       }
-      if (!Number.isFinite(byteSize) || byteSize <= 0) {
-        throw new Error(`uploadManifest.artifacts[${index}].byteSize must be positive.`);
+      if (!Number.isSafeInteger(byteSize) || byteSize <= 0 || byteSize > AI_GRADER_STORAGE_MAX_OBJECT_BYTES) {
+        throw new Error(
+          `uploadManifest.artifacts[${index}].byteSize must be between 1 and ${AI_GRADER_STORAGE_MAX_OBJECT_BYTES}.`,
+        );
       }
       const sourceImageWidthPx = entry.sourceImageWidthPx;
       const sourceImageHeightPx = entry.sourceImageHeightPx;
@@ -1570,6 +1572,21 @@ function assertStorageReadyPlan(
   requirePlannedImageDimensions: boolean,
 ) {
   const reportImageAssets = plan.artifacts.filter((artifact) => artifact.artifactClass === "report_asset");
+  if (
+    plan.artifacts.some(
+      (artifact) =>
+        !Number.isSafeInteger(artifact.byteSize) ||
+        artifact.byteSize < 1 ||
+        artifact.byteSize > AI_GRADER_STORAGE_MAX_OBJECT_BYTES,
+    )
+  ) {
+    const error = new Error(
+      `AI Grader upload artifacts must be between 1 and ${AI_GRADER_STORAGE_MAX_OBJECT_BYTES} bytes.`,
+    );
+    (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
+    (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_STORAGE_OBJECT_SIZE_LIMIT";
+    throw error;
+  }
   if (publicationStatus === "published" && reportImageAssets.length < 1) {
     const error = new Error("AI Grader publish requires storage-ready report image asset metadata with checksum and byte size.");
     (error as Error & { statusCode?: number; code?: string }).statusCode = 400;
@@ -1641,20 +1658,20 @@ export function assertAiGraderStorageArtifactIntegrity(input: {
   expectedChecksumSha256: string;
   label: string;
 }) {
+  if (!Number.isSafeInteger(input.verified.byteSize) || input.verified.byteSize !== input.expectedByteSize) {
+    throw new Error("Storage byte size mismatch for " + input.label + ".");
+  }
   const checksum = typeof input.verified.checksumSha256 === "string"
     ? input.verified.checksumSha256.toLowerCase()
     : "";
   if (!/^[a-f0-9]{64}$/.test(checksum)) {
-    const error = new Error("Storage did not return a native SHA-256 checksum for " + input.label + ". Finalize stopped.");
+    const error = new Error("Storage did not return a verified SHA-256 checksum for " + input.label + ". Finalize stopped.");
     (error as Error & { statusCode?: number; code?: string }).statusCode = 502;
     (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_STORAGE_CHECKSUM_UNAVAILABLE";
     throw error;
   }
   if (checksum !== input.expectedChecksumSha256.toLowerCase()) {
     throw new Error("Storage-provided SHA-256 checksum mismatch for " + input.label + ".");
-  }
-  if (!Number.isSafeInteger(input.verified.byteSize) || input.verified.byteSize !== input.expectedByteSize) {
-    throw new Error("Storage byte size mismatch for " + input.label + ".");
   }
   if (!storageContentTypeMatches(input.verified.contentType, input.expectedContentType)) {
     throw new Error("Storage content type mismatch for " + input.label + ".");
@@ -1793,8 +1810,6 @@ function parseCreateCardFromReportBody(body: unknown) {
   };
 }
 
-const AI_GRADER_OCR_PREFILL_MAX_IMAGE_BYTES = 50 * 1024 * 1024;
-
 function assertNoOcrUploadBodyFields(entry: JsonRecord, path: string) {
   for (const key of ["base64", "body", "bodyBase64", "dataUrl", "localPath", "publicUrl", "url", "uploadUrl"]) {
     if (Object.prototype.hasOwnProperty.call(entry, key)) {
@@ -1827,8 +1842,8 @@ function parseOcrPrefillImageMetadata(value: unknown, index: number, allowStorag
   if (!/^[a-f0-9]{64}$/.test(checksumSha256)) {
     throw new Error(`images[${index}].checksumSha256 must be a SHA-256 hex digest.`);
   }
-  if (!Number.isFinite(byteSize) || byteSize <= 0 || byteSize > AI_GRADER_OCR_PREFILL_MAX_IMAGE_BYTES) {
-    throw new Error(`images[${index}].byteSize must be between 1 and ${AI_GRADER_OCR_PREFILL_MAX_IMAGE_BYTES}.`);
+  if (!Number.isSafeInteger(byteSize) || byteSize <= 0 || byteSize > AI_GRADER_STORAGE_MAX_OBJECT_BYTES) {
+    throw new Error(`images[${index}].byteSize must be between 1 and ${AI_GRADER_STORAGE_MAX_OBJECT_BYTES}.`);
   }
   if (allowStorageKey && !storageKey) throw new Error(`images[${index}].storageKey is required.`);
   return {
@@ -1995,7 +2010,9 @@ function parseSlabbedPhotoInitBody(body: unknown) {
     throw new Error("Slabbed photos must use PNG, JPEG, or WebP raster images.");
   }
   if (!/^[a-f0-9]{64}$/i.test(checksumSha256)) throw new Error("checksumSha256 must be a SHA-256 hex digest.");
-  if (!Number.isFinite(byteSize) || byteSize <= 0) throw new Error("byteSize must be positive.");
+  if (!Number.isSafeInteger(byteSize) || byteSize <= 0 || byteSize > AI_GRADER_STORAGE_MAX_OBJECT_BYTES) {
+    throw new Error(`byteSize must be between 1 and ${AI_GRADER_STORAGE_MAX_OBJECT_BYTES}.`);
+  }
   if (!Number.isSafeInteger(widthPx) || widthPx < 1 || widthPx > 100_000) throw new Error("widthPx must be a safe positive image dimension.");
   if (!Number.isSafeInteger(heightPx) || heightPx < 1 || heightPx > 100_000) throw new Error("heightPx must be a safe positive image dimension.");
   return {
@@ -3925,7 +3942,10 @@ export async function createAiGraderCardFromReportRuntime(input: {
     if (typeof tx.$queryRaw !== "function") {
       throw new Error("AI Grader report lifecycle transaction locking is unavailable.");
     }
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${reportId}))`;
+    await tx.$queryRaw`
+      SELECT 1 AS "lockAcquired"
+      FROM pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${reportId}))
+    `;
     const existing = await existingAiGraderCreatedCardResult({
       db: tx,
       tenantId: input.tenantId,
@@ -4427,7 +4447,10 @@ export async function persistAiGraderSelectedCompsRuntime(input: {
   if (typeof tx.$queryRaw !== "function") {
     throw new Error("AI Grader selected comps transaction locking is unavailable.");
   }
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${input.reportId}))`;
+  await tx.$queryRaw`
+    SELECT 1 AS "lockAcquired"
+    FROM pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${input.reportId}))
+  `;
   const report = await findAiGraderReportForStationAction(tx, input.reportId);
   if (optionalString(report.tenantId) !== input.tenantId) {
     const error = new Error("AI Grader report was not found for this tenant.");
@@ -4634,7 +4657,10 @@ export async function persistAiGraderCompsRuntime(input: {
     if (typeof tx.$queryRaw !== "function") {
       throw new Error("AI Grader comps transaction locking is unavailable.");
     }
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${input.reportId}))`;
+    await tx.$queryRaw`
+      SELECT 1 AS "lockAcquired"
+      FROM pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${input.reportId}))
+    `;
     const valuationId = `ai-grader-valuation:${input.reportId}`;
     const current = await tx.aiGraderValuation.findUnique({
       where: { id: valuationId },
@@ -4725,8 +4751,14 @@ export async function addAiGraderCardToInventoryRuntime(input: {
     if (typeof tx.$queryRaw !== "function") {
       throw new Error("AI Grader inventory transaction locking is unavailable.");
     }
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${input.reportId}))`;
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('ai-grader-label-sheets'), hashtext(${input.tenantId}))`;
+    await tx.$queryRaw`
+      SELECT 1 AS "lockAcquired"
+      FROM pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${input.reportId}))
+    `;
+    await tx.$queryRaw`
+      SELECT 1 AS "lockAcquired"
+      FROM pg_advisory_xact_lock(hashtext('ai-grader-label-sheets'), hashtext(${input.tenantId}))
+    `;
     const readiness = await validateAiGraderInventoryReadiness(tx, input.reportId, {
       tenantId: input.tenantId,
       env: input.env ?? process.env,

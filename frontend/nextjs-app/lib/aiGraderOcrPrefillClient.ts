@@ -58,8 +58,8 @@ export class AiGraderOcrPrefillStageError extends Error {
   }
 }
 
-const OCR_NATIVE_CHECKSUM_BLOCKER =
-  "OCR Prefill stopped because storage did not return a native SHA-256 checksum. Storage checksum support must be confirmed before retrying.";
+const OCR_STORAGE_INTEGRITY_BLOCKER =
+  "OCR Prefill stopped because the stored image bytes could not be verified by SHA-256. Storage integrity verification must succeed before retrying.";
 
 export type AiGraderOcrPrefillField<T extends string | boolean | null = string | boolean | null> = {
   state: "supported" | "unknown" | "disagreement";
@@ -487,7 +487,7 @@ export async function runAiGraderOcrPrefillFromLocalReport(
   const finalizePayload = await responsePayload(finalizeResponse);
   if (!finalizeResponse.ok) {
     if (finalizePayload?.code === "AI_GRADER_STORAGE_CHECKSUM_UNAVAILABLE") {
-      throw new AiGraderOcrPrefillStageError("finalize", OCR_NATIVE_CHECKSUM_BLOCKER);
+      throw new AiGraderOcrPrefillStageError("finalize", OCR_STORAGE_INTEGRITY_BLOCKER);
     }
     const failureCode = finalizePayload?.code;
     if (isAiGraderOcrFailureCode(failureCode)) {
