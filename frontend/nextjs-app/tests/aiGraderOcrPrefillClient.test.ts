@@ -369,7 +369,7 @@ test("OCR prefill reports eight distinct redacted failure stages", async () => {
   assert.equal(messages.size, stages.length);
 });
 
-test("OCR prefill exposes only the safe native-checksum provider blocker", async () => {
+test("OCR prefill exposes only the safe storage-integrity blocker", async () => {
   let requestCount = 0;
   await assert.rejects(
     runAiGraderOcrPrefillFromLocalReport({
@@ -407,7 +407,7 @@ test("OCR prefill exposes only the safe native-checksum provider blocker", async
       },
     }),
     (error) => error instanceof AiGraderOcrPrefillStageError && error.stage === "finalize" &&
-      /storage did not return a native SHA-256 checksum/i.test(error.message) &&
+      /stored image bytes could not be verified by SHA-256/i.test(error.message) &&
       !/secret-sentinel|URL|key|path/.test(error.message),
   );
 });

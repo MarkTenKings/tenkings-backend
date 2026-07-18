@@ -120,6 +120,9 @@ try {
   New-Item -ItemType Directory -Path $stagingDirectory -ErrorAction Stop | Out-Null
   & dotnet publish $project --configuration Release --self-contained false --output $stagingDirectory
   if ($LASTEXITCODE -ne 0) { throw "The staged NFC helper publish failed; the running helper was not stopped." }
+  Copy-NfcReviewedGoToTagsTemplate `
+    -RepoRoot $repoRoot `
+    -DestinationInstallDirectory $stagingDirectory | Out-Null
   Copy-NfcStableMaintenancePayload -SourceDirectory $PSScriptRoot -DestinationInstallDirectory $stagingDirectory
   Protect-NfcTree -Path $stagingDirectory -AllowedRoot $script:NfcToolsRoot
   Assert-NfcProtectedTree -Path $stagingDirectory -AllowedRoot $script:NfcToolsRoot

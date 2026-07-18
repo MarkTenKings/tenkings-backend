@@ -61,12 +61,36 @@ export type StorageObjectHead = {
   byteSize?: number;
   contentType?: string;
   metadata: Record<string, string>;
-  /** SHA-256 of the stored bytes, supplied by storage (or calculated locally), never object metadata. */
+  /** Provider-native SHA-256 only; never ETag, object metadata, or a caller-supplied digest. */
   checksumSha256: string | null;
+  /** Distinguishes an absent native checksum from a malformed provider response. */
+  nativeChecksumPresent?: boolean;
+  checksumSource?: "provider_native";
+};
+
+export type StorageObjectRead = {
+  storageKey: string;
+  byteSize?: number;
+  body: AsyncIterable<Uint8Array> & { destroy?: () => void };
+};
+
+export type StorageObjectIntegrityResult = {
+  ok: boolean;
+  byteSize?: number;
+  contentType?: string;
+  checksumSha256: string | null;
+  checksumSource: "provider_native" | "server_stream" | null;
+  message?: string;
+};
+
+export type StorageObjectIntegrityDependencies = {
+  headObject?: (storageKey: string) => Promise<StorageObjectHead>;
+  openRead?: (storageKey: string) => Promise<StorageObjectRead>;
 };
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/i;
 const SHA256_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
+export const AI_GRADER_STORAGE_MAX_OBJECT_BYTES = 50 * 1024 * 1024;
 
 export function sha256HexToBase64(value: string) {
   const normalized = value.trim();
@@ -84,48 +108,169 @@ export function sha256Base64ToHex(value: string | null | undefined) {
   return decoded.toString("hex");
 }
 
-export function verifyStorageObjectIntegrity(input: {
+function stopStorageRead(body: StorageObjectRead["body"] | null | undefined) {
+  try {
+    body?.destroy?.();
+  } catch {
+    // Verification is already stopping. Never replace the bounded integrity error
+    // with a provider-specific stream teardown error.
+  }
+}
+
+async function sha256StorageObjectRead(input: {
+  read: StorageObjectRead;
+  expectedByteSize: number;
+  maxByteSize: number;
+}) {
+  if (input.read.byteSize !== undefined) {
+    if (!Number.isSafeInteger(input.read.byteSize) || input.read.byteSize < 0) {
+      stopStorageRead(input.read.body);
+      throw new Error("Storage object read returned an invalid byte size.");
+    }
+    if (input.read.byteSize > input.maxByteSize) {
+      stopStorageRead(input.read.body);
+      throw new Error("Storage object read exceeded the configured upload-size limit.");
+    }
+    if (input.read.byteSize !== input.expectedByteSize) {
+      stopStorageRead(input.read.body);
+      throw new Error("Storage object read byte size did not match the expected byte length.");
+    }
+  }
+  if (!input.read.body || typeof input.read.body[Symbol.asyncIterator] !== "function") {
+    stopStorageRead(input.read.body);
+    throw new Error("Storage object read did not return a stream.");
+  }
+
+  const digest = createHash("sha256");
+  let receivedBytes = 0;
+  try {
+    for await (const rawChunk of input.read.body) {
+      if (!(rawChunk instanceof Uint8Array)) {
+        throw new Error("invalid storage stream chunk");
+      }
+      const chunk = Buffer.from(rawChunk.buffer, rawChunk.byteOffset, rawChunk.byteLength);
+      receivedBytes += chunk.byteLength;
+      if (receivedBytes > input.maxByteSize) {
+        stopStorageRead(input.read.body);
+        throw new Error("Storage object stream exceeded the configured upload-size limit.");
+      }
+      if (receivedBytes > input.expectedByteSize) {
+        stopStorageRead(input.read.body);
+        throw new Error("Storage object stream exceeded the expected byte length.");
+      }
+      digest.update(chunk);
+    }
+  } catch (error) {
+    stopStorageRead(input.read.body);
+    if (
+      error instanceof Error &&
+      (error.message === "Storage object stream exceeded the configured upload-size limit." ||
+        error.message === "Storage object stream exceeded the expected byte length.")
+    ) {
+      throw error;
+    }
+    throw new Error("Storage object read failed during SHA-256 verification.");
+  }
+  if (receivedBytes !== input.expectedByteSize) {
+    throw new Error("Storage object stream ended before the expected byte length.");
+  }
+  return digest.digest("hex");
+}
+
+export async function verifyStorageObjectIntegrity(input: {
   storageKey: string;
   expectedByteSize: number;
   expectedChecksumSha256: string;
-  head: StorageObjectHead;
-}) {
-  const expectedChecksum = SHA256_HEX_PATTERN.test(input.expectedChecksumSha256)
-    ? input.expectedChecksumSha256.toLowerCase()
-    : null;
-  const actualChecksum =
-    typeof input.head.checksumSha256 === "string" && SHA256_HEX_PATTERN.test(input.head.checksumSha256)
-      ? input.head.checksumSha256.toLowerCase()
-      : null;
-  const actualByteSize = input.head.byteSize;
-  const checksumMatches = expectedChecksum != null && actualChecksum === expectedChecksum;
-  const byteSizeMatches = typeof actualByteSize === "number" && actualByteSize === input.expectedByteSize;
-  return {
-    ok: checksumMatches && byteSizeMatches,
-    byteSize: actualByteSize,
-    contentType: input.head.contentType,
-    checksumSha256: actualChecksum,
-    message: !actualChecksum
-      ? `Storage-provided SHA-256 checksum is missing or invalid for ${input.storageKey}.`
-      : !expectedChecksum
-        ? `Expected SHA-256 checksum is invalid for ${input.storageKey}.`
-        : !checksumMatches
-          ? `Storage-provided SHA-256 checksum mismatch for ${input.storageKey}.`
-          : !byteSizeMatches
-            ? `Storage byte size mismatch for ${input.storageKey}.`
-            : undefined,
-  };
-}
+  maxByteSize?: number;
+}, dependencies: StorageObjectIntegrityDependencies = {}): Promise<StorageObjectIntegrityResult> {
+  const storageKey = String(input.storageKey ?? "");
+  if (!storageKey) throw new Error("Storage object identity is required for integrity verification.");
+  const requestedMaxByteSize = input.maxByteSize ?? AI_GRADER_STORAGE_MAX_OBJECT_BYTES;
+  if (!Number.isSafeInteger(requestedMaxByteSize) || requestedMaxByteSize < 1) {
+    throw new Error("Storage integrity upload-size limit is invalid.");
+  }
+  const maxByteSize = Math.min(requestedMaxByteSize, AI_GRADER_STORAGE_MAX_OBJECT_BYTES);
+  if (!Number.isSafeInteger(input.expectedByteSize) || input.expectedByteSize < 1) {
+    throw new Error("Expected storage object byte length is invalid.");
+  }
+  if (input.expectedByteSize > maxByteSize) {
+    throw new Error("Expected storage object byte length exceeds the configured upload-size limit.");
+  }
+  const expectedChecksum = String(input.expectedChecksumSha256 ?? "").trim().toLowerCase();
+  if (!SHA256_HEX_PATTERN.test(expectedChecksum)) {
+    throw new Error("Expected SHA-256 checksum is invalid.");
+  }
 
-async function sha256File(filePath: string) {
-  const digest = createHash("sha256");
-  await new Promise<void>((resolve, reject) => {
-    createReadStream(filePath)
-      .on("data", (chunk) => digest.update(chunk))
-      .on("end", resolve)
-      .on("error", reject);
+  let head: StorageObjectHead;
+  try {
+    head = await (dependencies.headObject ?? headStorageObject)(storageKey);
+  } catch {
+    throw new Error("Storage object metadata read failed during integrity verification.");
+  }
+  if (head.storageKey !== storageKey) {
+    throw new Error("Storage object identity mismatch during integrity verification.");
+  }
+  const actualByteSize = head.byteSize;
+  if (!Number.isSafeInteger(actualByteSize) || (actualByteSize ?? -1) < 0) {
+    throw new Error("Storage object metadata did not return a valid byte size.");
+  }
+  if ((actualByteSize as number) > maxByteSize) {
+    throw new Error("Storage object exceeds the configured upload-size limit.");
+  }
+  if (actualByteSize !== input.expectedByteSize) {
+    return {
+      ok: false,
+      byteSize: actualByteSize,
+      contentType: head.contentType,
+      checksumSha256: null,
+      checksumSource: null,
+      message: "Storage byte size did not match the expected byte length.",
+    };
+  }
+
+  if (head.nativeChecksumPresent === true) {
+    const actualNativeChecksum =
+      typeof head.checksumSha256 === "string" && SHA256_HEX_PATTERN.test(head.checksumSha256)
+        ? head.checksumSha256.toLowerCase()
+        : null;
+    if (!actualNativeChecksum) {
+      throw new Error("Storage provider returned an invalid native SHA-256 checksum.");
+    }
+    const checksumMatches = actualNativeChecksum === expectedChecksum;
+    return {
+      ok: checksumMatches,
+      byteSize: actualByteSize,
+      contentType: head.contentType,
+      checksumSha256: actualNativeChecksum,
+      checksumSource: head.checksumSource ?? "provider_native",
+      message: checksumMatches ? undefined : "Storage-provided SHA-256 checksum mismatch.",
+    };
+  }
+
+  let read: StorageObjectRead;
+  try {
+    read = await (dependencies.openRead ?? openStorageObjectRead)(storageKey);
+  } catch {
+    throw new Error("Storage object read failed during SHA-256 verification.");
+  }
+  if (read.storageKey !== storageKey) {
+    stopStorageRead(read.body);
+    throw new Error("Storage object identity mismatch during integrity verification.");
+  }
+  const streamedChecksum = await sha256StorageObjectRead({
+    read,
+    expectedByteSize: input.expectedByteSize,
+    maxByteSize,
   });
-  return digest.digest("hex");
+  const checksumMatches = streamedChecksum === expectedChecksum;
+  return {
+    ok: checksumMatches,
+    byteSize: actualByteSize,
+    contentType: head.contentType,
+    checksumSha256: streamedChecksum,
+    checksumSource: "server_stream",
+    message: checksumMatches ? undefined : "Server-streamed SHA-256 checksum mismatch.",
+  };
 }
 
 export function getStorageMode(): StorageMode {
@@ -235,6 +380,35 @@ export async function readStorageBuffer(storageKey: string) {
   return fs.readFile(filePath);
 }
 
+export async function openStorageObjectRead(storageKey: string): Promise<StorageObjectRead> {
+  const mode = getStorageMode();
+  if (mode === "s3") {
+    const response = await getS3Client().send(
+      new GetObjectCommand({
+        Bucket: s3Bucket,
+        Key: storageKey,
+      }),
+    );
+    const body = response.Body as StorageObjectRead["body"] | undefined;
+    if (!body || typeof body[Symbol.asyncIterator] !== "function") {
+      throw new Error("Storage object read did not return a stream.");
+    }
+    return {
+      storageKey,
+      byteSize: response.ContentLength,
+      body,
+    };
+  }
+
+  const filePath = getLocalFilePath(storageKey);
+  const stats = await fs.stat(filePath);
+  return {
+    storageKey,
+    byteSize: stats.size,
+    body: createReadStream(filePath),
+  };
+}
+
 export async function readStoragePrefix(storageKey: string, maxBytes = 256 * 1024) {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 1024 * 1024) {
     throw new Error("Storage prefix read limit must be between 1 byte and 1 MiB.");
@@ -323,7 +497,8 @@ export async function headStorageObject(storageKey: string): Promise<StorageObje
       byteSize: stats.size,
       contentType: undefined as string | undefined,
       metadata: {} as Record<string, string>,
-      checksumSha256: await sha256File(filePath),
+      checksumSha256: null,
+      nativeChecksumPresent: false,
     };
   }
   const client = getS3Client();
@@ -334,12 +509,17 @@ export async function headStorageObject(storageKey: string): Promise<StorageObje
       ChecksumMode: "ENABLED",
     })
   );
+  const nativeChecksumPresent =
+    typeof response.ChecksumSHA256 === "string" && response.ChecksumSHA256.trim().length > 0;
+  const checksumSha256 = sha256Base64ToHex(response.ChecksumSHA256);
   return {
     storageKey,
     byteSize: response.ContentLength,
     contentType: response.ContentType,
     metadata: response.Metadata ?? {},
-    checksumSha256: sha256Base64ToHex(response.ChecksumSHA256),
+    checksumSha256,
+    nativeChecksumPresent,
+    ...(checksumSha256 ? { checksumSource: "provider_native" as const } : {}),
   };
 }
 
