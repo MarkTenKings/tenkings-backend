@@ -85,6 +85,29 @@ function deps(overrides: Partial<AiGraderNfcApiDependencies> = {}) {
   return { value, calls };
 }
 
+test("reportless NFC readiness returns only redacted policy without a runtime mutation", async () => {
+  const runtime = deps();
+  const handler = createAiGraderNfcApiHandler(runtime.value);
+  const output = response();
+  await handler(request({ method: "GET", action: "readiness" }), output.res);
+  assert.equal(output.read().statusCode, 200);
+  assert.deepEqual(output.read().payload, {
+    ok: true,
+    operation: "aiGraderNfcReadiness",
+    result: {
+      nfcSchemaReady: true,
+      nfcProgrammingEnabled: true,
+      nfcRequired: false,
+      nfcAttemptTokenConfigured: true,
+      nfcWorkstationAttestationConfigured: true,
+      nfcWorkstationKeyCount: 1,
+      expectedNfcHelperProtocolVersion: "tenkings-ai-grader-nfc-loopback-v2",
+    },
+  });
+  assert.equal(output.read().headers.get("cache-control"), "no-store");
+  assert.equal(runtime.calls.length, 0);
+});
+
 test("NFC status uses explicit human NFC scope and returns only the runtime safe result", async () => {
   const runtime = deps();
   const handler = createAiGraderNfcApiHandler(runtime.value);
@@ -476,6 +499,7 @@ test("NFC service accounts fail closed for programming and administration even w
     },
   });
   for (const input of [
+    { method: "GET", action: "readiness" },
     { method: "GET", action: "status", query: { reportId: "report-1" } },
     { action: "init", body: { reportId: "report-1", idempotencyKey: "program-report-1" } },
     { action: "revoke", body: { reportId: "report-1", reason: "Service cannot revoke", idempotencyKey: "revoke-report-1" } },
