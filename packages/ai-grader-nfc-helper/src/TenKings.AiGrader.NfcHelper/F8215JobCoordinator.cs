@@ -192,7 +192,7 @@ public sealed partial class F8215JobCoordinator
     {
         if (!HostedAttemptPattern().IsMatch(attemptId))
             throw Error("invalid_request_context", "attemptId is invalid.", false, 400);
-        if (!string.Equals(confirmation, NfcProtocol.FeijuQuarantineConfirmation, StringComparison.Ordinal))
+        if (!string.Equals(confirmation, NfcProtocol.FeijuInstalledResolverCompatibilityToken, StringComparison.Ordinal))
             throw Error(
                 "gototags_quarantine_confirmation_required",
                 "Exact confirmation that the physical tag was removed and quarantined is required.",
@@ -202,6 +202,7 @@ public sealed partial class F8215JobCoordinator
         var statePath = ProtectedJobDirectory.ContainedFile(jobRoot, StateFileName);
         if (!File.Exists(statePath))
             throw Error("gototags_job_not_found", "No protected Feiju job exists for this attempt.", false, 404);
+        ProtectedJobDirectory.AssertProtectedContainedLeaf(jobRoot, statePath);
 
         var bytes = File.ReadAllBytes(statePath);
         F8215PersistedJob job;
@@ -231,8 +232,10 @@ public sealed partial class F8215JobCoordinator
 
         var operationPath = ProtectedJobDirectory.ContainedFile(jobRoot, job.OperationFileName);
         var auditPath = ProtectedJobDirectory.ContainedFile(jobRoot, "abandoned-job-audit.jsonl");
+        if (File.Exists(operationPath))
+            ProtectedJobDirectory.AssertProtectedContainedLeaf(jobRoot, operationPath);
         var fingerprint = Sha256(attemptId);
-        AppendResolutionAudit(auditPath, new
+        AppendResolutionAudit(jobRoot, auditPath, new
         {
             schemaVersion = "tenkings-ai-grader-nfc-abandoned-resolution-v1",
             attemptFingerprintSha256 = fingerprint,
@@ -258,11 +261,12 @@ public sealed partial class F8215JobCoordinator
             false);
     }
 
-    private static void AppendResolutionAudit(string auditPath, object record)
+    private static void AppendResolutionAudit(string jobRoot, string auditPath, object record)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(record, PersistedJson);
         try
         {
+            if (File.Exists(auditPath)) ProtectedJobDirectory.ProtectContainedLeaf(jobRoot, auditPath);
             if (bytes.Length > 4096 || File.Exists(auditPath) && new FileInfo(auditPath).Length + bytes.Length + 1 > 1024 * 1024)
                 throw Error("gototags_resolution_audit_full", "The protected quarantine audit reached its reviewed size bound; no cleanup was performed.", false, 503);
             using var stream = new FileStream(auditPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
@@ -270,6 +274,8 @@ public sealed partial class F8215JobCoordinator
             stream.Write(bytes);
             stream.WriteByte((byte)'\n');
             stream.Flush(true);
+            stream.Close();
+            ProtectedJobDirectory.ProtectContainedLeaf(jobRoot, auditPath);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -352,6 +358,7 @@ public sealed partial class F8215JobCoordinator
         if (_statePath is null || !File.Exists(_statePath)) return;
         try
         {
+            ProtectedJobDirectory.AssertProtectedContainedLeaf(_options.JobRoot, _statePath);
             var bytes = File.ReadAllBytes(_statePath);
             try
             {
@@ -434,7 +441,9 @@ public sealed partial class F8215JobCoordinator
                 stream.Write(bytes);
                 stream.Flush(true);
             }
+            ProtectedJobDirectory.ProtectContainedLeaf(_options.JobRoot, temporary);
             File.Move(temporary, _statePath, true);
+            ProtectedJobDirectory.AssertProtectedContainedLeaf(_options.JobRoot, _statePath);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {

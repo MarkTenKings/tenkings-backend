@@ -165,6 +165,7 @@ function Copy-NfcStableMaintenancePayload {
       "configure-ai-grader-nfc-feiju-f8215.ps1",
       "export-ai-grader-nfc-workstation-public-key.ps1",
       "open-ai-grader-nfc-workstation.ps1",
+      "recover-ai-grader-nfc-f8215-stuck-job.ps1",
       "resolve-ai-grader-nfc-abandoned-job.ps1",
       "rotate-ai-grader-nfc-helper-token.ps1",
       "start-ai-grader-nfc-helper.ps1",
@@ -377,7 +378,8 @@ function Protect-NfcTree {
 function Assert-NfcProtectedTree {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $true)][string]$AllowedRoot
+    [Parameter(Mandatory = $true)][string]$AllowedRoot,
+    [switch]$AllowInheritedLeafFiles
   )
   $root = Assert-NfcPathWithinRoot -Path $Path -AllowedRoot $AllowedRoot -AllowRoot
   Assert-NfcProtectedAcl -Path $root
@@ -385,12 +387,22 @@ function Assert-NfcProtectedTree {
     if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
       throw "The NFC helper tree contains a reparse point."
     }
-    Assert-NfcProtectedAcl -Path $item.FullName
+    if ($AllowInheritedLeafFiles -and -not $item.PSIsContainer) {
+      # Legacy helper-created leaves inherited only the already-protected root's
+      # three-principal DACL. This narrow inspection mode still rejects foreign
+      # or deny ACEs and never permits an inheriting directory.
+      Assert-NfcProtectedAcl -Path $item.FullName -AllowInheritance
+    } else {
+      Assert-NfcProtectedAcl -Path $item.FullName
+    }
   }
 }
 
 function Read-NfcConfig {
-  param([string]$Path = $script:NfcConfigPath)
+  param(
+    [string]$Path = $script:NfcConfigPath,
+    [switch]$AllowInheritedGoToTagsLeafFiles
+  )
   $Path = (Assert-NfcProductionLayout -ConfigPath $Path).ConfigPath
   if (-not (Test-Path -LiteralPath $Path)) { return $null }
   if ((Get-Item -LiteralPath $Path).Length -gt 16384) { throw "The NFC helper config exceeds its size bound." }
@@ -441,7 +453,10 @@ function Read-NfcConfig {
         throw "The enabled F8215 adapter dependencies are unavailable."
       }
       Assert-NfcPathWithinRoot -Path $script:NfcGoToTagsJobRoot -AllowedRoot $script:NfcConfigRoot | Out-Null
-      Assert-NfcProtectedTree -Path $script:NfcGoToTagsRoot -AllowedRoot $script:NfcConfigRoot
+      Assert-NfcProtectedTree `
+        -Path $script:NfcGoToTagsRoot `
+        -AllowedRoot $script:NfcConfigRoot `
+        -AllowInheritedLeafFiles:$AllowInheritedGoToTagsLeafFiles
     }
   }
   return $config
@@ -561,6 +576,167 @@ function Set-NfcConfigProperty {
 function Get-NfcFileFingerprint {
   param([Parameter(Mandatory = $true)][string]$Path)
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Assert-NfcF8215RecoveryAudit {
+  param(
+    [Parameter(Mandatory = $true)][string]$AuditPath,
+    [Parameter(Mandatory = $true)][string]$AllowedRoot
+  )
+  $path = Assert-NfcPathWithinRoot -Path $AuditPath -AllowedRoot $AllowedRoot
+  if (-not (Test-Path -LiteralPath $path)) { return }
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -gt 1MB) {
+    throw "The protected F8215 recovery audit is outside its reviewed shape or size bound."
+  }
+  $auditLines = @(Get-Content -LiteralPath $path | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  if ($auditLines.Count -gt 256) {
+    throw "The protected F8215 recovery audit exceeds its record bound."
+  }
+  foreach ($line in $auditLines) {
+    if ([Text.Encoding]::UTF8.GetByteCount($line) -gt 4096) {
+      throw "The protected F8215 recovery audit contains an oversized record."
+    }
+    try {
+      $auditRecord = $line | ConvertFrom-Json
+    } catch {
+      throw "The protected F8215 recovery audit contains invalid JSON."
+    }
+    if ([string]$auditRecord.schemaVersion -cne "tenkings-ai-grader-nfc-abandoned-resolution-v1" -or
+        [string]$auditRecord.attemptFingerprintSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+        [string]$auditRecord.priorPhase -notin @("failed", "uncertain") -or
+        [string]$auditRecord.physicalTagDisposition -cne "removed_and_quarantined" -or
+        [string]$auditRecord.action -cne "quarantine_resolution_authorized" -or
+        [bool]$auditRecord.encodingSuccessClaimed -or
+        [string]$auditRecord.resolvedAt -notmatch '^\d{4}-\d{2}-\d{2}T') {
+      throw "The protected F8215 recovery audit does not match its reviewed schema."
+    }
+  }
+}
+
+function Get-NfcValidatedF8215RecoveryState {
+  param(
+    [Parameter(Mandatory = $true)][ValidatePattern('^nfc_attempt_[A-Za-z0-9_-]{43}$')][string]$AttemptId,
+    [string]$JobRoot = $script:NfcGoToTagsJobRoot,
+    [string]$AllowedRoot = $script:NfcConfigRoot,
+    [switch]$AllowInheritedLeafFiles
+  )
+  $root = Assert-NfcPathWithinRoot -Path $JobRoot -AllowedRoot $AllowedRoot
+  if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+    throw "The protected F8215 recovery directory is unavailable."
+  }
+  Assert-NfcProtectedTree `
+    -Path $root `
+    -AllowedRoot $AllowedRoot `
+    -AllowInheritedLeafFiles:$AllowInheritedLeafFiles
+  $entries = @(Get-ChildItem -LiteralPath $root -Force)
+  if (@($entries | Where-Object { $_.PSIsContainer }).Count -ne 0) {
+    throw "The protected F8215 recovery directory contains an unexpected directory."
+  }
+  $stateFiles = @($entries | Where-Object { $_.Name -ceq "active-job.json" })
+  $auditFiles = @($entries | Where-Object { $_.Name -ceq "abandoned-job-audit.jsonl" })
+  $operationFiles = @($entries | Where-Object { $_.Name -cmatch '^f8215-[A-Za-z0-9_-]{22}\.gototags$' })
+  $recognized = @($stateFiles + $auditFiles + $operationFiles)
+  if ($stateFiles.Count -ne 1 -or $auditFiles.Count -gt 1 -or $operationFiles.Count -gt 1 -or
+      $recognized.Count -ne $entries.Count -or
+      $stateFiles[0].Length -le 0 -or $stateFiles[0].Length -gt 32KB -or
+      ($auditFiles.Count -eq 1 -and $auditFiles[0].Length -gt 1MB) -or
+      ($operationFiles.Count -eq 1 -and ($operationFiles[0].Length -le 0 -or $operationFiles[0].Length -gt 64KB))) {
+    throw "The protected F8215 recovery artifacts are outside their reviewed shape or size bounds."
+  }
+  try {
+    $state = Get-Content -Raw -LiteralPath $stateFiles[0].FullName | ConvertFrom-Json
+  } catch {
+    throw "The protected F8215 recovery state contains invalid JSON."
+  }
+  $expectedStateProperties = @(
+    "attemptId",
+    "requestDigest",
+    "publicTagId",
+    "attestationChallenge",
+    "url",
+    "attemptExpiresAt",
+    "callbackIdentity",
+    "correlationId",
+    "operationFileName",
+    "phase",
+    "retryable",
+    "errorCode",
+    "callbackBodySha256",
+    "evidence",
+    "createdAt",
+    "updatedAt"
+  )
+  $actualStateProperties = @($state.PSObject.Properties | ForEach-Object { $_.Name })
+  if ($actualStateProperties.Count -ne $expectedStateProperties.Count -or
+      @($actualStateProperties | Where-Object { $expectedStateProperties -cnotcontains $_ }).Count -ne 0) {
+    throw "The protected F8215 recovery state has an unexpected schema."
+  }
+  $operationName = [string]$state.operationFileName
+  $publicTagId = [string]$state.publicTagId
+  $attemptExpiry = [DateTimeOffset]::MinValue
+  $createdAt = [DateTimeOffset]::MinValue
+  $updatedAt = [DateTimeOffset]::MinValue
+  if ([string]$state.attemptId -cne $AttemptId -or
+      [string]$state.requestDigest -cnotmatch '^[a-f0-9]{64}$' -or
+      [string]$state.attestationChallenge -cnotmatch '^[A-Za-z0-9_-]{43}$' -or
+      [string]$state.phase -notin @("awaiting_manual_start", "completed", "failed", "uncertain") -or
+      $operationName -cnotmatch '^f8215-[A-Za-z0-9_-]{22}\.gototags$' -or
+      $publicTagId -cnotmatch '^[A-Za-z0-9_-]{32}$' -or
+      [string]$state.url -cne "https://collect.tenkings.co/nfc/$publicTagId" -or
+      [string]$state.callbackIdentity -cnotmatch '^[A-Za-z0-9_-]{43}$' -or
+      [string]$state.correlationId -cnotmatch '^[A-Za-z0-9_-]{43}$' -or
+      -not [DateTimeOffset]::TryParse([string]$state.attemptExpiresAt, [ref]$attemptExpiry) -or
+      -not [DateTimeOffset]::TryParse([string]$state.createdAt, [ref]$createdAt) -or
+      -not [DateTimeOffset]::TryParse([string]$state.updatedAt, [ref]$updatedAt) -or
+      $attemptExpiry.Offset -ne [TimeSpan]::Zero -or
+      $createdAt.Offset -ne [TimeSpan]::Zero -or
+      $updatedAt.Offset -ne [TimeSpan]::Zero) {
+    throw "The protected F8215 recovery state does not match the exact attempt contract."
+  }
+  if ($auditFiles.Count -eq 1) {
+    Assert-NfcF8215RecoveryAudit -AuditPath $auditFiles[0].FullName -AllowedRoot $AllowedRoot
+  }
+  if ($operationFiles.Count -eq 1 -and $operationFiles[0].Name -cne $operationName) {
+    throw "The protected F8215 operation artifact does not match the exact recovery state."
+  }
+  return [pscustomobject]@{
+    Root = $root
+    StatePath = $stateFiles[0].FullName
+    OperationPath = if ($operationFiles.Count -eq 1) { $operationFiles[0].FullName } else { $null }
+    AuditPath = if ($auditFiles.Count -eq 1) { $auditFiles[0].FullName } else { Join-Path $root "abandoned-job-audit.jsonl" }
+    Phase = [string]$state.phase
+  }
+}
+
+function Protect-NfcValidatedF8215RecoveryArtifacts {
+  param(
+    [Parameter(Mandatory = $true)]$Recovery,
+    [string]$AllowedRoot = $script:NfcConfigRoot
+  )
+  foreach ($path in @($Recovery.StatePath, $Recovery.OperationPath, $(if (Test-Path -LiteralPath $Recovery.AuditPath) { $Recovery.AuditPath }))) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$path)) {
+      Protect-NfcPath -Path ([string]$path) -AllowedRoot $AllowedRoot
+    }
+  }
+  Assert-NfcProtectedTree -Path ([string]$Recovery.Root) -AllowedRoot $AllowedRoot
+}
+
+function Get-NfcExactGoToTagsProcess {
+  param([Parameter(Mandatory = $true)]$Config)
+  if ([string]::IsNullOrWhiteSpace([string]$Config.goToTagsExecutablePath)) { return @() }
+  $expectedExecutable = Get-NfcCanonicalPath -Path ([string]$Config.goToTagsExecutablePath)
+  return @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+    if ([int]$_.ProcessId -eq $PID -or [string]::IsNullOrWhiteSpace([string]$_.ExecutablePath)) {
+      return $false
+    }
+    try {
+      return (Get-NfcCanonicalPath -Path ([string]$_.ExecutablePath)).Equals(
+        $expectedExecutable,
+        [StringComparison]::OrdinalIgnoreCase)
+    } catch {
+      return $false
+    }
+  })
 }
 
 function Assert-NfcNoActiveGoToTagsRecovery {

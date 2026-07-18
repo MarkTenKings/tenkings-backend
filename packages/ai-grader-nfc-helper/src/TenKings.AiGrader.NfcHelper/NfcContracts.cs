@@ -24,7 +24,12 @@ public static class NfcProtocol
     public const string ApprovedGoToTagsDelegateExecute = "{BFEC0C93-0B7D-4F2C-B09C-AFFFC4BDAE78}";
     public const string ApprovedGoToTagsTemplateSha256 = "31bfcca6cfd0e947d5368643a0aeed2ce730b9e0ad2ed9d0a503cfd5e5e05c3d";
     public const string FeijuReaderResultCode = "write_locked_verified_gototags_readback";
-    public const string FeijuQuarantineConfirmation = "I removed and quarantined the exact F8215 tag for this attempt.";
+    public const string FeijuQuarantineConfirmation = "I removed and quarantined the exact NFC tag used for this F8215 attempt.";
+    // The offline helper executable receives this private compatibility token
+    // from the reviewed PowerShell wrapper. Keeping the original installed-v3
+    // token allows the current production job to be resolved before its v3-to-v3
+    // update; it is not operator wording and makes no chip-identification claim.
+    internal const string FeijuInstalledResolverCompatibilityToken = "I removed and quarantined the exact F8215 tag for this attempt.";
     public const string FeijuWriteProtectionState = "permanently_read_only_verified";
     public const string Ntag424ChipType = "NTAG424_DNA";
     public const string Ntag424ProgrammingProfile = "ntag424_dna_unimplemented";
