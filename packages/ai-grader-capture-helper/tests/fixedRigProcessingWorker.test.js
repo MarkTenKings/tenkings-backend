@@ -236,7 +236,7 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     assert.deepEqual(controller.status(), {
       active: false,
       pending: 0,
-      maxPending: 1,
+      maxPending: 20,
       maxConcurrency: 1,
       closed: false,
     });
@@ -249,6 +249,22 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     try {
       const callerBatch = structuredClone(fixture.batch);
       const processing = runner.processSide(callerBatch, { requestId: "request-front-2", sessionId: "session-front-1" });
+      const admission = await processing.admission;
+      assert.deepEqual(admission, {
+        status: "accepted",
+        requestId: "request-front-2",
+        sessionId: "session-front-1",
+        packageId: fixture.batch.packageId,
+        side: "front",
+        acceptedAt: admission.acceptedAt,
+        validationBoundary: "structural_snapshot_only",
+        sourceIntegrity: "pending_worker_validation",
+      });
+      assert.equal(new Date(admission.acceptedAt).toISOString(), admission.acceptedAt);
+      assert.equal(Object.isFrozen(admission), true, "the admitted exact identity cannot be mutated after controller insertion");
+      assert.equal("sourceSetSha256" in admission, false, "source integrity is a later child-worker validation, not structural admission");
+      assert.equal(runner.processingWorkerStatus().active, true, "admission resolves only after insertion into the one controller queue");
+      assert.equal(runner.processingWorkerStatus().maxConcurrency, 1);
       callerBatch.packageDir = path.join(fixture.root, "mutated-after-submit");
       callerBatch.sideDir = path.join(callerBatch.packageDir, "front");
       callerBatch.batch.captures.allOn.capture.sha256 = "0".repeat(64);
@@ -257,6 +273,8 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
       await runner.shutdownProcessingWorker("test complete");
     }
     assert.equal(result.processingWorker.mode, "captured_evidence_worker");
+    assert.equal(result.processingWorker.requestId, "request-front-2");
+    assert.equal(result.processingWorker.sessionId, "session-front-1");
     assert.match(result.processingWorker.sourceSetSha256, /^[a-f0-9]{64}$/);
     const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
     const authority = manifest.analysisCoordinateSystem.fullResolutionGeometryAuthority;
@@ -432,7 +450,7 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     }
   });
 
-  await t.test("one active plus one pending is bounded and shutdown drains both without overlap", async () => {
+  await t.test("one active plus twenty pending side jobs is bounded and shutdown drains all without overlap", async () => {
     const hangWorker = writeWorker(fixture.root, "hang-worker", `
       const { parentPort } = require("node:worker_threads");
       parentPort.on("message", () => {});
@@ -442,23 +460,149 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
       workerPath: hangWorker,
       timeoutMs: 5000,
     });
-    const first = settledError(controller.submit(request));
-    const second = settledError(controller.submit(request));
-    const third = settledError(controller.submit(request));
+    const accepted = Array.from({ length: 21 }, (_, index) => {
+      const queuedRequest = clone(request);
+      queuedRequest.identity.requestId = `request-bounded-${index}`;
+      return settledError(controller.submit(queuedRequest));
+    });
+    const overflowRequest = clone(request);
+    overflowRequest.identity.requestId = "request-bounded-overflow";
+    const overflow = settledError(controller.submit(overflowRequest));
     assert.deepEqual(controller.status(), {
       active: true,
-      pending: 1,
-      maxPending: 1,
+      pending: 20,
+      maxPending: 20,
       maxConcurrency: 1,
       closed: false,
-      activeIdentity: request.identity,
+      activeIdentity: { ...request.identity, requestId: "request-bounded-0" },
     });
-    const thirdError = await third;
-    assert.equal(thirdError.code, "queue_full");
+    assert.equal((await overflow).code, "queue_full");
     await controller.shutdown("bounded shutdown");
-    assert.equal((await first).code, "shutdown");
-    assert.equal((await second).code, "shutdown");
+    for (const acceptedJob of accepted) assert.equal((await acceptedJob).code, "shutdown");
     assert.equal(controller.status().closed, true);
+    assert.throws(
+      () => new FixedRigProcessingWorkerController({ allowedOutputRoot: fixture.root, maxPending: 21 }),
+      /zero through twenty pending side jobs/i,
+    );
+  });
+
+  await t.test("one active plus twenty pending warm-side jobs stay serialized and advance in order", async () => {
+    const eventsPath = path.join(fixture.root, "warm-capacity-events.log");
+    const releasePath = path.join(fixture.root, "warm-capacity-release");
+    const warmSideWorkerPath = writeWorker(fixture.root, "warm-capacity-worker", `
+      const crypto = require("node:crypto");
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const { parentPort, workerData } = require("node:worker_threads");
+      const admitted = workerData.admissionIdentity;
+      const eventsPath = path.join(workerData.allowedOutputRoot, "warm-capacity-events.log");
+      const releasePath = path.join(workerData.allowedOutputRoot, "warm-capacity-release");
+      const record = (kind) => fs.appendFileSync(eventsPath, admitted.requestId + ":" + kind + String.fromCharCode(10));
+      const finish = () => {
+        record("end");
+        const identity = {
+          protocolVersion: "fixed-rig-geometry-processing-worker-v1",
+          requestId: admitted.requestId,
+          sessionId: admitted.sessionId,
+          packageId: admitted.packageId,
+          side: admitted.side,
+          sourceSetSha256: crypto.createHash("sha256").update(admitted.requestId).digest("hex"),
+        };
+        parentPort.postMessage({
+          protocolVersion: "fixed-rig-geometry-processing-worker-v1",
+          operation: "process_fixed_rig_warm_side",
+          ok: true,
+          identity,
+          result: {
+            executionPath: "warm_full_forensic_runner",
+            packageId: admitted.packageId,
+            packageDir: workerData.captureBatch.packageDir,
+            manifestPath: path.join(workerData.captureBatch.packageDir, "manifest.json"),
+            analysisPath: path.join(workerData.captureBatch.packageDir, "analysis.json"),
+            previewReportPath: path.join(workerData.captureBatch.packageDir, "preview-report.html"),
+            manifest: {},
+            processingWorker: { ...identity, mode: "captured_evidence_worker" },
+          },
+        });
+        parentPort.close();
+      };
+      record("start");
+      if (admitted.requestId === "warm-capacity-0") {
+        const timer = setInterval(() => {
+          if (fs.existsSync(releasePath)) { clearInterval(timer); finish(); }
+        }, 5);
+      } else finish();
+    `);
+    const runner = createFixedRigWarmForensicProcessingRunner({
+      allowedOutputRoot: fixture.root,
+      warmSideWorkerPath,
+      maxPending: 20,
+      timeoutMs: 5000,
+    });
+    const batchFor = (index) => {
+      const value = structuredClone(fixture.batch);
+      value.packageId = `warm-capacity-package-${index}`;
+      value.packageDir = path.join(fixture.root, value.packageId);
+      value.sideDir = path.join(value.packageDir, value.side);
+      value.batch.outputDir = value.sideDir;
+      return value;
+    };
+    const submissions = [];
+    try {
+      for (let index = 0; index < 21; index += 1) {
+        const submission = runner.processSide(batchFor(index), {
+          requestId: `warm-capacity-${index}`,
+          sessionId: `warm-capacity-session-${index}`,
+        });
+        submissions.push(submission);
+        assert.equal((await submission.admission).requestId, `warm-capacity-${index}`);
+      }
+      assert.deepEqual(runner.processingWorkerStatus(), {
+        active: true,
+        pending: 20,
+        maxPending: 20,
+        maxConcurrency: 1,
+        closed: false,
+      });
+      assert.throws(
+        () => runner.processSide(batchFor(21), {
+          requestId: "warm-capacity-overflow",
+          sessionId: "warm-capacity-overflow-session",
+        }),
+        (error) => error instanceof FixedRigProcessingWorkerError && error.code === "queue_full",
+      );
+      for (let attempt = 0; attempt < 200 && !fs.existsSync(eventsPath); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      assert.equal(fs.existsSync(eventsPath), true, "the active warm-side worker started");
+      assert.deepEqual(
+        fs.readFileSync(eventsPath, "utf8").trim().split(/\r?\n/),
+        ["warm-capacity-0:start"],
+      );
+      fs.writeFileSync(releasePath, "release");
+      const results = await Promise.all(submissions);
+      assert.deepEqual(
+        results.map((result) => result.processingWorker.requestId),
+        Array.from({ length: 21 }, (_, index) => `warm-capacity-${index}`),
+      );
+      assert.deepEqual(
+        fs.readFileSync(eventsPath, "utf8").trim().split(/\r?\n/),
+        Array.from(
+          { length: 21 },
+          (_, index) => [`warm-capacity-${index}:start`, `warm-capacity-${index}:end`],
+        ).flat(),
+      );
+      assert.deepEqual(runner.processingWorkerStatus(), {
+        active: false,
+        pending: 0,
+        maxPending: 20,
+        maxConcurrency: 1,
+        closed: false,
+      });
+    } finally {
+      if (!fs.existsSync(releasePath)) fs.writeFileSync(releasePath, "release");
+      await runner.shutdownProcessingWorker("warm capacity test complete");
+    }
   });
 
   await t.test("session cancellation terminates its active job and rejects its pending job without closing the controller", async () => {
@@ -481,11 +625,199 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     assert.deepEqual(controller.status(), {
       active: false,
       pending: 0,
-      maxPending: 1,
+      maxPending: 20,
       maxConcurrency: 1,
       closed: false,
     });
     await controller.shutdown("cancel test complete");
+  });
+
+  await t.test("one failed side job advances the same serialized worker queue to the later exact job", async () => {
+    const advancingWorker = writeWorker(fixture.root, "advancing-worker", `
+      const { parentPort } = require("node:worker_threads");
+      let requestIdentity;
+      parentPort.on("message", (message) => {
+        if (message.operation === "revalidate_captured_source_identity") {
+          parentPort.postMessage({ ...message, ok: true });
+          setImmediate(() => process.exit(0));
+          return;
+        }
+        requestIdentity = message.identity;
+        if (message.identity.requestId === "request-intentional-failure") {
+          parentPort.postMessage({
+            protocolVersion: message.protocolVersion,
+            operation: message.operation,
+            ok: false,
+            identity: requestIdentity,
+            error: { code: "processing_failed", message: "intentional exact-item failure" },
+          });
+          return;
+        }
+        parentPort.postMessage({
+          protocolVersion: message.protocolVersion,
+          operation: message.operation,
+          ok: true,
+          identity: requestIdentity,
+          authority: ${JSON.stringify(response.authority)},
+        });
+      });
+    `);
+    const controller = new FixedRigProcessingWorkerController({
+      allowedOutputRoot: fixture.root,
+      workerPath: advancingWorker,
+      timeoutMs: 5000,
+    });
+    const failedRequest = clone(request);
+    failedRequest.identity.requestId = "request-intentional-failure";
+    const laterRequest = clone(request);
+    laterRequest.identity.requestId = "request-after-failure";
+    const failed = settledError(controller.submit(failedRequest));
+    const later = controller.submit(laterRequest);
+    assert.equal((await failed).code, "worker_failed");
+    assert.equal((await later).identity.requestId, "request-after-failure");
+    assert.equal(controller.status().maxConcurrency, 1);
+    await controller.shutdown("advance test complete");
+  });
+
+  await t.test("a hung or malformed TIFF-to-PNG child is terminal once and the same queue advances to later admitted sides", async () => {
+    const eventPath = path.join(fixture.root, "warm-side-worker-events.log");
+    const warmSideWorkerPath = writeWorker(fixture.root, "bounded-warm-side-worker", `
+      const crypto = require("node:crypto");
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const { parentPort, workerData } = require("node:worker_threads");
+      const admitted = workerData.admissionIdentity;
+      fs.appendFileSync(path.join(workerData.allowedOutputRoot, "warm-side-worker-events.log"), admitted.requestId + String.fromCharCode(10));
+      if (admitted.requestId === "request-hung-tiff-png") {
+        setInterval(() => undefined, 1000);
+      } else {
+        const identity = {
+          protocolVersion: "fixed-rig-geometry-processing-worker-v1",
+          requestId: admitted.requestId,
+          sessionId: admitted.sessionId,
+          packageId: admitted.packageId,
+          side: admitted.side,
+          sourceSetSha256: crypto.createHash("sha256").update(JSON.stringify(admitted)).digest("hex"),
+        };
+        parentPort.postMessage({
+          protocolVersion: "fixed-rig-geometry-processing-worker-v1",
+          operation: "process_fixed_rig_warm_side",
+          ok: true,
+          identity,
+          result: {
+            executionPath: "warm_full_forensic_runner",
+            packageId: admitted.packageId,
+            packageDir: workerData.captureBatch.packageDir,
+            manifestPath: path.join(workerData.captureBatch.packageDir, "manifest.json"),
+            analysisPath: path.join(workerData.captureBatch.packageDir, "analysis.json"),
+            previewReportPath: path.join(workerData.captureBatch.packageDir, "preview-report.html"),
+            manifest: {},
+            processingWorker: admitted.requestId === "request-malformed-processing-identity"
+              ? null
+              : { ...identity, mode: "captured_evidence_worker" },
+          },
+        });
+        parentPort.close();
+      }
+    `);
+    const runner = createFixedRigWarmForensicProcessingRunner({
+      allowedOutputRoot: fixture.root,
+      warmSideWorkerPath,
+      maxPending: 1,
+      timeoutMs: 100,
+    });
+    const queuedBatch = (packageId) => {
+      const value = structuredClone(fixture.batch);
+      value.packageId = packageId;
+      value.packageDir = path.join(fixture.root, packageId);
+      value.sideDir = path.join(value.packageDir, value.side);
+      value.batch.outputDir = value.sideDir;
+      return value;
+    };
+    try {
+      const structurallyInvalid = structuredClone(fixture.batch);
+      structurallyInvalid.sideDir = path.join(fixture.root, "wrong-side-directory");
+      assert.throws(
+        () => runner.processSide(structurallyInvalid, {
+          requestId: "request-invalid-structure",
+          sessionId: "session-invalid-structure",
+        }),
+        (error) => error instanceof FixedRigProcessingWorkerError && error.code === "identity_mismatch",
+        "structurally invalid evidence never receives an admission handle",
+      );
+      assert.equal(runner.processingWorkerStatus().active, false);
+      const hung = runner.processSide(fixture.batch, {
+        requestId: "request-hung-tiff-png",
+        sessionId: "session-hung-tiff-png",
+      });
+      const hungSettled = settledError(hung);
+      assert.equal((await hung.admission).validationBoundary, "structural_snapshot_only");
+      const laterBatch = queuedBatch("worker-package-later");
+      const later = runner.processSide(laterBatch, {
+        requestId: "request-after-hung-tiff-png",
+        sessionId: "session-after-hung-tiff-png",
+      });
+      assert.equal((await later.admission).requestId, "request-after-hung-tiff-png");
+      assert.throws(
+        () => runner.processSide(laterBatch, {
+          requestId: "request-not-admitted-queue-full",
+          sessionId: "session-not-admitted-queue-full",
+        }),
+        (error) => error instanceof FixedRigProcessingWorkerError && error.code === "queue_full",
+        "a caller cannot observe an admission handle when insertion did not occur",
+      );
+      assert.equal(runner.processingWorkerStatus().pending, 1);
+      assert.equal(runner.processingWorkerStatus().maxConcurrency, 1);
+      while (!fs.existsSync(eventPath)) await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.deepEqual(
+        fs.readFileSync(eventPath, "utf8").trim().split(/\r?\n/),
+        ["request-hung-tiff-png"],
+        "the later side cannot start while the first side owns the active child",
+      );
+      const hungError = await hungSettled;
+      assert.equal(hungError.code, "timeout");
+      const laterResult = await later;
+      assert.equal(laterResult.processingWorker.requestId, "request-after-hung-tiff-png");
+      assert.deepEqual(
+        fs.readFileSync(eventPath, "utf8").trim().split(String.fromCharCode(10)).map((line) => line.trim()),
+        ["request-hung-tiff-png", "request-after-hung-tiff-png"],
+        "the hung exact side was not retried and the later side started once after child termination",
+      );
+      const malformed = runner.processSide(queuedBatch("worker-package-malformed"), {
+        requestId: "request-malformed-processing-identity",
+        sessionId: "session-malformed-processing-identity",
+      });
+      const malformedSettled = settledError(malformed);
+      await malformed.admission;
+      const afterMalformed = runner.processSide(queuedBatch("worker-package-after-malformed"), {
+        requestId: "request-after-malformed-processing-identity",
+        sessionId: "session-after-malformed-processing-identity",
+      });
+      await afterMalformed.admission;
+      const malformedError = await malformedSettled;
+      assert.ok(malformedError instanceof FixedRigProcessingWorkerError);
+      assert.equal(malformedError.code, "identity_mismatch", "malformed nested identity is one exact-item terminal rejection");
+      assert.equal((await afterMalformed).processingWorker.requestId, "request-after-malformed-processing-identity");
+      assert.deepEqual(
+        fs.readFileSync(eventPath, "utf8").trim().split(String.fromCharCode(10)).map((line) => line.trim()),
+        [
+          "request-hung-tiff-png",
+          "request-after-hung-tiff-png",
+          "request-malformed-processing-identity",
+          "request-after-malformed-processing-identity",
+        ],
+        "malformed success did not crash or retry, and the same queue advanced once to the later side",
+      );
+      assert.deepEqual(runner.processingWorkerStatus(), {
+        active: false,
+        pending: 0,
+        maxPending: 1,
+        maxConcurrency: 1,
+        closed: false,
+      });
+    } finally {
+      await runner.shutdownProcessingWorker("bounded warm-side test complete");
+    }
   });
 
   await t.test("crash, timeout, malformed, wrong identity, and child error are redacted terminal results", async () => {

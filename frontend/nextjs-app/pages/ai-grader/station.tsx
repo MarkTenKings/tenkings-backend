@@ -5,15 +5,23 @@ import { useSession, type SessionPayload } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   AI_GRADER_STATION_STEPS,
+  aiGraderAtomicBackQueueReleaseMatches,
   aiGraderApproveAndPublishEligible,
+  aiGraderRapidItemPublishable,
+  aiGraderRapidQueueIdentityMatches,
+  aiGraderReviewActivationAvailable,
+  aiGraderStartNewCardAvailable,
+  assertAiGraderRapidItemPublishable,
   aiGraderAuthoritativeLiveLightingDraft,
   aiGraderCardPlacementLabel,
   buildAiGraderLocalStationStatus,
   buildSampleAiGraderReportHistory,
+  completeAiGraderExactPublicationHandoff,
+  embedAiGraderAuthoritativeProductionRelease,
   sanitizeAiGraderPreviewCardGeometryBySide,
+  selectNextSerializedAiGraderOcrItem,
   type AiGraderLocalStationStatus,
   type AiGraderLiveLightingStatus,
-  type AiGraderCaptureProfile,
   type AiGraderCaptureTriggerMode,
   type AiGraderPreviewCardGeometryBySide,
   type AiGraderPreviewGeometryPoint,
@@ -22,15 +30,18 @@ import {
   type AiGraderLocalReportHistory,
   type AiGraderLocalReportHistoryItem,
   type AiGraderStationAction,
+  type AiGraderRapidQueueIdentity,
 } from "../../lib/aiGraderLocalStation";
-import { resolveAiGraderAuthoritativeProductionPackage } from "../../lib/aiGraderReleaseAuthority";
 import {
   AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY,
   AI_GRADER_STATION_TOKEN_STORAGE_KEY,
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   applyAiGraderLiveLighting,
   buildAiGraderCaptureProfileRequest,
-  buildAiGraderRapidCaptureConfigurationRequest,
+  buildAiGraderQueuedOcrClaimRequest,
+  buildAiGraderQueuedOcrCompletionRequest,
+  buildAiGraderQueuedOcrFailureRequest,
+  buildAiGraderRapidPublicationEvidence,
   buildAiGraderRapidQueueActivationRequest,
   callAiGraderStationBridge,
   fetchAiGraderLiveLightingStatus,
@@ -40,8 +51,11 @@ import {
   fetchAiGraderStationReportBundle,
   fetchAiGraderStationReportHistory,
   heartbeatAiGraderLiveLighting,
+  initializeAiGraderQueuedOcrAttemptOwner,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
+  waitForAiGraderQueuedOcrAttemptOwnerLock,
+  type AiGraderQueuedOcrAttemptOwnerClaim,
 } from "../../lib/aiGraderStationBridgeClient";
 import {
   aiGraderPreviewBackCaptureReady,
@@ -67,6 +81,7 @@ import {
   aiGraderOcrPrefillReportMetadata,
   mergeAiGraderOcrPrefillIntoIdentityDraft,
   runAiGraderOcrPrefillFromLocalReport,
+  safeAiGraderOcrPrefillResult,
   type AiGraderOcrPrefillResult,
   type AiGraderOcrPrefillState,
 } from "../../lib/aiGraderOcrPrefillClient";
@@ -84,7 +99,7 @@ import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
 type StationWorkArea = "grade" | "finish";
-type StationCaptureMode = "single" | "rapid";
+type RapidItemOperation = "review" | "publish";
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
   message: string;
@@ -176,6 +191,11 @@ type ProductionAuthActor = {
   displayName: string;
 };
 type ProductionAuthActorState = ProductionAuthActor | null;
+type QueuedOcrAttemptOwnerState = {
+  status: "uninitialized" | "ready" | "failed";
+  attemptOwnerId: string | null;
+  error: string | null;
+};
 type BridgeConnectionState = "checking" | "connected" | "not_running" | "pairing_required" | "error";
 type LocalReportState = {
   open: boolean;
@@ -267,16 +287,6 @@ type PublishUploadedArtifact = {
   sourceImageHeightPx?: number;
   uploadedAt: string;
 };
-
-async function callStationContract(action: AiGraderStationAction): Promise<AiGraderLocalStationStatus> {
-  const method = action === "status" || action === "latest-report" || action === "session-manifest" ? "GET" : "POST";
-  const response = await fetch(`/api/ai-grader/station/${action}`, { method });
-  const payload = await response.json();
-  if (!response.ok || payload.ok !== true) {
-    throw new Error(payload.message ?? "AI Grader station action failed.");
-  }
-  return payload.result;
-}
 
 function formatMs(ms?: number) {
   if (typeof ms !== "number") return "pending";
@@ -393,19 +403,25 @@ function sanitizeReportBundleForProduction(bundle: AiGraderReportBundle): AiGrad
   };
 }
 
-function sanitizeProductionReleaseForProduction(release: AiGraderReportBundle["productionRelease"], bundle: AiGraderReportBundle, selectedCard: CardSelectionState | null) {
+function sanitizeProductionReleaseForProduction(
+  release: AiGraderReportBundle["productionRelease"],
+  bundle: AiGraderReportBundle,
+  selectedCard: CardSelectionState | null,
+): AiGraderReportBundle["productionRelease"] {
   if (!release) return release;
-  const linked = Boolean(selectedCard?.cardAssetId || selectedCard?.itemId || bundle.cardIdentity.cardAssetId || bundle.cardIdentity.itemId);
+  const cardAssetId = selectedCard?.cardAssetId ?? bundle.cardIdentity.cardAssetId;
+  const itemId = selectedCard?.itemId ?? bundle.cardIdentity.itemId;
+  if (!cardAssetId || !itemId) {
+    throw new Error("Production release requires the exact CardAsset and Item linkage.");
+  }
   return sanitizePublishJson({
     ...release,
     cardInventoryLinkage: {
       ...(release.cardInventoryLinkage ?? {}),
-      status: linked ? "linked" : "needs_card_linkage",
-      cardAssetId: selectedCard?.cardAssetId ?? bundle.cardIdentity.cardAssetId,
-      itemId: selectedCard?.itemId ?? bundle.cardIdentity.itemId,
-      note: linked
-        ? "AI Grader report is linked to an existing Ten Kings card or item identity."
-        : "Published AI Grader report is unlinked and needs card linkage before inventory automation.",
+      status: "linked" as const,
+      cardAssetId,
+      itemId,
+      note: "AI Grader report is linked to the exact Ten Kings CardAsset and Item identity.",
     },
   });
 }
@@ -516,8 +532,29 @@ const OCR_PREFILL_FIELD_LABELS = {
   memorabilia: "Mem",
 } as const;
 
-const RAPID_REVIEWABLE_STATES = new Set<string>(["report_ready_needs_confirm", "confirmed_needs_publish", "published"]);
+const RAPID_REVIEWABLE_STATES = new Set<string>(["report_ready_needs_confirm", "confirmed_needs_publish"]);
 const RAPID_PROCESSING_STATES = new Set<string>(["front_captured", "front_processing", "back_positioning", "back_captured", "finalizing"]);
+
+function exactCardItemSelection(selection: CardSelectionState | null) {
+  return selection?.source !== "manual_draft" && selection?.cardAssetId && selection.itemId
+    ? selection
+    : null;
+}
+
+function rapidQueueTerminalFailureCopy(item: {
+  error?: string;
+  ocr: { failure?: { code: string; message: string } };
+}) {
+  const rawMessage = item.error ?? item.ocr.failure?.message ?? "Exact background item failed.";
+  const accurateMessage = rawMessage
+    .replace(
+      /\s*Preserve its evidence and correct identity only in that item's normal Finish\/Review form;\s*OCR will not rerun\.?/gi,
+      " OCR will not rerun.",
+    )
+    .trim();
+  const punctuatedMessage = /[.!?]$/.test(accurateMessage) ? accurateMessage : `${accurateMessage}.`;
+  return `${punctuatedMessage} This failed item is not available for review or publication in the station.`;
+}
 
 function pointToward(
   from: AiGraderPreviewGeometryPoint,
@@ -634,7 +671,11 @@ export default function AiGraderStationPage() {
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
   const [workArea, setWorkArea] = useState<StationWorkArea>("grade");
   const [busy, setBusy] = useState<string | null>(null);
-  const previewBrowserCaptureActionActive = busy === "start-grading" || busy === "capture-back";
+  const [captureBusy, setCaptureBusy] = useState<"start" | "front" | "back" | null>(null);
+  const [rapidItemOperations, setRapidItemOperations] = useState<Record<string, RapidItemOperation | undefined>>({});
+  const publicationReviewClaimRef = useRef<AiGraderRapidQueueIdentity | null>(null);
+  const [publicationReviewClaim, setPublicationReviewClaim] = useState<AiGraderRapidQueueIdentity | null>(null);
+  const previewBrowserCaptureActionActive = captureBusy === "front" || captureBusy === "back";
   const [error, setError] = useState<string | null>(null);
   const [bridgeUrl, setBridgeUrl] = useState(DEFAULT_AI_GRADER_STATION_BRIDGE_URL);
   const [stationToken, setStationToken] = useState("");
@@ -661,7 +702,6 @@ export default function AiGraderStationPage() {
   const liveLightingApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [manualPairingCode, setManualPairingCode] = useState("");
   const [advancedConnectOpen, setAdvancedConnectOpen] = useState(false);
-  const [contractPreviewEnabled, setContractPreviewEnabled] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyView, setHistoryView] = useState<HistoryView>("list");
   const [historySort, setHistorySort] = useState<HistorySort>("most_recent");
@@ -676,15 +716,26 @@ export default function AiGraderStationPage() {
   const [selectedCard, setSelectedCard] = useState<CardSelectionState | null>(null);
   const [identityDraft, setIdentityDraft] = useState<IdentityDraftState>(defaultIdentityDraft);
   const identityEditedFieldsRef = useRef<Set<keyof IdentityDraftState>>(new Set());
-  const ocrAttemptedReportIdsRef = useRef<Set<string>>(new Set());
-  const ocrPrefillGenerationRef = useRef(0);
-  const [ocrPrefillRetryNonce, setOcrPrefillRetryNonce] = useState(0);
+  const reviewDraftCacheRef = useRef<Map<string, {
+    identityDraft: IdentityDraftState;
+    editedFields: Set<keyof IdentityDraftState>;
+    selectedCard: CardSelectionState | null;
+  }>>(new Map());
+  const activeReviewIdentityRef = useRef<string | null>(null);
+  const hydratedOcrIdentityRef = useRef<string | null>(null);
+  const queuedOcrRunningRef = useRef<Set<string>>(new Set());
+  const queuedOcrInterruptedHandledRef = useRef<Set<string>>(new Set());
+  const queuedOcrAttemptOwnerClaimRef = useRef<AiGraderQueuedOcrAttemptOwnerClaim | null>(null);
+  const [queuedOcrAttemptOwner, setQueuedOcrAttemptOwner] = useState<QueuedOcrAttemptOwnerState>({
+    status: "uninitialized",
+    attemptOwnerId: null,
+    error: null,
+  });
+  const [queuedOcrSchedulerRevision, setQueuedOcrSchedulerRevision] = useState(0);
   const [ocrPrefillState, setOcrPrefillState] = useState<AiGraderOcrPrefillState>({
     status: "idle",
     message: "OCR prefill starts after normalized front and back images are ready.",
   });
-  const [stationCaptureProfile, setStationCaptureProfile] = useState<AiGraderCaptureProfile>(status.captureProfile);
-  const [stationCaptureMode, setStationCaptureMode] = useState<StationCaptureMode>(status.rapidCapture.enabled ? "rapid" : "single");
   const [identityStatus, setIdentityStatus] = useState<StepState>({
     status: "idle",
     message: "Card identity has not been confirmed.",
@@ -750,6 +801,36 @@ export default function AiGraderStationPage() {
     applyPreviewEpochEvent({ type: "clear", ...(statusOverride ? { status: statusOverride } : {}) });
     previewLastLiveFrameAtRef.current = 0;
   };
+
+  useEffect(() => {
+    let disposed = false;
+    void initializeAiGraderQueuedOcrAttemptOwner().then(
+      (claim) => {
+        if (disposed) {
+          claim.release();
+          return;
+        }
+        queuedOcrAttemptOwnerClaimRef.current = claim;
+        const { attemptOwnerId } = claim;
+        setQueuedOcrAttemptOwner({ status: "ready", attemptOwnerId, error: null });
+      },
+      (ownerError) => {
+        if (disposed) return;
+        setQueuedOcrAttemptOwner({
+          status: "failed",
+          attemptOwnerId: null,
+          error: ownerError instanceof Error
+            ? ownerError.message
+            : "The browser could not persist its queued OCR attempt owner.",
+        });
+      },
+    );
+    return () => {
+      disposed = true;
+      queuedOcrAttemptOwnerClaimRef.current?.release();
+      queuedOcrAttemptOwnerClaimRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     reconcileBridgePreviewStatus(status.previewStatus);
@@ -1164,20 +1245,42 @@ export default function AiGraderStationPage() {
       source: selectedCard.source,
     };
   }, [selectedCard]);
-  const reportReady = status.latestReport.exists && Boolean(status.latestReport.reportId);
-  const finalReady = status.safety.finalGradeComputed || Boolean(status.productionRelease?.finalGradeComputed);
-  const labelReady = status.safety.labelGenerated || Boolean(status.outputs?.labelDataPath) || status.productionRelease?.label.status === "label_data_ready";
-  const linkedCardReady = Boolean((selectedCard?.cardAssetId || selectedCard?.itemId) && selectedCard.source !== "manual_draft");
+  const activeReview = status.rapidCaptureQueue.activeReview;
+  const activeReviewQueueIdentity: AiGraderRapidQueueIdentity | null = activeReview ? {
+    queueItemId: activeReview.queueItemId,
+    gradingSessionId: activeReview.gradingSessionId,
+    reportId: activeReview.reportId,
+  } : null;
+  const activeReviewItem = activeReview
+    ? status.rapidCaptureQueue.items.find((item) =>
+        item.queueItemId === activeReview.queueItemId &&
+        item.sessionId === activeReview.gradingSessionId &&
+        item.reportId === activeReview.reportId)
+    : undefined;
+  const activeReviewManifest = activeReviewItem ? activeReview?.manifest : undefined;
+  const activeReviewBundle = activeReviewManifest?.reportBundle;
+  const activeReviewRelease = activeReviewManifest?.productionRelease;
+  const activeReviewIdentityReady =
+    Boolean(activeReview && activeReviewItem && activeReviewManifest?.latestReport.exists) &&
+    activeReviewBundle?.reportId === activeReview?.reportId &&
+    activeReviewBundle?.gradingSessionId === activeReview?.gradingSessionId &&
+    activeReviewRelease?.reportId === activeReview?.reportId &&
+    activeReviewRelease?.gradingSessionId === activeReview?.gradingSessionId;
+  const reportReady = activeReviewIdentityReady;
+  const finalReady = activeReviewRelease?.finalGradeComputed === true;
+  const labelReady = activeReviewRelease?.label.status === "label_data_ready";
+  const exactSelectedCard = exactCardItemSelection(selectedCard);
+  const linkedCardReady = Boolean(exactSelectedCard);
   const slabbedPhotosReady = slabUploads.front?.status === "uploaded" && slabUploads.back?.status === "uploaded";
   const compsSaved = compsState.saved === true || compsState.status === "saved";
   const inventoryComplete = inventoryState.status === "completed";
   const publishReadiness = buildAiGraderPublishReadiness({
-    bundle: status.reportBundle,
-    productionRelease: status.productionRelease,
+    bundle: activeReviewIdentityReady ? activeReviewBundle : undefined,
+    productionRelease: activeReviewIdentityReady ? activeReviewRelease : undefined,
     published: productionPublish.status === "published",
   });
   const productionPublished = productionPublish.status === "published";
-  const reportIdForLinks = productionPublish.reportId ?? publishReadiness.reportId ?? status.latestReport.reportId;
+  const reportIdForLinks = productionPublish.reportId ?? publishReadiness.reportId ?? activeReview?.reportId;
   const labelPreviewUrl = productionPublished ? productionPublish.labelPreviewUrl : undefined;
   const publicReportUrl = productionPublished ? productionPublish.publicReportUrl : undefined;
   const qrPayloadUrl = productionPublished ? productionPublish.qrPayloadUrl : undefined;
@@ -1192,6 +1295,7 @@ export default function AiGraderStationPage() {
     ...identityDraftMissing,
   ].filter(Boolean);
   const canApproveAndPublish = aiGraderApproveAndPublishEligible({
+    itemState: activeReviewItem?.state,
     reportReady,
     finalReady,
     productionSignedIn,
@@ -1251,7 +1355,7 @@ export default function AiGraderStationPage() {
   const activePipelineStep = gradePipelineSteps.find((step) => !step.done) ?? gradePipelineSteps[gradePipelineSteps.length - 1];
   const publicationStatusLabel =
     productionPublish.status === "idle" ? formatStationValue(publishReadiness.status) : formatStationValue(productionPublish.status);
-  const ocrPrefillReportId = status.reportBundle?.reportId;
+  const ocrPrefillReportId = activeReviewIdentityReady ? activeReview?.reportId : undefined;
   const ocrPrefillIndicators = ocrPrefillState.result
     ? Object.entries(ocrPrefillState.result.fields).flatMap(([fieldName, field]) => {
         if (field.value === null || field.value === false || field.value === "") return [];
@@ -1442,7 +1546,7 @@ export default function AiGraderStationPage() {
     : [];
   const canStartGrading =
     bridgeConnected &&
-    busy === null &&
+    captureBusy === null &&
     status.currentStep === "capture_front" &&
     previewGeometrySide === "front" &&
     detectedGeometryReady &&
@@ -1460,7 +1564,7 @@ export default function AiGraderStationPage() {
               ? "Hold steady and use the base-plate color with the strongest contrast around the card border."
               : "Keep all four corners inside the frame, keep the printed top roughly toward the top, and hold steady.";
   const cardPlacementGuidance = detectedGeometryReady
-    ? `Edges locked. Off-center placement and ordinary rotation will be corrected. ${previewGeometrySide === "back" ? "Capture Back" : "Start Grading"} is enabled.`
+    ? `Edges locked. Off-center placement and ordinary rotation will be corrected. ${previewGeometrySide === "back" ? "Capture Back" : "Capture Front"} is enabled.`
     : cardPlacementState === "adjust_card" && detectedGeometryVisible
       ? `Edges found. ${cardAdjustmentGuidance}`
       : "Place the card on the solid base plate with all four edges visible and the printed top roughly toward the top.";
@@ -1479,12 +1583,20 @@ export default function AiGraderStationPage() {
     return matching.length ? matching.reduce((sum, phase) => sum + phase.durationMs, 0) : undefined;
   };
 
-  const canUseBridge = bridgeConnected || contractPreviewEnabled;
-  const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 6);
-  const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) => RAPID_PROCESSING_STATES.has(item.state));
-  const stationSettingsLocked = status.sessionManifest.frontCaptured || status.sessionManifest.backCaptured || Boolean(status.rapidCaptureQueue.activeQueueItemId);
+  const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 10);
+  const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) =>
+    RAPID_PROCESSING_STATES.has(item.state) || item.ocr.state === "eligible" || item.ocr.state === "in_flight");
   const warmRunner = status.warmRunnerStatus;
-  const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held || busy === "start-grading" || busy === "capture-back";
+  const warmRunnerCapturing = warmRunner.status === "capturing" || warmRunner.captureLock.held ||
+    captureBusy === "front" || captureBusy === "back";
+  const canStartNewCard = aiGraderStartNewCardAvailable({
+    bridgeConnected,
+    captureBusy: captureBusy !== null,
+    lightingRequestPending: liveLightingRequestPending,
+    captureLockHeld: warmRunner.captureLock.held,
+    warmRunnerStatus: warmRunner.status,
+    currentStep: status.currentStep,
+  });
   const liveLightingAvailable =
     bridgeConnected &&
     !liveLightingRequestPending &&
@@ -1521,7 +1633,7 @@ export default function AiGraderStationPage() {
   const latestWarmPhases = [...warmRunner.phases].slice(-4).reverse();
 
   useEffect(() => {
-    if (!bridgeConnected || !stationToken.trim() || stationCaptureMode !== "rapid" || !rapidQueueHasProcessing) return;
+    if (!bridgeConnected || !stationToken.trim() || !rapidQueueHasProcessing) return;
     let cancelled = false;
     let pending = false;
     const refreshRapidQueue = async () => {
@@ -1541,7 +1653,7 @@ export default function AiGraderStationPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [bridgeConnected, bridgeUrl, rapidQueueHasProcessing, stationCaptureMode, stationToken]);
+  }, [bridgeConnected, bridgeUrl, rapidQueueHasProcessing, stationToken]);
 
   const verifyProductionSession = async (token: string): Promise<ProductionAuthActor> => {
     const response = await fetch("/api/admin/ai-grader/production/auth-check", {
@@ -1643,106 +1755,347 @@ export default function AiGraderStationPage() {
     return buildAdminHeaders(activeSession.token, extra);
   };
 
+  const nextEligibleOcrItem = selectNextSerializedAiGraderOcrItem(status.rapidCaptureQueue.items);
+  const nextEligibleOcrQueueItemId = nextEligibleOcrItem?.queueItemId;
+  const nextEligibleOcrSessionId = nextEligibleOcrItem?.sessionId;
+  const nextEligibleOcrReportId = nextEligibleOcrItem?.reportId;
+
   useEffect(() => {
-    if (!ocrPrefillReportId || !reportReady || linkedCardReady) return;
-    if (!bridgeConnected || !stationToken.trim()) {
-      setOcrPrefillState({
-        status: "waiting",
-        reportId: ocrPrefillReportId,
-        message: "Connect the local station to load normalized images for OCR.",
-      });
+    if (
+      !nextEligibleOcrQueueItemId ||
+      !nextEligibleOcrSessionId ||
+      !nextEligibleOcrReportId ||
+      !bridgeConnected ||
+      !stationToken.trim() ||
+      sessionLoading ||
+      !session?.token
+    ) return;
+    if (queuedOcrAttemptOwner.status === "uninitialized") return;
+    if (queuedOcrAttemptOwner.status === "failed" || !queuedOcrAttemptOwner.attemptOwnerId) {
+      setError(
+        `Queued OCR cannot claim its one attempt because this tab has no durable attempt owner: ${queuedOcrAttemptOwner.error ?? "sessionStorage is unavailable."}`.slice(0, 750)
+      );
       return;
     }
-    if (sessionLoading) return;
-    if (!session?.token) {
-      setOcrPrefillState({
-        status: "waiting",
-        reportId: ocrPrefillReportId,
-        message: "Sign in to prefill the Approve & Publish identity from OCR.",
-      });
-      return;
-    }
-    if (ocrAttemptedReportIdsRef.current.has(ocrPrefillReportId)) return;
-    ocrAttemptedReportIdsRef.current.add(ocrPrefillReportId);
-    const generation = ocrPrefillGenerationRef.current;
-    let cancelled = false;
-    setOcrPrefillState({
-      status: "running",
-      reportId: ocrPrefillReportId,
-      message: "Reading normalized front and back images.",
-    });
-    void runAiGraderOcrPrefillFromLocalReport({
-      baseUrl: bridgeUrl,
-      stationToken,
-      reportId: ocrPrefillReportId,
-      authHeaders: buildAdminHeaders(session.token),
-    })
-      .then((result) => {
-        if (cancelled || generation !== ocrPrefillGenerationRef.current) return;
-        setIdentityDraft((current) =>
-          mergeAiGraderOcrPrefillIntoIdentityDraft({
-            current,
-            result,
-            operatorEditedFields: identityEditedFieldsRef.current,
-          }).draft
-        );
-        setStatus((current) =>
-          current.reportBundle?.reportId === result.reportId
-            ? {
-                ...current,
-                reportBundle: {
-                  ...current.reportBundle,
-                  ocrPrefill: aiGraderOcrPrefillReportMetadata(result),
-                },
-              }
-            : current
-        );
-        setOcrPrefillState({
-          status: "ready",
-          reportId: ocrPrefillReportId,
-          result,
-          message: `OCR ready. Review ${result.reviewFieldNames.length} field${result.reviewFieldNames.length === 1 ? "" : "s"} before Approve & Publish.`,
-        });
-      })
-      .catch((requestError) => {
-        if (cancelled || generation !== ocrPrefillGenerationRef.current) return;
-        const typedFailure = requestError instanceof AiGraderOcrPrefillStageError
-          ? requestError
-          : null;
-        setOcrPrefillState({
-          status: "failed",
-          reportId: ocrPrefillReportId,
-          message: requestError instanceof Error ? requestError.message : "OCR prefill did not complete.",
-          ...(typedFailure?.failureCode ? { failureCode: typedFailure.failureCode } : {}),
-          ...(typedFailure?.failureCategory ? { failureCategory: typedFailure.failureCategory } : {}),
-          ...(typedFailure?.failureLabel ? { failureLabel: typedFailure.failureLabel } : {}),
-        });
-      });
-    return () => {
-      cancelled = true;
+    const attemptOwnerId = queuedOcrAttemptOwner.attemptOwnerId;
+    const liveOwnerClaim = queuedOcrAttemptOwnerClaimRef.current;
+    if (!liveOwnerClaim || liveOwnerClaim.attemptOwnerId !== attemptOwnerId) return;
+    const ownsLiveAttempt = () => queuedOcrAttemptOwnerClaimRef.current === liveOwnerClaim;
+    const authorizedToken = session.token;
+    const identity = {
+      queueItemId: nextEligibleOcrQueueItemId,
+      gradingSessionId: nextEligibleOcrSessionId,
+      reportId: nextEligibleOcrReportId,
     };
+    const identityKey = [identity.queueItemId, identity.gradingSessionId, identity.reportId].join(":");
+    if (queuedOcrRunningRef.current.has(identityKey)) return;
+    queuedOcrRunningRef.current.add(identityKey);
+    void (async () => {
+      let claimed = false;
+      let wakeInterruptedRecovery = false;
+      try {
+        try {
+          const actor = await verifyProductionSession(authorizedToken);
+          if (!ownsLiveAttempt()) return;
+          setProductionAuthActor(actor);
+          setProductionAuthState({
+            status: "completed",
+            message: `Production sign-in verified as ${actor.displayName} (${actor.role}).`,
+          });
+        } catch (authError) {
+          if (!ownsLiveAttempt()) return;
+          const message = authFailureMessage(authError, "run queued OCR");
+          if (authStatusCode(authError) === 401) logout();
+          setProductionAuthActor(null);
+          setProductionAuthState({ status: "failed", message });
+          setError(
+            `Production authorization must be verified before queued OCR can claim its one attempt: ${message}`.slice(0, 750)
+          );
+          return;
+        }
+        if (!ownsLiveAttempt()) return;
+        const begun = await callAiGraderStationBridge({
+          baseUrl: bridgeUrl,
+          stationToken,
+          action: "begin-queued-ocr",
+          body: buildAiGraderQueuedOcrClaimRequest({ ...identity, attemptOwnerId }),
+        });
+        if (!ownsLiveAttempt()) return;
+        const claimedItem = begun.rapidCaptureQueue.items.find((item) =>
+          item.queueItemId === identity.queueItemId &&
+          item.sessionId === identity.gradingSessionId &&
+          item.reportId === identity.reportId);
+        if (claimedItem?.ocr.state !== "in_flight" || claimedItem.ocr.attemptOwnerId !== attemptOwnerId) {
+          throw new Error("The exact queued OCR item was not durably claimed by this tab.");
+        }
+        claimed = true;
+        setStatus(begun);
+        const result = await runAiGraderOcrPrefillFromLocalReport({
+          baseUrl: bridgeUrl,
+          stationToken,
+          ...identity,
+          authHeaders: buildAdminHeaders(authorizedToken),
+        });
+        if (!ownsLiveAttempt()) return;
+        const completed = await callAiGraderStationBridge({
+          baseUrl: bridgeUrl,
+          stationToken,
+          action: "complete-queued-ocr",
+          body: buildAiGraderQueuedOcrCompletionRequest({ ...identity, attemptOwnerId, result }),
+        });
+        if (!ownsLiveAttempt()) return;
+        setStatus(completed);
+      } catch (requestError) {
+        if (!ownsLiveAttempt()) return;
+        const typedFailure = requestError instanceof AiGraderOcrPrefillStageError ? requestError : null;
+        const message = (requestError instanceof Error ? requestError.message : "Queued OCR failed.").slice(0, 500);
+        if (!claimed) {
+          const refreshed = await callAiGraderStationBridge({
+            baseUrl: bridgeUrl,
+            stationToken,
+            action: "status",
+          }).catch(() => null);
+          if (!ownsLiveAttempt()) return;
+          const persisted = refreshed?.rapidCaptureQueue.items.find((item) =>
+            item.queueItemId === identity.queueItemId &&
+            item.sessionId === identity.gradingSessionId &&
+            item.reportId === identity.reportId);
+          if (refreshed) setStatus(refreshed);
+          // An observed in-flight attempt can belong to another live tab. Only the
+          // exact tab that received and validated the durable claim may fail it.
+          if (!persisted || persisted.ocr.state === "eligible") {
+            setError(
+              `Queued OCR was not claimed for queue ${identity.queueItemId}, session ${identity.gradingSessionId}, report ${identity.reportId}; its exact lifecycle was left unchanged: ${message}`.slice(0, 750)
+            );
+          }
+          return;
+        }
+        try {
+          if (!ownsLiveAttempt()) return;
+          const failed = await callAiGraderStationBridge({
+            baseUrl: bridgeUrl,
+            stationToken,
+            action: "fail-queued-ocr",
+            body: buildAiGraderQueuedOcrFailureRequest({
+              ...identity,
+              attemptOwnerId,
+              failure: {
+                code: typedFailure?.failureCode ?? "AI_GRADER_OCR_INTERNAL_FAILED",
+                message,
+              },
+            }),
+          });
+          if (!ownsLiveAttempt()) return;
+          setStatus(failed);
+        } catch (persistenceError) {
+          if (!ownsLiveAttempt()) return;
+          wakeInterruptedRecovery = true;
+          const persistenceMessage = persistenceError instanceof Error
+            ? persistenceError.message
+            : "The Dell bridge rejected the terminal OCR failure.";
+          setError(
+            `OCR failure persistence failed for queue ${identity.queueItemId}, session ${identity.gradingSessionId}, report ${identity.reportId}: ${persistenceMessage}`.slice(0, 750)
+          );
+        }
+      } finally {
+        queuedOcrRunningRef.current.delete(identityKey);
+        if (wakeInterruptedRecovery && ownsLiveAttempt()) {
+          setQueuedOcrSchedulerRevision((current) => current + 1);
+        }
+      }
+    })();
   }, [
     bridgeConnected,
     bridgeUrl,
-    linkedCardReady,
-    ocrPrefillReportId,
-    ocrPrefillRetryNonce,
-    reportReady,
+    logout,
+    nextEligibleOcrQueueItemId,
+    nextEligibleOcrSessionId,
+    nextEligibleOcrReportId,
+    queuedOcrAttemptOwner.status,
+    queuedOcrAttemptOwner.attemptOwnerId,
+    queuedOcrAttemptOwner.error,
+    queuedOcrSchedulerRevision,
     session?.token,
     sessionLoading,
     stationToken,
   ]);
 
-  const retryOcrPrefill = () => {
-    if (!ocrPrefillReportId) return;
-    ocrAttemptedReportIdsRef.current.delete(ocrPrefillReportId);
-    setOcrPrefillRetryNonce((current) => current + 1);
-  };
+  const interruptedOcrItem = status.rapidCaptureQueue.items.find((item) =>
+    item.ocr.state === "in_flight" && Boolean(item.ocr.attemptOwnerId));
+  const interruptedOcrQueueItemId = interruptedOcrItem?.queueItemId;
+  const interruptedOcrSessionId = interruptedOcrItem?.sessionId;
+  const interruptedOcrReportId = interruptedOcrItem?.reportId;
+  const interruptedOcrAttemptOwnerId = interruptedOcrItem?.ocr.attemptOwnerId;
+
+  useEffect(() => {
+    const attemptOwnerId = interruptedOcrAttemptOwnerId;
+    if (
+      !interruptedOcrQueueItemId ||
+      !interruptedOcrSessionId ||
+      !interruptedOcrReportId ||
+      !attemptOwnerId ||
+      queuedOcrAttemptOwner.status !== "ready" ||
+      !bridgeConnected ||
+      !stationToken.trim()
+    ) return;
+    const identity = {
+      queueItemId: interruptedOcrQueueItemId,
+      gradingSessionId: interruptedOcrSessionId,
+      reportId: interruptedOcrReportId,
+    };
+    const identityKey = [identity.queueItemId, identity.gradingSessionId, identity.reportId].join(":");
+    const recoveryKey = identityKey + ":" + attemptOwnerId;
+    if (
+      queuedOcrRunningRef.current.has(identityKey) ||
+      queuedOcrInterruptedHandledRef.current.has(recoveryKey)
+    ) return;
+    const currentClaim = queuedOcrAttemptOwnerClaimRef.current;
+    const currentDocumentOwnsAttempt = currentClaim?.attemptOwnerId === attemptOwnerId;
+    const abortController = new AbortController();
+    let active = true;
+    void (async () => {
+      let recoveryClaim: { release(): void } | null = null;
+      try {
+        if (!currentDocumentOwnsAttempt) {
+          recoveryClaim = await waitForAiGraderQueuedOcrAttemptOwnerLock({
+            attemptOwnerId,
+            signal: abortController.signal,
+          });
+          if (abortController.signal.aborted) return;
+        }
+        const refreshed = await callAiGraderStationBridge({
+          baseUrl: bridgeUrl,
+          stationToken,
+          action: "status",
+        });
+        if (!active || abortController.signal.aborted) return;
+        if (active) setStatus(refreshed);
+        const exactInFlight = refreshed.rapidCaptureQueue.items.find((item) =>
+          item.queueItemId === identity.queueItemId &&
+          item.sessionId === identity.gradingSessionId &&
+          item.reportId === identity.reportId &&
+          item.ocr.state === "in_flight" &&
+          item.ocr.attemptOwnerId === attemptOwnerId);
+        if (!exactInFlight) return;
+        queuedOcrInterruptedHandledRef.current.add(recoveryKey);
+        const failed = await callAiGraderStationBridge({
+          baseUrl: bridgeUrl,
+          stationToken,
+          action: "fail-queued-ocr",
+          body: buildAiGraderQueuedOcrFailureRequest({
+            ...identity,
+            attemptOwnerId,
+            failure: {
+              code: "AI_GRADER_OCR_INTERRUPTED",
+              message: "Queued OCR was interrupted before one safe exact-item result was persisted. This failed item cannot be reviewed or published in the station, and OCR will not rerun.",
+            },
+          }),
+        });
+        if (active) setStatus(failed);
+      } catch (persistenceError) {
+        if (abortController.signal.aborted || !active) return;
+        const persistenceMessage = persistenceError instanceof Error
+          ? persistenceError.message
+          : "The Dell bridge rejected the interrupted OCR failure.";
+        setError(
+          ("Interrupted OCR failure persistence failed for queue " + identity.queueItemId +
+            ", session " + identity.gradingSessionId + ", report " + identity.reportId +
+            ": " + persistenceMessage).slice(0, 750)
+        );
+      } finally {
+        recoveryClaim?.release();
+      }
+    })();
+    return () => {
+      active = false;
+      abortController.abort();
+    };
+  }, [
+    bridgeConnected,
+    bridgeUrl,
+    interruptedOcrQueueItemId,
+    interruptedOcrSessionId,
+    interruptedOcrReportId,
+    interruptedOcrAttemptOwnerId,
+    queuedOcrAttemptOwner.status,
+    queuedOcrAttemptOwner.attemptOwnerId,
+    queuedOcrSchedulerRevision,
+    stationToken,
+  ]);
+
+  useEffect(() => {
+    if (!activeReview || !activeReviewItem) return;
+    const identityKey = [activeReview.queueItemId, activeReview.gradingSessionId, activeReview.reportId].join(":");
+    if (activeReviewIdentityRef.current !== identityKey) {
+      activeReviewIdentityRef.current = identityKey;
+      hydratedOcrIdentityRef.current = null;
+      const cached = reviewDraftCacheRef.current.get(identityKey);
+      identityEditedFieldsRef.current = new Set(cached?.editedFields ?? []);
+      setSelectedCard(cached?.selectedCard ?? null);
+      setIdentityDraft(cached?.identityDraft ?? defaultIdentityDraft);
+      setIdentityStatus({ status: "idle", message: "Card identity has not been confirmed." });
+      setProductionPublish({ status: "idle", message: "Ten Kings DB/storage publish has not been run." });
+    }
+    const persistedOcr = activeReviewItem.ocr;
+    if (persistedOcr.state === "succeeded" && persistedOcr.result) {
+      const hydrationKey = identityKey + ":" + (persistedOcr.completedAt ?? persistedOcr.updatedAt);
+      if (hydratedOcrIdentityRef.current === hydrationKey) return;
+      try {
+        const result = safeAiGraderOcrPrefillResult(persistedOcr.result as AiGraderOcrPrefillResult);
+        if (result.queueItemId !== activeReview.queueItemId ||
+            result.gradingSessionId !== activeReview.gradingSessionId ||
+            result.reportId !== activeReview.reportId) {
+          throw new Error("Persisted OCR identity does not match the activated review item.");
+        }
+        setIdentityDraft((current) =>
+          mergeAiGraderOcrPrefillIntoIdentityDraft({
+            current,
+            result,
+            operatorEditedFields: identityEditedFieldsRef.current,
+          }).draft);
+        setOcrPrefillState({
+          status: "ready",
+          reportId: result.reportId,
+          result,
+          message: "Persisted OCR suggestions are ready for review and correction.",
+        });
+        hydratedOcrIdentityRef.current = hydrationKey;
+      } catch (hydrationError) {
+        setOcrPrefillState({
+          status: "failed",
+          reportId: activeReview.reportId,
+          message: hydrationError instanceof Error ? hydrationError.message : "Persisted OCR result is invalid.",
+        });
+      }
+      return;
+    }
+    if (persistedOcr.state === "failed") {
+      setOcrPrefillState({
+        status: "failed",
+        reportId: activeReview.reportId,
+        message: persistedOcr.failure?.message ?? "OCR failed for this exact queue item.",
+      });
+      return;
+    }
+    setOcrPrefillState({
+      status: persistedOcr.state === "in_flight" ? "running" : "waiting",
+      reportId: activeReview.reportId,
+      message: persistedOcr.state === "in_flight"
+        ? "OCR is running for this exact queued card."
+        : "OCR is waiting for exact normalized front and back PNG evidence.",
+    });
+  }, [
+    activeReview?.queueItemId,
+    activeReview?.gradingSessionId,
+    activeReview?.reportId,
+    activeReviewItem?.ocr.updatedAt,
+  ]);
 
   const signInForProduction = async () => {
     setError(null);
     try {
       await requireProductionSession("continue the AI Grader production workflow");
+      setQueuedOcrSchedulerRevision((current) => current + 1);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Ten Kings sign-in failed.");
     }
@@ -1829,13 +2182,10 @@ export default function AiGraderStationPage() {
   };
 
   const runAction = async (action: AiGraderStationAction, body?: Record<string, unknown>) => {
-    const next = bridgeConnected
-      ? await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action, body })
-      : contractPreviewEnabled
-        ? await callStationContract(action)
-        : (() => {
-            throw new Error("Connect the Dell local station bridge before running station actions.");
-          })();
+    if (!bridgeConnected || !stationToken.trim()) {
+      throw new Error("Connect the real Dell local station bridge before running station actions.");
+    }
+    const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action, body });
     setStatus(next);
     reconcileBridgePreviewStatus(next.previewStatus);
     setLiveLighting(next.liveLighting);
@@ -1875,13 +2225,6 @@ export default function AiGraderStationPage() {
     return displayed;
   };
 
-  const ensureLiveLightingSession = async () => {
-    if (status.currentStep === "start_new_card" || status.currentStep === "session_complete") {
-      return runAction("start-session", buildAiGraderCaptureProfileRequest("full_forensic"));
-    }
-    return status;
-  };
-
   const applyLiveLightingDraft = async (
     draft = liveLightingDraft,
     reason = "browser live lighting apply"
@@ -1893,7 +2236,9 @@ export default function AiGraderStationPage() {
     liveLightingRequestPendingRef.current = true;
     setLiveLightingRequestPending(true);
     try {
-      await ensureLiveLightingSession();
+      if (status.currentStep === "start_new_card" || status.currentStep === "session_complete") {
+        throw new Error("Select Start New Card before changing capture-session lighting.");
+      }
       const next = await applyAiGraderLiveLighting({
         baseUrl: bridgeUrl,
         stationToken,
@@ -1956,8 +2301,8 @@ export default function AiGraderStationPage() {
     updateLiveLightingDraft({ ...liveLightingDraft, dutyPercent }, "browser live lighting duty changed");
   };
 
-  const resetPerCardUiState = () => {
-    ocrPrefillGenerationRef.current += 1;
+  const resetReviewUiState = () => {
+    activeReviewIdentityRef.current = null;
     identityEditedFieldsRef.current.clear();
     setSelectedCard(null);
     setIdentityDraft(defaultIdentityDraft);
@@ -1978,44 +2323,19 @@ export default function AiGraderStationPage() {
     setInventoryState({ status: "idle", message: "Card has not been added to inventory." });
   };
 
-  const changeStationCaptureMode = async (nextMode: StationCaptureMode) => {
-    if (nextMode === stationCaptureMode) return;
-    if (stationSettingsLocked) {
-      setError("Queue or finish the active card before changing Rapid Capture mode.");
-      return;
-    }
-    setBusy("capture-settings");
-    setError(null);
-    try {
-      const next = await runAction(
-        "configure-rapid-capture",
-        buildAiGraderRapidCaptureConfigurationRequest(nextMode === "rapid"),
-      );
-      setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Rapid Capture mode could not be updated.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const startNewCard = async () => {
     if (liveLightingRequestPendingRef.current) return;
-    setBusy("start");
+    if (!canStartNewCard) return;
+    setCaptureBusy("start");
     setError(null);
     try {
-      resetPerCardUiState();
-      await runAction(
-        "configure-rapid-capture",
-        buildAiGraderRapidCaptureConfigurationRequest(stationCaptureMode === "rapid"),
-      );
-      await runAction("start-session", buildAiGraderCaptureProfileRequest("full_forensic"));
+      await runAction("start-session", buildAiGraderCaptureProfileRequest("production_fast"));
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.";
       await runAction("status").catch(() => undefined);
       setError(message);
     } finally {
-      setBusy(null);
+      setCaptureBusy(null);
     }
   };
 
@@ -2023,7 +2343,7 @@ export default function AiGraderStationPage() {
     if (liveLightingRequestPendingRef.current) {
       throw new Error("Wait for the pending lighting controller request before capture.");
     }
-    if (!canUseBridge) throw new Error("Connect the Dell local station bridge before capture.");
+    if (!bridgeConnected || !stationToken.trim()) throw new Error("Connect the real Dell local station bridge before capture.");
     const captureStatus = await runAction("status");
     const displayed = assertLocalFreshPreviewCaptureEligibility(side);
     const assertion = aiGraderCaptureAssertionFromFrame({
@@ -2032,7 +2352,7 @@ export default function AiGraderStationPage() {
       geometryCaptureMode: "detected_geometry",
       captureTriggerMode: "operator",
     });
-    setBusy(side === "front" ? "start-grading" : "capture-back");
+    setCaptureBusy(side);
     setError(null);
     try {
       const captured = await runAiGraderCapture({
@@ -2051,7 +2371,7 @@ export default function AiGraderStationPage() {
       });
       return captured;
     } finally {
-      setBusy(null);
+      setCaptureBusy(null);
     }
   };
 
@@ -2089,7 +2409,6 @@ export default function AiGraderStationPage() {
       exposureUs: next.acceptedProfile.exposureUs,
       gain: next.acceptedProfile.gain,
     });
-    setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
     setHistory(await fetchAiGraderStationReportHistory({
       baseUrl: targetBridgeUrl,
       stationToken: targetStationToken,
@@ -2107,56 +2426,85 @@ export default function AiGraderStationPage() {
   };
 
   const captureBackAndContinue = async () => {
+    const expectedIdentity = {
+      gradingSessionId: status.sessionManifest.gradingSessionId,
+      reportId: status.sessionManifest.reportId,
+    };
     try {
       const captured = await runStationCapture("back");
-      if (stationCaptureMode === "rapid" && captured.rapidCapture.enabled) {
-        await runAction("queue-current-card");
-        resetPerCardUiState();
-        return;
+      if (!aiGraderAtomicBackQueueReleaseMatches({
+        status: captured,
+        ...expectedIdentity,
+      })) {
+        throw new Error("Back capture did not return the exact card durably queued with clean capture ownership.");
       }
-      await runAction("run-diagnostics");
-      await runAction("export-report-bundle");
-      await prepareLocalProductionRelease();
-      await refreshHistory();
     } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Capture Back or report generation failed.";
+      const message = requestError instanceof Error ? requestError.message : "Capture Back or durable queue commit failed.";
       await runAction("status").catch(() => undefined);
       setError(message);
     }
   };
 
-  const activateRapidQueueItem = async (queueItemId: string) => {
-    setBusy(`rapid-review:${queueItemId}`);
+  const activateRapidQueueItem = async (item: (typeof status.rapidCaptureQueue.items)[number]) => {
+    if (!aiGraderRapidItemPublishable(item.state)) {
+      setError(item.state === "published" ? "Published cards are read-only in the local Review queue." : "This exact queue item is not ready for review.");
+      return;
+    }
+    const publicationClaim = publicationReviewClaimRef.current;
+    if (!aiGraderReviewActivationAvailable(publicationClaim)) {
+      setError(
+        `Approve & Publish is still bound to queue ${publicationClaim?.queueItemId}, session ${publicationClaim?.gradingSessionId}, report ${publicationClaim?.reportId}. Review selection will remain unchanged until it finishes.`
+      );
+      return;
+    }
+    if (activeReview) {
+      const currentIdentityKey = [
+        activeReview.queueItemId,
+        activeReview.gradingSessionId,
+        activeReview.reportId,
+      ].join(":");
+      reviewDraftCacheRef.current.set(currentIdentityKey, {
+        identityDraft: { ...identityDraft },
+        editedFields: new Set(identityEditedFieldsRef.current),
+        selectedCard,
+      });
+    }
+    setRapidItemOperations((current) => ({ ...current, [item.queueItemId]: "review" }));
     setError(null);
     try {
-      const next = await runAction("activate-queue-item", buildAiGraderRapidQueueActivationRequest(queueItemId));
-      resetPerCardUiState();
-      setStationCaptureProfile(next.captureProfile);
-      setStationCaptureMode(next.rapidCapture.enabled ? "rapid" : "single");
+      const next = await runAction("activate-queue-item", buildAiGraderRapidQueueActivationRequest({
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        reportId: item.reportId,
+      }));
+      if (next.rapidCaptureQueue.activeReview?.queueItemId !== item.queueItemId ||
+          next.rapidCaptureQueue.activeReview.gradingSessionId !== item.sessionId ||
+          next.rapidCaptureQueue.activeReview.reportId !== item.reportId) {
+        throw new Error("Rapid Capture review activation returned a different queue/session/report identity.");
+      }
+      resetReviewUiState();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Rapid Capture report could not be opened.");
     } finally {
-      setBusy(null);
+      setRapidItemOperations((current) => ({ ...current, [item.queueItemId]: undefined }));
     }
   };
-  const productionReleaseBody = () => ({
-    operatorId: "local-browser-operator",
-    warningsAccepted: true,
-    overrideReason: "Operator accepted Production Release V0 warning gates from the browser station.",
-  });
-
-  const prepareLocalProductionRelease = async () => {
-    let next = await runAction("calculate-final-grade", productionReleaseBody());
-    if (next.productionRelease?.finalGradeComputed === true) {
-      next = await runAction("finalize-report", productionReleaseBody());
-      next = await runAction("generate-label-data", productionReleaseBody());
+  const productionReleaseBody = (publicationIdentity: AiGraderRapidQueueIdentity) => {
+    assertAiGraderRapidItemPublishable(activeReviewItem?.state);
+    if (!activeReview || !activeReviewItem || !activeReviewIdentityReady ||
+        !aiGraderRapidQueueIdentityMatches(activeReviewQueueIdentity, publicationIdentity)) {
+      throw new Error("Approve & Publish requires one activated exact queue/session/report identity.");
     }
-    await refreshHistory();
-    return next;
+    return {
+      ...publicationIdentity,
+      operatorId: "local-browser-operator",
+      warningsAccepted: true,
+      overrideReason: "Operator accepted Production Release V0 warning gates from the browser station.",
+    };
   };
 
   const buildReportBundleForProduction = (
-    baseBundle: AiGraderReportBundle | undefined = status.reportBundle,
+    baseBundle: AiGraderReportBundle | undefined = activeReviewBundle,
     cardSelection: CardSelectionState | null = selectedCard,
   ) => {
     if (!baseBundle) return null;
@@ -2227,74 +2575,11 @@ export default function AiGraderStationPage() {
       .filter(Boolean)
       .join(" ") || "AI Grader Card";
 
-  const launchConfirmedCardComps = (input: {
-    reportId: string;
-    reportBundle: Record<string, unknown>;
-    productionRelease: Record<string, unknown>;
-    selection: CardSelectionState;
-    headers: Record<string, string>;
+  const createCardFromConfirmedIdentity = async (options: {
+    manageBusy?: boolean;
+    publicationIdentity: AiGraderRapidQueueIdentity;
   }) => {
-    setConfirmedDownstream((current) => ({
-      ...current,
-      reportId: input.reportId,
-      comps: {
-        status: "running",
-        message: "eBay sold comps are running in the background.",
-      },
-    }));
-    void fetch("/api/admin/ai-grader/production/run-comps", {
-      method: "POST",
-      headers: input.headers,
-      body: JSON.stringify({
-        reportId: input.reportId,
-        reportBundle: input.reportBundle,
-        productionRelease: input.productionRelease,
-        selection: input.selection,
-        limit: 10,
-      }),
-    })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok !== true) {
-          throw new Error(payload.message ?? "eBay sold comps failed to start.");
-        }
-        const result = payload.result ?? {};
-        const nextStatus: ConfirmedDownstreamState["comps"]["status"] =
-          result.status === "ready" ? "ready" : result.status === "failed" ? "failed" : "queued";
-        setConfirmedDownstream((current) =>
-          current.reportId === input.reportId
-            ? {
-                ...current,
-                comps: {
-                  status: nextStatus,
-                  message:
-                    result.message ??
-                    (nextStatus === "ready"
-                      ? "eBay sold comps are ready for review on Finish Cards."
-                      : nextStatus === "failed"
-                        ? "eBay sold comps failed. Retry from Finish Cards."
-                        : "eBay sold comps are queued."),
-                },
-              }
-            : current
-        );
-      })
-      .catch((requestError) => {
-        setConfirmedDownstream((current) =>
-          current.reportId === input.reportId
-            ? {
-                ...current,
-                comps: {
-                  status: "failed",
-                  message: requestError instanceof Error ? requestError.message : "eBay sold comps failed to start.",
-                },
-              }
-            : current
-        );
-      });
-  };
-
-  const createCardFromConfirmedIdentity = async (options: { manageBusy?: boolean } = {}) => {
+    assertAiGraderRapidItemPublishable(activeReviewItem?.state);
     setError(null);
     let authHeaders: Record<string, string>;
     try {
@@ -2308,14 +2593,13 @@ export default function AiGraderStationPage() {
     if (options.manageBusy !== false) setBusy("create-card-from-report");
     setIdentityStatus({ status: "pending", message: "Creating Ten Kings CardAsset and Item from confirmed AI Grader identity." });
     try {
-      const resolvedPackage = await resolveAiGraderAuthoritativeProductionPackage({
-        initialStatus: status,
-        fetchBridgeBundle: bridgeConnected && stationToken.trim()
-          ? (reportId) => fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId })
-          : undefined,
-        explicitlyFinalize: prepareLocalProductionRelease,
-      });
-      const { reportId, sourceBundle, productionRelease } = resolvedPackage;
+      if (!activeReview || !activeReviewIdentityReady ||
+          !aiGraderRapidQueueIdentityMatches(activeReviewQueueIdentity, options.publicationIdentity)) {
+        throw new Error("Card creation requires the activated exact queue/session/report item.");
+      }
+      const reportId = activeReview.reportId;
+      const sourceBundle = activeReviewBundle;
+      const productionRelease = activeReviewRelease;
       if (!sourceBundle || !productionRelease) {
         throw new Error("A finalized production release and report bundle are required before card creation.");
       }
@@ -2325,7 +2609,7 @@ export default function AiGraderStationPage() {
       }
       const draftIdentity = identityDraftPayload();
       const draftTitle = identityDraftTitle();
-      const productionSourceBundle = buildReportBundleForProduction(sourceBundle) ?? sourceBundle;
+      const productionSourceBundle = buildReportBundleForProduction(sourceBundle, null) ?? sourceBundle;
       const reportBundleWithIdentity: AiGraderReportBundle = {
         ...productionSourceBundle,
         cardIdentity: {
@@ -2349,6 +2633,7 @@ export default function AiGraderStationPage() {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify({
+          queueItemId: options.publicationIdentity.queueItemId,
           publicationStatus: "finalized",
           reportId: sanitizedRelease?.reportId ?? sanitizedBundle.reportId,
           certId: sanitizedRelease?.label?.certId,
@@ -2371,6 +2656,11 @@ export default function AiGraderStationPage() {
         throw new Error(payload.message ?? "Card creation from AI Grader report failed.");
       }
       const result = payload.result ?? {};
+      if (result.queueItemId !== options.publicationIdentity.queueItemId ||
+          result.gradingSessionId !== options.publicationIdentity.gradingSessionId ||
+          result.reportId !== options.publicationIdentity.reportId) {
+        throw new Error("Card creation returned a different queue/session/report identity.");
+      }
       const nextCard = result.cardIdentity as CardSelectionState;
       setSelectedCard(nextCard);
       setCardSearchMessage("Confirmed identity created and linked a Ten Kings CardAsset/Item.");
@@ -2378,81 +2668,38 @@ export default function AiGraderStationPage() {
         status: "completed",
         message: `Created CardAsset ${result.cardAssetId} and Item ${result.itemId}.`,
       });
-      const downstream = result.downstream ?? {};
-      const downstreamComps = downstream.comps ?? {};
-      const downstreamCompsStatus: ConfirmedDownstreamState["comps"]["status"] =
-        downstreamComps.status === "running" ||
-        downstreamComps.status === "ready" ||
-        downstreamComps.status === "completed" ||
-        downstreamComps.status === "failed"
-          ? downstreamComps.status
-          : "queued";
-      setConfirmedDownstream({
-        reportId: result.reportId,
-        comps: {
-          status: downstreamCompsStatus,
-          message:
-            downstreamCompsStatus === "completed"
-              ? "Selected eBay sold comps and valuation are already complete."
-              : downstreamCompsStatus === "ready"
-                ? "eBay sold comps are ready for review on Finish Cards."
-                : downstreamCompsStatus === "running"
-                  ? "eBay sold comps are already running in the background."
-                  : downstreamCompsStatus === "failed"
-                    ? "eBay sold comps failed previously. Retry from Finish Cards."
-                    : "eBay sold comps are queued.",
-        },
-      });
-      setStatus((current) => ({
-        ...current,
-        productionRelease: result.productionRelease ?? current.productionRelease,
-        reportBundle: current.reportBundle
-          ? {
-              ...current.reportBundle,
-              cardIdentity: {
-                ...current.reportBundle.cardIdentity,
-                ...nextCard,
-                source: "card_asset",
-                sideCount: 2,
-                futureSlabbedPhotoRefsReserved: true,
-                futureEbayCompsRefsReserved: true,
+      setStatus((current) => {
+        const selected = current.rapidCaptureQueue.activeReview;
+        if (!selected ||
+            selected.queueItemId !== activeReview.queueItemId ||
+            selected.gradingSessionId !== activeReview.gradingSessionId ||
+            selected.reportId !== activeReview.reportId ||
+            !selected.manifest.reportBundle) return current;
+        return {
+          ...current,
+          rapidCaptureQueue: {
+            ...current.rapidCaptureQueue,
+            activeReview: {
+              ...selected,
+              manifest: {
+                ...selected.manifest,
+                productionRelease: result.productionRelease ?? selected.manifest.productionRelease,
+                reportBundle: {
+                  ...selected.manifest.reportBundle,
+                  cardIdentity: {
+                    ...selected.manifest.reportBundle.cardIdentity,
+                    ...nextCard,
+                    source: "card_asset",
+                    sideCount: 2,
+                    futureSlabbedPhotoRefsReserved: true,
+                    futureEbayCompsRefsReserved: true,
+                  },
+                },
               },
-            }
-          : current.reportBundle,
-      }));
-      const linkedRelease = (result.productionRelease ?? sanitizedRelease) as Record<string, unknown>;
-      const linkedFinalGrade =
-        linkedRelease.finalGrade && typeof linkedRelease.finalGrade === "object"
-          ? (linkedRelease.finalGrade as Record<string, unknown>)
-          : {};
-      if (downstreamComps.shouldStart === true) {
-        launchConfirmedCardComps({
-          reportId: result.reportId,
-          reportBundle: {
-            reportId: result.reportId,
-            gradingSessionId: sanitizedBundle.gradingSessionId,
-            cardIdentity: {
-              ...draftIdentity,
-              title: result.title ?? draftTitle,
-              set: result.set ?? identityDraft.productSet.trim(),
-              cardNumber: identityDraft.cardNumber.trim(),
-              cardAssetId: result.cardAssetId,
-              itemId: result.itemId,
             },
           },
-          productionRelease: {
-            reportId: result.reportId,
-            gradingSessionId: linkedRelease.gradingSessionId,
-            finalGradeComputed: linkedRelease.finalGradeComputed === true,
-            finalGrade: {
-              overall: linkedFinalGrade.overall,
-            },
-            ...(linkedRelease.label && typeof linkedRelease.label === "object" ? { label: linkedRelease.label } : {}),
-          },
-          selection: nextCard,
-          headers: authHeaders,
-        });
-      }
+        };
+      });
       return nextCard;
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Card creation failed.";
@@ -2536,27 +2783,22 @@ export default function AiGraderStationPage() {
 
   const publishToTenKingsSystem = async (
     cardSelection: CardSelectionState | null = selectedCard,
-    options: { manageBusy?: boolean } = {},
+    options: { manageBusy?: boolean; publicationIdentity: AiGraderRapidQueueIdentity },
   ) => {
+    assertAiGraderRapidItemPublishable(activeReviewItem?.state);
     if (options.manageBusy !== false) setBusy("ten-kings-publish");
     setError(null);
     setProductionPublish((current) => ({ ...current, status: "pending", message: "Preparing canonical local publish package." }));
+    let hostedPublicationCommitted = false;
+    let localPublicationAcknowledged = false;
     try {
-      const resolvedPackage = await resolveAiGraderAuthoritativeProductionPackage({
-        initialStatus: status,
-        fetchBridgeBundle: bridgeConnected && stationToken.trim()
-          ? async (reportId) => {
-              setProductionPublish((current) => ({ ...current, status: "pending", message: "Reading local package manifest from the paired Dell bridge." }));
-              try {
-                return await fetchAiGraderStationReportBundle({ baseUrl: bridgeUrl, stationToken, reportId });
-              } catch (error) {
-                throw new Error(formatAiGraderPublishStageError({ stage: "local-package-read", error }));
-              }
-            }
-          : undefined,
-        explicitlyFinalize: prepareLocalProductionRelease,
-      });
-      const { latestStatus, reportId, sourceBundle, productionRelease } = resolvedPackage;
+      if (!activeReview || !activeReviewIdentityReady ||
+          !aiGraderRapidQueueIdentityMatches(activeReviewQueueIdentity, options.publicationIdentity)) {
+        throw new Error("Approve & Publish requires the activated exact queue/session/report item.");
+      }
+      const reportId = options.publicationIdentity.reportId;
+      const sourceBundle = activeReviewBundle;
+      const productionRelease = activeReviewRelease;
       const reportBundleWithIdentity = buildReportBundleForProduction(sourceBundle, cardSelection);
       const readiness = buildAiGraderPublishReadiness({
         bundle: reportBundleWithIdentity,
@@ -2576,8 +2818,19 @@ export default function AiGraderStationPage() {
       if (localAssetManifest.length < 1) {
         throw new Error("Publish package is missing storage-ready image asset metadata with SHA-256 checksums and byte sizes.");
       }
-      const sanitizedBundle = sanitizeReportBundleForProduction(reportBundleWithIdentity);
-      const sanitizedRelease = sanitizeProductionReleaseForProduction(productionRelease, sanitizedBundle, cardSelection);
+      const sanitizedBundleWithoutAuthoritativeRelease = sanitizeReportBundleForProduction(reportBundleWithIdentity);
+      const sanitizedRelease = sanitizeProductionReleaseForProduction(
+        productionRelease,
+        sanitizedBundleWithoutAuthoritativeRelease,
+        cardSelection,
+      );
+      if (!sanitizedRelease) {
+        throw new Error("The authoritative production release could not be prepared for publish.");
+      }
+      const sanitizedBundle = embedAiGraderAuthoritativeProductionRelease(
+        sanitizedBundleWithoutAuthoritativeRelease,
+        sanitizedRelease,
+      );
       setProductionPublish((current) => ({ ...current, status: "pending", message: "Initializing publish and requesting direct storage upload URLs." }));
       let initResponse: Response;
       try {
@@ -2585,6 +2838,7 @@ export default function AiGraderStationPage() {
           method: "POST",
           headers: await productionAuthHeaders({ "content-type": "application/json" }),
           body: JSON.stringify({
+            queueItemId: options.publicationIdentity.queueItemId,
             publicationStatus: "published",
             reportId: sanitizedRelease?.reportId ?? sanitizedBundle.reportId,
             certId: sanitizedRelease?.label?.certId,
@@ -2624,6 +2878,11 @@ export default function AiGraderStationPage() {
       const uploadArtifacts = (initPayload.result?.uploadPlan?.artifacts ?? []) as PublishUploadPlanArtifact[];
       if (!uploadArtifacts.length || !initPayload.result?.publishSessionId) {
         throw new Error("Publish init did not return upload artifacts and publishSessionId.");
+      }
+      if (initPayload.result.queueItemId !== options.publicationIdentity.queueItemId ||
+          initPayload.result.gradingSessionId !== options.publicationIdentity.gradingSessionId ||
+          initPayload.result.reportId !== options.publicationIdentity.reportId) {
+        throw new Error("Publish init returned a different queue/session/report identity.");
       }
       const uploadedArtifacts: PublishUploadedArtifact[] = [];
       for (let index = 0; index < uploadArtifacts.length; index += 1) {
@@ -2744,6 +3003,7 @@ export default function AiGraderStationPage() {
           method: "POST",
           headers: await productionAuthHeaders({ "content-type": "application/json" }),
           body: JSON.stringify({
+            queueItemId: options.publicationIdentity.queueItemId,
             publicationStatus: "published",
             reportId: initPayload.result.reportId,
             gradingSessionId: sanitizedRelease?.gradingSessionId ?? sanitizedBundle.gradingSessionId,
@@ -2777,6 +3037,10 @@ export default function AiGraderStationPage() {
       const publishedLabelSheet = finalizePayload.result.labelSheetAssignment;
       if (
         !publishedReportId ||
+        publishedReportId !== options.publicationIdentity.reportId ||
+        finalizePayload.result.queueItemId !== options.publicationIdentity.queueItemId ||
+        finalizePayload.result.gradingSessionId !== options.publicationIdentity.gradingSessionId ||
+        finalizePayload.result.publicationStatus !== "published" ||
         !finalizePayload.result.publicReportUrl ||
         !finalizePayload.result.labelPreviewUrl ||
         typeof publishedLabelSheet?.sheetNumber !== "number" ||
@@ -2784,8 +3048,31 @@ export default function AiGraderStationPage() {
       ) {
         throw new Error("Publish finalize response did not include the report, Label Sheets link, and grading-label assignment.");
       }
-      setProductionPublish((current) => ({ ...current, status: "pending", message: "Verifying public report route and storage-backed images." }));
-      const publicVerification = await verifyPublishedReportRoute(publishedReportId);
+      hostedPublicationCommitted = true;
+      const publicVerification = await completeAiGraderExactPublicationHandoff({
+        identity: options.publicationIdentity,
+        acknowledgeExactLocalItem: async (identity) => {
+          if (!bridgeConnected || !stationToken.trim()) {
+            throw new Error("The exact selected queue item could not be marked published because the Dell bridge is disconnected.");
+          }
+          await runAction("publish-report", {
+            ...productionReleaseBody(identity),
+            ...buildAiGraderRapidPublicationEvidence({
+              ...identity,
+              publishedAt: new Date().toISOString(),
+            }),
+          });
+          localPublicationAcknowledged = true;
+        },
+        verifyPublishedRoute: async (reportId) => {
+          setProductionPublish((current) => ({
+            ...current,
+            status: "pending",
+            message: "Exact local queue item recorded as published. Verifying public report route and storage-backed images.",
+          }));
+          return verifyPublishedReportRoute(reportId);
+        },
+      });
       setProductionPublish({
         status: "published",
         message: `Published and verified. Public report, printable label, QR payload, and ${publicVerification.imageCount} storage-backed image(s) are ready.`,
@@ -2806,18 +3093,17 @@ export default function AiGraderStationPage() {
           capacity: typeof publishedLabelSheet.capacity === "number" ? publishedLabelSheet.capacity : 16,
         },
       }));
-      const activeRapidQueueItem = status.rapidCaptureQueue.items.find(
-        (item) => item.queueItemId === status.rapidCaptureQueue.activeQueueItemId && item.reportId === publishedReportId,
-      );
-      if (activeRapidQueueItem && bridgeConnected && stationToken.trim()) {
-        await runAction("publish-report", productionReleaseBody());
-      }
       await refreshHistory();
       await refreshFinishQueue(publishedReportId).catch(() => undefined);
     } catch (requestError) {
+      const failureMessage = requestError instanceof Error ? requestError.message : "Ten Kings publish failed.";
       setProductionPublish({
         status: "error",
-        message: requestError instanceof Error ? requestError.message : "Ten Kings publish failed.",
+        message: hostedPublicationCommitted
+          ? localPublicationAcknowledged
+            ? `Hosted publication and exact local queue acknowledgement succeeded, but public-route verification failed: ${failureMessage}`
+            : `Hosted publication committed, but exact local queue acknowledgement failed: ${failureMessage}`
+          : failureMessage,
       });
       throw requestError;
     } finally {
@@ -2826,21 +3112,47 @@ export default function AiGraderStationPage() {
   };
 
   const approveAndPublish = async () => {
-    setBusy("approve-and-publish");
+    try {
+      assertAiGraderRapidItemPublishable(activeReviewItem?.state);
+    } catch (publishabilityError) {
+      setError(publishabilityError instanceof Error ? publishabilityError.message : "This exact item cannot be published.");
+      return;
+    }
+    if (!activeReview || !activeReviewIdentityReady) {
+      setError("Approve & Publish requires one activated exact queue/session/report item.");
+      return;
+    }
+    if (publicationReviewClaimRef.current) {
+      setError("Approve & Publish is already running for one exact selected queue item.");
+      return;
+    }
+    const publicationIdentity: AiGraderRapidQueueIdentity = {
+      queueItemId: activeReview.queueItemId,
+      gradingSessionId: activeReview.gradingSessionId,
+      reportId: activeReview.reportId,
+    };
+    publicationReviewClaimRef.current = publicationIdentity;
+    setPublicationReviewClaim(publicationIdentity);
+    const queueItemId = publicationIdentity.queueItemId;
+    setRapidItemOperations((current) => ({ ...current, [queueItemId]: "publish" }));
     setError(null);
     try {
-      const cardSelection = linkedCardReady
-        ? selectedCard
-        : await createCardFromConfirmedIdentity({ manageBusy: false });
+      const cardSelection = exactSelectedCard
+        ? exactSelectedCard
+        : await createCardFromConfirmedIdentity({ manageBusy: false, publicationIdentity });
       if (!cardSelection?.cardAssetId || !cardSelection.itemId) {
         throw new Error("Approve & Publish requires one exact CardAsset and Item linkage.");
       }
-      await publishToTenKingsSystem(cardSelection, { manageBusy: false });
+      await publishToTenKingsSystem(cardSelection, { manageBusy: false, publicationIdentity });
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Approve & Publish failed.";
       setError(message);
     } finally {
-      setBusy(null);
+      setRapidItemOperations((current) => ({ ...current, [queueItemId]: undefined }));
+      if (aiGraderRapidQueueIdentityMatches(publicationReviewClaimRef.current, publicationIdentity)) {
+        publicationReviewClaimRef.current = null;
+        setPublicationReviewClaim(null);
+      }
     }
   };
 
@@ -2869,7 +3181,7 @@ export default function AiGraderStationPage() {
       [side]: { status: "uploading", message: `Preparing direct storage upload for slabbed ${side} photo.` },
     }));
     try {
-      const reportId = targetReportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      const reportId = targetReportId ?? activeReview?.reportId;
       if (!reportId) throw new Error("A report ID is required before uploading slabbed photos.");
       const bytes = await file.arrayBuffer();
       const checksumSha256 = await sha256Hex(bytes);
@@ -2973,7 +3285,7 @@ export default function AiGraderStationPage() {
       if (!reportBundle) {
         throw new Error("A finalized production release and selected report bundle are required before comps.");
       }
-      const productionRelease = targetItem ? reportBundle.productionRelease : status.productionRelease;
+      const productionRelease = targetItem ? reportBundle.productionRelease : activeReviewRelease;
       if (!productionRelease) {
         throw new Error("A finalized production release and selected report bundle are required before comps.");
       }
@@ -3056,7 +3368,7 @@ export default function AiGraderStationPage() {
     setBusy("save-comps");
     setError(null);
     try {
-      const reportId = targetReportId ?? productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      const reportId = targetReportId ?? productionPublish.reportId ?? activeReview?.reportId;
       if (!reportId) throw new Error("A published report ID is required before saving comps.");
       const selectedIds = new Set(compsState.selectedIds ?? []);
       const selectedComps = (compsState.compsRefs ?? []).filter((comp) => comp.id && selectedIds.has(comp.id));
@@ -3101,7 +3413,7 @@ export default function AiGraderStationPage() {
     setError(null);
     setInventoryState({ status: "pending", message: "Moving card to inventory-ready flow." });
     try {
-      const reportId = targetReportId ?? productionPublish.reportId ?? status.productionRelease?.reportId ?? status.reportBundle?.reportId ?? status.latestReport.reportId;
+      const reportId = targetReportId ?? productionPublish.reportId ?? activeReview?.reportId;
       if (!reportId) throw new Error("A published report ID is required before adding to inventory.");
       const response = await fetch("/api/admin/ai-grader/production/add-to-inventory", {
         method: "POST",
@@ -3128,7 +3440,7 @@ export default function AiGraderStationPage() {
   };
 
   const openReport = async () => {
-    const reportId = status.latestReport.reportId;
+    const reportId = activeReviewIdentityReady ? activeReview?.reportId : undefined;
     if (!reportReady || !reportId) {
       setError("No generated report is ready yet.");
       return;
@@ -3260,12 +3572,10 @@ export default function AiGraderStationPage() {
             : "The local Dell bridge could not be reached with the saved browser pairing.";
   const previewStatusLabel =
     warmRunnerCapturing
-      ? "Full Forensic Capture"
+      ? "Serialized Capture Worker"
       : previewStatus.status === "live"
       ? "Preview Live"
-      : busy === "start-grading" || busy === "capture-back"
-        ? "Capturing"
-        : previewStatus.status === "starting"
+      : previewStatus.status === "starting"
           ? "Preview Starting"
           : previewStatus.status === "paused_for_capture"
             ? "Preview Paused"
@@ -3281,7 +3591,7 @@ export default function AiGraderStationPage() {
       ? `${previewStatus.implementationType}; ${previewStatus.frameCount || 0} frame(s) displayed${previewStatus.fps ? `, ${previewStatus.fps} FPS` : ""}.`
       : previewStatus.status === "paused_for_capture"
         ? warmRunner.previewPolicy.holdActive
-          ? "Live preview is paused while full forensic capture and report generation use the Basler evidence session."
+          ? "Live preview is paused while the serialized capture worker and report generation use the Basler evidence session."
           : "The preview stream released the Basler camera for capture."
         : previewStatus.status === "error"
           ? previewStatus.lastError ?? "The local preview stream is not available."
@@ -3308,7 +3618,7 @@ export default function AiGraderStationPage() {
               <p>{finishQueueState.message}</p>
             </div>
             <div className="finish-top-actions">
-              <button type="button" onClick={() => setWorkArea("grade")} disabled={busy !== null}>
+              <button type="button" onClick={() => setWorkArea("grade")}>
                 Back to Grading
               </button>
               <button type="button" onClick={() => void refreshFinishQueue(selectedFinishReportId)} disabled={busy !== null || finishQueueState.status === "pending"}>
@@ -3888,14 +4198,6 @@ export default function AiGraderStationPage() {
                     </label>
                   </div>
                 ) : null}
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={contractPreviewEnabled}
-                    onChange={(event) => setContractPreviewEnabled(event.target.checked)}
-                  />
-                  Contract preview only
-                </label>
               </div>
             </div>
           ) : null}
@@ -3917,9 +4219,9 @@ export default function AiGraderStationPage() {
                   type="button"
                   onClick={() => void captureBackAndContinue()}
                   aria-describedby="back-geometry-guidance"
-                  disabled={busy !== null || Boolean(status.captureFailure) || previewGeometrySide !== "back" || !detectedGeometryReady}
+                  disabled={captureBusy !== null || Boolean(status.captureFailure) || previewGeometrySide !== "back" || !detectedGeometryReady}
                 >
-                  {busy === "capture-back" ? "Capturing Back" : "Capture Back"}
+                  {captureBusy === "back" ? "Capturing Back" : "Capture Back"}
                 </button>
               </div>
             </div>
@@ -4116,17 +4418,17 @@ export default function AiGraderStationPage() {
                 </li>
               ))}
             </ol>
-            <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
-              {busy === "start" ? "Starting" : "Start New Card"}
+            <button type="button" className="primary" onClick={startNewCard} disabled={!canStartNewCard}>
+              {captureBusy === "start" ? "Starting" : "Start New Card"}
             </button>
             <button
               type="button"
               className="start-grading"
               onClick={() => void startGrading()}
               aria-describedby="front-geometry-guidance"
-              disabled={busy !== null || !canStartGrading || previewGeometrySide !== "front" || !detectedGeometryReady}
+              disabled={captureBusy !== null || !canStartGrading || previewGeometrySide !== "front" || !detectedGeometryReady}
             >
-              {busy === "start-grading" ? "Capturing Front" : "Capture Front"}
+              {captureBusy === "front" ? "Capturing Front" : "Capture Front"}
             </button>
             <p id="front-geometry-guidance" className={`geometry-action-status ${detectedGeometryReady ? "ready" : cardPlacementState}`}>
               {frontStartGuidance}
@@ -4137,29 +4439,17 @@ export default function AiGraderStationPage() {
             <div className="capture-settings-head">
               <div>
                 <p className="eyebrow">Capture Pipeline</p>
-                <h3>{stationCaptureMode === "rapid" ? "Rapid Capture" : "Single Card"}</h3>
+                <h3>Rapid Capture</h3>
               </div>
-              <strong>Full Forensic / Detected Geometry</strong>
+              <strong>production_fast / Detected Geometry</strong>
             </div>
-            <label>
-              Throughput flow
-              <select
-                value={stationCaptureMode}
-                onChange={(event) => void changeStationCaptureMode(event.target.value as StationCaptureMode)}
-                disabled={!bridgeConnected || busy !== null || stationSettingsLocked}
-              >
-                <option value="single">Single card</option>
-                <option value="rapid">Rapid Capture queue</option>
-              </select>
-            </label>
-            <p>Capture Front and Capture Back remain explicit operator actions. Rapid Capture queues the completed card for one serialized background report worker; it does not add automatic or alternate capture.</p>
+            <p>Capture Front and Capture Back are the one production road. A successful Back returns only after immutable TIFF evidence and the exact card are durably queued; background work never owns the camera.</p>
           </section>
 
-          {stationCaptureMode === "rapid" || rapidQueueItems.length ? (
-            <section className="rapid-queue">
+          <section className="rapid-queue">
               <div className="rapid-queue-head">
                 <div>
-                  <p className="eyebrow">Rapid Capture Queue</p>
+                  <p className="eyebrow">Finish / Review Queue</p>
                   <h3>{rapidQueueItems.length ? `${rapidQueueItems.length} recent card(s)` : "Queue Empty"}</h3>
                 </div>
                 <strong>{rapidQueueHasProcessing ? "Processing" : "Ready"}</strong>
@@ -4167,26 +4457,37 @@ export default function AiGraderStationPage() {
               <div className="rapid-queue-list">
                 {rapidQueueItems.length ? rapidQueueItems.map((item) => {
                   const reviewable = RAPID_REVIEWABLE_STATES.has(item.state);
-                  const active = item.queueItemId === status.rapidCaptureQueue.activeQueueItemId;
+                  const published = item.state === "published";
+                  const active = item.queueItemId === activeReview?.queueItemId &&
+                    item.sessionId === activeReview.gradingSessionId &&
+                    item.reportId === activeReview.reportId;
+                  const itemOperation = rapidItemOperations[item.queueItemId];
+                  const statusText = item.state === "failed"
+                    ? "Failed"
+                    : published
+                      ? "Published"
+                    : reviewable
+                      ? "Ready for review"
+                      : "Processing";
                   return (
                     <article key={item.queueItemId} className={active ? "active" : ""}>
                       <div>
-                        <strong>{formatStationValue(item.state === "report_ready_needs_confirm" ? "ready for Approve & Publish" : item.state)}</strong>
+                        <strong>{statusText}</strong>
                         <small>{item.reportId}</small>
+                        {item.state === "failed" ? <small>{rapidQueueTerminalFailureCopy(item)}</small> : null}
                       </div>
                       <button
                         type="button"
-                        onClick={() => void activateRapidQueueItem(item.queueItemId)}
-                        disabled={!reviewable || active || busy !== null || status.sessionManifest.frontCaptured || status.sessionManifest.backCaptured}
+                        onClick={() => void activateRapidQueueItem(item)}
+                        disabled={!reviewable || active || itemOperation === "review" || !aiGraderReviewActivationAvailable(publicationReviewClaim)}
                       >
-                        {active ? "Active" : reviewable ? "Open for Approve & Publish" : "Processing"}
+                        {published ? "Published" : active ? "Active" : itemOperation === "review" ? "Opening" : reviewable ? "Open for Review" : statusText}
                       </button>
                     </article>
                   );
                 }) : <p>Capture Back queues each completed card here while the next card can begin.</p>}
               </div>
             </section>
-          ) : null}
           <section className={productionSignedIn ? "production-auth signed-in" : "production-auth"}>
             <div>
               <p className="eyebrow">Production Sign-In</p>
@@ -4212,7 +4513,7 @@ export default function AiGraderStationPage() {
                 type="button"
                 className={liveLightingPositioningVerified ? "toggle active" : "toggle"}
                 onClick={() => setLiveLightingEnabled(!liveLightingPositioningVerified)}
-                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
+                disabled={!bridgeConnected || captureBusy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
               >
                 {liveLightingPositioningVerified ? "Live" : "Off"}
               </button>
@@ -4238,7 +4539,7 @@ export default function AiGraderStationPage() {
                   key={channel}
                   className={liveLightingDraft.channels.includes(channel) ? `segment segment-${channel} active` : `segment segment-${channel}`}
                   onClick={() => toggleLiveLightingChannel(channel)}
-                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
+                  disabled={!bridgeConnected || captureBusy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
                   aria-label={`Toggle Leimac channel ${channel}`}
                   title={`Channel ${channel}`}
                 >
@@ -4247,10 +4548,10 @@ export default function AiGraderStationPage() {
               ))}
             </div>
             <div className="mini-actions">
-              <button type="button" onClick={() => setAllLiveLightingChannels([1, 2, 3, 4, 5, 6, 7, 8])} disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}>
+              <button type="button" onClick={() => setAllLiveLightingChannels([1, 2, 3, 4, 5, 6, 7, 8])} disabled={!bridgeConnected || captureBusy !== null || warmRunner.captureLock.held || liveLightingRequestPending}>
                 All On
               </button>
-              <button type="button" onClick={() => setAllLiveLightingChannels([])} disabled={!bridgeConnected || busy !== null || liveLightingRequestPending}>
+              <button type="button" onClick={() => setAllLiveLightingChannels([])} disabled={!bridgeConnected || captureBusy !== null || liveLightingRequestPending}>
                 All Off
               </button>
             </div>
@@ -4263,7 +4564,7 @@ export default function AiGraderStationPage() {
                 step="0.1"
                 value={liveLightingDraft.dutyPercent}
                 onChange={(event) => setLiveLightingDuty(Number(event.target.value))}
-                disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
+                disabled={!bridgeConnected || captureBusy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
               />
             </label>
             <div className="lighting-inputs">
@@ -4276,7 +4577,7 @@ export default function AiGraderStationPage() {
                   step="0.1"
                   value={liveLightingDraft.dutyPercent}
                   onChange={(event) => setLiveLightingDuty(Number(event.target.value))}
-                  disabled={!bridgeConnected || busy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
+                  disabled={!bridgeConnected || captureBusy !== null || warmRunner.captureLock.held || liveLightingRequestPending}
                 />
               </label>
               <label>
@@ -4331,11 +4632,6 @@ export default function AiGraderStationPage() {
                     <small>The single Approve & Publish action remains the human authority.</small>
                   </>
                 ) : null}
-                {ocrPrefillState.status === "failed" ? (
-                  <button type="button" onClick={retryOcrPrefill} disabled={!session?.token || busy !== null}>
-                    Retry OCR
-                  </button>
-                ) : null}
               </div>
             ) : null}
             <div className="identity-grid">
@@ -4356,7 +4652,7 @@ export default function AiGraderStationPage() {
                       ? updateIdentityDraft("playerName", event.target.value)
                       : updateIdentityDraft("cardName", event.target.value)
                   }
-                  placeholder={status.reportBundle?.cardIdentity.title ?? "Card identity"}
+                  placeholder={activeReviewBundle?.cardIdentity.title ?? "Card identity"}
                 />
               </label>
               <label>
@@ -4444,12 +4740,19 @@ export default function AiGraderStationPage() {
                     type="button"
                     key={`${result.source}:${result.cardAssetId ?? result.itemId ?? result.displayTitle}`}
                     onClick={() => {
-                      setSelectedCard(result);
-                      setCardSearchMessage("Existing Ten Kings card/item selected.");
-                      setIdentityStatus({
-                        status: "completed",
-                        message: "Existing Ten Kings CardAsset/Item selected for this AI Grader report.",
-                      });
+                      const exactSelection = exactCardItemSelection(result);
+                      setSelectedCard(exactSelection);
+                      if (exactSelection) {
+                        setCardSearchMessage("Existing Ten Kings card/item selected.");
+                        setIdentityStatus({
+                          status: "completed",
+                          message: "Existing Ten Kings CardAsset/Item selected for this AI Grader report.",
+                        });
+                        return;
+                      }
+                      const message = "That search result does not establish both the exact CardAsset and Item IDs. Approve & Publish will create the exact linked card/item from the confirmed identity.";
+                      setCardSearchMessage(message);
+                      setIdentityStatus({ status: "idle", message });
                     }}
                   >
                     <strong>{result.displayTitle}</strong>
@@ -4487,7 +4790,7 @@ export default function AiGraderStationPage() {
             <div className="warm-head">
               <div>
                 <p className="eyebrow">Warm Runner</p>
-                <h3>Full Forensic Capture</h3>
+                <h3>Serialized Capture Worker</h3>
               </div>
               <strong>{formatStationValue(warmRunner.status)}</strong>
             </div>
@@ -4579,21 +4882,19 @@ export default function AiGraderStationPage() {
               <button type="button" onClick={() => void openReport()} disabled={!reportReady || busy !== null}>
                 {busy === "open-report" ? "Opening Report" : "Review Report"}
               </button>
-              <button type="button" className="primary" onClick={() => void approveAndPublish()} disabled={!canApproveAndPublish || busy !== null}>
-                {busy === "approve-and-publish" ? "Approving & Publishing" : "Approve & Publish"}
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void approveAndPublish()}
+                disabled={!canApproveAndPublish || Boolean(publicationReviewClaim) || (activeReview ? rapidItemOperations[activeReview.queueItemId] === "publish" : false)}
+              >
+                {activeReview && rapidItemOperations[activeReview.queueItemId] === "publish" ? "Approving & Publishing" : "Approve & Publish"}
               </button>
               {productionPublish.status === "published" && publicReportUrl ? (
                 <a href={publicReportUrl} target="_blank" rel="noreferrer">View Public Report</a>
               ) : null}
               {productionPublished ? <Link href="/ai-grader/labels/sheets">Open Label Sheets</Link> : null}
-              {productionPublished ? (
-                <>
-                  <button type="button" className="primary" onClick={startNewCard} disabled={busy !== null}>
-                    {busy === "start" ? "Starting" : "Start Next Grade"}
-                  </button>
-                  <Link href="/ai-grader/finish">Finish Cards</Link>
-                </>
-              ) : null}
+              {productionPublished ? <Link href="/ai-grader/finish">Finish Cards</Link> : null}
               <button type="button" onClick={openHistory}>
                 Card History Reports
               </button>
@@ -4662,10 +4963,10 @@ export default function AiGraderStationPage() {
           <section className="paths">
             <p>Station URL: http://127.0.0.1:3020/ai-grader/station</p>
             <p>Bridge: {bridgeUrl}</p>
-            <p>Report path: {status.latestReport.localHtmlPath ?? "pending"}</p>
-            <p>Bundle: {status.outputs?.reportBundlePath ?? "pending"}</p>
-            <p>Production release: {status.outputs?.productionReleasePath ?? "pending"}</p>
-            <p>Label data: {status.outputs?.labelDataPath ?? (labelReady ? "ready" : "pending")}</p>
+            <p>Selected queue item: {activeReview?.queueItemId ?? "none"}</p>
+            <p>Selected grading session: {activeReview?.gradingSessionId ?? "none"}</p>
+            <p>Selected report: {activeReview?.reportId ?? "none"}</p>
+            <p>Label data: {labelReady ? "ready" : "pending"}</p>
           </section>
 
           <section className="timing">
