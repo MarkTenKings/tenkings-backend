@@ -202,6 +202,13 @@ export async function completeAiGraderExactPublicationHandoff<T>(input: {
   return input.verifyPublishedRoute(input.identity.reportId);
 }
 
+export function embedAiGraderAuthoritativeProductionRelease(
+  bundle: AiGraderReportBundle,
+  productionRelease: NonNullable<AiGraderReportBundle["productionRelease"]>,
+): AiGraderReportBundle {
+  return { ...bundle, productionRelease };
+}
+
 export type AiGraderQueuedOcrImage = {
   side: "front" | "back";
   artifactRole: "normalized_card";
@@ -220,6 +227,7 @@ export type AiGraderQueuedOcrLifecycle = {
   eligibleAt?: string;
   startedAt?: string;
   completedAt?: string;
+  attemptOwnerId?: string;
   images?: AiGraderQueuedOcrImage[];
   result?: Record<string, unknown>;
   failure?: {
@@ -793,6 +801,7 @@ const AI_GRADER_QUEUED_OCR_STATES: AiGraderQueuedOcrLifecycle["state"][] = [
   "succeeded",
   "failed",
 ];
+const AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 
 function sanitizeAiGraderQueuedOcrImage(value: unknown): AiGraderQueuedOcrImage | undefined {
   if (!stationRecord(value) || (value.side !== "front" && value.side !== "back") ||
@@ -836,6 +845,11 @@ function sanitizeAiGraderQueuedOcr(
   const eligibleAt = safeStationTimestamp(record.eligibleAt);
   const startedAt = safeStationTimestamp(record.startedAt);
   const completedAt = safeStationTimestamp(record.completedAt);
+  const attemptOwnerId = typeof record.attemptOwnerId === "string" &&
+    AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_PATTERN.test(record.attemptOwnerId)
+    ? record.attemptOwnerId
+    : undefined;
+  const attemptOwnerAbsent = record.attemptOwnerId === undefined;
   const result = browserSafeStationRecord(record.result);
   const exactResult = result &&
     safeStationId(result.queueItemId) === identity.queueItemId &&
@@ -854,13 +868,13 @@ function sanitizeAiGraderQueuedOcr(
   };
   const noTerminalPayload = record.result === undefined && record.failure === undefined && completedAt === undefined;
   const structurallyValid = Boolean(updatedAt && parsedState && (
-    (parsedState === "waiting_for_normalized" && attemptCount === 0 && !eligibleAt && !startedAt && record.images === undefined && noTerminalPayload) ||
-    (parsedState === "eligible" && attemptCount === 0 && eligibleAt && !startedAt && exactImages && noTerminalPayload && ordered(eligibleAt, updatedAt)) ||
-    (parsedState === "in_flight" && attemptCount === 1 && eligibleAt && startedAt && exactImages && noTerminalPayload && ordered(eligibleAt, startedAt, updatedAt)) ||
-    (parsedState === "succeeded" && attemptCount === 1 && eligibleAt && startedAt && completedAt && exactImages && exactResult && record.failure === undefined && ordered(eligibleAt, startedAt, completedAt, updatedAt)) ||
+    (parsedState === "waiting_for_normalized" && attemptCount === 0 && attemptOwnerAbsent && !eligibleAt && !startedAt && record.images === undefined && noTerminalPayload) ||
+    (parsedState === "eligible" && attemptCount === 0 && attemptOwnerAbsent && eligibleAt && !startedAt && exactImages && noTerminalPayload && ordered(eligibleAt, updatedAt)) ||
+    (parsedState === "in_flight" && attemptCount === 1 && attemptOwnerId && eligibleAt && startedAt && exactImages && noTerminalPayload && ordered(eligibleAt, startedAt, updatedAt)) ||
+    (parsedState === "succeeded" && attemptCount === 1 && attemptOwnerId && eligibleAt && startedAt && completedAt && exactImages && exactResult && record.failure === undefined && ordered(eligibleAt, startedAt, completedAt, updatedAt)) ||
     (parsedState === "failed" && completedAt && failureCode && failureMessage && record.result === undefined && (
-      (attemptCount === 0 && !startedAt && ordered(completedAt, updatedAt)) ||
-      (attemptCount === 1 && eligibleAt && startedAt && exactImages && ordered(eligibleAt, startedAt, completedAt, updatedAt))
+      (attemptCount === 0 && attemptOwnerAbsent && !startedAt && ordered(completedAt, updatedAt)) ||
+      (attemptCount === 1 && attemptOwnerId && eligibleAt && startedAt && exactImages && ordered(eligibleAt, startedAt, completedAt, updatedAt))
     ))
   ));
   if (!structurallyValid || !parsedState || !updatedAt) {
@@ -883,6 +897,7 @@ function sanitizeAiGraderQueuedOcr(
     ...(eligibleAt ? { eligibleAt } : {}),
     ...(startedAt ? { startedAt } : {}),
     ...(completedAt ? { completedAt } : {}),
+    ...(attemptOwnerId ? { attemptOwnerId } : {}),
     ...(exactImages ? { images: exactImages } : {}),
     ...(exactResult ? { result: exactResult } : {}),
     ...(failureCode && failureMessage ? { failure: { code: failureCode, message: failureMessage } } : {}),

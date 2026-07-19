@@ -17,6 +17,7 @@ import {
   buildAiGraderLocalStationStatus,
   buildSampleAiGraderReportHistory,
   completeAiGraderExactPublicationHandoff,
+  embedAiGraderAuthoritativeProductionRelease,
   sanitizeAiGraderPreviewCardGeometryBySide,
   selectNextSerializedAiGraderOcrItem,
   type AiGraderLocalStationStatus,
@@ -37,6 +38,8 @@ import {
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
   applyAiGraderLiveLighting,
   buildAiGraderCaptureProfileRequest,
+  buildAiGraderQueuedOcrClaimRequest,
+  buildAiGraderQueuedOcrCompletionRequest,
   buildAiGraderQueuedOcrFailureRequest,
   buildAiGraderRapidPublicationEvidence,
   buildAiGraderRapidQueueActivationRequest,
@@ -48,8 +51,11 @@ import {
   fetchAiGraderStationReportBundle,
   fetchAiGraderStationReportHistory,
   heartbeatAiGraderLiveLighting,
+  initializeAiGraderQueuedOcrAttemptOwner,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
+  waitForAiGraderQueuedOcrAttemptOwnerLock,
+  type AiGraderQueuedOcrAttemptOwnerClaim,
 } from "../../lib/aiGraderStationBridgeClient";
 import {
   aiGraderPreviewBackCaptureReady,
@@ -185,6 +191,11 @@ type ProductionAuthActor = {
   displayName: string;
 };
 type ProductionAuthActorState = ProductionAuthActor | null;
+type QueuedOcrAttemptOwnerState = {
+  status: "uninitialized" | "ready" | "failed";
+  attemptOwnerId: string | null;
+  error: string | null;
+};
 type BridgeConnectionState = "checking" | "connected" | "not_running" | "pairing_required" | "error";
 type LocalReportState = {
   open: boolean;
@@ -392,19 +403,25 @@ function sanitizeReportBundleForProduction(bundle: AiGraderReportBundle): AiGrad
   };
 }
 
-function sanitizeProductionReleaseForProduction(release: AiGraderReportBundle["productionRelease"], bundle: AiGraderReportBundle, selectedCard: CardSelectionState | null) {
+function sanitizeProductionReleaseForProduction(
+  release: AiGraderReportBundle["productionRelease"],
+  bundle: AiGraderReportBundle,
+  selectedCard: CardSelectionState | null,
+): AiGraderReportBundle["productionRelease"] {
   if (!release) return release;
-  const linked = Boolean(selectedCard?.cardAssetId || selectedCard?.itemId || bundle.cardIdentity.cardAssetId || bundle.cardIdentity.itemId);
+  const cardAssetId = selectedCard?.cardAssetId ?? bundle.cardIdentity.cardAssetId;
+  const itemId = selectedCard?.itemId ?? bundle.cardIdentity.itemId;
+  if (!cardAssetId || !itemId) {
+    throw new Error("Production release requires the exact CardAsset and Item linkage.");
+  }
   return sanitizePublishJson({
     ...release,
     cardInventoryLinkage: {
       ...(release.cardInventoryLinkage ?? {}),
-      status: linked ? "linked" : "needs_card_linkage",
-      cardAssetId: selectedCard?.cardAssetId ?? bundle.cardIdentity.cardAssetId,
-      itemId: selectedCard?.itemId ?? bundle.cardIdentity.itemId,
-      note: linked
-        ? "AI Grader report is linked to an existing Ten Kings card or item identity."
-        : "Published AI Grader report is unlinked and needs card linkage before inventory automation.",
+      status: "linked" as const,
+      cardAssetId,
+      itemId,
+      note: "AI Grader report is linked to the exact Ten Kings CardAsset and Item identity.",
     },
   });
 }
@@ -517,6 +534,27 @@ const OCR_PREFILL_FIELD_LABELS = {
 
 const RAPID_REVIEWABLE_STATES = new Set<string>(["report_ready_needs_confirm", "confirmed_needs_publish"]);
 const RAPID_PROCESSING_STATES = new Set<string>(["front_captured", "front_processing", "back_positioning", "back_captured", "finalizing"]);
+
+function exactCardItemSelection(selection: CardSelectionState | null) {
+  return selection?.source !== "manual_draft" && selection?.cardAssetId && selection.itemId
+    ? selection
+    : null;
+}
+
+function rapidQueueTerminalFailureCopy(item: {
+  error?: string;
+  ocr: { failure?: { code: string; message: string } };
+}) {
+  const rawMessage = item.error ?? item.ocr.failure?.message ?? "Exact background item failed.";
+  const accurateMessage = rawMessage
+    .replace(
+      /\s*Preserve its evidence and correct identity only in that item's normal Finish\/Review form;\s*OCR will not rerun\.?/gi,
+      " OCR will not rerun.",
+    )
+    .trim();
+  const punctuatedMessage = /[.!?]$/.test(accurateMessage) ? accurateMessage : `${accurateMessage}.`;
+  return `${punctuatedMessage} This failed item is not available for review or publication in the station.`;
+}
 
 function pointToward(
   from: AiGraderPreviewGeometryPoint,
@@ -686,6 +724,13 @@ export default function AiGraderStationPage() {
   const activeReviewIdentityRef = useRef<string | null>(null);
   const hydratedOcrIdentityRef = useRef<string | null>(null);
   const queuedOcrRunningRef = useRef<Set<string>>(new Set());
+  const queuedOcrInterruptedHandledRef = useRef<Set<string>>(new Set());
+  const queuedOcrAttemptOwnerClaimRef = useRef<AiGraderQueuedOcrAttemptOwnerClaim | null>(null);
+  const [queuedOcrAttemptOwner, setQueuedOcrAttemptOwner] = useState<QueuedOcrAttemptOwnerState>({
+    status: "uninitialized",
+    attemptOwnerId: null,
+    error: null,
+  });
   const [ocrPrefillState, setOcrPrefillState] = useState<AiGraderOcrPrefillState>({
     status: "idle",
     message: "OCR prefill starts after normalized front and back images are ready.",
@@ -755,6 +800,36 @@ export default function AiGraderStationPage() {
     applyPreviewEpochEvent({ type: "clear", ...(statusOverride ? { status: statusOverride } : {}) });
     previewLastLiveFrameAtRef.current = 0;
   };
+
+  useEffect(() => {
+    let disposed = false;
+    void initializeAiGraderQueuedOcrAttemptOwner().then(
+      (claim) => {
+        if (disposed) {
+          claim.release();
+          return;
+        }
+        queuedOcrAttemptOwnerClaimRef.current = claim;
+        const { attemptOwnerId } = claim;
+        setQueuedOcrAttemptOwner({ status: "ready", attemptOwnerId, error: null });
+      },
+      (ownerError) => {
+        if (disposed) return;
+        setQueuedOcrAttemptOwner({
+          status: "failed",
+          attemptOwnerId: null,
+          error: ownerError instanceof Error
+            ? ownerError.message
+            : "The browser could not persist its queued OCR attempt owner.",
+        });
+      },
+    );
+    return () => {
+      disposed = true;
+      queuedOcrAttemptOwnerClaimRef.current?.release();
+      queuedOcrAttemptOwnerClaimRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     reconcileBridgePreviewStatus(status.previewStatus);
@@ -1193,7 +1268,8 @@ export default function AiGraderStationPage() {
   const reportReady = activeReviewIdentityReady;
   const finalReady = activeReviewRelease?.finalGradeComputed === true;
   const labelReady = activeReviewRelease?.label.status === "label_data_ready";
-  const linkedCardReady = Boolean((selectedCard?.cardAssetId || selectedCard?.itemId) && selectedCard.source !== "manual_draft");
+  const exactSelectedCard = exactCardItemSelection(selectedCard);
+  const linkedCardReady = Boolean(exactSelectedCard);
   const slabbedPhotosReady = slabUploads.front?.status === "uploaded" && slabUploads.back?.status === "uploaded";
   const compsSaved = compsState.saved === true || compsState.status === "saved";
   const inventoryComplete = inventoryState.status === "completed";
@@ -1679,13 +1755,33 @@ export default function AiGraderStationPage() {
   };
 
   const nextEligibleOcrItem = selectNextSerializedAiGraderOcrItem(status.rapidCaptureQueue.items);
+  const nextEligibleOcrQueueItemId = nextEligibleOcrItem?.queueItemId;
+  const nextEligibleOcrSessionId = nextEligibleOcrItem?.sessionId;
+  const nextEligibleOcrReportId = nextEligibleOcrItem?.reportId;
 
   useEffect(() => {
-    if (!nextEligibleOcrItem || !bridgeConnected || !stationToken.trim() || sessionLoading || !session?.token) return;
+    if (
+      !nextEligibleOcrQueueItemId ||
+      !nextEligibleOcrSessionId ||
+      !nextEligibleOcrReportId ||
+      !bridgeConnected ||
+      !stationToken.trim() ||
+      sessionLoading ||
+      !session?.token
+    ) return;
+    if (queuedOcrAttemptOwner.status === "uninitialized") return;
+    if (queuedOcrAttemptOwner.status === "failed" || !queuedOcrAttemptOwner.attemptOwnerId) {
+      setError(
+        `Queued OCR cannot claim its one attempt because this tab has no durable attempt owner: ${queuedOcrAttemptOwner.error ?? "sessionStorage is unavailable."}`.slice(0, 750)
+      );
+      return;
+    }
+    const attemptOwnerId = queuedOcrAttemptOwner.attemptOwnerId;
+    const authorizedToken = session.token;
     const identity = {
-      queueItemId: nextEligibleOcrItem.queueItemId,
-      gradingSessionId: nextEligibleOcrItem.sessionId,
-      reportId: nextEligibleOcrItem.reportId,
+      queueItemId: nextEligibleOcrQueueItemId,
+      gradingSessionId: nextEligibleOcrSessionId,
+      reportId: nextEligibleOcrReportId,
     };
     const identityKey = [identity.queueItemId, identity.gradingSessionId, identity.reportId].join(":");
     if (queuedOcrRunningRef.current.has(identityKey)) return;
@@ -1693,39 +1789,55 @@ export default function AiGraderStationPage() {
     void (async () => {
       let claimed = false;
       try {
+        try {
+          const actor = await verifyProductionSession(authorizedToken);
+          setProductionAuthActor(actor);
+          setProductionAuthState({
+            status: "completed",
+            message: `Production sign-in verified as ${actor.displayName} (${actor.role}).`,
+          });
+        } catch (authError) {
+          const message = authFailureMessage(authError, "run queued OCR");
+          if (authStatusCode(authError) === 401) logout();
+          setProductionAuthActor(null);
+          setProductionAuthState({ status: "failed", message });
+          setError(
+            `Production authorization must be verified before queued OCR can claim its one attempt: ${message}`.slice(0, 750)
+          );
+          return;
+        }
         const begun = await callAiGraderStationBridge({
           baseUrl: bridgeUrl,
           stationToken,
           action: "begin-queued-ocr",
-          body: identity,
+          body: buildAiGraderQueuedOcrClaimRequest({ ...identity, attemptOwnerId }),
         });
-        claimed = true;
-        setStatus(begun);
         const claimedItem = begun.rapidCaptureQueue.items.find((item) =>
           item.queueItemId === identity.queueItemId &&
           item.sessionId === identity.gradingSessionId &&
           item.reportId === identity.reportId);
-        if (claimedItem?.ocr.state !== "in_flight") {
-          throw new Error("The exact queued OCR item was not durably claimed.");
+        if (claimedItem?.ocr.state !== "in_flight" || claimedItem.ocr.attemptOwnerId !== attemptOwnerId) {
+          throw new Error("The exact queued OCR item was not durably claimed by this tab.");
         }
+        claimed = true;
+        setStatus(begun);
         const result = await runAiGraderOcrPrefillFromLocalReport({
           baseUrl: bridgeUrl,
           stationToken,
           ...identity,
-          authHeaders: buildAdminHeaders(session.token),
+          authHeaders: buildAdminHeaders(authorizedToken),
         });
         const completed = await callAiGraderStationBridge({
           baseUrl: bridgeUrl,
           stationToken,
           action: "complete-queued-ocr",
-          body: { ...identity, result },
+          body: buildAiGraderQueuedOcrCompletionRequest({ ...identity, attemptOwnerId, result }),
         });
         setStatus(completed);
       } catch (requestError) {
         const typedFailure = requestError instanceof AiGraderOcrPrefillStageError ? requestError : null;
         const message = (requestError instanceof Error ? requestError.message : "Queued OCR failed.").slice(0, 500);
-        let shouldFail = claimed;
-        if (!shouldFail) {
+        if (!claimed) {
           const refreshed = await callAiGraderStationBridge({
             baseUrl: bridgeUrl,
             stationToken,
@@ -1735,32 +1847,38 @@ export default function AiGraderStationPage() {
             item.queueItemId === identity.queueItemId &&
             item.sessionId === identity.gradingSessionId &&
             item.reportId === identity.reportId);
-          shouldFail = persisted?.ocr.state === "in_flight";
           if (refreshed) setStatus(refreshed);
-        }
-        if (shouldFail) {
-          try {
-            const failed = await callAiGraderStationBridge({
-              baseUrl: bridgeUrl,
-              stationToken,
-              action: "fail-queued-ocr",
-              body: buildAiGraderQueuedOcrFailureRequest({
-                ...identity,
-                failure: {
-                  code: typedFailure?.failureCode ?? "AI_GRADER_OCR_INTERNAL_FAILED",
-                  message,
-                },
-              }),
-            });
-            setStatus(failed);
-          } catch (persistenceError) {
-            const persistenceMessage = persistenceError instanceof Error
-              ? persistenceError.message
-              : "The Dell bridge rejected the terminal OCR failure.";
+          // An observed in-flight attempt can belong to another live tab. Only the
+          // exact tab that received and validated the durable claim may fail it.
+          if (!persisted || persisted.ocr.state === "eligible") {
             setError(
-              `OCR failure persistence failed for queue ${identity.queueItemId}, session ${identity.gradingSessionId}, report ${identity.reportId}: ${persistenceMessage}`.slice(0, 750)
+              `Queued OCR was not claimed for queue ${identity.queueItemId}, session ${identity.gradingSessionId}, report ${identity.reportId}; its exact lifecycle was left unchanged: ${message}`.slice(0, 750)
             );
           }
+          return;
+        }
+        try {
+          const failed = await callAiGraderStationBridge({
+            baseUrl: bridgeUrl,
+            stationToken,
+            action: "fail-queued-ocr",
+            body: buildAiGraderQueuedOcrFailureRequest({
+              ...identity,
+              attemptOwnerId,
+              failure: {
+                code: typedFailure?.failureCode ?? "AI_GRADER_OCR_INTERNAL_FAILED",
+                message,
+              },
+            }),
+          });
+          setStatus(failed);
+        } catch (persistenceError) {
+          const persistenceMessage = persistenceError instanceof Error
+            ? persistenceError.message
+            : "The Dell bridge rejected the terminal OCR failure.";
+          setError(
+            `OCR failure persistence failed for queue ${identity.queueItemId}, session ${identity.gradingSessionId}, report ${identity.reportId}: ${persistenceMessage}`.slice(0, 750)
+          );
         }
       } finally {
         queuedOcrRunningRef.current.delete(identityKey);
@@ -1769,53 +1887,117 @@ export default function AiGraderStationPage() {
   }, [
     bridgeConnected,
     bridgeUrl,
-    nextEligibleOcrItem?.queueItemId,
-    nextEligibleOcrItem?.sessionId,
-    nextEligibleOcrItem?.reportId,
+    logout,
+    nextEligibleOcrQueueItemId,
+    nextEligibleOcrSessionId,
+    nextEligibleOcrReportId,
+    queuedOcrAttemptOwner.status,
+    queuedOcrAttemptOwner.attemptOwnerId,
+    queuedOcrAttemptOwner.error,
     session?.token,
     sessionLoading,
     stationToken,
   ]);
 
-  const nextInterruptedOcrItem = status.rapidCaptureQueue.items.find((item) => item.ocr.state === "in_flight");
+  const interruptedOcrItem = status.rapidCaptureQueue.items.find((item) =>
+    item.ocr.state === "in_flight" && Boolean(item.ocr.attemptOwnerId));
+  const interruptedOcrQueueItemId = interruptedOcrItem?.queueItemId;
+  const interruptedOcrSessionId = interruptedOcrItem?.sessionId;
+  const interruptedOcrReportId = interruptedOcrItem?.reportId;
+  const interruptedOcrAttemptOwnerId = interruptedOcrItem?.ocr.attemptOwnerId;
 
   useEffect(() => {
-    if (!nextInterruptedOcrItem || !bridgeConnected || !stationToken.trim()) return;
+    const attemptOwnerId = interruptedOcrAttemptOwnerId;
+    if (
+      !interruptedOcrQueueItemId ||
+      !interruptedOcrSessionId ||
+      !interruptedOcrReportId ||
+      !attemptOwnerId ||
+      queuedOcrAttemptOwner.status !== "ready" ||
+      !bridgeConnected ||
+      !stationToken.trim()
+    ) return;
     const identity = {
-      queueItemId: nextInterruptedOcrItem.queueItemId,
-      gradingSessionId: nextInterruptedOcrItem.sessionId,
-      reportId: nextInterruptedOcrItem.reportId,
+      queueItemId: interruptedOcrQueueItemId,
+      gradingSessionId: interruptedOcrSessionId,
+      reportId: interruptedOcrReportId,
     };
     const identityKey = [identity.queueItemId, identity.gradingSessionId, identity.reportId].join(":");
-    if (queuedOcrRunningRef.current.has(identityKey)) return;
-    queuedOcrRunningRef.current.add(identityKey);
-    void callAiGraderStationBridge({
-      baseUrl: bridgeUrl,
-      stationToken,
-      action: "fail-queued-ocr",
-      body: buildAiGraderQueuedOcrFailureRequest({
-        ...identity,
-        failure: {
-          code: "AI_GRADER_OCR_INTERRUPTED",
-          message: "Queued OCR was interrupted before one safe exact-item result was persisted. It will not be retried automatically.",
-        },
-      }),
-    }).then(setStatus).catch((persistenceError) => {
-      const persistenceMessage = persistenceError instanceof Error
-        ? persistenceError.message
-        : "The Dell bridge rejected the interrupted OCR failure.";
-      setError(
-        `Interrupted OCR failure persistence failed for queue ${identity.queueItemId}, session ${identity.gradingSessionId}, report ${identity.reportId}: ${persistenceMessage}`.slice(0, 750)
-      );
-    }).finally(() => {
-      queuedOcrRunningRef.current.delete(identityKey);
-    });
+    const recoveryKey = identityKey + ":" + attemptOwnerId;
+    if (
+      queuedOcrRunningRef.current.has(identityKey) ||
+      queuedOcrInterruptedHandledRef.current.has(recoveryKey)
+    ) return;
+    const currentClaim = queuedOcrAttemptOwnerClaimRef.current;
+    const currentDocumentOwnsAttempt = currentClaim?.attemptOwnerId === attemptOwnerId;
+    const abortController = new AbortController();
+    let active = true;
+    void (async () => {
+      let recoveryClaim: { release(): void } | null = null;
+      try {
+        if (!currentDocumentOwnsAttempt) {
+          recoveryClaim = await waitForAiGraderQueuedOcrAttemptOwnerLock({
+            attemptOwnerId,
+            signal: abortController.signal,
+          });
+          if (abortController.signal.aborted) return;
+        }
+        const refreshed = await callAiGraderStationBridge({
+          baseUrl: bridgeUrl,
+          stationToken,
+          action: "status",
+        });
+        if (!active || abortController.signal.aborted) return;
+        if (active) setStatus(refreshed);
+        const exactInFlight = refreshed.rapidCaptureQueue.items.find((item) =>
+          item.queueItemId === identity.queueItemId &&
+          item.sessionId === identity.gradingSessionId &&
+          item.reportId === identity.reportId &&
+          item.ocr.state === "in_flight" &&
+          item.ocr.attemptOwnerId === attemptOwnerId);
+        if (!exactInFlight) return;
+        queuedOcrInterruptedHandledRef.current.add(recoveryKey);
+        const failed = await callAiGraderStationBridge({
+          baseUrl: bridgeUrl,
+          stationToken,
+          action: "fail-queued-ocr",
+          body: buildAiGraderQueuedOcrFailureRequest({
+            ...identity,
+            attemptOwnerId,
+            failure: {
+              code: "AI_GRADER_OCR_INTERRUPTED",
+              message: "Queued OCR was interrupted before one safe exact-item result was persisted. This failed item cannot be reviewed or published in the station, and OCR will not rerun.",
+            },
+          }),
+        });
+        if (active) setStatus(failed);
+      } catch (persistenceError) {
+        if (abortController.signal.aborted || !active) return;
+        const persistenceMessage = persistenceError instanceof Error
+          ? persistenceError.message
+          : "The Dell bridge rejected the interrupted OCR failure.";
+        setError(
+          ("Interrupted OCR failure persistence failed for queue " + identity.queueItemId +
+            ", session " + identity.gradingSessionId + ", report " + identity.reportId +
+            ": " + persistenceMessage).slice(0, 750)
+        );
+      } finally {
+        recoveryClaim?.release();
+      }
+    })();
+    return () => {
+      active = false;
+      abortController.abort();
+    };
   }, [
     bridgeConnected,
     bridgeUrl,
-    nextInterruptedOcrItem?.queueItemId,
-    nextInterruptedOcrItem?.sessionId,
-    nextInterruptedOcrItem?.reportId,
+    interruptedOcrQueueItemId,
+    interruptedOcrSessionId,
+    interruptedOcrReportId,
+    interruptedOcrAttemptOwnerId,
+    queuedOcrAttemptOwner.status,
+    queuedOcrAttemptOwner.attemptOwnerId,
     stationToken,
   ]);
 
@@ -2404,7 +2586,7 @@ export default function AiGraderStationPage() {
       }
       const draftIdentity = identityDraftPayload();
       const draftTitle = identityDraftTitle();
-      const productionSourceBundle = buildReportBundleForProduction(sourceBundle) ?? sourceBundle;
+      const productionSourceBundle = buildReportBundleForProduction(sourceBundle, null) ?? sourceBundle;
       const reportBundleWithIdentity: AiGraderReportBundle = {
         ...productionSourceBundle,
         cardIdentity: {
@@ -2613,8 +2795,19 @@ export default function AiGraderStationPage() {
       if (localAssetManifest.length < 1) {
         throw new Error("Publish package is missing storage-ready image asset metadata with SHA-256 checksums and byte sizes.");
       }
-      const sanitizedBundle = sanitizeReportBundleForProduction(reportBundleWithIdentity);
-      const sanitizedRelease = sanitizeProductionReleaseForProduction(productionRelease, sanitizedBundle, cardSelection);
+      const sanitizedBundleWithoutAuthoritativeRelease = sanitizeReportBundleForProduction(reportBundleWithIdentity);
+      const sanitizedRelease = sanitizeProductionReleaseForProduction(
+        productionRelease,
+        sanitizedBundleWithoutAuthoritativeRelease,
+        cardSelection,
+      );
+      if (!sanitizedRelease) {
+        throw new Error("The authoritative production release could not be prepared for publish.");
+      }
+      const sanitizedBundle = embedAiGraderAuthoritativeProductionRelease(
+        sanitizedBundleWithoutAuthoritativeRelease,
+        sanitizedRelease,
+      );
       setProductionPublish((current) => ({ ...current, status: "pending", message: "Initializing publish and requesting direct storage upload URLs." }));
       let initResponse: Response;
       try {
@@ -2921,8 +3114,8 @@ export default function AiGraderStationPage() {
     setRapidItemOperations((current) => ({ ...current, [queueItemId]: "publish" }));
     setError(null);
     try {
-      const cardSelection = linkedCardReady
-        ? selectedCard
+      const cardSelection = exactSelectedCard
+        ? exactSelectedCard
         : await createCardFromConfirmedIdentity({ manageBusy: false, publicationIdentity });
       if (!cardSelection?.cardAssetId || !cardSelection.itemId) {
         throw new Error("Approve & Publish requires one exact CardAsset and Item linkage.");
@@ -4258,7 +4451,7 @@ export default function AiGraderStationPage() {
                       <div>
                         <strong>{statusText}</strong>
                         <small>{item.reportId}</small>
-                        {item.state === "failed" ? <small>{item.error ?? item.ocr.failure?.message ?? "Exact background item failed."}</small> : null}
+                        {item.state === "failed" ? <small>{rapidQueueTerminalFailureCopy(item)}</small> : null}
                       </div>
                       <button
                         type="button"
@@ -4524,12 +4717,19 @@ export default function AiGraderStationPage() {
                     type="button"
                     key={`${result.source}:${result.cardAssetId ?? result.itemId ?? result.displayTitle}`}
                     onClick={() => {
-                      setSelectedCard(result);
-                      setCardSearchMessage("Existing Ten Kings card/item selected.");
-                      setIdentityStatus({
-                        status: "completed",
-                        message: "Existing Ten Kings CardAsset/Item selected for this AI Grader report.",
-                      });
+                      const exactSelection = exactCardItemSelection(result);
+                      setSelectedCard(exactSelection);
+                      if (exactSelection) {
+                        setCardSearchMessage("Existing Ten Kings card/item selected.");
+                        setIdentityStatus({
+                          status: "completed",
+                          message: "Existing Ten Kings CardAsset/Item selected for this AI Grader report.",
+                        });
+                        return;
+                      }
+                      const message = "That search result does not establish both the exact CardAsset and Item IDs. Approve & Publish will create the exact linked card/item from the confirmed identity.";
+                      setCardSearchMessage(message);
+                      setIdentityStatus({ status: "idle", message });
                     }}
                   >
                     <strong>{result.displayTitle}</strong>

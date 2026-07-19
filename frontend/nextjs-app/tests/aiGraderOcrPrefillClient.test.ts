@@ -30,8 +30,9 @@ test("every queued OCR provider failure is terminal exact-item guidance with no 
     const presentation = aiGraderOcrFailurePresentation(code);
     assert.match(presentation.message, /terminal failure/i);
     assert.match(presentation.message, /exact (?:item|normalized)/i);
+    assert.match(presentation.message, /cannot be reviewed or published in the station/i);
     assert.match(presentation.message, /will not rerun/i);
-    assert.doesNotMatch(presentation.message, /retry|confirm card|manual/i);
+    assert.doesNotMatch(presentation.message, /retry|confirm card|manual|Finish\/Review form/i);
   }
 });
 

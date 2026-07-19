@@ -3,10 +3,12 @@ import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
   AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV,
+  assertAuthoritativeConfirmReleaseIdentity,
   assertAiGraderPublishBundleBoundary,
   createAiGraderProductionApiHandler,
 } from "../lib/server/aiGraderProductionApi";
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE } from "../lib/aiGraderReportBundle";
+import { embedAiGraderAuthoritativeProductionRelease } from "../lib/aiGraderLocalStation";
 import { buildSampleAiGraderProductionRelease } from "../lib/aiGraderProductionRelease";
 
 function request(body: unknown, action = "publish-init") {
@@ -114,6 +116,34 @@ test("publish boundary rejects any true certification claim flag before storage 
     assert.equal(state.body.code, "AI_GRADER_CERTIFIED_CLAIM_REJECTED");
     assert.equal(presignCalled, false);
   }
+});
+
+test("publish package re-embeds the exact submitted authoritative production release", () => {
+  const originalRelease = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
+  const linkedRelease = {
+    ...originalRelease,
+    cardInventoryLinkage: {
+      ...originalRelease.cardInventoryLinkage,
+      status: "linked" as const,
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+      note: "AI Grader report is linked to the exact Ten Kings card and item identity.",
+    },
+  };
+  const staleBundle = {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    reportId: originalRelease.reportId,
+    productionRelease: originalRelease,
+  };
+  assert.throws(
+    () => assertAuthoritativeConfirmReleaseIdentity(staleBundle, linkedRelease),
+    /authoritative release exactly as returned/i,
+  );
+
+  const authoritativeBundle = embedAiGraderAuthoritativeProductionRelease(staleBundle, linkedRelease);
+  assert.equal(authoritativeBundle.productionRelease, linkedRelease);
+  assert.deepEqual(authoritativeBundle.productionRelease, linkedRelease);
+  assert.doesNotThrow(() => assertAuthoritativeConfirmReleaseIdentity(authoritativeBundle, linkedRelease));
 });
 
 test("hosted publish requires the exact queue identity before authority or storage work", async () => {

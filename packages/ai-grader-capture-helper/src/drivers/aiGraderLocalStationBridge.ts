@@ -24,6 +24,7 @@ import {
 import {
   createFixedRigWarmForensicProcessingRunner,
   type FixedRigWarmProcessingResult,
+  type FixedRigWarmProcessingSubmission,
 } from "./fixedRigProcessingWorker";
 import { FIXED_RIG_PROCESSING_WORKER_PROTOCOL_VERSION } from "./fixedRigProcessingWorkerProtocol";
 import {
@@ -207,6 +208,7 @@ export interface AiGraderQueuedOcrLifecycle {
   state: AiGraderQueuedOcrState;
   updatedAt: string;
   attemptCount: 0 | 1;
+  attemptOwnerId?: string;
   eligibleAt?: string;
   startedAt?: string;
   completedAt?: string;
@@ -229,7 +231,7 @@ interface PersistedAiGraderRapidCaptureQueueItem extends Omit<AiGraderRapidCaptu
 }
 
 interface PersistedAiGraderRapidCaptureQueue {
-  schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1";
+  schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2";
   updatedAt: string;
   rapidCaptureEnabled: boolean;
   items: PersistedAiGraderRapidCaptureQueueItem[];
@@ -994,6 +996,7 @@ export interface AiGraderLocalStationBridgeActionRequest {
   captureProfile?: FixedRigCaptureProfile;
   queueItemId?: string;
   gradingSessionId?: string;
+  attemptOwnerId?: string;
   result?: Record<string, unknown>;
   failure?: AiGraderQueuedOcrFailure;
   publication?: AiGraderHostedPublicationEvidence;
@@ -2586,7 +2589,7 @@ export interface AiGraderWarmForensicRunner {
   processSide(
     batch: FixedRigWarmSideCaptureBatch,
     context: { requestId: string; sessionId: string }
-  ): Promise<FixedRigWarmProcessingResult>;
+  ): FixedRigWarmProcessingSubmission;
   cancelSession?(sessionId: string, reason?: string): Promise<void>;
   shutdownProcessingWorker?(reason?: string): Promise<void>;
   processingWorkerStatus?(): {
@@ -2613,8 +2616,18 @@ function cloneManifest(manifest: AiGraderLocalStationBridgeManifest): AiGraderLo
   return structuredClone(manifest);
 }
 
-const RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
+const LEGACY_RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
+const RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v2" as const;
 const RAPID_CAPTURE_QUEUE_LIMIT = 25;
+
+class LegacyRapidCaptureQueueCompatibilityError extends Error {
+  constructor(itemCount: number) {
+    super(
+      `Rapid queue rollout stopped: the preserved legacy v1 queue contains ${itemCount} item${itemCount === 1 ? "" : "s"} without exact accepted side-processing job identities; no legacy item was parsed or rewritten.`,
+    );
+    this.name = "LegacyRapidCaptureQueueCompatibilityError";
+  }
+}
 
 export function retainAiGraderRapidCaptureQueueItems<T extends { state: AiGraderRapidCaptureWorkflowState }>(
   items: T[],
@@ -2655,6 +2668,17 @@ function persistedTimestamp(value: unknown, label: string): string {
 function persistedIdentifier(value: unknown, label: string): string {
   if (typeof value !== "string" || !ATOMIC_CAPTURE_ASSERTION_RE.test(value)) {
     throw new Error(`Persisted Rapid ${label} is invalid.`);
+  }
+  return value;
+}
+
+function queuedOcrAttemptOwnerId(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || value !== value.trim()
+    || !ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE.test(value)
+  ) {
+    throw new Error("Queued OCR attemptOwnerId must be one exact safe 16-128 character owner identity.");
   }
   return value;
 }
@@ -2855,12 +2879,13 @@ function persistedOcrLifecycle(
     return { state, updatedAt, attemptCount: 0, eligibleAt: persistedTimestamp(ocr.eligibleAt, "OCR eligibility timestamp"), images: persistedOcrImages(ocr.images, config) };
   }
   if (state === "in_flight") {
-    if (!exactObjectKeys(ocr, ["state", "updatedAt", "attemptCount", "eligibleAt", "startedAt", "images"]) || ocr.attemptCount !== 1) throw new Error("Persisted in-flight OCR lifecycle is invalid.");
+    if (!exactObjectKeys(ocr, ["state", "updatedAt", "attemptCount", "attemptOwnerId", "eligibleAt", "startedAt", "images"]) || ocr.attemptCount !== 1) throw new Error("Persisted in-flight OCR lifecycle is invalid.");
     const now = new Date().toISOString();
     return {
       state: "failed",
       updatedAt: now,
       attemptCount: 1,
+      attemptOwnerId: queuedOcrAttemptOwnerId(ocr.attemptOwnerId),
       eligibleAt: persistedTimestamp(ocr.eligibleAt, "OCR eligibility timestamp"),
       startedAt: persistedTimestamp(ocr.startedAt, "OCR start timestamp"),
       completedAt: now,
@@ -2872,13 +2897,14 @@ function persistedOcrLifecycle(
     };
   }
   if (state === "succeeded") {
-    if (!exactObjectKeys(ocr, ["state", "updatedAt", "attemptCount", "eligibleAt", "startedAt", "completedAt", "images", "result"]) || ocr.attemptCount !== 1) {
+    if (!exactObjectKeys(ocr, ["state", "updatedAt", "attemptCount", "attemptOwnerId", "eligibleAt", "startedAt", "completedAt", "images", "result"]) || ocr.attemptCount !== 1) {
       throw new Error("Persisted succeeded OCR lifecycle is invalid.");
     }
     return {
       state,
       updatedAt,
       attemptCount: 1,
+      attemptOwnerId: queuedOcrAttemptOwnerId(ocr.attemptOwnerId),
       eligibleAt: persistedTimestamp(ocr.eligibleAt, "OCR eligibility timestamp"),
       startedAt: persistedTimestamp(ocr.startedAt, "OCR start timestamp"),
       completedAt: persistedTimestamp(ocr.completedAt, "OCR completion timestamp"),
@@ -2887,16 +2913,21 @@ function persistedOcrLifecycle(
     };
   }
   if (state === "failed") {
-    const allowed = new Set(["state", "updatedAt", "attemptCount", "eligibleAt", "startedAt", "completedAt", "images", "failure"]);
+    const allowed = new Set(["state", "updatedAt", "attemptCount", "attemptOwnerId", "eligibleAt", "startedAt", "completedAt", "images", "failure"]);
     if (Object.keys(ocr).some((key) => !allowed.has(key)) || (ocr.attemptCount !== 0 && ocr.attemptCount !== 1) || ocr.completedAt === undefined) {
       throw new Error("Persisted failed OCR lifecycle is invalid.");
     }
     const attemptCount = ocr.attemptCount as 0 | 1;
-    if ((attemptCount === 1) !== (ocr.startedAt !== undefined)) throw new Error("Persisted failed OCR attempt identity is invalid.");
+    const attemptOwnerId = ocr.attemptOwnerId === undefined ? undefined : queuedOcrAttemptOwnerId(ocr.attemptOwnerId);
+    if (
+      (attemptCount === 1) !== (ocr.startedAt !== undefined)
+      || (attemptCount === 1) !== (attemptOwnerId !== undefined)
+    ) throw new Error("Persisted failed OCR attempt identity is invalid.");
     return {
       state,
       updatedAt,
       attemptCount,
+      ...(attemptOwnerId ? { attemptOwnerId } : {}),
       ...(ocr.eligibleAt !== undefined ? { eligibleAt: persistedTimestamp(ocr.eligibleAt, "OCR eligibility timestamp") } : {}),
       ...(ocr.startedAt !== undefined ? { startedAt: persistedTimestamp(ocr.startedAt, "OCR start timestamp") } : {}),
       completedAt: persistedTimestamp(ocr.completedAt, "OCR failure timestamp"),
@@ -3030,10 +3061,17 @@ function readRapidCaptureQueueSync(config: AiGraderLocalStationBridgeConfig): Pe
     const parsed = JSON.parse(readFileSync(rapidCaptureQueuePath(config), "utf-8")) as Record<string, unknown>;
     if (
       !exactObjectKeys(parsed, ["schemaVersion", "updatedAt", "rapidCaptureEnabled", "items"])
-      || parsed.schemaVersion !== RAPID_CAPTURE_QUEUE_SCHEMA_VERSION
       || typeof parsed.rapidCaptureEnabled !== "boolean"
       || !Array.isArray(parsed.items)
     ) throw new Error("Authoritative Rapid queue top-level shape or schema is invalid.");
+    const persistedQueueUpdatedAt = persistedTimestamp(parsed.updatedAt, "queue update timestamp");
+    if (parsed.schemaVersion === LEGACY_RAPID_CAPTURE_QUEUE_SCHEMA_VERSION) {
+      if (parsed.items.length > 0) throw new LegacyRapidCaptureQueueCompatibilityError(parsed.items.length);
+      return empty();
+    }
+    if (parsed.schemaVersion !== RAPID_CAPTURE_QUEUE_SCHEMA_VERSION) {
+      throw new Error("Authoritative Rapid queue top-level shape or schema is invalid.");
+    }
     const parsedItems = parsed.items.map((item) => persistedRapidItem(item, config));
     const queueItemCounts = new Map<string, number>();
     const sessionCounts = new Map<string, number>();
@@ -3059,12 +3097,13 @@ function readRapidCaptureQueueSync(config: AiGraderLocalStationBridgeConfig): Pe
     });
     return {
       schemaVersion: RAPID_CAPTURE_QUEUE_SCHEMA_VERSION,
-      updatedAt: persistedTimestamp(parsed.updatedAt, "queue update timestamp"),
+      updatedAt: persistedQueueUpdatedAt,
       rapidCaptureEnabled: true,
       items: retainAiGraderRapidCaptureQueueItems(uniqueItems),
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return empty();
+    if (error instanceof LegacyRapidCaptureQueueCompatibilityError) throw error;
     throw new Error(`Authoritative Rapid queue is corrupt and the bridge refuses to hide its items: ${error instanceof Error ? error.message : "unreadable queue"}`);
   }
 }
@@ -3610,7 +3649,10 @@ export class AiGraderLocalStationBridgeService {
             currentStep: activeReviewManifest.currentStep,
             warnings: [...activeReviewManifest.warnings],
             ...(activeReviewManifest.reportBundle ? {
-              reportBundle: browserSafeReviewRecord(activeReviewManifest.reportBundle, this.config.outputDir),
+              reportBundle: browserSafeReviewRecord(
+                bundleWithProductionRelease(activeReviewManifest.reportBundle, activeReviewManifest.productionRelease),
+                this.config.outputDir,
+              ),
             } : {}),
             ...(activeReviewManifest.productionRelease ? {
               productionRelease: browserSafeReviewRecord(activeReviewManifest.productionRelease, this.config.outputDir),
@@ -5758,6 +5800,7 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private async beginQueuedOcr(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
+    const attemptOwnerId = queuedOcrAttemptOwnerId(request.attemptOwnerId);
     const verificationFailure = await this.runRapidQueueMutation(async ({ trackManifest }) => {
       const item = this.exactMutableQueuedItem(request);
       const manifest = await this.exactQueuedManifest(item);
@@ -5781,6 +5824,7 @@ export class AiGraderLocalStationBridgeService {
         state: "in_flight",
         updatedAt: now,
         attemptCount: 1,
+        attemptOwnerId,
         startedAt: now,
       });
       return { value: undefined, manifests: [manifest] };
@@ -5789,11 +5833,15 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private async completeQueuedOcr(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
+    const attemptOwnerId = queuedOcrAttemptOwnerId(request.attemptOwnerId);
     const verificationFailure = await this.runRapidQueueMutation(async ({ trackManifest }) => {
       const item = this.exactMutableQueuedItem(request);
       const manifest = await this.exactQueuedManifest(item);
       if (item.ocr.state !== "in_flight" || item.ocr.attemptCount !== 1 || !item.ocr.images || item.ocr.images.length !== 2) {
         throw new Error("Queued OCR completion requires the exact one in-flight execution and cannot rerun.");
+      }
+      if (item.ocr.attemptOwnerId !== attemptOwnerId) {
+        throw new Error("Queued OCR completion attemptOwnerId does not match the exact in-flight owner.");
       }
       trackManifest(manifest);
       try {
@@ -5842,12 +5890,16 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private async failQueuedOcr(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
+    const attemptOwnerId = queuedOcrAttemptOwnerId(request.attemptOwnerId);
     const failure = safeQueuedOcrFailure(request.failure);
     await this.runRapidQueueMutation(async ({ trackManifest }) => {
       const item = this.exactMutableQueuedItem(request);
       const manifest = await this.exactQueuedManifest(item);
       if (item.ocr.state !== "in_flight" || item.ocr.attemptCount !== 1) {
         throw new Error("Queued OCR failure requires the exact one in-flight execution and cannot retry.");
+      }
+      if (item.ocr.attemptOwnerId !== attemptOwnerId) {
+        throw new Error("Queued OCR failure attemptOwnerId does not match the exact in-flight owner.");
       }
       trackManifest(manifest);
       this.applyQueuedOcrFailure(item, manifest, failure);
@@ -6282,6 +6334,7 @@ export class AiGraderLocalStationBridgeService {
     if (this.captureLock) {
       throw new Error(`Cannot start a new card while capture lock is held by ${this.captureLock.owner}.`);
     }
+    this.assertCallerSuppliedReportIdAvailable(request.reportId);
     if (this.manifest.sessionId) {
       let processingError: Error | undefined;
       try {
@@ -6360,6 +6413,57 @@ export class AiGraderLocalStationBridgeService {
           ? `Start New Card could not establish the configured positioning light. Retry Start New Card. ${message}`
           : `Start New Card could not establish or safely release the configured positioning light; authoritative ownership remains blocked. ${message}`,
       );
+    }
+  }
+
+  private canonicalCallerSuppliedReportId(reportId: string | undefined): string | undefined {
+    if (reportId === undefined) return;
+    const canonicalReportId = safeReportPackageSegment(reportId);
+    if (canonicalReportId !== reportId) {
+      throw new Error('Start New Card requires a canonical untrimmed caller-supplied report ID.');
+    }
+    return canonicalReportId;
+  }
+
+  private assertCallerSuppliedReportIdDoesNotMatchActive(canonicalReportId: string): void {
+    if (this.manifest.reportId?.toLowerCase() === canonicalReportId.toLowerCase()) {
+      throw new Error(
+        `Start New Card rejects caller-supplied report ID ${canonicalReportId}; active station session ${this.manifest.sessionId ?? 'unknown'} already owns it.`,
+      );
+    }
+  }
+
+  private assertCallerSuppliedReportIdAvailable(reportId: string | undefined): void {
+    const canonicalReportId = this.canonicalCallerSuppliedReportId(reportId);
+    if (canonicalReportId === undefined) return;
+    this.assertCallerSuppliedReportIdDoesNotMatchActive(canonicalReportId);
+    const normalizedReportId = canonicalReportId.toLowerCase();
+    const queuedConflict = this.rapidQueue.items.find(
+      (item) => item.reportId.toLowerCase() === normalizedReportId,
+    );
+    if (queuedConflict) {
+      throw new Error(
+        `Start New Card rejects caller-supplied report ID ${canonicalReportId}; it already belongs to exact queue item ${queuedConflict.queueItemId}.`,
+      );
+    }
+    if (existsSync(publishPackageDir(this.config, canonicalReportId))) {
+      throw new Error(`Start New Card rejects caller-supplied report ID ${canonicalReportId}; its exact report package already exists.`);
+    }
+    if (!existsSync(this.config.outputDir)) return;
+    for (const entry of readdirSync(this.config.outputDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const manifestPath = path.join(this.config.outputDir, entry.name, 'station-session.json');
+      if (!existsSync(manifestPath)) continue;
+      try {
+        const persisted = JSON.parse(readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
+        if (typeof persisted.reportId === 'string' && persisted.reportId.toLowerCase() === normalizedReportId) {
+          throw new Error(
+            `Start New Card rejects caller-supplied report ID ${canonicalReportId}; a persisted station session already owns it.`,
+          );
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('Start New Card rejects caller-supplied report ID')) throw error;
+      }
     }
   }
   private updatePreviewStatus(update: Partial<AiGraderLocalStationPreviewStatus>) {
@@ -8087,6 +8191,22 @@ export class AiGraderLocalStationBridgeService {
       const processingSessionId = sessionManifest.sessionId;
       if (!processingSessionId) throw new Error("Warm processing requires an active session identity.");
       const processingRequestId = `fixed-rig-processing-${crypto.randomUUID()}`;
+      const processingSubmission = this.warmRunner.processSide(batch, {
+        requestId: processingRequestId,
+        sessionId: processingSessionId,
+      });
+      const processingAdmission = await processingSubmission.admission;
+      if (
+        processingAdmission.status !== 'accepted' ||
+        processingAdmission.requestId !== processingRequestId ||
+        processingAdmission.sessionId !== processingSessionId ||
+        processingAdmission.side !== side ||
+        processingAdmission.packageId !== batch.packageId ||
+        typeof processingAdmission.acceptedAt !== 'string' ||
+        !Number.isFinite(Date.parse(processingAdmission.acceptedAt))
+      ) {
+        throw new Error('Warm side-processing admission did not match the exact immutable side identity.');
+      }
       result.payload = {
         ...(result.payload ?? {}),
         sideProcessingJob: {
@@ -8094,13 +8214,10 @@ export class AiGraderLocalStationBridgeService {
           sessionId: processingSessionId,
           side,
           packageId: batch.packageId,
-          acceptedAt: new Date().toISOString(),
+          acceptedAt: processingAdmission.acceptedAt,
         },
       };
-      const processingJob = this.warmRunner.processSide(batch, {
-        requestId: processingRequestId,
-        sessionId: processingSessionId,
-      }).then(async (processed) => {
+      const processingJob = processingSubmission.then(async (processed) => {
         this.assertWarmProcessingIdentity({
           requestId: processingRequestId,
           sessionId: processingSessionId,
@@ -9040,17 +9157,17 @@ export class AiGraderLocalStationBridgeService {
       return this.status();
     }
     if (action === "begin-queued-ocr") {
-      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId"]);
+      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId", "attemptOwnerId"]);
       await this.beginQueuedOcr(request);
       return this.status();
     }
     if (action === "complete-queued-ocr") {
-      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId", "result"]);
+      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId", "attemptOwnerId", "result"]);
       await this.completeQueuedOcr(request);
       return this.status();
     }
     if (action === "fail-queued-ocr") {
-      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId", "failure"]);
+      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId", "attemptOwnerId", "failure"]);
       await this.failQueuedOcr(request);
       return this.status();
     }
@@ -9074,6 +9191,12 @@ export class AiGraderLocalStationBridgeService {
       || (this.lightingLifecyclePending > 0 && !terminalAction)
     ) {
       throw new Error("Station capture mutation is blocked while authoritative capture, lighting, or terminal ownership is active.");
+    }
+    if (action === "start-session") {
+      const canonicalReportId = this.canonicalCallerSuppliedReportId(request.reportId);
+      if (canonicalReportId !== undefined) {
+        this.assertCallerSuppliedReportIdDoesNotMatchActive(canonicalReportId);
+      }
     }
     const now = new Date().toISOString();
     this.manifest.updatedAt = now;

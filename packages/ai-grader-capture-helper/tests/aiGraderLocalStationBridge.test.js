@@ -21,7 +21,7 @@ const OCR_FIELDS = [
   "productSet", "cardNumber", "parallel", "insert", "numbered", "autograph", "memorabilia",
 ];
 
-function configFor(outputDir, dependencies = {}, overrides = {}) {
+function configFor(outputDir, dependencies = {}, overrides = {}, warmRunner) {
   const config = buildAiGraderLocalStationBridgeConfig({
     enabled: true,
     mode: "mock",
@@ -33,7 +33,7 @@ function configFor(outputDir, dependencies = {}, overrides = {}) {
     captureProfile: "production_fast",
     ...overrides,
   });
-  return { config, service: new AiGraderLocalStationBridgeService(config, undefined, undefined, dependencies) };
+  return { config, service: new AiGraderLocalStationBridgeService(config, undefined, warmRunner, dependencies) };
 }
 
 function rawRoles(seed) {
@@ -391,7 +391,7 @@ async function createEligibleQueuedFixture(outputDir, seed = "ocr", configOverri
   queuedManifest.rapidCapture.workflowState = "finalizing";
   queuedManifest.rapidCapture.workflowHistory = item.history;
   queuedManifest.rapidCapture.ocr = { ...item.ocr, images: item.ocr.images.map(({ localPath, ...image }) => image) };
-  service.rapidQueue = { schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1", updatedAt: now, rapidCaptureEnabled: true, items: [item] };
+  service.rapidQueue = { schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2", updatedAt: now, rapidCaptureEnabled: true, items: [item] };
   service.committedRapidQueue = structuredClone(service.rapidQueue);
   service.queuedManifests.set(item.queueItemId, queuedManifest);
   service.manifest = service.cleanStartNewCardManifest(queuedManifest);
@@ -492,6 +492,187 @@ test("atomic Back queue commit persists exact TIFF hashes and queue before captu
     assert.equal(service.status().rapidCaptureQueue.items[0].rawEvidence.format, "tiff");
     assert.equal(service.captureLock.owner, "atomic-test-owner", "queue commit never releases capture ownership itself");
     service.releaseCaptureLock("atomic-test-owner");
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("atomic Back waits for both exact warm-side admissions before queue commit and capture release", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-atomic-admission-"));
+  const admissionControls = new Map();
+  const admissionResolved = new Set();
+  const releaseObservations = [];
+  let queueWriteCount = 0;
+  let service;
+  const warmRunner = {
+    async captureSide(input) {
+      const payload = capturePayload(service.manifest, input.side, `real-admission-${input.side}`);
+      const packageDir = path.join(service.manifest.outputs.sessionDir, `${input.side}-admission-package`);
+      const sideDir = path.join(packageDir, input.side);
+      fs.mkdirSync(sideDir, { recursive: true });
+      return {
+        executionPath: "warm_full_forensic_runner",
+        packageId: payload.packageId,
+        packageDir,
+        sideDir,
+        side: input.side,
+        captureProfile: "production_fast",
+        rawEvidenceFormat: "tiff",
+        hardwareMeasurement: false,
+        batch: {
+          executionPath: "warm_full_forensic_runner",
+          fallbackUsed: false,
+          side: input.side,
+          outputDir: sideDir,
+          captures: payload.warmBatch.captures,
+          timing: {},
+          safety: { safeOffBefore: true, safeOffAfter: true },
+        },
+      };
+    },
+    processSide(batch, identity) {
+      let resolveAdmission;
+      const admission = new Promise((resolve) => {
+        resolveAdmission = resolve;
+      });
+      const result = new Promise(() => {});
+      result.admission = admission;
+      admissionControls.set(batch.side, {
+        identity,
+        batch,
+        resolve() {
+          admissionResolved.add(batch.side);
+          resolveAdmission({
+            status: "accepted",
+            requestId: identity.requestId,
+            sessionId: identity.sessionId,
+            side: batch.side,
+            packageId: batch.packageId,
+            acceptedAt: new Date().toISOString(),
+            validationBoundary: "structural_snapshot_only",
+            sourceIntegrity: "pending_worker_validation",
+          });
+        },
+      });
+      return result;
+    },
+    async cancelSession() {},
+    async shutdownProcessingWorker() {},
+    processingWorkerStatus() {
+      return { active: false, pending: 0, maxPending: 20, maxConcurrency: 1, closed: false };
+    },
+  };
+  const waitForAdmission = async (side) => {
+    for (let attempt = 0; attempt < 500 && !admissionControls.has(side); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    assert.equal(admissionControls.has(side), true, `${side} processing reached its admission boundary`);
+    return admissionControls.get(side);
+  };
+  try {
+    const created = configFor(
+      outputDir,
+      {
+        writeRapidQueueAtomic: async (filePath, value) => {
+          const item = value.items[0];
+          if (!item) {
+            fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+            return;
+          }
+          queueWriteCount += 1;
+          assert.equal(admissionResolved.has("front"), true);
+          assert.equal(admissionResolved.has("back"), true);
+          assert.deepEqual(Object.keys(item.sideProcessingJobs).sort(), ["back", "front"]);
+          fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+        },
+      },
+      {},
+      warmRunner,
+    );
+    service = created.service;
+    service.enqueueRapidFinalization = () => {};
+    const originalRunWarmSideCapture = service.runWarmSideCapture.bind(service);
+    service.runWarmSideCapture = async (side) => {
+      const priorMode = service.config.mode;
+      service.config.mode = "real";
+      try {
+        return await originalRunWarmSideCapture(side);
+      } finally {
+        service.config.mode = priorMode;
+      }
+    };
+    const originalReleaseCaptureLock = service.releaseCaptureLock.bind(service);
+    service.releaseCaptureLock = (owner) => {
+      if (owner.startsWith("atomic-capture-")) {
+        releaseObservations.push({
+          owner,
+          frontAdmitted: admissionResolved.has("front"),
+          backAdmitted: admissionResolved.has("back"),
+          queueWriteCount,
+          queueLength: service.status().rapidCaptureQueue.items.length,
+        });
+      }
+      return originalReleaseCaptureLock(owner);
+    };
+
+    await service.action("start-session", {
+      captureProfile: "production_fast",
+      reportId: "atomic-admission-report",
+    });
+    const frontRequest = bindReadyPreview(service, "front", "admission");
+    let frontSettled = false;
+    const frontAction = service.action("capture-front", frontRequest).finally(() => {
+      frontSettled = true;
+    });
+    const frontAdmission = await waitForAdmission("front");
+    assert.equal(frontSettled, false);
+    assert.match(service.captureLock.owner, /^atomic-capture-front:/);
+    assert.equal(queueWriteCount, 0);
+    frontAdmission.resolve();
+    const front = await frontAction;
+    assert.equal(front.currentStep, "prompt_flip_card");
+    assert.deepEqual(
+      releaseObservations.filter((entry) => entry.owner.startsWith("atomic-capture-front:")),
+      [{
+        owner: `atomic-capture-front:${frontRequest.idempotencyKey}`,
+        frontAdmitted: true,
+        backAdmitted: false,
+        queueWriteCount: 0,
+        queueLength: 0,
+      }],
+    );
+
+    const backRequest = bindReadyPreview(service, "back", "admission");
+    let backSettled = false;
+    const backAction = service.action("capture-back", backRequest).finally(() => {
+      backSettled = true;
+    });
+    const backAdmission = await waitForAdmission("back");
+    assert.equal(backSettled, false);
+    assert.match(service.captureLock.owner, /^atomic-capture-back:/);
+    assert.equal(service.status().rapidCaptureQueue.items.length, 0);
+    assert.equal(queueWriteCount, 0);
+    assert.equal(
+      releaseObservations.some((entry) => entry.owner.startsWith("atomic-capture-back:")),
+      false,
+    );
+
+    backAdmission.resolve();
+    const back = await backAction;
+    assert.equal(back.currentStep, "start_new_card");
+    assert.equal(back.sessionId, undefined);
+    assert.equal(queueWriteCount, 1);
+    assert.equal(back.rapidCaptureQueue.items.length, 1);
+    assert.deepEqual(
+      releaseObservations.filter((entry) => entry.owner.startsWith("atomic-capture-back:")),
+      [{
+        owner: `atomic-capture-back:${backRequest.idempotencyKey}`,
+        frontAdmitted: true,
+        backAdmitted: true,
+        queueWriteCount: 1,
+        queueLength: 1,
+      }],
+    );
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
@@ -659,19 +840,52 @@ test("queued OCR executes once, enforces exact request/result identity, and comp
   try {
     const { service, item } = await createEligibleQueuedFixture(outputDir, "once");
     const identity = { queueItemId: item.queueItemId, gradingSessionId: item.sessionId, reportId: item.reportId };
-    await assert.rejects(service.action("begin-queued-ocr", { ...identity, reportId: "wrong-report" }), /does not match/i);
-    await service.action("begin-queued-ocr", identity);
-    await assert.rejects(service.action("begin-queued-ocr", identity), /one allowed execution/i);
+    const attempt = { ...identity, attemptOwnerId: "ocr-attempt-owner-once" };
+    await assert.rejects(service.action("begin-queued-ocr", { ...attempt, reportId: "wrong-report" }), /does not match/i);
+    await service.action("begin-queued-ocr", attempt);
+    await assert.rejects(service.action("begin-queued-ocr", attempt), /one allowed execution/i);
     const wrongResult = safeOcrResult(item);
     wrongResult.reportId = "wrong-report";
-    await assert.rejects(service.action("complete-queued-ocr", { ...identity, result: wrongResult }), /identity/i);
+    await assert.rejects(service.action("complete-queued-ocr", { ...attempt, result: wrongResult }), /identity/i);
     const failed = service.status().rapidCaptureQueue.items[0];
     assert.equal(failed.state, "failed");
     assert.equal(failed.ocr.state, "failed");
     assert.equal(failed.ocr.attemptCount, 1);
-    await assert.rejects(service.action("complete-queued-ocr", { ...identity, result: safeOcrResult(item) }), /cannot rerun/i);
+    await assert.rejects(service.action("complete-queued-ocr", { ...attempt, result: safeOcrResult(item) }), /cannot rerun/i);
     const next = await service.action("start-session", { captureProfile: "production_fast", reportId: "next-after-ocr-failure" });
     assert.equal(next.currentStep, "capture_front", "one item OCR failure never blocks new capture");
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("only the exact durable OCR attempt owner can complete or fail its in-flight item", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-ocr-attempt-owner-"));
+  try {
+    const { service, item } = await createEligibleQueuedFixture(outputDir, "attempt-owner");
+    const identity = { queueItemId: item.queueItemId, gradingSessionId: item.sessionId, reportId: item.reportId };
+    const firstOwner = { ...identity, attemptOwnerId: "ocr-attempt-owner-first" };
+    const secondOwner = { ...identity, attemptOwnerId: "ocr-attempt-owner-second" };
+    await service.action("begin-queued-ocr", firstOwner);
+    assert.equal(service.status().rapidCaptureQueue.items[0].ocr.attemptOwnerId, firstOwner.attemptOwnerId);
+    await assert.rejects(
+      service.action("complete-queued-ocr", { ...secondOwner, result: safeOcrResult(item) }),
+      /attemptOwnerId does not match the exact in-flight owner/i,
+    );
+    await assert.rejects(
+      service.action("fail-queued-ocr", {
+        ...secondOwner,
+        failure: { code: "AI_GRADER_OCR_INTERNAL_FAILED", message: "Second owner must not terminate this attempt." },
+      }),
+      /attemptOwnerId does not match the exact in-flight owner/i,
+    );
+    const stillOwned = service.status().rapidCaptureQueue.items[0].ocr;
+    assert.equal(stillOwned.state, "in_flight");
+    assert.equal(stillOwned.attemptOwnerId, firstOwner.attemptOwnerId);
+    await service.action("complete-queued-ocr", { ...firstOwner, result: safeOcrResult(item) });
+    const completed = service.status().rapidCaptureQueue.items[0].ocr;
+    assert.equal(completed.state, "succeeded");
+    assert.equal(completed.attemptOwnerId, firstOwner.attemptOwnerId);
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
@@ -682,9 +896,10 @@ test("normalized evidence changed after begin becomes one terminal item failure"
   try {
     const { service, item, images } = await createEligibleQueuedFixture(outputDir, "reverify");
     const identity = { queueItemId: item.queueItemId, gradingSessionId: item.sessionId, reportId: item.reportId };
-    await service.action("begin-queued-ocr", identity);
+    const attempt = { ...identity, attemptOwnerId: "ocr-attempt-owner-reverify" };
+    await service.action("begin-queued-ocr", attempt);
     await sharp({ create: { width: 1200, height: 1680, channels: 3, background: "#ffffff" } }).png().toFile(images[0].localPath);
-    await assert.rejects(service.action("complete-queued-ocr", { ...identity, result: safeOcrResult(item) }), /failed fresh hash/i);
+    await assert.rejects(service.action("complete-queued-ocr", { ...attempt, result: safeOcrResult(item) }), /failed fresh hash/i);
     const failed = service.status().rapidCaptureQueue.items[0];
     assert.equal(failed.state, "failed");
     assert.equal(failed.ocr.failure.code, "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID");
@@ -698,12 +913,13 @@ test("successful exact OCR survives reload as succeeded and cannot be claimed ag
   try {
     const { service, item } = await createEligibleQueuedFixture(outputDir, "success-reload");
     const identity = { queueItemId: item.queueItemId, gradingSessionId: item.sessionId, reportId: item.reportId };
-    await service.action("begin-queued-ocr", identity);
-    await service.action("complete-queued-ocr", { ...identity, result: safeOcrResult(item) });
+    const attempt = { ...identity, attemptOwnerId: "ocr-attempt-owner-reload" };
+    await service.action("begin-queued-ocr", attempt);
+    await service.action("complete-queued-ocr", { ...attempt, result: safeOcrResult(item) });
     assert.equal(service.status().rapidCaptureQueue.items[0].ocr.state, "succeeded");
     const reloaded = new AiGraderLocalStationBridgeService(service.config);
     assert.equal(reloaded.status().rapidCaptureQueue.items[0].ocr.state, "succeeded");
-    await assert.rejects(reloaded.action("begin-queued-ocr", identity), /one allowed execution/i);
+    await assert.rejects(reloaded.action("begin-queued-ocr", attempt), /one allowed execution/i);
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
@@ -734,9 +950,16 @@ test("reload parser allowlists exact OCR and converts interrupted or forged-read
     const { service, item, queuedManifest } = await createEligibleQueuedFixture(outputDir, "reload");
     const now = new Date().toISOString();
     const interrupted = structuredClone(item);
-    interrupted.ocr = { ...interrupted.ocr, state: "in_flight", attemptCount: 1, startedAt: now, updatedAt: now };
+    interrupted.ocr = {
+      ...interrupted.ocr,
+      state: "in_flight",
+      attemptCount: 1,
+      attemptOwnerId: "ocr-attempt-owner-interrupted",
+      startedAt: now,
+      updatedAt: now,
+    };
     fs.writeFileSync(path.join(outputDir, "rapid-capture-queue.json"), JSON.stringify({
-      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1",
+      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2",
       updatedAt: now,
       rapidCaptureEnabled: true,
       items: [interrupted],
@@ -747,18 +970,85 @@ test("reload parser allowlists exact OCR and converts interrupted or forged-read
     assert.equal(failed.state, "failed");
     assert.equal(failed.ocr.state, "failed");
     assert.equal(failed.ocr.failure.code, "AI_GRADER_OCR_INTERRUPTED");
+    assert.equal(failed.ocr.attemptOwnerId, "ocr-attempt-owner-interrupted");
     const forged = structuredClone(item);
     forged.state = "report_ready_needs_confirm";
     forged.history = [{ state: forged.state, at: now, detail: "Forged ready fixture." }];
     forged.ocr = { state: "waiting_for_normalized", updatedAt: now, attemptCount: 0 };
     fs.writeFileSync(path.join(outputDir, "rapid-capture-queue.json"), JSON.stringify({
-      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1",
+      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2",
       updatedAt: now,
       rapidCaptureEnabled: true,
       items: [forged],
     }, null, 2));
     const forgedReload = new AiGraderLocalStationBridgeService(service.config);
     assert.equal(forgedReload.status().rapidCaptureQueue.items[0].state, "failed");
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("nonempty protected v1 Rapid queue stops rollout and remains byte-for-byte unchanged", () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-legacy-v1-preserved-"));
+  try {
+    const now = "2026-07-17T12:00:00.000Z";
+    const queuePath = path.join(outputDir, "rapid-capture-queue.json");
+    const legacyBytes = Buffer.from(`${JSON.stringify({
+      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1",
+      updatedAt: now,
+      rapidCaptureEnabled: true,
+      items: [{
+        queueItemId: "legacy-session-rapid-card",
+        sessionId: "legacy-session",
+        reportId: "legacy-report",
+        state: "report_ready_needs_confirm",
+        queuedAt: now,
+        updatedAt: now,
+        history: [{ state: "report_ready_needs_confirm", at: now, detail: "Protected v1 item." }],
+        humanConfirmationRequired: true,
+        autoConfirmed: false,
+        autoPublished: false,
+        manifestPath: path.join(outputDir, "legacy-session", "station-session.json"),
+      }],
+    }, null, 3)}\r\n`, "utf8");
+    fs.writeFileSync(queuePath, legacyBytes);
+    const config = buildAiGraderLocalStationBridgeConfig({
+      enabled: true, mode: "mock", host: "127.0.0.1", port: 47652,
+      stationToken: "StationTokenStationTokenStationToken1234", outputDir,
+      captureProfile: "production_fast",
+    });
+    assert.throws(
+      () => new AiGraderLocalStationBridgeService(config),
+      /rollout stopped.*legacy v1 queue contains 1 item.*no legacy item was parsed or rewritten/i,
+    );
+    assert.deepEqual(fs.readFileSync(queuePath), legacyBytes);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("empty protected v1 Rapid queue safely initializes the exact v2 queue", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-empty-v1-initialize-"));
+  try {
+    const queuePath = path.join(outputDir, "rapid-capture-queue.json");
+    fs.writeFileSync(queuePath, JSON.stringify({
+      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1",
+      updatedAt: "2026-07-17T12:00:00.000Z",
+      rapidCaptureEnabled: false,
+      items: [],
+    }));
+    const config = buildAiGraderLocalStationBridgeConfig({
+      enabled: true, mode: "mock", host: "127.0.0.1", port: 47652,
+      stationToken: "StationTokenStationTokenStationToken1234", outputDir,
+      captureProfile: "production_fast",
+    });
+    const service = new AiGraderLocalStationBridgeService(config);
+    await service.rapidMutationChain;
+    const initialized = JSON.parse(fs.readFileSync(queuePath, "utf8"));
+    assert.equal(initialized.schemaVersion, "ten-kings-ai-grader-rapid-capture-queue-v2");
+    assert.equal(initialized.rapidCaptureEnabled, true);
+    assert.deepEqual(initialized.items, []);
+    assert.equal(service.status().currentStep, "start_new_card");
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
@@ -783,7 +1073,7 @@ test("syntactically valid queue with a truncated item identity refuses startup i
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-truncated-queue-item-"));
   try {
     fs.writeFileSync(path.join(outputDir, "rapid-capture-queue.json"), JSON.stringify({
-      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1",
+      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2",
       updatedAt: new Date().toISOString(),
       rapidCaptureEnabled: true,
       items: [{ queueItemId: "truncated-card", state: "finalizing" }],
@@ -807,7 +1097,7 @@ test("restart refuses an orphaned queued claim or unqueued Back failure but igno
     const manifest = prepareExactCapturedCard(service, "orphan");
     fs.writeFileSync(manifest.outputs.manifestPath, JSON.stringify(manifest, null, 2));
     fs.writeFileSync(path.join(outputDir, "rapid-capture-queue.json"), JSON.stringify({
-      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1", updatedAt: new Date().toISOString(), rapidCaptureEnabled: true, items: [],
+      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2", updatedAt: new Date().toISOString(), rapidCaptureEnabled: true, items: [],
     }));
     assert.throws(() => new AiGraderLocalStationBridgeService(config), /Back evidence without a complete durable Rapid queue claim|quarantine/i);
     manifest.captureFailure = { side: "back", stage: "queue_commit", message: "queue write failed", at: new Date().toISOString() };
@@ -853,8 +1143,9 @@ test("Approve & Publish accepts the exact configured sibling report-bundle root 
       { reportBundleOutputDir },
     );
     const identity = { queueItemId: item.queueItemId, gradingSessionId: item.sessionId, reportId: item.reportId };
-    await service.action("begin-queued-ocr", identity);
-    await service.action("complete-queued-ocr", { ...identity, result: safeOcrResult(item) });
+    const attempt = { ...identity, attemptOwnerId: "ocr-attempt-owner-publish" };
+    await service.action("begin-queued-ocr", attempt);
+    await service.action("complete-queued-ocr", { ...attempt, result: safeOcrResult(item) });
     const mutableItem = service.exactMutableQueuedItem(identity);
     const now = new Date().toISOString();
     mutableItem.state = "report_ready_needs_confirm";
@@ -960,6 +1251,11 @@ test("active review projection strips every local Path/Dir/Folder and filesystem
     const active = service.status().rapidCaptureQueue.activeReview;
     const serialized = JSON.stringify(active);
     assert.ok(active);
+    assert.deepEqual(
+      active.manifest.reportBundle.productionRelease,
+      active.manifest.productionRelease,
+      'the browser review bundle must embed the exact same release required by hosted Confirm/Publish',
+    );
     assert.equal(serialized.includes(outputDir), false);
     assert.equal(serialized.includes("C:\\\\secret"), false);
     assert.equal(serialized.includes("Dell\\\\private"), false);
@@ -997,4 +1293,51 @@ test("preview multipart assembler remains bounded", () => {
   assert.deepEqual(frames, [frame]);
   assembler.push(Buffer.alloc(2_000_000));
   assert.ok(assembler.bufferedByteLength < 2_000_000);
+});
+
+test('Start New Card rejects an active caller-supplied report identity before changing the exact active session', async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenkings-active-duplicate-report-'));
+  try {
+    const { service } = configFor(outputDir);
+    await service.action('start-session', { captureProfile: 'production_fast', reportId: 'active-live-report' });
+    const activeManifest = service.manifest;
+    const activeSnapshot = structuredClone(activeManifest);
+    const persistedManifestBytes = fs.readFileSync(activeManifest.outputs.manifestPath);
+    const outputEntries = fs.readdirSync(outputDir).sort();
+
+    await assert.rejects(
+      service.action('start-session', { captureProfile: 'production_fast', reportId: 'ACTIVE-LIVE-REPORT' }),
+      /rejects caller-supplied report ID.*active station session.*already owns it/i,
+    );
+
+    assert.equal(service.manifest, activeManifest);
+    assert.deepEqual(service.manifest, activeSnapshot);
+    assert.equal(service.manifest.sessionId, activeSnapshot.sessionId);
+    assert.equal(service.manifest.reportId, activeSnapshot.reportId);
+    assert.deepEqual(fs.readFileSync(activeManifest.outputs.manifestPath), persistedManifestBytes);
+    assert.deepEqual(fs.readdirSync(outputDir).sort(), outputEntries);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('Start New Card rejects a duplicate caller-supplied report identity before creating another session', async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenkings-duplicate-report-'));
+  try {
+    const { service } = configFor(outputDir);
+    await service.action('start-session', { captureProfile: 'production_fast', reportId: 'duplicate-live-report' });
+    const firstManifest = service.manifest;
+    const firstItem = queueItemFor(firstManifest);
+    service.rapidQueue.items = [firstItem];
+    service.committedRapidQueue = structuredClone(service.rapidQueue);
+    service.manifest = service.cleanStartNewCardManifest(firstManifest);
+    await assert.rejects(
+      service.action('start-session', { captureProfile: 'production_fast', reportId: 'DUPLICATE-LIVE-REPORT' }),
+      /rejects caller-supplied report ID.*already belongs to exact queue item/i,
+    );
+    assert.equal(service.status().currentStep, 'start_new_card');
+    assert.equal(service.status().sessionId, undefined);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
 });

@@ -1426,7 +1426,7 @@ function assertExplicitOperatorFinalization(
   }
 }
 
-function assertAuthoritativeConfirmReleaseIdentity(
+export function assertAuthoritativeConfirmReleaseIdentity(
   reportBundle: AiGraderProductionReportBundleLike,
   productionRelease: AiGraderProductionReleaseLike,
 ) {
