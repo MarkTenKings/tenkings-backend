@@ -1,7 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { deflateSync } = require("node:zlib");
 const {
   AI_GRADER_PUBLISH_AUTHORITY_EXCLUDED_RUNTIME_FIELDS,
+  buildAiGraderConfirmCardReferencePlan,
   buildAiGraderLabelPreviewHtml,
   buildAiGraderCompsSearchQuery,
   buildAiGraderPublishAuthorityRecord,
@@ -15,7 +17,623 @@ const {
   normalizeAiGraderPublicOcrPrefill,
   sanitizeAiGraderPublicJson,
   sanitizeAiGraderPublicReportBundleForRead,
+  readAiGraderMathematicalCalibrationReadiness,
 } = require("../dist/database/src/aiGraderProductionService");
+const {
+  AI_GRADER_DEFECT_FINDING_V2_VERSION,
+  MATHEMATICAL_CALIBRATION_PROFILE_V1_SCHEMA_VERSION,
+  MATHEMATICAL_DEDUCTION_LEDGER_V1_SCHEMA_VERSION,
+  MATHEMATICAL_DESIGN_REFERENCE_V1_SCHEMA_VERSION,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+  aiGraderReportBundleV03Schema,
+} = require("@tenkings/shared");
+
+const V03_ASSET_SHA = "c".repeat(64);
+
+function designReferencePng(width, height) {
+  function crc32(bytes) {
+    let crc = 0xffffffff;
+    for (const value of bytes) {
+      crc ^= value;
+      for (let bit = 0; bit < 8; bit += 1) {
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+      }
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+  function chunk(type, data) {
+    const typeBytes = Buffer.from(type, "ascii");
+    const output = Buffer.alloc(12 + data.length);
+    output.writeUInt32BE(data.length, 0);
+    typeBytes.copy(output, 4);
+    data.copy(output, 8);
+    output.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), 8 + data.length);
+    return output;
+  }
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 6, 0, 0, 0], 8);
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(Buffer.alloc((width * 4 + 1) * height))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function sampleV03Confidence() {
+  return { score: 0.98, band: "high", validEvidenceCoverage: 0.99, warnings: [] };
+}
+
+function sampleV03CalibrationProfile() {
+  return {
+    schemaVersion: MATHEMATICAL_CALIBRATION_PROFILE_V1_SCHEMA_VERSION,
+    profileId: "fixed-rig-calibration-v1",
+    calibrationVersion: "fixed-rig-calibration-2026-07-18",
+    rigId: "dell-fixed-rig-1",
+    isCalibrated: true,
+    status: "finalized",
+    coordinateFrame: "normalized_card_portrait_pixels",
+    thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+    thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+    artifactId: "calibration-artifact-v1",
+    artifactSha256: V03_ASSET_SHA,
+    finalizedAt: "2026-07-18T18:00:00.000Z",
+    normalizedWidthPx: 1200,
+    normalizedHeightPx: 1680,
+    mmPerPixelX: 63.5 / 1200,
+    mmPerPixelY: 88.9 / 1680,
+    scaleRelativeU95: 0.002,
+    scaleSampleCount: 20,
+    lensCalibrationViewCount: 20,
+    lensResidualPx: 0.2,
+    normalizationRegistrationResidualPx: 0.4,
+    normalizationRegistrationSampleCount: 20,
+    repeatedPlacementCount: 20,
+    repeatedPlacementU95Mm: 0.02,
+    segmentationBoundaryU95Px: 0.8,
+    segmentationBoundarySampleCount: 20,
+    measurementRepeatability: {
+      linearMm: { sampleCount: 20, u95: 0.02 },
+      areaMm2: { sampleCount: 20, u95: 0.01 },
+      reliefIndex: { sampleCount: 20, u95: 0.01 },
+      roughnessIndex: { sampleCount: 20, u95: 0.01 },
+      colorDeltaE: { sampleCount: 20, u95: 0.1 },
+    },
+    channels: Array.from({ length: 8 }, (_, index) => {
+      const angle = (2 * Math.PI * index) / 8;
+      return {
+        channelIndex: index + 1,
+        direction: { x: Math.cos(angle), y: Math.sin(angle) },
+        directionConfidence: 0.95,
+        directionMeasurementSampleCount: 5,
+        directionAngularU95Degrees: 1.125,
+        directionSourceRadiusMm: 75,
+        directionPointU95Mm: 0.1,
+        flatFieldArtifactId: `flat-field-${index + 1}`,
+        flatFieldArtifactSha256: V03_ASSET_SHA,
+        flatFieldFrameCount: 5,
+        darkControlFrameCount: 5,
+        maxFlatFieldDeviationFraction: 0.02,
+        illuminationPatternArtifactId: `illumination-pattern-${index + 1}`,
+        illuminationPatternArtifactSha256: V03_ASSET_SHA,
+        illuminationPatternFrameCount: 5,
+        responseScale: 1,
+      };
+    }),
+  };
+}
+
+function sampleV03CenteringAxis(axis) {
+  return {
+    axis,
+    marginAName: axis === "horizontal" ? "left" : "top",
+    marginBName: axis === "horizontal" ? "right" : "bottom",
+    marginAPx: 100,
+    marginBPx: 100,
+    marginAMm: 5.2917,
+    marginBMm: 5.2917,
+    measuredDifferenceMm: 0,
+    u95Mm: 0.02,
+    u95Components: {
+      pixelMmScale: 0,
+      lensDistortion: 0,
+      normalizationRegistration: 0,
+      repeatedPlacement: 0.02,
+      segmentationBoundary: 0,
+      measurementRepeatability: 0,
+      lightingChannelConfidence: 0,
+    },
+    effectiveDifferenceMm: 0,
+    grade10ToleranceMm: 0.05,
+    balanceRatio: 100,
+    score: 10,
+  };
+}
+
+function sampleV03OuterCutGeometry(side) {
+  const rawAllOnAssetId = `${side}/raw-all-on.png`;
+  const normalizedAllOnAssetId = `${side}/all-on.png`;
+  const contour = Array.from({ length: 256 }, (_, index) => ({
+    ...[
+      { x: 0, y: 0 },
+      { x: 1200, y: 0 },
+      { x: 1200, y: 1680 },
+      { x: 0, y: 1680 },
+    ][index % 4],
+  }));
+  const observedArtifact = {
+    schemaVersion: "fixed-rig-raw-bound-observed-outer-cut-artifact-v1",
+    detectorId: "fixed_rig_raw_outer_cut_detector_v1",
+    detectorVersion: "fixed_rig_raw_outer_cut_detector_v1.0.0",
+    rawCoordinateFrame: "auto_oriented_raw_image_pixels",
+    normalizedCoordinateFrame: "normalized_card_portrait_pixels",
+    rawAllOnAssetId,
+    rawAllOnAssetSha256: V03_ASSET_SHA,
+    rawAllOnScalarPlaneSha256: V03_ASSET_SHA,
+    rawWidthPx: 1200,
+    rawHeightPx: 1680,
+    normalizedAllOnAssetId,
+    normalizedAllOnAssetSha256: V03_ASSET_SHA,
+    normalizedWidthPx: 1200,
+    normalizedHeightPx: 1680,
+    rawToNormalizedTransformSha256: V03_ASSET_SHA,
+    calibrationProfileId: "fixed-rig-calibration-v1",
+    calibrationVersion: "fixed-rig-calibration-2026-07-18",
+    calibrationSha256: V03_ASSET_SHA,
+    pixelsPerMmX: 1200 / 63.5,
+    pixelsPerMmY: 1680 / 88.9,
+    segmentationBoundaryU95Px: 0.8,
+    intendedBoundaryArtifactSha256: V03_ASSET_SHA,
+    intendedBoundaryProfileId: "standard_sports_card_63_50x88_90_r3_18_v1",
+    intendedBoundaryProfileVersion: "1.0.0",
+    rawContour: contour,
+    normalizedContour: contour,
+    crossSectionCount: 256,
+    supportedCrossSectionCount: 256,
+    minimumGradientDigitalUnits: 8,
+    meanDetectedGradientDigitalUnits: 40,
+    minimumDetectedGradientDigitalUnits: 30,
+    confidence: 0.95,
+    u95ComponentsMm: { calibratedSegmentationBoundary: 0.04, rawDetectorLocalization: 0.03 },
+    u95Mm: 0.05,
+    artifactSha256: V03_ASSET_SHA,
+  };
+  return {
+    coordinateFrame: "normalized_card_portrait_pixels",
+    observedContourSha256: V03_ASSET_SHA,
+    intendedContourSha256: V03_ASSET_SHA,
+    intendedBoundaryProfileId: observedArtifact.intendedBoundaryProfileId,
+    intendedBoundaryProfileVersion: observedArtifact.intendedBoundaryProfileVersion,
+    observedContourPointCount: 256,
+    intendedContourPointCount: 4,
+    observedContourDetectorId: observedArtifact.detectorId,
+    observedContourDetectorVersion: observedArtifact.detectorVersion,
+    rawAllOnAssetId,
+    rawAllOnAssetSha256: V03_ASSET_SHA,
+    rawAllOnScalarPlaneSha256: V03_ASSET_SHA,
+    rawToNormalizedTransformSha256: V03_ASSET_SHA,
+    normalizedAllOnAssetId,
+    normalizedAllOnAssetSha256: V03_ASSET_SHA,
+    boundaryConfidence: 0.95,
+    boundaryU95Mm: 0.05,
+    observedArtifact,
+  };
+}
+
+function sampleV03CenteringSide(side) {
+  return {
+    side,
+    profile: "printed_border_v1",
+    score: 10,
+    horizontal: sampleV03CenteringAxis("horizontal"),
+    vertical: sampleV03CenteringAxis("vertical"),
+    outerCutContourAssetId: `${side}/outer-cut-contour.png`,
+    printedDesignContourAssetId: `${side}/printed-design-contour.png`,
+    measurementOverlayAssetId: `${side}/centering-overlay.png`,
+    registration: {
+      profile: "printed_border_v1",
+      transformType: "robust_line_fit",
+      transformMatrix: [1, 0, 0, 0, 1, 0],
+      registrationResidualPx: 0.4,
+      inlierCount: 100,
+      inlierFraction: 0.9,
+      confidence: 0.95,
+    },
+    outerCutGeometryEvidence: sampleV03OuterCutGeometry(side),
+    evidenceAssetIds: [
+      `${side}/outer-cut-contour.png`,
+      `${side}/printed-design-contour.png`,
+      `${side}/centering-overlay.png`,
+      `${side}/raw-all-on.png`,
+      `${side}/all-on.png`,
+    ],
+  };
+}
+
+function sampleV03Location(side, location) {
+  return {
+    side,
+    location,
+    score: 10,
+    penalty: 0,
+    findingIds: [],
+    confidence: sampleV03Confidence(),
+  };
+}
+
+function sampleV03Element(element, locationScores = []) {
+  const formulas = {
+    centering: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.centering.frontBackFusion.formula,
+    corners: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.formula,
+    edges: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.formula,
+    surface: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surface.formula,
+  };
+  return {
+    score: 10,
+    startingScore: 10,
+    frontScore: 10,
+    backScore: 10,
+    aggregatePenalty: 0,
+    locationScores,
+    findingIds: [],
+    confidence: sampleV03Confidence(),
+    formula: formulas[element],
+    explanation: "No condition defect measured beyond U95 and the published Grade-10 tolerance.",
+  };
+}
+
+function sampleV03Asset(id, side, evidenceRole) {
+  return {
+    id,
+    kind: "report-image",
+    fileName: id.split("/").at(-1),
+    contentType: "image/png",
+    publicUrl: `/api/ai-grader/reports/report-v03-clean/assets/${id.replaceAll("/", "-")}`,
+    byteSize: 1,
+    checksumSha256: V03_ASSET_SHA,
+    side,
+    evidenceRole,
+  };
+}
+
+function sampleV03ObservationAssetId(element, side, location, role) {
+  return `${side}/${element}/${location}/${role}.png`;
+}
+
+function sampleV03ConditionObservation(element, side, location) {
+  return {
+    element,
+    side,
+    location,
+    regionId: `${side}-${element}-${location}`,
+    score: 10,
+    penalty: 0,
+    validEvidenceCoverage: 0.99,
+    usableDirectionalChannelCount: 8,
+    findingIds: [],
+    measurementIds: [],
+    roiAssetId: sampleV03ObservationAssetId(element, side, location, "roi"),
+    segmentationMaskAssetId: sampleV03ObservationAssetId(element, side, location, "segmentation"),
+    confidenceMaskAssetId: sampleV03ObservationAssetId(element, side, location, "confidence"),
+    illuminationMaskAssetId: sampleV03ObservationAssetId(element, side, location, "illumination"),
+    channelAssetIds: Array.from({ length: 8 }, (_, index) =>
+      `${side}/channels/channel-${index + 1}.png`),
+  };
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonicalJson(entry)]));
+  }
+  return value;
+}
+
+function sampleV03CalibrationBundleAuthority(profile) {
+  const members = [
+    { role: "calibration_profile", fileName: "mathematical-calibration-profile-v1.json", sha256: "1".repeat(64) },
+    { role: "physical_calibration_artifact", fileName: "mathematical-calibration-artifact-v1.json", sha256: "2".repeat(64) },
+    { role: "calibration_acceptance", fileName: "mathematical-calibration-acceptance-v1.json", sha256: "3".repeat(64) },
+    ...profile.channels.map((channel) => ({
+      role: "flat_field",
+      channelIndex: channel.channelIndex,
+      fileName: `flat-field-channel-${channel.channelIndex}-v1.json`,
+      sha256: channel.flatFieldArtifactSha256,
+    })),
+    { role: "illumination_pattern", fileName: "illumination-pattern-v1.json", sha256: profile.channels[0].illuminationPatternArtifactSha256 },
+  ];
+  return {
+    schemaVersion: "ten-kings-mathematical-calibration-bundle-v1",
+    bundleManifestSha256: "4".repeat(64),
+    sourceCaptureManifestSha256: "5".repeat(64),
+    memberLedgerSha256: aiGraderSha256(Buffer.from(JSON.stringify(canonicalJson(members)))),
+    members,
+  };
+}
+
+function sampleV03Bundle() {
+  const cornerNames = ["top_left", "top_right", "bottom_right", "bottom_left"];
+  const edgeNames = ["top", "right", "bottom", "left"];
+  const observations = {
+    corners: ["front", "back"].flatMap((side) =>
+      cornerNames.map((location) => sampleV03ConditionObservation("corners", side, location))),
+    edges: ["front", "back"].flatMap((side) =>
+      edgeNames.map((location) => sampleV03ConditionObservation("edges", side, location))),
+  };
+  const publicAssets = ["front", "back"].flatMap((side) => [
+    {
+      ...sampleV03Asset(`${side}/normalized-card.png`, side, "normalized_card"),
+      widthPx: 1200,
+      heightPx: 1680,
+    },
+    sampleV03Asset(`${side}/outer-cut-contour.png`, side, "outer_cut_contour"),
+    sampleV03Asset(`${side}/printed-design-contour.png`, side, "printed_design_contour"),
+    sampleV03Asset(`${side}/centering-overlay.png`, side, "centering_overlay"),
+    sampleV03Asset(`${side}/raw-all-on.png`, side, "other_evidence"),
+    sampleV03Asset(`${side}/all-on.png`, side, "other_evidence"),
+    ...Array.from({ length: 8 }, (_, index) =>
+      sampleV03Asset(`${side}/channels/channel-${index + 1}.png`, side, "directional_channel")),
+    ...[...cornerNames.map((location) => ["corners", location]), ...edgeNames.map((location) => ["edges", location])]
+      .flatMap(([element, location]) => [
+        sampleV03Asset(sampleV03ObservationAssetId(element, side, location, "roi"), side, "roi_crop"),
+        sampleV03Asset(sampleV03ObservationAssetId(element, side, location, "segmentation"), side, "segmentation_mask"),
+        sampleV03Asset(sampleV03ObservationAssetId(element, side, location, "confidence"), side, "confidence_mask"),
+        sampleV03Asset(sampleV03ObservationAssetId(element, side, location, "illumination"), side, "illumination_mask"),
+      ]),
+  ]);
+  const calibrationProfile = sampleV03CalibrationProfile();
+  return {
+    schemaVersion: "ai-grader-report-bundle-v0.3",
+    generatedAt: "2026-07-18T19:00:00.000Z",
+    reportId: "report-v03-clean",
+    certifiedClaim: false,
+    cardIdentity: {
+      title: "Calibration test card",
+      sideCount: 2,
+      tenantId: "tenant-1",
+      setId: "set-1",
+      programId: "program-1",
+      set: "Calibration Set",
+      cardNumber: "42",
+      variantId: null,
+      parallelId: null,
+    },
+    gradingStandard: {
+      id: "mathematical_calibration_v1",
+      thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+      thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+      algorithmVersion: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.algorithmVersion,
+      defectFindingSchemaVersion: AI_GRADER_DEFECT_FINDING_V2_VERSION,
+      designReferenceSchemaVersion: MATHEMATICAL_DESIGN_REFERENCE_V1_SCHEMA_VERSION,
+    },
+    productionRelease: {
+      finalGrade: {
+        status: "final_mathematical_grade_v1",
+        overall: 10,
+        labelGrade: 10,
+        weightedGrade: 10,
+        weakestElement: "centering",
+        weakestScore: 10,
+        weakestElementCap: 10,
+        weights: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weights,
+        weightedFormula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weightedFormula,
+        elements: {
+          centering: sampleV03Element("centering"),
+          corners: sampleV03Element("corners", ["front", "back"].flatMap((side) =>
+            cornerNames.map((name) => sampleV03Location(side, name)))),
+          edges: sampleV03Element("edges", ["front", "back"].flatMap((side) =>
+            edgeNames.map((name) => sampleV03Location(side, name)))),
+          surface: sampleV03Element("surface"),
+        },
+        confidence: sampleV03Confidence(),
+        formula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.finalFormula,
+        whyNot10: [],
+      },
+      label: {
+        certId: "TK-report-v03-clean",
+        labelGradeText: "10.0",
+        publicReportUrl: "/ai-grader/reports/report-v03-clean",
+        qrPayloadUrl: "/ai-grader/reports/report-v03-clean",
+      },
+      publication: { publicReportUrl: "/ai-grader/reports/report-v03-clean" },
+    },
+    calibrationProfile,
+    calibrationBundleAuthority: sampleV03CalibrationBundleAuthority(calibrationProfile),
+    designReferences: [],
+    centeringEvidence: {
+      front: sampleV03CenteringSide("front"),
+      back: sampleV03CenteringSide("back"),
+      fusedScore: 10,
+      deduction: 0,
+      formula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.centering.frontBackFusion.formula,
+      balanceCurve: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.centering.balanceCurve,
+    },
+    conditionObservationEvidence: observations,
+    defectFindings: [],
+    deductionLedger: {
+      schemaVersion: MATHEMATICAL_DEDUCTION_LEDGER_V1_SCHEMA_VERSION,
+      thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+      thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+      startingScores: { centering: 10, corners: 10, edges: 10, surface: 10 },
+      entries: [],
+    },
+    evidenceQualityLimitations: [],
+    publicAssets,
+  };
+}
+
+function sampleV03BundleWithDesignReference() {
+  const bundle = sampleV03Bundle();
+  const bytes = designReferencePng(2, 2);
+  const artifactSha256 = aiGraderSha256(bytes);
+  const artifactId = "front-design-reference-v1.png";
+  const reference = {
+    schemaVersion: MATHEMATICAL_DESIGN_REFERENCE_V1_SCHEMA_VERSION,
+    designReferenceId: "design-reference-row-v1",
+    profile: "registered_design_template_v1",
+    tenantId: bundle.cardIdentity.tenantId,
+    setId: bundle.cardIdentity.setId,
+    programId: bundle.cardIdentity.programId,
+    cardNumber: bundle.cardIdentity.cardNumber,
+    variantId: bundle.cardIdentity.variantId,
+    parallelId: bundle.cardIdentity.parallelId,
+    side: "front",
+    artifactId,
+    artifactSha256,
+    version: 1,
+    widthPx: 2,
+    heightPx: 2,
+    intendedPrintBoundary: [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ],
+    approvedBy: "design-approver-1",
+    approvedAt: "2026-07-18T17:30:00.000Z",
+  };
+  bundle.designReferences = [reference];
+  bundle.publicAssets.push({
+    ...sampleV03Asset(artifactId, "front", "other_evidence"),
+    checksumSha256: artifactSha256,
+    widthPx: 2,
+    heightPx: 2,
+  });
+  const row = {
+    id: reference.designReferenceId,
+    tenantId: reference.tenantId,
+    setId: reference.setId,
+    programId: reference.programId,
+    cardNumber: reference.cardNumber,
+    variantId: null,
+    variantKey: "",
+    parallelId: null,
+    parallelKey: "",
+    side: reference.side,
+    profile: reference.profile,
+    version: reference.version,
+    status: "approved",
+    artifactStorageKey: "ai-grader/design-references/set-1/card-42/front-v1.png",
+    artifactSha256,
+    artifactMimeType: "image/png",
+    artifactWidthPx: 2,
+    artifactHeightPx: 2,
+    intendedDesignBoundary: {
+      schemaVersion: "ai-grader-intended-design-boundary-v1",
+      coordinateFrame: "design_reference_pixels",
+      contour: [[0, 0], [2, 0], [2, 2], [0, 2]],
+    },
+    provenance: {
+      schemaVersion: "ai-grader-design-reference-provenance-v1",
+      sourceKind: "ten_kings_controlled_reference",
+      approvedForPrecisionReference: true,
+    },
+    transformAcceptanceMetadata: {
+      schemaVersion: "ai-grader-design-reference-transform-acceptance-v1",
+      registrationAlgorithmVersion: "registered-design-registration-v1",
+      maxResidualPx: 1,
+      minInlierFraction: 0.9,
+    },
+    createdByUserId: "design-creator-1",
+    approvedByUserId: reference.approvedBy,
+    approvedAt: new Date(reference.approvedAt),
+    retiredByUserId: null,
+    retiredAt: null,
+    retirementReason: null,
+    createdAt: new Date("2026-07-18T17:00:00.000Z"),
+    updatedAt: new Date(reference.approvedAt),
+  };
+  return { bundle, reference, row, bytes };
+}
+
+function sampleV03ProductionRelease(bundle) {
+  const elementScores = Object.fromEntries(
+    Object.entries(bundle.productionRelease.finalGrade.elements).map(([element, value]) => [
+      element,
+      value.score,
+    ]),
+  );
+  return {
+    schemaVersion: "ai-grader-mathematical-production-release-v1",
+    generatedAt: bundle.generatedAt,
+    gradingSessionId: "station-session-v03",
+    reportId: bundle.reportId,
+    reportStatus: "final_ai_grader_report_v1",
+    finalStatus: "final_grade_computed",
+    finalGradeComputed: true,
+    certifiedClaim: false,
+    certificateGenerated: false,
+    labelDataGenerated: true,
+    qrPayloadGenerated: true,
+    gates: [{
+      id: "strict_mathematical_v1_contract",
+      status: "pass",
+      reason: "Strict Mathematical V1 report validated.",
+      evidenceRefs: bundle.publicAssets.map((asset) => asset.id),
+    }],
+    finalGrade: structuredClone(bundle.productionRelease.finalGrade),
+    operatorFinalization: {
+      operatorId: "operator-v03",
+      finalizedAt: bundle.generatedAt,
+      warningsAccepted: false,
+      acceptedWarningGateIds: [],
+    },
+    publication: {
+      status: "local_bundle_ready",
+      reportId: bundle.reportId,
+      publicReportUrl: bundle.productionRelease.label.publicReportUrl,
+      qrPayloadUrl: bundle.productionRelease.label.qrPayloadUrl,
+    },
+    label: {
+      ...structuredClone(bundle.productionRelease.label),
+      status: "label_data_ready",
+      labelVersion: "ten-kings-ai-grader-label-v1",
+      reportId: bundle.reportId,
+      certificateStatus: "report_id_issued_not_certified",
+      elementScores,
+      cardIdentity: structuredClone(bundle.cardIdentity),
+      certifiedClaim: false,
+    },
+    cardIdentity: structuredClone(bundle.cardIdentity),
+  };
+}
+
+function trustedV03CalibrationSnapshot(bundle, overrides = {}) {
+  const profile = bundle.calibrationProfile;
+  return {
+    id: "calibration-snapshot-v03",
+    rigId: profile.rigId,
+    calibrationType: "MATHEMATICAL_GRADING_V1",
+    mathematicalProfileId: profile.profileId,
+    mathematicalCalibrationVersion: profile.calibrationVersion,
+    mathematicalProfileFinalizedAt: new Date(profile.finalizedAt),
+    mathematicalArtifactId: profile.artifactId,
+    mathematicalArtifactSha256: profile.artifactSha256,
+    mathematicalThresholdSetId: bundle.gradingStandard.thresholdSetId,
+    mathematicalThresholdSetHash: bundle.gradingStandard.thresholdSetHash,
+    mathematicalBundleSchemaVersion: bundle.calibrationBundleAuthority.schemaVersion,
+    mathematicalBundleManifestSha256: bundle.calibrationBundleAuthority.bundleManifestSha256,
+    mathematicalSourceCaptureManifestSha256:
+      bundle.calibrationBundleAuthority.sourceCaptureManifestSha256,
+    mathematicalMemberLedgerSha256: bundle.calibrationBundleAuthority.memberLedgerSha256,
+    artifactChecksums: {
+      calibrationBundleAuthority: structuredClone(bundle.calibrationBundleAuthority),
+    },
+    trustStatus: "TRUSTED",
+    trustedAt: new Date("2026-07-18T18:30:00.000Z"),
+    validityStartsAt: new Date(profile.finalizedAt),
+    validityEndsAt: null,
+    supersededById: null,
+    rig: { tenantId: "tenant-1", status: "ACTIVE" },
+    ...overrides,
+  };
+}
 
 function publicStorageLocatorPaths(value, path = "$") {
   if (Array.isArray(value)) return value.flatMap((entry, index) => publicStorageLocatorPaths(entry, `${path}[${index}]`));
@@ -437,6 +1055,11 @@ function createMockDelegate(name, calls, id, findUniqueValue, updateManyValue) {
     },
     async findMany(args) {
       calls.push({ delegate: name, method: "findMany", args });
+      if (name === "calibrationSnapshot" && findUniqueValue !== undefined) {
+        const value = typeof findUniqueValue === "function" ? findUniqueValue(args) : findUniqueValue;
+        if (Array.isArray(value)) return value;
+        return value ? [value] : [];
+      }
       if (name === "aiGraderLabel" && findUniqueValue !== undefined) {
         const value = typeof findUniqueValue === "function" ? findUniqueValue(args) : findUniqueValue;
         return value ? [value] : [];
@@ -489,6 +1112,25 @@ function createMockProductionDb(options = {}) {
     aiGraderLabel: createMockDelegate("aiGraderLabel", calls, "db-label-1", options.existingLabel),
     aiGraderPublication: createMockDelegate("aiGraderPublication", calls, "db-publication-1"),
     aiGraderValuation: createMockDelegate("aiGraderValuation", calls, "db-valuation-1", options.existingValuation),
+    ...(Object.prototype.hasOwnProperty.call(options, "calibrationSnapshotRows")
+      ? {
+          calibrationSnapshot: createMockDelegate(
+            "calibrationSnapshot", calls, "calibration-snapshot-v03", options.calibrationSnapshotRows,
+          ),
+        }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(options, "designReferenceRow")
+      ? {
+          aiGraderDesignReference: {
+            async findFirst(args) {
+              calls.push({ delegate: "aiGraderDesignReference", method: "findFirst", args });
+              return typeof options.designReferenceRow === "function"
+                ? options.designReferenceRow(args)
+                : options.designReferenceRow;
+            },
+          },
+        }
+      : {}),
     cardAsset: createMockDelegate("cardAsset", calls, "card-asset-1", confirmedCardAsset),
     item: createMockDelegate("item", calls, "item-1", options.item),
   };
@@ -735,7 +1377,7 @@ test("production storage plan rejects dangling findings and unsafe or duplicate 
       reportBundle: sampleBundle({ assets: [{ ...baseAsset, id: "C:\\capture\\image.png" }] }),
       productionRelease: sampleRelease(),
     }),
-    /unsafe public image asset ID/,
+    /unsafe public (?:image|evidence) asset ID/,
   );
   assert.throws(
     () => buildAiGraderProductionStoragePlan({
@@ -747,7 +1389,7 @@ test("production storage plan rejects dangling findings and unsafe or duplicate 
       }),
       productionRelease: sampleRelease(),
     }),
-    /duplicate public image asset IDs/,
+    /duplicate public (?:image|evidence) asset IDs/,
   );
   assert.throws(
     () => buildAiGraderProductionStoragePlan({
@@ -1302,6 +1944,16 @@ test("public report read validates canonical storage locators, then recursively 
   assert.doesNotMatch(publicV02Serialized, /internal-front-|internal-report-bundle|internal-private-object|internal-openai-operation|internal-provider-id|internal-bridge|internal-cookie|internal-authorization-header|cHJpdmF0ZS1vcGFxdWUtcGF5bG9hZA|cHJpdmF0ZS1lbmNvZGVkLWltYWdl|private-hidden-object|internal-header-cookie|internal-openai-handle|internal-serp-reference|internal-bucket|internal-source-key|report-bundle\.json|production-release\.json|\/(?:etc|var|usr|proc|dev|bin)\/internal-private|synthetic-internal-(?:bearer|api-key)-value|c3ludGhldGljLWludGVybmFsLWJhc2ljLXZhbHVl|iVBORw0KGgo|aW50ZXJuYWwtb3BhcXVlLWVuY29kZWQ/);
   assert.deepEqual(persistedV02, persistedV02BeforeRead, "the canonical persisted bundle remains byte-for-byte equivalent JSON");
 
+  const historicalScoreV02 = structuredClone(persistedV02);
+  historicalScoreV02.productionRelease.finalGrade.overall = 0;
+  historicalScoreV02.productionRelease.finalGrade.elements.surface.score = 0.5;
+  const historicalScoreRead = sanitizeAiGraderPublicReportBundleForRead(historicalScoreV02, {
+    expectedReportId: "report-1",
+    publicUrlFor: (storageKey) => `https://collect.tenkings.co/storage/${storageKey}`,
+  });
+  assert.equal(historicalScoreRead?.productionRelease.finalGrade.overall, 0);
+  assert.equal(historicalScoreRead?.productionRelease.finalGrade.elements.surface.score, 0.5);
+
   const legacyAsset = {
     id: "legacy/front.png",
     kind: "report-image",
@@ -1458,6 +2110,473 @@ test("public report read keeps v0.1 compatibility and rejects corrupt v0.2 proje
       publicUrlFor: (storageKey) => `https://collect.tenkings.co/storage/${storageKey}`,
     }),
     undefined,
+  );
+});
+
+test("strict calibrated v0.3 storage and public reads preserve the complete mathematical bundle", () => {
+  const source = sampleV03Bundle();
+  const parsedSource = aiGraderReportBundleV03Schema.safeParse(source);
+  assert.equal(
+    parsedSource.success,
+    true,
+    "fixture must stay coordinated with the shared strict v0.3 contract",
+  );
+  assert.deepEqual(
+    sampleV03ProductionRelease(source).finalGrade,
+    parsedSource.success ? parsedSource.data.productionRelease.finalGrade : undefined,
+    "the separate release fixture must preserve the strict parsed Mathematical V1 grade",
+  );
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: source,
+    productionRelease: sampleV03ProductionRelease(source),
+  });
+  const stored = JSON.parse(
+    plan.artifacts.find((entry) => entry.artifactClass === "report_bundle")?.body ?? "null",
+  );
+
+  assert.equal(stored.schemaVersion, "ai-grader-report-bundle-v0.3");
+  assert.equal(stored.productionRelease.finalGrade.status, "final_mathematical_grade_v1");
+  assert.deepEqual(stored.gradingStandard, source.gradingStandard);
+  assert.deepEqual(stored.calibrationProfile, source.calibrationProfile);
+  assert.deepEqual(stored.centeringEvidence, source.centeringEvidence);
+  assert.deepEqual(stored.defectFindings, source.defectFindings);
+  assert.deepEqual(stored.deductionLedger, source.deductionLedger);
+  assert.deepEqual(stored.evidenceQualityLimitations, source.evidenceQualityLimitations);
+  assert.equal(Object.hasOwn(stored, "assets"), false, "calibrated V1 is never projected into the v0.2 assets alias");
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(stored).success, true);
+
+  const confirmPlan = buildAiGraderConfirmCardReferencePlan({
+    reportBundle: source,
+    productionRelease: sampleV03ProductionRelease(source),
+  });
+  assert.deepEqual(
+    confirmPlan.imageReferences.map((reference) => reference.sourceAssetSide),
+    ["front", "back"],
+  );
+
+  const publicRead = sanitizeAiGraderPublicReportBundleForRead(stored, {
+    expectedReportId: source.reportId,
+    publicUrlFor: (storageKey) => `https://collect.tenkings.co/storage/${storageKey}`,
+  });
+  assert.equal(publicRead?.schemaVersion, "ai-grader-report-bundle-v0.3");
+  assert.equal(publicRead?.productionRelease.finalGrade.overall, 10);
+  assert.deepEqual(publicRead?.deductionLedger, source.deductionLedger);
+  assert.deepEqual(publicRead?.centeringEvidence, source.centeringEvidence);
+  assert.equal(publicRead?.publicAssets.length, source.publicAssets.length);
+  assert.equal(
+    publicRead?.publicAssets.every((asset) => !Object.hasOwn(asset, "storageKey")),
+    true,
+    "public reads preserve logical evidence while removing private storage locators",
+  );
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(publicRead).success, true);
+});
+
+test("calibrated v0.3 corruption is rejected instead of silently falling back to V0", () => {
+  const corruptSource = sampleV03Bundle();
+  corruptSource.productionRelease.finalGrade.elements.surface.score = 0;
+  assert.throws(
+    () => buildAiGraderProductionStoragePlan({
+      reportBundle: corruptSource,
+      productionRelease: sampleV03ProductionRelease(corruptSource),
+    }),
+    /v0\.3 validation failed/,
+  );
+
+  const validSource = sampleV03Bundle();
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle: validSource,
+    productionRelease: sampleV03ProductionRelease(validSource),
+  });
+  const corruptStored = JSON.parse(
+    plan.artifacts.find((entry) => entry.artifactClass === "report_bundle")?.body ?? "null",
+  );
+  corruptStored.productionRelease.finalGrade.elements.surface.score = 0;
+  assert.equal(
+    sanitizeAiGraderPublicReportBundleForRead(corruptStored, {
+      expectedReportId: validSource.reportId,
+      publicUrlFor: (storageKey) => `https://collect.tenkings.co/storage/${storageKey}`,
+    }),
+    undefined,
+  );
+
+  const mismatchedRelease = sampleV03ProductionRelease(validSource);
+  mismatchedRelease.finalGrade.elements.surface.score = 9;
+  assert.throws(
+    () => buildAiGraderProductionStoragePlan({
+      reportBundle: validSource,
+      productionRelease: mismatchedRelease,
+    }),
+    /exact Mathematical V1 release/,
+  );
+});
+
+test("calibrated V1 release boundary rejects mixed schemas, statuses, labels, and public links", () => {
+  const reportBundle = sampleV03Bundle();
+  const cases = [
+    ["legacy release schema", (release) => { release.schemaVersion = "ai-grader-production-release-v0.1"; }],
+    ["wrong final status", (release) => { release.finalStatus = "insufficient_evidence"; }],
+    ["wrong Label V1 version", (release) => { release.label.labelVersion = "ten-kings-ai-grader-label-v0"; }],
+    ["wrong label report URL", (release) => { release.label.publicReportUrl = "/ai-grader/reports/other"; }],
+    ["wrong publication QR URL", (release) => { release.publication.qrPayloadUrl = "/ai-grader/reports/other"; }],
+  ];
+  for (const [name, mutate] of cases) {
+    const release = sampleV03ProductionRelease(reportBundle);
+    mutate(release);
+    assert.throws(
+      () => buildAiGraderProductionStoragePlan({ reportBundle, productionRelease: release }),
+      /exact Mathematical V1 release/,
+      name,
+    );
+  }
+});
+
+test("immutable Publish authority seals the complete Mathematical V1 calibration and condition evidence", () => {
+  const reportBundle = sampleV03Bundle();
+  const productionRelease = sampleV03ProductionRelease(reportBundle);
+  const authority = buildAiGraderPublishAuthorityRecord({ reportBundle, productionRelease });
+
+  const changedCalibrationAuthority = structuredClone(reportBundle);
+  changedCalibrationAuthority.calibrationBundleAuthority.bundleManifestSha256 = "a".repeat(64);
+  const calibrationMutationAuthority = buildAiGraderPublishAuthorityRecord({
+    reportBundle: changedCalibrationAuthority,
+    productionRelease,
+  });
+  assert.notEqual(calibrationMutationAuthority.digestSha256, authority.digestSha256);
+
+  const changedConditionEvidence = structuredClone(reportBundle);
+  changedConditionEvidence.conditionObservationEvidence.corners[0].validEvidenceCoverage = 0.98;
+  const conditionMutationAuthority = buildAiGraderPublishAuthorityRecord({
+    reportBundle: changedConditionEvidence,
+    productionRelease,
+  });
+  assert.notEqual(conditionMutationAuthority.digestSha256, authority.digestSha256);
+  assert.deepEqual(
+    authority.projection.report.calibrationBundleAuthority,
+    reportBundle.calibrationBundleAuthority,
+  );
+  assert.deepEqual(
+    authority.projection.report.conditionObservationEvidence,
+    reportBundle.conditionObservationEvidence,
+  );
+});
+
+test("calibrated V1 persistence rejects a valid stored report body that differs from the in-memory report", async () => {
+  const reportBundle = sampleV03Bundle();
+  const productionRelease = sampleV03ProductionRelease(reportBundle);
+  const storedBundle = structuredClone(reportBundle);
+  storedBundle.conditionObservationEvidence.edges[0].validEvidenceCoverage = 0.98;
+  const storagePlan = buildAiGraderProductionStoragePlan({
+    reportBundle: storedBundle,
+    productionRelease: sampleV03ProductionRelease(storedBundle),
+  });
+  const { db, calls } = createMockProductionDb();
+
+  await assert.rejects(
+    () => persistAiGraderProductionRelease(db, {
+      tenantId: "tenant-1",
+      reportBundle,
+      productionRelease,
+      storagePlan,
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+      persistedAt: "2026-07-18T19:00:00.000Z",
+    }),
+    (error) => error?.code === "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
+  );
+  assert.equal(calls.some((call) => call.method === "upsert" || call.method === "updateMany"), false);
+});
+
+test("Mathematical V1 calibration readiness is not required for historical bundles", async () => {
+  let queried = false;
+  const readiness = await readAiGraderMathematicalCalibrationReadiness({
+    calibrationSnapshot: {
+      async findMany() {
+        queried = true;
+        return [];
+      },
+    },
+  }, {
+    tenantId: "tenant-1",
+    reportBundle: sampleBundle(),
+    at: "2026-07-18T19:00:00.000Z",
+  });
+
+  assert.deepEqual(readiness, { required: false, ready: true, code: "not_required" });
+  assert.equal(queried, false, "historical V0 readability must not depend on the new snapshot schema");
+});
+
+test("Mathematical V1 calibration readiness requires one exact current trusted snapshot", async () => {
+  const bundle = sampleV03Bundle();
+  const at = new Date("2026-07-18T19:00:00.000Z");
+  let query;
+  const readiness = await readAiGraderMathematicalCalibrationReadiness({
+    calibrationSnapshot: {
+      async findMany(args) {
+        query = args;
+        return [trustedV03CalibrationSnapshot(bundle)];
+      },
+    },
+  }, {
+    tenantId: "tenant-1",
+    reportBundle: bundle,
+    at,
+  });
+
+  assert.equal(readiness.required, true);
+  assert.equal(readiness.ready, true);
+  assert.equal(readiness.code, "ready");
+  assert.equal(readiness.snapshotId, "calibration-snapshot-v03");
+  assert.deepEqual(readiness.identity, {
+    rigId: bundle.calibrationProfile.rigId,
+    profileId: bundle.calibrationProfile.profileId,
+    calibrationVersion: bundle.calibrationProfile.calibrationVersion,
+    profileFinalizedAt: new Date(bundle.calibrationProfile.finalizedAt),
+    artifactId: bundle.calibrationProfile.artifactId,
+    artifactSha256: bundle.calibrationProfile.artifactSha256,
+    thresholdSetId: bundle.gradingStandard.thresholdSetId,
+    thresholdSetHash: bundle.gradingStandard.thresholdSetHash,
+    bundleSchemaVersion: bundle.calibrationBundleAuthority.schemaVersion,
+    bundleManifestSha256: bundle.calibrationBundleAuthority.bundleManifestSha256,
+    sourceCaptureManifestSha256: bundle.calibrationBundleAuthority.sourceCaptureManifestSha256,
+    memberLedgerSha256: bundle.calibrationBundleAuthority.memberLedgerSha256,
+    calibrationBundleAuthority: bundle.calibrationBundleAuthority,
+  });
+  assert.equal(query.where.rigId, bundle.calibrationProfile.rigId);
+  assert.equal(query.where.calibrationType, "MATHEMATICAL_GRADING_V1");
+  assert.equal(query.where.mathematicalProfileId, bundle.calibrationProfile.profileId);
+  assert.equal(query.where.mathematicalCalibrationVersion, bundle.calibrationProfile.calibrationVersion);
+  assert.deepEqual(query.where.mathematicalProfileFinalizedAt, new Date(bundle.calibrationProfile.finalizedAt));
+  assert.equal(query.where.mathematicalArtifactId, bundle.calibrationProfile.artifactId);
+  assert.equal(query.where.mathematicalArtifactSha256, bundle.calibrationProfile.artifactSha256);
+  assert.equal(query.where.mathematicalThresholdSetId, bundle.gradingStandard.thresholdSetId);
+  assert.equal(query.where.mathematicalThresholdSetHash, bundle.gradingStandard.thresholdSetHash);
+  assert.equal(query.where.mathematicalBundleSchemaVersion, bundle.calibrationBundleAuthority.schemaVersion);
+  assert.equal(query.where.mathematicalBundleManifestSha256, bundle.calibrationBundleAuthority.bundleManifestSha256);
+  assert.equal(query.where.mathematicalSourceCaptureManifestSha256, bundle.calibrationBundleAuthority.sourceCaptureManifestSha256);
+  assert.equal(query.where.mathematicalMemberLedgerSha256, bundle.calibrationBundleAuthority.memberLedgerSha256);
+  assert.equal(query.where.trustStatus, "TRUSTED");
+  assert.deepEqual(query.where.rig, { is: { tenantId: "tenant-1", status: "ACTIVE" } });
+  assert.deepEqual(query.where.OR, [{ validityEndsAt: null }, { validityEndsAt: { gt: at } }]);
+  assert.equal(query.where.supersededById, null);
+  assert.equal(query.take, 2, "a duplicate exact match must be detected, never selected silently");
+});
+
+test("Mathematical V1 calibration readiness fails closed for invalid, absent, ambiguous, or contradictory evidence", async () => {
+  const bundle = sampleV03Bundle();
+  const at = "2026-07-18T19:00:00.000Z";
+  const invalid = structuredClone(bundle);
+  invalid.calibrationProfile.artifactSha256 = "not-a-sha256";
+  let invalidQueryCount = 0;
+  const invalidResult = await readAiGraderMathematicalCalibrationReadiness({
+    calibrationSnapshot: {
+      async findMany() {
+        invalidQueryCount += 1;
+        return [];
+      },
+    },
+  }, { tenantId: "tenant-1", reportBundle: invalid, at });
+  assert.equal(invalidResult.code, "invalid_report_bundle");
+  assert.equal(invalidQueryCount, 0);
+
+  const cases = [
+    ["schema_unavailable", undefined],
+    ["trusted_snapshot_missing", []],
+    ["trusted_snapshot_ambiguous", [
+      trustedV03CalibrationSnapshot(bundle),
+      trustedV03CalibrationSnapshot(bundle, { id: "calibration-snapshot-v03-duplicate" }),
+    ]],
+  ];
+  for (const [expectedCode, rows] of cases) {
+    const db = rows === undefined ? {} : {
+      calibrationSnapshot: { async findMany() { return rows; } },
+    };
+    const result = await readAiGraderMathematicalCalibrationReadiness(
+      db,
+      { tenantId: "tenant-1", reportBundle: bundle, at },
+    );
+    assert.equal(result.code, expectedCode);
+  }
+
+  const contradictions = [
+    { mathematicalArtifactSha256: "d".repeat(64) },
+    { mathematicalThresholdSetHash: "e".repeat(64) },
+    { mathematicalBundleManifestSha256: "e".repeat(64) },
+    { mathematicalMemberLedgerSha256: "e".repeat(64) },
+    { artifactChecksums: { calibrationBundleAuthority: {
+      ...bundle.calibrationBundleAuthority,
+      sourceCaptureManifestSha256: "e".repeat(64),
+    } } },
+    { trustStatus: "DRAFT", trustedAt: null },
+    { validityEndsAt: new Date("2026-07-18T18:59:59.999Z") },
+    { supersededById: "newer-snapshot" },
+    { rig: { tenantId: "other-tenant", status: "ACTIVE" } },
+    { rig: { tenantId: "tenant-1", status: "INACTIVE" } },
+  ];
+  for (const overrides of contradictions) {
+    const result = await readAiGraderMathematicalCalibrationReadiness({
+      calibrationSnapshot: {
+        async findMany() { return [trustedV03CalibrationSnapshot(bundle, overrides)]; },
+      },
+    }, { tenantId: "tenant-1", reportBundle: bundle, at });
+    assert.equal(result.code, "trusted_snapshot_integrity_mismatch", JSON.stringify(overrides));
+  }
+});
+
+test("calibrated V1 publication stops before authority reads or mutations without a trusted snapshot", async () => {
+  const reportBundle = sampleV03Bundle();
+  const productionRelease = sampleV03ProductionRelease(reportBundle);
+  const storagePlan = buildAiGraderProductionStoragePlan({ reportBundle, productionRelease });
+  const { db, calls } = createMockProductionDb({
+    reportBundle,
+    productionRelease,
+    calibrationSnapshotRows: [],
+  });
+
+  await assert.rejects(
+    () => persistAiGraderProductionRelease(db, {
+      tenantId: "tenant-1",
+      reportBundle,
+      productionRelease,
+      storagePlan,
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+      persistedAt: "2026-07-18T19:00:00.000Z",
+    }),
+    (error) => error?.code === "AI_GRADER_MATHEMATICAL_CALIBRATION_NOT_READY" && error?.statusCode === 409,
+  );
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "$queryRaw.$queryRaw", "calibrationSnapshot.findMany"],
+  );
+  assert.equal(calls.some((call) => call.method === "findUnique"), false);
+  assert.equal(calls.some((call) => call.method === "updateMany" || call.method === "upsert"), false);
+});
+
+test("calibrated V1 publication links the exact trusted snapshot to the durable report", async () => {
+  const reportBundle = sampleV03Bundle();
+  const productionRelease = sampleV03ProductionRelease(reportBundle);
+  const storagePlan = buildAiGraderProductionStoragePlan({ reportBundle, productionRelease });
+  const { db, calls } = createMockProductionDb({
+    reportBundle,
+    productionRelease,
+    calibrationSnapshotRows: [trustedV03CalibrationSnapshot(reportBundle)],
+    session: confirmedProductionSession({
+      gradingSessionId: productionRelease.gradingSessionId,
+      reportId: reportBundle.reportId,
+    }),
+    report: confirmedProductionReport({
+      reportId: reportBundle.reportId,
+      finalOverallGrade: 10,
+    }),
+  });
+
+  const result = await persistAiGraderProductionRelease(db, {
+    tenantId: "tenant-1",
+    reportBundle,
+    productionRelease,
+    storagePlan,
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    persistedAt: "2026-07-18T19:00:00.000Z",
+  });
+
+  assert.equal(result.reportId, reportBundle.reportId);
+  const reportUpdate = calls.find(
+    (call) => call.delegate === "aiGraderReport" && call.method === "updateMany",
+  );
+  assert.equal(reportUpdate.args.data.calibrationSnapshotId, "calibration-snapshot-v03");
+  const snapshotQuery = calls.find(
+    (call) => call.delegate === "calibrationSnapshot" && call.method === "findMany",
+  );
+  assert.equal(
+    snapshotQuery.args.where.mathematicalArtifactSha256,
+    reportBundle.calibrationProfile.artifactSha256,
+  );
+  assert.equal(
+    snapshotQuery.args.where.mathematicalThresholdSetHash,
+    reportBundle.gradingStandard.thresholdSetHash,
+  );
+});
+
+test("calibrated V1 publication rereads and exactly resolves every APPROVED design-reference artifact before mutation", async () => {
+  const fixture = sampleV03BundleWithDesignReference();
+  const reportBundle = fixture.bundle;
+  const productionRelease = sampleV03ProductionRelease(reportBundle);
+  const parsedDesignBundle = aiGraderReportBundleV03Schema.safeParse(reportBundle);
+  assert.equal(
+    parsedDesignBundle.success,
+    true,
+    parsedDesignBundle.success ? "" : JSON.stringify(parsedDesignBundle.error.issues),
+  );
+  const storagePlan = buildAiGraderProductionStoragePlan({ reportBundle, productionRelease });
+  const common = {
+    reportBundle,
+    productionRelease,
+    calibrationSnapshotRows: [trustedV03CalibrationSnapshot(reportBundle)],
+    designReferenceRow: fixture.row,
+    session: confirmedProductionSession({
+      gradingSessionId: productionRelease.gradingSessionId,
+      reportId: reportBundle.reportId,
+    }),
+    report: confirmedProductionReport({ reportId: reportBundle.reportId, finalOverallGrade: 10 }),
+  };
+  const passing = createMockProductionDb(common);
+  const result = await persistAiGraderProductionRelease(passing.db, {
+    tenantId: "tenant-1",
+    reportBundle,
+    productionRelease,
+    storagePlan,
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    persistedAt: "2026-07-18T19:00:00.000Z",
+  }, {
+    readDesignReferenceArtifactBytes: async (key) => {
+      assert.equal(key, fixture.row.artifactStorageKey);
+      return fixture.bytes;
+    },
+  });
+  assert.equal(result.reportId, reportBundle.reportId);
+  const exactQuery = passing.calls.find((call) =>
+    call.delegate === "aiGraderDesignReference" && call.method === "findFirst");
+  assert.deepEqual(exactQuery.args.where, {
+    tenantId: fixture.reference.tenantId,
+    setId: fixture.reference.setId,
+    programId: fixture.reference.programId,
+    cardNumber: fixture.reference.cardNumber,
+    variantId: null,
+    variantKey: "",
+    parallelId: null,
+    parallelKey: "",
+    side: "front",
+    profile: "registered_design_template_v1",
+    version: 1,
+    artifactSha256: fixture.reference.artifactSha256,
+    status: "approved",
+  });
+
+  const failing = createMockProductionDb(common);
+  await assert.rejects(
+    () => persistAiGraderProductionRelease(failing.db, {
+      tenantId: "tenant-1",
+      reportBundle,
+      productionRelease,
+      storagePlan,
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+      persistedAt: "2026-07-18T19:00:00.000Z",
+    }, {
+      readDesignReferenceArtifactBytes: async () =>
+        Buffer.concat([fixture.bytes, Buffer.from([0])]),
+    }),
+    (error) => error?.code === "AI_GRADER_DESIGN_REFERENCE_NOT_READY" &&
+      error?.statusCode === 409,
+  );
+  assert.equal(
+    failing.calls.some((call) =>
+      call.delegate === "aiGraderSession" &&
+      (call.method === "findUnique" || call.method === "updateMany")),
+    false,
+    "changed design-reference bytes must stop publication before durable Confirm reads or mutations",
   );
 });
 

@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   cinematicEvidenceImage,
   toAiGraderCinematicReport,
+  toAiGraderLegacyCinematicReportForRead,
 } from "../lib/aiGraderCinematicReport";
 import {
   resolveAiGraderCinematicReportPageProps,
@@ -182,6 +183,27 @@ test("cinematic adapter uses persisted v0.2 fields and never prototype report va
   assert.match(html, /AI Grade · Not a certified claim/);
   assert.doesNotMatch(html, /\b995\b|PRISTINE|OBSIDIAN|\b50\/50\b|14,208|Act II|Act III|>1\./);
   assert.doesNotMatch(html, /Legacy|Living Legacy|Journey|Crown Label/);
+});
+
+test("current cinematic parsing rejects sub-1 scores while explicit V0 reads preserve historical values", async () => {
+  const historical = publicBundle();
+  historical.productionRelease.finalGrade.overall = 0;
+  historical.productionRelease.finalGrade.elements.surface.score = 0.5;
+
+  assert.equal(toAiGraderCinematicReport(historical)?.grade, undefined);
+  const legacyRead = toAiGraderLegacyCinematicReportForRead(historical);
+  assert.equal(legacyRead?.grade?.score, 0);
+  assert.equal(legacyRead?.grade?.elements.find((element) => element.key === "surface")?.score, 0.5);
+
+  const nonLegacy = { ...historical, schemaVersion: "ai-grader-report-bundle-v0.3" };
+  assert.equal(toAiGraderLegacyCinematicReportForRead(nonLegacy)?.grade, undefined);
+
+  const page = await resolveAiGraderCinematicReportPageProps("historical-zero-score", {
+    publicReadsEnabled: () => true,
+    async readPublicBundle() { return { ...historical, reportId: "historical-zero-score" }; },
+    fixtureBundle: () => ({}),
+  });
+  assert.equal(page?.report.grade?.score, 0);
 });
 
 test("cinematic findings remain exact-image and side scoped", () => {

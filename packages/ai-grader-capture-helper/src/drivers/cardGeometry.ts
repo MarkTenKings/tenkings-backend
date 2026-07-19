@@ -9,6 +9,8 @@ export const STANDARD_CARD_WIDTH_INCHES = 2.5;
 export const STANDARD_CARD_HEIGHT_INCHES = 3.5;
 export const NORMALIZED_CARD_WIDTH_PIXELS = 1200;
 export const NORMALIZED_CARD_HEIGHT_PIXELS = 1680;
+export const CARD_GEOMETRY_RAW_TO_NORMALIZED_TRANSFORM_V1 =
+  "ten-kings-raw-to-normalized-card-transform-v1" as const;
 
 export type CardGeometrySide = "front" | "back";
 export type CardPlacementState = "not_detected" | "adjust_card" | "ready";
@@ -239,7 +241,32 @@ export interface CardGeometryNormalizedArtifact extends CardGeometryArtifactMeta
   coordinateFrame: "normalized_card_portrait_pixels";
   sourceSha256: string;
   deskewAppliedDegrees: number;
+  rawToNormalizedTransform: CardGeometryRawToNormalizedTransformV1;
 }
+
+export interface CardGeometryRawToNormalizedTransformV1 {
+  schemaVersion: typeof CARD_GEOMETRY_RAW_TO_NORMALIZED_TRANSFORM_V1;
+  sourceSha256: string;
+  sourceCoordinateFrame: "auto_oriented_raw_image_pixels";
+  sourceWidthPx: number;
+  sourceHeightPx: number;
+  autoOrientApplied: true;
+  deskewClockwiseDegrees: number;
+  rotatedWidthPx: number;
+  rotatedHeightPx: number;
+  crop: { leftPx: number; topPx: number; widthPx: number; heightPx: number };
+  outputCoordinateFrame: "normalized_card_portrait_pixels";
+  outputWidthPx: number;
+  outputHeightPx: number;
+  /** Row-major affine 3x3 matrix mapping source boundary coordinates to normalized coordinates. */
+  matrix: [number, number, number, number, number, number, 0, 0, 1];
+  transformSha256: string;
+}
+
+type CardGeometryRawToNormalizedTransformPayloadV1 = Omit<
+  CardGeometryRawToNormalizedTransformV1,
+  'transformSha256'
+>;
 
 export interface CardGeometryNormalizationResult {
   geometry: CardGeometryMetadata;
@@ -1729,6 +1756,108 @@ function transformPointForRotation(
   };
 }
 
+function rawToNormalizedTransformSha256(
+  payload: CardGeometryRawToNormalizedTransformPayloadV1,
+): string {
+  return createHash('sha256').update(JSON.stringify(payload), 'utf8').digest('hex');
+}
+
+function buildRawToNormalizedTransformV1(input: {
+  sourceSha256: string;
+  sourceWidthPx: number;
+  sourceHeightPx: number;
+  deskewClockwiseDegrees: number;
+  rotatedWidthPx: number;
+  rotatedHeightPx: number;
+  cropLeftPx: number;
+  cropTopPx: number;
+  cropWidthPx: number;
+  cropHeightPx: number;
+  outputWidthPx: number;
+  outputHeightPx: number;
+}): CardGeometryRawToNormalizedTransformV1 {
+  const radians = (input.deskewClockwiseDegrees * Math.PI) / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  const scaleX = input.outputWidthPx / input.cropWidthPx;
+  const scaleY = input.outputHeightPx / input.cropHeightPx;
+  const rotatedOffsetX = input.rotatedWidthPx / 2 -
+    cosine * input.sourceWidthPx / 2 + sine * input.sourceHeightPx / 2;
+  const rotatedOffsetY = input.rotatedHeightPx / 2 -
+    sine * input.sourceWidthPx / 2 - cosine * input.sourceHeightPx / 2;
+  const payload: CardGeometryRawToNormalizedTransformPayloadV1 = {
+    schemaVersion: CARD_GEOMETRY_RAW_TO_NORMALIZED_TRANSFORM_V1,
+    sourceSha256: input.sourceSha256,
+    sourceCoordinateFrame: 'auto_oriented_raw_image_pixels',
+    sourceWidthPx: input.sourceWidthPx,
+    sourceHeightPx: input.sourceHeightPx,
+    autoOrientApplied: true,
+    deskewClockwiseDegrees: round(input.deskewClockwiseDegrees, 9),
+    rotatedWidthPx: input.rotatedWidthPx,
+    rotatedHeightPx: input.rotatedHeightPx,
+    crop: {
+      leftPx: input.cropLeftPx,
+      topPx: input.cropTopPx,
+      widthPx: input.cropWidthPx,
+      heightPx: input.cropHeightPx,
+    },
+    outputCoordinateFrame: 'normalized_card_portrait_pixels',
+    outputWidthPx: input.outputWidthPx,
+    outputHeightPx: input.outputHeightPx,
+    matrix: [
+      round(scaleX * cosine, 12),
+      round(-scaleX * sine, 12),
+      round(scaleX * (rotatedOffsetX - input.cropLeftPx), 12),
+      round(scaleY * sine, 12),
+      round(scaleY * cosine, 12),
+      round(scaleY * (rotatedOffsetY - input.cropTopPx), 12),
+      0,
+      0,
+      1,
+    ],
+  };
+  return { ...payload, transformSha256: rawToNormalizedTransformSha256(payload) };
+}
+
+export function verifyCardGeometryRawToNormalizedTransformV1(
+  transform: CardGeometryRawToNormalizedTransformV1,
+): boolean {
+  const { transformSha256, ...payload } = transform;
+  return /^[a-f0-9]{64}$/.test(transformSha256) &&
+    rawToNormalizedTransformSha256(payload) === transformSha256;
+}
+
+export function transformRawPointToNormalizedV1(
+  transform: CardGeometryRawToNormalizedTransformV1,
+  point: CardGeometryPoint,
+): CardGeometryPoint {
+  if (!verifyCardGeometryRawToNormalizedTransformV1(transform)) {
+    throw new Error('Raw-to-normalized transform SHA-256 does not reproduce.');
+  }
+  const [a, b, c, d, e, f] = transform.matrix;
+  return { x: a * point.x + b * point.y + c, y: d * point.x + e * point.y + f };
+}
+
+export function transformNormalizedPointToRawV1(
+  transform: CardGeometryRawToNormalizedTransformV1,
+  point: CardGeometryPoint,
+): CardGeometryPoint {
+  if (!verifyCardGeometryRawToNormalizedTransformV1(transform)) {
+    throw new Error('Raw-to-normalized transform SHA-256 does not reproduce.');
+  }
+  const [a, b, c, d, e, f] = transform.matrix;
+  const determinant = a * e - b * d;
+  if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) {
+    throw new Error('Raw-to-normalized transform matrix is singular.');
+  }
+  const normalizedX = point.x - c;
+  const normalizedY = point.y - f;
+  return {
+    x: (e * normalizedX - b * normalizedY) / determinant,
+    y: (-d * normalizedX + a * normalizedY) / determinant,
+  };
+}
+
 function normalizationDeskewDegrees(
   rotationDegrees: number,
   sourceWidth: number,
@@ -1796,6 +1925,20 @@ async function normalizePreparedImage(
   const geometricResamplingApplied = cropWidth !== targetWidth || cropHeight !== targetHeight;
   const upscaled = targetWidth > cropWidth || targetHeight > cropHeight;
   const compressionLevel = Math.round(clamp(input.pngCompressionLevel ?? 6, 0, 9));
+  const rawToNormalizedTransform = buildRawToNormalizedTransformV1({
+    sourceSha256: prepared.rawArtifact.sha256,
+    sourceWidthPx: prepared.orientedWidth,
+    sourceHeightPx: prepared.orientedHeight,
+    deskewClockwiseDegrees: deskewDegrees,
+    rotatedWidthPx: rotated.info.width,
+    rotatedHeightPx: rotated.info.height,
+    cropLeftPx: left,
+    cropTopPx: top,
+    cropWidthPx: cropWidth,
+    cropHeightPx: cropHeight,
+    outputWidthPx: targetWidth,
+    outputHeightPx: targetHeight,
+  });
   await sharp(rotated.data)
     .extract({ left, top, width: cropWidth, height: cropHeight })
     .resize(targetWidth, targetHeight, { fit: "fill", kernel: sharp.kernel.lanczos3 })
@@ -1825,6 +1968,7 @@ async function normalizePreparedImage(
     coordinateFrame: "normalized_card_portrait_pixels",
     sourceSha256: prepared.rawArtifact.sha256,
     deskewAppliedDegrees: round(deskewDegrees, 3),
+    rawToNormalizedTransform,
   };
 }
 

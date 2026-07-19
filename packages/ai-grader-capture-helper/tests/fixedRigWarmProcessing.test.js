@@ -250,6 +250,7 @@ test("production_fast warm processing preserves all forensic roles and writes ge
   assert.equal(manifest.analysisCoordinateSystem.transform.sourceResolutionGate.maximumUpscale, 1.2);
   assert.equal(typeof manifest.analysisCoordinateSystem.transform.geometricResamplingApplied, "boolean");
   assert.deepEqual(manifest.analysisCoordinateSystem.transformReusedForRoles, [
+    "dark_control",
     "accepted_profile",
     "channel_1",
     "channel_2",
@@ -278,6 +279,19 @@ test("production_fast warm processing preserves all forensic roles and writes ge
     manifest.front.allOn.stats.cardBoundary.sourceWarnings.join(" "),
     /cannot determine printed top/i,
   );
+  assert.equal(
+    manifest.front.darkControl.normalized.analysisCoordinateFrame,
+    "normalized_card_portrait_pixels",
+  );
+  assert.equal(
+    manifest.front.darkControl.normalized.analysisArtifact.sourceSha256,
+    manifest.front.darkControl.capture.sha256,
+  );
+  assert.equal(
+    fs.existsSync(manifest.front.darkControl.normalized.analysisArtifact.localOutputPath),
+    true,
+  );
+  assert.match(manifest.front.darkControl.note, /pixel-aligned subtraction/i);
   assert.equal(manifest.front.acceptedProfile.analysisCoordinateFrame, "normalized_card_portrait_pixels");
   assert.equal(manifest.front.channels.every((channel) => channel.analysisCoordinateFrame === "normalized_card_portrait_pixels"), true);
   assert.equal(manifest.front.surfaceAnalysis.registration.status, "normalized_geometry_transform");

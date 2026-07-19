@@ -222,6 +222,47 @@ function fakeFixedRigQuality(overrides = {}) {
   };
 }
 
+test("fixed-rig provisional element scores clamp to the strict 1.00-10.00 contract", () => {
+  const quality = fakeFixedRigQuality({
+    clippedPixelFraction: 1,
+    darkPixelFraction: 1,
+    sharpnessScore: 0,
+    overlayAlignment: {
+      marginLeft: 0,
+      marginRight: 100,
+      marginTop: 0,
+      marginBottom: 100,
+      overlayAlignmentStatus: "pass",
+    },
+  });
+  const diagnostic = buildFixedRigDiagnosticGradingResult({
+    quality,
+    roiDefinitions: [{
+      id: "top-left-corner",
+      status: "computed",
+      rect: { x: 0, y: 0, width: 10, height: 10 },
+    }],
+    fixtureCalibrationProfile: {
+      referenceType: "fixed_metric_rulers",
+      pixelToMmConsistency: { status: "pass" },
+      mmPerPixelX: 0.01,
+      mmPerPixelY: 0.01,
+      framingGate: { status: "pass" },
+    },
+    surfaceAnalysis: {
+      status: "computed_diagnostic",
+      detectorId: "strict-score-contract-test",
+      candidates: [{ severityProxy: 1_000 }],
+      perChannelStats: [],
+      warnings: [],
+    },
+  });
+
+  assert.equal(diagnostic.centering.score, 1);
+  assert.equal(diagnostic.corners.topLeft.score, 1);
+  assert.equal(diagnostic.surface.score, 1);
+});
+
 async function runCli(argv) {
   let stdout = "";
   let stderr = "";
@@ -1044,6 +1085,29 @@ test("Provisional Grade Story Engine computes only with passing or accepted-warn
   assert.ok(story.whyNot10.length > 0);
   assert.ok(story.gradeImpactCandidates.length > 0);
   assert.ok(story.story.claims.every((claim) => Array.isArray(claim.evidenceRefs) && claim.evidenceRefs.length > 0));
+
+  const belowMinimumFront = structuredClone(frontDiagnostic);
+  const belowMinimumBack = structuredClone(backDiagnostic);
+  for (const diagnostic of [belowMinimumFront, belowMinimumBack]) {
+    diagnostic.centering.score = 0;
+    for (const element of Object.values(diagnostic.corners)) element.score = -2;
+    for (const element of Object.values(diagnostic.edges)) element.score = 0.5;
+  }
+  const minimumScoreStory = buildFixedRigProvisionalGradeStory({
+    frontDiagnostic: belowMinimumFront,
+    backDiagnostic: belowMinimumBack,
+    frontSurface: frontAnalysis.front.surfaceAnalysis,
+    backSurface: backAnalysis.back.surfaceAnalysis,
+    frontStats: frontAnalysis.front.allOn,
+    backStats: backAnalysis.back.allOn,
+    fixtureProfile: passingDiagnosticProfile,
+    activeLightingProfile: frontAnalysis.activeLightingProfile,
+    allowAcceptedWarnings: true,
+  });
+  assert.equal(minimumScoreStory.elementScores.centering.score, 1);
+  assert.equal(minimumScoreStory.elementScores.corners.score, 1);
+  assert.equal(minimumScoreStory.elementScores.edges.score, 1);
+  assert.ok(minimumScoreStory.provisionalOverallGrade >= 1);
 
   const highFiniteClipping = buildFixedRigProvisionalGradeStory({
     frontDiagnostic,

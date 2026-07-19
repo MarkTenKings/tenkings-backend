@@ -18,6 +18,10 @@ const migration = [readFileSync(
   join(packageRoot, "prisma", "migrations", "20260716230000_ai_grader_nfc_feiju_f8215_gototags_two_click", "migration.sql"),
   "utf8",
 )].join("\n");
+const mathematicalCalibrationMigration = readFileSync(
+  join(packageRoot, "prisma", "migrations", "20260718150000_ai_grader_design_reference_v1", "migration.sql"),
+  "utf8",
+);
 const compose = readFileSync(
   join(repositoryRoot, "docker-compose.ai-grader-nfc-migration-validation.yml"),
   "utf8",
@@ -25,6 +29,10 @@ const compose = readFileSync(
 const harness = readFileSync(join(scriptsRoot, "runAiGraderNfcMigrationValidation.mjs"), "utf8");
 const absentSql = readFileSync(join(scriptsRoot, "validateAiGraderNfcSchemaAbsent.sql"), "utf8");
 const appliedSql = readFileSync(join(scriptsRoot, "validateAiGraderNfcMigration.sql"), "utf8");
+const mathematicalCalibrationSql = readFileSync(
+  join(scriptsRoot, "validateAiGraderMathematicalCalibrationSnapshot.sql"),
+  "utf8",
+);
 const serviceValidation = readFileSync(
   join(scriptsRoot, "validateAiGraderNfcServiceAgainstPostgres.mjs"),
   "utf8",
@@ -86,6 +94,46 @@ test("orchestrator proves absent/ready runtime states, full deploy, and second-d
   assert.match(appliedSql, /AI_GRADER_NFC_MIGRATION_VALIDATION_PASS/);
   assert.match(harness, /20260716225000_ai_grader_nfc_feiju_f8215_chip_type/);
   assert.match(harness, /20260716230000_ai_grader_nfc_feiju_f8215_gototags_two_click/);
+  assert.match(harness, /20260718150000_ai_grader_design_reference_v1/);
+  assert.match(harness, /AI_GRADER_MATHEMATICAL_CALIBRATION_SNAPSHOT_VALIDATION_PASS/);
+});
+
+test("live Mathematical V1 snapshot probe enforces exact identity, current trust, and immutable evidence", () => {
+  for (const required of [
+    "MATHEMATICAL_GRADING_V1",
+    "CalibrationSnapshot_mathematical_identity_check",
+    "CalibrationSnapshot_trust_lifecycle_check",
+    "CalibrationSnapshot_validity_window_check",
+    "CalibrationSnapshot_guard_mathematical_update",
+    "CalibrationSnapshot_reject_mathematical_delete",
+    "AiGraderReport_calibrationSnapshotId_fkey",
+    "CalibrationSnapshot_mathematical_identity_key",
+  ]) {
+    assert.ok(mathematicalCalibrationMigration.includes(required), `Migration omits ${required}`);
+    assert.ok(mathematicalCalibrationSql.includes(required), `Live probe omits ${required}`);
+  }
+  for (const exactField of [
+    "mathematicalProfileId",
+    "mathematicalCalibrationVersion",
+    "mathematicalProfileFinalizedAt",
+    "mathematicalArtifactId",
+    "mathematicalArtifactSha256",
+    "mathematicalThresholdSetId",
+    "mathematicalThresholdSetHash",
+  ]) {
+    assert.ok(mathematicalCalibrationSql.includes(exactField), `Exact snapshot query omits ${exactField}`);
+    assert.ok(mathematicalCalibrationMigration.includes(`"${exactField}" IS NOT NULL`), `${exactField} is nullable in the database CHECK`);
+  }
+  assert.match(mathematicalCalibrationSql, /Expected incomplete Mathematical V1 identity rejection/);
+  assert.match(mathematicalCalibrationSql, /Expected incomplete Mathematical V1 trust evidence rejection/);
+  assert.match(mathematicalCalibrationSql, /Expected mathematical physical identity mutation rejection/);
+  assert.match(mathematicalCalibrationSql, /Expected reverse trust transition rejection/);
+  assert.match(mathematicalCalibrationSql, /Expected mathematical snapshot delete rejection/);
+  assert.match(mathematicalCalibrationSql, /Expected closed validity window mutation rejection/);
+  assert.match(mathematicalCalibrationSql, /Expired Mathematical V1 snapshot remained publish-ready/);
+  assert.match(mathematicalCalibrationSql, /BEGIN;/);
+  assert.match(mathematicalCalibrationSql, /ROLLBACK;/);
+  assert.match(mathematicalCalibrationSql, /AI_GRADER_MATHEMATICAL_CALIBRATION_SNAPSHOT_VALIDATION_PASS/);
 });
 
 test("live SQL validator names every migrated constraint, index, trigger, enum, and table", () => {

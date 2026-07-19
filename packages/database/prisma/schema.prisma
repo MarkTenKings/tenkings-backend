@@ -402,6 +402,12 @@ enum AiGraderNfcProgrammingAttemptState {
   consumed
 }
 
+enum AiGraderDesignReferenceStatus {
+  draft
+  approved
+  retired
+}
+
 enum CaptureSide {
   FRONT
   BACK
@@ -539,6 +545,13 @@ enum CalibrationType {
   MICROSCOPE_FOCUS_BASELINE
   LED_INTENSITY_HEALTH
   ARM_INTERLOCK_HEALTH
+  MATHEMATICAL_GRADING_V1
+}
+
+enum CalibrationSnapshotTrustStatus {
+  DRAFT
+  TRUSTED
+  REVOKED
 }
 
 enum OperatorOverrideReviewStatus {
@@ -2455,6 +2468,7 @@ model Tenant {
   locations RigLocation[]
   rigs      CaptureRig[]
   operators Operator[]
+  designReferences AiGraderDesignReference[]
 }
 
 model RigLocation {
@@ -2566,22 +2580,44 @@ model DeviceCapabilityManifest {
 }
 
 model CalibrationSnapshot {
-  id                String          @id @default(cuid())
-  rigId             String
-  rig               CaptureRig      @relation(fields: [rigId], references: [id], onDelete: Cascade)
-  calibrationType   CalibrationType
-  componentSerials  Json
-  artifactKeys      Json
-  artifactChecksums Json
-  residuals         Json?
-  operatorId        String?
-  validityStartsAt  DateTime        @default(now())
-  validityEndsAt    DateTime?
-  supersededById    String?
-  supersessionReason String?
-  createdAt         DateTime        @default(now())
+  id                                 String                         @id @default(cuid())
+  rigId                              String
+  rig                                CaptureRig                     @relation(fields: [rigId], references: [id], onDelete: Cascade)
+  calibrationType                    CalibrationType
+  componentSerials                   Json
+  artifactKeys                       Json
+  artifactChecksums                  Json
+  residuals                          Json?
+  operatorId                         String?
+  mathematicalProfileId              String?
+  mathematicalCalibrationVersion     String?
+  mathematicalProfileFinalizedAt     DateTime?
+  mathematicalArtifactId             String?
+  mathematicalArtifactSha256         String?
+  mathematicalThresholdSetId         String?
+  mathematicalThresholdSetHash       String?
+  mathematicalBundleSchemaVersion    String?
+  mathematicalBundleManifestSha256   String?
+  mathematicalSourceCaptureManifestSha256 String?
+  mathematicalMemberLedgerSha256     String?
+  trustStatus                        CalibrationSnapshotTrustStatus @default(DRAFT)
+  trustedAt                          DateTime?
+  trustedByOperatorId                String?
+  revokedAt                          DateTime?
+  revokedByOperatorId               String?
+  revocationReason                   String?
+  validityStartsAt                   DateTime                       @default(now())
+  validityEndsAt                     DateTime?
+  supersededById                     String?
+  supersededByOperatorId             String?
+  supersessionReason                 String?
+  createdAt                          DateTime                       @default(now())
 
+  aiGraderReports AiGraderReport[]
+
+  @@unique([rigId, calibrationType, mathematicalProfileId, mathematicalCalibrationVersion, mathematicalProfileFinalizedAt, mathematicalArtifactId, mathematicalArtifactSha256, mathematicalThresholdSetId, mathematicalThresholdSetHash, mathematicalBundleSchemaVersion, mathematicalBundleManifestSha256, mathematicalSourceCaptureManifestSha256, mathematicalMemberLedgerSha256], map: "CalibrationSnapshot_mathematical_identity_key")
   @@index([rigId, calibrationType, validityStartsAt])
+  @@index([rigId, calibrationType, trustStatus, validityStartsAt, validityEndsAt], map: "CalibrationSnapshot_mathematical_readiness_idx")
 }
 
 model CaptureSession {
@@ -2948,6 +2984,8 @@ model AiGraderReport {
   gates                       Json?
   warnings                    Json?
   calibrationProfile          Json?
+  calibrationSnapshotId       String?
+  calibrationSnapshot         CalibrationSnapshot? @relation(fields: [calibrationSnapshotId], references: [id], onDelete: Restrict)
   repeatabilitySummary        Json?
   lightingProfile             Json?
   visionLabArtifacts          Json?
@@ -2972,6 +3010,7 @@ model AiGraderReport {
   @@index([cardAssetId])
   @@index([itemId])
   @@index([sessionId])
+  @@index([calibrationSnapshotId], map: "AiGraderReport_calibrationSnapshotId_idx")
 }
 
 model AiGraderEvidenceAsset {
@@ -3000,6 +3039,44 @@ model AiGraderEvidenceAsset {
   @@index([tenantId, artifactClass, kind])
   @@index([sessionId])
   @@index([reportId])
+}
+
+model AiGraderDesignReference {
+  id                          String                        @id @default(cuid())
+  tenantId                    String
+  tenant                      Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  setId                       String
+  programId                   String
+  cardNumber                  String
+  variantId                   String?
+  variantKey                  String                        @default("")
+  parallelId                  String?
+  parallelKey                 String                        @default("")
+  side                        String
+  profile                     String
+  version                     Int
+  status                      AiGraderDesignReferenceStatus @default(draft)
+  artifactStorageKey          String                        @unique(map: "AiGraderDesignReference_artifactStorageKey_key")
+  artifactSha256              String
+  artifactMimeType            String
+  artifactWidthPx             Int
+  artifactHeightPx            Int
+  intendedDesignBoundary      Json
+  provenance                  Json
+  transformAcceptanceMetadata Json
+  createdByUserId             String
+  approvedByUserId            String?
+  approvedAt                  DateTime?
+  retiredByUserId             String?
+  retiredAt                   DateTime?
+  retirementReason            String?
+  createdAt                   DateTime                      @default(now())
+  updatedAt                   DateTime                      @updatedAt
+
+  @@unique([tenantId, setId, programId, cardNumber, variantKey, parallelKey, side, profile, version], map: "AiGraderDesignReference_identity_version_key")
+  @@index([tenantId, setId, programId, cardNumber, variantKey, parallelKey, side, profile, status], map: "AiGraderDesignReference_identity_status_idx")
+  @@index([tenantId, status, updatedAt], map: "AiGraderDesignReference_tenant_status_idx")
+  @@index([artifactSha256], map: "AiGraderDesignReference_artifactSha256_idx")
 }
 
 model AiGraderGrade {

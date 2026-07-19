@@ -43,7 +43,11 @@ import {
   type AiGraderStationCommandStep,
   type AiGraderStationRealWorkflowInput,
 } from "./aiGraderStationWorkflow";
-import { BaslerPylonClient } from "./baslerPylonClient";
+import {
+  BaslerPylonClient,
+  defaultBaslerPylonBridgeScriptPath,
+  type BaslerCaptureStillResult,
+} from "./baslerPylonClient";
 import {
   AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
   buildAiGraderReportBundle,
@@ -65,6 +69,29 @@ import {
   type AiGraderProductionRelease,
 } from "./aiGraderProductionRelease";
 import {
+  AI_GRADER_MATHEMATICAL_PRODUCTION_RELEASE_V1_VERSION,
+  AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION,
+  AI_GRADER_MATHEMATICAL_REPORT_PACKAGE_DIR,
+  AI_GRADER_MATHEMATICAL_REPORT_PACKAGE_V1_VERSION,
+  buildAiGraderMathematicalReportEnvelopeV1,
+  decodeAiGraderMathematicalAssetPayloadsV1,
+  readAiGraderMathematicalReportAssetV1,
+  readAiGraderMathematicalReportPackageV1,
+  writeAiGraderMathematicalProductionReleaseV1,
+  writeAiGraderMathematicalReportPackageV1,
+  type AiGraderMathematicalAssetPayloadTransportV1,
+  type AiGraderMathematicalProductionReleaseV1,
+  type AiGraderMathematicalReportEnvelopeV1,
+  type AiGraderMathematicalReportPackageV1,
+} from "./aiGraderMathematicalReportPackageV1";
+import {
+  AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION,
+  type AiGraderMathematicalReportBundleV1Artifact,
+} from "./aiGraderMathematicalReportBundleV1";
+import {
+  type AiGraderReportBundleV03,
+} from "@tenkings/shared";
+import {
   detectCardGeometryFromBuffer,
   type CardGeometryMetadata,
   type CardGeometrySide,
@@ -78,6 +105,31 @@ import {
   type AiGraderCaptureTimingMetadata,
   type AiGraderCaptureTriggerMode,
 } from "./aiGraderCaptureTiming";
+import {
+  FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
+  FixedRigMathematicalCalibrationCaptureProducerV1,
+  type CaptureFixedRigMathematicalCalibrationStepV1Request,
+  type FixedRigMathematicalCalibrationCaptureBoundaryRequestV1,
+  type FixedRigMathematicalCalibrationCaptureBoundaryResultV1,
+  type RecordFixedRigMathematicalCalibrationMeasurementV1Request,
+  type SealFixedRigMathematicalCalibrationCaptureV1Request,
+  type SealedFixedRigMathematicalCalibrationCaptureV1,
+  type StartFixedRigMathematicalCalibrationCaptureV1Request,
+  type FixedRigMathematicalCalibrationCaptureSessionStatusV1,
+} from "./fixedRigMathematicalCalibrationCaptureV1";
+import { loadFixedRigMathematicalCalibrationBundleV1 } from "./fixedRigMathematicalCalibrationBundleV1";
+import {
+  FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
+  buildFixedRigMathematicalCalibrationStationPackageV1,
+  type BuildFixedRigMathematicalCalibrationStationPackageV1Result,
+  type FixedRigMathematicalStationGradingAuthorityV1,
+} from "./fixedRigMathematicalStationAdapterV1";
+import type {
+  FixedRigMathematicalFindingReviewAssetMetadataV1,
+  FixedRigMathematicalFindingReviewAssetV1,
+  FixedRigMathematicalFindingReviewRequestV1,
+  FixedRigMathematicalFindingReviewV1,
+} from "./fixedRigMathematicalCalibrationOrchestratorV1";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.9";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
@@ -103,8 +155,123 @@ const PREVIEW_GEOMETRY_MAX_AGE_MS = 2000;
 const CAPTURE_TRIGGER_MAX_ACTION_DELAY_MS = 10_000;
 const PREVIEW_JPEG_BUFFER_LIMIT_BYTES = 12 * 1024 * 1024;
 const PREVIEW_MJPEG_HEADER_BUFFER_LIMIT_BYTES = 8 * 1024;
+const MATHEMATICAL_DESIGN_REFERENCE_MAX_BYTES = 64 * 1024 * 1024;
+const MATHEMATICAL_REVIEW_ASSET_MAX_BYTES = 64 * 1024 * 1024;
+const MATHEMATICAL_REVIEW_ASSET_TOTAL_MAX_BYTES = 512 * 1024 * 1024;
+const SHA256_LOWERCASE_RE = /^[a-f0-9]{64}$/;
 
 export type AiGraderLocalStationBridgeMode = "mock" | "real";
+
+export type AiGraderGradingContract = "legacy_v0" | "mathematical_calibration_v1";
+export type AiGraderStationReportBundle = AiGraderReportBundle | AiGraderReportBundleV03;
+export type AiGraderStationProductionRelease = AiGraderProductionRelease | AiGraderMathematicalProductionReleaseV1;
+
+type RegisteredMathematicalCenteringAuthority = Extract<
+  FixedRigMathematicalStationGradingAuthorityV1["sides"]["front"]["centering"],
+  { profile: "registered_design_template_v1" }
+>;
+
+export type AiGraderLocalStationMathematicalCenteringAuthorityV1 =
+  | { profile: "printed_border_v1" }
+  | {
+      profile: "registered_design_template_v1";
+      approvedReference: RegisteredMathematicalCenteringAuthority["approvedReference"];
+      approvedDesignArtifact: Omit<RegisteredMathematicalCenteringAuthority["approvedDesignArtifact"], "filePath">;
+    };
+
+export interface AiGraderLocalStationMathematicalGradingAuthorityV1 {
+  schemaVersion: typeof FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION;
+  cardIdentity: FixedRigMathematicalStationGradingAuthorityV1["cardIdentity"];
+  cardFormatId: FixedRigMathematicalStationGradingAuthorityV1["cardFormatId"];
+  sides: {
+    front: { centering: AiGraderLocalStationMathematicalCenteringAuthorityV1 };
+    back: { centering: AiGraderLocalStationMathematicalCenteringAuthorityV1 };
+  };
+}
+
+export interface AiGraderLocalStationStagedDesignReferenceV1 {
+  side: "front" | "back";
+  referenceId: string;
+  assetId: string;
+  fileName: string;
+  contentType: "image/png" | "image/jpeg";
+  sha256: string;
+  byteSize: number;
+  filePath: string;
+  stagedAt: string;
+}
+
+export interface AiGraderLocalStationMathematicalReviewAssetV1 {
+  assetId: string;
+  side: "front" | "back";
+  evidenceRole: FixedRigMathematicalFindingReviewAssetMetadataV1["evidenceRole"];
+  fileName: string;
+  contentType: "image/png" | "image/jpeg" | "image/tiff";
+  sha256: string;
+  byteSize: number;
+  widthPx: number;
+  heightPx: number;
+  filePath: string;
+}
+
+type MathematicalCompletedResultV1 = Extract<
+  BuildFixedRigMathematicalCalibrationStationPackageV1Result,
+  { status: "completed" }
+>;
+type MathematicalInsufficientResultV1 = Extract<
+  BuildFixedRigMathematicalCalibrationStationPackageV1Result,
+  { status: "insufficient_evidence" }
+>;
+
+export type AiGraderLocalStationMathematicalExecutionV1 =
+  | {
+      status: "processing";
+      startedAt: string;
+      attempt: number;
+      v0FallbackUsed: false;
+      reviewRequestSha256?: string;
+    }
+  | {
+      status: "finding_review_required";
+      completedAt: string;
+      attempt: number;
+      v0FallbackUsed: false;
+      reviewRequest: FixedRigMathematicalFindingReviewRequestV1;
+      reviewIssues: string[];
+    }
+  | {
+      status: "completed";
+      completedAt: string;
+      attempt: number;
+      v0FallbackUsed: false;
+      reportPackagePath: string;
+      reportBundlePath: string;
+      orchestrationTraceSha256: string;
+      grade: MathematicalCompletedResultV1["grade"];
+      summary: MathematicalCompletedResultV1["summary"];
+    }
+  | {
+      status: "insufficient_evidence";
+      completedAt: string;
+      attempt: number;
+      v0FallbackUsed: false;
+      failedStage: MathematicalInsufficientResultV1["failedStage"];
+      reasons: string[];
+      requiresRecapture: boolean;
+      requiresApprovedDesignReference: boolean;
+      requiresCalibration: boolean;
+      requiresImplementationCorrection: boolean;
+    };
+
+export interface AiGraderLocalStationMathematicalV1State {
+  schemaVersion: "ten-kings-ai-grader-local-station-mathematical-v1-state-v1";
+  generatedAt: string;
+  gradingAuthority: AiGraderLocalStationMathematicalGradingAuthorityV1;
+  stagedDesignReferences: Partial<Record<"front" | "back", AiGraderLocalStationStagedDesignReferenceV1>>;
+  reviewAssets?: Record<string, AiGraderLocalStationMathematicalReviewAssetV1>;
+  submittedFindingReviews?: FixedRigMathematicalFindingReviewV1[];
+  execution?: AiGraderLocalStationMathematicalExecutionV1;
+}
 
 export type AiGraderLocalStationBridgeAction =
   | "status"
@@ -122,7 +289,9 @@ export type AiGraderLocalStationBridgeAction =
   | "session-manifest"
   | "configure-rapid-capture"
   | "queue-current-card"
-  | "activate-queue-item";
+  | "activate-queue-item"
+  | "bind-mathematical-grading-authority"
+  | "submit-mathematical-finding-reviews";
 
 export type AiGraderRapidCaptureWorkflowState =
   | "front_captured"
@@ -130,6 +299,8 @@ export type AiGraderRapidCaptureWorkflowState =
   | "back_positioning"
   | "back_captured"
   | "finalizing"
+  | "finding_review_required"
+  | "insufficient_evidence"
   | "report_ready_needs_confirm"
   | "confirmed_needs_publish"
   | "published"
@@ -152,6 +323,16 @@ export interface AiGraderRapidCaptureQueueItem {
   humanConfirmationRequired: true;
   autoConfirmed: false;
   autoPublished: false;
+  mathematicalV1?: {
+    status: AiGraderLocalStationMathematicalExecutionV1["status"];
+    reviewRequestSha256?: string;
+    failedStage?: MathematicalInsufficientResultV1["failedStage"];
+    reasons?: string[];
+    requiresRecapture?: boolean;
+    requiresApprovedDesignReference?: boolean;
+    requiresCalibration?: boolean;
+    requiresImplementationCorrection?: boolean;
+  };
   error?: string;
 }
 
@@ -205,6 +386,8 @@ export type AiGraderFrontCaptureReadinessCode =
   | 'lifecycle_pending'
   | 'workflow_transition_required'
   | 'current_step_not_capture_front'
+  | 'mathematical_authority_required'
+  | 'design_reference_staging_required'
   | 'front_binding_stale'
   | 'live_preview_required';
 
@@ -363,6 +546,15 @@ export interface AiGraderLocalStationBridgeConfigInput {
   verticalStartPx?: { x: number; y: number };
   verticalEndPx?: { x: number; y: number };
   cardBoundaryRect?: { x: number; y: number; width: number; height: number };
+  mathematicalCalibrationOutputDir?: string;
+  mathematicalCalibrationTargetPath?: string;
+  mathematicalCalibrationTargetVersion?: string;
+  mathematicalCalibrationTargetSha256?: string;
+  mathematicalCalibrationRigId?: string;
+  mathematicalCalibrationProfilePath?: string;
+  mathematicalCalibrationProfileSha256?: string;
+  mathematicalCalibrationBundlePath?: string;
+  mathematicalCalibrationBundleSha256?: string;
 }
 
 export interface AiGraderLocalStationBridgeConfig {
@@ -404,6 +596,15 @@ export interface AiGraderLocalStationBridgeConfig {
   verticalStartPx?: { x: number; y: number };
   verticalEndPx?: { x: number; y: number };
   cardBoundaryRect?: { x: number; y: number; width: number; height: number };
+  mathematicalCalibrationOutputDir: string;
+  mathematicalCalibrationTargetPath?: string;
+  mathematicalCalibrationTargetVersion?: string;
+  mathematicalCalibrationTargetSha256?: string;
+  mathematicalCalibrationRigId: string;
+  mathematicalCalibrationProfilePath?: string;
+  mathematicalCalibrationProfileSha256?: string;
+  mathematicalCalibrationBundlePath?: string;
+  mathematicalCalibrationBundleSha256?: string;
 }
 
 export interface AiGraderLocalStationBridgeManifest {
@@ -416,6 +617,8 @@ export interface AiGraderLocalStationBridgeManifest {
   createdAt?: string;
   updatedAt: string;
   acceptedProfile: AiGraderLocalStationAcceptedProfile;
+  gradingContract?: AiGraderGradingContract;
+  mathematicalV1?: AiGraderLocalStationMathematicalV1State;
   captureProfile: FixedRigCaptureProfile;
   captureProfileGuard: {
     stationSettingRequired: true;
@@ -443,6 +646,9 @@ export interface AiGraderLocalStationBridgeManifest {
     labelDataPath?: string;
     publicationManifestPath?: string;
     integrationContractPath?: string;
+    mathematicalReportBundlePath?: string;
+    mathematicalReportEnvelopePath?: string;
+    mathematicalReleaseChecksumsPath?: string;
   };
   safety: {
     localOnly: true;
@@ -466,8 +672,8 @@ export interface AiGraderLocalStationBridgeManifest {
   commandResults: AiGraderStationCommandResult[];
   progressLog: string[];
   warnings: string[];
-  reportBundle?: AiGraderReportBundle;
-  productionRelease?: AiGraderProductionRelease;
+  reportBundle?: AiGraderStationReportBundle;
+  productionRelease?: AiGraderStationProductionRelease;
   captureTiming: AiGraderCaptureTimingMetadata;
   captureTimingHardwareEvidence: Record<AiGraderWarmRunnerSide, {
     captureBatch: boolean;
@@ -507,6 +713,15 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
   localOnly: true;
   loginRequired: false;
   hardwareActionsEnabled: boolean;
+  mathematicalCalibration?: {
+    ready: boolean;
+    reason?: string;
+    profileId?: string;
+    calibrationVersion?: string;
+    rigId?: string;
+    artifactSha256?: string;
+    bundleSha256?: string;
+  };
   frontCaptureReadiness: AiGraderFrontCaptureReadiness;
   stationUrl: string;
   nextAction: AiGraderLocalStationBridgeAction;
@@ -527,10 +742,23 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     provisionalDiagnosticsRun: boolean;
   };
   bridgeContract: {
+    gradingContracts: ["legacy_v0", "mathematical_calibration_v1"];
+    mathematicalV1: {
+      reportBundleSchemaVersion: "ai-grader-report-bundle-v0.3";
+      envelopeVersion: typeof AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION;
+      packageVersion: typeof AI_GRADER_MATHEMATICAL_REPORT_PACKAGE_V1_VERSION;
+      productionReleaseVersion: typeof AI_GRADER_MATHEMATICAL_PRODUCTION_RELEASE_V1_VERSION;
+      gradingSessionIdentity: "external_envelope";
+      packageIntegrity: "atomic_non_overwriting_sha256";
+      fallbackPolicy: "explicit_not_ready_no_v0_or_manual_fallback";
+    };
     endpoints: Array<{
       method: "GET" | "POST";
       path: string;
-      action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat";
+      action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
+        | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
+        | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
+        | "mathematical-design-reference-stage" | "mathematical-review-asset";
       hardwareAccess: boolean;
       description: string;
     }>;
@@ -905,6 +1133,13 @@ export interface AiGraderLocalStationBridgeActionRequest {
   warningsAccepted?: boolean;
   overrideReason?: string;
   captureProfile?: FixedRigCaptureProfile;
+  gradingContract?: AiGraderGradingContract;
+  mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
+  mathematicalReviewRequestSha256?: string;
+  mathematicalFindingReviews?: FixedRigMathematicalFindingReviewV1[];
+  mathematicalReportEnvelope?: AiGraderMathematicalReportEnvelopeV1;
+  mathematicalReportPackagePath?: string;
+  mathematicalAssetPayloads?: AiGraderMathematicalAssetPayloadTransportV1[];
   rapidCaptureEnabled?: boolean;
   queueItemId?: string;
   captureTriggerMode?: AiGraderCaptureTriggerMode;
@@ -933,6 +1168,7 @@ export type AiGraderLocalStationLightingWriteResult =
 
 export type AiGraderLocalStationRealHardwareBoundary =
   | "lighting_network"
+  | "calibration_camera_capture"
   | "orphan_preview_process_scan"
   | "preview_process_start"
   | "preview_process_stop";
@@ -954,6 +1190,30 @@ export interface AiGraderLocalStationBridgeDependencies {
     jpegQuality: number;
   }) => ChildProcessWithoutNullStreams;
   onRealHardwareBoundary?: (boundary: AiGraderLocalStationRealHardwareBoundary) => void;
+  mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
+  loadMathematicalCalibrationBundle?: typeof loadFixedRigMathematicalCalibrationBundleV1;
+  buildMathematicalStationPackage?: typeof buildFixedRigMathematicalCalibrationStationPackageV1;
+  captureMathematicalCalibrationFrame?: (
+    input: FixedRigMathematicalCalibrationCaptureBoundaryRequestV1,
+  ) => Promise<FixedRigMathematicalCalibrationCaptureBoundaryResultV1>;
+}
+
+export function requireAppliedMathematicalCalibrationCameraSettings(
+  capture: Pick<BaslerCaptureStillResult, "exposureTime" | "gain">,
+): { exposureUs: number; gain: number } {
+  if (
+    typeof capture.exposureTime !== "number" ||
+    !Number.isFinite(capture.exposureTime) ||
+    capture.exposureTime <= 0 ||
+    typeof capture.gain !== "number" ||
+    !Number.isFinite(capture.gain) ||
+    capture.gain < 0
+  ) {
+    throw new Error(
+      "Mathematical calibration capture requires finite applied exposure and gain telemetry from Pylon; requested settings cannot substitute for missing camera evidence.",
+    );
+  }
+  return { exposureUs: capture.exposureTime, gain: capture.gain };
 }
 
 type JsonBody = Record<string, unknown>;
@@ -1119,6 +1379,140 @@ function actionLabel(action: AiGraderLocalStationBridgeAction) {
 function firstNonEmpty(...values: Array<string | undefined>) {
   const value = values.find((candidate) => typeof candidate === "string" && candidate.trim().length > 0);
   return value?.trim();
+}
+
+function stationContractObject(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(label + " must be one exact JSON object.");
+  }
+  return value as Record<string, unknown>;
+}
+
+function assertStationContractKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  label: string,
+): void {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new Error(label + " fields do not match the exact station contract.");
+  }
+}
+
+function exactStationString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(label + " must be a non-empty string.");
+  }
+  return value.trim();
+}
+
+function validateLocalMathematicalGradingAuthorityV1(
+  value: unknown,
+): AiGraderLocalStationMathematicalGradingAuthorityV1 {
+  const authority = stationContractObject(value, "Mathematical V1 grading authority");
+  assertStationContractKeys(
+    authority,
+    ["schemaVersion", "cardIdentity", "cardFormatId", "sides"],
+    "Mathematical V1 grading authority",
+  );
+  if (authority.schemaVersion !== FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION) {
+    throw new Error("Mathematical V1 grading authority schemaVersion is not supported.");
+  }
+  const cardIdentity = stationContractObject(authority.cardIdentity, "Mathematical V1 card identity");
+  for (const field of ["tenantId", "setId", "programId", "cardNumber"] as const) {
+    exactStationString(cardIdentity[field], "Mathematical V1 card identity " + field);
+  }
+  if (!("variantId" in cardIdentity) || !("parallelId" in cardIdentity)) {
+    throw new Error("Mathematical V1 card identity requires explicit nullable variantId and parallelId.");
+  }
+  const sides = stationContractObject(authority.sides, "Mathematical V1 side authority");
+  assertStationContractKeys(sides, ["front", "back"], "Mathematical V1 side authority");
+  for (const side of ["front", "back"] as const) {
+    const sideAuthority = stationContractObject(sides[side], "Mathematical V1 " + side + " authority");
+    assertStationContractKeys(sideAuthority, ["centering"], "Mathematical V1 " + side + " authority");
+    const centering = stationContractObject(
+      sideAuthority.centering,
+      "Mathematical V1 " + side + " centering authority",
+    );
+    if (centering.profile === "printed_border_v1") {
+      assertStationContractKeys(
+        centering,
+        ["profile"],
+        "Mathematical V1 printed-border " + side + " authority",
+      );
+      continue;
+    }
+    if (centering.profile !== "registered_design_template_v1") {
+      throw new Error("Mathematical V1 " + side + " centering profile is not supported.");
+    }
+    assertStationContractKeys(
+      centering,
+      ["profile", "approvedReference", "approvedDesignArtifact"],
+      "Mathematical V1 registered-template " + side + " authority",
+    );
+    const reference = stationContractObject(
+      centering.approvedReference,
+      "Mathematical V1 " + side + " approved reference",
+    );
+    assertStationContractKeys(
+      reference,
+      [
+        "tenantId", "setId", "programId", "cardNumber", "variantId", "parallelId",
+        "referenceId", "profile", "status", "side", "version", "artifactSha256",
+        "artifactWidthPx", "artifactHeightPx", "intendedDesignBoundary",
+        "approvedByUserId", "approvedAt",
+      ],
+      "Mathematical V1 " + side + " approved reference",
+    );
+    const artifact = stationContractObject(
+      centering.approvedDesignArtifact,
+      "Mathematical V1 " + side + " approved artifact",
+    );
+    assertStationContractKeys(
+      artifact,
+      ["assetId", "fileName", "contentType", "sha256"],
+      "Mathematical V1 " + side + " approved artifact",
+    );
+    const artifactSha256 = exactStationString(
+      artifact.sha256,
+      "Mathematical V1 " + side + " artifact SHA-256",
+    ).toLowerCase();
+    if (!SHA256_LOWERCASE_RE.test(artifactSha256) || reference.artifactSha256 !== artifactSha256) {
+      throw new Error("Mathematical V1 " + side + " reference and artifact SHA-256 do not match.");
+    }
+    if (reference.side !== side || reference.profile !== "registered_design_template_v1" ||
+        reference.status !== "approved") {
+      throw new Error("Mathematical V1 " + side + " reference is not the exact approved side/profile.");
+    }
+    for (const field of ["tenantId", "setId", "programId", "cardNumber", "variantId", "parallelId"] as const) {
+      if (reference[field] !== cardIdentity[field]) {
+        throw new Error("Mathematical V1 " + side + " reference identity does not match the exact card.");
+      }
+    }
+    if (artifact.contentType !== "image/png" && artifact.contentType !== "image/jpeg") {
+      throw new Error("Mathematical V1 design-reference contentType must be image/png or image/jpeg.");
+    }
+    const fileName = exactStationString(artifact.fileName, "Mathematical V1 design-reference fileName");
+    if (path.basename(fileName) !== fileName) {
+      throw new Error("Mathematical V1 design-reference fileName must be a safe leaf.");
+    }
+    exactStationString(reference.referenceId, "Mathematical V1 approved reference ID");
+    exactStationString(artifact.assetId, "Mathematical V1 design-reference asset ID");
+  }
+  return structuredClone(value) as AiGraderLocalStationMathematicalGradingAuthorityV1;
+}
+
+function newLocalMathematicalV1State(
+  authority: AiGraderLocalStationMathematicalGradingAuthorityV1,
+  generatedAt: string,
+): AiGraderLocalStationMathematicalV1State {
+  return {
+    schemaVersion: "ten-kings-ai-grader-local-station-mathematical-v1-state-v1",
+    generatedAt,
+    gradingAuthority: structuredClone(authority),
+    stagedDesignReferences: {},
+  };
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -1497,6 +1891,30 @@ export function buildAiGraderLocalStationBridgeConfig(
   }
   if (!Number.isFinite(gain) || gain < 0) throw new Error("AI Grader station bridge gain must be non-negative.");
   if (!Number.isFinite(duty) || duty < 0 || duty > LEIMAC_IDMU_MAX_DUTY_PERCENT) throw new Error(`AI Grader station bridge duty must be from 0 to ${LEIMAC_IDMU_MAX_DUTY_PERCENT} percent.`);
+  const mathematicalCalibrationTargetSha256 = firstNonEmpty(
+    input.mathematicalCalibrationTargetSha256,
+    env.AI_GRADER_MATHEMATICAL_CALIBRATION_TARGET_SHA256,
+  );
+  const mathematicalCalibrationProfileSha256 = firstNonEmpty(
+    input.mathematicalCalibrationProfileSha256,
+    env.AI_GRADER_MATHEMATICAL_CALIBRATION_PROFILE_SHA256,
+  );
+  const mathematicalCalibrationBundleSha256 = firstNonEmpty(
+    input.mathematicalCalibrationBundleSha256,
+    env.AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_SHA256,
+  );
+  for (const [name, value] of [
+    ["mathematical calibration target", mathematicalCalibrationTargetSha256],
+    ["mathematical calibration profile", mathematicalCalibrationProfileSha256],
+    ["mathematical calibration bundle", mathematicalCalibrationBundleSha256],
+  ] as const) {
+    if (value && !/^[a-f0-9]{64}$/.test(value)) throw new Error(`AI Grader ${name} SHA-256 must be exact lowercase hexadecimal.`);
+  }
+  const mathematicalCalibrationOutputDir = firstNonEmpty(
+    input.mathematicalCalibrationOutputDir,
+    env.AI_GRADER_MATHEMATICAL_CALIBRATION_OUTPUT_DIR,
+  ) ?? path.join(outputDir, "mathematical-calibration-v1");
+  assertFixedRigOutputDirAllowed(mathematicalCalibrationOutputDir);
   return {
     enabled,
     host: normalizeHost(firstNonEmpty(input.host, env.AI_GRADER_STATION_BRIDGE_HOST)),
@@ -1536,6 +1954,30 @@ export function buildAiGraderLocalStationBridgeConfig(
     verticalStartPx: input.verticalStartPx,
     verticalEndPx: input.verticalEndPx,
     cardBoundaryRect: input.cardBoundaryRect,
+    mathematicalCalibrationOutputDir,
+    mathematicalCalibrationTargetPath: firstNonEmpty(
+      input.mathematicalCalibrationTargetPath,
+      env.AI_GRADER_MATHEMATICAL_CALIBRATION_TARGET_PATH,
+    ),
+    mathematicalCalibrationTargetVersion: firstNonEmpty(
+      input.mathematicalCalibrationTargetVersion,
+      env.AI_GRADER_MATHEMATICAL_CALIBRATION_TARGET_VERSION,
+    ),
+    mathematicalCalibrationTargetSha256,
+    mathematicalCalibrationRigId: firstNonEmpty(
+      input.mathematicalCalibrationRigId,
+      env.AI_GRADER_MATHEMATICAL_CALIBRATION_RIG_ID,
+    ) ?? "ten-kings-fixed-rig-dell-v1",
+    mathematicalCalibrationProfilePath: firstNonEmpty(
+      input.mathematicalCalibrationProfilePath,
+      env.AI_GRADER_MATHEMATICAL_CALIBRATION_PROFILE_PATH,
+    ),
+    mathematicalCalibrationProfileSha256,
+    mathematicalCalibrationBundlePath: firstNonEmpty(
+      input.mathematicalCalibrationBundlePath,
+      env.AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_PATH,
+    ),
+    mathematicalCalibrationBundleSha256,
   };
 }
 
@@ -1552,6 +1994,7 @@ function newManifest(
     mode: config.mode,
     updatedAt: startedAt,
     acceptedProfile: defaultProfile(config),
+    gradingContract: "legacy_v0",
     captureProfile,
     captureProfileGuard: {
       stationSettingRequired: true,
@@ -2003,6 +2446,10 @@ function publishPackagePath(config: AiGraderLocalStationBridgeConfig, reportId: 
   return path.join(publishPackageDir(config, reportId), fileName);
 }
 
+function mathematicalPublishPackageDir(config: AiGraderLocalStationBridgeConfig, reportId: string) {
+  return path.join(publishPackageDir(config, reportId), AI_GRADER_MATHEMATICAL_REPORT_PACKAGE_DIR);
+}
+
 function commandInput(config: AiGraderLocalStationBridgeConfig, manifest: AiGraderLocalStationBridgeManifest): AiGraderStationRealWorkflowInput {
   return {
     outputDir: config.outputDir,
@@ -2053,6 +2500,32 @@ function assertRealReady(config: AiGraderLocalStationBridgeConfig, manifest: AiG
 
 function assertAtomicFrontRealReady(config: AiGraderLocalStationBridgeConfig) {
   assertRealBridgeArmed(config);
+}
+
+function mathematicalCalibrationReadiness(
+  config: AiGraderLocalStationBridgeConfig,
+  loader: typeof loadFixedRigMathematicalCalibrationBundleV1 = loadFixedRigMathematicalCalibrationBundleV1,
+): NonNullable<AiGraderLocalStationBridgeStatus["mathematicalCalibration"]> {
+  if (!config.mathematicalCalibrationBundlePath || !config.mathematicalCalibrationBundleSha256) {
+    return { ready: false, reason: "No exact finalized Mathematical Calibration V1 bundle is configured on this station." };
+  }
+  try {
+    const loaded = loader({
+      bundlePath: config.mathematicalCalibrationBundlePath,
+      bundleSha256: config.mathematicalCalibrationBundleSha256,
+      expectedRigId: config.mathematicalCalibrationRigId,
+    });
+    return {
+      ready: true,
+      profileId: loaded.profile.profileId,
+      calibrationVersion: loaded.profile.calibrationVersion,
+      rigId: loaded.profile.rigId,
+      artifactSha256: loaded.profile.artifactSha256,
+      bundleSha256: loaded.bundleSha256,
+    };
+  } catch (error) {
+    return { ready: false, reason: error instanceof Error ? error.message : "Calibration bundle readiness could not be established." };
+  }
 }
 
 const atomicJsonWriteChains = new Map<string, Promise<void>>();
@@ -2128,7 +2601,10 @@ function reportRoute(reportId: string | undefined) {
 function bridgeEndpoints() {
     const actions: Array<{
       method: "GET" | "POST";
-      action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat";
+      action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
+        | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
+        | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
+        | "mathematical-design-reference-stage" | "mathematical-review-asset";
       hardwareAccess: boolean;
       description: string;
       path?: string;
@@ -2139,19 +2615,28 @@ function bridgeEndpoints() {
     { method: "GET", action: "lighting-status", path: "/lighting/status", hardwareAccess: false, description: "Read browser live Leimac lighting tuning status." },
     { method: "POST", action: "lighting-apply", path: "/lighting/apply", hardwareAccess: true, description: "Apply an explicit bounded Leimac duty for preview tuning." },
     { method: "POST", action: "lighting-heartbeat", path: "/lighting/heartbeat", hardwareAccess: false, description: "Keep browser live lighting watchdog alive while the operator page is connected." },
+    { method: "POST", action: "mathematical-calibration-start", path: "/calibration/mathematical-v1/start", hardwareAccess: false, description: "Start or explicitly resume a purpose-bound non-production calibration capture session." },
+    { method: "GET", action: "mathematical-calibration-status", path: "/calibration/mathematical-v1/status", hardwareAccess: false, description: "Read one exact calibration capture-session status." },
+    { method: "POST", action: "mathematical-calibration-capture", path: "/calibration/mathematical-v1/capture", hardwareAccess: true, description: "Capture one allowlisted calibration step under bridge lock, watchdog, protected settings, and safe-off." },
+    { method: "POST", action: "mathematical-calibration-measurement", path: "/calibration/mathematical-v1/measurement", hardwareAccess: false, description: "Record one instrument/operator/time-bound immutable physical measurement." },
+    { method: "POST", action: "mathematical-calibration-seal", path: "/calibration/mathematical-v1/seal", hardwareAccess: false, description: "Fail closed unless the unique capture/metrology ledger is complete, then seal analyzer input and source package." },
+    { method: "POST", action: "mathematical-design-reference-stage", path: "/mathematical-v1/design-reference-artifacts/{front|back}", hardwareAccess: false, description: "Stage one exact approved design-reference body through a token-gated, create-new, 64 MiB bounded, SHA-256 verified session route." },
+    { method: "GET", action: "mathematical-review-asset", path: "/mathematical-v1/review-assets?reportId={reportId}&assetId={assetId}", hardwareAccess: false, description: "Read one exact hash-bound normalized, directional, ROI, segmentation, confidence, or illumination asset named by a pending Mathematical finding-review request." },
     { method: "POST", action: "start-session", hardwareAccess: true, description: "Create a local station session." },
     { method: "POST", action: "capture-front", hardwareAccess: true, description: "Validate the exact front preview snapshot, drain preview, and capture front evidence." },
     { method: "POST", action: "capture-back", hardwareAccess: true, description: "Validate the exact back preview snapshot, drain preview, and capture back evidence." },
     { method: "POST", action: "run-diagnostics", hardwareAccess: false, description: "Generate the unified provisional diagnostic report." },
-    { method: "POST", action: "export-report-bundle", hardwareAccess: false, description: "Export report-bundle.json, asset manifest, and checksums." },
-    { method: "POST", action: "calculate-final-grade", hardwareAccess: false, description: "Calculate the V0 final AI-Grader grade from the report bundle." },
-    { method: "POST", action: "finalize-report", hardwareAccess: false, description: "Record operator finalization metadata and write production-release.json." },
+    { method: "POST", action: "export-report-bundle", hardwareAccess: false, description: "Export the designated legacy V0 package or strict Mathematical V1 V0.3 body, external grading-session envelope, immutable assets, and checksums." },
+    { method: "POST", action: "calculate-final-grade", hardwareAccess: false, description: "Calculate legacy V0 only for legacy sessions, or validate and return the exact four-element Mathematical V1 grade for explicitly designated calibrated sessions." },
+    { method: "POST", action: "finalize-report", hardwareAccess: false, description: "Record operator finalization metadata and write the grading-contract-specific production release without cross-version fallback." },
     { method: "POST", action: "publish-report", hardwareAccess: false, description: "Prepare local publication manifest and future public report URL data." },
     { method: "POST", action: "generate-label-data", hardwareAccess: false, description: "Write label-ready JSON and QR payload URL data." },
     { method: "POST", action: "cancel-session", hardwareAccess: true, description: "Cancel the local station session and run guarded safe-off cleanup." },
     { method: "POST", action: "configure-rapid-capture", hardwareAccess: false, description: "Enable or disable the durable Rapid Capture throughput queue." },
     { method: "POST", action: "queue-current-card", hardwareAccess: false, description: "Queue persisted front/back evidence for serialized background report processing." },
     { method: "POST", action: "activate-queue-item", hardwareAccess: false, description: "Open one completed queued report for Approve & Publish." },
+    { method: "POST", action: "bind-mathematical-grading-authority", hardwareAccess: false, description: "Bind exact Mathematical V1 card and centering/design-reference authority to a fresh Rapid continuation before capture; publication remains bridge-derived." },
+    { method: "POST", action: "submit-mathematical-finding-reviews", hardwareAccess: false, description: "Submit explicit operator finding decisions bound to the exact pending review-request SHA-256 and rerun deterministically." },
     { method: "GET", action: "latest-report", hardwareAccess: false, description: "Read latest report location." },
     { method: "GET", action: "session-manifest", hardwareAccess: false, description: "Read station manifest path and state." },
   ];
@@ -2336,7 +2821,7 @@ function extractDetailedTimingEntries(result: AiGraderStationCommandResult): AiG
 
 function gradeBucket(grade: number | undefined): string | undefined {
   if (typeof grade !== "number" || !Number.isFinite(grade)) return undefined;
-  return String(Math.max(0, Math.min(10, Math.floor(grade))));
+  return String(Math.max(1, Math.min(10, Math.floor(grade))));
 }
 
 function historyItemFromBundle(input: {
@@ -2365,6 +2850,47 @@ function historyItemFromBundle(input: {
     category: undefined,
     warnings: input.productionRelease?.warnings ?? input.bundle.warnings,
   };
+}
+
+function historyItemFromMathematicalBundle(input: {
+  bundle: AiGraderReportBundleV03;
+  gradingSessionId: string;
+  productionRelease?: AiGraderMathematicalProductionReleaseV1;
+  reportBundlePath?: string;
+  productionReleasePath?: string;
+  sessionDir?: string;
+}): AiGraderLocalStationReportHistoryItem {
+  const release = input.productionRelease;
+  return {
+    reportId: input.bundle.reportId,
+    gradingSessionId: input.gradingSessionId,
+    generatedAt: input.bundle.generatedAt,
+    status: release?.reportStatus ?? "final_ai_grader_report_v1",
+    viewerPath: reportRoute(input.bundle.reportId),
+    reportBundlePath: input.reportBundlePath,
+    productionReleasePath: input.productionReleasePath,
+    sessionDir: input.sessionDir,
+    finalOverallGrade: input.bundle.productionRelease.finalGrade.overall,
+    confidenceBand: input.bundle.productionRelease.finalGrade.confidence.band,
+    title: input.bundle.cardIdentity.title,
+    warnings: release?.warnings ?? input.bundle.warnings ?? [],
+  };
+}
+
+function isMathematicalReportBundle(bundle: AiGraderStationReportBundle | undefined): bundle is AiGraderReportBundleV03 {
+  return bundle?.schemaVersion === "ai-grader-report-bundle-v0.3";
+}
+
+function isMathematicalProductionRelease(
+  release: AiGraderStationProductionRelease | undefined,
+): release is AiGraderMathematicalProductionReleaseV1 {
+  return release?.schemaVersion === "ai-grader-mathematical-production-release-v1";
+}
+
+function gradingContractFor(manifest: Pick<AiGraderLocalStationBridgeManifest, "gradingContract" | "reportBundle">): AiGraderGradingContract {
+  return manifest.gradingContract === "mathematical_calibration_v1" || isMathematicalReportBundle(manifest.reportBundle)
+    ? "mathematical_calibration_v1"
+    : "legacy_v0";
 }
 
 function historyStats(items: AiGraderLocalStationReportHistoryItem[]): AiGraderLocalStationReportHistory["stats"] {
@@ -2577,6 +3103,35 @@ function publicRapidCaptureQueueItem(item: PersistedAiGraderRapidCaptureQueueIte
   return publicItem;
 }
 
+function mathematicalRapidQueueSummary(
+  execution: AiGraderLocalStationMathematicalExecutionV1 | undefined,
+): AiGraderRapidCaptureQueueItem["mathematicalV1"] | undefined {
+  if (!execution) return undefined;
+  if (execution.status === "finding_review_required") {
+    return {
+      status: execution.status,
+      reviewRequestSha256: execution.reviewRequest.artifactSha256,
+    };
+  }
+  if (execution.status === "insufficient_evidence") {
+    return {
+      status: execution.status,
+      failedStage: execution.failedStage,
+      reasons: [...execution.reasons],
+      requiresRecapture: execution.requiresRecapture,
+      requiresApprovedDesignReference: execution.requiresApprovedDesignReference,
+      requiresCalibration: execution.requiresCalibration,
+      requiresImplementationCorrection: execution.requiresImplementationCorrection,
+    };
+  }
+  return {
+    status: execution.status,
+    ...(execution.status === "processing" && execution.reviewRequestSha256
+      ? { reviewRequestSha256: execution.reviewRequestSha256 }
+      : {}),
+  };
+}
+
 function timingRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -2657,6 +3212,7 @@ export class AiGraderLocalStationBridgeService {
   private terminalLifecyclePending = 0;
   private lightingLifecycleChain: Promise<void> = Promise.resolve();
   private lightingLifecyclePending = 0;
+  private readonly mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
 
   constructor(
     config: AiGraderLocalStationBridgeConfig,
@@ -2672,6 +3228,33 @@ export class AiGraderLocalStationBridgeService {
     this.rapidQueue = readRapidCaptureQueueSync(config);
     this.committedRapidQueue = structuredClone(this.rapidQueue);
     this.manifest = newManifest(config, this.rapidQueue.rapidCaptureEnabled);
+    this.mathematicalCalibrationCaptureProducer = dependencies.mathematicalCalibrationCaptureProducer ?? (
+      config.mathematicalCalibrationTargetPath &&
+      config.mathematicalCalibrationTargetVersion &&
+      config.mathematicalCalibrationTargetSha256
+        ? new FixedRigMathematicalCalibrationCaptureProducerV1({
+            outputRoot: config.mathematicalCalibrationOutputDir,
+            targetPath: config.mathematicalCalibrationTargetPath,
+            targetVersion: config.mathematicalCalibrationTargetVersion,
+            targetSha256: config.mathematicalCalibrationTargetSha256,
+            protectedSettings: {
+              stationId: "local-dell-ai-grader-station",
+              rigId: config.mathematicalCalibrationRigId,
+              captureProfileVersion: FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
+              cameraIndex: config.cameraIndex ?? 0,
+              exposureUs: config.exposureUs,
+              gain: config.gain,
+              dutyPercent: config.duty,
+              leimacUnit: config.leimacUnit ?? 1,
+              selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+              normalizedWidthPx: 1200,
+              normalizedHeightPx: 1680,
+              checkerboard: { internalColumns: 11, internalRows: 16, cellMm: 5 },
+            },
+            capture: (input) => this.captureMathematicalCalibrationHardwareBoundary(input),
+          })
+        : undefined
+    );
     void this.recoverPersistedRapidFinalization().catch(() => {});
   }
 
@@ -2702,6 +3285,22 @@ export class AiGraderLocalStationBridgeService {
     if (!binding) return result('session_required', 'Start New Card to create an authoritative station session and report.');
     if (this.manifest.captureFailure || this.manifest.outputs.frontPackageDir) {
       return result('capture_blocked', 'Front capture is unavailable because this session already has evidence or a terminal capture/processing failure.');
+    }
+    if (gradingContractFor(this.manifest) === "mathematical_calibration_v1") {
+      if (!this.manifest.mathematicalV1) {
+        return result(
+          'mathematical_authority_required',
+          'Bind the exact Mathematical V1 card and centering/design-reference authority before Capture Front; publication remains bridge-derived.',
+        );
+      }
+      const centering = this.manifest.mathematicalV1.gradingAuthority.sides.front.centering;
+      if (centering.profile === "registered_design_template_v1" &&
+          !this.manifest.mathematicalV1.stagedDesignReferences.front) {
+        return result(
+          'design_reference_staging_required',
+          'Stage the exact approved Front design-reference bytes before Capture Front.',
+        );
+      }
     }
     if (
       this.closing
@@ -2757,6 +3356,11 @@ export class AiGraderLocalStationBridgeService {
       loginRequired: false,
       frontCaptureReadiness: this.deriveFrontCaptureReadiness(),
       hardwareActionsEnabled: this.config.mode === "real",
+      mathematicalCalibration: mathematicalCalibrationReadiness(
+        this.config,
+        this.dependencies.loadMathematicalCalibrationBundle ??
+          loadFixedRigMathematicalCalibrationBundleV1,
+      ),
       stationUrl: this.stationUrl,
       nextAction,
       nextActionLabel: actionLabel(nextAction),
@@ -2776,6 +3380,16 @@ export class AiGraderLocalStationBridgeService {
         provisionalDiagnosticsRun: reportReady,
       },
       bridgeContract: {
+        gradingContracts: ["legacy_v0", "mathematical_calibration_v1"],
+        mathematicalV1: {
+          reportBundleSchemaVersion: "ai-grader-report-bundle-v0.3",
+          envelopeVersion: AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION,
+          packageVersion: AI_GRADER_MATHEMATICAL_REPORT_PACKAGE_V1_VERSION,
+          productionReleaseVersion: AI_GRADER_MATHEMATICAL_PRODUCTION_RELEASE_V1_VERSION,
+          gradingSessionIdentity: "external_envelope",
+          packageIntegrity: "atomic_non_overwriting_sha256",
+          fallbackPolicy: "explicit_not_ready_no_v0_or_manual_fallback",
+        },
         endpoints: bridgeEndpoints(),
         realHardwarePending: this.config.mode === "real" ? [] : ["Start the bridge with --station-bridge-mode real, --apply, Mark/wiring/Leimac flags, and a local token to enable hardware actions."],
       },
@@ -2921,6 +3535,149 @@ export class AiGraderLocalStationBridgeService {
       if (source) return source;
     }
     return undefined;
+  }
+
+  private async findStationManifestForReport(
+    reportId: string,
+  ): Promise<{ manifest: AiGraderLocalStationBridgeManifest; manifestPath?: string } | undefined> {
+    if (this.manifest.reportId === reportId) {
+      return { manifest: this.manifest, manifestPath: this.manifest.outputs.manifestPath };
+    }
+    for (const queued of this.queuedManifests.values()) {
+      if (queued.reportId === reportId) return { manifest: queued, manifestPath: queued.outputs.manifestPath };
+    }
+    let entries: Array<{ name: string; isDirectory(): boolean }> = [];
+    try {
+      entries = await readdir(this.config.outputDir, { withFileTypes: true });
+    } catch {
+      return undefined;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const manifestPath = path.join(this.config.outputDir, entry.name, "station-session.json");
+      const manifest = await readJsonFile(manifestPath) as AiGraderLocalStationBridgeManifest | undefined;
+      if (manifest?.reportId === reportId) return { manifest, manifestPath };
+    }
+    return undefined;
+  }
+
+  private assertMathematicalPackagePathAllowed(packagePath: string): string {
+    const resolved = path.resolve(packagePath);
+    const allowedRoots = [path.resolve(this.config.outputDir), path.resolve(reportBundleRootDir(this.config))];
+    if (!allowedRoots.some((root) => isSubpath(resolved, root))) {
+      throw new Error("Mathematical Grading V1 package path must stay within the configured station or report-package output root.");
+    }
+    return resolved;
+  }
+
+  private assertMathematicalPackageIdentity(
+    reportPackage: AiGraderMathematicalReportPackageV1,
+    manifest: AiGraderLocalStationBridgeManifest,
+  ): void {
+    if (!manifest.reportId || !manifest.sessionId ||
+      reportPackage.envelope.reportBundle.reportId !== manifest.reportId ||
+      reportPackage.envelope.gradingSessionId !== manifest.sessionId) {
+      throw new Error("Mathematical Grading V1 package identity did not match the exact station report and external grading session.");
+    }
+  }
+
+  private applyMathematicalReportPackage(
+    manifest: AiGraderLocalStationBridgeManifest,
+    reportPackage: AiGraderMathematicalReportPackageV1,
+  ): void {
+    this.assertMathematicalPackageIdentity(reportPackage, manifest);
+    manifest.gradingContract = "mathematical_calibration_v1";
+    manifest.outputs.reportBundlePath = reportPackage.bundlePath;
+    manifest.outputs.mathematicalReportBundlePath = reportPackage.bundlePath;
+    manifest.outputs.mathematicalReportEnvelopePath = reportPackage.envelopePath;
+    manifest.outputs.publishPackageDir = reportPackage.outputDir;
+    manifest.outputs.assetManifestPath = reportPackage.assetManifestPath;
+    manifest.outputs.checksumsPath = reportPackage.checksumsPath;
+    manifest.reportBundle = reportPackage.envelope.reportBundle;
+  }
+
+  private async resolveMathematicalReportPackage(
+    manifest: AiGraderLocalStationBridgeManifest,
+    request: AiGraderLocalStationBridgeActionRequest,
+  ): Promise<AiGraderMathematicalReportPackageV1> {
+    if (!manifest.reportId || !manifest.sessionId) {
+      throw new Error("Mathematical Grading V1 requires one exact report and external grading-session identity.");
+    }
+    if (request.mathematicalReportPackagePath && request.mathematicalReportEnvelope) {
+      throw new Error("Provide either a Mathematical V1 package path or a V0.3 body envelope, not both.");
+    }
+    if (request.mathematicalReportPackagePath) {
+      const reportPackage = await readAiGraderMathematicalReportPackageV1(
+        this.assertMathematicalPackagePathAllowed(request.mathematicalReportPackagePath),
+      );
+      this.assertMathematicalPackageIdentity(reportPackage, manifest);
+      return reportPackage;
+    }
+    if (request.mathematicalReportEnvelope) {
+      const envelope = buildAiGraderMathematicalReportEnvelopeV1({
+        gradingSessionId: request.mathematicalReportEnvelope.gradingSessionId,
+        reportBundle: request.mathematicalReportEnvelope.reportBundle,
+      });
+      if (envelope.gradingSessionId !== manifest.sessionId || envelope.reportBundle.reportId !== manifest.reportId) {
+        throw new Error("Mathematical Grading V1 body envelope did not match the exact active station report and grading session.");
+      }
+      const artifact: AiGraderMathematicalReportBundleV1Artifact = {
+        adapterVersion: AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION,
+        bundle: envelope.reportBundle,
+        assetPayloads: decodeAiGraderMathematicalAssetPayloadsV1(request.mathematicalAssetPayloads ?? []),
+      };
+      return writeAiGraderMathematicalReportPackageV1({
+        gradingSessionId: manifest.sessionId,
+        artifact,
+        outputDir: mathematicalPublishPackageDir(this.config, manifest.reportId),
+      });
+    }
+    const existingPath = manifest.outputs.mathematicalReportEnvelopePath ??
+      manifest.outputs.mathematicalReportBundlePath ??
+      (manifest.outputs.reportBundlePath?.endsWith("report-bundle-v0.3.json")
+        ? manifest.outputs.reportBundlePath
+        : undefined);
+    if (existingPath) {
+      const reportPackage = await readAiGraderMathematicalReportPackageV1(
+        this.assertMathematicalPackagePathAllowed(existingPath),
+      );
+      this.assertMathematicalPackageIdentity(reportPackage, manifest);
+      return reportPackage;
+    }
+    const canonicalDir = mathematicalPublishPackageDir(this.config, manifest.reportId);
+    if (await exists(canonicalDir)) {
+      const reportPackage = await readAiGraderMathematicalReportPackageV1(canonicalDir);
+      this.assertMathematicalPackageIdentity(reportPackage, manifest);
+      return reportPackage;
+    }
+    throw new Error(
+      "Mathematical Grading V1 is not ready: provide the completed strict V0.3 body plus every immutable asset payload, or a checksum-verified package path. V0/manual fallback is prohibited.",
+    );
+  }
+
+  private async mathematicalReportBundleResponse(
+    expectedReportId: string,
+  ): Promise<{
+    reportId: string;
+    gradingSessionId: string;
+    gradingContract: "mathematical_calibration_v1";
+    bundle: AiGraderReportBundleV03;
+    source: string;
+  }> {
+    const source = await this.findStationManifestForReport(expectedReportId);
+    if (!source || gradingContractFor(source.manifest) !== "mathematical_calibration_v1") {
+      throw new Error("Mathematical Grading V1 report " + expectedReportId + " is not available.");
+    }
+    const reportPackage = await this.resolveMathematicalReportPackage(source.manifest, {});
+    this.applyMathematicalReportPackage(source.manifest, reportPackage);
+    if (source.manifestPath) await writeJsonAtomic(source.manifestPath, source.manifest);
+    return {
+      reportId: expectedReportId,
+      gradingSessionId: reportPackage.envelope.gradingSessionId,
+      gradingContract: "mathematical_calibration_v1",
+      bundle: reportPackage.envelope.reportBundle,
+      source: "checksum_verified_mathematical_v1_package",
+    };
   }
 
   private async applyRecoveredReportPackage(
@@ -4203,6 +4960,719 @@ export class AiGraderLocalStationBridgeService {
     });
   }
 
+  private bindMathematicalGradingAuthority(
+    manifest: AiGraderLocalStationBridgeManifest,
+    value: unknown,
+  ): void {
+    if (gradingContractFor(manifest) !== "mathematical_calibration_v1") {
+      throw new Error("Mathematical grading authority can bind only to an explicit Mathematical V1 session.");
+    }
+    if (!manifest.sessionId || !manifest.reportId || !manifest.createdAt) {
+      throw new Error("Mathematical grading authority requires one exact active station session.");
+    }
+    if (manifest.outputs.frontPackageDir || manifest.outputs.backPackageDir ||
+        manifest.mathematicalV1?.execution || Object.keys(manifest.mathematicalV1?.stagedDesignReferences ?? {}).length) {
+      throw new Error("Mathematical grading authority is immutable after staging, capture, or grading starts.");
+    }
+    if (manifest.mathematicalV1) {
+      throw new Error("Mathematical grading authority is already bound to this exact session.");
+    }
+    manifest.mathematicalV1 = newLocalMathematicalV1State(
+      validateLocalMathematicalGradingAuthorityV1(value),
+      manifest.createdAt,
+    );
+    manifest.progressLog.push(
+      new Date().toISOString() +
+      " Exact Mathematical V1 card and centering/design-reference authority bound before capture; no caller publication or registration transform was accepted.",
+    );
+  }
+
+  private mathematicalCenteringAuthority(
+    manifest: AiGraderLocalStationBridgeManifest,
+    side: "front" | "back",
+  ): AiGraderLocalStationMathematicalCenteringAuthorityV1 {
+    if (gradingContractFor(manifest) !== "mathematical_calibration_v1" || !manifest.mathematicalV1) {
+      throw new Error("Mathematical V1 capture requires exact card and centering authority before capture.");
+    }
+    return manifest.mathematicalV1.gradingAuthority.sides[side].centering;
+  }
+
+  private verifyStagedDesignReferenceSync(
+    manifest: AiGraderLocalStationBridgeManifest,
+    side: "front" | "back",
+  ): AiGraderLocalStationStagedDesignReferenceV1 | undefined {
+    const centering = this.mathematicalCenteringAuthority(manifest, side);
+    if (centering.profile === "printed_border_v1") return undefined;
+    const staged = manifest.mathematicalV1?.stagedDesignReferences[side];
+    if (!staged || !manifest.outputs.sessionDir ||
+        staged.referenceId !== centering.approvedReference.referenceId ||
+        staged.sha256 !== centering.approvedDesignArtifact.sha256 ||
+        staged.assetId !== centering.approvedDesignArtifact.assetId ||
+        staged.fileName !== centering.approvedDesignArtifact.fileName ||
+        staged.contentType !== centering.approvedDesignArtifact.contentType ||
+        !isSubpath(staged.filePath, manifest.outputs.sessionDir)) {
+      throw new Error(
+        "Mathematical V1 " + side +
+        " capture requires the exact approved design-reference bytes staged for this session.",
+      );
+    }
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(staged.filePath);
+    } catch {
+      throw new Error("Mathematical V1 " + side + " staged design-reference file is unavailable.");
+    }
+    if (bytes.byteLength !== staged.byteSize ||
+        crypto.createHash("sha256").update(bytes).digest("hex") !== staged.sha256) {
+      throw new Error("Mathematical V1 " + side + " staged design-reference bytes changed after staging.");
+    }
+    return staged;
+  }
+
+  private assertMathematicalCaptureAuthority(
+    manifest: AiGraderLocalStationBridgeManifest,
+    side: "front" | "back",
+  ): void {
+    if (gradingContractFor(manifest) !== "mathematical_calibration_v1") return;
+    this.verifyStagedDesignReferenceSync(manifest, side);
+  }
+
+  assertMathematicalDesignReferenceStageRequest(input: {
+    sessionId: string;
+    side: "front" | "back";
+    referenceId: string;
+    sha256: string;
+    contentType: string;
+  }): void {
+    if (!this.manifest.sessionId || this.manifest.sessionId !== input.sessionId ||
+        gradingContractFor(this.manifest) !== "mathematical_calibration_v1") {
+      throw new Error("Design-reference staging session does not match the exact active Mathematical V1 session.");
+    }
+    if (!this.manifest.outputs.sessionDir || !this.manifest.outputs.manifestPath) {
+      throw new Error("Design-reference staging requires the exact active station-session directory.");
+    }
+    if (input.side !== "front" && input.side !== "back") {
+      throw new Error("Design-reference staging side must be front or back.");
+    }
+    const centering = this.mathematicalCenteringAuthority(this.manifest, input.side);
+    if (centering.profile !== "registered_design_template_v1") {
+      throw new Error("Design-reference staging is permitted only for a registered-template side.");
+    }
+    const expected = centering.approvedDesignArtifact;
+    if (input.referenceId !== centering.approvedReference.referenceId ||
+        input.sha256 !== expected.sha256 ||
+        input.contentType !== expected.contentType) {
+      throw new Error("Staged design-reference headers do not match the exact approved session authority.");
+    }
+  }
+
+  async stageMathematicalDesignReference(input: {
+    sessionId: string;
+    side: "front" | "back";
+    referenceId: string;
+    sha256: string;
+    contentType: string;
+    declaredByteSize: number;
+    bytes: Uint8Array;
+  }): Promise<AiGraderLocalStationStagedDesignReferenceV1> {
+    this.assertMathematicalDesignReferenceStageRequest(input);
+    const centering = this.mathematicalCenteringAuthority(this.manifest, input.side);
+    if (centering.profile !== "registered_design_template_v1") throw new Error("Registered-template staging authority changed.");
+    const expected = centering.approvedDesignArtifact;
+    if (!Number.isSafeInteger(input.declaredByteSize) || input.declaredByteSize < 24 ||
+        input.declaredByteSize > MATHEMATICAL_DESIGN_REFERENCE_MAX_BYTES ||
+        input.bytes.byteLength !== input.declaredByteSize) {
+      throw new Error(
+        "Design-reference Content-Length must exactly match 24 through " +
+        MATHEMATICAL_DESIGN_REFERENCE_MAX_BYTES + " bounded bytes.",
+      );
+    }
+    const bytes = Buffer.from(input.bytes);
+    const observedSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+    if (!SHA256_LOWERCASE_RE.test(input.sha256) || observedSha256 !== input.sha256) {
+      throw new Error("Staged design-reference body SHA-256 does not match its exact approved authority.");
+    }
+    if (this.manifest.mathematicalV1?.stagedDesignReferences[input.side]) {
+      throw new Error("This exact Mathematical V1 side already has an immutable staged design reference.");
+    }
+    const sessionDir = this.manifest.outputs.sessionDir;
+    if (!sessionDir) {
+      throw new Error("Design-reference staging requires the exact active station-session directory.");
+    }
+    const stageDir = path.join(sessionDir, "mathematical-v1-design-references");
+    const extension = expected.contentType === "image/png" ? "png" : "jpg";
+    const filePath = path.join(stageDir, input.side + "-approved-design-reference." + extension);
+    if (!isSubpath(filePath, sessionDir)) {
+      throw new Error("Design-reference staging path escaped the exact station session.");
+    }
+    await mkdir(stageDir, { recursive: true });
+    try {
+      await writeFile(filePath, bytes, { flag: "wx" });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === "EEXIST") {
+        throw new Error("Design-reference staging is create-new and cannot overwrite an existing file.");
+      }
+      throw error;
+    }
+    const readback = await readFile(filePath);
+    if (readback.byteLength !== bytes.byteLength ||
+        crypto.createHash("sha256").update(readback).digest("hex") !== observedSha256) {
+      throw new Error("Staged design-reference readback did not preserve exact bytes and SHA-256.");
+    }
+    const staged: AiGraderLocalStationStagedDesignReferenceV1 = {
+      side: input.side,
+      referenceId: centering.approvedReference.referenceId,
+      assetId: expected.assetId,
+      fileName: expected.fileName,
+      contentType: expected.contentType as "image/png" | "image/jpeg",
+      sha256: observedSha256,
+      byteSize: bytes.byteLength,
+      filePath,
+      stagedAt: new Date().toISOString(),
+    };
+    this.manifest.mathematicalV1!.stagedDesignReferences[input.side] = staged;
+    this.manifest.updatedAt = staged.stagedAt;
+    this.manifest.progressLog.push(
+      staged.stagedAt + " Staged one create-new, hash-verified " + input.side +
+      " approved design reference inside the exact private station session.",
+    );
+    await writeSessionManifest(this.manifest);
+    return structuredClone(staged);
+  }
+
+  private hydratedMathematicalGradingAuthority(
+    manifest: AiGraderLocalStationBridgeManifest,
+  ): FixedRigMathematicalStationGradingAuthorityV1 {
+    if (!manifest.mathematicalV1) {
+      throw new Error("Mathematical V1 grading authority is missing from this exact station session.");
+    }
+    const authority = structuredClone(manifest.mathematicalV1.gradingAuthority) as unknown as Record<string, unknown>;
+    const sides = authority.sides as FixedRigMathematicalStationGradingAuthorityV1["sides"];
+    for (const side of ["front", "back"] as const) {
+      const centering = sides[side].centering;
+      if (centering.profile === "printed_border_v1") continue;
+      const staged = this.verifyStagedDesignReferenceSync(manifest, side);
+      if (!staged) throw new Error("Registered-template staging authority unexpectedly resolved empty.");
+      sides[side].centering = {
+        ...centering,
+        approvedDesignArtifact: {
+          ...centering.approvedDesignArtifact,
+          filePath: staged.filePath,
+        },
+      };
+    }
+    const configuredPublicBase = this.config.publicBasePath?.startsWith("https://")
+      ? this.config.publicBasePath.replace(/\/$/, "")
+      : "https://collect.tenkings.co";
+    const reportBase = configuredPublicBase.endsWith("/ai-grader/reports")
+      ? configuredPublicBase
+      : configuredPublicBase + "/ai-grader/reports";
+    const publicReportUrl = reportBase + "/" + encodeURIComponent(manifest.reportId!);
+    const certHash = crypto.createHash("sha1")
+      .update(manifest.reportId!)
+      .digest("hex")
+      .slice(0, 8)
+      .toUpperCase();
+    authority.publication = {
+      certId: "TK-AIG-" + certHash,
+      publicReportUrl,
+      qrPayloadUrl: publicReportUrl,
+    };
+    return authority as unknown as FixedRigMathematicalStationGradingAuthorityV1;
+  }
+
+  private async exactWarmManifestBinding(
+    manifest: AiGraderLocalStationBridgeManifest,
+    side: "front" | "back",
+  ): Promise<{ manifestPath: string; manifestSha256: string }> {
+    await this.awaitWarmProcessing(manifest, side);
+    const packageDir = manifest.outputs[side === "front" ? "frontPackageDir" : "backPackageDir"];
+    if (!packageDir) throw new Error("Mathematical V1 is missing the exact " + side + " warm package.");
+    const manifestPath = path.join(packageDir, "manifest.json");
+    if (!isSubpath(manifestPath, packageDir) || !isSubpath(manifestPath, this.config.outputDir)) {
+      throw new Error("Mathematical V1 " + side + " manifest path escaped the station output authority.");
+    }
+    const bytes = await readFile(manifestPath);
+    return {
+      manifestPath,
+      manifestSha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+    };
+  }
+
+  private async buildMathematicalReviewAssetRegistry(
+    manifest: AiGraderLocalStationBridgeManifest,
+    request: FixedRigMathematicalFindingReviewRequestV1,
+    producedAssets: readonly FixedRigMathematicalFindingReviewAssetV1[],
+  ): Promise<Record<string, AiGraderLocalStationMathematicalReviewAssetV1>> {
+    const sessionDir = manifest.outputs.sessionDir;
+    if (!sessionDir || !manifest.sessionId || !manifest.reportId ||
+        request.gradingSessionId !== manifest.sessionId ||
+        request.reportId !== manifest.reportId ||
+        !SHA256_LOWERCASE_RE.test(request.artifactSha256)) {
+      throw new Error("Pending Mathematical review request is not bound to the exact station session/report.");
+    }
+    if (!request.findings.length) {
+      throw new Error("Pending Mathematical review request must name at least one measured finding.");
+    }
+
+    type ExpectedAsset = {
+      side: "front" | "back";
+      metadata: FixedRigMathematicalFindingReviewAssetMetadataV1;
+    };
+    const expected = new Map<string, ExpectedAsset>();
+    const allowedContentTypes = new Set(["image/png", "image/jpeg", "image/tiff"]);
+    const assetIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+    const metadataMatches = (
+      left: FixedRigMathematicalFindingReviewAssetMetadataV1,
+      right: FixedRigMathematicalFindingReviewAssetMetadataV1,
+    ) =>
+      left.assetId === right.assetId &&
+      left.evidenceRole === right.evidenceRole &&
+      left.sha256 === right.sha256 &&
+      left.fileName === right.fileName &&
+      left.contentType === right.contentType &&
+      left.byteSize === right.byteSize &&
+      left.widthPx === right.widthPx &&
+      left.heightPx === right.heightPx;
+    const addExpected = (
+      side: "front" | "back",
+      metadata: FixedRigMathematicalFindingReviewAssetMetadataV1,
+      requiredRole: FixedRigMathematicalFindingReviewAssetMetadataV1["evidenceRole"],
+    ) => {
+      if (!metadata || typeof metadata !== "object" ||
+          !assetIdPattern.test(metadata.assetId) ||
+          metadata.evidenceRole !== requiredRole ||
+          !SHA256_LOWERCASE_RE.test(metadata.sha256) ||
+          !metadata.fileName.trim() ||
+          path.basename(metadata.fileName) !== metadata.fileName ||
+          !allowedContentTypes.has(metadata.contentType) ||
+          !Number.isSafeInteger(metadata.byteSize) || metadata.byteSize <= 0 ||
+          metadata.byteSize > MATHEMATICAL_REVIEW_ASSET_MAX_BYTES ||
+          !Number.isSafeInteger(metadata.widthPx) || metadata.widthPx <= 0 ||
+          !Number.isSafeInteger(metadata.heightPx) || metadata.heightPx <= 0) {
+        throw new Error(
+          "Pending Mathematical review request contains invalid " + requiredRole + " asset metadata.",
+        );
+      }
+      const key = metadata.assetId.toLowerCase();
+      const prior = expected.get(key);
+      if (prior && (prior.side !== side || !metadataMatches(prior.metadata, metadata))) {
+        throw new Error("Pending Mathematical review request reused one asset ID inconsistently.");
+      }
+      expected.set(key, { side, metadata: structuredClone(metadata) });
+    };
+
+    for (const finding of request.findings) {
+      if (finding.side !== "front" && finding.side !== "back") {
+        throw new Error("Pending Mathematical review finding has an invalid side.");
+      }
+      if (finding.directionalChannels.length !== 8) {
+        throw new Error("Pending Mathematical review finding requires all eight directional channels.");
+      }
+      addExpected(finding.side, finding.trueView, "normalized_card");
+      for (const directional of finding.directionalChannels) {
+        addExpected(finding.side, directional, "directional_channel");
+      }
+      addExpected(finding.side, finding.reviewEvidence.roi, "roi_crop");
+      addExpected(finding.side, finding.reviewEvidence.segmentationMask, "segmentation_mask");
+      addExpected(finding.side, finding.reviewEvidence.confidenceMask, "confidence_mask");
+      addExpected(finding.side, finding.reviewEvidence.illuminationMask, "illumination_mask");
+    }
+
+    const exactBytes = new Map<string, Buffer>();
+    for (const produced of producedAssets) {
+      const key = produced?.assetId?.toLowerCase();
+      const expectedAsset = key ? expected.get(key) : undefined;
+      if (!expectedAsset || !Buffer.isBuffer(produced.bytes) ||
+          !metadataMatches(expectedAsset.metadata, produced) ||
+          exactBytes.has(key!)) {
+        throw new Error("Station adapter returned an extra, duplicate, or metadata-mismatched review asset.");
+      }
+      const bytes = Buffer.from(produced.bytes);
+      if (bytes.byteLength !== produced.byteSize ||
+          crypto.createHash("sha256").update(bytes).digest("hex") !== produced.sha256) {
+        throw new Error("Station adapter review asset bytes do not match exact request metadata.");
+      }
+      exactBytes.set(key!, bytes);
+    }
+
+    for (const side of ["front", "back"] as const) {
+      const binding = await this.exactWarmManifestBinding(manifest, side);
+      const bytes = await readFile(binding.manifestPath);
+      const parsed = stationContractObject(
+        JSON.parse(bytes.toString("utf-8")),
+        "Mathematical " + side + " review source manifest",
+      );
+      const sideEvidence = stationContractObject(
+        parsed[side],
+        "Mathematical " + side + " review source evidence",
+      );
+      const accepted = stationContractObject(
+        sideEvidence.acceptedProfile,
+        "Mathematical " + side + " accepted-profile evidence",
+      );
+      const artifacts: Array<{
+        assetId: string;
+        evidenceRole: "normalized_card" | "directional_channel";
+        artifact: Record<string, unknown>;
+      }> = [{
+        assetId: side + "-accepted-profile",
+        evidenceRole: "normalized_card",
+        artifact: stationContractObject(
+          accepted.analysisArtifact,
+          "Mathematical " + side + " accepted-profile artifact",
+        ),
+      }];
+      if (!Array.isArray(sideEvidence.channels)) {
+        throw new Error("Mathematical " + side + " review source lacks directional channels.");
+      }
+      for (const value of sideEvidence.channels) {
+        const channel = stationContractObject(
+          value,
+          "Mathematical " + side + " directional review source",
+        );
+        if (!Number.isSafeInteger(channel.channel) || Number(channel.channel) < 1 ||
+            Number(channel.channel) > 8) {
+          throw new Error("Mathematical directional review source has an invalid channel.");
+        }
+        artifacts.push({
+          assetId: side + "-directional-channel-" + Number(channel.channel),
+          evidenceRole: "directional_channel",
+          artifact: stationContractObject(
+            channel.analysisArtifact,
+            "Mathematical " + side + " directional review artifact",
+          ),
+        });
+      }
+      const packageDir = path.dirname(binding.manifestPath);
+      for (const source of artifacts) {
+        const key = source.assetId.toLowerCase();
+        const required = expected.get(key);
+        if (!required || exactBytes.has(key)) continue;
+        if (required.side !== side || required.metadata.evidenceRole !== source.evidenceRole) {
+          throw new Error("Mathematical review source role does not match the exact request.");
+        }
+        const filePath = path.resolve(exactStationString(
+          source.artifact.localOutputPath,
+          "Mathematical review source path",
+        ));
+        const declaredSha256 = exactStationString(
+          source.artifact.sha256,
+          "Mathematical review source SHA-256",
+        ).toLowerCase();
+        if (!isSubpath(filePath, packageDir) || !isSubpath(filePath, this.config.outputDir) ||
+            declaredSha256 !== required.metadata.sha256 ||
+            !SHA256_LOWERCASE_RE.test(declaredSha256)) {
+          throw new Error("Mathematical review source path/hash escaped or mismatched its immutable request.");
+        }
+        const sourceBytes = await readFile(filePath);
+        const extension = path.extname(filePath).toLowerCase();
+        const contentType = extension === ".tif" || extension === ".tiff"
+          ? "image/tiff"
+          : extension === ".jpg" || extension === ".jpeg"
+            ? "image/jpeg"
+            : "image/png";
+        if (sourceBytes.byteLength !== required.metadata.byteSize ||
+            path.basename(filePath) !== required.metadata.fileName ||
+            contentType !== required.metadata.contentType ||
+            crypto.createHash("sha256").update(sourceBytes).digest("hex") !== declaredSha256) {
+          throw new Error("Mathematical review source bytes changed after request generation.");
+        }
+        exactBytes.set(key, sourceBytes);
+      }
+    }
+
+    let totalByteSize = 0;
+    for (const [key, required] of expected) {
+      const bytes = exactBytes.get(key);
+      if (!bytes) {
+        throw new Error(
+          "Mathematical review source " + required.metadata.assetId +
+          " is unavailable before explicit operator review.",
+        );
+      }
+      totalByteSize += bytes.byteLength;
+    }
+    if (totalByteSize > MATHEMATICAL_REVIEW_ASSET_TOTAL_MAX_BYTES) {
+      throw new Error("Pending Mathematical review assets exceed the bounded aggregate size.");
+    }
+
+    const reviewDir = path.join(
+      sessionDir,
+      "mathematical-v1-finding-review",
+      request.artifactSha256,
+    );
+    if (!isSubpath(reviewDir, sessionDir) || !isSubpath(reviewDir, this.config.outputDir)) {
+      throw new Error("Pending Mathematical review asset directory escaped station authority.");
+    }
+    await mkdir(reviewDir, { recursive: true });
+    const registry = new Map<string, AiGraderLocalStationMathematicalReviewAssetV1>();
+    const ordered = [...expected.values()].sort((left, right) =>
+      left.metadata.assetId.localeCompare(right.metadata.assetId));
+    for (const [index, required] of ordered.entries()) {
+      const key = required.metadata.assetId.toLowerCase();
+      const bytes = exactBytes.get(key)!;
+      const extension = required.metadata.contentType === "image/tiff"
+        ? "tiff"
+        : required.metadata.contentType === "image/jpeg"
+          ? "jpg"
+          : "png";
+      const filePath = path.join(
+        reviewDir,
+        String(index + 1).padStart(4, "0") + "." + extension,
+      );
+      if (!isSubpath(filePath, reviewDir)) {
+        throw new Error("Pending Mathematical review asset path escaped its immutable request.");
+      }
+      try {
+        await writeFile(filePath, bytes, { flag: "wx" });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+      }
+      const readback = await readFile(filePath);
+      if (readback.byteLength !== required.metadata.byteSize ||
+          crypto.createHash("sha256").update(readback).digest("hex") !== required.metadata.sha256) {
+        throw new Error("Pending Mathematical review asset readback does not match the exact request.");
+      }
+      registry.set(required.metadata.assetId, {
+        assetId: required.metadata.assetId,
+        side: required.side,
+        evidenceRole: required.metadata.evidenceRole,
+        fileName: required.metadata.fileName,
+        contentType: required.metadata.contentType as "image/png" | "image/jpeg" | "image/tiff",
+        sha256: required.metadata.sha256,
+        byteSize: required.metadata.byteSize,
+        widthPx: required.metadata.widthPx,
+        heightPx: required.metadata.heightPx,
+        filePath,
+      });
+    }
+    return Object.fromEntries(registry);
+  }
+
+  private async runMathematicalStationPackage(
+    manifest: AiGraderLocalStationBridgeManifest,
+    findingReviews?: FixedRigMathematicalFindingReviewV1[],
+  ): Promise<AiGraderLocalStationMathematicalExecutionV1> {
+    if (gradingContractFor(manifest) !== "mathematical_calibration_v1" ||
+        !manifest.mathematicalV1 || !manifest.sessionId || !manifest.reportId) {
+      throw new Error("Mathematical V1 processing requires one exact authority-bound station session.");
+    }
+    if (!this.config.mathematicalCalibrationBundlePath ||
+        !this.config.mathematicalCalibrationBundleSha256) {
+      throw new Error("Mathematical V1 processing requires one protected finalized calibration bundle.");
+    }
+    const prior = manifest.mathematicalV1.execution;
+    const attempt = (prior?.attempt ?? 0) + 1;
+    const startedAt = new Date().toISOString();
+    manifest.mathematicalV1.execution = {
+      status: "processing",
+      startedAt,
+      attempt,
+      v0FallbackUsed: false,
+      ...(prior?.status === "finding_review_required"
+        ? { reviewRequestSha256: prior.reviewRequest.artifactSha256 }
+        : {}),
+    };
+    manifest.mathematicalV1.submittedFindingReviews = findingReviews
+      ? structuredClone(findingReviews)
+      : undefined;
+    manifest.updatedAt = startedAt;
+    manifest.progressLog.push(
+      startedAt + " Mathematical V1 deterministic processing started from the exact finalized bundle and warm side manifests.",
+    );
+    await writeSessionManifest(manifest);
+
+    let result: BuildFixedRigMathematicalCalibrationStationPackageV1Result;
+    try {
+      const [front, back] = await Promise.all([
+        this.exactWarmManifestBinding(manifest, "front"),
+        this.exactWarmManifestBinding(manifest, "back"),
+      ]);
+      const builder = this.dependencies.buildMathematicalStationPackage ??
+        buildFixedRigMathematicalCalibrationStationPackageV1;
+      result = await builder({
+        authority: this.hydratedMathematicalGradingAuthority(manifest),
+        gradingSessionId: manifest.sessionId,
+        generatedAt: manifest.mathematicalV1.generatedAt,
+        reportId: manifest.reportId,
+        outputDir: mathematicalPublishPackageDir(this.config, manifest.reportId),
+        captureProfileVersion: manifest.captureProfile === "full_forensic"
+          ? "ten-kings-fixed-rig-full-forensic-v1"
+          : "ten-kings-fixed-rig-production-fast-v1",
+        calibration: {
+          bundlePath: this.config.mathematicalCalibrationBundlePath,
+          bundleSha256: this.config.mathematicalCalibrationBundleSha256,
+          expectedRigId: this.config.mathematicalCalibrationRigId,
+        },
+        warmSides: { front, back },
+        ...(findingReviews ? { findingReviews: structuredClone(findingReviews) } : {}),
+      });
+      if (result.gradingContract !== "mathematical_calibration_v1" || result.v0FallbackUsed !== false) {
+        throw new Error("Mathematical station adapter returned cross-contract or fallback output.");
+      }
+    } catch (error) {
+      result = {
+        version: "fixed_rig_mathematical_calibration_orchestrator_v1",
+        status: "insufficient_evidence",
+        gradingContract: "mathematical_calibration_v1",
+        v0FallbackUsed: false,
+        failedStage: "input_contract",
+        reasons: [
+          "Unexpected deterministic Mathematical V1 station integration failure: " +
+          (error instanceof Error ? error.message : "unknown station adapter error"),
+        ],
+        requiresRecapture: false,
+        requiresApprovedDesignReference: false,
+        requiresCalibration: false,
+        requiresImplementationCorrection: true,
+        reportPackage: null,
+        stationInput: null,
+      };
+    }
+
+    let reviewAssets: Record<string, AiGraderLocalStationMathematicalReviewAssetV1> | undefined;
+    if (result.status === "finding_review_required") {
+      try {
+        reviewAssets = await this.buildMathematicalReviewAssetRegistry(
+          manifest,
+          result.reviewRequest,
+          result.reviewAssets,
+        );
+      } catch (error) {
+        result = {
+          version: "fixed_rig_mathematical_calibration_orchestrator_v1",
+          status: "insufficient_evidence",
+          gradingContract: "mathematical_calibration_v1",
+          v0FallbackUsed: false,
+          failedStage: "finding_review",
+          reasons: [
+            "Pending finding-review evidence could not be exposed from exact immutable sources: " +
+            (error instanceof Error ? error.message : "unknown review-asset binding error"),
+          ],
+          requiresRecapture: false,
+          requiresApprovedDesignReference: false,
+          requiresCalibration: false,
+          requiresImplementationCorrection: true,
+          reportPackage: null,
+          stationInput: null,
+        };
+      }
+    }
+    const completedAt = new Date().toISOString();
+    if (result.status === "completed") {
+      delete manifest.mathematicalV1.reviewAssets;
+      this.applyMathematicalReportPackage(manifest, result.reportPackage);
+      manifest.outputs.unifiedReportDir = result.reportPackage.outputDir;
+      manifest.outputs.unifiedReportPath = result.reportPackage.bundlePath;
+      manifest.mathematicalV1.execution = {
+        status: "completed",
+        completedAt,
+        attempt,
+        v0FallbackUsed: false,
+        reportPackagePath: result.reportPackage.outputDir,
+        reportBundlePath: result.reportPackage.bundlePath,
+        orchestrationTraceSha256: result.orchestrationTraceSha256,
+        grade: result.grade,
+        summary: result.summary,
+      };
+      manifest.progressLog.push(
+        completedAt + " Mathematical V1 strict V0.3 package completed with all four elements and no V0/manual fallback.",
+      );
+    } else if (result.status === "finding_review_required") {
+      manifest.mathematicalV1.reviewAssets = reviewAssets;
+      manifest.mathematicalV1.execution = {
+        status: "finding_review_required",
+        completedAt,
+        attempt,
+        v0FallbackUsed: false,
+        reviewRequest: structuredClone(result.reviewRequest),
+        reviewIssues: [...result.reviewIssues],
+      };
+      manifest.progressLog.push(
+        completedAt + " Mathematical V1 requires explicit operator review bound to request " +
+        result.reviewRequest.artifactSha256 + "; no finding was auto-confirmed.",
+      );
+    } else {
+      delete manifest.mathematicalV1.reviewAssets;
+      manifest.mathematicalV1.execution = {
+        status: "insufficient_evidence",
+        completedAt,
+        attempt,
+        v0FallbackUsed: false,
+        failedStage: result.failedStage,
+        reasons: [...result.reasons],
+        requiresRecapture: result.requiresRecapture,
+        requiresApprovedDesignReference: result.requiresApprovedDesignReference,
+        requiresCalibration: result.requiresCalibration,
+        requiresImplementationCorrection: result.requiresImplementationCorrection,
+      };
+      const warning = "Mathematical V1 insufficient evidence: " + result.reasons.join("; ");
+      if (!manifest.warnings.includes(warning)) manifest.warnings.push(warning);
+      manifest.progressLog.push(
+        completedAt + " Mathematical V1 stopped at " + result.failedStage +
+        " with explicit insufficient evidence; no V0/manual fallback ran.",
+      );
+    }
+    manifest.currentStep = "view_unified_report";
+    manifest.updatedAt = completedAt;
+    await writeSessionManifest(manifest);
+    return manifest.mathematicalV1.execution;
+  }
+
+  private validatedMathematicalFindingReviews(
+    manifest: AiGraderLocalStationBridgeManifest,
+    reviewRequestSha256: unknown,
+    reviews: unknown,
+  ): FixedRigMathematicalFindingReviewV1[] {
+    const execution = manifest.mathematicalV1?.execution;
+    if (execution?.status !== "finding_review_required") {
+      throw new Error("Mathematical finding reviews require the exact pending finding-review request.");
+    }
+    if (reviewRequestSha256 !== execution.reviewRequest.artifactSha256) {
+      throw new Error("Mathematical finding reviews are not bound to the exact pending request SHA-256.");
+    }
+    if (!Array.isArray(reviews)) {
+      throw new Error("Mathematical finding reviews must be an explicit complete array.");
+    }
+    const expectedIds = new Set(execution.reviewRequest.findings.map((finding) => finding.findingId));
+    const seen = new Set<string>();
+    const parsed = reviews.map((value, index): FixedRigMathematicalFindingReviewV1 => {
+      const review = stationContractObject(value, "Mathematical finding review " + (index + 1));
+      assertStationContractKeys(
+        review,
+        ["findingId", "reviewRequestSha256", "status", "reviewedAt"],
+        "Mathematical finding review " + (index + 1),
+      );
+      const findingId = exactStationString(review.findingId, "Mathematical finding review findingId");
+      if (!expectedIds.has(findingId) || seen.has(findingId)) {
+        throw new Error("Mathematical finding reviews contain an unexpected or duplicate finding ID.");
+      }
+      seen.add(findingId);
+      if (review.reviewRequestSha256 !== execution.reviewRequest.artifactSha256) {
+        throw new Error("Every Mathematical finding review must bind the exact request SHA-256.");
+      }
+      if (review.status !== "confirmed" && review.status !== "adjusted") {
+        throw new Error("Every Mathematical finding review must be explicitly confirmed or adjusted.");
+      }
+      const reviewedAt = exactStationString(review.reviewedAt, "Mathematical finding review reviewedAt");
+      if (!Number.isFinite(Date.parse(reviewedAt))) {
+        throw new Error("Mathematical finding review reviewedAt must be an ISO timestamp.");
+      }
+      return {
+        findingId,
+        reviewRequestSha256: execution.reviewRequest.artifactSha256,
+        status: review.status,
+        reviewedAt,
+      };
+    });
+    if (seen.size !== expectedIds.size) {
+      throw new Error("Every finding in the exact Mathematical review request requires an explicit operator decision.");
+    }
+    return parsed;
+  }
+
   private transitionRapidWorkflow(
     manifest: AiGraderLocalStationBridgeManifest,
     state: AiGraderRapidCaptureWorkflowState,
@@ -4228,6 +5698,7 @@ export class AiGraderLocalStationBridgeService {
     item.state = state;
     item.updatedAt = event.at;
     item.history = [...item.history, event].slice(-100);
+    item.mathematicalV1 = mathematicalRapidQueueSummary(manifest.mathematicalV1?.execution);
     if (state !== "failed") delete item.error;
     this.queuedManifests.set(queueItemId, manifest);
   }
@@ -4252,6 +5723,7 @@ export class AiGraderLocalStationBridgeService {
     item.state = manifest.rapidCapture.workflowState ?? item.state;
     item.updatedAt = manifest.updatedAt;
     item.history = [...manifest.rapidCapture.workflowHistory];
+    item.mathematicalV1 = mathematicalRapidQueueSummary(manifest.mathematicalV1?.execution);
     item.error = item.state === "failed" ? manifest.warnings.at(-1) ?? item.error : undefined;
     this.queuedManifests.set(queueItemId, manifest);
     await writeSessionManifest(manifest);
@@ -4266,35 +5738,62 @@ export class AiGraderLocalStationBridgeService {
         const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
         if (!manifest || !item) throw new Error(`Rapid capture queue item ${queueItemId} is no longer available.`);
         try {
-          const result = await this.runWarmReport(manifest);
-          manifest.outputs.unifiedReportDir = result.payload?.report?.packageDir ?? dirnameIfFile(extractUnifiedReportPath(result.payload));
-          manifest.outputs.unifiedReportPath = extractUnifiedReportPath(result.payload);
-          const reportDir = manifest.outputs.unifiedReportDir ?? dirnameIfFile(manifest.outputs.unifiedReportPath);
-          if (!reportDir) throw new Error("Rapid finalization did not produce a unified report folder.");
           const reportId = manifest.reportId ?? "local-report";
-          const packageDir = publishPackageDir(this.config, reportId);
-          const bundle = await withAiGraderReportPackageOperation(reportId, async () => {
-            await reconcileAiGraderReportPackageTransaction({
-              canonicalDir: packageDir,
-              reportId,
-              gradingSessionId: manifest.sessionId,
-              reportDir,
+          if (gradingContractFor(manifest) === "mathematical_calibration_v1") {
+            const execution = await this.runMathematicalStationPackage(manifest);
+            if (execution.status === "finding_review_required") {
+              this.transitionRapidWorkflow(
+                manifest,
+                "finding_review_required",
+                "Exact measured findings require operator review bound to request " +
+                execution.reviewRequest.artifactSha256 + "; this queued card remains reviewable.",
+              );
+              await this.syncQueuedManifest(manifest);
+              return;
+            }
+            if (execution.status === "insufficient_evidence") {
+              this.transitionRapidWorkflow(
+                manifest,
+                "insufficient_evidence",
+                "Mathematical V1 stopped fail-closed at " + execution.failedStage +
+                "; no V0/manual fallback was used.",
+              );
+              await this.syncQueuedManifest(manifest);
+              return;
+            }
+            if (execution.status !== "completed") {
+              throw new Error("Mathematical V1 Rapid processing did not reach a durable terminal state.");
+            }
+          } else {
+            const result = await this.runWarmReport(manifest);
+            manifest.outputs.unifiedReportDir = result.payload?.report?.packageDir ?? dirnameIfFile(extractUnifiedReportPath(result.payload));
+            manifest.outputs.unifiedReportPath = extractUnifiedReportPath(result.payload);
+            const reportDir = manifest.outputs.unifiedReportDir ?? dirnameIfFile(manifest.outputs.unifiedReportPath);
+            if (!reportDir) throw new Error("Rapid finalization did not produce a unified report folder.");
+            const packageDir = publishPackageDir(this.config, reportId);
+            const bundle = await withAiGraderReportPackageOperation(reportId, async () => {
+              await reconcileAiGraderReportPackageTransaction({
+                canonicalDir: packageDir,
+                reportId,
+                gradingSessionId: manifest.sessionId,
+                reportDir,
+              });
+              return writeAiGraderReportBundle({
+                reportDir,
+                outputDir: packageDir,
+                reportId,
+                gradingSessionId: manifest.sessionId,
+                publicBasePath: this.config.publicBasePath,
+                captureTiming: this.captureTimingSnapshot(manifest),
+                geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(manifest),
+              });
             });
-            return writeAiGraderReportBundle({
-              reportDir,
-              outputDir: packageDir,
-              reportId,
-              gradingSessionId: manifest.sessionId,
-              publicBasePath: this.config.publicBasePath,
-              captureTiming: this.captureTimingSnapshot(manifest),
-              geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(manifest),
-            });
-          });
-          manifest.outputs.reportBundlePath = bundle.bundlePath;
-          manifest.outputs.publishPackageDir = bundle.outputDir;
-          manifest.outputs.assetManifestPath = bundle.assetManifestPath;
-          manifest.outputs.checksumsPath = bundle.checksumsPath;
-          manifest.reportBundle = bundle.bundle;
+            manifest.outputs.reportBundlePath = bundle.bundlePath;
+            manifest.outputs.publishPackageDir = bundle.outputDir;
+            manifest.outputs.assetManifestPath = bundle.assetManifestPath;
+            manifest.outputs.checksumsPath = bundle.checksumsPath;
+            manifest.reportBundle = bundle.bundle;
+          }
           const release = await this.writeProductionReleaseForManifest(manifest, {
             operatorId: "rapid-background-preparation",
             warningsAccepted: true,
@@ -4423,7 +5922,7 @@ export class AiGraderLocalStationBridgeService {
     await this.persistRapidQueue();
     this.enqueueRapidFinalization(queueItemId);
     await this.createFreshSession(
-      { captureProfile: snapshot.captureProfile },
+      { captureProfile: snapshot.captureProfile, gradingContract: gradingContractFor(snapshot) },
       new Date().toISOString(),
       "rapid_continuation",
     );
@@ -4458,7 +5957,13 @@ export class AiGraderLocalStationBridgeService {
     }
     const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
     if (!item) throw new Error(`Rapid Capture queue item ${queueItemId} was not found.`);
-    if (!["report_ready_needs_confirm", "confirmed_needs_publish", "published"].includes(item.state)) {
+    if (![
+      "finding_review_required",
+      "insufficient_evidence",
+      "report_ready_needs_confirm",
+      "confirmed_needs_publish",
+      "published",
+    ].includes(item.state)) {
       throw new Error(`Rapid Capture queue item ${queueItemId} is not ready for review (state ${item.state}).`);
     }
     let manifest = this.queuedManifests.get(queueItemId);
@@ -4504,7 +6009,12 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private createFreshSession(
-    request: { reportId?: string; captureProfile: FixedRigCaptureProfile },
+    request: {
+      reportId?: string;
+      captureProfile: FixedRigCaptureProfile;
+      gradingContract?: AiGraderGradingContract;
+      mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
+    },
     now = new Date().toISOString(),
     selectionSource: AiGraderLocalStationBridgeManifest["captureProfileGuard"]["selectionSource"] = "operator_setting"
   ) {
@@ -4515,7 +6025,12 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private async createFreshSessionUnlocked(
-    request: { reportId?: string; captureProfile: FixedRigCaptureProfile },
+    request: {
+      reportId?: string;
+      captureProfile: FixedRigCaptureProfile;
+      gradingContract?: AiGraderGradingContract;
+      mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
+    },
     now = new Date().toISOString(),
     selectionSource: AiGraderLocalStationBridgeManifest["captureProfileGuard"]["selectionSource"] = "operator_setting"
   ) {
@@ -4548,6 +6063,7 @@ export class AiGraderLocalStationBridgeService {
     this.releaseFullForensicPreviewHold("new station session started");
     this.clearLiveLightingWatchdog();
     const manifest = newManifest(this.config, this.rapidQueue.rapidCaptureEnabled, now);
+    manifest.gradingContract = request.gradingContract ?? "legacy_v0";
     manifest.captureProfile = parseCaptureProfile(request.captureProfile);
     manifest.captureProfileGuard.selectionSource = selectionSource;
     manifest.captureProfileGuard.productionFastOptIn = request.captureProfile === "production_fast";
@@ -4563,6 +6079,9 @@ export class AiGraderLocalStationBridgeService {
     manifest.outputs.sessionDir = packageDir;
     manifest.outputs.manifestPath = path.join(packageDir, "station-session.json");
     manifest.currentStep = "capture_front";
+    if (manifest.gradingContract === "mathematical_calibration_v1" && request.mathematicalGradingAuthority) {
+      this.bindMathematicalGradingAuthority(manifest, request.mathematicalGradingAuthority);
+    }
     manifest.warmRunnerStatus.sessionId = manifest.sessionId;
     manifest.warmRunnerStatus.status = "warming";
     this.manifest = manifest;
@@ -4896,6 +6415,112 @@ export class AiGraderLocalStationBridgeService {
       if (!result.ok) throw new Error(result.error ?? `Leimac live lighting write ${frame.name} failed.`);
     }
     return writes;
+  }
+
+  private async captureMathematicalCalibrationHardwareBoundary(
+    input: FixedRigMathematicalCalibrationCaptureBoundaryRequestV1,
+  ): Promise<FixedRigMathematicalCalibrationCaptureBoundaryResultV1> {
+    if (this.dependencies.captureMathematicalCalibrationFrame) {
+      return this.dependencies.captureMathematicalCalibrationFrame(input);
+    }
+    if (this.config.mode !== "real") {
+      throw new Error("Mathematical calibration image capture requires an injected hardware-free test boundary or an armed real station bridge.");
+    }
+    assertRealBridgeArmed(this.config);
+    const safeOffBefore = await this.runTerminalSafeOff(`mathematical calibration ${input.operationId} pre-capture`);
+    if (!safeOffBefore.ok) {
+      throw new Error(safeOffBefore.directError?.message ?? safeOffBefore.guardedCleanupError?.message ?? "Calibration pre-capture safe-off could not be confirmed.");
+    }
+    const profile: AiGraderLiveLightingProfile = {
+      enabled: input.lighting.mode !== "safe_off" && input.lighting.enabledChannels.length > 0,
+      dutyPercent: input.lighting.dutyPercent,
+      actualLeimacPwmStep: leimacIdmuDutyPercentToSteps(input.lighting.dutyPercent),
+      channels: input.lighting.enabledChannels,
+      source: "accepted_station_profile",
+      acceptedForCapture: true,
+    };
+    const frames = this.liveLightingFrames(profile);
+    let verification: ReturnType<AiGraderLocalStationBridgeService["strictLightingAcknowledgements"]> | undefined;
+    let captureResult: Awaited<ReturnType<BaslerPylonClient["captureStill"]>> | undefined;
+    let operationError: Error | undefined;
+    let safeOffAfter: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>> | undefined;
+    try {
+      const writes = await this.executeLiveLightingFrames(frames);
+      verification = this.strictLightingAcknowledgements(frames, writes);
+      await mkdir(input.outputDir, { recursive: true });
+      this.dependencies.onRealHardwareBoundary?.("calibration_camera_capture");
+      const client = new BaslerPylonClient({
+        pylonRoot: this.config.pylonRoot,
+        bridgeScriptPath: this.config.baslerBridgeScript,
+        timeoutMs: this.config.pylonTimeoutMs ?? 1800000,
+      });
+      captureResult = await client.captureStill({
+        outputDir: input.outputDir,
+        label: input.label,
+        cameraIndex: input.protectedSettings.cameraIndex,
+        savedFormat: "png",
+        exposureUs: input.protectedSettings.exposureUs,
+        gain: input.protectedSettings.gain,
+      });
+    } catch (error) {
+      operationError = error instanceof Error ? error : new Error("Mathematical calibration capture failed.");
+    } finally {
+      safeOffAfter = await this.runTerminalSafeOff(`mathematical calibration ${input.operationId} post-capture`);
+    }
+    if (!safeOffAfter.ok) {
+      const message = safeOffAfter.directError?.message ?? safeOffAfter.guardedCleanupError?.message ?? "Calibration post-capture safe-off could not be confirmed.";
+      throw new Error(operationError ? `${operationError.message} Post-capture safe-off also failed: ${message}` : message);
+    }
+    if (operationError) throw operationError;
+    if (!captureResult || !verification) throw new Error("Calibration capture did not return exact camera/lighting evidence.");
+    const pylonVersion = captureResult.pylon.version?.trim();
+    const cameraSerial = captureResult.camera.serialNumber?.trim();
+    const cameraModel = captureResult.camera.modelName?.trim() ?? captureResult.camera.friendlyName?.trim();
+    if (!pylonVersion || !cameraSerial || !cameraModel) {
+      throw new Error("Calibration capture requires exact pylon version and Basler camera serial/model provenance.");
+    }
+    if (captureResult.mimeType !== "image/png" || captureResult.savedImageFormat !== "PNG") {
+      throw new Error("Mathematical calibration capture requested lossless PNG evidence and will not relabel or accept another camera output format.");
+    }
+    const appliedCameraSettings =
+      requireAppliedMathematicalCalibrationCameraSettings(captureResult);
+    const bridgeScriptPath = this.config.baslerBridgeScript ?? defaultBaslerPylonBridgeScriptPath();
+    const bridgeScriptSha256 = crypto.createHash("sha256").update(readFileSync(bridgeScriptPath)).digest("hex");
+    const confirmedAt = new Date().toISOString();
+    return {
+      rawBytes: await readFile(captureResult.outputFilePath),
+      mimeType: "image/png",
+      imageWidth: captureResult.imageWidth,
+      imageHeight: captureResult.imageHeight,
+      capturedAt: captureResult.timestamp,
+      camera: {
+        serialNumber: cameraSerial,
+        modelName: cameraModel,
+        transport: "GigE",
+        sourcePixelFormat: captureResult.sourcePixelFormat,
+        savedImageFormat: "PNG",
+        exposureUs: appliedCameraSettings.exposureUs,
+        gain: appliedCameraSettings.gain,
+      },
+      pylon: {
+        version: pylonVersion,
+        bridgeVersion: `basler-pylon-bridge-sha256-${bridgeScriptSha256}`,
+      },
+      leimac: {
+        unit: input.protectedSettings.leimacUnit,
+        dutyPercent: input.lighting.dutyPercent,
+        enabledChannels: input.lighting.enabledChannels,
+        expectedWriteCount: verification.expectedWriteCount,
+        acknowledgedWriteCount: verification.acknowledgedWriteCount,
+        responseKinds: verification.responseKinds,
+        complete: true,
+      },
+      safeOff: {
+        beforeCaptureConfirmed: true,
+        afterCaptureConfirmed: true,
+        confirmedAt,
+      },
+    };
   }
 
   private executeLiveLightingFrames(
@@ -6921,13 +8546,21 @@ export class AiGraderLocalStationBridgeService {
     productionRelease?: AiGraderProductionRelease;
     source: string;
     includeAssetBodies?: boolean;
-  }): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
+  }): Promise<{
+    reportId: string;
+    gradingSessionId: string;
+    gradingContract: "legacy_v0";
+    bundle: AiGraderReportBundle;
+    source: string;
+  }> {
     const authoritativeBundle = bundleWithProductionRelease(input.bundle, input.productionRelease);
     const responseBundle = input.includeAssetBodies
       ? await this.attachVerifiedReportAssetBodies(input.expectedReportId, authoritativeBundle)
       : authoritativeBundle;
     return {
       reportId: input.expectedReportId,
+      gradingSessionId: responseBundle.gradingSessionId,
+      gradingContract: "legacy_v0",
       bundle: responseBundle,
       source: input.includeAssetBodies ? input.source + "_with_asset_bodies" : input.source,
     };
@@ -6936,10 +8569,29 @@ export class AiGraderLocalStationBridgeService {
   async reportBundle(
     reportId: string | undefined,
     options: { includeAssetBodies?: boolean } = {}
-  ): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
+  ): Promise<
+    | {
+        reportId: string;
+        gradingSessionId: string;
+        gradingContract: "legacy_v0";
+        bundle: AiGraderReportBundle;
+        source: string;
+      }
+    | {
+        reportId: string;
+        gradingSessionId: string;
+        gradingContract: "mathematical_calibration_v1";
+        bundle: AiGraderReportBundleV03;
+        source: string;
+      }
+  > {
     const expectedReportId = reportId?.trim() || this.manifest.reportId;
     if (!expectedReportId) throw new Error("No AI Grader report ID is available yet.");
     return withAiGraderReportPackageOperation(expectedReportId, async () => {
+      const stationSource = await this.findStationManifestForReport(expectedReportId);
+      if (stationSource && gradingContractFor(stationSource.manifest) === "mathematical_calibration_v1") {
+        return this.mathematicalReportBundleResponse(expectedReportId);
+      }
       const recoverySource = await this.findReportRecoverySource(expectedReportId);
       await reconcileAiGraderReportPackageTransaction({
         canonicalDir: publishPackageDir(this.config, expectedReportId),
@@ -6951,10 +8603,100 @@ export class AiGraderLocalStationBridgeService {
     });
   }
 
+  async reportAsset(reportId: string, assetId: string): Promise<{
+    id: string;
+    bytes: Buffer;
+    contentType: string;
+    sha256: string;
+  }> {
+    const resolved = await this.reportBundle(reportId);
+    if (resolved.gradingContract === "mathematical_calibration_v1") {
+      const source = await this.findStationManifestForReport(reportId);
+      if (!source) throw new Error("Mathematical Grading V1 station manifest is unavailable.");
+      const reportPackage = await this.resolveMathematicalReportPackage(source.manifest, {});
+      const asset = await readAiGraderMathematicalReportAssetV1({
+        packagePath: reportPackage.outputDir,
+        assetId,
+      });
+      return {
+        id: asset.asset.id,
+        bytes: asset.bytes,
+        contentType: asset.asset.contentType ?? "application/octet-stream",
+        sha256: asset.asset.sha256 ?? asset.asset.checksumSha256 ?? crypto.createHash("sha256").update(asset.bytes).digest("hex"),
+      };
+    }
+    const asset = resolved.bundle.assets.find((candidate) => candidate.id === assetId);
+    if (!asset?.localPath || asset.kind !== "image") {
+      throw new Error("AI Grader report asset " + assetId + " is not available as a local image file.");
+    }
+    const bytes = await readFile(asset.localPath);
+    return {
+      id: asset.id,
+      bytes,
+      contentType: asset.contentType ?? "application/octet-stream",
+      sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+    };
+  }
+
+  async mathematicalReviewAsset(reportId: string, assetId: string): Promise<{
+    id: string;
+    bytes: Buffer;
+    contentType: string;
+    sha256: string;
+    side: "front" | "back";
+    evidenceRole: FixedRigMathematicalFindingReviewAssetMetadataV1["evidenceRole"];
+    widthPx: number;
+    heightPx: number;
+  }> {
+    if (!reportId.trim() || !assetId.trim()) {
+      throw new Error("Pending Mathematical review asset requires exact reportId and assetId.");
+    }
+    const source = await this.findStationManifestForReport(reportId);
+    const execution = source?.manifest.mathematicalV1?.execution;
+    if (!source || gradingContractFor(source.manifest) !== "mathematical_calibration_v1" ||
+        execution?.status !== "finding_review_required") {
+      throw new Error("Mathematical review assets are available only for one exact pending review request.");
+    }
+    const asset = source.manifest.mathematicalV1?.reviewAssets?.[assetId];
+    const namedByRequest = execution.reviewRequest.findings.some((finding) =>
+      finding.trueView.assetId === assetId ||
+      finding.directionalChannels.some((channel) => channel.assetId === assetId) ||
+      finding.reviewEvidence.roi.assetId === assetId ||
+      finding.reviewEvidence.segmentationMask.assetId === assetId ||
+      finding.reviewEvidence.confidenceMask.assetId === assetId ||
+      finding.reviewEvidence.illuminationMask.assetId === assetId);
+    if (!asset || !namedByRequest || !source.manifest.outputs.sessionDir ||
+        !isSubpath(asset.filePath, source.manifest.outputs.sessionDir) ||
+        !isSubpath(asset.filePath, this.config.outputDir)) {
+      throw new Error("Requested asset is not an exact hash-bound source in the pending review request.");
+    }
+    const bytes = await readFile(asset.filePath);
+    if (bytes.byteLength !== asset.byteSize ||
+        crypto.createHash("sha256").update(bytes).digest("hex") !== asset.sha256) {
+      throw new Error("Pending Mathematical review asset changed after exact request generation.");
+    }
+    return {
+      id: asset.assetId,
+      bytes,
+      contentType: asset.contentType,
+      sha256: asset.sha256,
+      side: asset.side,
+      evidenceRole: asset.evidenceRole,
+      widthPx: asset.widthPx,
+      heightPx: asset.heightPx,
+    };
+  }
+
   private async reportBundleUnlocked(
     expectedReportId: string,
     options: { includeAssetBodies?: boolean } = {},
-  ): Promise<{ reportId: string; bundle: AiGraderReportBundle; source: string }> {
+  ): Promise<{
+    reportId: string;
+    gradingSessionId: string;
+    gradingContract: "legacy_v0";
+    bundle: AiGraderReportBundle;
+    source: string;
+  }> {
     const packageDir = publishPackageDir(this.config, expectedReportId);
     const canonicalBundlePath = publishPackagePath(this.config, expectedReportId, "report-bundle.json");
     const canonicalDirExists = await recoveryPathExists(packageDir);
@@ -6982,7 +8724,8 @@ export class AiGraderLocalStationBridgeService {
         includeAssetBodies: options.includeAssetBodies,
       });
     }
-    if (this.manifest.reportBundle?.reportId === expectedReportId) {
+    if (this.manifest.reportBundle?.reportId === expectedReportId &&
+        !isMathematicalReportBundle(this.manifest.reportBundle)) {
       const resolved = await this.recoverReportBundleIfNeeded({
         reportId: expectedReportId,
         bundle: this.manifest.reportBundle,
@@ -7094,7 +8837,7 @@ export class AiGraderLocalStationBridgeService {
     };
   }
 
-  private async writeProductionRelease(request: AiGraderLocalStationBridgeActionRequest): Promise<AiGraderProductionRelease> {
+  private async writeProductionRelease(request: AiGraderLocalStationBridgeActionRequest): Promise<AiGraderStationProductionRelease> {
     const reportId = this.manifest.reportId;
     if (!reportId) throw new Error("Production release requires an active AI Grader report ID.");
     if (!this.manifest.outputs.reportBundlePath) {
@@ -7106,10 +8849,84 @@ export class AiGraderLocalStationBridgeService {
   private async writeProductionReleaseForManifest(
     manifest: AiGraderLocalStationBridgeManifest,
     request: AiGraderLocalStationBridgeActionRequest,
-  ): Promise<AiGraderProductionRelease> {
+  ): Promise<AiGraderStationProductionRelease> {
     const reportId = manifest.reportId;
     if (!reportId || !manifest.sessionId) {
       throw new Error("Production release requires one exact report and grading-session identity.");
+    }
+    if (gradingContractFor(manifest) === "mathematical_calibration_v1") {
+      return withAiGraderReportPackageOperation(reportId, async () => {
+        const reportPackage = await this.resolveMathematicalReportPackage(manifest, request);
+        this.applyMathematicalReportPackage(manifest, reportPackage);
+        const result = await writeAiGraderMathematicalProductionReleaseV1({
+          packagePath: reportPackage.outputDir,
+          operatorId: request.operatorId,
+          warningsAccepted: request.warningsAccepted,
+          overrideReason: request.overrideReason,
+        });
+        const release = result.productionRelease;
+        const expectedPublication =
+          this.hydratedMathematicalGradingAuthority(manifest).publication;
+        const elementNames = ["centering", "corners", "edges", "surface"] as const;
+        const identityFields = [
+          "title", "sideCount", "tenantId", "setId", "programId",
+          "cardNumber", "variantId", "parallelId",
+        ] as const;
+        if (
+          release.schemaVersion !== AI_GRADER_MATHEMATICAL_PRODUCTION_RELEASE_V1_VERSION ||
+          release.reportId !== reportId ||
+          release.gradingSessionId !== manifest.sessionId ||
+          release.reportStatus !== "final_ai_grader_report_v1" ||
+          release.finalStatus !== "final_grade_computed" ||
+          release.finalGrade.status !== "final_mathematical_grade_v1" ||
+          release.finalGradeComputed !== true ||
+          release.labelDataGenerated !== true ||
+          release.qrPayloadGenerated !== true ||
+          release.certifiedClaim !== false ||
+          release.certificateGenerated !== false ||
+          release.label.status !== "label_data_ready" ||
+          release.label.labelVersion !== "ten-kings-ai-grader-label-v1" ||
+          release.label.reportId !== reportId ||
+          release.label.certificateStatus !== "report_id_issued_not_certified" ||
+          release.label.certifiedClaim !== false ||
+          release.label.certId !== expectedPublication.certId ||
+          release.label.publicReportUrl !== expectedPublication.publicReportUrl ||
+          release.label.qrPayloadUrl !== expectedPublication.qrPayloadUrl ||
+          release.publication.reportId !== reportId ||
+          release.publication.publicReportUrl !== expectedPublication.publicReportUrl ||
+          release.publication.qrPayloadUrl !== expectedPublication.qrPayloadUrl ||
+          release.label.labelGradeText !== release.finalGrade.labelGrade.toFixed(1) ||
+          elementNames.some((element) =>
+            release.label.elementScores[element] !== release.finalGrade.elements[element].score ||
+            release.label.elementScores[element] < 1 ||
+            release.label.elementScores[element] > 10) ||
+          identityFields.some((field) =>
+            release.cardIdentity[field] !==
+              manifest.mathematicalV1!.gradingAuthority.cardIdentity[field] ||
+            release.label.cardIdentity[field] !== release.cardIdentity[field])
+        ) {
+          throw new Error(
+            "Mathematical Grading V1 production release did not preserve its exact V1 schema, " +
+            "final flags, card identity, four element scores, Label V1 data, and report/QR authority.",
+          );
+        }
+        manifest.outputs.productionReleasePath = result.productionReleasePath;
+        manifest.outputs.labelDataPath = result.labelDataPath;
+        manifest.outputs.publicationManifestPath = result.publicationManifestPath;
+        manifest.outputs.integrationContractPath = result.integrationContractPath;
+        manifest.outputs.mathematicalReleaseChecksumsPath = result.releaseChecksumsPath;
+        manifest.outputs.publishPackageDir = result.outputDir;
+        manifest.reportBundle = reportPackage.envelope.reportBundle;
+        manifest.productionRelease = release;
+        manifest.safety.finalGradeComputed = true;
+        manifest.safety.labelGenerated = true;
+        manifest.safety.qrGenerated = true;
+        manifest.progressLog.push(
+          new Date().toISOString() + " Mathematical Grading V1 production release validated from the strict V0.3 body with no V0 warning, redistribution, 9.0 cap, manual grade, or scoring fallback.",
+        );
+        await writeSessionManifest(manifest);
+        return release;
+      });
     }
     if (!manifest.outputs.reportBundlePath) {
       throw new Error("Production release requires an exported report-bundle.json.");
@@ -7167,29 +8984,61 @@ export class AiGraderLocalStationBridgeService {
   private async reportHistoryItems(): Promise<AiGraderLocalStationReportHistoryItem[]> {
     const items: AiGraderLocalStationReportHistoryItem[] = [];
     if (this.manifest.reportBundle) {
-      items.push(historyItemFromBundle({
-        bundle: this.manifest.reportBundle,
-        productionRelease: this.manifest.productionRelease,
-        reportBundlePath: this.manifest.outputs.reportBundlePath,
-        productionReleasePath: this.manifest.outputs.productionReleasePath,
-        sessionDir: this.manifest.outputs.sessionDir,
-      }));
-    } else if (this.manifest.reportId && this.manifest.outputs.unifiedReportPath) {
-      try {
-        const resolved = await this.reportBundle(this.manifest.reportId);
-        items.push(historyItemFromBundle({
-          bundle: resolved.bundle,
-          productionRelease: this.manifest.productionRelease,
+      if (isMathematicalReportBundle(this.manifest.reportBundle)) {
+        items.push(historyItemFromMathematicalBundle({
+          bundle: this.manifest.reportBundle,
+          gradingSessionId: this.manifest.sessionId ?? "",
+          productionRelease: isMathematicalProductionRelease(this.manifest.productionRelease)
+            ? this.manifest.productionRelease
+            : undefined,
           reportBundlePath: this.manifest.outputs.reportBundlePath,
           productionReleasePath: this.manifest.outputs.productionReleasePath,
           sessionDir: this.manifest.outputs.sessionDir,
         }));
+      } else {
+        items.push(historyItemFromBundle({
+          bundle: this.manifest.reportBundle,
+          productionRelease: !isMathematicalProductionRelease(this.manifest.productionRelease)
+            ? this.manifest.productionRelease
+            : undefined,
+          reportBundlePath: this.manifest.outputs.reportBundlePath,
+          productionReleasePath: this.manifest.outputs.productionReleasePath,
+          sessionDir: this.manifest.outputs.sessionDir,
+        }));
+      }
+    } else if (this.manifest.reportId && this.manifest.outputs.unifiedReportPath) {
+      try {
+        const resolved = await this.reportBundle(this.manifest.reportId);
+        if (resolved.gradingContract === "mathematical_calibration_v1") {
+          items.push(historyItemFromMathematicalBundle({
+            bundle: resolved.bundle,
+            gradingSessionId: resolved.gradingSessionId,
+            productionRelease: isMathematicalProductionRelease(this.manifest.productionRelease)
+              ? this.manifest.productionRelease
+              : undefined,
+            reportBundlePath: this.manifest.outputs.reportBundlePath,
+            productionReleasePath: this.manifest.outputs.productionReleasePath,
+            sessionDir: this.manifest.outputs.sessionDir,
+          }));
+        } else {
+          items.push(historyItemFromBundle({
+            bundle: resolved.bundle,
+            productionRelease: !isMathematicalProductionRelease(this.manifest.productionRelease)
+              ? this.manifest.productionRelease
+              : undefined,
+            reportBundlePath: this.manifest.outputs.reportBundlePath,
+            productionReleasePath: this.manifest.outputs.productionReleasePath,
+            sessionDir: this.manifest.outputs.sessionDir,
+          }));
+        }
       } catch {
         items.push({
           reportId: this.manifest.reportId,
           gradingSessionId: this.manifest.sessionId ?? this.manifest.reportId,
           generatedAt: this.manifest.updatedAt,
-          status: "provisional_diagnostic_ready",
+          status: gradingContractFor(this.manifest) === "mathematical_calibration_v1"
+            ? "insufficient_mathematical_v1_evidence"
+            : "provisional_diagnostic_ready",
           viewerPath: reportRoute(this.manifest.reportId),
           localHtmlPath: this.manifest.outputs.unifiedReportPath,
           reportBundlePath: this.manifest.outputs.reportBundlePath,
@@ -7197,7 +9046,9 @@ export class AiGraderLocalStationBridgeService {
           sessionDir: this.manifest.outputs.sessionDir,
           frontPackageDir: this.manifest.outputs.frontPackageDir,
           backPackageDir: this.manifest.outputs.backPackageDir,
-          warnings: this.manifest.warnings,
+          warnings: gradingContractFor(this.manifest) === "mathematical_calibration_v1"
+            ? [...this.manifest.warnings, "Mathematical Grading V1 is not ready; no historical or manual scoring fallback was used."]
+            : this.manifest.warnings,
         });
       }
     }
@@ -7216,6 +9067,39 @@ export class AiGraderLocalStationBridgeService {
       if (!(await exists(stationManifestPath))) continue;
       const stationManifest = await readJsonFile(stationManifestPath) as AiGraderLocalStationBridgeManifest | undefined;
       if (!stationManifest?.reportId) continue;
+      if (gradingContractFor(stationManifest) === "mathematical_calibration_v1") {
+        try {
+          const reportPackage = await this.resolveMathematicalReportPackage(stationManifest, {});
+          items.push(historyItemFromMathematicalBundle({
+            bundle: reportPackage.envelope.reportBundle,
+            gradingSessionId: reportPackage.envelope.gradingSessionId,
+            productionRelease: isMathematicalProductionRelease(stationManifest.productionRelease)
+              ? stationManifest.productionRelease
+              : undefined,
+            reportBundlePath: reportPackage.bundlePath,
+            productionReleasePath: stationManifest.outputs.productionReleasePath,
+            sessionDir,
+          }));
+        } catch {
+          items.push({
+            reportId: stationManifest.reportId,
+            gradingSessionId: stationManifest.sessionId ?? stationManifest.reportId,
+            generatedAt: stationManifest.updatedAt,
+            status: "insufficient_mathematical_v1_evidence",
+            viewerPath: reportRoute(stationManifest.reportId),
+            reportBundlePath: stationManifest.outputs.reportBundlePath,
+            productionReleasePath: stationManifest.outputs.productionReleasePath,
+            sessionDir,
+            frontPackageDir: stationManifest.outputs.frontPackageDir,
+            backPackageDir: stationManifest.outputs.backPackageDir,
+            warnings: [
+              ...(stationManifest.warnings ?? []),
+              "Mathematical Grading V1 is not ready; historical V0 scoring was not generated as a fallback.",
+            ],
+          });
+        }
+        continue;
+      }
       const canonicalBundlePath = publishPackagePath(this.config, stationManifest.reportId, "report-bundle.json");
       const canonicalProductionReleasePath = publishPackagePath(this.config, stationManifest.reportId, "production-release.json");
       const canonicalBundle = await readBundleFromPath(canonicalBundlePath);
@@ -7279,11 +9163,89 @@ export class AiGraderLocalStationBridgeService {
     return Array.from(deduped.values()).sort((a, b) => String(b.generatedAt ?? "").localeCompare(String(a.generatedAt ?? "")));
   }
 
+  private requireMathematicalCalibrationCaptureProducer(): FixedRigMathematicalCalibrationCaptureProducerV1 {
+    if (!this.mathematicalCalibrationCaptureProducer) {
+      throw new Error(
+        "Mathematical calibration capture is unavailable until the bridge has an exact protected target path, version, and SHA-256.",
+      );
+    }
+    return this.mathematicalCalibrationCaptureProducer;
+  }
+
+  private assertCalibrationSessionIsolated(): void {
+    if (this.manifest.sessionId) {
+      throw new Error("Mathematical calibration capture requires an isolated bridge with no active card-grading session.");
+    }
+    if (this.closing || this.frontCaptureTransition || this.captureLock || this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
+      throw new Error("Mathematical calibration mutation is blocked while another serialized bridge lifecycle is active.");
+    }
+  }
+
+  startMathematicalCalibrationCapture(
+    request: StartFixedRigMathematicalCalibrationCaptureV1Request,
+  ): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    this.assertCalibrationSessionIsolated();
+    return this.requireMathematicalCalibrationCaptureProducer().start(request);
+  }
+
+  mathematicalCalibrationCaptureStatus(sessionId: string): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    return this.requireMathematicalCalibrationCaptureProducer().status(sessionId);
+  }
+
+  captureMathematicalCalibrationStep(
+    request: CaptureFixedRigMathematicalCalibrationStepV1Request,
+  ): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    this.assertCalibrationSessionIsolated();
+    assertRealBridgeArmed(this.config);
+    return this.serializeTerminalLifecycle(async () => {
+      await this.awaitLightingLifecycleIdle();
+      await this.stopPreviewForHardwareAction("mathematical calibration");
+      const owner = `mathematical-calibration:${request.sessionId}:${request.operationId}`;
+      this.acquireCaptureLock(owner);
+      let result: FixedRigMathematicalCalibrationCaptureSessionStatusV1 | undefined;
+      let operationError: Error | undefined;
+      try {
+        result = await this.requireMathematicalCalibrationCaptureProducer().captureStep(request);
+      } catch (error) {
+        operationError = error instanceof Error ? error : new Error("Mathematical calibration capture failed.");
+      }
+      let safeOff: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>>;
+      try {
+        safeOff = await this.runTerminalSafeOff(`mathematical calibration ${request.operationId} bridge lifecycle end`);
+      } finally {
+        if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+      }
+      if (!safeOff.ok) {
+        const message = safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration lifecycle safe-off could not be confirmed.";
+        throw new Error(operationError ? `${operationError.message} ${message}` : message);
+      }
+      if (operationError) throw operationError;
+      if (!result) throw new Error("Mathematical calibration capture did not return a durable session status.");
+      return result;
+    });
+  }
+
+  recordMathematicalCalibrationMeasurement(
+    request: RecordFixedRigMathematicalCalibrationMeasurementV1Request,
+  ): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    this.assertCalibrationSessionIsolated();
+    return this.requireMathematicalCalibrationCaptureProducer().recordMeasurement(request);
+  }
+
+  sealMathematicalCalibrationCapture(
+    request: SealFixedRigMathematicalCalibrationCaptureV1Request,
+  ): Promise<SealedFixedRigMathematicalCalibrationCaptureV1> {
+    this.assertCalibrationSessionIsolated();
+    return this.requireMathematicalCalibrationCaptureProducer().seal(request);
+  }
+
   async action(action: AiGraderLocalStationBridgeAction, request: AiGraderLocalStationBridgeActionRequest = {}): Promise<AiGraderLocalStationBridgeStatus> {
     if (action === "capture-front") {
+      this.assertMathematicalCaptureAuthority(this.manifest, "front");
       return this.atomicFrontCapture(request);
     }
     if (action === "capture-back") {
+      this.assertMathematicalCaptureAuthority(this.manifest, "back");
       return this.atomicBackCapture(request);
     }
     if (action === "status" || action === "latest-report" || action === "session-manifest") {
@@ -7325,12 +9287,53 @@ export class AiGraderLocalStationBridgeService {
         throw new Error("AI Grader start-session requires an explicit captureProfile of full_forensic or production_fast.");
       }
       assertRealBridgeArmed(this.config);
-      await this.createFreshSession({ reportId: request.reportId, captureProfile: request.captureProfile }, now);
+      if (request.gradingContract !== undefined &&
+          request.gradingContract !== "legacy_v0" &&
+          request.gradingContract !== "mathematical_calibration_v1") {
+        throw new Error("AI Grader start-session gradingContract must be legacy_v0 or mathematical_calibration_v1.");
+      }
+      if (request.gradingContract === "mathematical_calibration_v1") {
+        const readiness = mathematicalCalibrationReadiness(
+          this.config,
+          this.dependencies.loadMathematicalCalibrationBundle ??
+            loadFixedRigMathematicalCalibrationBundleV1,
+        );
+        if (!readiness.ready) {
+          throw new Error(`Mathematical Calibration V1 is not ready: ${readiness.reason ?? "finalized calibration evidence is unavailable"}. No V0 fallback is permitted.`);
+        }
+        if (!request.mathematicalGradingAuthority) {
+          throw new Error("Mathematical V1 Start New Card requires exact card and centering/design-reference authority; publication remains bridge-derived.");
+        }
+      } else if (request.mathematicalGradingAuthority) {
+        throw new Error("Legacy V0 Start New Card cannot accept Mathematical V1 grading authority.");
+      }
+      await this.createFreshSession({
+        reportId: request.reportId,
+        captureProfile: request.captureProfile,
+        gradingContract: request.gradingContract ?? "legacy_v0",
+        mathematicalGradingAuthority: request.mathematicalGradingAuthority,
+      }, now);
       return this.status();
     }
 
     if (!this.manifest.sessionId) {
       throw new Error("Start a station session before running AI Grader station actions.");
+    }
+    if (request.gradingContract && request.gradingContract !== gradingContractFor(this.manifest)) {
+      throw new Error("AI Grader action gradingContract must match the contract explicitly selected at Start New Card.");
+    }
+    if ((request.mathematicalReportEnvelope || request.mathematicalReportPackagePath) &&
+        gradingContractFor(this.manifest) !== "mathematical_calibration_v1") {
+      throw new Error("Start an explicit mathematical_calibration_v1 session before attaching a strict V0.3 artifact.");
+    }
+
+    if (action === "bind-mathematical-grading-authority") {
+      if (!request.mathematicalGradingAuthority) {
+        throw new Error("Binding Mathematical V1 authority requires one exact mathematicalGradingAuthority.");
+      }
+      this.bindMathematicalGradingAuthority(this.manifest, request.mathematicalGradingAuthority);
+      await writeSessionManifest(this.manifest);
+      return this.status();
     }
 
     if (action === "queue-current-card") {
@@ -7382,7 +9385,64 @@ export class AiGraderLocalStationBridgeService {
 
     assertRealReady(this.config, this.manifest);
 
+    if (action === "submit-mathematical-finding-reviews") {
+      if (gradingContractFor(this.manifest) !== "mathematical_calibration_v1") {
+        throw new Error("Finding-review submission is available only for an explicit Mathematical V1 session.");
+      }
+      const reviews = this.validatedMathematicalFindingReviews(
+        this.manifest,
+        request.mathematicalReviewRequestSha256,
+        request.mathematicalFindingReviews,
+      );
+      const execution = await this.runMathematicalStationPackage(this.manifest, reviews);
+      if (this.activeQueueItemId) {
+        if (execution.status === "completed") {
+          const release = await this.writeProductionReleaseForManifest(this.manifest, {
+            operatorId: request.operatorId ?? "rapid-reviewed-background-preparation",
+            warningsAccepted: request.warningsAccepted,
+            overrideReason: request.overrideReason,
+          });
+          if (
+            release.reportId !== this.manifest.reportId ||
+            release.gradingSessionId !== this.manifest.sessionId ||
+            release.finalGradeComputed !== true ||
+            release.labelDataGenerated !== true ||
+            release.qrPayloadGenerated !== true ||
+            release.label.status !== "label_data_ready" ||
+            !this.manifest.outputs.productionReleasePath ||
+            !this.manifest.outputs.labelDataPath
+          ) {
+            throw new Error("Reviewed Mathematical Rapid item did not produce the exact strict release and Label V1 data.");
+          }
+          this.manifest.currentStep = "label_data_ready";
+          this.transitionRapidWorkflow(
+            this.manifest,
+            "report_ready_needs_confirm",
+            "Explicit finding reviews were accepted; strict Mathematical V1 release and Label V1 data await Approve & Publish.",
+          );
+        } else if (execution.status === "finding_review_required") {
+          this.transitionRapidWorkflow(
+            this.manifest,
+            "finding_review_required",
+            "Submitted reviews did not satisfy the exact request; no finding was auto-confirmed.",
+          );
+        } else if (execution.status === "insufficient_evidence") {
+          this.transitionRapidWorkflow(
+            this.manifest,
+            "insufficient_evidence",
+            "Reviewed Mathematical V1 rerun stopped fail-closed at " + execution.failedStage + ".",
+          );
+        }
+        await this.syncQueuedManifest(this.manifest);
+      }
+      return this.status();
+    }
+
     if (action === "run-diagnostics") {
+      if (gradingContractFor(this.manifest) === "mathematical_calibration_v1") {
+        await this.runMathematicalStationPackage(this.manifest);
+        return this.status();
+      }
       const result = await this.runWarmReport();
       this.manifest.outputs.unifiedReportDir = result.payload?.report?.packageDir ?? dirnameIfFile(extractUnifiedReportPath(result.payload));
       this.manifest.outputs.unifiedReportPath = extractUnifiedReportPath(result.payload);
@@ -7393,6 +9453,19 @@ export class AiGraderLocalStationBridgeService {
     }
 
     if (action === "export-report-bundle") {
+      if (gradingContractFor(this.manifest) === "mathematical_calibration_v1") {
+        const reportId = this.manifest.reportId;
+        if (!reportId) throw new Error("Mathematical Grading V1 export requires an exact report ID.");
+        const reportPackage = await withAiGraderReportPackageOperation(reportId, () =>
+          this.resolveMathematicalReportPackage(this.manifest, request)
+        );
+        this.applyMathematicalReportPackage(this.manifest, reportPackage);
+        this.manifest.progressLog.push(
+          now + " Strict Mathematical Grading V1 V0.3 body, external grading-session envelope, immutable assets, and checksums exported without overwrite.",
+        );
+        await writeSessionManifest(this.manifest);
+        return this.status();
+      }
       const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
       if (!reportDir) throw new Error("Report bundle export requires a generated unified report folder.");
       const reportId = this.manifest.reportId ?? "local-report";
@@ -7464,6 +9537,8 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
     "configure-rapid-capture",
     "queue-current-card",
     "activate-queue-item",
+    "bind-mathematical-grading-authority",
+    "submit-mathematical-finding-reviews",
   ].includes(value);
 }
 
@@ -7496,11 +9571,11 @@ function setCors(res: http.ServerResponse, origin: string | undefined, config: A
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type,x-ai-grader-station-token,x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch"
+    "content-type,x-ai-grader-station-token,x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-side,x-ai-grader-reference-id,x-ai-grader-sha256"
   );
   res.setHeader(
     "Access-Control-Expose-Headers",
-    "x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-frame-id"
+    "x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-frame-id,x-ai-grader-reference-id,x-ai-grader-sha256,x-ai-grader-asset-id,x-ai-grader-side,x-ai-grader-evidence-role"
   );
   res.setHeader("Access-Control-Allow-Private-Network", "true");
   res.setHeader("Access-Control-Max-Age", "600");
@@ -7566,6 +9641,45 @@ async function readJsonBody(req: http.IncomingMessage): Promise<JsonBody> {
     throw new Error("AI Grader station bridge request body must be a JSON object.");
   }
   return parsed as JsonBody;
+}
+
+function exactRequestHeader(req: http.IncomingMessage, name: string): string {
+  const value = req.headers[name.toLowerCase()];
+  if (Array.isArray(value) || typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(name + " must be supplied exactly once.");
+  }
+  return value.trim();
+}
+
+async function readExactBoundedBinaryBody(
+  req: http.IncomingMessage,
+  maximumBytes: number,
+): Promise<{ bytes: Buffer; declaredByteSize: number }> {
+  const contentLength = exactRequestHeader(req, "Content-Length");
+  if (!/^[0-9]+$/.test(contentLength)) {
+    throw new Error("Design-reference Content-Length must be one exact decimal integer.");
+  }
+  const declaredByteSize = Number(contentLength);
+  if (!Number.isSafeInteger(declaredByteSize) || declaredByteSize < 24 ||
+      declaredByteSize > maximumBytes) {
+    throw new Error(
+      "Design-reference Content-Length must be from 24 through " + maximumBytes + " bytes.",
+    );
+  }
+  const chunks: Buffer[] = [];
+  let observed = 0;
+  for await (const chunk of req) {
+    const bytes = Buffer.from(chunk);
+    observed += bytes.byteLength;
+    if (observed > declaredByteSize || observed > maximumBytes) {
+      throw new Error("Design-reference body exceeded its exact bounded Content-Length.");
+    }
+    chunks.push(bytes);
+  }
+  if (observed !== declaredByteSize) {
+    throw new Error("Design-reference body length did not match Content-Length.");
+  }
+  return { bytes: Buffer.concat(chunks), declaredByteSize };
 }
 
 function actionRequestFromJson(value: JsonBody): AiGraderLocalStationBridgeActionRequest {
@@ -7708,6 +9822,126 @@ export function createAiGraderLocalStationBridgeHttpServer(
         return sendJson(res, 200, { ok: true, operation: "lighting-heartbeat", result: await service.heartbeatLiveLighting(reason) }, origin, config);
       }
 
+      const designReferenceStageMatch = url.pathname.match(
+        /^\/mathematical-v1\/design-reference-artifacts\/(front|back)$/,
+      );
+      if (designReferenceStageMatch) {
+        if (req.method !== "POST") {
+          return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for Mathematical design-reference staging." }, origin, config);
+        }
+        if (!tokenMatches(req, config)) {
+          return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        }
+        if (url.search.length > 0) {
+          throw new Error("Design-reference staging does not accept caller path or query parameters.");
+        }
+        const side = designReferenceStageMatch[1] as "front" | "back";
+        if (exactRequestHeader(req, "X-AI-Grader-Side") !== side) {
+          throw new Error("Design-reference path and X-AI-Grader-Side must match exactly.");
+        }
+        const contentType = exactRequestHeader(req, "Content-Type").toLowerCase();
+        if (contentType !== "image/png" && contentType !== "image/jpeg") {
+          throw new Error("Design-reference Content-Type must be exactly image/png or image/jpeg.");
+        }
+        const stageHeaders = {
+          sessionId: exactRequestHeader(req, "X-AI-Grader-Session-Id"),
+          side,
+          referenceId: exactRequestHeader(req, "X-AI-Grader-Reference-Id"),
+          sha256: exactRequestHeader(req, "X-AI-Grader-SHA256").toLowerCase(),
+          contentType,
+        };
+        service.assertMathematicalDesignReferenceStageRequest(stageHeaders);
+        const body = await readExactBoundedBinaryBody(
+          req,
+          MATHEMATICAL_DESIGN_REFERENCE_MAX_BYTES,
+        );
+        const staged = await service.stageMathematicalDesignReference({
+          ...stageHeaders,
+          declaredByteSize: body.declaredByteSize,
+          bytes: body.bytes,
+        });
+        return sendJson(res, 201, {
+          ok: true,
+          operation: "mathematical-design-reference-stage",
+          result: {
+            side: staged.side,
+            referenceId: staged.referenceId,
+            assetId: staged.assetId,
+            sha256: staged.sha256,
+            byteSize: staged.byteSize,
+            contentType: staged.contentType,
+            stagedAt: staged.stagedAt,
+            createNew: true,
+          },
+        }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/status") {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for the calibration status route." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const sessionId = url.searchParams.get("sessionId") ?? "";
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-status", result: await service.mathematicalCalibrationCaptureStatus(sessionId) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/start") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for calibration start." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-start", result: await service.startMathematicalCalibrationCapture(body as unknown as StartFixedRigMathematicalCalibrationCaptureV1Request) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/capture") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for calibration capture." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-capture", result: await service.captureMathematicalCalibrationStep(body as unknown as CaptureFixedRigMathematicalCalibrationStepV1Request) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/measurement") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for calibration measurement." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-measurement", result: await service.recordMathematicalCalibrationMeasurement(body as unknown as RecordFixedRigMathematicalCalibrationMeasurementV1Request) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/seal") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for calibration seal." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-seal", result: await service.sealMathematicalCalibrationCapture(body as unknown as SealFixedRigMathematicalCalibrationCaptureV1Request) }, origin, config);
+      }
+
+      if (url.pathname === "/mathematical-v1/review-assets") {
+        if (req.method !== "GET") {
+          return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for pending Mathematical review assets." }, origin, config);
+        }
+        if (!tokenMatches(req, config)) {
+          return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        }
+        const reportId = url.searchParams.get("reportId") ?? "";
+        const assetId = url.searchParams.get("assetId") ?? "";
+        if (url.searchParams.size !== 2 || !reportId || !assetId) {
+          throw new Error("Pending Mathematical review asset requires only exact reportId and assetId parameters.");
+        }
+        const asset = await service.mathematicalReviewAsset(reportId, assetId);
+        return sendBinary(
+          res,
+          200,
+          asset.bytes,
+          origin,
+          config,
+          asset.contentType,
+          {
+            "X-AI-Grader-Asset-Id": asset.id,
+            "X-AI-Grader-SHA256": asset.sha256,
+            "X-AI-Grader-Side": asset.side,
+            "X-AI-Grader-Evidence-Role": asset.evidenceRole,
+            "X-AI-Grader-Width-Px": String(asset.widthPx),
+            "X-AI-Grader-Height-Px": String(asset.heightPx),
+          },
+        );
+      }
+
       const reportBundleMatch = url.pathname.match(/^\/reports\/([^/]+)\/bundle$/);
       if (reportBundleMatch) {
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for report bundles." }, origin, config);
@@ -7733,23 +9967,17 @@ export function createAiGraderLocalStationBridgeHttpServer(
         const reportId = decodeURIComponent(reportAssetMatch[1]);
         const assetId = url.searchParams.get("assetId") ?? "";
         if (!assetId.trim()) throw new Error("assetId is required.");
-        const resolved = await service.reportBundle(reportId);
-        const asset = resolved.bundle.assets.find((candidate) => candidate.id === assetId);
-        if (!asset?.localPath || asset.kind !== "image") {
-          throw new Error(`AI Grader report asset ${assetId} is not available as a local image file.`);
-        }
-        const bytes = await readFile(asset.localPath);
-        const checksum = crypto.createHash("sha256").update(bytes).digest("hex");
+        const asset = await service.reportAsset(reportId, assetId);
         return sendBinary(
           res,
           200,
-          bytes,
+          asset.bytes,
           origin,
           config,
-          asset.contentType ?? "application/octet-stream",
+          asset.contentType,
           {
             "X-AI-Grader-Asset-Id": asset.id,
-            "X-AI-Grader-SHA256": checksum,
+            "X-AI-Grader-SHA256": asset.sha256,
           }
         );
       }
@@ -7760,6 +9988,9 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         const reportId = decodeURIComponent(reportHtmlMatch[1]);
         const resolved = await service.reportBundle(reportId);
+        if (resolved.gradingContract === "mathematical_calibration_v1") {
+          throw new Error("Mathematical Grading V1 is rendered from its strict V0.3 report body and does not expose legacy generated HTML.");
+        }
         if (!resolved.bundle.reportHtmlPath) throw new Error("Report HTML path is not available for this local report.");
         return sendText(res, 200, await readFile(resolved.bundle.reportHtmlPath, "utf-8"), origin, config, "text/html; charset=utf-8");
       }

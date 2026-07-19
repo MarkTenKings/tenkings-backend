@@ -184,14 +184,14 @@ function publishedMeasurementsByFindingId(bundle: JsonRecord, calibrationVersion
   return measurements;
 }
 
-function gradeData(bundle: JsonRecord) {
+function gradeData(bundle: JsonRecord, minimumScore: 0 | 1) {
   const productionRelease = isRecord(bundle.productionRelease) ? bundle.productionRelease : undefined;
   const finalGrade = productionRelease && isRecord(productionRelease.finalGrade) ? productionRelease.finalGrade : undefined;
   const provisionalGrade = isRecord(bundle.provisionalGrade) ? bundle.provisionalGrade : undefined;
   const source = finalGrade && finiteNumber(finalGrade.overall) !== undefined ? finalGrade : provisionalGrade;
   if (!source) return undefined;
   const score = finiteNumber(source.overall);
-  if (score === undefined || score < 0 || score > 10) return undefined;
+  if (score === undefined || score < minimumScore || score > 10) return undefined;
   const confidence = isRecord(source.confidence) ? source.confidence : undefined;
   const elementSource = isRecord(source.elements)
     ? source.elements
@@ -201,7 +201,7 @@ function gradeData(bundle: JsonRecord) {
   const elements: CinematicElement[] = ELEMENT_KEYS.flatMap((key) => {
     const value = isRecord(elementSource[key]) ? elementSource[key] : undefined;
     const elementScore = value && finiteNumber(value.score);
-    if (elementScore === undefined || elementScore < 0 || elementScore > 10) return [];
+    if (elementScore === undefined || elementScore < minimumScore || elementScore > 10) return [];
     return [{
       key,
       score: elementScore,
@@ -240,7 +240,7 @@ function reportNotes(bundle: JsonRecord): CinematicNote[] {
  * score, date, measurement, evidence image, or optional room is synthesized.
  * Current public policy does not permit a certified cinematic presentation.
  */
-export function toAiGraderCinematicReport(value: unknown): CinematicReport | null {
+function toAiGraderCinematicReportWithMinimumScore(value: unknown, minimumScore: 0 | 1): CinematicReport | null {
   if (!isRecord(value)) return null;
   const images = imagesForBundle(value);
   const cardIdentity = isRecord(value.cardIdentity) ? value.cardIdentity : {};
@@ -276,13 +276,14 @@ export function toAiGraderCinematicReport(value: unknown): CinematicReport | nul
   });
   const generatedAt = text(value.generatedAt);
   const validGeneratedAt = generatedAt && Number.isFinite(Date.parse(generatedAt)) ? generatedAt : undefined;
+  const grade = gradeData(value, minimumScore);
   return {
     ...(text(value.reportId) ? { reportId: text(value.reportId) } : {}),
     ...(text(cardIdentity.title) ? { title: text(cardIdentity.title) } : {}),
     ...(text(cardIdentity.set) ? { set: text(cardIdentity.set) } : {}),
     ...(text(cardIdentity.cardNumber) ? { cardNumber: text(cardIdentity.cardNumber) } : {}),
     ...(validGeneratedAt ? { generatedAt: validGeneratedAt } : {}),
-    ...(gradeData(value) ? { grade: gradeData(value) } : {}),
+    ...(grade ? { grade } : {}),
     notes: reportNotes(value),
     images: {
       ...(Object.keys(sideImages("front")).length ? { front: sideImages("front") } : {}),
@@ -291,6 +292,24 @@ export function toAiGraderCinematicReport(value: unknown): CinematicReport | nul
     findings: { front: cinematicFindings("front"), back: cinematicFindings("back") },
     certifiedPresentation: false,
   };
+}
+
+/** Current adapters require every grade and element score to be within 1.00-10.00. */
+export function toAiGraderCinematicReport(value: unknown): CinematicReport | null {
+  return toAiGraderCinematicReportWithMinimumScore(value, 1);
+}
+
+/**
+ * Explicit read-only compatibility for stored V0 reports whose historical
+ * score contract allowed 0.00. Non-V0 payloads still use the current minimum.
+ */
+export function toAiGraderLegacyCinematicReportForRead(value: unknown): CinematicReport | null {
+  const legacyV0 = isRecord(value) && (
+    value.schemaVersion === undefined ||
+    value.schemaVersion === "ai-grader-report-bundle-v0.1" ||
+    value.schemaVersion === "ai-grader-report-bundle-v0.2"
+  );
+  return toAiGraderCinematicReportWithMinimumScore(value, legacyV0 ? 0 : 1);
 }
 
 export function cinematicEvidenceImage(

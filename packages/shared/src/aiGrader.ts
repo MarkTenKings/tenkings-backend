@@ -1079,6 +1079,31 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function isContractGradeScore(value: unknown): value is number {
+  return (
+    isFiniteNumber(value) &&
+    value >= 1 &&
+    value <= 10 &&
+    Math.abs(value * 100 - Math.round(value * 100)) < 1e-8
+  );
+}
+
+function validateContractGradeRecord(
+  value: Record<string, unknown>,
+  path: string,
+  issues: AiGraderValidationIssue[],
+) {
+  Object.entries(value).forEach(([field, grade]) => {
+    if (!isContractGradeScore(grade)) {
+      issues.push(issue(
+        `${path}.${field}`,
+        "INVALID_SCORE",
+        "grade values must be finite scores from 1.00 through 10.00 with at most two decimal places.",
+      ));
+    }
+  });
+}
+
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
@@ -1804,8 +1829,8 @@ export function validateMacroPipelineOutput(value: unknown): AiGraderValidationR
   } else {
     const provisionalGrades = value.provisionalGrades;
     ["centering", "corners", "edges", "surface"].forEach((field) => {
-      if (!isFiniteNumber(provisionalGrades[field])) {
-        issues.push(issue(`${path}.provisionalGrades.${field}`, "INVALID_NUMBER", `${field} provisional grade must be a finite number.`));
+      if (!isContractGradeScore(provisionalGrades[field])) {
+        issues.push(issue(`${path}.provisionalGrades.${field}`, "INVALID_SCORE", `${field} provisional grade must be from 1.00 through 10.00 with at most two decimal places.`));
       }
     });
   }
@@ -2321,11 +2346,11 @@ export function validateFusionAction(value: unknown): AiGraderValidationResult {
   validateUnknownRecordPresent(value.macroMeasurement, `${path}.macroMeasurement`, issues);
   validateUnknownRecordPresent(value.microMeasurement, `${path}.microMeasurement`, issues);
 
-  if (!isFiniteNumber(value.gradeBefore)) {
-    issues.push(issue(`${path}.gradeBefore`, "INVALID_NUMBER", "gradeBefore must be a finite number."));
+  if (!isContractGradeScore(value.gradeBefore)) {
+    issues.push(issue(`${path}.gradeBefore`, "INVALID_SCORE", "gradeBefore must be from 1.00 through 10.00 with at most two decimal places."));
   }
-  if (!isFiniteNumber(value.gradeAfter)) {
-    issues.push(issue(`${path}.gradeAfter`, "INVALID_NUMBER", "gradeAfter must be a finite number."));
+  if (!isContractGradeScore(value.gradeAfter)) {
+    issues.push(issue(`${path}.gradeAfter`, "INVALID_SCORE", "gradeAfter must be from 1.00 through 10.00 with at most two decimal places."));
   }
 
   if (value.regionId != null && !isNonEmptyString(value.regionId)) {
@@ -2566,11 +2591,11 @@ export function validateStandardFusionOutput(
   if (!isRecord(draft.finalGrades)) {
     issues.push(issue(`${path}.gradeRunDraft.finalGrades`, "INVALID_RECORD", "finalGrades must be an object."));
   } else {
-    Object.entries(draft.finalGrades).forEach(([key, grade]) => {
-      if (!isFiniteNumber(grade)) {
-        issues.push(issue(`${path}.gradeRunDraft.finalGrades.${key}`, "INVALID_NUMBER", "final grade values must be finite numbers."));
-      }
-    });
+    validateContractGradeRecord(
+      draft.finalGrades,
+      `${path}.gradeRunDraft.finalGrades`,
+      issues,
+    );
   }
 
   if (!Array.isArray(draft.fusionActions)) {
@@ -3196,6 +3221,8 @@ export function validateAuthRunContract(value: unknown): AiGraderValidationResul
   }
   if (value.finalGrades != null && !isRecord(value.finalGrades)) {
     issues.push(issue(`${path}.finalGrades`, "INVALID_RECORD", "finalGrades must be an object when provided."));
+  } else if (isRecord(value.finalGrades)) {
+    validateContractGradeRecord(value.finalGrades, `${path}.finalGrades`, issues);
   }
 
   if (value.mode === "AUTH_ONLY" && isRecord(value.finalGrades) && Object.keys(value.finalGrades).length > 0) {
@@ -3432,11 +3459,7 @@ export function validateGradeCertificateContract(value: unknown): AiGraderValida
   if (value.finalGrades != null && !isRecord(value.finalGrades)) {
     issues.push(issue(`${path}.finalGrades`, "INVALID_RECORD", "finalGrades must be an object when provided."));
   } else if (isRecord(value.finalGrades)) {
-    Object.entries(value.finalGrades).forEach(([field, grade]) => {
-      if (!isFiniteNumber(grade)) {
-        issues.push(issue(`${path}.finalGrades.${field}`, "INVALID_NUMBER", "final grade values must be finite numbers."));
-      }
-    });
+    validateContractGradeRecord(value.finalGrades, `${path}.finalGrades`, issues);
   }
   if (!hasValidTimestamp(value.createdAt)) {
     issues.push(issue(`${path}.createdAt`, "INVALID_TIMESTAMP", "createdAt must be a valid timestamp string."));
@@ -3675,11 +3698,7 @@ export function validatePublicReportDisclosure(value: unknown): AiGraderValidati
   if (value.gradeValues != null && !isRecord(value.gradeValues)) {
     issues.push(issue(`${path}.gradeValues`, "INVALID_RECORD", "gradeValues must be an object when provided."));
   } else if (isRecord(value.gradeValues)) {
-    Object.entries(value.gradeValues).forEach(([field, grade]) => {
-      if (!isFiniteNumber(grade)) {
-        issues.push(issue(`${path}.gradeValues.${field}`, "INVALID_NUMBER", "grade values must be finite numbers."));
-      }
-    });
+    validateContractGradeRecord(value.gradeValues, `${path}.gradeValues`, issues);
   }
 
   [

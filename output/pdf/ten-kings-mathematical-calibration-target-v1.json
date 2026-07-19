@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "ten-kings-calibration-target-manifest-v1",
+  "version": "ten-kings-mathematical-calibration-target-v1.0.0",
+  "pdf": "ten-kings-mathematical-calibration-target-v1.pdf",
+  "pdfSha256": "5cc1344fe02ea5346a77592540aa72882150278aa9a7705d6dcfe900893c81bd",
+  "pageSize": {
+    "name": "LETTER",
+    "widthMm": 215.9,
+    "heightMm": 279.4
+  },
+  "printScale": 1.0,
+  "maximumPrintScaleErrorMm": 0.2,
+  "requiredPrintScaleVerification": {
+    "x": {
+      "nominalSpanMm": 100.0,
+      "measurementU95Required": true
+    },
+    "y": {
+      "nominalSpanMm": 200.0,
+      "measurementU95Required": true
+    },
+    "maximumErrorPlusU95Mm": 0.2,
+    "acceptanceFormula": "abs(measuredSpanMm - nominalSpanMm) + measurementU95Mm <= 0.20"
+  },
+  "requiredCutDimensionVerification": {
+    "x": {
+      "nominalDimensionMm": 63.5,
+      "measurementU95Required": true
+    },
+    "y": {
+      "nominalDimensionMm": 88.9,
+      "measurementU95Required": true
+    },
+    "maximumErrorPlusU95Mm": 0.2
+  },
+  "uniformFlatFieldPolicy": {
+    "preferred": "blank_matte_neutral_reverse_without_print_showthrough",
+    "minimumDarkFramesPerChannel": 3,
+    "minimumFlatFieldFramesPerChannel": 3,
+    "minimumPatternFramesPerChannel": 3
+  },
+  "measurementRepeatabilityClasses": [
+    "linear_mm",
+    "area_mm2",
+    "relief_index",
+    "roughness_index",
+    "color_delta_e"
+  ],
+  "minimumRepeatedPlacements": 10,
+  "geometryCheckerboard": {
+    "columns": 12,
+    "rows": 17,
+    "internalColumns": 11,
+    "internalRows": 16,
+    "cellMm": 5.0,
+    "couponWidthMm": 63.5,
+    "couponHeightMm": 88.9
+  },
+  "cardReference": {
+    "widthMm": 63.5,
+    "heightMm": 88.9,
+    "cornerRadiusMm": 3.18,
+    "printedFrameInsetMm": 5.0
+  },
+  "verificationBarsMm": [
+    50.0,
+    100.0,
+    200.0
+  ]
+}

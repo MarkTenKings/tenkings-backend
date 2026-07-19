@@ -1,4 +1,8 @@
-import type { AiGraderReportBundle, AiGraderReportPublicAsset } from "./aiGraderReportBundle";
+import {
+  isAiGraderReportBundleV03,
+  type AiGraderReportPublicAsset,
+  type AiGraderStationReportBundle,
+} from "./aiGraderReportBundle";
 import { AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION } from "./aiGraderLocalStation";
 import {
   fetchAiGraderStationReportAsset,
@@ -252,11 +256,14 @@ export function aiGraderOcrPrefillReportMetadata(result: AiGraderOcrPrefillResul
   return safeAiGraderOcrPrefillResult(result) as unknown as Record<string, unknown>;
 }
 
-export function findAiGraderNormalizedOcrAssets(bundle: AiGraderReportBundle): NormalizedAsset[] {
-  if (bundle.reportProducer?.contractVersion !== AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION) {
+export function findAiGraderNormalizedOcrAssets(bundle: AiGraderStationReportBundle): NormalizedAsset[] {
+  if (!isAiGraderReportBundleV03(bundle) && bundle.reportProducer?.contractVersion !== AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION) {
     throw new Error("OCR Prefill requires a current report-producer v0.2 package. Update the Dell helper and capture a new card.");
   }
-  const normalizedAssets = [...(bundle.assets ?? []), ...(bundle.publicAssets ?? [])]
+  const sourceAssets = isAiGraderReportBundleV03(bundle)
+    ? bundle.publicAssets
+    : [...(bundle.assets ?? []), ...(bundle.publicAssets ?? [])];
+  const normalizedAssets = (sourceAssets as unknown as AiGraderReportPublicAsset[])
     .filter((asset) => asset.evidenceRole === "normalized_card");
   if (normalizedAssets.length !== 2) {
     throw new Error("OCR Prefill requires exactly one verified normalized front asset and one verified normalized back asset.");
@@ -356,7 +363,7 @@ export async function runAiGraderOcrPrefillFromLocalReport(
     stationToken: string;
     reportId: string;
     authHeaders: Record<string, string>;
-    bundle?: AiGraderReportBundle;
+    bundle?: AiGraderStationReportBundle;
   },
   dependencies: {
     fetchImpl?: typeof fetch;
@@ -371,7 +378,7 @@ export async function runAiGraderOcrPrefillFromLocalReport(
   const fetchAsset = dependencies.fetchAsset ?? fetchAiGraderStationReportAsset;
   const digestSha256 = dependencies.digestSha256 ?? sha256Hex;
   const uploadDirect = dependencies.uploadDirect ?? uploadAiGraderArtifactDirectly;
-  let bundle: AiGraderReportBundle;
+  let bundle: AiGraderStationReportBundle;
   let normalizedAssets: NormalizedAsset[];
   try {
     bundle = input.bundle ?? await fetchBundle({

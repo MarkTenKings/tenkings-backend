@@ -16,6 +16,10 @@
       "types": "./dist/drivers/index.d.ts",
       "default": "./dist/drivers/index.js"
     },
+    "./calibration-bundle": {
+      "types": "./dist/drivers/fixedRigMathematicalCalibrationBundleV1.d.ts",
+      "default": "./dist/drivers/fixedRigMathematicalCalibrationBundleV1.js"
+    },
     "./transport": {
       "types": "./dist/transport.d.ts",
       "default": "./dist/transport.js"

@@ -71,3 +71,17 @@ echo "DATABASE_URL length: ${#DATABASE_URL}"
 ## AI Grader Direct-Upload CORS Gate
 
 Any AI Grader release that makes `x-amz-checksum-sha256` a required signed browser PUT header must preserve the additive DigitalOcean Spaces CORS rule documented in `docs/ai-grader-capture-helper.md`. Verify production-origin PUT and HEAD preflights for `Content-Type`, `x-amz-acl`, and `x-amz-checksum-sha256`, and stop before rollout if either fails. Finalization must HEAD the exact planned object and require the exact expected byte size and compatible content type. It uses a valid provider-native SHA-256 when one is returned; when the provider returns no native checksum, it must stream that same exact object through the reviewed bounded server-side SHA-256 verifier, enforce the existing per-object upload limit and expected length, and compare the result to the browser-provided digest before OCR, publication, or slab-photo persistence. Oversized, truncated, mismatched, malformed, or failed reads stop finalization. Never accept ETag, mutable metadata, filename, or a caller URL as integrity evidence, and never write verification bytes to disk. A production-storage canary remains an exceptional separately authorized action: use only a uniquely named harmless non-card object, record normalized results only, delete it immediately, and verify deletion.
+
+## Mathematical Calibration V1 Rollout Gate
+
+Mathematical Calibration V1 must remain unavailable until all of these identities agree exactly:
+
+- the reviewed source commit and centralized threshold-manifest SHA-256;
+- one physically accepted finalized calibration bundle and its complete member ledger;
+- one current `TRUSTED` hosted `CalibrationSnapshot` for the same rig, profile, version, artifact, source-capture manifest, bundle manifest, member ledger, and threshold set;
+- the strict V0.3 report and Mathematical V1 release envelope; and
+- the exact Label V1 report/certificate/grade/link authority.
+
+Never create or trust a snapshot merely to unlock measurements. A rejected or incomplete physical run may retain its evidence and acceptance record, but it must not produce a finalized profile or trusted bundle. Historical V0 reports remain readable; a V1 session with missing calibration/reference/review/evidence authority stops explicitly and never falls back to V0 or a manual grade.
+
+Before any protected rollout, require the complete disposable PostgreSQL migration chain plus second-deploy no-op, all normal GitHub/Docker/Vercel checks, and the separately required independent Mac architecture/calibration review. Apply the additive migration, import/trust a real bundle, install/update a Dell helper, deploy, or enable V1 only under a separately authorized rollout; none is an ordinary consequence of merging the implementation PR.

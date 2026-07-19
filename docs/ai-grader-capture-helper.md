@@ -68,6 +68,20 @@ The automatic all-off sequence is bridge-owned and limited to fatal bridge failu
 
 The circular specular reflection remains an unresolved optical setup issue. Candidate physical mitigations include cross-polarization, a diffuser, ambient-light control, and reviewed lighting geometry changes. No PR #39 code or smoke may claim the ring reflection is solved, calibrated, or certified without controlled optical evidence.
 
+Mathematical Calibration V1 does not claim that the optical reflection has disappeared. It changes how calibrated evidence is interpreted: per-channel dark/flat-field correction separates common-mode/calibrated illumination response from directional residuals; clipping, specular response, low confidence, and insufficient channel coverage create visible evidence-quality masks; and physical candidates may deduct only from adequate valid multi-channel evidence. Alternate non-glare channels may recover a partly obscured region. A region obscured in every usable channel is insufficient evidence, never a physical defect and never a false `10.00`.
+
+The redacted immutable replay for the historical Surface `5.50` report proves the old V0 path treated sixteen fixed-grid, channel-selective illumination candidates as high-severity surface damage: nominal deduction `22.40`, cap `4.50`, result `5.50`. The V1 regression retains those exact candidate identities as zero-deduction illumination limitations while independently proving that a directional scratch still deducts, including when alternate channels support the portion crossing glare. This is an algorithmic classification correction; physical target/test-card evidence is still required before rollout.
+
+## Mathematical Calibration V1 candidate boundary
+
+Mathematical V1 is fail-closed and separate from historical V0. It requires one complete finalized calibration bundle, the exact frozen threshold-set hash, real printed-design centering on both sides, all eight visible corner observations, all eight visible edge observations, calibrated surface evidence, measurement U95, and complete finding disposition. Missing calibration, intended-design authority, valid pixels, channels, measurements, or review produces explicit insufficient evidence. It never redistributes a missing element, invokes the legacy image-quality proxy scorer, uses a manual/historical grade, or silently switches camera/capture/reference paths.
+
+Before capture, the operator supplies the exact card/set/program/variant identity and chooses `printed_border_v1` or `registered_design_template_v1` per side. Registered-template capture is available only after the authenticated server resolves one exact APPROVED design artifact and the browser and bridge independently verify its MIME type, dimensions, identity, version, bytes, and SHA-256. The browser cannot author a hash, private storage key, registration transform, residual, confidence, certificate, report URL, or score.
+
+Ordinary and Rapid Capture use the same exact Mathematical authority and serialized bridge pipeline. Processing states are explicit: `processing`, `finding_review_required`, `completed`, or `insufficient_evidence`; `v0FallbackUsed` remains false. Finding review exposes hash-verified True View, eight directional channels, ROI, segmentation, confidence, and illumination evidence. The operator records one disposition per exact finding; evidence-derived confidence and score math remain immutable. The existing single **Approve & Publish** authority completes review and then enters the protected publication boundary only for a strict completed V1 package.
+
+The physical calibration workflow is documented in `docs/runbooks/AI_GRADER_MATHEMATICAL_CALIBRATION_V1_RUNBOOK.md`. It uses a clearly non-production target, exactly 102 captures and 78 measurement records, pinned offline analysis, and a create-new 12-member finalized bundle. It never installs over the Dell helper and has no Production, database-trust, report-publication, label-printing, inventory, NFC, deployment, or merge authority.
+
 ## Build and hardware-free validation
 
 ```powershell

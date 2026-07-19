@@ -1,6 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mergeAiGraderPublishedReportReadData } from "../lib/server/aiGraderPublicReportRead";
+import { safeAiGraderPublicReportUrl } from "../lib/server/aiGraderPublicReportData";
+
+test("V1 public enrichment URLs reuse the strict report-link safety policy", () => {
+  assert.equal(
+    safeAiGraderPublicReportUrl("https://cdn.tenkings.test/reports/card.png"),
+    "https://cdn.tenkings.test/reports/card.png",
+  );
+  assert.equal(
+    safeAiGraderPublicReportUrl("/api/ai-grader/reports/report-1/assets/card.png"),
+    "/api/ai-grader/reports/report-1/assets/card.png",
+  );
+
+  for (const unsafe of [
+    "https://127.0.0.1/private-report.png",
+    "https://169.254.169.254/latest/meta-data",
+    "https://storage.invalid/card.png?X-Amz-Signature=secret",
+    "https://user:secret@cdn.tenkings.test/card.png",
+    "//tracker.invalid/card.png",
+    "javascript:alert(1)",
+  ]) {
+    assert.equal(
+      safeAiGraderPublicReportUrl(unsafe),
+      undefined,
+      `expected unsafe public report URL to be rejected: ${unsafe}`,
+    );
+  }
+});
 
 test("v0.2 public reads retain the canonical release and ignore private runtime release enrichments", () => {
   const canonicalRelease = {

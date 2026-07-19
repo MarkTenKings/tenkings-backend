@@ -1,5 +1,10 @@
 import { buildSampleAiGraderProductionRelease, type AiGraderProductionRelease } from "./aiGraderProductionRelease";
-import type { AiGraderDefectFindingV1, AiGraderPublishedDefectFindingV1 } from "@tenkings/shared";
+import {
+  AI_GRADER_REPORT_BUNDLE_V03_VERSION,
+  type AiGraderDefectFindingV1,
+  type AiGraderPublishedDefectFindingV1,
+  type AiGraderReportBundleV03,
+} from "@tenkings/shared";
 
 export const AI_GRADER_WEB_REPORT_BUNDLE_V01_VERSION = "ai-grader-report-bundle-v0.1" as const;
 export const AI_GRADER_WEB_REPORT_BUNDLE_V02_VERSION = "ai-grader-report-bundle-v0.2" as const;
@@ -192,6 +197,18 @@ export type AiGraderReportBundleV02 = Partial<
 };
 
 export type AiGraderCompatibleReportBundle = AiGraderReportBundleV01 | AiGraderReportBundleV02;
+
+/** Explicit legacy/V0 union retained for historical station and public-report readability. */
+export type AiGraderLegacyReportBundle = AiGraderReportBundleV01 | AiGraderReportBundleV02;
+
+/** Local station transport accepts legacy V0 or the complete strict Mathematical Grading V1 body. */
+export type AiGraderStationReportBundle = AiGraderLegacyReportBundle | AiGraderReportBundleV03;
+
+export function isAiGraderReportBundleV03(
+  bundle: AiGraderStationReportBundle | null | undefined,
+): bundle is AiGraderReportBundleV03 {
+  return bundle?.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION;
+}
 
 function publishedFindingForOverlay(
   finding: AiGraderPublishedDefectFindingV1,

@@ -24,7 +24,14 @@ param(
   [double]$VerticalSpanMm,
   [string]$VerticalStartPx,
   [string]$VerticalEndPx,
-  [string]$CardBoundaryRect
+  [string]$CardBoundaryRect,
+  [string]$MathematicalCalibrationOutputDir,
+  [string]$MathematicalCalibrationTargetPath,
+  [string]$MathematicalCalibrationTargetVersion,
+  [string]$MathematicalCalibrationTargetSha256,
+  [string]$MathematicalCalibrationRigId,
+  [string]$MathematicalCalibrationBundlePath,
+  [string]$MathematicalCalibrationBundleSha256
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,6 +76,29 @@ $selectedVerticalSpanMm = if ($PSBoundParameters.ContainsKey("VerticalSpanMm")) 
 $selectedVerticalStartPx = if ($PSBoundParameters.ContainsKey("VerticalStartPx")) { $VerticalStartPx } elseif ($config) { [string]$config.verticalStartPx } else { "2295,145" }
 $selectedVerticalEndPx = if ($PSBoundParameters.ContainsKey("VerticalEndPx")) { $VerticalEndPx } elseif ($config) { [string]$config.verticalEndPx } else { "2295,1218" }
 $selectedCardBoundaryRect = if ($PSBoundParameters.ContainsKey("CardBoundaryRect")) { $CardBoundaryRect } elseif ($config) { [string]$config.cardBoundaryRect } else { "285,349,1878,1350" }
+$selectedMathematicalCalibrationOutputDir = if ($PSBoundParameters.ContainsKey('MathematicalCalibrationOutputDir')) { $MathematicalCalibrationOutputDir } elseif ($config) { [string]$config.mathematicalCalibrationOutputDir } else { $null }
+$selectedMathematicalCalibrationTargetPath = if ($PSBoundParameters.ContainsKey('MathematicalCalibrationTargetPath')) { $MathematicalCalibrationTargetPath } elseif ($config) { [string]$config.mathematicalCalibrationTargetPath } else { $null }
+$selectedMathematicalCalibrationTargetVersion = if ($PSBoundParameters.ContainsKey('MathematicalCalibrationTargetVersion')) { $MathematicalCalibrationTargetVersion } elseif ($config) { [string]$config.mathematicalCalibrationTargetVersion } else { $null }
+$selectedMathematicalCalibrationTargetSha256 = if ($PSBoundParameters.ContainsKey('MathematicalCalibrationTargetSha256')) { $MathematicalCalibrationTargetSha256 } elseif ($config) { [string]$config.mathematicalCalibrationTargetSha256 } else { $null }
+$selectedMathematicalCalibrationRigId = if ($PSBoundParameters.ContainsKey('MathematicalCalibrationRigId')) { $MathematicalCalibrationRigId } elseif ($config) { [string]$config.mathematicalCalibrationRigId } else { $null }
+$selectedMathematicalCalibrationBundlePath = if ($PSBoundParameters.ContainsKey('MathematicalCalibrationBundlePath')) { $MathematicalCalibrationBundlePath } elseif ($config) { [string]$config.mathematicalCalibrationBundlePath } else { $null }
+$selectedMathematicalCalibrationBundleSha256 = if ($PSBoundParameters.ContainsKey('MathematicalCalibrationBundleSha256')) { $MathematicalCalibrationBundleSha256 } elseif ($config) { [string]$config.mathematicalCalibrationBundleSha256 } else { $null }
+
+$targetSettings = @(
+  $selectedMathematicalCalibrationTargetPath,
+  $selectedMathematicalCalibrationTargetVersion,
+  $selectedMathematicalCalibrationTargetSha256
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+if ($targetSettings.Count -ne 0 -and $targetSettings.Count -ne 3) {
+  throw 'Mathematical calibration target path, version, and SHA-256 must be configured together.'
+}
+$bundleSettings = @(
+  $selectedMathematicalCalibrationBundlePath,
+  $selectedMathematicalCalibrationBundleSha256
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+if ($bundleSettings.Count -ne 0 -and $bundleSettings.Count -ne 2) {
+  throw 'Mathematical calibration bundle path and SHA-256 must be configured together.'
+}
 
 $cliPath = Join-Path $repoRoot "packages\ai-grader-capture-helper\dist\cli.js"
 if (-not $SkipBuild) {
@@ -85,6 +115,21 @@ if (-not (Test-Path -LiteralPath $cliPath)) {
 }
 
 $env:AI_GRADER_STATION_BRIDGE_TOKEN = $StationToken
+if (-not [string]::IsNullOrWhiteSpace($selectedMathematicalCalibrationOutputDir)) {
+  $env:AI_GRADER_MATHEMATICAL_CALIBRATION_OUTPUT_DIR = $selectedMathematicalCalibrationOutputDir
+}
+if ($targetSettings.Count -eq 3) {
+  $env:AI_GRADER_MATHEMATICAL_CALIBRATION_TARGET_PATH = $selectedMathematicalCalibrationTargetPath
+  $env:AI_GRADER_MATHEMATICAL_CALIBRATION_TARGET_VERSION = $selectedMathematicalCalibrationTargetVersion
+  $env:AI_GRADER_MATHEMATICAL_CALIBRATION_TARGET_SHA256 = $selectedMathematicalCalibrationTargetSha256
+}
+if (-not [string]::IsNullOrWhiteSpace($selectedMathematicalCalibrationRigId)) {
+  $env:AI_GRADER_MATHEMATICAL_CALIBRATION_RIG_ID = $selectedMathematicalCalibrationRigId
+}
+if ($bundleSettings.Count -eq 2) {
+  $env:AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_PATH = $selectedMathematicalCalibrationBundlePath
+  $env:AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_SHA256 = $selectedMathematicalCalibrationBundleSha256
+}
 if ($config -and -not [string]::IsNullOrWhiteSpace($config.pairingCode)) {
   $env:AI_GRADER_STATION_PAIRING_CODE = [string]$config.pairingCode
   $env:AI_GRADER_STATION_PAIRING_EXPIRES_AT = [string]$config.pairingCodeExpiresAt
@@ -164,4 +209,11 @@ try {
   Remove-Item Env:\AI_GRADER_STATION_BRIDGE_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:\AI_GRADER_STATION_PAIRING_CODE -ErrorAction SilentlyContinue
   Remove-Item Env:\AI_GRADER_STATION_PAIRING_EXPIRES_AT -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_MATHEMATICAL_CALIBRATION_OUTPUT_DIR -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_MATHEMATICAL_CALIBRATION_TARGET_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_MATHEMATICAL_CALIBRATION_TARGET_VERSION -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_MATHEMATICAL_CALIBRATION_TARGET_SHA256 -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_MATHEMATICAL_CALIBRATION_RIG_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_SHA256 -ErrorAction SilentlyContinue
 }

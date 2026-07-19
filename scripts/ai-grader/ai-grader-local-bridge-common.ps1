@@ -172,6 +172,13 @@ function Initialize-AiGraderBridgeConfig {
       verticalStartPx = "2295,145"
       verticalEndPx = "2295,1218"
       cardBoundaryRect = "285,349,1878,1350"
+      mathematicalCalibrationOutputDir = 'C:\TenKings\capture-data\ai-grader-mathematical-calibration'
+      mathematicalCalibrationTargetPath = $null
+      mathematicalCalibrationTargetVersion = $null
+      mathematicalCalibrationTargetSha256 = $null
+      mathematicalCalibrationRigId = 'fixed-rig-dell-v1'
+      mathematicalCalibrationBundlePath = $null
+      mathematicalCalibrationBundleSha256 = $null
     }
   }
   if ($RotateToken -or [string]::IsNullOrWhiteSpace($config.stationToken)) {
@@ -203,6 +210,23 @@ function Initialize-AiGraderBridgeConfig {
   }
   if ([string]::IsNullOrWhiteSpace($config.reportBundleOutputDir)) {
     Set-AiGraderConfigValue -Config $config -Name "reportBundleOutputDir" -Value "C:\TenKings\capture-data\ai-grader-report-bundles"
+  }
+  if ([string]::IsNullOrWhiteSpace($config.mathematicalCalibrationOutputDir)) {
+    Set-AiGraderConfigValue -Config $config -Name 'mathematicalCalibrationOutputDir' -Value 'C:\TenKings\capture-data\ai-grader-mathematical-calibration'
+  }
+  if ([string]::IsNullOrWhiteSpace($config.mathematicalCalibrationRigId)) {
+    Set-AiGraderConfigValue -Config $config -Name 'mathematicalCalibrationRigId' -Value 'fixed-rig-dell-v1'
+  }
+  foreach ($optionalCalibrationSetting in @(
+    'mathematicalCalibrationTargetPath',
+    'mathematicalCalibrationTargetVersion',
+    'mathematicalCalibrationTargetSha256',
+    'mathematicalCalibrationBundlePath',
+    'mathematicalCalibrationBundleSha256'
+  )) {
+    if (-not $config.PSObject.Properties[$optionalCalibrationSetting]) {
+      Set-AiGraderConfigValue -Config $config -Name $optionalCalibrationSetting -Value $null
+    }
   }
   if ([string]::IsNullOrWhiteSpace($config.leimacHost)) {
     Set-AiGraderConfigValue -Config $config -Name "leimacHost" -Value "169.254.191.156"

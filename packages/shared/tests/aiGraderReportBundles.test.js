@@ -4,6 +4,7 @@ const {
   AI_GRADER_DEFECT_FINDING_VERSION,
   AI_GRADER_REPORT_BUNDLE_V01_VERSION,
   AI_GRADER_REPORT_BUNDLE_V02_VERSION,
+  aiGraderLegacyReportBundleV02ReadSchema,
   aiGraderPublishedAssetSchema,
   aiGraderReportBundleSchema,
   aiGraderReportBundleV02Schema,
@@ -124,6 +125,31 @@ test("v0.2 accepts partial element results so unsupported elements remain absent
   const parsed = aiGraderReportBundleV02Schema.safeParse(bundle);
   assert.equal(parsed.success, true);
   assert.deepEqual(Object.keys(parsed.data.productionRelease.finalGrade.elements), ["surface"]);
+});
+
+test("v0.2 new-write schema enforces 1.00-10.00 while explicit legacy reads preserve historical scores", () => {
+  for (const invalidScore of [0, 0.99, -0.01, 10.01]) {
+    const overall = v02Bundle();
+    overall.productionRelease.finalGrade.overall = invalidScore;
+    assert.equal(aiGraderReportBundleV02Schema.safeParse(overall).success, false);
+
+    const element = v02Bundle();
+    element.productionRelease.finalGrade.elements.surface.score = invalidScore;
+    assert.equal(aiGraderReportBundleV02Schema.safeParse(element).success, false);
+  }
+
+  const historical = v02Bundle();
+  historical.productionRelease.finalGrade.overall = 0;
+  historical.productionRelease.finalGrade.elements.surface.score = 0.5;
+  const legacyRead = aiGraderLegacyReportBundleV02ReadSchema.safeParse(historical);
+  assert.equal(legacyRead.success, true);
+  assert.equal(legacyRead.data.productionRelease.finalGrade.overall, 0);
+  assert.equal(legacyRead.data.productionRelease.finalGrade.elements.surface.score, 0.5);
+  assert.equal(aiGraderReportBundleSchema.safeParse(historical).success, false);
+
+  const corruptHistorical = v02Bundle();
+  corruptHistorical.productionRelease.finalGrade.overall = -0.01;
+  assert.equal(aiGraderLegacyReportBundleV02ReadSchema.safeParse(corruptHistorical).success, false);
 });
 
 test("v0.2 rejects certification claims, unknown assets, and dangling finding references", () => {

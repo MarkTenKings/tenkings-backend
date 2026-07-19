@@ -238,7 +238,10 @@ test("Rapid Capture detaches the exact card and completes its report in the seri
     assert.equal(continued.currentStep, "capture_front");
     assert.equal(continued.rapidCaptureQueue.items[0].sessionId, detachedSessionId);
     assert.equal(continued.rapidCaptureQueue.items[0].reportId, detachedReportId);
-    assert.equal(continued.rapidCaptureQueue.items[0].state, "finalizing");
+    assert.ok(
+      ["finalizing", "report_ready_needs_confirm"].includes(continued.rapidCaptureQueue.items[0].state),
+      "the serialized background worker may already be ready when Start New Card returns",
+    );
     assert.equal(continued.rapidCaptureQueue.reportWorkerSerialized, true);
     assert.equal(continued.liveLighting.physicalState.state, "positioning_light_verified");
     assert.equal(continued.liveLighting.applied.expectedWriteCount, continued.liveLighting.applied.acknowledgedWriteCount);

@@ -42,6 +42,7 @@ import {
 import {
   AI_GRADER_REPORT_BUNDLE_V01_VERSION,
   AI_GRADER_REPORT_BUNDLE_V02_VERSION,
+  AI_GRADER_REPORT_BUNDLE_V03_VERSION,
   createClassificationPayloadFromAttributes,
   type CardAttributes,
   type NormalizedClassification,
@@ -63,6 +64,7 @@ import {
   type AiGraderProductionActorAudit,
 } from "./aiGraderProductionAuth";
 import type { AiGraderLabelSheetsResult } from "../aiGraderLabelSheets";
+import { readStorageBuffer } from "./storage";
 import { AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION } from "../aiGraderLocalStation";
 import {
   completePublishedAiGraderCardTx,
@@ -90,6 +92,11 @@ import {
   isAiGraderOcrFailureCode,
 } from "../aiGraderOcrFailure";
 import { AI_GRADER_STORAGE_MAX_OBJECT_BYTES, sha256Base64ToHex } from "./storage";
+import {
+  aiGraderMathematicalNormalizedEvidenceIssue,
+  aiGraderMathematicalReleaseEnvelopeIssue,
+  parseAiGraderMathematicalBoundaryBundle,
+} from "./aiGraderMathematicalReleaseBoundary";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
@@ -556,6 +563,7 @@ export type AiGraderPublicReportApiDependencies = {
   env?: EnvLike;
   readPublishedBundle(reportId: string): Promise<AiGraderProductionReportBundleLike | null>;
   readNfcRegistration?(reportId: string): Promise<AiGraderPublicNfcRegistration | null>;
+  readEnrichment?(reportId: string): Promise<unknown>;
   publicUrlFor?: (storageKey: string) => string;
 };
 
@@ -876,15 +884,22 @@ export function assertAiGraderPublishBundleBoundary(
   const schemaVersion = reportBundle.schemaVersion;
   if (
     schemaVersion !== AI_GRADER_REPORT_BUNDLE_V01_VERSION &&
-    schemaVersion !== AI_GRADER_REPORT_BUNDLE_V02_VERSION
+    schemaVersion !== AI_GRADER_REPORT_BUNDLE_V02_VERSION &&
+    schemaVersion !== AI_GRADER_REPORT_BUNDLE_V03_VERSION
   ) {
     throw aiGraderPublishBoundaryError(
       "AI_GRADER_UNSUPPORTED_REPORT_BUNDLE_VERSION",
-      `AI Grader publish supports only ${AI_GRADER_REPORT_BUNDLE_V01_VERSION} and ${AI_GRADER_REPORT_BUNDLE_V02_VERSION}.`,
+      `AI Grader publish supports only ${AI_GRADER_REPORT_BUNDLE_V01_VERSION}, ${AI_GRADER_REPORT_BUNDLE_V02_VERSION}, and ${AI_GRADER_REPORT_BUNDLE_V03_VERSION}.`,
     );
   }
   assertNoUnauthorizedAiGraderClaimFlags(reportBundle, "reportBundle");
   assertNoUnauthorizedAiGraderClaimFlags(productionRelease, "productionRelease");
+  if (schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION) {
+    const parsedV1 = parseAiGraderMathematicalBoundaryBundle(reportBundle);
+    if (!parsedV1.success) throw aiGraderPublishBoundaryError('AI_GRADER_INVALID_MATHEMATICAL_REPORT_V1', parsedV1.message);
+    const envelopeIssue = aiGraderMathematicalReleaseEnvelopeIssue(parsedV1.bundle, productionRelease);
+    if (envelopeIssue) throw aiGraderPublishBoundaryError('AI_GRADER_MATHEMATICAL_RELEASE_MISMATCH', envelopeIssue);
+  }
 }
 
 function parseProductionPublishSmallBody(body: unknown) {
@@ -922,6 +937,7 @@ function parseConfirmedPublishSmallBody(body: unknown) {
   const releaseReportId = optionalString(parsed.productionRelease.reportId);
   const bundleSessionId = optionalString(parsed.reportBundle.gradingSessionId);
   const releaseSessionId = optionalString(parsed.productionRelease.gradingSessionId);
+  const mathematicalV1 = parsed.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION;
   const bundleIdentity = isRecord(parsed.reportBundle.cardIdentity) ? parsed.reportBundle.cardIdentity : {};
   const releaseLabel = isRecord(parsed.productionRelease.label) ? parsed.productionRelease.label : {};
   const requestedCertId = optionalString(source.certId);
@@ -949,10 +965,11 @@ function parseConfirmedPublishSmallBody(body: unknown) {
     !releaseReportId ||
     reportId !== bundleReportId ||
     reportId !== releaseReportId ||
-    !bundleSessionId ||
+    (!mathematicalV1 && !bundleSessionId) ||
     !releaseSessionId ||
-    gradingSessionId !== bundleSessionId ||
+    (bundleSessionId && gradingSessionId !== bundleSessionId) ||
     gradingSessionId !== releaseSessionId ||
+    (bundleSessionId && bundleSessionId !== releaseSessionId) ||
     embeddedCardAssetIds.some((value) => value !== cardAssetId) ||
     embeddedItemIds.some((value) => value !== itemId) ||
     (optionalString(releaseLabel.reportId) && optionalString(releaseLabel.reportId) !== reportId) ||
@@ -1167,7 +1184,18 @@ function assertPublishedReleaseReady(input: {
   const optionalCenteringValid = !Object.prototype.hasOwnProperty.call(elements, "centering") ||
     validElementScore("centering");
   const releaseLabel = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
+  const mathematicalV1 = input.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION;
+  if (mathematicalV1) {
+    const parsedV1 = parseAiGraderMathematicalBoundaryBundle(input.reportBundle);
+    if (!parsedV1.success) {
+      fail('AI_GRADER_PUBLISH_INVALID_MATHEMATICAL_REPORT_V1', parsedV1.message);
+      return;
+    }
+    const envelopeIssue = aiGraderMathematicalReleaseEnvelopeIssue(parsedV1.bundle, input.productionRelease);
+    if (envelopeIssue) fail('AI_GRADER_PUBLISH_MATHEMATICAL_RELEASE_MISMATCH', envelopeIssue);
+  }
   if (
+    !mathematicalV1 && (
     input.productionRelease.finalGradeComputed !== true ||
     input.productionRelease.reportStatus !== "final_ai_grader_report_v0" ||
     input.productionRelease.finalStatus !== "final_grade_computed" ||
@@ -1178,6 +1206,7 @@ function assertPublishedReleaseReady(input: {
     overall > 10 ||
     !requiredElementScoresComplete ||
     !optionalCenteringValid
+    )
   ) {
     fail(
       "AI_GRADER_PUBLISH_FINAL_GRADE_REQUIRED",
@@ -1505,6 +1534,21 @@ function assertConfirmNormalizedEvidence(reportBundle: AiGraderProductionReportB
   }
 }
 
+function assertAiGraderMathematicalConfirmReady(
+  reportBundle: AiGraderProductionReportBundleLike,
+  productionRelease: AiGraderProductionReleaseLike,
+) {
+  const parsed = parseAiGraderMathematicalBoundaryBundle(reportBundle);
+  if (!parsed.success) throw aiGraderConfirmBoundaryError('AI_GRADER_CONFIRM_INVALID_MATHEMATICAL_REPORT_V1', parsed.message);
+  const envelopeIssue = aiGraderMathematicalReleaseEnvelopeIssue(parsed.bundle, productionRelease);
+  if (envelopeIssue) throw aiGraderConfirmBoundaryError('AI_GRADER_CONFIRM_MATHEMATICAL_RELEASE_MISMATCH', envelopeIssue);
+  assertExplicitOperatorFinalization(productionRelease);
+  const failedGate = firstFailedConfirmGate(reportBundle, productionRelease);
+  if (failedGate) throw aiGraderConfirmBoundaryError('AI_GRADER_CONFIRM_GATE_FAILED', 'Confirm Card failed gate ' + failedGate.id + ': ' + failedGate.reason);
+  const evidenceIssue = aiGraderMathematicalNormalizedEvidenceIssue(parsed.bundle);
+  if (evidenceIssue) throw aiGraderConfirmBoundaryError('AI_GRADER_CONFIRM_NORMALIZED_EVIDENCE_REQUIRED', evidenceIssue);
+}
+
 export function assertAiGraderConfirmCardReady(input: {
   publicationStatus: "draft" | "finalized" | "published" | "unpublished" | "revoked" | "error";
   reportBundle: AiGraderProductionReportBundleLike;
@@ -1515,6 +1559,10 @@ export function assertAiGraderConfirmCardReady(input: {
       "AI_GRADER_CONFIRM_FINALIZED_STATUS_REQUIRED",
       "Confirm Card requires finalized, unpublished report semantics.",
     );
+  }
+  if (input.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION) {
+    assertAiGraderMathematicalConfirmReady(input.reportBundle, input.productionRelease);
+    return;
   }
   const producer = isRecord(input.reportBundle.reportProducer) ? input.reportBundle.reportProducer : {};
   const capabilities = Array.isArray(producer.capabilities) ? producer.capabilities : [];
@@ -1561,7 +1609,8 @@ export function assertAiGraderConfirmCardReady(input: {
 }
 
 function reportBundleRequiresPlannedImageDimensions(reportBundle: AiGraderProductionReportBundleLike) {
-  if (reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V02_VERSION) return true;
+  if (reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V02_VERSION ||
+      reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION) return true;
   const visionLab = isRecord(reportBundle.visionLab) ? reportBundle.visionLab : undefined;
   return Boolean(visionLab && isRecord(visionLab.findingValidation));
 }
@@ -3338,6 +3387,10 @@ export function createAiGraderPublicReportApiHandler(deps: AiGraderPublicReportA
     const nfcRegistration = deps.readNfcRegistration
       ? await deps.readNfcRegistration(reportId).catch(() => null)
       : null;
+    const rawEnrichment = deps.readEnrichment
+      ? await deps.readEnrichment(reportId).catch(() => null)
+      : null;
+    const enrichment = isRecord(rawEnrichment) ? rawEnrichment : null;
     return res.status(200).json({
       ok: true,
       reportId,
@@ -3345,6 +3398,7 @@ export function createAiGraderPublicReportApiHandler(deps: AiGraderPublicReportA
       readOnly: true,
       noHardwareControls: true,
       ...(nfcRegistration ? { nfcRegistration } : {}),
+      ...(enrichment ? { enrichment } : {}),
     });
   };
 }
@@ -3384,8 +3438,10 @@ export async function persistProductionReleaseRuntime(input: {
   const db = dbClient ?? (prisma as any);
   const reportId = optionalString(input.reportBundle.reportId);
   const releaseReportId = optionalString(input.productionRelease.reportId);
-  const gradingSessionId = optionalString(input.reportBundle.gradingSessionId);
+  const bundleSessionId = optionalString(input.reportBundle.gradingSessionId);
   const releaseSessionId = optionalString(input.productionRelease.gradingSessionId);
+  const mathematicalV1 = input.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION;
+  const gradingSessionId = mathematicalV1 ? releaseSessionId : bundleSessionId;
   const cardAssetId = optionalString(input.cardAssetId);
   const itemId = optionalString(input.itemId);
   const operatorUserId = optionalString(input.operatorUserId);
@@ -3452,37 +3508,36 @@ export async function persistProductionReleaseRuntime(input: {
     canonical.productionRelease,
     input.storagePlan,
   );
+  const canonicalReportBundle = mathematicalV1
+    ? canonical.reportBundle
+    : { ...canonical.reportBundle, productionRelease: canonicalProductionRelease };
   assertPublishedReleaseReady({
     publicationStatus: input.publicationStatus,
     reportId,
     gradingSessionId,
     cardAssetId,
     itemId,
-    reportBundle: {
-      ...canonical.reportBundle,
-      productionRelease: canonicalProductionRelease,
-    },
+    reportBundle: canonicalReportBundle,
     productionRelease: canonicalProductionRelease,
   });
   assertAiGraderConfirmedPublishIdentitySnapshot({
-    reportBundle: {
-      ...canonical.reportBundle,
-      productionRelease: canonicalProductionRelease,
-    },
+    reportBundle: canonicalReportBundle,
     productionRelease: canonicalProductionRelease,
     authority,
   });
   const persistAtomically = async (tx: any) => {
-    const persisted = await (persistRelease ?? persistAiGraderProductionRelease)(tx, {
+    const exactPersistInput = {
       ...persistInput,
-      reportBundle: {
-        ...canonical.reportBundle,
-        productionRelease: canonicalProductionRelease,
-      },
+      reportBundle: canonicalReportBundle,
       productionRelease: canonicalProductionRelease,
       cardAssetId,
       itemId,
-    });
+    };
+    const persisted = await (persistRelease
+      ? persistRelease(tx, exactPersistInput)
+      : persistAiGraderProductionRelease(tx, exactPersistInput, {
+          readDesignReferenceArtifactBytes: readStorageBuffer,
+        }));
     if (persisted.publicationStatus !== "published") return persisted;
     const labelSheetAssignment = await completePublishedAiGraderCardTx({
       tx,

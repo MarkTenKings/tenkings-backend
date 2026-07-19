@@ -22,6 +22,25 @@ jobs:
       - run: pnpm --filter @tenkings/database generate
       - run: pnpm --filter @tenkings/* run --if-present build
 
+  disposable-postgres-migration-chain:
+    name: Disposable PostgreSQL Migration Chain
+    runs-on: ubuntu-latest
+    needs: quality
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+      - run: corepack enable
+      - run: pnpm install
+      - run: pnpm --filter @tenkings/database generate
+      - name: Complete disposable migration chain and second-deploy no-op
+        run: pnpm --filter @tenkings/database validate:nfc:migration:disposable -- --ack-disposable-local-postgres
+
   docker-images:
     name: Build Docker Images
     runs-on: ubuntu-latest

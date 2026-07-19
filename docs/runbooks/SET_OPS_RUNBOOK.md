@@ -8,6 +8,14 @@ owner: Mark
 - Log every run in `docs/handoffs/SESSION_LOG.md`
 - No destructive production delete confirms without explicit approval
 
+## AI Grader Mathematical V1 identity/reference boundary
+
+Mathematical Calibration V1 does not change, discover, merge, seed, archive, or delete set/card identity. Before a V1 capture the operator supplies the exact existing `tenantId + setId + programId + cardNumber + variantId + parallelId` identity and chooses one centering profile per side. The capture path must fail closed on an incomplete or ambiguous identity; it must not silently choose a nearby checklist row, historical card, report, image, or grade.
+
+`registered_design_template_v1` is a separate admin-controlled reference lifecycle. One exact private artifact is keyed to the complete identity and side, its bytes determine MIME type/dimensions/SHA-256, and it must be APPROVED before the station may stage it. Set Ops source imagery, internet/eBay imagery, listing thumbnails, arbitrary symmetry, or a loose card-name match are never precision centering authority. A changed set/program/card/variant identity requires a separately reviewed reference; do not rewrite an approved row to make it fit.
+
+The product contract is in `docs/specs/AI_GRADER_MATHEMATICAL_CALIBRATION_V1.md`; supervised rig calibration is in `docs/runbooks/AI_GRADER_MATHEMATICAL_CALIBRATION_V1_RUNBOOK.md`. Neither runbook authorizes a Set Ops mutation. Destructive set operations still require the existing dry-run impact and typed confirmation rules.
+
 ## P0 UI Workflow (No Terminal)
 Admin pages:
 - `/admin/set-ops` (set list, archive/unarchive, delete dry-run/confirm)

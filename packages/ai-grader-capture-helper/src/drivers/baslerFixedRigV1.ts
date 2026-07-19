@@ -1646,7 +1646,7 @@ export function buildFixedRigDiagnosticGradingResult(input: {
   const verticalCenteringPercent = tbTotal ? roundMetric((Math.min(top ?? 0, bottom ?? 0) / tbTotal) * 100, 2) : undefined;
   const centeringScore =
     horizontalCenteringPercent !== undefined && verticalCenteringPercent !== undefined
-      ? roundMetric(Math.max(0, Math.min(10, ((horizontalCenteringPercent + verticalCenteringPercent) / 100) * 10)), 2)
+      ? roundMetric(Math.max(1, Math.min(10, ((horizontalCenteringPercent + verticalCenteringPercent) / 100) * 10)), 2)
       : undefined;
   const centering =
     input.analysisCoordinateFrame === "normalized_card_portrait_pixels"
@@ -1695,7 +1695,7 @@ export function buildFixedRigDiagnosticGradingResult(input: {
       score: input.quality
         ? roundMetric(
             Math.max(
-              0,
+              1,
               Math.min(10, 10 - input.quality.clippedPixelFraction * 40 - input.quality.darkPixelFraction * 8 + Math.min(input.quality.sharpnessScore, 500) / 250)
             ),
             2
@@ -1753,7 +1753,7 @@ export function buildFixedRigDiagnosticGradingResult(input: {
       confidence: input.surfaceAnalysis?.status === "computed_diagnostic" ? 0.25 : 0,
       score:
         input.surfaceAnalysis?.status === "computed_diagnostic"
-          ? roundMetric(Math.max(0, 10 - Math.min(10, (input.surfaceAnalysis.candidates[0]?.severityProxy ?? 0) / 50)), 2)
+          ? roundMetric(Math.max(1, 10 - Math.min(10, (input.surfaceAnalysis.candidates[0]?.severityProxy ?? 0) / 50)), 2)
           : undefined,
       metrics: {
         scoreType: "provisional_diagnostic",
@@ -3908,8 +3908,8 @@ export async function processFixedRigWarmSideBatch(
   const authoritativeGeometryRole = recordedGeometryAuthority.authoritativeRole;
   const transformReusedForRoles = (
     authoritativeGeometryRole === "all_on"
-      ? ["accepted_profile", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
-      : ["all_on", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
+      ? ["dark_control", "accepted_profile", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
+      : ["dark_control", "all_on", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
   );
   const normalizeVisibleRole = async (
     role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
@@ -3926,6 +3926,7 @@ export async function processFixedRigWarmSideBatch(
     return { ...registration, normalizedArtifact: registration.normalizedArtifact };
   };
   const visibleRoleNormalizationInputs = [
+    { role: batch.captures.darkControl, fileLabel: "dark-control" },
     { role: batch.captures.acceptedProfile, fileLabel: "accepted-profile" },
     ...orderedChannelRoles.map((role) => ({ role, fileLabel: `channel-${Number(role.channel)}` })),
   ];
@@ -3936,8 +3937,9 @@ export async function processFixedRigWarmSideBatch(
       ({ role, fileLabel }) => normalizeVisibleRole(role, fileLabel),
     )
   );
-  const acceptedRegistration = visibleRoleRegistrations[0]!;
-  const channelRegistrations = visibleRoleRegistrations.slice(1);
+  const darkControlRegistration = visibleRoleRegistrations[0]!;
+  const acceptedRegistration = visibleRoleRegistrations[1]!;
+  const channelRegistrations = visibleRoleRegistrations.slice(2);
   const analyzeNormalizedRole = async (
     role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
     analysisArtifact: CardGeometryNormalizedArtifact,
@@ -3967,6 +3969,7 @@ export async function processFixedRigWarmSideBatch(
   );
   const normalizedRoleAnalysisInputs = [
     { role: batch.captures.allOn, artifact: normalizedCard.normalizedArtifact },
+    { role: batch.captures.darkControl, artifact: darkControlRegistration.normalizedArtifact },
     { role: batch.captures.acceptedProfile, artifact: acceptedRegistration.normalizedArtifact },
     ...orderedChannelRoles.map((role, index) => ({
       role,
@@ -3981,8 +3984,9 @@ export async function processFixedRigWarmSideBatch(
     )
   );
   const allOn = normalizedRoleAnalyses[0]!;
-  const acceptedProfile = normalizedRoleAnalyses[1]!;
-  const channels = normalizedRoleAnalyses.slice(2).map((channelAnalysis, index) => ({
+  const normalizedDarkControl = normalizedRoleAnalyses[1]!;
+  const acceptedProfile = normalizedRoleAnalyses[2]!;
+  const channels = normalizedRoleAnalyses.slice(3).map((channelAnalysis, index) => ({
     ...channelAnalysis,
     channel: Number(orderedChannelRoles[index]!.channel),
   }));
@@ -4262,7 +4266,13 @@ export async function processFixedRigWarmSideBatch(
   const sideEvidence = {
     side,
     safeOffBeforeDark: batch.leimac?.safeOffStart,
-    darkControl: { capture: darkControlCapture, stats: darkStats },
+    darkControl: {
+      capture: darkControlCapture,
+      stats: darkStats,
+      normalized: normalizedDarkControl,
+      note:
+        "Raw dark-control evidence is retained; the normalized artifact reuses the exact authoritative all-on card transform for calibrated pixel-aligned subtraction.",
+    },
     allOn,
     acceptedProfile,
     channels,
@@ -4363,6 +4373,10 @@ export async function processFixedRigWarmSideBatch(
     captureTiming,
     activeLightingProfile,
     [side]: {
+      darkControl: {
+        raw: darkStats,
+        normalized: normalizedDarkControl,
+      },
       allOn: allOn.stats,
       acceptedProfile: acceptedProfile.stats,
       geometry: normalizedCard.geometry,

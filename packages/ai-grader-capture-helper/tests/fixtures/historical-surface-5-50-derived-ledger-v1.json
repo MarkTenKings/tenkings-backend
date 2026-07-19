@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "ten-kings-redacted-surface-replay-ledger-v1",
+  "redactedSourceIdentity": "historical-surface-5.50-report-v1",
+  "sourceDigests": {
+    "reportManifestSha256": "35f0b5553a8e897fe6d3055dec9683a78380770e5b4b9ec0bdceab9b8381b97a",
+    "reportAnalysisSha256": "98b9ccb4848c4963d687b76fc30a33ebd03e87ed0193108713682b9f729cf3bf",
+    "frontPackageManifestSha256": "cd5eb8f82b0a574283b192108d06b6fd0d9267f9310349e8a6256c40ba04ca62",
+    "backPackageManifestSha256": "cfe85b314e83879492948ae8930b821014f9d1d7ca201529bb119263da8c4242"
+  },
+  "redaction": {
+    "privatePathsIncluded": false,
+    "cardIdentityIncluded": false,
+    "rawImagesIncluded": false,
+    "authority": "exact immutable derived scalar ledger and source artifact digests"
+  },
+  "v0Policy": {
+    "responseFormula": "100*(max(channel)-min(channel))/max(mean(channel)+12,18)",
+    "normalizationFormula": "clamp((response-p50)/(p95-p50),0,1)",
+    "cellRankFormula": "0.65*mean+0.35*max",
+    "severityFormula": "rank*100*max(0.55,1-0.3*clippedFraction)",
+    "highSeverityThreshold": 68,
+    "highSeverityDeduction": 1.4,
+    "surfacePenaltyCap": 4.5,
+    "startingScore": 10,
+    "storedScore": 5.5
+  },
+  "sidePercentiles": {
+    "front": { "p50": 15.6379, "p95": 230.2368, "p99": 346.9159 },
+    "back": { "p50": 19.8582, "p95": 75.6757, "p99": 218.5366 }
+  },
+  "roi": { "widthPx": 112, "heightPx": 117, "pixelCount": 13104, "confidenceArtifactOverlapFraction": 1 },
+  "candidates": [
+    { "id": "F-001", "side": "front", "rect": [573,1572,112,117], "sourceChannels": [3,1,5], "severity": 74.92, "glareOverlapPixels": 10926, "glareOverlapFraction": 0.833791, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.84188, "v0Deduction": 1.4 },
+    { "id": "F-002", "side": "front", "rect": [461,1455,112,117], "sourceChannels": [3,1,5], "severity": 75.49, "glareOverlapPixels": 10537, "glareOverlapFraction": 0.804106, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.84214, "v0Deduction": 1.4 },
+    { "id": "F-003", "side": "front", "rect": [461,870,112,117], "sourceChannels": [4,1,2], "severity": 93.98, "glareOverlapPixels": 1498, "glareOverlapFraction": 0.114316, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.88116, "v0Deduction": 1.4 },
+    { "id": "F-004", "side": "front", "rect": [461,987,112,117], "sourceChannels": [4,1,6], "severity": 94.95, "glareOverlapPixels": 815, "glareOverlapFraction": 0.062195, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.88208, "v0Deduction": 1.4 },
+    { "id": "F-005", "side": "front", "rect": [461,1338,112,117], "sourceChannels": [3,4,1], "severity": 85.2, "glareOverlapPixels": 4849, "glareOverlapFraction": 0.37004, "underexposureOverlapPixels": 3, "underexposureOverlapFraction": 0.000229, "confidence": 0.85493, "v0Deduction": 1.4 },
+    { "id": "F-006", "side": "front", "rect": [461,1572,112,117], "sourceChannels": [3,1,6], "severity": 74.37, "glareOverlapPixels": 9384, "glareOverlapFraction": 0.716117, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.85461, "v0Deduction": 1.4 },
+    { "id": "F-007", "side": "front", "rect": [461,1104,112,117], "sourceChannels": [4,1,5], "severity": 74.12, "glareOverlapPixels": 8077, "glareOverlapFraction": 0.616377, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.86335, "v0Deduction": 1.4 },
+    { "id": "F-008", "side": "front", "rect": [573,1689,112,117], "sourceChannels": [3,1,6], "severity": 83.11, "glareOverlapPixels": 3097, "glareOverlapFraction": 0.23634, "underexposureOverlapPixels": 1535, "underexposureOverlapFraction": 0.11714, "confidence": 0.88629, "v0Deduction": 1.4 },
+    { "id": "B-001", "side": "back", "rect": [461,1572,112,117], "sourceChannels": [3,1,6], "severity": 100, "glareOverlapPixels": 0, "glareOverlapFraction": 0, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.84177, "v0Deduction": 1.4 },
+    { "id": "B-002", "side": "back", "rect": [573,1689,112,117], "sourceChannels": [3,6,1], "severity": 98.6, "glareOverlapPixels": 0, "glareOverlapFraction": 0, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.85369, "v0Deduction": 1.4 },
+    { "id": "B-003", "side": "back", "rect": [349,987,112,117], "sourceChannels": [4,6,1], "severity": 98.29, "glareOverlapPixels": 0, "glareOverlapFraction": 0, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.85013, "v0Deduction": 1.4 },
+    { "id": "B-004", "side": "back", "rect": [349,1104,112,117], "sourceChannels": [4,6,1], "severity": 96.66, "glareOverlapPixels": 0, "glareOverlapFraction": 0, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.84591, "v0Deduction": 1.4 },
+    { "id": "B-005", "side": "back", "rect": [461,1455,112,117], "sourceChannels": [3,1,6], "severity": 93.4, "glareOverlapPixels": 0, "glareOverlapFraction": 0, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.85066, "v0Deduction": 1.4 },
+    { "id": "B-006", "side": "back", "rect": [461,1689,112,117], "sourceChannels": [3,1,6], "severity": 93.1, "glareOverlapPixels": 0, "glareOverlapFraction": 0, "underexposureOverlapPixels": 581, "underexposureOverlapFraction": 0.044338, "confidence": 0.86554, "v0Deduction": 1.4 },
+    { "id": "B-007", "side": "back", "rect": [349,1221,112,117], "sourceChannels": [4,3,6], "severity": 92.4, "glareOverlapPixels": 0, "glareOverlapFraction": 0, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.8458, "v0Deduction": 1.4 },
+    { "id": "B-008", "side": "back", "rect": [349,870,112,117], "sourceChannels": [4,6,1], "severity": 91.04, "glareOverlapPixels": 0, "glareOverlapFraction": 0, "underexposureOverlapPixels": 0, "underexposureOverlapFraction": 0, "confidence": 0.87688, "v0Deduction": 1.4 }
+  ],
+  "classification": {
+    "signal": "directional_channel_selective_ring_specular_illumination_plus_v0_normalization_and_deduplication_error",
+    "candidatePixelsWithFourOrMoreChannelsAboveCardP90": 0,
+    "independentlyProvenPhysicalDefects": 0,
+    "v1ExpectedDisposition": "calibrated_illumination_pattern_no_card_deduction"
+  }
+}

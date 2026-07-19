@@ -1,9 +1,9 @@
-import type { AiGraderReportBundle } from "./aiGraderReportBundle";
-import type { AiGraderProductionRelease } from "./aiGraderProductionRelease";
+import { isAiGraderReportBundleV03, type AiGraderStationReportBundle } from "./aiGraderReportBundle";
+import type { AiGraderStationProductionRelease } from "./aiGraderProductionRelease";
 
 export interface AiGraderReleaseAuthorityStatus {
-  reportBundle?: AiGraderReportBundle;
-  productionRelease?: AiGraderProductionRelease;
+  reportBundle?: AiGraderStationReportBundle;
+  productionRelease?: AiGraderStationProductionRelease;
   latestReport: {
     reportId?: string;
   };
@@ -18,19 +18,23 @@ function reportIdFromStatus(status: AiGraderReleaseAuthorityStatus, fallback?: s
 
 function authoritativeRelease(input: {
   bridgeBundleFetched: boolean;
-  sourceBundle?: AiGraderReportBundle;
-  cachedRelease?: AiGraderProductionRelease;
+  sourceBundle?: AiGraderStationReportBundle;
+  cachedRelease?: AiGraderStationProductionRelease;
 }) {
+  if (isAiGraderReportBundleV03(input.sourceBundle)) {
+    return input.cachedRelease;
+  }
+  const embeddedRelease = input.sourceBundle?.productionRelease as AiGraderStationProductionRelease | undefined;
   return input.bridgeBundleFetched
-    ? input.sourceBundle?.productionRelease
-    : input.sourceBundle?.productionRelease ?? input.cachedRelease;
+    ? embeddedRelease
+    : embeddedRelease ?? input.cachedRelease;
 }
 
 export async function resolveAiGraderAuthoritativeProductionPackage<
   TStatus extends AiGraderReleaseAuthorityStatus,
 >(input: {
   initialStatus: TStatus;
-  fetchBridgeBundle?: (reportId: string) => Promise<AiGraderReportBundle>;
+  fetchBridgeBundle?: (reportId: string) => Promise<AiGraderStationReportBundle>;
   explicitlyFinalize: () => Promise<TStatus>;
 }) {
   let latestStatus = input.initialStatus;

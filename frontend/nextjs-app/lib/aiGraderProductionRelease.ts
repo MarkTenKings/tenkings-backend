@@ -1,4 +1,5 @@
 import type { AiGraderReportBundle, AiGraderReportElementKey } from "./aiGraderReportBundle";
+import type { AiGraderMathematicalProductionReleaseEnvelope } from "./aiGraderMathematicalReportV1";
 
 export const AI_GRADER_PRODUCTION_RELEASE_VERSION = "ai-grader-production-release-v0.1";
 
@@ -131,8 +132,13 @@ export type AiGraderProductionRelease = {
     valuationCurrency?: string | null;
     resultSummary?: unknown;
   };
-  cardInventoryLinkage: { status: "contract_ready_not_persisted" | "manual_draft" | "linked"; cardAssetId?: string; itemId?: string; note: string };
+  cardInventoryLinkage: { status: "contract_ready_not_persisted" | "manual_draft" | "needs_card_linkage" | "linked"; cardAssetId?: string; itemId?: string; note: string };
 };
+
+/** Workflow metadata remains external to a strict V1 report; legacy V0 keeps its existing envelope. */
+export type AiGraderStationProductionRelease =
+  | AiGraderProductionRelease
+  | AiGraderMathematicalProductionReleaseEnvelope;
 
 function certId(reportId: string) {
   let hash = 0;
