@@ -19,7 +19,7 @@ import {
   type FixedRigWarmSideCaptureBatch,
 } from "./baslerFixedRigV1";
 
-const DEFAULT_MAX_PENDING = 1;
+const DEFAULT_MAX_PENDING = 20;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const SAFE_CONTEXT_ID_RE = /^[A-Za-z0-9._:-]{1,180}$/;
@@ -49,7 +49,7 @@ export class FixedRigProcessingWorkerError extends Error {
 export interface FixedRigProcessingWorkerStatus {
   active: boolean;
   pending: number;
-  maxPending: 0 | 1;
+  maxPending: number;
   maxConcurrency: 1;
   closed: boolean;
   activeIdentity?: FixedRigProcessingWorkerIdentity;
@@ -58,7 +58,7 @@ export interface FixedRigProcessingWorkerStatus {
 export interface FixedRigProcessingWorkerControllerOptions {
   /** Trusted bridge config outputDir; never taken from a request/browser. */
   allowedOutputRoot: string;
-  maxPending?: 0 | 1;
+  maxPending?: number;
   timeoutMs?: number;
   /** Test-only compiled worker entry injection. */
   workerPath?: string;
@@ -66,8 +66,9 @@ export interface FixedRigProcessingWorkerControllerOptions {
 
 interface PendingJob {
   request: FixedRigProcessingWorkerRequest;
-  resolve: (response: FixedRigProcessingWorkerSuccessResponse) => void;
-  reject: (error: FixedRigProcessingWorkerError) => void;
+  processResponse?: (response: FixedRigProcessingWorkerSuccessResponse) => Promise<unknown>;
+  resolve: (response: any) => void;
+  reject: (error: any) => void;
 }
 
 interface RevalidateCommand {
@@ -86,6 +87,7 @@ interface ActiveJob extends PendingJob {
   response?: FixedRigProcessingWorkerSuccessResponse;
   revalidated: boolean;
   terminalError?: FixedRigProcessingWorkerError;
+  responseProcessing: boolean;
   timer: NodeJS.Timeout;
   finished: boolean;
   drained: Promise<void>;
@@ -122,7 +124,7 @@ function hasExactIdentity(value: unknown): value is FixedRigProcessingWorkerIden
 
 export class FixedRigProcessingWorkerController {
   readonly allowedOutputRoot: string;
-  readonly maxPending: 0 | 1;
+  readonly maxPending: number;
   readonly timeoutMs: number;
   readonly workerPath: string;
   private readonly pendingJobs: PendingJob[] = [];
@@ -136,8 +138,8 @@ export class FixedRigProcessingWorkerController {
     }
     const maxPending = options.maxPending ?? DEFAULT_MAX_PENDING;
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    if (maxPending !== 0 && maxPending !== 1) {
-      throw new FixedRigProcessingWorkerError("closed", "Processing worker permits at most one pending job.");
+    if (!Number.isInteger(maxPending) || maxPending < 0 || maxPending > 20) {
+      throw new FixedRigProcessingWorkerError("closed", "Processing worker permits from zero through twenty pending side jobs.");
     }
     if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 300_000) {
       throw new FixedRigProcessingWorkerError("closed", "Processing worker timeout must be from 100 to 300000 ms.");
@@ -172,7 +174,15 @@ export class FixedRigProcessingWorkerController {
     }));
   }
 
-  submit(request: FixedRigProcessingWorkerRequest): Promise<FixedRigProcessingWorkerSuccessResponse> {
+  submit(request: FixedRigProcessingWorkerRequest): Promise<FixedRigProcessingWorkerSuccessResponse>;
+  submit<T>(
+    request: FixedRigProcessingWorkerRequest,
+    processResponse: (response: FixedRigProcessingWorkerSuccessResponse) => Promise<T>,
+  ): Promise<T>;
+  submit<T = FixedRigProcessingWorkerSuccessResponse>(
+    request: FixedRigProcessingWorkerRequest,
+    processResponse?: (response: FixedRigProcessingWorkerSuccessResponse) => Promise<T>,
+  ): Promise<T> {
     try {
       validateFixedRigProcessingWorkerRequest(request);
     } catch {
@@ -184,8 +194,8 @@ export class FixedRigProcessingWorkerController {
     if (this.activeJob && this.pendingJobs.length >= this.maxPending) {
       return Promise.reject(new FixedRigProcessingWorkerError("queue_full", "Processing worker queue is full."));
     }
-    return new Promise<FixedRigProcessingWorkerSuccessResponse>((resolve, reject) => {
-      this.pendingJobs.push({ request, resolve, reject });
+    return new Promise<T>((resolve, reject) => {
+      this.pendingJobs.push({ request, processResponse, resolve, reject });
       this.pump();
     });
   }
@@ -246,6 +256,7 @@ export class FixedRigProcessingWorkerController {
       worker,
       phase: "authority",
       revalidated: false,
+      responseProcessing: false,
       timer: setTimeout(() => undefined, 0),
       finished: false,
       drained,
@@ -358,6 +369,18 @@ export class FixedRigProcessingWorkerController {
       this.finishActive(active, active.terminalError);
     } else if (code !== 0 || !active.response || !active.revalidated) {
       this.finishActive(active, new FixedRigProcessingWorkerError("crash", "Geometry worker exited without one validated result."));
+    } else if (active.processResponse) {
+      active.responseProcessing = true;
+      void active.processResponse(active.response).then(
+        (result) => {
+          active.responseProcessing = false;
+          this.finishActive(active, active.terminalError, result);
+        },
+        (error) => {
+          active.responseProcessing = false;
+          this.finishActive(active, active.terminalError ?? error);
+        },
+      );
     } else {
       this.finishActive(active, undefined, active.response);
     }
@@ -366,16 +389,17 @@ export class FixedRigProcessingWorkerController {
   private terminateActive(active: ActiveJob, error: FixedRigProcessingWorkerError): void {
     if (active.finished || active.terminalError) return;
     active.terminalError = error;
+    if (active.responseProcessing) return;
     void active.worker.terminate().catch(() => this.finishActive(active, error));
   }
 
-  private finishActive(active: ActiveJob, error?: FixedRigProcessingWorkerError, response?: FixedRigProcessingWorkerSuccessResponse): void {
+  private finishActive(active: ActiveJob, error?: unknown, response?: unknown): void {
     if (active.finished) return;
     active.finished = true;
     clearTimeout(active.timer);
     if (active === this.activeJob) this.activeJob = undefined;
     if (error) active.reject(error);
-    else if (response) active.resolve(response);
+    else if (response !== undefined) active.resolve(response);
     else active.reject(new FixedRigProcessingWorkerError("crash", "Geometry worker ended without a terminal result."));
     active.resolveDrained();
     this.pump();
@@ -418,25 +442,26 @@ export function createFixedRigWarmForensicProcessingRunner(
         sessionId: contextSnapshot.sessionId,
         captureBatch: captureSnapshot,
       });
-      const response = await controller.submit(request);
-      let resolverUsed = false;
-      const result = await processFixedRigWarmSideBatch(captureSnapshot, {
-        trustedWorkerGeometryAuthorityResolver: async (authorityInput: FixedRigFullResolutionGeometryAuthorityInput) => {
-          if (resolverUsed) {
-            throw new FixedRigProcessingWorkerError("identity_mismatch", "Main processing requested a different or duplicate geometry authority.");
-          }
-          await validateFixedRigProcessingWorkerAuthorityInput(request, authorityInput, options.allowedOutputRoot);
-          resolverUsed = true;
-          return response.authority;
-        },
+      return controller.submit(request, async (response) => {
+        let resolverUsed = false;
+        const result = await processFixedRigWarmSideBatch(captureSnapshot, {
+          trustedWorkerGeometryAuthorityResolver: async (authorityInput: FixedRigFullResolutionGeometryAuthorityInput) => {
+            if (resolverUsed) {
+              throw new FixedRigProcessingWorkerError("identity_mismatch", "Main processing requested a different or duplicate geometry authority.");
+            }
+            await validateFixedRigProcessingWorkerAuthorityInput(request, authorityInput, options.allowedOutputRoot);
+            resolverUsed = true;
+            return response.authority;
+          },
+        });
+        if (!resolverUsed) {
+          throw new FixedRigProcessingWorkerError("identity_mismatch", "Main processing did not consume its exact worker authority once.");
+        }
+        return {
+          ...result,
+          processingWorker: { ...response.identity, mode: "captured_evidence_worker" as const },
+        };
       });
-      if (!resolverUsed) {
-        throw new FixedRigProcessingWorkerError("identity_mismatch", "Main processing did not consume its exact worker authority once.");
-      }
-      return {
-        ...result,
-        processingWorker: { ...response.identity, mode: "captured_evidence_worker" },
-      };
     },
     cancelSession: (sessionId, reason) => controller.cancelSession(sessionId, reason),
     shutdownProcessingWorker: (reason) => controller.shutdown(reason),

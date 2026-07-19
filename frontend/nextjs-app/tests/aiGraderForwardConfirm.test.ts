@@ -1,25 +1,10 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
-import { canConfirmAiGraderCardManually } from "../lib/aiGraderForwardConfirm";
 
-test("fully manual Confirm Card remains available after OCR provider failure", () => {
-  const ocrState = "failed";
-  assert.equal(ocrState, "failed");
-  assert.equal(canConfirmAiGraderCardManually({
-    reportReady: true,
-    identityComplete: true,
-    linkedCardReady: false,
-    confirmationPending: false,
-  }), true);
-});
-
-test("manual Confirm Card still requires a report, complete operator identity, and no prior link", () => {
-  for (const input of [
-    { reportReady: false, identityComplete: true, linkedCardReady: false, confirmationPending: false },
-    { reportReady: true, identityComplete: false, linkedCardReady: false, confirmationPending: false },
-    { reportReady: true, identityComplete: true, linkedCardReady: true, confirmationPending: false },
-    { reportReady: true, identityComplete: true, linkedCardReady: false, confirmationPending: true },
-  ]) {
-    assert.equal(canConfirmAiGraderCardManually(input), false);
-  }
+test("the obsolete manual Confirm Card fallback is absent from the one-road production station", () => {
+  assert.equal(existsSync(new URL("../lib/aiGraderForwardConfirm.ts", import.meta.url)), false);
+  const station = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(station, /canConfirmAiGraderCardManually|fully manual Confirm Card|OCR provider failure.*Confirm Card/i);
+  assert.match(station, /Approve & Publish/);
 });

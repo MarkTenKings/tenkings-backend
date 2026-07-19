@@ -9,10 +9,10 @@ import {
 import { SAMPLE_AI_GRADER_REPORT_BUNDLE } from "../lib/aiGraderReportBundle";
 import { buildSampleAiGraderProductionRelease } from "../lib/aiGraderProductionRelease";
 
-function request(body: unknown) {
+function request(body: unknown, action = "publish-init") {
   return {
     method: "POST",
-    query: { action: ["publish-init"] },
+    query: { action: [action] },
     body,
     headers: {},
   } as unknown as NextApiRequest;
@@ -114,4 +114,120 @@ test("publish boundary rejects any true certification claim flag before storage 
     assert.equal(state.body.code, "AI_GRADER_CERTIFIED_CLAIM_REJECTED");
     assert.equal(presignCalled, false);
   }
+});
+
+test("hosted publish requires the exact queue identity before authority or storage work", async () => {
+  const productionRelease = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
+  let presignCalled = false;
+  const handler = boundaryHandler(() => {
+    presignCalled = true;
+  });
+  const { state, res } = response();
+  await handler(request({
+    publicationStatus: "published",
+    reportBundle: SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    productionRelease,
+  }), res);
+
+  assert.equal(state.statusCode, 400);
+  assert.match(String(state.body.message), /queueItemId is required/i);
+  assert.equal(presignCalled, false);
+});
+
+test("prepublication CardAsset linkage carries one exact triple and performs no publish persistence", async () => {
+  const reportId = "prepublication-report-1";
+  const gradingSessionId = "prepublication-session-1";
+  const queueItemId = "prepublication-queue-1";
+  const assets = (["front", "back"] as const).map((side) => ({
+    id: `${reportId}/${side}/${side}-normalized-card.png`,
+    kind: "image",
+    fileName: `${side}-normalized-card.png`,
+    contentType: "image/png",
+    checksumSha256: side === "front" ? "a".repeat(64) : "b".repeat(64),
+    byteSize: side === "front" ? 2048 : 3072,
+    widthPx: 1200,
+    heightPx: 1680,
+    side,
+    evidenceRole: "normalized_card",
+  }));
+  const baseBundle = {
+    ...SAMPLE_AI_GRADER_REPORT_BUNDLE,
+    reportId,
+    gradingSessionId,
+    reportProducer: {
+      contractVersion: "ai-grader-report-producer-v0.2",
+      capabilities: ["finding-validation-v1", "capture-profile-provenance-v1", "raster-dimensions-v1"],
+    },
+    visionLab: {
+      ...SAMPLE_AI_GRADER_REPORT_BUNDLE.visionLab,
+      findingValidation: {
+        status: "valid" as const,
+        sourceCandidateCount: 0,
+        publishedFindingCount: 0,
+        issues: [],
+      },
+    },
+    assets,
+  };
+  const productionRelease = buildSampleAiGraderProductionRelease(baseBundle as any);
+  const reportBundle = { ...baseBundle, productionRelease };
+  const identity = {
+    category: "sport",
+    playerName: "Michael Jordan",
+    year: "1996",
+    manufacturer: "Topps",
+    sport: "basketball",
+    productSet: "Topps",
+    cardNumber: "23",
+  } as const;
+  let persistCalls = 0;
+  let linkedInput: any;
+  const handler = createAiGraderProductionApiHandler({
+    env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
+    async requireAdminSession() {
+      return { user: { id: "admin-1", phone: null, displayName: "Admin" } } as any;
+    },
+    publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
+    async createCardFromReport(input) {
+      linkedInput = input;
+      return {
+        queueItemId,
+        gradingSessionId,
+        reportId,
+        cardAssetId: "card-asset-1",
+        itemId: "item-1",
+        batchId: "batch-1",
+        title: "1996 Topps Michael Jordan #23",
+        set: "Topps",
+        publicImageUrl: "",
+        cardIdentity: {} as any,
+        productionRelease,
+        itemLinkage: { itemNumberConvention: "Item.number = CardAsset.id" },
+      };
+    },
+    async persist() {
+      persistCalls += 1;
+      throw new Error("prepublication linkage must not publish");
+    },
+  });
+  const { state, res } = response();
+  await handler(request({
+    queueItemId,
+    publicationStatus: "finalized",
+    reportBundle,
+    productionRelease,
+    identity,
+  }, "create-card-from-report"), res);
+
+  assert.equal(state.statusCode, 200);
+  assert.deepEqual(
+    {
+      queueItemId: linkedInput.queueItemId,
+      gradingSessionId: linkedInput.reportBundle.gradingSessionId,
+      reportId: linkedInput.productionRelease.reportId,
+    },
+    { queueItemId, gradingSessionId, reportId },
+  );
+  assert.equal(persistCalls, 0);
+  assert.equal(state.body.result.queueItemId, queueItemId);
 });

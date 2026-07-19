@@ -39,8 +39,20 @@ export type AiGraderStationBridgeActionRequestBody = {
   expectedSide?: "front" | "back";
   expectedSideEpoch?: string;
   expectedFrameId?: string;
-  rapidCaptureEnabled?: boolean;
   queueItemId?: string;
+  gradingSessionId?: string;
+  result?: Record<string, unknown>;
+  failure?: {
+    code: string;
+    message: string;
+  };
+  publication?: {
+    queueItemId: string;
+    gradingSessionId: string;
+    reportId: string;
+    publicationStatus: "published";
+    publishedAt: string;
+  };
 };
 
 export function buildAiGraderCaptureProfileRequest(captureProfile: AiGraderCaptureProfile) {
@@ -57,16 +69,84 @@ export function buildAiGraderDetectedGeometryCaptureRequest(input: {
   } satisfies AiGraderStationBridgeActionRequestBody;
 }
 
-export function buildAiGraderRapidCaptureConfigurationRequest(rapidCaptureEnabled: boolean) {
-  return { rapidCaptureEnabled } satisfies AiGraderStationBridgeActionRequestBody;
+function exactRapidQueueIdentity(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+}) {
+  const normalized = {
+    queueItemId: input.queueItemId.trim(),
+    gradingSessionId: input.gradingSessionId.trim(),
+    reportId: input.reportId.trim(),
+  };
+  for (const [label, value] of Object.entries(normalized)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(value)) {
+      throw new Error("Rapid Capture " + label + " is invalid.");
+    }
+  }
+  return normalized;
 }
 
-export function buildAiGraderRapidQueueActivationRequest(queueItemId: string) {
-  const normalized = queueItemId.trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(normalized)) {
-    throw new Error("Rapid Capture queue item ID is invalid.");
+export function buildAiGraderRapidQueueActivationRequest(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+}) {
+  return exactRapidQueueIdentity(input) satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+const AI_GRADER_QUEUED_OCR_FAILURE_CODES = new Set([
+  "AI_GRADER_OCR_GOOGLE_CONFIG_MISSING",
+  "AI_GRADER_OCR_GOOGLE_PROVIDER_FAILED",
+  "AI_GRADER_OCR_GOOGLE_FRONT_FAILED",
+  "AI_GRADER_OCR_GOOGLE_BACK_FAILED",
+  "AI_GRADER_OCR_OPENAI_CONFIG_MISSING",
+  "AI_GRADER_OCR_OPENAI_TIMEOUT",
+  "AI_GRADER_OCR_OPENAI_NETWORK",
+  "AI_GRADER_OCR_OPENAI_NON_2XX",
+  "AI_GRADER_OCR_OPENAI_REFUSAL",
+  "AI_GRADER_OCR_OPENAI_SCHEMA_FAILED",
+  "AI_GRADER_OCR_CATALOG_FAILED",
+  "AI_GRADER_OCR_INTERNAL_FAILED",
+  "AI_GRADER_OCR_NORMALIZED_EVIDENCE_MISSING",
+  "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID",
+  "AI_GRADER_OCR_IDENTITY_MISMATCH",
+  "AI_GRADER_OCR_INTERRUPTED",
+]);
+
+export function buildAiGraderQueuedOcrFailureRequest(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  failure: { code: string; message: string };
+}) {
+  const identity = exactRapidQueueIdentity(input);
+  const code = input.failure.code.trim();
+  const message = input.failure.message.trim();
+  if (!AI_GRADER_QUEUED_OCR_FAILURE_CODES.has(code) || !message || message.length > 500) {
+    throw new Error("Queued OCR terminal failure evidence is invalid.");
   }
-  return { queueItemId: normalized } satisfies AiGraderStationBridgeActionRequestBody;
+  return { ...identity, failure: { code, message } } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderRapidPublicationEvidence(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  publishedAt: string;
+}) {
+  const identity = exactRapidQueueIdentity(input);
+  if (!Number.isFinite(Date.parse(input.publishedAt)) || new Date(input.publishedAt).toISOString() !== input.publishedAt) {
+    throw new Error("Rapid Capture publication timestamp is invalid.");
+  }
+  return {
+    ...identity,
+    publication: {
+      ...identity,
+      publicationStatus: "published" as const,
+      publishedAt: input.publishedAt,
+    },
+  } satisfies AiGraderStationBridgeActionRequestBody;
 }
 
 export type AiGraderStationBridgeHealth = {
@@ -168,6 +248,9 @@ export async function fetchAiGraderStationBridgeHealth(
     throw new Error(
       `Dell report producer update/restart required. Launch the Ten Kings AI Grader Station desktop shortcut, then re-export the existing report. No hardware recapture is required.`,
     );
+  }
+  if (payload.mode !== "real" || payload.hardwareActionsEnabled !== true) {
+    throw new Error("The production AI Grader station requires the real paired Dell helper. Contract or mock preview cannot operate the capture road.");
   }
   return payload as AiGraderStationBridgeHealth;
 }
@@ -555,6 +638,97 @@ export async function fetchAiGraderStationReportAsset(input: {
   }
   const bytes = await response.arrayBuffer();
   return {
+    bytes,
+    contentType: response.headers.get("content-type") ?? "application/octet-stream",
+    byteSize: bytes.byteLength,
+    checksumSha256: response.headers.get("x-ai-grader-sha256") ?? undefined,
+  };
+}
+
+export type AiGraderQueuedOcrDescriptor = {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  status: "eligible" | "in_flight";
+  images: Array<{
+    side: "front" | "back";
+    artifactRole: "normalized_card";
+    fileName: string;
+    mimeType: "image/png";
+    checksumSha256: string;
+    byteSize: number;
+    widthPx: 1200;
+    heightPx: 1680;
+  }>;
+};
+
+export async function fetchAiGraderQueuedOcrDescriptor(input: {
+  baseUrl: string;
+  stationToken: string;
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderQueuedOcrDescriptor> {
+  const identity = exactRapidQueueIdentity(input);
+  return bridgeGetJson<AiGraderQueuedOcrDescriptor>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: "/rapid-queue/" + encodeURIComponent(identity.queueItemId) +
+      "/ocr?gradingSessionId=" + encodeURIComponent(identity.gradingSessionId) +
+      "&reportId=" + encodeURIComponent(identity.reportId),
+  }, fetchImpl);
+}
+
+export async function fetchAiGraderQueuedOcrAsset(input: {
+  baseUrl: string;
+  stationToken: string;
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  side: "front" | "back";
+}, fetchImpl: typeof fetch = fetch): Promise<{
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  side: "front" | "back";
+  bytes: ArrayBuffer;
+  contentType: string;
+  byteSize: number;
+  checksumSha256?: string;
+}> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  const identity = exactRapidQueueIdentity(input);
+  if (!input.stationToken.trim()) throw new Error("AI Grader station bridge token is required.");
+  const response = await fetchImpl(
+    baseUrl + "/rapid-queue/" + encodeURIComponent(identity.queueItemId) +
+      "/ocr/asset?gradingSessionId=" + encodeURIComponent(identity.gradingSessionId) +
+      "&reportId=" + encodeURIComponent(identity.reportId) +
+      "&side=" + input.side,
+    {
+      method: "GET",
+      headers: { "x-ai-grader-station-token": input.stationToken },
+    },
+  );
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.message ?? "Queued OCR " + input.side + " asset fetch failed with HTTP " + response.status + ".");
+  }
+  const headerIdentity = {
+    queueItemId: response.headers.get("x-ai-grader-queue-item-id"),
+    gradingSessionId: response.headers.get("x-ai-grader-grading-session-id"),
+    reportId: response.headers.get("x-ai-grader-report-id"),
+    side: response.headers.get("x-ai-grader-side"),
+  };
+  if (headerIdentity.queueItemId !== identity.queueItemId ||
+      headerIdentity.gradingSessionId !== identity.gradingSessionId ||
+      headerIdentity.reportId !== identity.reportId ||
+      headerIdentity.side !== input.side) {
+    throw new Error("Queued OCR asset response identity mismatch.");
+  }
+  const bytes = await response.arrayBuffer();
+  return {
+    ...identity,
+    side: input.side,
     bytes,
     contentType: response.headers.get("content-type") ?? "application/octet-stream",
     byteSize: bytes.byteLength,

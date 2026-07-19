@@ -2,6 +2,18 @@
 
 Proprietary 4-element math grading. Raw-card office pipeline. LEAN single-stand rig. Macro dome plus targeted microscope spot checks. Optional full forensic raster. CMYK print-profile comparison. Deterministic replay provenance.
 
+## OVERRIDING WORKFLOW POLICY
+
+Do not add any new operator safety gate, confirmation screen, recovery workflow, fallback, alternate scorer,
+alternate capture path, retry ladder or feature flag. Build one deterministic measurement path. Invalid
+measurement evidence returns one explicit failure; it never chooses another method. Preserve exact identity, one
+camera owner, immutable evidence, atomic publication and mathematical measurement-validity rules because they
+define correctness of the single path—not an alternate workflow.
+
+The glare mask, uncertainty calculation and requirement for real measurable evidence are parts of the grading
+formula, not additional workflow safety systems. Removing those would recreate the false surface deductions you
+are trying to eliminate.
+
 This document is the standalone implementation blueprint. A fresh Codex agent must be able to build from this file without reading older specifications, reviewer notes, amendment memos, or synthesis documents.
 
 ## Changelog v4.1 -> v5
@@ -1802,7 +1814,7 @@ Acceptance is two-phase: validate the exact response identity/schema, source bin
 
 There is no manual geometry or manual capture path. Detector failure remains terminal for the capture attempt. The worker boundary preserves exact preview/frame binding, captured-evidence authority, pairwise consensus rejection, raw hashes, lossless `1200x1680` normalization, fail-closed processing, worker isolation, and public-response sanitization.
 
-## July 17, 2026 Final Binary Safety and Fallback Policy
+## July 18, 2026 Final One-Road Rapid Capture and Measurement Policy
 
 This section replaces the earlier July capture-path policy wherever they conflict. The production station has exactly four operator actions: **Start New Card**, **Capture Front**, flip and **Capture Back**, then **Approve & Publish**.
 
@@ -1812,15 +1824,21 @@ The retained capture authority binds exact session, report/card, side, preview e
 
 Removed production systems have no route or operator authority: startup physical-state interlock, global browser hardware-safety interlock, browser/manual Safe Off, page-close/preview-loss/capture-start shutdown, fixture/ruler confirmation, per-card profile acceptance, strict front-before-back authority record, flip/light-idle confirmations, back-light retry, manual geometry/capture, reconnect ladders, browser hardware shadow state, separate Confirm and Publish screens, cold/debug or alternate capture implementations, compatibility routes, and routine external/chat authorization.
 
-**Start New Card** applies the configured approved default positioning-light profile through the one existing bounded Leimac command path. Complete exact controller acknowledgement is required before the returned session is capture-light-ready. Rapid continuation applies the same profile to the new next-card session. A failed lighting application is one explicit retryable error; it cannot produce capture readiness, and the browser Live/Off display is derived from the returned authoritative acknowledgement state.
+**Start New Card** is the only next-card action. It creates exactly one `production_fast` session and applies the configured approved default positioning-light profile through the one existing bounded Leimac command path. Complete exact controller acknowledgement is required before the returned session is capture-light-ready. Back completion returns to sessionless `start_new_card` and never creates a continuation session. A failed lighting application is one explicit failure; it cannot produce capture readiness, and the browser Live/Off display is derived from the returned authoritative acknowledgement state.
 
-Rapid Capture remains a production throughput feature. It never triggers the shutter: **Capture Front** and **Capture Back** remain explicit. After Back, the bridge durably queues the exact completed evidence session for one serialized background worker that completes diagnostics/report-bundle generation, final-grade calculation, finalized production release, and final label-data preparation required by the unchanged downstream Label V1 authority. It creates the next session with independently acknowledged configured lighting. Only a fully prepared exact item becomes reviewable; no item is auto-approved, auto-published, or added to inventory, and one failed item does not corrupt the next session. Queue review rejoins the single **Approve & Publish** authority. **Add To Inventory** remains a distinct downstream Finish action after applicable NFC, slab-photo, valuation, and label gates; it is outside the four grading actions and was not removed.
+Rapid is the sole production capture path and the existing persisted throughput queue. It never triggers the shutter: **Capture Front** and **Capture Back** remain explicit. Raw Front/Back production evidence is immutable lossless TIFF and normalized measurement/OCR evidence is PNG. Back success requires the exact TIFF/hash persistence, acceptance of the exact Front and Back processing jobs, and atomic persistence of the exact Rapid item before capture/camera/session release. Queue-persistence failure is an exact-card failure and cannot report release success.
+
+The camera waits only for authoritative capture, lighting, and terminal physical ownership. Once Back is durably queued, **Start New Card** is immediately independent of older PNG conversion, OCR, grading, report/release/Label V1 preparation, review, publication, hosted Finish work, missing OCR fields, or a terminal background failure. The existing fixed-rig worker remains active-concurrency one and advances after failure; its pending representation accepts the twenty exact side jobs required for ten captured cards. Each exact TIFF-to-PNG side-processing job executes once.
+
+When both exact normalized PNGs pass identity, path, MIME, size, hash, and `1200x1680` dimension verification, the existing Rapid manifest persists one OCR-eligible transition keyed by `queueItemId`, `gradingSessionId`, and `reportId`. Only those two verified bodies are exposed through the token-gated loopback bridge. The existing hosted Google Vision path executes once, carries the exact triple through init/upload/finalize/provider/result/local persistence, and persists one bounded result or terminal failure. It has no automatic retry, alternate provider, manual substitute, confirm, publication, or inventory authority. Reload never reruns success, an interrupted in-flight request becomes exact-item failure, and review merges persisted suggestions only into untouched operator fields.
+
+All unpublished evidence remains in the persisted local **Finish / Review Queue** with durable processing, ready, or exact-failure state. Only a fully prepared activated exact item can use the one human **Approve & Publish** authority, and publication mutates only that queue/session/report triple. The existing hosted Finish queue receives the same report only after atomic publication, then continues unchanged with Label V1, NFC, comps, slab photos, and inventory. **Add To Inventory** remains outside the four grading actions.
 
 NFC retains exact ACR1552U PICC selection, one operation, exact hosted linkage/profile/URL matching, full readback, F8215 permanent-lock proof, signed workstation evidence, pinned GoToTags identity, UID hash-and-discard, expiration/replay controls, quarantine, exact-attempt abandoned-job cleanup, server-only activation, `AI_GRADER_NFC_PROGRAMMING_ENABLED`, and `AI_GRADER_NFC_REQUIRED`. NTAG215 and F8215 are explicit non-fallback profiles. There is no redundant F8215 enable switch, manual-iPhone production writer, automatic failed-tag reuse, invented GoToTags progress, browser activation, or production sacrificial mode.
 
 ## Appendix A. Legacy Arduino LED Controller Protocol
 
-The remaining PR-by-PR material is historical evidence only. Where it mentions operator lighting acceptance, fixture/final-light confirmations, manual Safe Off, manual capture, cold/debug capture, separate Confirm/Publish actions, or older Rapid behavior, the July 17 Final Binary Safety and Fallback Policy above is the sole current production authority.
+The remaining PR-by-PR material is historical evidence only. Where it mentions operator lighting acceptance, fixture/final-light confirmations, manual Safe Off, manual capture, cold/debug capture, separate Confirm/Publish actions, or older Rapid behavior, the July 18 Final One-Road Rapid Capture and Measurement Policy above is the sole current production authority.
 
 On the Dell capture-node rig this is no longer the primary Leimac production lighting path. Leimac production lighting is expected to use the Leimac IDMU-P Ethernet controller, with Basler Line 2 `Exposure Active` triggering Leimac `TRG IN1`. Arduino may remain useful later for auxiliary interlocks, buttons, sensors, emergency stop, or non-Leimac devices.
 

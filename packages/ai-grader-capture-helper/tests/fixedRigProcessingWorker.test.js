@@ -236,7 +236,7 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     assert.deepEqual(controller.status(), {
       active: false,
       pending: 0,
-      maxPending: 1,
+      maxPending: 20,
       maxConcurrency: 1,
       closed: false,
     });
@@ -432,7 +432,7 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     }
   });
 
-  await t.test("one active plus one pending is bounded and shutdown drains both without overlap", async () => {
+  await t.test("one active plus twenty pending side jobs is bounded and shutdown drains all without overlap", async () => {
     const hangWorker = writeWorker(fixture.root, "hang-worker", `
       const { parentPort } = require("node:worker_threads");
       parentPort.on("message", () => {});
@@ -442,23 +442,30 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
       workerPath: hangWorker,
       timeoutMs: 5000,
     });
-    const first = settledError(controller.submit(request));
-    const second = settledError(controller.submit(request));
-    const third = settledError(controller.submit(request));
+    const accepted = Array.from({ length: 21 }, (_, index) => {
+      const queuedRequest = clone(request);
+      queuedRequest.identity.requestId = `request-bounded-${index}`;
+      return settledError(controller.submit(queuedRequest));
+    });
+    const overflowRequest = clone(request);
+    overflowRequest.identity.requestId = "request-bounded-overflow";
+    const overflow = settledError(controller.submit(overflowRequest));
     assert.deepEqual(controller.status(), {
       active: true,
-      pending: 1,
-      maxPending: 1,
+      pending: 20,
+      maxPending: 20,
       maxConcurrency: 1,
       closed: false,
-      activeIdentity: request.identity,
+      activeIdentity: { ...request.identity, requestId: "request-bounded-0" },
     });
-    const thirdError = await third;
-    assert.equal(thirdError.code, "queue_full");
+    assert.equal((await overflow).code, "queue_full");
     await controller.shutdown("bounded shutdown");
-    assert.equal((await first).code, "shutdown");
-    assert.equal((await second).code, "shutdown");
+    for (const acceptedJob of accepted) assert.equal((await acceptedJob).code, "shutdown");
     assert.equal(controller.status().closed, true);
+    assert.throws(
+      () => new FixedRigProcessingWorkerController({ allowedOutputRoot: fixture.root, maxPending: 21 }),
+      /zero through twenty pending side jobs/i,
+    );
   });
 
   await t.test("session cancellation terminates its active job and rejects its pending job without closing the controller", async () => {
@@ -481,11 +488,107 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     assert.deepEqual(controller.status(), {
       active: false,
       pending: 0,
-      maxPending: 1,
+      maxPending: 20,
       maxConcurrency: 1,
       closed: false,
     });
     await controller.shutdown("cancel test complete");
+  });
+
+  await t.test("one failed side job advances the same serialized worker queue to the later exact job", async () => {
+    const advancingWorker = writeWorker(fixture.root, "advancing-worker", `
+      const { parentPort } = require("node:worker_threads");
+      let requestIdentity;
+      parentPort.on("message", (message) => {
+        if (message.operation === "revalidate_captured_source_identity") {
+          parentPort.postMessage({ ...message, ok: true });
+          setImmediate(() => process.exit(0));
+          return;
+        }
+        requestIdentity = message.identity;
+        if (message.identity.requestId === "request-intentional-failure") {
+          parentPort.postMessage({
+            protocolVersion: message.protocolVersion,
+            operation: message.operation,
+            ok: false,
+            identity: requestIdentity,
+            error: { code: "processing_failed", message: "intentional exact-item failure" },
+          });
+          return;
+        }
+        parentPort.postMessage({
+          protocolVersion: message.protocolVersion,
+          operation: message.operation,
+          ok: true,
+          identity: requestIdentity,
+          authority: ${JSON.stringify(response.authority)},
+        });
+      });
+    `);
+    const controller = new FixedRigProcessingWorkerController({
+      allowedOutputRoot: fixture.root,
+      workerPath: advancingWorker,
+      timeoutMs: 5000,
+    });
+    const failedRequest = clone(request);
+    failedRequest.identity.requestId = "request-intentional-failure";
+    const laterRequest = clone(request);
+    laterRequest.identity.requestId = "request-after-failure";
+    const failed = settledError(controller.submit(failedRequest));
+    const later = controller.submit(laterRequest);
+    assert.equal((await failed).code, "worker_failed");
+    assert.equal((await later).identity.requestId, "request-after-failure");
+    assert.equal(controller.status().maxConcurrency, 1);
+    await controller.shutdown("advance test complete");
+  });
+
+  await t.test("the sole controller slot remains held through heavy TIFF-to-PNG response processing", async () => {
+    const workerPath = writeWorker(fixture.root, "held-full-processing-worker", `
+      const { parentPort } = require("node:worker_threads");
+      parentPort.on("message", (message) => {
+        if (message.operation === "revalidate_captured_source_identity") {
+          parentPort.postMessage({ ...message, ok: true });
+          setImmediate(() => process.exit(0));
+          return;
+        }
+        parentPort.postMessage({
+          protocolVersion: message.protocolVersion,
+          operation: message.operation,
+          ok: true,
+          identity: message.identity,
+          authority: ${JSON.stringify(response.authority)},
+        });
+      });
+    `);
+    const controller = new FixedRigProcessingWorkerController({ allowedOutputRoot: fixture.root, workerPath, timeoutMs: 5000 });
+    let releaseFirst;
+    const firstHeld = new Promise((resolve) => { releaseFirst = resolve; });
+    let firstProcessingStarted = false;
+    let secondProcessingStarted = false;
+    const firstRequest = clone(request);
+    firstRequest.identity.requestId = "request-held-heavy-first";
+    const secondRequest = clone(request);
+    secondRequest.identity.requestId = "request-held-heavy-second";
+    const first = controller.submit(firstRequest, async (workerResponse) => {
+      firstProcessingStarted = true;
+      await firstHeld;
+      return workerResponse.identity.requestId;
+    });
+    while (!firstProcessingStarted) await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = controller.submit(secondRequest, async (workerResponse) => {
+      secondProcessingStarted = true;
+      return workerResponse.identity.requestId;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(secondProcessingStarted, false, "later side cannot enter heavy processing while first TIFF-to-PNG body is held");
+    assert.equal(controller.status().activeIdentity.requestId, firstRequest.identity.requestId);
+    assert.equal(controller.status().pending, 1);
+    assert.equal(controller.status().maxConcurrency, 1);
+    releaseFirst();
+    assert.equal(await first, firstRequest.identity.requestId);
+    assert.equal(await second, secondRequest.identity.requestId);
+    assert.equal(secondProcessingStarted, true);
+    await controller.shutdown("held full processing complete");
   });
 
   await t.test("crash, timeout, malformed, wrong identity, and child error are redacted terminal results", async () => {

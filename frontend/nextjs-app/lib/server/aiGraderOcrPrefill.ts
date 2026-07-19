@@ -57,6 +57,8 @@ export type AiGraderOcrPrefillFields = {
 };
 
 export type AiGraderOcrPrefillResult = {
+  queueItemId: string;
+  gradingSessionId: string;
   reportId: string;
   status: "prefill_ready";
   humanConfirmationRequired: true;
@@ -384,9 +386,23 @@ function remainingProviderMs(deadline: number, now: () => number) {
 }
 
 export async function runAiGraderOcrPrefillRuntime(
-  input: { reportId: string; images: AiGraderOcrPrefillSourceImage[] },
+  input: {
+    queueItemId: string;
+    gradingSessionId: string;
+    reportId: string;
+    images: AiGraderOcrPrefillSourceImage[];
+  },
   dependencies: AiGraderOcrPrefillRuntimeDependencies = {}
 ): Promise<AiGraderOcrPrefillRuntimeResult> {
+  for (const [name, value] of Object.entries({
+    queueItemId: input.queueItemId,
+    gradingSessionId: input.gradingSessionId,
+    reportId: input.reportId,
+  })) {
+    if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(value)) {
+      throw new Error(`AI Grader OCR ${name} must be an exact safe identifier.`);
+    }
+  }
   const images = [...input.images].sort((left, right) => (left.side === right.side ? 0 : left.side === "front" ? -1 : 1));
   if (images.length !== 2 || images[0]?.side !== "front" || images[1]?.side !== "back") {
     throw new Error("AI Grader OCR requires exactly one verified normalized front image and one verified normalized back image.");
@@ -499,6 +515,8 @@ export async function runAiGraderOcrPrefillRuntime(
     ? ["Unknown or conflicting OCR fields require operator review."]
     : [];
   return {
+    queueItemId: input.queueItemId,
+    gradingSessionId: input.gradingSessionId,
     reportId: input.reportId,
     status: "prefill_ready",
     humanConfirmationRequired: true,

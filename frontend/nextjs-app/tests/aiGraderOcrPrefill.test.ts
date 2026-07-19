@@ -11,7 +11,8 @@ import {
 } from "../lib/server/aiGraderProductionApi";
 import {
   AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS,
-  runAiGraderOcrPrefillRuntime,
+  runAiGraderOcrPrefillRuntime as runExactAiGraderOcrPrefillRuntime,
+  type AiGraderOcrPrefillRuntimeDependencies,
 } from "../lib/server/aiGraderOcrPrefill";
 import {
   AiGraderOcrFailure,
@@ -32,10 +33,42 @@ type MockResponse = NextApiResponse & {
   jsonBody: unknown;
 };
 
+function exactOcrIdentity(reportId: string) {
+  return {
+    queueItemId: `${reportId}-queue-item`,
+    gradingSessionId: `${reportId}-grading-session`,
+    reportId,
+  };
+}
+
+type OcrRuntimeInput = Parameters<typeof runExactAiGraderOcrPrefillRuntime>[0];
+
+function runAiGraderOcrPrefillRuntime(
+  input: Omit<OcrRuntimeInput, "queueItemId" | "gradingSessionId">,
+  dependencies?: AiGraderOcrPrefillRuntimeDependencies,
+) {
+  return runExactAiGraderOcrPrefillRuntime({ ...exactOcrIdentity(input.reportId), ...input }, dependencies);
+}
+
 function mockRequest(method: string, action: string[], body: unknown = {}): NextApiRequest {
-  const requestBody = action[0] === "ocr-prefill-init" && body && typeof body === "object" && !Array.isArray(body)
-    ? { reportProducerContractVersion: "ai-grader-report-producer-v0.2", ...(body as Record<string, unknown>) }
-    : body;
+  let requestBody = body;
+  if (action[0] === "ocr-prefill-init" && body && typeof body === "object" && !Array.isArray(body)) {
+    const source = body as Record<string, unknown>;
+    const reportId = String(source.reportId ?? "ocr-test-report");
+    const identity = {
+      ...exactOcrIdentity(reportId),
+      ...(typeof source.queueItemId === "string" ? { queueItemId: source.queueItemId } : {}),
+      ...(typeof source.gradingSessionId === "string" ? { gradingSessionId: source.gradingSessionId } : {}),
+    };
+    requestBody = {
+      reportProducerContractVersion: "ai-grader-report-producer-v0.2",
+      ...identity,
+      ...source,
+      images: Array.isArray(source.images)
+        ? source.images.map((image) => ({ ...identity, ...(image as Record<string, unknown>) }))
+        : source.images,
+    };
+  }
   return {
     method,
     query: { action },
@@ -73,7 +106,7 @@ function normalizedImages() {
     {
       side: "front",
       artifactRole: "normalized_card",
-      fileName: "front-normalized.png",
+      fileName: "front-normalized-card.png",
       mimeType: "image/png",
       checksumSha256: sha256("front-normalized"),
       byteSize: 2048,
@@ -83,7 +116,7 @@ function normalizedImages() {
     {
       side: "back",
       artifactRole: "normalized_card",
-      fileName: "back-normalized.png",
+      fileName: "back-normalized-card.png",
       mimeType: "image/png",
       checksumSha256: sha256("back-normalized"),
       byteSize: 3072,
@@ -180,6 +213,8 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
       assert.equal(input.images.every((image) => image.url.startsWith("https://cdn.tenkings.test/")), true);
       assert.equal(JSON.stringify(input).includes("X-Amz"), false);
       return {
+        queueItemId: input.queueItemId,
+        gradingSessionId: input.gradingSessionId,
         reportId: input.reportId,
         status: "prefill_ready",
         humanConfirmationRequired: true,
@@ -226,6 +261,9 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
   assert.equal(initRes.statusCodeValue, 200);
   const initBody = initRes.jsonBody as any;
   assert.equal(initBody.operation, "aiGraderOcrPrefillInit");
+  assert.equal(initBody.result.queueItemId, "ocr-report-1-queue-item");
+  assert.equal(initBody.result.gradingSessionId, "ocr-report-1-grading-session");
+  assert.equal(initBody.result.reportId, "ocr-report-1");
   assert.match(initBody.result.uploadSessionId, /^aigocr_[a-f0-9]{32}$/);
   assert.equal(initBody.result.uploadPlan.length, 2);
   assert.equal(initBody.result.uploadPlan.every((image: any) => image.artifactRole === "normalized_card"), true);
@@ -242,6 +280,8 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
   assert.equal(finalizeRes.statusCodeValue, 200);
   const finalizeBody = finalizeRes.jsonBody as any;
   assert.equal(finalizeBody.operation, "aiGraderOcrPrefillFinalize");
+  assert.equal(finalizeBody.result.queueItemId, "ocr-report-1-queue-item");
+  assert.equal(finalizeBody.result.gradingSessionId, "ocr-report-1-grading-session");
   assert.equal(finalizeBody.result.humanConfirmationRequired, true);
   assert.equal(finalizeBody.result.inventoryMutationPerformed, false);
   assert.equal(finalizeBody.result.publishMutationPerformed, false);
@@ -262,6 +302,123 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
   assert.deepEqual(verifiedSides.sort(), ["back", "front"]);
   assert.equal(ocrCalls, 1);
   assert.equal(persistCalls, 0);
+});
+
+test("hosted OCR rejects queue, grading-session, or report drift at init, finalize, and provider result", async () => {
+  let presignCalls = 0;
+  let verifyCalls = 0;
+  let providerCalls = 0;
+  const handler = createAiGraderProductionApiHandler({
+    env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
+    async requireAdminSession() { throw new Error("not used"); },
+    async requireProductionActor(_req, action) {
+      return {
+        type: "service_account",
+        role: "ai_grader_service",
+        serviceAccountId: "ocr-identity-test",
+        scopes: ["publish"],
+        audit: { actorType: "service_account", action, requestedAt: "2026-07-18T12:00:00.000Z" },
+      };
+    },
+    publicUrlFor(storageKey) { return `https://cdn.tenkings.test/${storageKey}`; },
+    async presignUpload({ storageKey, contentType, checksumSha256 }) {
+      presignCalls += 1;
+      return {
+        storageKey,
+        uploadUrl: `https://uploads.tenkings.test/${storageKey}`,
+        uploadMethod: "PUT",
+        uploadHeaders: {
+          "Content-Type": contentType,
+          "x-amz-checksum-sha256": sha256HexToBase64(checksumSha256),
+        },
+        publicUrl: `https://cdn.tenkings.test/${storageKey}`,
+      };
+    },
+    async verifyUploadedArtifact(input) {
+      verifyCalls += 1;
+      return {
+        ok: true,
+        byteSize: input.byteSize,
+        contentType: input.contentType,
+        checksumSha256: input.checksumSha256,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
+      };
+    },
+    async runOcrPrefill(input) {
+      providerCalls += 1;
+      return {
+        ...input,
+        queueItemId: "different-queue-item",
+        status: "prefill_ready",
+        humanConfirmationRequired: true,
+        inventoryMutationPerformed: false,
+        publishMutationPerformed: false,
+        sourceSides: ["front", "back"],
+        fields: prefillFields(),
+        reviewFieldNames: [],
+        provenance: {
+          ocrEngine: "google_vision_document_text_detection_url_only",
+          attributeExtractor: "@tenkings/shared/extractCardAttributes",
+          structuredExtractor: "openai_responses_strict_json_schema",
+          structuredExtractionModel: "gpt-5.6-sol",
+          setLookupUsed: false,
+          setIdentificationUsed: false,
+        },
+        warnings: [],
+      } as any;
+    },
+    async persist() { throw new Error("OCR must not publish"); },
+  });
+
+  const invalidNameImages = normalizedImages();
+  invalidNameImages[0] = { ...invalidNameImages[0]!, fileName: "../front-normalized.png" };
+  const invalidNameInit = mockResponse();
+  await handler(mockRequest("POST", ["ocr-prefill-init"], {
+    reportId: "identity-report",
+    images: invalidNameImages,
+  }), invalidNameInit);
+  assert.equal(invalidNameInit.statusCodeValue, 400);
+  assert.match(String((invalidNameInit.jsonBody as any).message), /exact safe PNG file name/i);
+  assert.equal(presignCalls, 0);
+
+  const noncanonicalNameImages = normalizedImages();
+  noncanonicalNameImages[0] = { ...noncanonicalNameImages[0]!, fileName: "different-front.png" };
+  const noncanonicalNameInit = mockResponse();
+  await handler(mockRequest("POST", ["ocr-prefill-init"], {
+    reportId: "identity-report",
+    images: noncanonicalNameImages,
+  }), noncanonicalNameInit);
+  assert.equal(noncanonicalNameInit.statusCodeValue, 400);
+  assert.match(String((noncanonicalNameInit.jsonBody as any).message), /front-normalized-card\.png/i);
+  assert.equal(presignCalls, 0);
+
+  const crossedImages = normalizedImages();
+  (crossedImages[0] as any).queueItemId = "different-queue-item";
+  const crossedInit = mockResponse();
+  await handler(mockRequest("POST", ["ocr-prefill-init"], { reportId: "identity-report", images: crossedImages }), crossedInit);
+  assert.equal(crossedInit.statusCodeValue, 409);
+  assert.equal((crossedInit.jsonBody as any).code, "AI_GRADER_OCR_IDENTITY_MISMATCH");
+  assert.equal(presignCalls, 0);
+
+  const initRes = mockResponse();
+  await handler(mockRequest("POST", ["ocr-prefill-init"], { reportId: "identity-report", images: normalizedImages() }), initRes);
+  assert.equal(initRes.statusCodeValue, 200);
+  const manifest = (initRes.jsonBody as any).result.requiredFinalizeManifest;
+
+  const crossedFinalize = mockResponse();
+  await handler(mockRequest("POST", ["ocr-prefill-finalize"], { ...manifest, gradingSessionId: "different-session" }), crossedFinalize);
+  assert.equal(crossedFinalize.statusCodeValue, 409);
+  assert.equal((crossedFinalize.jsonBody as any).code, "AI_GRADER_OCR_IDENTITY_MISMATCH");
+  assert.equal(verifyCalls, 0);
+  assert.equal(providerCalls, 0);
+
+  const crossedProvider = mockResponse();
+  await handler(mockRequest("POST", ["ocr-prefill-finalize"], manifest), crossedProvider);
+  assert.equal(crossedProvider.statusCodeValue, 409);
+  assert.equal((crossedProvider.jsonBody as any).code, "AI_GRADER_OCR_IDENTITY_MISMATCH");
+  assert.equal(verifyCalls, 2);
+  assert.equal(providerCalls, 1);
 });
 
 test("OCR finalize API preserves safe typed provider and catalog diagnostics", async () => {
@@ -486,6 +643,30 @@ test("OCR heuristic hints use true for positive autograph or memorabilia evidenc
   assert.equal(observed[0]?.memorabilia, null);
   assert.equal(observed[1]?.autograph, true);
   assert.equal(observed[1]?.memorabilia, true);
+});
+
+test("OCR runtime rejects non-string exact identities before either provider runs", async () => {
+  for (const queueItemId of [undefined, null, 123]) {
+    let providerCalls = 0;
+    await assert.rejects(
+      runExactAiGraderOcrPrefillRuntime({
+        queueItemId,
+        gradingSessionId: "runtime-grading-session",
+        reportId: "runtime-report",
+        images: [
+          { side: "front", url: "https://cdn.tenkings.test/front.png" },
+          { side: "back", url: "https://cdn.tenkings.test/back.png" },
+        ],
+      } as any, {
+        async runOcr() {
+          providerCalls += 1;
+          throw new Error("provider must not run");
+        },
+      }),
+      /exact safe identifier/i,
+    );
+    assert.equal(providerCalls, 0);
+  }
 });
 
 test("OCR runtime enforces provider phase limits inside one Vercel-compatible budget", async () => {
@@ -861,6 +1042,8 @@ test("OCR provider remains gated until both missing-native-checksum objects pass
     async runOcrPrefill(input) {
       ocrCalls += 1;
       return {
+        queueItemId: input.queueItemId,
+        gradingSessionId: input.gradingSessionId,
         reportId: input.reportId,
         status: "prefill_ready",
         humanConfirmationRequired: true,
