@@ -731,6 +731,7 @@ export default function AiGraderStationPage() {
     attemptOwnerId: null,
     error: null,
   });
+  const [queuedOcrSchedulerRevision, setQueuedOcrSchedulerRevision] = useState(0);
   const [ocrPrefillState, setOcrPrefillState] = useState<AiGraderOcrPrefillState>({
     status: "idle",
     message: "OCR prefill starts after normalized front and back images are ready.",
@@ -1777,6 +1778,9 @@ export default function AiGraderStationPage() {
       return;
     }
     const attemptOwnerId = queuedOcrAttemptOwner.attemptOwnerId;
+    const liveOwnerClaim = queuedOcrAttemptOwnerClaimRef.current;
+    if (!liveOwnerClaim || liveOwnerClaim.attemptOwnerId !== attemptOwnerId) return;
+    const ownsLiveAttempt = () => queuedOcrAttemptOwnerClaimRef.current === liveOwnerClaim;
     const authorizedToken = session.token;
     const identity = {
       queueItemId: nextEligibleOcrQueueItemId,
@@ -1788,15 +1792,18 @@ export default function AiGraderStationPage() {
     queuedOcrRunningRef.current.add(identityKey);
     void (async () => {
       let claimed = false;
+      let wakeInterruptedRecovery = false;
       try {
         try {
           const actor = await verifyProductionSession(authorizedToken);
+          if (!ownsLiveAttempt()) return;
           setProductionAuthActor(actor);
           setProductionAuthState({
             status: "completed",
             message: `Production sign-in verified as ${actor.displayName} (${actor.role}).`,
           });
         } catch (authError) {
+          if (!ownsLiveAttempt()) return;
           const message = authFailureMessage(authError, "run queued OCR");
           if (authStatusCode(authError) === 401) logout();
           setProductionAuthActor(null);
@@ -1806,12 +1813,14 @@ export default function AiGraderStationPage() {
           );
           return;
         }
+        if (!ownsLiveAttempt()) return;
         const begun = await callAiGraderStationBridge({
           baseUrl: bridgeUrl,
           stationToken,
           action: "begin-queued-ocr",
           body: buildAiGraderQueuedOcrClaimRequest({ ...identity, attemptOwnerId }),
         });
+        if (!ownsLiveAttempt()) return;
         const claimedItem = begun.rapidCaptureQueue.items.find((item) =>
           item.queueItemId === identity.queueItemId &&
           item.sessionId === identity.gradingSessionId &&
@@ -1827,14 +1836,17 @@ export default function AiGraderStationPage() {
           ...identity,
           authHeaders: buildAdminHeaders(authorizedToken),
         });
+        if (!ownsLiveAttempt()) return;
         const completed = await callAiGraderStationBridge({
           baseUrl: bridgeUrl,
           stationToken,
           action: "complete-queued-ocr",
           body: buildAiGraderQueuedOcrCompletionRequest({ ...identity, attemptOwnerId, result }),
         });
+        if (!ownsLiveAttempt()) return;
         setStatus(completed);
       } catch (requestError) {
+        if (!ownsLiveAttempt()) return;
         const typedFailure = requestError instanceof AiGraderOcrPrefillStageError ? requestError : null;
         const message = (requestError instanceof Error ? requestError.message : "Queued OCR failed.").slice(0, 500);
         if (!claimed) {
@@ -1843,6 +1855,7 @@ export default function AiGraderStationPage() {
             stationToken,
             action: "status",
           }).catch(() => null);
+          if (!ownsLiveAttempt()) return;
           const persisted = refreshed?.rapidCaptureQueue.items.find((item) =>
             item.queueItemId === identity.queueItemId &&
             item.sessionId === identity.gradingSessionId &&
@@ -1858,6 +1871,7 @@ export default function AiGraderStationPage() {
           return;
         }
         try {
+          if (!ownsLiveAttempt()) return;
           const failed = await callAiGraderStationBridge({
             baseUrl: bridgeUrl,
             stationToken,
@@ -1871,8 +1885,11 @@ export default function AiGraderStationPage() {
               },
             }),
           });
+          if (!ownsLiveAttempt()) return;
           setStatus(failed);
         } catch (persistenceError) {
+          if (!ownsLiveAttempt()) return;
+          wakeInterruptedRecovery = true;
           const persistenceMessage = persistenceError instanceof Error
             ? persistenceError.message
             : "The Dell bridge rejected the terminal OCR failure.";
@@ -1882,6 +1899,9 @@ export default function AiGraderStationPage() {
         }
       } finally {
         queuedOcrRunningRef.current.delete(identityKey);
+        if (wakeInterruptedRecovery && ownsLiveAttempt()) {
+          setQueuedOcrSchedulerRevision((current) => current + 1);
+        }
       }
     })();
   }, [
@@ -1894,6 +1914,7 @@ export default function AiGraderStationPage() {
     queuedOcrAttemptOwner.status,
     queuedOcrAttemptOwner.attemptOwnerId,
     queuedOcrAttemptOwner.error,
+    queuedOcrSchedulerRevision,
     session?.token,
     sessionLoading,
     stationToken,
@@ -1998,6 +2019,7 @@ export default function AiGraderStationPage() {
     interruptedOcrAttemptOwnerId,
     queuedOcrAttemptOwner.status,
     queuedOcrAttemptOwner.attemptOwnerId,
+    queuedOcrSchedulerRevision,
     stationToken,
   ]);
 
@@ -2073,6 +2095,7 @@ export default function AiGraderStationPage() {
     setError(null);
     try {
       await requireProductionSession("continue the AI Grader production workflow");
+      setQueuedOcrSchedulerRevision((current) => current + 1);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Ten Kings sign-in failed.");
     }

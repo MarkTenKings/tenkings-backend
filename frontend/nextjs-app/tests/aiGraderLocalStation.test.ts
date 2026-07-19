@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+import ts from "typescript";
 import {
   AI_GRADER_STATION_STEPS,
   aiGraderAtomicBackQueueReleaseMatches,
@@ -112,6 +113,479 @@ class FakeQueuedOcrOwnerLockManager implements AiGraderQueuedOcrAttemptOwnerLock
 async function settleQueuedOcrOwnerLockRelease() {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
+
+const stationPageSource = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+const stationPageAst = ts.createSourceFile(
+  "station.tsx",
+  stationPageSource,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX,
+);
+
+function stationUseEffectExpression(marker: string) {
+  let match: ts.CallExpression | undefined;
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "useEffect" &&
+      node.arguments[0]?.getText(stationPageAst).includes(marker)
+    ) {
+      match = node;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(stationPageAst);
+  if (!match || !match.arguments[0] || !match.arguments[1]) {
+    throw new Error(`Station useEffect containing ${marker} was not found.`);
+  }
+  return {
+    callback: match.arguments[0].getText(stationPageAst),
+    dependencies: match.arguments[1].getText(stationPageAst),
+  };
+}
+
+function stationVariableInitializerExpression(variableName: string) {
+  let match: ts.Expression | undefined;
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === variableName &&
+      node.initializer
+    ) {
+      match = node.initializer;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(stationPageAst);
+  if (!match) throw new Error(`Station variable ${variableName} was not found.`);
+  return match.getText(stationPageAst);
+}
+
+function evaluateStationExpression<T>(expression: string, scope: Record<string, unknown>): T {
+  const parameterNames = Object.keys(scope);
+  const output = ts.transpileModule(`const __stationExpression = ${expression};`, {
+    compilerOptions: {
+      module: ts.ModuleKind.None,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const evaluator = Function(...parameterNames, `${output}\nreturn __stationExpression;`);
+  return evaluator(...parameterNames.map((name) => scope[name])) as T;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitForQueuedOcrBehavior(predicate: () => boolean, label: string) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.fail(`Timed out waiting for ${label}.`);
+}
+
+type BehavioralQueuedOcrState = "eligible" | "in_flight" | "failed" | "succeeded";
+type BehavioralQueuedOcrItem = {
+  queueItemId: string;
+  sessionId: string;
+  reportId: string;
+  queuedAt: string;
+  ocr: {
+    state: BehavioralQueuedOcrState;
+    attemptOwnerId?: string;
+  };
+};
+type BehavioralStationStatus = {
+  rapidCaptureQueue: {
+    items: BehavioralQueuedOcrItem[];
+  };
+};
+
+function behavioralStatus(items: BehavioralQueuedOcrItem[]): BehavioralStationStatus {
+  return JSON.parse(JSON.stringify({ rapidCaptureQueue: { items } })) as BehavioralStationStatus;
+}
+
+function behavioralOcrItem(
+  suffix: string,
+  state: BehavioralQueuedOcrState = "eligible",
+  attemptOwnerId?: string,
+): BehavioralQueuedOcrItem {
+  return {
+    queueItemId: `queue-${suffix}`,
+    sessionId: `session-${suffix}`,
+    reportId: `report-${suffix}`,
+    queuedAt: `2026-07-19T12:00:0${suffix}.000Z`,
+    ocr: { state, ...(attemptOwnerId ? { attemptOwnerId } : {}) },
+  };
+}
+
+function createEligibleOcrBehaviorHarness(input: {
+  item?: BehavioralQueuedOcrItem;
+  verifyProductionSession?: (token: string) => Promise<unknown>;
+  runProvider?: (request: Record<string, unknown>) => Promise<unknown>;
+  callBridge?: (request: { action: string; body?: Record<string, unknown> }) => Promise<unknown>;
+  setStatus?: (status: BehavioralStationStatus) => void;
+} = {}) {
+  const item = input.item ?? behavioralOcrItem("1");
+  const actions: string[] = [];
+  const errors: string[] = [];
+  const running = new Set<string>();
+  const ownerClaim = {
+    attemptOwnerId: OCR_ATTEMPT_OWNER_ID,
+    reusedPersistedOwner: false,
+    release() {},
+  };
+  const ownerRef = { current: ownerClaim as typeof ownerClaim | null };
+  const defaultClaimedStatus = behavioralStatus([
+    { ...item, ocr: { state: "in_flight", attemptOwnerId: OCR_ATTEMPT_OWNER_ID } },
+  ]);
+  const defaultCompletedStatus = behavioralStatus([
+    { ...item, ocr: { state: "succeeded", attemptOwnerId: OCR_ATTEMPT_OWNER_ID } },
+  ]);
+  const scope: Record<string, unknown> = {
+    nextEligibleOcrQueueItemId: item.queueItemId,
+    nextEligibleOcrSessionId: item.sessionId,
+    nextEligibleOcrReportId: item.reportId,
+    bridgeConnected: true,
+    bridgeUrl: "http://127.0.0.1:47652",
+    stationToken: "station-token",
+    sessionLoading: false,
+    session: { token: "same-production-token" },
+    queuedOcrAttemptOwner: {
+      status: "ready",
+      attemptOwnerId: OCR_ATTEMPT_OWNER_ID,
+      error: null,
+    },
+    queuedOcrAttemptOwnerClaimRef: ownerRef,
+    queuedOcrRunningRef: { current: running },
+    queuedOcrSchedulerRevision: 0,
+    setQueuedOcrSchedulerRevision(update: number | ((current: number) => number)) {
+      const current = Number(scope.queuedOcrSchedulerRevision);
+      scope.queuedOcrSchedulerRevision = typeof update === "function" ? update(current) : update;
+    },
+    setError(message: string | null) {
+      if (message) errors.push(message);
+    },
+    verifyProductionSession: input.verifyProductionSession ?? (async () => ({
+      displayName: "OCR Operator",
+      role: "admin",
+    })),
+    setProductionAuthActor() {},
+    setProductionAuthState() {},
+    authFailureMessage(error: unknown) {
+      return error instanceof Error ? error.message : "Production authorization failed.";
+    },
+    authStatusCode() {
+      return null;
+    },
+    logout() {},
+    callAiGraderStationBridge: async (request: { action: string; body?: Record<string, unknown> }) => {
+      actions.push(request.action);
+      if (input.callBridge) return input.callBridge(request);
+      if (request.action === "begin-queued-ocr") return defaultClaimedStatus;
+      if (request.action === "status") return defaultClaimedStatus;
+      return defaultCompletedStatus;
+    },
+    buildAiGraderQueuedOcrClaimRequest(value: unknown) {
+      return value;
+    },
+    buildAiGraderQueuedOcrCompletionRequest(value: unknown) {
+      return value;
+    },
+    buildAiGraderQueuedOcrFailureRequest(value: unknown) {
+      return value;
+    },
+    runAiGraderOcrPrefillFromLocalReport: input.runProvider ?? (async () => ({ safe: true })),
+    buildAdminHeaders() {
+      return {};
+    },
+    AiGraderOcrPrefillStageError: class AiGraderOcrPrefillStageError extends Error {},
+    setStatus(status: BehavioralStationStatus) {
+      input.setStatus?.(status);
+    },
+  };
+  const eligibleEffect = stationUseEffectExpression('action: "begin-queued-ocr"');
+  return {
+    actions,
+    errors,
+    item,
+    ownerClaim,
+    ownerRef,
+    running,
+    scope,
+    dependencies() {
+      return evaluateStationExpression<unknown[]>(eligibleEffect.dependencies, scope);
+    },
+    invoke() {
+      return evaluateStationExpression<() => void>(eligibleEffect.callback, scope)();
+    },
+  };
+}
+
+function stationDependenciesChanged(before: unknown[], after: unknown[]) {
+  return before.length !== after.length || before.some((value, index) => !Object.is(value, after[index]));
+}
+
+test("station unmount before queued OCR authorization resolves makes zero durable claim calls", async () => {
+  const authorization = deferred<unknown>();
+  const harness = createEligibleOcrBehaviorHarness({
+    verifyProductionSession: () => authorization.promise,
+  });
+
+  harness.invoke();
+  harness.ownerRef.current = null;
+  authorization.resolve({ displayName: "OCR Operator", role: "admin" });
+  await waitForQueuedOcrBehavior(() => harness.running.size === 0, "the stale authorization continuation to settle");
+
+  assert.equal(harness.actions.filter((action) => action === "begin-queued-ocr").length, 0);
+});
+
+test("station unmount after durable queued OCR claim prevents stale completion", async () => {
+  const provider = deferred<unknown>();
+  const harness = createEligibleOcrBehaviorHarness({
+    runProvider: () => provider.promise,
+  });
+
+  harness.invoke();
+  await waitForQueuedOcrBehavior(
+    () => harness.actions.includes("begin-queued-ocr"),
+    "the exact durable queued OCR claim",
+  );
+  harness.ownerRef.current = null;
+  provider.resolve({ safe: true });
+  await waitForQueuedOcrBehavior(() => harness.running.size === 0, "the stale OCR completion continuation to settle");
+
+  assert.equal(harness.actions.filter((action) => action === "complete-queued-ocr").length, 0);
+  assert.equal(harness.actions.filter((action) => action === "fail-queued-ocr").length, 0);
+});
+
+test("station unmount after durable queued OCR claim prevents stale terminal failure", async () => {
+  const provider = deferred<unknown>();
+  const harness = createEligibleOcrBehaviorHarness({
+    runProvider: () => provider.promise,
+  });
+
+  harness.invoke();
+  await waitForQueuedOcrBehavior(
+    () => harness.actions.includes("begin-queued-ocr"),
+    "the exact durable queued OCR claim",
+  );
+  harness.ownerRef.current = null;
+  provider.reject(new Error("Hosted OCR failed after the station unmounted."));
+  await waitForQueuedOcrBehavior(() => harness.running.size === 0, "the stale OCR failure continuation to settle");
+
+  assert.equal(harness.actions.filter((action) => action === "complete-queued-ocr").length, 0);
+  assert.equal(harness.actions.filter((action) => action === "fail-queued-ocr").length, 0);
+});
+
+test("rejected terminal OCR persistence reconciles the exact in-flight owner and advances the next eligible card", async () => {
+  const first = behavioralOcrItem("1");
+  const second = behavioralOcrItem("2");
+  let serverStatus = behavioralStatus([first, second]);
+  let localStatus = behavioralStatus([first, second]);
+  let failCalls = 0;
+  const bridgeActions: string[] = [];
+  const providerCalls = new Map<string, number>();
+  const snapshot = () => behavioralStatus(serverStatus.rapidCaptureQueue.items);
+  const callBridge = async (request: { action: string; body?: Record<string, unknown> }) => {
+    bridgeActions.push(request.action);
+    const queueItemId = String(request.body?.queueItemId ?? "");
+    const item = serverStatus.rapidCaptureQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (request.action === "status") return snapshot();
+    if (!item) throw new Error("Exact queued OCR item was not found.");
+    if (request.action === "begin-queued-ocr") {
+      item.ocr = { state: "in_flight", attemptOwnerId: OCR_ATTEMPT_OWNER_ID };
+      return snapshot();
+    }
+    if (request.action === "complete-queued-ocr") {
+      item.ocr = { state: "succeeded", attemptOwnerId: OCR_ATTEMPT_OWNER_ID };
+      return snapshot();
+    }
+    if (request.action === "fail-queued-ocr") {
+      failCalls += 1;
+      if (failCalls === 1) throw new Error("The Dell bridge rejected terminal failure persistence.");
+      item.ocr = { state: "failed", attemptOwnerId: OCR_ATTEMPT_OWNER_ID };
+      return snapshot();
+    }
+    throw new Error(`Unexpected bridge action ${request.action}.`);
+  };
+  const runProvider = async (request: Record<string, unknown>) => {
+    const reportId = String(request.reportId);
+    providerCalls.set(reportId, (providerCalls.get(reportId) ?? 0) + 1);
+    if (reportId === first.reportId) throw new Error("Hosted OCR failed once.");
+    return { safe: true };
+  };
+  const firstHarness = createEligibleOcrBehaviorHarness({
+    item: first,
+    callBridge,
+    runProvider,
+    setStatus(status) {
+      localStatus = behavioralStatus(status.rapidCaptureQueue.items);
+    },
+  });
+
+  firstHarness.invoke();
+  await waitForQueuedOcrBehavior(
+    () => failCalls === 1 && firstHarness.running.size === 0,
+    "the rejected terminal failure mutation",
+  );
+
+  assert.equal(firstHarness.scope.queuedOcrSchedulerRevision, 1);
+  assert.equal(localStatus.rapidCaptureQueue.items[0]?.ocr.state, "in_flight");
+
+  Object.assign(firstHarness.scope, {
+    interruptedOcrQueueItemId: first.queueItemId,
+    interruptedOcrSessionId: first.sessionId,
+    interruptedOcrReportId: first.reportId,
+    interruptedOcrAttemptOwnerId: OCR_ATTEMPT_OWNER_ID,
+    queuedOcrInterruptedHandledRef: { current: new Set<string>() },
+    waitForAiGraderQueuedOcrAttemptOwnerLock: async () => ({ release() {} }),
+  });
+  const recoveryEffect = stationUseEffectExpression('code: "AI_GRADER_OCR_INTERRUPTED"');
+  evaluateStationExpression<() => void>(recoveryEffect.callback, firstHarness.scope)();
+  await waitForQueuedOcrBehavior(
+    () => serverStatus.rapidCaptureQueue.items[0]?.ocr.state === "failed",
+    "one exact interrupted-owner terminalization",
+  );
+  assert.equal(
+    bridgeActions.filter((action) => action === "status").length,
+    1,
+    "the live exact owner must reconcile durable state before interrupted-owner terminalization",
+  );
+
+  const next = selectNextSerializedAiGraderOcrItem(
+    serverStatus.rapidCaptureQueue.items as unknown as Parameters<typeof selectNextSerializedAiGraderOcrItem>[0],
+  );
+  assert.equal(next?.queueItemId, second.queueItemId);
+  const secondHarness = createEligibleOcrBehaviorHarness({
+    item: second,
+    callBridge,
+    runProvider,
+    setStatus(status) {
+      localStatus = behavioralStatus(status.rapidCaptureQueue.items);
+    },
+  });
+  secondHarness.invoke();
+  await waitForQueuedOcrBehavior(
+    () => serverStatus.rapidCaptureQueue.items[1]?.ocr.state === "succeeded" && secondHarness.running.size === 0,
+    "the next eligible queued OCR card",
+  );
+
+  assert.equal(providerCalls.get(first.reportId), 1);
+  assert.equal(providerCalls.get(second.reportId), 1);
+  assert.equal(failCalls, 2);
+  assert.equal(localStatus.rapidCaptureQueue.items[1]?.ocr.state, "succeeded");
+});
+
+test("lost terminal OCR response already advances through persisted exact status without provider rerun", async () => {
+  const first = behavioralOcrItem("1");
+  const second = behavioralOcrItem("2");
+  let serverStatus = behavioralStatus([first, second]);
+  let failCalls = 0;
+  const providerCalls = new Map<string, number>();
+  const snapshot = () => behavioralStatus(serverStatus.rapidCaptureQueue.items);
+  const callBridge = async (request: { action: string; body?: Record<string, unknown> }) => {
+    const queueItemId = String(request.body?.queueItemId ?? "");
+    const item = serverStatus.rapidCaptureQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (request.action === "status") return snapshot();
+    if (!item) throw new Error("Exact queued OCR item was not found.");
+    if (request.action === "begin-queued-ocr") {
+      item.ocr = { state: "in_flight", attemptOwnerId: OCR_ATTEMPT_OWNER_ID };
+      return snapshot();
+    }
+    if (request.action === "complete-queued-ocr") {
+      item.ocr = { state: "succeeded", attemptOwnerId: OCR_ATTEMPT_OWNER_ID };
+      return snapshot();
+    }
+    if (request.action === "fail-queued-ocr") {
+      failCalls += 1;
+      item.ocr = { state: "failed", attemptOwnerId: OCR_ATTEMPT_OWNER_ID };
+      throw new Error("The terminal response was lost after durable persistence.");
+    }
+    throw new Error(`Unexpected bridge action ${request.action}.`);
+  };
+  const runProvider = async (request: Record<string, unknown>) => {
+    const reportId = String(request.reportId);
+    providerCalls.set(reportId, (providerCalls.get(reportId) ?? 0) + 1);
+    if (reportId === first.reportId) throw new Error("Hosted OCR failed once.");
+    return { safe: true };
+  };
+  const firstHarness = createEligibleOcrBehaviorHarness({ item: first, callBridge, runProvider });
+  firstHarness.invoke();
+  await waitForQueuedOcrBehavior(
+    () => failCalls === 1 && firstHarness.running.size === 0,
+    "the lost terminal response",
+  );
+
+  const polledStatus = snapshot();
+  assert.equal(polledStatus.rapidCaptureQueue.items[0]?.ocr.state, "failed");
+  const next = selectNextSerializedAiGraderOcrItem(
+    polledStatus.rapidCaptureQueue.items as unknown as Parameters<typeof selectNextSerializedAiGraderOcrItem>[0],
+  );
+  assert.equal(next?.queueItemId, second.queueItemId);
+
+  const secondHarness = createEligibleOcrBehaviorHarness({ item: second, callBridge, runProvider });
+  secondHarness.invoke();
+  await waitForQueuedOcrBehavior(
+    () => serverStatus.rapidCaptureQueue.items[1]?.ocr.state === "succeeded" && secondHarness.running.size === 0,
+    "the next eligible card after exact status polling",
+  );
+
+  assert.equal(providerCalls.get(first.reportId), 1);
+  assert.equal(providerCalls.get(second.reportId), 1);
+  assert.equal(failCalls, 1);
+});
+
+test("successful same-token Refresh Sign-In wakes one fresh authorization and queued OCR claim", async () => {
+  let verificationCalls = 0;
+  const harness = createEligibleOcrBehaviorHarness({
+    verifyProductionSession: async () => {
+      verificationCalls += 1;
+      if (verificationCalls === 1) throw new Error("The saved Production authorization is not ready.");
+      return { displayName: "OCR Operator", role: "admin" };
+    },
+  });
+
+  harness.invoke();
+  await waitForQueuedOcrBehavior(
+    () => verificationCalls === 1 && harness.running.size === 0,
+    "the initial unclaimed authorization failure",
+  );
+  assert.equal(harness.actions.filter((action) => action === "begin-queued-ocr").length, 0);
+  const dependenciesBeforeRefresh = harness.dependencies();
+  Object.assign(harness.scope, {
+    requireProductionSession: async () => ({ token: "same-production-token" }),
+  });
+  const signInForProduction = evaluateStationExpression<() => Promise<void>>(
+    stationVariableInitializerExpression("signInForProduction"),
+    harness.scope,
+  );
+  await signInForProduction();
+  const dependenciesAfterRefresh = harness.dependencies();
+  if (stationDependenciesChanged(dependenciesBeforeRefresh, dependenciesAfterRefresh)) {
+    harness.invoke();
+    await waitForQueuedOcrBehavior(
+      () => harness.running.size === 0 && harness.actions.includes("begin-queued-ocr"),
+      "the refreshed same-token queued OCR claim",
+    );
+  }
+
+  assert.equal(verificationCalls, 2);
+  assert.equal(harness.actions.filter((action) => action === "begin-queued-ocr").length, 1);
+  assert.equal(harness.actions.filter((action) => action === "complete-queued-ocr").length, 1);
+});
 
 test("operator station contract exposes the single retained grading workflow", () => {
   const labels = AI_GRADER_STATION_STEPS.map((step) => step.label);
