@@ -27427,3 +27427,9 @@ By enabling Rip It Live, I confirm:
 - Exact fetched protected `origin/main` was `1e56791ff0bfa5e97e6abc5784a6c942985c2710`, the normal merge commit containing merged PRs #108, #109, and #110. The clean saved calibration branch was reconciled with that exact head by merge commit `0357b81`; no rebase or force-push was used.
 - The conflict was limited to this append-only session log. Both the Mathematical V1 rejected-session evidence and the merged PR #108/#109/#110 handoffs were retained. The two rejected sessions `math-cal-v1-20260719-01` and `math-cal-v1-20260719-02` remain immutable and are not resumed or edited.
 - No bridge, helper, camera, lighting, NFC/F8215, Production data, migration, deployment, or hardware action occurred during reconciliation. The next source change is limited to the evidence-proven threshold/strict-corner corrections recorded immediately above.
+
+## 2026-07-20 - Mathematical V1 calibration correction source applied
+
+- Commit `c6229c4` applies only the proven calibration defects: geometry and normalization `minimumNormalizedCenterSpanX` are now `0.07`; Y remains `0.08`, rotation remains `2` degrees, per-view coverage remains `0.30`, and sample-count, scoring, uncertainty, metrology, and other acceptance limits are unchanged.
+- Threshold identity advanced to `ten-kings-mathematical-grading-v1.0.1`; the recomputed canonical threshold-set SHA-256 is `6f4fe21980a14458468d7526278c7b6cff70e39f8a80b07172b1991dfa1187c7`. The TypeScript producer and Python analyzer now reject every outer-corner coordinate at or below zero, at or beyond the frame, or non-finite; cross-runtime fixtures and boundary regressions were updated.
+- This source-only correction was hardware-free. No calibration session was resumed or edited, and no bridge, helper, camera, lighting, NFC/F8215, Production, migration, deployment, or physical target action occurred.
