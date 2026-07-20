@@ -13,6 +13,7 @@ const {
   AiGraderLocalStationBridgeService,
   buildAiGraderLocalStationBridgeConfig,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
+const { assessMathematicalCalibrationV1_1Preview } = require("../dist/drivers/fixedRigMathematicalCalibrationV1_1");
 
 test("V1.1 binds only a calibration session, exposes overlay-gated capture, and never opens Production", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v11-bridge-"));
@@ -69,5 +70,25 @@ test("V1.1 binds only a calibration session, exposes overlay-gated capture, and 
       targetFace: "checkerboard",
     }),
     /active token-bound preview.*valid and sufficiently distinct/i,
+  );
+
+  service.mathematicalCalibrationPreviewStatus = {
+    contractVersion: "1.1.0",
+    sessionId: started.sessionId,
+    active: false,
+    overlay: assessMathematicalCalibrationV1_1Preview({ acceptedPoses: [] }),
+    cameraOwnership: "released",
+    reconnectAllowed: true,
+  };
+  await assert.rejects(
+    service.captureMathematicalCalibrationV1_1Step({
+      sessionId: started.sessionId,
+      operationId: "flat-field-1-1",
+      role: "flat_field",
+      sampleIndex: 1,
+      channelIndex: 1,
+      targetFace: "blank_reverse",
+    }),
+    /hardware boundary must not run in this test/,
   );
 });

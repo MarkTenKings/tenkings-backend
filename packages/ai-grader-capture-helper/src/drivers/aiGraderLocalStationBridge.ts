@@ -123,6 +123,10 @@ import {
   assessMathematicalCalibrationV1_1Preview,
   type MathematicalCalibrationV1_1PreviewAssessment,
 } from "./fixedRigMathematicalCalibrationV1_1";
+import {
+  MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML,
+  MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH,
+} from "./mathematicalCalibrationV1_1Page";
 import { loadFixedRigMathematicalCalibrationBundleV1 } from "./fixedRigMathematicalCalibrationBundleV1";
 import {
   FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
@@ -835,7 +839,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
         | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
         | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
-        | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal"
+        | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
         | "mathematical-design-reference-stage" | "mathematical-review-asset"
         | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
@@ -2723,7 +2727,7 @@ function bridgeEndpoints() {
         | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
         | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
-        | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal"
+        | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
         | "mathematical-design-reference-stage" | "mathematical-review-asset"
         | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
@@ -2742,6 +2746,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "mathematical-calibration-measurement", path: "/calibration/mathematical-v1/measurement", hardwareAccess: false, description: "Record one instrument/operator/time-bound immutable physical measurement." },
     { method: "POST", action: "mathematical-calibration-seal", path: "/calibration/mathematical-v1/seal", hardwareAccess: false, description: "Fail closed unless the unique capture/metrology ledger is complete, then seal analyzer input and source package." },
     { method: "POST", action: "mathematical-calibration-v1.1-start", path: "/calibration/mathematical-v1.1/start", hardwareAccess: false, description: "Start the isolated four-placement Mathematical Calibration V1.1 session; no Production station session is created." },
+    { method: "GET", action: "mathematical-calibration-v1.1-page", path: MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH, hardwareAccess: false, description: "Serve the same-origin protected calibration-only preview page; no Production station page is opened." },
     { method: "GET", action: "mathematical-calibration-v1.1-status", path: "/calibration/mathematical-v1.1/status", hardwareAccess: false, description: "Read the active four-placement V1.1 calibration session." },
     { method: "POST", action: "mathematical-calibration-v1.1-capture", path: "/calibration/mathematical-v1.1/capture", hardwareAccess: true, description: "Capture one overlay-approved V1.1 placement/channel step under sole camera ownership and verified safe-off." },
     { method: "POST", action: "mathematical-calibration-v1.1-measurement", path: "/calibration/mathematical-v1.1/measurement", hardwareAccess: false, description: "Record one immutable V1.1 physical/metrology measurement." },
@@ -11602,8 +11607,20 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Mathematical Calibration V1.1 capture requires the active bridge-bound calibration session.");
     }
     const previewAssessment = this.mathematicalCalibrationPreviewStatus;
-    if (!previewAssessment || !previewAssessment.active || !previewAssessment.overlay.valid || !previewAssessment.overlay.sufficientlyDistinct) {
-      throw new Error("Mathematical Calibration V1.1 capture requires an active token-bound preview whose proposed pose is valid and sufficiently distinct.");
+    if (request.role === "checkerboard_placement") {
+      if (!previewAssessment || !previewAssessment.active || !previewAssessment.overlay.valid || !previewAssessment.overlay.sufficientlyDistinct) {
+        throw new Error("Mathematical Calibration V1.1 checkerboard placement capture requires an active token-bound preview whose proposed pose is valid and sufficiently distinct.");
+      }
+    } else if (["flat_field", "dark_control", "illumination_pattern"].includes(request.role)) {
+      if (request.targetFace !== "blank_reverse") {
+        throw new Error("Mathematical Calibration V1.1 photometric capture requires the blank_reverse target face.");
+      }
+      const preview = this.previewStatus();
+      if (previewAssessment?.active || preview.status === "starting" || preview.status === "live" || preview.cameraOwnership !== "idle" && preview.cameraOwnership !== "released") {
+        throw new Error("Mathematical Calibration V1.1 photometric capture requires the preview stopped and camera ownership released.");
+      }
+    } else {
+      throw new Error("Mathematical Calibration V1.1 capture role is not allowlisted.");
     }
     assertRealBridgeArmed(this.config);
     return this.serializeTerminalLifecycle(async () => {
@@ -11627,6 +11644,18 @@ export class AiGraderLocalStationBridgeService {
       if (!safeOff.ok) {
         const message = safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration lifecycle safe-off could not be confirmed.";
         throw new Error(operationError ? `${operationError.message} ${message}` : message);
+      }
+      this.updatePreviewStatus({
+        status: "stopped",
+        cameraOwnership: "released",
+        lastStopReason: `mathematical calibration V1.1 ${request.operationId} capture lifecycle released camera ownership`,
+      });
+      if (this.mathematicalCalibrationPreviewStatus?.sessionId === request.sessionId) {
+        this.mathematicalCalibrationPreviewStatus = {
+          ...this.mathematicalCalibrationPreviewStatus,
+          active: false,
+          cameraOwnership: "released",
+        };
       }
       if (operationError) throw operationError;
       if (!result) throw new Error("Mathematical Calibration V1.1 capture did not return a durable session status.");
@@ -12096,6 +12125,11 @@ export function createAiGraderLocalStationBridgeHttpServer(
             hardwareActionsEnabled: config.mode === "real",
           },
         }, origin, config);
+      }
+
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for the calibration-only page." }, origin, config);
+        return sendText(res, 200, MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, origin, config, "text/html; charset=utf-8");
       }
 
       const statusRoutes = new Set(["/status", "/latest-report", "/session-manifest"]);
