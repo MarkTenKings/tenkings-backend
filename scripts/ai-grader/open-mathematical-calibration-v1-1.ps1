@@ -38,7 +38,7 @@ function Get-ChromePath {
 if (-not (Test-Path -LiteralPath $ChromeUserDataDir)) {
   New-Item -ItemType Directory -Path $ChromeUserDataDir -Force | Out-Null
 }
-$pageUrl = "$($config.bridgeUrl)/calibration/mathematical-v1.1?sessionId=$([Uri]::EscapeDataString($SessionId))#aiGraderBridgePair=$([Uri]::EscapeDataString([string]$config.pairingCode))"
+$pageUrl = "$($bridgeUri.AbsoluteUri.TrimEnd('/'))/calibration/mathematical-v1.1?sessionId=$([Uri]::EscapeDataString($SessionId))#aiGraderBridgePair=$([Uri]::EscapeDataString([string]$config.pairingCode))"
 $chromeArgs = @(
   "--user-data-dir=$ChromeUserDataDir",
   "--new-window",
@@ -48,7 +48,7 @@ Start-Process -FilePath (Get-ChromePath) -ArgumentList $chromeArgs -WorkingDirec
 [pscustomobject]@{
   ok = $true
   pagePath = "/calibration/mathematical-v1.1"
-  bridgeUrl = $config.bridgeUrl
+  bridgeUrl = $bridgeUri.AbsoluteUri.TrimEnd('/')
   sessionId = $SessionId
   pairingCodeRedacted = $true
 } | ConvertTo-Json -Compress
