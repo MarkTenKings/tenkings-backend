@@ -129,6 +129,9 @@ test("calibration preview uses a separate single-frame Pylon action and Producti
   assert.match(calibrationStart[0], /IsValid/);
   assert.match(calibrationStart[0], /PYLON_CALIBRATION_PREVIEW_NO_VALID_FRAME/);
   assert.match(calibrationStart[0], /AddSeconds\(10\)/);
+  assert.match(calibrationStart[0], /while \(\$true\)/);
+  assert.match(calibrationStart[0], /\$frameIndex -eq 0 -and \(Get-Date\) -ge \$deadline/);
+  assert.doesNotMatch(calibrationStart[0], /while \(\(Get-Date\) -lt \$deadline\)/);
   const productionStart = script.match(/function Start-OperatorPreviewMjpegStream[\s\S]*?\n}\r?\n\r?\nfunction Start-CalibrationPreviewMjpegStream/);
   assert.ok(productionStart, "Production preview action must remain present");
   assert.match(productionStart[0], /GrabStrategy\]::LatestImages/);

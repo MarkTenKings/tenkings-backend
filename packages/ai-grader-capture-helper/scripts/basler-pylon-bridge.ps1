@@ -1498,7 +1498,7 @@ function Start-CalibrationPreviewMjpegStream {
     try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureAuto, "ExposureAuto") "Off" } catch {}
     try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::GainAuto, "GainAuto") "Off" } catch {}
 
-    while ((Get-Date) -lt $deadline) {
+    while ($true) {
       $grabResult = $null
       $streamStarted = $false
       try {
@@ -1526,9 +1526,11 @@ function Start-CalibrationPreviewMjpegStream {
         if ($null -ne $grabResult) { try { $grabResult.Dispose() } catch {} }
         if ($streamStarted) { try { [void]$camera.StreamGrabber.Stop() } catch {} }
       }
+      if ($frameIndex -eq 0 -and (Get-Date) -ge $deadline) {
+        throw "PYLON_CALIBRATION_PREVIEW_NO_VALID_FRAME: No valid Basler frame arrived within 10 seconds. Last Pylon error: $lastPylonError"
+      }
       if ($frameIndex -gt 0) { Start-Sleep -Milliseconds $RefreshIntervalMs }
     }
-    throw "PYLON_CALIBRATION_PREVIEW_NO_VALID_FRAME: No valid Basler frame arrived within 10 seconds. Last Pylon error: $lastPylonError"
   } finally {
     if ($camera.IsOpen) { try { [void]$camera.Close() } catch {} }
     try { $camera.Dispose() } catch {}

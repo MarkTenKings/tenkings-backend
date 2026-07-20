@@ -27532,3 +27532,10 @@ By enabling Rip It Live, I confirm:
 - Added focused tests proving the calibration action contract, Production continuous-preview regression, protected-port/session binding, calibration mock preview frame readiness, and no Production lighting-readiness dependency.
 - Hardware-free validation: calibration bridge tests `2/2`; serialized complete capture-helper suite `388/388`; frontend station tests `38/38`; capture-helper TypeScript build passed; Next build passed with existing lint/module warnings; PowerShell parse passed; `git diff --check` passed. The default parallel helper runner showed `386/388` from two existing timing/preview-lifecycle contention failures; both failing files passed independently, and the authoritative serialized run passed `388/388`.
 - No bridge, camera, lighting, NFC, F8215, Production/Rapid, installed helper, database, deployment, merge, or physical calibration action occurred. Preserved failed sessions remain untouched.
+
+## 2026-07-20 - PR #105 calibration preview lifetime correction
+
+- Protected session `math-cal-v1.1-20260720-04` proved pairing and hardware preview transport: the loopback page paired successfully, received `frameCount=29`, and released camera ownership after the preview child exited.
+- The exact execution defect was in the new calibration-only Pylon action: its ten-second deadline wrapped the entire loop, so it exited after ten seconds even after valid frames had arrived; the analyzer consequently saw `framesAnalyzed=0` and no checkerboard overlay.
+- Corrected only that defect: the ten-second deadline now applies only while `frameIndex` remains zero; after the first valid frame, repeated `Start(1)`/bounded `RetrieveResult(...ThrowException)` acquisition continues until the bridge stops the preview. Added a focused regression assertion and preserved the Production preview implementation unchanged.
+- No capture, pose movement, lighting, NFC, F8215, Production/Rapid, installed helper, database, deployment, merge, or physical calibration action occurred. Session `math-cal-v1.1-20260720-04` remains unsealed and preserved; prior failed sessions remain untouched.
