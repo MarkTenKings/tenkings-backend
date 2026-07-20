@@ -416,6 +416,17 @@ test("station bridge is one loopback production_fast road and exposes no removed
   assert.equal(bridgeSource.includes("writeProductionReleaseForManifest(manifest, request)"), false, "Approve & Publish must reuse immutable background release");
 });
 
+test("station launcher passes the exact production_fast capture profile pair", () => {
+  const launcherSource = fs.readFileSync(
+    path.resolve(__dirname, "../../../scripts/ai-grader/start-local-station-bridge.ps1"),
+    "utf8",
+  );
+  assert.equal(
+    launcherSource.includes('"--capture-profile", "production_fast"'),
+    true,
+  );
+});
+
 test("Start New Card applies configured lighting and returns Capture Front lighting-ready", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-start-lighting-"));
   try {
