@@ -1043,6 +1043,117 @@ test("reload parser allowlists exact OCR and converts interrupted or forged-read
   }
 });
 
+test("failed zero-attempt OCR with one valid normalized image survives reload without item rewrite", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-ocr-failed-one-image-reload-"));
+  try {
+    const { config, item, queuedManifest } = await createEligibleQueuedFixture(outputDir, "failed-one-image");
+    const now = new Date().toISOString();
+    const failure = {
+      code: "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID",
+      message: "Exact Back normalized evidence was unavailable before OCR claim; this exact item will not retry automatically.",
+    };
+    const failed = structuredClone(item);
+    failed.state = "failed";
+    failed.updatedAt = now;
+    failed.history = [...failed.history, { state: "failed", at: now, detail: failure.message }];
+    failed.error = failure.message;
+    failed.ocr = {
+      state: "failed",
+      updatedAt: now,
+      attemptCount: 0,
+      completedAt: now,
+      images: [item.ocr.images[0]],
+      failure,
+    };
+    fs.writeFileSync(queuedManifest.outputs.manifestPath, `${JSON.stringify(queuedManifest, null, 2)}\n`);
+    fs.writeFileSync(path.join(outputDir, "rapid-capture-queue.json"), `${JSON.stringify({
+      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2",
+      updatedAt: now,
+      rapidCaptureEnabled: true,
+      items: [failed],
+    }, null, 2)}\n`);
+
+    const reloaded = new AiGraderLocalStationBridgeService(config);
+    await new Promise((resolve) => setImmediate(resolve));
+    await reloaded.rapidMutationChain;
+    const persisted = JSON.parse(fs.readFileSync(path.join(outputDir, "rapid-capture-queue.json"), "utf-8"));
+    assert.deepEqual(persisted.items[0], failed);
+    assert.equal(persisted.items[0].ocr.failure.code, "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID");
+    assert.equal(persisted.items[0].ocr.attemptCount, 0);
+    assert.deepEqual(persisted.items[0].ocr.images.map((image) => image.side), ["front"]);
+    const identity = { queueItemId: failed.queueItemId, gradingSessionId: failed.sessionId, reportId: failed.reportId };
+    await assert.rejects(
+      reloaded.action("begin-queued-ocr", { ...identity, attemptOwnerId: "ocr-attempt-owner-failed-one-image" }),
+      /not eligible for its one allowed execution/i,
+    );
+    await assert.rejects(reloaded.action("activate-queue-item", identity), /not ready for review/i);
+
+    const attemptedAt = new Date().toISOString();
+    const malformedAttempted = structuredClone(failed);
+    malformedAttempted.updatedAt = attemptedAt;
+    malformedAttempted.history = [...failed.history, { state: "failed", at: attemptedAt, detail: failure.message }];
+    malformedAttempted.ocr = {
+      ...item.ocr,
+      state: "failed",
+      updatedAt: attemptedAt,
+      attemptCount: 1,
+      attemptOwnerId: "ocr-attempt-owner-malformed-one-image",
+      startedAt: attemptedAt,
+      completedAt: attemptedAt,
+      images: [item.ocr.images[0]],
+      failure,
+    };
+    fs.writeFileSync(path.join(outputDir, "rapid-capture-queue.json"), `${JSON.stringify({
+      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2",
+      updatedAt: attemptedAt,
+      rapidCaptureEnabled: true,
+      items: [malformedAttempted],
+    }, null, 2)}\n`);
+    const attemptedReload = new AiGraderLocalStationBridgeService(config);
+    await new Promise((resolve) => setImmediate(resolve));
+    await attemptedReload.rapidMutationChain;
+    const rejectedAttempt = JSON.parse(fs.readFileSync(path.join(outputDir, "rapid-capture-queue.json"), "utf-8")).items[0];
+    assert.equal(rejectedAttempt.ocr.failure.code, "AI_GRADER_OCR_INTERNAL_FAILED");
+    assert.match(rejectedAttempt.error, /Persisted queued OCR images are invalid/i);
+    assert.deepEqual(rejectedAttempt.rawEvidence, { format: "tiff", sides: [] });
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("internally generated invalid Rapid item tombstone is idempotent across reload", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-rapid-invalid-tombstone-reload-"));
+  try {
+    const { config, item, queuedManifest } = await createEligibleQueuedFixture(outputDir, "invalid-tombstone");
+    const now = new Date().toISOString();
+    fs.writeFileSync(queuedManifest.outputs.manifestPath, `${JSON.stringify(queuedManifest, null, 2)}\n`);
+    fs.writeFileSync(path.join(outputDir, "rapid-capture-queue.json"), `${JSON.stringify({
+      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2",
+      updatedAt: now,
+      rapidCaptureEnabled: true,
+      items: [{ ...item, unexpectedField: "force exact allowlist quarantine" }],
+    }, null, 2)}\n`);
+
+    const firstReload = new AiGraderLocalStationBridgeService(config);
+    await new Promise((resolve) => setImmediate(resolve));
+    await firstReload.rapidMutationChain;
+    const firstPersisted = JSON.parse(fs.readFileSync(path.join(outputDir, "rapid-capture-queue.json"), "utf-8"));
+    const firstTombstone = firstPersisted.items[0];
+    assert.equal(firstTombstone.state, "failed");
+    assert.equal(firstTombstone.ocr.failure.code, "AI_GRADER_OCR_INTERNAL_FAILED");
+    assert.deepEqual(firstTombstone.rawEvidence, { format: "tiff", sides: [] });
+    assert.deepEqual(firstTombstone.sideProcessingJobs, {});
+
+    const secondReload = new AiGraderLocalStationBridgeService(config);
+    await new Promise((resolve) => setImmediate(resolve));
+    await secondReload.rapidMutationChain;
+    const secondPersisted = JSON.parse(fs.readFileSync(path.join(outputDir, "rapid-capture-queue.json"), "utf-8"));
+    assert.deepEqual(secondPersisted.items[0], firstTombstone);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("nonempty protected v1 Rapid queue stops rollout and remains byte-for-byte unchanged", () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-legacy-v1-preserved-"));
   try {

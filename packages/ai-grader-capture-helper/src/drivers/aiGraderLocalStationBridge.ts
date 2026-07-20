@@ -2657,6 +2657,7 @@ const RAPID_RAW_EVIDENCE_ROLES = [
   "dark_control", "all_on", "accepted_profile",
   ...Array.from({ length: 8 }, (_, index) => `channel_${index + 1}`),
 ] as const;
+const INVALID_PERSISTED_RAPID_ITEM_DETAIL = "Persisted exact-item state failed allowlist validation and cannot resume or become review-ready.";
 
 function persistedTimestamp(value: unknown, label: string): string {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
@@ -2931,11 +2932,83 @@ function persistedOcrLifecycle(
       ...(ocr.eligibleAt !== undefined ? { eligibleAt: persistedTimestamp(ocr.eligibleAt, "OCR eligibility timestamp") } : {}),
       ...(ocr.startedAt !== undefined ? { startedAt: persistedTimestamp(ocr.startedAt, "OCR start timestamp") } : {}),
       completedAt: persistedTimestamp(ocr.completedAt, "OCR failure timestamp"),
-      ...(ocr.images !== undefined ? { images: persistedOcrImages(ocr.images, config) } : {}),
+      ...(ocr.images !== undefined ? { images: persistedOcrImages(ocr.images, config, attemptCount === 0 ? [1, 2] : [2]) } : {}),
       failure: safeQueuedOcrFailure(ocr.failure),
     };
   }
   throw new Error("Persisted queued OCR state is invalid.");
+}
+
+function persistedInvalidRapidItemTombstone(
+  raw: Record<string, unknown>,
+  config: AiGraderLocalStationBridgeConfig,
+): PersistedAiGraderRapidCaptureQueueItem | undefined {
+  try {
+    if (!exactObjectKeys(raw, [
+      "queueItemId", "sessionId", "reportId", "state", "queuedAt", "updatedAt", "history",
+      "humanConfirmationRequired", "autoConfirmed", "autoPublished", "rawEvidence",
+      "sideProcessingJobs", "ocr", "manifestPath", "error",
+    ])) return undefined;
+    if (
+      raw.state !== "failed"
+      || raw.humanConfirmationRequired !== true
+      || raw.autoConfirmed !== false
+      || raw.autoPublished !== false
+      || !exactObjectKeys(raw.rawEvidence, ["format", "sides"])
+      || raw.rawEvidence.format !== "tiff"
+      || !Array.isArray(raw.rawEvidence.sides)
+      || raw.rawEvidence.sides.length !== 0
+      || !exactObjectKeys(raw.sideProcessingJobs, [])
+      || !Array.isArray(raw.history)
+      || raw.history.length !== 1
+      || !exactObjectKeys(raw.history[0], ["state", "at", "detail"])
+      || raw.history[0].state !== "failed"
+      || raw.history[0].detail !== INVALID_PERSISTED_RAPID_ITEM_DETAIL
+      || !exactObjectKeys(raw.ocr, ["state", "updatedAt", "attemptCount", "completedAt", "failure"])
+      || raw.ocr.state !== "failed"
+      || raw.ocr.attemptCount !== 0
+      || !exactObjectKeys(raw.ocr.failure, ["code", "message"])
+      || raw.ocr.failure.code !== "AI_GRADER_OCR_INTERNAL_FAILED"
+      || raw.ocr.failure.message !== INVALID_PERSISTED_RAPID_ITEM_DETAIL
+    ) return undefined;
+    const queueItemId = persistedIdentifier(raw.queueItemId, "queue item identity");
+    const sessionId = persistedIdentifier(raw.sessionId, "session identity");
+    const reportId = persistedIdentifier(raw.reportId, "report identity");
+    const queuedAt = persistedTimestamp(raw.queuedAt, "queue timestamp");
+    const updatedAt = persistedTimestamp(raw.updatedAt, "update timestamp");
+    const historyAt = persistedTimestamp(raw.history[0].at, "workflow timestamp");
+    const ocrUpdatedAt = persistedTimestamp(raw.ocr.updatedAt, "OCR update timestamp");
+    const completedAt = persistedTimestamp(raw.ocr.completedAt, "OCR failure timestamp");
+    if (queuedAt !== updatedAt || historyAt !== updatedAt || ocrUpdatedAt !== updatedAt || completedAt !== updatedAt) return undefined;
+    const manifestPath = persistedContainedPath(raw.manifestPath, config, "manifest path", "station-session.json");
+    const error = safeQueuedOcrString(raw.error, "invalid Rapid item failure", 500);
+    if (error !== raw.error || !error.startsWith(`${INVALID_PERSISTED_RAPID_ITEM_DETAIL} `)) return undefined;
+    return {
+      queueItemId,
+      sessionId,
+      reportId,
+      state: "failed",
+      queuedAt,
+      updatedAt,
+      history: [{ state: "failed", at: historyAt, detail: INVALID_PERSISTED_RAPID_ITEM_DETAIL }],
+      humanConfirmationRequired: true,
+      autoConfirmed: false,
+      autoPublished: false,
+      rawEvidence: { format: "tiff", sides: [] },
+      sideProcessingJobs: {} as AiGraderRapidCaptureQueueItem["sideProcessingJobs"],
+      ocr: {
+        state: "failed",
+        updatedAt: ocrUpdatedAt,
+        attemptCount: 0,
+        completedAt,
+        failure: { code: "AI_GRADER_OCR_INTERNAL_FAILED", message: INVALID_PERSISTED_RAPID_ITEM_DETAIL },
+      },
+      manifestPath,
+      error,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function invalidPersistedRapidItem(
@@ -2960,7 +3033,7 @@ function invalidPersistedRapidItem(
   } catch {
     manifestPath = path.join(config.outputDir, ".invalid-rapid-item", queueItemId, "station-session.json");
   }
-  const detail = "Persisted exact-item state failed allowlist validation and cannot resume or become review-ready.";
+  const detail = INVALID_PERSISTED_RAPID_ITEM_DETAIL;
   return {
     queueItemId,
     sessionId,
@@ -2994,6 +3067,8 @@ function persistedRapidItem(
     throw new Error("Persisted Rapid item cannot retain an exact queue/session/report identity.");
   }
   const raw = value as Record<string, unknown>;
+  const tombstone = persistedInvalidRapidItemTombstone(raw, config);
+  if (tombstone) return tombstone;
   try {
     const allowed = new Set([
       "queueItemId", "sessionId", "reportId", "state", "queuedAt", "updatedAt", "history",
