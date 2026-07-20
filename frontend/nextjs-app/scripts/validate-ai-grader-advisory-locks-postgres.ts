@@ -32,7 +32,6 @@ const inventoryEnv = {
   OPERATOR_USER_ID: ACTOR_ID,
   AI_GRADER_NFC_REQUIRED: "false",
 };
-let validationStage = "STARTUP";
 
 type LockFamily = "report" | "label";
 
@@ -288,7 +287,6 @@ async function main() {
     });
     // Card creation owns one report lifecycle lock; publication and label finalization
     // intentionally exercise their separate report and label locks below.
-    validationStage = "CONFIRMED_CARD";
     const created = await requireLockDelta(
       { report: 1 },
       () => createAiGraderCardFromReportRuntime({
@@ -353,7 +351,6 @@ async function main() {
     let failedPublishCode = "";
     let failedPublishDiagnostic = "UNKNOWN";
     try {
-      validationStage = "INJECTED_PUBLISH";
       await persistProductionReleaseRuntime({
         queueItemId: QUEUE_ITEM_ID,
         tenantId: TENANT_ID,
@@ -381,7 +378,6 @@ async function main() {
     requireProof(observedLocks.report - beforeFailedPublish.report === 2, "FAILED_PUBLISH_REPORT_LOCK_COUNT");
     requireProof(observedLocks.label - beforeFailedPublish.label === 2, "FAILED_PUBLISH_LABEL_LOCK_COUNT");
 
-    validationStage = "ROLLBACK_CHECK";
     const [rolledBackSession, rolledBackReport, rolledBackCard, rolledBackBatch, rollbackCounts] = await Promise.all([
       prisma.aiGraderSession.findUnique({ where: { gradingSessionId: GRADING_SESSION_ID } }),
       prisma.aiGraderReport.findUnique({ where: { reportId: REPORT_ID } }),
@@ -403,7 +399,6 @@ async function main() {
     requireProof(rolledBackBatch.status === "UPLOADING" && rolledBackBatch.processedCount === 0, "ROLLBACK_BATCH_STATE");
     requireProof(rollbackCounts.every((count: number) => count === 0), "ROLLBACK_PARTIAL_ROWS");
 
-    validationStage = "ATOMIC_PUBLISH";
     const published = await requireLockDelta(
       { report: 2, label: 2 },
       () => persistProductionReleaseRuntime({
@@ -422,7 +417,6 @@ async function main() {
     );
     requireProof(published.publicationStatus === "published", "PUBLICATION_STATUS");
     requireProof(published.labelSheetAssignment?.slot === 1, "LABEL_V1_ASSIGNMENT");
-    validationStage = "DURABLE_PUBLISH_CHECK";
     const durableReport = await prisma.aiGraderReport.findUnique({ where: { reportId: REPORT_ID } });
     requireProof(durableReport !== null, "DURABLE_REPORT_ROW_PRESENT");
     const durablePublishedRows = await Promise.all([
@@ -446,7 +440,6 @@ async function main() {
       matchScore: 0.99,
       matchQuality: "exact",
     };
-    validationStage = "COMPS_RUNNING";
     await requireLockDelta(
       { report: 1 },
       () => persistAiGraderCompsRuntime({
@@ -458,7 +451,6 @@ async function main() {
       }),
       "COMPS_RUNNING",
     );
-    validationStage = "COMPS_READY";
     await requireLockDelta(
       { report: 1 },
       () => persistAiGraderCompsRuntime({
@@ -476,7 +468,6 @@ async function main() {
       }),
       "COMPS_READY",
     );
-    validationStage = "SELECTED_COMPS";
     const valuation = await requireLockDelta(
       { report: 1 },
       () => persistAiGraderSelectedCompsRuntime({
@@ -490,11 +481,9 @@ async function main() {
     );
     requireProof(valuation.valuationMinor === 12_500, "SELECTED_COMPS_VALUATION");
 
-    validationStage = "LABEL_SHEETS";
     const sheets = await listAiGraderLabelSheetsRuntime({ dbClient: prisma, tenantId: TENANT_ID });
     const assignedSheet = sheets.sheets.find((sheet) => sheet.sheetId === published.labelSheetAssignment?.sheetId);
     requireProof(assignedSheet, "ASSIGNED_SHEET_NOT_FOUND");
-    validationStage = "LABEL_SHEET_SEAL";
     const prepared = await requireLockDelta(
       { label: 1 },
       () => prepareAiGraderLabelSheetPrintRuntime({
@@ -506,7 +495,6 @@ async function main() {
       }),
       "LABEL_SHEET_SEAL",
     );
-    validationStage = "LABEL_SHEET_PRINT";
     const printed = await requireLockDelta(
       { label: 1 },
       () => markAiGraderLabelSheetPrintedRuntime({
@@ -520,7 +508,6 @@ async function main() {
     );
     requireProof(printed.printedLabelCount === 1 && printed.sheet.status === "printed", "LABEL_SHEET_PRINTED");
 
-    validationStage = "SLABBED_PHOTOS";
     for (const side of ["front", "back"] as const) {
       await persistAiGraderSlabbedPhotoAsset(prisma as any, {
         tenantId: TENANT_ID,
@@ -544,7 +531,6 @@ async function main() {
       dbClient: prisma,
       env: inventoryEnv,
     };
-    validationStage = "INVENTORY_REPORT";
     const inventory = await holdLockAndRequireBlocking(
       "report",
       REPORT_ID,
@@ -552,7 +538,6 @@ async function main() {
       "INVENTORY_REPORT_LOCK",
     );
     requireProof(inventory.reportId === REPORT_ID && inventory.cardAssetId === created.cardAssetId, "INVENTORY_LINKAGE");
-    validationStage = "INVENTORY_LABEL";
     await holdLockAndRequireBlocking(
       "label",
       TENANT_ID,
@@ -560,7 +545,6 @@ async function main() {
       "INVENTORY_LABEL_LOCK",
     );
 
-    validationStage = "INVENTORY_CHECK";
     const [inventoryCard, inventorySession, inventoryReport, inventoryLabelPairs] = await Promise.all([
       prisma.cardAsset.findUniqueOrThrow({ where: { id: created.cardAssetId } }),
       prisma.aiGraderSession.findUniqueOrThrow({ where: { gradingSessionId: GRADING_SESSION_ID } }),
@@ -591,7 +575,7 @@ main()
       : "";
     const message = error instanceof Error && /^AI_GRADER_ADVISORY_LOCK_VALIDATION_[A-Z0-9_]+$/.test(error.message)
       ? error.message
-      : `AI_GRADER_ADVISORY_LOCK_VALIDATION_UNEXPECTED_FAILURE_${normalizedCode || "ERROR"}_${validationStage}`;
+      : `AI_GRADER_ADVISORY_LOCK_VALIDATION_UNEXPECTED_FAILURE_${normalizedCode || "ERROR"}`;
     console.error(message);
     process.exitCode = 1;
   });
