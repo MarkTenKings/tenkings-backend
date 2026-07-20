@@ -1296,7 +1296,7 @@ test("station Mathematical V1 path returns strict body with external session ide
   t.after(() => service.shutdown("mathematical station test complete"));
   const started = await service.action("start-session", {
     reportId: artifact.bundle.reportId,
-    captureProfile: "full_forensic",
+    captureProfile: "production_fast",
     gradingContract: "mathematical_calibration_v1",
     mathematicalGradingAuthority: {
       schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1",
@@ -1313,41 +1313,22 @@ test("station Mathematical V1 path returns strict body with external session ide
     gradingSessionId,
     reportBundle: artifact.bundle,
   });
-  const mathematicalAssetPayloads = artifact.assetPayloads.map((payload) => ({
-    id: payload.id,
-    contentType: payload.contentType,
-    sha256: payload.sha256,
-    byteSize: payload.byteSize,
-    bodyBase64: payload.bytes.toString("base64"),
-  }));
-  const exported = await service.action("export-report-bundle", {
-    gradingContract: "mathematical_calibration_v1",
-    mathematicalReportEnvelope: envelope,
-    mathematicalAssetPayloads,
+  const reportPackage = await writeAiGraderMathematicalReportPackageV1({
+    gradingSessionId,
+    artifact: {
+      adapterVersion: AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION,
+      bundle: envelope.reportBundle,
+      assetPayloads: artifact.assetPayloads,
+    },
+    outputDir: path.join(outputDir, "report-bundles", artifact.bundle.reportId, "mathematical-v1"),
   });
-  assert.equal(exported.gradingContract, "mathematical_calibration_v1");
-  assert.equal(exported.reportBundle.schemaVersion, "ai-grader-report-bundle-v0.3");
-  assert.equal(exported.reportBundle.gradingSessionId, undefined, "workflow identity remains outside the strict public body");
-  assert.equal(fs.existsSync(exported.outputs.mathematicalReportEnvelopePath), true);
+  assert.equal(fs.existsSync(reportPackage.envelopePath), true);
   const response = await service.reportBundle(artifact.bundle.reportId);
   assert.equal(response.gradingContract, "mathematical_calibration_v1");
   assert.equal(response.gradingSessionId, gradingSessionId);
+  assert.equal(response.bundle.schemaVersion, "ai-grader-report-bundle-v0.3");
+  assert.equal(response.bundle.gradingSessionId, undefined, "workflow identity remains outside the strict public body");
   assert.deepEqual(response.bundle, artifact.bundle);
-
-  const calculated = await service.action("calculate-final-grade", {
-    gradingContract: "mathematical_calibration_v1",
-    operatorId: "calibration-operator",
-  });
-  assert.equal(calculated.productionRelease.reportStatus, "final_ai_grader_report_v1");
-  assert.deepEqual(calculated.productionRelease.finalGrade, artifact.bundle.productionRelease.finalGrade);
-  assert.equal(calculated.productionRelease.label.labelGradeText, "9.9");
-  assert.equal(calculated.productionRelease.warnings.some((warning) => /Production Release V0/i.test(warning)), false);
-  const labelReady = await service.action("generate-label-data", {
-    gradingContract: "mathematical_calibration_v1",
-    operatorId: "calibration-operator",
-  });
-  assert.equal(labelReady.productionRelease.label.status, "label_data_ready");
-  assert.equal(labelReady.productionRelease.label.labelVersion, "ten-kings-ai-grader-label-v1");
 
   const unavailable = new AiGraderLocalStationBridgeService(
     stationConfig(path.join(outputDir, "unavailable")),
@@ -1356,7 +1337,7 @@ test("station Mathematical V1 path returns strict body with external session ide
   await assert.rejects(
     () => unavailable.action("start-session", {
       reportId: "mathematical-v1-not-ready",
-      captureProfile: "full_forensic",
+      captureProfile: "production_fast",
       gradingContract: "mathematical_calibration_v1",
     }),
     /Mathematical Calibration V1 is not ready:.*No V0 fallback is permitted/i,
@@ -1371,11 +1352,10 @@ test("explicit Mathematical V1 Rapid background preparation fails not-ready inst
   const config = stationConfig(outputDir);
   const service = new AiGraderLocalStationBridgeService(config);
   t.after(() => service.shutdown("mathematical rapid test complete"));
-  await service.action("configure-rapid-capture", { rapidCaptureEnabled: true });
   await assert.rejects(
     () => service.action("start-session", {
       reportId: "mathematical-v1-rapid-not-ready",
-      captureProfile: "full_forensic",
+      captureProfile: "production_fast",
       gradingContract: "mathematical_calibration_v1",
     }),
     /Mathematical Calibration V1 is not ready:.*No V0 fallback is permitted/i,

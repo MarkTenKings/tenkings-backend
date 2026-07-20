@@ -285,8 +285,10 @@ async function main() {
       productionRelease,
       publicReportBaseUrl: "https://collect.tenkings.co",
     });
+    // Card creation owns one report lifecycle lock; publication and label finalization
+    // intentionally exercise their separate report and label locks below.
     const created = await requireLockDelta(
-      { report: 2 },
+      { report: 1 },
       () => createAiGraderCardFromReportRuntime({
         queueItemId: QUEUE_ITEM_ID,
         tenantId: TENANT_ID,

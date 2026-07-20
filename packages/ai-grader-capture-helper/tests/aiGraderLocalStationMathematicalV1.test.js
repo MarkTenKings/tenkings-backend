@@ -413,7 +413,7 @@ async function processedMathematicalSide(side, packageDir, includeReviewSources)
     };
   }
   fs.writeFileSync(path.join(packageDir, "manifest.json"), JSON.stringify(diskManifest, null, 2));
-  const normalizedDir = path.join(packageDir, "normalized");
+  const normalizedDir = path.join(packageDir, side, "normalized");
   fs.mkdirSync(normalizedDir, { recursive: true });
   const normalizedPath = path.join(normalizedDir, `${side}-normalized-card.png`);
   await sharp({

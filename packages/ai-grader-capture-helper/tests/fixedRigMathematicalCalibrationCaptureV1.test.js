@@ -471,7 +471,7 @@ test("station bridge advertises calibration readiness and never falls back to V0
     endpoint.path === "/calibration/mathematical-v1/capture" && endpoint.hardwareAccess === true));
   await assert.rejects(
     service.action("start-session", {
-      captureProfile: "full_forensic",
+      captureProfile: "production_fast",
       gradingContract: "mathematical_calibration_v1",
     }),
     /not ready.*No V0 fallback/i,

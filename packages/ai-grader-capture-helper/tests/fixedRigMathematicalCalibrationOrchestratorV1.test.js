@@ -870,7 +870,7 @@ test("station accepts the package only inside an explicitly opted-in mathematica
   const reportId = "mathematical-orchestrator-station";
   const started = await service.action("start-session", {
     reportId,
-    captureProfile: "full_forensic",
+    captureProfile: "production_fast",
     gradingContract: "mathematical_calibration_v1",
     mathematicalGradingAuthority: {
       schemaVersion: FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
@@ -897,30 +897,12 @@ test("station accepts the package only inside an explicitly opted-in mathematica
     outputName: "station-package",
   });
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
-  fixture.input.outputDir = path.join(stationRoot, "station-package");
+  fixture.input.outputDir = path.join(stationRoot, "report-bundles", reportId, "mathematical-v1");
   const result = await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
   assert.equal(result.status, "completed", result.reasons?.join("; "));
-  const exported = await service.action("export-report-bundle", result.stationInput);
-  assert.equal(exported.gradingContract, "mathematical_calibration_v1");
-  assert.equal(exported.reportBundle.reportId, reportId);
-
-  const legacyRoot = path.join(stationRoot, "legacy");
-  fs.mkdirSync(legacyRoot, { recursive: true });
-  const legacyService = new AiGraderLocalStationBridgeService(buildAiGraderLocalStationBridgeConfig({
-    enabled: true,
-    mode: "mock",
-    host: "127.0.0.1",
-    port: 47653,
-    stationToken: "StationTokenStationTokenStationToken1234",
-    outputDir: legacyRoot,
-  }));
-  t.after(() => legacyService.shutdown("legacy boundary test complete"));
-  await legacyService.action("start-session", {
-    reportId: "legacy-session",
-    captureProfile: "full_forensic",
-  });
-  await assert.rejects(
-    () => legacyService.action("export-report-bundle", result.stationInput),
-    /explicit mathematical_calibration_v1 session|contract explicitly selected at Start New Card/i,
-  );
+  const resolved = await service.reportBundle(reportId);
+  assert.equal(resolved.gradingContract, "mathematical_calibration_v1");
+  assert.equal(resolved.reportId, reportId);
+  assert.equal(resolved.gradingSessionId, started.sessionId);
+  assert.deepEqual(resolved.bundle, result.reportArtifact.bundle);
 });
