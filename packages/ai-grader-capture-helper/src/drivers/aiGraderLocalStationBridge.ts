@@ -124,6 +124,10 @@ import {
   type MathematicalCalibrationV1_1PreviewAssessment,
 } from "./fixedRigMathematicalCalibrationV1_1";
 import {
+  detectMathematicalCalibrationPreviewCheckerboard,
+  type MathematicalCalibrationPreviewCheckerboard,
+} from "./mathematicalCalibrationPreviewCheckerboard";
+import {
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML,
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH,
 } from "./mathematicalCalibrationV1_1Page";
@@ -1293,6 +1297,7 @@ export type AiGraderLocalStationRealHardwareBoundary =
 
 export interface AiGraderLocalStationBridgeDependencies {
   detectPreviewCardGeometry?: typeof detectCardGeometryFromBuffer;
+  detectMathematicalCalibrationPreviewCheckerboard?: typeof detectMathematicalCalibrationPreviewCheckerboard;
   writeLightingFrames?: (
     frames: readonly LeimacIdmuWriteFrame[]
   ) => Promise<AiGraderLocalStationLightingWriteResult[]>;
@@ -4345,6 +4350,7 @@ export class AiGraderLocalStationBridgeService {
   private readonly mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private mathematicalCalibrationV1_1SessionId?: string;
   private mathematicalCalibrationPreviewStatus?: AiGraderLocalStationPreviewStatus["mathematicalCalibrationPreview"];
+  private mathematicalCalibrationPreviewDetectionInFlight = false;
 
   constructor(
     config: AiGraderLocalStationBridgeConfig,
@@ -4640,24 +4646,21 @@ export class AiGraderLocalStationBridgeService {
   ): void {
     const current = this.mathematicalCalibrationPreviewStatus;
     if (!current || !current.active) return;
-    const detectPreviewCardGeometry = this.dependencies.detectPreviewCardGeometry ?? detectCardGeometryFromBuffer;
+    if (this.mathematicalCalibrationPreviewDetectionInFlight) return;
+    this.mathematicalCalibrationPreviewDetectionInFlight = true;
+    const detectCheckerboard = this.dependencies.detectMathematicalCalibrationPreviewCheckerboard
+      ?? (this.config.mode === "mock"
+        ? async (): Promise<MathematicalCalibrationPreviewCheckerboard> => {
+          throw new Error("mock calibration preview has no checkerboard frame");
+        }
+        : detectMathematicalCalibrationPreviewCheckerboard);
     const acceptedPoses = this.mathematicalCalibrationCaptureProducerV1_1?.previewPoses(current.sessionId) ?? Promise.resolve([]);
-    void Promise.all([detectPreviewCardGeometry({
-      imageBuffer: frame,
-      fileName: "mathematical-calibration-preview-frame.jpg",
-      side: "front",
-      sourceImageId: `mathematical-calibration-preview-${current.sessionId}`,
-      sourceFrameId: frameId,
-      timestamp: capturedAt,
-      detectionPolicy: "live_preview_fast",
-    }), acceptedPoses]).then(([geometry, previousPoses]) => {
+    void Promise.all([detectCheckerboard(frame), acceptedPoses]).then(([geometry, previousPoses]) => {
       if (this.mathematicalCalibrationPreviewStatus?.sessionId !== current.sessionId || !this.mathematicalCalibrationPreviewStatus.active) return;
       const assessment = assessMathematicalCalibrationV1_1Preview({
-        corners: geometry.corners
-          ? [geometry.corners.topLeft, geometry.corners.topRight, geometry.corners.bottomRight, geometry.corners.bottomLeft]
-          : null,
-        imageWidth: geometry.image?.width,
-        imageHeight: geometry.image?.height,
+        corners: geometry.outerCorners,
+        imageWidth: geometry.imageWidth,
+        imageHeight: geometry.imageHeight,
         rotationDegrees: geometry.rotationDegrees,
         acceptedPoses: previousPoses,
       });
@@ -4676,6 +4679,8 @@ export class AiGraderLocalStationBridgeService {
         lastFrameAt: capturedAt,
       };
       void error;
+    }).finally(() => {
+      this.mathematicalCalibrationPreviewDetectionInFlight = false;
     });
   }
 

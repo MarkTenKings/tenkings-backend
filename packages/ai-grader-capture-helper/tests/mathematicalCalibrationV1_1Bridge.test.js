@@ -55,6 +55,14 @@ test("V1.1 binds only a calibration session, exposes overlay-gated capture, and 
   const service = new AiGraderLocalStationBridgeService(config, undefined, undefined, {
     mathematicalCalibrationCaptureProducerV1_1: producer,
     stopOrphanedPreviewStreamsUntilReleased: async () => 0,
+    detectPreviewCardGeometry: async () => { throw new Error("Production detector must not serve calibration preview"); },
+    detectMathematicalCalibrationPreviewCheckerboard: async () => ({
+      imageWidth: 1200,
+      imageHeight: 1680,
+      internalCorners: Array.from({ length: 176 }, (_, index) => ({ x: index % 11, y: Math.floor(index / 11) })),
+      outerCorners: [{ x: 100, y: 100 }, { x: 1100, y: 100 }, { x: 1100, y: 1580 }, { x: 100, y: 1580 }],
+      rotationDegrees: 0,
+    }),
   });
   const started = await service.startMathematicalCalibrationV1_1Capture({
     sessionId: "calibration-v11-bridge-session",
@@ -105,13 +113,15 @@ test("V1.1 binds only a calibration session, exposes overlay-gated capture, and 
   response.write = () => true;
   response.end = () => { response.destroyed = true; };
   const stream = service.streamPreview(request, response, undefined);
-  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setTimeout(resolve, 50));
   const preview = service.previewStatus();
   assert.equal(preview.status, "live");
   assert.equal(preview.frameCount > 0, true);
   assert.equal(preview.positioningLightReady, false, "calibration preview does not depend on Production positioning-light readiness");
   assert.equal(preview.frameSource, "mock_station_preview");
   assert.equal(preview.mathematicalCalibrationPreview.active, true);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(service.previewStatus().mathematicalCalibrationPreview.overlay.valid, true);
   const reconnectRequest = new EventEmitter();
   reconnectRequest.headers = { "x-ai-grader-mathematical-calibration-session-id": started.sessionId };
   const reconnectResponse = new EventEmitter();
@@ -137,6 +147,7 @@ test("calibration preview uses a separate single-frame Pylon action and Producti
   assert.match(script, /calibration-preview-mjpeg-stream/);
   const calibrationStart = script.match(/function Start-CalibrationPreviewMjpegStream[\s\S]*?\n}\r?\n\r?\nfunction Add-OperatorPreviewTypes/);
   assert.ok(calibrationStart, "calibration preview action must have its own implementation");
+  assert.doesNotMatch(calibrationStart[0], /live_preview_fast/);
   assert.match(calibrationStart[0], /StreamGrabber\.Start\(1\)/);
   assert.match(calibrationStart[0], /RetrieveResult\(1000, \[Basler\.Pylon\.TimeoutHandling\]::ThrowException\)/);
   assert.match(calibrationStart[0], /IsValid/);
