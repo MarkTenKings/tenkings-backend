@@ -5603,7 +5603,7 @@ export class AiGraderLocalStationBridgeService {
     const withLocalPaths = images.map((image) => {
       const packageDir = image.side === "front" ? manifest.outputs.frontPackageDir : manifest.outputs.backPackageDir;
       if (!packageDir) throw new Error(`Exact normalized ${image.side} PNG package identity is missing.`);
-      return { ...image, localPath: path.join(packageDir, "normalized", image.fileName) };
+      return { ...image, localPath: path.join(packageDir, image.side, "normalized", image.fileName) };
     });
     return persistedOcrImages(withLocalPaths, this.config, [1, 2]);
   }
