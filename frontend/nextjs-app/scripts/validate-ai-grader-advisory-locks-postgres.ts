@@ -380,7 +380,7 @@ async function main() {
 
     const [rolledBackSession, rolledBackReport, rolledBackCard, rolledBackBatch, rollbackCounts] = await Promise.all([
       prisma.aiGraderSession.findUniqueOrThrow({ where: { gradingSessionId: GRADING_SESSION_ID } }),
-      prisma.aiGraderReport.findUniqueOrThrow({ where: { reportId: REPORT_ID } }),
+      prisma.aiGraderReport.findUnique({ where: { reportId: REPORT_ID } }),
       prisma.cardAsset.findUniqueOrThrow({ where: { id: created.cardAssetId } }),
       prisma.cardBatch.findUniqueOrThrow({ where: { id: created.batchId } }),
       Promise.all([
@@ -391,7 +391,7 @@ async function main() {
       ]),
     ]);
     requireProof(rolledBackSession.status === "card_created", "ROLLBACK_SESSION_STATE");
-    requireProof(rolledBackReport.publicationStatus === "draft", "ROLLBACK_REPORT_STATE");
+    requireProof(rolledBackReport === null, "ROLLBACK_REPORT_ROW_ABSENT");
     requireProof(rolledBackCard.status === "UPLOADING" && rolledBackCard.imageUrl === "", "ROLLBACK_CARD_STATE");
     requireProof(rolledBackBatch.status === "UPLOADING" && rolledBackBatch.processedCount === 0, "ROLLBACK_BATCH_STATE");
     requireProof(rollbackCounts.every((count: number) => count === 0), "ROLLBACK_PARTIAL_ROWS");
@@ -417,7 +417,7 @@ async function main() {
     const durablePublishedRows = await Promise.all([
       prisma.aiGraderSession.findUniqueOrThrow({ where: { gradingSessionId: GRADING_SESSION_ID } }),
       prisma.aiGraderReport.findUniqueOrThrow({ where: { reportId: REPORT_ID } }),
-      prisma.aiGraderPublication.findUniqueOrThrow({ where: { reportId: rolledBackReport.id } }),
+      prisma.aiGraderPublication.findUniqueOrThrow({ where: { reportId: REPORT_ID } }),
       prisma.aiGraderLabel.findUniqueOrThrow({ where: { certId: CERT_ID } }),
     ]);
     requireProof(durablePublishedRows[0].status === "published", "DURABLE_SESSION_PUBLISHED");
