@@ -27337,3 +27337,8 @@ By enabling Rip It Live, I confirm:
 
 - New session `math-cal-v1-20260719-02` was created with the supervised operator identity and exact protected target SHA-256 `5cc1344fe02ea5346a77592540aa72882150278aa9a7705d6dcfe900893c81bd`. Its immutable ledger SHA-256 is `bb0c37da9a2ca3fc2afef238c96959078283f48c34daf88a1e8b4a58b7fd3506` at capture count 0, measurement count 0, failed-operation count 0, and `sealed=false`; creation performed no camera or lighting action.
 - Read-only status identifies exact next slot `lens_geometry:none:1`. Port 47653 remains the sole calibration listener and normal port 47652 remains closed. Capture is paused for Mark to move the flat checkerboard to a fresh centered pose with the full rounded physical outline visibly inside the camera frame on all four sides; the previously clipped pose must not be reused.
+
+## 2026-07-20 - Mathematical V1 corrected fresh pose 1 capture planned action
+
+- Physical confirmation: Mark stated `fresh pose 1 ready` after the instruction to center the flat checkerboard with the complete rounded physical boundary visibly clear of all four frame sides. This confirmation applies only to the first lens-geometry slot in new session `math-cal-v1-20260719-02`; no pose from rejected session `math-cal-v1-20260719-01` may be reused or relabeled.
+- Immediate preflight proves session capture count 0, failed-operation count 0, `sealed=false`, exact next slot `lens_geometry:none:1`, normal port 47652 closed, exactly one healthy calibration listener on 47653, and no Pylon or Basler process. Invoke exactly one `Advance` without a physical-action override, then stop for immutable hash, geometry, in-frame coverage, hardware telemetry, acknowledgement, and safe-off review before requesting another movement.
