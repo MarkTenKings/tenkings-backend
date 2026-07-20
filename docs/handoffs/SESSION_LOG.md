@@ -27360,3 +27360,8 @@ By enabling Rip It Live, I confirm:
 
 - Mark requested `lets pause` before any pose-diversity source correction began. The exact calibration listener on 47653 had already been positively identified and stopped; both 47652 and 47653 are closed and no Pylon/Basler process remains. Preserve rejected sessions `math-cal-v1-20260719-01` and `math-cal-v1-20260719-02` unchanged and perform no further calibration capture or source implementation.
 - Restore only the retained normal bridge on 47652 using its exact reviewed token-free launcher and existing config, without reading or changing that config. Verify public-safe health, require 47653 to remain closed and no Pylon/Basler process, then pause all assignment work.
+
+## 2026-07-20 - Mathematical V1 operator pause cleanup observed
+
+- The retained normal bridge was restored from its exact reviewed launcher without reading, changing, or printing its existing config or token. Public-safe health on 47652 reports `ok=true`, `ai-grader-local-station-bridge-v0.10`, real mode, local-only, token required, and hardware actions enabled.
+- Final paused state: exactly one normal listener on 47652, zero calibration listeners on 47653, zero Pylon/Basler processes, and no capture or lighting action during restoration. Both rejected calibration sessions and their immutable evidence remain preserved; no pose-diversity source correction, further capture, seal, analysis, finalization, Production mutation, NFC, label, inventory, deployment, or PR operation proceeded after Mark's pause request.
