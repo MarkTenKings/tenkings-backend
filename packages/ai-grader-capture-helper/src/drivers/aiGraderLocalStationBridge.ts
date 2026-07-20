@@ -144,6 +144,7 @@ import type {
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.10";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
+export const MATHEMATICAL_CALIBRATION_PREVIEW_PORT = 47653;
 const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
 const PREVIEW_CAMERA_SETTLE_MS = 3500;
 const LIVE_LIGHTING_WATCHDOG_MS = 15000;
@@ -944,7 +945,7 @@ export interface AiGraderLocalStationPreviewStatus {
   statusPath: "/preview/status";
   portraitOrientation: true;
   cameraOwnership: "idle" | "preview_stream" | "capture_action" | "released";
-  frameSource: "basler_pylon_continuous_grab" | "mock_station_preview" | "native_pylon_window";
+  frameSource: "basler_pylon_continuous_grab" | "basler_pylon_single_frame" | "mock_station_preview" | "native_pylon_window";
   frameCount: number;
   sessionId?: string;
   activeSide: CardGeometrySide;
@@ -1285,6 +1286,7 @@ export type AiGraderLocalStationLightingWriteResult =
 export type AiGraderLocalStationRealHardwareBoundary =
   | "lighting_network"
   | "calibration_camera_capture"
+  | "calibration_preview_process_start"
   | "orphan_preview_process_scan"
   | "preview_process_start"
   | "preview_process_stop";
@@ -1297,6 +1299,15 @@ export interface AiGraderLocalStationBridgeDependencies {
   stopOrphanedPreviewStreamsUntilReleased?: (timeoutMs: number, settleMs: number) => Promise<number>;
   stopPreviewProcessTree?: (child: ChildProcessWithoutNullStreams) => void;
   startPreviewProcess?: (input: {
+    pylonRoot?: string;
+    bridgeScriptPath?: string;
+    timeoutMs: number;
+    cameraIndex?: number;
+    exposureUs: number;
+    refreshIntervalMs: number;
+    jpegQuality: number;
+  }) => ChildProcessWithoutNullStreams;
+  startCalibrationPreviewProcess?: (input: {
     pylonRoot?: string;
     bridgeScriptPath?: string;
     timeoutMs: number;
@@ -8528,6 +8539,31 @@ export class AiGraderLocalStationBridgeService {
     });
   }
 
+  private startCalibrationPreviewProcess() {
+    const input = {
+      pylonRoot: this.config.pylonRoot,
+      bridgeScriptPath: this.config.baslerBridgeScript,
+      timeoutMs: this.config.pylonTimeoutMs ?? 1800000,
+      cameraIndex: this.config.cameraIndex,
+      exposureUs: this.manifest.acceptedProfile.exposureUs,
+      refreshIntervalMs: 100,
+      jpegQuality: 72,
+    };
+    if (this.dependencies.startCalibrationPreviewProcess) return this.dependencies.startCalibrationPreviewProcess(input);
+    this.dependencies.onRealHardwareBoundary?.("calibration_preview_process_start");
+    const client = new BaslerPylonClient({
+      pylonRoot: input.pylonRoot,
+      bridgeScriptPath: input.bridgeScriptPath,
+      timeoutMs: input.timeoutMs,
+    });
+    return client.startCalibrationPreviewMjpegStream({
+      cameraIndex: input.cameraIndex,
+      exposureUs: input.exposureUs,
+      refreshIntervalMs: input.refreshIntervalMs,
+      jpegQuality: input.jpegQuality,
+    });
+  }
+
   private updateBackPositioningLight(update: Partial<AiGraderBackPositioningLightStatus>) {
     this.updateLiveLightingStatus({
       backPositioning: {
@@ -10495,6 +10531,21 @@ export class AiGraderLocalStationBridgeService {
     const calibrationPreviewBound = Boolean(
       calibrationPreviewSessionId && calibrationPreviewSessionId === this.mathematicalCalibrationV1_1SessionId,
     );
+    if (calibrationPreviewBound && this.config.port !== MATHEMATICAL_CALIBRATION_PREVIEW_PORT) {
+      sendJson(
+        res,
+        409,
+        {
+          ok: false,
+          code: "AI_GRADER_CALIBRATION_PREVIEW_PROTECTED_PORT_REQUIRED",
+          message: `Mathematical Calibration V1.1 preview requires protected bridge port ${MATHEMATICAL_CALIBRATION_PREVIEW_PORT}.`,
+          result: this.previewStatus(),
+        },
+        origin,
+        this.config,
+      );
+      return Promise.resolve();
+    }
     if (this.closing || this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
       sendJson(
         res,
@@ -10617,13 +10668,15 @@ export class AiGraderLocalStationBridgeService {
       statusPath: "/preview/status",
       portraitOrientation: true,
       cameraOwnership: this.config.mode === "real" ? "preview_stream" : "idle",
-      frameSource: this.config.mode === "real" ? "basler_pylon_continuous_grab" : "mock_station_preview",
+      frameSource: calibrationPreviewBound
+        ? (this.config.mode === "real" ? "basler_pylon_single_frame" : "mock_station_preview")
+        : (this.config.mode === "real" ? "basler_pylon_continuous_grab" : "mock_station_preview"),
       frameCount: 0,
       sessionId: binding.sessionId,
       activeSide: binding.side,
       sideEpoch: binding.sideEpoch,
       latestFrameId: undefined,
-      positioningLightReady: this.manifest.liveLighting.backPositioning.captureReady,
+      positioningLightReady: calibrationPreviewBound ? false : this.manifest.liveLighting.backPositioning.captureReady,
       fps: undefined,
       startedAt: previewStartedAt,
       firstFrameAt: undefined,
@@ -10647,9 +10700,14 @@ export class AiGraderLocalStationBridgeService {
     return new Promise<void>((resolve) => {
       let settled = false;
       let mockPreviewTimer: ReturnType<typeof setInterval> | undefined;
+      let calibrationNoFrameTimer: ReturnType<typeof setTimeout> | undefined;
       const finish = (reason: string) => {
         if (settled) return;
         settled = true;
+        if (calibrationNoFrameTimer) {
+          clearTimeout(calibrationNoFrameTimer);
+          calibrationNoFrameTimer = undefined;
+        }
         const intentionalCaptureTransition = this.manifest.previewStatus.intentionalTransition.active
           && (
             this.manifest.previewStatus.intentionalTransition.kind === "capture_front"
@@ -10706,6 +10764,14 @@ export class AiGraderLocalStationBridgeService {
             this.notePreviewFrame(frameCount, binding, frameId, generatedAt);
             this.noteMockPreviewGeometry(frameCount, frameId);
           } else if (this.mathematicalCalibrationPreviewStatus) {
+            this.updatePreviewStatus({
+              status: "live",
+              cameraOwnership: "preview_stream",
+              frameCount,
+              latestFrameId: frameId,
+              firstFrameAt: this.manifest.previewStatus.firstFrameAt ?? generatedAt,
+              lastFrameAt: generatedAt,
+            });
             this.mathematicalCalibrationPreviewStatus = {
               ...this.mathematicalCalibrationPreviewStatus,
               lastFrameId: frameId,
@@ -10723,10 +10789,20 @@ export class AiGraderLocalStationBridgeService {
       }
 
       try {
-        const child = this.startPreviewProcess();
+        const child = calibrationPreviewBound ? this.startCalibrationPreviewProcess() : this.startPreviewProcess();
         this.previewProcess = child;
         let frameCount = 0;
         const jpegFrames = new AiGraderPreviewJpegFrameAssembler();
+        if (calibrationPreviewBound) {
+          calibrationNoFrameTimer = setTimeout(() => {
+            if (settled || frameCount > 0) return;
+            const message = "PYLON_CALIBRATION_PREVIEW_NO_VALID_FRAME: No valid Basler frame arrived within 10 seconds.";
+            this.updatePreviewStatus({ status: "error", cameraOwnership: "released", lastError: message });
+            this.stopPreviewProcessTree(child);
+            finish("calibration preview error");
+          }, 10000);
+          calibrationNoFrameTimer.unref?.();
+        }
         child.stdout.on("data", (chunk: Buffer) => {
           if (settled || res.destroyed) return;
           for (const frame of jpegFrames.pushWithMetadata(chunk)) {
@@ -10749,7 +10825,23 @@ export class AiGraderLocalStationBridgeService {
               binding,
               frameId
             );
-            if (!calibrationPreviewBound) this.notePreviewFrame(frameCount, binding, frameId, frame.capturedAt ?? frame.receivedAt);
+            if (!calibrationPreviewBound) {
+              this.notePreviewFrame(frameCount, binding, frameId, frame.capturedAt ?? frame.receivedAt);
+            } else {
+              const capturedAt = frame.capturedAt ?? frame.receivedAt;
+              if (calibrationNoFrameTimer) {
+                clearTimeout(calibrationNoFrameTimer);
+                calibrationNoFrameTimer = undefined;
+              }
+              this.updatePreviewStatus({
+                status: "live",
+                cameraOwnership: "preview_stream",
+                frameCount,
+                latestFrameId: frameId,
+                firstFrameAt: this.manifest.previewStatus.firstFrameAt ?? capturedAt,
+                lastFrameAt: capturedAt,
+              });
+            }
             if (calibrationPreviewBound && this.mathematicalCalibrationPreviewStatus) {
               this.mathematicalCalibrationPreviewStatus = {
                 ...this.mathematicalCalibrationPreviewStatus,

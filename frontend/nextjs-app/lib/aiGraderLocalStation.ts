@@ -2176,7 +2176,7 @@ export type AiGraderLocalStationPreviewStatus = {
   statusPath: "/preview/status";
   portraitOrientation: true;
   cameraOwnership: "idle" | "preview_stream" | "capture_action" | "released";
-  frameSource: "basler_pylon_continuous_grab" | "mock_station_preview" | "native_pylon_window";
+  frameSource: "basler_pylon_continuous_grab" | "basler_pylon_single_frame" | "mock_station_preview" | "native_pylon_window";
   frameCount: number;
   sessionId?: string;
   activeSide?: AiGraderPreviewGeometrySide;

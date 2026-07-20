@@ -1,5 +1,7 @@
 const crypto = require("node:crypto");
+const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
+const { EventEmitter } = require("node:events");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -46,11 +48,13 @@ test("V1.1 binds only a calibration session, exposes overlay-gated capture, and 
   const config = buildAiGraderLocalStationBridgeConfig({
     enabled: true,
     mode: "mock",
+    port: 47653,
     stationToken: "StationTokenStationTokenStationToken1234",
     outputDir: path.join(root, "station"),
   });
   const service = new AiGraderLocalStationBridgeService(config, undefined, undefined, {
     mathematicalCalibrationCaptureProducerV1_1: producer,
+    stopOrphanedPreviewStreamsUntilReleased: async () => 0,
   });
   const started = await service.startMathematicalCalibrationV1_1Capture({
     sessionId: "calibration-v11-bridge-session",
@@ -91,4 +95,42 @@ test("V1.1 binds only a calibration session, exposes overlay-gated capture, and 
     }),
     /hardware boundary must not run in this test/,
   );
+
+  const request = new EventEmitter();
+  request.headers = { "x-ai-grader-mathematical-calibration-session-id": started.sessionId };
+  const response = new EventEmitter();
+  response.destroyed = false;
+  response.setHeader = () => response;
+  response.writeHead = () => undefined;
+  response.write = () => true;
+  response.end = () => { response.destroyed = true; };
+  const stream = service.streamPreview(request, response, undefined);
+  await new Promise((resolve) => setImmediate(resolve));
+  const preview = service.previewStatus();
+  assert.equal(preview.status, "live");
+  assert.equal(preview.frameCount > 0, true);
+  assert.equal(preview.positioningLightReady, false, "calibration preview does not depend on Production positioning-light readiness");
+  assert.equal(preview.frameSource, "mock_station_preview");
+  assert.equal(preview.mathematicalCalibrationPreview.active, true);
+  request.emit("close");
+  await stream;
+});
+
+test("calibration preview uses a separate single-frame Pylon action and Production remains continuous", () => {
+  const script = fsSync.readFileSync(
+    path.join(__dirname, "..", "scripts", "basler-pylon-bridge.ps1"),
+    "utf8",
+  );
+  assert.match(script, /calibration-preview-mjpeg-stream/);
+  const calibrationStart = script.match(/function Start-CalibrationPreviewMjpegStream[\s\S]*?\n}\r?\n\r?\nfunction Add-OperatorPreviewTypes/);
+  assert.ok(calibrationStart, "calibration preview action must have its own implementation");
+  assert.match(calibrationStart[0], /StreamGrabber\.Start\(1\)/);
+  assert.match(calibrationStart[0], /RetrieveResult\(1000, \[Basler\.Pylon\.TimeoutHandling\]::ThrowException\)/);
+  assert.match(calibrationStart[0], /IsValid/);
+  assert.match(calibrationStart[0], /PYLON_CALIBRATION_PREVIEW_NO_VALID_FRAME/);
+  assert.match(calibrationStart[0], /AddSeconds\(10\)/);
+  const productionStart = script.match(/function Start-OperatorPreviewMjpegStream[\s\S]*?\n}\r?\n\r?\nfunction Start-CalibrationPreviewMjpegStream/);
+  assert.ok(productionStart, "Production preview action must remain present");
+  assert.match(productionStart[0], /GrabStrategy\]::LatestImages/);
+  assert.match(productionStart[0], /TimeoutHandling\]::Return/);
 });
