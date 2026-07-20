@@ -37,6 +37,7 @@ jobs:
           cache: "pnpm"
       - run: corepack enable
       - run: pnpm install
+      - run: pnpm --filter @tenkings/shared build
       - run: pnpm --filter @tenkings/database generate
       - name: Complete disposable migration chain and second-deploy no-op
         run: pnpm --filter @tenkings/database validate:nfc:migration:disposable -- --ack-disposable-local-postgres
