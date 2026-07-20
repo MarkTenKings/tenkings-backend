@@ -80,12 +80,21 @@ def _detect_with_local_contrast(gray: np.ndarray) -> tuple[np.ndarray, int, int]
         x, y, roi_width, roi_height = cv2.boundingRect(contour)
         if roi_width * roi_height < width * height * 0.10:
             continue
-        roi = cv2.equalizeHist(gray[y:y + roi_height, x:x + roi_width])
-        detected = _detect_internal_corners(roi)
-        if detected is not None:
-            detected[:, 0, 0] += x
-            detected[:, 0, 1] += y
-            return detected, x, y
+        for inset_fraction in (0.0, 0.03, 0.04, 0.05):
+            inset_x = round(roi_width * inset_fraction)
+            inset_y = round(roi_height * inset_fraction)
+            crop_x = x + inset_x
+            crop_y = y + inset_y
+            crop_width = roi_width - 2 * inset_x
+            crop_height = roi_height - 2 * inset_y
+            if crop_width <= 0 or crop_height <= 0:
+                continue
+            roi = cv2.equalizeHist(gray[crop_y:crop_y + crop_height, crop_x:crop_x + crop_width])
+            detected = _detect_internal_corners(roi)
+            if detected is not None:
+                detected[:, 0, 0] += crop_x
+                detected[:, 0, 1] += crop_y
+                return detected, crop_x, crop_y
     return None
 
 
