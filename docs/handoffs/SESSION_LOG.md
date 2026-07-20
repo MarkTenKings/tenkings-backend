@@ -26905,3 +26905,23 @@ By enabling Rip It Live, I confirm:
 - The focused launcher regression passed `1/1` with `30` nonmatching tests skipped. The complete capture-helper suite rebuilt its dependencies and passed `267/267` with zero failures, and the requested standalone capture-helper build also completed successfully.
 - PowerShell syntax parsing reported zero errors, `git diff --check` passed, and exact containment found only the launcher, its focused test, and this required session log changed.
 - No commit, push, PR, merge, deployment, Dell helper restart, hardware, camera, lighting, calibration, hosted data, report, NFC, inventory, or F8215 action had occurred at this validation boundary.
+
+## 2026-07-20 - Basler preview-to-capture GigE lease correction planned action
+
+- Work only in isolated branch `codex/ai-grader-preview-camera-handoff` from exact protected source `d75998837f5e9d6fb994f5efa09decc5ef03035d`. The live failed Front attempt is terminal and must not be retried or altered.
+- Runtime evidence identifies one transient ownership collision between the helper's force-stopped browser preview and its immediately following capture process: the tracked preview process exited, no competing Basler/Pylon application remained, the next `Camera.Open()` failed with `0xE1018006`, and the same camera later resumed preview without any external owner being stopped.
+- Add one hardware-free behavioral regression proving OS process exit is not equivalent to expiration of the Basler GigE control lease. Make only the smallest deterministic capture-handoff correction by extending the existing fixed release-settle boundary beyond the unmodified three-second Basler heartbeat. Add no retry, fallback, alternate capture path, queue, worker, provider, feature flag, or recovery workflow.
+- Run the focused regression failing-before and passing-after, the complete capture-helper suite/build, and `git diff --check`. This source correction does not authorize commit/push/merge/deploy, a Dell helper restart, camera/lighting operation, hosted mutation, NFC action, inventory action, report alteration, or any F8215 operation.
+
+## 2026-07-20 - Basler preview-to-capture GigE lease correction observed result
+
+- The focused regression failed against exact `d75998837f5e9d6fb994f5efa09decc5ef03035d`: the helper force-stopped the simulated preview process and reported capture-camera eligibility after the old `350 ms` settle while the simulated GigE lease was still held. The result was `0/1` passed with `31` nonmatching tests skipped.
+- The only production-source change raises `PREVIEW_CAMERA_SETTLE_MS` from `350` to `3500`. This remains one deterministic handoff: after the tracked preview process exits, Front or Back capture waits beyond the unmodified Basler GigE default heartbeat before attempting the sole camera-open path. There is no retry or alternate method.
+- The same focused regression then passed `1/1` with `31` nonmatching tests skipped. The complete capture-helper suite rebuilt successfully and passed `268/268` tests with zero failures; its TypeScript build passed as part of the suite.
+- The failed live session remains terminal with no Front or Back evidence. Read-only status proved the bridge still healthy on v0.10, camera ownership released, capture lock clear, and Leimac physical state `safe_off_verified`. No camera or lighting command, helper restart, queue mutation, hosted mutation, report change, NFC action, inventory action, deployment, migration, or F8215 operation occurred.
+
+## 2026-07-20 - Basler GigE lease correction protected merge planned action
+
+- Mark explicitly authorized pushing isolated branch `codex/ai-grader-preview-camera-handoff` and merging the correction to Production after confirmation that the same preview-to-capture boundary governs both Front and Back capture. Fresh preflight proves the branch is clean, its exact parent and current `origin/main` are both `d75998837f5e9d6fb994f5efa09decc5ef03035d`, and no earlier PR exists for the branch.
+- Push the branch without force, open one PR into `main`, wait for every required GitHub check, and merge only by the normal merge-commit method when GitHub reports the exact head mergeable. Do not bypass branch protection, rebase, squash, or manually deploy. Observe the automatic Production deployment and verify exact merge-source containment.
+- This authorization does not include installing or restarting the Dell helper. The currently installed v0.10 helper remains on the earlier `d759988` build until a separately recorded helper-only rollout. Do not operate camera/lighting, alter the terminal failed session or queue, access hosted reports/data, restart NFC, mutate inventory, run migrations, or touch F8215.
