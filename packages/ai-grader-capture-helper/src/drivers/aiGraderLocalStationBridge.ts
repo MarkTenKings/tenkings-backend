@@ -24,6 +24,7 @@ import {
 import {
   createFixedRigWarmForensicProcessingRunner,
   type FixedRigWarmProcessingResult,
+  type FixedRigWarmProcessingSubmission,
 } from "./fixedRigProcessingWorker";
 import { FIXED_RIG_PROCESSING_WORKER_PROTOCOL_VERSION } from "./fixedRigProcessingWorkerProtocol";
 import {
@@ -131,7 +132,7 @@ import type {
   FixedRigMathematicalFindingReviewV1,
 } from "./fixedRigMathematicalCalibrationOrchestratorV1";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.9";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.10";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
@@ -278,20 +279,16 @@ export type AiGraderLocalStationBridgeAction =
   | "start-session"
   | "capture-front"
   | "capture-back"
-  | "run-diagnostics"
-  | "export-report-bundle"
-  | "calculate-final-grade"
-  | "finalize-report"
   | "publish-report"
-  | "generate-label-data"
   | "cancel-session"
   | "latest-report"
   | "session-manifest"
-  | "configure-rapid-capture"
-  | "queue-current-card"
   | "activate-queue-item"
   | "bind-mathematical-grading-authority"
-  | "submit-mathematical-finding-reviews";
+  | "submit-mathematical-finding-reviews"
+  | "begin-queued-ocr"
+  | "complete-queued-ocr"
+  | "fail-queued-ocr";
 
 export type AiGraderRapidCaptureWorkflowState =
   | "front_captured"
@@ -333,15 +330,89 @@ export interface AiGraderRapidCaptureQueueItem {
     requiresCalibration?: boolean;
     requiresImplementationCorrection?: boolean;
   };
+  rawEvidence: {
+    format: "tiff";
+    sides: Array<{
+      side: AiGraderWarmRunnerSide;
+      packageId: string;
+      roles: Array<{
+        role: string;
+        sha256: string;
+        byteSize: number;
+        mimeType: "image/tiff";
+      }>;
+    }>;
+  };
+  sideProcessingJobs: Record<AiGraderWarmRunnerSide, {
+    requestId: string;
+    sessionId: string;
+    side: AiGraderWarmRunnerSide;
+    packageId: string;
+    acceptedAt: string;
+  }>;
+  ocr: AiGraderQueuedOcrLifecycle;
   error?: string;
 }
 
-interface PersistedAiGraderRapidCaptureQueueItem extends AiGraderRapidCaptureQueueItem {
+export type AiGraderQueuedOcrState =
+  | "waiting_for_normalized"
+  | "eligible"
+  | "in_flight"
+  | "succeeded"
+  | "failed";
+
+export interface AiGraderQueuedOcrImage {
+  side: AiGraderWarmRunnerSide;
+  artifactRole: "normalized_card";
+  fileName: string;
+  mimeType: "image/png";
+  checksumSha256: string;
+  byteSize: number;
+  widthPx: 1200;
+  heightPx: 1680;
+}
+
+export interface AiGraderQueuedOcrFailure {
+  code: string;
+  message: string;
+}
+
+export interface AiGraderHostedPublicationEvidence {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  publicationStatus: "published";
+  publishedAt: string;
+}
+
+export interface AiGraderQueuedOcrLifecycle {
+  state: AiGraderQueuedOcrState;
+  updatedAt: string;
+  attemptCount: 0 | 1;
+  attemptOwnerId?: string;
+  eligibleAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  images?: AiGraderQueuedOcrImage[];
+  result?: Record<string, unknown>;
+  failure?: AiGraderQueuedOcrFailure;
+}
+
+interface PersistedAiGraderQueuedOcrImage extends AiGraderQueuedOcrImage {
+  localPath: string;
+}
+
+interface PersistedAiGraderQueuedOcrLifecycle extends Omit<AiGraderQueuedOcrLifecycle, "images"> {
+  images?: PersistedAiGraderQueuedOcrImage[];
+}
+
+interface PersistedAiGraderRapidCaptureQueueItem extends Omit<AiGraderRapidCaptureQueueItem, "ocr"> {
   manifestPath: string;
+  ocr: PersistedAiGraderQueuedOcrLifecycle;
 }
 
 interface PersistedAiGraderRapidCaptureQueue {
-  schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v1";
+  schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2";
   updatedAt: string;
   rapidCaptureEnabled: boolean;
   items: PersistedAiGraderRapidCaptureQueueItem[];
@@ -621,12 +692,11 @@ export interface AiGraderLocalStationBridgeManifest {
   mathematicalV1?: AiGraderLocalStationMathematicalV1State;
   captureProfile: FixedRigCaptureProfile;
   captureProfileGuard: {
-    stationSettingRequired: true;
-    selectionSource: "bridge_default" | "operator_setting" | "rapid_continuation";
-    productionFastOptIn: boolean;
+    oneRoadProductionFastRequired: true;
+    stationSettingRequired: false;
+    selectionSource: "bridge_required";
     fullForensicEvidencePreserved: true;
-    availableCaptureProfiles: ["full_forensic", "production_fast"];
-    previousStableProfile: "full_forensic";
+    availableCaptureProfiles: ["production_fast"];
     fiveSecondTargetProven: boolean;
   };
   executionPath: AiGraderWarmRunnerExecutionPath;
@@ -681,7 +751,7 @@ export interface AiGraderLocalStationBridgeManifest {
   }>;
   captureFailure?: {
     side: AiGraderWarmRunnerSide;
-    stage: "warm_capture" | "warm_processing";
+    stage: "warm_capture" | "warm_processing" | "queue_commit" | "capture_release";
     message: string;
     at: string;
   };
@@ -703,6 +773,7 @@ export interface AiGraderLocalStationBridgeManifest {
     humanConfirmationRequired: true;
     autoConfirm: false;
     autoPublish: false;
+    ocr?: AiGraderQueuedOcrLifecycle;
   };
 }
 
@@ -758,7 +829,8 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
         | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
         | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
-        | "mathematical-design-reference-stage" | "mathematical-review-asset";
+        | "mathematical-design-reference-stage" | "mathematical-review-asset"
+        | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
       description: string;
     }>;
@@ -779,6 +851,25 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     persisted: true;
     reportWorkerSerialized: true;
     items: AiGraderRapidCaptureQueueItem[];
+    activeReview?: {
+      queueItemId: string;
+      gradingSessionId: string;
+      reportId: string;
+      manifest: {
+        currentStep: AiGraderLocalStationStepId;
+        warnings: string[];
+        mathematicalV1?: Record<string, unknown>;
+        reportBundle?: Record<string, unknown>;
+        productionRelease?: Record<string, unknown>;
+        ocr?: Record<string, unknown>;
+        latestReport: {
+          reportId: string;
+          localViewerPath: string;
+          publicViewerRoute: string;
+          exists: boolean;
+        };
+      };
+    };
   };
 }
 
@@ -1140,8 +1231,12 @@ export interface AiGraderLocalStationBridgeActionRequest {
   mathematicalReportEnvelope?: AiGraderMathematicalReportEnvelopeV1;
   mathematicalReportPackagePath?: string;
   mathematicalAssetPayloads?: AiGraderMathematicalAssetPayloadTransportV1[];
-  rapidCaptureEnabled?: boolean;
   queueItemId?: string;
+  gradingSessionId?: string;
+  attemptOwnerId?: string;
+  result?: Record<string, unknown>;
+  failure?: AiGraderQueuedOcrFailure;
+  publication?: AiGraderHostedPublicationEvidence;
   captureTriggerMode?: AiGraderCaptureTriggerMode;
   captureTriggerAt?: string;
   geometryCaptureMode?: AiGraderGeometryCaptureMode;
@@ -1196,6 +1291,8 @@ export interface AiGraderLocalStationBridgeDependencies {
   captureMathematicalCalibrationFrame?: (
     input: FixedRigMathematicalCalibrationCaptureBoundaryRequestV1,
   ) => Promise<FixedRigMathematicalCalibrationCaptureBoundaryResultV1>;
+  /** Test-only queue persistence boundary; production uses the same atomic JSON writer as manifests. */
+  writeRapidQueueAtomic?: (filePath: string, value: unknown) => Promise<void>;
 }
 
 export function requireAppliedMathematicalCalibrationCameraSettings(
@@ -1361,10 +1458,10 @@ const NEXT_ACTION_BY_STEP: Record<AiGraderLocalStationStepId, AiGraderLocalStati
   capture_front: "capture-front",
   prompt_flip_card: "capture-back",
   capture_back: "capture-back",
-  run_provisional_diagnostics: "run-diagnostics",
-  view_unified_report: "calculate-final-grade",
-  calculate_final_grade: "finalize-report",
-  finalize_publish_report: "generate-label-data",
+  run_provisional_diagnostics: "latest-report",
+  view_unified_report: "latest-report",
+  calculate_final_grade: "latest-report",
+  finalize_publish_report: "latest-report",
   label_data_ready: "latest-report",
   session_complete: "latest-report",
 };
@@ -1760,9 +1857,9 @@ export class AiGraderPreviewJpegFrameAssembler {
 }
 
 function parseCaptureProfile(value: string | undefined): FixedRigCaptureProfile {
-  const normalized = (value ?? "full_forensic").trim().toLowerCase();
-  if (normalized === "full_forensic" || normalized === "production_fast") return normalized;
-  throw new Error("AI Grader capture profile must be full_forensic or production_fast.");
+  const normalized = (value ?? "production_fast").trim().toLowerCase();
+  if (normalized === "production_fast") return normalized;
+  throw new Error("AI Grader production station has one required capture profile: production_fast.");
 }
 
 function parseCaptureTriggerMode(value: AiGraderCaptureTriggerMode | undefined): AiGraderCaptureTriggerMode {
@@ -1859,7 +1956,7 @@ export function buildAiGraderLocalStationBridgeConfig(
 ): AiGraderLocalStationBridgeConfig {
   const enabled = input.enabled ?? env.AI_GRADER_LOCAL_STATION_ENABLED === "true";
   const mode = input.mode ?? parseMode(env.AI_GRADER_STATION_BRIDGE_MODE);
-  const captureProfile = input.captureProfile ?? parseCaptureProfile(env.AI_GRADER_CAPTURE_PROFILE);
+  const captureProfile = parseCaptureProfile(input.captureProfile ?? env.AI_GRADER_CAPTURE_PROFILE);
   const outputDir = firstNonEmpty(input.outputDir, env.AI_GRADER_STATION_OUTPUT_DIR) ?? "C:\\TenKings\\capture-data\\ai-grader-station";
   const stationToken = firstNonEmpty(input.stationToken, env.AI_GRADER_STATION_BRIDGE_TOKEN) ?? (mode === "mock" ? "local-dev-token" : "");
   const stationPairingCode = firstNonEmpty(input.stationPairingCode, env.AI_GRADER_STATION_PAIRING_CODE);
@@ -1983,10 +2080,9 @@ export function buildAiGraderLocalStationBridgeConfig(
 
 function newManifest(
   config: AiGraderLocalStationBridgeConfig,
-  rapidCaptureEnabled = false,
   startedAt = new Date().toISOString(),
 ): AiGraderLocalStationBridgeManifest {
-  const captureProfile: FixedRigCaptureProfile = config.captureProfile;
+  const captureProfile: FixedRigCaptureProfile = "production_fast";
   return {
     schemaVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
     stationId: "local-dell-ai-grader-station",
@@ -1997,12 +2093,11 @@ function newManifest(
     gradingContract: "legacy_v0",
     captureProfile,
     captureProfileGuard: {
-      stationSettingRequired: true,
-      selectionSource: "bridge_default",
-      productionFastOptIn: captureProfile === "production_fast",
+      oneRoadProductionFastRequired: true,
+      stationSettingRequired: false,
+      selectionSource: "bridge_required",
       fullForensicEvidencePreserved: true,
-      availableCaptureProfiles: ["full_forensic", "production_fast"],
-      previousStableProfile: "full_forensic",
+      availableCaptureProfiles: ["production_fast"],
       fiveSecondTargetProven: false,
     },
     executionPath: "warm_full_forensic_runner",
@@ -2045,11 +2140,16 @@ function newManifest(
     },
     geometryCaptureDecisions: {},
     rapidCapture: {
-      enabled: rapidCaptureEnabled,
+      enabled: true,
       workflowHistory: [],
       humanConfirmationRequired: true,
       autoConfirm: false,
       autoPublish: false,
+      ocr: {
+        state: "waiting_for_normalized",
+        updatedAt: startedAt,
+        attemptCount: 0,
+      },
     },
   };
 }
@@ -2604,7 +2704,8 @@ function bridgeEndpoints() {
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
         | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
         | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
-        | "mathematical-design-reference-stage" | "mathematical-review-asset";
+        | "mathematical-design-reference-stage" | "mathematical-review-asset"
+        | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
       description: string;
       path?: string;
@@ -2621,22 +2722,20 @@ function bridgeEndpoints() {
     { method: "POST", action: "mathematical-calibration-measurement", path: "/calibration/mathematical-v1/measurement", hardwareAccess: false, description: "Record one instrument/operator/time-bound immutable physical measurement." },
     { method: "POST", action: "mathematical-calibration-seal", path: "/calibration/mathematical-v1/seal", hardwareAccess: false, description: "Fail closed unless the unique capture/metrology ledger is complete, then seal analyzer input and source package." },
     { method: "POST", action: "mathematical-design-reference-stage", path: "/mathematical-v1/design-reference-artifacts/{front|back}", hardwareAccess: false, description: "Stage one exact approved design-reference body through a token-gated, create-new, 64 MiB bounded, SHA-256 verified session route." },
-    { method: "GET", action: "mathematical-review-asset", path: "/mathematical-v1/review-assets?reportId={reportId}&assetId={assetId}", hardwareAccess: false, description: "Read one exact hash-bound normalized, directional, ROI, segmentation, confidence, or illumination asset named by a pending Mathematical finding-review request." },
+    { method: "GET", action: "mathematical-review-asset", path: "/mathematical-v1/review-assets?queueItemId={queueItemId}&gradingSessionId={gradingSessionId}&reportId={reportId}&assetId={assetId}", hardwareAccess: false, description: "Read one exact active-queue-bound normalized, directional, ROI, segmentation, confidence, or illumination asset named by a pending Mathematical finding-review request." },
     { method: "POST", action: "start-session", hardwareAccess: true, description: "Create a local station session." },
     { method: "POST", action: "capture-front", hardwareAccess: true, description: "Validate the exact front preview snapshot, drain preview, and capture front evidence." },
     { method: "POST", action: "capture-back", hardwareAccess: true, description: "Validate the exact back preview snapshot, drain preview, and capture back evidence." },
-    { method: "POST", action: "run-diagnostics", hardwareAccess: false, description: "Generate the unified provisional diagnostic report." },
-    { method: "POST", action: "export-report-bundle", hardwareAccess: false, description: "Export the designated legacy V0 package or strict Mathematical V1 V0.3 body, external grading-session envelope, immutable assets, and checksums." },
-    { method: "POST", action: "calculate-final-grade", hardwareAccess: false, description: "Calculate legacy V0 only for legacy sessions, or validate and return the exact four-element Mathematical V1 grade for explicitly designated calibrated sessions." },
-    { method: "POST", action: "finalize-report", hardwareAccess: false, description: "Record operator finalization metadata and write the grading-contract-specific production release without cross-version fallback." },
     { method: "POST", action: "publish-report", hardwareAccess: false, description: "Prepare local publication manifest and future public report URL data." },
-    { method: "POST", action: "generate-label-data", hardwareAccess: false, description: "Write label-ready JSON and QR payload URL data." },
     { method: "POST", action: "cancel-session", hardwareAccess: true, description: "Cancel the local station session and run guarded safe-off cleanup." },
-    { method: "POST", action: "configure-rapid-capture", hardwareAccess: false, description: "Enable or disable the durable Rapid Capture throughput queue." },
-    { method: "POST", action: "queue-current-card", hardwareAccess: false, description: "Queue persisted front/back evidence for serialized background report processing." },
     { method: "POST", action: "activate-queue-item", hardwareAccess: false, description: "Open one completed queued report for Approve & Publish." },
     { method: "POST", action: "bind-mathematical-grading-authority", hardwareAccess: false, description: "Bind exact Mathematical V1 card and centering/design-reference authority to a fresh Rapid continuation before capture; publication remains bridge-derived." },
     { method: "POST", action: "submit-mathematical-finding-reviews", hardwareAccess: false, description: "Submit explicit operator finding decisions bound to the exact pending review-request SHA-256 and rerun deterministically." },
+    { method: "POST", action: "begin-queued-ocr", hardwareAccess: false, description: "Claim one exact eligible queued OCR item once." },
+    { method: "POST", action: "complete-queued-ocr", hardwareAccess: false, description: "Persist one safe exact-item OCR result." },
+    { method: "POST", action: "fail-queued-ocr", hardwareAccess: false, description: "Persist one explicit terminal exact-item OCR failure." },
+    { method: "GET", action: "queued-ocr-descriptor", path: "/rapid-queue/{queueItemId}/ocr", hardwareAccess: false, description: "Read exact verified normalized-PNG OCR descriptors." },
+    { method: "GET", action: "queued-ocr-asset", path: "/rapid-queue/{queueItemId}/ocr/asset", hardwareAccess: false, description: "Read one exact freshly verified normalized-PNG body." },
     { method: "GET", action: "latest-report", hardwareAccess: false, description: "Read latest report location." },
     { method: "GET", action: "session-manifest", hardwareAccess: false, description: "Read station manifest path and state." },
   ];
@@ -2979,6 +3078,28 @@ async function readProductionReleaseFromPath(releasePath: string | undefined): P
   return parsed?.schemaVersion === "ai-grader-production-release-v0.1" ? parsed as AiGraderProductionRelease : undefined;
 }
 
+async function readStationReportBundleFromPath(
+  bundlePath: string | undefined,
+): Promise<AiGraderStationReportBundle | undefined> {
+  if (!bundlePath) return undefined;
+  const parsed = await readJsonFile(bundlePath);
+  return parsed?.schemaVersion === "ai-grader-report-bundle-v0.1"
+    || parsed?.schemaVersion === "ai-grader-report-bundle-v0.3"
+    ? parsed as AiGraderStationReportBundle
+    : undefined;
+}
+
+async function readStationProductionReleaseFromPath(
+  releasePath: string | undefined,
+): Promise<AiGraderStationProductionRelease | undefined> {
+  if (!releasePath) return undefined;
+  const parsed = await readJsonFile(releasePath);
+  return parsed?.schemaVersion === "ai-grader-production-release-v0.1"
+    || parsed?.schemaVersion === "ai-grader-mathematical-production-release-v1"
+    ? parsed as AiGraderStationProductionRelease
+    : undefined;
+}
+
 function bundleWithProductionRelease(bundle: AiGraderReportBundle, productionRelease: AiGraderProductionRelease | undefined): AiGraderReportBundle {
   const cleanBundle = { ...bundle } as AiGraderReportBundle & { productionRelease?: AiGraderProductionRelease };
   delete cleanBundle.productionRelease;
@@ -3019,7 +3140,7 @@ export interface AiGraderWarmForensicRunner {
   processSide(
     batch: FixedRigWarmSideCaptureBatch,
     context: { requestId: string; sessionId: string }
-  ): Promise<FixedRigWarmProcessingResult>;
+  ): FixedRigWarmProcessingSubmission;
   cancelSession?(sessionId: string, reason?: string): Promise<void>;
   shutdownProcessingWorker?(reason?: string): Promise<void>;
   processingWorkerStatus?(): {
@@ -3046,8 +3167,18 @@ function cloneManifest(manifest: AiGraderLocalStationBridgeManifest): AiGraderLo
   return structuredClone(manifest);
 }
 
-const RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
+const LEGACY_RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
+const RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v2" as const;
 const RAPID_CAPTURE_QUEUE_LIMIT = 25;
+
+class LegacyRapidCaptureQueueCompatibilityError extends Error {
+  constructor(itemCount: number) {
+    super(
+      `Rapid queue rollout stopped: the preserved legacy v1 queue contains ${itemCount} item${itemCount === 1 ? "" : "s"} without exact accepted side-processing job identities; no legacy item was parsed or rewritten.`,
+    );
+    this.name = "LegacyRapidCaptureQueueCompatibilityError";
+  }
+}
 
 export function retainAiGraderRapidCaptureQueueItems<T extends { state: AiGraderRapidCaptureWorkflowState }>(
   items: T[],
@@ -3069,38 +3200,917 @@ function rapidCaptureQueuePath(config: AiGraderLocalStationBridgeConfig) {
   return path.join(config.outputDir, "rapid-capture-queue.json");
 }
 
+const RAPID_WORKFLOW_STATES = new Set<AiGraderRapidCaptureWorkflowState>([
+  "front_captured", "front_processing", "back_positioning", "back_captured", "finalizing",
+  "report_ready_needs_confirm", "confirmed_needs_publish", "published", "failed",
+]);
+const RAPID_RAW_EVIDENCE_ROLES = [
+  "dark_control", "all_on", "accepted_profile",
+  ...Array.from({ length: 8 }, (_, index) => `channel_${index + 1}`),
+] as const;
+
+function persistedTimestamp(value: unknown, label: string): string {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    throw new Error(`Persisted Rapid ${label} is invalid.`);
+  }
+  return value;
+}
+
+function persistedIdentifier(value: unknown, label: string): string {
+  if (typeof value !== "string" || !ATOMIC_CAPTURE_ASSERTION_RE.test(value)) {
+    throw new Error(`Persisted Rapid ${label} is invalid.`);
+  }
+  return value;
+}
+
+function queuedOcrAttemptOwnerId(value: unknown): string {
+  if (
+    typeof value !== "string"
+    || value !== value.trim()
+    || !ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE.test(value)
+  ) {
+    throw new Error("Queued OCR attemptOwnerId must be one exact safe 16-128 character owner identity.");
+  }
+  return value;
+}
+
+function persistedContainedPath(
+  value: unknown,
+  config: AiGraderLocalStationBridgeConfig,
+  label: string,
+  requiredBaseName?: string,
+): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`Persisted Rapid ${label} is invalid.`);
+  const resolved = path.resolve(value);
+  const outputRoot = `${path.resolve(config.outputDir).toLowerCase()}${path.sep}`;
+  if (
+    !resolved.toLowerCase().startsWith(outputRoot)
+    || (requiredBaseName !== undefined && path.basename(resolved) !== requiredBaseName)
+  ) {
+    throw new Error(`Persisted Rapid ${label} is outside the allowlisted output root.`);
+  }
+  return resolved;
+}
+
+function persistedReportPackagePath(
+  value: unknown,
+  config: AiGraderLocalStationBridgeConfig,
+  reportId: string,
+  label: string,
+  requiredBaseName: string,
+  packageKind: "legacy_v0" | "mathematical_calibration_v1" = "legacy_v0",
+): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`Persisted Rapid ${label} is invalid.`);
+  const resolved = path.resolve(value);
+  const expected = path.resolve(
+    packageKind === "mathematical_calibration_v1"
+      ? path.join(mathematicalPublishPackageDir(config, reportId), requiredBaseName)
+      : publishPackagePath(config, reportId, requiredBaseName),
+  );
+  if (resolved.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error(`Persisted Rapid ${label} is outside the exact allowlisted report package.`);
+  }
+  return resolved;
+}
+
+function persistedWorkflowHistory(value: unknown): AiGraderRapidCaptureWorkflowEvent[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) {
+    throw new Error("Persisted Rapid workflow history is invalid.");
+  }
+  return value.map((event) => {
+    if (!exactObjectKeys(event, ["state", "at", "detail"]) || !RAPID_WORKFLOW_STATES.has(event.state as AiGraderRapidCaptureWorkflowState)) {
+      throw new Error("Persisted Rapid workflow event is invalid.");
+    }
+    return {
+      state: event.state as AiGraderRapidCaptureWorkflowState,
+      at: persistedTimestamp(event.at, "workflow timestamp"),
+      detail: safeQueuedOcrString(event.detail, "workflow detail", 500),
+    };
+  });
+}
+
+function persistedRawEvidence(
+  value: unknown,
+): AiGraderRapidCaptureQueueItem["rawEvidence"] {
+  if (!exactObjectKeys(value, ["format", "sides"]) || value.format !== "tiff" || !Array.isArray(value.sides) || value.sides.length !== 2) {
+    throw new Error("Persisted Rapid raw TIFF evidence is invalid.");
+  }
+  const sides = value.sides.map((rawSide) => {
+    if (!exactObjectKeys(rawSide, ["side", "packageId", "roles"]) || (rawSide.side !== "front" && rawSide.side !== "back")) {
+      throw new Error("Persisted Rapid raw TIFF side is invalid.");
+    }
+    const side = rawSide.side as AiGraderWarmRunnerSide;
+    const packageId = persistedIdentifier(rawSide.packageId, `${side} package identity`);
+    if (!Array.isArray(rawSide.roles) || rawSide.roles.length !== RAPID_RAW_EVIDENCE_ROLES.length) {
+      throw new Error(`Persisted Rapid ${side} TIFF roles are incomplete.`);
+    }
+    const roles = rawSide.roles.map((role) => {
+      if (
+        !exactObjectKeys(role, ["role", "sha256", "byteSize", "mimeType"])
+        || !RAPID_RAW_EVIDENCE_ROLES.includes(role.role as typeof RAPID_RAW_EVIDENCE_ROLES[number])
+        || typeof role.sha256 !== "string"
+        || !/^[a-f0-9]{64}$/i.test(role.sha256)
+        || !Number.isSafeInteger(role.byteSize)
+        || Number(role.byteSize) <= 0
+        || role.mimeType !== "image/tiff"
+      ) {
+        throw new Error(`Persisted Rapid ${side} TIFF role evidence is invalid.`);
+      }
+      return {
+        role: role.role as string,
+        sha256: role.sha256.toLowerCase(),
+        byteSize: role.byteSize as number,
+        mimeType: "image/tiff" as const,
+      };
+    });
+    if (new Set(roles.map((role) => role.role)).size !== RAPID_RAW_EVIDENCE_ROLES.length) {
+      throw new Error(`Persisted Rapid ${side} TIFF roles are not exact and unique.`);
+    }
+    return { side, packageId, roles };
+  });
+  if (sides[0].side !== "front" || sides[1].side !== "back") {
+    throw new Error("Persisted Rapid raw TIFF sides must be exact ordered front/back evidence.");
+  }
+  return { format: "tiff", sides };
+}
+
+function persistedSideProcessingJobs(
+  value: unknown,
+  identity: { sessionId: string },
+  rawEvidence: AiGraderRapidCaptureQueueItem["rawEvidence"],
+): AiGraderRapidCaptureQueueItem["sideProcessingJobs"] {
+  if (!exactObjectKeys(value, ["front", "back"])) throw new Error("Persisted Rapid side-processing jobs are invalid.");
+  const parseJob = (side: AiGraderWarmRunnerSide) => {
+    const job = value[side];
+    const rawSide = rawEvidence.sides.find((candidate) => candidate.side === side);
+    if (
+      !exactObjectKeys(job, ["requestId", "sessionId", "side", "packageId", "acceptedAt"])
+      || job.sessionId !== identity.sessionId
+      || job.side !== side
+      || job.packageId !== rawSide?.packageId
+    ) {
+      throw new Error(`Persisted Rapid ${side} side-processing identity is invalid.`);
+    }
+    return {
+      requestId: persistedIdentifier(job.requestId, `${side} processing request`),
+      sessionId: identity.sessionId,
+      side,
+      packageId: persistedIdentifier(job.packageId, `${side} processing package`),
+      acceptedAt: persistedTimestamp(job.acceptedAt, `${side} processing acceptance`),
+    };
+  };
+  return { front: parseJob("front"), back: parseJob("back") };
+}
+
+function persistedOcrImages(
+  value: unknown,
+  config: AiGraderLocalStationBridgeConfig,
+  allowedLengths: readonly number[] = [2],
+): PersistedAiGraderQueuedOcrImage[] {
+  if (!Array.isArray(value) || !allowedLengths.includes(value.length)) throw new Error("Persisted queued OCR images are invalid.");
+  const images = value.map((image) => {
+    if (
+      !exactObjectKeys(image, ["side", "artifactRole", "fileName", "mimeType", "checksumSha256", "byteSize", "widthPx", "heightPx", "localPath"])
+      || (image.side !== "front" && image.side !== "back")
+      || image.artifactRole !== "normalized_card"
+      || image.mimeType !== "image/png"
+      || typeof image.fileName !== "string"
+      || image.fileName !== `${image.side}-normalized-card.png`
+      || typeof image.checksumSha256 !== "string"
+      || !/^[a-f0-9]{64}$/i.test(image.checksumSha256)
+      || !Number.isSafeInteger(image.byteSize)
+      || Number(image.byteSize) <= 0
+      || image.widthPx !== 1200
+      || image.heightPx !== 1680
+    ) {
+      throw new Error("Persisted queued OCR image descriptor is invalid.");
+    }
+    const localPath = persistedContainedPath(image.localPath, config, `${image.side} normalized PNG`);
+    if (path.basename(localPath) !== image.fileName) throw new Error("Persisted queued OCR image name does not match its exact local artifact.");
+    return {
+      side: image.side as AiGraderWarmRunnerSide,
+      artifactRole: "normalized_card" as const,
+      fileName: image.fileName,
+      mimeType: "image/png" as const,
+      checksumSha256: image.checksumSha256.toLowerCase(),
+      byteSize: image.byteSize as number,
+      widthPx: 1200 as const,
+      heightPx: 1680 as const,
+      localPath,
+    };
+  });
+  if (new Set(images.map((image) => image.side)).size !== images.length) {
+    throw new Error("Persisted queued OCR image descriptors must have unique sides.");
+  }
+  const expectedOrder = images.map((image) => image.side).sort((left, right) => left === right ? 0 : left === "front" ? -1 : 1);
+  if (images.some((image, index) => image.side !== expectedOrder[index])) {
+    throw new Error("Persisted queued OCR images must use exact front/back order.");
+  }
+  return images;
+}
+
+function persistedOcrLifecycle(
+  value: unknown,
+  config: AiGraderLocalStationBridgeConfig,
+  identity: { queueItemId: string; gradingSessionId: string; reportId: string },
+): PersistedAiGraderQueuedOcrLifecycle {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Persisted queued OCR lifecycle is invalid.");
+  const ocr = value as Record<string, unknown>;
+  const state = ocr.state;
+  const updatedAt = persistedTimestamp(ocr.updatedAt, "OCR update timestamp");
+  if (state === "waiting_for_normalized") {
+    const allowed = ocr.images === undefined
+      ? ["state", "updatedAt", "attemptCount"]
+      : ["state", "updatedAt", "attemptCount", "images"];
+    if (!exactObjectKeys(ocr, allowed) || ocr.attemptCount !== 0) throw new Error("Persisted waiting OCR lifecycle is invalid.");
+    return {
+      state,
+      updatedAt,
+      attemptCount: 0,
+      ...(ocr.images !== undefined ? { images: persistedOcrImages(ocr.images, config, [1, 2]) } : {}),
+    };
+  }
+  if (state === "eligible") {
+    if (!exactObjectKeys(ocr, ["state", "updatedAt", "attemptCount", "eligibleAt", "images"]) || ocr.attemptCount !== 0) throw new Error("Persisted eligible OCR lifecycle is invalid.");
+    return { state, updatedAt, attemptCount: 0, eligibleAt: persistedTimestamp(ocr.eligibleAt, "OCR eligibility timestamp"), images: persistedOcrImages(ocr.images, config) };
+  }
+  if (state === "in_flight") {
+    if (!exactObjectKeys(ocr, ["state", "updatedAt", "attemptCount", "attemptOwnerId", "eligibleAt", "startedAt", "images"]) || ocr.attemptCount !== 1) throw new Error("Persisted in-flight OCR lifecycle is invalid.");
+    const now = new Date().toISOString();
+    return {
+      state: "failed",
+      updatedAt: now,
+      attemptCount: 1,
+      attemptOwnerId: queuedOcrAttemptOwnerId(ocr.attemptOwnerId),
+      eligibleAt: persistedTimestamp(ocr.eligibleAt, "OCR eligibility timestamp"),
+      startedAt: persistedTimestamp(ocr.startedAt, "OCR start timestamp"),
+      completedAt: now,
+      images: persistedOcrImages(ocr.images, config),
+      failure: {
+        code: "AI_GRADER_OCR_INTERRUPTED",
+        message: "Queued OCR was interrupted before one durable result; this exact item will not retry automatically.",
+      },
+    };
+  }
+  if (state === "succeeded") {
+    if (!exactObjectKeys(ocr, ["state", "updatedAt", "attemptCount", "attemptOwnerId", "eligibleAt", "startedAt", "completedAt", "images", "result"]) || ocr.attemptCount !== 1) {
+      throw new Error("Persisted succeeded OCR lifecycle is invalid.");
+    }
+    return {
+      state,
+      updatedAt,
+      attemptCount: 1,
+      attemptOwnerId: queuedOcrAttemptOwnerId(ocr.attemptOwnerId),
+      eligibleAt: persistedTimestamp(ocr.eligibleAt, "OCR eligibility timestamp"),
+      startedAt: persistedTimestamp(ocr.startedAt, "OCR start timestamp"),
+      completedAt: persistedTimestamp(ocr.completedAt, "OCR completion timestamp"),
+      images: persistedOcrImages(ocr.images, config),
+      result: safeQueuedOcrResult(ocr.result, identity),
+    };
+  }
+  if (state === "failed") {
+    const allowed = new Set(["state", "updatedAt", "attemptCount", "attemptOwnerId", "eligibleAt", "startedAt", "completedAt", "images", "failure"]);
+    if (Object.keys(ocr).some((key) => !allowed.has(key)) || (ocr.attemptCount !== 0 && ocr.attemptCount !== 1) || ocr.completedAt === undefined) {
+      throw new Error("Persisted failed OCR lifecycle is invalid.");
+    }
+    const attemptCount = ocr.attemptCount as 0 | 1;
+    const attemptOwnerId = ocr.attemptOwnerId === undefined ? undefined : queuedOcrAttemptOwnerId(ocr.attemptOwnerId);
+    if (
+      (attemptCount === 1) !== (ocr.startedAt !== undefined)
+      || (attemptCount === 1) !== (attemptOwnerId !== undefined)
+    ) throw new Error("Persisted failed OCR attempt identity is invalid.");
+    return {
+      state,
+      updatedAt,
+      attemptCount,
+      ...(attemptOwnerId ? { attemptOwnerId } : {}),
+      ...(ocr.eligibleAt !== undefined ? { eligibleAt: persistedTimestamp(ocr.eligibleAt, "OCR eligibility timestamp") } : {}),
+      ...(ocr.startedAt !== undefined ? { startedAt: persistedTimestamp(ocr.startedAt, "OCR start timestamp") } : {}),
+      completedAt: persistedTimestamp(ocr.completedAt, "OCR failure timestamp"),
+      ...(ocr.images !== undefined ? { images: persistedOcrImages(ocr.images, config) } : {}),
+      failure: safeQueuedOcrFailure(ocr.failure),
+    };
+  }
+  throw new Error("Persisted queued OCR state is invalid.");
+}
+
+function invalidPersistedRapidItem(
+  raw: Record<string, unknown>,
+  config: AiGraderLocalStationBridgeConfig,
+  reason: string,
+): PersistedAiGraderRapidCaptureQueueItem | undefined {
+  let queueItemId: string;
+  let sessionId: string;
+  let reportId: string;
+  try {
+    queueItemId = persistedIdentifier(raw.queueItemId, "queue item identity");
+    sessionId = persistedIdentifier(raw.sessionId, "session identity");
+    reportId = persistedIdentifier(raw.reportId, "report identity");
+  } catch {
+    return undefined;
+  }
+  const now = new Date().toISOString();
+  let manifestPath: string;
+  try {
+    manifestPath = persistedContainedPath(raw.manifestPath, config, "manifest path", "station-session.json");
+  } catch {
+    manifestPath = path.join(config.outputDir, ".invalid-rapid-item", queueItemId, "station-session.json");
+  }
+  const detail = "Persisted exact-item state failed allowlist validation and cannot resume or become review-ready.";
+  return {
+    queueItemId,
+    sessionId,
+    reportId,
+    state: "failed",
+    queuedAt: now,
+    updatedAt: now,
+    history: [{ state: "failed", at: now, detail }],
+    humanConfirmationRequired: true,
+    autoConfirmed: false,
+    autoPublished: false,
+    rawEvidence: { format: "tiff", sides: [] },
+    sideProcessingJobs: {} as AiGraderRapidCaptureQueueItem["sideProcessingJobs"],
+    ocr: {
+      state: "failed",
+      updatedAt: now,
+      attemptCount: 0,
+      completedAt: now,
+      failure: { code: "AI_GRADER_OCR_INTERNAL_FAILED", message: detail },
+    },
+    manifestPath,
+    error: `${detail} ${reason}`.slice(0, 500),
+  };
+}
+
+const MATHEMATICAL_ORCHESTRATION_STAGES = new Set<MathematicalInsufficientResultV1["failedStage"]>([
+  "input_contract",
+  "calibration_ingestion",
+  "photometric_calibration",
+  "capture_evidence_ingestion",
+  "photometric_evidence",
+  "detector_plane_ingestion",
+  "condition_segmentation",
+  "centering",
+  "corner_edge_measurement",
+  "surface_measurement",
+  "grade_composition",
+  "finding_review",
+  "report_adaptation",
+  "package_write",
+]);
+
+function persistedMathematicalRapidQueueSummary(
+  value: unknown,
+): NonNullable<AiGraderRapidCaptureQueueItem["mathematicalV1"]> | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Persisted Mathematical Rapid summary must be an exact object.");
+  }
+  const raw = value as Record<string, unknown>;
+  if (raw.status === "completed") {
+    if (!exactObjectKeys(raw, ["status"])) {
+      throw new Error("Persisted completed Mathematical Rapid summary has unknown fields.");
+    }
+    return { status: "completed" };
+  }
+  if (raw.status === "processing") {
+    if (!exactObjectKeys(raw, raw.reviewRequestSha256 === undefined
+      ? ["status"]
+      : ["status", "reviewRequestSha256"])) {
+      throw new Error("Persisted processing Mathematical Rapid summary has unknown fields.");
+    }
+    if (raw.reviewRequestSha256 !== undefined
+        && (typeof raw.reviewRequestSha256 !== "string" || !SHA256_LOWERCASE_RE.test(raw.reviewRequestSha256))) {
+      throw new Error("Persisted processing Mathematical Rapid review-request SHA-256 is invalid.");
+    }
+    return {
+      status: "processing",
+      ...(typeof raw.reviewRequestSha256 === "string"
+        ? { reviewRequestSha256: raw.reviewRequestSha256 }
+        : {}),
+    };
+  }
+  if (raw.status === "finding_review_required") {
+    if (!exactObjectKeys(raw, ["status", "reviewRequestSha256"])
+        || typeof raw.reviewRequestSha256 !== "string"
+        || !SHA256_LOWERCASE_RE.test(raw.reviewRequestSha256)) {
+      throw new Error("Persisted Mathematical Rapid finding-review summary is invalid.");
+    }
+    return {
+      status: "finding_review_required",
+      reviewRequestSha256: raw.reviewRequestSha256,
+    };
+  }
+  if (raw.status === "insufficient_evidence") {
+    if (!exactObjectKeys(raw, [
+      "status",
+      "failedStage",
+      "reasons",
+      "requiresRecapture",
+      "requiresApprovedDesignReference",
+      "requiresCalibration",
+      "requiresImplementationCorrection",
+    ])) {
+      throw new Error("Persisted insufficient-evidence Mathematical Rapid summary has unknown fields.");
+    }
+    if (!MATHEMATICAL_ORCHESTRATION_STAGES.has(raw.failedStage as MathematicalInsufficientResultV1["failedStage"])
+        || !Array.isArray(raw.reasons)
+        || raw.reasons.length === 0
+        || raw.reasons.length > 50
+        || raw.reasons.some((reason) => typeof reason !== "string" || !reason.trim() || reason.length > 1000)
+        || typeof raw.requiresRecapture !== "boolean"
+        || typeof raw.requiresApprovedDesignReference !== "boolean"
+        || typeof raw.requiresCalibration !== "boolean"
+        || typeof raw.requiresImplementationCorrection !== "boolean") {
+      throw new Error("Persisted insufficient-evidence Mathematical Rapid summary is invalid.");
+    }
+    return {
+      status: "insufficient_evidence",
+      failedStage: raw.failedStage as MathematicalInsufficientResultV1["failedStage"],
+      reasons: [...raw.reasons] as string[],
+      requiresRecapture: raw.requiresRecapture,
+      requiresApprovedDesignReference: raw.requiresApprovedDesignReference,
+      requiresCalibration: raw.requiresCalibration,
+      requiresImplementationCorrection: raw.requiresImplementationCorrection,
+    };
+  }
+  throw new Error("Persisted Mathematical Rapid summary status is invalid.");
+}
+
+function persistedRapidItem(
+  value: unknown,
+  config: AiGraderLocalStationBridgeConfig,
+): PersistedAiGraderRapidCaptureQueueItem {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Persisted Rapid item cannot retain an exact queue/session/report identity.");
+  }
+  const raw = value as Record<string, unknown>;
+  try {
+    const allowed = new Set([
+      "queueItemId", "sessionId", "reportId", "state", "queuedAt", "updatedAt", "history",
+      "humanConfirmationRequired", "autoConfirmed", "autoPublished", "rawEvidence",
+      "sideProcessingJobs", "ocr", "mathematicalV1", "manifestPath", "error",
+    ]);
+    if (Object.keys(raw).some((key) => !allowed.has(key))) throw new Error("Persisted Rapid item has unknown fields.");
+    const queueItemId = persistedIdentifier(raw.queueItemId, "queue item identity");
+    const sessionId = persistedIdentifier(raw.sessionId, "session identity");
+    const reportId = persistedIdentifier(raw.reportId, "report identity");
+    if (!RAPID_WORKFLOW_STATES.has(raw.state as AiGraderRapidCaptureWorkflowState)) throw new Error("Persisted Rapid workflow state is invalid.");
+    const state = raw.state as AiGraderRapidCaptureWorkflowState;
+    if (raw.humanConfirmationRequired !== true || raw.autoConfirmed !== false || raw.autoPublished !== false) {
+      throw new Error("Persisted Rapid mutation authority is invalid.");
+    }
+    const queuedAt = persistedTimestamp(raw.queuedAt, "queue timestamp");
+    const updatedAt = persistedTimestamp(raw.updatedAt, "update timestamp");
+    const history = persistedWorkflowHistory(raw.history);
+    if (history.at(-1)?.state !== state) throw new Error("Persisted Rapid workflow state does not match its durable history.");
+    const rawEvidence = persistedRawEvidence(raw.rawEvidence);
+    const sideProcessingJobs = persistedSideProcessingJobs(raw.sideProcessingJobs, { sessionId }, rawEvidence);
+    const ocr = persistedOcrLifecycle(raw.ocr, config, { queueItemId, gradingSessionId: sessionId, reportId });
+    const mathematicalV1 = persistedMathematicalRapidQueueSummary(raw.mathematicalV1);
+    const resolvedState = ocr.state === "failed" ? "failed" : state;
+    if (["report_ready_needs_confirm", "confirmed_needs_publish", "published"].includes(resolvedState) && ocr.state !== "succeeded") {
+      throw new Error("Persisted review/publication state lacks one durable exact OCR result.");
+    }
+    const manifestPath = persistedContainedPath(raw.manifestPath, config, "manifest path", "station-session.json");
+    const error = resolvedState === "failed"
+      ? ocr.failure?.message ?? (typeof raw.error === "string" ? safeQueuedOcrString(raw.error, "item failure", 500) : "Persisted Rapid item failed.")
+      : undefined;
+    return {
+      queueItemId,
+      sessionId,
+      reportId,
+      state: resolvedState,
+      queuedAt,
+      updatedAt: resolvedState === state ? updatedAt : ocr.updatedAt,
+      history: resolvedState === state ? history : [...history, { state: "failed" as const, at: ocr.updatedAt, detail: ocr.failure!.message }].slice(-100),
+      humanConfirmationRequired: true,
+      autoConfirmed: false,
+      autoPublished: false,
+      rawEvidence,
+      sideProcessingJobs,
+      ocr,
+      ...(mathematicalV1 ? { mathematicalV1 } : {}),
+      manifestPath,
+      ...(error ? { error } : {}),
+    };
+  } catch (error) {
+    const invalid = invalidPersistedRapidItem(raw, config, error instanceof Error ? error.message : "Invalid persisted Rapid item.");
+    if (!invalid) {
+      throw new Error("Persisted Rapid item is corrupt and cannot retain an exact queue/session/report failure identity.");
+    }
+    return invalid;
+  }
+}
+
 function readRapidCaptureQueueSync(config: AiGraderLocalStationBridgeConfig): PersistedAiGraderRapidCaptureQueue {
   const empty = (): PersistedAiGraderRapidCaptureQueue => ({
     schemaVersion: RAPID_CAPTURE_QUEUE_SCHEMA_VERSION,
     updatedAt: new Date().toISOString(),
-    rapidCaptureEnabled: false,
+    rapidCaptureEnabled: true,
     items: [],
   });
   try {
-    const parsed = JSON.parse(readFileSync(rapidCaptureQueuePath(config), "utf-8")) as Partial<PersistedAiGraderRapidCaptureQueue>;
-    if (parsed.schemaVersion !== RAPID_CAPTURE_QUEUE_SCHEMA_VERSION || !Array.isArray(parsed.items)) return empty();
+    const parsed = JSON.parse(readFileSync(rapidCaptureQueuePath(config), "utf-8")) as Record<string, unknown>;
+    if (
+      !exactObjectKeys(parsed, ["schemaVersion", "updatedAt", "rapidCaptureEnabled", "items"])
+      || typeof parsed.rapidCaptureEnabled !== "boolean"
+      || !Array.isArray(parsed.items)
+    ) throw new Error("Authoritative Rapid queue top-level shape or schema is invalid.");
+    const persistedQueueUpdatedAt = persistedTimestamp(parsed.updatedAt, "queue update timestamp");
+    if (parsed.schemaVersion === LEGACY_RAPID_CAPTURE_QUEUE_SCHEMA_VERSION) {
+      if (parsed.items.length > 0) throw new LegacyRapidCaptureQueueCompatibilityError(parsed.items.length);
+      return empty();
+    }
+    if (parsed.schemaVersion !== RAPID_CAPTURE_QUEUE_SCHEMA_VERSION) {
+      throw new Error("Authoritative Rapid queue top-level shape or schema is invalid.");
+    }
+    const parsedItems = parsed.items.map((item) => persistedRapidItem(item, config));
+    const queueItemCounts = new Map<string, number>();
+    const sessionCounts = new Map<string, number>();
+    const reportCounts = new Map<string, number>();
+    for (const item of parsedItems) {
+      queueItemCounts.set(item.queueItemId, (queueItemCounts.get(item.queueItemId) ?? 0) + 1);
+      sessionCounts.set(item.sessionId, (sessionCounts.get(item.sessionId) ?? 0) + 1);
+      reportCounts.set(item.reportId, (reportCounts.get(item.reportId) ?? 0) + 1);
+    }
+    const uniqueItems = parsedItems.map((item) => {
+      if (
+        queueItemCounts.get(item.queueItemId) === 1
+        && sessionCounts.get(item.sessionId) === 1
+        && reportCounts.get(item.reportId) === 1
+      ) return item;
+      const invalid = invalidPersistedRapidItem(
+        item as unknown as Record<string, unknown>,
+        config,
+        "Persisted queue/session/report identities are not unique.",
+      );
+      if (!invalid) throw new Error("Duplicate persisted Rapid identity cannot be retained safely.");
+      return invalid;
+    });
     return {
       schemaVersion: RAPID_CAPTURE_QUEUE_SCHEMA_VERSION,
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
-      rapidCaptureEnabled: parsed.rapidCaptureEnabled === true,
-      items: retainAiGraderRapidCaptureQueueItems(parsed.items.filter(
-        (item): item is PersistedAiGraderRapidCaptureQueueItem => Boolean(
-          item
-          && typeof item.queueItemId === "string"
-          && typeof item.sessionId === "string"
-          && typeof item.reportId === "string"
-          && typeof item.manifestPath === "string",
-        ),
-      )),
+      updatedAt: persistedQueueUpdatedAt,
+      rapidCaptureEnabled: true,
+      items: retainAiGraderRapidCaptureQueueItems(uniqueItems),
     };
-  } catch {
-    return empty();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return empty();
+    if (error instanceof LegacyRapidCaptureQueueCompatibilityError) throw error;
+    throw new Error(`Authoritative Rapid queue is corrupt and the bridge refuses to hide its items: ${error instanceof Error ? error.message : "unreadable queue"}`);
+  }
+}
+
+function assertNoUnqueuedRapidSessionManifest(
+  config: AiGraderLocalStationBridgeConfig,
+  queue: PersistedAiGraderRapidCaptureQueue,
+): void {
+  if (!existsSync(config.outputDir)) return;
+  const queued = new Set(queue.items.map((item) => `${item.queueItemId}|${item.sessionId}|${item.reportId}`));
+  for (const entry of readdirSync(config.outputDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const manifestPath = path.join(config.outputDir, entry.name, "station-session.json");
+    if (!existsSync(manifestPath)) continue;
+    const rawManifest = readFileSync(manifestPath, "utf-8");
+    const exactSchemaClaim = rawManifest.includes('"schemaVersion"')
+      && rawManifest.includes(`"${AI_GRADER_LOCAL_STATION_BRIDGE_VERSION}"`);
+    if (!exactSchemaClaim) continue;
+    let manifest: AiGraderLocalStationBridgeManifest;
+    try {
+      manifest = JSON.parse(rawManifest) as AiGraderLocalStationBridgeManifest;
+    } catch (error) {
+      throw new Error(`Queued session manifest ${entry.name} is unreadable: ${error instanceof Error ? error.message : "invalid JSON"}`);
+    }
+    const rapid = manifest.rapidCapture;
+    const backEvidenceWithoutDurableClaim = Boolean(
+      manifest.outputs?.backPackageDir
+      && (!rapid?.safelyQueuedAt || !rapid?.queueItemId),
+    );
+    if (backEvidenceWithoutDurableClaim) {
+      throw new Error(`Session manifest ${entry.name} contains exact Back evidence without a complete durable Rapid queue claim; startup refuses to release its quarantine.`);
+    }
+    const unqueuedBackFailure = Boolean(
+      manifest.outputs?.backPackageDir
+      && manifest.captureFailure
+      && (manifest.captureFailure.stage === "queue_commit" || manifest.captureFailure.stage === "capture_release"),
+    );
+    if (unqueuedBackFailure) {
+      throw new Error(`Session manifest ${entry.name} contains exact Back evidence with terminal ${manifest.captureFailure!.stage} failure; startup refuses to release its quarantine.`);
+    }
+    if (!rapid?.safelyQueuedAt && !rapid?.queueItemId) continue;
+    if (rapid.workflowState === "published" || rapid.workflowState === "failed") continue;
+    if (
+      !rapid.queueItemId
+      || !manifest.sessionId
+      || !manifest.reportId
+      || !queued.has(`${rapid.queueItemId}|${manifest.sessionId}|${manifest.reportId}`)
+    ) {
+      throw new Error(`Session manifest ${entry.name} claims a durable Rapid enqueue absent from the authoritative queue; startup refuses to hide the exact card.`);
+    }
   }
 }
 
 function publicRapidCaptureQueueItem(item: PersistedAiGraderRapidCaptureQueueItem): AiGraderRapidCaptureQueueItem {
-  const { manifestPath: _manifestPath, ...publicItem } = item;
-  return publicItem;
+  const { manifestPath: _manifestPath, ocr, ...publicItem } = item;
+  return {
+    ...publicItem,
+    ocr: {
+      ...ocr,
+      ...(ocr.images ? {
+        images: ocr.images.map(({ localPath: _localPath, ...image }) => image),
+      } : {}),
+    },
+  };
+}
+
+const AI_GRADER_QUEUED_OCR_FIELD_NAMES = [
+  "category", "playerName", "cardName", "year", "manufacturer", "sport", "game",
+  "productSet", "cardNumber", "parallel", "insert", "numbered", "autograph", "memorabilia",
+] as const;
+const AI_GRADER_QUEUED_OCR_FAILURE_CODES = new Set([
+  "AI_GRADER_OCR_GOOGLE_CONFIG_MISSING",
+  "AI_GRADER_OCR_GOOGLE_PROVIDER_FAILED",
+  "AI_GRADER_OCR_GOOGLE_FRONT_FAILED",
+  "AI_GRADER_OCR_GOOGLE_BACK_FAILED",
+  "AI_GRADER_OCR_OPENAI_CONFIG_MISSING",
+  "AI_GRADER_OCR_OPENAI_TIMEOUT",
+  "AI_GRADER_OCR_OPENAI_NETWORK",
+  "AI_GRADER_OCR_OPENAI_NON_2XX",
+  "AI_GRADER_OCR_OPENAI_REFUSAL",
+  "AI_GRADER_OCR_OPENAI_SCHEMA_FAILED",
+  "AI_GRADER_OCR_CATALOG_FAILED",
+  "AI_GRADER_OCR_INTERNAL_FAILED",
+  "AI_GRADER_OCR_NORMALIZED_EVIDENCE_MISSING",
+  "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID",
+  "AI_GRADER_OCR_IDENTITY_MISMATCH",
+  "AI_GRADER_OCR_INTERRUPTED",
+]);
+
+function exactObjectKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function assertExactActionRequestKeys(
+  request: AiGraderLocalStationBridgeActionRequest,
+  action: string,
+  required: readonly string[],
+  optional: readonly string[] = [],
+) {
+  const actual = Object.keys(request);
+  const allowed = new Set([...required, ...optional]);
+  if (required.some((key) => !actual.includes(key)) || actual.some((key) => !allowed.has(key))) {
+    throw new Error(`${action} request shape is invalid; exact identity and action fields are required.`);
+  }
+}
+
+function safeQueuedOcrString(value: unknown, label: string, maxLength = 500): string {
+  if (typeof value !== "string") throw new Error(`Queued OCR ${label} must be a string.`);
+  const normalized = value.replace(/[\r\n\t]/g, " ").trim();
+  if (!normalized || normalized.length > maxLength || /(?:token|secret|bearer|authorization|api[-_ ]?key|password)\s*[:=]/i.test(normalized)) {
+    throw new Error(`Queued OCR ${label} is not safe to persist.`);
+  }
+  return normalized;
+}
+
+function safeQueuedOcrFailure(value: unknown): AiGraderQueuedOcrFailure {
+  if (!exactObjectKeys(value, ["code", "message"])) {
+    throw new Error("Queued OCR failure must contain only code and message.");
+  }
+  const code = safeQueuedOcrString(value.code, "failure code", 80);
+  if (!AI_GRADER_QUEUED_OCR_FAILURE_CODES.has(code)) {
+    throw new Error("Queued OCR failure code is not allowlisted.");
+  }
+  return { code, message: safeQueuedOcrResultText(value.message, "failure message", 500) };
+}
+
+function safeQueuedOcrResultText(value: unknown, label: string, maxLength: number): string {
+  if (
+    typeof value !== "string"
+    || !value.trim()
+    || value !== value.trim()
+    || value.length > maxLength
+    || /[\u0000-\u001f\u007f]/.test(value)
+    || /(?:https?:\/\/|^data:|^file:|^[a-z]:[\\/]|^\\\\)/i.test(value)
+    || /(?:token|secret|bearer|authorization|api[-_ ]?key|password)\s*[:=]/i.test(value)
+  ) {
+    throw new Error(`Queued OCR ${label} is not safe to persist.`);
+  }
+  return value;
+}
+
+function exactHostedPublicationEvidence(
+  value: unknown,
+  identity: { queueItemId: string; gradingSessionId: string; reportId: string },
+): AiGraderHostedPublicationEvidence {
+  if (!exactObjectKeys(value, ["queueItemId", "gradingSessionId", "reportId", "publicationStatus", "publishedAt"])) {
+    throw new Error("Approve & Publish requires only the exact hosted publication evidence fields.");
+  }
+  if (
+    value.queueItemId !== identity.queueItemId
+    || value.gradingSessionId !== identity.gradingSessionId
+    || value.reportId !== identity.reportId
+    || value.publicationStatus !== "published"
+    || typeof value.publishedAt !== "string"
+    || !Number.isFinite(Date.parse(value.publishedAt))
+  ) {
+    throw new Error("Hosted publication evidence does not match the selected exact queue/session/report triple.");
+  }
+  return {
+    queueItemId: identity.queueItemId,
+    gradingSessionId: identity.gradingSessionId,
+    reportId: identity.reportId,
+    publicationStatus: "published",
+    publishedAt: value.publishedAt,
+  };
+}
+
+function safeQueuedOcrResult(
+  value: unknown,
+  identity: { queueItemId: string; gradingSessionId: string; reportId: string },
+): Record<string, unknown> {
+  const topLevelKeys = [
+    "queueItemId", "gradingSessionId", "reportId", "status", "humanConfirmationRequired",
+    "inventoryMutationPerformed", "publishMutationPerformed", "sourceSides", "fields",
+    "reviewFieldNames", "provenance", "warnings",
+  ] as const;
+  if (!exactObjectKeys(value, topLevelKeys)) throw new Error("Queued OCR result shape is invalid.");
+  if (
+    value.queueItemId !== identity.queueItemId
+    || value.gradingSessionId !== identity.gradingSessionId
+    || value.reportId !== identity.reportId
+    || value.status !== "prefill_ready"
+    || value.humanConfirmationRequired !== true
+    || value.inventoryMutationPerformed !== false
+    || value.publishMutationPerformed !== false
+  ) {
+    throw new Error("Queued OCR result identity or mutation authority does not match the exact queue item.");
+  }
+  if (!Array.isArray(value.sourceSides) || value.sourceSides.length !== 2 || value.sourceSides[0] !== "front" || value.sourceSides[1] !== "back") {
+    throw new Error("Queued OCR result must bind exact front and back source sides.");
+  }
+  const resultFields = value.fields;
+  if (!exactObjectKeys(resultFields, AI_GRADER_QUEUED_OCR_FIELD_NAMES)) {
+    throw new Error("Queued OCR result fields are invalid.");
+  }
+  const fields = Object.fromEntries(AI_GRADER_QUEUED_OCR_FIELD_NAMES.map((fieldName) => {
+    const field = resultFields[fieldName];
+    if (!exactObjectKeys(field, ["state", "value", "confidence", "reviewRequired", "evidenceRefs"])) {
+      throw new Error(`Queued OCR field ${fieldName} is invalid.`);
+    }
+    if (!["supported", "unknown", "disagreement"].includes(String(field.state))) {
+      throw new Error(`Queued OCR field ${fieldName} state is invalid.`);
+    }
+    const allowsBoolean = fieldName === "autograph" || fieldName === "memorabilia";
+    const fieldValue = field.value;
+    let safeFieldValue: string | boolean | null = null;
+    if (field.state === "supported") {
+      if (allowsBoolean) {
+        if (typeof fieldValue !== "boolean") throw new Error(`Queued OCR field ${fieldName} supported value is invalid.`);
+        safeFieldValue = fieldValue;
+      } else {
+        safeFieldValue = safeQueuedOcrResultText(fieldValue, `field ${fieldName}`, 500);
+        if (fieldName === "category" && !["sport", "tcg", "comics"].includes(safeFieldValue)) {
+          throw new Error("Queued OCR category field is invalid.");
+        }
+      }
+    } else if (fieldValue !== null) {
+      throw new Error(`Queued OCR field ${fieldName} unsupported value must be null.`);
+    }
+    if (typeof field.confidence !== "number" || !Number.isFinite(field.confidence) || field.confidence < 0 || field.confidence > 1 || typeof field.reviewRequired !== "boolean") {
+      throw new Error(`Queued OCR field ${fieldName} confidence or review flag is invalid.`);
+    }
+    const expectedReviewRequired = field.state !== "supported" || field.confidence < 0.8;
+    if (field.reviewRequired !== expectedReviewRequired) {
+      throw new Error(`Queued OCR field ${fieldName} review flag does not match state/confidence requirements.`);
+    }
+    if (!Array.isArray(field.evidenceRefs) || field.evidenceRefs.length > 24) {
+      throw new Error(`Queued OCR field ${fieldName} evidence references are invalid.`);
+    }
+    const evidenceRefs = field.evidenceRefs.map((ref) => {
+      const safeRef = safeQueuedOcrResultText(ref, `field ${fieldName} evidence reference`, 192);
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(safeRef)) {
+        throw new Error(`Queued OCR field ${fieldName} evidence reference is invalid.`);
+      }
+      return safeRef;
+    });
+    if (new Set(evidenceRefs).size !== evidenceRefs.length || (field.state === "supported" && evidenceRefs.length < 1)) {
+      throw new Error(`Queued OCR field ${fieldName} evidence reference set is invalid.`);
+    }
+    return [fieldName, {
+      state: field.state,
+      value: safeFieldValue,
+      confidence: field.confidence,
+      reviewRequired: field.reviewRequired,
+      evidenceRefs,
+    }];
+  }));
+  if (
+    !Array.isArray(value.reviewFieldNames)
+    || value.reviewFieldNames.length > AI_GRADER_QUEUED_OCR_FIELD_NAMES.length
+    || value.reviewFieldNames.some((name) => !AI_GRADER_QUEUED_OCR_FIELD_NAMES.includes(name as any))
+    || new Set(value.reviewFieldNames).size !== value.reviewFieldNames.length
+  ) {
+    throw new Error("Queued OCR review field names are invalid.");
+  }
+  const reviewFieldNames = value.reviewFieldNames as string[];
+  const expectedReviewFieldNames = AI_GRADER_QUEUED_OCR_FIELD_NAMES.filter((fieldName) => (fields[fieldName] as Record<string, unknown>).reviewRequired === true);
+  if (
+    reviewFieldNames.length !== expectedReviewFieldNames.length
+    || expectedReviewFieldNames.some((fieldName) => !reviewFieldNames.includes(fieldName))
+  ) throw new Error("Queued OCR review field names do not match exact structured review requirements.");
+  if (!exactObjectKeys(value.provenance, ["ocrEngine", "attributeExtractor", "structuredExtractor", "structuredExtractionModel", "setLookupUsed", "setIdentificationUsed"])) {
+    throw new Error("Queued OCR provenance is invalid.");
+  }
+  const provenance = value.provenance;
+  if (
+    provenance.ocrEngine !== "google_vision_document_text_detection_url_only"
+    || provenance.attributeExtractor !== "@tenkings/shared/extractCardAttributes"
+    || provenance.structuredExtractor !== "openai_responses_strict_json_schema"
+    || typeof provenance.structuredExtractionModel !== "string"
+    || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(provenance.structuredExtractionModel)
+    || typeof provenance.setLookupUsed !== "boolean"
+    || typeof provenance.setIdentificationUsed !== "boolean"
+  ) {
+    throw new Error("Queued OCR provenance flags are invalid.");
+  }
+  if (!Array.isArray(value.warnings) || value.warnings.length > 24) {
+    throw new Error("Queued OCR warnings are invalid.");
+  }
+  const warnings = value.warnings.map((warning) => safeQueuedOcrResultText(warning, "warning", 500));
+  return structuredClone({
+    queueItemId: identity.queueItemId,
+    gradingSessionId: identity.gradingSessionId,
+    reportId: identity.reportId,
+    status: "prefill_ready",
+    humanConfirmationRequired: true,
+    inventoryMutationPerformed: false,
+    publishMutationPerformed: false,
+    sourceSides: ["front", "back"],
+    fields,
+    reviewFieldNames: [...reviewFieldNames],
+    provenance: {
+      ocrEngine: "google_vision_document_text_detection_url_only",
+      attributeExtractor: "@tenkings/shared/extractCardAttributes",
+      structuredExtractor: "openai_responses_strict_json_schema",
+      structuredExtractionModel: provenance.structuredExtractionModel,
+      setLookupUsed: provenance.setLookupUsed,
+      setIdentificationUsed: provenance.setIdentificationUsed,
+    },
+    warnings,
+  });
+}
+
+function pngDimensions(bytes: Buffer): { width: number; height: number } | undefined {
+  const signature = "89504e470d0a1a0a";
+  if (bytes.length < 24 || bytes.subarray(0, 8).toString("hex") !== signature || bytes.subarray(12, 16).toString("ascii") !== "IHDR") return undefined;
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+function browserSafeReviewRecord(value: unknown, outputDir: string): Record<string, unknown> | undefined {
+  const explicitlySafeRouteOrUrlKey = new Set([
+    "localViewerPath",
+    "publicViewerRoute",
+    "publicReportUrl",
+    "qrPayloadUrl",
+    "viewerPath",
+  ]);
+  const outputRoot = path.resolve(outputDir).replace(/[\\/]+$/, "").toLowerCase();
+  const isUnsafeFilesystemString = (input: string) => {
+    const normalized = input.trim();
+    if (
+      /^(?:[a-z]:[\\/]|\\\\|file:|data:)/i.test(normalized)
+      || /(?:https?:\/\/(?:127\.0\.0\.1|localhost|\[?::1\]?)(?::|\/|$)|x-amz-|[?&](?:signature|token|credential|key|expires)=)/i.test(normalized)
+      || /(?:token|secret|bearer|authorization|api[-_ ]?key|password|cookie)\s*[:=]/i.test(normalized)
+    ) return true;
+    const lower = normalized.replace(/[\\/]+$/, "").toLowerCase();
+    return lower === outputRoot || lower.startsWith(`${outputRoot}${path.sep.toLowerCase()}`);
+  };
+  const forbiddenKey = (key: string) => (
+    /(?:token|authorization|presign|credential|secret|cookie|password|apiKey|bodyBase64|bodyEncoding)/i.test(key)
+    || (
+      !explicitlySafeRouteOrUrlKey.has(key)
+      && (/^local/i.test(key) || /(?:path|dir|folder)$/i.test(key))
+    )
+  );
+  const project = (input: unknown): unknown => {
+    if (typeof input === "string" && isUnsafeFilesystemString(input)) return undefined;
+    if (Array.isArray(input)) return input.map(project).filter((item) => item !== undefined);
+    if (!input || typeof input !== "object") return input;
+    const projected: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(input as Record<string, unknown>)) {
+      if (forbiddenKey(key) || key === "bodyBase64" || key === "bodyEncoding") continue;
+      const safeChild = project(child);
+      if (safeChild !== undefined) projected[key] = safeChild;
+    }
+    return projected;
+  };
+  const projected = project(value);
+  return projected && typeof projected === "object" && !Array.isArray(projected)
+    ? projected as Record<string, unknown>
+    : undefined;
 }
 
 function mathematicalRapidQueueSummary(
@@ -3169,13 +4179,14 @@ export class AiGraderLocalStationBridgeService {
   private previewStop?: (reason: string) => void;
   private captureLock?: { owner: string; acquiredAt: string };
   private warmProcessingJobs = new Map<string, Promise<FixedRigWarmProcessingResult>>();
+  private rapidOcrEligibilityObservers = new Map<string, Promise<void>>();
   private processingSessionsCancelling = new Set<string>();
   private processingWorkerShutdown?: Promise<void>;
   private rapidQueue: PersistedAiGraderRapidCaptureQueue;
   private committedRapidQueue: PersistedAiGraderRapidCaptureQueue;
   private queuedManifests = new Map<string, AiGraderLocalStationBridgeManifest>();
   private reportWorker: Promise<void> = Promise.resolve();
-  private queueWriteChain: Promise<void> = Promise.resolve();
+  private rapidMutationChain: Promise<void> = Promise.resolve();
   private activeQueueItemId?: string;
   private previewGeometryPending?: {
     frame: Buffer;
@@ -3226,8 +4237,9 @@ export class AiGraderLocalStationBridgeService {
     this.dependencies = dependencies;
     this.stationUrl = `http://${hostForUrl(config.host)}:${config.port}`;
     this.rapidQueue = readRapidCaptureQueueSync(config);
+    assertNoUnqueuedRapidSessionManifest(config, this.rapidQueue);
     this.committedRapidQueue = structuredClone(this.rapidQueue);
-    this.manifest = newManifest(config, this.rapidQueue.rapidCaptureEnabled);
+    this.manifest = newManifest(config);
     this.mathematicalCalibrationCaptureProducer = dependencies.mathematicalCalibrationCaptureProducer ?? (
       config.mathematicalCalibrationTargetPath &&
       config.mathematicalCalibrationTargetVersion &&
@@ -3323,7 +4335,7 @@ export class AiGraderLocalStationBridgeService {
       );
     }
     if (this.manifest.currentStep !== 'capture_front') {
-      return result('current_step_not_capture_front', `Start Grading requires bridge step capture_front; current step is ${this.manifest.currentStep}.`, false, profileIdentity);
+      return result('current_step_not_capture_front', `Capture Front requires bridge step capture_front; current step is ${this.manifest.currentStep}.`, false, profileIdentity);
     }
     if (
       this.manifest.previewStatus.activeSide !== 'front'
@@ -3336,7 +4348,7 @@ export class AiGraderLocalStationBridgeService {
       this.manifest.previewStatus.status !== 'live'
       || this.manifest.previewStatus.cameraOwnership !== 'preview_stream'
     ) {
-      return result('live_preview_required', 'Wait for the current session-bound Front preview to become live before Start Grading.', false, profileIdentity);
+      return result('live_preview_required', 'Wait for the current session-bound Front preview to become live before Capture Front.', false, profileIdentity);
     }
     return result('ready', 'The exact current Front frame and acknowledged lighting profile are ready.', true, profileIdentity);
   }
@@ -3348,6 +4360,54 @@ export class AiGraderLocalStationBridgeService {
     const viewerRoute = reportRoute(reportId);
     const reportReady = Boolean(this.manifest.outputs.unifiedReportPath);
     const latestHistoryReport = reportReady ? undefined : latestReportFromHistorySync(this.config.outputDir);
+    const activeReviewManifest = this.activeQueueItemId
+      ? this.queuedManifests.get(this.activeQueueItemId)
+      : undefined;
+    const activeReviewItem = this.activeQueueItemId
+      ? this.committedRapidQueue.items.find((item) => item.queueItemId === this.activeQueueItemId)
+      : undefined;
+    const activeReview = activeReviewManifest && activeReviewItem
+      ? {
+          queueItemId: activeReviewItem.queueItemId,
+          gradingSessionId: activeReviewItem.sessionId,
+          reportId: activeReviewItem.reportId,
+          manifest: {
+            currentStep: activeReviewManifest.currentStep,
+            warnings: [...activeReviewManifest.warnings],
+            ...(activeReviewManifest.mathematicalV1 ? {
+              mathematicalV1: browserSafeReviewRecord(
+                activeReviewManifest.mathematicalV1,
+                this.config.outputDir,
+              ),
+            } : {}),
+            ...(activeReviewManifest.reportBundle ? {
+              reportBundle: browserSafeReviewRecord(
+                isMathematicalReportBundle(activeReviewManifest.reportBundle)
+                  ? activeReviewManifest.reportBundle
+                  : bundleWithProductionRelease(
+                      activeReviewManifest.reportBundle,
+                      isMathematicalProductionRelease(activeReviewManifest.productionRelease)
+                        ? undefined
+                        : activeReviewManifest.productionRelease,
+                    ),
+                this.config.outputDir,
+              ),
+            } : {}),
+            ...(activeReviewManifest.productionRelease ? {
+              productionRelease: browserSafeReviewRecord(activeReviewManifest.productionRelease, this.config.outputDir),
+            } : {}),
+            ...(activeReviewItem.ocr.result ? {
+              ocr: structuredClone(activeReviewItem.ocr.result),
+            } : {}),
+            latestReport: {
+              reportId: activeReviewItem.reportId,
+              localViewerPath: reportRoute(activeReviewItem.reportId),
+              publicViewerRoute: "/ai-grader/reports/[reportId]",
+              exists: Boolean(activeReviewManifest.outputs.unifiedReportPath),
+            },
+          },
+        }
+      : undefined;
     return {
       ok: true,
       bridgeVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
@@ -3403,8 +4463,9 @@ export class AiGraderLocalStationBridgeService {
       },
       timingSummary: timingSummary(this.manifest.commandResults, this.manifest.warmRunnerStatus),
       rapidCaptureQueue: {
-        enabled: this.committedRapidQueue.rapidCaptureEnabled,
+        enabled: true,
         ...(this.activeQueueItemId ? { activeQueueItemId: this.activeQueueItemId } : {}),
+        ...(activeReview ? { activeReview } : {}),
         persisted: true,
         reportWorkerSerialized: true,
         items: this.committedRapidQueue.items.map(publicRapidCaptureQueueItem),
@@ -3423,7 +4484,10 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private ensureCaptureTiming(manifest: AiGraderLocalStationBridgeManifest) {
-    const captureProfile: FixedRigCaptureProfile = manifest.captureProfile === "production_fast" ? "production_fast" : "full_forensic";
+    if (manifest.captureProfile !== "production_fast") {
+      throw new Error("This persisted card used a removed capture profile and cannot enter the one-road production_fast workflow; Start New Card creates a clean production_fast session.");
+    }
+    const captureProfile: FixedRigCaptureProfile = "production_fast";
     if (!manifest.captureTiming || manifest.captureTiming.schemaVersion !== "ten-kings-ai-grader-capture-timing-v1") {
       manifest.captureTiming = createAiGraderCaptureTimingMetadata({
         captureProfile,
@@ -4475,16 +5539,35 @@ export class AiGraderLocalStationBridgeService {
     if (unexpected.length > 0) {
       throw new Error("Atomic Back Capture accepts only bounded idempotency, session/report/side/epoch/frame, mode, and trigger assertions.");
     }
-    if (!request.idempotencyKey || !ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE.test(request.idempotencyKey)) {
+    if (
+      !request.idempotencyKey
+      || !ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE.test(request.idempotencyKey)
+      || ATOMIC_CAPTURE_PRIVATE_ASSERTION_RE.test(request.idempotencyKey)
+    ) {
       throw new Error("Atomic Back Capture requires a 16-128 character bounded idempotency key.");
     }
     const requiredStrings = [request.expectedSessionId, request.expectedReportId, request.expectedSideEpoch, request.expectedFrameId];
-    if (requiredStrings.some((value) => typeof value !== "string" || value.length < 1 || value.length > 256)) {
-      throw new Error("Atomic Back Capture requires bounded expected session/report/epoch/frame assertions.");
+    if (requiredStrings.some((value) =>
+      typeof value !== "string"
+      || !ATOMIC_CAPTURE_ASSERTION_RE.test(value)
+      || ATOMIC_CAPTURE_PRIVATE_ASSERTION_RE.test(value)
+    )) {
+      throw new Error("Atomic Back Capture requires path-free bounded expected session/report/epoch/frame assertions.");
     }
     if (request.expectedSide !== "back") throw new Error("Atomic Back Capture expectedSide must be back.");
     if (request.geometryCaptureMode !== "detected_geometry") throw new Error("Capture Back requires detected_geometry mode.");
+    if (request.captureTriggerMode !== "operator" && request.captureTriggerMode !== "auto") {
+      throw new Error("Atomic Back Capture requires an explicit operator or auto captureTriggerMode assertion.");
+    }
     const captureTriggerMode = parseCaptureTriggerMode(request.captureTriggerMode);
+    if (
+      typeof request.captureTriggerAt !== "string"
+      || request.captureTriggerAt.length > 40
+      || !Number.isFinite(Date.parse(request.captureTriggerAt))
+      || new Date(request.captureTriggerAt).toISOString() !== request.captureTriggerAt
+    ) {
+      throw new Error("Atomic Back Capture requires an explicit canonical ISO captureTriggerAt assertion.");
+    }
     return {
       idempotencyKey: request.idempotencyKey,
       expectedSessionId: request.expectedSessionId!,
@@ -4616,6 +5699,7 @@ export class AiGraderLocalStationBridgeService {
     let transitionStarted = false;
     let transitionSafeOffAttempted = false;
     let completed = false;
+    let queuedForBackground: string | undefined;
     let outcomeError: unknown;
     try {
       snapshot = this.snapshotAtomicBackCapture(request);
@@ -4663,8 +5747,18 @@ export class AiGraderLocalStationBridgeService {
       operation.consumed = true;
       const result = await this.runWarmSideCapture("back");
       this.manifest.outputs.backPackageDir = extractPackageDir(result.payload);
-      this.manifest.currentStep = "run_provisional_diagnostics";
+      if (!this.manifest.outputs.backPackageDir) {
+        throw new Error("Atomic Back Capture did not return a persisted Back TIFF evidence package.");
+      }
       this.manifest.progressLog.push(`${new Date().toISOString()} Back evidence captured by one bridge-authoritative atomic operation.`);
+      queuedForBackground = await this.commitCurrentCardToRapidQueueUnderCaptureLock(owner);
+      const queuedManifest = this.manifest;
+      const safeOff = await this.runTerminalSafeOff("durable Rapid enqueue capture release");
+      if (!safeOff.ok) {
+        throw new Error(safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Durably queued Back capture could not release authoritative lighting ownership.");
+      }
+      await writeSessionManifest(queuedManifest);
+      this.manifest = this.cleanStartNewCardManifest(queuedManifest);
       completed = true;
     } catch (error) {
       outcomeError = error;
@@ -4678,6 +5772,35 @@ export class AiGraderLocalStationBridgeService {
           const cleanupMessage = `Failure safe-off also could not be verified: ${cleanup}`;
           if (!this.manifest.warnings.includes(original)) this.manifest.warnings.push(original);
           if (!this.manifest.warnings.includes(cleanupMessage)) this.manifest.warnings.push(cleanupMessage);
+        }
+      }
+      if (transitionStarted && this.manifest.outputs.backPackageDir) {
+        const failedAt = new Date().toISOString();
+        const message = error instanceof Error ? error.message : "Atomic Back queue commit or capture release failed.";
+        this.manifest.captureFailure = {
+          side: "back",
+          stage: this.manifest.rapidCapture.safelyQueuedAt ? "capture_release" : "queue_commit",
+          message,
+          at: failedAt,
+        };
+        this.manifest.currentStep = "session_complete";
+        this.manifest.warmRunnerStatus.status = "failed";
+        if (!this.manifest.warnings.includes(message)) this.manifest.warnings.push(message);
+        this.updatePreviewStatus({
+          status: "error",
+          positioningLightReady: false,
+          lastError: message,
+          lastStopReason: "Back evidence did not complete the single durable enqueue-and-release transaction; this exact card remains blocked.",
+        });
+        if (this.manifest.rapidCapture.queueItemId) {
+          const failedManifest = this.manifest;
+          await this.runRapidQueueMutation(async ({ trackManifest }) => {
+            trackManifest(failedManifest);
+            this.transitionRapidWorkflow(failedManifest, "failed", message);
+            const failedItem = this.rapidQueue.items.find((candidate) => candidate.queueItemId === failedManifest.rapidCapture.queueItemId);
+            if (failedItem) failedItem.error = message;
+            return { value: undefined, manifests: [failedManifest] };
+          }).catch(() => undefined);
         }
       }
       if (transitionStarted && !this.manifest.captureFailure) {
@@ -4720,7 +5843,11 @@ export class AiGraderLocalStationBridgeService {
       if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
       if (!transitionStarted) this.manifest.warmRunnerStatus.status = priorWarmRunnerStatus;
       if (transitionStarted && !completed) {
-        this.releaseFullForensicPreviewHold("atomic back capture transition failed; explicit preview recovery is available");
+        if (this.manifest.outputs.backPackageDir) {
+          this.manifest.progressLog.push(`${new Date().toISOString()} Back transaction failed after evidence persistence; the exact card remains blocked and no clean Start New Card state was published.`);
+        } else {
+          this.releaseFullForensicPreviewHold("atomic back capture transition failed before Back evidence persistence");
+        }
       }
       try {
         await writeSessionManifest(this.manifest);
@@ -4729,6 +5856,7 @@ export class AiGraderLocalStationBridgeService {
       }
     }
     if (outcomeError) throw outcomeError;
+    if (queuedForBackground) this.startRapidBackgroundForReleasedCard(queuedForBackground);
     return this.status();
   }
 
@@ -5498,9 +6626,7 @@ export class AiGraderLocalStationBridgeService {
         generatedAt: manifest.mathematicalV1.generatedAt,
         reportId: manifest.reportId,
         outputDir: mathematicalPublishPackageDir(this.config, manifest.reportId),
-        captureProfileVersion: manifest.captureProfile === "full_forensic"
-          ? "ten-kings-fixed-rig-full-forensic-v1"
-          : "ten-kings-fixed-rig-production-fast-v1",
+        captureProfileVersion: "ten-kings-fixed-rig-production-fast-v1",
         calibration: {
           bundlePath: this.config.mathematicalCalibrationBundlePath,
           bundleSha256: this.config.mathematicalCalibrationBundleSha256,
@@ -5673,6 +6799,231 @@ export class AiGraderLocalStationBridgeService {
     return parsed;
   }
 
+  private exactAcceptedSideEvidence(
+    manifest: AiGraderLocalStationBridgeManifest,
+    side: AiGraderWarmRunnerSide,
+  ): {
+    raw: AiGraderRapidCaptureQueueItem["rawEvidence"]["sides"][number];
+    job: AiGraderRapidCaptureQueueItem["sideProcessingJobs"][AiGraderWarmRunnerSide];
+  } {
+    const result = [...manifest.commandResults].reverse().find((candidate) => candidate.stepId === `capture_${side}` && candidate.ok);
+    const payload = result?.payload as Record<string, any> | undefined;
+    if (
+      !payload
+      || payload.captureProfile !== "production_fast"
+      || payload.rawEvidenceFormat !== "tiff"
+      || typeof payload.packageId !== "string"
+      || !payload.packageId.trim()
+      || payload.warmBatch?.side !== side
+    ) {
+      throw new Error(`Rapid queue commit requires exact ${side} production_fast TIFF capture identity.`);
+    }
+    const captures = payload.warmBatch?.captures;
+    const roleCaptures = [captures?.darkControl, captures?.allOn, captures?.acceptedProfile, ...(Array.isArray(captures?.channels) ? captures.channels : [])];
+    const expectedRoles = new Set(["dark_control", "all_on", "accepted_profile", ...Array.from({ length: 8 }, (_, index) => `channel_${index + 1}`)]);
+    const roles = roleCaptures.map((entry: any) => {
+      const role = entry?.role;
+      const capture = entry?.capture;
+      if (
+        typeof role !== "string"
+        || !expectedRoles.has(role)
+        || capture?.mimeType !== "image/tiff"
+        || capture?.savedImageFormat !== "TIFF"
+        || !/^[a-f0-9]{64}$/i.test(capture?.sha256 ?? "")
+        || !Number.isSafeInteger(capture?.byteSize)
+        || capture.byteSize <= 0
+      ) {
+        throw new Error(`Rapid queue commit requires immutable ${side} TIFF bytes and hashes for every exact evidence role.`);
+      }
+      return {
+        role,
+        sha256: String(capture.sha256).toLowerCase(),
+        byteSize: capture.byteSize,
+        mimeType: "image/tiff" as const,
+      };
+    });
+    if (roles.length !== expectedRoles.size || new Set(roles.map((role) => role.role)).size !== expectedRoles.size) {
+      throw new Error(`Rapid queue commit requires one immutable ${side} TIFF for every exact evidence role.`);
+    }
+    const job = payload.sideProcessingJob;
+    if (
+      !job
+      || typeof job.requestId !== "string"
+      || job.sessionId !== manifest.sessionId
+      || job.side !== side
+      || job.packageId !== payload.packageId
+      || typeof job.acceptedAt !== "string"
+      || !Number.isFinite(Date.parse(job.acceptedAt))
+    ) {
+      throw new Error(`Rapid queue commit requires the exact accepted ${side} side-processing job identity.`);
+    }
+    return {
+      raw: { side, packageId: payload.packageId, roles },
+      job: {
+        requestId: job.requestId,
+        sessionId: job.sessionId,
+        side,
+        packageId: job.packageId,
+        acceptedAt: job.acceptedAt,
+      },
+    };
+  }
+
+  private assertQueuedEvidenceMatchesManifest(
+    item: PersistedAiGraderRapidCaptureQueueItem,
+    manifest: AiGraderLocalStationBridgeManifest,
+  ): void {
+    for (const side of ["front", "back"] as const) {
+      const accepted = this.exactAcceptedSideEvidence(manifest, side);
+      const queuedRaw = item.rawEvidence.sides.find((candidate) => candidate.side === side);
+      const normalizedRaw = (raw: AiGraderRapidCaptureQueueItem["rawEvidence"]["sides"][number] | undefined) => raw && ({
+        side: raw.side,
+        packageId: raw.packageId,
+        roles: [...raw.roles].sort((left, right) => left.role.localeCompare(right.role)),
+      });
+      if (
+        JSON.stringify(normalizedRaw(queuedRaw)) !== JSON.stringify(normalizedRaw(accepted.raw))
+        || JSON.stringify(item.sideProcessingJobs[side]) !== JSON.stringify(accepted.job)
+      ) {
+        throw new Error(`Persisted Rapid ${side} TIFF hashes or side-processing identity do not match the exact session manifest.`);
+      }
+    }
+  }
+
+  private async commitCurrentCardToRapidQueueUnderCaptureLock(owner: string): Promise<string> {
+    if (this.captureLock?.owner !== owner) {
+      throw new Error("Rapid queue commit requires the exact Atomic Back Capture owner.");
+    }
+    const snapshot = this.manifest;
+    const { sessionId, reportId } = snapshot;
+    if (!sessionId || !reportId || !snapshot.outputs.manifestPath || !snapshot.outputs.frontPackageDir || !snapshot.outputs.backPackageDir) {
+      throw new Error("Rapid queue commit requires exact persisted front/back session and report evidence.");
+    }
+    if (snapshot.captureProfile !== "production_fast" || snapshot.captureFailure) {
+      throw new Error("Rapid queue commit accepts only one valid production_fast measurement path.");
+    }
+    const front = this.exactAcceptedSideEvidence(snapshot, "front");
+    const back = this.exactAcceptedSideEvidence(snapshot, "back");
+    const queueItemId = `${sessionId}-rapid-card`;
+    try {
+      await this.runRapidQueueMutation(async ({ trackManifest }) => {
+        if (this.captureLock?.owner !== owner || this.manifest !== snapshot) {
+          throw new Error("Rapid queue commit lost the exact Atomic Back Capture owner before durable persistence.");
+        }
+        trackManifest(snapshot);
+        const safelyQueuedAt = new Date().toISOString();
+        snapshot.rapidCapture.enabled = true;
+        snapshot.rapidCapture.queueItemId = queueItemId;
+        snapshot.rapidCapture.safelyQueuedAt = safelyQueuedAt;
+        this.recordCaptureTimingEvent(snapshot, { id: "safely_queued", at: safelyQueuedAt });
+        this.transitionRapidWorkflow(
+          snapshot,
+          "finalizing",
+          "Exact immutable front/back TIFF evidence and both side-processing jobs are accepted; one serialized worker owns background preparation.",
+        );
+        const stagedNormalizedImages = this.persistedNormalizedOcrImagesFromManifest(snapshot);
+        const item: PersistedAiGraderRapidCaptureQueueItem = {
+          queueItemId,
+          sessionId,
+          reportId,
+          state: "finalizing",
+          queuedAt: safelyQueuedAt,
+          updatedAt: snapshot.updatedAt,
+          history: [...snapshot.rapidCapture.workflowHistory],
+          humanConfirmationRequired: true,
+          autoConfirmed: false,
+          autoPublished: false,
+          rawEvidence: { format: "tiff", sides: [front.raw, back.raw] },
+          sideProcessingJobs: { front: front.job, back: back.job },
+          ocr: {
+            state: "waiting_for_normalized",
+            updatedAt: safelyQueuedAt,
+            attemptCount: 0,
+            ...(stagedNormalizedImages.length ? { images: stagedNormalizedImages } : {}),
+          },
+          manifestPath: snapshot.outputs.manifestPath!,
+        };
+        snapshot.rapidCapture.ocr = publicRapidCaptureQueueItem(item).ocr;
+        this.rapidQueue.items = retainAiGraderRapidCaptureQueueItems([
+          item,
+          ...this.rapidQueue.items.filter((candidate) => candidate.queueItemId !== queueItemId),
+        ]);
+        this.queuedManifests.set(queueItemId, snapshot);
+        return { value: undefined, manifests: [snapshot] };
+      });
+    } catch (error) {
+      throw new Error(`Rapid queue persistence failed for exact card ${sessionId}/${reportId}; capture ownership was not released. ${error instanceof Error ? error.message : "Atomic queue write failed."}`);
+    }
+    return queueItemId;
+  }
+
+  private cleanStartNewCardManifest(queuedManifest: AiGraderLocalStationBridgeManifest): AiGraderLocalStationBridgeManifest {
+    const now = new Date().toISOString();
+    const clean = newManifest(this.config, now);
+    clean.previewStatus.status = "stopped";
+    clean.previewStatus.cameraOwnership = "released";
+    clean.previewStatus.lastStopReason = "Previous Back TIFF and exact Rapid item are durably queued; camera ownership is released for Start New Card.";
+    clean.liveLighting.status = "safe_off";
+    clean.liveLighting.applied = {
+      ...clean.liveLighting.applied,
+      enabled: false,
+      dutyPercent: 0,
+      actualLeimacPwmStep: 0,
+      channels: [],
+      verificationState: "verified",
+      expectedWriteCount: queuedManifest.liveLighting.physicalState.expectedWriteCount,
+      acknowledgedWriteCount: queuedManifest.liveLighting.physicalState.acknowledgedWriteCount,
+      verificationComplete: true,
+      verifiedAt: queuedManifest.liveLighting.physicalState.verifiedAt ?? now,
+    };
+    clean.liveLighting.physicalState = {
+      ...queuedManifest.liveLighting.physicalState,
+      state: "safe_off_verified",
+      reason: "Previous exact card was durably enqueued before release.",
+      changedAt: now,
+      complete: true,
+      verifiedAt: queuedManifest.liveLighting.physicalState.verifiedAt ?? now,
+    };
+    clean.progressLog.push(`${now} Exact queued card ${queuedManifest.sessionId}/${queuedManifest.reportId} released to the serialized background worker; Start New Card is the sole next capture action.`);
+    return clean;
+  }
+
+  private cleanStartAfterFailedStartManifest(failedManifest: AiGraderLocalStationBridgeManifest, failure: string): AiGraderLocalStationBridgeManifest {
+    const now = new Date().toISOString();
+    const clean = newManifest(this.config, now);
+    clean.previewStatus.status = "stopped";
+    clean.previewStatus.cameraOwnership = "released";
+    clean.previewStatus.positioningLightReady = false;
+    clean.previewStatus.lastError = failure;
+    clean.previewStatus.lastStopReason = "Failed Start New Card rolled back to a verified sessionless camera/lighting state.";
+    clean.liveLighting.status = "safe_off";
+    clean.liveLighting.applied = {
+      ...clean.liveLighting.applied,
+      enabled: false,
+      dutyPercent: 0,
+      actualLeimacPwmStep: 0,
+      channels: [],
+      verificationState: "verified",
+      expectedWriteCount: failedManifest.liveLighting.physicalState.expectedWriteCount,
+      acknowledgedWriteCount: failedManifest.liveLighting.physicalState.acknowledgedWriteCount,
+      verificationComplete: true,
+      verifiedAt: failedManifest.liveLighting.physicalState.verifiedAt ?? now,
+    };
+    clean.outputs.sessionDir = failedManifest.outputs.sessionDir;
+    clean.outputs.manifestPath = failedManifest.outputs.manifestPath;
+    clean.liveLighting.physicalState = {
+      ...failedManifest.liveLighting.physicalState,
+      state: "safe_off_verified",
+      reason: "Failed Start New Card lighting apply was rolled back before capture ownership was released.",
+      changedAt: now,
+      complete: true,
+      verifiedAt: failedManifest.liveLighting.physicalState.verifiedAt ?? now,
+    };
+    clean.warnings.push(failure);
+    clean.progressLog.push(`${now} Failed Start New Card persisted its failed session, verified safe-off, and restored the sole explicit sessionless Start New Card action.`);
+    return clean;
+  }
+
   private transitionRapidWorkflow(
     manifest: AiGraderLocalStationBridgeManifest,
     state: AiGraderRapidCaptureWorkflowState,
@@ -5703,31 +7054,539 @@ export class AiGraderLocalStationBridgeService {
     this.queuedManifests.set(queueItemId, manifest);
   }
 
-  private persistRapidQueue(): Promise<void> {
-    this.rapidQueue.updatedAt = new Date().toISOString();
-    const snapshot = structuredClone(this.rapidQueue);
-    this.queueWriteChain = this.queueWriteChain
+  private runRapidQueueMutation<T>(
+    mutate: (context: {
+      trackManifest: (manifest: AiGraderLocalStationBridgeManifest) => void;
+    }) => Promise<{ value: T; manifests?: AiGraderLocalStationBridgeManifest[] }>,
+  ): Promise<T> {
+    const operation = this.rapidMutationChain
       .catch(() => {})
       .then(async () => {
-        await writeJsonAtomic(rapidCaptureQueuePath(this.config), snapshot);
-        this.committedRapidQueue = structuredClone(snapshot);
+        const queueBefore = structuredClone(this.rapidQueue);
+        const committedBefore = structuredClone(this.committedRapidQueue);
+        const mapBefore = new Map(
+          Array.from(this.queuedManifests.entries(), ([queueItemId, manifest]) => [queueItemId, cloneManifest(manifest)]),
+        );
+        const tracked = new Map<AiGraderLocalStationBridgeManifest, AiGraderLocalStationBridgeManifest>();
+        const trackManifest = (manifest: AiGraderLocalStationBridgeManifest) => {
+          if (!tracked.has(manifest)) tracked.set(manifest, cloneManifest(manifest));
+        };
+        try {
+          const result = await mutate({ trackManifest });
+          const uniqueManifests = Array.from(new Set(result.manifests ?? []));
+          for (const manifest of uniqueManifests) await writeSessionManifest(manifest);
+          this.rapidQueue.updatedAt = new Date().toISOString();
+          const snapshot = structuredClone(this.rapidQueue);
+          await (this.dependencies.writeRapidQueueAtomic ?? writeJsonAtomic)(rapidCaptureQueuePath(this.config), snapshot);
+          this.committedRapidQueue = structuredClone(snapshot);
+          return result.value;
+        } catch (error) {
+          this.rapidQueue = queueBefore;
+          this.committedRapidQueue = committedBefore;
+          this.queuedManifests = mapBefore;
+          for (const [manifest, before] of tracked) {
+            for (const key of Object.keys(manifest) as Array<keyof AiGraderLocalStationBridgeManifest>) delete manifest[key];
+            Object.assign(manifest, cloneManifest(before));
+          }
+          const rollbackWrites = await Promise.allSettled(Array.from(tracked.values(), (manifest) => writeSessionManifest(manifest)));
+          const rollbackFailures = rollbackWrites.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+          if (rollbackFailures.length) {
+            const rollbackMessage = rollbackFailures
+              .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason))
+              .join(" ")
+              .slice(0, 500);
+            throw new Error(`Rapid queue mutation failed and manifest rollback persistence also failed; restart must refuse any orphaned exact card. Original: ${error instanceof Error ? error.message : String(error)} Rollback: ${rollbackMessage}`);
+          }
+          throw error;
+        }
       });
-    return this.queueWriteChain;
+    this.rapidMutationChain = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private persistRapidQueue(): Promise<void> {
+    return this.runRapidQueueMutation(async () => ({ value: undefined }));
   }
 
   private async syncQueuedManifest(manifest: AiGraderLocalStationBridgeManifest) {
+    await this.runRapidQueueMutation(async ({ trackManifest }) => {
+      const queueItemId = manifest.rapidCapture.queueItemId;
+      if (!queueItemId) return { value: undefined };
+      const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+      if (!item) return { value: undefined };
+      trackManifest(manifest);
+      item.state = manifest.rapidCapture.workflowState ?? item.state;
+      item.updatedAt = manifest.updatedAt;
+      item.history = [...manifest.rapidCapture.workflowHistory];
+      item.mathematicalV1 = mathematicalRapidQueueSummary(manifest.mathematicalV1?.execution);
+      item.error = item.state === "failed" ? manifest.warnings.at(-1) ?? item.error : undefined;
+      this.queuedManifests.set(queueItemId, manifest);
+      return { value: undefined, manifests: [manifest] };
+    });
+  }
+
+  private exactQueuedItem(identity: {
+    queueItemId?: string;
+    gradingSessionId?: string;
+    reportId?: string;
+  }): PersistedAiGraderRapidCaptureQueueItem {
+    return this.exactQueuedItemFrom(this.committedRapidQueue, identity);
+  }
+
+  private exactMutableQueuedItem(identity: {
+    queueItemId?: string;
+    gradingSessionId?: string;
+    reportId?: string;
+  }): PersistedAiGraderRapidCaptureQueueItem {
+    return this.exactQueuedItemFrom(this.rapidQueue, identity);
+  }
+
+  private exactQueuedItemFrom(
+    queue: PersistedAiGraderRapidCaptureQueue,
+    identity: { queueItemId?: string; gradingSessionId?: string; reportId?: string },
+  ): PersistedAiGraderRapidCaptureQueueItem {
+    const queueItemId = identity.queueItemId?.trim();
+    const gradingSessionId = identity.gradingSessionId?.trim();
+    const reportId = identity.reportId?.trim();
+    if (!queueItemId || !gradingSessionId || !reportId || [queueItemId, gradingSessionId, reportId].some((value) => !ATOMIC_CAPTURE_ASSERTION_RE.test(value))) {
+      throw new Error("Queued item operation requires bounded queueItemId, gradingSessionId, and reportId.");
+    }
+    const item = queue.items.find((candidate) => candidate.queueItemId === queueItemId);
+    if (!item || item.sessionId !== gradingSessionId || item.reportId !== reportId) {
+      throw new Error("Queued item identity does not match the exact persisted queue/session/report triple.");
+    }
+    return item;
+  }
+
+  private async exactQueuedManifest(item: PersistedAiGraderRapidCaptureQueueItem): Promise<AiGraderLocalStationBridgeManifest> {
+    let manifest = this.queuedManifests.get(item.queueItemId);
+    if (!manifest) {
+      const outputRoot = `${path.resolve(this.config.outputDir).toLowerCase()}${path.sep}`;
+      const manifestPath = path.resolve(item.manifestPath);
+      if (!manifestPath.toLowerCase().startsWith(outputRoot) || path.basename(manifestPath) !== "station-session.json") {
+        throw new Error("Queued item manifest reference is invalid.");
+      }
+      manifest = await readJsonFile(manifestPath) as AiGraderLocalStationBridgeManifest | undefined;
+    }
+    if (
+      !manifest
+      || manifest.schemaVersion !== AI_GRADER_LOCAL_STATION_BRIDGE_VERSION
+      || manifest.sessionId !== item.sessionId
+      || manifest.reportId !== item.reportId
+      || manifest.captureProfile !== "production_fast"
+      || manifest.captureProfileGuard?.oneRoadProductionFastRequired !== true
+      || manifest.captureProfileGuard?.stationSettingRequired !== false
+      || manifest.captureProfileGuard?.selectionSource !== "bridge_required"
+      || manifest.rapidCapture?.queueItemId !== item.queueItemId
+      || manifest.rapidCapture?.enabled !== true
+      || manifest.rapidCapture?.humanConfirmationRequired !== true
+      || manifest.rapidCapture?.autoConfirm !== false
+      || manifest.rapidCapture?.autoPublish !== false
+      || path.resolve(manifest.outputs?.manifestPath ?? "") !== path.resolve(item.manifestPath)
+    ) {
+      throw new Error("Queued item manifest does not match the exact queue/session/report triple.");
+    }
+    if (manifest.captureFailure) {
+      throw new Error(`Queued item manifest has terminal ${manifest.captureFailure.stage} failure and cannot resume background readiness.`);
+    }
+    this.assertQueuedEvidenceMatchesManifest(item, manifest);
+    this.queuedManifests.set(item.queueItemId, manifest);
+    return manifest;
+  }
+
+  private applyQueuedOcrLifecycle(
+    item: PersistedAiGraderRapidCaptureQueueItem,
+    manifest: AiGraderLocalStationBridgeManifest,
+    lifecycle: PersistedAiGraderQueuedOcrLifecycle,
+  ): void {
+    item.ocr = structuredClone(lifecycle);
+    item.updatedAt = lifecycle.updatedAt;
+    manifest.rapidCapture.ocr = publicRapidCaptureQueueItem(item).ocr;
+    manifest.updatedAt = lifecycle.updatedAt;
+  }
+
+  private persistedNormalizedOcrImagesFromManifest(
+    manifest: AiGraderLocalStationBridgeManifest,
+  ): PersistedAiGraderQueuedOcrImage[] {
+    const images = manifest.rapidCapture.ocr?.images;
+    if (!images?.length) return [];
+    const withLocalPaths = images.map((image) => {
+      const packageDir = image.side === "front" ? manifest.outputs.frontPackageDir : manifest.outputs.backPackageDir;
+      if (!packageDir) throw new Error(`Exact normalized ${image.side} PNG package identity is missing.`);
+      return { ...image, localPath: path.join(packageDir, "normalized", image.fileName) };
+    });
+    return persistedOcrImages(withLocalPaths, this.config, [1, 2]);
+  }
+
+  private mergePersistedNormalizedOcrImages(
+    queued: PersistedAiGraderQueuedOcrImage[] | undefined,
+    fromManifest: PersistedAiGraderQueuedOcrImage[],
+  ): PersistedAiGraderQueuedOcrImage[] | undefined {
+    const merged = [...(queued ?? [])];
+    for (const image of fromManifest) {
+      const existing = merged.find((candidate) => candidate.side === image.side);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(image)) {
+        throw new Error(`Persisted normalized ${image.side} PNG descriptor conflicts between queue and exact session manifest.`);
+      }
+      if (!existing) merged.push(image);
+    }
+    merged.sort((left, right) => left.side === right.side ? 0 : left.side === "front" ? -1 : 1);
+    return merged.length ? merged : undefined;
+  }
+
+  private recordProcessedNormalizedOcrImage(
+    manifest: AiGraderLocalStationBridgeManifest,
+    side: AiGraderWarmRunnerSide,
+    processed: FixedRigWarmProcessingResult,
+  ): void {
+    const { localPath: _localPath, ...image } = this.normalizedOcrImage(processed, side);
+    const lifecycle = manifest.rapidCapture.ocr;
+    if (!lifecycle || lifecycle.state !== "waiting_for_normalized") return;
+    const images = [
+      ...(lifecycle.images ?? []).filter((candidate) => candidate.side !== side),
+      image,
+    ].sort((left, right) => left.side === right.side ? 0 : left.side === "front" ? -1 : 1);
+    manifest.rapidCapture.ocr = {
+      state: "waiting_for_normalized",
+      updatedAt: new Date().toISOString(),
+      attemptCount: 0,
+      images,
+    };
+  }
+
+  private normalizedOcrImage(
+    processed: FixedRigWarmProcessingResult | undefined,
+    side: AiGraderWarmRunnerSide,
+  ): PersistedAiGraderQueuedOcrImage {
+    const manifestSide = (processed?.manifest as Record<string, any> | undefined)?.[side];
+    const artifact = manifestSide?.normalizedCard?.normalizedArtifact;
+    if (
+      processed?.manifest?.evidenceSide !== side
+      || !artifact
+      || artifact.mimeType !== "image/png"
+      || artifact.imageWidth !== 1200
+      || artifact.imageHeight !== 1680
+      || !/^[a-f0-9]{64}$/i.test(artifact.sha256 ?? "")
+      || !Number.isSafeInteger(artifact.byteSize)
+      || artifact.byteSize <= 0
+      || typeof artifact.localOutputPath !== "string"
+      || !artifact.localOutputPath.trim()
+      || path.basename(artifact.localOutputPath) !== `${side}-normalized-card.png`
+    ) {
+      throw new Error(`Exact normalized ${side} PNG evidence is missing or invalid.`);
+    }
+    return {
+      side,
+      artifactRole: "normalized_card",
+      fileName: path.basename(artifact.localOutputPath),
+      mimeType: "image/png",
+      checksumSha256: String(artifact.sha256).toLowerCase(),
+      byteSize: artifact.byteSize,
+      widthPx: 1200,
+      heightPx: 1680,
+      localPath: artifact.localOutputPath,
+    };
+  }
+
+  private async verifiedQueuedOcrImage(
+    item: PersistedAiGraderRapidCaptureQueueItem,
+    manifest: AiGraderLocalStationBridgeManifest,
+    image: PersistedAiGraderQueuedOcrImage,
+  ): Promise<Buffer> {
+    const resolved = path.resolve(image.localPath);
+    const sidePackageDir = image.side === "front" ? manifest.outputs.frontPackageDir : manifest.outputs.backPackageDir;
+    const outputRoot = `${path.resolve(this.config.outputDir).toLowerCase()}${path.sep}`;
+    const packageRoot = sidePackageDir ? `${path.resolve(sidePackageDir).toLowerCase()}${path.sep}` : "";
+    if (
+      !resolved.toLowerCase().startsWith(outputRoot)
+      || !packageRoot
+      || !resolved.toLowerCase().startsWith(packageRoot)
+      || path.basename(resolved) !== image.fileName
+      || image.fileName !== `${image.side}-normalized-card.png`
+      || item.sessionId !== manifest.sessionId
+      || item.reportId !== manifest.reportId
+    ) {
+      throw new Error(`Queued OCR ${image.side} normalized image containment or identity is invalid.`);
+    }
+    const [bytes, fileStat] = await Promise.all([readFile(resolved), stat(resolved)]);
+    const dimensions = pngDimensions(bytes);
+    if (
+      fileStat.size !== image.byteSize
+      || bytes.byteLength !== image.byteSize
+      || crypto.createHash("sha256").update(bytes).digest("hex") !== image.checksumSha256
+      || dimensions?.width !== image.widthPx
+      || dimensions.height !== image.heightPx
+    ) {
+      throw new Error(`Queued OCR ${image.side} normalized PNG failed fresh hash, size, or dimension verification.`);
+    }
+    return bytes;
+  }
+
+  private applyQueuedOcrFailure(
+    item: PersistedAiGraderRapidCaptureQueueItem,
+    manifest: AiGraderLocalStationBridgeManifest,
+    failure: AiGraderQueuedOcrFailure,
+  ): void {
+    if (item.ocr.state === "succeeded" || item.ocr.state === "failed") return;
+    const now = new Date().toISOString();
+    this.applyQueuedOcrLifecycle(item, manifest, {
+      ...item.ocr,
+      state: "failed",
+      updatedAt: now,
+      attemptCount: item.ocr.attemptCount,
+      completedAt: now,
+      failure,
+    });
+    if (!manifest.warnings.includes(failure.message)) manifest.warnings.push(failure.message);
+    this.transitionRapidWorkflow(manifest, "failed", failure.message);
+    item.error = failure.message;
+  }
+
+  private async persistQueuedOcrEligibility(
+    manifest: AiGraderLocalStationBridgeManifest,
+    front: FixedRigWarmProcessingResult | undefined,
+    back: FixedRigWarmProcessingResult | undefined,
+  ): Promise<void> {
     const queueItemId = manifest.rapidCapture.queueItemId;
-    if (!queueItemId) return;
-    const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
-    if (!item) return;
-    item.state = manifest.rapidCapture.workflowState ?? item.state;
-    item.updatedAt = manifest.updatedAt;
-    item.history = [...manifest.rapidCapture.workflowHistory];
-    item.mathematicalV1 = mathematicalRapidQueueSummary(manifest.mathematicalV1?.execution);
-    item.error = item.state === "failed" ? manifest.warnings.at(-1) ?? item.error : undefined;
-    this.queuedManifests.set(queueItemId, manifest);
-    await writeSessionManifest(manifest);
-    await this.persistRapidQueue();
+    if (!queueItemId || !manifest.sessionId || !manifest.reportId) {
+      throw new Error("Normalized OCR eligibility requires the exact persisted Rapid queue item.");
+    }
+    const identity = { queueItemId, gradingSessionId: manifest.sessionId, reportId: manifest.reportId };
+    const existing = this.exactQueuedItem(identity);
+    if (["eligible", "in_flight", "succeeded"].includes(existing.ocr.state)) return;
+    if (existing.ocr.state === "failed") throw new Error(existing.ocr.failure?.message ?? "Queued OCR is terminally failed.");
+    let images: PersistedAiGraderQueuedOcrImage[];
+    try {
+      const persistedImages = existing.ocr.images ?? this.persistedNormalizedOcrImagesFromManifest(manifest);
+      images = (["front", "back"] as const).map((side) => {
+        const persisted = persistedImages.find((candidate) => candidate.side === side);
+        if (persisted) return persisted;
+        const processed = side === "front" ? front : back;
+        return this.normalizedOcrImage(processed, side);
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Exact normalized OCR evidence is unavailable.";
+      await this.runRapidQueueMutation(async ({ trackManifest }) => {
+        const item = this.exactMutableQueuedItem(identity);
+        const queuedManifest = await this.exactQueuedManifest(item);
+        trackManifest(queuedManifest);
+        this.applyQueuedOcrFailure(item, queuedManifest, {
+          code: /missing/i.test(message) ? "AI_GRADER_OCR_NORMALIZED_EVIDENCE_MISSING" : "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID",
+          message,
+        });
+        return { value: undefined, manifests: [queuedManifest] };
+      });
+      throw error;
+    }
+    const verificationFailure = await this.runRapidQueueMutation(async ({ trackManifest }) => {
+      const item = this.exactMutableQueuedItem(identity);
+      const queuedManifest = await this.exactQueuedManifest(item);
+      if (item.ocr.state !== "waiting_for_normalized") {
+        if (["eligible", "in_flight", "succeeded"].includes(item.ocr.state)) return { value: undefined };
+        throw new Error(item.ocr.failure?.message ?? "Queued OCR is terminally failed.");
+      }
+      trackManifest(queuedManifest);
+      try {
+        for (const image of images) await this.verifiedQueuedOcrImage(item, queuedManifest, image);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Exact normalized OCR evidence is unavailable.";
+        this.applyQueuedOcrFailure(item, queuedManifest, {
+          code: /missing/i.test(message) ? "AI_GRADER_OCR_NORMALIZED_EVIDENCE_MISSING" : "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID",
+          message,
+        });
+        return { value: message, manifests: [queuedManifest] };
+      }
+      const now = new Date().toISOString();
+      this.applyQueuedOcrLifecycle(item, queuedManifest, {
+        state: "eligible",
+        updatedAt: now,
+        attemptCount: 0,
+        eligibleAt: now,
+        images,
+      });
+      return { value: undefined, manifests: [queuedManifest] };
+    });
+    if (verificationFailure) throw new Error(verificationFailure);
+  }
+
+  private async beginQueuedOcr(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
+    const attemptOwnerId = queuedOcrAttemptOwnerId(request.attemptOwnerId);
+    const verificationFailure = await this.runRapidQueueMutation(async ({ trackManifest }) => {
+      const item = this.exactMutableQueuedItem(request);
+      const manifest = await this.exactQueuedManifest(item);
+      if (item.ocr.state !== "eligible" || item.ocr.attemptCount !== 0 || !item.ocr.images || item.ocr.images.length !== 2) {
+        throw new Error("Queued OCR is not eligible for its one allowed execution.");
+      }
+      trackManifest(manifest);
+      try {
+        for (const image of item.ocr.images) await this.verifiedQueuedOcrImage(item, manifest, image);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Exact normalized OCR evidence became invalid.";
+        this.applyQueuedOcrFailure(item, manifest, {
+          code: "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID",
+          message,
+        });
+        return { value: message, manifests: [manifest] };
+      }
+      const now = new Date().toISOString();
+      this.applyQueuedOcrLifecycle(item, manifest, {
+        ...item.ocr,
+        state: "in_flight",
+        updatedAt: now,
+        attemptCount: 1,
+        attemptOwnerId,
+        startedAt: now,
+      });
+      return { value: undefined, manifests: [manifest] };
+    });
+    if (verificationFailure) throw new Error(verificationFailure);
+  }
+
+  private async completeQueuedOcr(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
+    const attemptOwnerId = queuedOcrAttemptOwnerId(request.attemptOwnerId);
+    const verificationFailure = await this.runRapidQueueMutation(async ({ trackManifest }) => {
+      const item = this.exactMutableQueuedItem(request);
+      const manifest = await this.exactQueuedManifest(item);
+      if (item.ocr.state !== "in_flight" || item.ocr.attemptCount !== 1 || !item.ocr.images || item.ocr.images.length !== 2) {
+        throw new Error("Queued OCR completion requires the exact one in-flight execution and cannot rerun.");
+      }
+      if (item.ocr.attemptOwnerId !== attemptOwnerId) {
+        throw new Error("Queued OCR completion attemptOwnerId does not match the exact in-flight owner.");
+      }
+      trackManifest(manifest);
+      try {
+        for (const image of item.ocr.images) await this.verifiedQueuedOcrImage(item, manifest, image);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Exact normalized OCR evidence changed before completion.";
+        this.applyQueuedOcrFailure(item, manifest, {
+          code: "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID",
+          message,
+        });
+        return { value: message, manifests: [manifest] };
+      }
+      let result: Record<string, unknown>;
+      try {
+        result = safeQueuedOcrResult(request.result, {
+          queueItemId: item.queueItemId,
+          gradingSessionId: item.sessionId,
+          reportId: item.reportId,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Queued OCR result failed exact safe-result validation.";
+        this.applyQueuedOcrFailure(item, manifest, {
+          code: /identity|queue|session|report/i.test(message) ? "AI_GRADER_OCR_IDENTITY_MISMATCH" : "AI_GRADER_OCR_INTERNAL_FAILED",
+          message,
+        });
+        return { value: message, manifests: [manifest] };
+      }
+      const now = new Date().toISOString();
+      this.applyQueuedOcrLifecycle(item, manifest, {
+        ...item.ocr,
+        state: "succeeded",
+        updatedAt: now,
+        completedAt: now,
+        result,
+      });
+      if (manifest.currentStep === "label_data_ready") {
+        this.transitionRapidWorkflow(
+          manifest,
+          "report_ready_needs_confirm",
+          "Exact queued OCR suggestions and background grade/report/release/Label V1 preparation are durably complete.",
+        );
+      }
+      return { value: undefined, manifests: [manifest] };
+    });
+    if (verificationFailure) throw new Error(verificationFailure);
+  }
+
+  private async failQueuedOcr(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
+    const attemptOwnerId = queuedOcrAttemptOwnerId(request.attemptOwnerId);
+    const failure = safeQueuedOcrFailure(request.failure);
+    await this.runRapidQueueMutation(async ({ trackManifest }) => {
+      const item = this.exactMutableQueuedItem(request);
+      const manifest = await this.exactQueuedManifest(item);
+      if (item.ocr.state !== "in_flight" || item.ocr.attemptCount !== 1) {
+        throw new Error("Queued OCR failure requires the exact one in-flight execution and cannot retry.");
+      }
+      if (item.ocr.attemptOwnerId !== attemptOwnerId) {
+        throw new Error("Queued OCR failure attemptOwnerId does not match the exact in-flight owner.");
+      }
+      trackManifest(manifest);
+      this.applyQueuedOcrFailure(item, manifest, failure);
+      return { value: undefined, manifests: [manifest] };
+    });
+  }
+
+  async queuedOcrDescriptor(identity: { queueItemId?: string; gradingSessionId?: string; reportId?: string }) {
+    const item = this.exactQueuedItem(identity);
+    const manifest = await this.exactQueuedManifest(item);
+    if (!["eligible", "in_flight"].includes(item.ocr.state) || !item.ocr.images || item.ocr.images.length !== 2) {
+      throw new Error("Queued OCR descriptor is unavailable for this exact item state.");
+    }
+    for (const image of item.ocr.images) await this.verifiedQueuedOcrImage(item, manifest, image);
+    return {
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+      status: item.ocr.state as "eligible" | "in_flight",
+      images: item.ocr.images.map(({ localPath: _localPath, ...image }) => image),
+    };
+  }
+
+  async queuedOcrAsset(
+    identity: { queueItemId?: string; gradingSessionId?: string; reportId?: string },
+    side: string | undefined,
+  ) {
+    if (side !== "front" && side !== "back") throw new Error("Queued OCR asset side must be front or back.");
+    const item = this.exactQueuedItem(identity);
+    const manifest = await this.exactQueuedManifest(item);
+    if (!["eligible", "in_flight"].includes(item.ocr.state) || !item.ocr.images) {
+      throw new Error("Queued OCR asset is unavailable for this exact item state.");
+    }
+    const image = item.ocr.images.find((candidate) => candidate.side === side);
+    if (!image) throw new Error(`Queued OCR ${side} asset is missing.`);
+    return { item, image, bytes: await this.verifiedQueuedOcrImage(item, manifest, image) };
+  }
+
+  private observeRapidOcrEligibility(queueItemId: string): Promise<void> {
+    const current = this.rapidOcrEligibilityObservers.get(queueItemId);
+    if (current) return current;
+    const observer = Promise.resolve().then(async () => {
+      const manifest = this.queuedManifests.get(queueItemId);
+      const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+      if (!manifest || !item || manifest.sessionId !== item.sessionId || manifest.reportId !== item.reportId) {
+        throw new Error(`Rapid OCR eligibility observer lost exact item ${queueItemId}.`);
+      }
+      const [frontProcessed, backProcessed] = await Promise.all([
+        this.awaitWarmProcessing(manifest, "front"),
+        this.awaitWarmProcessing(manifest, "back"),
+      ]);
+      await this.persistQueuedOcrEligibility(manifest, frontProcessed, backProcessed);
+    }).catch(async (error) => {
+      const message = (error instanceof Error ? error.message : "Exact normalized OCR evidence processing failed.").slice(0, 500);
+      await this.runRapidQueueMutation(async ({ trackManifest }) => {
+        const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+        const manifest = this.queuedManifests.get(queueItemId);
+        if (!item || !manifest) return { value: undefined };
+        trackManifest(manifest);
+        this.applyQueuedOcrFailure(item, manifest, {
+          code: /missing|unavailable/i.test(message)
+            ? "AI_GRADER_OCR_NORMALIZED_EVIDENCE_MISSING"
+            : "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID",
+          message,
+        });
+        return { value: undefined, manifests: [manifest] };
+      });
+      throw error;
+    });
+    this.rapidOcrEligibilityObservers.set(queueItemId, observer);
+    void observer.catch(() => {});
+    return observer;
+  }
+
+  private startRapidBackgroundForReleasedCard(queueItemId: string): void {
+    this.observeRapidOcrEligibility(queueItemId);
+    this.enqueueRapidFinalization(queueItemId);
   }
 
   private enqueueRapidFinalization(queueItemId: string) {
@@ -5738,6 +7597,7 @@ export class AiGraderLocalStationBridgeService {
         const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
         if (!manifest || !item) throw new Error(`Rapid capture queue item ${queueItemId} is no longer available.`);
         try {
+          await this.observeRapidOcrEligibility(queueItemId);
           const reportId = manifest.reportId ?? "local-report";
           if (gradingContractFor(manifest) === "mathematical_calibration_v1") {
             const execution = await this.runMathematicalStationPackage(manifest);
@@ -5811,175 +7671,369 @@ export class AiGraderLocalStationBridgeService {
           ) {
             throw new Error("Rapid background preparation did not produce the exact final grade and label-ready release for this queued report.");
           }
-          manifest.currentStep = "label_data_ready";
-          this.transitionRapidWorkflow(
-            manifest,
-            "report_ready_needs_confirm",
-            "Background diagnostics, final grade, finalized release, and label data are ready for the single Approve & Publish authority.",
-          );
-          await this.syncQueuedManifest(manifest);
+          await this.runRapidQueueMutation(async ({ trackManifest }) => {
+            const mutableItem = this.exactMutableQueuedItem({
+              queueItemId,
+              gradingSessionId: manifest.sessionId,
+              reportId: manifest.reportId,
+            });
+            trackManifest(manifest);
+            manifest.rapidCapture.ocr = publicRapidCaptureQueueItem(mutableItem).ocr;
+            manifest.currentStep = "label_data_ready";
+            this.queuedManifests.set(queueItemId, manifest);
+            if (mutableItem.ocr.state === "succeeded") {
+              this.transitionRapidWorkflow(
+                manifest,
+                "report_ready_needs_confirm",
+                "Exact queued OCR suggestions and background diagnostics, final grade, finalized release, and Label V1 data are durably ready.",
+              );
+            } else if (mutableItem.ocr.state === "failed") {
+              this.transitionRapidWorkflow(
+                manifest,
+                "failed",
+                mutableItem.ocr.failure?.message ?? "Exact queued OCR failed terminally.",
+              );
+            } else {
+              this.transitionRapidWorkflow(
+                manifest,
+                "finalizing",
+                "Background grade/report/release/Label V1 preparation is complete; the exact queued OCR result remains pending.",
+              );
+            }
+            return { value: undefined, manifests: [manifest] };
+          });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Rapid background finalization failed.";
-          if (!manifest.warnings.includes(message)) manifest.warnings.push(message);
-          this.transitionRapidWorkflow(manifest, "failed", message);
-          const failedItem = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
-          if (failedItem) failedItem.error = message;
-          await this.syncQueuedManifest(manifest);
+          await this.runRapidQueueMutation(async ({ trackManifest }) => {
+            const failedItem = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
+            if (!failedItem) return { value: undefined };
+            trackManifest(manifest);
+            manifest.rapidCapture.ocr = publicRapidCaptureQueueItem(failedItem).ocr;
+            if (!manifest.warnings.includes(message)) manifest.warnings.push(message);
+            this.queuedManifests.set(queueItemId, manifest);
+            this.transitionRapidWorkflow(manifest, "failed", message);
+            failedItem.error = message;
+            return { value: undefined, manifests: [manifest] };
+          });
+        } finally {
+          if (manifest.sessionId) {
+            this.warmProcessingJobs.delete(`${manifest.sessionId}:front`);
+            this.warmProcessingJobs.delete(`${manifest.sessionId}:back`);
+          }
+          this.rapidOcrEligibilityObservers.delete(queueItemId);
         }
       });
     void this.reportWorker.catch(() => {});
   }
 
   private async recoverPersistedRapidFinalization() {
-    const outputRoot = `${path.resolve(this.config.outputDir).toLowerCase()}${path.sep}`;
-    for (const item of this.rapidQueue.items.filter((candidate) => candidate.state === "finalizing")) {
-      const resolvedManifestPath = path.resolve(item.manifestPath);
-      if (!resolvedManifestPath.toLowerCase().startsWith(outputRoot) || path.basename(resolvedManifestPath) !== "station-session.json") {
-        item.state = "failed";
-        item.error = "Rapid finalization recovery failed because the persisted manifest reference was invalid.";
-        item.updatedAt = new Date().toISOString();
-        continue;
-      }
-      const manifest = await readJsonFile(resolvedManifestPath) as AiGraderLocalStationBridgeManifest | undefined;
-      if (!manifest || manifest.sessionId !== item.sessionId || manifest.reportId !== item.reportId) {
-        item.state = "failed";
-        item.error = "Rapid finalization recovery failed because the persisted session identity did not match the queue item.";
-        item.updatedAt = new Date().toISOString();
-        continue;
-      }
-      manifest.rapidCapture ??= {
-        enabled: true,
-        workflowHistory: [],
-        humanConfirmationRequired: true,
-        autoConfirm: false,
-        autoPublish: false,
-      };
-      manifest.rapidCapture.queueItemId = item.queueItemId;
-      this.ensureCaptureTiming(manifest);
-      this.queuedManifests.set(item.queueItemId, manifest);
-      const sideProcessingComplete = (["front", "back"] as const).every((side) =>
-        manifest.warmRunnerStatus?.phases?.some((phase) => phase.id === `process_${side}_artifacts` && phase.status === "completed"),
-      );
-      if (sideProcessingComplete) {
-        this.enqueueRapidFinalization(item.queueItemId);
-        continue;
-      }
-      const message = "Rapid finalization recovery stopped because the bridge restarted before both side-processing packages completed.";
-      if (!manifest.warnings.includes(message)) manifest.warnings.push(message);
-      this.transitionRapidWorkflow(manifest, "failed", message);
-      item.error = message;
-      await writeSessionManifest(manifest);
-    }
     await this.persistRapidQueue();
-  }
-
-  private async queueCurrentRapidCard() {
-    if (!this.rapidQueue.rapidCaptureEnabled || !this.manifest.rapidCapture.enabled) {
-      throw new Error("Enable Rapid Capture before queueing the current card.");
-    }
-    if (this.captureLock) {
-      throw new Error(`Cannot queue the current card while capture lock is held by ${this.captureLock.owner}.`);
-    }
-    const { sessionId, reportId } = this.manifest;
-    if (!sessionId || !reportId || !this.manifest.outputs.manifestPath) {
-      throw new Error("Rapid Capture queueing requires an active station session and report identity.");
-    }
-    if (!this.manifest.outputs.frontPackageDir || !this.manifest.outputs.backPackageDir) {
-      throw new Error("Rapid Capture queueing requires persisted front and back capture packages.");
-    }
-    if (this.manifest.captureFailure || this.manifest.rapidCapture.workflowState === "failed") {
-      throw new Error("A failed card cannot enter the Rapid Capture ready queue.");
-    }
-    const snapshot = this.manifest;
-    const queueItemId = `${sessionId}-rapid-card`;
-    snapshot.rapidCapture.queueItemId = queueItemId;
-    snapshot.rapidCapture.safelyQueuedAt = new Date().toISOString();
-    this.recordCaptureTimingEvent(snapshot, { id: "safely_queued", at: snapshot.rapidCapture.safelyQueuedAt });
-    this.transitionRapidWorkflow(
-      snapshot,
-      "finalizing",
-      "Both raw side packages are persisted; one serialized worker is completing the report in the background.",
-    );
-    const item: PersistedAiGraderRapidCaptureQueueItem = {
-      queueItemId,
-      sessionId,
-      reportId,
-      state: "finalizing",
-      queuedAt: snapshot.rapidCapture.safelyQueuedAt,
-      updatedAt: snapshot.updatedAt,
-      history: [...snapshot.rapidCapture.workflowHistory],
-      humanConfirmationRequired: true,
-      autoConfirmed: false,
-      autoPublished: false,
-      manifestPath: snapshot.outputs.manifestPath!,
-    };
-    this.rapidQueue.items = retainAiGraderRapidCaptureQueueItems([
-      item,
-      ...this.rapidQueue.items.filter((candidate) => candidate.queueItemId !== queueItemId),
-    ]);
-    this.queuedManifests.set(queueItemId, snapshot);
-    await writeSessionManifest(snapshot);
-    await this.persistRapidQueue();
-    this.enqueueRapidFinalization(queueItemId);
-    await this.createFreshSession(
-      { captureProfile: snapshot.captureProfile, gradingContract: gradingContractFor(snapshot) },
-      new Date().toISOString(),
-      "rapid_continuation",
-    );
-  }
-
-  private async activateRapidQueueItem(queueItemId: string) {
-    if (!queueItemId.trim()) throw new Error("Rapid Capture queue item ID is required.");
-    if (this.captureLock) throw new Error(`Cannot activate a queued card while capture lock is held by ${this.captureLock.owner}.`);
-    if (
-      this.previewProcess
-      || this.previewStop
-      || this.manifest.previewStatus.status === "live"
-      || this.manifest.previewStatus.status === "starting"
-      || this.manifest.previewStatus.cameraOwnership === "preview_stream"
-    ) {
-      await this.stopPreviewStream("Rapid Capture review activation", {
-        waitForRelease: true,
-        requireRelease: true,
-        settleMs: PREVIEW_CAMERA_SETTLE_MS,
+    const recovering = this.committedRapidQueue.items
+      .filter((candidate) => candidate.state === "finalizing")
+      .map((item) => ({ queueItemId: item.queueItemId, gradingSessionId: item.sessionId, reportId: item.reportId }));
+    const failRecovery = async (
+      identity: { queueItemId: string; gradingSessionId: string; reportId: string },
+      message: string,
+      manifest?: AiGraderLocalStationBridgeManifest,
+    ) => {
+      await this.runRapidQueueMutation(async ({ trackManifest }) => {
+        const item = this.exactMutableQueuedItem(identity);
+        const now = new Date().toISOString();
+        const event: AiGraderRapidCaptureWorkflowEvent = { state: "failed", at: now, detail: message };
+        item.state = "failed";
+        item.updatedAt = now;
+        item.history = [...item.history, event].slice(-100);
+        item.error = message;
+        if (manifest) {
+          trackManifest(manifest);
+          manifest.rapidCapture.ocr = publicRapidCaptureQueueItem(item).ocr;
+          manifest.rapidCapture.workflowState = "failed";
+          manifest.rapidCapture.workflowHistory = [...manifest.rapidCapture.workflowHistory, event].slice(-100);
+          manifest.updatedAt = now;
+          if (!manifest.warnings.includes(message)) manifest.warnings.push(message);
+          manifest.progressLog.push(`${now} Rapid capture recovery failed: ${message}`);
+          this.queuedManifests.set(item.queueItemId, manifest);
+        }
+        return { value: undefined, ...(manifest ? { manifests: [manifest] } : {}) };
       });
+    };
+
+    for (const identity of recovering) {
+      let manifest: AiGraderLocalStationBridgeManifest | undefined;
+      try {
+        const item = this.exactQueuedItem(identity);
+        manifest = await this.exactQueuedManifest(item);
+        this.ensureCaptureTiming(manifest);
+        const persistedManifestOcrImages = this.persistedNormalizedOcrImagesFromManifest(manifest);
+        if (manifest.currentStep === "label_data_ready") {
+          const packageKind = gradingContractFor(manifest);
+          const reportBundlePath = persistedReportPackagePath(
+            manifest.outputs.reportBundlePath,
+            this.config,
+            item.reportId,
+            "report bundle",
+            packageKind === "mathematical_calibration_v1"
+              ? "report-bundle-v0.3.json"
+              : "report-bundle.json",
+            packageKind,
+          );
+          const productionReleasePath = persistedReportPackagePath(manifest.outputs.productionReleasePath, this.config, item.reportId, "production release", "production-release.json", packageKind);
+          const labelDataPath = persistedReportPackagePath(manifest.outputs.labelDataPath, this.config, item.reportId, "Label V1 data", "label-data.json", packageKind);
+          const [storedBundle, storedRelease, labelExists] = await Promise.all([
+            readStationReportBundleFromPath(reportBundlePath),
+            readStationProductionReleaseFromPath(productionReleasePath),
+            exists(labelDataPath),
+          ]);
+          const storedBundleIdentityMatches = storedBundle
+            ? isMathematicalReportBundle(storedBundle)
+              ? storedBundle.reportId === item.reportId
+              : storedBundle.reportId === item.reportId && storedBundle.gradingSessionId === item.sessionId
+            : false;
+          if (
+            !storedBundle
+            || !storedRelease
+            || !labelExists
+            || !storedBundleIdentityMatches
+            || storedRelease.reportId !== item.reportId
+            || storedRelease.gradingSessionId !== item.sessionId
+            || storedRelease.finalGradeComputed !== true
+            || storedRelease.labelDataGenerated !== true
+            || storedRelease.qrPayloadGenerated !== true
+            || storedRelease.label.status !== "label_data_ready"
+            || JSON.stringify(storedBundle) !== JSON.stringify(manifest.reportBundle)
+            || JSON.stringify(storedRelease) !== JSON.stringify(manifest.productionRelease)
+          ) {
+            throw new Error("Persisted background report/release/Label V1 evidence is not exact and durable.");
+          }
+          await this.runRapidQueueMutation(async ({ trackManifest }) => {
+            const mutableItem = this.exactMutableQueuedItem(identity);
+            trackManifest(manifest!);
+            if (mutableItem.ocr.state === "waiting_for_normalized") {
+              const images = this.mergePersistedNormalizedOcrImages(mutableItem.ocr.images, persistedManifestOcrImages);
+              mutableItem.ocr = { ...mutableItem.ocr, ...(images ? { images } : {}) };
+            }
+            manifest!.rapidCapture.ocr = publicRapidCaptureQueueItem(mutableItem).ocr;
+            this.queuedManifests.set(mutableItem.queueItemId, manifest!);
+            if (mutableItem.ocr.state === "succeeded") {
+              this.transitionRapidWorkflow(
+                manifest!,
+                "report_ready_needs_confirm",
+                "Reload restored exact completed OCR and completed background preparation without rerunning either.",
+              );
+            }
+            return { value: undefined, manifests: [manifest!] };
+          });
+          if (this.exactQueuedItem(identity).ocr.state === "waiting_for_normalized") {
+            await this.persistQueuedOcrEligibility(manifest, undefined, undefined);
+          }
+          continue;
+        }
+        const sideProcessingComplete = (["front", "back"] as const).every((side) =>
+          manifest!.warmRunnerStatus?.phases?.some((phase) => phase.id === `process_${side}_artifacts` && phase.status === "completed"),
+        );
+        if (!sideProcessingComplete) {
+          throw new Error("Bridge restart interrupted exact side processing before both normalized packages were durably completed; this item will not retry.");
+        }
+        await this.runRapidQueueMutation(async ({ trackManifest }) => {
+          const mutableItem = this.exactMutableQueuedItem(identity);
+          trackManifest(manifest!);
+          if (mutableItem.ocr.state === "waiting_for_normalized") {
+            const images = this.mergePersistedNormalizedOcrImages(mutableItem.ocr.images, persistedManifestOcrImages);
+            mutableItem.ocr = { ...mutableItem.ocr, ...(images ? { images } : {}) };
+          }
+          manifest!.rapidCapture.ocr = publicRapidCaptureQueueItem(mutableItem).ocr;
+          this.queuedManifests.set(mutableItem.queueItemId, manifest!);
+          return { value: undefined, manifests: [manifest!] };
+        });
+        if (this.exactQueuedItem(identity).ocr.state === "waiting_for_normalized") {
+          await this.persistQueuedOcrEligibility(manifest, undefined, undefined);
+        }
+        this.startRapidBackgroundForReleasedCard(identity.queueItemId);
+      } catch (error) {
+        await failRecovery(
+          identity,
+          error instanceof Error ? error.message : "Rapid finalization recovery failed for this exact item.",
+          manifest && manifest.captureProfile === "production_fast" && manifest.rapidCapture?.queueItemId === identity.queueItemId
+            ? manifest
+            : undefined,
+        );
+      }
     }
-    if (this.manifest.outputs.frontPackageDir || this.manifest.outputs.backPackageDir) {
-      throw new Error("Queue the active card before opening a completed Rapid Capture report.");
-    }
-    const freshSessionProgressed = Boolean(this.manifest.sessionId) && (
-      this.manifest.currentStep !== "capture_front"
-      || this.manifest.commandResults.length > 0
-      || this.manifest.rapidCapture.workflowHistory.length > 0
-    );
-    if (freshSessionProgressed) {
-      throw new Error("The next card has already started; finish or reset it before opening a queued report.");
-    }
-    const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
-    if (!item) throw new Error(`Rapid Capture queue item ${queueItemId} was not found.`);
+  }
+
+  private async activateRapidQueueItem(request: AiGraderLocalStationBridgeActionRequest) {
+    const item = this.exactQueuedItem(request);
     if (![
       "finding_review_required",
       "insufficient_evidence",
       "report_ready_needs_confirm",
       "confirmed_needs_publish",
-      "published",
     ].includes(item.state)) {
-      throw new Error(`Rapid Capture queue item ${queueItemId} is not ready for review (state ${item.state}).`);
+      throw new Error(`Rapid Capture queue item ${item.queueItemId} is not ready for review (state ${item.state}).`);
     }
-    let manifest = this.queuedManifests.get(queueItemId);
-    if (!manifest) manifest = await readJsonFile(item.manifestPath) as AiGraderLocalStationBridgeManifest | undefined;
-    if (!manifest || manifest.sessionId !== item.sessionId || manifest.reportId !== item.reportId) {
-      throw new Error(`Rapid Capture queue item ${queueItemId} has no matching persisted session manifest.`);
+    const manifest = await this.exactQueuedManifest(item);
+    this.activeQueueItemId = item.queueItemId;
+    manifest.progressLog.push(`${new Date().toISOString()} Selected this exact queued report for review without changing capture, preview, lighting, or session ownership.`);
+    await writeSessionManifest(manifest);
+  }
+
+  private async submitMathematicalFindingReviews(
+    request: AiGraderLocalStationBridgeActionRequest,
+  ): Promise<void> {
+    const item = this.exactQueuedItem(request);
+    if (this.activeQueueItemId !== item.queueItemId) {
+      throw new Error("Mathematical finding review requires the exact currently activated queue/session/report triple.");
     }
-    if (this.manifest.sessionId) await this.releaseStationRuntimeForReplacement("Rapid Capture review activation");
-    this.manifest = cloneManifest(manifest);
-    this.releaseFullForensicPreviewHold("Rapid Capture report opened for Approve & Publish");
-    this.manifest.rapidCapture.enabled = this.rapidQueue.rapidCaptureEnabled;
-    this.manifest.rapidCapture.queueItemId = queueItemId;
-    this.activeQueueItemId = queueItemId;
-    this.queuedManifests.set(queueItemId, this.manifest);
-    this.manifest.progressLog.push(`${new Date().toISOString()} Opened Rapid Capture report for the single Approve & Publish authority.`);
-    await writeSessionManifest(this.manifest);
+    if (item.state !== "finding_review_required") {
+      throw new Error(`Mathematical finding review requires finding_review_required state, not ${item.state}.`);
+    }
+    const manifest = await this.exactQueuedManifest(item);
+    if (gradingContractFor(manifest) !== "mathematical_calibration_v1") {
+      throw new Error("Finding-review submission is available only for an explicit Mathematical V1 queued session.");
+    }
+    assertRealReady(this.config, manifest);
+    const reviews = this.validatedMathematicalFindingReviews(
+      manifest,
+      request.mathematicalReviewRequestSha256,
+      request.mathematicalFindingReviews,
+    );
+    const execution = await this.runMathematicalStationPackage(manifest, reviews);
+    if (execution.status === "completed") {
+      const release = await this.writeProductionReleaseForManifest(manifest, {
+        operatorId: request.operatorId ?? "rapid-reviewed-background-preparation",
+        warningsAccepted: request.warningsAccepted,
+        overrideReason: request.overrideReason,
+      });
+      if (
+        release.reportId !== manifest.reportId
+        || release.gradingSessionId !== manifest.sessionId
+        || release.finalGradeComputed !== true
+        || release.labelDataGenerated !== true
+        || release.qrPayloadGenerated !== true
+        || release.label.status !== "label_data_ready"
+        || !manifest.outputs.productionReleasePath
+        || !manifest.outputs.labelDataPath
+      ) {
+        throw new Error("Reviewed Mathematical Rapid item did not produce the exact strict release and Label V1 data.");
+      }
+      manifest.currentStep = "label_data_ready";
+      const mutableItem = this.exactMutableQueuedItem(request);
+      if (mutableItem.ocr.state === "succeeded") {
+        this.transitionRapidWorkflow(
+          manifest,
+          "report_ready_needs_confirm",
+          "Explicit finding reviews, queued OCR, strict Mathematical V1 release, and Label V1 data are durably ready for Approve & Publish.",
+        );
+      } else if (mutableItem.ocr.state === "failed") {
+        this.transitionRapidWorkflow(
+          manifest,
+          "failed",
+          mutableItem.ocr.failure?.message ?? "Exact queued OCR failed terminally.",
+        );
+      } else {
+        this.transitionRapidWorkflow(
+          manifest,
+          "finalizing",
+          "Explicit finding reviews and strict Mathematical V1 release are complete; exact queued OCR remains pending.",
+        );
+      }
+    } else if (execution.status === "finding_review_required") {
+      this.transitionRapidWorkflow(
+        manifest,
+        "finding_review_required",
+        "Submitted reviews did not satisfy the exact request; no finding was auto-confirmed.",
+      );
+    } else if (execution.status === "insufficient_evidence") {
+      this.transitionRapidWorkflow(
+        manifest,
+        "insufficient_evidence",
+        "Reviewed Mathematical V1 rerun stopped fail-closed at " + execution.failedStage + ".",
+      );
+    }
+    await this.syncQueuedManifest(manifest);
+  }
+
+  private async publishSelectedRapidQueueItem(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
+    const item = this.exactQueuedItem(request);
+    if (this.activeQueueItemId !== item.queueItemId) {
+      throw new Error("Approve & Publish requires the exact currently activated queue/session/report triple.");
+    }
+    if (!["report_ready_needs_confirm", "confirmed_needs_publish"].includes(item.state) || item.ocr.state !== "succeeded") {
+      throw new Error("Approve & Publish requires one review-ready item with its durable exact OCR suggestions.");
+    }
+    const manifest = await this.exactQueuedManifest(item);
+    if (manifest.currentStep !== "label_data_ready" || !manifest.reportBundle || !manifest.productionRelease) {
+      throw new Error("Approve & Publish requires completed exact background grade/report/release/Label V1 preparation.");
+    }
+    const publication = exactHostedPublicationEvidence(request.publication, {
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+    });
+    const release = manifest.productionRelease;
+    const reportBundleIdentityMatches = isMathematicalReportBundle(manifest.reportBundle)
+      ? manifest.reportBundle.reportId === item.reportId
+      : manifest.reportBundle.reportId === item.reportId
+        && manifest.reportBundle.gradingSessionId === item.sessionId;
+    if (
+      !reportBundleIdentityMatches
+      || release.reportId !== item.reportId
+      || release.gradingSessionId !== item.sessionId
+      || release.finalGradeComputed !== true
+      || release.labelDataGenerated !== true
+      || release.qrPayloadGenerated !== true
+      || release.label.status !== "label_data_ready"
+      || !manifest.outputs.reportBundlePath
+      || !manifest.outputs.productionReleasePath
+      || !manifest.outputs.labelDataPath
+    ) {
+      throw new Error("Approve & Publish background report/release/Label V1 identity or readiness is invalid.");
+    }
+    const packageKind = gradingContractFor(manifest);
+    const reportBundlePath = persistedReportPackagePath(
+      manifest.outputs.reportBundlePath,
+      this.config,
+      item.reportId,
+      "report bundle",
+      isMathematicalReportBundle(manifest.reportBundle)
+        ? "report-bundle-v0.3.json"
+        : "report-bundle.json",
+      packageKind,
+    );
+    const productionReleasePath = persistedReportPackagePath(manifest.outputs.productionReleasePath, this.config, item.reportId, "production release", "production-release.json", packageKind);
+    const labelDataPath = persistedReportPackagePath(manifest.outputs.labelDataPath, this.config, item.reportId, "Label V1 data", "label-data.json", packageKind);
+    const [persistedBundle, persistedRelease] = await Promise.all([
+      readStationReportBundleFromPath(reportBundlePath),
+      readStationProductionReleaseFromPath(productionReleasePath),
+    ]);
+    if (
+      !persistedBundle
+      || !persistedRelease
+      || JSON.stringify(persistedBundle) !== JSON.stringify(manifest.reportBundle)
+      || JSON.stringify(persistedRelease) !== JSON.stringify(release)
+      || !(await exists(labelDataPath))
+    ) {
+      throw new Error("Approve & Publish requires the unchanged durable background report, release, and Label V1 artifacts.");
+    }
+    await this.runRapidQueueMutation(async ({ trackManifest }) => {
+      const mutableItem = this.exactMutableQueuedItem(request);
+      const mutableManifest = await this.exactQueuedManifest(mutableItem);
+      if (
+        this.activeQueueItemId !== mutableItem.queueItemId
+        || !["report_ready_needs_confirm", "confirmed_needs_publish"].includes(mutableItem.state)
+        || mutableItem.ocr.state !== "succeeded"
+        || mutableManifest.currentStep !== "label_data_ready"
+        || JSON.stringify(mutableManifest.reportBundle) !== JSON.stringify(persistedBundle)
+        || JSON.stringify(mutableManifest.productionRelease) !== JSON.stringify(persistedRelease)
+      ) {
+        throw new Error("Approve & Publish authority changed before the exact local publication transition.");
+      }
+      trackManifest(mutableManifest);
+      mutableManifest.currentStep = "session_complete";
+      mutableManifest.progressLog.push(`${publication.publishedAt} Hosted atomic publication was observed for only selected item ${mutableItem.queueItemId}/${mutableItem.sessionId}/${mutableItem.reportId}; immutable background release and Label V1 were reused.`);
+      this.transitionRapidWorkflow(mutableManifest, "published", "Exact hosted atomic publication completed for this selected queued report only.");
+      return { value: undefined, manifests: [mutableManifest] };
+    });
   }
 
   private async releaseStationRuntimeForReplacement(reason: string) {
@@ -6011,42 +8065,39 @@ export class AiGraderLocalStationBridgeService {
   private createFreshSession(
     request: {
       reportId?: string;
-      captureProfile: FixedRigCaptureProfile;
+      captureProfile: "production_fast";
       gradingContract?: AiGraderGradingContract;
       mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
     },
     now = new Date().toISOString(),
-    selectionSource: AiGraderLocalStationBridgeManifest["captureProfileGuard"]["selectionSource"] = "operator_setting"
   ) {
     return this.serializeTerminalLifecycle(async () => {
       await this.awaitLightingLifecycleIdle();
-      return this.createFreshSessionUnlocked(request, now, selectionSource);
+      return this.createFreshSessionUnlocked(request, now);
     });
   }
 
   private async createFreshSessionUnlocked(
     request: {
       reportId?: string;
-      captureProfile: FixedRigCaptureProfile;
+      captureProfile: "production_fast";
       gradingContract?: AiGraderGradingContract;
       mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
     },
     now = new Date().toISOString(),
-    selectionSource: AiGraderLocalStationBridgeManifest["captureProfileGuard"]["selectionSource"] = "operator_setting"
   ) {
     if (this.captureLock) {
       throw new Error(`Cannot start a new card while capture lock is held by ${this.captureLock.owner}.`);
     }
+    this.assertCallerSuppliedReportIdAvailable(request.reportId);
     if (this.manifest.sessionId) {
       let processingError: Error | undefined;
-      if (selectionSource !== "rapid_continuation") {
-        try {
-          await this.cancelWarmProcessingSession(this.manifest.sessionId, "station session replacement");
-        } catch (error) {
-          processingError = new Error(boundedProcessingWorkerError(error));
-          this.manifest.warmRunnerStatus.status = "failed";
-          if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
-        }
+      try {
+        await this.cancelWarmProcessingSession(this.manifest.sessionId, "station session replacement");
+      } catch (error) {
+        processingError = new Error(boundedProcessingWorkerError(error));
+        this.manifest.warmRunnerStatus.status = "failed";
+        if (!this.manifest.warnings.includes(processingError.message)) this.manifest.warnings.push(processingError.message);
       }
       let runtimeError: Error | undefined;
       try {
@@ -6062,11 +8113,9 @@ export class AiGraderLocalStationBridgeService {
     const { packageId, packageDir } = await createFixedRigPackageDir(this.config.outputDir, "ai-grader-browser-station-session");
     this.releaseFullForensicPreviewHold("new station session started");
     this.clearLiveLightingWatchdog();
-    const manifest = newManifest(this.config, this.rapidQueue.rapidCaptureEnabled, now);
+    const manifest = newManifest(this.config, now);
     manifest.gradingContract = request.gradingContract ?? "legacy_v0";
-    manifest.captureProfile = parseCaptureProfile(request.captureProfile);
-    manifest.captureProfileGuard.selectionSource = selectionSource;
-    manifest.captureProfileGuard.productionFastOptIn = request.captureProfile === "production_fast";
+    manifest.captureProfile = "production_fast";
     manifest.captureTiming = createAiGraderCaptureTimingMetadata({
       captureProfile: manifest.captureProfile,
       hardwareMeasurement: false,
@@ -6089,7 +8138,6 @@ export class AiGraderLocalStationBridgeService {
     this.frontCaptureInFlightKey = undefined;
     this.backCaptureOperations.clear();
     this.backCaptureInFlightKey = undefined;
-    this.activeQueueItemId = undefined;
     this.resetPreviewGeometryAnalysis();
     this.setExecutionPath("warm_full_forensic_runner", undefined, manifest);
     this.markWarmPhase({
@@ -6105,9 +8153,7 @@ export class AiGraderLocalStationBridgeService {
     await writeSessionManifest(manifest);
     try {
       await this.applyConfiguredDefaultLightingUnlocked(
-        selectionSource === "rapid_continuation"
-          ? "Rapid continuation configured positioning light"
-          : "Start New Card configured positioning light",
+        "Start New Card configured positioning light",
       );
       manifest.progressLog.push(`${new Date().toISOString()} Configured positioning light is controller-acknowledged and Capture Front lighting-ready.`);
       await writeSessionManifest(manifest);
@@ -6115,7 +8161,68 @@ export class AiGraderLocalStationBridgeService {
       const message = boundedBackPositioningError(error).message;
       manifest.progressLog.push(`${new Date().toISOString()} Configured positioning light was not fully acknowledged; this session is not capture-ready.`);
       await writeSessionManifest(manifest);
-      throw new Error(`Start New Card could not establish the configured positioning light. Retry Start New Card. ${message}`);
+      const safeOffVerified = manifest.liveLighting.physicalState.state === "safe_off_verified"
+        && manifest.liveLighting.physicalState.complete === true;
+      if (safeOffVerified) {
+        this.manifest = this.cleanStartAfterFailedStartManifest(manifest, message);
+        await writeSessionManifest(this.manifest);
+      }
+      throw new Error(
+        safeOffVerified
+          ? `Start New Card could not establish the configured positioning light. Retry Start New Card. ${message}`
+          : `Start New Card could not establish or safely release the configured positioning light; authoritative ownership remains blocked. ${message}`,
+      );
+    }
+  }
+
+  private canonicalCallerSuppliedReportId(reportId: string | undefined): string | undefined {
+    if (reportId === undefined) return;
+    const canonicalReportId = safeReportPackageSegment(reportId);
+    if (canonicalReportId !== reportId) {
+      throw new Error('Start New Card requires a canonical untrimmed caller-supplied report ID.');
+    }
+    return canonicalReportId;
+  }
+
+  private assertCallerSuppliedReportIdDoesNotMatchActive(canonicalReportId: string): void {
+    if (this.manifest.reportId?.toLowerCase() === canonicalReportId.toLowerCase()) {
+      throw new Error(
+        `Start New Card rejects caller-supplied report ID ${canonicalReportId}; active station session ${this.manifest.sessionId ?? 'unknown'} already owns it.`,
+      );
+    }
+  }
+
+  private assertCallerSuppliedReportIdAvailable(reportId: string | undefined): void {
+    const canonicalReportId = this.canonicalCallerSuppliedReportId(reportId);
+    if (canonicalReportId === undefined) return;
+    this.assertCallerSuppliedReportIdDoesNotMatchActive(canonicalReportId);
+    const normalizedReportId = canonicalReportId.toLowerCase();
+    const queuedConflict = this.rapidQueue.items.find(
+      (item) => item.reportId.toLowerCase() === normalizedReportId,
+    );
+    if (queuedConflict) {
+      throw new Error(
+        `Start New Card rejects caller-supplied report ID ${canonicalReportId}; it already belongs to exact queue item ${queuedConflict.queueItemId}.`,
+      );
+    }
+    if (existsSync(publishPackageDir(this.config, canonicalReportId))) {
+      throw new Error(`Start New Card rejects caller-supplied report ID ${canonicalReportId}; its exact report package already exists.`);
+    }
+    if (!existsSync(this.config.outputDir)) return;
+    for (const entry of readdirSync(this.config.outputDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const manifestPath = path.join(this.config.outputDir, entry.name, 'station-session.json');
+      if (!existsSync(manifestPath)) continue;
+      try {
+        const persisted = JSON.parse(readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
+        if (typeof persisted.reportId === 'string' && persisted.reportId.toLowerCase() === normalizedReportId) {
+          throw new Error(
+            `Start New Card rejects caller-supplied report ID ${canonicalReportId}; a persisted station session already owns it.`,
+          );
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('Start New Card rejects caller-supplied report ID')) throw error;
+      }
     }
   }
   private updatePreviewStatus(update: Partial<AiGraderLocalStationPreviewStatus>) {
@@ -7680,11 +9787,7 @@ export class AiGraderLocalStationBridgeService {
     const key = this.warmProcessingKey(manifest, side);
     const job = this.warmProcessingJobs.get(key);
     if (!job) return undefined;
-    try {
-      return await job;
-    } finally {
-      this.warmProcessingJobs.delete(key);
-    }
+    return job;
   }
 
   private async runSafeOffCleanup(reason: string): Promise<boolean> {
@@ -7809,6 +9912,18 @@ export class AiGraderLocalStationBridgeService {
       if (this.config.mode === "mock") {
         const finishedAtMs = Date.now();
         const mockPackageDir = path.join(sessionManifest.outputs.sessionDir ?? this.config.outputDir, `mock-${stepId}`);
+        const processingRequestId = `fixed-rig-processing-${crypto.randomUUID()}`;
+        const mockPackageId = path.basename(mockPackageDir);
+        const mockRoles = ["dark_control", "all_on", "accepted_profile", ...Array.from({ length: 8 }, (_, index) => `channel_${index + 1}`)];
+        const mockRoleCapture = (role: string) => ({
+          role,
+          capture: {
+            sha256: crypto.createHash("sha256").update(`${sessionManifest.sessionId}:${side}:${role}`).digest("hex"),
+            byteSize: 1,
+            mimeType: "image/tiff",
+            savedImageFormat: "TIFF",
+          },
+        });
         const result: AiGraderStationCommandResult = {
           stepId,
           ok: true,
@@ -7821,7 +9936,25 @@ export class AiGraderLocalStationBridgeService {
             executionPath: "warm_full_forensic_runner",
             captureProfile: sessionManifest.captureProfile,
             rawEvidenceFormat: sessionManifest.captureProfile === "production_fast" ? "tiff" : "png",
+            packageId: mockPackageId,
             packageDir: mockPackageDir,
+            warmBatch: {
+              packageId: mockPackageId,
+              side,
+              captures: {
+                darkControl: mockRoleCapture(mockRoles[0]!),
+                allOn: mockRoleCapture(mockRoles[1]!),
+                acceptedProfile: mockRoleCapture(mockRoles[2]!),
+                channels: mockRoles.slice(3).map(mockRoleCapture),
+              },
+            },
+            sideProcessingJob: {
+              requestId: processingRequestId,
+              sessionId: sessionManifest.sessionId,
+              side,
+              packageId: mockPackageId,
+              acceptedAt: new Date().toISOString(),
+            },
           },
         };
         const mockCompletedAt = result.finishedAt ?? new Date().toISOString();
@@ -7856,6 +9989,15 @@ export class AiGraderLocalStationBridgeService {
           executionPath: "warm_full_forensic_runner",
           detail: "Mock processing completed; real mode processes captured artifacts in this queue.",
         }, sessionManifest);
+        this.markWarmPhase({
+          id: `process_${side}_artifacts_started`,
+          label: `${side === "front" ? "Front" : "Back"} processing started`,
+          status: "completed",
+          side,
+          backend: "warm_full_forensic_runner",
+          executionPath: "warm_full_forensic_runner",
+          detail: "Mock background processing queue accepted the exact side identity.",
+        }, sessionManifest);
         sessionManifest.warmRunnerStatus.status = "processing";
         return result;
       }
@@ -7878,6 +10020,7 @@ export class AiGraderLocalStationBridgeService {
           captureProfile: sessionManifest.captureProfile,
           rawEvidenceFormat: batch.rawEvidenceFormat,
           packageDir: batch.packageDir,
+          packageId: batch.packageId,
           warmBatch: batch.batch,
         },
       };
@@ -7913,10 +10056,33 @@ export class AiGraderLocalStationBridgeService {
       const processingSessionId = sessionManifest.sessionId;
       if (!processingSessionId) throw new Error("Warm processing requires an active session identity.");
       const processingRequestId = `fixed-rig-processing-${crypto.randomUUID()}`;
-      const processingJob = this.warmRunner.processSide(batch, {
+      const processingSubmission = this.warmRunner.processSide(batch, {
         requestId: processingRequestId,
         sessionId: processingSessionId,
-      }).then(async (processed) => {
+      });
+      const processingAdmission = await processingSubmission.admission;
+      if (
+        processingAdmission.status !== 'accepted' ||
+        processingAdmission.requestId !== processingRequestId ||
+        processingAdmission.sessionId !== processingSessionId ||
+        processingAdmission.side !== side ||
+        processingAdmission.packageId !== batch.packageId ||
+        typeof processingAdmission.acceptedAt !== 'string' ||
+        !Number.isFinite(Date.parse(processingAdmission.acceptedAt))
+      ) {
+        throw new Error('Warm side-processing admission did not match the exact immutable side identity.');
+      }
+      result.payload = {
+        ...(result.payload ?? {}),
+        sideProcessingJob: {
+          requestId: processingRequestId,
+          sessionId: processingSessionId,
+          side,
+          packageId: batch.packageId,
+          acceptedAt: processingAdmission.acceptedAt,
+        },
+      };
+      const processingJob = processingSubmission.then(async (processed) => {
         this.assertWarmProcessingIdentity({
           requestId: processingRequestId,
           sessionId: processingSessionId,
@@ -7926,6 +10092,7 @@ export class AiGraderLocalStationBridgeService {
           manifest: sessionManifest,
         });
         this.recordProcessedSideTiming(sessionManifest, side, processed);
+        this.recordProcessedNormalizedOcrImage(sessionManifest, side, processed);
         this.markWarmPhase({
           id: `process_${side}_artifacts`,
           label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
@@ -7967,16 +10134,6 @@ export class AiGraderLocalStationBridgeService {
           throw new Error(message);
         }
 
-        this.processingSessionsCancelling.add(processingSessionId);
-        let workerReconcileError: Error | undefined;
-        try {
-          await this.warmRunner.cancelSession?.(processingSessionId, `${side} captured-evidence processing failure`);
-        } catch (reconcileError) {
-          workerReconcileError = new Error(boundedProcessingWorkerError(reconcileError));
-        }
-        const terminalMessage = workerReconcileError
-          ? boundedProcessingWorkerError(new Error(`${message} Worker reconciliation also failed: ${workerReconcileError.message}`))
-          : message;
         this.markWarmPhase({
           id: `process_${side}_artifacts`,
           label: `${side === "front" ? "Front" : "Back"} artifact processing queue`,
@@ -7985,68 +10142,18 @@ export class AiGraderLocalStationBridgeService {
           startedAt: processingPhase.startedAt,
           backend: "warm_full_forensic_runner",
           executionPath: "warm_full_forensic_runner",
-          detail: terminalMessage,
+          detail: message,
         }, sessionManifest);
-        sessionManifest.warmRunnerStatus.status = "failed";
-        sessionManifest.captureFailure = {
-          side,
-          stage: "warm_processing",
-          message: terminalMessage,
-          at: failedAt,
-        };
-        if (!sessionManifest.warnings.includes(terminalMessage)) sessionManifest.warnings.push(terminalMessage);
-        let terminalCleanupError: Error | undefined;
-        try {
-          if (sessionManifest === this.manifest) {
-            await this.serializeTerminalLifecycle(async () => {
-              const frontAtomic = this.currentAtomicFrontCapturePromise();
-              if (frontAtomic) await frontAtomic.catch(() => undefined);
-              const atomic = this.currentAtomicBackCapturePromise();
-              if (atomic) await atomic.catch(() => undefined);
-              await this.awaitLightingLifecycleIdle();
-              if (sessionManifest !== this.manifest) return;
-              const safeOff = await this.runTerminalSafeOff(`${side} processing failure`);
-              if (!safeOff.ok) {
-                terminalCleanupError = new Error(
-                  safeOff.directError?.message
-                    ?? safeOff.guardedCleanupError?.message
-                    ?? `${side} processing failure safe-off could not be verified.`
-                );
-              }
-              let previewReleased = false;
-              try {
-                await this.stopPreviewStream(`${side} processing failure released preview`, {
-                  waitForRelease: true,
-                  settleMs: PREVIEW_CAMERA_SETTLE_MS,
-                });
-                previewReleased = true;
-              } catch (cleanupError) {
-                if (!terminalCleanupError) terminalCleanupError = new Error(boundedPreviewLifecycleError(cleanupError));
-              }
-              const lightVerifiedOff = this.manifest.liveLighting.physicalState.state === "safe_off_verified";
-              this.updatePreviewStatus({
-                status: "error",
-                cameraOwnership: previewReleased ? "released" : this.manifest.previewStatus.cameraOwnership,
-                positioningLightReady: false,
-                lastError: terminalCleanupError?.message ?? terminalMessage,
-                lastStopReason: previewReleased && lightVerifiedOff
-                  ? `${side} processing failed; preview released and positioning light safe-off was verified.`
-                  : `${side} processing failed; terminal cleanup is incomplete and physical/camera state remains authoritative above.`,
-              });
-            });
-          }
-          await writeSessionManifest(sessionManifest);
-          if (terminalCleanupError) throw terminalCleanupError;
-          throw new Error(terminalMessage);
-        } finally {
-          this.processingSessionsCancelling.delete(processingSessionId);
-        }
+        if (!sessionManifest.warnings.includes(message)) sessionManifest.warnings.push(message);
+        sessionManifest.progressLog.push(`${failedAt} ${side} TIFF-to-PNG processing failed for this exact card; capture ownership remains independent so raw Back evidence can still be durably queued.`);
+        sessionManifest.updatedAt = failedAt;
+        await writeSessionManifest(sessionManifest);
+        throw new Error(message);
       });
-      const trackedProcessingJob = processingJob.finally(() => {
-        if (this.warmProcessingJobs.get(processingKey) === trackedProcessingJob) {
-          this.warmProcessingJobs.delete(processingKey);
-        }
-      });
+      // A settled job remains addressable by its exact session/side key until
+      // the single report worker consumes it. Otherwise a fast completion can
+      // disappear before a later queued report reaches awaitWarmProcessing.
+      const trackedProcessingJob = processingJob;
       this.warmProcessingJobs.set(processingKey, trackedProcessingJob);
       void trackedProcessingJob.catch(() => {});
       this.markWarmPhase({
@@ -8139,7 +10246,10 @@ export class AiGraderLocalStationBridgeService {
       detail: "Builds from already processed front/back full forensic artifacts.",
     }, manifest);
     manifest.warmRunnerStatus.status = "reporting";
-    await Promise.all([this.awaitWarmProcessing(manifest, "front"), this.awaitWarmProcessing(manifest, "back")]);
+    await Promise.all([
+      this.awaitWarmProcessing(manifest, "front"),
+      this.awaitWarmProcessing(manifest, "back"),
+    ]);
     const reportStartedAt = new Date().toISOString();
     this.recordCaptureTimingEvent(manifest, { id: "report_generation_started", at: reportStartedAt });
     const step = {
@@ -8638,7 +10748,13 @@ export class AiGraderLocalStationBridgeService {
     };
   }
 
-  async mathematicalReviewAsset(reportId: string, assetId: string): Promise<{
+  async mathematicalReviewAsset(
+    identity: { queueItemId?: string; gradingSessionId?: string; reportId?: string },
+    assetId: string,
+  ): Promise<{
+    queueItemId: string;
+    gradingSessionId: string;
+    reportId: string;
     id: string;
     bytes: Buffer;
     contentType: string;
@@ -8648,16 +10764,20 @@ export class AiGraderLocalStationBridgeService {
     widthPx: number;
     heightPx: number;
   }> {
-    if (!reportId.trim() || !assetId.trim()) {
-      throw new Error("Pending Mathematical review asset requires exact reportId and assetId.");
+    if (!assetId.trim()) {
+      throw new Error("Pending Mathematical review asset requires an exact assetId.");
     }
-    const source = await this.findStationManifestForReport(reportId);
-    const execution = source?.manifest.mathematicalV1?.execution;
-    if (!source || gradingContractFor(source.manifest) !== "mathematical_calibration_v1" ||
+    const item = this.exactQueuedItem(identity);
+    if (this.activeQueueItemId !== item.queueItemId) {
+      throw new Error("Pending Mathematical review asset requires the exact currently activated queue/session/report triple.");
+    }
+    const manifest = await this.exactQueuedManifest(item);
+    const execution = manifest.mathematicalV1?.execution;
+    if (gradingContractFor(manifest) !== "mathematical_calibration_v1" ||
         execution?.status !== "finding_review_required") {
       throw new Error("Mathematical review assets are available only for one exact pending review request.");
     }
-    const asset = source.manifest.mathematicalV1?.reviewAssets?.[assetId];
+    const asset = manifest.mathematicalV1?.reviewAssets?.[assetId];
     const namedByRequest = execution.reviewRequest.findings.some((finding) =>
       finding.trueView.assetId === assetId ||
       finding.directionalChannels.some((channel) => channel.assetId === assetId) ||
@@ -8665,8 +10785,8 @@ export class AiGraderLocalStationBridgeService {
       finding.reviewEvidence.segmentationMask.assetId === assetId ||
       finding.reviewEvidence.confidenceMask.assetId === assetId ||
       finding.reviewEvidence.illuminationMask.assetId === assetId);
-    if (!asset || !namedByRequest || !source.manifest.outputs.sessionDir ||
-        !isSubpath(asset.filePath, source.manifest.outputs.sessionDir) ||
+    if (!asset || !namedByRequest || !manifest.outputs.sessionDir ||
+        !isSubpath(asset.filePath, manifest.outputs.sessionDir) ||
         !isSubpath(asset.filePath, this.config.outputDir)) {
       throw new Error("Requested asset is not an exact hash-bound source in the pending review request.");
     }
@@ -8676,6 +10796,9 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Pending Mathematical review asset changed after exact request generation.");
     }
     return {
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
       id: asset.assetId,
       bytes,
       contentType: asset.contentType,
@@ -8835,15 +10958,6 @@ export class AiGraderLocalStationBridgeService {
       items,
       stats: historyStats(items),
     };
-  }
-
-  private async writeProductionRelease(request: AiGraderLocalStationBridgeActionRequest): Promise<AiGraderStationProductionRelease> {
-    const reportId = this.manifest.reportId;
-    if (!reportId) throw new Error("Production release requires an active AI Grader report ID.");
-    if (!this.manifest.outputs.reportBundlePath) {
-      await this.action("export-report-bundle", request);
-    }
-    return this.writeProductionReleaseForManifest(this.manifest, request);
   }
 
   private async writeProductionReleaseForManifest(
@@ -9251,40 +11365,75 @@ export class AiGraderLocalStationBridgeService {
     if (action === "status" || action === "latest-report" || action === "session-manifest") {
       return this.status();
     }
+    if (this.closing) throw new Error("Station mutation is unavailable while the local bridge is closing.");
+    if (action === "activate-queue-item") {
+      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId"]);
+      await this.activateRapidQueueItem(request);
+      return this.status();
+    }
+    if (action === "begin-queued-ocr") {
+      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId", "attemptOwnerId"]);
+      await this.beginQueuedOcr(request);
+      return this.status();
+    }
+    if (action === "complete-queued-ocr") {
+      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId", "attemptOwnerId", "result"]);
+      await this.completeQueuedOcr(request);
+      return this.status();
+    }
+    if (action === "fail-queued-ocr") {
+      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId", "attemptOwnerId", "failure"]);
+      await this.failQueuedOcr(request);
+      return this.status();
+    }
+    if (action === "submit-mathematical-finding-reviews") {
+      assertExactActionRequestKeys(
+        request,
+        action,
+        ["queueItemId", "gradingSessionId", "reportId", "mathematicalReviewRequestSha256", "mathematicalFindingReviews"],
+        ["operatorId", "warningsAccepted", "overrideReason"],
+      );
+      await this.submitMathematicalFindingReviews(request);
+      return this.status();
+    }
+    if (action === "publish-report") {
+      assertExactActionRequestKeys(
+        request,
+        action,
+        ["queueItemId", "gradingSessionId", "reportId", "publication"],
+        ["operatorId", "warningsAccepted", "overrideReason"],
+      );
+      await this.publishSelectedRapidQueueItem(request);
+      return this.status();
+    }
+
     const terminalAction = action === "cancel-session";
     if (
-      this.closing
-      || this.frontCaptureTransition
+      this.frontCaptureTransition
       || this.captureLock
       || this.manifest.previewStatus.intentionalTransition.active
       || this.terminalLifecyclePending > 0
       || (this.lightingLifecyclePending > 0 && !terminalAction)
     ) {
-      throw new Error("Station mutation is blocked while another serialized capture/terminal lifecycle owns the bridge.");
+      throw new Error("Station capture mutation is blocked while authoritative capture, lighting, or terminal ownership is active.");
+    }
+    if (action === "start-session") {
+      const canonicalReportId = this.canonicalCallerSuppliedReportId(request.reportId);
+      if (canonicalReportId !== undefined) {
+        this.assertCallerSuppliedReportIdDoesNotMatchActive(canonicalReportId);
+      }
     }
     const now = new Date().toISOString();
     this.manifest.updatedAt = now;
-
-    if (action === "configure-rapid-capture") {
-      if (typeof request.rapidCaptureEnabled !== "boolean") {
-        throw new Error("Rapid Capture configuration requires rapidCaptureEnabled true or false.");
-      }
-      this.rapidQueue.rapidCaptureEnabled = request.rapidCaptureEnabled;
-      this.manifest.rapidCapture.enabled = request.rapidCaptureEnabled;
-      this.manifest.progressLog.push(`${now} Rapid Capture ${request.rapidCaptureEnabled ? "enabled" : "disabled"}; Capture Back queues work and Approve & Publish remains the only publication authority.`);
-      await writeSessionManifest(this.manifest);
-      await this.persistRapidQueue();
-      return this.status();
-    }
-
-    if (action === "activate-queue-item") {
-      await this.activateRapidQueueItem(request.queueItemId ?? "");
-      return this.status();
-    }
-
     if (action === "start-session") {
-      if (!request.captureProfile) {
-        throw new Error("AI Grader start-session requires an explicit captureProfile of full_forensic or production_fast.");
+      if (this.manifest.sessionId || this.manifest.currentStep !== "start_new_card") {
+        throw new Error("Start New Card requires the authoritative clean sessionless start_new_card state; an existing card must complete exact Back enqueue before another session can start.");
+      }
+      if (request.captureProfile !== "production_fast") {
+        throw new Error("Start New Card requires the one production_fast capture path.");
+      }
+      if (this.manifest.outputs.backPackageDir && !this.manifest.rapidCapture.safelyQueuedAt) {
+        throw new Error("Start New Card is blocked because the current Back TIFF was not durably committed to its exact Rapid queue item.");
       }
       assertRealBridgeArmed(this.config);
       if (request.gradingContract !== undefined &&
@@ -9336,18 +11485,12 @@ export class AiGraderLocalStationBridgeService {
       return this.status();
     }
 
-    if (action === "queue-current-card") {
-      await this.queueCurrentRapidCard();
-      return this.status();
-    }
-
     if (
       action === "cancel-session"
       && (this.captureLock || this.manifest.previewStatus.intentionalTransition.active)
     ) {
       throw new Error("Terminal station lifecycle actions are blocked while forensic capture owns the serialized lifecycle.");
     }
-
     if (action === "cancel-session") return this.serializeTerminalLifecycle(async () => {
       await this.awaitLightingLifecycleIdle();
       const safeOff = await this.runTerminalSafeOff("station cancellation");
@@ -9383,138 +11526,6 @@ export class AiGraderLocalStationBridgeService {
       return this.status();
     });
 
-    assertRealReady(this.config, this.manifest);
-
-    if (action === "submit-mathematical-finding-reviews") {
-      if (gradingContractFor(this.manifest) !== "mathematical_calibration_v1") {
-        throw new Error("Finding-review submission is available only for an explicit Mathematical V1 session.");
-      }
-      const reviews = this.validatedMathematicalFindingReviews(
-        this.manifest,
-        request.mathematicalReviewRequestSha256,
-        request.mathematicalFindingReviews,
-      );
-      const execution = await this.runMathematicalStationPackage(this.manifest, reviews);
-      if (this.activeQueueItemId) {
-        if (execution.status === "completed") {
-          const release = await this.writeProductionReleaseForManifest(this.manifest, {
-            operatorId: request.operatorId ?? "rapid-reviewed-background-preparation",
-            warningsAccepted: request.warningsAccepted,
-            overrideReason: request.overrideReason,
-          });
-          if (
-            release.reportId !== this.manifest.reportId ||
-            release.gradingSessionId !== this.manifest.sessionId ||
-            release.finalGradeComputed !== true ||
-            release.labelDataGenerated !== true ||
-            release.qrPayloadGenerated !== true ||
-            release.label.status !== "label_data_ready" ||
-            !this.manifest.outputs.productionReleasePath ||
-            !this.manifest.outputs.labelDataPath
-          ) {
-            throw new Error("Reviewed Mathematical Rapid item did not produce the exact strict release and Label V1 data.");
-          }
-          this.manifest.currentStep = "label_data_ready";
-          this.transitionRapidWorkflow(
-            this.manifest,
-            "report_ready_needs_confirm",
-            "Explicit finding reviews were accepted; strict Mathematical V1 release and Label V1 data await Approve & Publish.",
-          );
-        } else if (execution.status === "finding_review_required") {
-          this.transitionRapidWorkflow(
-            this.manifest,
-            "finding_review_required",
-            "Submitted reviews did not satisfy the exact request; no finding was auto-confirmed.",
-          );
-        } else if (execution.status === "insufficient_evidence") {
-          this.transitionRapidWorkflow(
-            this.manifest,
-            "insufficient_evidence",
-            "Reviewed Mathematical V1 rerun stopped fail-closed at " + execution.failedStage + ".",
-          );
-        }
-        await this.syncQueuedManifest(this.manifest);
-      }
-      return this.status();
-    }
-
-    if (action === "run-diagnostics") {
-      if (gradingContractFor(this.manifest) === "mathematical_calibration_v1") {
-        await this.runMathematicalStationPackage(this.manifest);
-        return this.status();
-      }
-      const result = await this.runWarmReport();
-      this.manifest.outputs.unifiedReportDir = result.payload?.report?.packageDir ?? dirnameIfFile(extractUnifiedReportPath(result.payload));
-      this.manifest.outputs.unifiedReportPath = extractUnifiedReportPath(result.payload);
-      this.manifest.currentStep = "view_unified_report";
-      this.manifest.progressLog.push(`${now} Unified diagnostics generated from the single serialized capture path.`);
-      await writeSessionManifest(this.manifest);
-      return this.status();
-    }
-
-    if (action === "export-report-bundle") {
-      if (gradingContractFor(this.manifest) === "mathematical_calibration_v1") {
-        const reportId = this.manifest.reportId;
-        if (!reportId) throw new Error("Mathematical Grading V1 export requires an exact report ID.");
-        const reportPackage = await withAiGraderReportPackageOperation(reportId, () =>
-          this.resolveMathematicalReportPackage(this.manifest, request)
-        );
-        this.applyMathematicalReportPackage(this.manifest, reportPackage);
-        this.manifest.progressLog.push(
-          now + " Strict Mathematical Grading V1 V0.3 body, external grading-session envelope, immutable assets, and checksums exported without overwrite.",
-        );
-        await writeSessionManifest(this.manifest);
-        return this.status();
-      }
-      const reportDir = this.manifest.outputs.unifiedReportDir ?? dirnameIfFile(this.manifest.outputs.unifiedReportPath);
-      if (!reportDir) throw new Error("Report bundle export requires a generated unified report folder.");
-      const reportId = this.manifest.reportId ?? "local-report";
-      const outputDir = publishPackageDir(this.config, reportId);
-      const bundle = await withAiGraderReportPackageOperation(reportId, async () => {
-        await reconcileAiGraderReportPackageTransaction({
-          canonicalDir: outputDir,
-          reportId,
-          gradingSessionId: this.manifest.sessionId,
-          reportDir,
-        });
-        return writeAiGraderReportBundle({
-          reportDir,
-          outputDir,
-          reportId,
-          gradingSessionId: this.manifest.sessionId,
-          publicBasePath: this.config.publicBasePath,
-          captureTiming: this.captureTimingSnapshot(this.manifest),
-          geometryCaptureDecisions: this.geometryCaptureDecisionSnapshot(this.manifest),
-        });
-      });
-      this.manifest.outputs.reportBundlePath = bundle.bundlePath;
-      this.manifest.outputs.publishPackageDir = bundle.outputDir;
-      this.manifest.outputs.assetManifestPath = bundle.assetManifestPath;
-      this.manifest.outputs.checksumsPath = bundle.checksumsPath;
-      this.manifest.reportBundle = bundle.bundle;
-      this.manifest.progressLog.push(`${now} Report bundle exported to ${bundle.bundlePath}.`);
-      await writeSessionManifest(this.manifest);
-      return this.status();
-    }
-
-    if (action === "calculate-final-grade" || action === "finalize-report" || action === "publish-report" || action === "generate-label-data") {
-      const release = await this.writeProductionRelease(request);
-      if (action === "calculate-final-grade") {
-        this.manifest.currentStep = "calculate_final_grade";
-      } else if (action === "finalize-report" || action === "publish-report") {
-        this.manifest.currentStep = "finalize_publish_report";
-      } else {
-        this.manifest.currentStep = "label_data_ready";
-      }
-      this.manifest.progressLog.push(`${now} ${actionLabel(action)} completed with status ${release.reportStatus}.`);
-      if (this.activeQueueItemId && action === "publish-report") {
-        this.transitionRapidWorkflow(this.manifest, "published", "Approve & Publish completed for this queued report.");
-        await this.syncQueuedManifest(this.manifest);
-      }
-      await writeSessionManifest(this.manifest);
-      return this.status();
-    }
-
     throw new Error(`Unsupported AI Grader station bridge action: ${action}`);
   }
 }
@@ -9525,20 +11536,16 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
     "start-session",
     "capture-front",
     "capture-back",
-    "run-diagnostics",
-    "export-report-bundle",
-    "calculate-final-grade",
-    "finalize-report",
     "publish-report",
-    "generate-label-data",
     "cancel-session",
     "latest-report",
     "session-manifest",
-    "configure-rapid-capture",
-    "queue-current-card",
     "activate-queue-item",
     "bind-mathematical-grading-authority",
     "submit-mathematical-finding-reviews",
+    "begin-queued-ocr",
+    "complete-queued-ocr",
+    "fail-queued-ocr",
   ].includes(value);
 }
 
@@ -9575,7 +11582,7 @@ function setCors(res: http.ServerResponse, origin: string | undefined, config: A
   );
   res.setHeader(
     "Access-Control-Expose-Headers",
-    "x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-frame-id,x-ai-grader-reference-id,x-ai-grader-sha256,x-ai-grader-asset-id,x-ai-grader-side,x-ai-grader-evidence-role"
+    "x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-frame-id,x-ai-grader-queue-item-id,x-ai-grader-grading-session-id,x-ai-grader-report-id,x-ai-grader-reference-id,x-ai-grader-sha256,x-ai-grader-asset-id,x-ai-grader-side,x-ai-grader-evidence-role,x-ai-grader-width-px,x-ai-grader-height-px"
   );
   res.setHeader("Access-Control-Allow-Private-Network", "true");
   res.setHeader("Access-Control-Max-Age", "600");
@@ -9918,12 +11925,18 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (!tokenMatches(req, config)) {
           return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         }
+        const queueItemId = url.searchParams.get("queueItemId") ?? "";
+        const gradingSessionId = url.searchParams.get("gradingSessionId") ?? "";
         const reportId = url.searchParams.get("reportId") ?? "";
         const assetId = url.searchParams.get("assetId") ?? "";
-        if (url.searchParams.size !== 2 || !reportId || !assetId) {
-          throw new Error("Pending Mathematical review asset requires only exact reportId and assetId parameters.");
+        if (url.searchParams.size !== 4 || !queueItemId || !gradingSessionId || !reportId || !assetId) {
+          throw new Error("Pending Mathematical review asset requires only exact queueItemId, gradingSessionId, reportId, and assetId parameters.");
         }
-        const asset = await service.mathematicalReviewAsset(reportId, assetId);
+        const asset = await service.mathematicalReviewAsset({
+          queueItemId,
+          gradingSessionId,
+          reportId,
+        }, assetId);
         return sendBinary(
           res,
           200,
@@ -9932,6 +11945,9 @@ export function createAiGraderLocalStationBridgeHttpServer(
           config,
           asset.contentType,
           {
+            "X-AI-Grader-Queue-Item-Id": asset.queueItemId,
+            "X-AI-Grader-Grading-Session-Id": asset.gradingSessionId,
+            "X-AI-Grader-Report-Id": asset.reportId,
             "X-AI-Grader-Asset-Id": asset.id,
             "X-AI-Grader-SHA256": asset.sha256,
             "X-AI-Grader-Side": asset.side,
@@ -9940,6 +11956,38 @@ export function createAiGraderLocalStationBridgeHttpServer(
             "X-AI-Grader-Height-Px": String(asset.heightPx),
           },
         );
+      }
+
+      const queuedOcrAssetMatch = url.pathname.match(/^\/rapid-queue\/([^/]+)\/ocr\/asset$/);
+      if (queuedOcrAssetMatch) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for queued OCR assets." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const queueItemId = decodeURIComponent(queuedOcrAssetMatch[1]);
+        const asset = await service.queuedOcrAsset({
+          queueItemId,
+          gradingSessionId: url.searchParams.get("gradingSessionId") ?? undefined,
+          reportId: url.searchParams.get("reportId") ?? undefined,
+        }, url.searchParams.get("side") ?? undefined);
+        return sendBinary(res, 200, asset.bytes, origin, config, "image/png", {
+          "X-AI-Grader-Queue-Item-Id": asset.item.queueItemId,
+          "X-AI-Grader-Grading-Session-Id": asset.item.sessionId,
+          "X-AI-Grader-Report-Id": asset.item.reportId,
+          "X-AI-Grader-Side": asset.image.side,
+          "X-AI-Grader-SHA256": asset.image.checksumSha256,
+        });
+      }
+
+      const queuedOcrDescriptorMatch = url.pathname.match(/^\/rapid-queue\/([^/]+)\/ocr$/);
+      if (queuedOcrDescriptorMatch) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for queued OCR descriptors." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const queueItemId = decodeURIComponent(queuedOcrDescriptorMatch[1]);
+        const descriptor = await service.queuedOcrDescriptor({
+          queueItemId,
+          gradingSessionId: url.searchParams.get("gradingSessionId") ?? undefined,
+          reportId: url.searchParams.get("reportId") ?? undefined,
+        });
+        return sendJson(res, 200, { ok: true, operation: "queued-ocr-descriptor", result: descriptor }, origin, config);
       }
 
       const reportBundleMatch = url.pathname.match(/^\/reports\/([^/]+)\/bundle$/);

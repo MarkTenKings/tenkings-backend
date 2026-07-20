@@ -204,11 +204,12 @@ function finishRow(nfc: Record<string, unknown>) {
   return {
     id: "report-row-1",
     reportId: "report-1",
+    publicationStatus: "published",
     finalOverallGrade: 8.6,
     cardAssetId: "card-1",
     itemId: "item-1",
     qrPayloadUrl: "https://collect.tenkings.co/ai-grader/reports/report-1",
-    session: { status: "published" },
+    session: { status: "published", reportId: "report-1" },
     cardAsset: { reviewStage: null, customTitle: "Test card" },
     labels: [{ id: "label-1", certId: "TK-AIG-1", physicalPrintStatus: "printed" }],
     evidenceAssets: [
@@ -236,6 +237,18 @@ test("Finish inventory gate requires exact active NFC only when policy is enable
   })], { nfcRequired: true });
   assert.equal(requiredActive.items[0].inventory.canAddToInventory, true);
   assert.equal(requiredActive.items[0].nfcStatus, "active");
+});
+
+test("hosted Finish excludes unpublished reports and exact report/session identity mismatches", () => {
+  const published = finishRow({ status: "missing" });
+  const result = buildAiGraderFinishCardsQueueResult([
+    published,
+    { ...published, reportId: "draft-report", publicationStatus: "draft", session: { status: "published", reportId: "draft-report" } },
+    { ...published, reportId: "unpublished-report", publicationStatus: "unpublished", session: { status: "published", reportId: "unpublished-report" } },
+    { ...published, reportId: "session-mismatch", session: { status: "published", reportId: "different-report" } },
+    { ...published, reportId: "session-processing", session: { status: "processing", reportId: "session-processing" } },
+  ]);
+  assert.deepEqual(result.items.map((item) => item.reportId), ["report-1"]);
 });
 
 function inventoryDb(

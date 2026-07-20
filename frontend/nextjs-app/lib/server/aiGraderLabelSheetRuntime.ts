@@ -1,11 +1,9 @@
 import {
   assertAiGraderDurableConfirmedIdentityMatchesAuthority,
-  buildAiGraderCompsSearchQuery,
   canonicalAiGraderPublishAuthorityJson,
   parseAiGraderPublishAuthorityRecord,
   type AiGraderConfirmedPublishAuthority,
   type AiGraderProductionReleaseLike,
-  type AiGraderProductionReportBundleLike,
   type Prisma,
 } from "@tenkings/database";
 import {
@@ -41,14 +39,6 @@ import type { AiGraderProductionActorAudit } from "./aiGraderProductionAuth";
 import { readAiGraderNfcStatusesForReports } from "./aiGraderNfcReadProjection";
 
 type JsonRecord = Record<string, unknown>;
-
-export type AiGraderConfirmedCardQueueResult = {
-  comps: {
-    status: "queued" | "running" | "ready" | "completed" | "failed";
-    searchQuery: string;
-    shouldStart: boolean;
-  };
-};
 
 export type AiGraderPublishedLabelAssignmentResult = {
   sheetId: string;
@@ -123,29 +113,6 @@ async function acquireReportLifecycleLock(tx: any, reportId: string) {
     SELECT 1 AS "lockAcquired"
     FROM pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${reportId}))
   `;
-}
-
-function confirmedTitle(identity: AiGraderSafeConfirmedCardIdentity) {
-  return [
-    identity.year,
-    identity.manufacturer,
-    identity.productSet ?? identity.productLine,
-    identity.playerName ?? identity.cardName ?? identity.title,
-    identity.cardNumber ? `#${identity.cardNumber}` : undefined,
-    identity.parallel,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function finalGradeDetails(productionRelease: AiGraderProductionReleaseLike) {
-  const finalGrade = isRecord(productionRelease.finalGrade) ? productionRelease.finalGrade : {};
-  return {
-    overall: numberValue(finalGrade.overall),
-    status: stringValue(finalGrade.status, productionRelease.finalGradeComputed ? "final_grade_computed" : "not_computed"),
-  };
 }
 
 function canonicalLabelPayload(input: {
@@ -225,133 +192,6 @@ async function readTenantLabels(tx: any, tenantId: string) {
   return Array.isArray(rows) ? rows : [];
 }
 
-export async function linkConfirmedAiGraderCardTx(input: {
-  tx: any;
-  tenantId: string;
-  sessionId: string;
-  gradingSessionId: string;
-  reportId: string;
-  reportBundle: AiGraderProductionReportBundleLike;
-  productionRelease: AiGraderProductionReleaseLike;
-  confirmedIdentity: unknown;
-  cardAssetId: string;
-  itemId: string;
-  operatorUserId: string;
-  now?: Date;
-}): Promise<AiGraderConfirmedCardQueueResult> {
-  const now = input.now ?? new Date();
-  const identity = normalizeAiGraderConfirmedCardIdentity(input.confirmedIdentity);
-  const grade = finalGradeDetails(input.productionRelease);
-
-  await acquireReportLifecycleLock(input.tx, input.reportId);
-
-  const existingReport = await input.tx.aiGraderReport.findUnique({
-    where: { reportId: input.reportId },
-    select: { id: true },
-  });
-  const report = await input.tx.aiGraderReport.upsert({
-    where: { reportId: input.reportId },
-    update: {
-      tenantId: input.tenantId,
-      sessionId: input.sessionId,
-      cardAssetId: input.cardAssetId,
-      itemId: input.itemId,
-      finalOverallGrade: grade.overall,
-      updatedAt: now,
-    },
-    create: {
-      tenantId: input.tenantId,
-      sessionId: input.sessionId,
-      reportId: input.reportId,
-      reportStatus: stringValue(input.productionRelease.reportStatus, "final_ai_grader_report_v0"),
-      finalGradeStatus: grade.status,
-      visibilityStatus: "private",
-      publicationStatus: "draft",
-      cardAssetId: input.cardAssetId,
-      itemId: input.itemId,
-      publicReportUrl: null,
-      qrPayloadUrl: null,
-      finalOverallGrade: grade.overall,
-      createdAt: now,
-      updatedAt: now,
-    },
-  });
-  const reportRowId = stringValue(report?.id ?? existingReport?.id, "");
-  if (!reportRowId) throw new Error("AI Grader draft report could not be created for confirmed card linkage.");
-
-  const reportBundle = {
-    ...input.reportBundle,
-    cardIdentity: {
-      ...(isRecord(input.reportBundle.cardIdentity) ? input.reportBundle.cardIdentity : {}),
-      ...identity,
-      title: confirmedTitle(identity) || optionalString(input.reportBundle.cardIdentity?.title),
-      cardAssetId: input.cardAssetId,
-      itemId: input.itemId,
-    },
-  };
-  const searchQuery = buildAiGraderCompsSearchQuery({
-    reportBundle,
-    productionRelease: input.productionRelease,
-  });
-  const valuationId = `ai-grader-valuation:${input.reportId}`;
-  const existingValuation = await input.tx.aiGraderValuation.findUnique({
-    where: { id: valuationId },
-    select: {
-      id: true,
-      status: true,
-      searchQuery: true,
-      compsRefs: true,
-      resultSummary: true,
-    },
-  });
-  if (!existingValuation) {
-    await input.tx.aiGraderValuation.create({
-      data: {
-        id: valuationId,
-        tenantId: input.tenantId,
-        sessionId: input.sessionId,
-        reportId: reportRowId,
-        status: "ready",
-        source: "ebay_sold",
-        searchQuery: searchQuery || null,
-        resultSummary: jsonInput({
-          workflowStatus: "queued",
-          queuedAt: now.toISOString(),
-        }),
-        requestedByUserId: input.operatorUserId,
-        requestedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      },
-    });
-  }
-
-  const existingSummary = isRecord(existingValuation?.resultSummary) ? existingValuation.resultSummary : {};
-  const persistedCandidateCount = Array.isArray(existingValuation?.compsRefs) ? existingValuation.compsRefs.length : 0;
-  const persistedStatus = optionalString(existingValuation?.status);
-  const compsStatus: AiGraderConfirmedCardQueueResult["comps"]["status"] = !existingValuation
-    ? "queued"
-    : persistedStatus === "completed"
-      ? "completed"
-      : persistedStatus === "running"
-        ? "running"
-        : persistedStatus === "failed"
-          ? "failed"
-          : persistedCandidateCount > 0 || optionalString(existingSummary.lifecycleStatus) === "ready"
-            ? "ready"
-            : "queued";
-
-  return {
-    comps: {
-      status: compsStatus,
-      searchQuery: optionalString(existingValuation?.searchQuery) ?? searchQuery,
-      // A queued durable handoff may be relaunched after a lost browser response;
-      // the advisory-locked run-comps claim prevents duplicate provider execution.
-      shouldStart: compsStatus === "queued",
-    },
-  };
-}
-
 export async function completePublishedAiGraderCardTx(input: {
   tx: any;
   tenantId: string;
@@ -414,7 +254,7 @@ export async function completePublishedAiGraderCardTx(input: {
     input.publishAuthority.cardAssetId !== input.cardAssetId ||
     input.publishAuthority.itemId !== input.itemId ||
     input.publishAuthority.sessionId !== sessionId ||
-    input.publishAuthority.reportRowId !== reportRowId
+    (input.publishAuthority.reportRowId !== undefined && input.publishAuthority.reportRowId !== reportRowId)
   ) {
     throw runtimeError(
       "Verified Publish linkage does not match the durable report, session, CardAsset, and Item identity.",

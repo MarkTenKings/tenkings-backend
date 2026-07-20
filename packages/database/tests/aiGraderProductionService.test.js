@@ -11,7 +11,7 @@ const {
   aiGraderSha256,
   computeAiGraderValuationStatus,
   persistAiGraderSlabbedPhotoAsset,
-  persistAiGraderProductionRelease,
+  persistAiGraderProductionRelease: persistAiGraderProductionReleaseRaw,
   persistAiGraderValuationResult,
   normalizeAiGraderPublicGeometryCaptureDecisions,
   normalizeAiGraderPublicOcrPrefill,
@@ -635,6 +635,19 @@ function trustedV03CalibrationSnapshot(bundle, overrides = {}) {
   };
 }
 
+const RAPID_QUEUE_IDENTITY = Object.freeze({
+  queueItemId: "queue-card-1",
+  gradingSessionId: "station-session-1",
+  reportId: "report-1",
+});
+
+function persistAiGraderProductionRelease(db, input, options) {
+  return persistAiGraderProductionReleaseRaw(db, {
+    queueItemId: RAPID_QUEUE_IDENTITY.queueItemId,
+    ...input,
+  }, options);
+}
+
 function publicStorageLocatorPaths(value, path = "$") {
   if (Array.isArray(value)) return value.flatMap((entry, index) => publicStorageLocatorPaths(entry, `${path}[${index}]`));
   if (typeof value === "string") {
@@ -990,7 +1003,7 @@ function confirmedProductionSession(overrides = {}) {
     cardAssetId: "card-asset-1",
     itemId: "item-1",
     status: "card_created",
-    cardIdentity: sampleConfirmedIdentity(),
+    cardIdentity: sampleConfirmedIdentity({ rapidQueueIdentity: RAPID_QUEUE_IDENTITY }),
     ...overrides,
   };
 }
@@ -1009,10 +1022,49 @@ function confirmedProductionReport(overrides = {}) {
   };
 }
 
-function createMockDelegate(name, calls, id, findUniqueValue, updateManyValue) {
+function confirmedV03PublishAuthority(reportBundle, productionRelease) {
+  const rapidQueueIdentity = {
+    queueItemId: RAPID_QUEUE_IDENTITY.queueItemId,
+    gradingSessionId: productionRelease.gradingSessionId,
+    reportId: reportBundle.reportId,
+  };
+  const publishAuthority = buildAiGraderPublishAuthorityRecord({ reportBundle, productionRelease });
   return {
+    session: confirmedProductionSession({
+      gradingSessionId: productionRelease.gradingSessionId,
+      reportId: reportBundle.reportId,
+      cardIdentity: sampleConfirmedIdentity({ rapidQueueIdentity }),
+    }),
+    cardAsset: {
+      id: "card-asset-1",
+      batchId: "batch-1",
+      aiGradeFinal: productionRelease.finalGrade.overall,
+      classificationSourcesJson: {
+        rapidQueueIdentity,
+        aiGraderPublishAuthority: publishAuthority,
+      },
+      aiGradingJson: {
+        rapidQueueIdentity,
+        publishAuthority,
+      },
+    },
+  };
+}
+
+function createMockDelegate(name, calls, id, findUniqueValue, updateManyValue) {
+  const record = (method, args) => calls.push({
+    delegate: name,
+    method,
+    args,
+    inTransaction: calls.transactionDepth > 0,
+  });
+  return {
+    async create(args) {
+      record("create", args);
+      return { id, ...(args.data ?? {}) };
+    },
     async upsert(args) {
-      calls.push({ delegate: name, method: "upsert", args });
+      record("upsert", args);
       return {
         id,
         ...(args.create ?? {}),
@@ -1020,7 +1072,7 @@ function createMockDelegate(name, calls, id, findUniqueValue, updateManyValue) {
       };
     },
     async findUnique(args) {
-      calls.push({ delegate: name, method: "findUnique", args });
+      record("findUnique", args);
       if (findUniqueValue !== undefined) {
         return typeof findUniqueValue === "function" ? findUniqueValue(args) : findUniqueValue;
       }
@@ -1054,7 +1106,7 @@ function createMockDelegate(name, calls, id, findUniqueValue, updateManyValue) {
       return null;
     },
     async findMany(args) {
-      calls.push({ delegate: name, method: "findMany", args });
+      record("findMany", args);
       if (name === "calibrationSnapshot" && findUniqueValue !== undefined) {
         const value = typeof findUniqueValue === "function" ? findUniqueValue(args) : findUniqueValue;
         if (Array.isArray(value)) return value;
@@ -1067,7 +1119,7 @@ function createMockDelegate(name, calls, id, findUniqueValue, updateManyValue) {
       return [];
     },
     async updateMany(args) {
-      calls.push({ delegate: name, method: "updateMany", args });
+      record("updateMany", args);
       if (updateManyValue !== undefined) {
         return typeof updateManyValue === "function" ? updateManyValue(args) : updateManyValue;
       }
@@ -1078,19 +1130,33 @@ function createMockDelegate(name, calls, id, findUniqueValue, updateManyValue) {
 
 function createMockProductionDb(options = {}) {
   const calls = [];
+  calls.transactionDepth = 0;
   const publishAuthority = buildAiGraderPublishAuthorityRecord({
     reportBundle: options.reportBundle ?? sampleBundle(),
     productionRelease: options.productionRelease ?? sampleRelease(),
   });
-  const confirmedCardAsset = options.cardAsset ?? {
+  const cardAssetOverride = options.cardAsset ?? {};
+  const confirmedCardAsset = {
     id: "card-asset-1",
     batchId: "batch-1",
-    classificationSourcesJson: { aiGraderPublishAuthority: publishAuthority },
-    aiGradingJson: { publishAuthority },
+    aiGradeFinal: 8.6,
+    ...cardAssetOverride,
+    classificationSourcesJson: {
+      rapidQueueIdentity: RAPID_QUEUE_IDENTITY,
+      ...(options.cardAsset ? cardAssetOverride.classificationSourcesJson ?? {} : { aiGraderPublishAuthority: publishAuthority }),
+    },
+    aiGradingJson: {
+      rapidQueueIdentity: RAPID_QUEUE_IDENTITY,
+      ...(options.cardAsset ? cardAssetOverride.aiGradingJson ?? {} : { publishAuthority }),
+    },
   };
   const tx = {
     async $queryRaw() {
-      calls.push({ delegate: "$queryRaw", method: "$queryRaw" });
+      calls.push({
+        delegate: "$queryRaw",
+        method: "$queryRaw",
+        inTransaction: calls.transactionDepth > 0,
+      });
       return [];
     },
     aiGraderSession: createMockDelegate(
@@ -1139,8 +1205,13 @@ function createMockProductionDb(options = {}) {
     db: {
       ...tx,
       async $transaction(callback) {
-        calls.push({ delegate: "$transaction", method: "$transaction" });
-        return callback(tx);
+        calls.push({ delegate: "$transaction", method: "$transaction", inTransaction: false });
+        calls.transactionDepth += 1;
+        try {
+          return await callback(tx);
+        } finally {
+          calls.transactionDepth -= 1;
+        }
       },
     },
   };
@@ -2456,14 +2527,12 @@ test("calibrated V1 publication links the exact trusted snapshot to the durable 
   const reportBundle = sampleV03Bundle();
   const productionRelease = sampleV03ProductionRelease(reportBundle);
   const storagePlan = buildAiGraderProductionStoragePlan({ reportBundle, productionRelease });
+  const durableAuthority = confirmedV03PublishAuthority(reportBundle, productionRelease);
   const { db, calls } = createMockProductionDb({
     reportBundle,
     productionRelease,
     calibrationSnapshotRows: [trustedV03CalibrationSnapshot(reportBundle)],
-    session: confirmedProductionSession({
-      gradingSessionId: productionRelease.gradingSessionId,
-      reportId: reportBundle.reportId,
-    }),
+    ...durableAuthority,
     report: confirmedProductionReport({
       reportId: reportBundle.reportId,
       finalOverallGrade: 10,
@@ -2514,10 +2583,7 @@ test("calibrated V1 publication rereads and exactly resolves every APPROVED desi
     productionRelease,
     calibrationSnapshotRows: [trustedV03CalibrationSnapshot(reportBundle)],
     designReferenceRow: fixture.row,
-    session: confirmedProductionSession({
-      gradingSessionId: productionRelease.gradingSessionId,
-      reportId: reportBundle.reportId,
-    }),
+    ...confirmedV03PublishAuthority(reportBundle, productionRelease),
     report: confirmedProductionReport({ reportId: reportBundle.reportId, finalOverallGrade: 10 }),
   };
   const passing = createMockProductionDb(common);
@@ -2882,6 +2948,7 @@ test("production release persistence updates verified durable records and option
   });
 
   assert.equal(result.reportId, "report-1");
+  assert.equal(result.queueItemId, RAPID_QUEUE_IDENTITY.queueItemId);
   assert.equal(result.publicationStatus, "published");
   assert.equal(result.evidenceAssetCount, plan.artifacts.length);
   assert.equal(result.cardAssetUpdatedCount, 1);
@@ -2939,12 +3006,175 @@ test("production release persistence updates verified durable records and option
     cardUpdate.args.data.aiGradingJson.publishAuthority,
     buildAiGraderPublishAuthorityRecord({ reportBundle, productionRelease }),
   );
+  assert.deepEqual(cardUpdate.args.data.aiGradingJson.rapidQueueIdentity, RAPID_QUEUE_IDENTITY);
   const itemUpdate = calls.find((call) => call.delegate === "item" && call.method === "updateMany");
   assert.equal(calls.some((call) => call.delegate === "item" && call.method === "findUnique"), true);
   assert.equal(itemUpdate.args.data.detailsJson.existingItemDetail, "keep-me");
   assert.deepEqual(itemUpdate.args.data.detailsJson.nestedItemDetail, { preserved: true });
   assert.equal(itemUpdate.args.data.detailsJson.aiGraderReportId, "report-1");
+  assert.deepEqual(itemUpdate.args.data.detailsJson.aiGraderRapidQueueIdentity, RAPID_QUEUE_IDENTITY);
   assert.equal(itemUpdate.args.data.imageUrl, cardUpdate.args.data.imageUrl);
+});
+
+test("atomic publish creates the first hosted report and Finish valuation only after durable CardAsset linkage", async () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle,
+    productionRelease,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const { db, calls } = createMockProductionDb({
+    report: null,
+    reportBundle,
+    productionRelease,
+  });
+
+  const result = await persistAiGraderProductionRelease(db, {
+    tenantId: "tenant-1",
+    reportBundle,
+    productionRelease,
+    storagePlan: plan,
+    operatorUserId: "user-1",
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    persistedAt: "2026-07-18T12:30:00.000Z",
+  });
+
+  const hostedReportCreate = calls.find((call) => call.delegate === "aiGraderReport" && call.method === "create");
+  assert.equal(result.publicationStatus, "published");
+  assert.equal(result.queueItemId, RAPID_QUEUE_IDENTITY.queueItemId);
+  assert.equal(hostedReportCreate.args.data.reportId, "report-1");
+  assert.equal(hostedReportCreate.args.data.publicationStatus, "published");
+  assert.deepEqual(hostedReportCreate.args.data.checksumSummary.rapidQueueIdentity, RAPID_QUEUE_IDENTITY);
+  assert.equal(calls.some((call) => call.delegate === "aiGraderReport" && call.method === "updateMany"), false);
+  const reportCreateIndex = calls.indexOf(hostedReportCreate);
+  const valuationIndex = calls.findIndex((call) => call.delegate === "aiGraderValuation" && call.method === "upsert");
+  const labelIndex = calls.findIndex((call) => call.delegate === "aiGraderLabel" && call.method === "upsert");
+  assert.ok(reportCreateIndex > calls.findIndex((call) => call.delegate === "aiGraderSession" && call.method === "updateMany"));
+  assert.ok(valuationIndex > reportCreateIndex);
+  assert.ok(labelIndex > reportCreateIndex);
+  const atomicWrites = calls.filter((call) => ["create", "upsert", "updateMany"].includes(call.method));
+  assert.ok(atomicWrites.length > 0);
+  assert.equal(
+    atomicWrites.every((call) => call.inTransaction === true),
+    true,
+    "the first hosted report, publication, Finish valuation, and linked updates share one transaction",
+  );
+});
+
+test("atomic publish rejects a cross-queue identity before hosted report or Finish writes", async () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle,
+    productionRelease,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const { db, calls } = createMockProductionDb({
+    report: null,
+    reportBundle,
+    productionRelease,
+  });
+
+  await assert.rejects(
+    () => persistAiGraderProductionRelease(db, {
+      queueItemId: "queue-card-2",
+      tenantId: "tenant-1",
+      reportBundle,
+      productionRelease,
+      storagePlan: plan,
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+    }),
+    /queue identity does not match the durable confirmed queue/i,
+  );
+  assert.equal(
+    calls.some((call) => call.method === "create" || call.method === "upsert" || call.method === "updateMany"),
+    false,
+  );
+});
+
+test("publish authority requires the same stored queue/session/report triple in every existing JSON mirror", async () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const publishAuthority = buildAiGraderPublishAuthorityRecord({ reportBundle, productionRelease });
+  const plan = buildAiGraderProductionStoragePlan({ reportBundle, productionRelease });
+  const baseCard = {
+    id: "card-asset-1",
+    batchId: "batch-1",
+    aiGradeFinal: 8.6,
+    classificationSourcesJson: {
+      rapidQueueIdentity: RAPID_QUEUE_IDENTITY,
+      aiGraderPublishAuthority: publishAuthority,
+    },
+    aiGradingJson: {
+      rapidQueueIdentity: RAPID_QUEUE_IDENTITY,
+      publishAuthority,
+    },
+  };
+  const scenarios = [
+    {
+      name: "session mirror queue drift",
+      options: {
+        session: confirmedProductionSession({
+          cardIdentity: sampleConfirmedIdentity({
+            rapidQueueIdentity: { ...RAPID_QUEUE_IDENTITY, queueItemId: "queue-card-2" },
+          }),
+        }),
+      },
+    },
+    {
+      name: "classification mirror session drift",
+      options: {
+        cardAsset: {
+          ...baseCard,
+          classificationSourcesJson: {
+            ...baseCard.classificationSourcesJson,
+            rapidQueueIdentity: { ...RAPID_QUEUE_IDENTITY, gradingSessionId: "other-session" },
+          },
+        },
+      },
+    },
+    {
+      name: "grading mirror report drift",
+      options: {
+        cardAsset: {
+          ...baseCard,
+          aiGradingJson: {
+            ...baseCard.aiGradingJson,
+            rapidQueueIdentity: { ...RAPID_QUEUE_IDENTITY, reportId: "other-report" },
+          },
+        },
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const { db, calls } = createMockProductionDb({
+      report: null,
+      reportBundle,
+      productionRelease,
+      ...scenario.options,
+    });
+    await assert.rejects(
+      () => persistAiGraderProductionRelease(db, {
+        tenantId: "tenant-1",
+        reportBundle,
+        productionRelease,
+        storagePlan: plan,
+        cardAssetId: "card-asset-1",
+        itemId: "item-1",
+      }),
+      /queue identity does not match the durable confirmed queue/i,
+      scenario.name,
+    );
+    assert.equal(
+      calls.some((call) => call.method === "create" || call.method === "upsert" || call.method === "updateMany"),
+      false,
+      scenario.name,
+    );
+  }
 });
 
 test("production persistence rejects cross-tenant or mismatched Confirm authority before publication writes", async () => {

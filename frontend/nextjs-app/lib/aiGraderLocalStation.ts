@@ -1,7 +1,12 @@
-import { SAMPLE_AI_GRADER_REPORT_BUNDLE, type AiGraderStationReportBundle } from "./aiGraderReportBundle";
+import {
+  SAMPLE_AI_GRADER_REPORT_BUNDLE,
+  isAiGraderReportBundleV03,
+  type AiGraderReportBundle,
+  type AiGraderStationReportBundle,
+} from "./aiGraderReportBundle";
 import type { AiGraderStationProductionRelease } from "./aiGraderProductionRelease";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.9";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.10";
 export const AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION = "ai-grader-report-producer-v0.2";
 
 export type AiGraderStationStepId =
@@ -23,22 +28,18 @@ export type AiGraderStationAction =
   | "start-session"
   | "capture-front"
   | "capture-back"
-  | "run-diagnostics"
-  | "export-report-bundle"
-  | "calculate-final-grade"
-  | "finalize-report"
   | "publish-report"
-  | "generate-label-data"
   | "cancel-session"
   | "latest-report"
   | "session-manifest"
-  | "configure-rapid-capture"
-  | "queue-current-card"
   | "activate-queue-item"
   | "bind-mathematical-grading-authority"
-  | "submit-mathematical-finding-reviews";
+  | "submit-mathematical-finding-reviews"
+  | "begin-queued-ocr"
+  | "complete-queued-ocr"
+  | "fail-queued-ocr";
 
-export type AiGraderCaptureProfile = "full_forensic" | "production_fast";
+export type AiGraderCaptureProfile = "production_fast";
 export type AiGraderGradingContract = "legacy_v0" | "mathematical_calibration_v1";
 
 export type AiGraderMathematicalCardIdentityV1 = {
@@ -313,12 +314,11 @@ export type AiGraderCaptureTimingMetadata = {
 };
 
 export type AiGraderCaptureProfileGuard = {
-  stationSettingRequired: true;
-  selectionSource: "bridge_default" | "operator_setting" | "rapid_continuation";
-  productionFastOptIn: boolean;
+  stationSettingRequired: false;
+  selectionSource: "bridge_required";
+  oneRoadProductionFastRequired: true;
   fullForensicEvidencePreserved: true;
-  availableCaptureProfiles: ["full_forensic", "production_fast"];
-  previousStableProfile: "full_forensic";
+  availableCaptureProfiles: ["production_fast"];
   fiveSecondTargetProven: boolean;
 };
 
@@ -373,12 +373,115 @@ export type AiGraderRapidCaptureQueueItem = {
     requiresCalibration?: boolean;
     requiresImplementationCorrection?: boolean;
   };
+  ocr: AiGraderQueuedOcrLifecycle;
   error?: string;
+};
+
+export type AiGraderRapidQueueIdentity = {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+};
+
+export function aiGraderRapidQueueIdentityMatches(
+  left: AiGraderRapidQueueIdentity | null | undefined,
+  right: AiGraderRapidQueueIdentity | null | undefined,
+) {
+  return Boolean(left && right &&
+    left.queueItemId === right.queueItemId &&
+    left.gradingSessionId === right.gradingSessionId &&
+    left.reportId === right.reportId);
+}
+
+export function aiGraderReviewActivationAvailable(publicationClaim: AiGraderRapidQueueIdentity | null | undefined) {
+  return !publicationClaim;
+}
+
+const AI_GRADER_RAPID_PUBLISHABLE_STATES = new Set<AiGraderRapidCaptureWorkflowState>([
+  "report_ready_needs_confirm",
+  "confirmed_needs_publish",
+]);
+
+export function aiGraderRapidItemPublishable(state: AiGraderRapidCaptureWorkflowState | undefined) {
+  return Boolean(state && AI_GRADER_RAPID_PUBLISHABLE_STATES.has(state));
+}
+
+export function assertAiGraderRapidItemPublishable(state: AiGraderRapidCaptureWorkflowState | undefined) {
+  if (!aiGraderRapidItemPublishable(state)) {
+    throw new Error("Approve & Publish requires one unpublished exact item ready for review.");
+  }
+}
+
+export async function completeAiGraderExactPublicationHandoff<T>(input: {
+  identity: AiGraderRapidQueueIdentity;
+  acknowledgeExactLocalItem(identity: AiGraderRapidQueueIdentity): Promise<void>;
+  verifyPublishedRoute(reportId: string): Promise<T>;
+}) {
+  await input.acknowledgeExactLocalItem(input.identity);
+  return input.verifyPublishedRoute(input.identity.reportId);
+}
+
+export function embedAiGraderAuthoritativeProductionRelease(
+  bundle: AiGraderReportBundle,
+  productionRelease: NonNullable<AiGraderReportBundle["productionRelease"]>,
+): AiGraderReportBundle {
+  return { ...bundle, productionRelease };
+}
+
+export type AiGraderQueuedOcrImage = {
+  side: "front" | "back";
+  artifactRole: "normalized_card";
+  fileName: string;
+  mimeType: "image/png";
+  checksumSha256: string;
+  byteSize: number;
+  widthPx: 1200;
+  heightPx: 1680;
+};
+
+export type AiGraderQueuedOcrLifecycle = {
+  state: "waiting_for_normalized" | "eligible" | "in_flight" | "succeeded" | "failed";
+  updatedAt: string;
+  attemptCount: 0 | 1;
+  eligibleAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  attemptOwnerId?: string;
+  images?: AiGraderQueuedOcrImage[];
+  result?: Record<string, unknown>;
+  failure?: {
+    code: string;
+    message: string;
+  };
+};
+
+export type AiGraderRapidCaptureActiveReview = {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  manifest: {
+    currentStep?: AiGraderStationStepId;
+    latestReport: {
+      reportId: string;
+      localViewerPath: string;
+      publicViewerRoute: string;
+      exists: boolean;
+    };
+    mathematicalV1?: AiGraderMathematicalV1State;
+    reportBundle?: AiGraderStationReportBundle;
+    productionRelease?: AiGraderStationProductionRelease;
+    safety?: {
+      finalGradeComputed: boolean;
+      labelGenerated: boolean;
+    };
+    rapidCapture?: AiGraderRapidCaptureManifestStatus;
+  };
 };
 
 export type AiGraderRapidCaptureQueueStatus = {
   enabled: boolean;
   activeQueueItemId?: string;
+  activeReview?: AiGraderRapidCaptureActiveReview;
   persisted: true;
   reportWorkerSerialized: true;
   items: AiGraderRapidCaptureQueueItem[];
@@ -700,7 +803,7 @@ function captureTimingTargetNote(hardwareMeasurement: boolean, fiveSecondsPerSid
 }
 
 export function buildDefaultAiGraderCaptureTiming(
-  captureProfile: AiGraderCaptureTimingProfile = "full_forensic"
+  captureProfile: AiGraderCaptureTimingProfile = "production_fast"
 ): AiGraderCaptureTimingMetadata {
   return {
     schemaVersion: AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION,
@@ -724,12 +827,10 @@ export function sanitizeAiGraderCaptureTiming(
 ): AiGraderCaptureTimingMetadata {
   const record = captureTimingRecord(value) ? value : undefined;
   if (!record || record.schemaVersion !== AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION) {
-    return buildDefaultAiGraderCaptureTiming(authoritativeProfile ?? "full_forensic");
+    return buildDefaultAiGraderCaptureTiming(authoritativeProfile ?? "production_fast");
   }
-  const recordProfile = record?.captureProfile === "production_fast" || record?.captureProfile === "full_forensic"
-    ? record.captureProfile
-    : undefined;
-  const captureProfile = authoritativeProfile ?? recordProfile ?? "full_forensic";
+  const recordProfile = record?.captureProfile === "production_fast" ? record.captureProfile : undefined;
+  const captureProfile = authoritativeProfile ?? recordProfile ?? "production_fast";
 
   const hardwareMeasurement = record.hardwareMeasurement === true;
   const events = Array.isArray(record.events)
@@ -1116,7 +1217,8 @@ function sanitizeMathematicalFindingReviewRequest(
         width <= 0 || height <= 0 || x + width > 1.000001 || y + height > 1.000001) return undefined;
     const measurements = rawFinding.measurements.map(sanitizeMathematicalReviewMeasurement);
     if (!measurements.length || measurements.some((entry) => !entry)) return undefined;
-    const evidenceAssetIds = rawFinding.evidenceAssetIds.map(safeMathematicalIdentityText);
+    const evidenceAssetIds = rawFinding.evidenceAssetIds.map((entry) =>
+      safeMathematicalIdentityText(entry));
     if (!evidenceAssetIds.length || evidenceAssetIds.some((entry) => !entry)) return undefined;
     const trueView = sanitizeMathematicalReviewAsset(rawFinding.trueView, "normalized_card");
     const directionalChannels = rawFinding.directionalChannels.map((entry) =>
@@ -1279,6 +1381,41 @@ export function sanitizeAiGraderMathematicalV1StateForDisplay(
   };
 }
 
+const AI_GRADER_BROWSER_UNSAFE_KEY = /(?:path|dir|folder)$|^local|token|authorization|presign|credential|secret|cookie|bodyBase64|bodyEncoding/i;
+const AI_GRADER_BROWSER_UNSAFE_STRING = /(?:^|[\s"'(])(?:[a-z]:[\\/]|\\\\)|^file:|(?:station|bridge|service)[_-]?token|authorization|bearer\s|x-amz-|presigned|https?:\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i;
+
+function browserSafeStationRecord(value: unknown): Record<string, unknown> | undefined {
+  let visited = 0;
+  const clone = (input: unknown, depth: number): unknown => {
+    visited += 1;
+    if (visited > 20_000 || depth > 40) throw new Error("Station review payload is too deeply nested.");
+    if (input === null || typeof input === "boolean") return input;
+    if (typeof input === "number") return Number.isFinite(input) ? input : undefined;
+    if (typeof input === "string") {
+      if (input.length > 250_000 || AI_GRADER_BROWSER_UNSAFE_STRING.test(input) || /^data:/i.test(input.trim())) return undefined;
+      return input;
+    }
+    if (Array.isArray(input)) {
+      return input.map((entry) => clone(entry, depth + 1)).filter((entry) => entry !== undefined);
+    }
+    if (!stationRecord(input)) return undefined;
+    const output: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(input)) {
+      if (AI_GRADER_BROWSER_UNSAFE_KEY.test(key)) continue;
+      const safeChild = clone(child, depth + 1);
+      if (safeChild !== undefined) output[key] = safeChild;
+    }
+    return output;
+  };
+  try {
+    const cloned = clone(value, 0);
+    if (!stationRecord(cloned) || JSON.stringify(cloned).length > 2_000_000) return undefined;
+    return cloned;
+  } catch {
+    return undefined;
+  }
+}
+
 const AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES: AiGraderRapidCaptureWorkflowState[] = [
   "front_captured",
   "front_processing",
@@ -1319,7 +1456,7 @@ function sanitizeAiGraderRapidCaptureManifest(value: unknown): AiGraderRapidCapt
   const workflowState = parseAiGraderRapidCaptureWorkflowState(record.workflowState);
   const safelyQueuedAt = safeStationTimestamp(record.safelyQueuedAt);
   return {
-    enabled: record.enabled === true,
+    enabled: true,
     ...(queueItemId ? { queueItemId } : {}),
     ...(workflowState ? { workflowState } : {}),
     workflowHistory: sanitizeAiGraderRapidCaptureHistory(record.workflowHistory),
@@ -1327,6 +1464,116 @@ function sanitizeAiGraderRapidCaptureManifest(value: unknown): AiGraderRapidCapt
     humanConfirmationRequired: true,
     autoConfirm: false,
     autoPublish: false,
+  };
+}
+
+const AI_GRADER_QUEUED_OCR_STATES: AiGraderQueuedOcrLifecycle["state"][] = [
+  "waiting_for_normalized",
+  "eligible",
+  "in_flight",
+  "succeeded",
+  "failed",
+];
+const AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
+
+function sanitizeAiGraderQueuedOcrImage(value: unknown): AiGraderQueuedOcrImage | undefined {
+  if (!stationRecord(value) || (value.side !== "front" && value.side !== "back") ||
+      value.artifactRole !== "normalized_card" || value.mimeType !== "image/png" ||
+      value.widthPx !== 1200 || value.heightPx !== 1680) return undefined;
+  const fileName = value.fileName === `${value.side}-normalized-card.png`
+    ? value.fileName
+    : undefined;
+  const checksumSha256 = typeof value.checksumSha256 === "string" && /^[a-f0-9]{64}$/.test(value.checksumSha256)
+    ? value.checksumSha256
+    : undefined;
+  const byteSize = Number(value.byteSize);
+  if (!fileName || !checksumSha256 || !Number.isSafeInteger(byteSize) || byteSize < 1) return undefined;
+  return {
+    side: value.side,
+    artifactRole: "normalized_card",
+    fileName,
+    mimeType: "image/png",
+    checksumSha256,
+    byteSize,
+    widthPx: 1200,
+    heightPx: 1680,
+  };
+}
+
+function sanitizeAiGraderQueuedOcr(
+  value: unknown,
+  identity: { queueItemId: string; gradingSessionId: string; reportId: string },
+): AiGraderQueuedOcrLifecycle {
+  const record = stationRecord(value) ? value : {};
+  const parsedState = typeof record.state === "string" &&
+    AI_GRADER_QUEUED_OCR_STATES.includes(record.state as AiGraderQueuedOcrLifecycle["state"])
+    ? record.state as AiGraderQueuedOcrLifecycle["state"]
+    : undefined;
+  const updatedAt = safeStationTimestamp(record.updatedAt);
+  const attemptCount = record.attemptCount === 1 ? 1 : 0;
+  const images = Array.isArray(record.images)
+    ? record.images.map(sanitizeAiGraderQueuedOcrImage).filter((image): image is AiGraderQueuedOcrImage => Boolean(image))
+    : [];
+  const rawImagesExactlyValid = Array.isArray(record.images) && record.images.length === 2 && images.length === 2;
+  const eligibleAt = safeStationTimestamp(record.eligibleAt);
+  const startedAt = safeStationTimestamp(record.startedAt);
+  const completedAt = safeStationTimestamp(record.completedAt);
+  const attemptOwnerId = typeof record.attemptOwnerId === "string" &&
+    AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_PATTERN.test(record.attemptOwnerId)
+    ? record.attemptOwnerId
+    : undefined;
+  const attemptOwnerAbsent = record.attemptOwnerId === undefined;
+  const result = browserSafeStationRecord(record.result);
+  const exactResult = result &&
+    safeStationId(result.queueItemId) === identity.queueItemId &&
+    safeStationId(result.gradingSessionId) === identity.gradingSessionId &&
+    safeStationId(result.reportId) === identity.reportId &&
+    result.status === "prefill_ready"
+    ? result
+    : undefined;
+  const failureRecord = stationRecord(record.failure) ? record.failure : {};
+  const failureCode = safeStationId(failureRecord.code);
+  const failureMessage = safeStationText(failureRecord.message);
+  const exactImages = rawImagesExactlyValid && new Set(images.map((image) => image.side)).size === 2 ? images : undefined;
+  const ordered = (...timestamps: Array<string | undefined>) => {
+    const present = timestamps.filter((timestamp): timestamp is string => Boolean(timestamp));
+    return present.every((timestamp, index) => index === 0 || Date.parse(present[index - 1]) <= Date.parse(timestamp));
+  };
+  const noTerminalPayload = record.result === undefined && record.failure === undefined && completedAt === undefined;
+  const structurallyValid = Boolean(updatedAt && parsedState && (
+    (parsedState === "waiting_for_normalized" && attemptCount === 0 && attemptOwnerAbsent && !eligibleAt && !startedAt && record.images === undefined && noTerminalPayload) ||
+    (parsedState === "eligible" && attemptCount === 0 && attemptOwnerAbsent && eligibleAt && !startedAt && exactImages && noTerminalPayload && ordered(eligibleAt, updatedAt)) ||
+    (parsedState === "in_flight" && attemptCount === 1 && attemptOwnerId && eligibleAt && startedAt && exactImages && noTerminalPayload && ordered(eligibleAt, startedAt, updatedAt)) ||
+    (parsedState === "succeeded" && attemptCount === 1 && attemptOwnerId && eligibleAt && startedAt && completedAt && exactImages && exactResult && record.failure === undefined && ordered(eligibleAt, startedAt, completedAt, updatedAt)) ||
+    (parsedState === "failed" && completedAt && failureCode && failureMessage && record.result === undefined && (
+      (attemptCount === 0 && attemptOwnerAbsent && !startedAt && ordered(completedAt, updatedAt)) ||
+      (attemptCount === 1 && attemptOwnerId && eligibleAt && startedAt && exactImages && ordered(eligibleAt, startedAt, completedAt, updatedAt))
+    ))
+  ));
+  if (!structurallyValid || !parsedState || !updatedAt) {
+    const failureAt = updatedAt ?? new Date(0).toISOString();
+    return {
+      state: "failed",
+      updatedAt: failureAt,
+      attemptCount,
+      completedAt: failureAt,
+      failure: {
+        code: "AI_GRADER_OCR_PERSISTED_STATE_INVALID",
+        message: `Persisted OCR lifecycle evidence is malformed for exact queue ${identity.queueItemId}, session ${identity.gradingSessionId}, report ${identity.reportId}; this item will not retry automatically.`.slice(0, 500),
+      },
+    };
+  }
+  return {
+    state: parsedState,
+    updatedAt,
+    attemptCount,
+    ...(eligibleAt ? { eligibleAt } : {}),
+    ...(startedAt ? { startedAt } : {}),
+    ...(completedAt ? { completedAt } : {}),
+    ...(attemptOwnerId ? { attemptOwnerId } : {}),
+    ...(exactImages ? { images: exactImages } : {}),
+    ...(exactResult ? { result: exactResult } : {}),
+    ...(failureCode && failureMessage ? { failure: { code: failureCode, message: failureMessage } } : {}),
   };
 }
 
@@ -1371,11 +1618,18 @@ function sanitizeAiGraderRapidCaptureQueueItem(value: unknown): AiGraderRapidCap
         ...(rawMathematical?.requiresImplementationCorrection === true ? { requiresImplementationCorrection: true } : {}),
       }
     : undefined;
+  const ocr = sanitizeAiGraderQueuedOcr(value.ocr, {
+    queueItemId,
+    gradingSessionId: sessionId,
+    reportId,
+  });
+  const stateWithTerminalOcr = ocr.state === "failed" ? "failed" : state;
+  const terminalOcrError = ocr.state === "failed" ? ocr.failure?.message : undefined;
   return {
     queueItemId,
     sessionId,
     reportId,
-    state,
+    state: stateWithTerminalOcr,
     queuedAt,
     updatedAt,
     history: sanitizeAiGraderRapidCaptureHistory(value.history),
@@ -1383,21 +1637,103 @@ function sanitizeAiGraderRapidCaptureQueueItem(value: unknown): AiGraderRapidCap
     autoConfirmed: false,
     autoPublished: false,
     ...(mathematicalV1 ? { mathematicalV1 } : {}),
-    ...(error ? { error } : {}),
+    ocr,
+    ...(error || terminalOcrError ? { error: error ?? terminalOcrError } : {}),
   };
 }
 
-export function sanitizeAiGraderRapidCaptureQueue(value: unknown, fallbackEnabled = false): AiGraderRapidCaptureQueueStatus {
+function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapidCaptureActiveReview | undefined {
+  if (!stationRecord(value) || !stationRecord(value.manifest)) return undefined;
+  const queueItemId = safeStationId(value.queueItemId);
+  const gradingSessionId = safeStationId(value.gradingSessionId);
+  const reportId = safeStationId(value.reportId);
+  const manifest = value.manifest;
+  if (!queueItemId || !gradingSessionId || !reportId) return undefined;
+  const latest = stationRecord(manifest.latestReport) ? manifest.latestReport : {};
+  if (safeStationId(latest.reportId) !== reportId ||
+      (latest.exists !== true && latest.exists !== false)) return undefined;
+  const mathematicalV1 = sanitizeAiGraderMathematicalV1StateForDisplay(manifest.mathematicalV1);
+  const mathematicalExecution = mathematicalV1?.execution;
+  if (mathematicalExecution?.status === "finding_review_required" &&
+      (mathematicalExecution.reviewRequest.gradingSessionId !== gradingSessionId ||
+        mathematicalExecution.reviewRequest.reportId !== reportId)) {
+    return undefined;
+  }
+  const pendingMathematicalEvidence =
+    mathematicalExecution?.status === "finding_review_required" ||
+    mathematicalExecution?.status === "insufficient_evidence";
+  if (latest.exists !== true && !pendingMathematicalEvidence) return undefined;
+  const safeReportBundle = browserSafeStationRecord(manifest.reportBundle);
+  const candidateReportBundle = safeReportBundle as unknown as AiGraderStationReportBundle | undefined;
+  const reportBundle = safeReportBundle &&
+      safeStationId(safeReportBundle.reportId) === reportId &&
+      candidateReportBundle &&
+      (isAiGraderReportBundleV03(candidateReportBundle) ||
+        safeStationId(safeReportBundle.gradingSessionId) === gradingSessionId)
+    ? candidateReportBundle
+    : undefined;
+  const safeProductionRelease = browserSafeStationRecord(manifest.productionRelease);
+  const productionRelease = safeProductionRelease &&
+      safeStationId(safeProductionRelease.reportId) === reportId &&
+      safeStationId(safeProductionRelease.gradingSessionId) === gradingSessionId
+    ? safeProductionRelease as unknown as AiGraderStationProductionRelease
+    : undefined;
+  const currentStep = typeof manifest.currentStep === "string"
+    ? AI_GRADER_STATION_STEPS.find((step) => step.id === manifest.currentStep)?.id
+    : undefined;
+  return {
+    queueItemId,
+    gradingSessionId,
+    reportId,
+    manifest: {
+      ...(currentStep ? { currentStep } : {}),
+      latestReport: {
+        reportId,
+        localViewerPath: "/ai-grader/station",
+        publicViewerRoute: "/ai-grader/reports/" + encodeURIComponent(reportId),
+        exists: latest.exists === true,
+      },
+      ...(mathematicalV1 ? { mathematicalV1 } : {}),
+      ...(reportBundle ? { reportBundle } : {}),
+      ...(productionRelease ? { productionRelease } : {}),
+      ...(stationRecord(manifest.safety) ? {
+        safety: {
+          finalGradeComputed: manifest.safety.finalGradeComputed === true,
+          labelGenerated: manifest.safety.labelGenerated === true,
+        },
+      } : {}),
+      ...(manifest.rapidCapture ? { rapidCapture: sanitizeAiGraderRapidCaptureManifest(manifest.rapidCapture) } : {}),
+    },
+  };
+}
+
+export function sanitizeAiGraderRapidCaptureQueue(value: unknown): AiGraderRapidCaptureQueueStatus {
   const record = stationRecord(value) ? value : {};
   const activeQueueItemId = safeStationId(record.activeQueueItemId);
+  const activeReview = sanitizeAiGraderRapidCaptureActiveReview(record.activeReview);
   const items = Array.isArray(record.items)
     ? record.items.map(sanitizeAiGraderRapidCaptureQueueItem)
         .filter((item): item is AiGraderRapidCaptureQueueItem => Boolean(item))
         .slice(0, 50)
     : [];
+  const exactActiveReview = activeReview && items.some((item) => {
+    const pendingMathematicalState =
+      item.state === "finding_review_required" || item.state === "insufficient_evidence";
+    const activeMathematicalStatus = activeReview.manifest.mathematicalV1?.execution?.status;
+    return item.queueItemId === activeReview.queueItemId &&
+      item.sessionId === activeReview.gradingSessionId &&
+      item.reportId === activeReview.reportId &&
+      item.state !== "failed" &&
+      (item.ocr.state === "succeeded" || pendingMathematicalState) &&
+      (!pendingMathematicalState ||
+        (item.mathematicalV1?.status === item.state && activeMathematicalStatus === item.state));
+  })
+    ? activeReview
+    : undefined;
   return {
-    enabled: typeof record.enabled === "boolean" ? record.enabled : fallbackEnabled,
-    ...(activeQueueItemId ? { activeQueueItemId } : {}),
+    enabled: true,
+    ...(activeQueueItemId && exactActiveReview?.queueItemId === activeQueueItemId ? { activeQueueItemId } : {}),
+    ...(exactActiveReview && exactActiveReview.queueItemId === activeQueueItemId ? { activeReview: exactActiveReview } : {}),
     persisted: true,
     reportWorkerSerialized: true,
     items,
@@ -1475,15 +1811,12 @@ function sanitizeGeometryCaptureDecisions(value: unknown): AiGraderLocalStationS
 export function sanitizeAiGraderLocalStationStatusForDisplay(
   status: AiGraderLocalStationStatus
 ): AiGraderLocalStationStatus {
-  const captureProfile: AiGraderCaptureProfile =
-    status.captureProfile === "production_fast" && status.captureProfileGuard?.productionFastOptIn === true
-      ? "production_fast"
-      : "full_forensic";
-  const selectionSource = status.captureProfileGuard?.selectionSource === "operator_setting"
-    ? "operator_setting"
-    : status.captureProfileGuard?.selectionSource === "rapid_continuation"
-      ? "rapid_continuation"
-      : "bridge_default";
+  if (status.captureProfile !== "production_fast" ||
+      status.captureProfileGuard?.selectionSource !== "bridge_required" ||
+      status.captureProfileGuard?.oneRoadProductionFastRequired !== true) {
+    throw new Error("Dell local bridge update/restart required. The one-road station requires production_fast.");
+  }
+  const captureProfile: AiGraderCaptureProfile = "production_fast";
   const rawMathematicalCalibration = status.mathematicalCalibration;
   const mathematicalCalibration = rawMathematicalCalibration
     ? {
@@ -1528,12 +1861,11 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
     executionPath: "warm_full_forensic_runner",
     captureProfile,
     captureProfileGuard: {
-      stationSettingRequired: true,
-      selectionSource,
-      productionFastOptIn: captureProfile === "production_fast",
+      stationSettingRequired: false,
+      selectionSource: "bridge_required",
+      oneRoadProductionFastRequired: true,
       fullForensicEvidencePreserved: true,
-      availableCaptureProfiles: ["full_forensic", "production_fast"],
-      previousStableProfile: "full_forensic",
+      availableCaptureProfiles: ["production_fast"],
       fiveSecondTargetProven:
         status.executionPath === "warm_full_forensic_runner" &&
         sanitizeAiGraderCaptureTiming(status.captureTiming, captureProfile).target.fiveSecondsPerSideProven,
@@ -1563,7 +1895,7 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
     ...(status.outputs ? { outputs: status.outputs } : {}),
     ...(status.productionRelease ? { productionRelease: status.productionRelease } : {}),
     rapidCapture: sanitizeAiGraderRapidCaptureManifest(status.rapidCapture),
-    rapidCaptureQueue: sanitizeAiGraderRapidCaptureQueue(status.rapidCaptureQueue, status.rapidCapture?.enabled === true),
+    rapidCaptureQueue: sanitizeAiGraderRapidCaptureQueue(status.rapidCaptureQueue),
     ...(status.timingSummary
       ? {
           timingSummary: {
@@ -1981,18 +2313,57 @@ export function aiGraderAuthoritativeLiveLightingDraft(lighting: AiGraderLiveLig
 }
 
 export function aiGraderApproveAndPublishEligible(input: {
+  itemState: AiGraderRapidCaptureWorkflowState | undefined;
   reportReady: boolean;
   finalReady: boolean;
   productionSignedIn: boolean;
   identityReady: boolean;
   publishStatus: "idle" | "pending" | "published" | "disabled" | "error";
 }) {
-  return input.reportReady
+  return aiGraderRapidItemPublishable(input.itemState)
+    && input.reportReady
     && input.finalReady
     && input.productionSignedIn
     && input.identityReady
     && input.publishStatus !== "published"
     && input.publishStatus !== "pending";
+}
+
+export function aiGraderStartNewCardAvailable(input: {
+  bridgeConnected: boolean;
+  captureBusy: boolean;
+  lightingRequestPending: boolean;
+  captureLockHeld: boolean;
+  warmRunnerStatus: AiGraderWarmRunnerStatusName;
+  currentStep: AiGraderStationStepId;
+}) {
+  return input.bridgeConnected &&
+    !input.captureBusy &&
+    !input.lightingRequestPending &&
+    !input.captureLockHeld &&
+    input.warmRunnerStatus !== "capturing" &&
+    input.currentStep === "start_new_card";
+}
+
+export function selectNextSerializedAiGraderOcrItem(items: AiGraderRapidCaptureQueueItem[]) {
+  if (items.some((item) => item.ocr.state === "in_flight")) return undefined;
+  return items
+    .filter((item) => item.ocr.state === "eligible")
+    .sort((left, right) =>
+      Date.parse(left.queuedAt) - Date.parse(right.queuedAt) || left.queueItemId.localeCompare(right.queueItemId)
+    )[0];
+}
+
+export function aiGraderAtomicBackQueueReleaseMatches(input: {
+  status: AiGraderLocalStationStatus;
+  gradingSessionId: string;
+  reportId: string;
+}) {
+  return input.status.currentStep === "start_new_card" &&
+    input.status.sessionManifest.frontCaptured === false &&
+    input.status.sessionManifest.backCaptured === false &&
+    input.status.rapidCaptureQueue.items.some((item) =>
+      item.sessionId === input.gradingSessionId && item.reportId === input.reportId);
 }
 
 export type AiGraderLocalReportHistoryItem = {
@@ -2046,20 +2417,16 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "start-session": "live_preview_focus_framing",
   "capture-front": "prompt_flip_card",
   "capture-back": "run_provisional_diagnostics",
-  "run-diagnostics": "view_unified_report",
-  "export-report-bundle": "view_unified_report",
-  "calculate-final-grade": "calculate_final_grade",
-  "finalize-report": "finalize_publish_report",
   "publish-report": "finalize_publish_report",
-  "generate-label-data": "label_data_ready",
   "cancel-session": "session_complete",
   "latest-report": "view_unified_report",
   "session-manifest": "view_unified_report",
-  "configure-rapid-capture": "start_new_card",
-  "queue-current-card": "start_new_card",
   "activate-queue-item": "view_unified_report",
   "bind-mathematical-grading-authority": "capture_front",
   "submit-mathematical-finding-reviews": "view_unified_report",
+  "begin-queued-ocr": "start_new_card",
+  "complete-queued-ocr": "start_new_card",
+  "fail-queued-ocr": "start_new_card",
 };
 
 const NEXT_ACTION_BY_STEP: Record<AiGraderStationStepId, AiGraderStationAction> = {
@@ -2069,10 +2436,10 @@ const NEXT_ACTION_BY_STEP: Record<AiGraderStationStepId, AiGraderStationAction> 
   capture_front: "capture-front",
   prompt_flip_card: "capture-back",
   capture_back: "capture-back",
-  run_provisional_diagnostics: "run-diagnostics",
-  view_unified_report: "calculate-final-grade",
+  run_provisional_diagnostics: "status",
+  view_unified_report: "status",
   calculate_final_grade: "publish-report",
-  finalize_publish_report: "generate-label-data",
+  finalize_publish_report: "status",
   label_data_ready: "latest-report",
   session_complete: "latest-report",
 };
@@ -2100,24 +2467,27 @@ function bridgeEndpoints() {
     { method: "POST", action: "start-session", description: "Start a local station session in mock/contract mode." },
     { method: "POST", action: "capture-front", description: "Validate the exact front frame and acknowledged lighting, serialize camera ownership, and capture front evidence." },
     { method: "POST", action: "capture-back", description: "Validate the exact back frame and acknowledged lighting, serialize camera ownership, and capture back evidence." },
-    { method: "POST", action: "run-diagnostics", description: "Generate or attach the provisional report." },
-    { method: "POST", action: "export-report-bundle", description: "Export report-bundle.json, asset manifest, and checksums." },
-    { method: "POST", action: "calculate-final-grade", description: "Calculate Final AI-Grader Grade V0 from the report bundle." },
-    { method: "POST", action: "finalize-report", description: "Finalize the local report and record operator warning acceptance." },
     { method: "POST", action: "publish-report", description: "Prepare local publication manifest and public URL data." },
-    { method: "POST", action: "generate-label-data", description: "Generate label-ready JSON and QR payload URL data." },
     { method: "POST", action: "cancel-session", description: "Cancel a local station session with safe-off cleanup." },
-    { method: "POST", action: "configure-rapid-capture", description: "Configure the durable Rapid Capture throughput queue." },
-    { method: "POST", action: "queue-current-card", description: "Queue captured evidence for serialized background report processing." },
-    { method: "POST", action: "activate-queue-item", description: "Open a completed queued report for Approve & Publish." },
+    { method: "POST", action: "activate-queue-item", description: "Select one exact completed queued report for review without taking capture ownership." },
     { method: "POST", action: "bind-mathematical-grading-authority", description: "Bind exact Mathematical V1 card and centering authority before capture." },
     { method: "POST", action: "submit-mathematical-finding-reviews", description: "Submit one exact SHA-bound disposition for every measured finding." },
+    { method: "POST", action: "begin-queued-ocr", description: "Atomically claim one exact eligible queued OCR lifecycle." },
+    { method: "POST", action: "complete-queued-ocr", description: "Persist one safe OCR result for the exact claimed queue identity." },
+    { method: "POST", action: "fail-queued-ocr", description: "Persist one explicit terminal OCR failure for the exact claimed queue identity." },
     { method: "GET", action: "latest-report", description: "Read latest report location." },
     { method: "GET", action: "session-manifest", description: "Read station session manifest." },
   ];
   return actions.map((endpoint) => ({
     ...endpoint,
-    path: endpoint.path ?? `/api/ai-grader/station/${endpoint.action}`,
+    path: endpoint.path ??
+      (endpoint.action === "status"
+        ? "/status"
+        : endpoint.action === "latest-report"
+          ? "/latest-report"
+          : endpoint.action === "session-manifest"
+            ? "/session-manifest"
+            : `/actions/${endpoint.action}`),
     hardwareAccess: false,
   }));
 }
@@ -2194,7 +2564,7 @@ function defaultWarmRunnerStatus(): AiGraderWarmRunnerStatus {
       persistentLeimacSaved: false,
     },
     note:
-      "Full forensic evidence remains the default. The local Dell bridge owns warm capture, lock, queue, timing, and safe cleanup state.",
+      "The one production_fast path preserves immutable measurement evidence. The local Dell bridge owns capture, lock, queue, timing, and clean release state.",
   };
 }
 
@@ -2323,7 +2693,7 @@ export function buildAiGraderLocalStationStatus(input: {
   captureProfile?: AiGraderCaptureProfile;
 } = {}): AiGraderLocalStationStatus {
   const action = input.action ?? "status";
-  const captureProfile = input.captureProfile ?? "full_forensic";
+  const captureProfile: AiGraderCaptureProfile = "production_fast";
   const currentStep = ACTION_TO_STEP[action] ?? "start_new_card";
   const nextAction = NEXT_ACTION_BY_STEP[currentStep];
   const reportBundle = SAMPLE_AI_GRADER_REPORT_BUNDLE;
@@ -2351,12 +2721,11 @@ export function buildAiGraderLocalStationStatus(input: {
     executionPath: "warm_full_forensic_runner",
     captureProfile,
     captureProfileGuard: {
-      stationSettingRequired: true,
-      selectionSource: captureProfile === "production_fast" ? "operator_setting" : "bridge_default",
-      productionFastOptIn: captureProfile === "production_fast",
+      stationSettingRequired: false,
+      selectionSource: "bridge_required",
+      oneRoadProductionFastRequired: true,
       fullForensicEvidencePreserved: true,
-      availableCaptureProfiles: ["full_forensic", "production_fast"],
-      previousStableProfile: "full_forensic",
+      availableCaptureProfiles: ["production_fast"],
       fiveSecondTargetProven: false,
     },
     captureTiming: buildDefaultAiGraderCaptureTiming(captureProfile),
@@ -2421,14 +2790,14 @@ export function buildAiGraderLocalStationStatus(input: {
     warmRunnerStatus: defaultWarmRunnerStatus(),
     geometryCaptureDecisions: {},
     rapidCapture: {
-      enabled: false,
+      enabled: true,
       workflowHistory: [],
       humanConfirmationRequired: true,
       autoConfirm: false,
       autoPublish: false,
     },
     rapidCaptureQueue: {
-      enabled: false,
+      enabled: true,
       persisted: true,
       reportWorkerSerialized: true,
       items: [],
@@ -2502,20 +2871,16 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "start-session",
     "capture-front",
     "capture-back",
-    "run-diagnostics",
-    "export-report-bundle",
-    "calculate-final-grade",
-    "finalize-report",
     "publish-report",
-    "generate-label-data",
     "cancel-session",
     "latest-report",
     "session-manifest",
-    "configure-rapid-capture",
-    "queue-current-card",
     "activate-queue-item",
     "bind-mathematical-grading-authority",
     "submit-mathematical-finding-reviews",
+    "begin-queued-ocr",
+    "complete-queued-ocr",
+    "fail-queued-ocr",
   ];
   return allowed.includes(raw as AiGraderStationAction) ? (raw as AiGraderStationAction) : null;
 }

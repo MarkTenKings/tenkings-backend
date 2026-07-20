@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildAiGraderCaptureProfileRequest,
@@ -14,6 +15,8 @@ import {
 import {
   buildAiGraderLocalStationStatus,
   parseAiGraderStationAction,
+  sanitizeAiGraderMathematicalV1StateForDisplay,
+  sanitizeAiGraderRapidCaptureQueue,
   sanitizeAiGraderLocalStationStatusForDisplay,
   type AiGraderMathematicalFindingReviewRequestV1,
   type AiGraderMathematicalGradingAuthorityV1,
@@ -108,10 +111,10 @@ function exactAuthority(): {
   };
 }
 
-test("initial Mathematical V1 request carries exact authority but no caller publication, transform, or confidence", () => {
+test("initial Mathematical V1 request uses the one-road production_fast profile with exact authority", () => {
   const { authority } = exactAuthority();
   const request = buildAiGraderCaptureProfileRequest(
-    "full_forensic",
+    "production_fast",
     "mathematical_calibration_v1",
     authority,
   );
@@ -120,15 +123,83 @@ test("initial Mathematical V1 request carries exact authority but no caller publ
     "gradingContract",
     "mathematicalGradingAuthority",
   ]);
+  assert.equal(request.captureProfile, "production_fast");
   assert.equal(request.mathematicalGradingAuthority, authority);
   const serialized = JSON.stringify(request);
+  assert.equal(serialized.includes("full_forensic"), false);
   assert.equal(serialized.includes("publication"), false);
   assert.equal(serialized.includes("transform"), false);
   assert.equal(serialized.includes("confidence"), false);
   assert.throws(
-    () => buildAiGraderCaptureProfileRequest("full_forensic", "mathematical_calibration_v1"),
+    () => buildAiGraderCaptureProfileRequest("production_fast", "mathematical_calibration_v1"),
     /requires exact card and centering authority/i,
   );
+});
+
+test("Mathematical V1 does not restore retired profile or separate Rapid queue actions", () => {
+  const status = buildAiGraderLocalStationStatus();
+  assert.equal(status.captureProfile, "production_fast");
+  assert.deepEqual(status.captureProfileGuard.availableCaptureProfiles, ["production_fast"]);
+  assert.equal(parseAiGraderStationAction("configure-rapid-capture"), null);
+  assert.equal(parseAiGraderStationAction("queue-current-card"), null);
+});
+
+test("Mathematical review activation accepts V1 review states without weakening publication eligibility", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  const activationStart = source.indexOf("const activateRapidQueueItem");
+  const activationEnd = source.indexOf("const submitMathematicalFindingReviews", activationStart);
+  assert.ok(activationStart >= 0 && activationEnd > activationStart);
+  const activationBlock = source.slice(activationStart, activationEnd);
+  assert.match(activationBlock, /RAPID_REVIEWABLE_STATES\.has\(item\.state\)/);
+  assert.doesNotMatch(activationBlock, /aiGraderRapidItemPublishable\(item\.state\)/);
+  assert.match(
+    source,
+    /RAPID_REVIEWABLE_STATES[\s\S]*?"finding_review_required"[\s\S]*?"insufficient_evidence"/,
+  );
+
+  const publicationStart = source.indexOf("const productionReleaseBody");
+  const publicationEnd = source.indexOf("const buildReportBundleForProduction", publicationStart);
+  assert.ok(publicationStart >= 0 && publicationEnd > publicationStart);
+  assert.match(
+    source.slice(publicationStart, publicationEnd),
+    /assertAiGraderRapidItemPublishable\(activeReviewItem\?\.state\)/,
+  );
+});
+
+test("queued Mathematical review state and assets bind to the exact activated queue identity", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  const reviewStateStart = source.indexOf("const activeReview = status.rapidCaptureQueue.activeReview;");
+  const reviewStateEnd = source.indexOf("const revokeMathematicalReviewObjectUrls", reviewStateStart);
+  assert.ok(reviewStateStart >= 0 && reviewStateEnd > reviewStateStart);
+  const reviewStateBlock = source.slice(reviewStateStart, reviewStateEnd);
+  assert.match(
+    reviewStateBlock,
+    /const mathematicalExecution = activeReviewManifest\?\.mathematicalV1\?\.execution/,
+  );
+  assert.doesNotMatch(reviewStateBlock, /status\.mathematicalV1\?\.execution/);
+  assert.match(reviewStateBlock, /const cleanSessionMathematicalV1 = status\.mathematicalV1/);
+  assert.match(
+    reviewStateBlock,
+    /const mathematicalAuthorityBound = Boolean\(cleanSessionMathematicalV1\?\.gradingAuthority\)/,
+  );
+
+  const assetEffectStart = source.indexOf("const request = mathematicalReviewRequest;", reviewStateEnd);
+  const assetEffectEnd = source.indexOf(
+    "useEffect(() => () => revokeMathematicalReviewObjectUrls()",
+    assetEffectStart,
+  );
+  assert.ok(assetEffectStart >= 0 && assetEffectEnd > assetEffectStart);
+  const assetEffectBlock = source.slice(assetEffectStart, assetEffectEnd);
+  assert.match(
+    assetEffectBlock,
+    /request\.gradingSessionId !== activeReviewQueueIdentity\.gradingSessionId/,
+  );
+  assert.match(assetEffectBlock, /request\.reportId !== activeReviewQueueIdentity\.reportId/);
+  assert.match(
+    assetEffectBlock,
+    /fetchAiGraderMathematicalReviewAsset\(\{[\s\S]*?queueItemId: activeReviewQueueIdentity\.queueItemId,[\s\S]*?gradingSessionId: activeReviewQueueIdentity\.gradingSessionId,[\s\S]*?reportId: activeReviewQueueIdentity\.reportId,/,
+  );
+  assert.doesNotMatch(assetEffectBlock, /reportId: request\.reportId/);
 });
 
 test("Rapid continuation binds the same publication-free exact authority before capture", () => {
@@ -211,6 +282,8 @@ test("review asset tampering is rejected after exact header verification", async
     fetchAiGraderMathematicalReviewAsset({
       baseUrl: "http://127.0.0.1:47652",
       stationToken: "paired-token",
+      queueItemId: "queue-item-1",
+      gradingSessionId: "grading-session-1",
       reportId: "report-1",
       requirement: { side: "front", metadata },
     }, (async () => new Response(tamperedBytes, {
@@ -218,6 +291,9 @@ test("review asset tampering is rejected after exact header verification", async
       headers: {
         "content-type": metadata.contentType,
         "content-length": String(metadata.byteSize),
+        "x-ai-grader-queue-item-id": "queue-item-1",
+        "x-ai-grader-grading-session-id": "grading-session-1",
+        "x-ai-grader-report-id": "report-1",
         "x-ai-grader-asset-id": metadata.assetId,
         "x-ai-grader-sha256": metadata.sha256,
         "x-ai-grader-side": "front",
@@ -253,7 +329,21 @@ function reviewRequest(): AiGraderMathematicalFindingReviewRequestV1 {
     },
     detector: { id: "surface-v1", version: "1.0.0" },
     measuredDeduction: 0.25,
-    measurements: [],
+    measurements: [{
+      measurementId: findingId + "-length",
+      kind: "length",
+      unit: "mm",
+      measuredMeasurement: 1,
+      u95: 0.1,
+      effectiveMeasurement: 0.9,
+      explicitGrade10Tolerance: 0.05,
+      grade10Buffer: 0.1,
+      calibrationProfileId: "profile-1",
+      calibrationVersion: "1.0.0",
+      algorithmVersion: "surface-v1",
+      validEvidenceCoverage: 0.95,
+      usableDirectionalChannelCount: 8,
+    }],
     evidenceAssetIds: ["front-true-view"],
     trueView,
     directionalChannels,
@@ -281,6 +371,96 @@ function reviewRequest(): AiGraderMathematicalFindingReviewRequestV1 {
     artifactSha256: "2".repeat(64),
   };
 }
+
+test("queued finding and insufficient reviews retain exact Mathematical state without a completed report", () => {
+  const request = reviewRequest();
+  const authority = buildAiGraderMathematicalGradingAuthorityV1({
+    identity: { ...identity },
+    profiles: { front: "printed_border_v1", back: "printed_border_v1" },
+  });
+  const at = "2026-07-19T12:10:00.000Z";
+  const findingPayload = {
+    activeQueueItemId: "queue-1",
+    activeReview: {
+      queueItemId: "queue-1",
+      gradingSessionId: request.gradingSessionId,
+      reportId: request.reportId,
+      manifest: {
+        latestReport: { reportId: request.reportId, exists: false },
+        mathematicalV1: {
+          schemaVersion: "ten-kings-ai-grader-local-station-mathematical-v1-state-v1",
+          generatedAt: request.generatedAt,
+          gradingAuthority: authority,
+          stagedDesignReferences: {},
+          execution: {
+            status: "finding_review_required",
+            completedAt: at,
+            attempt: 1,
+            v0FallbackUsed: false,
+            reviewRequest: request,
+            reviewIssues: [],
+          },
+        },
+      },
+    },
+    items: [{
+      queueItemId: "queue-1",
+      sessionId: request.gradingSessionId,
+      reportId: request.reportId,
+      state: "finding_review_required",
+      queuedAt: at,
+      updatedAt: at,
+      history: [],
+      mathematicalV1: {
+        status: "finding_review_required",
+        reviewRequestSha256: request.artifactSha256,
+      },
+      ocr: { state: "waiting_for_normalized", updatedAt: at, attemptCount: 0 },
+    }],
+  };
+  assert.equal(
+    sanitizeAiGraderMathematicalV1StateForDisplay(
+      findingPayload.activeReview.manifest.mathematicalV1,
+    )?.execution?.status,
+    "finding_review_required",
+  );
+  const finding = sanitizeAiGraderRapidCaptureQueue(findingPayload);
+  assert.equal(finding.activeReview?.manifest.latestReport.exists, false);
+  assert.equal(
+    finding.activeReview?.manifest.mathematicalV1?.execution?.status,
+    "finding_review_required",
+  );
+
+  const insufficientPayload = structuredClone(findingPayload) as any;
+  insufficientPayload.activeReview.manifest.mathematicalV1.execution = {
+    status: "insufficient_evidence",
+    completedAt: at,
+    attempt: 1,
+    v0FallbackUsed: false,
+    failedStage: "centering",
+    reasons: ["Exact intended design evidence is unavailable."],
+    requiresRecapture: false,
+    requiresApprovedDesignReference: true,
+    requiresCalibration: false,
+    requiresImplementationCorrection: false,
+  };
+  insufficientPayload.items[0].state = "insufficient_evidence";
+  insufficientPayload.items[0].mathematicalV1 = {
+    status: "insufficient_evidence",
+    failedStage: "centering",
+    requiresApprovedDesignReference: true,
+  };
+  const insufficient = sanitizeAiGraderRapidCaptureQueue(insufficientPayload);
+  assert.equal(insufficient.activeReview?.manifest.latestReport.exists, false);
+  assert.equal(
+    insufficient.activeReview?.manifest.mathematicalV1?.execution?.status,
+    "insufficient_evidence",
+  );
+
+  const forged = structuredClone(findingPayload) as any;
+  forged.activeReview.manifest.mathematicalV1.execution.reviewRequest.reportId = "report-other";
+  assert.equal(sanitizeAiGraderRapidCaptureQueue(forged).activeReview, undefined);
+});
 
 test("complete finding review submits one exact SHA-bound disposition per finding and nothing subjective", () => {
   const request = reviewRequest();

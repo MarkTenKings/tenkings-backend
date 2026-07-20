@@ -33,6 +33,276 @@ import type {
 export const DEFAULT_AI_GRADER_STATION_BRIDGE_URL = "http://127.0.0.1:47652";
 export const AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY = "tenkings.aiGraderStation.bridgeUrl";
 export const AI_GRADER_STATION_TOKEN_STORAGE_KEY = "tenkings.aiGraderStation.stationToken";
+export const AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_STORAGE_KEY = "tenkings.aiGraderStation.queuedOcrAttemptOwnerId";
+export const AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_LOCK_PREFIX = "tenkings.aiGraderStation.queuedOcrAttemptOwner:";
+
+const AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
+const AI_GRADER_QUEUED_OCR_BROWSER_OWNER_PATTERN = /^ocr-attempt-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+export type AiGraderQueuedOcrAttemptOwnerLockManager = {
+  request(
+    name: string,
+    options:
+      | { mode: "exclusive"; ifAvailable: true }
+      | { mode: "exclusive"; signal: AbortSignal },
+    callback: (lock: { name: string } | null) => void | Promise<void>,
+  ): Promise<void>;
+};
+
+export type AiGraderQueuedOcrAttemptOwnerClaim = {
+  attemptOwnerId: string;
+  reusedPersistedOwner: boolean;
+  release(): void;
+};
+
+type AiGraderQueuedOcrAttemptOwnerStorage = Pick<Storage, "getItem" | "setItem">;
+
+function queuedOcrAttemptOwnerInitializationError(message: string) {
+  return new Error("Queued OCR attempt owner initialization failed: " + message);
+}
+
+function queuedOcrAttemptOwnerLockName(attemptOwnerId: string) {
+  return AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_LOCK_PREFIX + attemptOwnerId;
+}
+
+function createAiGraderQueuedOcrAttemptOwnerId(createUuid: () => string) {
+  const attemptOwnerId = "ocr-attempt-" + createUuid().toLowerCase();
+  if (!AI_GRADER_QUEUED_OCR_BROWSER_OWNER_PATTERN.test(attemptOwnerId)) {
+    throw queuedOcrAttemptOwnerInitializationError("the browser could not create a safe owner UUID.");
+  }
+  return attemptOwnerId;
+}
+
+function tryAcquireAiGraderQueuedOcrAttemptOwnerLock(
+  lockManager: AiGraderQueuedOcrAttemptOwnerLockManager,
+  attemptOwnerId: string,
+): Promise<Omit<AiGraderQueuedOcrAttemptOwnerClaim, "reusedPersistedOwner"> | null> {
+  const lockName = queuedOcrAttemptOwnerLockName(attemptOwnerId);
+  let releaseHeldLock: (() => void) | null = null;
+  const holdUntilRelease = new Promise<void>((resolve) => {
+    releaseHeldLock = resolve;
+  });
+  return new Promise((resolve, reject) => {
+    let acquisitionSettled = false;
+    let requestPromise: Promise<void>;
+    try {
+      requestPromise = Promise.resolve(lockManager.request(
+        lockName,
+        { mode: "exclusive", ifAvailable: true },
+        async (lock) => {
+          if (!lock) {
+            if (!acquisitionSettled) {
+              acquisitionSettled = true;
+              resolve(null);
+            }
+            return;
+          }
+          if (lock.name !== lockName) {
+            if (!acquisitionSettled) {
+              acquisitionSettled = true;
+              reject(new Error("the Web Lock manager returned a mismatched owner lock"));
+            }
+            return;
+          }
+          let released = false;
+          const claim = {
+            attemptOwnerId,
+            release() {
+              if (released) return;
+              released = true;
+              releaseHeldLock?.();
+            },
+          };
+          if (!acquisitionSettled) {
+            acquisitionSettled = true;
+            resolve(claim);
+          }
+          await holdUntilRelease;
+        },
+      ));
+    } catch (error) {
+      acquisitionSettled = true;
+      reject(error);
+      return;
+    }
+    void requestPromise.then(
+      () => {
+        if (!acquisitionSettled) {
+          acquisitionSettled = true;
+          reject(new Error("the Web Lock manager completed without an owner-lock decision"));
+        }
+      },
+      (error) => {
+        if (!acquisitionSettled) {
+          acquisitionSettled = true;
+          reject(error);
+        }
+      },
+    );
+  });
+}
+
+export async function initializeAiGraderQueuedOcrAttemptOwner(input: {
+  lockManager?: AiGraderQueuedOcrAttemptOwnerLockManager;
+  storage?: AiGraderQueuedOcrAttemptOwnerStorage;
+  navigationType?: string;
+  createUuid?: () => string;
+} = {}): Promise<AiGraderQueuedOcrAttemptOwnerClaim> {
+  try {
+    const browserWindow = typeof window === "undefined" ? undefined : window;
+    const browserLockManager = browserWindow?.navigator?.locks as unknown as
+      AiGraderQueuedOcrAttemptOwnerLockManager | undefined;
+    const lockManager = input.lockManager ?? browserLockManager;
+    if (!lockManager || typeof lockManager.request !== "function") {
+      throw queuedOcrAttemptOwnerInitializationError(
+        "the origin-scoped Web Locks API is unavailable; OCR will not be claimed.",
+      );
+    }
+    const storage = input.storage ?? browserWindow?.sessionStorage;
+    if (!storage) {
+      throw queuedOcrAttemptOwnerInitializationError(
+        "browser sessionStorage is unavailable; OCR will not be claimed.",
+      );
+    }
+    const persistedAttemptOwnerId = storage.getItem(AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_STORAGE_KEY);
+    if (
+      typeof persistedAttemptOwnerId === "string" &&
+      AI_GRADER_QUEUED_OCR_BROWSER_OWNER_PATTERN.test(persistedAttemptOwnerId)
+    ) {
+      const persistedClaim = await tryAcquireAiGraderQueuedOcrAttemptOwnerLock(
+        lockManager,
+        persistedAttemptOwnerId,
+      );
+      if (persistedClaim) {
+        return { ...persistedClaim, reusedPersistedOwner: true };
+      }
+    }
+
+    const createUuid = input.createUuid ?? (() => {
+      if (typeof browserWindow?.crypto?.randomUUID !== "function") {
+        throw queuedOcrAttemptOwnerInitializationError(
+          "browser crypto.randomUUID is unavailable; OCR will not be claimed.",
+        );
+      }
+      return browserWindow.crypto.randomUUID();
+    });
+    const attemptOwnerId = createAiGraderQueuedOcrAttemptOwnerId(createUuid);
+    const generatedClaim = await tryAcquireAiGraderQueuedOcrAttemptOwnerLock(lockManager, attemptOwnerId);
+    if (!generatedClaim) {
+      throw queuedOcrAttemptOwnerInitializationError(
+        "the fresh owner UUID lock is already held; OCR will not be claimed.",
+      );
+    }
+    try {
+      storage.setItem(AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_STORAGE_KEY, attemptOwnerId);
+    } catch (error) {
+      generatedClaim.release();
+      throw error;
+    }
+    return { ...generatedClaim, reusedPersistedOwner: false };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Queued OCR attempt owner initialization failed:")
+    ) {
+      throw error;
+    }
+    const message = error instanceof Error && error.message.trim()
+      ? error.message.trim()
+      : "the browser owner claim could not be initialized";
+    throw queuedOcrAttemptOwnerInitializationError(message + "; OCR will not be claimed.");
+  }
+}
+
+export async function waitForAiGraderQueuedOcrAttemptOwnerLock(input: {
+  attemptOwnerId: string;
+  signal: AbortSignal;
+  lockManager?: AiGraderQueuedOcrAttemptOwnerLockManager;
+}): Promise<Omit<AiGraderQueuedOcrAttemptOwnerClaim, "reusedPersistedOwner">> {
+  if (!AI_GRADER_QUEUED_OCR_BROWSER_OWNER_PATTERN.test(input.attemptOwnerId)) {
+    throw new Error(
+      "Queued OCR orphan recovery failed: the persisted attempt owner is invalid; no terminal failure was written.",
+    );
+  }
+  const browserWindow = typeof window === "undefined" ? undefined : window;
+  const browserLockManager = browserWindow?.navigator?.locks as unknown as
+    AiGraderQueuedOcrAttemptOwnerLockManager | undefined;
+  const lockManager = input.lockManager ?? browserLockManager;
+  if (!lockManager || typeof lockManager.request !== "function") {
+    throw new Error(
+      "Queued OCR orphan recovery failed: the origin-scoped Web Locks API is unavailable; no terminal failure was written.",
+    );
+  }
+  try {
+    const lockName = queuedOcrAttemptOwnerLockName(input.attemptOwnerId);
+    let releaseHeldLock: (() => void) | null = null;
+    const holdUntilRelease = new Promise<void>((resolve) => {
+      releaseHeldLock = resolve;
+    });
+    return await new Promise((resolve, reject) => {
+      let acquisitionSettled = false;
+      let requestPromise: Promise<void>;
+      try {
+        requestPromise = Promise.resolve(lockManager.request(
+          lockName,
+          { mode: "exclusive", signal: input.signal },
+          async (lock) => {
+            if (!lock || lock.name !== lockName) {
+              if (!acquisitionSettled) {
+                acquisitionSettled = true;
+                reject(new Error("the Web Lock manager returned a mismatched owner lock"));
+              }
+              return;
+            }
+            let released = false;
+            const release = () => {
+              if (released) return;
+              released = true;
+              input.signal.removeEventListener("abort", release);
+              releaseHeldLock?.();
+            };
+            input.signal.addEventListener("abort", release, { once: true });
+            if (input.signal.aborted) release();
+            if (!acquisitionSettled) {
+              acquisitionSettled = true;
+              resolve({
+                attemptOwnerId: input.attemptOwnerId,
+                release,
+              });
+            }
+            await holdUntilRelease;
+          },
+        ));
+      } catch (error) {
+        acquisitionSettled = true;
+        reject(error);
+        return;
+      }
+      void requestPromise.then(
+        () => {
+          if (!acquisitionSettled) {
+            acquisitionSettled = true;
+            reject(new Error("the Web Lock waiter completed without acquiring the owner lock"));
+          }
+        },
+        (error) => {
+          if (!acquisitionSettled) {
+            acquisitionSettled = true;
+            reject(error);
+          }
+        },
+      );
+    });
+  } catch (error) {
+    if (input.signal.aborted) throw error;
+    const message = error instanceof Error && error.message.trim()
+      ? error.message.trim()
+      : "the exact owner lock could not be acquired";
+    throw new Error(
+      "Queued OCR orphan recovery failed: " + message + "; no terminal failure was written.",
+    );
+  }
+}
 
 function strictStationReportBundle(value: unknown): AiGraderStationReportBundle {
   const schemaVersion = value && typeof value === "object"
@@ -83,12 +353,25 @@ export type AiGraderStationBridgeActionRequestBody = {
   expectedSide?: "front" | "back";
   expectedSideEpoch?: string;
   expectedFrameId?: string;
-  rapidCaptureEnabled?: boolean;
   queueItemId?: string;
   gradingContract?: AiGraderGradingContract;
   mathematicalGradingAuthority?: AiGraderMathematicalGradingAuthorityV1;
   mathematicalReviewRequestSha256?: string;
   mathematicalFindingReviews?: AiGraderMathematicalFindingReviewV1[];
+  gradingSessionId?: string;
+  attemptOwnerId?: string;
+  result?: Record<string, unknown>;
+  failure?: {
+    code: string;
+    message: string;
+  };
+  publication?: {
+    queueItemId: string;
+    gradingSessionId: string;
+    reportId: string;
+    publicationStatus: "published";
+    publishedAt: string;
+  };
 };
 
 export function buildAiGraderCaptureProfileRequest(
@@ -315,16 +598,132 @@ export function buildAiGraderDetectedGeometryCaptureRequest(input: {
   } satisfies AiGraderStationBridgeActionRequestBody;
 }
 
-export function buildAiGraderRapidCaptureConfigurationRequest(rapidCaptureEnabled: boolean) {
-  return { rapidCaptureEnabled } satisfies AiGraderStationBridgeActionRequestBody;
+function exactRapidQueueIdentity(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+}) {
+  const normalized = {
+    queueItemId: input.queueItemId.trim(),
+    gradingSessionId: input.gradingSessionId.trim(),
+    reportId: input.reportId.trim(),
+  };
+  for (const [label, value] of Object.entries(normalized)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(value)) {
+      throw new Error("Rapid Capture " + label + " is invalid.");
+    }
+  }
+  return normalized;
 }
 
-export function buildAiGraderRapidQueueActivationRequest(queueItemId: string) {
-  const normalized = queueItemId.trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(normalized)) {
-    throw new Error("Rapid Capture queue item ID is invalid.");
+function exactQueuedOcrAttemptOwnerId(value: string) {
+  if (typeof value !== "string" || !AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_PATTERN.test(value)) {
+    throw new Error("Queued OCR attemptOwnerId is invalid.");
   }
-  return { queueItemId: normalized } satisfies AiGraderStationBridgeActionRequestBody;
+  return value;
+}
+
+export function buildAiGraderRapidQueueActivationRequest(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+}) {
+  return exactRapidQueueIdentity(input) satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderQueuedOcrClaimRequest(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  attemptOwnerId: string;
+}) {
+  return {
+    ...exactRapidQueueIdentity(input),
+    attemptOwnerId: exactQueuedOcrAttemptOwnerId(input.attemptOwnerId),
+  } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderQueuedOcrCompletionRequest(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  attemptOwnerId: string;
+  result: unknown;
+}) {
+  const identity = exactRapidQueueIdentity(input);
+  if (!input.result || typeof input.result !== "object" || Array.isArray(input.result)) {
+    throw new Error("Queued OCR completion result is invalid.");
+  }
+  const result = input.result as Record<string, unknown>;
+  if (result.queueItemId !== identity.queueItemId ||
+      result.gradingSessionId !== identity.gradingSessionId ||
+      result.reportId !== identity.reportId) {
+    throw new Error("Queued OCR completion result identity is invalid.");
+  }
+  return {
+    ...identity,
+    attemptOwnerId: exactQueuedOcrAttemptOwnerId(input.attemptOwnerId),
+    result,
+  } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+const AI_GRADER_QUEUED_OCR_FAILURE_CODES = new Set([
+  "AI_GRADER_OCR_GOOGLE_CONFIG_MISSING",
+  "AI_GRADER_OCR_GOOGLE_PROVIDER_FAILED",
+  "AI_GRADER_OCR_GOOGLE_FRONT_FAILED",
+  "AI_GRADER_OCR_GOOGLE_BACK_FAILED",
+  "AI_GRADER_OCR_OPENAI_CONFIG_MISSING",
+  "AI_GRADER_OCR_OPENAI_TIMEOUT",
+  "AI_GRADER_OCR_OPENAI_NETWORK",
+  "AI_GRADER_OCR_OPENAI_NON_2XX",
+  "AI_GRADER_OCR_OPENAI_REFUSAL",
+  "AI_GRADER_OCR_OPENAI_SCHEMA_FAILED",
+  "AI_GRADER_OCR_CATALOG_FAILED",
+  "AI_GRADER_OCR_INTERNAL_FAILED",
+  "AI_GRADER_OCR_NORMALIZED_EVIDENCE_MISSING",
+  "AI_GRADER_OCR_NORMALIZED_EVIDENCE_INVALID",
+  "AI_GRADER_OCR_IDENTITY_MISMATCH",
+  "AI_GRADER_OCR_INTERRUPTED",
+]);
+
+export function buildAiGraderQueuedOcrFailureRequest(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  attemptOwnerId: string;
+  failure: { code: string; message: string };
+}) {
+  const identity = exactRapidQueueIdentity(input);
+  const code = input.failure.code.trim();
+  const message = input.failure.message.trim();
+  if (!AI_GRADER_QUEUED_OCR_FAILURE_CODES.has(code) || !message || message.length > 500) {
+    throw new Error("Queued OCR terminal failure evidence is invalid.");
+  }
+  return {
+    ...identity,
+    attemptOwnerId: exactQueuedOcrAttemptOwnerId(input.attemptOwnerId),
+    failure: { code, message },
+  } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderRapidPublicationEvidence(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  publishedAt: string;
+}) {
+  const identity = exactRapidQueueIdentity(input);
+  if (!Number.isFinite(Date.parse(input.publishedAt)) || new Date(input.publishedAt).toISOString() !== input.publishedAt) {
+    throw new Error("Rapid Capture publication timestamp is invalid.");
+  }
+  return {
+    ...identity,
+    publication: {
+      ...identity,
+      publicationStatus: "published" as const,
+      publishedAt: input.publishedAt,
+    },
+  } satisfies AiGraderStationBridgeActionRequestBody;
 }
 
 const AI_GRADER_MATHEMATICAL_BINARY_MAX_BYTES = 64 * 1024 * 1024;
@@ -490,16 +889,20 @@ export type AiGraderFetchedMathematicalReviewAssetV1 = {
 export async function fetchAiGraderMathematicalReviewAsset(input: {
   baseUrl: string;
   stationToken: string;
+  queueItemId: string;
+  gradingSessionId: string;
   reportId: string;
   requirement: AiGraderMathematicalReviewAssetRequirementV1;
   signal?: AbortSignal;
 }, fetchImpl: typeof fetch = fetch): Promise<AiGraderFetchedMathematicalReviewAssetV1> {
   const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
   if (!input.stationToken.trim()) throw new Error("AI Grader station bridge token is required.");
-  const reportId = exactBridgeIdentifier(input.reportId, "Mathematical V1 report ID");
+  const identity = exactRapidQueueIdentity(input);
   const metadata = input.requirement.metadata;
   const response = await fetchImpl(
-    baseUrl + "/mathematical-v1/review-assets?reportId=" + encodeURIComponent(reportId) +
+    baseUrl + "/mathematical-v1/review-assets?queueItemId=" + encodeURIComponent(identity.queueItemId) +
+      "&gradingSessionId=" + encodeURIComponent(identity.gradingSessionId) +
+      "&reportId=" + encodeURIComponent(identity.reportId) +
       "&assetId=" + encodeURIComponent(metadata.assetId),
     {
       method: "GET",
@@ -521,6 +924,9 @@ export async function fetchAiGraderMathematicalReviewAsset(input: {
     response.headers.get("content-type") !== metadata.contentType ||
     response.headers.get("x-ai-grader-asset-id") !== metadata.assetId ||
     response.headers.get("x-ai-grader-sha256") !== metadata.sha256 ||
+    response.headers.get("x-ai-grader-queue-item-id") !== identity.queueItemId ||
+    response.headers.get("x-ai-grader-grading-session-id") !== identity.gradingSessionId ||
+    response.headers.get("x-ai-grader-report-id") !== identity.reportId ||
     response.headers.get("x-ai-grader-side") !== input.requirement.side ||
     response.headers.get("x-ai-grader-evidence-role") !== metadata.evidenceRole ||
     widthPx !== metadata.widthPx ||
@@ -638,6 +1044,9 @@ export async function fetchAiGraderStationBridgeHealth(
     throw new Error(
       `Dell report producer update/restart required. Launch the Ten Kings AI Grader Station desktop shortcut, then re-export the existing report. No hardware recapture is required.`,
     );
+  }
+  if (payload.mode !== "real" || payload.hardwareActionsEnabled !== true) {
+    throw new Error("The production AI Grader station requires the real paired Dell helper. Contract or mock preview cannot operate the capture road.");
   }
   return payload as AiGraderStationBridgeHealth;
 }
@@ -1027,6 +1436,97 @@ export async function fetchAiGraderStationReportAsset(input: {
   }
   const bytes = await response.arrayBuffer();
   return {
+    bytes,
+    contentType: response.headers.get("content-type") ?? "application/octet-stream",
+    byteSize: bytes.byteLength,
+    checksumSha256: response.headers.get("x-ai-grader-sha256") ?? undefined,
+  };
+}
+
+export type AiGraderQueuedOcrDescriptor = {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  status: "eligible" | "in_flight";
+  images: Array<{
+    side: "front" | "back";
+    artifactRole: "normalized_card";
+    fileName: string;
+    mimeType: "image/png";
+    checksumSha256: string;
+    byteSize: number;
+    widthPx: 1200;
+    heightPx: 1680;
+  }>;
+};
+
+export async function fetchAiGraderQueuedOcrDescriptor(input: {
+  baseUrl: string;
+  stationToken: string;
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderQueuedOcrDescriptor> {
+  const identity = exactRapidQueueIdentity(input);
+  return bridgeGetJson<AiGraderQueuedOcrDescriptor>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: "/rapid-queue/" + encodeURIComponent(identity.queueItemId) +
+      "/ocr?gradingSessionId=" + encodeURIComponent(identity.gradingSessionId) +
+      "&reportId=" + encodeURIComponent(identity.reportId),
+  }, fetchImpl);
+}
+
+export async function fetchAiGraderQueuedOcrAsset(input: {
+  baseUrl: string;
+  stationToken: string;
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  side: "front" | "back";
+}, fetchImpl: typeof fetch = fetch): Promise<{
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  side: "front" | "back";
+  bytes: ArrayBuffer;
+  contentType: string;
+  byteSize: number;
+  checksumSha256?: string;
+}> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  const identity = exactRapidQueueIdentity(input);
+  if (!input.stationToken.trim()) throw new Error("AI Grader station bridge token is required.");
+  const response = await fetchImpl(
+    baseUrl + "/rapid-queue/" + encodeURIComponent(identity.queueItemId) +
+      "/ocr/asset?gradingSessionId=" + encodeURIComponent(identity.gradingSessionId) +
+      "&reportId=" + encodeURIComponent(identity.reportId) +
+      "&side=" + input.side,
+    {
+      method: "GET",
+      headers: { "x-ai-grader-station-token": input.stationToken },
+    },
+  );
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.message ?? "Queued OCR " + input.side + " asset fetch failed with HTTP " + response.status + ".");
+  }
+  const headerIdentity = {
+    queueItemId: response.headers.get("x-ai-grader-queue-item-id"),
+    gradingSessionId: response.headers.get("x-ai-grader-grading-session-id"),
+    reportId: response.headers.get("x-ai-grader-report-id"),
+    side: response.headers.get("x-ai-grader-side"),
+  };
+  if (headerIdentity.queueItemId !== identity.queueItemId ||
+      headerIdentity.gradingSessionId !== identity.gradingSessionId ||
+      headerIdentity.reportId !== identity.reportId ||
+      headerIdentity.side !== input.side) {
+    throw new Error("Queued OCR asset response identity mismatch.");
+  }
+  const bytes = await response.arrayBuffer();
+  return {
+    ...identity,
+    side: input.side,
     bytes,
     contentType: response.headers.get("content-type") ?? "application/octet-stream",
     byteSize: bytes.byteLength,

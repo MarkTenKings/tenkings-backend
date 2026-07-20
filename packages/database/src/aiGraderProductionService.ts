@@ -87,6 +87,7 @@ export type AiGraderValuationStatus =
 
 export type AiGraderProductionDbDelegate = {
   upsert(args: unknown): Promise<unknown>;
+  create?(args: unknown): Promise<unknown>;
   findUnique?(args: unknown): Promise<unknown | null>;
   findMany?(args: unknown): Promise<unknown[]>;
   updateMany?(args: unknown): Promise<{ count: number }>;
@@ -214,6 +215,7 @@ export type AiGraderProductionActorAudit = JsonRecord & {
 };
 
 export type AiGraderProductionPersistInput = {
+  queueItemId: string;
   tenantId: string;
   reportBundle: AiGraderProductionReportBundleLike;
   productionRelease: AiGraderProductionReleaseLike;
@@ -228,6 +230,7 @@ export type AiGraderProductionPersistInput = {
 
 export type AiGraderConfirmedPublishAuthorityInput = {
   tenantId: string;
+  queueItemId: string;
   gradingSessionId: string;
   reportId: string;
   cardAssetId: string;
@@ -254,7 +257,7 @@ export type AiGraderPublishAuthorityRecord = {
 
 export type AiGraderConfirmedPublishAuthority = AiGraderConfirmedPublishAuthorityInput & {
   sessionId: string;
-  reportRowId: string;
+  reportRowId?: string;
   confirmedIdentity: JsonRecord;
   finalOverallGrade?: number;
   publishAuthority: AiGraderPublishAuthorityRecord;
@@ -262,6 +265,7 @@ export type AiGraderConfirmedPublishAuthority = AiGraderConfirmedPublishAuthorit
 };
 
 export type AiGraderProductionPersistResult = {
+  queueItemId: string;
   gradingSessionId: string;
   reportId: string;
   publicationStatus: AiGraderProductionPublicationStatus;
@@ -3203,6 +3207,11 @@ function reportData(input: AiGraderProductionPersistInput, sessionId: string, re
     checksumSummary: nullableJson({
       assets: input.storagePlan.assetManifest,
       actorAudit: actorAuditJson(input.actorAudit),
+      rapidQueueIdentity: {
+        queueItemId: input.queueItemId,
+        gradingSessionId: stringValue(input.reportBundle.gradingSessionId, ""),
+        reportId,
+      },
     }),
     finalizedAt: now,
     publishedAt: status === "published" ? now : null,
@@ -3215,14 +3224,16 @@ async function resolveAiGraderConfirmedPublishAuthorityTx(
   input: AiGraderConfirmedPublishAuthorityInput,
 ): Promise<AiGraderConfirmedPublishAuthority> {
   const tenantId = trimmedString(input.tenantId);
+  const requestedQueueItemId = trimmedString(input.queueItemId);
   const gradingSessionId = trimmedString(input.gradingSessionId);
   const reportId = trimmedString(input.reportId);
   const cardAssetId = trimmedString(input.cardAssetId);
   const itemId = trimmedString(input.itemId);
-  if (!tenantId || !gradingSessionId || !reportId || !cardAssetId || !itemId) {
+  if (!tenantId || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(requestedQueueItemId) ||
+      !gradingSessionId || !reportId || !cardAssetId || !itemId) {
     throw aiGraderPublishAuthorityError(
       "AI_GRADER_PUBLISH_LINKAGE_REQUIRED",
-      "Publish requires explicit report, grading-session, CardAsset, and Item linkage.",
+      "Publish requires explicit queue, report, grading-session, CardAsset, and Item linkage.",
       400,
     );
   }
@@ -3272,6 +3283,7 @@ async function resolveAiGraderConfirmedPublishAuthorityTx(
         batchId: true,
         classificationSourcesJson: true,
         aiGradingJson: true,
+        aiGradeFinal: true,
       },
     }),
     tx.item.findUnique({
@@ -3285,23 +3297,26 @@ async function resolveAiGraderConfirmedPublishAuthorityTx(
   const itemRecord = isRecord(item) ? item : {};
   const sessionId = trimmedString(sessionRecord.id);
   const reportRowId = trimmedString(reportRecord.id);
+  const hasHostedReport = Boolean(reportRowId);
   const sessionStatus = trimmedString(sessionRecord.status);
   const reportPublicationStatus = trimmedString(reportRecord.publicationStatus);
   if (
     !sessionId ||
-    !reportRowId ||
     trimmedString(sessionRecord.tenantId) !== tenantId ||
-    trimmedString(reportRecord.tenantId) !== tenantId ||
     trimmedString(sessionRecord.gradingSessionId) !== gradingSessionId ||
     trimmedString(sessionRecord.reportId) !== reportId ||
-    trimmedString(reportRecord.reportId) !== reportId ||
-    trimmedString(reportRecord.sessionId) !== sessionId ||
     trimmedString(sessionRecord.cardAssetId) !== cardAssetId ||
-    trimmedString(reportRecord.cardAssetId) !== cardAssetId ||
     trimmedString(sessionRecord.itemId) !== itemId ||
-    trimmedString(reportRecord.itemId) !== itemId ||
     !["card_created", "published"].includes(sessionStatus) ||
-    !["draft", "published"].includes(reportPublicationStatus) ||
+    (!hasHostedReport && sessionStatus === "published") ||
+    (hasHostedReport && (
+      trimmedString(reportRecord.tenantId) !== tenantId ||
+      trimmedString(reportRecord.reportId) !== reportId ||
+      trimmedString(reportRecord.sessionId) !== sessionId ||
+      trimmedString(reportRecord.cardAssetId) !== cardAssetId ||
+      trimmedString(reportRecord.itemId) !== itemId ||
+      !["draft", "published"].includes(reportPublicationStatus)
+    )) ||
     trimmedString(cardRecord.id) !== cardAssetId ||
     !trimmedString(cardRecord.batchId) ||
     trimmedString(itemRecord.id) !== itemId ||
@@ -3337,11 +3352,14 @@ async function resolveAiGraderConfirmedPublishAuthorityTx(
     (category === "sport" && (!trimmedString(confirmedIdentity.playerName) || !trimmedString(confirmedIdentity.sport))) ||
     (category === "tcg" && (!trimmedString(confirmedIdentity.cardName) || !trimmedString(confirmedIdentity.game))) ||
     (category === "comics" && !trimmedString(confirmedIdentity.cardName));
-  const finalOverallGrade = numberValue(reportRecord.finalOverallGrade);
+  const reportFinalOverallGrade = numberValue(reportRecord.finalOverallGrade);
+  const cardFinalOverallGrade = numberValue(cardRecord.aiGradeFinal);
+  const finalOverallGrade = hasHostedReport ? reportFinalOverallGrade : cardFinalOverallGrade;
   if (
     !["sport", "tcg", "comics"].includes(category) ||
     missingCommon ||
     categoryIdentityMissing ||
+    (hasHostedReport && cardFinalOverallGrade !== undefined && cardFinalOverallGrade !== reportFinalOverallGrade) ||
     finalOverallGrade === undefined ||
     finalOverallGrade < 1 ||
     finalOverallGrade > 10
@@ -3357,6 +3375,25 @@ async function resolveAiGraderConfirmedPublishAuthorityTx(
   const cardAiGradingJson = isRecord(cardRecord.aiGradingJson)
     ? cardRecord.aiGradingJson
     : {};
+  const durableRapidIdentity = isRecord(durableIdentity.rapidQueueIdentity) ? durableIdentity.rapidQueueIdentity : {};
+  const classificationRapidIdentity = isRecord(classificationSources.rapidQueueIdentity) ? classificationSources.rapidQueueIdentity : {};
+  const gradingRapidIdentity = isRecord(cardAiGradingJson.rapidQueueIdentity) ? cardAiGradingJson.rapidQueueIdentity : {};
+  const storedQueueItemId = trimmedString(durableRapidIdentity.queueItemId);
+  const rapidIdentityMatches = (record: JsonRecord) =>
+    trimmedString(record.queueItemId) === storedQueueItemId &&
+    trimmedString(record.gradingSessionId) === gradingSessionId &&
+    trimmedString(record.reportId) === reportId;
+  if (!storedQueueItemId ||
+      !rapidIdentityMatches(durableRapidIdentity) ||
+      !rapidIdentityMatches(classificationRapidIdentity) ||
+      !rapidIdentityMatches(gradingRapidIdentity) ||
+      requestedQueueItemId !== storedQueueItemId) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH",
+      "Publish queue identity does not match the durable confirmed queue, grading session, and report.",
+    );
+  }
+  const queueItemId = requestedQueueItemId;
   const publishAuthority = parseAiGraderPublishAuthorityRecord(
     classificationSources.aiGraderPublishAuthority,
   );
@@ -3381,12 +3418,13 @@ async function resolveAiGraderConfirmedPublishAuthorityTx(
   });
   return {
     tenantId,
+    queueItemId,
     gradingSessionId,
     reportId,
     cardAssetId,
     itemId,
     sessionId,
-    reportRowId,
+    ...(reportRowId ? { reportRowId } : {}),
     confirmedIdentity,
     finalOverallGrade,
     publishAuthority,
@@ -3438,6 +3476,7 @@ function aiGraderPersistAuthorityInput(input: AiGraderProductionPersistInput): A
       );
     }
   }
+  const queueItemId = trimmedString(input.queueItemId);
   const bundleReportId = trimmedString(input.reportBundle.reportId);
   const releaseReportId = trimmedString(input.productionRelease.reportId);
   const bundleSessionId = trimmedString(input.reportBundle.gradingSessionId);
@@ -3473,6 +3512,7 @@ function aiGraderPersistAuthorityInput(input: AiGraderProductionPersistInput): A
   ].map(trimmedString).filter(Boolean);
   if (
     !trimmedString(input.tenantId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(queueItemId) ||
     !bundleReportId ||
     !releaseReportId ||
     bundleReportId !== releaseReportId ||
@@ -3488,12 +3528,13 @@ function aiGraderPersistAuthorityInput(input: AiGraderProductionPersistInput): A
   ) {
     throw aiGraderPublishAuthorityError(
       "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
-      "Publish requires one exact report, grading-session, CardAsset, and Item linkage.",
+      "Publish requires one exact queue, report, grading-session, CardAsset, and Item linkage.",
       400,
     );
   }
   return {
     tenantId: trimmedString(input.tenantId),
+    queueItemId,
     gradingSessionId,
     reportId: bundleReportId,
     cardAssetId,
@@ -3734,41 +3775,62 @@ export async function persistAiGraderProductionRelease(
       itemId: _reportItemId,
       ...reportUpdateData
     } = baseReportData;
-    if (typeof tx.aiGraderReport.updateMany !== "function") {
-      throw aiGraderPublishAuthorityError(
-        "AI_GRADER_PUBLISH_AUTHORITY_UNAVAILABLE",
-        "Durable Confirm authority cannot be updated safely; Publish stopped before database publication changes.",
-        503,
-      );
-    }
-    const reportUpdate = await tx.aiGraderReport.updateMany({
-      where: {
-        id: authority.reportRowId,
+    let reportRowId = authority.reportRowId;
+    let report: Record<string, unknown>;
+    if (reportRowId) {
+      if (typeof tx.aiGraderReport.updateMany !== "function") {
+        throw aiGraderPublishAuthorityError(
+          "AI_GRADER_PUBLISH_AUTHORITY_UNAVAILABLE",
+          "Durable Confirm authority cannot be updated safely; Publish stopped before database publication changes.",
+          503,
+        );
+      }
+      const reportUpdate = await tx.aiGraderReport.updateMany({
+        where: {
+          id: reportRowId,
+          tenantId: authority.tenantId,
+          sessionId: authority.sessionId,
+          reportId: authority.reportId,
+          cardAssetId: authority.cardAssetId,
+          itemId: authority.itemId,
+          publicationStatus: { in: ["draft", "published"] },
+        },
+        data: reportUpdateData,
+      });
+      if (reportUpdate.count !== 1) {
+        throw aiGraderPublishAuthorityError(
+          "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH",
+          "Publish linkage changed after durable Confirm authority was verified.",
+        );
+      }
+      report = {
+        id: reportRowId,
         tenantId: authority.tenantId,
         sessionId: authority.sessionId,
         reportId: authority.reportId,
         cardAssetId: authority.cardAssetId,
         itemId: authority.itemId,
-        publicationStatus: { in: ["draft", "published"] },
-      },
-      data: reportUpdateData,
-    });
-    if (reportUpdate.count !== 1) {
-      throw aiGraderPublishAuthorityError(
-        "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH",
-        "Publish linkage changed after durable Confirm authority was verified.",
-      );
+        ...reportUpdateData,
+      };
+    } else {
+      if (typeof tx.aiGraderReport.create !== "function") {
+        throw aiGraderPublishAuthorityError(
+          "AI_GRADER_PUBLISH_AUTHORITY_UNAVAILABLE",
+          "Atomic Publish cannot create the first hosted report record.",
+          503,
+        );
+      }
+      const createdReport = await tx.aiGraderReport.create({ data: baseReportData });
+      const createdReportRecord = isRecord(createdReport) ? createdReport : {};
+      reportRowId = trimmedString(createdReportRecord.id);
+      if (!reportRowId) {
+        throw aiGraderPublishAuthorityError(
+          "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH",
+          "Atomic Publish did not return one exact hosted report record.",
+        );
+      }
+      report = createdReportRecord;
     }
-    const reportRowId = authority.reportRowId;
-    const report = {
-      id: authority.reportRowId,
-      tenantId: authority.tenantId,
-      sessionId: authority.sessionId,
-      reportId: authority.reportId,
-      cardAssetId: authority.cardAssetId,
-      itemId: authority.itemId,
-      ...reportUpdateData,
-    };
     const finalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
     const elements = elementScores(input.productionRelease);
     const confidenceData = confidence(input.productionRelease);
@@ -4036,6 +4098,11 @@ export async function persistAiGraderProductionRelease(
           aiGradeLabel: label.labelGradeText ?? null,
           aiGradingJson: json({
             ...authority.cardAiGradingJson,
+            rapidQueueIdentity: {
+              queueItemId: authority.queueItemId,
+              gradingSessionId: authority.gradingSessionId,
+              reportId: authority.reportId,
+            },
             reportId,
             publicReportUrl: input.storagePlan.publicReportUrl,
             publicationStatus,
@@ -4083,6 +4150,11 @@ export async function persistAiGraderProductionRelease(
             : {}),
           detailsJson: json({
             ...existingDetails,
+            aiGraderRapidQueueIdentity: {
+              queueItemId: authority.queueItemId,
+              gradingSessionId: authority.gradingSessionId,
+              reportId: authority.reportId,
+            },
             aiGraderReportId: reportId,
             aiGraderPublicReportUrl: input.storagePlan.publicReportUrl,
             aiGraderFinalGrade: finalOverallGrade(input.productionRelease) ?? null,
@@ -4095,6 +4167,7 @@ export async function persistAiGraderProductionRelease(
     }
 
     return {
+      queueItemId: authority.queueItemId,
       gradingSessionId,
       reportId,
       publicationStatus,

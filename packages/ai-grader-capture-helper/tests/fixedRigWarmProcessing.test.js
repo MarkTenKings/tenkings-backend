@@ -219,6 +219,9 @@ test("production_fast warm processing preserves all forensic roles and writes ge
   assert.equal(manifest.geometryPolicy.normalizedArtifactCreated, true);
   assert.equal(manifest.front.normalizedCard.rawEvidencePreserved, true);
   assert.equal(fs.existsSync(manifest.front.normalizedCard.normalizedArtifact.localOutputPath), true);
+  const normalizedCardFiles = fs.readdirSync(path.join(sideDir, "normalized"))
+    .filter((fileName) => fileName === "front-normalized-card.png");
+  assert.deepEqual(normalizedCardFiles, ["front-normalized-card.png"], "TIFF-to-normalized-PNG executes once for the exact side");
   assert.equal(manifest.analysisCoordinateSystem.coordinateFrame, "normalized_card_portrait_pixels");
   assert.equal(manifest.analysisCoordinateSystem.authoritativeGeometryRole, "all_on");
   assert.equal(manifest.analysisCoordinateSystem.acquisitionPlacementExcludedFromGrade, true);

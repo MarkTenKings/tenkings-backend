@@ -166,6 +166,7 @@ $bridgeArgs = @(
   "ai-grader-station-bridge",
   "--enable-local-station",
   "--station-bridge-mode", $mode,
+  "--capture-profile", "production_fast",
   "--host", $selectedHost,
   "--port", "$selectedPort",
   "--output-dir", $selectedOutputDir,

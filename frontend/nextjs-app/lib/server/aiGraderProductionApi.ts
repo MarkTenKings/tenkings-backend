@@ -68,8 +68,6 @@ import { readStorageBuffer } from "./storage";
 import { AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION } from "../aiGraderLocalStation";
 import {
   completePublishedAiGraderCardTx,
-  linkConfirmedAiGraderCardTx,
-  type AiGraderConfirmedCardQueueResult,
   type AiGraderPublishedLabelAssignmentResult,
   type AiGraderPreparedLabelSheetResult,
   type AiGraderPrintedLabelSheetResult,
@@ -196,6 +194,8 @@ export type AiGraderConfirmedCardIdentity = {
 };
 
 export type AiGraderCreateCardFromReportResult = {
+  queueItemId: string;
+  gradingSessionId: string;
   reportId: string;
   cardAssetId: string;
   itemId: string;
@@ -208,7 +208,6 @@ export type AiGraderCreateCardFromReportResult = {
   itemLinkage: {
     itemNumberConvention: "Item.number = CardAsset.id";
   };
-  downstream?: AiGraderConfirmedCardQueueResult;
 };
 
 export type AiGraderProductionPublishPersistResult = AiGraderProductionPersistResult & {
@@ -237,6 +236,9 @@ export type AiGraderSlabbedPhotoUploadInitResult = {
 };
 
 export type AiGraderOcrPrefillImageUpload = {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
   side: AiGraderOcrPrefillSide;
   artifactRole: "normalized_card";
   fileName: string;
@@ -249,6 +251,8 @@ export type AiGraderOcrPrefillImageUpload = {
 };
 
 export type AiGraderOcrPrefillUploadInitResult = {
+  queueItemId: string;
+  gradingSessionId: string;
   reportId: string;
   reportProducerContractVersion: typeof AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION;
   uploadSessionId: string;
@@ -262,6 +266,8 @@ export type AiGraderOcrPrefillUploadInitResult = {
     }
   >;
   requiredFinalizeManifest: {
+    queueItemId: string;
+    gradingSessionId: string;
     reportId: string;
     reportProducerContractVersion: typeof AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION;
     uploadSessionId: string;
@@ -316,6 +322,7 @@ export type AiGraderProductionApiDependencies = {
     message?: string;
   }>;
   persist(input: {
+    queueItemId: string;
     tenantId: string;
     reportBundle: AiGraderProductionReportBundleLike;
     productionRelease: AiGraderProductionReleaseLike;
@@ -336,6 +343,7 @@ export type AiGraderProductionApiDependencies = {
     actor: AiGraderProductionActor;
   }): Promise<AiGraderCardItemSearchResult[]>;
   createCardFromReport?(input: {
+    queueItemId: string;
     tenantId: string;
     reportBundle: AiGraderProductionReportBundleLike;
     productionRelease: AiGraderProductionReleaseLike;
@@ -359,6 +367,8 @@ export type AiGraderProductionApiDependencies = {
     actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderSlabbedPhotoUploadResult>;
   runOcrPrefill?(input: {
+    queueItemId: string;
+    gradingSessionId: string;
     reportId: string;
     images: AiGraderOcrPrefillSourceImage[];
   }): Promise<AiGraderOcrPrefillResult & { internalProviderDiagnostics?: AiGraderOcrProviderDiagnostics }>;
@@ -929,6 +939,7 @@ function parseProductionPublishSmallBody(body: unknown) {
 function parseConfirmedPublishSmallBody(body: unknown) {
   const parsed = parseProductionPublishSmallBody(body);
   const source = body as JsonRecord;
+  const queueItemId = parseOcrExactIdentityValue(source.queueItemId, "queueItemId");
   const reportId = optionalString(source.reportId);
   const gradingSessionId = optionalString(source.gradingSessionId);
   const cardAssetId = optionalString(source.cardAssetId);
@@ -977,11 +988,12 @@ function parseConfirmedPublishSmallBody(body: unknown) {
   ) {
     throw aiGraderPublishBoundaryError(
       "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
-      "Publish requires one exact report, grading-session, CardAsset, and Item linkage.",
+      "Publish requires one exact queue, report, grading-session, CardAsset, and Item linkage.",
     );
   }
   return {
     ...parsed,
+    queueItemId,
     reportId,
     gradingSessionId,
     cardAssetId,
@@ -1043,9 +1055,12 @@ function parseUploadManifest(value: unknown): AiGraderProductionUploadManifest {
   };
 }
 
-function publishSessionIdForPlan(reportId: string, plan: AiGraderProductionStoragePlan) {
+function publishSessionIdForPlan(
+  identity: { queueItemId: string; gradingSessionId: string; reportId: string },
+  plan: AiGraderProductionStoragePlan,
+) {
   const basis = {
-    reportId,
+    ...identity,
     storageKeyPrefix: plan.storageKeyPrefix,
     artifacts: plan.artifacts.map((artifact) => ({
       artifactId: artifact.artifactId,
@@ -1294,6 +1309,7 @@ function assertPublishedReleaseReady(input: {
 function assertResolvedPublishAuthority(input: {
   authority: AiGraderConfirmedPublishAuthority;
   tenantId: string;
+  queueItemId: string;
   reportId: string;
   gradingSessionId: string;
   cardAssetId: string;
@@ -1305,12 +1321,12 @@ function assertResolvedPublishAuthority(input: {
   const confirmedIdentity = isRecord(authority.confirmedIdentity) ? authority.confirmedIdentity : {};
   if (
     authority.tenantId !== input.tenantId ||
+    authority.queueItemId !== input.queueItemId ||
     authority.reportId !== input.reportId ||
     authority.gradingSessionId !== input.gradingSessionId ||
     authority.cardAssetId !== input.cardAssetId ||
     authority.itemId !== input.itemId ||
     !optionalString(authority.sessionId) ||
-    !optionalString(authority.reportRowId) ||
     typeof authority.finalOverallGrade !== "number" ||
     authority.finalOverallGrade !== finalGrade.overall ||
     optionalString(confirmedIdentity.source) !== "card_asset" ||
@@ -1320,7 +1336,7 @@ function assertResolvedPublishAuthority(input: {
   ) {
     throw aiGraderPublishBoundaryError(
       "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH",
-      "Publish linkage does not match the durable confirmed report, session, CardAsset, Item, and final-grade authority.",
+      "Publish linkage does not match the durable confirmed queue, report, session, CardAsset, Item, and final-grade authority.",
     );
   }
   parseConfirmedCardIdentity(authority.confirmedIdentity);
@@ -1439,7 +1455,7 @@ function assertExplicitOperatorFinalization(
   }
 }
 
-function assertAuthoritativeConfirmReleaseIdentity(
+export function assertAuthoritativeConfirmReleaseIdentity(
   reportBundle: AiGraderProductionReportBundleLike,
   productionRelease: AiGraderProductionReleaseLike,
 ) {
@@ -1852,9 +1868,11 @@ function parseCreateCardFromReportBody(body: unknown) {
   assertNoUnsafePublishPayload(body);
   const parsed = parseProductionPublishSmallBody(body);
   const source = body as JsonRecord;
+  const queueItemId = parseOcrExactIdentityValue(source.queueItemId, "queueItemId");
   const identity = parseConfirmedCardIdentity(source.identity ?? parsed.reportBundle.cardIdentity);
   return {
     ...parsed,
+    queueItemId,
     identity,
   };
 }
@@ -1870,12 +1888,48 @@ function assertNoOcrUploadBodyFields(entry: JsonRecord, path: string) {
   }
 }
 
-function parseOcrPrefillImageMetadata(value: unknown, index: number, allowStorageKey: boolean): AiGraderOcrPrefillImageUpload {
+type AiGraderOcrExactIdentity = {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+};
+
+function parseOcrExactIdentityValue(value: unknown, name: keyof AiGraderOcrExactIdentity) {
+  const normalized = stringValue(value, "");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(normalized)) {
+    throw new Error(`${name} is required and must be an exact safe identifier.`);
+  }
+  return normalized;
+}
+
+function ocrIdentityMismatch(message: string): never {
+  const error = new Error(message);
+  (error as Error & { statusCode?: number; code?: string }).statusCode = 409;
+  (error as Error & { statusCode?: number; code?: string }).code = "AI_GRADER_OCR_IDENTITY_MISMATCH";
+  throw error;
+}
+
+function parseOcrPrefillImageMetadata(
+  value: unknown,
+  index: number,
+  allowStorageKey: boolean,
+  identity: AiGraderOcrExactIdentity,
+): AiGraderOcrPrefillImageUpload {
   if (!isRecord(value)) throw new Error(`images[${index}] must be an object.`);
   assertNoOcrUploadBodyFields(value, `images[${index}]`);
+  const queueItemId = parseOcrExactIdentityValue(value.queueItemId, "queueItemId");
+  const gradingSessionId = parseOcrExactIdentityValue(value.gradingSessionId, "gradingSessionId");
+  const reportId = parseOcrExactIdentityValue(value.reportId, "reportId");
+  if (
+    queueItemId !== identity.queueItemId ||
+    gradingSessionId !== identity.gradingSessionId ||
+    reportId !== identity.reportId
+  ) {
+    ocrIdentityMismatch(`images[${index}] does not match the exact OCR queue/session/report identity.`);
+  }
   const side = stringValue(value.side, "") as AiGraderOcrPrefillSide;
   const artifactRole = stringValue(value.artifactRole, "");
-  const fileName = sanitizeUploadFileName(stringValue(value.fileName, `${side || "card"}-normalized.png`));
+  const fileName = stringValue(value.fileName, "");
   const mimeType = stringValue(value.mimeType, "").toLowerCase();
   const checksumSha256 = stringValue(value.checksumSha256, "").toLowerCase();
   const byteSize = Math.round(numericValue(value.byteSize, 0));
@@ -1884,6 +1938,9 @@ function parseOcrPrefillImageMetadata(value: unknown, index: number, allowStorag
   const storageKey = allowStorageKey ? stringValue(value.storageKey, "") : "";
   if (side !== "front" && side !== "back") throw new Error(`images[${index}].side must be front or back.`);
   if (artifactRole !== "normalized_card") throw new Error(`images[${index}].artifactRole must be normalized_card.`);
+  if (fileName !== `${side}-normalized-card.png`) {
+    throw new Error(`images[${index}].fileName must be the exact safe PNG file name ${side}-normalized-card.png.`);
+  }
   if (mimeType !== "image/png") throw new Error(`images[${index}].mimeType must be image/png.`);
   if (widthPx !== 1200 || heightPx !== 1680) {
     throw new Error(`images[${index}] must be exactly 1200x1680.`);
@@ -1896,6 +1953,9 @@ function parseOcrPrefillImageMetadata(value: unknown, index: number, allowStorag
   }
   if (allowStorageKey && !storageKey) throw new Error(`images[${index}].storageKey is required.`);
   return {
+    queueItemId,
+    gradingSessionId,
+    reportId,
     side,
     artifactRole: "normalized_card",
     fileName,
@@ -1908,11 +1968,16 @@ function parseOcrPrefillImageMetadata(value: unknown, index: number, allowStorag
   };
 }
 
-function buildOcrPrefillStorageKey(reportId: string, image: Omit<AiGraderOcrPrefillImageUpload, "storageKey">) {
-  return `ai-grader/reports/${safeStorageSegment(reportId)}/ocr-prefill/${image.side}-normalized-${image.checksumSha256.slice(0, 16)}-${image.fileName}`;
+function buildOcrPrefillStorageKey(image: Omit<AiGraderOcrPrefillImageUpload, "storageKey">) {
+  const exactIdentityDigest = aiGraderSha256(stableStringify({
+    queueItemId: image.queueItemId,
+    gradingSessionId: image.gradingSessionId,
+    reportId: image.reportId,
+  })).slice(0, 24);
+  return `ai-grader/reports/${safeStorageSegment(image.reportId)}/ocr-prefill/${safeStorageSegment(image.queueItemId)}-${exactIdentityDigest}/${safeStorageSegment(image.gradingSessionId)}/${image.side}-normalized-${image.checksumSha256.slice(0, 16)}-${image.fileName}`;
 }
 
-function normalizeOcrPrefillImages(reportId: string, images: AiGraderOcrPrefillImageUpload[]) {
+function normalizeOcrPrefillImages(images: AiGraderOcrPrefillImageUpload[]) {
   const sides = new Set(images.map((image) => image.side));
   if (images.length !== 2 || sides.size !== 2 || !sides.has("front") || !sides.has("back")) {
     throw new Error("OCR prefill requires exactly one normalized front image and one normalized back image.");
@@ -1920,15 +1985,15 @@ function normalizeOcrPrefillImages(reportId: string, images: AiGraderOcrPrefillI
   return [...images]
     .map((image) => ({
       ...image,
-      storageKey: buildOcrPrefillStorageKey(reportId, image),
+      storageKey: buildOcrPrefillStorageKey(image),
     }))
     .sort((left, right) => (left.side === right.side ? 0 : left.side === "front" ? -1 : 1));
 }
 
-function ocrPrefillUploadSessionId(reportId: string, images: AiGraderOcrPrefillImageUpload[]) {
+function ocrPrefillUploadSessionId(identity: AiGraderOcrExactIdentity, images: AiGraderOcrPrefillImageUpload[]) {
   return `aigocr_${aiGraderSha256(
     stableStringify({
-      reportId,
+      ...identity,
       reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
       images: images.map(({ side, artifactRole, storageKey, checksumSha256, byteSize, mimeType, widthPx, heightPx }) => ({
         side,
@@ -1948,15 +2013,18 @@ function parseOcrPrefillBody(body: unknown, finalize: boolean) {
   assertSmallJsonPayload(body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader OCR prefill request");
   assertNoUnsafePublishPayload(body);
   if (!isRecord(body)) throw new Error("JSON object body is required.");
-  const reportId = stringValue(body.reportId, "");
-  if (!reportId || reportId.length > 200) throw new Error("reportId is required and must be 200 characters or fewer.");
+  const identity: AiGraderOcrExactIdentity = {
+    queueItemId: parseOcrExactIdentityValue(body.queueItemId, "queueItemId"),
+    gradingSessionId: parseOcrExactIdentityValue(body.gradingSessionId, "gradingSessionId"),
+    reportId: parseOcrExactIdentityValue(body.reportId, "reportId"),
+  };
   const reportProducerContractVersion = stringValue(body.reportProducerContractVersion, "");
   if (reportProducerContractVersion !== AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION) {
     throw new Error("OCR Prefill accepts only current report-producer v0.2 packages.");
   }
   const rawImages = Array.isArray(body.images) ? body.images : [];
-  const parsedImages = rawImages.map((image, index) => parseOcrPrefillImageMetadata(image, index, finalize));
-  const expectedImages = normalizeOcrPrefillImages(reportId, parsedImages);
+  const parsedImages = rawImages.map((image, index) => parseOcrPrefillImageMetadata(image, index, finalize, identity));
+  const expectedImages = normalizeOcrPrefillImages(parsedImages);
   if (finalize) {
     for (const [index, image] of parsedImages
       .sort((left, right) => (left.side === right.side ? 0 : left.side === "front" ? -1 : 1))
@@ -1969,7 +2037,7 @@ function parseOcrPrefillBody(body: unknown, finalize: boolean) {
       }
     }
   }
-  const uploadSessionId = ocrPrefillUploadSessionId(reportId, expectedImages);
+  const uploadSessionId = ocrPrefillUploadSessionId(identity, expectedImages);
   if (finalize && stringValue(body.uploadSessionId, "") !== uploadSessionId) {
     const error = new Error("OCR prefill finalize does not match the upload plan from OCR prefill init.");
     (error as Error & { statusCode?: number; code?: string }).statusCode = 409;
@@ -1977,7 +2045,7 @@ function parseOcrPrefillBody(body: unknown, finalize: boolean) {
     throw error;
   }
   return {
-    reportId,
+    ...identity,
     reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
     images: expectedImages,
     uploadSessionId,
@@ -2358,7 +2426,17 @@ function finishNfcProjection(value: unknown) {
 }
 
 export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: AiGraderFinishCardsQueueBuildOptions = {}): AiGraderFinishCardsQueueResult {
-  const allItems = rows.filter(isRecord).map((row): AiGraderFinishCardsQueueItem => {
+  const allItems = rows
+    .filter(isRecord)
+    .filter((row) => {
+      const reportId = optionalString(row.reportId);
+      const session = firstRecord(row.session);
+      const sessionStatus = optionalString(session?.status);
+      return Boolean(reportId) && optionalString(session?.reportId) === reportId &&
+        optionalString(row.publicationStatus) === "published" &&
+        (sessionStatus === "published" || sessionStatus === "inventory_ready");
+    })
+    .map((row): AiGraderFinishCardsQueueItem => {
     const label = firstRecord(row.labels) ?? firstRecord(row.label);
     const valuation = firstRecord(row.valuations) ?? firstRecord(row.valuation);
     const valuationSummary = firstRecord(valuation?.resultSummary);
@@ -2467,7 +2545,7 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
         canAddToInventory: labelPrinted && slabComplete && valuationComplete && (!nfcRequired || nfcReady) && !inventoryComplete,
       },
     };
-  });
+    });
   allItems.sort(compareFinishQueueItems);
   const activeItems = allItems.filter((item) => item.queueStatus !== "complete");
   const completedItems = allItems.filter((item) => item.queueStatus === "complete");
@@ -2731,12 +2809,16 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           });
         }
         const result: AiGraderOcrPrefillUploadInitResult = {
+          queueItemId: input.queueItemId,
+          gradingSessionId: input.gradingSessionId,
           reportId: input.reportId,
           reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
           uploadSessionId: input.uploadSessionId,
           humanConfirmationRequired: true,
           uploadPlan,
           requiredFinalizeManifest: {
+            queueItemId: input.queueItemId,
+            gradingSessionId: input.gradingSessionId,
             reportId: input.reportId,
             reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
             uploadSessionId: input.uploadSessionId,
@@ -2757,7 +2839,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         const input = parseOcrPrefillBody(req.body, true);
         for (const image of input.images) {
           const verified = await deps.verifyUploadedArtifact({
-            artifactId: `ocr-prefill:${input.reportId}:${image.side}`,
+            artifactId: `ocr-prefill:${input.queueItemId}:${input.gradingSessionId}:${input.reportId}:${image.side}`,
             storageKey: image.storageKey,
             checksumSha256: image.checksumSha256,
             byteSize: image.byteSize,
@@ -2781,6 +2863,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         };
         try {
           runtimeResult = await deps.runOcrPrefill({
+            queueItemId: input.queueItemId,
+            gradingSessionId: input.gradingSessionId,
             reportId: input.reportId,
             images: input.images.map((image) => ({
               side: image.side,
@@ -2791,6 +2875,13 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           if (isRecord(error) && isAiGraderOcrFailureCode(error.code)) throw error;
           throw new AiGraderOcrFailure("AI_GRADER_OCR_INTERNAL_FAILED");
         }
+        if (
+          runtimeResult.queueItemId !== input.queueItemId ||
+          runtimeResult.gradingSessionId !== input.gradingSessionId ||
+          runtimeResult.reportId !== input.reportId
+        ) {
+          ocrIdentityMismatch("OCR provider result does not match the exact queue/session/report identity.");
+        }
         if (runtimeResult.internalProviderDiagnostics && deps.recordOcrProviderDiagnostics) {
           try {
             deps.recordOcrProviderDiagnostics(runtimeResult.internalProviderDiagnostics);
@@ -2799,6 +2890,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           }
         }
         const safeResult: AiGraderOcrPrefillResult = {
+          queueItemId: input.queueItemId,
+          gradingSessionId: input.gradingSessionId,
           reportId: input.reportId,
           status: runtimeResult.status,
           humanConfirmationRequired: true,
@@ -3173,6 +3266,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           publicUrlFor: deps.publicUrlFor,
         });
         const result = await deps.createCardFromReport({
+          queueItemId: input.queueItemId,
           tenantId,
           reportBundle: input.reportBundle,
           productionRelease: input.productionRelease,
@@ -3181,6 +3275,14 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           operatorUserId: actorOperatorUserId(authorizedActor),
           actorAudit: authorizedActor.audit,
         });
+        if (result.queueItemId !== input.queueItemId ||
+            result.gradingSessionId !== input.reportBundle.gradingSessionId ||
+            result.reportId !== input.productionRelease.reportId) {
+          throw aiGraderPublishBoundaryError(
+            "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
+            "Card linkage returned a different queue, grading-session, or report identity.",
+          );
+        }
         assertSmallJsonPayload(result, AI_GRADER_PRODUCTION_VERCEL_PAYLOAD_LIMIT_BYTES, "AI Grader create-card-from-report response");
         return res.status(200).json({
           ok: true,
@@ -3200,6 +3302,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       }
       const authority = await deps.resolvePublishAuthority({
         tenantId,
+        queueItemId: requestedInput.queueItemId,
         reportId: requestedInput.reportId,
         gradingSessionId: requestedInput.gradingSessionId,
         cardAssetId: requestedInput.cardAssetId,
@@ -3208,6 +3311,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       assertResolvedPublishAuthority({
         authority,
         tenantId,
+        queueItemId: requestedInput.queueItemId,
         reportId: requestedInput.reportId,
         gradingSessionId: requestedInput.gradingSessionId,
         cardAssetId: requestedInput.cardAssetId,
@@ -3239,7 +3343,11 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         input.publicationStatus,
         reportBundleRequiresPlannedImageDimensions(input.reportBundle),
       );
-      const publishSessionId = publishSessionIdForPlan(input.reportId, plan);
+      const publishSessionId = publishSessionIdForPlan({
+        queueItemId: input.queueItemId,
+        gradingSessionId: input.gradingSessionId,
+        reportId: input.reportId,
+      }, plan);
 
       if (key === "publish-init") {
         if (!deps.presignUpload) throw new Error("AI Grader presigned upload planning is not configured.");
@@ -3253,6 +3361,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           artifacts.push(artifactForResponse(artifact, presigned));
         }
         const result = {
+          queueItemId: input.queueItemId,
           reportId: input.reportId,
           certId: input.certId ?? stringValue(input.productionRelease.label?.certId, input.reportId),
           gradingSessionId: input.gradingSessionId,
@@ -3267,6 +3376,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             artifacts,
           },
           finalizeManifestShape: {
+            queueItemId: input.queueItemId,
+            gradingSessionId: input.gradingSessionId,
             reportId: input.reportId,
             publishSessionId,
             uploadManifest: {
@@ -3309,6 +3420,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       await verifyUploadedArtifacts(deps, uploadManifest);
       const uploadedPlan = planWithoutBodies(plan);
       const result = await deps.persist({
+        queueItemId: input.queueItemId,
         tenantId,
         reportBundle: input.reportBundle,
         productionRelease: input.productionRelease,
@@ -3319,11 +3431,20 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         itemId: input.itemId,
         actorAudit: authorizedActor.audit,
       });
+      if (result.queueItemId !== input.queueItemId ||
+          result.gradingSessionId !== input.gradingSessionId ||
+          result.reportId !== input.reportId) {
+        throw aiGraderPublishBoundaryError(
+          "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
+          "Publish persistence returned a different queue, grading-session, or report identity.",
+        );
+      }
       return res.status(200).json({
         ok: true,
         enabled: true,
         operation: "aiGraderProductionPublishFinalize",
         result: {
+          queueItemId: result.queueItemId,
           reportId: result.reportId,
           gradingSessionId: result.gradingSessionId,
           certId: stringValue(input.productionRelease.label?.certId, result.reportId),
@@ -3411,6 +3532,7 @@ export async function resolveAiGraderPublishAuthorityRuntime(
     input.dbClient ?? (prisma as any),
     {
       tenantId: input.tenantId,
+      queueItemId: input.queueItemId,
       gradingSessionId: input.gradingSessionId,
       reportId: input.reportId,
       cardAssetId: input.cardAssetId,
@@ -3420,6 +3542,7 @@ export async function resolveAiGraderPublishAuthorityRuntime(
 }
 
 export async function persistProductionReleaseRuntime(input: {
+  queueItemId: string;
   tenantId: string;
   reportBundle: AiGraderProductionReportBundleLike;
   productionRelease: AiGraderProductionReleaseLike;
@@ -3436,6 +3559,7 @@ export async function persistProductionReleaseRuntime(input: {
   const { prisma } = await import("@tenkings/database");
   const { dbClient, persistRelease, resolveAuthority, ...persistInput } = input;
   const db = dbClient ?? (prisma as any);
+  const queueItemId = optionalString(input.queueItemId);
   const reportId = optionalString(input.reportBundle.reportId);
   const releaseReportId = optionalString(input.productionRelease.reportId);
   const bundleSessionId = optionalString(input.reportBundle.gradingSessionId);
@@ -3462,6 +3586,8 @@ export async function persistProductionReleaseRuntime(input: {
     optionalString(inventoryLinkage.itemId),
   ].filter((value): value is string => Boolean(value));
   if (
+    !queueItemId ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(queueItemId) ||
     !reportId ||
     !releaseReportId ||
     reportId !== releaseReportId ||
@@ -3475,11 +3601,12 @@ export async function persistProductionReleaseRuntime(input: {
   ) {
     throw aiGraderPublishBoundaryError(
       "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
-      "Verified Publish requires one exact report, session, CardAsset, and Item linkage.",
+      "Verified Publish requires one exact queue, report, session, CardAsset, and Item linkage.",
     );
   }
   const authority = await (resolveAuthority ?? resolveAiGraderConfirmedPublishAuthority)(db, {
     tenantId: input.tenantId,
+    queueItemId,
     reportId,
     gradingSessionId,
     cardAssetId,
@@ -3488,6 +3615,7 @@ export async function persistProductionReleaseRuntime(input: {
   assertResolvedPublishAuthority({
     authority,
     tenantId: input.tenantId,
+    queueItemId,
     reportId,
     gradingSessionId,
     cardAssetId,
@@ -3528,6 +3656,7 @@ export async function persistProductionReleaseRuntime(input: {
   const persistAtomically = async (tx: any) => {
     const exactPersistInput = {
       ...persistInput,
+      queueItemId,
       reportBundle: canonicalReportBundle,
       productionRelease: canonicalProductionRelease,
       cardAssetId,
@@ -3538,6 +3667,14 @@ export async function persistProductionReleaseRuntime(input: {
       : persistAiGraderProductionRelease(tx, exactPersistInput, {
           readDesignReferenceArtifactBytes: readStorageBuffer,
         }));
+    if (persisted.queueItemId !== queueItemId ||
+        persisted.gradingSessionId !== gradingSessionId ||
+        persisted.reportId !== reportId) {
+      throw aiGraderPublishBoundaryError(
+        "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
+        "Atomic persistence returned a different queue, grading-session, or report identity.",
+      );
+    }
     if (persisted.publicationStatus !== "published") return persisted;
     const labelSheetAssignment = await completePublishedAiGraderCardTx({
       tx,
@@ -3853,6 +3990,7 @@ export async function searchAiGraderCardItemsRuntime(input: {
 async function existingAiGraderCreatedCardResult(input: {
   db: any;
   tenantId: string;
+  queueItemId: string;
   reportId: string;
   gradingSessionId?: string | null;
   reportBundle: AiGraderProductionReportBundleLike;
@@ -3865,7 +4003,7 @@ async function existingAiGraderCreatedCardResult(input: {
   const session = input.gradingSessionId
     ? await input.db.aiGraderSession?.findUnique?.({
         where: { gradingSessionId: input.gradingSessionId },
-        select: { cardAssetId: true, itemId: true },
+        select: { cardAssetId: true, itemId: true, cardIdentity: true },
       })
     : null;
   const report = await input.db.aiGraderReport?.findUnique?.({
@@ -3905,6 +4043,26 @@ async function existingAiGraderCreatedCardResult(input: {
     ? card.classificationSourcesJson
     : {};
   const aiGradingJson = isRecord(card.aiGradingJson) ? card.aiGradingJson : {};
+  const expectedRapidIdentity = {
+    queueItemId: input.queueItemId,
+    gradingSessionId: input.gradingSessionId,
+    reportId: input.reportId,
+  };
+  const exactRapidIdentity = (value: unknown) => {
+    const record = isRecord(value) ? value : {};
+    return optionalString(record.queueItemId) === expectedRapidIdentity.queueItemId &&
+      optionalString(record.gradingSessionId) === expectedRapidIdentity.gradingSessionId &&
+      optionalString(record.reportId) === expectedRapidIdentity.reportId;
+  };
+  const sessionIdentity = isRecord(session) && isRecord(session.cardIdentity) ? session.cardIdentity : {};
+  if (!exactRapidIdentity(sessionIdentity.rapidQueueIdentity) ||
+      !exactRapidIdentity(classificationSources.rapidQueueIdentity) ||
+      !exactRapidIdentity(aiGradingJson.rapidQueueIdentity)) {
+    throw aiGraderPublishBoundaryError(
+      "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
+      "The existing confirmed card does not match the exact Rapid queue, grading-session, and report identity.",
+    );
+  }
   const storedPublishAuthority = parseAiGraderPublishAuthorityRecord(
     classificationSources.aiGraderPublishAuthority,
   );
@@ -3945,6 +4103,8 @@ async function existingAiGraderCreatedCardResult(input: {
     imageUrl: publicImageUrl,
   });
   return {
+    queueItemId: input.queueItemId,
+    gradingSessionId: input.gradingSessionId ?? "",
     reportId: input.reportId,
     cardAssetId,
     itemId,
@@ -3961,6 +4121,7 @@ async function existingAiGraderCreatedCardResult(input: {
 }
 
 export async function createAiGraderCardFromReportRuntime(input: {
+  queueItemId: string;
   tenantId: string;
   reportBundle: AiGraderProductionReportBundleLike;
   productionRelease: AiGraderProductionReleaseLike;
@@ -3977,8 +4138,10 @@ export async function createAiGraderCardFromReportRuntime(input: {
     throw error;
   }
   const operatorUserId = input.operatorUserId;
+  const queueItemId = stringValue(input.queueItemId, "");
   const reportId = stringValue(input.productionRelease.reportId ?? input.reportBundle.reportId, "");
   const gradingSessionId = optionalString(input.productionRelease.gradingSessionId ?? input.reportBundle.gradingSessionId);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(queueItemId)) throw new Error("queueItemId is required.");
   if (!reportId) throw new Error("reportId is required.");
   if (!gradingSessionId) throw new Error("gradingSessionId is required.");
   const primary = primaryConfirmImage(input.storagePlan);
@@ -3990,6 +4153,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
     reportBundle: input.reportBundle,
     productionRelease: input.productionRelease,
   });
+  const rapidQueueIdentity = { queueItemId, gradingSessionId, reportId };
 
   const { prisma } = await import("@tenkings/database");
   const db = input.dbClient ?? (prisma as any);
@@ -4004,6 +4168,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
     const existing = await existingAiGraderCreatedCardResult({
       db: tx,
       tenantId: input.tenantId,
+      queueItemId,
       reportId,
       gradingSessionId,
       reportBundle: input.reportBundle,
@@ -4013,34 +4178,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
       publishAuthority,
       env: input.env,
     });
-    if (existing) {
-      const [existingSession, existingReport] = await Promise.all([
-        tx.aiGraderSession?.findUnique?.({
-          where: { gradingSessionId },
-          select: { id: true },
-        }),
-        tx.aiGraderReport?.findUnique?.({
-          where: { reportId },
-          select: { sessionId: true },
-        }),
-      ]);
-      const sessionId = optionalString(existingSession?.id ?? existingReport?.sessionId);
-      if (!sessionId) throw new Error("AI Grader session could not be resolved for confirmed card linkage.");
-      const downstream = await linkConfirmedAiGraderCardTx({
-        tx,
-        tenantId: input.tenantId,
-        sessionId,
-        gradingSessionId,
-        reportId,
-        reportBundle: input.reportBundle,
-        productionRelease: existing.productionRelease,
-        confirmedIdentity: input.identity,
-        cardAssetId: existing.cardAssetId,
-        itemId: existing.itemId,
-        operatorUserId,
-      });
-      return { ...existing, downstream };
-    }
+    if (existing) return existing;
 
     const owner = await resolveAiGraderItemOwner(tx, input.env ?? process.env);
     const now = new Date();
@@ -4060,6 +4198,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
       ...(label ? { label } : {}),
       actorAudit: input.actorAudit ?? null,
       publishAuthority,
+      rapidQueueIdentity,
     };
 
     const batch = await tx.cardBatch.create({
@@ -4090,6 +4229,7 @@ export async function createAiGraderCardFromReportRuntime(input: {
         classificationSourcesJson: jsonInput({
           source: "ai_grader_confirmed_identity",
           reportId,
+          rapidQueueIdentity,
           confirmedAt: now.toISOString(),
           aiGraderPublishAuthority: publishAuthority,
           normalizedEvidence: input.storagePlan.imageReferences.map((reference) => ({
@@ -4134,9 +4274,10 @@ export async function createAiGraderCardFromReportRuntime(input: {
       source: "card_asset",
       status: "linked",
       itemNumberConvention: "Item.number = CardAsset.id",
+      rapidQueueIdentity,
     };
 
-    const aiGraderSession = await tx.aiGraderSession.upsert({
+    await tx.aiGraderSession.upsert({
       where: { gradingSessionId },
       update: {
         tenantId: input.tenantId,
@@ -4162,22 +4303,9 @@ export async function createAiGraderCardFromReportRuntime(input: {
         updatedAt: now,
       },
     });
-    const downstream = await linkConfirmedAiGraderCardTx({
-      tx,
-      tenantId: input.tenantId,
-      sessionId: stringValue(aiGraderSession.id, ""),
-      gradingSessionId,
-      reportId,
-      reportBundle: input.reportBundle,
-      productionRelease: linkedRelease,
-      confirmedIdentity: input.identity,
-      cardAssetId: card.id,
-      itemId: itemLinkage.itemId,
-      operatorUserId,
-      now,
-    });
-
     return {
+      queueItemId,
+      gradingSessionId,
       reportId,
       cardAssetId: card.id,
       itemId: itemLinkage.itemId,
@@ -4190,7 +4318,6 @@ export async function createAiGraderCardFromReportRuntime(input: {
       itemLinkage: {
         itemNumberConvention: "Item.number = CardAsset.id",
       },
-      downstream,
     };
   });
 }
@@ -4998,6 +5125,7 @@ export async function listAiGraderFinishCardsQueueRuntime(input?: {
       select: {
         status: true,
         gradingSessionId: true,
+        reportId: true,
       },
     },
     labels: {

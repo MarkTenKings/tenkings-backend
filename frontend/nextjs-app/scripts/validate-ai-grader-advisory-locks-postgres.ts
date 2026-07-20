@@ -25,6 +25,7 @@ const TENANT_ID = "advisory-lock-validation-tenant";
 const ACTOR_ID = "advisory-lock-validation-user";
 const REPORT_ID = "advisory-lock-validation-report";
 const GRADING_SESSION_ID = "advisory-lock-validation-session";
+const QUEUE_ITEM_ID = "advisory-lock-validation-queue-item";
 const CERT_ID = "AIG-ADVISORY-LOCK-VALIDATION";
 const NOW = new Date("2026-07-17T16:00:00.000Z");
 const inventoryEnv = {
@@ -287,6 +288,7 @@ async function main() {
     const created = await requireLockDelta(
       { report: 2 },
       () => createAiGraderCardFromReportRuntime({
+        queueItemId: QUEUE_ITEM_ID,
         tenantId: TENANT_ID,
         reportBundle,
         productionRelease,
@@ -348,6 +350,7 @@ async function main() {
     let failedPublishDiagnostic = "UNKNOWN";
     try {
       await persistProductionReleaseRuntime({
+        queueItemId: QUEUE_ITEM_ID,
         tenantId: TENANT_ID,
         reportBundle,
         productionRelease: created.productionRelease,
@@ -394,6 +397,7 @@ async function main() {
     const published = await requireLockDelta(
       { report: 2, label: 2 },
       () => persistProductionReleaseRuntime({
+        queueItemId: QUEUE_ITEM_ID,
         tenantId: TENANT_ID,
         reportBundle,
         productionRelease: created.productionRelease,

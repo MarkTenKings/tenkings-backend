@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const sharp = require("sharp");
 const {
   AiGraderLocalStationBridgeService,
   buildAiGraderLocalStationBridgeConfig,
@@ -24,6 +25,16 @@ const {
 const BUNDLE_SHA256 = "a".repeat(64);
 const CALIBRATION_ARTIFACT_SHA256 = "c".repeat(64);
 const REVIEW_REQUEST_SHA256 = "d".repeat(64);
+const RAW_ROLES = [
+  "dark_control",
+  "all_on",
+  "accepted_profile",
+  ...Array.from({ length: 8 }, (_, index) => `channel_${index + 1}`),
+];
+const OCR_FIELDS = [
+  "category", "playerName", "cardName", "year", "manufacturer", "sport", "game",
+  "productSet", "cardNumber", "parallel", "insert", "numbered", "autograph", "memorabilia",
+];
 
 function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
@@ -115,6 +126,7 @@ function createService(outputDir, builder) {
     port: 47652,
     stationToken: "StationTokenStationTokenStationToken1234",
     outputDir,
+    captureProfile: "production_fast",
     publicBasePath: "https://collect.tenkings.co/ai-grader/reports",
     mathematicalCalibrationRigId: "fixture-rig",
     mathematicalCalibrationBundlePath: path.join(
@@ -132,7 +144,7 @@ function createService(outputDir, builder) {
 async function startMathematicalSession(service, authority = printedAuthority(), reportId = "math-report-fixture") {
   return service.action("start-session", {
     reportId,
-    captureProfile: "full_forensic",
+    captureProfile: "production_fast",
     gradingContract: "mathematical_calibration_v1",
     mathematicalGradingAuthority: authority,
   });
@@ -209,6 +221,350 @@ function attachWarmManifests(service, includeReviewSources = false) {
     sources[side] = { trueView, directionalChannels };
   }
   return sources;
+}
+
+function rawRoles(seed) {
+  return RAW_ROLES.map((role, index) => ({
+    role,
+    sha256: crypto.createHash("sha256").update(`${seed}:${role}:${index}`).digest("hex"),
+    byteSize: 1000 + index,
+    mimeType: "image/tiff",
+  }));
+}
+
+function capturePayload(manifest, side, seed) {
+  const packageId = `${seed}-${side}-package`;
+  const entries = Object.fromEntries(rawRoles(`${seed}:${side}`).map((role) => [role.role, {
+    role: role.role,
+    capture: {
+      mimeType: "image/tiff",
+      savedImageFormat: "TIFF",
+      sha256: role.sha256,
+      byteSize: role.byteSize,
+    },
+  }]));
+  return {
+    captureProfile: "production_fast",
+    rawEvidenceFormat: "tiff",
+    packageId,
+    warmBatch: {
+      side,
+      captures: {
+        darkControl: entries.dark_control,
+        allOn: entries.all_on,
+        acceptedProfile: entries.accepted_profile,
+        channels: Array.from({ length: 8 }, (_, index) => entries[`channel_${index + 1}`]),
+      },
+    },
+    sideProcessingJob: {
+      requestId: `${seed}-${side}-processing-request`,
+      sessionId: manifest.sessionId,
+      side,
+      packageId,
+      acceptedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function bindReadyPreview(service, side, suffix) {
+  const manifest = service.manifest;
+  const frameId = `${side}-frame-${suffix}`;
+  const timestamp = new Date().toISOString();
+  const box = { x: 198, y: 277.5, width: 504, height: 705 };
+  const corners = {
+    topLeft: { x: box.x, y: box.y },
+    topRight: { x: box.x + box.width, y: box.y },
+    bottomRight: { x: box.x + box.width, y: box.y + box.height },
+    bottomLeft: { x: box.x, y: box.y + box.height },
+  };
+  const geometry = {
+    version: "ten-kings-card-geometry-v1",
+    detectionPolicy: "live_preview_fast",
+    side,
+    placementState: "ready",
+    adjustmentReason: null,
+    geometrySource: "detected",
+    captureMode: "automatic_detection",
+    confidenceBasis: "automatic_detection",
+    detectionUsed: true,
+    manualOverrideUsed: false,
+    corners,
+    detectedCorners: corners,
+    boundingBox: box,
+    rotationDegrees: 0,
+    skewDegrees: 0,
+    confidence: 0.96,
+    sourceImageId: `preview-${side}`,
+    sourceFrameId: frameId,
+    timestamp,
+    sessionId: manifest.sessionId,
+    sideEpoch: manifest.previewStatus.sideEpoch,
+    image: { width: 900, height: 1260, coordinateFrame: "source_image_pixels" },
+    semanticOrientation: { canonicalOrientation: "portrait", basis: "operator_top_toward_preview_top", contentUprightVerified: false },
+    placement: {
+      centerOffsetPixels: { x: 0, y: 0, distance: 0, maxAxis: 0 },
+      centerOffsetInches: { x: 0, y: 0, distance: 0, maxAxis: 0 },
+      estimatedPixelsPerInch: 201.6,
+      maxCenterOffsetInches: 0.5,
+      maxSkewDegrees: 10,
+      maxNormalizationSkewDegrees: 35,
+      minReadyConfidence: 0.72,
+      withinCenterTolerance: true,
+      withinSkewTolerance: true,
+      withinNormalizationSkewTolerance: true,
+      withinAspectTolerance: true,
+      withinFrame: true,
+      confidenceReady: true,
+    },
+    detection: {
+      method: "adaptive_border_contrast_connected_component_pca_v1",
+      backgroundLuma: 20,
+      contrastRange: 180,
+      foregroundThreshold: 54,
+      foregroundPixelFraction: 0.3133,
+      componentPixelFraction: 0.3133,
+      measuredAspectRatio: 1.3988,
+      relativeAspectError: 0.0009,
+      expectedAspectRatio: 1.4,
+      analysisWidth: 731,
+      analysisHeight: 1024,
+    },
+    warnings: [],
+  };
+  manifest.previewStatus.status = "live";
+  manifest.previewStatus.cameraOwnership = "preview_stream";
+  manifest.previewStatus.sessionId = manifest.sessionId;
+  manifest.previewStatus.activeSide = side;
+  manifest.previewStatus.latestFrameId = frameId;
+  manifest.previewStatus.lastFrameAt = timestamp;
+  manifest.previewStatus.positioningLightReady = true;
+  manifest.previewStatus.cardGeometry[side] = geometry;
+  service.retainPreviewObservation(
+    { sessionId: manifest.sessionId, side, sideEpoch: manifest.previewStatus.sideEpoch },
+    frameId,
+    timestamp,
+  );
+  service.retainPreviewGeometryObservation(geometry);
+  if (side === "back") {
+    manifest.liveLighting.backPositioning = {
+      ...manifest.liveLighting.backPositioning,
+      status: "ready",
+      captureReady: true,
+      sessionId: manifest.sessionId,
+      sideEpoch: manifest.previewStatus.sideEpoch,
+      profileIdentity: service.durableAcceptedCaptureProfile().identity,
+    };
+  }
+  return {
+    idempotencyKey: `atomic-${side}-${suffix}-mathematical-idempotency`,
+    expectedSessionId: manifest.sessionId,
+    expectedReportId: manifest.reportId,
+    expectedSide: side,
+    expectedSideEpoch: manifest.previewStatus.sideEpoch,
+    expectedFrameId: frameId,
+    geometryCaptureMode: "detected_geometry",
+    captureTriggerMode: "operator",
+    captureTriggerAt: timestamp,
+  };
+}
+
+async function processedMathematicalSide(side, packageDir, includeReviewSources) {
+  fs.mkdirSync(packageDir, { recursive: true });
+  const reviewSource = {};
+  let diskManifest = {};
+  if (includeReviewSources) {
+    const acceptedBytes = Buffer.from(side + "-accepted-profile-source");
+    const acceptedPath = path.join(packageDir, side + "-accepted-profile.png");
+    fs.writeFileSync(acceptedPath, acceptedBytes);
+    reviewSource.trueView = assetMetadata(
+      side + "-accepted-profile",
+      "normalized_card",
+      acceptedBytes,
+      path.basename(acceptedPath),
+      1200,
+      1680,
+    );
+    reviewSource.directionalChannels = [];
+    const channelEntries = [];
+    for (let channel = 1; channel <= 8; channel += 1) {
+      const channelBytes = Buffer.from(side + "-directional-channel-" + channel + "-source");
+      const channelPath = path.join(packageDir, side + "-directional-channel-" + channel + ".png");
+      fs.writeFileSync(channelPath, channelBytes);
+      reviewSource.directionalChannels.push(assetMetadata(
+        side + "-directional-channel-" + channel,
+        "directional_channel",
+        channelBytes,
+        path.basename(channelPath),
+        1200,
+        1680,
+      ));
+      channelEntries.push({
+        channel,
+        analysisArtifact: { localOutputPath: channelPath, sha256: sha256(channelBytes) },
+      });
+    }
+    diskManifest = {
+      [side]: {
+        acceptedProfile: {
+          analysisArtifact: { localOutputPath: acceptedPath, sha256: sha256(acceptedBytes) },
+        },
+        channels: channelEntries,
+      },
+    };
+  }
+  fs.writeFileSync(path.join(packageDir, "manifest.json"), JSON.stringify(diskManifest, null, 2));
+  const normalizedDir = path.join(packageDir, "normalized");
+  fs.mkdirSync(normalizedDir, { recursive: true });
+  const normalizedPath = path.join(normalizedDir, `${side}-normalized-card.png`);
+  await sharp({
+    create: {
+      width: 1200,
+      height: 1680,
+      channels: 3,
+      background: side === "front" ? "#203040" : "#405060",
+    },
+  }).png().toFile(normalizedPath);
+  const normalizedBytes = fs.readFileSync(normalizedPath);
+  return {
+    reviewSource,
+    processed: {
+      manifest: {
+        evidenceSide: side,
+        [side]: {
+          normalizedCard: {
+            normalizedArtifact: {
+              mimeType: "image/png",
+              imageWidth: 1200,
+              imageHeight: 1680,
+              sha256: sha256(normalizedBytes),
+              byteSize: normalizedBytes.byteLength,
+              localOutputPath: normalizedPath,
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+function installSimulatedMathematicalCapture(service, includeReviewSources = false) {
+  const warmSources = {};
+  let invocation = 0;
+  service.runWarmSideCapture = async (side) => {
+    invocation += 1;
+    const manifest = service.manifest;
+    const seed = `${manifest.reportId}-${invocation}`;
+    const packageDir = path.join(manifest.outputs.sessionDir, `${side}-package`);
+    const payload = { ...capturePayload(manifest, side, seed), packageDir };
+    const result = {
+      stepId: `capture_${side}`,
+      ok: true,
+      exitCode: 0,
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      durationMs: 1,
+      payload,
+    };
+    manifest.commandResults.push(result);
+    const processing = processedMathematicalSide(side, packageDir, includeReviewSources)
+      .then((fixture) => {
+        if (includeReviewSources) warmSources[side] = fixture.reviewSource;
+        service.recordProcessedNormalizedOcrImage(manifest, side, fixture.processed);
+        manifest.warmRunnerStatus.phases.push({
+          id: `process_${side}_artifacts`,
+          label: `${side} processing`,
+          status: "completed",
+          side,
+          backend: "warm_full_forensic_runner",
+          executionPath: "warm_full_forensic_runner",
+        });
+        return fixture.processed;
+      });
+    service.warmProcessingJobs.set(`${manifest.sessionId}:${side}`, processing);
+    void processing.catch(() => {});
+    await Promise.resolve();
+    await Promise.resolve();
+    return result;
+  };
+  return warmSources;
+}
+
+function safeOcrResult(item) {
+  return {
+    queueItemId: item.queueItemId,
+    gradingSessionId: item.sessionId,
+    reportId: item.reportId,
+    status: "prefill_ready",
+    humanConfirmationRequired: true,
+    inventoryMutationPerformed: false,
+    publishMutationPerformed: false,
+    sourceSides: ["front", "back"],
+    fields: Object.fromEntries(OCR_FIELDS.map((name) => [name, {
+      state: "unknown",
+      value: null,
+      confidence: 0,
+      reviewRequired: true,
+      evidenceRefs: [],
+    }])),
+    reviewFieldNames: [...OCR_FIELDS],
+    provenance: {
+      ocrEngine: "google_vision_document_text_detection_url_only",
+      attributeExtractor: "@tenkings/shared/extractCardAttributes",
+      structuredExtractor: "openai_responses_strict_json_schema",
+      structuredExtractionModel: "gpt-4.1-mini",
+      setLookupUsed: false,
+      setIdentificationUsed: false,
+    },
+    warnings: [],
+  };
+}
+
+function installMathematicalReleaseStub(service) {
+  service.writeProductionReleaseForManifest = async (manifest) => {
+    const packageDir = path.dirname(manifest.outputs.reportBundlePath);
+    fs.mkdirSync(packageDir, { recursive: true });
+    const productionReleasePath = path.join(packageDir, "production-release.json");
+    const labelDataPath = path.join(packageDir, "label-data.json");
+    const release = {
+      schemaVersion: "ai-grader-mathematical-production-release-v1",
+      reportId: manifest.reportId,
+      gradingSessionId: manifest.sessionId,
+      reportStatus: "final_ai_grader_report_v1",
+      finalGradeComputed: true,
+      labelDataGenerated: true,
+      qrPayloadGenerated: true,
+      label: { status: "label_data_ready" },
+    };
+    fs.writeFileSync(productionReleasePath, JSON.stringify(release, null, 2));
+    fs.writeFileSync(labelDataPath, JSON.stringify(release.label, null, 2));
+    manifest.outputs.productionReleasePath = productionReleasePath;
+    manifest.outputs.labelDataPath = labelDataPath;
+    manifest.productionRelease = release;
+    return release;
+  };
+}
+
+async function captureMathematicalCard(service, authority, reportId, suffix) {
+  await startMathematicalSession(service, authority, reportId);
+  const gradingSessionId = service.status().sessionId;
+  await service.action("capture-front", bindReadyPreview(service, "front", suffix));
+  const released = await service.action("capture-back", bindReadyPreview(service, "back", suffix));
+  assert.equal(released.currentStep, "start_new_card");
+  assert.equal(released.sessionId, undefined);
+  await service.reportWorker;
+  await service.rapidMutationChain;
+  const item = service.status().rapidCaptureQueue.items.find((candidate) => candidate.reportId === reportId);
+  assert.ok(item, `Expected durable queue item for ${reportId}.`);
+  assert.equal(item.sessionId, gradingSessionId);
+  return {
+    item,
+    identity: {
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+    },
+    manifest: service.queuedManifests.get(item.queueItemId),
+  };
 }
 
 function fakeGrade() {
@@ -444,12 +800,22 @@ test("ordinary Mathematical V1 no-finding completion uses station-derived public
       calls.push(input);
       return completedResult(input);
     });
+    installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service);
     const browserAuthority = printedAuthority();
-    await startMathematicalSession(service, browserAuthority, "ordinary-math-report");
-    attachWarmManifests(service);
-    const result = await service.action("run-diagnostics");
-    assert.equal(result.mathematicalV1.execution.status, "completed");
-    assert.equal(result.mathematicalV1.execution.v0FallbackUsed, false);
+    const queued = await captureMathematicalCard(
+      service,
+      browserAuthority,
+      "ordinary-math-report",
+      "ordinary",
+    );
+    assert.equal(queued.manifest.mathematicalV1.execution.status, "completed");
+    assert.equal(queued.manifest.mathematicalV1.execution.v0FallbackUsed, false);
+    assert.equal(queued.item.mathematicalV1.status, "completed");
+    assert.equal(queued.item.state, "finalizing", "completed grading remains separate from pending queued OCR");
+    assert.equal(queued.item.rawEvidence.format, "tiff");
+    assert.equal(queued.item.rawEvidence.sides.length, 2);
+    assert.deepEqual(Object.keys(queued.item.sideProcessingJobs).sort(), ["back", "front"]);
     assert.equal(calls.length, 1);
     assert.equal("publication" in browserAuthority, false);
     const expectedUrl = "https://collect.tenkings.co/ai-grader/reports/ordinary-math-report";
@@ -464,8 +830,8 @@ test("ordinary Mathematical V1 no-finding completion uses station-derived public
       qrPayloadUrl: expectedUrl,
     });
     assert.equal(calls[0].findingReviews, undefined);
-    assert.equal(result.outputs.unifiedReportPath.endsWith("report-bundle-v0.3.json"), true);
-    assert.equal(result.outputs.unifiedReportPath.includes("mock-unified-report"), false);
+    assert.equal(queued.manifest.outputs.unifiedReportPath.endsWith("report-bundle-v0.3.json"), true);
+    assert.equal(queued.manifest.outputs.unifiedReportPath.includes("mock-unified-report"), false);
 
     const source = fs.readFileSync(
       path.resolve(__dirname, "../src/drivers/aiGraderLocalStationBridge.ts"),
@@ -493,6 +859,7 @@ test("finding review persists and serves exact True View, directional, ROI, segm
   const calls = [];
   let reviewFixture;
   try {
+    let warmSources;
     const service = createService(outputDir, async (input) => {
       calls.push(input);
       if (!input.findingReviews) {
@@ -501,14 +868,22 @@ test("finding review persists and serves exact True View, directional, ROI, segm
       }
       return completedResult(input);
     });
-    await startMathematicalSession(service, printedAuthority(), "finding-review-report");
-    const warmSources = attachWarmManifests(service, true);
-    const pending = await service.action("run-diagnostics");
+    installMathematicalReleaseStub(service);
+    warmSources = installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "finding-review-report",
+      "finding-review",
+    );
+    const pending = queued.manifest;
     assert.equal(pending.mathematicalV1.execution.status, "finding_review_required");
     assert.equal(
       pending.mathematicalV1.execution.reviewRequest.artifactSha256,
       REVIEW_REQUEST_SHA256,
     );
+    assert.equal(queued.item.state, "finding_review_required");
+    assert.equal(queued.item.mathematicalV1.status, "finding_review_required");
     assert.equal(Object.keys(pending.mathematicalV1.reviewAssets).length, 13);
     const persisted = JSON.parse(fs.readFileSync(pending.outputs.manifestPath, "utf8"));
     assert.equal(
@@ -516,6 +891,12 @@ test("finding review persists and serves exact True View, directional, ROI, segm
       REVIEW_REQUEST_SHA256,
     );
     assert.equal(Object.keys(persisted.mathematicalV1.reviewAssets).length, 13);
+
+    await service.action("activate-queue-item", queued.identity);
+    const active = service.status().rapidCaptureQueue.activeReview;
+    assert.equal(active.queueItemId, queued.item.queueItemId);
+    assert.equal(active.manifest.mathematicalV1.execution.status, "finding_review_required");
+    assert.equal(JSON.stringify(active.manifest.mathematicalV1).includes("filePath"), false);
 
     const requestFinding = pending.mathematicalV1.execution.reviewRequest.findings[0];
     const expectedRoles = new Set([
@@ -536,9 +917,12 @@ test("finding review persists and serves exact True View, directional, ROI, segm
     ];
     for (const metadata of allRequestedMetadata) {
       const served = await service.mathematicalReviewAsset(
-        "finding-review-report",
+        queued.identity,
         metadata.assetId,
       );
+      assert.equal(served.queueItemId, queued.item.queueItemId);
+      assert.equal(served.gradingSessionId, queued.item.sessionId);
+      assert.equal(served.reportId, queued.item.reportId);
       assert.equal(served.sha256, metadata.sha256);
       assert.equal(sha256(served.bytes), metadata.sha256);
       assert.equal(served.evidenceRole, metadata.evidenceRole);
@@ -552,10 +936,17 @@ test("finding review persists and serves exact True View, directional, ROI, segm
       );
     }
     const roiServed = await service.mathematicalReviewAsset(
-      "finding-review-report",
+      queued.identity,
       requestFinding.reviewEvidence.roi.assetId,
     );
     assert.deepEqual(roiServed.bytes, reviewFixture.rawBytes.roi);
+    await assert.rejects(
+      service.mathematicalReviewAsset(
+        { ...queued.identity, gradingSessionId: "wrong-grading-session" },
+        requestFinding.reviewEvidence.roi.assetId,
+      ),
+      /does not match the exact persisted queue\/session\/report triple/i,
+    );
 
     const baseReview = {
       findingId: requestFinding.findingId,
@@ -565,6 +956,7 @@ test("finding review persists and serves exact True View, directional, ROI, segm
     };
     await assert.rejects(
       service.action("submit-mathematical-finding-reviews", {
+        ...queued.identity,
         mathematicalReviewRequestSha256: REVIEW_REQUEST_SHA256,
         mathematicalFindingReviews: [{ ...baseReview, confidence: 1 }],
       }),
@@ -572,6 +964,7 @@ test("finding review persists and serves exact True View, directional, ROI, segm
     );
     await assert.rejects(
       service.action("submit-mathematical-finding-reviews", {
+        ...queued.identity,
         mathematicalReviewRequestSha256: "f".repeat(64),
         mathematicalFindingReviews: [baseReview],
       }),
@@ -579,31 +972,55 @@ test("finding review persists and serves exact True View, directional, ROI, segm
     );
 
     const completed = await service.action("submit-mathematical-finding-reviews", {
+      ...queued.identity,
       mathematicalReviewRequestSha256: REVIEW_REQUEST_SHA256,
       mathematicalFindingReviews: [baseReview],
     });
-    assert.equal(completed.mathematicalV1.execution.status, "completed");
-    assert.equal(completed.mathematicalV1.execution.attempt, 2);
-    assert.equal(completed.mathematicalV1.reviewAssets, undefined);
+    const completedManifest = service.queuedManifests.get(queued.item.queueItemId);
+    assert.equal(completedManifest.mathematicalV1.execution.status, "completed");
+    assert.equal(completedManifest.mathematicalV1.execution.attempt, 2);
+    assert.equal(completedManifest.mathematicalV1.reviewAssets, undefined);
+    assert.equal(
+      completed.rapidCaptureQueue.items.find((item) => item.queueItemId === queued.item.queueItemId).state,
+      "finalizing",
+    );
     assert.equal(calls.length, 2);
     assert.deepEqual(calls[1].findingReviews, [baseReview]);
     assert.equal("confidence" in calls[1].findingReviews[0], false);
     assert.equal(calls[0].generatedAt, calls[1].generatedAt);
+
+    const attempt = { ...queued.identity, attemptOwnerId: "mathematical-review-ocr-owner" };
+    await service.action("begin-queued-ocr", attempt);
+    const ready = await service.action("complete-queued-ocr", {
+      ...attempt,
+      result: safeOcrResult(queued.item),
+    });
+    const readyItem = ready.rapidCaptureQueue.items.find(
+      (item) => item.queueItemId === queued.item.queueItemId,
+    );
+    assert.equal(readyItem.state, "report_ready_needs_confirm");
+    assert.equal(readyItem.ocr.state, "succeeded");
+    assert.equal(readyItem.autoConfirmed, false);
+    assert.equal(readyItem.autoPublished, false);
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
 });
 
-test("insufficient Mathematical evidence persists exact stage, reasons, flags, and rejects V0 export fallback", async () => {
+test("insufficient Mathematical evidence persists exact stage, reasons, flags, and cannot publish or fall back", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-station-insufficient-"));
   try {
     const service = createService(outputDir, async () => insufficientResult());
-    await startMathematicalSession(service, printedAuthority(), "insufficient-math-report");
-    attachWarmManifests(service);
-    const result = await service.action("run-diagnostics");
-    assert.deepEqual(result.mathematicalV1.execution, {
+    installSimulatedMathematicalCapture(service);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "insufficient-math-report",
+      "insufficient",
+    );
+    assert.deepEqual(queued.manifest.mathematicalV1.execution, {
       status: "insufficient_evidence",
-      completedAt: result.mathematicalV1.execution.completedAt,
+      completedAt: queued.manifest.mathematicalV1.execution.completedAt,
       attempt: 1,
       v0FallbackUsed: false,
       failedStage: "surface_measurement",
@@ -613,11 +1030,36 @@ test("insufficient Mathematical evidence persists exact stage, reasons, flags, a
       requiresCalibration: false,
       requiresImplementationCorrection: false,
     });
-    assert.equal(result.outputs.reportBundlePath, undefined);
-    assert.equal(result.productionRelease, undefined);
+    assert.equal(queued.item.state, "insufficient_evidence");
+    assert.deepEqual(queued.item.mathematicalV1, {
+      status: "insufficient_evidence",
+      failedStage: "surface_measurement",
+      reasons: ["Front center is fully obscured in every usable directional channel."],
+      requiresRecapture: true,
+      requiresApprovedDesignReference: false,
+      requiresCalibration: false,
+      requiresImplementationCorrection: false,
+    });
+    assert.equal(queued.manifest.outputs.reportBundlePath, undefined);
+    assert.equal(queued.manifest.productionRelease, undefined);
+
+    const inspected = await service.action("activate-queue-item", queued.identity);
+    assert.equal(
+      inspected.rapidCaptureQueue.activeReview.manifest.mathematicalV1.execution.status,
+      "insufficient_evidence",
+    );
     await assert.rejects(
-      service.action("export-report-bundle"),
-      /not ready|V0\/manual fallback is prohibited/i,
+      service.action("publish-report", {
+        ...queued.identity,
+        publication: {
+          queueItemId: queued.identity.queueItemId,
+          gradingSessionId: queued.identity.gradingSessionId,
+          reportId: queued.identity.reportId,
+          publicReportUrl: "https://collect.tenkings.co/ai-grader/reports/insufficient-math-report",
+          publishedAt: "2026-07-19T14:30:00.000Z",
+        },
+      }),
+      /review-ready item/i,
     );
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
@@ -709,10 +1151,22 @@ test("Mathematical binary staging HTTP endpoint rejects unauthenticated bodies b
     const response = await postWithoutToken(server, Buffer.alloc(24, 7));
     assert.equal(response.statusCode, 401);
     assert.match(response.body, /STATION_BRIDGE_UNAUTHORIZED/);
+    const bridgeSource = fs.readFileSync(
+      path.resolve(__dirname, "../src/drivers/aiGraderLocalStationBridge.ts"),
+      "utf8",
+    );
+    assert.match(bridgeSource, /url\.searchParams\.size !== 4/);
+    for (const identityHeader of [
+      "X-AI-Grader-Queue-Item-Id",
+      "X-AI-Grader-Grading-Session-Id",
+      "X-AI-Grader-Report-Id",
+    ]) {
+      assert.equal(bridgeSource.includes(`"${identityHeader}": asset.`), true);
+    }
   } finally {
     if (server.listening) await closeServer(server);
     if (fs.existsSync(outputDir)) {
-      fs.rmSync(outputDir, { recursive: true, force: true });
+      fs.rmSync(outputDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   }
 });
@@ -731,49 +1185,57 @@ test("Rapid Mathematical finding review stays reviewable while next-card capture
       }
       return completedResult(input);
     });
-    await service.action("configure-rapid-capture", { rapidCaptureEnabled: true });
-    await startMathematicalSession(service, printedAuthority(), "rapid-math-review-report");
-    const detachedSessionId = service.status().sessionId;
-    warmSources = attachWarmManifests(service, true);
-    const continued = await service.action("queue-current-card");
-    assert.notEqual(continued.sessionId, detachedSessionId);
-    assert.equal(continued.gradingContract, "mathematical_calibration_v1");
-    assert.equal(continued.mathematicalV1, undefined);
-    assert.equal(continued.frontCaptureReadiness.code, "mathematical_authority_required");
+    installMathematicalReleaseStub(service);
+    warmSources = installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "rapid-math-review-report",
+      "rapid-review",
+    );
+    assert.equal(queued.item.state, "finding_review_required");
+    assert.equal(queued.item.mathematicalV1.status, "finding_review_required");
+    assert.equal(queued.item.mathematicalV1.reviewRequestSha256, REVIEW_REQUEST_SHA256);
+    assert.equal(queued.item.autoConfirmed, false);
+    assert.equal(queued.item.autoPublished, false);
+    assert.equal(queued.item.error, undefined);
 
-    let queued;
-    for (let index = 0; index < 100; index += 1) {
-      queued = service.status().rapidCaptureQueue.items.find(
-        (item) => item.reportId === "rapid-math-review-report",
-      );
-      if (queued?.state === "finding_review_required") break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    assert.equal(queued.state, "finding_review_required");
-    assert.equal(queued.mathematicalV1.status, "finding_review_required");
-    assert.equal(queued.mathematicalV1.reviewRequestSha256, REVIEW_REQUEST_SHA256);
-    assert.equal(queued.autoConfirmed, false);
-    assert.equal(queued.autoPublished, false);
-    assert.equal(queued.error, undefined);
+    const next = await startMathematicalSession(
+      service,
+      printedAuthority(),
+      "rapid-next-card-report",
+    );
+    assert.equal(next.currentStep, "capture_front");
+    const nextSessionId = next.sessionId;
 
-    await service.action("activate-queue-item", { queueItemId: queued.queueItemId });
-    service.writeProductionReleaseForManifest = async (manifest) => {
-      manifest.outputs.productionReleasePath = path.join(
-        manifest.outputs.sessionDir,
-        "production-release.json",
-      );
-      manifest.outputs.labelDataPath = path.join(manifest.outputs.sessionDir, "label-data.json");
-      return {
-        schemaVersion: "ai-grader-mathematical-production-release-v1",
-        reportId: manifest.reportId,
-        gradingSessionId: manifest.sessionId,
-        finalGradeComputed: true,
-        labelDataGenerated: true,
-        qrPayloadGenerated: true,
-        label: { status: "label_data_ready" },
-      };
-    };
-    const finding = service.status().mathematicalV1.execution.reviewRequest.findings[0];
+    const activated = await service.action("activate-queue-item", queued.identity);
+    assert.equal(activated.sessionId, nextSessionId);
+    assert.equal(activated.currentStep, "capture_front");
+    assert.equal(activated.latestReport.exists, false);
+    assert.equal(activated.rapidCaptureQueue.activeReview.queueItemId, queued.item.queueItemId);
+    assert.equal(
+      activated.rapidCaptureQueue.activeReview.manifest.mathematicalV1.execution.status,
+      "finding_review_required",
+    );
+    assert.equal(
+      JSON.stringify(activated.rapidCaptureQueue.activeReview.manifest.mathematicalV1).includes("filePath"),
+      false,
+    );
+
+    const attempt = { ...queued.identity, attemptOwnerId: "rapid-mathematical-ocr-owner" };
+    await service.action("begin-queued-ocr", attempt);
+    const ocrComplete = await service.action("complete-queued-ocr", {
+      ...attempt,
+      result: safeOcrResult(queued.item),
+    });
+    const ocrItem = ocrComplete.rapidCaptureQueue.items.find(
+      (item) => item.queueItemId === queued.item.queueItemId,
+    );
+    assert.equal(ocrItem.ocr.state, "succeeded");
+    assert.equal(ocrItem.state, "finding_review_required");
+
+    const finding = ocrComplete.rapidCaptureQueue.activeReview
+      .manifest.mathematicalV1.execution.reviewRequest.findings[0];
     const review = {
       findingId: finding.findingId,
       reviewRequestSha256: REVIEW_REQUEST_SHA256,
@@ -781,21 +1243,35 @@ test("Rapid Mathematical finding review stays reviewable while next-card capture
       reviewedAt: "2026-07-19T14:00:00.000Z",
     };
     const ready = await service.action("submit-mathematical-finding-reviews", {
+      ...queued.identity,
       mathematicalReviewRequestSha256: REVIEW_REQUEST_SHA256,
       mathematicalFindingReviews: [review],
       operatorId: "rapid-review-operator",
       warningsAccepted: true,
     });
     const completedQueueItem = ready.rapidCaptureQueue.items.find(
-      (item) => item.queueItemId === queued.queueItemId,
+      (item) => item.queueItemId === queued.item.queueItemId,
     );
     assert.equal(completedQueueItem.state, "report_ready_needs_confirm");
     assert.equal(completedQueueItem.mathematicalV1.status, "completed");
     assert.equal(completedQueueItem.autoConfirmed, false);
     assert.equal(completedQueueItem.autoPublished, false);
-    assert.equal(ready.mathematicalV1.execution.v0FallbackUsed, false);
-    assert.equal(ready.currentStep, "label_data_ready");
+    assert.equal(
+      ready.rapidCaptureQueue.activeReview.manifest.mathematicalV1.execution.v0FallbackUsed,
+      false,
+    );
+    assert.equal(ready.rapidCaptureQueue.activeReview.manifest.currentStep, "label_data_ready");
+    assert.equal(ready.sessionId, nextSessionId);
+    assert.equal(ready.currentStep, "capture_front");
     assert.equal(adapterCallCount, 2);
+
+    const mutableItem = service.exactMutableQueuedItem(queued.identity);
+    mutableItem.state = "published";
+    service.committedRapidQueue = structuredClone(service.rapidQueue);
+    await assert.rejects(
+      service.action("activate-queue-item", queued.identity),
+      /not ready for review \(state published\)/i,
+    );
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
