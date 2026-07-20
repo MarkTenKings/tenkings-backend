@@ -11,6 +11,7 @@ test("calibration-only page is bridge-served, paired without URL token, and rend
   assert.match(MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, /X-AI-Grader-Station-Token/);
   assert.match(MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, /X-AI-Grader-Mathematical-Calibration-Session-Id/);
   assert.match(MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, /preview\/stream/);
+  assert.match(MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, /location\.hash\.match\(\/\(\?:\^\|\[#&\]\)aiGraderBridgePair=/);
   assert.match(MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, /outerContour/);
   assert.match(MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, /sufficientlyDistinct/);
   assert.doesNotMatch(MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, /stationToken=/i);
