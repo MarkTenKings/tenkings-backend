@@ -69,7 +69,7 @@ body{margin:0;background:#10130f;color:#f4f0df;font:16px system-ui,sans-serif}ma
   }
   async function pair() {
     if (localStorage.getItem(tokenKey)) return true;
-    const match = location.hash.match(/(?:^|&)aiGraderBridgePair=([^&]+)/);
+    const match = location.hash.match(/(?:^|[#&])aiGraderBridgePair=([^&]+)/);
     if (!match) { message("Pairing code is required. Open this page from the protected calibration launcher.", "bad"); return false; }
     const response = await fetch("/pair", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({pairingCode:decodeURIComponent(match[1])})});
     if (!response.ok) throw new Error("Protected bridge pairing failed.");
