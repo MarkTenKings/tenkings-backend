@@ -505,9 +505,9 @@ function poseFromGeometry(geometry: CardGeometryMetadata) {
   if (corners.some((point) =>
     !Number.isFinite(point.x) ||
     !Number.isFinite(point.y) ||
-    point.x < 0 ||
+    point.x <= 0 ||
     point.x >= imageWidth ||
-    point.y < 0 ||
+    point.y <= 0 ||
     point.y >= imageHeight
   )) {
     throw new Error("Calibration target outer corners must be finite and fully inside the source frame.");

@@ -152,7 +152,7 @@ function displayBundle() {
     cardIdentity: { title: "Controlled Test Card", sideCount: 2 },
     gradingStandard: {
       id: "mathematical_calibration_v1",
-      thresholdSetId: "ten-kings-mathematical-grading-v1.0.0",
+      thresholdSetId: "ten-kings-mathematical-grading-v1.0.1",
       thresholdSetHash: "a".repeat(64),
       algorithmVersion: "mathematical-grading-v1.0.0",
       defectFindingSchemaVersion: "ai-grader-defect-finding-v2",
@@ -281,7 +281,7 @@ function displayBundle() {
         calibrationProfileId: "cal-profile-1",
         calibrationVersion: "cal-v1",
         algorithmVersion: "surface-measurement-v1.0.0",
-        thresholdSetId: "ten-kings-mathematical-grading-v1.0.0",
+        thresholdSetId: "ten-kings-mathematical-grading-v1.0.1",
       }],
     },
     evidenceQualityLimitations: [{ limitationId: "glare-1", side: "front", regionId: "region-1", classification: "common_mode_specular_glare", validEvidenceCoverage: 0.85, excludedPixelFraction: 0.15, recoveredFromAlternateChannels: true, recaptureRequired: false, deduction: 0, evidenceAssetIds: ["front/glare.png"], explanation: "Specular pixels were excluded and alternate channels retained valid evidence." }],

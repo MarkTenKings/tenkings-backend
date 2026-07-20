@@ -9,11 +9,11 @@ import { z } from "zod";
  */
 
 export const MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID =
-  "ten-kings-mathematical-grading-v1.0.0" as const;
+  "ten-kings-mathematical-grading-v1.0.1" as const;
 
 /** SHA-256 of canonical JSON for the manifest with sourceHash omitted. */
 export const MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH =
-  "6c0692c37ea2c18f56ae61226274a7a94d1eb4531927b7343e811eab6a2aeee0" as const;
+  "6f4fe21980a14458468d7526278c7b6cff70e39f8a80b07172b1991dfa1187c7" as const;
 
 export const MATHEMATICAL_GRADING_V1_SCHEMA_VERSION =
   "ten-kings-mathematical-grading-v1" as const;
@@ -284,12 +284,12 @@ const manifestWithoutHash = {
       poseDiversity: {
         minimumDetectedTargetCoverageFractionPerView: 0.3,
         geometry: {
-          minimumNormalizedCenterSpanX: 0.08,
+          minimumNormalizedCenterSpanX: 0.07,
           minimumNormalizedCenterSpanY: 0.08,
           minimumRotationSpanDegrees: 2,
         },
         normalization: {
-          minimumNormalizedCenterSpanX: 0.08,
+          minimumNormalizedCenterSpanX: 0.07,
           minimumNormalizedCenterSpanY: 0.08,
           minimumRotationSpanDegrees: 2,
         },

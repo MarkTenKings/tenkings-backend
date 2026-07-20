@@ -53,7 +53,7 @@ function analysis() {
       rigId: "ten-kings-fixed-rig-v1",
       captureProfileVersion: "ten-kings-fixed-rig-mathematical-calibration-v1",
       purpose: "mathematical_calibration_v1",
-      thresholdSetId: "ten-kings-mathematical-grading-v1.0.0",
+      thresholdSetId: "ten-kings-mathematical-grading-v1.0.1",
       thresholdSetHash: "d".repeat(64),
       captureEvidenceAcceptance: {
         poseDiversity: { policy: "fixture-v1" },
@@ -164,7 +164,7 @@ test("finalization writes a profile only when the acceptance authority finalizes
           calibrationVersion: "test-v1",
           rigId: "ten-kings-fixed-rig-v1",
           finalizedAt: "2026-07-18T12:00:00.000Z",
-          thresholdSetId: "ten-kings-mathematical-grading-v1.0.0",
+          thresholdSetId: "ten-kings-mathematical-grading-v1.0.1",
           thresholdSetHash: "d".repeat(64),
         },
         artifact: {
@@ -256,7 +256,7 @@ test("finalization rejects a changed certified photometric artifact before writi
             calibrationVersion: "test-v1",
             rigId: "ten-kings-fixed-rig-v1",
             finalizedAt: "2026-07-18T12:00:00.000Z",
-            thresholdSetId: "ten-kings-mathematical-grading-v1.0.0",
+          thresholdSetId: "ten-kings-mathematical-grading-v1.0.1",
             thresholdSetHash: "d".repeat(64),
           },
           artifact: {

@@ -188,7 +188,7 @@ def load_capture_package_authority(
             'source capture-package captureProfileVersion mismatch')
     if package.get('purpose') != CAPTURE_PACKAGE_PURPOSE:
         raise ValueError('source capture-package purpose is not calibration')
-    if package.get('thresholdSetId') != 'ten-kings-mathematical-grading-v1.0.0':
+    if package.get('thresholdSetId') != 'ten-kings-mathematical-grading-v1.0.1':
         raise ValueError('source capture-package thresholdSetId mismatch')
     threshold_set_hash = exact_sha256(
         package.get('thresholdSetHash'), 'source capture-package thresholdSetHash')
@@ -902,6 +902,14 @@ def detect_outer_coupon(
 
 def measured_source_pose(contour: np.ndarray, image_width: int,
                          image_height: int) -> dict[str, float]:
+    if (not np.isfinite(contour).all() or
+            np.any(contour[:, 0] <= 0) or
+            np.any(contour[:, 0] >= image_width) or
+            np.any(contour[:, 1] <= 0) or
+            np.any(contour[:, 1] >= image_height)):
+        raise ValueError(
+            'detected outer coupon corners must be finite and strictly inside '
+            'the source frame')
     area = abs(float(cv2.contourArea(contour.astype(np.float32))))
     center = np.mean(contour, axis=0)
     top_edge = contour[1] - contour[0]

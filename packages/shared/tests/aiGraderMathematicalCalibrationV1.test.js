@@ -229,6 +229,25 @@ test("threshold manifest is deeply immutable and its canonical SHA-256 is stable
       MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.scoreContract.minimum,
   );
   assert.equal(MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.uncertainty.coverageFactor, 1.96);
+  assert.deepEqual(
+    MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence.poseDiversity,
+    {
+      minimumDetectedTargetCoverageFractionPerView: 0.3,
+      geometry: {
+        minimumNormalizedCenterSpanX: 0.07,
+        minimumNormalizedCenterSpanY: 0.08,
+        minimumRotationSpanDegrees: 2,
+      },
+      normalization: {
+        minimumNormalizedCenterSpanX: 0.07,
+        minimumNormalizedCenterSpanY: 0.08,
+        minimumRotationSpanDegrees: 2,
+      },
+      targetCoverageFormula:
+        "detectedOuterContourAreaPx / sourceFrameAreaPx >= minimumDetectedTargetCoverageFractionPerView for every accepted geometry and normalization view",
+      spanFormula: "max(observedPoseValue) - min(observedPoseValue) >= minimumSpan",
+    },
+  );
   assert.equal(MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.requiredChannelCount, 8);
   assert.equal(
     MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.minimumIlluminationPatternFramesPerChannel,

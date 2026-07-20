@@ -269,6 +269,8 @@ test("calibration producer derives pose coverage from the in-frame outer quadril
 test("calibration producer rejects non-finite or out-of-frame target corners before slot occupancy", async () => {
   const invalidCases = [
     ["negative", { x: -1, y: 100 }],
+    ["zero-x", { x: 0, y: 100 }],
+    ["zero-y", { x: 200, y: 0 }],
     ["boundary-equal", { x: 1000, y: 100 }],
     ["non-finite", { x: Number.NaN, y: 100 }],
   ];

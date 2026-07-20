@@ -9,7 +9,7 @@ Mathematical Calibration V1 grades a card from explicit physical measurements. I
 The only scoring and calibration-acceptance constant source is:
 
 - `packages/shared/src/aiGraderMathematicalCalibrationV1.ts`
-- threshold-set ID `ten-kings-mathematical-grading-v1.0.0`
+- threshold-set ID `ten-kings-mathematical-grading-v1.0.1`
 - the finalized canonical threshold-set SHA-256 recorded in that module, every calibration bundle, and every V0.3 report
 
 UI, report, storage, and publication code render or validate that authority. They do not define alternate scoring constants.

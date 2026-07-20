@@ -650,18 +650,18 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
             'rigId': rig_id,
             'captureProfileVersion': capture_profile_version,
             'purpose': 'mathematical_calibration_v1',
-            'thresholdSetId': 'ten-kings-mathematical-grading-v1.0.0',
+            'thresholdSetId': 'ten-kings-mathematical-grading-v1.0.1',
             'thresholdSetHash': threshold_match.group(1),
             'captureEvidenceAcceptance': {
                 'poseDiversity': {
                     'minimumDetectedTargetCoverageFractionPerView': 0.3,
                     'geometry': {
-                        'minimumNormalizedCenterSpanX': 0.08,
+                        'minimumNormalizedCenterSpanX': 0.07,
                         'minimumNormalizedCenterSpanY': 0.08,
                         'minimumRotationSpanDegrees': 2,
                     },
                     'normalization': {
-                        'minimumNormalizedCenterSpanX': 0.08,
+                        'minimumNormalizedCenterSpanX': 0.07,
                         'minimumNormalizedCenterSpanY': 0.08,
                         'minimumRotationSpanDegrees': 2,
                     },
@@ -747,6 +747,14 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
         return manifest_path
+
+    def test_outer_coupon_corners_must_be_strictly_inside_source_frame(self):
+        contour = np.float32([
+            [0, 10], [90, 10], [90, 90], [10, 90],
+        ])
+        with self.assertRaisesRegex(
+                ValueError, 'strictly inside the source frame'):
+            MODULE.measured_source_pose(contour, 100, 100)
 
     def test_exact_synthetic_calibration_is_deterministic(self):
         with tempfile.TemporaryDirectory() as directory:
