@@ -4320,6 +4320,8 @@ export class AiGraderLocalStationBridgeService {
   private previewGeometryLastStartedAtMs = 0;
   private previewGeometryEpoch = 0;
   private previewStreamSequence = 0;
+  private previewStreamRequestSequence = 0;
+  private previewStreamReservation?: number;
   private liveLightingWatchdog?: ReturnType<typeof setTimeout>;
   private leimacClient?: LeimacIdmuClient;
   private lightingWriteChain: Promise<void> = Promise.resolve();
@@ -10642,7 +10644,29 @@ export class AiGraderLocalStationBridgeService {
       );
       return Promise.resolve();
     }
-    await this.stopPreviewStream("new preview stream requested", { waitForRelease: true, settleMs: 100 });
+    if (this.previewStreamReservation !== undefined) {
+      sendJson(
+        res,
+        409,
+        {
+          ok: false,
+          code: "AI_GRADER_PREVIEW_STREAM_ALREADY_ACTIVE",
+          message: "A preview stream is already starting or releasing the Basler camera; wait for it to settle before reconnecting.",
+          result: this.previewStatus(),
+        },
+        origin,
+        this.config,
+      );
+      return Promise.resolve();
+    }
+    const previewReservation = ++this.previewStreamRequestSequence;
+    this.previewStreamReservation = previewReservation;
+    try {
+      await this.stopPreviewStream("new preview stream requested", { waitForRelease: true, settleMs: 100 });
+    } catch (error) {
+      if (this.previewStreamReservation === previewReservation) this.previewStreamReservation = undefined;
+      throw error;
+    }
     const previewStartedAt = new Date().toISOString();
     const binding = calibrationPreviewBound
       ? {
@@ -10720,9 +10744,9 @@ export class AiGraderLocalStationBridgeService {
           clearInterval(mockPreviewTimer);
           mockPreviewTimer = undefined;
         }
+        if (this.previewStreamReservation === previewReservation) this.previewStreamReservation = undefined;
         this.previewStop = undefined;
         if (this.previewProcess) this.stopPreviewProcessTree(this.previewProcess);
-        this.previewProcess = undefined;
         this.updatePreviewStatus({
           status: intentionalCaptureTransition ? "paused_for_capture" : reason.includes("error") ? "error" : "stopped",
           cameraOwnership: intentionalCaptureTransition ? "capture_action" : "released",
