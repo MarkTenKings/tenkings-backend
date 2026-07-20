@@ -53,15 +53,53 @@ def derive_outer_corners(grid: np.ndarray, width: int, height: int) -> list[dict
     return [_point(point) for point in ordered]
 
 
+def _detect_internal_corners(gray: np.ndarray) -> np.ndarray | None:
+    flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY | cv2.CALIB_CB_NORMALIZE_IMAGE
+    found, detected = cv2.findChessboardCornersSB(gray, (INTERNAL_COLUMNS, INTERNAL_ROWS), flags)
+    if not found or detected is None or detected.shape[0] != INTERNAL_COLUMNS * INTERNAL_ROWS:
+        return None
+    return detected.astype(np.float32)
+
+
+def _detect_with_local_contrast(gray: np.ndarray) -> tuple[np.ndarray, int, int] | None:
+    """Retry SB on the high-contrast target ROI, preserving source coordinates.
+
+    The live Basler frame can contain a large matte-card/background gradient and
+    the target's rounded black border. SB is authoritative, but its frozen
+    detector does not find this exact full-frame input until the border-defined
+    target ROI is locally contrast-normalized. This does not use the
+    Production/card detector and does not alter the detected geometry.
+    """
+    height, width = gray.shape[:2]
+    for threshold in (40, 60, 80, 100, 120, 140):
+        _, mask = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        contour = max(contours, key=cv2.contourArea)
+        x, y, roi_width, roi_height = cv2.boundingRect(contour)
+        if roi_width * roi_height < width * height * 0.10:
+            continue
+        roi = cv2.equalizeHist(gray[y:y + roi_height, x:x + roi_width])
+        detected = _detect_internal_corners(roi)
+        if detected is not None:
+            detected[:, 0, 0] += x
+            detected[:, 0, 1] += y
+            return detected, x, y
+    return None
+
+
 def detect_preview(encoded: bytes) -> dict:
     image = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
     if image is None or image.size == 0:
         raise RuntimeError("calibration preview frame could not be decoded")
     height, width = image.shape[:2]
-    flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY | cv2.CALIB_CB_NORMALIZE_IMAGE
-    found, detected = cv2.findChessboardCornersSB(image, (INTERNAL_COLUMNS, INTERNAL_ROWS), flags)
-    if not found or detected is None or detected.shape[0] != INTERNAL_COLUMNS * INTERNAL_ROWS:
-        raise RuntimeError("frozen 11x16 checkerboard detection failed closed")
+    detected = _detect_internal_corners(image)
+    if detected is None:
+        local = _detect_with_local_contrast(image)
+        if local is None:
+            raise RuntimeError("frozen 11x16 checkerboard detection failed closed")
+        detected, _, _ = local
 
     grid = detected.reshape(INTERNAL_ROWS, INTERNAL_COLUMNS, 2).astype(np.float64)
     outer = derive_outer_corners(grid, width, height)
