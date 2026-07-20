@@ -1514,7 +1514,14 @@ function sanitizeAiGraderQueuedOcr(
   const images = Array.isArray(record.images)
     ? record.images.map(sanitizeAiGraderQueuedOcrImage).filter((image): image is AiGraderQueuedOcrImage => Boolean(image))
     : [];
-  const rawImagesExactlyValid = Array.isArray(record.images) && record.images.length === 2 && images.length === 2;
+  const sortedImageSides = images.map((image) => image.side)
+    .sort((left, right) => left === right ? 0 : left === "front" ? -1 : 1);
+  const rawImagesValid = Array.isArray(record.images) &&
+    record.images.length >= 1 &&
+    record.images.length <= 2 &&
+    images.length === record.images.length &&
+    new Set(images.map((image) => image.side)).size === images.length &&
+    images.every((image, index) => image.side === sortedImageSides[index]);
   const eligibleAt = safeStationTimestamp(record.eligibleAt);
   const startedAt = safeStationTimestamp(record.startedAt);
   const completedAt = safeStationTimestamp(record.completedAt);
@@ -1534,14 +1541,15 @@ function sanitizeAiGraderQueuedOcr(
   const failureRecord = stationRecord(record.failure) ? record.failure : {};
   const failureCode = safeStationId(failureRecord.code);
   const failureMessage = safeStationText(failureRecord.message);
-  const exactImages = rawImagesExactlyValid && new Set(images.map((image) => image.side)).size === 2 ? images : undefined;
+  const waitingImages = rawImagesValid ? images : undefined;
+  const exactImages = rawImagesValid && images.length === 2 ? images : undefined;
   const ordered = (...timestamps: Array<string | undefined>) => {
     const present = timestamps.filter((timestamp): timestamp is string => Boolean(timestamp));
     return present.every((timestamp, index) => index === 0 || Date.parse(present[index - 1]) <= Date.parse(timestamp));
   };
   const noTerminalPayload = record.result === undefined && record.failure === undefined && completedAt === undefined;
   const structurallyValid = Boolean(updatedAt && parsedState && (
-    (parsedState === "waiting_for_normalized" && attemptCount === 0 && attemptOwnerAbsent && !eligibleAt && !startedAt && record.images === undefined && noTerminalPayload) ||
+    (parsedState === "waiting_for_normalized" && attemptCount === 0 && attemptOwnerAbsent && !eligibleAt && !startedAt && (record.images === undefined || waitingImages) && noTerminalPayload) ||
     (parsedState === "eligible" && attemptCount === 0 && attemptOwnerAbsent && eligibleAt && !startedAt && exactImages && noTerminalPayload && ordered(eligibleAt, updatedAt)) ||
     (parsedState === "in_flight" && attemptCount === 1 && attemptOwnerId && eligibleAt && startedAt && exactImages && noTerminalPayload && ordered(eligibleAt, startedAt, updatedAt)) ||
     (parsedState === "succeeded" && attemptCount === 1 && attemptOwnerId && eligibleAt && startedAt && completedAt && exactImages && exactResult && record.failure === undefined && ordered(eligibleAt, startedAt, completedAt, updatedAt)) ||
@@ -1563,6 +1571,7 @@ function sanitizeAiGraderQueuedOcr(
       },
     };
   }
+  const persistedImages = parsedState === "waiting_for_normalized" ? waitingImages : exactImages;
   return {
     state: parsedState,
     updatedAt,
@@ -1571,7 +1580,7 @@ function sanitizeAiGraderQueuedOcr(
     ...(startedAt ? { startedAt } : {}),
     ...(completedAt ? { completedAt } : {}),
     ...(attemptOwnerId ? { attemptOwnerId } : {}),
-    ...(exactImages ? { images: exactImages } : {}),
+    ...(persistedImages ? { images: persistedImages } : {}),
     ...(exactResult ? { result: exactResult } : {}),
     ...(failureCode && failureMessage ? { failure: { code: failureCode, message: failureMessage } } : {}),
   };

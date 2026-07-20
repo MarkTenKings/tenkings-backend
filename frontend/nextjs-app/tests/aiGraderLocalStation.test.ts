@@ -699,6 +699,40 @@ test("Rapid Capture queue sanitization preserves bounded report state and strips
   assert.equal(queue.activeReview?.manifest.productionRelease?.gradingSessionId, "session-1");
 });
 
+test("valid one-side normalized evidence remains waiting while the exact Back PNG is still processing", () => {
+  const queue = sanitizeAiGraderRapidCaptureQueue({
+    items: [{
+      queueItemId: "queue-waiting-front",
+      sessionId: "session-waiting-front",
+      reportId: "report-waiting-front",
+      state: "finalizing",
+      queuedAt: "2026-07-20T05:40:58.639Z",
+      updatedAt: "2026-07-20T05:40:59.000Z",
+      history: [],
+      ocr: {
+        state: "waiting_for_normalized",
+        updatedAt: "2026-07-20T05:40:59.000Z",
+        attemptCount: 0,
+        images: [{
+          side: "front",
+          artifactRole: "normalized_card",
+          fileName: "front-normalized-card.png",
+          mimeType: "image/png",
+          checksumSha256: "a".repeat(64),
+          byteSize: 1360997,
+          widthPx: 1200,
+          heightPx: 1680,
+        }],
+      },
+    }],
+  });
+
+  assert.equal(queue.items[0].state, "finalizing");
+  assert.equal(queue.items[0].ocr.state, "waiting_for_normalized");
+  assert.deepEqual(queue.items[0].ocr.images?.map((image) => image.side), ["front"]);
+  assert.equal(selectNextSerializedAiGraderOcrItem(queue.items), undefined);
+});
+
 test("malformed or cross-identity completed OCR becomes one explicit terminal item failure", () => {
   const queue = sanitizeAiGraderRapidCaptureQueue({
     activeQueueItemId: "queue-corrupt",
