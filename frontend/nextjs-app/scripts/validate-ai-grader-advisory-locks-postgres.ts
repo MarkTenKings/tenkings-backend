@@ -423,10 +423,12 @@ async function main() {
     requireProof(published.publicationStatus === "published", "PUBLICATION_STATUS");
     requireProof(published.labelSheetAssignment?.slot === 1, "LABEL_V1_ASSIGNMENT");
     validationStage = "DURABLE_PUBLISH_CHECK";
+    const durableReport = await prisma.aiGraderReport.findUnique({ where: { reportId: REPORT_ID } });
+    requireProof(durableReport !== null, "DURABLE_REPORT_ROW_PRESENT");
     const durablePublishedRows = await Promise.all([
       prisma.aiGraderSession.findUniqueOrThrow({ where: { gradingSessionId: GRADING_SESSION_ID } }),
-      prisma.aiGraderReport.findUniqueOrThrow({ where: { reportId: REPORT_ID } }),
-      prisma.aiGraderPublication.findUniqueOrThrow({ where: { reportId: REPORT_ID } }),
+      Promise.resolve(durableReport),
+      prisma.aiGraderPublication.findUniqueOrThrow({ where: { reportId: durableReport.id } }),
       prisma.aiGraderLabel.findUniqueOrThrow({ where: { certId: CERT_ID } }),
     ]);
     requireProof(durablePublishedRows[0].status === "published", "DURABLE_SESSION_PUBLISHED");
