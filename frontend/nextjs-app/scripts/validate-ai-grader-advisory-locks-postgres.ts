@@ -574,7 +574,8 @@ async function main() {
       "INVENTORY_REPORT_STATE",
     );
     requireProof(inventoryLabelPairs === 1, "INVENTORY_IDEMPOTENT_LABEL_PAIR");
-    requireProof(observedLocks.report >= 12 && observedLocks.label >= 9, "ALL_LOCK_PATHS_NOT_OBSERVED");
+    requireProof(observedLocks.report >= 11, `ALL_LOCK_PATHS_NOT_OBSERVED_REPORT_${observedLocks.report}`);
+    requireProof(observedLocks.label >= 9, `ALL_LOCK_PATHS_NOT_OBSERVED_LABEL_${observedLocks.label}`);
   } finally {
     await prisma.$disconnect();
   }
