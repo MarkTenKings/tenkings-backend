@@ -41,7 +41,7 @@ test("real calibration camera evidence requires exact applied exposure and gain 
   }
 });
 
-async function producerFixture(root) {
+async function producerFixture(root, options = {}) {
   const targetBytes = Buffer.from("%PDF-1.4\n% immutable non-production target\n", "utf8");
   const targetPath = path.join(root, "protected-target.pdf");
   await fsp.writeFile(targetPath, targetBytes);
@@ -124,13 +124,16 @@ async function producerFixture(root) {
         bottomRight: { x: centerX + 300, y: centerY + 450 },
         bottomLeft: { x: centerX - 300, y: centerY + 450 },
       };
-      const geometry = {
+      const defaultGeometry = {
         version: "ten-kings-card-geometry-v1",
         corners,
         boundingBox: { x: centerX - 300, y: centerY - 450, width: 600, height: 900 },
         rotationDegrees: rotation,
         image: { width: 1000, height: 1400 },
       };
+      const geometry = options.geometryForRequest
+        ? options.geometryForRequest({ request, sample, defaultGeometry })
+        : defaultGeometry;
       return {
         geometry,
         rawArtifact: {
@@ -231,6 +234,83 @@ test("calibration producer binds the protected target, resumes explicitly, and r
   assert.equal(normalized.role, "lens_geometry_normalized");
   assert.equal(normalized.parentSha256, raw.sha256);
   assert.equal(normalized.normalization.sourceSha256, raw.sha256);
+});
+
+test("calibration producer derives pose coverage from the in-frame outer quadrilateral", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-polygon-coverage-"));
+  const fixture = await producerFixture(root, {
+    geometryForRequest: () => ({
+      version: "ten-kings-card-geometry-v1",
+      corners: {
+        topLeft: { x: 500, y: 100 },
+        topRight: { x: 900, y: 700 },
+        bottomRight: { x: 500, y: 1300 },
+        bottomLeft: { x: 100, y: 700 },
+      },
+      boundingBox: { x: 100, y: 100, width: 800, height: 1200 },
+      rotationDegrees: 0,
+      image: { width: 1000, height: 1400 },
+    }),
+  });
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, "calibration-polygon-coverage"));
+  await fixture.producer.captureStep({
+    sessionId: started.sessionId,
+    operationId: "polygon-coverage-operation",
+    role: "lens_geometry",
+    sampleIndex: 1,
+    targetFace: "checkerboard",
+  });
+  const state = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "capture-session.json"), "utf8"));
+  const raw = state.artifacts.find((artifact) => artifact.artifactClass === "raw_capture");
+  assert.equal(raw.pose.coverageFraction, 0.342857);
+  assert.notEqual(raw.pose.coverageFraction, 0.685714, "axis-aligned bounding-box area is not target coverage");
+});
+
+test("calibration producer rejects non-finite or out-of-frame target corners before slot occupancy", async () => {
+  const invalidCases = [
+    ["negative", { x: -1, y: 100 }],
+    ["boundary-equal", { x: 1000, y: 100 }],
+    ["non-finite", { x: Number.NaN, y: 100 }],
+  ];
+  for (const [label, invalidTopLeft] of invalidCases) {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), `tk-calibration-invalid-corner-${label}-`));
+    const fixture = await producerFixture(root, {
+      geometryForRequest: () => ({
+        version: "ten-kings-card-geometry-v1",
+        corners: {
+          topLeft: invalidTopLeft,
+          topRight: { x: 800, y: 100 },
+          bottomRight: { x: 800, y: 1300 },
+          bottomLeft: { x: 200, y: 1300 },
+        },
+        boundingBox: { x: 200, y: 100, width: 600, height: 1200 },
+        rotationDegrees: 0,
+        image: { width: 1000, height: 1400 },
+      }),
+    });
+    const sessionId = `calibration-invalid-corner-${label}`;
+    const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+    await assert.rejects(
+      fixture.producer.captureStep({
+        sessionId,
+        operationId: `invalid-corner-operation-${label}`,
+        role: "lens_geometry",
+        sampleIndex: 1,
+        targetFace: "checkerboard",
+      }),
+      /outer corners must be finite and fully inside the source frame/,
+    );
+    const status = await fixture.producer.status(sessionId);
+    assert.equal(status.captureCount, 0, `${label} must leave the slot unoccupied`);
+    assert.equal(status.failedOperationCount, 1);
+    const state = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "capture-session.json"), "utf8"));
+    assert.equal(state.captures.length, 0);
+    assert.equal(
+      state.artifacts.filter((artifact) =>
+        artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative").length,
+      0,
+    );
+  }
 });
 
 test("calibration producer seals the complete unique capture and metrology ledger without overwrite", async () => {

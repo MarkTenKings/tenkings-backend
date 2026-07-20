@@ -482,8 +482,19 @@ async function defaultNormalizer(input: FixedRigMathematicalCalibrationNormalize
 }
 
 function poseFromGeometry(geometry: CardGeometryMetadata) {
-  if (!geometry.corners || !geometry.boundingBox || geometry.rotationDegrees == null) {
+  if (!geometry.corners || geometry.rotationDegrees == null) {
     throw new Error("Calibration capture requires automatically detected target geometry for immutable pose provenance.");
+  }
+  const imageWidth = geometry.image?.width;
+  const imageHeight = geometry.image?.height;
+  if (
+    !Number.isFinite(imageWidth) ||
+    !Number.isFinite(imageHeight) ||
+    imageWidth <= 0 ||
+    imageHeight <= 0 ||
+    !Number.isFinite(geometry.rotationDegrees)
+  ) {
+    throw new Error("Calibration capture requires finite positive source-frame geometry and rotation.");
   }
   const corners = [
     geometry.corners.topLeft,
@@ -491,18 +502,34 @@ function poseFromGeometry(geometry: CardGeometryMetadata) {
     geometry.corners.bottomRight,
     geometry.corners.bottomLeft,
   ];
+  if (corners.some((point) =>
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y) ||
+    point.x < 0 ||
+    point.x >= imageWidth ||
+    point.y < 0 ||
+    point.y >= imageHeight
+  )) {
+    throw new Error("Calibration target outer corners must be finite and fully inside the source frame.");
+  }
+  const doubledOuterContourArea = Math.abs(corners.reduce((total, point, index) => {
+    const next = corners[(index + 1) % corners.length]!;
+    return total + point.x * next.y - next.x * point.y;
+  }, 0));
+  const coverageFraction = doubledOuterContourArea / 2 / (imageWidth * imageHeight);
+  if (!Number.isFinite(coverageFraction) || coverageFraction <= 0 || coverageFraction > 1) {
+    throw new Error("Calibration target outer-contour coverage must be finite and within the source frame.");
+  }
   const centerX = corners.reduce((total, point) => total + point.x, 0) / 4;
   const centerY = corners.reduce((total, point) => total + point.y, 0) / 4;
   return {
-    centerXFraction: Number((centerX / geometry.image.width).toFixed(6)),
-    centerYFraction: Number((centerY / geometry.image.height).toFixed(6)),
-    coverageFraction: Number(
-      ((geometry.boundingBox.width * geometry.boundingBox.height) / (geometry.image.width * geometry.image.height)).toFixed(6),
-    ),
+    centerXFraction: Number((centerX / imageWidth).toFixed(6)),
+    centerYFraction: Number((centerY / imageHeight).toFixed(6)),
+    coverageFraction: Number(coverageFraction.toFixed(6)),
     rotationDegrees: Number(geometry.rotationDegrees.toFixed(6)),
     cornerSignature: corners.flatMap((point) => [
-      Number((point.x / geometry.image.width).toFixed(6)),
-      Number((point.y / geometry.image.height).toFixed(6)),
+      Number((point.x / imageWidth).toFixed(6)),
+      Number((point.y / imageHeight).toFixed(6)),
     ]),
   };
 }
@@ -741,6 +768,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         if (!normalization.rawEvidencePreserved || !normalization.normalizedArtifact) {
           throw new Error("Calibration normalization must preserve raw bytes and produce a normalized derivative.");
         }
+        const pose = poseFromGeometry(normalization.geometry);
         if (normalization.rawArtifact.sha256 !== rawSha256 || normalization.normalizedArtifact.sourceSha256 !== rawSha256) {
           throw new Error("Calibration normalization source hash does not bind to the immutable raw capture.");
         }
@@ -761,7 +789,6 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         const normalizedEvidenceId = `${baseName}-normalized`;
         const geometryRecordPath = path.join(this.sessionDir(request.sessionId), "working", `${normalizedEvidenceId}-geometry.json`);
         await writeExclusive(geometryRecordPath, canonicalBytes(normalization.geometry));
-        const pose = poseFromGeometry(normalization.geometry);
         const common = {
           rigId: state.protectedSettings.rigId,
           captureProfileVersion: state.protectedSettings.captureProfileVersion,

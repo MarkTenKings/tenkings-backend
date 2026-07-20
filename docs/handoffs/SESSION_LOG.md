@@ -27168,3 +27168,52 @@ By enabling Rip It Live, I confirm:
 
 - Observed result: the initial tool-managed foreground process ended but its child listener remained, so the exact listener was resolved read-only from port 47653, verified as a distinct Node process whose command line contained only the calibration port marker, and stopped by exact PID. Port 47653 then closed. The normal real bridge continued listening on 47652 and was not stopped, restarted, reconfigured, or otherwise changed.
 - Hardware/evidence state: no Pylon or Basler process remained after the stop. The bridge had already confirmed safe-off after the failed capture before reaching normalization. The calibration session, failed-operation ledger, target copy, and raw image remain unchanged and resumable only with a new operation ID after physical field-of-view correction and positive bridge exclusivity.
+
+## 2026-07-19 - Mathematical V1 normal-bridge isolation authorized
+
+- Physical/authority confirmation: Mark stated `checkerboard visible; stop normal bridge`, confirming physical checkerboard correction and explicitly authorizing temporary stop of the retained normal bridge for exclusive camera/lighting access, followed by restart after calibration.
+- Verified stop target: loopback port 47652 was owned by a non-calibration Node listener in a three-process launcher tree. The exact listener and its parents all carried the 47652 marker, the launcher was the retained `start-local-station-bridge` entry, no command contained a token literal, and no Mathematical calibration marker was present. The calibration bridge on 47653 was already stopped.
+- Planned action: stop only the exact verified 47652 listener, verify both hardware ports are isolated as intended and no Pylon/Basler process exists, then restart only the calibration bridge with the full immutable worktree launch arguments. Do not alter the normal bridge config, files, queue, or evidence; retain its exact token-free restart command for restoration after calibration.
+
+## 2026-07-19 - Mathematical V1 exclusive calibration retry plan
+
+- Observed isolation: the exact authorized normal listener stopped and port 47652 closed; no Pylon/Basler process remained. Its config, queue, files, and evidence were not read or changed. The worktree calibration bridge then rebuilt/restarted on 47653 with the complete target/output arguments and returned healthy real, loopback-only, token-required status while 47652 remained closed.
+- Resume evidence: the immutable session reopened with capture count 0, measurement count 0, failed-operation count 1, and next slot still `lens_geometry:none:1`. The failed operation and blank raw file remain preserved; no slot or evidence was overwritten.
+- Planned retry: after Mark's explicit `checkerboard visible` confirmation, invoke exactly one new-operation-ID retry for the same first lens slot. Recheck that 47652 is closed and no Pylon/Basler process exists immediately before the call. Require normalized checkerboard evidence and all protected telemetry/safe-off gates; if the camera still cannot see the target, stop without another automatic retry.
+
+## 2026-07-19 - Mathematical V1 first lens capture accepted
+
+- Observed result: exclusive preflight passed and new operation `cal-capture-45faae42cb1b41b6970893882121181f` successfully occupied exact slot `lens_geometry:none:1`. The session now contains 1/102 captures, 0/78 measurements, the one preserved earlier failed operation, and remains unsealed.
+- Immutable evidence: raw PNG SHA-256 is `8dc409d0e3a5433a732f0306ad30397f4c0a98f6b2a0b6cd506ee7af2dc0ac07`; normalized PNG SHA-256 is `0db3e38b9b7c7d07514432049da5343b15b83f17cc291fbca22eb297630d9c90`. Visual inspection confirms the complete checkerboard and outer coupon boundary are visible, and the normalized derivative is portrait/upright. Recorded pose is center (0.488464, 0.479527), coverage 0.780175, rotation 88.918 degrees.
+- Protected hardware evidence: Pylon-applied exposure is 45000 microseconds, gain 0; all eight Leimac channels were enabled at bounded 1.2 percent duty; acknowledged writes 5/5; Leimac completion true; safe-off before and after capture both true.
+- Next physical pause: exact slot `lens_geometry:none:2` requires an independently repositioned checkerboard pose. Mark must move the same coupon slightly while keeping it flat and the full rounded outer boundary visible; no capture proceeds until that physical action is confirmed.
+
+## 2026-07-19 - Mathematical V1 lens pose 2 capture plan
+
+- Physical confirmation: Mark confirmed pose 2 ready after the requested slight upper-left translation and clockwise rotation of the same checkerboard coupon.
+- Planned capture: revalidate exclusive ports and absence of a Pylon/Basler owner, then invoke one `Advance -ConfirmPhysicalAction` for exact slot `lens_geometry:none:2`. Preserve applied settings, hashes, pose, acknowledgements, and safe-off; stop on any failure without relabeling evidence.
+
+## 2026-07-19 - Mathematical V1 lens pose 2 accepted
+
+- Observed result: operation `cal-capture-8dffdf03d47a46cd954c0540bae7eef7` successfully occupied lens sample 2; session capture count is 2. Raw SHA-256 is `35f1610446bb3388e5fbaa75000c0fc0bc5c61a68345db09650aae22c1810b85`; normalized SHA-256 is `b5a8cfcba7d0280cee887f7e6f525ca29450c9d00996f9f0adb59b602f533599`.
+- Pose/hardware evidence: center (0.453860, 0.502029), coverage 0.807032, rotation 87.902 degrees; current two-view spans are X 0.034604, Y 0.022502, rotation 1.016 degrees. Applied exposure/gain remained 45000/0, Leimac 1.2 percent with 5/5 acknowledgements, and both safe-off confirmations are true.
+- Next physical pause: move the same flat coupon toward the opposite available corner while retaining the entire rounded outline, and rotate slightly counterclockwise, for exact lens sample 3. The remaining views must honestly reach the centralized 0.08 X/Y and 2 degree rotation spans before sealing.
+
+## 2026-07-19 - Mathematical V1 lens pose 3 capture plan
+
+- Physical confirmation: Mark confirmed the opposite-corner, counterclockwise lens pose 3 is ready.
+- Planned capture: require 47652 closed, 47653 healthy, no existing Pylon/Basler owner, then capture only exact slot `lens_geometry:none:3` with a new operation ID and explicit physical-action confirmation.
+
+## 2026-07-19 - Mathematical V1 pose 3 physical replay exposed an in-frame guard defect
+
+- Observed capture: operation `cal-capture-494a0bdaa1654185b5a8bf8e70834b3e` occupied lens sample 3 with raw SHA-256 `fd8e49d56994495440eef100bf7b53d8e8c33074cc66329123d6602ec395587f` and normalized SHA-256 `f75c0ad82233a8d55954faebe3803567250784df311f86125caa4fbf5a1b658f`. Applied camera/light settings remained protected, acknowledgements were 5/5, and safe-off before/after were true.
+- Defect evidence: the recorded normalized outer-corner signature contains X = 1.079773 and Y = -0.033492, proving the derived physical outer contour extends outside the source frame. The producer nevertheless recorded impossible coverage 1.011482 because it used the extrapolated axis-aligned bounding-box area instead of the manifest's detected-outer-contour-area/source-frame-area formula, and it did not reject out-of-frame corners before slot occupancy.
+- Safety decision: stop before lens sample 4. Session `math-cal-v1-20260719-01` is retained as immutable rejected development evidence and must never be sealed or finalized. Correct the producer to require finite fully in-frame outer corners and compute polygon area coverage, add regressions, rebuild, and start a new session rather than editing or relabeling these three captures.
+- Planned bridge stop: stop only the calibration listener on 47653 while the code correction is validated; keep normal port 47652 isolated under Mark's authorization, verify no Pylon/Basler process remains, and retain both bridges' exact restoration commands.
+
+## 2026-07-19 - Mathematical V1 physical in-frame coverage correction
+
+- Observed bridge state: the exact calibration listener stopped, both 47652 and 47653 are closed under Mark's temporary-isolation authorization, and no Pylon/Basler process remains. Rejected session `math-cal-v1-20260719-01` and all raw/normalized evidence remain immutable and will not be resumed, sealed, or finalized.
+- Code correction: calibration pose provenance now requires finite positive source-frame dimensions, finite rotation, and all four detected physical outer corners strictly inside the source frame. Coverage is the shoelace quadrilateral outer-contour area divided by source-frame area, matching the frozen manifest, rather than extrapolated bounding-box area. Invalid coverage or corners fail before derivative/geometry ledger writes and before capture-slot occupancy. No threshold, tolerance, schema, or pre-release V1 profile identifier changed.
+- Regression evidence: a diamond fixture proves polygon coverage 0.342857 rather than bounding-box proxy 0.685714. Negative, boundary-equal, and non-finite corner fixtures each fail closed with capture count 0, failed-operation count 1, and no raw/normalized artifact ledger entries. Shared/simulator/helper build passed and the complete focused physical-capture file passed 6/6.
+- Protected-main finding and plan: while physical work was paused, protected main advanced from the original base through PRs #106/#107 to reported head `d75998837f5e9d6fb994f5efa09decc5ef03035d`, adding Rapid OCR/launcher work that overlaps this branch. PR #105 is therefore merge-conflicted and GitHub cannot synthesize its pull-request merge ref; Vercel remains green but current-head GitHub Actions are absent. Fetch and verify the exact protected head, merge it once into the already-published feature branch without force-push, resolve overlaps preserving both authorized changes, rerun affected validation, then start a new physical session only from the reconciled source.
