@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { EventEmitter } = require("node:events");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const sharp = require("sharp");
@@ -1284,6 +1285,58 @@ test("Rapid queue retention preserves all unfinished items and only trims termin
   const pending = Array.from({ length: 26 }, (_, index) => ({ queueItemId: `pending-${index}`, state: "finalizing" }));
   const terminal = Array.from({ length: 8 }, (_, index) => ({ queueItemId: `published-${index}`, state: "published" }));
   assert.deepEqual(retainAiGraderRapidCaptureQueueItems([...pending, ...terminal]).map((item) => item.queueItemId), pending.map((item) => item.queueItemId));
+});
+
+test("preview-to-capture handoff waits through the Basler GigE lease after forced preview exit", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-preview-camera-release-"));
+  let leaseTimer;
+  try {
+    const events = [];
+    let cameraLeaseHeld = true;
+    const child = new EventEmitter();
+    child.exitCode = null;
+    child.signalCode = null;
+    child.pid = 4242;
+    child.stdin = { end() {} };
+    child.stdout = {};
+    child.stderr = {};
+    child.kill = () => {
+      child.exitCode = 1;
+      return true;
+    };
+
+    const { service } = configFor(outputDir, {
+      stopPreviewProcessTree(stoppedChild) {
+        events.push("forced-process-stop");
+        stoppedChild.exitCode = 1;
+        leaseTimer = setTimeout(() => {
+          cameraLeaseHeld = false;
+          events.push("gigE-lease-released");
+        }, 3_100);
+        queueMicrotask(() => {
+          stoppedChild.emit("exit", 1, null);
+          stoppedChild.emit("close", 1, null);
+        });
+      },
+      stopOrphanedPreviewStreamsUntilReleased: async () => 0,
+    });
+    service.previewProcess = child;
+    service.previewStop = () => {};
+
+    await service.stopPreviewStream("atomic Front capture handoff", {
+      waitForRelease: true,
+      requireRelease: true,
+      captureOwner: true,
+    });
+    assert.equal(cameraLeaseHeld, false, "capture must not open while the killed preview still owns the GigE lease");
+    events.push("capture-camera-open-eligible");
+
+    assert.deepEqual(events, ["forced-process-stop", "gigE-lease-released", "capture-camera-open-eligible"]);
+    assert.equal(service.manifest.previewStatus.cameraOwnership, "capture_action");
+  } finally {
+    clearTimeout(leaseTimer);
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
 });
 
 test("retained bridge invariants and bounded Leimac conversion remain explicit", () => {
