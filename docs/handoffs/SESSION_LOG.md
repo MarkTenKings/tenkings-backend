@@ -27462,3 +27462,59 @@ By enabling Rip It Live, I confirm:
 - Run `29761569041` passed through durable publication and failed only at the final aggregate lock proof. The aggregate is now split into explicit report-family and label-family proofs, to identify the short observed family without weakening coverage.
 - The proven current contract makes the report aggregate `11` (card creation `1`; failed publication `2`; successful publication `2`; comps running/ready/selected `3`; inventory/holder coverage `3`), so the report lower bound is corrected from `12` to `11`. Label coverage remains `9` and every operation-level delta and blocking proof remains unchanged.
 - Hosted run `29762118931` passed all listed PR checks, including Disposable PostgreSQL, with the aggregate correction. The bounded diagnostic stage suffix has now been removed from the validator; explicit rollback-row proofs, internal publication identity lookup, report `>=11`, label `>=9`, and all per-operation lock assertions remain.
+
+## 2026-07-20 - Mathematical V1 supervised physical calibration planned action
+
+- Mark gave final confirmation that the frozen one-sided target is positioned checkerboard-up at the fixed card plane, the X/Y bars and coupon dimensions pass the required `abs(measured - nominal) + U95 <= 0.20 mm` equation, and the qualifying instrument identity, range, calibration authority, documented U95, calibration version/date, certificate artifact, and SHA-256 evidence are valid. Start only the protected calibration bridge from this worktree on loopback port `47653`; retain the installed helper on normal port `47652` unchanged, preserve rejected sessions `math-cal-v1-20260719-01` and `math-cal-v1-20260719-02`, and use a new session ID. No Production/Rapid, NFC, F8215, database, deployment, PR, or installed-helper action is authorized.
+
+- Protected calibration bridge started from the exact worktree on loopback `127.0.0.1:47653` in real supervised mode. It reports local-only operation, token required, hardware actions enabled only through staged operator-confirmed requests, and `databaseWrites=false`, `migrationsRun=false`, `deployRun=false`, `finalGradeComputed=false`, `certifiedClaim=false`, `labelGenerated=false`, `qrGenerated=false`, and `certificateGenerated=false`. The installed helper's normal `47652` listener was not changed; no camera or lighting action has run.
+
+- New supervised session `math-cal-v1-20260720-01` was created from the protected launcher with the repository target version/hash and Mark's initial checkerboard-position confirmation. The session has `0/102` captures, `0/78` measurements, `0` failed operations, and is unsealed. No capture ran before the confirmation.
+
+- Planned first calibration capture block: capture only `lens_geometry:1` from the already confirmed checkerboard pose, then stop before the next required reposition. No other physical action is included in this block.
+
+- First protected capture succeeded: exact slot `lens_geometry:none:1` completed, session count is `1/102`, measurement count `0/78`, and failed-operation count `0`. The launcher stopped before the next checkerboard reposition as required; safe-off/camera-release status is being checked before the next physical instruction.
+
+- Planned second calibration capture block: after Mark's single controlled `lens_geometry:2` reposition (`+3 mm` camera-right, `+2 mm` camera-view-top, approximately `+0.5°` clockwise, no lift/reseat/flip), capture only that exact slot and stop for pose inspection before any further movement.
+
+- Second protected capture completed as `lens_geometry:none:2`; session count is `2/102`, measurement count `0/78`, and failed-operation count `0`. The capture stopped before the next required pose; recorded pose, coverage, safe-off, and camera release are being verified before the next instruction.
+
+- Pose inspection passed: lens pose 1 was `(centerX=0.406250, centerY=0.331776, coverage=0.358799, rotation=90°)` and pose 2 was `(0.511719, 0.457944, 0.812096, 90°)`, with both safe-off-before and safe-off-after true. The observed center spans already exceed the frozen `0.07`/`0.08` X/Y gates; rotation diversity remains to be established. The next capture block will contain only lens pose 3 after one in-plane rotation action.
+
+- Planned third calibration capture block: capture only `lens_geometry:3` after Mark's single approximately 2° clockwise in-plane rotation around the current target center, with no translation, lift, reseat, or flip. Stop for pose and rotation inspection afterward.
+
+- Third protected capture completed as `lens_geometry:none:3`; session count is `3/102`, measurement count `0/78`, and failed-operation count `0`. Pose rotation, coverage, safe-off, and camera release are being inspected before the next physical instruction.
+
+- Pose 3 inspection passed: `(centerX=0.500000, centerY=0.556075, coverage=0.410046, rotation=-70°)` with safe-off-before and safe-off-after true. The recorded raw rotation span versus pose 1 is `160°` (angle-wrapped physical change notwithstanding), and X/Y spans are `0.105469`/`0.224299`, so all centralized diversity minima are already exceeded. Pose 3 is near the lower frame edge; the next block will use one upward/left translation only.
+
+- Planned fourth calibration capture block: capture only `lens_geometry:4` after Mark's single approximately 4 mm camera-view-left and 5 mm camera-view-top translation, with the current in-plane angle unchanged and no lift, reseat, or flip. Stop for coverage inspection afterward.
+
+- Fourth protected capture completed as `lens_geometry:none:4`; session count is `4/102`, measurement count `0/78`, and failed-operation count `0`. Pose coverage, safe-off, and camera release are being inspected before the next physical instruction.
+
+- Pose 4 inspection passed with `(centerX=0.535156, centerY=0.457944, coverage=0.763068, rotation=90°)` and safe-off-before/after true. The accumulated four-view lens evidence has X span `0.128906`, Y span `0.224299`, rotation span `160°`, and minimum coverage `0.358799`, all above the frozen minima. Continue one distinct translation at a time for the remaining lens slots.
+
+- Planned fifth calibration capture block: capture only `lens_geometry:5` after Mark's single approximately 5 mm camera-view-left and 5 mm camera-view-bottom translation, preserving the current angle with no lift, reseat, or flip. Stop for coverage inspection afterward.
+
+- Fifth protected capture completed as `lens_geometry:none:5`; session count is `5/102`, measurement count `0/78`, and failed-operation count `0`. Pose coverage, safe-off, and camera release are being inspected before the next physical instruction.
+
+- Pose 5 inspection passed with `(centerX=0.511719, centerY=0.443925, coverage=0.812096, rotation=90°)` and safe-off-before/after true. Its detected geometry is coincident with the earlier pose-2 geometry; no acceptance gate has been lost, but the next lens pose will use a deliberate one-direction translation to avoid another duplicate.
+
+- Planned sixth calibration capture block: capture only `lens_geometry:6` after Mark's single approximately 6 mm camera-view-bottom translation, preserving left/right position and angle with no lift, reseat, or flip. Stop for distinctness and coverage inspection afterward.
+
+- Sixth protected capture completed as `lens_geometry:none:6`; session count is `6/102`, measurement count `0/78`, and failed-operation count `0`. Pose distinctness, coverage, safe-off, and camera release are being inspected before the next physical instruction.
+
+- Pose 6 inspection passed with `(centerX=0.453125, centerY=0.443925, coverage=0.738695, rotation=90°)` and safe-off-before/after true. Its detected outer bounds remain fully in-frame but close to the top/left edges; the next block will use one right/down translation only.
+
+- Planned seventh calibration capture block: capture only `lens_geometry:7` after Mark's single approximately 5 mm camera-view-right and 5 mm camera-view-bottom translation, preserving the current angle with no lift, reseat, or flip. Stop for coverage inspection afterward.
+
+- The `lens_geometry:7` capture was attempted once and rejected with HTTP 400. The immutable failed-operation record is `cal-capture-75b36743e37d4d8d92cc0f0a63bcd8ff` with the exact cause `Calibration target outer corners must be finite and fully inside the source frame.` The session remains preserved and unedited at `6/102` captures, `0/78` measurements, and `1` failed operation; the runbook prohibits retrying or resuming this failed session. Read-only ownership shows no Pylon/Basler process; only the protected bridge remains on `127.0.0.1:47653`. Stop that exact protected bridge now; do not touch normal port `47652`.
+
+- The exact protected bridge process tree was stopped after the failed capture. Port `47653` is closed and no Pylon/Basler owner remains. The installed helper/normal port, rejected sessions, Production/Rapid, NFC, F8215, database, deployment, and PR state were not touched. The failed calibration session remains immutable evidence and is not finalized.
+
+- Planned software-only Mathematical Calibration V1.1 correction on PR #105 from clean HEAD `0580366e236110cbe5ef62839633f9b47b38601e`: preserve failed session `math-cal-v1-20260720-01` and frozen V1.0.1/target evidence; add token-gated calibration preview binding, exactly four unique checkerboard placements plus one reverse flip, deterministic leave-one-pose-out analysis with conservative small-sample U95, and focused hardware-free tests. No bridge, camera, lighting, NFC, F8215, Production/Rapid, database, deployment, or PR state action is planned.
+
+- V1.1 software-only validation completed without starting hardware: the preserved-session replay read six raw lens captures, found five internally detectable checkerboards, and selected captures 3-6 as the deterministic four-pose subset. Diversity was X `0.082031`, Y `0.112150`, rotation `160` degrees, minimum coverage `0.410046`; LOO mean RMS `2.603134` px, sample SD `0.028135` px, conservative Student-t U95 `0.089538` px, maximum holdout RMS `2.628116` px. This remains validation-only and did not import or finalize a new session; the retained `0.5` px residual gate therefore remains fail-closed for final calibration.
+
+- Mathematical Calibration V1.1 implementation completed in the protected worktree: isolated token-bound MJPEG preview/status binding with contour/safety/coverage/center/rotation/valid/distinct overlay, preview-stop/sole-camera-owner/safe-off/release/reconnect lifecycle, exactly four checkerboard placement slots plus one blank-reverse flip, 8 channels x 3 dark + 3 flat + 3 pattern captures, immutable shared placement derivation references, deterministic leave-one-pose-out analyzer/finalizer, and conservative four-sample Student-t U95. V1.0.1 grading authority and capture behavior remain preserved.
+
+- Hardware-free checks passed: `pnpm --filter @tenkings/shared test` `148/148`; serial `node --test --test-concurrency=1 packages/ai-grader-capture-helper/tests` `386/386`; `node --test scripts/ai-grader/tests` `3/3`; capture-helper TypeScript build passed; Python analyzer/replay syntax validation passed; `git diff --check` passed. No bridge/camera/lighting/NFC/F8215/Production/Rapid/database/deployment action occurred.

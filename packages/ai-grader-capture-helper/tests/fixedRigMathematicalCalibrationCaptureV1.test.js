@@ -7,6 +7,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
+  FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1_1,
   FixedRigMathematicalCalibrationCaptureProducerV1,
 } = require("../dist/drivers/fixedRigMathematicalCalibrationCaptureV1");
 const {
@@ -50,7 +51,7 @@ async function producerFixture(root, options = {}) {
   const protectedSettings = {
     stationId: "local-dell-ai-grader-station",
     rigId: "fixed-rig-test-v1",
-    captureProfileVersion: FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
+    captureProfileVersion: options.v11 ? FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1_1 : FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
     cameraIndex: 0,
     exposureUs: 6200,
     gain: 0,
@@ -66,6 +67,7 @@ async function producerFixture(root, options = {}) {
     targetPath,
     targetVersion: "ten-kings-mathematical-calibration-target-v1.0.0",
     targetSha256: sha256(targetBytes),
+    ...(options.v11 ? { contractVersion: "v1.1" } : {}),
     protectedSettings,
     capture: async (request) => {
       captureCounter += 1;
@@ -476,4 +478,121 @@ test("station bridge advertises calibration readiness and never falls back to V0
     }),
     /not ready.*No V0 fallback/i,
   );
+});
+
+test("V1.1 enforces four placement slots and records one reverse flip without role duplication", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v11-"));
+  const fixture = await producerFixture(root, { v11: true });
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, "calibration-v11-session-001"));
+  await assert.rejects(
+    fixture.producer.captureStep({
+      sessionId: started.sessionId,
+      operationId: "old-v1-geometry-operation",
+      role: "lens_geometry",
+      sampleIndex: 1,
+      targetFace: "checkerboard",
+    }),
+    /V1\.1 accepts exactly four/,
+  );
+  for (let sampleIndex = 1; sampleIndex <= 4; sampleIndex += 1) {
+    await fixture.producer.captureStep({
+      sessionId: started.sessionId,
+      operationId: `placement-operation-${sampleIndex}`,
+      role: "checkerboard_placement",
+      sampleIndex,
+      targetFace: "checkerboard",
+    });
+  }
+  await fixture.producer.captureStep({
+    sessionId: started.sessionId,
+    operationId: "blank-reverse-flat-1",
+    role: "flat_field",
+    sampleIndex: 1,
+    channelIndex: 1,
+    targetFace: "blank_reverse",
+  });
+  const state = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "capture-session.json"), "utf8"));
+  assert.equal(state.schemaVersion, "ten-kings-mathematical-calibration-capture-session-v1.1");
+  assert.equal(state.captures.filter((capture) => capture.role === "checkerboard_placement").length, 4);
+  assert.equal(state.blankReverseFlipRecorded, true);
+  assert.equal(state.captures.filter((capture) => capture.role === "lens_geometry").length, 0);
+});
+
+test("V1.1 seals 76 image captures and 48 measurements with one four-pose evidence identity", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v11-seal-"));
+  const fixture = await producerFixture(root, {
+    v11: true,
+    geometryForRequest: ({ request, defaultGeometry }) => {
+      if (request.role !== "checkerboard_placement") return defaultGeometry;
+      const centers = [
+        [350, 450],
+        [450, 600],
+        [550, 750],
+        [650, 900],
+      ];
+      const [centerX, centerY] = centers[request.sampleIndex - 1];
+      const width = 600;
+      const height = 800;
+      const corners = {
+        topLeft: { x: centerX - width / 2, y: centerY - height / 2 },
+        topRight: { x: centerX + width / 2, y: centerY - height / 2 },
+        bottomRight: { x: centerX + width / 2, y: centerY + height / 2 },
+        bottomLeft: { x: centerX - width / 2, y: centerY + height / 2 },
+      };
+      return {
+        ...defaultGeometry,
+        corners,
+        boundingBox: { x: corners.topLeft.x, y: corners.topLeft.y, width, height },
+        rotationDegrees: [-4, -1, 2, 4][request.sampleIndex - 1],
+      };
+    },
+  });
+  const sessionId = "calibration-v11-seal-session";
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+  for (let sampleIndex = 1; sampleIndex <= 4; sampleIndex += 1) {
+    await fixture.producer.captureStep({ sessionId, operationId: `placement-operation-${sampleIndex}`, role: "checkerboard_placement", sampleIndex, targetFace: "checkerboard" });
+  }
+  for (const role of ["flat_field", "dark_control", "illumination_pattern"]) {
+    for (let channelIndex = 1; channelIndex <= 8; channelIndex += 1) {
+      for (let sampleIndex = 1; sampleIndex <= 3; sampleIndex += 1) {
+        await fixture.producer.captureStep({ sessionId, operationId: `${role}-${channelIndex}-${sampleIndex}`, role, channelIndex, sampleIndex, targetFace: "blank_reverse" });
+      }
+    }
+  }
+  const instrument = {
+    instrumentId: "traceable-ruler-v11",
+    kind: "traceable_ruler",
+    calibrationVersion: "2026.07",
+    calibrationSha256: "a".repeat(64),
+  };
+  const physical = [
+    { measurementType: "print_scale", axis: "x", nominalSpanMm: 100, measuredSpanMm: 100, measurementU95Mm: 0.01 },
+    { measurementType: "print_scale", axis: "y", nominalSpanMm: 200, measuredSpanMm: 200, measurementU95Mm: 0.01 },
+    { measurementType: "target_cut_dimension", axis: "x", nominalDimensionMm: 63.5, measuredDimensionMm: 63.5, measurementU95Mm: 0.01 },
+    { measurementType: "target_cut_dimension", axis: "y", nominalDimensionMm: 88.9, measuredDimensionMm: 88.9, measurementU95Mm: 0.01 },
+  ];
+  for (const [index, measurement] of physical.entries()) {
+    await fixture.producer.recordMeasurement({ sessionId, operationId: `physical-${index}`, ...measurement, measurementMethod: "traceable_measurement_v1", sourceMetrologyArtifactSha256: "b".repeat(64), instrument });
+  }
+  for (let channelIndex = 1; channelIndex <= 8; channelIndex += 1) {
+    for (let sampleIndex = 1; sampleIndex <= 3; sampleIndex += 1) {
+      await fixture.producer.recordMeasurement({ sessionId, operationId: `direction-${channelIndex}-${sampleIndex}`, measurementType: "direction_geometry", channelIndex, sampleIndex, sourcePointMm: { x: channelIndex, y: sampleIndex }, cardCenterPointMm: { x: 0, y: 0 }, pointU95Mm: 0.01, measurementMethod: "fixed_ring_segment_geometry_with_ruler_v1", sourceMetrologyArtifactSha256: "c".repeat(64), instrument });
+    }
+  }
+  for (const measurementClass of ["linear_mm", "area_mm2", "relief_index", "roughness_index", "color_delta_e"]) {
+    for (let sampleIndex = 1; sampleIndex <= 4; sampleIndex += 1) {
+      await fixture.producer.recordMeasurement({ sessionId, operationId: `repeat-${measurementClass}-${sampleIndex}`, measurementType: "measurement_repeatability", measurementClass, sampleIndex, referenceFeatureId: `checkerboard-repeatability-${measurementClass}-v1.1`, measuredValue: 1 + sampleIndex / 1000, sourceCaptureOperationId: `placement-operation-${sampleIndex}`, measurementAlgorithmVersion: "opencv_checkerboard_repeatability_measurement_v1.1", measurementMethod: "fixed_reference_repeatability_v1.1", instrument });
+    }
+  }
+  const sealed = await fixture.producer.seal({ sessionId, operationId: "seal-v11", profileId: "fixed-rig-test-profile-v1.1", calibrationVersion: "fixed-rig-test-calibration-v1.1", artifactId: "fixed-rig-test-artifact-v1.1" });
+  assert.equal(sealed.status.captureCount, 76);
+  assert.equal(sealed.status.measurementCount, 48);
+  const manifest = JSON.parse(await fsp.readFile(sealed.captureManifest.path, "utf8"));
+  assert.equal(manifest.geometryViews.length, 4);
+  assert.equal(manifest.normalizationHoldoutViews.length, 4);
+  assert.equal(manifest.segmentationBoundaryViews.length, 4);
+  assert.equal(manifest.repeatedPlacementDerivations.length, 4);
+  assert.equal(manifest.blankReverseFlip.count, 1);
+  assert.equal(manifest.measurementRepeatabilitySamples.length, 20);
+  assert.equal(new Set(manifest.placementEvidenceIdentity.map((entry) => entry.evidenceId)).size, 4);
 });

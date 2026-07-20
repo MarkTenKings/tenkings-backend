@@ -108,6 +108,7 @@ import {
 } from "./aiGraderCaptureTiming";
 import {
   FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
+  FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1_1,
   FixedRigMathematicalCalibrationCaptureProducerV1,
   type CaptureFixedRigMathematicalCalibrationStepV1Request,
   type FixedRigMathematicalCalibrationCaptureBoundaryRequestV1,
@@ -118,6 +119,10 @@ import {
   type StartFixedRigMathematicalCalibrationCaptureV1Request,
   type FixedRigMathematicalCalibrationCaptureSessionStatusV1,
 } from "./fixedRigMathematicalCalibrationCaptureV1";
+import {
+  assessMathematicalCalibrationV1_1Preview,
+  type MathematicalCalibrationV1_1PreviewAssessment,
+} from "./fixedRigMathematicalCalibrationV1_1";
 import { loadFixedRigMathematicalCalibrationBundleV1 } from "./fixedRigMathematicalCalibrationBundleV1";
 import {
   FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
@@ -829,6 +834,8 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
         | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
         | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
+        | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
+        | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal"
         | "mathematical-design-reference-stage" | "mathematical-review-asset"
         | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
@@ -979,6 +986,16 @@ export interface AiGraderLocalStationPreviewStatus {
     };
     explicitManualOverlayAvailable: true;
     previewFramesPersisted: false;
+  };
+  mathematicalCalibrationPreview?: {
+    contractVersion: "1.1.0";
+    sessionId: string;
+    active: boolean;
+    overlay: MathematicalCalibrationV1_1PreviewAssessment;
+    lastFrameId?: string;
+    lastFrameAt?: string;
+    cameraOwnership: "preview_stream" | "capture_action" | "released";
+    reconnectAllowed: true;
   };
   safety: {
     publicRouteExposed: false;
@@ -1286,6 +1303,7 @@ export interface AiGraderLocalStationBridgeDependencies {
   }) => ChildProcessWithoutNullStreams;
   onRealHardwareBoundary?: (boundary: AiGraderLocalStationRealHardwareBoundary) => void;
   mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
+  mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
   loadMathematicalCalibrationBundle?: typeof loadFixedRigMathematicalCalibrationBundleV1;
   buildMathematicalStationPackage?: typeof buildFixedRigMathematicalCalibrationStationPackageV1;
   captureMathematicalCalibrationFrame?: (
@@ -2704,6 +2722,8 @@ function bridgeEndpoints() {
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
         | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
         | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
+        | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
+        | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal"
         | "mathematical-design-reference-stage" | "mathematical-review-asset"
         | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
@@ -2721,6 +2741,11 @@ function bridgeEndpoints() {
     { method: "POST", action: "mathematical-calibration-capture", path: "/calibration/mathematical-v1/capture", hardwareAccess: true, description: "Capture one allowlisted calibration step under bridge lock, watchdog, protected settings, and safe-off." },
     { method: "POST", action: "mathematical-calibration-measurement", path: "/calibration/mathematical-v1/measurement", hardwareAccess: false, description: "Record one instrument/operator/time-bound immutable physical measurement." },
     { method: "POST", action: "mathematical-calibration-seal", path: "/calibration/mathematical-v1/seal", hardwareAccess: false, description: "Fail closed unless the unique capture/metrology ledger is complete, then seal analyzer input and source package." },
+    { method: "POST", action: "mathematical-calibration-v1.1-start", path: "/calibration/mathematical-v1.1/start", hardwareAccess: false, description: "Start the isolated four-placement Mathematical Calibration V1.1 session; no Production station session is created." },
+    { method: "GET", action: "mathematical-calibration-v1.1-status", path: "/calibration/mathematical-v1.1/status", hardwareAccess: false, description: "Read the active four-placement V1.1 calibration session." },
+    { method: "POST", action: "mathematical-calibration-v1.1-capture", path: "/calibration/mathematical-v1.1/capture", hardwareAccess: true, description: "Capture one overlay-approved V1.1 placement/channel step under sole camera ownership and verified safe-off." },
+    { method: "POST", action: "mathematical-calibration-v1.1-measurement", path: "/calibration/mathematical-v1.1/measurement", hardwareAccess: false, description: "Record one immutable V1.1 physical/metrology measurement." },
+    { method: "POST", action: "mathematical-calibration-v1.1-seal", path: "/calibration/mathematical-v1.1/seal", hardwareAccess: false, description: "Seal only the exact four-placement, one-flip, eight-channel V1.1 source package." },
     { method: "POST", action: "mathematical-design-reference-stage", path: "/mathematical-v1/design-reference-artifacts/{front|back}", hardwareAccess: false, description: "Stage one exact approved design-reference body through a token-gated, create-new, 64 MiB bounded, SHA-256 verified session route." },
     { method: "GET", action: "mathematical-review-asset", path: "/mathematical-v1/review-assets?queueItemId={queueItemId}&gradingSessionId={gradingSessionId}&reportId={reportId}&assetId={assetId}", hardwareAccess: false, description: "Read one exact active-queue-bound normalized, directional, ROI, segmentation, confidence, or illumination asset named by a pending Mathematical finding-review request." },
     { method: "POST", action: "start-session", hardwareAccess: true, description: "Create a local station session." },
@@ -4299,6 +4324,9 @@ export class AiGraderLocalStationBridgeService {
   private lightingLifecycleChain: Promise<void> = Promise.resolve();
   private lightingLifecyclePending = 0;
   private readonly mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
+  private readonly mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
+  private mathematicalCalibrationV1_1SessionId?: string;
+  private mathematicalCalibrationPreviewStatus?: AiGraderLocalStationPreviewStatus["mathematicalCalibrationPreview"];
 
   constructor(
     config: AiGraderLocalStationBridgeConfig,
@@ -4328,6 +4356,34 @@ export class AiGraderLocalStationBridgeService {
               stationId: "local-dell-ai-grader-station",
               rigId: config.mathematicalCalibrationRigId,
               captureProfileVersion: FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
+              cameraIndex: config.cameraIndex ?? 0,
+              exposureUs: config.exposureUs,
+              gain: config.gain,
+              dutyPercent: config.duty,
+              leimacUnit: config.leimacUnit ?? 1,
+              selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+              normalizedWidthPx: 1200,
+              normalizedHeightPx: 1680,
+              checkerboard: { internalColumns: 11, internalRows: 16, cellMm: 5 },
+            },
+            capture: (input) => this.captureMathematicalCalibrationHardwareBoundary(input),
+          })
+        : undefined
+    );
+    this.mathematicalCalibrationCaptureProducerV1_1 = dependencies.mathematicalCalibrationCaptureProducerV1_1 ?? (
+      config.mathematicalCalibrationTargetPath &&
+      config.mathematicalCalibrationTargetVersion &&
+      config.mathematicalCalibrationTargetSha256
+        ? new FixedRigMathematicalCalibrationCaptureProducerV1({
+            outputRoot: path.join(config.mathematicalCalibrationOutputDir, "v1.1"),
+            targetPath: config.mathematicalCalibrationTargetPath,
+            targetVersion: config.mathematicalCalibrationTargetVersion,
+            targetSha256: config.mathematicalCalibrationTargetSha256,
+            contractVersion: "v1.1",
+            protectedSettings: {
+              stationId: "local-dell-ai-grader-station",
+              rigId: config.mathematicalCalibrationRigId,
+              captureProfileVersion: FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1_1,
               cameraIndex: config.cameraIndex ?? 0,
               exposureUs: config.exposureUs,
               gain: config.gain,
@@ -4551,7 +4607,58 @@ export class AiGraderLocalStationBridgeService {
 
   previewStatus(): AiGraderLocalStationPreviewStatus {
     this.refreshPreviewGeometryActiveSide();
-    return this.manifest.previewStatus;
+    return {
+      ...this.manifest.previewStatus,
+      ...(this.mathematicalCalibrationPreviewStatus ? {
+        mathematicalCalibrationPreview: structuredClone(this.mathematicalCalibrationPreviewStatus),
+      } : {}),
+    };
+  }
+
+  private updateMathematicalCalibrationPreviewOverlay(
+    frame: Buffer,
+    frameId: string,
+    capturedAt: string,
+  ): void {
+    const current = this.mathematicalCalibrationPreviewStatus;
+    if (!current || !current.active) return;
+    const detectPreviewCardGeometry = this.dependencies.detectPreviewCardGeometry ?? detectCardGeometryFromBuffer;
+    const acceptedPoses = this.mathematicalCalibrationCaptureProducerV1_1?.previewPoses(current.sessionId) ?? Promise.resolve([]);
+    void Promise.all([detectPreviewCardGeometry({
+      imageBuffer: frame,
+      fileName: "mathematical-calibration-preview-frame.jpg",
+      side: "front",
+      sourceImageId: `mathematical-calibration-preview-${current.sessionId}`,
+      sourceFrameId: frameId,
+      timestamp: capturedAt,
+      detectionPolicy: "live_preview_fast",
+    }), acceptedPoses]).then(([geometry, previousPoses]) => {
+      if (this.mathematicalCalibrationPreviewStatus?.sessionId !== current.sessionId || !this.mathematicalCalibrationPreviewStatus.active) return;
+      const assessment = assessMathematicalCalibrationV1_1Preview({
+        corners: geometry.corners
+          ? [geometry.corners.topLeft, geometry.corners.topRight, geometry.corners.bottomRight, geometry.corners.bottomLeft]
+          : null,
+        imageWidth: geometry.image?.width,
+        imageHeight: geometry.image?.height,
+        rotationDegrees: geometry.rotationDegrees,
+        acceptedPoses: previousPoses,
+      });
+      this.mathematicalCalibrationPreviewStatus = {
+        ...this.mathematicalCalibrationPreviewStatus,
+        overlay: assessment,
+        lastFrameId: frameId,
+        lastFrameAt: capturedAt,
+      };
+    }).catch((error) => {
+      if (this.mathematicalCalibrationPreviewStatus?.sessionId !== current.sessionId) return;
+      this.mathematicalCalibrationPreviewStatus = {
+        ...this.mathematicalCalibrationPreviewStatus,
+        overlay: assessMathematicalCalibrationV1_1Preview({ acceptedPoses: [] }),
+        lastFrameId: frameId,
+        lastFrameAt: capturedAt,
+      };
+      void error;
+    });
   }
 
   liveLightingStatus(): AiGraderLiveLightingStatus {
@@ -10379,6 +10486,10 @@ export class AiGraderLocalStationBridgeService {
   }
 
   async streamPreview(req: http.IncomingMessage, res: http.ServerResponse, origin: string | undefined): Promise<void> {
+    const calibrationPreviewSessionId = exactRequestHeader(req, "X-AI-Grader-Mathematical-Calibration-Session-Id");
+    const calibrationPreviewBound = Boolean(
+      calibrationPreviewSessionId && calibrationPreviewSessionId === this.mathematicalCalibrationV1_1SessionId,
+    );
     if (this.closing || this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
       sendJson(
         res,
@@ -10409,7 +10520,7 @@ export class AiGraderLocalStationBridgeService {
       );
       return Promise.resolve();
     }
-    if (!this.manifest.sessionId) {
+    if (!this.manifest.sessionId && !calibrationPreviewBound) {
       this.updatePreviewStatus({
         status: "stopped",
         cameraOwnership: "released",
@@ -10449,7 +10560,7 @@ export class AiGraderLocalStationBridgeService {
       );
       return Promise.resolve();
     }
-    if (this.manifest.warmRunnerStatus.previewPolicy.holdActive) {
+    if (!calibrationPreviewBound && this.manifest.warmRunnerStatus.previewPolicy.holdActive) {
       const reason = this.manifest.warmRunnerStatus.previewPolicy.holdReason ?? "full forensic grading session in progress";
       await this.stopPreviewStream(`preview stream blocked during ${reason}`, {
         waitForRelease: true,
@@ -10477,11 +10588,17 @@ export class AiGraderLocalStationBridgeService {
     }
     await this.stopPreviewStream("new preview stream requested", { waitForRelease: true, settleMs: 100 });
     const previewStartedAt = new Date().toISOString();
-    const binding = {
-      sessionId: this.manifest.sessionId,
-      side: this.manifest.previewStatus.activeSide,
-      sideEpoch: this.manifest.previewStatus.sideEpoch,
-    };
+    const binding = calibrationPreviewBound
+      ? {
+          sessionId: calibrationPreviewSessionId!,
+          side: "front" as const,
+          sideEpoch: `mathematical-calibration-v1.1-${calibrationPreviewSessionId}`,
+        }
+      : {
+          sessionId: this.manifest.sessionId!,
+          side: this.manifest.previewStatus.activeSide,
+          sideEpoch: this.manifest.previewStatus.sideEpoch,
+        };
     const streamSequence = ++this.previewStreamSequence;
     const streamId = `stream-${streamSequence}-${binding.sideEpoch}`;
     this.updatePreviewStatus({
@@ -10509,6 +10626,16 @@ export class AiGraderLocalStationBridgeService {
       lastError: undefined,
       lastStopReason: undefined,
     });
+    if (calibrationPreviewBound) {
+      this.mathematicalCalibrationPreviewStatus = {
+        contractVersion: "1.1.0",
+        sessionId: binding.sessionId,
+        active: true,
+        overlay: assessMathematicalCalibrationV1_1Preview({ acceptedPoses: [] }),
+        cameraOwnership: this.config.mode === "real" ? "preview_stream" : "released",
+        reconnectAllowed: true,
+      };
+    }
     this.recordCaptureTimingEvent(this.manifest, { id: "preview_stream_started", at: previewStartedAt });
     setMjpegHeaders(res, origin, this.config, binding, streamId);
 
@@ -10538,6 +10665,13 @@ export class AiGraderLocalStationBridgeService {
           cameraOwnership: intentionalCaptureTransition ? "capture_action" : "released",
           lastStopReason: reason,
         });
+        if (calibrationPreviewBound && this.mathematicalCalibrationPreviewStatus?.sessionId === binding.sessionId) {
+          this.mathematicalCalibrationPreviewStatus = {
+            ...this.mathematicalCalibrationPreviewStatus,
+            active: false,
+            cameraOwnership: intentionalCaptureTransition ? "capture_action" : "released",
+          };
+        }
         try {
           if (!res.destroyed) res.end();
         } catch {}
@@ -10552,9 +10686,9 @@ export class AiGraderLocalStationBridgeService {
         const send = () => {
           if (settled || res.destroyed) return;
           if (
-            binding.sessionId !== this.manifest.sessionId
-            || binding.side !== this.manifest.previewStatus.activeSide
-            || binding.sideEpoch !== this.manifest.previewStatus.sideEpoch
+            (!calibrationPreviewBound && binding.sessionId !== this.manifest.sessionId)
+            || (!calibrationPreviewBound && binding.side !== this.manifest.previewStatus.activeSide)
+            || (!calibrationPreviewBound && binding.sideEpoch !== this.manifest.previewStatus.sideEpoch)
           ) {
             finish("preview epoch replaced");
             return;
@@ -10563,8 +10697,17 @@ export class AiGraderLocalStationBridgeService {
           const generatedAt = new Date().toISOString();
           const frameId = `frame-${streamSequence}-${frameCount}`;
           writeMjpegFrame(res, "image/svg+xml", mockPreviewSvg(frameCount, generatedAt), frameCount, generatedAt, binding, frameId);
-          this.notePreviewFrame(frameCount, binding, frameId, generatedAt);
-          this.noteMockPreviewGeometry(frameCount, frameId);
+          if (!calibrationPreviewBound) {
+            this.notePreviewFrame(frameCount, binding, frameId, generatedAt);
+            this.noteMockPreviewGeometry(frameCount, frameId);
+          } else if (this.mathematicalCalibrationPreviewStatus) {
+            this.mathematicalCalibrationPreviewStatus = {
+              ...this.mathematicalCalibrationPreviewStatus,
+              lastFrameId: frameId,
+              lastFrameAt: generatedAt,
+            };
+            this.updateMathematicalCalibrationPreviewOverlay(Buffer.from(mockPreviewSvg(frameCount, generatedAt)), frameId, generatedAt);
+          }
         };
         send();
         mockPreviewTimer = setInterval(send, 250);
@@ -10583,9 +10726,9 @@ export class AiGraderLocalStationBridgeService {
           if (settled || res.destroyed) return;
           for (const frame of jpegFrames.pushWithMetadata(chunk)) {
             if (
-              binding.sessionId !== this.manifest.sessionId
-              || binding.side !== this.manifest.previewStatus.activeSide
-              || binding.sideEpoch !== this.manifest.previewStatus.sideEpoch
+              (!calibrationPreviewBound && binding.sessionId !== this.manifest.sessionId)
+              || (!calibrationPreviewBound && binding.side !== this.manifest.previewStatus.activeSide)
+              || (!calibrationPreviewBound && binding.sideEpoch !== this.manifest.previewStatus.sideEpoch)
             ) {
               finish("preview epoch replaced");
               return;
@@ -10601,8 +10744,16 @@ export class AiGraderLocalStationBridgeService {
               binding,
               frameId
             );
-            this.notePreviewFrame(frameCount, binding, frameId, frame.capturedAt ?? frame.receivedAt);
-            this.queuePreviewGeometryAnalysis(
+            if (!calibrationPreviewBound) this.notePreviewFrame(frameCount, binding, frameId, frame.capturedAt ?? frame.receivedAt);
+            if (calibrationPreviewBound && this.mathematicalCalibrationPreviewStatus) {
+              this.mathematicalCalibrationPreviewStatus = {
+                ...this.mathematicalCalibrationPreviewStatus,
+                lastFrameId: frameId,
+                lastFrameAt: frame.capturedAt ?? frame.receivedAt,
+              };
+              this.updateMathematicalCalibrationPreviewOverlay(frame.bytes, frameId, frame.capturedAt ?? frame.receivedAt);
+            }
+            if (!calibrationPreviewBound) this.queuePreviewGeometryAnalysis(
               frame.bytes,
               frame.frameIndex ?? frameCount,
               frame.capturedAt ?? frame.receivedAt,
@@ -11361,6 +11512,15 @@ export class AiGraderLocalStationBridgeService {
     return this.mathematicalCalibrationCaptureProducer;
   }
 
+  private requireMathematicalCalibrationCaptureProducerV1_1(): FixedRigMathematicalCalibrationCaptureProducerV1 {
+    if (!this.mathematicalCalibrationCaptureProducerV1_1) {
+      throw new Error(
+        "Mathematical Calibration V1.1 capture is unavailable until the bridge has an exact protected target path, version, and SHA-256.",
+      );
+    }
+    return this.mathematicalCalibrationCaptureProducerV1_1;
+  }
+
   private assertCalibrationSessionIsolated(): void {
     if (this.manifest.sessionId) {
       throw new Error("Mathematical calibration capture requires an isolated bridge with no active card-grading session.");
@@ -11377,8 +11537,28 @@ export class AiGraderLocalStationBridgeService {
     return this.requireMathematicalCalibrationCaptureProducer().start(request);
   }
 
+  startMathematicalCalibrationV1_1Capture(
+    request: StartFixedRigMathematicalCalibrationCaptureV1Request,
+  ): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    this.assertCalibrationSessionIsolated();
+    if (this.mathematicalCalibrationV1_1SessionId && this.mathematicalCalibrationV1_1SessionId !== request.sessionId) {
+      throw new Error("Only one active Mathematical Calibration V1.1 session may be bound to the protected bridge.");
+    }
+    return this.requireMathematicalCalibrationCaptureProducerV1_1().start(request).then((status) => {
+      this.mathematicalCalibrationV1_1SessionId = request.sessionId;
+      return status;
+    });
+  }
+
   mathematicalCalibrationCaptureStatus(sessionId: string): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
     return this.requireMathematicalCalibrationCaptureProducer().status(sessionId);
+  }
+
+  mathematicalCalibrationV1_1CaptureStatus(sessionId: string): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    if (this.mathematicalCalibrationV1_1SessionId && this.mathematicalCalibrationV1_1SessionId !== sessionId) {
+      throw new Error("Mathematical Calibration V1.1 status is bound to the active calibration session only.");
+    }
+    return this.requireMathematicalCalibrationCaptureProducerV1_1().status(sessionId);
   }
 
   captureMathematicalCalibrationStep(
@@ -11414,6 +11594,46 @@ export class AiGraderLocalStationBridgeService {
     });
   }
 
+  captureMathematicalCalibrationV1_1Step(
+    request: CaptureFixedRigMathematicalCalibrationStepV1Request,
+  ): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    this.assertCalibrationSessionIsolated();
+    if (this.mathematicalCalibrationV1_1SessionId !== request.sessionId) {
+      throw new Error("Mathematical Calibration V1.1 capture requires the active bridge-bound calibration session.");
+    }
+    const previewAssessment = this.mathematicalCalibrationPreviewStatus;
+    if (!previewAssessment || !previewAssessment.active || !previewAssessment.overlay.valid || !previewAssessment.overlay.sufficientlyDistinct) {
+      throw new Error("Mathematical Calibration V1.1 capture requires an active token-bound preview whose proposed pose is valid and sufficiently distinct.");
+    }
+    assertRealBridgeArmed(this.config);
+    return this.serializeTerminalLifecycle(async () => {
+      await this.awaitLightingLifecycleIdle();
+      await this.stopPreviewForHardwareAction("mathematical calibration V1.1");
+      const owner = `mathematical-calibration-v1.1:${request.sessionId}:${request.operationId}`;
+      this.acquireCaptureLock(owner);
+      let result: FixedRigMathematicalCalibrationCaptureSessionStatusV1 | undefined;
+      let operationError: Error | undefined;
+      try {
+        result = await this.requireMathematicalCalibrationCaptureProducerV1_1().captureStep(request);
+      } catch (error) {
+        operationError = error instanceof Error ? error : new Error("Mathematical Calibration V1.1 capture failed.");
+      }
+      let safeOff: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>>;
+      try {
+        safeOff = await this.runTerminalSafeOff(`mathematical calibration V1.1 ${request.operationId} bridge lifecycle end`);
+      } finally {
+        if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+      }
+      if (!safeOff.ok) {
+        const message = safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration lifecycle safe-off could not be confirmed.";
+        throw new Error(operationError ? `${operationError.message} ${message}` : message);
+      }
+      if (operationError) throw operationError;
+      if (!result) throw new Error("Mathematical Calibration V1.1 capture did not return a durable session status.");
+      return result;
+    });
+  }
+
   recordMathematicalCalibrationMeasurement(
     request: RecordFixedRigMathematicalCalibrationMeasurementV1Request,
   ): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
@@ -11421,11 +11641,31 @@ export class AiGraderLocalStationBridgeService {
     return this.requireMathematicalCalibrationCaptureProducer().recordMeasurement(request);
   }
 
+  recordMathematicalCalibrationV1_1Measurement(
+    request: RecordFixedRigMathematicalCalibrationMeasurementV1Request,
+  ): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    this.assertCalibrationSessionIsolated();
+    if (this.mathematicalCalibrationV1_1SessionId !== request.sessionId) {
+      throw new Error("Mathematical Calibration V1.1 measurement requires the active bridge-bound calibration session.");
+    }
+    return this.requireMathematicalCalibrationCaptureProducerV1_1().recordMeasurement(request);
+  }
+
   sealMathematicalCalibrationCapture(
     request: SealFixedRigMathematicalCalibrationCaptureV1Request,
   ): Promise<SealedFixedRigMathematicalCalibrationCaptureV1> {
     this.assertCalibrationSessionIsolated();
     return this.requireMathematicalCalibrationCaptureProducer().seal(request);
+  }
+
+  sealMathematicalCalibrationV1_1Capture(
+    request: SealFixedRigMathematicalCalibrationCaptureV1Request,
+  ): Promise<SealedFixedRigMathematicalCalibrationCaptureV1> {
+    this.assertCalibrationSessionIsolated();
+    if (this.mathematicalCalibrationV1_1SessionId !== request.sessionId) {
+      throw new Error("Mathematical Calibration V1.1 seal requires the active bridge-bound calibration session.");
+    }
+    return this.requireMathematicalCalibrationCaptureProducerV1_1().seal(request);
   }
 
   async action(action: AiGraderLocalStationBridgeAction, request: AiGraderLocalStationBridgeActionRequest = {}): Promise<AiGraderLocalStationBridgeStatus> {
@@ -11653,7 +11893,7 @@ function setCors(res: http.ServerResponse, origin: string | undefined, config: A
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type,x-ai-grader-station-token,x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-side,x-ai-grader-reference-id,x-ai-grader-sha256"
+    "content-type,x-ai-grader-station-token,x-ai-grader-session-id,x-ai-grader-mathematical-calibration-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-side,x-ai-grader-reference-id,x-ai-grader-sha256"
   );
   res.setHeader(
     "Access-Control-Expose-Headers",
@@ -11963,6 +12203,41 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         const sessionId = url.searchParams.get("sessionId") ?? "";
         return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-status", result: await service.mathematicalCalibrationCaptureStatus(sessionId) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1.1/status") {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for the V1.1 calibration status route." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const sessionId = url.searchParams.get("sessionId") ?? "";
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-v1.1-status", result: await service.mathematicalCalibrationV1_1CaptureStatus(sessionId) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1.1/start") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for V1.1 calibration start." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-v1.1-start", result: await service.startMathematicalCalibrationV1_1Capture(body as unknown as StartFixedRigMathematicalCalibrationCaptureV1Request) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1.1/capture") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for V1.1 calibration capture." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-v1.1-capture", result: await service.captureMathematicalCalibrationV1_1Step(body as unknown as CaptureFixedRigMathematicalCalibrationStepV1Request) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1.1/measurement") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for V1.1 calibration measurement." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-v1.1-measurement", result: await service.recordMathematicalCalibrationV1_1Measurement(body as unknown as RecordFixedRigMathematicalCalibrationMeasurementV1Request) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1.1/seal") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for V1.1 calibration seal." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = await readJsonBody(req);
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-v1.1-seal", result: await service.sealMathematicalCalibrationV1_1Capture(body as unknown as SealFixedRigMathematicalCalibrationCaptureV1Request) }, origin, config);
       }
 
       if (url.pathname === "/calibration/mathematical-v1/start") {

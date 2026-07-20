@@ -9,10 +9,18 @@ import {
   type CardGeometryNormalizationResult,
 } from "./cardGeometry";
 import {
+  MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_MANIFEST_SCHEMA,
+  MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_PACKAGE_SCHEMA,
+  MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_PROFILE,
+  MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_SESSION_SCHEMA,
+  MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_MANIFEST,
+  MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_HASH,
+  MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_ID,
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
 } from "@tenkings/shared";
+import type { MathematicalCalibrationV1_1Pose } from "./fixedRigMathematicalCalibrationV1_1";
 
 export const FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 =
   "ten-kings-mathematical-calibration-capture-session-v1" as const;
@@ -22,6 +30,8 @@ export const FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_MANIFEST_V1 =
   "ten-kings-mathematical-calibration-capture-manifest-v1" as const;
 export const FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1 =
   "ten-kings-fixed-rig-mathematical-calibration-v1" as const;
+export const FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1_1 =
+  MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_PROFILE;
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -36,6 +46,7 @@ const CAPTURE_ROLES = [
   "lens_geometry",
   "normalization_registration",
   "repeated_placement",
+  "checkerboard_placement",
   "flat_field",
   "dark_control",
   "illumination_pattern",
@@ -48,7 +59,7 @@ export type FixedRigMathematicalCalibrationTargetFaceV1 = "checkerboard" | "blan
 export interface FixedRigMathematicalCalibrationProtectedSettingsV1 {
   stationId: string;
   rigId: string;
-  captureProfileVersion: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1;
+  captureProfileVersion: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1 | typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1_1;
   cameraIndex: number;
   exposureUs: number;
   gain: number;
@@ -139,6 +150,7 @@ export interface FixedRigMathematicalCalibrationCaptureProducerConfigV1 {
   ) => Promise<FixedRigMathematicalCalibrationCaptureBoundaryResultV1>;
   normalize?: FixedRigMathematicalCalibrationNormalizerV1;
   now?: () => Date;
+  contractVersion?: "v1.0.1" | "v1.1";
 }
 
 export interface StartFixedRigMathematicalCalibrationCaptureV1Request {
@@ -214,7 +226,7 @@ export type RecordFixedRigMathematicalCalibrationMeasurementV1Request =
       referenceFeatureId: string;
       measuredValue: number;
       sourceCaptureOperationId: string;
-      measurementAlgorithmVersion: "opencv_checkerboard_repeatability_measurement_v1";
+      measurementAlgorithmVersion: "opencv_checkerboard_repeatability_measurement_v1" | "opencv_checkerboard_repeatability_measurement_v1.1";
       measurementMethod: string;
       instrument: FixedRigMathematicalCalibrationInstrumentV1;
     };
@@ -294,11 +306,11 @@ interface MeasurementRecordV1 {
 }
 
 interface CaptureSessionStateV1 {
-  schemaVersion: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1;
+  schemaVersion: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 | typeof MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_SESSION_SCHEMA;
   sessionId: string;
   operatorId: string;
   packageId: string;
-  purpose: "mathematical_calibration_v1";
+  purpose: "mathematical_calibration_v1" | "mathematical_calibration_v1.1";
   subject: {
     designation: "calibration_target";
     productionCard: false;
@@ -313,10 +325,11 @@ interface CaptureSessionStateV1 {
   captures: CaptureRecordV1[];
   measurements: MeasurementRecordV1[];
   failedOperations: Array<{ operationId: string; failedAt: string; error: string }>;
+  blankReverseFlipRecorded?: boolean;
 }
 
 export interface FixedRigMathematicalCalibrationCaptureSessionStatusV1 {
-  schemaVersion: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1;
+  schemaVersion: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 | typeof MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_SESSION_SCHEMA;
   sessionId: string;
   packageId: string;
   operatorId: string;
@@ -397,11 +410,12 @@ function captureRole(input: CaptureFixedRigMathematicalCalibrationStepV1Request)
   if (input.role === "flat_field") return `flat_field_channel_${input.channelIndex}`;
   if (input.role === "dark_control") return `dark_control_channel_${input.channelIndex}`;
   if (input.role === "illumination_pattern") return `illumination_pattern_channel_${input.channelIndex}`;
+  if (input.role === "checkerboard_placement") return "checkerboard_placement";
   return input.role;
 }
 
 function analysisUsesRaw(role: FixedRigMathematicalCalibrationCaptureRoleV1): boolean {
-  return role === "lens_geometry" || role === "normalization_registration" || role === "repeated_placement";
+  return role === "lens_geometry" || role === "normalization_registration" || role === "repeated_placement" || role === "checkerboard_placement";
 }
 
 function lightingFor(
@@ -534,10 +548,13 @@ function poseFromGeometry(geometry: CardGeometryMetadata) {
   };
 }
 
-function assertCaptureRequest(input: CaptureFixedRigMathematicalCalibrationStepV1Request): void {
+function assertCaptureRequest(input: CaptureFixedRigMathematicalCalibrationStepV1Request, contractVersion: "v1.0.1" | "v1.1" = "v1.0.1"): void {
   assertSafeId(input.sessionId, "sessionId");
   assertSafeId(input.operationId, "operationId");
   if (!CAPTURE_ROLES.includes(input.role)) throw new Error("Calibration capture role is not allowlisted.");
+  if (contractVersion === "v1.0.1" && input.role === "checkerboard_placement") {
+    throw new Error("checkerboard_placement is available only under the Mathematical Calibration V1.1 contract.");
+  }
   positiveInteger(input.sampleIndex, "sampleIndex");
   if (["flat_field", "dark_control", "illumination_pattern"].includes(input.role)) {
     if (!Number.isInteger(input.channelIndex) || Number(input.channelIndex) < 1 || Number(input.channelIndex) > 8) {
@@ -553,10 +570,18 @@ function assertCaptureRequest(input: CaptureFixedRigMathematicalCalibrationStepV
   if (input.normalizationSourceOperationId !== undefined) {
     assertSafeId(input.normalizationSourceOperationId, "normalizationSourceOperationId");
   }
+  if (contractVersion === "v1.1" && !["checkerboard_placement", "flat_field", "dark_control", "illumination_pattern"].includes(input.role)) {
+    throw new Error("V1.1 accepts exactly four checkerboard_placement captures; the V1.0.1 geometry/normalization/reseat roles are not valid.");
+  }
+  if (contractVersion === "v1.1" && input.role === "checkerboard_placement" && input.sampleIndex > 4) {
+    throw new Error("V1.1 checkerboard placement sampleIndex must be 1 through 4.");
+  }
   if (input.role === "repeated_placement") {
     assertSafeId(input.removeReseatCycleId, "removeReseatCycleId");
   } else if (input.removeReseatCycleId !== undefined) {
-    throw new Error("removeReseatCycleId is purpose-bound to repeated_placement captures.");
+    throw new Error(contractVersion === "v1.1"
+      ? "V1.1 has no reseat interaction contract; checkerboard placements are distinct overlay-approved captures only."
+      : "removeReseatCycleId is purpose-bound to repeated_placement captures.");
   }
 }
 
@@ -579,8 +604,12 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
     assertSha256(config.targetSha256, "targetSha256");
     assertSafeId(config.protectedSettings.stationId, "protectedSettings.stationId");
     assertSafeId(config.protectedSettings.rigId, "protectedSettings.rigId");
-    if (config.protectedSettings.captureProfileVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1) {
-      throw new Error(`captureProfileVersion must be ${FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1}.`);
+    const contractVersion = config.contractVersion ?? "v1.0.1";
+    const expectedProfile = contractVersion === "v1.1"
+      ? FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1_1
+      : FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1;
+    if (config.protectedSettings.captureProfileVersion !== expectedProfile) {
+      throw new Error(`captureProfileVersion must be ${expectedProfile}.`);
     }
   }
 
@@ -601,7 +630,10 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
   private async load(sessionId: string): Promise<CaptureSessionStateV1> {
     const bytes = await readFile(this.statePath(sessionId));
     const state = JSON.parse(bytes.toString("utf-8")) as CaptureSessionStateV1;
-    if (state.schemaVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 || state.sessionId !== sessionId) {
+    const expectedSchema = this.config.contractVersion === "v1.1"
+      ? MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_SESSION_SCHEMA
+      : FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1;
+    if (state.schemaVersion !== expectedSchema || state.sessionId !== sessionId) {
       throw new Error("Calibration capture session state is not the expected immutable contract.");
     }
     return state;
@@ -657,12 +689,13 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         byteSize: targetBytes.length,
         mediaType: "application/pdf",
       };
+      const v11 = this.config.contractVersion === "v1.1";
       const state: CaptureSessionStateV1 = {
-        schemaVersion: FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1,
+        schemaVersion: v11 ? MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_SESSION_SCHEMA : FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1,
         sessionId,
         operatorId,
         packageId,
-        purpose: "mathematical_calibration_v1",
+        purpose: v11 ? "mathematical_calibration_v1.1" : "mathematical_calibration_v1",
         subject: {
           designation: "calibration_target",
           productionCard: false,
@@ -676,6 +709,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         captures: [],
         measurements: [],
         failedOperations: [],
+        ...(v11 ? { blankReverseFlipRecorded: false } : {}),
       };
       await writeExclusive(statePath, canonicalBytes(state));
       return statusFor(state, sessionDir);
@@ -687,9 +721,37 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
     return statusFor(state, this.sessionDir(sessionId));
   }
 
+  async previewPoses(sessionId: string): Promise<MathematicalCalibrationV1_1Pose[]> {
+    if (this.config.contractVersion !== "v1.1") return [];
+    const state = await this.load(assertSafeId(sessionId, "sessionId"));
+    return state.artifacts
+      .filter((artifact) => artifact.artifactClass === "raw_capture" && artifact.role === "checkerboard_placement" && artifact.pose)
+      .sort((left, right) => left.operationId.localeCompare(right.operationId))
+      .map((artifact) => {
+        const pose = artifact.pose!;
+        const values = pose.cornerSignature;
+        return {
+          evidenceId: artifact.evidenceId,
+          centerXFraction: pose.centerXFraction,
+          centerYFraction: pose.centerYFraction,
+          coverageFraction: pose.coverageFraction,
+          rotationDegrees: pose.rotationDegrees,
+          cornerSignature: values,
+          imageWidth: 1,
+          imageHeight: 1,
+          corners: [
+            { x: values[0]!, y: values[1]! },
+            { x: values[2]!, y: values[3]! },
+            { x: values[4]!, y: values[5]! },
+            { x: values[6]!, y: values[7]! },
+          ],
+        };
+      });
+  }
+
   async captureStep(request: CaptureFixedRigMathematicalCalibrationStepV1Request): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
     return this.serialized(async () => {
-      assertCaptureRequest(request);
+      assertCaptureRequest(request, this.config.contractVersion ?? "v1.0.1");
       const state = await this.load(request.sessionId);
       if (state.sealedAt) throw new Error("Sealed calibration capture sessions are immutable.");
       if (state.captures.some((capture) => capture.operationId === request.operationId)) {
@@ -701,6 +763,9 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       const key = captureKey(request);
       if (state.captures.some((capture) => captureKey(capture) === key)) {
         throw new Error(`Calibration capture slot ${key} is already occupied and cannot be overwritten.`);
+      }
+      if (this.config.contractVersion === "v1.1" && request.normalizationSourceOperationId !== undefined) {
+        throw new Error("V1.1 placement captures are immutable source evidence and may not import or reuse another capture as their input.");
       }
       const reusableGeometry = request.normalizationSourceOperationId
         ? state.artifacts.find(
@@ -854,6 +919,9 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           normalizedEvidenceId,
           completedAt: (this.config.now?.() ?? new Date()).toISOString(),
         });
+        if (this.config.contractVersion === "v1.1" && request.role === "flat_field" && state.blankReverseFlipRecorded === false) {
+          state.blankReverseFlipRecorded = true;
+        }
         state.updatedAt = (this.config.now?.() ?? new Date()).toISOString();
         await writeExclusive(
           path.join(this.sessionDir(request.sessionId), "events", `${safeSegment(request.operationId)}.json`),
@@ -948,21 +1016,29 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       } else {
         if (!MEASUREMENT_CLASSES.includes(request.measurementClass)) throw new Error("measurementClass is not allowlisted.");
         const sampleIndex = positiveInteger(request.sampleIndex, "sampleIndex");
-        if (sampleIndex > 10) throw new Error("Measurement repeatability sampleIndex must be 1 through 10.");
+        const maximumRepeatabilitySamples = this.config.contractVersion === "v1.1" ? 4 : 10;
+        if (sampleIndex > maximumRepeatabilitySamples) throw new Error(`Measurement repeatability sampleIndex must be 1 through ${maximumRepeatabilitySamples}.`);
         const sourceCaptureOperationId = assertSafeId(
           request.sourceCaptureOperationId,
           "sourceCaptureOperationId",
         );
-        if (request.measurementAlgorithmVersion !== "opencv_checkerboard_repeatability_measurement_v1") {
+        const expectedRepeatabilityAlgorithm = this.config.contractVersion === "v1.1"
+          ? "opencv_checkerboard_repeatability_measurement_v1.1"
+          : "opencv_checkerboard_repeatability_measurement_v1";
+        if (request.measurementAlgorithmVersion !== expectedRepeatabilityAlgorithm) {
           throw new Error("Measurement repeatability requires the exact deterministic OpenCV checkerboard algorithm version.");
         }
-        if (request.measurementMethod !== "fixed_reference_repeatability_v1") {
-          throw new Error("Measurement repeatability requires fixed_reference_repeatability_v1.");
+        const expectedRepeatabilityMethod = this.config.contractVersion === "v1.1"
+          ? "fixed_reference_repeatability_v1.1"
+          : "fixed_reference_repeatability_v1";
+        if (request.measurementMethod !== expectedRepeatabilityMethod) {
+          throw new Error(`Measurement repeatability requires ${expectedRepeatabilityMethod}.`);
         }
         const sourceCapture = state.captures.find(
           (capture) => capture.operationId === sourceCaptureOperationId,
         );
-        if (!sourceCapture || sourceCapture.role !== "repeated_placement" || sourceCapture.sampleIndex !== sampleIndex) {
+        const expectedSourceRole = this.config.contractVersion === "v1.1" ? "checkerboard_placement" : "repeated_placement";
+        if (!sourceCapture || sourceCapture.role !== expectedSourceRole || sourceCapture.sampleIndex !== sampleIndex) {
           throw new Error("Measurement repeatability must bind to the matching immutable repeated-placement source capture.");
         }
         const sourceArtifact = state.artifacts.find(
@@ -980,7 +1056,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         if (hash(sourceBytes) !== sourceArtifact.sha256) {
           throw new Error("Measurement repeatability source raw evidence SHA-256 mismatch.");
         }
-        const expectedFeatureId = `checkerboard-repeatability-${request.measurementClass}-v1`;
+        const expectedFeatureId = `checkerboard-repeatability-${request.measurementClass}-${this.config.contractVersion === "v1.1" ? "v1.1" : "v1"}`;
         if (request.referenceFeatureId !== expectedFeatureId) {
           throw new Error(`referenceFeatureId must be ${expectedFeatureId}.`);
         }
@@ -994,7 +1070,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           sourceCaptureOperationId,
           sourceEvidenceId: sourceArtifact.evidenceId,
           sourceSha256: sourceArtifact.sha256,
-          sourceRole: "repeated_placement",
+          sourceRole: expectedSourceRole,
           measurementAlgorithmVersion: request.measurementAlgorithmVersion,
           fixedRoiDefinition:
             "registered_checkerboard_center_cell_and_grid_spacing_v1",
@@ -1064,9 +1140,15 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           captureManifest: { path: captureManifestPath, sha256: hash(manifestBytes) },
         };
       }
+      const v11 = this.config.contractVersion === "v1.1";
+      const thresholdManifest = v11 ? MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_MANIFEST : MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST;
       const expectedCaptureKeys = new Set<string>();
-      for (const role of ["lens_geometry", "normalization_registration", "repeated_placement"] as const) {
-        for (let sampleIndex = 1; sampleIndex <= 10; sampleIndex += 1) expectedCaptureKeys.add(`${role}:none:${sampleIndex}`);
+      if (v11) {
+        for (let sampleIndex = 1; sampleIndex <= 4; sampleIndex += 1) expectedCaptureKeys.add(`checkerboard_placement:none:${sampleIndex}`);
+      } else {
+        for (const role of ["lens_geometry", "normalization_registration", "repeated_placement"] as const) {
+          for (let sampleIndex = 1; sampleIndex <= 10; sampleIndex += 1) expectedCaptureKeys.add(`${role}:none:${sampleIndex}`);
+        }
       }
       for (const role of ["flat_field", "dark_control", "illumination_pattern"] as const) {
         for (let channelIndex = 1; channelIndex <= 8; channelIndex += 1) {
@@ -1077,6 +1159,9 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       if (observedCaptureKeys.size !== expectedCaptureKeys.size || [...expectedCaptureKeys].some((key) => !observedCaptureKeys.has(key))) {
         throw new Error("Calibration session cannot seal until every required unique capture slot is complete.");
       }
+      if (v11 && state.blankReverseFlipRecorded !== true) {
+        throw new Error("V1.1 calibration session requires exactly one recorded blank-reverse flip before channel evidence.");
+      }
       const expectedMeasurementKeys = new Set<string>([
         "print_scale:x", "print_scale:y", "target_cut_dimension:x", "target_cut_dimension:y",
       ]);
@@ -1084,7 +1169,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         for (let sample = 1; sample <= 3; sample += 1) expectedMeasurementKeys.add(`direction_geometry:${channel}:${sample}`);
       }
       for (const measurementClass of MEASUREMENT_CLASSES) {
-        for (let sample = 1; sample <= 10; sample += 1) expectedMeasurementKeys.add(`measurement_repeatability:${measurementClass}:${sample}`);
+        for (let sample = 1; sample <= (v11 ? 4 : 10); sample += 1) expectedMeasurementKeys.add(`measurement_repeatability:${measurementClass}:${sample}`);
       }
       const observedMeasurementKeys = new Set(state.measurements.map(measurementKey));
       if (observedMeasurementKeys.size !== expectedMeasurementKeys.size || [...expectedMeasurementKeys].some((key) => !observedMeasurementKeys.has(key))) {
@@ -1103,8 +1188,9 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       );
       const hashes = captureArtifacts.map((artifact) => artifact.sha256);
       if (new Set(hashes).size !== hashes.length) throw new Error("Calibration session contains duplicate image content relabeled as different evidence.");
-      const posePolicy = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence.poseDiversity;
-      for (const role of ["lens_geometry", "normalization_registration"] as const) {
+      const posePolicy = thresholdManifest.calibrationAcceptance.captureEvidence.poseDiversity;
+      const poseRoles = v11 ? ["checkerboard_placement"] as const : ["lens_geometry", "normalization_registration"] as const;
+      for (const role of poseRoles) {
         const poses = captureArtifacts
           .filter((artifact) => artifact.artifactClass === "raw_capture" && artifact.role === role)
           .map((artifact) => artifact.pose!);
@@ -1114,7 +1200,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         const xSpan = Math.max(...poses.map((pose) => pose.centerXFraction)) - Math.min(...poses.map((pose) => pose.centerXFraction));
         const ySpan = Math.max(...poses.map((pose) => pose.centerYFraction)) - Math.min(...poses.map((pose) => pose.centerYFraction));
         const rotationSpan = Math.max(...poses.map((pose) => pose.rotationDegrees)) - Math.min(...poses.map((pose) => pose.rotationDegrees));
-        const rolePolicy = role === "lens_geometry" ? posePolicy.geometry : posePolicy.normalization;
+        const rolePolicy = role === "lens_geometry" || role === "checkerboard_placement" ? posePolicy.geometry : posePolicy.normalization;
         if (
           xSpan < rolePolicy.minimumNormalizedCenterSpanX ||
           ySpan < rolePolicy.minimumNormalizedCenterSpanY ||
@@ -1123,11 +1209,11 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           throw new Error(`${role} does not contain the required independently observed pose diversity.`);
         }
       }
-      const repeatedPlacement = state.captures.filter((capture) => capture.role === "repeated_placement");
+      const repeatedPlacement = state.captures.filter((capture) => capture.role === (v11 ? "checkerboard_placement" : "repeated_placement"));
       if (
         new Set(repeatedPlacement.map((capture) => capture.operationId)).size !== repeatedPlacement.length ||
-        new Set(repeatedPlacement.map((capture) => capture.capturedAt)).size !== repeatedPlacement.length ||
-        new Set(repeatedPlacement.map((capture) => capture.removeReseatCycleId)).size !== repeatedPlacement.length ||
+        (!v11 && new Set(repeatedPlacement.map((capture) => capture.capturedAt)).size !== repeatedPlacement.length) ||
+        (!v11 && new Set(repeatedPlacement.map((capture) => capture.removeReseatCycleId)).size !== repeatedPlacement.length) ||
         new Set(repeatedPlacement.map((capture) =>
           state.artifacts.find((artifact) => artifact.evidenceId === capture.rawEvidenceId)?.sha256,
         )).size !== repeatedPlacement.length
@@ -1136,15 +1222,23 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       }
       const finalizedAt = (this.config.now?.() ?? new Date()).toISOString();
       const packageBody = {
-        schemaVersion: FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PACKAGE_V1,
+        schemaVersion: v11 ? MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_PACKAGE_SCHEMA : FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PACKAGE_V1,
         packageId: state.packageId,
         rigId: state.protectedSettings.rigId,
         captureProfileVersion: state.protectedSettings.captureProfileVersion,
         purpose: state.purpose,
-        thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
-        thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+        thresholdSetId: v11 ? MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_ID : MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+        thresholdSetHash: v11 ? MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_HASH : MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
         captureEvidenceAcceptance:
-          MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence,
+          thresholdManifest.calibrationAcceptance.captureEvidence,
+        ...(v11 ? {
+          calibrationContractVersion: "1.1.0",
+          placementContract: {
+            exactlyDistinctCheckerboardPlacements: 4,
+            blankReverseFlipCount: state.blankReverseFlipRecorded ? 1 : 0,
+            noDuplicateEvidence: true,
+          },
+        } : {}),
         stationAuthority: {
           stationId: state.protectedSettings.stationId,
           sessionId: state.sessionId,
@@ -1209,7 +1303,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         };
       });
       const captureManifestBody = {
-        schemaVersion: FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_MANIFEST_V1,
+        schemaVersion: v11 ? MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_MANIFEST_SCHEMA : FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_MANIFEST_V1,
         evidenceRoot: ".",
         profileId: request.profileId,
         calibrationVersion: request.calibrationVersion,
@@ -1227,9 +1321,23 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         normalizedHeightPx: state.protectedSettings.normalizedHeightPx,
         checkerboard: state.protectedSettings.checkerboard,
         target,
-        geometryViews: capturesFor("lens_geometry"),
-        normalizationViews: capturesFor("normalization_registration"),
-        placementViews: capturesFor("repeated_placement"),
+        geometryViews: capturesFor(v11 ? "checkerboard_placement" : "lens_geometry"),
+        normalizationViews: capturesFor(v11 ? "checkerboard_placement" : "normalization_registration"),
+        placementViews: capturesFor(v11 ? "checkerboard_placement" : "repeated_placement"),
+        ...(v11 ? {
+          segmentationBoundaryViews: capturesFor("checkerboard_placement"),
+          normalizationHoldoutViews: capturesFor("checkerboard_placement"),
+          repeatedPlacementDerivations: capturesFor("checkerboard_placement"),
+          placementEvidenceIdentity: state.captures
+            .filter((capture) => capture.role === "checkerboard_placement")
+            .sort((left, right) => left.sampleIndex - right.sampleIndex)
+            .map((capture) => artifactFor(capture.rawEvidenceId)),
+          blankReverseFlip: { count: 1, targetFace: "blank_reverse" },
+          validation: {
+            method: "deterministic_leave_one_pose_out",
+            smallSampleU95: "student_t_0.975_n_minus_1_times_sample_standard_deviation",
+          },
+        } : {}),
         measurementRepeatabilitySamples: state.measurements
           .filter((record) => record.measurementType === "measurement_repeatability")
           .sort((left, right) => `${left.payload.measurementClass}:${left.payload.sampleIndex}`.localeCompare(`${right.payload.measurementClass}:${right.payload.sampleIndex}`))

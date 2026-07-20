@@ -711,6 +711,80 @@ export const MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST = deepFreeze({
 export type MathematicalGradingV1ThresholdManifest =
   typeof MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST;
 
+/**
+ * Mathematical Calibration V1.1 is an acquisition/validation contract.  The
+ * V1.0.1 grading authority above remains immutable and continues to serve all
+ * production grading consumers.  V1.1 deliberately reuses every acceptance
+ * limit except the proven interaction/evidence cardinalities.
+ */
+export const MATHEMATICAL_CALIBRATION_V1_1_CONTRACT_VERSION = "1.1.0" as const;
+export const MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_SESSION_SCHEMA =
+  "ten-kings-mathematical-calibration-capture-session-v1.1" as const;
+export const MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_PACKAGE_SCHEMA =
+  "ten-kings-mathematical-calibration-capture-package-v1.1" as const;
+export const MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_MANIFEST_SCHEMA =
+  "ten-kings-mathematical-calibration-capture-manifest-v1.1" as const;
+export const MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_PROFILE =
+  "ten-kings-fixed-rig-mathematical-calibration-v1.1" as const;
+export const MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_ID =
+  "ten-kings-mathematical-grading-v1.1.0" as const;
+
+const mathematicalCalibrationV1_1ManifestWithoutHash = {
+  ...MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
+  thresholdSetId: MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_ID,
+  calibrationContractVersion: MATHEMATICAL_CALIBRATION_V1_1_CONTRACT_VERSION,
+  calibrationAcceptance: {
+    ...MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance,
+    minimumLensCalibrationViews: 4,
+    minimumScaleSamples: 4,
+    minimumNormalizationRegistrations: 4,
+    minimumRepeatedPlacements: 4,
+    minimumSegmentationBoundarySamples: 4,
+    minimumMeasurementRepeatabilitySamplesPerClass: 4,
+    captureEvidence: {
+      ...MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence,
+      poseDiversity: {
+        ...MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence.poseDiversity,
+        geometry: {
+          ...MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence.poseDiversity.geometry,
+        },
+        normalization: {
+          ...MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence.poseDiversity.normalization,
+        },
+      },
+      placementContract: {
+        exactlyDistinctCheckerboardPlacements: 4,
+        blankReverseFlipCount: 1,
+        immutableCaptureDerivationRoles: [
+          "geometry",
+          "normalization_holdout",
+          "segmentation_boundary",
+          "repeated_placement",
+        ],
+        noDuplicateEvidence: true,
+      },
+      leaveOnePoseOutValidation: {
+        method: "deterministic_leave_one_pose_out",
+        minimumPoseCount: 4,
+        smallSampleU95: "student_t_0.975_n_minus_1_times_sample_standard_deviation",
+        degreesOfFreedom: 3,
+      },
+    },
+  },
+};
+
+/** SHA-256 of canonical JSON for the V1.1 manifest with sourceHash omitted. */
+export const MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_HASH =
+  "d6e3e6772436544d4a434fc0a6f1e93150fb17507020097c8e9ec10af66dc989" as const;
+
+export const MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_MANIFEST = deepFreeze({
+  ...mathematicalCalibrationV1_1ManifestWithoutHash,
+  sourceHash: MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_HASH,
+});
+
+export type MathematicalCalibrationV1_1ThresholdManifest =
+  typeof MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_MANIFEST;
+
 export const MATHEMATICAL_GRADING_V1_MAXIMUM_SCORE_DEDUCTION =
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.scoreContract.maximum -
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.scoreContract.minimum;
