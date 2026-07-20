@@ -2,6 +2,7 @@
 param(
   [string]$ConfigPath = "C:\TenKings\capture-data\ai-grader-mathematical-calibration-v1\private-bridge-config.json",
   [Parameter(Mandatory = $true)][string]$SessionId,
+  [int]$Port = 47653,
   [string]$ChromeUserDataDir = "C:\TenKings\chrome-ai-grader-mathematical-calibration-v1.1"
 )
 
@@ -11,11 +12,14 @@ $ErrorActionPreference = "Stop"
 if ($SessionId -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') {
   throw "SessionId must be a safe calibration session identifier."
 }
+if ($Port -ne 47653) {
+  throw "Mathematical Calibration V1.1 is restricted to protected loopback port 47653."
+}
 $config = Read-AiGraderBridgeConfig -Path $ConfigPath
 if ($null -eq $config -or [string]::IsNullOrWhiteSpace([string]$config.bridgeUrl) -or [string]::IsNullOrWhiteSpace([string]$config.pairingCode)) {
   throw "Protected calibration bridge config is unavailable or has no pairing code. Start the protected bridge first."
 }
-$bridgeUri = [Uri]$config.bridgeUrl
+$bridgeUri = [Uri]::new("http://$($config.host):$Port")
 if ($bridgeUri.Scheme -ne "http" -or $bridgeUri.Host -notin @("127.0.0.1", "localhost", "::1")) {
   throw "Calibration page launcher accepts only a loopback bridge URL."
 }
