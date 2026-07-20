@@ -317,7 +317,7 @@ async function normalizedImage(side, packageDir, color) {
 }
 
 async function processedNormalizedSide(side, packageDir, color = side === "front" ? "#203040" : "#405060") {
-  const normalizedDir = path.join(packageDir, "normalized");
+  const normalizedDir = path.join(packageDir, side, "normalized");
   fs.mkdirSync(normalizedDir, { recursive: true });
   const image = await normalizedImage(side, normalizedDir, color);
   return {
@@ -800,6 +800,49 @@ test("Front-before-Back and immediate Back processing failures fail only the exa
     } finally {
       fs.rmSync(outputDir, { recursive: true, force: true });
     }
+  }
+});
+
+test("Rapid OCR eligibility reconstructs normalized PNG paths from the production side directory", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-production-normalized-path-"));
+  let releaseBackProcessing;
+  try {
+    const { service } = configFor(outputDir);
+    service.enqueueRapidFinalization = () => {};
+    installSimulatedPublicCapture(service, {
+      processing: (side, _manifest, packageDir) => side === "front"
+        ? processedNormalizedSide(side, packageDir)
+        : new Promise((resolve) => {
+          releaseBackProcessing = async () => resolve(await processedNormalizedSide(side, packageDir));
+        }),
+    });
+    await service.action("start-session", { captureProfile: "production_fast", reportId: "production-normalized-path-card" });
+    await service.action("capture-front", bindReadyPreview(service, "front", "production-normalized-path"));
+    await Promise.all([...service.warmProcessingJobs.values()]);
+    await service.action("capture-back", bindReadyPreview(service, "back", "production-normalized-path"));
+
+    const waiting = service.rapidQueue.items[0];
+    const queuedManifest = service.queuedManifests.get(waiting.queueItemId);
+    assert.equal(waiting.ocr.state, "waiting_for_normalized");
+    assert.deepEqual(waiting.ocr.images.map((image) => image.localPath), [
+      path.join(queuedManifest.outputs.frontPackageDir, "front", "normalized", "front-normalized-card.png"),
+    ]);
+
+    assert.equal(typeof releaseBackProcessing, "function");
+    await releaseBackProcessing();
+    await Promise.allSettled([...service.rapidOcrEligibilityObservers.values()]);
+
+    const item = service.rapidQueue.items[0];
+    assert.equal(item.ocr.state, "eligible");
+    assert.deepEqual(
+      item.ocr.images.map((image) => image.localPath),
+      [
+        path.join(queuedManifest.outputs.frontPackageDir, "front", "normalized", "front-normalized-card.png"),
+        path.join(queuedManifest.outputs.backPackageDir, "back", "normalized", "back-normalized-card.png"),
+      ],
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
   }
 });
 
