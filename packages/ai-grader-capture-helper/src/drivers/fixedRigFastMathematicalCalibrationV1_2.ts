@@ -1,0 +1,1049 @@
+import crypto from "node:crypto";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT = "1.2.0" as const;
+export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_SESSION_SCHEMA =
+  "ten-kings-mathematical-calibration-capture-session-v1.2" as const;
+export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_PACKAGE_SCHEMA =
+  "ten-kings-mathematical-calibration-capture-package-v1.2" as const;
+export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_PROFILE =
+  "ten-kings-fixed-rig-mathematical-calibration-v1.2" as const;
+export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA =
+  "ten-kings-mathematical-calibration-runtime-context-v1.2" as const;
+export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_AUTHORITY_SCHEMA =
+  "ten-kings-mathematical-rig-characterization-v1.2" as const;
+export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_ANALYSIS_SCHEMA =
+  "ten-kings-mathematical-calibration-analysis-v1.2" as const;
+
+export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_COUNTS = Object.freeze({
+  checkerboardPlacements: 4,
+  darkControlFrames: 24,
+  flatFieldFrames: 24,
+  illuminationPatternFrames: 24,
+  totalImageCaptures: 76,
+  quickPhysicalMeasurements: 0,
+});
+
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
+const SHA256 = /^[a-f0-9]{64}$/;
+const MINIMUM_TARGET_COVERAGE = 0.30;
+const MINIMUM_SAFETY_MARGIN = 0.01;
+const MINIMUM_X_SPAN = 0.07;
+const MINIMUM_Y_SPAN = 0.08;
+const MINIMUM_ROTATION_SPAN_DEGREES = 2;
+
+type JsonObject = Record<string, unknown>;
+
+export interface FastCalibrationChannelWiringV1_2 {
+  channelIndex: number;
+  controllerOutput: string;
+  componentId: string;
+  physicalDirectionId: string;
+}
+
+export interface FastCalibrationRuntimeContextV1_2 {
+  schemaVersion: typeof FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA;
+  stationId: string;
+  rigId: string;
+  camera: {
+    serialNumber: string;
+    modelName: string;
+    lensAuthorityId: string;
+    exposureUs: number;
+    gain: number;
+    pixelFormat: string;
+    widthPx: number;
+    heightPx: number;
+  };
+  controller: {
+    identity: string;
+    unit: number;
+    channelWiring: FastCalibrationChannelWiringV1_2[];
+  };
+  dutyPercent: number;
+  target: { version: string; sha256: string };
+  componentConfigurationId: string;
+  algorithmHashes: {
+    geometry: string;
+    photometric: string;
+    finalizer: string;
+    thresholdManifest: string;
+  };
+  locationLabel: string;
+  lightingConfigurationId: string;
+}
+
+export interface FastCalibrationRigCharacterizationAuthorityV1_2 {
+  schemaVersion: typeof FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_AUTHORITY_SCHEMA;
+  characterizedAt: string;
+  rigId: string;
+  sourceBundleManifestSha256: string;
+  sourceCaptureManifestSha256: string;
+  sourceMemberLedgerSha256: string;
+  targetMetrologyAuthoritySha256: string;
+  cameraLensAuthoritySha256: string;
+  physicalLightDirectionAuthoritySha256: string;
+  componentIdentityAuthoritySha256: string;
+  repeatabilityAuthoritySha256: string;
+  cameraSerialNumber: string;
+  cameraModelName: string;
+  lensAuthorityId: string;
+  controllerIdentity: string;
+  channelWiring: FastCalibrationChannelWiringV1_2[];
+  targetVersion: string;
+  targetSha256: string;
+  componentConfigurationId: string;
+  algorithmHashes: FastCalibrationRuntimeContextV1_2["algorithmHashes"];
+}
+
+export interface FastCalibrationPoseV1_2 {
+  sourceFrameSha256: string;
+  centerXFraction: number;
+  centerYFraction: number;
+  coverageFraction: number;
+  rotationDegrees: number;
+  safetyMarginFraction: number;
+  outerCorners: readonly [
+    { x: number; y: number },
+    { x: number; y: number },
+    { x: number; y: number },
+    { x: number; y: number },
+  ];
+}
+
+export type FastCalibrationPhotometricRoleV1_2 =
+  | "dark_control"
+  | "flat_field"
+  | "illumination_pattern";
+
+export interface FastCalibrationControllerAcknowledgementV1_2 {
+  controllerIdentity: string;
+  expectedWriteCount: number;
+  acknowledgedWriteCount: number;
+  responseKinds: string[];
+  complete: boolean;
+}
+
+export interface FastCalibrationCaptureMetadataV1_2 {
+  capturedAt: string;
+  camera: FastCalibrationRuntimeContextV1_2["camera"];
+  controller: FastCalibrationControllerAcknowledgementV1_2;
+  safeOffBeforeConfirmed: boolean;
+  safeOffAfterConfirmed: boolean;
+}
+
+export interface FastCalibrationCapturedFrameV1_2 {
+  bytes: Buffer;
+  mediaType: "image/png" | "image/tiff";
+  metadata: FastCalibrationCaptureMetadataV1_2;
+}
+
+export interface FastCalibrationPersistentBatchControllerV1_2 {
+  open(expectedContext: FastCalibrationRuntimeContextV1_2): Promise<FastCalibrationRuntimeContextV1_2>;
+  capture(input: {
+    operationId: string;
+    role: FastCalibrationPhotometricRoleV1_2;
+    channelIndex: number;
+    sampleIndex: number;
+    dutyPercent: number;
+  }): Promise<FastCalibrationCapturedFrameV1_2>;
+  safeOff(): Promise<{
+    controllerIdentity: string;
+    confirmed: boolean;
+    responseKinds: string[];
+  }>;
+  close(): Promise<void>;
+}
+
+interface FastCalibrationEvidenceV1_2 {
+  evidenceId: string;
+  relativePath: string;
+  sha256: string;
+  byteSize: number;
+  mediaType: "image/png" | "image/tiff" | "application/json";
+}
+
+interface FastCalibrationSessionIdentityV1_2 {
+  schemaVersion: typeof FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_SESSION_SCHEMA;
+  contractVersion: typeof FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT;
+  sessionId: string;
+  operatorId: string;
+  createdAt: string;
+  runtimeContext: FastCalibrationRuntimeContextV1_2;
+  runtimeContextSha256: string;
+  rigCharacterization: FastCalibrationRigCharacterizationAuthorityV1_2;
+  rigCharacterizationSha256: string;
+  noProductionMutation: true;
+  v0FallbackAllowed: false;
+}
+
+type FastCalibrationCaptureRoleV1_2 = "checkerboard_placement" | FastCalibrationPhotometricRoleV1_2;
+
+interface FastCalibrationEventBaseV1_2 {
+  sequence: number;
+  operationId: string;
+  recordedAt: string;
+  previousEventSha256: string | null;
+  eventSha256: string;
+}
+
+interface FastCalibrationAcceptedEventV1_2 extends FastCalibrationEventBaseV1_2 {
+  type: "capture_accepted";
+  role: FastCalibrationCaptureRoleV1_2;
+  slot: number;
+  channelIndex: number | null;
+  sampleIndex: number;
+  evidence: FastCalibrationEvidenceV1_2;
+  metadata: FastCalibrationCaptureMetadataV1_2;
+  pose?: FastCalibrationPoseV1_2;
+  supersedesOperationId?: string;
+}
+
+interface FastCalibrationFailedEventV1_2 extends FastCalibrationEventBaseV1_2 {
+  type: "capture_failed" | "analysis_failed" | "finalization_failed" | "batch_open_failed" | "batch_safe_off_failed" | "batch_close_failed";
+  role: FastCalibrationCaptureRoleV1_2 | "analysis" | "finalization" | "batch_open" | "safe_off" | "batch_close";
+  slot: number | null;
+  channelIndex: number | null;
+  sampleIndex: number | null;
+  error: string;
+  evidence?: FastCalibrationEvidenceV1_2;
+}
+
+interface FastCalibrationFlipEventV1_2 extends FastCalibrationEventBaseV1_2 {
+  type: "blank_reverse_flip_confirmed";
+  flipCount: 1;
+}
+
+interface FastCalibrationAnalysisEventV1_2 extends FastCalibrationEventBaseV1_2 {
+  type: "analysis_completed";
+  evidence: FastCalibrationEvidenceV1_2;
+  sourceArtifactLedgerSha256: string;
+  accepted: true;
+}
+
+interface FastCalibrationFinalizationEventV1_2 extends FastCalibrationEventBaseV1_2 {
+  type: "finalization_completed";
+  bundle: FastCalibrationEvidenceV1_2;
+  memberLedgerSha256: string;
+  memberCount: 12;
+  captureContractVersion: typeof FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT;
+  runtimeContextSha256: string;
+  rigCharacterizationSha256: string;
+}
+interface FastCalibrationBatchCleanupEventV1_2 extends FastCalibrationEventBaseV1_2 {
+  type: "batch_cleanup_completed";
+  controllerIdentity: string;
+  safeOffResponseKinds: string[];
+  closed: true;
+}
+
+
+type FastCalibrationEventV1_2 =
+  | FastCalibrationAcceptedEventV1_2
+  | FastCalibrationFailedEventV1_2
+  | FastCalibrationFlipEventV1_2
+  | FastCalibrationAnalysisEventV1_2
+  | FastCalibrationFinalizationEventV1_2
+  | FastCalibrationBatchCleanupEventV1_2;
+
+export type FastCalibrationPhaseV1_2 =
+  | "checkerboard_placements"
+  | "blank_reverse_flip"
+  | "photometric_sweep"
+  | "analyze"
+  | "finalize"
+  | "ready_for_explicit_activation";
+
+export type FastCalibrationNextActionV1_2 =
+  | { action: "capture_checkerboard"; role: "checkerboard_placement"; slot: number; channelIndex: null; sampleIndex: number }
+  | { action: "confirm_blank_reverse_flip"; role: "blank_reverse_flip"; slot: null; channelIndex: null; sampleIndex: null }
+  | { action: "capture_photometric"; role: FastCalibrationPhotometricRoleV1_2; slot: number; channelIndex: number; sampleIndex: number }
+  | { action: "analyze"; role: "analysis"; slot: null; channelIndex: null; sampleIndex: null }
+  | { action: "complete_batch_cleanup"; role: "safe_off"; slot: null; channelIndex: null; sampleIndex: null }
+  | { action: "finalize"; role: "finalization"; slot: null; channelIndex: null; sampleIndex: null }
+  | { action: "activate_explicitly"; role: "activation"; slot: null; channelIndex: null; sampleIndex: null };
+
+export interface FastCalibrationStatusV1_2 {
+  sessionId: string;
+  contractVersion: typeof FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT;
+  phase: FastCalibrationPhaseV1_2;
+  nextAction: FastCalibrationNextActionV1_2;
+  captureCounts: {
+    acceptedCheckerboardPlacements: number;
+    acceptedPhotometricFrames: number;
+    totalAcceptedImages: number;
+    requiredTotalImages: 76;
+  };
+  acceptedPlacementSlots: number[];
+  failedOperationCount: number;
+  supersededOperationCount: number;
+  aggregatePoseSpans: { x: number; y: number; rotationDegrees: number };
+  runtimeContextSha256: string;
+  rigCharacterizationSha256: string;
+  eventCount: number;
+  lastEventSha256: string | null;
+}
+
+export class FastCalibrationOperationErrorV1_2 extends Error {
+  constructor(public readonly operationId: string, message: string) {
+    super(message);
+    this.name = "FastCalibrationOperationErrorV1_2";
+  }
+}
+
+export interface OpenFastCalibrationSessionV1_2Input {
+  sessionId: string;
+  operatorId: string;
+  runtimeContext: FastCalibrationRuntimeContextV1_2;
+  rigCharacterization: FastCalibrationRigCharacterizationAuthorityV1_2;
+  resume?: boolean;
+}
+
+export interface FastCalibrationCoreV1_2Config {
+  outputRoot: string;
+  now?: () => Date;
+  operationId?: () => string;
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as JsonObject)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonical(entry)]),
+    );
+  }
+  return value;
+}
+
+function canonicalBytes(value: unknown): Buffer {
+  return Buffer.from(`${JSON.stringify(canonical(value))}\n`, "utf8");
+}
+
+export function hashFastCalibrationCanonicalV1_2(value: unknown): string {
+  return crypto.createHash("sha256").update(canonicalBytes(value)).digest("hex");
+}
+
+function hashBytes(value: Uint8Array): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function exactId(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SAFE_ID.test(value)) throw new Error(`${label} must be an exact safe identifier.`);
+  return value;
+}
+
+function exactSha(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SHA256.test(value)) throw new Error(`${label} must be an exact lowercase SHA-256.`);
+  return value;
+}
+
+function finite(value: unknown, label: string, minimum?: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || (minimum !== undefined && value < minimum)) {
+    throw new Error(`${label} must be a finite number${minimum === undefined ? "" : ` >= ${minimum}`}.`);
+  }
+  return value;
+}
+
+function sameCanonical(left: unknown, right: unknown): boolean {
+  return hashFastCalibrationCanonicalV1_2(left) === hashFastCalibrationCanonicalV1_2(right);
+}
+
+function validateChannelWiring(value: FastCalibrationChannelWiringV1_2[], label: string): void {
+  if (!Array.isArray(value) || value.length !== 8) throw new Error(`${label} must bind exactly eight channels.`);
+  const channels = new Set<number>();
+  const outputs = new Set<string>();
+  for (const item of value) {
+    if (!Number.isInteger(item.channelIndex) || item.channelIndex < 1 || item.channelIndex > 8 || channels.has(item.channelIndex)) {
+      throw new Error(`${label} channelIndex must contain unique channels 1 through 8.`);
+    }
+    channels.add(item.channelIndex);
+    const output = exactId(item.controllerOutput, `${label}.controllerOutput`);
+    if (outputs.has(output)) throw new Error(`${label} controller outputs must be unique.`);
+    outputs.add(output);
+    exactId(item.componentId, `${label}.componentId`);
+    exactId(item.physicalDirectionId, `${label}.physicalDirectionId`);
+  }
+}
+
+export function validateFastCalibrationRuntimeContextV1_2(value: FastCalibrationRuntimeContextV1_2): void {
+  if (value?.schemaVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA) {
+    throw new Error("Fast calibration runtime context schema mismatch.");
+  }
+  exactId(value.stationId, "runtimeContext.stationId");
+  exactId(value.rigId, "runtimeContext.rigId");
+  exactId(value.camera.serialNumber, "runtimeContext.camera.serialNumber");
+  exactId(value.camera.modelName, "runtimeContext.camera.modelName");
+  exactId(value.camera.lensAuthorityId, "runtimeContext.camera.lensAuthorityId");
+  finite(value.camera.exposureUs, "runtimeContext.camera.exposureUs", 1);
+  finite(value.camera.gain, "runtimeContext.camera.gain", 0);
+  exactId(value.camera.pixelFormat, "runtimeContext.camera.pixelFormat");
+  if (!Number.isInteger(value.camera.widthPx) || value.camera.widthPx < 1 || !Number.isInteger(value.camera.heightPx) || value.camera.heightPx < 1) {
+    throw new Error("Fast calibration camera resolution must contain positive integer dimensions.");
+  }
+  exactId(value.controller.identity, "runtimeContext.controller.identity");
+  if (!Number.isInteger(value.controller.unit) || value.controller.unit < 1) throw new Error("Fast calibration controller unit must be positive.");
+  validateChannelWiring(value.controller.channelWiring, "runtimeContext.controller.channelWiring");
+  finite(value.dutyPercent, "runtimeContext.dutyPercent", 0);
+  exactId(value.target.version, "runtimeContext.target.version");
+  exactSha(value.target.sha256, "runtimeContext.target.sha256");
+  exactId(value.componentConfigurationId, "runtimeContext.componentConfigurationId");
+  for (const [name, digest] of Object.entries(value.algorithmHashes)) exactSha(digest, `runtimeContext.algorithmHashes.${name}`);
+  exactId(value.locationLabel, "runtimeContext.locationLabel");
+  exactId(value.lightingConfigurationId, "runtimeContext.lightingConfigurationId");
+}
+
+export function validateFastCalibrationRigCharacterizationV1_2(
+  authority: FastCalibrationRigCharacterizationAuthorityV1_2,
+  context: FastCalibrationRuntimeContextV1_2,
+): void {
+  if (authority?.schemaVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_AUTHORITY_SCHEMA) {
+    throw new Error("Fast calibration rig-characterization schema mismatch.");
+  }
+  exactId(authority.rigId, "rigCharacterization.rigId");
+  for (const [name, digest] of Object.entries(authority).filter(([key]) => key.endsWith("Sha256"))) {
+    exactSha(digest, `rigCharacterization.${name}`);
+  }
+  validateChannelWiring(authority.channelWiring, "rigCharacterization.channelWiring");
+  if (
+    authority.rigId !== context.rigId ||
+    authority.cameraSerialNumber !== context.camera.serialNumber ||
+    authority.cameraModelName !== context.camera.modelName ||
+    authority.lensAuthorityId !== context.camera.lensAuthorityId ||
+    authority.controllerIdentity !== context.controller.identity ||
+    authority.targetVersion !== context.target.version ||
+    authority.targetSha256 !== context.target.sha256 ||
+    authority.componentConfigurationId !== context.componentConfigurationId ||
+    !sameCanonical(authority.channelWiring, context.controller.channelWiring) ||
+    !sameCanonical(authority.algorithmHashes, context.algorithmHashes)
+  ) {
+    throw new Error("Fast calibration runtime context does not exactly match immutable rig characterization.");
+  }
+}
+
+export function assertFastCalibrationRuntimeContextMatchV1_2(
+  expected: FastCalibrationRuntimeContextV1_2,
+  live: FastCalibrationRuntimeContextV1_2,
+): void {
+  validateFastCalibrationRuntimeContextV1_2(live);
+  if (!sameCanonical(expected, live)) {
+    throw new Error("Live camera, rig, controller, wiring, settings, target, component, algorithm, location, or lighting context differs from the active calibration.");
+  }
+}
+
+function photometricPlan(): Array<{
+  role: FastCalibrationPhotometricRoleV1_2;
+  slot: number;
+  channelIndex: number;
+  sampleIndex: number;
+}> {
+  const plan: Array<{ role: FastCalibrationPhotometricRoleV1_2; slot: number; channelIndex: number; sampleIndex: number }> = [];
+  let slot = 1;
+  for (let channelIndex = 1; channelIndex <= 8; channelIndex += 1) {
+    for (const role of ["dark_control", "flat_field", "illumination_pattern"] as const) {
+      for (let sampleIndex = 1; sampleIndex <= 3; sampleIndex += 1) {
+        plan.push({ role, slot, channelIndex, sampleIndex });
+        slot += 1;
+      }
+    }
+  }
+  return plan;
+}
+
+const PHOTOMETRIC_PLAN = photometricPlan();
+
+function acceptedEvents(events: FastCalibrationEventV1_2[]): FastCalibrationAcceptedEventV1_2[] {
+  return events.filter((event): event is FastCalibrationAcceptedEventV1_2 => event.type === "capture_accepted");
+}
+
+function activePlacements(events: FastCalibrationEventV1_2[]): Map<number, FastCalibrationAcceptedEventV1_2> {
+  const active = new Map<number, FastCalibrationAcceptedEventV1_2>();
+  for (const event of acceptedEvents(events)) {
+    if (event.role === "checkerboard_placement") active.set(event.slot, event);
+  }
+  return active;
+}
+
+function acceptedPhotometricKeys(events: FastCalibrationEventV1_2[]): Set<string> {
+  return new Set(acceptedEvents(events)
+    .filter((event) => event.role !== "checkerboard_placement")
+    .map((event) => `${event.role}:${event.channelIndex}:${event.sampleIndex}`));
+}
+
+function poseSpans(poses: FastCalibrationPoseV1_2[]): { x: number; y: number; rotationDegrees: number } {
+  if (poses.length === 0) return { x: 0, y: 0, rotationDegrees: 0 };
+  return {
+    x: Math.max(...poses.map((pose) => pose.centerXFraction)) - Math.min(...poses.map((pose) => pose.centerXFraction)),
+    y: Math.max(...poses.map((pose) => pose.centerYFraction)) - Math.min(...poses.map((pose) => pose.centerYFraction)),
+    rotationDegrees: Math.max(...poses.map((pose) => pose.rotationDegrees)) - Math.min(...poses.map((pose) => pose.rotationDegrees)),
+  };
+}
+
+function validatePose(
+  pose: FastCalibrationPoseV1_2,
+  frameSha256: string,
+  prior: FastCalibrationPoseV1_2[],
+  finalSet: FastCalibrationPoseV1_2[],
+): string[] {
+  const reasons: string[] = [];
+  if (pose.sourceFrameSha256 !== frameSha256) reasons.push("pose validation is not bound to the exact capture-time still");
+  for (const [name, value] of Object.entries({
+    centerXFraction: pose.centerXFraction,
+    centerYFraction: pose.centerYFraction,
+    coverageFraction: pose.coverageFraction,
+    rotationDegrees: pose.rotationDegrees,
+    safetyMarginFraction: pose.safetyMarginFraction,
+  })) {
+    if (typeof value !== "number" || !Number.isFinite(value)) reasons.push(`${name} is not finite`);
+  }
+  if (pose.coverageFraction < MINIMUM_TARGET_COVERAGE) reasons.push("target coverage is below the unchanged centralized minimum");
+  if (pose.safetyMarginFraction < MINIMUM_SAFETY_MARGIN) reasons.push("target contour is inside the unsafe frame margin");
+  if (!Array.isArray(pose.outerCorners) || pose.outerCorners.length !== 4 || pose.outerCorners.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
+    reasons.push("outer target contour is incomplete or non-finite");
+  }
+  if (prior.some((item) =>
+    Math.abs(item.centerXFraction - pose.centerXFraction) < 0.005 &&
+    Math.abs(item.centerYFraction - pose.centerYFraction) < 0.005 &&
+    Math.abs(item.rotationDegrees - pose.rotationDegrees) < 2)) {
+    reasons.push("pose is not sufficiently distinct from an accepted placement");
+  }
+  if (finalSet.length === 4) {
+    const spans = poseSpans(finalSet);
+    if (spans.x < MINIMUM_X_SPAN || spans.y < MINIMUM_Y_SPAN || spans.rotationDegrees < MINIMUM_ROTATION_SPAN_DEGREES) {
+      reasons.push("complete four-pose aggregate diversity does not meet unchanged X, Y, and rotation minima");
+    }
+  }
+  return reasons;
+}
+
+function assertCaptureMetadata(
+  metadata: FastCalibrationCaptureMetadataV1_2,
+  context: FastCalibrationRuntimeContextV1_2,
+): void {
+  if (!sameCanonical(metadata.camera, context.camera)) throw new Error("Capture-time camera identity/settings differ from the session runtime context.");
+  const acknowledgement = metadata.controller;
+  if (
+    acknowledgement.controllerIdentity !== context.controller.identity ||
+    !Number.isInteger(acknowledgement.expectedWriteCount) || acknowledgement.expectedWriteCount < 1 ||
+    acknowledgement.acknowledgedWriteCount !== acknowledgement.expectedWriteCount ||
+    acknowledgement.complete !== true || acknowledgement.responseKinds.length !== acknowledgement.expectedWriteCount ||
+    acknowledgement.responseKinds.some((kind) => kind !== "ack")
+  ) {
+    throw new Error("Capture-time controller identity or exact acknowledgements are incomplete.");
+  }
+  if (!metadata.safeOffBeforeConfirmed || !metadata.safeOffAfterConfirmed) {
+    throw new Error("Capture-time safe-off was not exactly confirmed before and after the frame.");
+  }
+}
+
+export class FixedRigFastMathematicalCalibrationCoreV1_2 {
+  private constructor(
+    private readonly config: FastCalibrationCoreV1_2Config,
+    private readonly sessionDir: string,
+    private readonly identity: FastCalibrationSessionIdentityV1_2,
+    private events: FastCalibrationEventV1_2[],
+  ) {}
+
+  static async open(
+    config: FastCalibrationCoreV1_2Config,
+    input: OpenFastCalibrationSessionV1_2Input,
+  ): Promise<FixedRigFastMathematicalCalibrationCoreV1_2> {
+    const sessionId = exactId(input.sessionId, "sessionId");
+    const operatorId = exactId(input.operatorId, "operatorId");
+    validateFastCalibrationRuntimeContextV1_2(input.runtimeContext);
+    validateFastCalibrationRigCharacterizationV1_2(input.rigCharacterization, input.runtimeContext);
+    const outputRoot = path.resolve(config.outputRoot);
+    const sessionDir = path.join(outputRoot, sessionId.replace(/:/g, "-"));
+    const identityPath = path.join(sessionDir, "session-identity.json");
+    let identity: FastCalibrationSessionIdentityV1_2;
+    try {
+      identity = JSON.parse((await readFile(identityPath)).toString("utf8")) as FastCalibrationSessionIdentityV1_2;
+      if (!input.resume) throw new Error("Fast calibration session already exists; explicit resume is required.");
+      if (
+        identity.schemaVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_SESSION_SCHEMA ||
+        identity.sessionId !== sessionId || identity.operatorId !== operatorId ||
+        identity.runtimeContextSha256 !== hashFastCalibrationCanonicalV1_2(input.runtimeContext) ||
+        identity.rigCharacterizationSha256 !== hashFastCalibrationCanonicalV1_2(input.rigCharacterization) ||
+        !sameCanonical(identity.runtimeContext, input.runtimeContext) ||
+        !sameCanonical(identity.rigCharacterization, input.rigCharacterization)
+      ) {
+        throw new Error("Fast calibration resume identity, immutable rig authority, or runtime context mismatch.");
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await mkdir(path.join(sessionDir, "events"), { recursive: true });
+      await mkdir(path.join(sessionDir, "evidence"), { recursive: true });
+      const createdAt = (config.now?.() ?? new Date()).toISOString();
+      identity = {
+        schemaVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_SESSION_SCHEMA,
+        contractVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
+        sessionId,
+        operatorId,
+        createdAt,
+        runtimeContext: input.runtimeContext,
+        runtimeContextSha256: hashFastCalibrationCanonicalV1_2(input.runtimeContext),
+        rigCharacterization: input.rigCharacterization,
+        rigCharacterizationSha256: hashFastCalibrationCanonicalV1_2(input.rigCharacterization),
+        noProductionMutation: true,
+        v0FallbackAllowed: false,
+      };
+      await writeFile(identityPath, canonicalBytes(identity), { flag: "wx" });
+    }
+    const core = new FixedRigFastMathematicalCalibrationCoreV1_2(config, sessionDir, identity, []);
+    core.events = await core.loadEvents();
+    return core;
+  }
+
+  private async loadEvents(): Promise<FastCalibrationEventV1_2[]> {
+    let names: string[] = [];
+    try {
+      names = (await readdir(path.join(this.sessionDir, "events")))
+        .filter((name) => /^\d{8}\.json$/.test(name)).sort();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const events: FastCalibrationEventV1_2[] = [];
+    let previous: string | null = hashFastCalibrationCanonicalV1_2(this.identity);
+    const operationIds = new Set<string>();
+    for (const [index, name] of names.entries()) {
+      const event = JSON.parse((await readFile(path.join(this.sessionDir, "events", name))).toString("utf8")) as FastCalibrationEventV1_2;
+      const { eventSha256, ...withoutHash } = event;
+      if (event.sequence !== index + 1 || event.previousEventSha256 !== previous || hashFastCalibrationCanonicalV1_2(withoutHash) !== eventSha256) {
+        throw new Error("Fast calibration append-only event chain is missing, reordered, or corrupt.");
+      }
+      if (operationIds.has(event.operationId)) throw new Error("Fast calibration operationId is duplicated in the immutable event chain.");
+      operationIds.add(event.operationId);
+      previous = eventSha256;
+      events.push(event);
+      const evidence = event.type === "finalization_completed"
+        ? event.bundle
+        : "evidence" in event
+          ? event.evidence
+          : undefined;
+      if (evidence) {
+        if (!evidence.relativePath.startsWith("evidence/") || evidence.relativePath.includes("..") || evidence.relativePath.includes("\\")) {
+          throw new Error("Fast calibration event contains an unsafe evidence path.");
+        }
+        const evidenceBytes = await readFile(path.join(this.sessionDir, ...evidence.relativePath.split("/")));
+        if (hashBytes(evidenceBytes) !== evidence.sha256 || evidenceBytes.length !== evidence.byteSize) {
+          throw new Error("Fast calibration accepted or failed evidence checkpoint is missing or corrupt.");
+        }
+      }
+    }
+    return events;
+  }
+
+  private nextOperationId(): string {
+    const value = this.config.operationId?.() ?? `op-${crypto.randomUUID()}`;
+    exactId(value, "operationId");
+    if (this.events.some((event) => event.operationId === value)) throw new Error("Generated fast calibration operationId is not unique.");
+    return value;
+  }
+
+  private async append<T extends Omit<FastCalibrationEventV1_2, keyof FastCalibrationEventBaseV1_2>>(
+    operationId: string,
+    body: T,
+  ): Promise<FastCalibrationEventV1_2> {
+    exactId(operationId, "operationId");
+    if (this.events.some((event) => event.operationId === operationId)) throw new Error("Fast calibration operationId cannot be reused.");
+    const sequence = this.events.length + 1;
+    const withoutHash = {
+      ...body,
+      sequence,
+      operationId,
+      recordedAt: (this.config.now?.() ?? new Date()).toISOString(),
+      previousEventSha256: this.events.at(-1)?.eventSha256 ?? hashFastCalibrationCanonicalV1_2(this.identity),
+    };
+    const event = { ...withoutHash, eventSha256: hashFastCalibrationCanonicalV1_2(withoutHash) } as unknown as FastCalibrationEventV1_2;
+    await writeFile(
+      path.join(this.sessionDir, "events", `${String(sequence).padStart(8, "0")}.json`),
+      canonicalBytes(event),
+      { flag: "wx" },
+    );
+    this.events.push(event);
+    return event;
+  }
+
+  private async checkpoint(bytes: Buffer, mediaType: FastCalibrationEvidenceV1_2["mediaType"], prefix: string): Promise<FastCalibrationEvidenceV1_2> {
+    if (!Buffer.isBuffer(bytes) || bytes.length === 0) throw new Error("Fast calibration evidence bytes are empty.");
+    const sha256 = hashBytes(bytes);
+    const extension = mediaType === "image/tiff" ? "tiff" : mediaType === "image/png" ? "png" : "json";
+    const relativePath = `evidence/${prefix}-${sha256}.${extension}`;
+    const filePath = path.join(this.sessionDir, ...relativePath.split("/"));
+    try {
+      await writeFile(filePath, bytes, { flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (hashBytes(await readFile(filePath)) !== sha256) throw new Error("Existing content-addressed calibration checkpoint is corrupt.");
+    }
+    const metadata = await stat(filePath);
+    if (metadata.size !== bytes.length) throw new Error("Fast calibration checkpoint byte size mismatch.");
+    return { evidenceId: `${prefix}-${sha256.slice(0, 16)}`, relativePath, sha256, byteSize: bytes.length, mediaType };
+  }
+
+  status(): FastCalibrationStatusV1_2 {
+    const placements = activePlacements(this.events);
+    const photometricKeys = acceptedPhotometricKeys(this.events);
+    const placementPoses = [...placements.values()].sort((a, b) => a.slot - b.slot).map((event) => event.pose!);
+    const lastPhotometricSequence = Math.max(0, ...acceptedEvents(this.events)
+      .filter((event) => event.role !== "checkerboard_placement")
+      .map((event) => event.sequence));
+    const batchCleanupComplete = this.events.some((event) =>
+      event.type === "batch_cleanup_completed" && event.sequence > lastPhotometricSequence);
+    const flip = this.events.some((event) => event.type === "blank_reverse_flip_confirmed");
+    const analysis = this.events.some((event) => event.type === "analysis_completed");
+    const finalization = this.events.some((event) => event.type === "finalization_completed");
+    let phase: FastCalibrationPhaseV1_2;
+    let nextAction: FastCalibrationNextActionV1_2;
+    if (placements.size < 4) {
+      const slot = [1, 2, 3, 4].find((candidate) => !placements.has(candidate))!;
+      phase = "checkerboard_placements";
+      nextAction = { action: "capture_checkerboard", role: "checkerboard_placement", slot, channelIndex: null, sampleIndex: slot };
+    } else if (!flip) {
+      phase = "blank_reverse_flip";
+      nextAction = { action: "confirm_blank_reverse_flip", role: "blank_reverse_flip", slot: null, channelIndex: null, sampleIndex: null };
+    } else if (photometricKeys.size < PHOTOMETRIC_PLAN.length) {
+      const missing = PHOTOMETRIC_PLAN.find((item) => !photometricKeys.has(`${item.role}:${item.channelIndex}:${item.sampleIndex}`))!;
+      phase = "photometric_sweep";
+      nextAction = { action: "capture_photometric", ...missing };
+    } else if (!batchCleanupComplete) {
+      phase = "photometric_sweep";
+      nextAction = { action: "complete_batch_cleanup", role: "safe_off", slot: null, channelIndex: null, sampleIndex: null };
+    } else if (!analysis) {
+      phase = "analyze";
+      nextAction = { action: "analyze", role: "analysis", slot: null, channelIndex: null, sampleIndex: null };
+    } else if (!finalization) {
+      phase = "finalize";
+      nextAction = { action: "finalize", role: "finalization", slot: null, channelIndex: null, sampleIndex: null };
+    } else {
+      phase = "ready_for_explicit_activation";
+      nextAction = { action: "activate_explicitly", role: "activation", slot: null, channelIndex: null, sampleIndex: null };
+    }
+    return {
+      sessionId: this.identity.sessionId,
+      contractVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
+      phase,
+      nextAction,
+      captureCounts: {
+        acceptedCheckerboardPlacements: placements.size,
+        acceptedPhotometricFrames: photometricKeys.size,
+        totalAcceptedImages: placements.size + photometricKeys.size,
+        requiredTotalImages: 76,
+      },
+      acceptedPlacementSlots: [...placements.keys()].sort((a, b) => a - b),
+      failedOperationCount: this.events.filter((event) => event.type.endsWith("failed")).length,
+      supersededOperationCount: acceptedEvents(this.events).filter((event) => event.supersedesOperationId).length,
+      aggregatePoseSpans: poseSpans(placementPoses),
+      runtimeContextSha256: this.identity.runtimeContextSha256,
+      rigCharacterizationSha256: this.identity.rigCharacterizationSha256,
+      eventCount: this.events.length,
+      lastEventSha256: this.events.at(-1)?.eventSha256 ?? null,
+    };
+  }
+
+  private async recordCaptureFailure(input: {
+    operationId: string;
+    role: FastCalibrationCaptureRoleV1_2;
+    slot: number | null;
+    channelIndex: number | null;
+    sampleIndex: number | null;
+    error: unknown;
+    evidence?: FastCalibrationEvidenceV1_2;
+  }): Promise<never> {
+    const message = input.error instanceof Error ? input.error.message : String(input.error);
+    await this.append(input.operationId, {
+      type: "capture_failed",
+      role: input.role,
+      slot: input.slot,
+      channelIndex: input.channelIndex,
+      sampleIndex: input.sampleIndex,
+      error: message.slice(0, 1000),
+      ...(input.evidence ? { evidence: input.evidence } : {}),
+    });
+    throw new FastCalibrationOperationErrorV1_2(input.operationId, message);
+  }
+
+  async captureCheckerboard(input: {
+    frame: FastCalibrationCapturedFrameV1_2;
+    pose: FastCalibrationPoseV1_2;
+    replaceSlot?: number;
+  }): Promise<FastCalibrationStatusV1_2> {
+    const operationId = this.nextOperationId();
+    const before = this.status();
+    const placements = activePlacements(this.events);
+    const replacement = input.replaceSlot !== undefined;
+    const slot = replacement ? input.replaceSlot! : before.nextAction.role === "checkerboard_placement" ? before.nextAction.slot : 0;
+    let evidence: FastCalibrationEvidenceV1_2 | undefined;
+    try {
+      if (before.phase !== "checkerboard_placements") throw new Error("Checkerboard placement capture is not the bridge-owned next action.");
+      if (!Number.isInteger(slot) || slot < 1 || slot > 4) throw new Error("Checkerboard placement slot must be 1 through 4.");
+      const superseded = placements.get(slot);
+      if (replacement && !superseded) throw new Error("Explicit pose replacement requires an already accepted slot.");
+      if (!replacement && superseded) throw new Error("Accepted pose slot cannot be overwritten without explicit replacement.");
+      assertCaptureMetadata(input.frame.metadata, this.identity.runtimeContext);
+      evidence = await this.checkpoint(input.frame.bytes, input.frame.mediaType, `checkerboard-${slot}-${operationId}`);
+      const other = [...placements.values()].filter((event) => event.slot !== slot).map((event) => event.pose!);
+      const finalSet = other.length === 3 ? [...other, input.pose] : [];
+      const reasons = validatePose(input.pose, evidence.sha256, other, finalSet);
+      if (acceptedEvents(this.events).some((event) => event.evidence.sha256 === evidence!.sha256)) {
+        reasons.push("capture bytes duplicate or relabel previously accepted evidence");
+      }
+      if (reasons.length) throw new Error(reasons.join("; "));
+      await this.append(operationId, {
+        type: "capture_accepted",
+        role: "checkerboard_placement",
+        slot,
+        channelIndex: null,
+        sampleIndex: slot,
+        evidence,
+        metadata: input.frame.metadata,
+        pose: input.pose,
+        ...(superseded ? { supersedesOperationId: superseded.operationId } : {}),
+      });
+      return this.status();
+    } catch (error) {
+      return this.recordCaptureFailure({ operationId, role: "checkerboard_placement", slot: slot || null, channelIndex: null, sampleIndex: slot || null, error, evidence });
+    }
+  }
+
+  async confirmBlankReverseFlip(confirmed: boolean): Promise<FastCalibrationStatusV1_2> {
+    const operationId = this.nextOperationId();
+    if (this.status().phase !== "blank_reverse_flip" || confirmed !== true) {
+      throw new FastCalibrationOperationErrorV1_2(operationId, "Exactly one explicit blank-reverse flip confirmation is required after four accepted poses.");
+    }
+    await this.append(operationId, { type: "blank_reverse_flip_confirmed", flipCount: 1 });
+    return this.status();
+  }
+
+  async runPhotometricBatch(controller: FastCalibrationPersistentBatchControllerV1_2): Promise<FastCalibrationStatusV1_2> {
+    if (this.status().phase !== "photometric_sweep") throw new Error("Photometric batch is not the bridge-owned next action.");
+    let opened = false;
+    let currentOperationId: string | undefined;
+    try {
+      opened = true;
+      try {
+        const observedContext = await controller.open(this.identity.runtimeContext);
+        assertFastCalibrationRuntimeContextMatchV1_2(this.identity.runtimeContext, observedContext);
+      } catch (error) {
+        const openOperationId = this.nextOperationId();
+        const message = error instanceof Error ? error.message : String(error);
+        await this.append(openOperationId, {
+          type: "batch_open_failed",
+          role: "batch_open",
+          slot: null,
+          channelIndex: null,
+          sampleIndex: null,
+          error: message.slice(0, 1000),
+        });
+        throw new FastCalibrationOperationErrorV1_2(openOperationId, message);
+      }
+      while (this.status().nextAction.action === "capture_photometric") {
+        const next = this.status().nextAction;
+        if (next.role !== "dark_control" && next.role !== "flat_field" && next.role !== "illumination_pattern") {
+          throw new Error("Photometric sweep next-action contract is inconsistent.");
+        }
+        currentOperationId = this.nextOperationId();
+        try {
+          const frame = await controller.capture({
+            operationId: currentOperationId,
+            role: next.role,
+            channelIndex: next.channelIndex,
+            sampleIndex: next.sampleIndex,
+            dutyPercent: next.role === "dark_control" ? 0 : this.identity.runtimeContext.dutyPercent,
+          });
+          assertCaptureMetadata(frame.metadata, this.identity.runtimeContext);
+          const evidence = await this.checkpoint(frame.bytes, frame.mediaType, `${next.role}-${next.channelIndex}-${next.sampleIndex}-${currentOperationId}`);
+          if (acceptedEvents(this.events).some((event) => event.evidence.sha256 === evidence.sha256)) {
+            throw new Error("Photometric capture bytes duplicate or relabel previously accepted evidence.");
+          }
+          await this.append(currentOperationId, {
+            type: "capture_accepted",
+            role: next.role,
+            slot: next.slot,
+            channelIndex: next.channelIndex,
+            sampleIndex: next.sampleIndex,
+            evidence,
+            metadata: frame.metadata,
+          });
+          currentOperationId = undefined;
+        } catch (error) {
+          await this.recordCaptureFailure({
+            operationId: currentOperationId as string,
+            role: next.role,
+            slot: next.slot,
+            channelIndex: next.channelIndex,
+            sampleIndex: next.sampleIndex,
+            error,
+          });
+        }
+      }
+    } finally {
+      if (opened) {
+        const cleanupOperationId = this.nextOperationId();
+        let safeOff: Awaited<ReturnType<FastCalibrationPersistentBatchControllerV1_2["safeOff"]>>;
+        try {
+          safeOff = await controller.safeOff();
+          if (
+            safeOff.controllerIdentity !== this.identity.runtimeContext.controller.identity ||
+            safeOff.confirmed !== true || safeOff.responseKinds.length === 0 || safeOff.responseKinds.some((kind) => kind !== "ack")
+          ) {
+            throw new Error("Persistent calibration batch final safe-off acknowledgement is incomplete.");
+          }
+        } catch (error) {
+          const safeOffMessage = error instanceof Error ? error.message : String(error);
+          let closeMessage = "";
+          try {
+            await controller.close();
+          } catch (closeError) {
+            closeMessage = closeError instanceof Error ? closeError.message : String(closeError);
+          }
+          const message = closeMessage
+            ? safeOffMessage + "; controller close also failed: " + closeMessage
+            : safeOffMessage;
+          await this.append(cleanupOperationId, {
+            type: "batch_safe_off_failed",
+            role: "safe_off",
+            slot: null,
+            channelIndex: null,
+            sampleIndex: null,
+            error: message.slice(0, 1000),
+          });
+          throw new FastCalibrationOperationErrorV1_2(cleanupOperationId, message);
+        }
+        try {
+          await controller.close();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await this.append(cleanupOperationId, {
+            type: "batch_close_failed",
+            role: "batch_close",
+            slot: null,
+            channelIndex: null,
+            sampleIndex: null,
+            error: message.slice(0, 1000),
+          });
+          throw new FastCalibrationOperationErrorV1_2(cleanupOperationId, message);
+        }
+        await this.append(cleanupOperationId, {
+          type: "batch_cleanup_completed",
+          controllerIdentity: safeOff.controllerIdentity,
+          safeOffResponseKinds: [...safeOff.responseKinds],
+          closed: true,
+        });
+      }
+    }
+    return this.status();
+  }
+
+  async recordAnalysis(input: {
+    analysisBytes: Buffer;
+    accepted: boolean;
+    sourceArtifactLedgerSha256: string;
+  }): Promise<FastCalibrationStatusV1_2> {
+    const operationId = this.nextOperationId();
+    if (this.status().phase !== "analyze") throw new Error("Analysis is not the bridge-owned next action.");
+    const evidence = await this.checkpoint(input.analysisBytes, "application/json", `analysis-${operationId}`);
+    exactSha(input.sourceArtifactLedgerSha256, "sourceArtifactLedgerSha256");
+    if (!input.accepted) {
+      await this.append(operationId, {
+        type: "analysis_failed",
+        role: "analysis",
+        slot: null,
+        channelIndex: null,
+        sampleIndex: null,
+        error: "Fast calibration analysis rejected the evidence without changing acceptance thresholds.",
+        evidence,
+      });
+      throw new FastCalibrationOperationErrorV1_2(operationId, "Fast calibration analysis rejected the evidence.");
+    }
+    await this.append(operationId, {
+      type: "analysis_completed",
+      evidence,
+      sourceArtifactLedgerSha256: input.sourceArtifactLedgerSha256,
+      accepted: true,
+    });
+    return this.status();
+  }
+
+  async recordFinalizedBundle(input: {
+    bundleBytes: Buffer;
+    memberLedgerSha256: string;
+    memberCount: number;
+    captureContractVersion: string;
+    runtimeContextSha256: string;
+    rigCharacterizationSha256: string;
+  }): Promise<FastCalibrationStatusV1_2> {
+    const operationId = this.nextOperationId();
+    if (this.status().phase !== "finalize") throw new Error("Finalization is not the bridge-owned next action.");
+    try {
+      if (input.memberCount !== 12) throw new Error("Production-authoritative fast calibration requires exactly 12 bundle members.");
+      exactSha(input.memberLedgerSha256, "memberLedgerSha256");
+      if (
+        input.captureContractVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT ||
+        input.runtimeContextSha256 !== this.identity.runtimeContextSha256 ||
+        input.rigCharacterizationSha256 !== this.identity.rigCharacterizationSha256
+      ) {
+        throw new Error("Finalized bundle is not exactly bound to the V1.2 session, runtime context, and rig characterization.");
+      }
+      const bundle = await this.checkpoint(input.bundleBytes, "application/json", `bundle-${operationId}`);
+      await this.append(operationId, {
+        type: "finalization_completed",
+        bundle,
+        memberLedgerSha256: input.memberLedgerSha256,
+        memberCount: 12,
+        captureContractVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
+        runtimeContextSha256: input.runtimeContextSha256,
+        rigCharacterizationSha256: input.rigCharacterizationSha256,
+      });
+      return this.status();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.append(operationId, {
+        type: "finalization_failed",
+        role: "finalization",
+        slot: null,
+        channelIndex: null,
+        sampleIndex: null,
+        error: message.slice(0, 1000),
+      });
+      throw new FastCalibrationOperationErrorV1_2(operationId, message);
+    }
+  }
+
+  assertReadyForStartNewCard(liveContext: FastCalibrationRuntimeContextV1_2): void {
+    if (this.status().phase !== "ready_for_explicit_activation") {
+      throw new Error("Start New Card requires one complete Mathematical V1/V1.2 calibration bundle ready for explicit activation.");
+    }
+    assertFastCalibrationRuntimeContextMatchV1_2(this.identity.runtimeContext, liveContext);
+  }
+
+  getSourceArtifactLedger(): Array<{
+    operationId: string;
+    role: FastCalibrationCaptureRoleV1_2;
+    slot: number;
+    channelIndex: number | null;
+    sampleIndex: number;
+    sha256: string;
+    byteSize: number;
+    active: boolean;
+    supersedesOperationId?: string;
+  }> {
+    const activePlacementOperationIds = new Set(
+      [...activePlacements(this.events).values()].map((event) => event.operationId),
+    );
+    return acceptedEvents(this.events).map((event) => ({
+      operationId: event.operationId,
+      role: event.role,
+      slot: event.slot,
+      channelIndex: event.channelIndex,
+      sampleIndex: event.sampleIndex,
+      sha256: event.evidence.sha256,
+      byteSize: event.evidence.byteSize,
+      active: event.role !== "checkerboard_placement" || activePlacementOperationIds.has(event.operationId),
+      ...(event.supersedesOperationId ? { supersedesOperationId: event.supersedesOperationId } : {}),
+    }));
+  }
+}

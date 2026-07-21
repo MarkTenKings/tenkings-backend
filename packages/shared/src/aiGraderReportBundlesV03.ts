@@ -440,6 +440,22 @@ const calibrationBundleAuthoritySchema = z.strictObject({
   sourceCaptureManifestSha256: sha256Schema,
   memberLedgerSha256: sha256Schema,
   members: z.array(calibrationBundleAuthorityMemberSchema).length(12),
+  captureContractVersion: z.literal("1.2.0").optional(),
+  runtimeContextSha256: sha256Schema.optional(),
+  rigCharacterizationSha256: sha256Schema.optional(),
+}).superRefine((authority, context) => {
+  const values = [
+    authority.captureContractVersion,
+    authority.runtimeContextSha256,
+    authority.rigCharacterizationSha256,
+  ];
+  const present = values.filter((value) => value !== undefined).length;
+  if (present !== 0 && present !== values.length) {
+    context.addIssue({
+      code: "custom",
+      message: "V1.2 calibration bundle authority requires the exact contract, runtime-context, and rig-characterization hashes together",
+    });
+  }
 });
 
 export const aiGraderReportBundleV03Schema = z

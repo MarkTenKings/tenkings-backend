@@ -842,6 +842,38 @@ test("Production Start New Card accepts only an explicit ready Mathematical V1 c
   assert.equal(unavailable.manifest.sessionId, undefined);
   assert.equal(unavailable.manifest.currentStep, "start_new_card");
   assert.equal(unavailable.manifest.gradingContract, "mathematical_calibration_v1");
+
+  const runtimeContext = { schemaVersion: "fast-mathematical-calibration-runtime-context-v1.2", marker: "exact-live-context" };
+  const mismatchConfig = buildAiGraderLocalStationBridgeConfig({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 47652,
+    stationToken: "StationTokenStationTokenStationToken1234",
+    outputDir: path.join(outputDir, "context-mismatch"),
+    captureProfile: "production_fast",
+    mathematicalCalibrationRigId: "fixture-rig",
+    mathematicalCalibrationBundlePath: path.join(outputDir, "context-mismatch", "mathematical-calibration-bundle-v1.json"),
+    mathematicalCalibrationBundleSha256: BUNDLE_SHA256,
+    mathematicalCalibrationRuntimeContext: runtimeContext,
+  });
+  const mismatch = new AiGraderLocalStationBridgeService(mismatchConfig, undefined, undefined, {
+    loadMathematicalCalibrationBundle(input) {
+      assert.deepEqual(input.expectedRuntimeContext, runtimeContext);
+      throw new Error("Live camera, rig, controller, wiring, settings, target, component, algorithm, location, or lighting context differs from the active calibration.");
+    },
+  });
+  t.after(() => mismatch.shutdown("mathematical context mismatch test complete"));
+  await assert.rejects(
+    () => mismatch.action("start-session", {
+      reportId: "context-mismatch-report",
+      captureProfile: "production_fast",
+      gradingContract: "mathematical_calibration_v1",
+      mathematicalGradingAuthority: printedAuthority(),
+    }),
+    /Mathematical Calibration V1 is not ready:.*Live camera, rig, controller.*No V0 fallback is permitted/i,
+  );
+  assert.equal(mismatch.manifest.sessionId, undefined);
 });
 
 test("ordinary Mathematical V1 no-finding completion uses station-derived publication and no V0 fallback", async () => {

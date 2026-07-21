@@ -12,16 +12,22 @@ The executable acceptance and scoring authority is `packages/shared/src/aiGrader
 
 Use one exact reviewed checkout pinned to the intended source commit. Do not install it over the Dell helper, change the Scheduled Task, rotate or print a station token, or persist new driver/firmware/controller settings. If another process already owns the camera or the requested loopback port, stop and obtain direction rather than changing the installed helper.
 
-## Current four-pose V1.1 compatibility stop
+## V1.1 compatibility stop and V1.2 software candidate
 
-As of `origin/main` commit `9f63691d792847d13f47e2df02b137cdb317ae2a`, the newer four-pose/one-flip V1.1 capture prototype is **not** a Production activation path. Do not spend physical calibration time on it until the following software gap is closed and verified without hardware:
+The four-pose/one-flip V1.1 profile prototype remains **not** a Production activation path:
 
-- V1.1 seals `76` captures and `48` measurements, but its checked-in finalizer emits only `ten-kings-mathematical-calibration-profile-v1.1`.
+- V1.1 seals '76' captures and '48' measurements, but its finalizer emits only 'ten-kings-mathematical-calibration-profile-v1.1'.
 - Production accepts the pinned V1.0.1 authority and the complete outer bundle plus its exact 12 members. The current V1.1 finalizer does not create the physical artifact, acceptance artifact, eight flat-field artifacts, illumination-pattern artifact, or outer bundle.
-- `open-mathematical-calibration-v1-1.ps1` only opens the protected preview page. That page has reconnect/stop preview controls; it is not an end-to-end start/capture/measure/seal/analyze/finalize operator runner.
-- The per-pose preview `Distinct` indicator does not by itself prove the final aggregate X/Y/rotation diversity gates. A future V1.1 runner must display and enforce the final aggregate spans before sealing.
+- 'open-mathematical-calibration-v1-1.ps1' only opens the protected preview page. It is not an end-to-end operator runner.
+- A per-pose Distinct indicator does not prove the final aggregate X/Y/rotation diversity gates.
 
-Until a tested V1.1 runner/analyzer/finalizer produces a bundle accepted by the real Production loader, the only checked-in deployable workflow is the `102`-capture/`78`-measurement V1.0.1 process documented below. There is no conversion fallback between these contracts.
+The hardware-free V1.2 core is a separate contract, not a reinterpretation of V1.1. Its quick session is exactly four capture-time checkerboard placements, one explicit blank-reverse flip, and 72 automated photometric images: 24 dark, 24 flat-field, and 24 illumination-pattern. That is 76 images and zero new quick physical measurements. It consumes one exact immutable rig-characterization authority for target metrology, camera/lens, physical directions, component identities, and repeatability.
+
+V1.2 persists an append-only event/hash chain, retains successful poses across failures and restart, permits explicit lineage-preserving pose supersession, resumes a persistent camera/controller batch at the first missing frame, enforces exact safe-off/controller acknowledgement, and produces the complete Production outer bundle and ordered 12-member ledger. The canonical loader accepts V1.2 only when its exact source, threshold, runtime-context, and rig-characterization contracts verify. Local Start New Card remains blocked if exact live context is absent or differs.
+
+This software candidate does **not** authorize a Dell run, activation, helper install/restart, Production port use, database import/trust, or deployment. A Dell operator runner/controller adapter, physical timing, thermal/repeatability evidence, and explicit activation remain required. The V1.0.1 '102'-capture/'78'-measurement process below remains the established physical procedure until those V1.2 Dell gates pass. There is no conversion or automatic fallback among V1.0.1, V1.1, V1.2, provisional geometry, or V0.
+
+Under ten minutes is an acceptance target, not a present claim. Measure wall time on the Dell from session creation through ready-for-explicit-activation, including operator moves, controller acknowledgements, image transfer/checkpointing, analysis, finalization, and safe-off. Never lower pose, residual, U95, repeatability, or threshold-manifest gates to meet the target.
 
 The Basler transport is not the unresolved blocker. Prior protected sessions received real frame streams, including sessions with successful valid overlays/captures. Pylon Viewer may be used only for coarse physical positioning and must then be closed completely. The protected bridge must be the sole camera owner for preview and capture. A black browser canvas, invalid checkerboard contour, missing lighting-controller acknowledgement, or disagreement between preview and capture-time geometry is an explicit stop, not authority to use Pylon Viewer frames or another image source.
 
