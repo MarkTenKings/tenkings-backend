@@ -41,6 +41,23 @@ test("partial real activation wiring fails closed instead of falling back to loo
         AI_GRADER_CALIBRATION_WORKSTATION_KEY_ID: "d".repeat(64),
       },
     ),
-    /requires the workstation key, key ID, SHA-pinned rig inventory, and trusted finalizer staging root/,
+    /requires the workstation key, key ID, SHA-pinned rig inventory, trusted finalizer staging root, and pinned hosted authority public keys/,
+  );
+});
+
+
+test("real helper requires pinned hosted authority verification keys before reading local key or inventory files", () => {
+  assert.throws(
+    () => createAiGraderLocalStationBridgeHttpServer(
+      realInput(),
+      {
+        AI_GRADER_CALIBRATION_WORKSTATION_PRIVATE_KEY_PATH: "C:\\trusted\\workstation-key.pem",
+        AI_GRADER_CALIBRATION_WORKSTATION_KEY_ID: "d".repeat(64),
+        AI_GRADER_CALIBRATION_RIG_INVENTORY_PATH: "C:\\trusted\\rig-inventory.json",
+        AI_GRADER_CALIBRATION_RIG_INVENTORY_SHA256: "e".repeat(64),
+        AI_GRADER_CALIBRATION_FINALIZER_STAGING_ROOT: "C:\\trusted\\finalizer-staging",
+      },
+    ),
+    /pinned hosted authority public keys/,
   );
 });

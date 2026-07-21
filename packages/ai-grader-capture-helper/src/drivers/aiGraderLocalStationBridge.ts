@@ -137,7 +137,10 @@ import {
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH,
 } from "./mathematicalCalibrationV1_1Page";
 import { loadFixedRigMathematicalCalibrationBundleV1 } from "./fixedRigMathematicalCalibrationBundleV1";
-import { createMathematicalCalibrationActivationRegistryV1 } from "./mathematicalCalibrationActivationRegistryV1";
+import {
+  createMathematicalCalibrationActivationRegistryV1,
+  parseMathematicalCalibrationHostedAuthorityPublicKeysV1,
+} from "./mathematicalCalibrationActivationRegistryV1";
 import {
   MATHEMATICAL_CALIBRATION_RUNTIME_OBSERVATION_SOURCE_V1,
   MATHEMATICAL_CALIBRATION_RUNTIME_OBSERVATION_V1,
@@ -1378,6 +1381,7 @@ export interface AiGraderLocalStationBridgeDependencies {
     prepareActivation(value: unknown): Promise<AiGraderCalibrationWorkstationReceiptV1>;
     confirmHostedActivation(value: unknown): Promise<unknown>;
     assertStartAuthority(value: unknown): Promise<{ bundlePath: string }>;
+    assertBoundSessionAuthority(value: unknown): Promise<{ bundlePath: string }>;
   };
 }
 
@@ -6909,7 +6913,7 @@ export class AiGraderLocalStationBridgeService {
       if (!this.dependencies.calibrationActivationRegistry || !activationAuthority) {
         throw new Error("Mathematical V1 processing requires the exact session-bound calibration activation; configured bundle fallback is prohibited.");
       }
-      const activationBinding = await this.dependencies.calibrationActivationRegistry.assertStartAuthority(
+      const activationBinding = await this.dependencies.calibrationActivationRegistry.assertBoundSessionAuthority(
         activationAuthority,
       );
       calibrationBundlePath = activationBinding.bundlePath;
@@ -12485,10 +12489,13 @@ export function createAiGraderLocalStationBridgeHttpServer(
   const protectedRigInventoryPath = env.AI_GRADER_CALIBRATION_RIG_INVENTORY_PATH?.trim();
   const protectedRigInventorySha256 = env.AI_GRADER_CALIBRATION_RIG_INVENTORY_SHA256?.trim();
   const finalizedBundleStagingRoot = env.AI_GRADER_CALIBRATION_FINALIZER_STAGING_ROOT?.trim();
+  const hostedAuthorityPublicKeysJson =
+    env.AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_PUBLIC_KEYS_JSON?.trim();
   const legacyLiveOperatingContextPath = env.AI_GRADER_CALIBRATION_LIVE_OPERATING_CONTEXT_PATH?.trim();
   const activationConfigurationRequested = Boolean(
     workstationPrivateKeyPath || workstationKeyId || protectedRigInventoryPath ||
     protectedRigInventorySha256 || finalizedBundleStagingRoot ||
+    hostedAuthorityPublicKeysJson ||
     env.AI_GRADER_CALIBRATION_ACTIVATION_REGISTRY_DIR?.trim(),
   );
   if (config.mode === "real" && legacyLiveOperatingContextPath) {
@@ -12498,9 +12505,10 @@ export function createAiGraderLocalStationBridgeHttpServer(
   }
   if (!runtimeDependencies.calibrationActivationRegistry && config.mode === "real" && activationConfigurationRequested) {
     if (!workstationPrivateKeyPath || !workstationKeyId || !protectedRigInventoryPath ||
-        !protectedRigInventorySha256 || !finalizedBundleStagingRoot) {
+        !protectedRigInventorySha256 || !finalizedBundleStagingRoot ||
+        !hostedAuthorityPublicKeysJson) {
       throw new Error(
-        "Real calibration activation requires the workstation key, key ID, SHA-pinned rig inventory, and trusted finalizer staging root.",
+        "Real calibration activation requires the workstation key, key ID, SHA-pinned rig inventory, trusted finalizer staging root, and pinned hosted authority public keys.",
       );
     }
     if (!path.isAbsolute(workstationPrivateKeyPath) ||
@@ -12537,6 +12545,10 @@ export function createAiGraderLocalStationBridgeHttpServer(
       helperVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
       workstationKeyId,
       workstationPrivateKey: crypto.createPrivateKey(readFileSync(workstationPrivateKeyPath)),
+      hostedAuthorityPublicKeys: parseMathematicalCalibrationHostedAuthorityPublicKeysV1(
+        hostedAuthorityPublicKeysJson,
+        config.mathematicalCalibrationRigId,
+      ),
       liveOperatingContext: trustedLiveOperatingContext,
       isIdle: () => {
         if (!service) return false;

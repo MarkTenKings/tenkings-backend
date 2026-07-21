@@ -8,6 +8,8 @@ export const AI_GRADER_CALIBRATION_WORKSTATION_RECEIPT_V1_SCHEMA_VERSION =
   "ten-kings-ai-grader-calibration-workstation-receipt-v1" as const;
 export const AI_GRADER_CALIBRATION_PENDING_AUTHORITY_V1_SCHEMA_VERSION =
   "ten-kings-ai-grader-calibration-pending-authority-v1" as const;
+export const AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1 =
+  "ecdsa-p256-sha256-ieee-p1363" as const;
 export const AI_GRADER_CALIBRATION_LOCAL_POINTER_V1_SCHEMA_VERSION =
   "ten-kings-ai-grader-calibration-local-pointer-v1" as const;
 export const AI_GRADER_CALIBRATION_ACTIVATION_API_V1 =
@@ -151,8 +153,18 @@ export function canonicalAiGraderRuntimeContextV1(value: unknown): string {
   });
 }
 
-export const aiGraderCalibrationActivationAuthorityV1Schema = z.object({
+const hostedAuthoritySignatureShapeV1 = {
+  hostedAuthorityKeyId: sha256,
+  hostedAuthoritySignatureAlgorithm: z.literal(
+    AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1,
+  ),
+  hostedAuthorityIssuedAt: timestamp,
+  hostedAuthorityExpiresAt: timestamp,
+} as const;
+
+const calibrationActivationAuthorityStatementShapeV1 = {
   schemaVersion: z.literal(AI_GRADER_CALIBRATION_ACTIVATION_AUTHORITY_V1_SCHEMA_VERSION),
+  authorityPhase: z.literal("ACTIVE"),
   activationId: canonicalText,
   activationHash: sha256,
   activationRevision: sha256,
@@ -165,12 +177,42 @@ export const aiGraderCalibrationActivationAuthorityV1Schema = z.object({
   operatingContextHash: sha256,
   workstationReceiptSha256: sha256,
   activatedAt: timestamp,
-}).strict();
+  ...hostedAuthoritySignatureShapeV1,
+} as const;
+
+function validateActiveHostedAuthorityTimesV1(
+  value: {
+    activatedAt: string;
+    hostedAuthorityIssuedAt: string;
+    hostedAuthorityExpiresAt: string;
+  },
+  context: z.RefinementCtx,
+) {
+  const activatedAt = new Date(value.activatedAt).getTime();
+  const issuedAt = new Date(value.hostedAuthorityIssuedAt).getTime();
+  const expiresAt = new Date(value.hostedAuthorityExpiresAt).getTime();
+  if (issuedAt < activatedAt) {
+    context.addIssue({ code: "custom", path: ["hostedAuthorityIssuedAt"], message: "must not precede activatedAt" });
+  }
+  if (expiresAt <= issuedAt) {
+    context.addIssue({ code: "custom", path: ["hostedAuthorityExpiresAt"], message: "must follow hostedAuthorityIssuedAt" });
+  }
+}
+
+const aiGraderCalibrationActivationAuthorityStatementV1Schema = z.object(
+  calibrationActivationAuthorityStatementShapeV1,
+).strict().superRefine(validateActiveHostedAuthorityTimesV1);
+
+export const aiGraderCalibrationActivationAuthorityV1Schema = z.object({
+  ...calibrationActivationAuthorityStatementShapeV1,
+  hostedAuthoritySignature: z.string().regex(/^[A-Za-z0-9_-]{86}$/),
+}).strict().superRefine(validateActiveHostedAuthorityTimesV1);
 
 export type AiGraderCalibrationActivationAuthorityV1 = z.infer<typeof aiGraderCalibrationActivationAuthorityV1Schema>;
 
-export const aiGraderCalibrationPendingAuthorityV1Schema = z.object({
+const calibrationPendingAuthorityStatementShapeV1 = {
   schemaVersion: z.literal(AI_GRADER_CALIBRATION_PENDING_AUTHORITY_V1_SCHEMA_VERSION),
+  authorityPhase: z.literal("PENDING"),
   activationId: canonicalText,
   activationHash: sha256,
   activationRevision: sha256,
@@ -184,13 +226,53 @@ export const aiGraderCalibrationPendingAuthorityV1Schema = z.object({
   operatingContextV1: aiGraderOperatingContextV1Schema,
   requestedAt: timestamp,
   pendingExpiresAt: timestamp,
-}).strict().superRefine((value, context) => {
+  ...hostedAuthoritySignatureShapeV1,
+} as const;
+
+function validatePendingHostedAuthorityTimesV1(
+  value: {
+    requestedAt: string;
+    pendingExpiresAt: string;
+    hostedAuthorityIssuedAt: string;
+    hostedAuthorityExpiresAt: string;
+  },
+  context: z.RefinementCtx,
+) {
   if (new Date(value.pendingExpiresAt).getTime() <= new Date(value.requestedAt).getTime()) {
     context.addIssue({ code: "custom", path: ["pendingExpiresAt"], message: "must follow requestedAt" });
   }
-});
+  if (value.hostedAuthorityIssuedAt !== value.requestedAt) {
+    context.addIssue({ code: "custom", path: ["hostedAuthorityIssuedAt"], message: "must equal requestedAt" });
+  }
+  if (value.hostedAuthorityExpiresAt !== value.pendingExpiresAt) {
+    context.addIssue({ code: "custom", path: ["hostedAuthorityExpiresAt"], message: "must equal pendingExpiresAt" });
+  }
+}
+
+const aiGraderCalibrationPendingAuthorityStatementV1Schema = z.object(
+  calibrationPendingAuthorityStatementShapeV1,
+).strict().superRefine(validatePendingHostedAuthorityTimesV1);
+
+export const aiGraderCalibrationPendingAuthorityV1Schema = z.object({
+  ...calibrationPendingAuthorityStatementShapeV1,
+  hostedAuthoritySignature: z.string().regex(/^[A-Za-z0-9_-]{86}$/),
+}).strict().superRefine(validatePendingHostedAuthorityTimesV1);
 
 export type AiGraderCalibrationPendingAuthorityV1 = z.infer<typeof aiGraderCalibrationPendingAuthorityV1Schema>;
+
+export function canonicalAiGraderCalibrationHostedAuthorityStatementV1(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Hosted calibration authority must be one exact object.");
+  }
+  const { hostedAuthoritySignature: _signature, ...statement } = value as Record<string, unknown>;
+  const phase = statement.authorityPhase;
+  const parsed = phase === "PENDING"
+    ? aiGraderCalibrationPendingAuthorityStatementV1Schema.parse(statement)
+    : phase === "ACTIVE"
+      ? aiGraderCalibrationActivationAuthorityStatementV1Schema.parse(statement)
+      : (() => { throw new Error("Hosted calibration authority phase is invalid."); })();
+  return canonicalAiGraderCalibrationJsonV1(parsed);
+}
 
 export const aiGraderCalibrationWorkstationReceiptV1Schema = z.object({
   schemaVersion: z.literal(AI_GRADER_CALIBRATION_WORKSTATION_RECEIPT_V1_SCHEMA_VERSION),

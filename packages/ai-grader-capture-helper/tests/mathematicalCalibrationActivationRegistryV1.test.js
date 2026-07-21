@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   canonicalAiGraderCalibrationJsonV1,
+  canonicalAiGraderCalibrationHostedAuthorityStatementV1,
   canonicalAiGraderOperatingContextV1,
   canonicalAiGraderRuntimeContextV1,
 } = require("@tenkings/shared");
@@ -19,6 +20,31 @@ const KEY_ID = "d".repeat(64);
 
 function sha(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+const {
+  privateKey: HOSTED_AUTHORITY_PRIVATE_KEY,
+  publicKey: HOSTED_AUTHORITY_PUBLIC_KEY,
+} = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+const HOSTED_AUTHORITY_KEY_ID = sha(HOSTED_AUTHORITY_PUBLIC_KEY.export({
+  format: "der",
+  type: "spki",
+}));
+const HOSTED_AUTHORITY_PUBLIC_KEYS = new Map([[HOSTED_AUTHORITY_KEY_ID, {
+  keyId: HOSTED_AUTHORITY_KEY_ID,
+  rigId: RIG_ID,
+  publicKey: HOSTED_AUTHORITY_PUBLIC_KEY,
+}]]);
+
+function signHostedAuthority(unsigned, privateKey = HOSTED_AUTHORITY_PRIVATE_KEY) {
+  return {
+    ...unsigned,
+    hostedAuthoritySignature: crypto.sign(
+      "sha256",
+      Buffer.from(canonicalAiGraderCalibrationHostedAuthorityStatementV1(unsigned), "utf8"),
+      { key: privateKey, dsaEncoding: "ieee-p1363" },
+    ).toString("base64url"),
+  };
 }
 
 function memberLedger() {
@@ -85,8 +111,11 @@ function operatingContext(authority, artifactSha256) {
 }
 
 function pendingAuthority(context, authority, artifactSha256, suffix) {
-  return {
+  const requestedAt = NOW.toISOString();
+  const pendingExpiresAt = new Date(NOW.getTime() + 600000).toISOString();
+  return signHostedAuthority({
     schemaVersion: "ten-kings-ai-grader-calibration-pending-authority-v1",
+    authorityPhase: "PENDING",
     activationId: `activation-${suffix}`,
     activationHash: sha(`activation:${suffix}`),
     activationRevision: sha(`revision:${suffix}`),
@@ -98,9 +127,13 @@ function pendingAuthority(context, authority, artifactSha256, suffix) {
     rigCharacterizationSha256: artifactSha256,
     operatingContextHash: sha(canonicalAiGraderOperatingContextV1(context)),
     operatingContextV1: context,
-    requestedAt: NOW.toISOString(),
-    pendingExpiresAt: new Date(NOW.getTime() + 600000).toISOString(),
-  };
+    requestedAt,
+    pendingExpiresAt,
+    hostedAuthorityKeyId: HOSTED_AUTHORITY_KEY_ID,
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: requestedAt,
+    hostedAuthorityExpiresAt: pendingExpiresAt,
+  });
 }
 
 test("local registry uses content-addressed bytes, atomic exact pointers, and no fallback after a failed selection", async (t) => {
@@ -215,6 +248,7 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
   );
 
   const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  let localNow = new Date(NOW);
   const registry = createMathematicalCalibrationActivationRegistryV1({
     rootDir: root,
     finalizedBundleStagingRoot,
@@ -223,9 +257,10 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     helperVersion: "helper-v1",
     workstationKeyId: KEY_ID,
     workstationPrivateKey: privateKey,
+    hostedAuthorityPublicKeys: HOSTED_AUTHORITY_PUBLIC_KEYS,
     liveOperatingContext: trustedLiveOperatingContext,
     isIdle: async () => true,
-    now: () => new Date(NOW),
+    now: () => new Date(localNow),
   });
 
   await assert.rejects(
@@ -249,14 +284,74 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
   assert.equal(await fs.readFile(bundlePath, "utf8"), "immutable finalized bundle fixture");
 
   const pending = pendingAuthority(context, authority, artifactSha256, "v1");
+  const unsignedPending = structuredClone(pending);
+  delete unsignedPending.hostedAuthoritySignature;
+  await assert.rejects(
+    registry.prepareActivation(unsignedPending),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+  );
+  await assert.rejects(
+    registry.prepareActivation({
+      ...pending,
+      activationHash: sha("browser-tampered-pending"),
+    }),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+  );
+  const {
+    privateKey: unknownPrivateKey,
+    publicKey: unknownPublicKey,
+  } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const unknownKeyId = sha(unknownPublicKey.export({ format: "der", type: "spki" }));
+  await assert.rejects(
+    registry.prepareActivation(signHostedAuthority({
+      ...pending,
+      hostedAuthorityKeyId: unknownKeyId,
+      hostedAuthoritySignature: undefined,
+    }, unknownPrivateKey)),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+  );
+  const expiredRequestedAt = new Date(NOW.getTime() - 120000).toISOString();
+  const expiredAt = new Date(NOW.getTime() - 60000).toISOString();
+  await assert.rejects(
+    registry.prepareActivation(signHostedAuthority({
+      ...pending,
+      activationId: "activation-expired",
+      activationHash: sha("activation:expired"),
+      activationRevision: sha("revision:expired"),
+      snapshotId: "snapshot-expired",
+      requestedAt: expiredRequestedAt,
+      pendingExpiresAt: expiredAt,
+      hostedAuthorityIssuedAt: expiredRequestedAt,
+      hostedAuthorityExpiresAt: expiredAt,
+      hostedAuthoritySignature: undefined,
+    })),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_EXPIRED",
+  );
+  await assert.rejects(
+    registry.prepareActivation(signHostedAuthority({
+      ...pending,
+      activationId: "activation-cross-rig",
+      activationHash: sha("activation:cross-rig"),
+      activationRevision: sha("revision:cross-rig"),
+      snapshotId: "snapshot-cross-rig",
+      rigId: "different-rig",
+      hostedAuthoritySignature: undefined,
+    })),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+  );
   const receipt = await registry.prepareActivation(pending);
+  await assert.rejects(
+    registry.prepareActivation(pending),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REPLAYED",
+  );
   assert.equal((await registry.readPointer()).state, "PENDING");
   assert.equal(receipt.observedOperatingContextHash, pending.operatingContextHash);
 
   const receiptPath = path.join(root, "receipts", `${pending.activationId}.json`);
   const receiptSha256 = sha(await fs.readFile(receiptPath));
-  const hosted = {
+  const hosted = signHostedAuthority({
     schemaVersion: "ten-kings-ai-grader-calibration-activation-authority-v1",
+    authorityPhase: "ACTIVE",
     activationId: pending.activationId,
     activationHash: pending.activationHash,
     activationRevision: sha("hosted-active-revision"),
@@ -269,11 +364,58 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     operatingContextHash: pending.operatingContextHash,
     workstationReceiptSha256: receiptSha256,
     activatedAt: NOW.toISOString(),
-  };
+    hostedAuthorityKeyId: HOSTED_AUTHORITY_KEY_ID,
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: NOW.toISOString(),
+    hostedAuthorityExpiresAt: new Date(NOW.getTime() + 120000).toISOString(),
+  });
+  await assert.rejects(
+    registry.confirmHostedActivation(pending),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+  );
+  await assert.rejects(
+    registry.confirmHostedActivation({
+      ...hosted,
+      activationRevision: sha("browser-forged-active-revision"),
+    }),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+  );
+  await assert.rejects(
+    registry.confirmHostedActivation(signHostedAuthority({
+      ...hosted,
+      activationId: "different-activation",
+      activationHash: sha("different-activation"),
+      hostedAuthoritySignature: undefined,
+    })),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_MISMATCH",
+  );
+  assert.equal((await registry.readPointer()).state, "PENDING");
   await registry.confirmHostedActivation(hosted);
   const active = await registry.assertStartAuthority(hosted);
   assert.equal(active.bundlePath, bundlePath);
+  await assert.rejects(
+    registry.assertStartAuthority({
+      ...hosted,
+      workstationReceiptSha256: sha("browser-forged-receipt"),
+    }),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+  );
+  const unsignedActive = structuredClone(hosted);
+  delete unsignedActive.hostedAuthoritySignature;
+  await assert.rejects(
+    registry.assertStartAuthority(unsignedActive),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+  );
   assert.equal((await registry.readPointer()).state, "ACTIVE");
+
+  localNow = new Date(NOW.getTime() + 180000);
+  await assert.rejects(
+    registry.assertStartAuthority(hosted),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_EXPIRED",
+  );
+  const boundSession = await registry.assertBoundSessionAuthority(hosted);
+  assert.equal(boundSession.authority.activationId, hosted.activationId);
+  localNow = new Date(NOW);
 
   observedRuntime = {
     ...observedRuntime,

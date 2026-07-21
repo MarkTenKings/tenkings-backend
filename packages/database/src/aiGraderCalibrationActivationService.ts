@@ -1,17 +1,23 @@
 import {
   createHash,
+  createPrivateKey,
   createPublicKey,
   randomUUID,
+  sign as signSignature,
   verify as verifySignature,
   type KeyObject,
 } from "node:crypto";
 import {
+  AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1,
   AI_GRADER_CALIBRATION_PENDING_AUTHORITY_V1_SCHEMA_VERSION,
   AI_GRADER_CALIBRATION_ACTIVATION_AUTHORITY_V1_SCHEMA_VERSION,
+  aiGraderCalibrationActivationAuthorityV1Schema,
+  aiGraderCalibrationPendingAuthorityV1Schema,
   aiGraderCalibrationWorkstationReceiptStatementV1,
   aiGraderCalibrationWorkstationReceiptV1Schema,
   aiGraderOperatingContextV1Schema,
   canonicalAiGraderCalibrationJsonV1,
+  canonicalAiGraderCalibrationHostedAuthorityStatementV1,
   canonicalAiGraderOperatingContextV1,
   type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderCalibrationActivationProjectionV1,
@@ -37,11 +43,18 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const DEFAULT_PENDING_TTL_MS = 10 * 60 * 1000;
 const MAX_PENDING_TTL_MS = 30 * 60 * 1000;
 const RECEIPT_CLOCK_SKEW_MS = 30 * 1000;
+const DEFAULT_ACTIVE_AUTHORITY_TTL_MS = 2 * 60 * 1000;
+const MAX_ACTIVE_AUTHORITY_TTL_MS = 10 * 60 * 1000;
 
 export type AiGraderCalibrationWorkstationPublicKeyV1 = {
   keyId: string;
   tenantId: string;
   publicKey: KeyObject;
+};
+
+export type AiGraderCalibrationHostedAuthoritySigningKeyV1 = {
+  keyId: string;
+  privateKey: KeyObject;
 };
 
 export type AiGraderCalibrationActivationServiceOptions = {
@@ -51,6 +64,8 @@ export type AiGraderCalibrationActivationServiceOptions = {
   acquireRigLock?: (tx: DbClient, rigId: string) => Promise<void>;
   verifySnapshotStorage?: (snapshot: JsonRecord) => Promise<void>;
   workstationPublicKeys?: Map<string, AiGraderCalibrationWorkstationPublicKeyV1>;
+  hostedAuthoritySigningKey?: AiGraderCalibrationHostedAuthoritySigningKeyV1;
+  activeAuthorityTtlMs?: number;
 };
 
 export type AiGraderCalibrationActivationServiceErrorCode =
@@ -445,6 +460,42 @@ export function parseAiGraderCalibrationWorkstationPublicKeysV1(raw: unknown) {
   return result;
 }
 
+export function parseAiGraderCalibrationHostedAuthoritySigningKeyV1(
+  raw: unknown,
+): AiGraderCalibrationHostedAuthoritySigningKeyV1 {
+  if (typeof raw !== "string" || raw.length < 2 || raw.length > 16 * 1024 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) {
+    return failure(
+      "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+      "Hosted calibration authority signing key is unavailable.",
+      503,
+    );
+  }
+  const der = Buffer.from(raw, "base64");
+  if (der.toString("base64") !== raw) {
+    return failure(
+      "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+      "Hosted calibration authority signing key is invalid.",
+      503,
+    );
+  }
+  try {
+    const privateKey = createPrivateKey({ key: der, format: "der", type: "pkcs8" });
+    if (privateKey.asymmetricKeyType !== "ec" ||
+        privateKey.asymmetricKeyDetails?.namedCurve !== "prime256v1") {
+      throw new Error("wrong key");
+    }
+    const publicSpkiDer = createPublicKey(privateKey).export({ format: "der", type: "spki" });
+    return { keyId: hash(publicSpkiDer), privateKey };
+  } catch {
+    return failure(
+      "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+      "Hosted calibration authority signing key is invalid.",
+      503,
+    );
+  }
+}
+
 function exactSnapshotForActivation(snapshotValue: unknown, rigId: string) {
   const snapshot = record(snapshotValue, "CalibrationSnapshot");
   if (
@@ -463,12 +514,23 @@ function exactSnapshotForActivation(snapshotValue: unknown, rigId: string) {
 
 function authorityFrom(
   activation: AiGraderCalibrationActivationProjectionV1,
+  issuedAt: Date,
+  activeAuthorityTtlMs: number,
+  signingKey: AiGraderCalibrationHostedAuthoritySigningKeyV1 | undefined,
 ): AiGraderCalibrationActivationAuthorityV1 {
   if (activation.state !== "ACTIVE" || !activation.workstationReceiptSha256 || !activation.activatedAt) {
     return failure("AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY", "Active activation authority is incomplete.", 503);
   }
-  return {
+  if (!signingKey) {
+    return failure(
+      "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+      "Hosted calibration authority signing is unavailable.",
+      503,
+    );
+  }
+  const unsigned = {
     schemaVersion: AI_GRADER_CALIBRATION_ACTIVATION_AUTHORITY_V1_SCHEMA_VERSION,
+    authorityPhase: "ACTIVE" as const,
     activationId: activation.activationId,
     activationHash: activation.activationHash,
     activationRevision: activation.activationRevision,
@@ -481,9 +543,27 @@ function authorityFrom(
     operatingContextHash: activation.operatingContextHash,
     workstationReceiptSha256: activation.workstationReceiptSha256,
     activatedAt: activation.activatedAt,
+    hostedAuthorityKeyId: signingKey.keyId,
+    hostedAuthoritySignatureAlgorithm: AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1,
+    hostedAuthorityIssuedAt: issuedAt.toISOString(),
+    hostedAuthorityExpiresAt: new Date(issuedAt.getTime() + activeAuthorityTtlMs).toISOString(),
   };
+  const hostedAuthoritySignature = signSignature(
+    "sha256",
+    Buffer.from(canonicalAiGraderCalibrationHostedAuthorityStatementV1(unsigned), "utf8"),
+    { key: signingKey.privateKey, dsaEncoding: "ieee-p1363" },
+  ).toString("base64url");
+  return aiGraderCalibrationActivationAuthorityV1Schema.parse({
+    ...unsigned,
+    hostedAuthoritySignature,
+  });
 }
-function pendingAuthorityFrom(rootValue: unknown, activationRevisionValue: unknown): AiGraderCalibrationPendingAuthorityV1 {
+
+function pendingAuthorityFrom(
+  rootValue: unknown,
+  activationRevisionValue: unknown,
+  signingKey: AiGraderCalibrationHostedAuthoritySigningKeyV1 | undefined,
+): AiGraderCalibrationPendingAuthorityV1 {
   const root = record(rootValue, "pending activation");
   const context = aiGraderOperatingContextV1Schema.safeParse(root.operatingContextV1);
   if (!context.success) {
@@ -493,8 +573,18 @@ function pendingAuthorityFrom(rootValue: unknown, activationRevisionValue: unkno
   if (operatingContextHash !== root.operatingContextHash) {
     return failure("AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY", "Pending activation operating context hash is contradictory.", 503);
   }
-  return {
+  if (!signingKey) {
+    return failure(
+      "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+      "Hosted calibration authority signing is unavailable.",
+      503,
+    );
+  }
+  const requestedAt = iso(root.requestedAt);
+  const pendingExpiresAt = iso(root.pendingExpiresAt);
+  const unsigned = {
     schemaVersion: AI_GRADER_CALIBRATION_PENDING_AUTHORITY_V1_SCHEMA_VERSION,
+    authorityPhase: "PENDING" as const,
     activationId: text(root.id, "activation.id"),
     activationHash: exactSha(root.activationHash, "activation.activationHash"),
     activationRevision: exactSha(activationRevisionValue, "activation.activationRevision"),
@@ -506,9 +596,22 @@ function pendingAuthorityFrom(rootValue: unknown, activationRevisionValue: unkno
     rigCharacterizationSha256: exactSha(root.rigCharacterizationSha256, "activation.rigCharacterizationSha256"),
     operatingContextHash,
     operatingContextV1: context.data,
-    requestedAt: iso(root.requestedAt),
-    pendingExpiresAt: iso(root.pendingExpiresAt),
+    requestedAt,
+    pendingExpiresAt,
+    hostedAuthorityKeyId: signingKey.keyId,
+    hostedAuthoritySignatureAlgorithm: AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1,
+    hostedAuthorityIssuedAt: requestedAt,
+    hostedAuthorityExpiresAt: pendingExpiresAt,
   };
+  const hostedAuthoritySignature = signSignature(
+    "sha256",
+    Buffer.from(canonicalAiGraderCalibrationHostedAuthorityStatementV1(unsigned), "utf8"),
+    { key: signingKey.privateKey, dsaEncoding: "ieee-p1363" },
+  ).toString("base64url");
+  return aiGraderCalibrationPendingAuthorityV1Schema.parse({
+    ...unsigned,
+    hostedAuthoritySignature,
+  });
 }
 
 
@@ -525,11 +628,54 @@ export function createAiGraderCalibrationActivationService(
   if (!Number.isSafeInteger(ttlMs) || ttlMs < 60_000 || ttlMs > MAX_PENDING_TTL_MS) {
     failure("AI_GRADER_CALIBRATION_ACTIVATION_INVALID_INPUT", "pendingTtlMs is outside the safe activation window.", 400);
   }
+  const activeAuthorityTtlMs = options.activeAuthorityTtlMs ?? DEFAULT_ACTIVE_AUTHORITY_TTL_MS;
+  if (!Number.isSafeInteger(activeAuthorityTtlMs) || activeAuthorityTtlMs < 60_000 ||
+      activeAuthorityTtlMs > MAX_ACTIVE_AUTHORITY_TTL_MS) {
+    failure(
+      "AI_GRADER_CALIBRATION_ACTIVATION_INVALID_INPUT",
+      "activeAuthorityTtlMs is outside the safe hosted authority window.",
+      400,
+    );
+  }
   const acquireRigLock = options.acquireRigLock ?? defaultAcquireRigLock;
   const verifySnapshotStorage = options.verifySnapshotStorage ?? (async () => {
     failure("AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE", "Hosted calibration byte verification is unavailable.", 503);
   });
   const workstationKeys = options.workstationPublicKeys ?? new Map();
+  const hostedAuthoritySigningKey = options.hostedAuthoritySigningKey;
+  if (hostedAuthoritySigningKey) {
+    let valid = false;
+    try {
+      const publicSpkiDer = createPublicKey(hostedAuthoritySigningKey.privateKey).export({
+        format: "der",
+        type: "spki",
+      });
+      valid = SHA256.test(hostedAuthoritySigningKey.keyId) &&
+        hostedAuthoritySigningKey.privateKey.type === "private" &&
+        hostedAuthoritySigningKey.privateKey.asymmetricKeyType === "ec" &&
+        hostedAuthoritySigningKey.privateKey.asymmetricKeyDetails?.namedCurve === "prime256v1" &&
+        hash(publicSpkiDer) === hostedAuthoritySigningKey.keyId;
+    } catch {
+      valid = false;
+    }
+    if (!valid) {
+      failure(
+        "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+        "Hosted calibration authority signing configuration is invalid.",
+        503,
+      );
+    }
+  }
+  const requireHostedAuthoritySigningKey = () => {
+    if (!hostedAuthoritySigningKey) {
+      return failure(
+        "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+        "Hosted calibration authority signing is unavailable.",
+        503,
+      );
+    }
+    return hostedAuthoritySigningKey;
+  };
 
   const transaction = <T>(callback: (tx: DbClient) => Promise<T>) => db.$transaction(callback);
 
@@ -551,12 +697,15 @@ export function createAiGraderCalibrationActivationService(
       registryRevision: registry.registryRevision,
       active,
       pending,
-      authority: active ? authorityFrom(active) : null,
+      authority: active
+        ? authorityFrom(active, date(now(), "now"), activeAuthorityTtlMs, requireHostedAuthoritySigningKey())
+        : null,
       observedAt: registry.observedAt,
     };
   }
 
   async function requestActivation(input: ActivationRequest, actorUserIdValue: string) {
+    requireHostedAuthoritySigningKey();
     const rigId = text(input.rigId, "rigId");
     const snapshotId = text(input.snapshotId, "snapshotId");
     const expectedRegistryRevision = exactSha(input.expectedRegistryRevision, "expectedRegistryRevision");
@@ -583,7 +732,9 @@ export function createAiGraderCalibrationActivationService(
         return {
           registryRevision: registry.registryRevision,
           activation,
-          pendingAuthority: activation.state === "PENDING" ? pendingAuthorityFrom(existing, activation.activationRevision) : null,
+          pendingAuthority: activation.state === "PENDING"
+            ? pendingAuthorityFrom(existing, activation.activationRevision, hostedAuthoritySigningKey)
+            : null,
         };
       }
       const at = date(now(), "now");
@@ -708,7 +859,11 @@ export function createAiGraderCalibrationActivationService(
       return {
         registryRevision: registry.registryRevision,
         activation,
-        pendingAuthority: pendingAuthorityFrom(createdActivation, pendingEvent.eventHash),
+        pendingAuthority: pendingAuthorityFrom(
+          createdActivation,
+          pendingEvent.eventHash,
+          hostedAuthoritySigningKey,
+        ),
       };
     });
   }
@@ -763,6 +918,7 @@ export function createAiGraderCalibrationActivationService(
   }
 
   async function completeActivation(input: AiGraderCalibrationCompleteActivationRequestV1, actorUserIdValue: string) {
+    requireHostedAuthoritySigningKey();
     const activationId = text(input.activationId, "activationId");
     const expectedRevision = exactSha(input.expectedActivationRevision, "expectedActivationRevision");
     const actorUserId = text(actorUserIdValue, "actorUserId");
@@ -798,7 +954,16 @@ export function createAiGraderCalibrationActivationService(
         const registry = await loadRegistry(tx, rigId, date(now(), "now"), true);
         const activation = registry.activations.find((entry) => entry.activationId === activationId);
         if (!activation || activation.state !== "ACTIVE") failure("AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY", "Completed activation is not the exact active projection.", 503);
-        return { registryRevision: registry.registryRevision, activation, authority: authorityFrom(activation) };
+        return {
+          registryRevision: registry.registryRevision,
+          activation,
+          authority: authorityFrom(
+            activation,
+            date(now(), "now"),
+            activeAuthorityTtlMs,
+            hostedAuthoritySigningKey,
+          ),
+        };
       }
       const at = date(now(), "now");
       const pendingRow = await tx.mathematicalCalibrationPendingPointer.findUnique({ where: { rigId } });
@@ -856,7 +1021,16 @@ export function createAiGraderCalibrationActivationService(
       const registry = await loadRegistry(tx, rigId, at, true);
       const activation = registry.activations.find((entry) => entry.activationId === activationId);
       if (!activation || activation.state !== "ACTIVE") failure("AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY", "Activation did not become exact hosted ACTIVE authority.", 503);
-      return { registryRevision: registry.registryRevision, activation, authority: authorityFrom(activation) };
+      return {
+        registryRevision: registry.registryRevision,
+        activation,
+        authority: authorityFrom(
+          activation,
+          at,
+          activeAuthorityTtlMs,
+          hostedAuthoritySigningKey,
+        ),
+      };
     });
   }
 
@@ -992,7 +1166,11 @@ export function createAiGraderCalibrationActivationService(
     if (!receiptParsed.success || hashCanonical(receiptParsed.data) !== active.workstationReceiptSha256) {
       failure("AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY", "Hosted ACTIVE calibration receipt does not reproduce.", 503);
     }
-    return { registryRevision: registry.registryRevision, authority: authorityFrom(active), activation: active };
+    return {
+      registryRevision: registry.registryRevision,
+      authority: authorityFrom(active, at, activeAuthorityTtlMs, requireHostedAuthoritySigningKey()),
+      activation: active,
+    };
   }
 
   return {

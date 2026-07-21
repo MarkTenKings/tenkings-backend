@@ -1288,6 +1288,7 @@ function unsafeAiGraderPublicKey(entryKey: string) {
  */
 function unsafeAiGraderPublicStorageLocatorKey(entryKey: string) {
   const compact = entryKey.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (compact === "hostedauthoritykeyid") return false;
   if (
     compact.endsWith("base64") ||
     compact.endsWith("payload") ||
@@ -1407,8 +1408,10 @@ export function sanitizeAiGraderPublicJson<T>(value: T): T {
  * locators at every nesting depth without mutating the canonical package.
  */
 function projectAiGraderPublicReadJson(value: unknown): unknown {
-  function visit(current: unknown): unknown {
+  function visit(current: unknown, key = ""): unknown {
     if (typeof current === "string") {
+      const compactKey = key.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      if (compactKey === "hostedauthoritysignature") return current;
       return looksLikeAiGraderPrivateReadValue(current) ? undefined : current;
     }
     if (Array.isArray(current)) {
@@ -1418,7 +1421,7 @@ function projectAiGraderPublicReadJson(value: unknown): unknown {
     const next: JsonRecord = {};
     for (const [entryKey, entryValue] of Object.entries(current)) {
       if (unsafeAiGraderPublicStorageLocatorKey(entryKey)) continue;
-      const cleaned = visit(entryValue);
+      const cleaned = visit(entryValue, entryKey);
       if (cleaned !== undefined) next[entryKey] = cleaned;
     }
     return next;

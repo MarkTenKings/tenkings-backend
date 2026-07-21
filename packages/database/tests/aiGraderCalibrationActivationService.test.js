@@ -8,6 +8,7 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   aiGraderCalibrationWorkstationReceiptStatementV1,
+  canonicalAiGraderCalibrationHostedAuthorityStatementV1,
   canonicalAiGraderOperatingContextV1,
   canonicalAiGraderRuntimeContextV1,
 } = require("@tenkings/shared");
@@ -23,6 +24,24 @@ const KEY_ID = "d".repeat(64);
 function sha(value) {
   return require("node:crypto").createHash("sha256").update(value).digest("hex");
 }
+
+const {
+  privateKey: HOSTED_AUTHORITY_PRIVATE_KEY,
+  publicKey: HOSTED_AUTHORITY_PUBLIC_KEY,
+} = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const HOSTED_AUTHORITY_KEY_ID = sha(HOSTED_AUTHORITY_PUBLIC_KEY.export({
+  format: "der",
+  type: "spki",
+}));
+const HOSTED_AUTHORITY_SIGNING_KEY = {
+  keyId: HOSTED_AUTHORITY_KEY_ID,
+  privateKey: HOSTED_AUTHORITY_PRIVATE_KEY,
+};
+const HOSTED_AUTHORITY_PUBLIC_KEYS = new Map([[HOSTED_AUTHORITY_KEY_ID, {
+  keyId: HOSTED_AUTHORITY_KEY_ID,
+  rigId: RIG_ID,
+  publicKey: HOSTED_AUTHORITY_PUBLIC_KEY,
+}]]);
 
 function members(seed) {
   return [
@@ -263,6 +282,7 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
       assert.equal(row.revokedAt, null);
     },
     workstationPublicKeys: new Map([[KEY_ID, { keyId: KEY_ID, tenantId: TENANT_ID, publicKey }]]),
+    hostedAuthoritySigningKey: HOSTED_AUTHORITY_SIGNING_KEY,
   });
 
   let registry = await service.list(RIG_ID, true);
@@ -272,6 +292,17 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
   );
   assert.equal(initial.activation.state, "PENDING");
   assert.ok(initial.pendingAuthority);
+  assert.equal(initial.pendingAuthority.authorityPhase, "PENDING");
+  assert.equal(initial.pendingAuthority.hostedAuthorityKeyId, HOSTED_AUTHORITY_KEY_ID);
+  assert.equal(
+    require("node:crypto").verify(
+      "sha256",
+      Buffer.from(canonicalAiGraderCalibrationHostedAuthorityStatementV1(initial.pendingAuthority), "utf8"),
+      { key: HOSTED_AUTHORITY_PUBLIC_KEY, dsaEncoding: "ieee-p1363" },
+      Buffer.from(initial.pendingAuthority.hostedAuthoritySignature, "base64url"),
+    ),
+    true,
+  );
   assert.equal(state.activePointers.size, 0);
   assert.equal(state.pendingPointers.size, 1);
 
@@ -282,6 +313,8 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
     workstationReceipt: signedReceipt(initial.pendingAuthority, privateKey),
   }, "admin-1");
   assert.equal(completed.activation.state, "ACTIVE");
+  assert.equal(completed.authority.authorityPhase, "ACTIVE");
+  assert.equal(completed.authority.hostedAuthorityKeyId, HOSTED_AUTHORITY_KEY_ID);
   assert.equal(state.activePointers.size, 1);
   assert.equal(state.pendingPointers.size, 0);
   assert.equal((await service.readStartAuthority(TENANT_ID, RIG_ID)).authority.activationId, completed.activation.activationId);
@@ -454,6 +487,7 @@ test("trusted finalizer handoff flows through local prepare, hosted complete, lo
     helperVersion: "helper-v1",
     workstationKeyId: KEY_ID,
     workstationPrivateKey: privateKey,
+    hostedAuthorityPublicKeys: HOSTED_AUTHORITY_PUBLIC_KEYS,
     liveOperatingContext: async (expected) => expected,
     isIdle: async () => true,
     now: () => new Date(NOW),
@@ -473,6 +507,7 @@ test("trusted finalizer handoff flows through local prepare, hosted complete, lo
       tenantId: TENANT_ID,
       publicKey,
     }]]),
+    hostedAuthoritySigningKey: HOSTED_AUTHORITY_SIGNING_KEY,
   });
   const listed = await hosted.list(RIG_ID, true);
   const pending = await hosted.requestActivation(
@@ -503,6 +538,7 @@ test("operating-context mismatch and stale optimistic revision cannot create act
     randomId: () => "activation-1",
     acquireRigLock: async () => undefined,
     verifySnapshotStorage: async () => undefined,
+    hostedAuthoritySigningKey: HOSTED_AUTHORITY_SIGNING_KEY,
   });
   const registry = await service.list(RIG_ID, true);
   selected.mathematicalOperatingContextHash = "f".repeat(64);
@@ -523,6 +559,28 @@ test("operating-context mismatch and stale optimistic revision cannot create act
     "AI_GRADER_CALIBRATION_ACTIVATION_REVISION_CONFLICT",
   );
   assert.equal(state.activations.length, 0);
+});
+
+test("hosted activation request fails before mutation when authority signing is unavailable", async () => {
+  const selected = snapshot("snapshot-signing-required", "signing-required");
+  const { db, state } = createMemoryDb([selected]);
+  const service = createAiGraderCalibrationActivationService(db, {
+    now: () => new Date(NOW),
+    randomId: () => "activation-must-not-exist",
+    acquireRigLock: async () => undefined,
+    verifySnapshotStorage: async () => undefined,
+  });
+  const registry = await service.list(RIG_ID, true);
+  await errorCode(
+    service.requestActivation(
+      activationRequest(selected.id, registry.registryRevision, "signing-required"),
+      "admin-1",
+    ),
+    "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+  );
+  assert.equal(state.activations.length, 0);
+  assert.equal(state.pendingPointers.size, 0);
+  assert.equal(state.activePointers.size, 0);
 });
 
 test("migration source enforces append-only evidence, immutable historical bindings, and no automatic rollback", () => {
