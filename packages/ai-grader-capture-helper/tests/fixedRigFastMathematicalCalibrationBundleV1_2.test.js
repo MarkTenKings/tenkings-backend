@@ -457,6 +457,56 @@ function capturePose(context, frame, centerX, centerY, rotationDegrees) {
   };
 }
 
+function trustedEvidenceAnalyzer(context) {
+  const grid = (value) => Array(64).fill(value);
+  return {
+    geometryAlgorithmSha256: context.algorithmHashes.geometry,
+    photometricAlgorithmSha256: context.algorithmHashes.photometric,
+    async derivePose() {
+      throw new Error("direct core test does not use the authority capture adapter");
+    },
+    async analyze(input) {
+      for (const entry of input.activeSourceArtifactLedger) {
+        assert.equal(digest(await input.readFrame(entry)), entry.sha256);
+      }
+      const poses = input.activeSourceArtifactLedger
+        .filter((entry) => entry.active && entry.role === "checkerboard_placement")
+        .sort((left, right) => left.slot - right.slot)
+        .map((entry) => ({
+          sourceFrameSha256: entry.sha256,
+          pose: structuredClone(entry.pose),
+          normalizationResidualPx: Array(10).fill(entry.pose.authorityReprojectionResidualPx),
+          segmentationBoundaryResidualPx: Array(10).fill(entry.pose.authorityReprojectionResidualPx),
+        }));
+      const channels = Array.from({ length: 8 }, (_, index) => {
+        const channelIndex = index + 1;
+        const angle = index * Math.PI / 4;
+        const dx = Math.cos(angle);
+        const dy = Math.sin(angle);
+        const directional = Array.from({ length: 64 }, (_, cell) => {
+          const x = cell % 8 - 3.5;
+          const y = Math.floor(cell / 8) - 3.5;
+          return 210 + 3 * (dx * x + dy * y);
+        });
+        return {
+          channelIndex,
+          darkControlGrids: [grid(10), grid(10), grid(10)],
+          flatFieldGrids: [grid(110), grid(110), grid(110)],
+          illuminationPatternGrids: [directional, directional, directional],
+        };
+      });
+      return {
+        geometryAlgorithmSha256: context.algorithmHashes.geometry,
+        photometricAlgorithmSha256: context.algorithmHashes.photometric,
+        gridWidth: 8,
+        gridHeight: 8,
+        poses,
+        channels,
+      };
+    },
+  };
+}
+
 test("core derives analysis, canonical finalization, and durable ready-for-activation state", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-fast-core-finalization-"));
   try {
@@ -466,6 +516,7 @@ test("core derives analysis, canonical finalization, and durable ready-for-activ
       outputRoot: root,
       now: () => new Date("2026-07-21T12:10:00.000Z"),
       operationId: () => `core-operation-${++operationIndex}`,
+      evidenceAnalyzer: trustedEvidenceAnalyzer(fixture.context),
     };
     const core = await FixedRigFastMathematicalCalibrationCoreV1_2.open(config, {
       sessionId: "fast-session-1",
@@ -508,15 +559,16 @@ test("core derives analysis, canonical finalization, and durable ready-for-activ
       async close() {},
     });
     assert.equal(core.status().phase, "analyze");
-    const ledger = core.getSourceArtifactLedger();
-    const poseHashes = ledger.filter((entry) => entry.active && entry.role === "checkerboard_placement")
+    const activeLedger = core.getSourceArtifactLedger();
+    const activePoseHashes = activeLedger
+      .filter((entry) => entry.active && entry.role === "checkerboard_placement")
       .map((entry) => entry.sha256);
     fixture.builderInput.normalizationResidualSamples.forEach((sample, index) => {
-      sample.sha256 = poseHashes[index % poseHashes.length];
+      sample.sha256 = activePoseHashes[index % activePoseHashes.length];
       sample.role = "checkerboard_placement";
     });
     fixture.builderInput.segmentationBoundarySamples.forEach((sample, index) => {
-      sample.sha256 = poseHashes[index % poseHashes.length];
+      sample.sha256 = activePoseHashes[index % activePoseHashes.length];
       sample.role = "checkerboard_placement";
     });
     for (const channel of fixture.builderInput.channels) {
@@ -524,19 +576,31 @@ test("core derives analysis, canonical finalization, and durable ready-for-activ
         ["dark_control", channel.darkControlFrames],
         ["flat_field", channel.flatFieldFrames],
         ["illumination_pattern", channel.illuminationPatternFrames],
-      ]) {
-        frames.forEach((frame, index) => {
-          frame.sha256 = ledger.find((entry) => entry.active && entry.role === role &&
-            entry.channelIndex === channel.channelIndex && entry.sampleIndex === index + 1).sha256;
-          frame.role = role;
-        });
-      }
+      ]) frames.forEach((frame, index) => {
+        frame.sha256 = activeLedger.find((entry) => entry.active && entry.role === role &&
+          entry.channelIndex === channel.channelIndex && entry.sampleIndex === index + 1).sha256;
+        frame.role = role;
+      });
     }
-    await core.analyze({
-      builderInput: fixture.builderInput,
-      flatFieldArtifacts: fixture.flatFieldArtifacts,
-      illuminationPatternArtifact: fixture.illuminationPatternArtifact,
-    });
+    const callerPayload = {
+      builderInput: structuredClone(fixture.builderInput),
+      flatFieldArtifacts: structuredClone(fixture.flatFieldArtifacts),
+      illuminationPatternArtifact: structuredClone(fixture.illuminationPatternArtifact),
+    };
+    const numericMutations = [
+      (value) => { value.builderInput.normalizationResidualSamples[0].residualPx = 0.001; },
+      (value) => { value.builderInput.segmentationBoundarySamples[0].outerContourFitResidualPx = 0.001; },
+      (value) => { value.builderInput.channels[0].directionValidationAngularErrorsDegrees[0] = 0.001; },
+      (value) => { value.builderInput.channels[0].relativeResponse[0] = 0.999; },
+      (value) => { value.builderInput.channels[0].responseScale = 999; },
+      (value) => { value.builderInput.channels[0].expectedDirectionalResidual[0] = 0.999; },
+    ];
+    for (const mutate of numericMutations) {
+      const changed = structuredClone(callerPayload);
+      mutate(changed);
+      await assert.rejects(core.analyze(changed), /accepts no caller-authored values/);
+    }
+    await core.analyze();
     assert.equal(core.status().phase, "finalize");
     await core.finalize();
     assert.equal(core.status().phase, "ready_for_explicit_activation");

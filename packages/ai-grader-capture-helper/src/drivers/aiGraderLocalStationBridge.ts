@@ -135,6 +135,10 @@ import {
 import { loadFixedRigMathematicalCalibrationBundleV1 } from "./fixedRigMathematicalCalibrationBundleV1";
 import type { FastCalibrationRuntimeContextV1_2 } from "./fixedRigFastMathematicalCalibrationV1_2";
 import {
+  DurableMathematicalCalibrationV1_2LocalSessionAuthority,
+  type DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig,
+} from "./fixedRigFastMathematicalCalibrationLocalAuthorityV1_2";
+import {
   MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS,
   parseMathematicalCalibrationV1_2SessionMutationRequestDto,
   parseReplaceMathematicalCalibrationV1_2PoseRequestDto,
@@ -659,6 +663,8 @@ export interface AiGraderLocalStationBridgeConfigInput {
   mathematicalCalibrationBundleSha256?: string;
   mathematicalCalibrationRuntimeContext?: FastCalibrationRuntimeContextV1_2;
   mathematicalCalibrationV1_2Authority?: MathematicalCalibrationV1_2LocalSessionAuthority;
+  mathematicalCalibrationV1_2LocalAuthorityConfig?:
+    Omit<DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig, "outputRoot"> & { outputRoot?: string };
   provisionalGeometryArtifactPath?: string;
   provisionalGeometryArtifactSha256?: string;
 }
@@ -2086,6 +2092,21 @@ export function buildAiGraderLocalStationBridgeConfig(
     env.AI_GRADER_MATHEMATICAL_CALIBRATION_OUTPUT_DIR,
   ) ?? path.join(outputDir, "mathematical-calibration-v1");
   assertFixedRigOutputDirAllowed(mathematicalCalibrationOutputDir);
+  if (input.mathematicalCalibrationV1_2Authority && input.mathematicalCalibrationV1_2LocalAuthorityConfig) {
+    throw new Error("Mathematical Calibration V1.2 authority must be either prebuilt or helper-constructed, never both.");
+  }
+  const localAuthorityOutputRoot = input.mathematicalCalibrationV1_2LocalAuthorityConfig?.outputRoot ??
+    path.join(mathematicalCalibrationOutputDir, "sessions-v1.2");
+  if (input.mathematicalCalibrationV1_2LocalAuthorityConfig) {
+    assertFixedRigOutputDirAllowed(localAuthorityOutputRoot);
+  }
+  const mathematicalCalibrationV1_2Authority = input.mathematicalCalibrationV1_2Authority ??
+    (input.mathematicalCalibrationV1_2LocalAuthorityConfig
+      ? new DurableMathematicalCalibrationV1_2LocalSessionAuthority({
+        ...input.mathematicalCalibrationV1_2LocalAuthorityConfig,
+        outputRoot: localAuthorityOutputRoot,
+      })
+      : undefined);
   const provisionalGeometryArtifactPath = firstNonEmpty(
     input.provisionalGeometryArtifactPath,
     env.AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_PATH,
@@ -2167,7 +2188,7 @@ export function buildAiGraderLocalStationBridgeConfig(
     ),
     mathematicalCalibrationBundleSha256,
     mathematicalCalibrationRuntimeContext: input.mathematicalCalibrationRuntimeContext,
-    mathematicalCalibrationV1_2Authority: input.mathematicalCalibrationV1_2Authority,
+    mathematicalCalibrationV1_2Authority,
     provisionalGeometryArtifactPath,
     provisionalGeometryArtifactSha256,
   };

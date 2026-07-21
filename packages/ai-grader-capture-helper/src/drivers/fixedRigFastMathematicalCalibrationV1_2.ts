@@ -11,6 +11,10 @@ import type {
   FastCalibrationSourceCapturePackageV1_2,
 } from "./fixedRigFastMathematicalCalibrationBundleV1_2";
 import type {
+  FastCalibrationEvidenceAnalysisResultV1_2,
+  FastCalibrationEvidenceAnalyzerV1_2,
+} from "./fixedRigFastCalibrationEvidenceAnalyzerV1_2";
+import type {
   BuildFixedRigPhysicalCalibrationV1Input,
   FixedRigCalibrationChannelInputV1,
 } from "./fixedRigPhysicalCalibrationV1";
@@ -396,6 +400,53 @@ export interface FastCalibrationStatusV1_2 {
   lastEventSha256: string | null;
 }
 
+export interface FastCalibrationAuditProjectionV1_2 {
+  revisionSha256: string;
+  acceptedPoses: Array<{
+    operationId: string;
+    slot: number;
+    evidenceSha256: string;
+    byteSize: number;
+    acceptedRevision: string;
+    supersedesOperationId: string | null;
+    supersededByOperationId: string | null;
+    active: boolean;
+    pose: FastCalibrationPoseV1_2;
+  }>;
+  failedAttempts: Array<{
+    operationId: string;
+    recordedRevision: string;
+    action: FastCalibrationNextActionV1_2["action"];
+    slot: number | null;
+    channelIndex: number | null;
+    sampleIndex: number | null;
+    issue: string;
+  }>;
+  blankReverseFlipCount: 0 | 1;
+  automaticSweep: {
+    darkAccepted: number;
+    flatFieldAccepted: number;
+    illuminationPatternAccepted: number;
+    batchCleanupConfirmed: boolean;
+  };
+  analysis: {
+    state: "not_started" | "failed" | "accepted";
+    analysisSha256: string | null;
+    sourceManifestSha256: string | null;
+    sourceArtifactLedgerSha256: string | null;
+    issues: string[];
+  };
+  finalization: {
+    state: "not_started" | "failed" | "completed";
+    bundleSha256: string | null;
+    memberLedgerSha256: string | null;
+    analysisSha256: string | null;
+    sourceArtifactLedgerSha256: string | null;
+    memberCount: 0 | 12;
+    issues: string[];
+  };
+}
+
 export class FastCalibrationOperationErrorV1_2 extends Error {
   constructor(public readonly operationId: string, message: string) {
     super(message);
@@ -415,6 +466,7 @@ export interface FastCalibrationCoreV1_2Config {
   outputRoot: string;
   now?: () => Date;
   operationId?: () => string;
+  evidenceAnalyzer?: FastCalibrationEvidenceAnalyzerV1_2;
 }
 
 function canonical(value: unknown): unknown {
@@ -436,6 +488,31 @@ function canonicalBytes(value: unknown): Buffer {
 
 export function hashFastCalibrationCanonicalV1_2(value: unknown): string {
   return crypto.createHash("sha256").update(canonicalBytes(value)).digest("hex");
+}
+
+export function projectFastCalibrationOneTimeInputV1_2(
+  input: VerifiedFastCalibrationRigCharacterizationSourceV1_2["oneTimeBuilderInput"] | BuildFixedRigPhysicalCalibrationV1Input,
+): unknown {
+  return {
+    rigId: input.rigId,
+    targetVersion: input.targetVersion,
+    normalizedWidthPx: input.normalizedWidthPx,
+    normalizedHeightPx: input.normalizedHeightPx,
+    targetSha256: input.targetSha256,
+    scaleSamples: input.scaleSamples,
+    targetPrintScaleSamples: input.targetPrintScaleSamples,
+    targetCutDimensionSamples: input.targetCutDimensionSamples,
+    lensResidualSamples: input.lensResidualSamples,
+    repeatedPlacementSamples: input.repeatedPlacementSamples,
+    measurementRepeatabilitySamples: input.measurementRepeatabilitySamples,
+    lensModel: input.lensModel,
+    normalizationModel: { model: input.normalizationModel.model },
+    targetEvidence: input.targetEvidence,
+    channels: input.channels.map((channel) => ({
+      channelIndex: channel.channelIndex,
+      directionMeasurementSamples: channel.directionMeasurementSamples,
+    })),
+  };
 }
 
 function hashBytes(value: Uint8Array): string {
@@ -674,7 +751,7 @@ export function verifyFastCalibrationRigCharacterizationSourceV1_2(
     physicalLightDirectionAuthoritySha256: bundle.members[2].sha256,
     componentIdentityAuthoritySha256: bundle.members[3].sha256,
     repeatabilityAuthoritySha256: bundle.members[4].sha256,
-    oneTimeCalibrationInputSha256: hashFastCalibrationCanonicalV1_2(oneTimeBuilderInput),
+    oneTimeCalibrationInputSha256: hashFastCalibrationCanonicalV1_2(projectFastCalibrationOneTimeInputV1_2(oneTimeBuilderInput)),
     cameraSerialNumber: camera.cameraSerialNumber,
     cameraModelName: camera.cameraModelName,
     lensAuthorityId: camera.lensAuthorityId,
@@ -957,6 +1034,37 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
     private events: FastCalibrationEventV1_2[],
   ) {}
 
+  static async listStored(
+    config: FastCalibrationCoreV1_2Config,
+  ): Promise<FixedRigFastMathematicalCalibrationCoreV1_2[]> {
+    let entries: string[] = [];
+    try {
+      entries = await readdir(path.resolve(config.outputRoot));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    const sessions: FixedRigFastMathematicalCalibrationCoreV1_2[] = [];
+    for (const name of [...entries].sort()) {
+      const identityPath = path.join(path.resolve(config.outputRoot), name, "session-identity.json");
+      let bytes: Buffer;
+      try {
+        bytes = await readFile(identityPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      const stored = parseCanonicalJson<FastCalibrationSessionIdentityV1_2>(bytes, "stored fast calibration session identity");
+      sessions.push(await FixedRigFastMathematicalCalibrationCoreV1_2.open(config, {
+        sessionId: stored.sessionId,
+        operatorId: stored.operatorId,
+        runtimeContext: stored.runtimeContext,
+        resume: true,
+      }));
+    }
+    return sessions;
+  }
+
   static async open(
     config: FastCalibrationCoreV1_2Config,
     input: OpenFastCalibrationSessionV1_2Input,
@@ -1144,6 +1252,15 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
       !sameCanonical(analysis.sourceArtifactLedger, source.sourceArtifactLedger)
     ) {
       throw new Error("Stored deterministic analysis no longer matches the active event/evidence ledger.");
+    }
+    const deterministic = await this.rebuildDeterministicAnalysis(events);
+    if (
+      deterministic.analysisSha256 !== analysis.analysisSha256 ||
+      !analysisBytes.equals(analysisModule.serializeFastCalibrationAnalysisV1_2(deterministic))
+    ) {
+      throw new Error(
+        "Stored analysis does not deterministically reconstruct from the exact checkpointed frame bytes.",
+      );
     }
     if (finalizations.length === 0) return;
 
@@ -1557,16 +1674,266 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
     return { sourceManifestSha256, sourceCapturePackage, sourceArtifactLedger };
   }
 
-  async analyze(
-    input: Pick<BuildFastCalibrationAnalysisV1_2Input, "builderInput" | "flatFieldArtifacts" | "illuminationPatternArtifact">,
-  ): Promise<FastCalibrationStatusV1_2> {
-    exactKeys(input, ["builderInput", "flatFieldArtifacts", "illuminationPatternArtifact"], "fast calibration local analysis input");
+  private async verifiedStoredRigSource(): Promise<VerifiedFastCalibrationRigCharacterizationSourceV1_2> {
+    const source: FastCalibrationRigCharacterizationSourceV1_2 = {
+      bundleBytes: await readIdentityEvidence(this.sessionDir, this.identity.rigCharacterizationSource.bundle),
+      members: await Promise.all(this.identity.rigCharacterizationSource.members.map(async (member) => ({
+        fileName: member.fileName,
+        bytes: await readIdentityEvidence(this.sessionDir, member),
+      }))),
+    };
+    const verified = verifyFastCalibrationRigCharacterizationSourceV1_2(source, this.identity.runtimeContext);
+    if (!sameCanonical(verified.authority, this.identity.rigCharacterization)) {
+      throw new Error("Stored one-time rig-characterization source no longer matches the session identity.");
+    }
+    return verified;
+  }
+
+  private async readAcceptedFrame(
+    entry: ReturnType<FixedRigFastMathematicalCalibrationCoreV1_2["getSourceArtifactLedger"]>[number],
+    events: FastCalibrationEventV1_2[],
+  ): Promise<Buffer> {
+    const event = events.find((candidate): candidate is FastCalibrationAcceptedEventV1_2 =>
+      candidate.type === "capture_accepted" && candidate.operationId === entry.operationId);
+    if (!event || event.evidence.sha256 !== entry.sha256 || event.evidence.byteSize !== entry.byteSize ||
+        event.evidence.mediaType === "application/json" || !event.evidence.relativePath.startsWith("evidence/") ||
+        event.evidence.relativePath.includes("..") || event.evidence.relativePath.includes("\\")) {
+      throw new Error("Active source artifact is not exactly bound to a safe captured-frame checkpoint.");
+    }
+    const bytes = await readFile(path.join(this.sessionDir, ...event.evidence.relativePath.split("/")));
+    if (bytes.length !== event.evidence.byteSize || hashBytes(bytes) !== event.evidence.sha256) {
+      throw new Error("Active captured-frame checkpoint is missing or corrupt.");
+    }
+    return bytes;
+  }
+
+  private buildEvidenceDerivedInput(
+    source: ReturnType<FixedRigFastMathematicalCalibrationCoreV1_2["sourceAuthority"]>,
+    verifiedRig: VerifiedFastCalibrationRigCharacterizationSourceV1_2,
+    decoded: FastCalibrationEvidenceAnalysisResultV1_2,
+  ): Pick<BuildFastCalibrationAnalysisV1_2Input, "builderInput" | "flatFieldArtifacts" | "illuminationPatternArtifact"> {
+    if (decoded.geometryAlgorithmSha256 !== this.identity.runtimeContext.algorithmHashes.geometry ||
+        decoded.photometricAlgorithmSha256 !== this.identity.runtimeContext.algorithmHashes.photometric) {
+      throw new Error("Evidence analyzer implementation hashes differ from the protected runtime algorithm hashes.");
+    }
+    const activePoses = source.sourceArtifactLedger
+      .filter((entry) => entry.active && entry.role === "checkerboard_placement")
+      .sort((left, right) => left.slot - right.slot);
+    if (decoded.poses.length !== 4 || activePoses.length !== 4) {
+      throw new Error("Evidence-derived geometry must contain exactly four active poses.");
+    }
+    const normalizationResidualSamples: BuildFixedRigPhysicalCalibrationV1Input["normalizationResidualSamples"] = [];
+    const segmentationBoundarySamples: BuildFixedRigPhysicalCalibrationV1Input["segmentationBoundarySamples"] = [];
+    decoded.poses.forEach((derived, poseIndex) => {
+      const sourcePose = activePoses[poseIndex]!;
+      if (derived.sourceFrameSha256 !== sourcePose.sha256 || !sourcePose.pose ||
+          !sameCanonical(derived.pose, sourcePose.pose) || derived.normalizationResidualPx.length < 10 ||
+          derived.segmentationBoundaryResidualPx.length < 10) {
+        throw new Error("Capture-time pose geometry does not reconstruct from its exact active checkpoint bytes.");
+      }
+      derived.normalizationResidualPx.forEach((residualPx, index) => {
+        finite(residualPx, "evidence-derived normalization residual", 0);
+        normalizationResidualSamples.push({
+          evidenceId: `pose-${sourcePose.slot}-normalization-${index + 1}`,
+          sha256: sourcePose.sha256,
+          role: "checkerboard_placement",
+          residualPx,
+        });
+      });
+      derived.segmentationBoundaryResidualPx.forEach((outerContourFitResidualPx, index) => {
+        finite(outerContourFitResidualPx, "evidence-derived segmentation-boundary residual", 0);
+        segmentationBoundarySamples.push({
+          evidenceId: `pose-${sourcePose.slot}-boundary-${index + 1}`,
+          sha256: sourcePose.sha256,
+          role: "checkerboard_placement",
+          outerContourFitResidualPx,
+        });
+      });
+    });
+    if (decoded.gridWidth !== 8 || decoded.gridHeight !== 8 || decoded.channels.length !== 8) {
+      throw new Error("Evidence-derived photometric result must contain exact 8x8 grids for channels 1 through 8.");
+    }
+    const meanGrid = (grids: number[][], label: string): number[] => {
+      if (grids.length !== 3 || grids.some((grid) => grid.length !== 64 || grid.some((value) => !Number.isFinite(value) || value < 0))) {
+        throw new Error(`${label} must contain three exact finite non-negative 8x8 decoded grids.`);
+      }
+      return Array.from({ length: 64 }, (_, index) => Number(
+        ((grids[0]![index]! + grids[1]![index]! + grids[2]![index]!) / 3).toFixed(9),
+      ));
+    };
+    const sourceFor = (role: FastCalibrationPhotometricRoleV1_2, channelIndex: number, sampleIndex: number) => {
+      const values = source.sourceArtifactLedger.filter((entry) => entry.active && entry.role === role &&
+        entry.channelIndex === channelIndex && entry.sampleIndex === sampleIndex);
+      if (values.length !== 1) throw new Error(`Exact ${role} source evidence is missing or duplicated.`);
+      return { evidenceId: `${role}-${channelIndex}-${sampleIndex}`, sha256: values[0]!.sha256, role };
+    };
+    const physicalDirection = (channelIndex: number): { x: number; y: number } => {
+      const authority = verifiedRig.oneTimeBuilderInput.channels.find((channel) => channel.channelIndex === channelIndex);
+      if (!authority || authority.directionMeasurementSamples.length < 3) {
+        throw new Error(`Channel ${channelIndex} immutable physical-direction authority is incomplete.`);
+      }
+      const vectors = authority.directionMeasurementSamples.map((sample) => ({
+        x: sample.sourcePointMm.x - sample.cardCenterPointMm.x,
+        y: sample.sourcePointMm.y - sample.cardCenterPointMm.y,
+      }));
+      const x = vectors.reduce((sum, value) => sum + value.x, 0) / vectors.length;
+      const y = vectors.reduce((sum, value) => sum + value.y, 0) / vectors.length;
+      const magnitude = Math.hypot(x, y);
+      if (!Number.isFinite(magnitude) || magnitude <= 0) throw new Error(`Channel ${channelIndex} physical direction is degenerate.`);
+      return { x: x / magnitude, y: y / magnitude };
+    };
+    const angleError = (grid: number[], expected: { x: number; y: number }): number => {
+      const minimum = Math.min(...grid);
+      let weightedX = 0;
+      let weightedY = 0;
+      let weight = 0;
+      grid.forEach((value, index) => {
+        const sampleWeight = Math.max(0, value - minimum);
+        weightedX += sampleWeight * ((index % 8) - 3.5);
+        weightedY += sampleWeight * (Math.floor(index / 8) - 3.5);
+        weight += sampleWeight;
+      });
+      const magnitude = Math.hypot(weightedX, weightedY);
+      if (weight <= 0 || magnitude <= 0) throw new Error("Illumination pattern has no evidence-derived directional centroid.");
+      const dot = Math.max(-1, Math.min(1, (weightedX * expected.x + weightedY * expected.y) / magnitude));
+      return Number((Math.acos(dot) * 180 / Math.PI).toFixed(9));
+    };
+    const derivedChannels = decoded.channels.map((channel, index) => {
+      if (channel.channelIndex !== index + 1) throw new Error("Decoded photometric channels are reordered or incomplete.");
+      const dark = meanGrid(channel.darkControlGrids, `channel ${channel.channelIndex} dark response`);
+      const flat = meanGrid(channel.flatFieldGrids, `channel ${channel.channelIndex} flat response`);
+      const pattern = meanGrid(channel.illuminationPatternGrids, `channel ${channel.channelIndex} illumination response`);
+      const correctedFlat = flat.map((value, cell) => Math.max(0, value - dark[cell]!));
+      const responseScale = correctedFlat.reduce((sum, value) => sum + value, 0) / correctedFlat.length;
+      if (!Number.isFinite(responseScale) || responseScale <= 0) throw new Error(`Channel ${channel.channelIndex} flat response is not above dark response.`);
+      const relativeResponse = correctedFlat.map((value) => Number((value / responseScale).toFixed(9)));
+      const correctedPattern = pattern.map((value, cell) => Math.max(0, value - dark[cell]!));
+      const patternScale = correctedPattern.reduce((sum, value) => sum + value, 0) / correctedPattern.length;
+      if (!Number.isFinite(patternScale) || patternScale <= 0) throw new Error(`Channel ${channel.channelIndex} illumination response is not above dark response.`);
+      const expectedDirectionalResidual = correctedPattern.map((value, cell) =>
+        Number((value / patternScale - relativeResponse[cell]!).toFixed(9)));
+      const expected = physicalDirection(channel.channelIndex);
+      const directionValidationAngularErrorsDegrees = channel.illuminationPatternGrids.map((grid) => {
+        const corrected = grid.map((value, cell) => Math.max(0, value - dark[cell]!));
+        return angleError(corrected, expected);
+      });
+      return { channel, dark, flat, pattern, responseScale: Number(responseScale.toFixed(9)), relativeResponse,
+        expectedDirectionalResidual, directionValidationAngularErrorsDegrees };
+    });
+    const flatFieldArtifacts = derivedChannels.map((value) => {
+      const channelIndex = value.channel.channelIndex;
+      const content = {
+        schemaVersion: "ten-kings-flat-field-artifact-v1",
+        algorithmVersion: "opencv_physical_calibration_analysis_v1",
+        hashPolicy: "sha256-canonical-json-with-artifactSha256-omitted",
+        algorithmSha256: decoded.photometricAlgorithmSha256,
+        channelIndex,
+        gridWidth: decoded.gridWidth,
+        gridHeight: decoded.gridHeight,
+        darkResponse: value.dark,
+        flatResponse: value.flat,
+        relativeResponse: value.relativeResponse,
+        responseScale: value.responseScale,
+        sourceFrames: [1, 2, 3].map((sampleIndex) => ({
+          darkControlSha256: sourceFor("dark_control", channelIndex, sampleIndex).sha256,
+          flatFieldSha256: sourceFor("flat_field", channelIndex, sampleIndex).sha256,
+        })),
+      };
+      const artifactSha256 = hashBytes(Buffer.from(JSON.stringify(canonical(content)), "utf8"));
+      const bytes = canonicalBytes({ ...content, artifactSha256 });
+      return { channelIndex, fileName: `flat-field-channel-${channelIndex}-v1.json`, sha256: hashBytes(bytes), bytes };
+    });
+    const illuminationContent = {
+      schemaVersion: "ten-kings-illumination-pattern-artifact-v1",
+      algorithmVersion: "opencv_physical_calibration_analysis_v1",
+      hashPolicy: "sha256-canonical-json-with-artifactSha256-omitted",
+      algorithmSha256: decoded.photometricAlgorithmSha256,
+      coordinateFrame: "normalized_card_portrait_pixels",
+      gridWidth: decoded.gridWidth,
+      gridHeight: decoded.gridHeight,
+      channels: derivedChannels.map((value) => ({
+        channelIndex: value.channel.channelIndex,
+        illuminationResponse: value.pattern,
+        expectedDirectionalResidual: value.expectedDirectionalResidual,
+        directionValidationAngularErrorsDegrees: value.directionValidationAngularErrorsDegrees,
+        sourceFrameSha256: [1, 2, 3].map((sampleIndex) =>
+          sourceFor("illumination_pattern", value.channel.channelIndex, sampleIndex).sha256),
+      })),
+    };
+    const illuminationArtifactSha256 = hashBytes(Buffer.from(JSON.stringify(canonical(illuminationContent)), "utf8"));
+    const illuminationBytes = canonicalBytes({ ...illuminationContent, artifactSha256: illuminationArtifactSha256 });
+    const illuminationPatternArtifact = {
+      fileName: "illumination-pattern-v1.json" as const,
+      sha256: hashBytes(illuminationBytes),
+      bytes: illuminationBytes,
+    };
+    const builderInput: BuildFixedRigPhysicalCalibrationV1Input = {
+      ...verifiedRig.oneTimeBuilderInput,
+      profileId: `mathematical-calibration-profile-${this.identity.sessionId}`,
+      calibrationVersion: "mathematical-calibration-v1.2.0",
+      artifactId: `mathematical-calibration-artifact-${this.identity.sessionId}`,
+      finalizedAt: source.sourceCapturePackage.stationAuthority.finalizedAt,
+      operatorId: source.sourceCapturePackage.stationAuthority.operatorId,
+      normalizationResidualSamples,
+      segmentationBoundarySamples,
+      normalizationModel: {
+        ...verifiedRig.oneTimeBuilderInput.normalizationModel,
+        sampleResidualPx: normalizationResidualSamples.map((sample) => sample.residualPx),
+      },
+      channels: derivedChannels.map((value) => {
+        const channelIndex = value.channel.channelIndex;
+        const oneTime = verifiedRig.oneTimeBuilderInput.channels.find((channel) => channel.channelIndex === channelIndex)!;
+        const flat = flatFieldArtifacts.find((artifact) => artifact.channelIndex === channelIndex)!;
+        return {
+          channelIndex,
+          directionMeasurementSamples: oneTime.directionMeasurementSamples,
+          directionValidationAngularErrorsDegrees: value.directionValidationAngularErrorsDegrees,
+          relativeResponse: value.relativeResponse,
+          responseScale: value.responseScale,
+          flatFieldArtifactId: `flat-field-${channelIndex}-v1`,
+          flatFieldArtifactSha256: flat.sha256,
+          flatFieldFrames: [1, 2, 3].map((sampleIndex) => sourceFor("flat_field", channelIndex, sampleIndex)),
+          darkControlFrames: [1, 2, 3].map((sampleIndex) => sourceFor("dark_control", channelIndex, sampleIndex)),
+          illuminationPatternArtifactId: "illumination-pattern-v1",
+          illuminationPatternArtifactSha256: illuminationPatternArtifact.sha256,
+          illuminationPatternFrames: [1, 2, 3].map((sampleIndex) => sourceFor("illumination_pattern", channelIndex, sampleIndex)),
+          illuminationPatternGridWidth: decoded.gridWidth,
+          illuminationPatternGridHeight: decoded.gridHeight,
+          expectedDirectionalResidual: value.expectedDirectionalResidual,
+        };
+      }),
+    };
+    return { builderInput, flatFieldArtifacts, illuminationPatternArtifact };
+  }
+
+  private async rebuildDeterministicAnalysis(
+    events: FastCalibrationEventV1_2[] = this.events,
+  ): Promise<FastCalibrationAnalysisV1_2> {
+    const analyzer = this.config.evidenceAnalyzer;
+    if (!analyzer) throw new Error("Trusted local V1.2 evidence analyzer is not configured.");
+    const source = this.sourceAuthority(events);
+    const verifiedRig = await this.verifiedStoredRigSource();
+    const activeSourceArtifactLedger = source.sourceArtifactLedger.filter((entry) => entry.active);
+    const decoded = await analyzer.analyze({
+      runtimeContext: this.identity.runtimeContext,
+      activeSourceArtifactLedger,
+      readFrame: (entry) => this.readAcceptedFrame(entry, events),
+    });
+    const derived = this.buildEvidenceDerivedInput(source, verifiedRig, decoded);
+    const analysisModule = await import("./fixedRigFastMathematicalCalibrationBundleV1_2");
+    return analysisModule.buildFastCalibrationAnalysisV1_2({ ...source, ...derived });
+  }
+
+  async analyze(): Promise<FastCalibrationStatusV1_2> {
+    if (arguments.length !== 0) {
+      throw new Error("Fast calibration analyze accepts no caller-authored values, artifacts, bytes, or hashes.");
+    }
     const operationId = this.nextOperationId();
     if (this.status().phase !== "analyze") throw new Error("Analysis is not the bridge-owned next action.");
     try {
       const source = this.sourceAuthority();
       const analysisModule = await import("./fixedRigFastMathematicalCalibrationBundleV1_2");
-      const analysis = analysisModule.buildFastCalibrationAnalysisV1_2({ ...source, ...input });
+      const analysis = await this.rebuildDeterministicAnalysis();
       if (analysis.authorityLayers.oneTimeRigCharacterizationInputSha256 !== this.identity.oneTimeCalibrationInputSha256 ||
           analysis.sourceArtifactLedgerSha256 !== source.sourceCapturePackage.sourceArtifactLedgerSha256) {
         throw new Error("Deterministic analysis does not match the verified session authority.");
@@ -1733,5 +2100,74 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
     FixedRigFastMathematicalCalibrationCoreV1_2["sourceArtifactLedgerForEvents"]
   > {
     return this.sourceArtifactLedgerForEvents(this.events);
+  }
+
+  auditProjection(): FastCalibrationAuditProjectionV1_2 {
+    const activeOperationIds = new Set([...activePlacements(this.events).values()].map((event) => event.operationId));
+    const acceptedPoseEvents = acceptedEvents(this.events).filter((event) => event.role === "checkerboard_placement");
+    const supersededBy = new Map<string, string>();
+    acceptedPoseEvents.forEach((event) => {
+      if (event.supersedesOperationId) supersededBy.set(event.supersedesOperationId, event.operationId);
+    });
+    const failures = this.events.filter((event): event is FastCalibrationFailedEventV1_2 => event.type.endsWith("failed"));
+    const actionForFailure = (event: FastCalibrationFailedEventV1_2): FastCalibrationNextActionV1_2["action"] => {
+      if (event.type === "analysis_failed") return "analyze";
+      if (event.type === "finalization_failed") return "finalize";
+      if (event.role === "checkerboard_placement") return "capture_checkerboard";
+      return "capture_photometric";
+    };
+    const latestAnalysis = [...this.events].reverse().find((event) =>
+      event.type === "analysis_completed" || event.type === "analysis_failed");
+    const latestFinalization = [...this.events].reverse().find((event) =>
+      event.type === "finalization_completed" || event.type === "finalization_failed");
+    const analysisCompleted = latestAnalysis?.type === "analysis_completed" ? latestAnalysis : undefined;
+    const finalizationCompleted = latestFinalization?.type === "finalization_completed" ? latestFinalization : undefined;
+    const accepted = acceptedEvents(this.events);
+    return {
+      revisionSha256: this.events.at(-1)?.eventSha256 ?? hashFastCalibrationCanonicalV1_2(this.identity),
+      acceptedPoses: acceptedPoseEvents.map((event) => ({
+        operationId: event.operationId,
+        slot: event.slot,
+        evidenceSha256: event.evidence.sha256,
+        byteSize: event.evidence.byteSize,
+        acceptedRevision: event.eventSha256,
+        supersedesOperationId: event.supersedesOperationId ?? null,
+        supersededByOperationId: supersededBy.get(event.operationId) ?? null,
+        active: activeOperationIds.has(event.operationId),
+        pose: event.pose!,
+      })),
+      failedAttempts: failures.map((event) => ({
+        operationId: event.operationId,
+        recordedRevision: event.eventSha256,
+        action: actionForFailure(event),
+        slot: event.slot,
+        channelIndex: event.channelIndex,
+        sampleIndex: event.sampleIndex,
+        issue: event.error,
+      })),
+      blankReverseFlipCount: this.events.some((event) => event.type === "blank_reverse_flip_confirmed") ? 1 : 0,
+      automaticSweep: {
+        darkAccepted: accepted.filter((event) => event.role === "dark_control").length,
+        flatFieldAccepted: accepted.filter((event) => event.role === "flat_field").length,
+        illuminationPatternAccepted: accepted.filter((event) => event.role === "illumination_pattern").length,
+        batchCleanupConfirmed: this.events.some((event) => event.type === "batch_cleanup_completed"),
+      },
+      analysis: {
+        state: analysisCompleted ? "accepted" : latestAnalysis ? "failed" : "not_started",
+        analysisSha256: analysisCompleted?.analysisSha256 ?? null,
+        sourceManifestSha256: analysisCompleted?.sourceManifestSha256 ?? null,
+        sourceArtifactLedgerSha256: analysisCompleted?.sourceArtifactLedgerSha256 ?? null,
+        issues: latestAnalysis?.type === "analysis_failed" ? [latestAnalysis.error] : [],
+      },
+      finalization: {
+        state: finalizationCompleted ? "completed" : latestFinalization ? "failed" : "not_started",
+        bundleSha256: finalizationCompleted?.bundleSha256 ?? null,
+        memberLedgerSha256: finalizationCompleted?.memberLedgerSha256 ?? null,
+        analysisSha256: finalizationCompleted?.analysisSha256 ?? null,
+        sourceArtifactLedgerSha256: finalizationCompleted?.sourceArtifactLedgerSha256 ?? null,
+        memberCount: finalizationCompleted ? 12 : 0,
+        issues: latestFinalization?.type === "finalization_failed" ? [latestFinalization.error] : [],
+      },
+    };
   }
 }

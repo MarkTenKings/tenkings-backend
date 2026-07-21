@@ -20,6 +20,7 @@ import {
   FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_PROFILE,
   FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
   hashFastCalibrationCanonicalV1_2,
+  projectFastCalibrationOneTimeInputV1_2,
   validateFastCalibrationPoseV1_2,
   validateFastCalibrationRigCharacterizationV1_2,
   validateFastCalibrationRuntimeContextV1_2,
@@ -207,29 +208,6 @@ function exactSha(value: unknown, label: string): string {
 function exactText(value: unknown, label: string): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${label} must be non-empty.`);
   return value;
-}
-
-function oneTimeProjection(input: BuildFixedRigPhysicalCalibrationV1Input): unknown {
-  return {
-    rigId: input.rigId,
-    targetVersion: input.targetVersion,
-    normalizedWidthPx: input.normalizedWidthPx,
-    normalizedHeightPx: input.normalizedHeightPx,
-    targetSha256: input.targetSha256,
-    scaleSamples: input.scaleSamples,
-    targetPrintScaleSamples: input.targetPrintScaleSamples,
-    targetCutDimensionSamples: input.targetCutDimensionSamples,
-    lensResidualSamples: input.lensResidualSamples,
-    repeatedPlacementSamples: input.repeatedPlacementSamples,
-    measurementRepeatabilitySamples: input.measurementRepeatabilitySamples,
-    lensModel: input.lensModel,
-    normalizationModel: input.normalizationModel,
-    targetEvidence: input.targetEvidence,
-    channels: input.channels.map((channel) => ({
-      channelIndex: channel.channelIndex,
-      directionMeasurementSamples: channel.directionMeasurementSamples,
-    })),
-  };
 }
 
 function quickProjection(
@@ -460,7 +438,7 @@ export function buildFastCalibrationAnalysisV1_2(
   if (builderInput.rigId !== input.sourceCapturePackage.rigId) {
     throw new Error("Fast calibration builder input rigId differs from the source package.");
   }
-  if (hashFastCalibrationCanonicalV1_2(oneTimeProjection(builderInput)) !==
+  if (hashFastCalibrationCanonicalV1_2(projectFastCalibrationOneTimeInputV1_2(builderInput)) !==
       input.sourceCapturePackage.rigCharacterizationAuthority.oneTimeCalibrationInputSha256) {
     throw new Error("Fast calibration one-time builder inputs do not reconstruct from the verified rig-characterization source members.");
   }
@@ -506,7 +484,7 @@ export function buildFastCalibrationAnalysisV1_2(
     captureCounts: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_COUNTS,
     geometryVerification,
     authorityLayers: {
-      oneTimeRigCharacterizationInputSha256: hashFastCalibrationCanonicalV1_2(oneTimeProjection(builderInput)),
+      oneTimeRigCharacterizationInputSha256: hashFastCalibrationCanonicalV1_2(projectFastCalibrationOneTimeInputV1_2(builderInput)),
       quickSiteLightingInputSha256: hashFastCalibrationCanonicalV1_2(
         quickProjection(builderInput, input.sourceCapturePackage, geometryVerification),
       ),
