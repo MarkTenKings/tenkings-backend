@@ -13,6 +13,8 @@ const {
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
   MATHEMATICAL_FINDING_V1_SCHEMA_VERSION,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
   aiGraderReportBundleSchema,
   aiGraderReportBundleV03Schema,
   buildMathematicalMeasurementV1,
@@ -430,6 +432,134 @@ function cleanV03Bundle(overrides = {}) {
   };
 }
 
+function pokemonStandardV03Bundle() {
+  const bundle = cleanV03Bundle();
+  for (const side of ["front", "back"]) {
+    const geometry = bundle.centeringEvidence[side].outerCutGeometryEvidence;
+    geometry.intendedBoundaryProfileId = "pokemon_tcg_standard";
+    geometry.intendedBoundaryProfileVersion = "1.0.0";
+    geometry.observedArtifact.intendedBoundaryProfileId = "pokemon_tcg_standard";
+    geometry.observedArtifact.intendedBoundaryProfileVersion = "1.0.0";
+  }
+  const trustedCardFormatAuthority = {
+    schemaVersion: "ten-kings-trusted-card-format-authority-v1",
+    artifact: {
+      resolverVersion: "ten-kings-hosted-card-format-resolver-v1",
+      cardIdentity: {
+        title: bundle.cardIdentity.title,
+        sideCount: 2,
+        tenantId: bundle.cardIdentity.tenantId,
+        setId: bundle.cardIdentity.setId,
+        programId: bundle.cardIdentity.programId,
+        cardNumber: bundle.cardIdentity.cardNumber,
+        variantId: null,
+        parallelId: null,
+      },
+      formatSelection: {
+        game: "pokemon_tcg",
+        physicalFormat: "standard",
+        widthMm: 63.5,
+        heightMm: 88.9,
+        profileId: "pokemon_tcg_standard",
+        profileVersion: "1.0.0",
+        profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+      },
+      sourceRecord: {
+        recordType: "hosted_set_card",
+        recordId: "hosted-card-42",
+        recordUpdatedAt: "2026-07-18T18:30:00.000Z",
+        recordSha256: "a".repeat(64),
+      },
+      identitySourceArtifact: {
+        artifactType: "set_taxonomy_source",
+        artifactId: "taxonomy-source-42",
+        artifactSha256: "b".repeat(64),
+        trustStatus: "trusted",
+      },
+      provenance: {
+        authority: "ten_kings_hosted_immutable_card_identity",
+        physicalFormatAuthority: "ten_kings_owner_approved_card_format_record",
+        browserSelfDeclarationAccepted: false,
+      },
+    },
+    artifactSha256: "d".repeat(64),
+    authentication: {
+      algorithm: "hmac-sha256",
+      keyId: "pokemon-authority-v1",
+      signature: "e".repeat(64),
+    },
+  };
+  const tolerance = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST
+    .findings.corner_shape_deviation.grade10Tolerance;
+  const measurements = ["front", "back"].flatMap((side) =>
+    ["top_left", "top_right", "bottom_right", "bottom_left"].map((corner) => ({
+      side,
+      location: corner,
+      profileId: "pokemon_tcg_standard",
+      profileVersion: "1.0.0",
+      profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+      expectedRadiusMm: 3.18,
+      measuredContourDeviationMm: 0,
+      calibratedU95Mm: 0.02,
+      effectiveContourDeviationMm: 0,
+      grade10ToleranceMm: tolerance,
+      thresholdDecision: "within_grade_10_buffer",
+      thresholdDeduction: 0,
+      appliedContourDeduction: 0,
+      measurementId: `${side}-${corner}-contour-deviation`,
+      sourceImageAssetId: `${side}/raw-all-on.png`,
+      sourceImageSha256: SHA,
+      observedContourSha256: SHA,
+      intendedContourSha256: SHA,
+      contourFindingIds: [],
+      damageFindingIds: {
+        whitening: [],
+        chippingOrMaterialLoss: [],
+        deformation: [],
+        delamination: [],
+        otherVisibleDamage: [],
+      },
+    })),
+  );
+  bundle.pokemonStandardCornerAuthority = {
+    profile: structuredClone(POKEMON_TCG_STANDARD_CORNER_PROFILE),
+    profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+    trustedCardFormatAuthority,
+    productionMeasurementAuthority: {
+      schemaVersion: "ten-kings-pokemon-standard-corner-measurement-authority-v1",
+      artifact: {
+        gradingSessionId: "grading-session-pokemon-42",
+        reportId: bundle.reportId,
+        analyzerVersions: {
+          conditionSegmentation: "fixed_rig_condition_segmentation_v1.2.0",
+          cornerMeasurement: "fixed_rig_corner_edge_v1",
+          stationAdapter: "fixed_rig_mathematical_station_adapter_v1",
+        },
+        thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+        thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+        calibration: {
+          profileId: bundle.calibrationProfile.profileId,
+          version: bundle.calibrationProfile.calibrationVersion,
+          artifactSha256: bundle.calibrationProfile.artifactSha256,
+          bundleManifestSha256: bundle.calibrationBundleAuthority.bundleManifestSha256,
+          sourceCaptureManifestSha256: bundle.calibrationBundleAuthority.sourceCaptureManifestSha256,
+          memberLedgerSha256: bundle.calibrationBundleAuthority.memberLedgerSha256,
+        },
+        callerCreatedProfilesAccepted: false,
+        callerCreatedMeasurementsAccepted: false,
+        measurements,
+      },
+      artifactSha256: "f".repeat(64),
+      authentication: {
+        algorithm: "hmac-sha256",
+        keyId: "pokemon-authority-v1",
+        signature: "9".repeat(64),
+      },
+    },
+  };
+  return bundle;
+}
+
 function addReviewedZeroDeductionSurfaceFinding(bundle) {
   const findingId = "surface-clean-buffer-finding-1";
   const physicalDefectId = "surface-clean-buffer-physical-1";
@@ -714,6 +844,34 @@ test("calibrated v0.3 requires all four exact element scores and complete overla
     false,
     "calibration bundle member hashes must remain bound to the finalized profile",
   );
+});
+
+test("Pokemon standard reports preserve the exact profile, eight independent contours, and source hashes", () => {
+  const bundle = pokemonStandardV03Bundle();
+  const parsed = aiGraderReportBundleV03Schema.safeParse(bundle);
+  assert.equal(parsed.success, true, parsed.success ? "" : JSON.stringify(parsed.error.issues));
+  assert.equal(parsed.data.pokemonStandardCornerAuthority.profile.cornerRadiusMm, 3.18);
+  assert.deepEqual(
+    parsed.data.pokemonStandardCornerAuthority.profile.physicalDimensionsMm,
+    { height: 88.9, width: 63.5 },
+  );
+  assert.equal(
+    parsed.data.pokemonStandardCornerAuthority.profile.provenance.claimBoundary,
+    "not_an_official_pokemon_manufacturer_specification",
+  );
+  const measurements = parsed.data.pokemonStandardCornerAuthority
+    .productionMeasurementAuthority.artifact.measurements;
+  assert.equal(new Set(measurements.map((entry) => `${entry.side}:${entry.location}`)).size, 8);
+  assert.equal(measurements.every((entry) => entry.sourceImageSha256 === SHA), true);
+
+  const callerProfile = pokemonStandardV03Bundle();
+  callerProfile.pokemonStandardCornerAuthority.profile.cornerRadiusMm = 4;
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(callerProfile).success, false);
+
+  const callerMeasurement = pokemonStandardV03Bundle();
+  callerMeasurement.pokemonStandardCornerAuthority.productionMeasurementAuthority
+    .artifact.measurements[0].effectiveContourDeviationMm = 1;
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(callerMeasurement).success, false);
 });
 
 test("v0.3 final findings require confirmed or adjusted review and an exact deduction formula", () => {

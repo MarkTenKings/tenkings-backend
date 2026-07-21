@@ -106,6 +106,20 @@ export interface FixedRigConditionObservationComputedV1 {
   validEvidenceCoverage: number;
   usableDirectionalChannelCount: number;
   noDoubleDeduction: true;
+  cornerContourDeviation?: {
+    measurement: MathematicalMeasurementV1;
+    thresholdDecision: "within_grade_10_buffer" | "deducted";
+    thresholdDeduction: number;
+    appliedContourDeduction: number;
+    contourFindingIds: string[];
+    damageFindingIds: {
+      whitening: string[];
+      chippingOrMaterialLoss: string[];
+      deformation: string[];
+      delamination: string[];
+      otherVisibleDamage: string[];
+    };
+  };
 }
 
 export interface FixedRigConditionObservationInsufficientV1 {
@@ -693,6 +707,45 @@ export function measureFixedRigCornerObservationV1(
   const geometricMmPerPixel = 1 / Math.sqrt(
     input.calibration.pixelsPerMmX * input.calibration.pixelsPerMmY,
   );
+  let maximumContourDeviationPx = 0;
+  for (let index = 0; index < input.shapeDeviationPx.data.length; index += 1) {
+    const value = Number(input.shapeDeviationPx.data[index]);
+    if (!Number.isFinite(value) || value < 0) {
+      return insufficientObservation({
+        element: "corners", side: input.side, location: input.location, regionId: input.regionId,
+        reasons: ["Corner contour-deviation plane must contain finite nonnegative analyzer measurements."],
+      });
+    }
+    if (valid![index]) maximumContourDeviationPx = Math.max(maximumContourDeviationPx, value);
+  }
+  const contourMeasuredMm = round(maximumContourDeviationPx * geometricMmPerPixel);
+  const contourPolicy = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST
+    .findings.corner_shape_deviation;
+  const contourMeasurement = buildMathematicalMeasurementV1({
+    measurementId: safeId(
+      `${input.side}-${input.regionId}-intended-contour-deviation`,
+    ),
+    kind: "shape_deviation_mm",
+    unit: "mm",
+    measuredMeasurement: contourMeasuredMm,
+    uncertaintyComponentsU95: deriveFixedRigMeasurementUncertaintyV1({
+      calibration: input.calibration.profile,
+      kind: "shape_deviation_mm",
+      measuredMeasurement: contourMeasuredMm,
+    }).componentsU95,
+    explicitGrade10Tolerance: contourPolicy.grade10Tolerance,
+    calibrationProfileId: input.calibration.calibrationProfileId,
+    calibrationVersion: input.calibration.calibrationVersion,
+    algorithmVersion: input.algorithmVersion,
+    evidence: input.evidence.map((entry) => ({ ...entry })),
+    validEvidenceCoverage: coverage,
+    usableDirectionalChannelCount: input.usableDirectionalChannelCount,
+  });
+  const contourCalculation = calculateFindingDeductionV1({
+    category: "corner_shape_deviation",
+    measuredMeasurement: contourMeasurement.measuredMeasurement,
+    u95: contourMeasurement.u95,
+  });
   const findings: FixedRigPhysicalFindingV1[] = [];
   for (const component of components) {
     const counts = {
@@ -758,6 +811,14 @@ export function measureFixedRigCornerObservationV1(
       reasons: ["A clean Grade-10 corner observation requires complete valid-pixel coverage."],
     });
   }
+  const categoriesFor = (finding: FixedRigPhysicalFindingV1) => new Set([
+    finding.finding.category,
+    ...finding.secondaryCategoryEvidence,
+  ]);
+  const findingIdsFor = (categories: readonly MathematicalFindingCategoryV1[]) =>
+    findings.filter((finding) => categories.some((category) => categoriesFor(finding).has(category)))
+      .map((finding) => finding.finding.findingId)
+      .sort();
   return {
     version: FIXED_RIG_CORNER_EDGE_V1_VERSION,
     status: "computed",
@@ -773,6 +834,24 @@ export function measureFixedRigCornerObservationV1(
     validEvidenceCoverage: coverage,
     usableDirectionalChannelCount: input.usableDirectionalChannelCount,
     noDoubleDeduction: true,
+    cornerContourDeviation: {
+      measurement: contourMeasurement,
+      thresholdDecision: contourCalculation.deductionBasisMeasurement === 0
+        ? "within_grade_10_buffer"
+        : "deducted",
+      thresholdDeduction: contourCalculation.deduction,
+      appliedContourDeduction: round(findings
+        .filter((finding) => finding.finding.category === "corner_shape_deviation")
+        .reduce((sum, finding) => sum + finding.deduction, 0), 2),
+      contourFindingIds: findingIdsFor(["corner_shape_deviation"]),
+      damageFindingIds: {
+        whitening: findingIdsFor(["corner_whitening"]),
+        chippingOrMaterialLoss: findingIdsFor(["corner_chip", "corner_material_loss"]),
+        deformation: findingIdsFor(["corner_deformation"]),
+        delamination: findingIdsFor(["corner_delamination"]),
+        otherVisibleDamage: findingIdsFor(["corner_directional_relief"]),
+      },
+    },
   };
 }
 

@@ -46,6 +46,7 @@ import {
   createClassificationPayloadFromAttributes,
   type CardAttributes,
   type NormalizedClassification,
+  type TrustedPokemonCardFormatAuthorityV1,
 } from "@tenkings/shared";
 import type { AdminSession } from "./admin";
 import type { UserSession } from "./session";
@@ -96,6 +97,10 @@ import {
   parseAiGraderMathematicalBoundaryBundle,
 } from "./aiGraderMathematicalReleaseBoundary";
 import type { AiGraderReportEditorialRevisionV1 } from "../aiGraderReportRevision";
+import {
+  parseTrustedPokemonCardLookupBody,
+  type TrustedPokemonCardLookupV1,
+} from "./aiGraderTrustedCardFormatAuthority";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
@@ -343,6 +348,12 @@ export type AiGraderProductionApiDependencies = {
     admin?: AdminSession | null;
     actor: AiGraderProductionActor;
   }): Promise<AiGraderCardItemSearchResult[]>;
+  resolveMathematicalCardAuthority?(input: {
+    tenantId: string;
+    lookup: TrustedPokemonCardLookupV1;
+    admin?: AdminSession | null;
+    actor: AiGraderProductionActor;
+  }): Promise<TrustedPokemonCardFormatAuthorityV1>;
   createCardFromReport?(input: {
     queueItemId: string;
     tenantId: string;
@@ -2619,6 +2630,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           "prepare-label-sheet-print",
           "mark-label-sheet-printed",
           "card-search",
+          "mathematical-card-authority",
           "slabbed-photo-init",
           "slabbed-photo-finalize",
           "upload-slab-photo",
@@ -2662,6 +2674,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       "prepare-label-sheet-print",
       "mark-label-sheet-printed",
       "card-search",
+      "mathematical-card-authority",
       "slabbed-photo-init",
       "slabbed-photo-finalize",
       "upload-slab-photo",
@@ -2707,6 +2720,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         key === "mark-label-sheet-printed" ||
         key === "add-to-inventory"
           ? "publish"
+          : key === "mathematical-card-authority"
+            ? "card-search"
           : key === "finish-queue" || key === "label-sheets"
             ? "history"
             : key === "slabbed-photo-init" || key === "slabbed-photo-finalize" || key === "upload-slab-photo"
@@ -2799,6 +2814,25 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             manualDraftAllowed: false,
             createCardFromReportRequired: true,
           },
+        });
+      }
+      if (key === "mathematical-card-authority") {
+        if (!deps.resolveMathematicalCardAuthority) {
+          throw new Error("Trusted Mathematical card-format authority resolution is not configured.");
+        }
+        const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const lookup = parseTrustedPokemonCardLookupBody(req.body);
+        const authority = await deps.resolveMathematicalCardAuthority({
+          tenantId,
+          lookup,
+          admin,
+          actor: authorizedActor,
+        });
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderTrustedMathematicalCardAuthority",
+          result: { authority },
         });
       }
       if (key === "ocr-prefill-init") {

@@ -29,6 +29,10 @@ import type {
   AiGraderApprovedDesignReferenceOperatorAuthority,
   AiGraderExactDesignReferenceArtifact,
 } from "./aiGraderDesignReferenceClient";
+import {
+  trustedPokemonCardFormatAuthorityV1Schema,
+  type TrustedPokemonCardFormatAuthorityV1,
+} from "@tenkings/shared";
 
 export const DEFAULT_AI_GRADER_STATION_BRIDGE_URL = "http://127.0.0.1:47652";
 export const AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY = "tenkings.aiGraderStation.bridgeUrl";
@@ -532,6 +536,78 @@ export function buildAiGraderMathematicalGradingAuthorityV1(input: {
     schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1",
     cardIdentity,
     cardFormatId: "standard_trading_card_63_50x88_90_r3_18_v1",
+    sides: {
+      front: { centering: centeringFor("front") },
+      back: { centering: centeringFor("back") },
+    },
+  };
+}
+
+export async function resolveAiGraderTrustedPokemonCardFormatAuthorityV1(input: {
+  identity: AiGraderMathematicalCardIdentityDraftV1;
+  headers: Record<string, string>;
+}, fetchImpl: typeof fetch = fetch) {
+  const response = await fetchImpl(
+    "/api/admin/ai-grader/production/mathematical-card-authority",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", ...input.headers },
+      body: JSON.stringify({
+        lookup: {
+          setId: exactMathematicalIdentityField(input.identity.setId, "set ID"),
+          programId: exactMathematicalIdentityField(input.identity.programId, "program ID"),
+          cardNumber: exactMathematicalIdentityField(input.identity.cardNumber, "card number", 128),
+          variantId: exactNullableMathematicalIdentityField(input.identity.variantId, "variant ID"),
+          parallelId: exactNullableMathematicalIdentityField(input.identity.parallelId, "parallel ID"),
+        },
+      }),
+    },
+  );
+  const payload = await response.json().catch(() => ({})) as {
+    ok?: unknown;
+    message?: unknown;
+    result?: { authority?: unknown };
+  };
+  if (!response.ok || payload.ok !== true) {
+    throw new Error(
+      typeof payload.message === "string"
+        ? payload.message
+        : "Trusted Pokémon card-format authority could not be resolved.",
+    );
+  }
+  const parsed = trustedPokemonCardFormatAuthorityV1Schema.safeParse(
+    payload.result?.authority,
+  );
+  if (!parsed.success ||
+      parsed.data.artifact.cardIdentity.tenantId !==
+        exactMathematicalIdentityField(input.identity.tenantId, "tenant ID")) {
+    throw new Error("Hosted Pokémon card-format authority returned an invalid identity artifact.");
+  }
+  return parsed.data;
+}
+
+export function buildAiGraderTrustedPokemonMathematicalGradingAuthorityV1(input: {
+  trustedCardFormatAuthority: TrustedPokemonCardFormatAuthorityV1;
+  profiles: Record<"front" | "back", AiGraderMathematicalCenteringProfileV1>;
+  registeredDesignReferences?: Partial<Record<"front" | "back", AiGraderPreparedRegisteredDesignReferenceV1>>;
+}): AiGraderMathematicalGradingAuthorityV1 {
+  const trusted = trustedPokemonCardFormatAuthorityV1Schema.parse(
+    input.trustedCardFormatAuthority,
+  );
+  const cardIdentity = structuredClone(trusted.artifact.cardIdentity);
+  const centeringFor = (side: "front" | "back") =>
+    input.profiles[side] === "printed_border_v1"
+      ? { profile: "printed_border_v1" as const }
+      : registeredMathematicalCenteringAuthority({
+          side,
+          identity: cardIdentity,
+          prepared: input.registeredDesignReferences?.[side],
+        });
+  return {
+    schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1",
+    cardIdentity,
+    cardFormatId: "pokemon_tcg_standard",
+    trustedCardFormatAuthority: trusted,
     sides: {
       front: { centering: centeringFor("front") },
       back: { centering: centeringFor("back") },
