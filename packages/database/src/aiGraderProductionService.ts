@@ -3655,7 +3655,16 @@ async function resolveAiGraderHistoricalCalibrationActivationBinding(
   reportBundle: AiGraderProductionReportBundleLike,
   calibrationSnapshotId: string | undefined,
 ): Promise<string | undefined> {
-  if (reportBundle.calibrationActivationAuthority === undefined) return undefined;
+  if (reportBundle.calibrationActivationAuthority === undefined) {
+    if (calibrationSnapshotId) {
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_CALIBRATION_ACTIVATION_REQUIRED",
+        "New Mathematical V1 production persistence requires one exact activated calibration authority and durable session/report binding.",
+        409,
+      );
+    }
+    return undefined;
+  }
   const parsed = aiGraderCalibrationActivationAuthorityV1Schema.safeParse(
     reportBundle.calibrationActivationAuthority,
   );

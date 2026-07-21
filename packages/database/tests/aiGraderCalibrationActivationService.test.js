@@ -3,6 +3,9 @@ const assert = require("node:assert/strict");
 const { generateKeyPairSync, sign } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
+const fs = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
 const {
   aiGraderCalibrationWorkstationReceiptStatementV1,
   canonicalAiGraderOperatingContextV1,
@@ -310,9 +313,28 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
   );
 
   registry = await service.list(RIG_ID, true);
+  const failedReactivationPending = await service.requestActivation(
+    activationRequest(
+      first.id,
+      registry.registryRevision,
+      "reactivate-v1-fails",
+      "reactivate",
+      completed.activation.activationId,
+    ),
+    "admin-1",
+  );
+  const failedReactivation = await service.failActivation({
+    activationId: failedReactivationPending.activation.activationId,
+    expectedActivationRevision: failedReactivationPending.activation.activationRevision,
+    idempotencyKey: "fail-reactivation-v1",
+    failureCode: "LIVE_OPERATING_CONTEXT_MISMATCH",
+  }, "admin-1");
+  assert.equal(failedReactivation.activation.state, "FAILED");
+
+  registry = await service.list(RIG_ID, true);
   await errorCode(
     service.requestActivation(
-      activationRequest(first.id, registry.registryRevision, "ordinary-reuse"),
+      activationRequest(first.id, registry.registryRevision, "ordinary-reuse-after-failed-reactivation"),
       "admin-1",
     ),
     "AI_GRADER_CALIBRATION_ACTIVATION_EXPLICIT_REACTIVATION_REQUIRED",
@@ -345,7 +367,7 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
   first.trustStatus = "REVOKED";
   first.revokedAt = new Date(NOW);
   const revocationAudit = await service.recordSnapshotRevoked(first.id, "admin-1", "calibration evidence revoked");
-  assert.equal(revocationAudit.revokedActivationEventsRecorded, 2);
+  assert.equal(revocationAudit.revokedActivationEventsRecorded, 3);
   assert.equal(state.activePointers.size, 0);
   await errorCode(
     service.readStartAuthority(TENANT_ID, RIG_ID),
@@ -354,6 +376,125 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
   assert.equal(state.activations[0].calibrationSnapshotId, first.id, "historical activation remains bound to its immutable snapshot");
 });
 
+test("trusted finalizer handoff flows through local prepare, hosted complete, local confirm, and Start without restart", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ten-kings-calibration-end-to-end-"));
+  t.after(async () => fs.rm(root, { recursive: true, force: true }));
+
+  const selected = snapshot("snapshot-end-to-end", "end-to-end");
+  const contextValue = selected.mathematicalOperatingContextV1;
+  const bundleAuthority = {
+    schemaVersion: contextValue.calibration.bundleSchemaVersion,
+    bundleManifestSha256: contextValue.calibration.bundleManifestSha256,
+    sourceCaptureManifestSha256: contextValue.calibration.sourceCaptureManifestSha256,
+    memberLedgerSha256: contextValue.calibration.memberLedgerSha256,
+    members: contextValue.calibration.members,
+  };
+  const profile = {
+    rigId: RIG_ID,
+    profileId: selected.mathematicalProfileId,
+    calibrationVersion: selected.mathematicalCalibrationVersion,
+    finalizedAt: "2026-07-21T17:00:00.000Z",
+    artifactSha256: selected.mathematicalRigCharacterizationSha256,
+  };
+
+  const bundleModulePath = require.resolve("../../ai-grader-capture-helper/dist/drivers/fixedRigMathematicalCalibrationBundleV1");
+  const bundleModule = require(bundleModulePath);
+  const originalLoader = bundleModule.loadFixedRigMathematicalCalibrationBundleV1;
+  bundleModule.loadFixedRigMathematicalCalibrationBundleV1 = (input) => ({
+    bundlePath: input.bundlePath,
+    bundleSha256: input.bundleSha256,
+    bundle: {},
+    profile,
+    physicalArtifact: {},
+    acceptance: {},
+    authority: bundleAuthority,
+    files: {},
+  });
+  const registryModulePath = require.resolve("../../ai-grader-capture-helper/dist/drivers/mathematicalCalibrationActivationRegistryV1");
+  delete require.cache[registryModulePath];
+  const {
+    createMathematicalCalibrationActivationRegistryV1,
+  } = require(registryModulePath);
+  t.after(() => {
+    bundleModule.loadFixedRigMathematicalCalibrationBundleV1 = originalLoader;
+    delete require.cache[registryModulePath];
+  });
+
+  const stagingRoot = path.join(root, "trusted-finalizer-staging");
+  const stagingDirectory = path.join(stagingRoot, bundleAuthority.bundleManifestSha256);
+  await fs.mkdir(stagingDirectory, { recursive: true });
+  await fs.writeFile(
+    path.join(stagingDirectory, "mathematical-calibration-bundle-v1.json"),
+    "trusted finalized bundle",
+  );
+  for (const member of bundleAuthority.members) {
+    await fs.writeFile(path.join(stagingDirectory, member.fileName), `trusted ${member.fileName}`);
+  }
+  await fs.writeFile(
+    path.join(stagingDirectory, "mathematical-calibration-finalizer-handoff-v1.json"),
+    JSON.stringify({
+      schemaVersion: "ten-kings-mathematical-calibration-finalizer-handoff-v1",
+      authority: "trusted-local-mathematical-calibration-finalizer-v1",
+      rigId: RIG_ID,
+      profileId: profile.profileId,
+      calibrationVersion: profile.calibrationVersion,
+      finalizedAt: profile.finalizedAt,
+      bundleFileName: "mathematical-calibration-bundle-v1.json",
+      bundleManifestSha256: bundleAuthority.bundleManifestSha256,
+      sourceAnalysisSha256: sha("trusted-analysis"),
+    }),
+  );
+
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const registry = createMathematicalCalibrationActivationRegistryV1({
+    rootDir: path.join(root, "registry"),
+    finalizedBundleStagingRoot: stagingRoot,
+    expectedRigId: RIG_ID,
+    helperInstanceId: "helper-1",
+    helperVersion: "helper-v1",
+    workstationKeyId: KEY_ID,
+    workstationPrivateKey: privateKey,
+    liveOperatingContext: async (expected) => expected,
+    isIdle: async () => true,
+    now: () => new Date(NOW),
+  });
+  await registry.ingestFinalizedBundle({
+    bundleManifestSha256: bundleAuthority.bundleManifestSha256,
+  });
+
+  const { db } = createMemoryDb([selected]);
+  const hosted = createAiGraderCalibrationActivationService(db, {
+    now: () => new Date(NOW),
+    randomId: () => "activation-end-to-end",
+    acquireRigLock: async () => undefined,
+    verifySnapshotStorage: async () => undefined,
+    workstationPublicKeys: new Map([[KEY_ID, {
+      keyId: KEY_ID,
+      tenantId: TENANT_ID,
+      publicKey,
+    }]]),
+  });
+  const listed = await hosted.list(RIG_ID, true);
+  const pending = await hosted.requestActivation(
+    activationRequest(
+      selected.id,
+      listed.registryRevision,
+      "activate-end-to-end",
+    ),
+    "admin-1",
+  );
+  const receipt = await registry.prepareActivation(pending.pendingAuthority);
+  const completed = await hosted.completeActivation({
+    activationId: pending.activation.activationId,
+    expectedActivationRevision: pending.activation.activationRevision,
+    idempotencyKey: "complete-end-to-end",
+    workstationReceipt: receipt,
+  }, "admin-1");
+  await registry.confirmHostedActivation(completed.authority);
+  const start = await registry.assertStartAuthority(completed.authority);
+  assert.equal(start.authority.activationId, completed.activation.activationId);
+  assert.equal((await registry.readPointer()).state, "ACTIVE");
+});
 test("operating-context mismatch and stale optimistic revision cannot create activation authority", async () => {
   const selected = snapshot("snapshot-1", "v1");
   const { db, state } = createMemoryDb([selected]);

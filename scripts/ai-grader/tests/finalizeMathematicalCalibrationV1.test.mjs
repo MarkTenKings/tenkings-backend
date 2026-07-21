@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import os from "node:os";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -149,13 +150,15 @@ test("analysis verification rejects a changed measurement payload", () => {
 });
 
 test("finalization writes a profile only when the acceptance authority finalizes", async () => {
-  const temporaryRoot = await mkdtemp(path.join(process.cwd(), "tmp", "calibration-finalizer-test-"));
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "calibration-finalizer-test-"));
   try {
     const { analysisPath, value: sourceAnalysis } = await writeAnalysisFixture(temporaryRoot);
     const finalizedOutput = path.join(temporaryRoot, "finalized");
+    const registryStagingRoot = path.join(temporaryRoot, "trusted-registry-staging");
     const finalized = await finalizeMathematicalCalibrationV1({
       analysisPath,
       outputDir: finalizedOutput,
+      registryStagingRoot,
       buildFixedRigPhysicalCalibrationV1: () => ({
         status: "finalized",
         isCalibrated: true,
@@ -205,6 +208,34 @@ test("finalization writes a profile only when the acceptance authority finalizes
         entry.fileName,
       );
     }
+    assert.ok(finalized.bundle.registryHandoff);
+    const stagedDirectory = path.join(registryStagingRoot, finalized.bundle.sha256);
+    const handoff = JSON.parse(await readFile(
+      path.join(stagedDirectory, "mathematical-calibration-finalizer-handoff-v1.json"),
+      "utf8",
+    ));
+    assert.deepEqual(handoff, {
+      schemaVersion: "ten-kings-mathematical-calibration-finalizer-handoff-v1",
+      authority: "trusted-local-mathematical-calibration-finalizer-v1",
+      rigId: bundle.rigId,
+      profileId: bundle.profileId,
+      calibrationVersion: bundle.calibrationVersion,
+      finalizedAt: bundle.finalizedAt,
+      bundleFileName: "mathematical-calibration-bundle-v1.json",
+      bundleManifestSha256: finalized.bundle.sha256,
+      sourceAnalysisSha256: bundle.sourceAnalysisSha256,
+    });
+    assert.equal(
+      digest(await readFile(path.join(stagedDirectory, "mathematical-calibration-bundle-v1.json"))),
+      finalized.bundle.sha256,
+    );
+    for (const entry of bundle.artifacts) {
+      assert.equal(
+        digest(await readFile(path.join(stagedDirectory, entry.fileName))),
+        entry.sha256,
+        `staged ${entry.fileName}`,
+      );
+    }
 
     const rejectedOutput = path.join(temporaryRoot, "rejected");
     const rejected = await finalizeMathematicalCalibrationV1({
@@ -236,7 +267,7 @@ test("finalization writes a profile only when the acceptance authority finalizes
 });
 
 test("finalization rejects a changed certified photometric artifact before writing a bundle", async () => {
-  const temporaryRoot = await mkdtemp(path.join(process.cwd(), "tmp", "calibration-finalizer-tamper-"));
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "calibration-finalizer-tamper-"));
   try {
     const { analysisPath } = await writeAnalysisFixture(temporaryRoot);
     await writeFile(
