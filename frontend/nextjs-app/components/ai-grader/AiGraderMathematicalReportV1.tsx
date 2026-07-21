@@ -105,6 +105,9 @@ export default function AiGraderMathematicalReportV1({
   >("true_view");
   const [replayChannelIndex, setReplayChannelIndex] = useState(0);
   const finalGrade = bundle.productionRelease.finalGrade;
+  const pokemonCornerAuthority = bundle.pokemonStandardCornerAuthority;
+  const pokemonCornerMeasurements = pokemonCornerAuthority
+    ?.productionMeasurementAuthority.artifact;
   const reviewedRevision = editorialRevision?.reportId === bundle.reportId
     ? editorialRevision
     : null;
@@ -334,6 +337,48 @@ export default function AiGraderMathematicalReportV1({
           </table>
         </div>
       </section>
+
+      {pokemonCornerAuthority ? (
+        <section className="mx-auto mt-6 max-w-7xl rounded border border-amber-900/25 bg-amber-50 p-6">
+          <p className="text-xs font-bold uppercase tracking-widest text-amber-800">Trusted physical-format authority</p>
+          <h2 className="mt-2 text-2xl font-bold">Pokémon TCG standard corner contour</h2>
+          <p className="mt-2 text-sm">
+            Ten Kings owner-approved operational grading standard; this is not an official Pokémon manufacturer specification.
+          </p>
+          <dl className="mt-4 grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <div><dt>Profile</dt><dd>{pokemonCornerAuthority.profile.profileId} / {pokemonCornerAuthority.profile.semanticVersion}</dd></div>
+            <div><dt>Physical geometry</dt><dd>{pokemonCornerAuthority.profile.physicalDimensionsMm.width.toFixed(2)} x {pokemonCornerAuthority.profile.physicalDimensionsMm.height.toFixed(2)} mm; circular R{pokemonCornerAuthority.profile.cornerRadiusMm.toFixed(2)} mm</dd></div>
+            <div><dt>Canonical profile SHA-256</dt><dd className="break-all font-mono">{fullHash(pokemonCornerAuthority.profileArtifactSha256)}</dd></div>
+            <div><dt>Hosted identity source</dt><dd>{pokemonCornerAuthority.trustedCardFormatAuthority.artifact.sourceRecord.recordId}<br /><span className="break-all font-mono">{fullHash(pokemonCornerAuthority.trustedCardFormatAuthority.artifact.sourceRecord.recordSha256)}</span></dd></div>
+            <div><dt>Taxonomy authority</dt><dd>{pokemonCornerAuthority.trustedCardFormatAuthority.artifact.identitySourceArtifact.artifactId}<br /><span className="break-all font-mono">{fullHash(pokemonCornerAuthority.trustedCardFormatAuthority.artifact.identitySourceArtifact.artifactSha256)}</span></dd></div>
+            <div><dt>Contour generator</dt><dd>{pokemonCornerAuthority.profile.contourGeneration.version}</dd></div>
+            <div><dt>Analyzer</dt><dd>{pokemonCornerMeasurements?.analyzerVersions.cornerMeasurement}</dd></div>
+            <div><dt>Threshold authority</dt><dd>{pokemonCornerMeasurements?.thresholdSetId}<br /><span className="break-all font-mono">{fullHash(pokemonCornerMeasurements?.thresholdSetHash ?? "")}</span></dd></div>
+          </dl>
+          <div className="mt-5 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead><tr><th>Side / corner</th><th>Deviation</th><th>U95</th><th>Effective</th><th>Decision</th><th>Deduction</th><th>Separate visible damage</th><th>Source contour</th></tr></thead>
+              <tbody>
+                {pokemonCornerMeasurements?.measurements.map((measurement) => {
+                  const damage = measurement.damageFindingIds;
+                  return (
+                    <tr className="border-t border-amber-900/15" key={`${measurement.side}:${measurement.location}`}>
+                      <td>{measurement.side} / {label(measurement.location)}</td>
+                      <td>{measurement.measuredContourDeviationMm} mm</td>
+                      <td>{measurement.calibratedU95Mm} mm</td>
+                      <td>{measurement.effectiveContourDeviationMm} mm</td>
+                      <td>{label(measurement.thresholdDecision)}</td>
+                      <td>-{score(measurement.appliedContourDeduction)}</td>
+                      <td>whitening {damage.whitening.length}; chip/loss {damage.chippingOrMaterialLoss.length}; deformation {damage.deformation.length}; delamination {damage.delamination.length}; other {damage.otherVisibleDamage.length}</td>
+                      <td className="break-all font-mono">{fullHash(measurement.observedContourSha256)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
 
       <section id="v1-observation-inspector" className="mx-auto mt-6 max-w-7xl rounded border border-black/15 bg-white/80 p-6">
         <p className="text-xs font-bold uppercase tracking-widest text-amber-800">Independent corner and edge observations</p>

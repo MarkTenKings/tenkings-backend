@@ -45,6 +45,7 @@ import {
   buildAiGraderMathematicalAuthorityBindingRequest,
   buildAiGraderMathematicalFindingReviewSubmission,
   buildAiGraderMathematicalGradingAuthorityV1,
+  buildAiGraderTrustedPokemonMathematicalGradingAuthorityV1,
   buildAiGraderQueuedOcrClaimRequest,
   buildAiGraderQueuedOcrCompletionRequest,
   buildAiGraderQueuedOcrFailureRequest,
@@ -63,6 +64,7 @@ import {
   initializeAiGraderQueuedOcrAttemptOwner,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
+  resolveAiGraderTrustedPokemonCardFormatAuthorityV1,
   stageAiGraderMathematicalDesignReference,
   type AiGraderMathematicalCardIdentityDraftV1,
   type AiGraderMathematicalCenteringProfileV1,
@@ -235,6 +237,7 @@ type LocalReportState = {
 };
 
 type MathematicalAuthorityDraftState = {
+  cardFormatProfile: "generic_standard" | "pokemon_tcg_standard";
   title: string;
   tenantId: string;
   setId: string;
@@ -590,6 +593,7 @@ const defaultIdentityDraft: IdentityDraftState = {
 };
 
 const defaultMathematicalAuthorityDraft: MathematicalAuthorityDraftState = {
+  cardFormatProfile: "generic_standard",
   title: "",
   tenantId: "",
   setId: "",
@@ -2617,27 +2621,41 @@ export default function AiGraderStationPage() {
       variantId: mathematicalAuthorityDraft.variantId.trim() || null,
       parallelId: mathematicalAuthorityDraft.parallelId.trim() || null,
     };
-    buildAiGraderMathematicalGradingAuthorityV1({
-      identity,
-      profiles: { front: "printed_border_v1", back: "printed_border_v1" },
-    });
+    const pokemonProfile =
+      mathematicalAuthorityDraft.cardFormatProfile === "pokemon_tcg_standard";
     const registeredSides = (["front", "back"] as const).filter(
       (side) => mathematicalAuthorityDraft.profiles[side] === "registered_design_template_v1",
     );
     const registeredDesignReferences: Partial<
       Record<"front" | "back", AiGraderPreparedRegisteredDesignReferenceV1>
     > = {};
-    const authHeaders = registeredSides.length
+    const authHeaders = registeredSides.length || pokemonProfile
       ? await productionAuthHeaders({}, "resolve exact approved Mathematical V1 design references")
       : {};
+    const trustedCardFormatAuthority = pokemonProfile
+      ? await resolveAiGraderTrustedPokemonCardFormatAuthorityV1({
+          identity,
+          headers: authHeaders,
+        })
+      : undefined;
+    const exactCardIdentity = trustedCardFormatAuthority?.artifact.cardIdentity ?? {
+      title: identity.title.trim(),
+      sideCount: 2 as const,
+      tenantId: identity.tenantId.trim(),
+      setId: identity.setId.trim(),
+      programId: identity.programId.trim(),
+      cardNumber: identity.cardNumber.trim(),
+      variantId: identity.variantId,
+      parallelId: identity.parallelId,
+    };
     for (const side of registeredSides) {
       const referenceIdentity: AiGraderExactDesignReferenceIdentity = {
-        tenantId: identity.tenantId.trim(),
-        setId: identity.setId.trim(),
-        programId: identity.programId.trim(),
-        cardNumber: identity.cardNumber.trim(),
-        variantId: identity.variantId,
-        parallelId: identity.parallelId,
+        tenantId: exactCardIdentity.tenantId,
+        setId: exactCardIdentity.setId,
+        programId: exactCardIdentity.programId,
+        cardNumber: exactCardIdentity.cardNumber,
+        variantId: exactCardIdentity.variantId,
+        parallelId: exactCardIdentity.parallelId,
         side,
         profile: "registered_design_template_v1",
       };
@@ -2653,11 +2671,17 @@ export default function AiGraderStationPage() {
       registeredDesignReferences[side] = { operatorAuthority, artifact };
     }
     return {
-      authority: buildAiGraderMathematicalGradingAuthorityV1({
-        identity,
-        profiles: mathematicalAuthorityDraft.profiles,
-        registeredDesignReferences,
-      }),
+      authority: trustedCardFormatAuthority
+        ? buildAiGraderTrustedPokemonMathematicalGradingAuthorityV1({
+            trustedCardFormatAuthority,
+            profiles: mathematicalAuthorityDraft.profiles,
+            registeredDesignReferences,
+          })
+        : buildAiGraderMathematicalGradingAuthorityV1({
+            identity,
+            profiles: mathematicalAuthorityDraft.profiles,
+            registeredDesignReferences,
+          }),
       registeredDesignReferences,
     };
   };
@@ -5205,12 +5229,27 @@ export default function AiGraderStationPage() {
                       {" "}{cleanSessionMathematicalV1.gradingAuthority.cardIdentity.cardNumber}
                     </span>
                     <small>
+                      Format {formatStationValue(cleanSessionMathematicalV1.gradingAuthority.cardFormatId)} ·{" "}
                       Front {formatStationValue(cleanSessionMathematicalV1.gradingAuthority.sides.front.centering.profile)} ·
                       {" "}Back {formatStationValue(cleanSessionMathematicalV1.gradingAuthority.sides.back.centering.profile)}
                     </small>
                   </div>
                 ) : null}
                 <div className="mathematical-identity-grid">
+                  <label>
+                    Physical format authority
+                    <select
+                      value={mathematicalAuthorityDraft.cardFormatProfile}
+                      onChange={(event) => setMathematicalAuthorityDraft((current) => ({
+                        ...current,
+                        cardFormatProfile: event.target.value as MathematicalAuthorityDraftState["cardFormatProfile"],
+                      }))}
+                      disabled={mathematicalAuthorityBound || busy !== null}
+                    >
+                      <option value="generic_standard">Existing standard trading card</option>
+                      <option value="pokemon_tcg_standard">Trusted Pokémon TCG standard</option>
+                    </select>
+                  </label>
                   {([
                     ["title", "Card title"],
                     ["tenantId", "Tenant ID"],
@@ -5256,6 +5295,12 @@ export default function AiGraderStationPage() {
                     </label>
                   ))}
                 </div>
+                <p>
+                  Pokémon TCG standard selection is unlocked only by the hosted immutable set-card and
+                  taxonomy-source artifact. The browser cannot self-declare Pokémon format, dimensions,
+                  radius, verification status, or tolerances. Jumbo, oversize, nonstandard, contradictory,
+                  and unresolved records fail without choosing the generic or nearest profile.
+                </p>
                 <p>
                   Registered-template sides resolve the active approved artifact for this exact identity,
                   download and SHA-256 verify its bytes, then stage those bytes to the paired session.

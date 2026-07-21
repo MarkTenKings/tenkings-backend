@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import sharp from "sharp";
 import {
   AI_GRADER_DEFECT_FINDING_V2_VERSION,
@@ -8,8 +8,16 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_ID,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_RADIUS_MM,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION,
+  POKEMON_TCG_STANDARD_MEASUREMENT_AUTHENTICATION_DOMAIN,
+  POKEMON_TCG_STANDARD_MEASUREMENT_AUTHORITY_SCHEMA_VERSION,
   aiGraderReportBundleV03Schema,
   aiGraderPublishedDefectFindingV2Schema,
+  canonicalJsonV1,
   validateMathematicalCalibrationProfileV1,
   type AiGraderPublishedDefectFindingV2,
   type AiGraderReportBundleV03,
@@ -17,6 +25,7 @@ import {
   type MathematicalDesignReferenceV1,
   type MathematicalGradingElementV1,
   type RegisteredDesignTemplateAxisCalculationV1,
+  type TrustedPokemonCardFormatAuthorityV1,
 } from "@tenkings/shared";
 import type { FixedRigCenteringElementResultV1, FixedRigPointV1 } from "./fixedRigCenteringV1";
 import type { FixedRigConditionElementResultV1 } from "./fixedRigCornerEdgeV1";
@@ -24,6 +33,7 @@ import type {
   FixedRigMathematicalGradeV1Result,
 } from "./fixedRigMathematicalGradeV1";
 import type { FixedRigSurfaceV1Result } from "./fixedRigSurfaceV1";
+import { verifyTrustedPokemonCardFormatAuthorityV1 } from "./fixedRigPokemonStandardCornerProfileV1";
 
 export const AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION =
   "ai_grader_mathematical_report_adapter_v1" as const;
@@ -144,8 +154,11 @@ export interface AiGraderMathematicalEvidenceQualityLimitationV1 {
 
 export interface BuildAiGraderMathematicalReportBundleV1Input {
   generatedAt: string;
+  gradingSessionId?: string;
   reportId: string;
   cardIdentity: AiGraderReportBundleV03["cardIdentity"];
+  pokemonStandardCornerAuthority?: TrustedPokemonCardFormatAuthorityV1;
+  pokemonStandardCornerAuthorityVerification?: { hmacKey: string; keyId: string };
   calibrationProfile: MathematicalCalibrationProfileV1;
   calibrationBundleAuthority: AiGraderReportBundleV03["calibrationBundleAuthority"];
   designReferences: MathematicalDesignReferenceV1[];
@@ -1333,6 +1346,101 @@ function verifySurfaceSourceEvidence(
   }
 }
 
+function buildPokemonStandardCornerAuthorityV1(
+  input: BuildAiGraderMathematicalReportBundleV1Input & { grade: FinalMathematicalGradeV1 },
+): AiGraderReportBundleV03["pokemonStandardCornerAuthority"] | undefined {
+  if (!input.pokemonStandardCornerAuthority) return undefined;
+  const verification = input.pokemonStandardCornerAuthorityVerification;
+  const verifiedAuthority = verifyTrustedPokemonCardFormatAuthorityV1({
+    authority: input.pokemonStandardCornerAuthority,
+    hmacKey: verification?.hmacKey,
+    expectedKeyId: verification?.keyId,
+  });
+  if (!input.gradingSessionId) {
+    throw new Error("The trusted Pokémon standard profile requires the exact grading session ID.");
+  }
+  if (input.corners.status !== "computed") {
+    throw new Error("The trusted Pokémon standard profile requires eight computed physical corner observations.");
+  }
+  const measurements = input.corners.observations.map((observation) => {
+    const contour = observation.cornerContourDeviation;
+    if (!contour) {
+      throw new Error(`${observation.side} ${observation.location} has no analyzer-created contour result.`);
+    }
+    const geometry = input.outerCutGeometryEvidence[observation.side];
+    const observed = geometry.observedArtifact;
+    return {
+      side: observation.side,
+      location: observation.location as "top_left" | "top_right" | "bottom_right" | "bottom_left",
+      profileId: POKEMON_TCG_STANDARD_CORNER_PROFILE_ID,
+      profileVersion: POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION,
+      profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+      expectedRadiusMm: POKEMON_TCG_STANDARD_CORNER_PROFILE_RADIUS_MM,
+      measuredContourDeviationMm: contour.measurement.measuredMeasurement,
+      calibratedU95Mm: contour.measurement.u95,
+      effectiveContourDeviationMm: contour.measurement.effectiveMeasurement,
+      grade10ToleranceMm: contour.measurement.explicitGrade10Tolerance,
+      thresholdDecision: contour.thresholdDecision,
+      thresholdDeduction: contour.thresholdDeduction,
+      appliedContourDeduction: contour.appliedContourDeduction,
+      measurementId: contour.measurement.measurementId,
+      sourceImageAssetId: observed.rawAllOnAssetId,
+      sourceImageSha256: observed.rawAllOnAssetSha256,
+      observedContourSha256: observed.artifactSha256,
+      intendedContourSha256: observed.intendedBoundaryArtifactSha256,
+      contourFindingIds: [...contour.contourFindingIds],
+      damageFindingIds: {
+        whitening: [...contour.damageFindingIds.whitening],
+        chippingOrMaterialLoss: [...contour.damageFindingIds.chippingOrMaterialLoss],
+        deformation: [...contour.damageFindingIds.deformation],
+        delamination: [...contour.damageFindingIds.delamination],
+        otherVisibleDamage: [...contour.damageFindingIds.otherVisibleDamage],
+      },
+    };
+  });
+  const measurementArtifact = {
+    gradingSessionId: input.gradingSessionId,
+    reportId: input.reportId,
+    analyzerVersions: {
+      conditionSegmentation: "fixed_rig_condition_segmentation_v1.2.0" as const,
+      cornerMeasurement: "fixed_rig_corner_edge_v1" as const,
+      stationAdapter: "fixed_rig_mathematical_station_adapter_v1" as const,
+    },
+    thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+    thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+    calibration: {
+      profileId: input.calibrationProfile.profileId,
+      version: input.calibrationProfile.calibrationVersion,
+      artifactSha256: input.calibrationProfile.artifactSha256,
+      bundleManifestSha256: input.calibrationBundleAuthority.bundleManifestSha256,
+      sourceCaptureManifestSha256: input.calibrationBundleAuthority.sourceCaptureManifestSha256,
+      memberLedgerSha256: input.calibrationBundleAuthority.memberLedgerSha256,
+    },
+    callerCreatedProfilesAccepted: false as const,
+    callerCreatedMeasurementsAccepted: false as const,
+    measurements,
+  };
+  const measurementArtifactBytes = canonicalJsonV1(measurementArtifact);
+  return {
+    profile: POKEMON_TCG_STANDARD_CORNER_PROFILE,
+    profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+    trustedCardFormatAuthority: verifiedAuthority,
+    productionMeasurementAuthority: {
+      schemaVersion: POKEMON_TCG_STANDARD_MEASUREMENT_AUTHORITY_SCHEMA_VERSION,
+      artifact: measurementArtifact,
+      artifactSha256: sha256(Buffer.from(measurementArtifactBytes, "utf8")),
+      authentication: {
+        algorithm: "hmac-sha256",
+        keyId: verification!.keyId,
+        signature: createHmac("sha256", verification!.hmacKey)
+          .update(POKEMON_TCG_STANDARD_MEASUREMENT_AUTHENTICATION_DOMAIN, "utf8")
+          .update(measurementArtifactBytes, "utf8")
+          .digest("hex"),
+      },
+    },
+  };
+}
+
 /**
  * Builds the public Mathematical Grading V1 artifact only from finalized,
  * physically calibrated evidence. The function intentionally has no V0 path:
@@ -1364,6 +1472,7 @@ export async function buildAiGraderMathematicalReportBundleV1(
   );
   const whyNot10 = publicWhyNot10(input.grade, centeringEvidence, overlayAssetIdByFindingId);
   const overallConfidence = validateConfidence(input.confidence.overall, "overall");
+  const pokemonStandardCornerAuthority = buildPokemonStandardCornerAuthorityV1(input);
   const rawBundle = {
     schemaVersion: AI_GRADER_REPORT_BUNDLE_V03_VERSION,
     generatedAt: input.generatedAt,
@@ -1378,6 +1487,7 @@ export async function buildAiGraderMathematicalReportBundleV1(
       defectFindingSchemaVersion: AI_GRADER_DEFECT_FINDING_V2_VERSION,
       designReferenceSchemaVersion: MATHEMATICAL_DESIGN_REFERENCE_V1_SCHEMA_VERSION,
     },
+    ...(pokemonStandardCornerAuthority ? { pokemonStandardCornerAuthority } : {}),
     productionRelease: {
       finalGrade: {
         status: "final_mathematical_grade_v1",

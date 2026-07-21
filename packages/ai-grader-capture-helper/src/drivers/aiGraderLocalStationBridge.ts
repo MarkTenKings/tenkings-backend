@@ -165,6 +165,11 @@ import type {
   FixedRigMathematicalFindingReviewRequestV1,
   FixedRigMathematicalFindingReviewV1,
 } from "./fixedRigMathematicalCalibrationOrchestratorV1";
+import {
+  FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID,
+  verifyTrustedPokemonCardFormatAuthorityV1,
+} from "./fixedRigPokemonStandardCornerProfileV1";
+import { FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID } from "./fixedRigStandardCardFormatV1";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.10";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
@@ -215,15 +220,26 @@ export type AiGraderLocalStationMathematicalCenteringAuthorityV1 =
       approvedDesignArtifact: Omit<RegisteredMathematicalCenteringAuthority["approvedDesignArtifact"], "filePath">;
     };
 
-export interface AiGraderLocalStationMathematicalGradingAuthorityV1 {
+type AiGraderLocalStationMathematicalGradingAuthorityBaseV1 = {
   schemaVersion: typeof FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION;
   cardIdentity: FixedRigMathematicalStationGradingAuthorityV1["cardIdentity"];
-  cardFormatId: FixedRigMathematicalStationGradingAuthorityV1["cardFormatId"];
   sides: {
     front: { centering: AiGraderLocalStationMathematicalCenteringAuthorityV1 };
     back: { centering: AiGraderLocalStationMathematicalCenteringAuthorityV1 };
   };
-}
+};
+
+export type AiGraderLocalStationMathematicalGradingAuthorityV1 =
+  | AiGraderLocalStationMathematicalGradingAuthorityBaseV1 & {
+      cardFormatId: typeof FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID;
+    }
+  | AiGraderLocalStationMathematicalGradingAuthorityBaseV1 & {
+      cardFormatId: typeof FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID;
+      trustedCardFormatAuthority: Extract<
+        FixedRigMathematicalStationGradingAuthorityV1,
+        { cardFormatId: typeof FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID }
+      >["trustedCardFormatAuthority"];
+    };
 
 export interface AiGraderLocalStationStagedDesignReferenceV1 {
   side: "front" | "back";
@@ -667,6 +683,8 @@ export interface AiGraderLocalStationBridgeConfigInput {
     Omit<DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig, "outputRoot"> & { outputRoot?: string };
   provisionalGeometryArtifactPath?: string;
   provisionalGeometryArtifactSha256?: string;
+  cardFormatAuthorityHmacKey?: string;
+  cardFormatAuthorityHmacKeyId?: string;
 }
 
 export interface AiGraderLocalStationBridgeConfig {
@@ -721,6 +739,8 @@ export interface AiGraderLocalStationBridgeConfig {
   mathematicalCalibrationV1_2Authority?: MathematicalCalibrationV1_2LocalSessionAuthority;
   provisionalGeometryArtifactPath?: string;
   provisionalGeometryArtifactSha256?: string;
+  cardFormatAuthorityHmacKey?: string;
+  cardFormatAuthorityHmacKeyId?: string;
 }
 
 export interface AiGraderLocalStationBridgeManifest {
@@ -1586,11 +1606,17 @@ function exactStationString(value: unknown, label: string): string {
 
 function validateLocalMathematicalGradingAuthorityV1(
   value: unknown,
+  verification: {
+    hmacKey?: string;
+    keyId?: string;
+  } = {},
 ): AiGraderLocalStationMathematicalGradingAuthorityV1 {
   const authority = stationContractObject(value, "Mathematical V1 grading authority");
   assertStationContractKeys(
     authority,
-    ["schemaVersion", "cardIdentity", "cardFormatId", "sides"],
+    authority.cardFormatId === FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID
+      ? ["schemaVersion", "cardIdentity", "cardFormatId", "trustedCardFormatAuthority", "sides"]
+      : ["schemaVersion", "cardIdentity", "cardFormatId", "sides"],
     "Mathematical V1 grading authority",
   );
   if (authority.schemaVersion !== FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION) {
@@ -1676,6 +1702,16 @@ function validateLocalMathematicalGradingAuthorityV1(
     }
     exactStationString(reference.referenceId, "Mathematical V1 approved reference ID");
     exactStationString(artifact.assetId, "Mathematical V1 design-reference asset ID");
+  }
+  if (authority.cardFormatId === FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID) {
+    verifyTrustedPokemonCardFormatAuthorityV1({
+      authority: authority.trustedCardFormatAuthority,
+      hmacKey: verification.hmacKey,
+      expectedKeyId: verification.keyId,
+      expectedCardIdentity: cardIdentity as FixedRigMathematicalStationGradingAuthorityV1["cardIdentity"],
+    });
+  } else if (authority.cardFormatId !== FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID) {
+    throw new Error("Mathematical V1 card-format profile is not supported.");
   }
   return structuredClone(value) as AiGraderLocalStationMathematicalGradingAuthorityV1;
 }
@@ -2124,6 +2160,20 @@ export function buildAiGraderLocalStationBridgeConfig(
   if (provisionalGeometryArtifactSha256 && !/^[a-f0-9]{64}$/.test(provisionalGeometryArtifactSha256)) {
     throw new Error("AI Grader provisional geometry artifact SHA-256 must be exact lowercase hexadecimal.");
   }
+  const cardFormatAuthorityHmacKey = firstNonEmpty(
+    input.cardFormatAuthorityHmacKey,
+    env.AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY,
+  );
+  const cardFormatAuthorityHmacKeyId = firstNonEmpty(
+    input.cardFormatAuthorityHmacKeyId,
+    env.AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY_ID,
+  );
+  if (Boolean(cardFormatAuthorityHmacKey) !== Boolean(cardFormatAuthorityHmacKeyId) ||
+      (cardFormatAuthorityHmacKey && Buffer.byteLength(cardFormatAuthorityHmacKey, "utf8") < 32) ||
+      (cardFormatAuthorityHmacKeyId &&
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(cardFormatAuthorityHmacKeyId))) {
+    throw new Error("AI Grader card-format authority HMAC key and key ID must be configured together and valid.");
+  }
   return {
     enabled,
     host: normalizeHost(firstNonEmpty(input.host, env.AI_GRADER_STATION_BRIDGE_HOST)),
@@ -2191,6 +2241,8 @@ export function buildAiGraderLocalStationBridgeConfig(
     mathematicalCalibrationV1_2Authority,
     provisionalGeometryArtifactPath,
     provisionalGeometryArtifactSha256,
+    cardFormatAuthorityHmacKey,
+    cardFormatAuthorityHmacKeyId,
   };
 }
 
@@ -6433,7 +6485,10 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Mathematical grading authority is already bound to this exact session.");
     }
     manifest.mathematicalV1 = newLocalMathematicalV1State(
-      validateLocalMathematicalGradingAuthorityV1(value),
+      validateLocalMathematicalGradingAuthorityV1(value, {
+        hmacKey: this.config.cardFormatAuthorityHmacKey,
+        keyId: this.config.cardFormatAuthorityHmacKeyId,
+      }),
       manifest.createdAt,
     );
     manifest.progressLog.push(
@@ -6963,6 +7018,13 @@ export class AiGraderLocalStationBridgeService {
             : {}),
         },
         warmSides: { front, back },
+        ...(this.config.cardFormatAuthorityHmacKey &&
+          this.config.cardFormatAuthorityHmacKeyId ? {
+            cardFormatAuthorityVerification: {
+              hmacKey: this.config.cardFormatAuthorityHmacKey,
+              keyId: this.config.cardFormatAuthorityHmacKeyId,
+            },
+          } : {}),
         ...(findingReviews ? { findingReviews: structuredClone(findingReviews) } : {}),
       });
       if (result.gradingContract !== "mathematical_calibration_v1" || result.v0FallbackUsed !== false) {

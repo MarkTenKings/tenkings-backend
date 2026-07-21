@@ -665,8 +665,8 @@ function conditionCalibration() {
 }
 
 function cornerObservation(side, location, options = {}) {
-  const width = 10;
-  const height = 10;
+  const width = options.width ?? 10;
+  const height = options.height ?? 10;
   const regionId = `${side}-${location}-corner`;
   return measureFixedRigCornerObservationV1({
     side,
@@ -682,12 +682,12 @@ function cornerObservation(side, location, options = {}) {
     evidence: measurementEvidence(side, regionId),
     whiteningMask: options.whiteningMask ?? plane(width, height, 0),
     missingMaterialMask: options.missingMaterialMask ?? plane(width, height, 0),
-    shapeDeviationMask: plane(width, height, 0),
-    shapeDeviationPx: plane(width, height, 0),
-    deformationMask: plane(width, height, 0),
-    delaminationMask: plane(width, height, 0),
-    directionalReliefIndex: plane(width, height, 0),
-    directionalReliefMask: plane(width, height, 0),
+    shapeDeviationMask: options.shapeDeviationMask ?? plane(width, height, 0),
+    shapeDeviationPx: options.shapeDeviationPx ?? plane(width, height, 0),
+    deformationMask: options.deformationMask ?? plane(width, height, 0),
+    delaminationMask: options.delaminationMask ?? plane(width, height, 0),
+    directionalReliefIndex: options.directionalReliefIndex ?? plane(width, height, 0),
+    directionalReliefMask: options.directionalReliefMask ?? plane(width, height, 0),
   });
 }
 
@@ -704,6 +704,10 @@ test("each of eight corner observations measures its own pixels and aggregates w
     }
   }
   assert.ok(observations.every((observation) => observation.status === "computed"));
+  assert.equal(new Set(observations.map((observation) =>
+    observation.cornerContourDeviation.measurement.measurementId)).size, 8);
+  assert.ok(observations.every((observation) =>
+    observation.cornerContourDeviation.measurement.measuredMeasurement === 0));
   const damaged = observations[0];
   assert.equal(damaged.findings.length, 1);
   assert.equal(damaged.findings[0].finding.category, "corner_whitening");
@@ -717,6 +721,38 @@ test("each of eight corner observations measures its own pixels and aggregates w
   assert.equal(element.aggregation.worstPenalty, 0.03);
   assert.equal(element.aggregation.averagePenalty, 0.00375);
   assert.equal(element.score, 9.98);
+});
+
+test("contour, whitening, material loss, deformation, delamination, and other damage stay separate", () => {
+  const width = 80;
+  const height = 80;
+  const block = (predicate) => plane(width, height, (x, y) => predicate(x, y) ? 1 : 0);
+  const result = cornerObservation("front", "top_left", {
+    width,
+    height,
+    shapeDeviationMask: block((x, y) => x < 2 && y < 2),
+    shapeDeviationPx: plane(width, height, (x, y) => x < 2 && y < 2 ? 6 : 0),
+    whiteningMask: block((x, y) => x >= 30 && x < 32 && y < 2),
+    missingMaterialMask: block((x, y) => x < 2 && y >= 30 && y < 32),
+    deformationMask: block((x, y) => x >= 30 && x < 32 && y >= 30 && y < 32),
+    delaminationMask: block((x, y) => x >= 60 && x < 62 && y < 2),
+    directionalReliefMask: block((x, y) => x >= 60 && x < 62 && y >= 30 && y < 32),
+    directionalReliefIndex: plane(width, height, (x, y) =>
+      x >= 60 && x < 62 && y >= 30 && y < 32 ? 0.8 : 0),
+  });
+  assert.equal(result.status, "computed");
+  const contour = result.cornerContourDeviation;
+  assert.ok(contour.measurement.measuredMeasurement > 0);
+  const groups = [
+    contour.contourFindingIds,
+    contour.damageFindingIds.whitening,
+    contour.damageFindingIds.chippingOrMaterialLoss,
+    contour.damageFindingIds.deformation,
+    contour.damageFindingIds.delamination,
+    contour.damageFindingIds.otherVisibleDamage,
+  ];
+  assert.ok(groups.every((ids) => ids.length > 0));
+  assert.equal(new Set(groups.flat()).size, groups.flat().length);
 });
 
 test("an invalid clean-corner region cannot masquerade as a Grade 10", () => {

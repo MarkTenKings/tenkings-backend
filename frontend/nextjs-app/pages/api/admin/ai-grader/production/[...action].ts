@@ -25,6 +25,7 @@ import {
   runAiGraderEbayCompsRuntime,
   searchAiGraderCardItemsRuntime,
 } from "../../../../../lib/server/aiGraderProductionApi";
+import { resolveHostedPokemonStandardCardAuthorityRuntime } from "../../../../../lib/server/aiGraderTrustedCardFormatAuthority";
 import {
   listAiGraderLabelSheetsRuntime,
   markAiGraderLabelSheetPrintedRuntime,
@@ -97,6 +98,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     listFinishQueue: ({ tenantId }) => listAiGraderFinishCardsQueueRuntime({ tenantId }),
     listLabelSheets: ({ tenantId }) => listAiGraderLabelSheetsRuntime({ tenantId }),
     searchCards: searchAiGraderCardItemsRuntime,
+    resolveMathematicalCardAuthority: resolveHostedPokemonStandardCardAuthorityRuntime,
     createCardFromReport: createAiGraderCardFromReportRuntime,
     finalizeSlabbedPhotoUpload: finalizeAiGraderSlabbedPhotoUploadRuntime,
     runOcrPrefill: runAiGraderOcrPrefillRuntime,
