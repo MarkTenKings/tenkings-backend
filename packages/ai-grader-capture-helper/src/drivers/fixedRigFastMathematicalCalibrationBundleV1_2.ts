@@ -20,9 +20,11 @@ import {
   FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_PROFILE,
   FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
   hashFastCalibrationCanonicalV1_2,
+  validateFastCalibrationPoseV1_2,
   validateFastCalibrationRigCharacterizationV1_2,
   validateFastCalibrationRuntimeContextV1_2,
   type FastCalibrationRigCharacterizationAuthorityV1_2,
+  type FastCalibrationPoseV1_2,
   type FastCalibrationRuntimeContextV1_2,
 } from "./fixedRigFastMathematicalCalibrationV1_2";
 
@@ -51,6 +53,7 @@ export interface FastCalibrationSourceArtifactV1_2 {
   byteSize: number;
   active: boolean;
   supersedesOperationId?: string;
+  pose?: FastCalibrationPoseV1_2;
 }
 
 export interface FastCalibrationSourceCapturePackageV1_2 {
@@ -143,7 +146,6 @@ export interface BuildFastCalibrationAnalysisV1_2Input {
   sourceManifestSha256: string;
   sourceCapturePackage: FastCalibrationSourceCapturePackageV1_2;
   sourceArtifactLedger: FastCalibrationSourceArtifactV1_2[];
-  geometryVerification: FastCalibrationGeometryVerificationV1_2;
   builderInput: BuildFixedRigPhysicalCalibrationV1Input;
   flatFieldArtifacts: FastCalibrationAnalysisV1_2["flatFieldArtifacts"];
   illuminationPatternArtifact: FastCalibrationAnalysisV1_2["illuminationPatternArtifact"];
@@ -211,6 +213,8 @@ function oneTimeProjection(input: BuildFixedRigPhysicalCalibrationV1Input): unkn
   return {
     rigId: input.rigId,
     targetVersion: input.targetVersion,
+    normalizedWidthPx: input.normalizedWidthPx,
+    normalizedHeightPx: input.normalizedHeightPx,
     targetSha256: input.targetSha256,
     scaleSamples: input.scaleSamples,
     targetPrintScaleSamples: input.targetPrintScaleSamples,
@@ -221,7 +225,7 @@ function oneTimeProjection(input: BuildFixedRigPhysicalCalibrationV1Input): unkn
     lensModel: input.lensModel,
     normalizationModel: input.normalizationModel,
     targetEvidence: input.targetEvidence,
-    physicalDirections: input.channels.map((channel) => ({
+    channels: input.channels.map((channel) => ({
       channelIndex: channel.channelIndex,
       directionMeasurementSamples: channel.directionMeasurementSamples,
     })),
@@ -313,7 +317,7 @@ export function validateFastCalibrationSourceCapturePackageV1_2(
   }
 }
 
-function validateLedger(ledger: FastCalibrationSourceArtifactV1_2[]): void {
+function validateLedger(ledger: FastCalibrationSourceArtifactV1_2[], context: FastCalibrationRuntimeContextV1_2): void {
   if (!Array.isArray(ledger) || ledger.length < 76) throw new Error("Fast calibration source ledger is incomplete.");
   const operationIds = new Set<string>();
   const hashes = new Set<string>();
@@ -325,6 +329,17 @@ function validateLedger(ledger: FastCalibrationSourceArtifactV1_2[]): void {
     if (hashes.has(entry.sha256)) throw new Error("Duplicate or relabelled fast calibration evidence is rejected.");
     operationIds.add(entry.operationId);
     hashes.add(entry.sha256);
+    if (entry.role === "checkerboard_placement") {
+      if (!entry.pose) throw new Error("Every checkerboard source ledger entry must contain its immutable capture-time pose.");
+      validateFastCalibrationPoseV1_2(entry.pose, entry.sha256, context);
+      if (entry.channelIndex !== null || entry.sampleIndex !== entry.slot) {
+        throw new Error("Checkerboard source ledger identity is inconsistent.");
+      }
+    } else {
+      if (entry.pose !== undefined || entry.channelIndex === null || entry.slot < 1) {
+        throw new Error("Photometric source ledger identity or pose fields are inconsistent.");
+      }
+    }
   }
   const expected = new Set<string>();
   for (let sample = 1; sample <= 4; sample += 1) expected.add(`checkerboard_placement:none:${sample}`);
@@ -337,6 +352,37 @@ function validateLedger(ledger: FastCalibrationSourceArtifactV1_2[]): void {
   if (active.length !== 76 || observed.size !== 76 || [...expected].some((key) => !observed.has(key))) {
     throw new Error("Fast calibration active source ledger must contain exact slots for four placements and 72 photometric frames.");
   }
+}
+
+function deriveGeometryVerification(
+  ledger: FastCalibrationSourceArtifactV1_2[],
+): FastCalibrationGeometryVerificationV1_2 {
+  const poses = ledger
+    .filter((entry) => entry.active && entry.role === "checkerboard_placement")
+    .sort((left, right) => left.slot - right.slot)
+    .map((entry) => entry.pose!);
+  if (poses.length !== 4) throw new Error("Fast calibration geometry requires exactly four active capture-time poses.");
+  const span = (values: number[]) => Math.max(...values) - Math.min(...values);
+  const residuals = poses.map((pose) => pose.authorityReprojectionResidualPx);
+  const geometry: FastCalibrationGeometryVerificationV1_2 = {
+    accepted: true,
+    poseCount: 4,
+    minimumCoverageFraction: Math.min(...poses.map((pose) => pose.coverageFraction)),
+    minimumSafetyMarginFraction: Math.min(...poses.map((pose) => pose.safetyMarginFraction)),
+    spans: {
+      x: span(poses.map((pose) => pose.centerXFraction)),
+      y: span(poses.map((pose) => pose.centerYFraction)),
+      rotationDegrees: span(poses.map((pose) => pose.rotationDegrees)),
+    },
+    maximumAuthorityReprojectionResidualPx: Math.max(...residuals),
+    authorityReprojectionU95Px: Math.max(...residuals),
+  };
+  if (geometry.minimumCoverageFraction < 0.30 || geometry.minimumSafetyMarginFraction < 0.01 ||
+      geometry.spans.x < 0.07 || geometry.spans.y < 0.08 || geometry.spans.rotationDegrees < 2 ||
+      geometry.maximumAuthorityReprojectionResidualPx > 0.5 || geometry.authorityReprojectionU95Px > 0.5) {
+    throw new Error("Fast calibration four-pose geometry verification failed unchanged V1 acceptance thresholds.");
+  }
+  return geometry;
 }
 
 
@@ -365,26 +411,58 @@ function validateBuilderPhotometricLineage(
     }
   }
 }
+
+function validateQuickGeometryLineage(
+  builderInput: BuildFixedRigPhysicalCalibrationV1Input,
+  ledger: FastCalibrationSourceArtifactV1_2[],
+): void {
+  const poseHashes = new Set(ledger
+    .filter((entry) => entry.active && entry.role === "checkerboard_placement")
+    .map((entry) => entry.sha256));
+  for (const [label, samples] of [
+    ["normalization residual", builderInput.normalizationResidualSamples],
+    ["segmentation boundary", builderInput.segmentationBoundarySamples],
+  ] as const) {
+    if (samples.length === 0 || samples.some((sample) => !poseHashes.has(sample.sha256))) {
+      throw new Error(`Fast calibration ${label} inputs are not reconstructably bound to active capture-time pose evidence.`);
+    }
+  }
+}
+
+function normalizedBuilderInput(input: BuildFixedRigPhysicalCalibrationV1Input): BuildFixedRigPhysicalCalibrationV1Input {
+  return {
+    ...input,
+    channels: input.channels.map((channel) => ({
+      ...channel,
+      relativeResponse: Array.from(channel.relativeResponse),
+      expectedDirectionalResidual: Array.from(channel.expectedDirectionalResidual),
+    })),
+  };
+}
+
 export function buildFastCalibrationAnalysisV1_2(
   input: BuildFastCalibrationAnalysisV1_2Input,
 ): FastCalibrationAnalysisV1_2 {
+  if (!input || typeof input !== "object" || Array.isArray(input) ||
+      (() => {
+        const actual = Object.keys(input).sort();
+        const expected = ["builderInput", "flatFieldArtifacts", "illuminationPatternArtifact",
+          "sourceArtifactLedger", "sourceCapturePackage", "sourceManifestSha256"].sort();
+        return actual.length !== expected.length || actual.some((key, index) => key !== expected[index]);
+      })()) throw new Error("Fast calibration analysis input fields do not match the exact server-derived V1.2 contract.");
   validateFastCalibrationSourceCapturePackageV1_2(input.sourceCapturePackage);
-  validateLedger(input.sourceArtifactLedger);
-  validateBuilderPhotometricLineage(input.builderInput, input.sourceArtifactLedger);
+  validateLedger(input.sourceArtifactLedger, input.sourceCapturePackage.runtimeContext);
+  const builderInput = normalizedBuilderInput(input.builderInput);
+  validateBuilderPhotometricLineage(builderInput, input.sourceArtifactLedger);
+  validateQuickGeometryLineage(builderInput, input.sourceArtifactLedger);
   exactSha(input.sourceManifestSha256, "sourceManifestSha256");
-  if (
-    input.geometryVerification.accepted !== true || input.geometryVerification.poseCount !== 4 ||
-    input.geometryVerification.minimumCoverageFraction < 0.30 ||
-    input.geometryVerification.minimumSafetyMarginFraction < 0.01 ||
-    input.geometryVerification.spans.x < 0.07 || input.geometryVerification.spans.y < 0.08 ||
-    input.geometryVerification.spans.rotationDegrees < 2 ||
-    input.geometryVerification.maximumAuthorityReprojectionResidualPx > 0.5 ||
-    input.geometryVerification.authorityReprojectionU95Px > 0.5
-  ) {
-    throw new Error("Fast calibration four-pose geometry verification failed unchanged V1 acceptance thresholds.");
-  }
-  if (input.builderInput.rigId !== input.sourceCapturePackage.rigId) {
+  const geometryVerification = deriveGeometryVerification(input.sourceArtifactLedger);
+  if (builderInput.rigId !== input.sourceCapturePackage.rigId) {
     throw new Error("Fast calibration builder input rigId differs from the source package.");
+  }
+  if (hashFastCalibrationCanonicalV1_2(oneTimeProjection(builderInput)) !==
+      input.sourceCapturePackage.rigCharacterizationAuthority.oneTimeCalibrationInputSha256) {
+    throw new Error("Fast calibration one-time builder inputs do not reconstruct from the verified rig-characterization source members.");
   }
   if (input.flatFieldArtifacts.length !== 8) throw new Error("Fast calibration analysis requires eight flat-field artifacts.");
   const flatChannels = new Set<number>();
@@ -396,7 +474,7 @@ export function buildFastCalibrationAnalysisV1_2(
     if (artifact.fileName !== `flat-field-channel-${artifact.channelIndex}-v1.json` || digest(artifact.bytes) !== artifact.sha256) {
       throw new Error(`Fast calibration flat-field channel ${artifact.channelIndex} file identity mismatch.`);
     }
-    const builderChannel = input.builderInput.channels.find((channel) => channel.channelIndex === artifact.channelIndex);
+    const builderChannel = builderInput.channels.find((channel) => channel.channelIndex === artifact.channelIndex);
     if (!builderChannel || builderChannel.flatFieldArtifactSha256 !== artifact.sha256) {
       throw new Error(`Fast calibration flat-field channel ${artifact.channelIndex} is not bound to builder input.`);
     }
@@ -404,7 +482,7 @@ export function buildFastCalibrationAnalysisV1_2(
   if (
     input.illuminationPatternArtifact.fileName !== ILLUMINATION_FILE ||
     digest(input.illuminationPatternArtifact.bytes) !== input.illuminationPatternArtifact.sha256 ||
-    input.builderInput.channels.some((channel) => channel.illuminationPatternArtifactSha256 !== input.illuminationPatternArtifact.sha256)
+    builderInput.channels.some((channel) => channel.illuminationPatternArtifactSha256 !== input.illuminationPatternArtifact.sha256)
   ) {
     throw new Error("Fast calibration illumination-pattern artifact is not exactly bound to all channels.");
   }
@@ -426,14 +504,14 @@ export function buildFastCalibrationAnalysisV1_2(
     sourceArtifactLedger: input.sourceArtifactLedger,
     sourceArtifactLedgerSha256,
     captureCounts: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_COUNTS,
-    geometryVerification: input.geometryVerification,
+    geometryVerification,
     authorityLayers: {
-      oneTimeRigCharacterizationInputSha256: hashFastCalibrationCanonicalV1_2(oneTimeProjection(input.builderInput)),
+      oneTimeRigCharacterizationInputSha256: hashFastCalibrationCanonicalV1_2(oneTimeProjection(builderInput)),
       quickSiteLightingInputSha256: hashFastCalibrationCanonicalV1_2(
-        quickProjection(input.builderInput, input.sourceCapturePackage, input.geometryVerification),
+        quickProjection(builderInput, input.sourceCapturePackage, geometryVerification),
       ),
     },
-    builderInput: input.builderInput,
+    builderInput,
     flatFieldArtifacts: input.flatFieldArtifacts,
     illuminationPatternArtifact: input.illuminationPatternArtifact,
     accepted: true as const,
@@ -449,6 +527,71 @@ function analysisWithoutBuffers(analysis: FastCalibrationAnalysisV1_2): unknown 
   };
 }
 
+export function serializeFastCalibrationAnalysisV1_2(analysis: FastCalibrationAnalysisV1_2): Buffer {
+  return jsonBytes({
+    ...(analysisWithoutBuffers(analysis) as JsonObject),
+    flatFieldArtifacts: analysis.flatFieldArtifacts.map(({ bytes, ...artifact }) => ({
+      ...artifact,
+      bytesBase64: bytes.toString("base64"),
+    })),
+    illuminationPatternArtifact: {
+      ...((({ bytes: _bytes, ...artifact }) => artifact)(analysis.illuminationPatternArtifact)),
+      bytesBase64: analysis.illuminationPatternArtifact.bytes.toString("base64"),
+    },
+  });
+}
+
+function exactBase64Bytes(value: unknown, label: string): Buffer {
+  if (typeof value !== "string" || value.length === 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+    throw new Error(`${label} must contain exact non-empty base64 bytes.`);
+  }
+  const bytes = Buffer.from(value, "base64");
+  if (bytes.length === 0 || bytes.toString("base64") !== value) {
+    throw new Error(`${label} base64 bytes are not canonical.`);
+  }
+  return bytes;
+}
+
+export function parseAndRebuildFastCalibrationAnalysisV1_2(bytes: Buffer): FastCalibrationAnalysisV1_2 {
+  if (!Buffer.isBuffer(bytes) || bytes.length === 0) throw new Error("Fast calibration analysis evidence bytes are empty.");
+  let encoded: JsonObject;
+  try {
+    encoded = JSON.parse(bytes.toString("utf8")) as JsonObject;
+  } catch {
+    throw new Error("Fast calibration analysis evidence is not valid JSON.");
+  }
+  if (!Array.isArray(encoded.flatFieldArtifacts) || encoded.flatFieldArtifacts.length !== 8 ||
+      !encoded.illuminationPatternArtifact || typeof encoded.illuminationPatternArtifact !== "object") {
+    throw new Error("Fast calibration serialized analysis artifact payloads are incomplete.");
+  }
+  const flatFieldArtifacts = encoded.flatFieldArtifacts.map((value, index) => {
+    const artifact = value as JsonObject;
+    return {
+      channelIndex: artifact.channelIndex as number,
+      fileName: artifact.fileName as string,
+      sha256: artifact.sha256 as string,
+      bytes: exactBase64Bytes(artifact.bytesBase64, `flatFieldArtifacts[${index}].bytesBase64`),
+    };
+  });
+  const illumination = encoded.illuminationPatternArtifact as JsonObject;
+  const rebuilt = buildFastCalibrationAnalysisV1_2({
+    sourceManifestSha256: encoded.sourceManifestSha256 as string,
+    sourceCapturePackage: encoded.sourceCapturePackage as unknown as FastCalibrationSourceCapturePackageV1_2,
+    sourceArtifactLedger: encoded.sourceArtifactLedger as unknown as FastCalibrationSourceArtifactV1_2[],
+    builderInput: encoded.builderInput as unknown as BuildFixedRigPhysicalCalibrationV1Input,
+    flatFieldArtifacts,
+    illuminationPatternArtifact: {
+      fileName: illumination.fileName as typeof ILLUMINATION_FILE,
+      sha256: illumination.sha256 as string,
+      bytes: exactBase64Bytes(illumination.bytesBase64, "illuminationPatternArtifact.bytesBase64"),
+    },
+  });
+  if (!bytes.equals(serializeFastCalibrationAnalysisV1_2(rebuilt))) {
+    throw new Error("Fast calibration analysis evidence is not the exact deterministic rebuilt analysis.");
+  }
+  return rebuilt;
+}
+
 async function writeNew(filePath: string, bytes: Buffer): Promise<string> {
   await writeFile(filePath, bytes, { flag: "wx" });
   return digest(bytes);
@@ -462,7 +605,6 @@ export async function finalizeFastMathematicalCalibrationBundleV1_2(input: {
     sourceManifestSha256: input.analysis.sourceManifestSha256,
     sourceCapturePackage: input.analysis.sourceCapturePackage,
     sourceArtifactLedger: input.analysis.sourceArtifactLedger,
-    geometryVerification: input.analysis.geometryVerification,
     builderInput: input.analysis.builderInput,
     flatFieldArtifacts: input.analysis.flatFieldArtifacts,
     illuminationPatternArtifact: input.analysis.illuminationPatternArtifact,

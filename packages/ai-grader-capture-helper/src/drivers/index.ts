@@ -196,3 +196,4 @@ export * from "./fixedRigMathematicalCalibrationCaptureV1";
 export * from "./fixedRigMathematicalCalibrationBundleV1";
 export * from './fixedRigMathematicalStationAdapterV1';
 export * from './fixedRigAutomaticDesignRegistrationV1';
+export * from "./mathematicalCalibrationV1_2Contract";

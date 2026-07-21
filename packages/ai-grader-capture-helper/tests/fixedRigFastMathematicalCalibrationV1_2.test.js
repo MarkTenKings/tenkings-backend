@@ -11,10 +11,25 @@ const {
   FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA,
   FixedRigFastMathematicalCalibrationCoreV1_2,
   hashFastCalibrationCanonicalV1_2,
+  validateFastCalibrationRuntimeContextV1_2,
+  verifyFastCalibrationRigCharacterizationSourceV1_2,
 } = require("../dist/drivers/fixedRigFastMathematicalCalibrationV1_2");
 
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const exactHash = (seed) => digest(Buffer.from(seed));
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object" && !Buffer.isBuffer(value)) {
+    return Object.fromEntries(Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonical(entry)]));
+  }
+  return value;
+}
+
+const canonicalBytes = (value) => Buffer.from(`${JSON.stringify(canonical(value))}\n`, "utf8");
 
 function runtimeContext() {
   return {
@@ -80,6 +95,90 @@ function rigAuthority(context = runtimeContext()) {
   };
 }
 
+function rigSource(context = runtimeContext()) {
+  const members = [
+    {
+      role: "target_metrology",
+      fileName: "target-metrology-authority-v1.json",
+      value: {
+        schemaVersion: "ten-kings-target-metrology-authority-v1",
+        rigId: context.rigId,
+        targetVersion: context.target.version,
+        targetSha256: context.target.sha256,
+        scaleSamples: [],
+        targetPrintScaleSamples: [],
+        targetCutDimensionSamples: [],
+        targetEvidence: [],
+      },
+    },
+    {
+      role: "camera_lens",
+      fileName: "camera-lens-authority-v1.json",
+      value: {
+        schemaVersion: "ten-kings-camera-lens-authority-v1",
+        rigId: context.rigId,
+        cameraSerialNumber: context.camera.serialNumber,
+        cameraModelName: context.camera.modelName,
+        lensAuthorityId: context.camera.lensAuthorityId,
+        normalizedWidthPx: 1000,
+        normalizedHeightPx: 1400,
+        lensResidualSamples: [],
+        lensModel: {
+          model: "opencv_brown_conrady_v1", sourceWidthPx: context.camera.widthPx, sourceHeightPx: context.camera.heightPx,
+          cameraMatrix: [1, 0, 0, 0, 1, 0, 0, 0, 1], distortionCoefficients: [0, 0, 0, 0, 0],
+          calibrationRmsPx: 0, perViewResidualPx: [],
+        },
+        normalizationModel: {
+          model: "undistort_outer_cut_homography_with_fixed_holdout_repeatability_v1",
+          sampleResidualPx: [],
+        },
+      },
+    },
+    {
+      role: "physical_light_directions",
+      fileName: "physical-light-directions-authority-v1.json",
+      value: {
+        schemaVersion: "ten-kings-physical-light-directions-authority-v1",
+        rigId: context.rigId,
+        channels: Array.from({ length: 8 }, (_, index) => ({ channelIndex: index + 1, directionMeasurementSamples: [] })),
+      },
+    },
+    {
+      role: "component_identities",
+      fileName: "component-identities-authority-v1.json",
+      value: {
+        schemaVersion: "ten-kings-component-identities-authority-v1",
+        rigId: context.rigId,
+        controllerIdentity: context.controller.identity,
+        componentConfigurationId: context.componentConfigurationId,
+        channelWiring: structuredClone(context.controller.channelWiring),
+        algorithmHashes: structuredClone(context.algorithmHashes),
+      },
+    },
+    {
+      role: "repeatability",
+      fileName: "repeatability-authority-v1.json",
+      value: {
+        schemaVersion: "ten-kings-repeatability-authority-v1",
+        rigId: context.rigId,
+        repeatedPlacementSamples: [],
+        measurementRepeatabilitySamples: [],
+      },
+    },
+  ].map((member) => ({ ...member, bytes: canonicalBytes(member.value) }));
+  const ledger = members.map(({ role, fileName, bytes }) => ({ role, fileName, sha256: digest(bytes) }));
+  return {
+    bundleBytes: canonicalBytes({
+      schemaVersion: "ten-kings-mathematical-rig-characterization-source-v1.2",
+      characterizedAt: "2026-07-21T12:00:00.000Z",
+      rigId: context.rigId,
+      sourceCaptureManifestSha256: exactHash("one-time-source-capture"),
+      members: ledger,
+    }),
+    members: members.map(({ fileName, bytes }) => ({ fileName, bytes })),
+  };
+}
+
 function operationIds(prefix = "operation") {
   let index = 0;
   return () => `${prefix}-${++index}`;
@@ -109,19 +208,26 @@ function frame(label, context = runtimeContext()) {
   };
 }
 
-function poseFor(frameValue, centerX, centerY, rotation, coverage = 0.45) {
+function poseFor(frameValue, centerX, centerY, rotation, coverage = 0.30) {
+  const context = runtimeContext();
+  const side = Math.sqrt(coverage);
+  const left = centerX - side / 2;
+  const right = centerX + side / 2;
+  const top = centerY - side / 2;
+  const bottom = centerY + side / 2;
   return {
     sourceFrameSha256: digest(frameValue.bytes),
     centerXFraction: centerX,
     centerYFraction: centerY,
     coverageFraction: coverage,
     rotationDegrees: rotation,
-    safetyMarginFraction: 0.05,
+    safetyMarginFraction: Math.min(left, 1 - right, top, 1 - bottom),
+    authorityReprojectionResidualPx: 0.1,
     outerCorners: [
-      { x: 100, y: 100 },
-      { x: 1100, y: 100 },
-      { x: 1100, y: 1580 },
-      { x: 100, y: 1580 },
+      { x: left * context.camera.widthPx, y: top * context.camera.heightPx },
+      { x: right * context.camera.widthPx, y: top * context.camera.heightPx },
+      { x: right * context.camera.widthPx, y: bottom * context.camera.heightPx },
+      { x: left * context.camera.widthPx, y: bottom * context.camera.heightPx },
     ],
   };
 }
@@ -136,7 +242,7 @@ async function openCore(root, options = {}) {
     sessionId: options.sessionId ?? "fast-calibration-session-1",
     operatorId: "mark-supervised",
     runtimeContext: context,
-    rigCharacterization: rigAuthority(context),
+    ...(!options.resume ? { rigCharacterizationSource: rigSource(context) } : {}),
     resume: options.resume,
   });
 }
@@ -284,6 +390,16 @@ test("persistent camera/controller batch opens once, checkpoints frames, and res
     });
     assert.equal(resumed.status().phase, "analyze");
     assert.equal(resumed.status().captureCounts.totalAcceptedImages, 76);
+    await assert.rejects(
+      resumed.recordAnalysis({ analysisBytes: Buffer.from("{}"), accepted: true, sourceArtifactLedgerSha256: "a".repeat(64) }),
+      /Caller-authored analysis bytes/,
+    );
+    await assert.rejects(
+      resumed.recordFinalizedBundle({ bundleBytes: Buffer.from("{}"), memberCount: 12, memberLedgerSha256: "b".repeat(64) }),
+      /Caller-authored final bundle bytes/,
+    );
+    assert.throws(() => resumed.assertReadyForStartNewCard(context), /Agent 4 activation receipt/);
+    assert.equal(resumed.status().phase, "analyze");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -347,6 +463,41 @@ test("resume and Start New Card readiness reject any exact runtime-context misma
   }
 });
 
+test("runtime context and pose validators reject missing authority keys, unsafe duty, and zero corners", async () => {
+  const missingAlgorithm = runtimeContext();
+  delete missingAlgorithm.algorithmHashes.geometry;
+  assert.throws(
+    () => validateFastCalibrationRuntimeContextV1_2(missingAlgorithm),
+    /fields do not match the exact V1.2 contract/,
+  );
+  const unsafeDuty = runtimeContext();
+  unsafeDuty.dutyPercent = 101;
+  assert.throws(() => validateFastCalibrationRuntimeContextV1_2(unsafeDuty), /dutyPercent/);
+  const context = runtimeContext();
+  assert.doesNotThrow(() => verifyFastCalibrationRigCharacterizationSourceV1_2(rigSource(context), context));
+
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-fast-calibration-zero-corners-"));
+  try {
+    const core = await openCore(root, { context });
+    const value = frame("zero-corner-pose", context);
+    const pose = poseFor(value, 0.4, 0.4, 0, 0.30);
+    pose.outerCorners = [
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+    ];
+    await assert.rejects(
+      core.captureCheckerboard({ frame: value, pose }),
+      /positive and strictly inside|four distinct|coverage is not consistent/,
+    );
+    assert.deepEqual(core.status().acceptedPlacementSlots, []);
+    assert.equal(core.status().failedOperationCount, 1);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("corrupt append-only event or accepted evidence is rejected on restart", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-fast-calibration-corrupt-"));
   try {
@@ -358,6 +509,23 @@ test("corrupt append-only event or accepted evidence is rejected on restart", as
     event.slot = 2;
     await fs.writeFile(eventPath, JSON.stringify(event));
     await assert.rejects(openCore(root, { resume: true }), /event chain.*corrupt/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resume rejects any identity mutation that enables fallback authority", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-fast-calibration-identity-"));
+  try {
+    await openCore(root);
+    const identityPath = path.join(root, "fast-calibration-session-1", "session-identity.json");
+    const identity = JSON.parse(await fs.readFile(identityPath, "utf8"));
+    identity.v0FallbackAllowed = true;
+    await fs.writeFile(identityPath, canonicalBytes(identity));
+    await assert.rejects(
+      openCore(root, { resume: true }),
+      /no-fallback authority/,
+    );
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
