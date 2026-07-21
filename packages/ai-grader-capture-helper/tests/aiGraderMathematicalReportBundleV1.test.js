@@ -1360,7 +1360,7 @@ test("explicit Mathematical V1 Rapid background preparation fails not-ready inst
     }),
     /Mathematical Calibration V1 is not ready:.*No V0 fallback is permitted/i,
   );
-  assert.equal(service.manifest.gradingContract, "legacy_v0");
+  assert.equal(service.manifest.gradingContract, "mathematical_calibration_v1");
   assert.equal(service.manifest.reportBundle, undefined);
   assert.equal(service.manifest.safety.finalGradeComputed, false);
   assert.equal(service.manifest.rapidCapture.autoPublish, false);

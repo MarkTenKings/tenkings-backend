@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { AiGraderReportBundleV03 } from "@tenkings/shared";
 import AiGraderMathematicalReportV1 from "../components/ai-grader/AiGraderMathematicalReportV1";
 import { parseAiGraderMathematicalReportV1 } from "../lib/aiGraderMathematicalReportV1";
+import { buildAiGraderReportEditorialRevisionV1 } from "../lib/aiGraderReportRevision";
 
 const confidence = { score: 0.98, band: "high", validEvidenceCoverage: 0.99, warnings: [] };
 const location = { side: "front", location: "top_left", score: 9.75, penalty: 0.25, findingIds: [], confidence };
@@ -315,6 +316,39 @@ test("V1 report renders exact scores, subscores, formulas, and evidence limitati
   assert.match(html, /href="\/api\/evidence\/segmentation-mask"/);
   assert.match(html, /Calibration bundle manifest/);
   assert.match(html, /Exact calibration bundle members/);
+});
+
+test("V1 report renders human-reviewed values as effective while retaining immutable machine values", () => {
+  const bundle = displayBundle();
+  const editorialRevision = buildAiGraderReportEditorialRevisionV1({
+    reportId: bundle.reportId,
+    sourceReportSchemaVersion: bundle.schemaVersion,
+    sourceBundleSha256: sha("a"),
+    revision: 2,
+    editedAt: "2026-07-21T18:00:00.000Z",
+    scores: { centering: 8.25, corners: 8.5, edges: 8.75, surface: 9 },
+    content: {
+      cardTitle: "Human Reviewed Display Card",
+      reportSummary: "An administrator reviewed every required grading element.",
+      cornersExplanation: "Corner evidence was adjudicated at 8.50.",
+      whyNot10: "The effective reviewed report records visible corner wear.",
+    },
+    adjudicatedMachineFailures: ["MACHINE_CORNER_REVIEW_REQUIRED"],
+  });
+
+  const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, {
+    bundle,
+    editorialRevision,
+  }));
+  assert.match(html, /Human Reviewed Display Card/);
+  assert.match(html, /Completed — human reviewed\/admin adjudicated · revision 2/);
+  assert.match(html, new RegExp(editorialRevision.calculation.overall.toFixed(2)));
+  assert.match(html, /Immutable machine overall: 9\.58/);
+  assert.match(html, /Human reviewed · machine 9\.75/);
+  assert.match(html, /Corner evidence was adjudicated at 8\.50/);
+  assert.match(html, /Effective human-reviewed explanation/);
+  assert.match(html, /visible corner wear/);
+  assert.match(html, /Adjudicated machine failures: MACHINE_CORNER_REVIEW_REQUIRED/);
 });
 
 test("registered-template centering renders exact approved reference and correspondence provenance", () => {

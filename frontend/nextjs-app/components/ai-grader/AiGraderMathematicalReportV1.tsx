@@ -1,5 +1,12 @@
 import React, { useMemo, useState } from "react";
 import type { AiGraderPublishedDefectFindingV2, AiGraderReportBundleV03 } from "@tenkings/shared";
+import AiGraderReportAdminEditor, {
+  type AiGraderReportAdminEditorState,
+} from "./AiGraderReportAdminEditor";
+import type {
+  AiGraderReportEditorialContent,
+  AiGraderReportEditorialRevisionV1,
+} from "../../lib/aiGraderReportRevision";
 
 const ELEMENTS = ["centering", "corners", "edges", "surface"] as const;
 
@@ -79,10 +86,14 @@ export default function AiGraderMathematicalReportV1({
   bundle,
   nfc,
   enrichment,
+  editorialRevision,
+  onAdminEditorStateChange,
 }: {
   bundle: AiGraderReportBundleV03;
   nfc?: AiGraderMathematicalPublicNfc | null;
   enrichment?: AiGraderMathematicalPublicEnrichment | null;
+  editorialRevision?: AiGraderReportEditorialRevisionV1 | null;
+  onAdminEditorStateChange?: (state: AiGraderReportAdminEditorState) => void;
 }) {
   const [selectedSide, setSelectedSide] = useState<"front" | "back">("front");
   const [selectedFindingId, setSelectedFindingId] = useState<string>();
@@ -94,6 +105,20 @@ export default function AiGraderMathematicalReportV1({
   >("true_view");
   const [replayChannelIndex, setReplayChannelIndex] = useState(0);
   const finalGrade = bundle.productionRelease.finalGrade;
+  const reviewedRevision = editorialRevision?.reportId === bundle.reportId
+    ? editorialRevision
+    : null;
+  const reviewedContent = reviewedRevision?.content ?? {};
+  const effectiveOverall = reviewedRevision?.calculation.overall ?? finalGrade.overall;
+  const effectiveLabelGrade = reviewedRevision
+    ? reviewedRevision.calculation.labelGrade.toFixed(1)
+    : bundle.productionRelease.label.labelGradeText;
+  const explanationField: Record<(typeof ELEMENTS)[number], keyof AiGraderReportEditorialContent> = {
+    centering: "centeringExplanation",
+    corners: "cornersExplanation",
+    edges: "edgesExplanation",
+    surface: "surfaceExplanation",
+  };
   const assets = useMemo(() => new Map(bundle.publicAssets.map((asset) => [asset.id.toLowerCase(), asset])), [bundle.publicAssets]);
   const sideFindings = bundle.defectFindings.filter((finding) => finding.side === selectedSide);
   const selectedFinding = sideFindings.find((finding) => finding.findingId === selectedFindingId) ?? sideFindings[0];
@@ -142,17 +167,38 @@ export default function AiGraderMathematicalReportV1({
 
   return (
     <main className="min-h-screen bg-[#f3f0e9] px-5 py-8 text-[#171512]">
+      <AiGraderReportAdminEditor
+        reportId={bundle.reportId}
+        onStateChange={onAdminEditorStateChange}
+      />
       <header className="mx-auto flex max-w-7xl flex-wrap items-start justify-between gap-5 border-b border-black/15 pb-6">
         <div>
           <p className="text-xs font-bold uppercase tracking-[.2em] text-amber-800">Ten Kings Mathematical Grading V1</p>
-          <h1 className="mt-2 text-4xl font-bold">{bundle.cardIdentity.title}</h1>
+          <h1 className="mt-2 text-4xl font-bold">{reviewedContent.cardTitle ?? bundle.cardIdentity.title}</h1>
           <p className="mt-2 text-sm text-zinc-600">Report {bundle.reportId} · {new Date(bundle.generatedAt).toLocaleString()}</p>
+          {reviewedRevision ? (
+            <p className="mt-3 inline-flex rounded-full border border-emerald-700/30 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-900">
+              Completed — human reviewed/admin adjudicated · revision {reviewedRevision.revision}
+            </p>
+          ) : null}
         </div>
         <div className="text-right">
-          <strong className="block text-6xl tabular-nums">{score(finalGrade.overall)}</strong>
-          <span className="text-sm font-bold uppercase tracking-widest">Label {bundle.productionRelease.label.labelGradeText}</span>
+          <strong className="block text-6xl tabular-nums">{score(effectiveOverall)}</strong>
+          <span className="text-sm font-bold uppercase tracking-widest">Label {effectiveLabelGrade}</span>
+          {reviewedRevision ? <small className="mt-2 block text-zinc-600">Immutable machine overall: {score(finalGrade.overall)}</small> : null}
         </div>
       </header>
+
+      {reviewedContent.reportSummary || reviewedContent.strongestPositive || reviewedContent.strongestWarning ? (
+        <section className="mx-auto mt-6 max-w-7xl rounded border border-emerald-800/20 bg-emerald-50/80 p-5">
+          <p className="text-xs font-bold uppercase tracking-[.16em] text-emerald-900">Effective human-reviewed report text</p>
+          {reviewedContent.reportSummary ? <p className="mt-3 text-base leading-7">{reviewedContent.reportSummary}</p> : null}
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            {reviewedContent.strongestPositive ? <div><strong>Strongest positive</strong><p className="mt-1 text-sm">{reviewedContent.strongestPositive}</p></div> : null}
+            {reviewedContent.strongestWarning ? <div><strong>Strongest warning</strong><p className="mt-1 text-sm">{reviewedContent.strongestWarning}</p></div> : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="mx-auto mt-6 grid max-w-7xl gap-4 rounded border border-black/15 bg-white/80 p-5 text-sm md:grid-cols-2 lg:grid-cols-4" aria-label="Publication and collection linkages">
         <div>
@@ -214,10 +260,14 @@ export default function AiGraderMathematicalReportV1({
       <section className="mx-auto mt-6 grid max-w-7xl gap-4 md:grid-cols-4" aria-label="Required calibrated element scores">
         {ELEMENTS.map((element) => {
           const result = finalGrade.elements[element];
+          const effectiveScore = reviewedRevision?.scores[element] ?? result.score;
+          const reviewedExplanation = reviewedContent[explanationField[element]];
           return (
             <article className="rounded border border-black/15 bg-white/80 p-5" key={element}>
               <span className="text-xs font-bold uppercase tracking-widest text-amber-800">{element}</span>
-              <strong className="mt-2 block text-4xl tabular-nums">{score(result.score)}</strong>
+              <strong className="mt-2 block text-4xl tabular-nums">{score(effectiveScore)}</strong>
+              {reviewedRevision ? <small className="mt-1 block font-bold text-emerald-800">Human reviewed · machine {score(result.score)}</small> : null}
+              {reviewedExplanation ? <p className="mt-3 rounded bg-emerald-50 p-3 text-sm text-emerald-950">{reviewedExplanation}</p> : null}
               <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
                 <dt>Start</dt><dd className="text-right">{score(result.startingScore)}</dd>
                 <dt>Front</dt><dd className="text-right">{score(result.frontScore)}</dd>
@@ -231,18 +281,27 @@ export default function AiGraderMathematicalReportV1({
       </section>
 
       <section className="mx-auto mt-6 max-w-7xl rounded border border-black/15 bg-white/80 p-6">
-        <h2 className="text-2xl font-bold">Overall calculation</h2>
-        <p className="mt-2 font-mono text-sm">{finalGrade.weightedFormula}</p>
+        <h2 className="text-2xl font-bold">{reviewedRevision ? "Effective human-reviewed overall calculation" : "Overall calculation"}</h2>
+        <p className="mt-2 font-mono text-sm">{reviewedRevision?.calculation.weightedFormula ?? finalGrade.weightedFormula}</p>
         <p className="mt-1 text-sm">
-          Weights: centering {finalGrade.weights.centering.toFixed(2)}; corners {finalGrade.weights.corners.toFixed(2)}; edges {finalGrade.weights.edges.toFixed(2)}; surface {finalGrade.weights.surface.toFixed(2)}.
+          Weights: centering {(reviewedRevision?.calculation.weights.centering ?? finalGrade.weights.centering).toFixed(2)}; corners {(reviewedRevision?.calculation.weights.corners ?? finalGrade.weights.corners).toFixed(2)}; edges {(reviewedRevision?.calculation.weights.edges ?? finalGrade.weights.edges).toFixed(2)}; surface {(reviewedRevision?.calculation.weights.surface ?? finalGrade.weights.surface).toFixed(2)}.
         </p>
-        <p className="mt-2 font-mono text-sm">{finalGrade.formula}</p>
+        <p className="mt-2 font-mono text-sm">{reviewedRevision?.calculation.finalFormula ?? finalGrade.formula}</p>
         <dl className="mt-4 grid gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
-          <div><dt>Weighted grade</dt><dd className="font-bold">{score(finalGrade.weightedGrade)}</dd></div>
-          <div><dt>Weakest element</dt><dd className="font-bold">{finalGrade.weakestElement} {score(finalGrade.weakestScore)}</dd></div>
-          <div><dt>Weakest cap</dt><dd className="font-bold">{score(finalGrade.weakestElementCap)}</dd></div>
-          <div><dt>Severe-defect cap</dt><dd className="font-bold">{finalGrade.applicableSevereDefectCap === undefined ? "none" : score(finalGrade.applicableSevereDefectCap)}</dd></div>
+          <div><dt>Weighted grade</dt><dd className="font-bold">{score(reviewedRevision?.calculation.weightedGrade ?? finalGrade.weightedGrade)}</dd></div>
+          <div><dt>Weakest element</dt><dd className="font-bold">{reviewedRevision?.calculation.weakestElement ?? finalGrade.weakestElement} {score(reviewedRevision?.calculation.weakestScore ?? finalGrade.weakestScore)}</dd></div>
+          <div><dt>Weakest cap</dt><dd className="font-bold">{score(reviewedRevision?.calculation.weakestElementCap ?? finalGrade.weakestElementCap)}</dd></div>
+          <div><dt>Severe-defect cap</dt><dd className="font-bold">{(reviewedRevision?.calculation.applicableSevereDefectCap ?? finalGrade.applicableSevereDefectCap) === undefined ? "none" : score((reviewedRevision?.calculation.applicableSevereDefectCap ?? finalGrade.applicableSevereDefectCap) as number)}</dd></div>
         </dl>
+        {reviewedRevision ? (
+          <details className="mt-5 rounded border border-black/15 bg-zinc-50 p-4 text-sm">
+            <summary className="cursor-pointer font-bold">Immutable machine calculation and original status</summary>
+            <p className="mt-3 font-mono">{finalGrade.weightedFormula}</p>
+            <p className="mt-2 font-mono">{finalGrade.formula}</p>
+            <p className="mt-2">Machine overall {score(finalGrade.overall)}; weighted {score(finalGrade.weightedGrade)}; weakest {finalGrade.weakestElement} {score(finalGrade.weakestScore)}.</p>
+            {reviewedRevision.adjudicatedMachineFailures.length ? <p className="mt-2">Adjudicated machine failures: {reviewedRevision.adjudicatedMachineFailures.join(", ")}.</p> : null}
+          </details>
+        ) : null}
       </section>
 
       <section className="mx-auto mt-6 max-w-7xl rounded border border-black/15 bg-white/80 p-6">
@@ -420,6 +479,13 @@ export default function AiGraderMathematicalReportV1({
       <section className="mx-auto mt-6 grid max-w-7xl gap-5 lg:grid-cols-2">
         <article className="rounded border border-red-900/25 bg-red-50 p-6">
           <h2 className="text-2xl font-bold">Why Not 10?</h2>
+          {reviewedContent.whyNot10 ? (
+            <div className="mt-3 rounded border border-emerald-800/20 bg-emerald-50 p-4">
+              <strong>Effective human-reviewed explanation</strong>
+              <p className="mt-2 text-sm leading-6">{reviewedContent.whyNot10}</p>
+            </div>
+          ) : null}
+          {reviewedRevision ? <p className="mt-4 text-xs font-bold uppercase tracking-wider text-zinc-600">Immutable machine reasons</p> : null}
           <div className="mt-3 grid gap-3">
             {finalGrade.whyNot10.length ? finalGrade.whyNot10.map((reason) => (
               <div className="rounded border border-red-900/20 bg-white p-3" key={reason.id}>

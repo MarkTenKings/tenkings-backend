@@ -839,7 +839,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     provisionalDiagnosticsRun: boolean;
   };
   bridgeContract: {
-    gradingContracts: ["legacy_v0", "mathematical_calibration_v1"];
+    gradingContracts: ["mathematical_calibration_v1"];
     mathematicalV1: {
       reportBundleSchemaVersion: "ai-grader-report-bundle-v0.3";
       envelopeVersion: typeof AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION;
@@ -2159,7 +2159,7 @@ function newManifest(
     mode: config.mode,
     updatedAt: startedAt,
     acceptedProfile: defaultProfile(config),
-    gradingContract: "legacy_v0",
+    gradingContract: "mathematical_calibration_v1",
     captureProfile,
     captureProfileGuard: {
       oneRoadProductionFastRequired: true,
@@ -4652,7 +4652,7 @@ export class AiGraderLocalStationBridgeService {
         provisionalDiagnosticsRun: reportReady,
       },
       bridgeContract: {
-        gradingContracts: ["legacy_v0", "mathematical_calibration_v1"],
+        gradingContracts: ["mathematical_calibration_v1"],
         mathematicalV1: {
           reportBundleSchemaVersion: "ai-grader-report-bundle-v0.3",
           envelopeVersion: AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION,
@@ -8376,7 +8376,7 @@ export class AiGraderLocalStationBridgeService {
     this.releaseFullForensicPreviewHold("new station session started");
     this.clearLiveLightingWatchdog();
     const manifest = newManifest(this.config, now);
-    manifest.gradingContract = request.gradingContract ?? "legacy_v0";
+    manifest.gradingContract = request.gradingContract ?? "mathematical_calibration_v1";
     manifest.captureProfile = "production_fast";
     manifest.captureTiming = createAiGraderCaptureTimingMetadata({
       captureProfile: manifest.captureProfile,
@@ -11961,30 +11961,27 @@ export class AiGraderLocalStationBridgeService {
         throw new Error("Start New Card is blocked because the current Back TIFF was not durably committed to its exact Rapid queue item.");
       }
       assertRealBridgeArmed(this.config);
-      if (request.gradingContract !== undefined &&
-          request.gradingContract !== "legacy_v0" &&
-          request.gradingContract !== "mathematical_calibration_v1") {
-        throw new Error("AI Grader start-session gradingContract must be legacy_v0 or mathematical_calibration_v1.");
-      }
-      if (request.gradingContract === "mathematical_calibration_v1") {
-        const readiness = mathematicalCalibrationReadiness(
-          this.config,
-          this.dependencies.loadMathematicalCalibrationBundle ??
-            loadFixedRigMathematicalCalibrationBundleV1,
+      if (request.gradingContract !== "mathematical_calibration_v1") {
+        throw new Error(
+          "Start New Card requires the explicit mathematical_calibration_v1 grading contract. " +
+          "Legacy V0 and an omitted grading contract are prohibited.",
         );
-        if (!readiness.ready) {
-          throw new Error(`Mathematical Calibration V1 is not ready: ${readiness.reason ?? "finalized calibration evidence is unavailable"}. No V0 fallback is permitted.`);
-        }
-        if (!request.mathematicalGradingAuthority) {
-          throw new Error("Mathematical V1 Start New Card requires exact card and centering/design-reference authority; publication remains bridge-derived.");
-        }
-      } else if (request.mathematicalGradingAuthority) {
-        throw new Error("Legacy V0 Start New Card cannot accept Mathematical V1 grading authority.");
+      }
+      const readiness = mathematicalCalibrationReadiness(
+        this.config,
+        this.dependencies.loadMathematicalCalibrationBundle ??
+          loadFixedRigMathematicalCalibrationBundleV1,
+      );
+      if (!readiness.ready) {
+        throw new Error(`Mathematical Calibration V1 is not ready: ${readiness.reason ?? "finalized calibration evidence is unavailable"}. No V0 fallback is permitted.`);
+      }
+      if (!request.mathematicalGradingAuthority) {
+        throw new Error("Mathematical V1 Start New Card requires exact card and centering/design-reference authority; publication remains bridge-derived.");
       }
       await this.createFreshSession({
         reportId: request.reportId,
         captureProfile: request.captureProfile,
-        gradingContract: request.gradingContract ?? "legacy_v0",
+        gradingContract: request.gradingContract,
         mathematicalGradingAuthority: request.mathematicalGradingAuthority,
       }, now);
       return this.status();

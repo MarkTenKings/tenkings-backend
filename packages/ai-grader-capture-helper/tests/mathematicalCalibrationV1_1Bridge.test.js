@@ -42,7 +42,13 @@ test("Production preview does not require a Mathematical Calibration session hea
     outputDir: path.join(root, "station"),
   });
   const service = new AiGraderLocalStationBridgeService(config);
-  await service.action("start-session", { captureProfile: "production_fast", reportId: "production-preview-report" });
+  // Seed an already-existing historical session directly; public start-session
+  // is covered separately and accepts only explicit Mathematical V1.
+  await service.createFreshSession({
+    captureProfile: "production_fast",
+    reportId: "production-preview-report",
+    gradingContract: "legacy_v0",
+  });
 
   const request = new EventEmitter();
   request.headers = {};

@@ -134,6 +134,25 @@ test("initial Mathematical V1 request uses the one-road production_fast profile 
     () => buildAiGraderCaptureProfileRequest("production_fast", "mathematical_calibration_v1"),
     /requires exact card and centering authority/i,
   );
+  assert.throws(
+    () => buildAiGraderCaptureProfileRequest("production_fast"),
+    /requires the explicit Mathematical Calibration V1 contract.*omitted contracts are prohibited/i,
+  );
+  assert.throws(
+    () => buildAiGraderCaptureProfileRequest("production_fast", "legacy_v0", authority),
+    /requires the explicit Mathematical Calibration V1 contract.*Legacy V0/i,
+  );
+});
+
+test("Production station exposes Mathematical V1 as a fixed contract with no Legacy selector", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /selectedGradingContract:\s*AiGraderGradingContract\s*=\s*"mathematical_calibration_v1"/,
+  );
+  assert.match(source, /Mathematical Calibration V1 \(required\)/);
+  assert.doesNotMatch(source, /<option value="legacy_v0">/);
+  assert.doesNotMatch(source, /setSelectedGradingContract/);
 });
 
 test("Mathematical V1 does not restore retired profile or separate Rapid queue actions", () => {

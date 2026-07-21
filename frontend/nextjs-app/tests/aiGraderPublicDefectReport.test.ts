@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { defectFindingsForExactImage } from "../lib/aiGraderDefectFindings";
 import { createAiGraderPublicReportApiHandler } from "../lib/server/aiGraderProductionApi";
+import { buildAiGraderReportEditorialRevisionV1 } from "../lib/aiGraderReportRevision";
 
 function mockResponse() {
   const state: { statusCode?: number; body?: any; headers: Record<string, string> } = { headers: {} };
@@ -105,6 +106,9 @@ test("public report API revalidates defect assets and strips private finding sta
   const findingId = "dfv1_1234567890abcdef12345678";
   const handler = createAiGraderPublicReportApiHandler({
     env: { AI_GRADER_PUBLIC_REPORT_DB_ENABLED: "true" },
+    async readPresentation() {
+      return { reportVisibility: "public", editorialRevision: null };
+    },
     async readPublishedBundle() {
       return {
         schemaVersion: "ai-grader-report-bundle-v0.1",
@@ -259,6 +263,9 @@ test("public report API serializes only public asset metadata after validating n
   const persistedBeforeRead = JSON.parse(JSON.stringify(storedBundle));
   const handler = createAiGraderPublicReportApiHandler({
     env: { AI_GRADER_PUBLIC_REPORT_DB_ENABLED: "true" },
+    async readPresentation() {
+      return { reportVisibility: "public", editorialRevision: null };
+    },
     async readPublishedBundle() {
       return storedBundle;
     },
@@ -366,6 +373,9 @@ test("public report API recursively projects v0.2 payloads after validating stor
   const persistedBeforeRead = JSON.parse(JSON.stringify(storedBundle));
   const handler = createAiGraderPublicReportApiHandler({
     env: { AI_GRADER_PUBLIC_REPORT_DB_ENABLED: "true" },
+    async readPresentation() {
+      return { reportVisibility: "public", editorialRevision: null };
+    },
     async readPublishedBundle() {
       return storedBundle;
     },
@@ -419,6 +429,9 @@ test("public findings keep canonical 1200x1680 fractions after a 35-degree captu
   const backShape = canonicalBox(720, 840, 240, 336);
   const handler = createAiGraderPublicReportApiHandler({
     env: { AI_GRADER_PUBLIC_REPORT_DB_ENABLED: "true" },
+    async readPresentation() {
+      return { reportVisibility: "public", editorialRevision: null };
+    },
     async readPublishedBundle() {
       return {
         reportId: "normalized-35-degree-report",
@@ -503,6 +516,9 @@ test("public findings keep canonical 1200x1680 fractions after a 35-degree captu
 test("candidate-free public reports remain readable and never fabricate defect markers", async () => {
   const handler = createAiGraderPublicReportApiHandler({
     env: { AI_GRADER_PUBLIC_REPORT_DB_ENABLED: "true" },
+    async readPresentation() {
+      return { reportVisibility: "public", editorialRevision: null };
+    },
     async readPublishedBundle() {
       return {
         reportId: "candidate-free-report",
@@ -543,4 +559,83 @@ test("candidate-free public reports remain readable and never fabricate defect m
     JSON.stringify(state.body),
     /C:\\TenKings|127\.0\.0\.1|station-token|X-Amz-Signature|data:image|hardwareControls|lighting|capture/,
   );
+});
+
+test("coming-soon presentation returns only the scrim DTO and never reads report bytes", async () => {
+  let bundleRead = false;
+  const handler = createAiGraderPublicReportApiHandler({
+    env: { AI_GRADER_PUBLIC_REPORT_DB_ENABLED: "true" },
+    async readPresentation() {
+      return { reportVisibility: "coming_soon", editorialRevision: null };
+    },
+    async readPublishedBundle() {
+      bundleRead = true;
+      throw new Error("must not be called");
+    },
+  });
+  const { state, response } = mockResponse();
+  await handler({ method: "GET", query: { reportId: "scrim-report" } } as any, response as any);
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.comingSoon, true);
+  assert.equal(state.body.reportVisibility, "coming_soon");
+  assert.equal(Object.hasOwn(state.body, "bundle"), false);
+  assert.equal(bundleRead, false);
+  assert.equal(state.headers["Cache-Control"], "private, no-store, max-age=0");
+});
+
+test("invalid active operator revision is a hard public error", async () => {
+  const error = Object.assign(new Error("Invalid human-reviewed revision; original not substituted."), {
+    code: "AI_GRADER_OPERATOR_REVIEW_INVALID",
+  });
+  const handler = createAiGraderPublicReportApiHandler({
+    env: { AI_GRADER_PUBLIC_REPORT_DB_ENABLED: "true" },
+    async readPresentation() {
+      throw error;
+    },
+    async readPublishedBundle() {
+      throw new Error("must not be called");
+    },
+  });
+  const { state, response } = mockResponse();
+  await handler({ method: "GET", query: { reportId: "invalid-revision-report" } } as any, response as any);
+
+  assert.equal(state.statusCode, 500);
+  assert.equal(state.body.code, "AI_GRADER_OPERATOR_REVIEW_INVALID");
+  assert.match(state.body.message, /not substituted/i);
+});
+
+test("an explicit admin adjudication completes an invalid machine report without exposing or substituting its bytes", async () => {
+  const editorialRevision = buildAiGraderReportEditorialRevisionV1({
+    reportId: "failed-machine-report",
+    sourceReportSchemaVersion: "ai-grader-report-bundle-v0.3",
+    sourceBundleSha256: "d".repeat(64),
+    revision: 1,
+    editedAt: "2026-07-21T21:00:00.000Z",
+    scores: { centering: 8, corners: 9, edges: 9, surface: 9 },
+    adjudicatedMachineFailures: ["MACHINE_SUBGRADES_INCOMPLETE"],
+  });
+  const handler = createAiGraderPublicReportApiHandler({
+    env: { AI_GRADER_PUBLIC_REPORT_DB_ENABLED: "true" },
+    async readPresentation() {
+      return { reportVisibility: "public", editorialRevision };
+    },
+    async readPublishedBundle() {
+      return {
+        schemaVersion: "ai-grader-report-bundle-v0.3",
+        reportId: "failed-machine-report",
+        generatedAt: "2026-07-21T20:00:00.000Z",
+        finalGradeComputed: false,
+        privateMachineFailureBody: "must-not-be-exposed",
+      };
+    },
+  });
+  const { state, response } = mockResponse();
+  await handler({ method: "GET", query: { reportId: "failed-machine-report" } } as any, response as any);
+
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.machineFailure.failed, true);
+  assert.equal(state.body.editorialRevision.calculation.overall, 8.5);
+  assert.equal(Object.hasOwn(state.body, "bundle"), false);
+  assert.doesNotMatch(JSON.stringify(state.body), /must-not-be-exposed/);
 });

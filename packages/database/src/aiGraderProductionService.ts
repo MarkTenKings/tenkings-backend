@@ -3785,6 +3785,57 @@ export async function persistAiGraderProductionRelease(
           503,
         );
       }
+      const existingReportPresentation = await tx.aiGraderReport.findUnique?.({
+        where: { id: reportRowId },
+        select: { visibilityStatus: true, gradeStory: true },
+      });
+      if (!isRecord(existingReportPresentation)) {
+        throw aiGraderPublishAuthorityError(
+          "AI_GRADER_PUBLISH_AUTHORITY_MISMATCH",
+          "The hosted report presentation state disappeared before Publish.",
+        );
+      }
+      const existingGradeStory = isRecord(existingReportPresentation.gradeStory)
+        ? existingReportPresentation.gradeStory
+        : {};
+      if (Object.prototype.hasOwnProperty.call(existingGradeStory, "manualReportRevision")) {
+        const manualRevision = existingGradeStory.manualReportRevision;
+        const manualRevisionAudit = existingGradeStory.manualReportRevisionAudit;
+        const sourceBundleSha256 = isRecord(manualRevision) &&
+          typeof manualRevision.sourceBundleSha256 === "string" &&
+          /^[a-f0-9]{64}$/.test(manualRevision.sourceBundleSha256)
+          ? manualRevision.sourceBundleSha256
+          : "";
+        const auditSourceBundleSha256 = isRecord(manualRevisionAudit) &&
+          typeof manualRevisionAudit.sourceBundleSha256 === "string" &&
+          /^[a-f0-9]{64}$/.test(manualRevisionAudit.sourceBundleSha256)
+          ? manualRevisionAudit.sourceBundleSha256
+          : "";
+        const nextBundleSha256 = input.storagePlan.artifacts.find(
+          (artifact) => artifact.kind === "report-bundle.json",
+        )?.checksumSha256;
+        if (
+          !sourceBundleSha256 ||
+          auditSourceBundleSha256 !== sourceBundleSha256 ||
+          nextBundleSha256 !== sourceBundleSha256
+        ) {
+          throw aiGraderPublishAuthorityError(
+            "AI_GRADER_OPERATOR_REVIEW_SOURCE_CHANGED",
+            "Publish would replace the immutable source of an active human-reviewed revision. A new operator review is required; the machine report was not substituted.",
+          );
+        }
+        reportUpdateData.gradeStory = nullableJson({
+          ...(isRecord(reportUpdateData.gradeStory) ? reportUpdateData.gradeStory : {}),
+          manualReportRevision: manualRevision,
+          manualReportRevisionAudit: manualRevisionAudit,
+        });
+      }
+      if (
+        publicationStatus === "published" &&
+        existingReportPresentation.visibilityStatus === "coming_soon"
+      ) {
+        reportUpdateData.visibilityStatus = "coming_soon";
+      }
       const reportUpdate = await tx.aiGraderReport.updateMany({
         where: {
           id: reportRowId,

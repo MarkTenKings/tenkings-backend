@@ -1,3 +1,6 @@
+import { aiGraderReportEditorialRevisionFromGradeStory } from "../aiGraderReportRevision";
+import { readStorageBuffer } from "./storage";
+
 export const AI_GRADER_NFC_PUBLIC_BASE_URL = "https://collect.tenkings.co/nfc" as const;
 
 export type AiGraderNfcPublicTapData =
@@ -14,6 +17,8 @@ export type AiGraderNfcPublicTapData =
       cardTitle: string;
       cardSet?: string;
       grade?: number;
+      reportVisibility: "public" | "coming_soon";
+      comingSoon: boolean;
     }
   | { state: "revoked" | "not_valid" | "contradictory_linkage" | "unavailable" };
 
@@ -28,6 +33,21 @@ type JsonRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function validOperatorRevisionAuditHead(value: unknown, input: {
+  revision: number;
+  sourceBundleSha256: string;
+}) {
+  return isRecord(value) &&
+    value.schemaVersion === "ten-kings-ai-grader-report-editor-audit-head-v1" &&
+    Number.isSafeInteger(value.sequence) &&
+    Number(value.sequence) >= input.revision &&
+    typeof value.headEventId === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/.test(value.headEventId) &&
+    typeof value.headChecksum === "string" &&
+    /^[a-f0-9]{64}$/.test(value.headChecksum) &&
+    value.sourceBundleSha256 === input.sourceBundleSha256;
 }
 
 export type AiGraderPublicNfcRegistration = Pick<
@@ -92,6 +112,8 @@ export async function readAiGraderNfcPublicTap(
           cardAssetId: true,
           itemId: true,
           finalOverallGrade: true,
+          gradeStory: true,
+          reportBundleStorageKey: true,
         },
       },
       item: {
@@ -136,15 +158,36 @@ export async function readAiGraderNfcPublicTap(
     text(row.aiGraderLabelId) === text(label?.id) &&
     text(row.certId) === text(label?.certId);
   if (!exactLinkage) return { state: "contradictory_linkage" };
-  const publiclyPublished = report?.publicationStatus === "published" && report?.visibilityStatus === "public";
+  const reportVisibility = report?.visibilityStatus === "public" || report?.visibilityStatus === "coming_soon"
+    ? report.visibilityStatus
+    : undefined;
+  const publiclyPublished = report?.publicationStatus === "published" && Boolean(reportVisibility);
   const reportId = text(report?.reportId);
   const certId = text(label?.certId);
   const cardTitle = text(item?.name);
   if (!publiclyPublished || !reportId || !certId || !cardTitle) return { state: "not_valid" };
 
-  const grade = typeof report?.finalOverallGrade === "number" && Number.isFinite(report.finalOverallGrade)
+  const gradeStory = isRecord(report?.gradeStory) ? report.gradeStory : {};
+  let grade = typeof report?.finalOverallGrade === "number" && Number.isFinite(report.finalOverallGrade)
     ? report.finalOverallGrade
     : undefined;
+  if (Object.prototype.hasOwnProperty.call(gradeStory, "manualReportRevision")) {
+    const revision = aiGraderReportEditorialRevisionFromGradeStory(gradeStory, reportId);
+    const storageKey = text(report?.reportBundleStorageKey);
+    if (
+      !revision ||
+      !storageKey ||
+      !validOperatorRevisionAuditHead(
+        gradeStory.manualReportRevisionAudit,
+        revision,
+      )
+    ) return { state: "unavailable" };
+    const sourceBytes = await readStorageBuffer(storageKey).catch(() => null);
+    if (!sourceBytes || database.aiGraderSha256(sourceBytes) !== revision.sourceBundleSha256) {
+      return { state: "unavailable" };
+    }
+    grade = revision.calculation.overall;
+  }
   return {
     state: "active",
     registrationKind: "registered_link",
@@ -154,6 +197,8 @@ export async function readAiGraderNfcPublicTap(
     nfcTagUrl: buildAiGraderNfcPublicTagUrl(publicTagId),
     reportId,
     reportUrl: `/ai-grader/reports/${encodeURIComponent(reportId)}`,
+    reportVisibility: reportVisibility as "public" | "coming_soon",
+    comingSoon: reportVisibility === "coming_soon",
     certId,
     cardTitle,
     ...(text(item?.set) ? { cardSet: text(item?.set) } : {}),

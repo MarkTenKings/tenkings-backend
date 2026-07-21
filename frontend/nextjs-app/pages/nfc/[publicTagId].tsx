@@ -23,7 +23,9 @@ export const getServerSideProps: GetServerSideProps<Props> = async (context) => 
 export default function AiGraderNfcTapPage({ tap }: Props) {
   const active = tap.state === "active" ? tap : null;
   const title = active
-    ? active.chipType === "FEIJU_F8215"
+    ? active.comingSoon
+      ? "Grading report coming soon"
+      : active.chipType === "FEIJU_F8215"
       ? "Write-protected registered NFC link"
       : "Registered Ten Kings NFC link"
     : tap.state === "unavailable"
@@ -43,11 +45,15 @@ export default function AiGraderNfcTapPage({ tap }: Props) {
           <h1>{title}</h1>
           {active ? (
             <>
-              <p className="lead">Linked to this Ten Kings AI Grader report.</p>
+              <p className="lead">
+                {active.comingSoon
+                  ? "This NFC remains linked to its Ten Kings report. The report owner has temporarily enabled its Coming Soon wall."
+                  : "Linked to this Ten Kings AI Grader report."}
+              </p>
               <dl>
                 <div><dt>Card</dt><dd>{active.cardTitle}</dd></div>
                 {active.cardSet ? <div><dt>Set</dt><dd>{active.cardSet}</dd></div> : null}
-                {active.grade !== undefined ? <div><dt>AI Grader grade</dt><dd>{active.grade.toFixed(1)}</dd></div> : null}
+                {!active.comingSoon && active.grade !== undefined ? <div><dt>Effective grade</dt><dd>{active.grade.toFixed(1)}</dd></div> : null}
                 <div><dt>Report</dt><dd>{active.reportId}</dd></div>
                 <div><dt>Certificate ID</dt><dd>{active.certId}</dd></div>
                 <div><dt>NFC status</dt><dd>Registered link</dd></div>
@@ -55,7 +61,9 @@ export default function AiGraderNfcTapPage({ tap }: Props) {
               <p className="disclosure">
                 This registered link is a convenience identity link. {active.chipType === "FEIJU_F8215" ? "Consumer write protection does not make its static URL unclonable. " : ""}It is not cryptographic authentication of the chip, slab, or card.
               </p>
-              <Link className="action" href={active.reportUrl}>Open Ten Kings AI Grader report</Link>
+              <Link className="action" href={active.reportUrl}>
+                {active.comingSoon ? "Open Coming Soon report" : "Open Ten Kings AI Grader report"}
+              </Link>
             </>
           ) : (
             <p className="lead">

@@ -792,6 +792,58 @@ function postWithoutToken(server, body) {
   });
 }
 
+test("Production Start New Card accepts only an explicit ready Mathematical V1 contract", async (t) => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-only-start-"));
+  t.after(() => fs.rmSync(outputDir, { recursive: true, force: true }));
+  const service = createService(path.join(outputDir, "ready"), completedResult);
+  t.after(() => service.shutdown("mathematical-only start test complete"));
+
+  assert.equal(service.status().gradingContract, "mathematical_calibration_v1");
+  assert.deepEqual(service.status().bridgeContract.gradingContracts, ["mathematical_calibration_v1"]);
+  await assert.rejects(
+    () => service.action("start-session", {
+      reportId: "omitted-contract-report",
+      captureProfile: "production_fast",
+    }),
+    /requires the explicit mathematical_calibration_v1 grading contract.*omitted grading contract.*prohibited/i,
+  );
+  await assert.rejects(
+    () => service.action("start-session", {
+      reportId: "legacy-contract-report",
+      captureProfile: "production_fast",
+      gradingContract: "legacy_v0",
+    }),
+    /requires the explicit mathematical_calibration_v1 grading contract.*Legacy V0.*prohibited/i,
+  );
+  assert.equal(service.manifest.sessionId, undefined);
+  assert.equal(service.manifest.currentStep, "start_new_card");
+  assert.equal(service.manifest.gradingContract, "mathematical_calibration_v1");
+
+  const unavailableConfig = buildAiGraderLocalStationBridgeConfig({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 47652,
+    stationToken: "StationTokenStationTokenStationToken1234",
+    outputDir: path.join(outputDir, "unavailable"),
+    captureProfile: "production_fast",
+  });
+  const unavailable = new AiGraderLocalStationBridgeService(unavailableConfig);
+  t.after(() => unavailable.shutdown("mathematical unavailable start test complete"));
+  await assert.rejects(
+    () => unavailable.action("start-session", {
+      reportId: "unavailable-contract-report",
+      captureProfile: "production_fast",
+      gradingContract: "mathematical_calibration_v1",
+      mathematicalGradingAuthority: printedAuthority(),
+    }),
+    /Mathematical Calibration V1 is not ready:.*No V0 fallback is permitted/i,
+  );
+  assert.equal(unavailable.manifest.sessionId, undefined);
+  assert.equal(unavailable.manifest.currentStep, "start_new_card");
+  assert.equal(unavailable.manifest.gradingContract, "mathematical_calibration_v1");
+});
+
 test("ordinary Mathematical V1 no-finding completion uses station-derived publication and no V0 fallback", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-station-complete-"));
   const calls = [];

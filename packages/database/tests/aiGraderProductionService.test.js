@@ -2954,7 +2954,7 @@ test("production release persistence updates verified durable records and option
   assert.equal(result.cardAssetUpdatedCount, 1);
   assert.equal(result.itemUpdatedCount, 1);
   assert.deepEqual(
-    calls.map((call) => `${call.delegate}.${call.method}`).slice(0, 15),
+    calls.map((call) => `${call.delegate}.${call.method}`).slice(0, 16),
     [
       "$transaction.$transaction",
       "$queryRaw.$queryRaw",
@@ -2963,6 +2963,7 @@ test("production release persistence updates verified durable records and option
       "cardAsset.findUnique",
       "item.findUnique",
       "aiGraderSession.updateMany",
+      "aiGraderReport.findUnique",
       "aiGraderReport.updateMany",
       "aiGraderGrade.upsert",
       "$queryRaw.$queryRaw",
@@ -3060,6 +3061,86 @@ test("atomic publish creates the first hosted report and Finish valuation only a
     atomicWrites.every((call) => call.inTransaction === true),
     true,
     "the first hosted report, publication, Finish valuation, and linked updates share one transaction",
+  );
+});
+
+test("republish preserves an active operator revision and Coming Soon only for the identical source bundle", async () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle,
+    productionRelease,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const sourceBundleSha256 = plan.artifacts.find(
+    (artifact) => artifact.kind === "report-bundle.json",
+  ).checksumSha256;
+  const manualReportRevision = { sourceBundleSha256, revision: 1 };
+  const manualReportRevisionAudit = { sourceBundleSha256, sequence: 1 };
+  const { db, calls } = createMockProductionDb({
+    reportBundle,
+    productionRelease,
+    report: confirmedProductionReport({
+      visibilityStatus: "coming_soon",
+      gradeStory: { manualReportRevision, manualReportRevisionAudit },
+    }),
+  });
+
+  await persistAiGraderProductionRelease(db, {
+    tenantId: "tenant-1",
+    reportBundle,
+    productionRelease,
+    storagePlan: plan,
+    operatorUserId: "user-1",
+    cardAssetId: "card-asset-1",
+    itemId: "item-1",
+    persistedAt: "2026-07-21T20:00:00.000Z",
+  });
+
+  const reportUpdate = calls.find(
+    (call) => call.delegate === "aiGraderReport" && call.method === "updateMany",
+  );
+  assert.equal(reportUpdate.args.data.visibilityStatus, "coming_soon");
+  assert.deepEqual(reportUpdate.args.data.gradeStory.manualReportRevision, manualReportRevision);
+  assert.deepEqual(
+    reportUpdate.args.data.gradeStory.manualReportRevisionAudit,
+    manualReportRevisionAudit,
+  );
+});
+
+test("republish hard-stops when it would orphan an active operator revision", async () => {
+  const reportBundle = sampleBundle();
+  const productionRelease = sampleRelease();
+  const plan = buildAiGraderProductionStoragePlan({
+    reportBundle,
+    productionRelease,
+    publicReportBaseUrl: "https://collect.tenkings.co",
+  });
+  const staleSha256 = "f".repeat(64);
+  const { db } = createMockProductionDb({
+    reportBundle,
+    productionRelease,
+    report: confirmedProductionReport({
+      visibilityStatus: "public",
+      gradeStory: {
+        manualReportRevision: { sourceBundleSha256: staleSha256, revision: 1 },
+        manualReportRevisionAudit: { sourceBundleSha256: staleSha256, sequence: 1 },
+      },
+    }),
+  });
+
+  await assert.rejects(
+    () => persistAiGraderProductionRelease(db, {
+      tenantId: "tenant-1",
+      reportBundle,
+      productionRelease,
+      storagePlan: plan,
+      operatorUserId: "user-1",
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+      persistedAt: "2026-07-21T20:00:00.000Z",
+    }),
+    /new operator review is required/i,
   );
 });
 

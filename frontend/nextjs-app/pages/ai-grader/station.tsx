@@ -829,7 +829,7 @@ export default function AiGraderStationPage() {
     status: "idle",
     message: "OCR prefill starts after normalized front and back images are ready.",
   });
-  const [selectedGradingContract, setSelectedGradingContract] = useState<AiGraderGradingContract>("legacy_v0");
+  const selectedGradingContract: AiGraderGradingContract = "mathematical_calibration_v1";
   const [mathematicalAuthorityDraft, setMathematicalAuthorityDraft] =
     useState<MathematicalAuthorityDraftState>(defaultMathematicalAuthorityDraft);
   const [mathematicalAuthorityStatus, setMathematicalAuthorityStatus] = useState<StepState>({
@@ -1854,13 +1854,6 @@ export default function AiGraderStationPage() {
   const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 10);
   const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) =>
     RAPID_PROCESSING_STATES.has(item.state) || item.ocr.state === "eligible" || item.ocr.state === "in_flight");
-  const stationSettingsLocked =
-    status.sessionManifest.frontCaptured ||
-    status.sessionManifest.backCaptured ||
-    Boolean(status.rapidCaptureQueue.activeQueueItemId) ||
-    Boolean(status.gradingContract &&
-      status.currentStep !== "start_new_card" &&
-      status.currentStep !== "session_complete");
   const mathematicalCalibrationReady = status.mathematicalCalibration?.ready === true;
   const mathematicalCalibrationBlocked =
     selectedGradingContract === "mathematical_calibration_v1" &&
@@ -2782,9 +2775,7 @@ export default function AiGraderStationPage() {
     setCaptureBusy("start");
     setError(null);
     try {
-      const prepared = selectedGradingContract === "mathematical_calibration_v1"
-        ? await prepareMathematicalAuthority()
-        : undefined;
+      const prepared = await prepareMathematicalAuthority();
       const started = await runAction(
         "start-session",
         buildAiGraderCaptureProfileRequest(
@@ -2793,19 +2784,15 @@ export default function AiGraderStationPage() {
           prepared?.authority,
         ),
       );
-      if (prepared) {
-        await stagePreparedMathematicalDesignReferences(prepared, started);
-        setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
-        setMathematicalAuthorityStatus({
-          status: "completed",
-          message: "Exact Mathematical V1 identity and per-side centering authority are bound before capture.",
-        });
-      }
+      await stagePreparedMathematicalDesignReferences(prepared, started);
+      setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
+      setMathematicalAuthorityStatus({
+        status: "completed",
+        message: "Exact Mathematical V1 identity and per-side centering authority are bound before capture.",
+      });
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.";
-      if (selectedGradingContract === "mathematical_calibration_v1") {
-        setMathematicalAuthorityStatus({ status: "failed", message });
-      }
+      setMathematicalAuthorityStatus({ status: "failed", message });
       await runAction("status").catch(() => undefined);
       setError(message);
     } finally {
@@ -2886,7 +2873,6 @@ export default function AiGraderStationPage() {
       exposureUs: next.acceptedProfile.exposureUs,
       gain: next.acceptedProfile.gain,
     });
-    setSelectedGradingContract(next.gradingContract ?? "legacy_v0");
     setHistory(await fetchAiGraderStationReportHistory({
       baseUrl: targetBridgeUrl,
       stationToken: targetStationToken,
@@ -2962,7 +2948,6 @@ export default function AiGraderStationPage() {
         throw new Error("Rapid Capture review activation returned a different queue/session/report identity.");
       }
       resetReviewUiState();
-      setSelectedGradingContract(next.gradingContract ?? selectedGradingContract);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Rapid Capture report could not be opened.");
     } finally {
@@ -5186,17 +5171,10 @@ export default function AiGraderStationPage() {
               </div>
               <strong>production_fast / Detected Geometry</strong>
             </div>
-            <label>
-              Grading contract
-              <select
-                value={selectedGradingContract}
-                onChange={(event) => setSelectedGradingContract(event.target.value as AiGraderGradingContract)}
-                disabled={!bridgeConnected || busy !== null || stationSettingsLocked}
-              >
-                <option value="legacy_v0">Legacy V0</option>
-                <option value="mathematical_calibration_v1" disabled={!mathematicalCalibrationReady}>Mathematical Calibration V1</option>
-              </select>
-            </label>
+            <div className="grading-contract-fixed" aria-label="Required grading contract">
+              <span>Grading contract</span>
+              <strong>Mathematical Calibration V1 (required)</strong>
+            </div>
             <div className={`grading-contract-readiness ${mathematicalCalibrationReady ? "ready" : "blocked"}`} role="status">
               <strong>{mathematicalCalibrationReady ? "Mathematical V1 ready" : "Mathematical V1 unavailable"}</strong>
               <p>
@@ -5205,7 +5183,7 @@ export default function AiGraderStationPage() {
                   : status.mathematicalCalibration?.reason ?? "The bridge has not verified a finalized physical calibration profile."}
               </p>
               {status.mathematicalCalibration?.artifactSha256 ? <code>{status.mathematicalCalibration.artifactSha256}</code> : null}
-              <p>{selectedGradingContract === "mathematical_calibration_v1" ? "Start New Card will require strict V0.3 Mathematical V1 output; V0 fallback is prohibited." : "Start New Card will use the explicitly selected Legacy V0 contract."}</p>
+              <p>Start New Card requires strict V0.3 Mathematical V1 output. Legacy V0, provisional scoring, and omitted-contract fallback are prohibited.</p>
             </div>
             {selectedGradingContract === "mathematical_calibration_v1" ||
             status.gradingContract === "mathematical_calibration_v1" ? (

@@ -1,6 +1,6 @@
 # AI Grader Mathematical Calibration V1 Runbook
 
-last_verified_at: 2026-07-18
+last_verified_at: 2026-07-21
 owner: Mark
 status: supervised non-production calibration only; no protected rollout authority
 
@@ -10,7 +10,22 @@ This runbook creates one physically measured, immutable Mathematical Calibration
 
 The executable acceptance and scoring authority is `packages/shared/src/aiGraderMathematicalCalibrationV1.ts`. The operator launcher is `scripts/ai-grader/run-mathematical-calibration-capture-v1.ps1`. A session is calibrated only when the analyzer and finalizer produce a complete accepted 12-member bundle. Never edit a result, submit placeholder metrology, or set `isCalibrated=true` manually.
 
-Use the isolated feature worktree code directly. Do not install it over the Dell helper, change the Scheduled Task, rotate or print a station token, or persist new driver/firmware/controller settings. If another process already owns the camera or the requested loopback port, stop and obtain direction rather than changing the installed helper.
+Use one exact reviewed checkout pinned to the intended source commit. Do not install it over the Dell helper, change the Scheduled Task, rotate or print a station token, or persist new driver/firmware/controller settings. If another process already owns the camera or the requested loopback port, stop and obtain direction rather than changing the installed helper.
+
+## Current four-pose V1.1 compatibility stop
+
+As of `origin/main` commit `9f63691d792847d13f47e2df02b137cdb317ae2a`, the newer four-pose/one-flip V1.1 capture prototype is **not** a Production activation path. Do not spend physical calibration time on it until the following software gap is closed and verified without hardware:
+
+- V1.1 seals `76` captures and `48` measurements, but its checked-in finalizer emits only `ten-kings-mathematical-calibration-profile-v1.1`.
+- Production accepts the pinned V1.0.1 authority and the complete outer bundle plus its exact 12 members. The current V1.1 finalizer does not create the physical artifact, acceptance artifact, eight flat-field artifacts, illumination-pattern artifact, or outer bundle.
+- `open-mathematical-calibration-v1-1.ps1` only opens the protected preview page. That page has reconnect/stop preview controls; it is not an end-to-end start/capture/measure/seal/analyze/finalize operator runner.
+- The per-pose preview `Distinct` indicator does not by itself prove the final aggregate X/Y/rotation diversity gates. A future V1.1 runner must display and enforce the final aggregate spans before sealing.
+
+Until a tested V1.1 runner/analyzer/finalizer produces a bundle accepted by the real Production loader, the only checked-in deployable workflow is the `102`-capture/`78`-measurement V1.0.1 process documented below. There is no conversion fallback between these contracts.
+
+The Basler transport is not the unresolved blocker. Prior protected sessions received real frame streams, including sessions with successful valid overlays/captures. Pylon Viewer may be used only for coarse physical positioning and must then be closed completely. The protected bridge must be the sole camera owner for preview and capture. A black browser canvas, invalid checkerboard contour, missing lighting-controller acknowledgement, or disagreement between preview and capture-time geometry is an explicit stop, not authority to use Pylon Viewer frames or another image source.
+
+Machine grading remains Mathematical V1 or explicit failure. A later authenticated admin adjudication may supply all four confirmed sub-grades and complete a human-reviewed report, but it is a separate human authority: it does not repair calibration, mutate raw evidence, set `isCalibrated`, or relabel the failed machine run as a successful Mathematical V1 run.
 
 ## Before asking Mark to position anything
 
@@ -36,7 +51,7 @@ Use the isolated feature worktree code directly. Do not install it over the Dell
 
 ## Protected worktree bridge
 
-Run the bridge from this worktree in a separate foreground PowerShell. Use a new protected calibration-only bridge config rather than reading or changing the installed helper config. Never display its generated token or pass it on a command line. Use new non-production capture directories and the repository target identity. The example alternate port avoids the normal installed-helper port; confirm it is free first.
+Run the bridge from that exact checkout in a separate foreground PowerShell. Use a new protected calibration-only bridge config rather than reading or changing the installed helper config. Never display its generated token or pass it on a command line. Use new non-production capture directories and the repository target identity. The example alternate port avoids the normal installed-helper port; confirm it is free first.
 
 ```powershell
 $targetManifest = Get-Content output/pdf/ten-kings-mathematical-calibration-target-v1.json -Raw | ConvertFrom-Json

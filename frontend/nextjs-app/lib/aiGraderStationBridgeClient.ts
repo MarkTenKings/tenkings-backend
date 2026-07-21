@@ -379,16 +379,18 @@ export function buildAiGraderCaptureProfileRequest(
   gradingContract?: AiGraderGradingContract,
   mathematicalGradingAuthority?: AiGraderMathematicalGradingAuthorityV1,
 ) {
-  if (gradingContract === "mathematical_calibration_v1" && !mathematicalGradingAuthority) {
-    throw new Error("Mathematical V1 Start New Card requires exact card and centering authority.");
+  if (gradingContract !== "mathematical_calibration_v1") {
+    throw new Error(
+      "Start New Card requires the explicit Mathematical Calibration V1 contract; Legacy V0 and omitted contracts are prohibited.",
+    );
   }
-  if (gradingContract !== "mathematical_calibration_v1" && mathematicalGradingAuthority) {
-    throw new Error("Legacy V0 cannot accept Mathematical V1 authority.");
+  if (!mathematicalGradingAuthority) {
+    throw new Error("Mathematical V1 Start New Card requires exact card and centering authority.");
   }
   return {
     captureProfile,
-    ...(gradingContract ? { gradingContract } : {}),
-    ...(mathematicalGradingAuthority ? { mathematicalGradingAuthority } : {}),
+    gradingContract,
+    mathematicalGradingAuthority,
   } satisfies AiGraderStationBridgeActionRequestBody;
 }
 
