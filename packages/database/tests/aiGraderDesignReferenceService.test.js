@@ -65,6 +65,9 @@ function draftInput(overrides = {}) {
     ...identity,
     version: 3,
     artifactStorageKey: "ai-grader/design-references/ten-kings/card-42/front-v3.png",
+    expectedArtifactByteSize: ARTIFACT_BYTES.byteLength,
+    expectedArtifactMimeType: "image/png",
+    expectedArtifactSha256: HASH,
     intendedDesignBoundary: {
       schemaVersion: AI_GRADER_INTENDED_DESIGN_BOUNDARY_SCHEMA_VERSION,
       coordinateFrame: "design_reference_pixels",
@@ -196,6 +199,25 @@ test("storage-byte authority is mandatory and unsupported bytes fail before data
       .createVerifiedDraft(draftInput()),
     (error) => error.code === "AI_GRADER_DESIGN_REFERENCE_ARTIFACT_UNSUPPORTED",
   );
+  assert.equal(creates, 0);
+});
+
+test("receipt manifest size, MIME, and checksum mismatches fail before database mutation", async () => {
+  let creates = 0;
+  const service = createService(mockDb({
+    async create() { creates += 1; return referenceRow(); },
+  }));
+  const mismatches = [
+    draftInput({ expectedArtifactByteSize: ARTIFACT_BYTES.byteLength + 1 }),
+    draftInput({ expectedArtifactMimeType: "image/jpeg" }),
+    draftInput({ expectedArtifactSha256: "f".repeat(64) }),
+  ];
+  for (const input of mismatches) {
+    await assert.rejects(
+      service.createVerifiedDraft(input),
+      (error) => error.code === "AI_GRADER_DESIGN_REFERENCE_ARTIFACT_INTEGRITY_MISMATCH",
+    );
+  }
   assert.equal(creates, 0);
 });
 
@@ -531,7 +553,7 @@ test("retirement conditions the lifecycle change and reread on the exact approve
     retirementReason: "reference replaced after controlled review",
   });
   assert.equal(retired.status, "retired");
-  assert.equal(calls[0][1].where.status, "approved");
+  assert.deepEqual(calls[0][1].where.status, { in: ["draft", "approved"] });
   assert.equal(calls[0][1].where.artifactSha256, HASH);
   assert.equal(calls[0][1].where.version, 3);
   assert.deepEqual(calls[0][1].data, {

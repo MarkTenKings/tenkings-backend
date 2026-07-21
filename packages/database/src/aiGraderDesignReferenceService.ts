@@ -48,6 +48,9 @@ export type AiGraderIntendedDesignBoundary = Record<string, unknown> & {
 export type CreateVerifiedAiGraderDesignReferenceDraftInput = AiGraderDesignReferenceIdentity & {
   version: number;
   artifactStorageKey: string;
+  expectedArtifactByteSize: number;
+  expectedArtifactMimeType: "image/png" | "image/jpeg";
+  expectedArtifactSha256: string;
   intendedDesignBoundary: AiGraderIntendedDesignBoundary;
   provenance: AiGraderDesignReferenceProvenance;
   transformAcceptanceMetadata: AiGraderDesignReferenceTransformAcceptance;
@@ -240,7 +243,7 @@ function requireMimeType(value: unknown): string {
   return mimeType;
 }
 
-type VerifiedArtifactBytes = {
+export type VerifiedAiGraderDesignReferenceArtifactBytes = {
   artifactSha256: string;
   artifactMimeType: "image/png" | "image/jpeg";
   artifactWidthPx: number;
@@ -325,14 +328,17 @@ function inspectCompletePng(bytes: Uint8Array): { width: number; height: number 
     : undefined;
 }
 
-function inspectRasterArtifact(bytes: Uint8Array, maximumBytes: number): VerifiedArtifactBytes {
+export function inspectAiGraderDesignReferenceArtifactBytes(
+  bytes: Uint8Array,
+  maximumBytes = 64 * 1024 * 1024,
+): VerifiedAiGraderDesignReferenceArtifactBytes {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength < 24 || bytes.byteLength > maximumBytes) {
     return artifactError(
       "AI_GRADER_DESIGN_REFERENCE_ARTIFACT_UNSUPPORTED",
       `Design-reference bytes must contain a supported image from 24 through ${maximumBytes} bytes.`,
     );
   }
-  let artifactMimeType: VerifiedArtifactBytes["artifactMimeType"] | undefined;
+  let artifactMimeType: VerifiedAiGraderDesignReferenceArtifactBytes["artifactMimeType"] | undefined;
   let artifactWidthPx = 0;
   let artifactHeightPx = 0;
   const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
@@ -599,7 +605,7 @@ export function createAiGraderDesignReferenceService(
     invalid("maximumArtifactBytes", "must be an integer from 24 bytes through 256 MiB");
   }
 
-  const readVerifiedArtifact = async (storageKey: string): Promise<VerifiedArtifactBytes> => {
+  const readVerifiedArtifact = async (storageKey: string): Promise<VerifiedAiGraderDesignReferenceArtifactBytes> => {
     if (typeof options.readArtifactBytes !== "function") {
       return artifactError(
         "AI_GRADER_DESIGN_REFERENCE_ARTIFACT_READ_UNAVAILABLE",
@@ -615,7 +621,7 @@ export function createAiGraderDesignReferenceService(
         "Private design-reference storage bytes could not be read.",
       );
     }
-    return inspectRasterArtifact(bytes, maximumArtifactBytes);
+    return inspectAiGraderDesignReferenceArtifactBytes(bytes, maximumArtifactBytes);
   };
 
   const assertStoredArtifactExact = async (row: AiGraderDesignReferenceRow) => {
@@ -641,6 +647,30 @@ export function createAiGraderDesignReferenceService(
       const version = requireVersion(input.version);
       const artifactStorageKey = requireArtifactStorageKey(input.artifactStorageKey);
       const verified = await readVerifiedArtifact(artifactStorageKey);
+      if (!Number.isSafeInteger(input.expectedArtifactByteSize) ||
+          input.expectedArtifactByteSize < 24 ||
+          input.expectedArtifactByteSize > maximumArtifactBytes) {
+        return invalid(
+          "expectedArtifactByteSize",
+          `must be an integer from 24 through ${maximumArtifactBytes}`,
+        );
+      }
+      if (input.expectedArtifactMimeType !== "image/png" &&
+          input.expectedArtifactMimeType !== "image/jpeg") {
+        return invalid("expectedArtifactMimeType", "must equal image/png or image/jpeg");
+      }
+      const expectedArtifactSha256 = requireSha256(
+        input.expectedArtifactSha256,
+        "expectedArtifactSha256",
+      );
+      if (verified.byteLength !== input.expectedArtifactByteSize ||
+          verified.artifactMimeType !== input.expectedArtifactMimeType ||
+          verified.artifactSha256 !== expectedArtifactSha256) {
+        return artifactError(
+          "AI_GRADER_DESIGN_REFERENCE_ARTIFACT_INTEGRITY_MISMATCH",
+          "Reread private storage bytes do not match the upload receipt byte size, MIME type, and SHA-256.",
+        );
+      }
       const {
         artifactSha256,
         artifactMimeType,
@@ -811,7 +841,7 @@ export function createAiGraderDesignReferenceService(
             ...exactIdentityWhere(identity),
             version,
             artifactSha256,
-            status: "approved",
+            status: { in: ["draft", "approved"] },
           },
           data: {
             status: "retired",
@@ -823,7 +853,7 @@ export function createAiGraderDesignReferenceService(
         if (retired.count !== 1) {
           throw new AiGraderDesignReferenceServiceError(
             "AI_GRADER_DESIGN_REFERENCE_EXACT_RETIRE_TARGET_NOT_FOUND",
-            "no approved design reference matched the exact id, identity, side, profile, version, and artifact hash",
+            "no draft or approved design reference matched the exact id, identity, side, profile, version, and artifact hash",
           );
         }
         const row = await tx.aiGraderDesignReference.findFirst({

@@ -408,11 +408,84 @@ function contourSvg(
   );
 }
 
+function projectDesignReferencePoint(
+  point: FixedRigPointV1,
+  transformType: "affine" | "homography",
+  matrix: readonly number[],
+): FixedRigPointV1 | null {
+  if (transformType === "affine") {
+    const x = matrix[0]! * point.x + matrix[1]! * point.y + matrix[2]!;
+    const y = matrix[3]! * point.x + matrix[4]! * point.y + matrix[5]!;
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  }
+  const denominator = matrix[6]! * point.x + matrix[7]! * point.y + matrix[8]!;
+  if (!Number.isFinite(denominator) || Math.abs(denominator) <= Number.EPSILON) return null;
+  const x = (matrix[0]! * point.x + matrix[1]! * point.y + matrix[2]!) / denominator;
+  const y = (matrix[3]! * point.x + matrix[4]! * point.y + matrix[5]!) / denominator;
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+function closedContourPath(points: readonly FixedRigPointV1[]): string {
+  if (points.length < 4) throw new Error("A centering mask contour requires at least four points.");
+  return `M ${points.map((point) => `${svgNumber(point.x)} ${svgNumber(point.y)}`).join(" L ")} Z`;
+}
+
 function centeringOverlaySvg(
   width: number,
   height: number,
   side: ComputedCenteringV1["front"],
+  calibration: MathematicalCalibrationProfileV1,
 ): Buffer {
+  const binding = side.registrationBinding;
+  const inlierIds = new Set(binding?.inlierCorrespondenceIds ?? []);
+  const correspondenceQa = binding
+    ? binding.correspondenceLedger.correspondences.map((correspondence) => {
+        const projected = projectDesignReferencePoint(
+          correspondence.designReferencePointPx,
+          binding.correspondenceLedger.transformType,
+          side.registration.transformMatrix,
+        );
+        if (!projected) {
+          throw new Error(`${side.side} design-reference correspondence ${correspondence.correspondenceId} cannot be projected for its QA overlay.`);
+        }
+        const observed = correspondence.normalizedSourcePointPx;
+        const residual = Math.hypot(projected.x - observed.x, projected.y - observed.y);
+        const color = inlierIds.has(correspondence.correspondenceId) ? "#00ff8c" : "#ff476f";
+        return `<g data-correspondence-id="${xmlText(correspondence.correspondenceId)}">` +
+          `<title>${xmlText(correspondence.correspondenceId)} residual ${residual.toFixed(4)} px</title>` +
+          `<line x1="${svgNumber(projected.x)}" y1="${svgNumber(projected.y)}" x2="${svgNumber(observed.x)}" y2="${svgNumber(observed.y)}" stroke="${color}" stroke-width="3"/>` +
+          `<circle cx="${svgNumber(projected.x)}" cy="${svgNumber(projected.y)}" r="5" fill="none" stroke="#ffffff" stroke-width="2"/>` +
+          `<circle cx="${svgNumber(observed.x)}" cy="${svgNumber(observed.y)}" r="4" fill="${color}" stroke="#000000" stroke-width="1"/>` +
+          `<text x="${svgNumber(observed.x + 7)}" y="${svgNumber(observed.y - 7)}" font-family="Arial,sans-serif" font-size="13" fill="#ffffff" stroke="#000000" stroke-width="0.5">${xmlText(correspondence.correspondenceId)} ${residual.toFixed(2)}px</text></g>`;
+      }).join("")
+    : "";
+  const orientationQa = binding
+    ? (() => {
+        const referenceCenter = {
+          x: binding.correspondenceLedger.designReferenceWidthPx / 2,
+          y: binding.correspondenceLedger.designReferenceHeightPx / 2,
+        };
+        const referenceTop = { x: referenceCenter.x, y: 0 };
+        const center = projectDesignReferencePoint(
+          referenceCenter,
+          binding.correspondenceLedger.transformType,
+          side.registration.transformMatrix,
+        );
+        const top = projectDesignReferencePoint(
+          referenceTop,
+          binding.correspondenceLedger.transformType,
+          side.registration.transformMatrix,
+        );
+        if (!center || !top) throw new Error(`${side.side} design-reference orientation cannot be projected for its QA overlay.`);
+        return `<g data-registration-orientation="design-reference-top">` +
+          `<line x1="${svgNumber(center.x)}" y1="${svgNumber(center.y)}" x2="${svgNumber(top.x)}" y2="${svgNumber(top.y)}" stroke="#ff4dff" stroke-width="4" marker-end="url(#orientation-arrow)"/>` +
+          `<text x="${svgNumber(top.x + 10)}" y="${svgNumber(top.y + 20)}" font-family="Arial,sans-serif" font-size="16" fill="#ffb3ff" stroke="#000000" stroke-width="0.5">APPROVED DESIGN TOP</text></g>`;
+      })()
+    : "";
+  const tenMillimetersX = 10 / calibration.mmPerPixelX;
+  const tenMillimetersY = 10 / calibration.mmPerPixelY;
+  const physicalOrigin = { x: 22, y: Math.max(130, height - 118) };
+  const maskPath = `${closedContourPath(side.outerCutContour)} ${closedContourPath(side.printedDesignContour)}`;
   const lines = side.measurementLines.map((line, index) => {
     const y = 34 + index * 24;
     return `<g data-measurement-id="${xmlText(line.id)}">` +
@@ -427,17 +500,28 @@ function centeringOverlaySvg(
     `V ${side.vertical.balanceRatio.toFixed(2)}% / ${side.vertical.score.toFixed(2)}; ` +
     `U95 H ${side.u95Mm.horizontal.toFixed(4)} mm V ${side.u95Mm.vertical.toFixed(4)} mm; ` +
     `Grade-10 tolerance ${side.grade10ToleranceMm.toFixed(4)} mm`;
+  const authority = binding
+    ? `registered exact reference ${binding.designReferenceId} v${binding.designReferenceVersion}; residual ${side.registration.registrationResidualPx.toFixed(4)} px; inliers ${side.registration.inlierCount}/${side.registration.inlierFraction.toFixed(4)}; confidence ${side.registration.confidence.toFixed(4)}`
+    : `detected printed border; robust fit residual ${side.registration.registrationResidualPx.toFixed(4)} px; confidence ${side.registration.confidence.toFixed(4)}`;
   return svgDocument(
     width,
     height,
-    `<rect width="100%" height="100%" fill="#000000" fill-opacity="0.18"/>` +
+    `<defs><marker id="orientation-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#ff4dff"/></marker></defs>` +
+      `<rect width="100%" height="100%" fill="#000000" fill-opacity="0.12"/>` +
+      `<path d="${maskPath}" fill="#ff9f1c" fill-opacity="0.22" fill-rule="evenodd" data-mask="outer-cut-minus-printed-design"/>` +
       `<polygon points="${contourPoints(side.outerCutContour)}" fill="none" stroke="#ffcc00" stroke-width="3"/>` +
       `<polygon points="${contourPoints(side.printedDesignContour)}" fill="none" stroke="#00ff8c" stroke-width="3"/>` +
       lines +
+      correspondenceQa +
+      orientationQa +
+      `<g data-physical-coordinate-mapping="calibrated-millimeters">` +
+      `<line x1="${physicalOrigin.x}" y1="${physicalOrigin.y}" x2="${svgNumber(physicalOrigin.x + tenMillimetersX)}" y2="${physicalOrigin.y}" stroke="#00e5ff" stroke-width="4"/>` +
+      `<line x1="${physicalOrigin.x}" y1="${physicalOrigin.y}" x2="${physicalOrigin.x}" y2="${svgNumber(physicalOrigin.y - tenMillimetersY)}" stroke="#00e5ff" stroke-width="4"/>` +
+      `<text x="${physicalOrigin.x + 6}" y="${physicalOrigin.y - 8}" font-family="Arial,sans-serif" font-size="14" fill="#ffffff">10 mm X / 10 mm Y (calibrated)</text></g>` +
       `<rect x="4" y="${summaryY - 24}" width="${width - 8}" height="72" fill="#000000" fill-opacity="0.75"/>` +
       `<text x="12" y="${summaryY}" font-family="Arial,sans-serif" font-size="16" fill="#ffffff">${xmlText(summary)}</text>` +
       `<text x="12" y="${summaryY + 24}" font-family="Arial,sans-serif" font-size="16" fill="#ffffff">` +
-      `${xmlText(side.profile)} side score ${side.score.toFixed(2)}; exact deduction ${side.centeringDeduction.toFixed(2)}</text>`,
+      `${xmlText(side.profile)} side score ${side.score.toFixed(2)}; exact deduction ${side.centeringDeduction.toFixed(2)}; ${xmlText(authority)}</text>`,
   );
 }
 
@@ -563,6 +647,7 @@ async function addCenteringAssetsAndEvidence(
           calibration.normalizedWidthPx,
           calibration.normalizedHeightPx,
           side,
+          calibration,
         ),
         calibration.normalizedWidthPx,
         calibration.normalizedHeightPx,

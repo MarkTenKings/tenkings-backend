@@ -487,6 +487,56 @@ export async function presignUploadUrl(storageKey: string, contentType: string, 
   });
 }
 
+export type PrivateDesignReferencePresignDependencies = {
+  client?: S3Client;
+  bucket?: string;
+  sign?: typeof getSignedUrl;
+};
+
+export function createPrivateDesignReferenceUploadCommand(input: {
+  storageKey: string;
+  contentType: "image/png" | "image/jpeg";
+  checksumSha256: string;
+}, bucket = s3Bucket) {
+  if (!bucket) throw new Error("CARD_STORAGE_BUCKET must be configured for private design-reference uploads.");
+  const storageKey = normalizeStorageKeyCandidate(input.storageKey);
+  if (!storageKey) {
+    throw new Error("Private design-reference upload key is required.");
+  }
+  if (!storageKey.startsWith("ai-grader/design-references/imports/")) {
+    throw new Error("Private design-reference upload key is outside its controlled prefix.");
+  }
+  if (input.contentType !== "image/png" && input.contentType !== "image/jpeg") {
+    throw new Error("Private design-reference upload type must be PNG or JPEG.");
+  }
+  return new PutObjectCommand({
+    Bucket: bucket,
+    Key: storageKey,
+    ContentType: input.contentType,
+    ACL: "private",
+    ChecksumSHA256: sha256HexToBase64(input.checksumSha256),
+  });
+}
+
+export async function presignPrivateDesignReferenceUploadUrl(
+  input: {
+    storageKey: string;
+    contentType: "image/png" | "image/jpeg";
+    checksumSha256: string;
+  },
+  dependencies: PrivateDesignReferencePresignDependencies = {},
+) {
+  const client = dependencies.client ?? getS3Client();
+  const command = createPrivateDesignReferenceUploadCommand(input, dependencies.bucket ?? s3Bucket);
+  return (dependencies.sign ?? getSignedUrl)(client as any, command as any, {
+    expiresIn: 60 * 5,
+    unhoistableHeaders: new Set([
+      "x-amz-acl",
+      "x-amz-checksum-sha256",
+    ]),
+  });
+}
+
 export async function headStorageObject(storageKey: string): Promise<StorageObjectHead> {
   const mode = getStorageMode();
   if (mode !== "s3") {
