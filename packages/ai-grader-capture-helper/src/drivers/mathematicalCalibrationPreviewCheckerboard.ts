@@ -211,7 +211,7 @@ export function detectMathematicalCalibrationPreviewCheckerboard(
         settled = true;
         reject(new Error("calibration preview checkerboard detection timed out"));
       }
-    }, options.timeoutMs ?? 3000);
+    }, options.timeoutMs ?? 10000);
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;

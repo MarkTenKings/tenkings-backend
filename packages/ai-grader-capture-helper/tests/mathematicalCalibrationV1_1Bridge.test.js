@@ -15,7 +15,22 @@ const {
   AiGraderLocalStationBridgeService,
   buildAiGraderLocalStationBridgeConfig,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
+const {
+  detectMathematicalCalibrationPreviewCheckerboard,
+} = require("../dist/drivers/mathematicalCalibrationPreviewCheckerboard");
 const { assessMathematicalCalibrationV1_1Preview } = require("../dist/drivers/fixedRigMathematicalCalibrationV1_1");
+
+test("checkerboard detector default timeout allows ten-second bounded detection", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-checkerboard-timeout-"));
+  const scriptPath = path.join(root, "delayed-detector.py");
+  await fs.writeFile(scriptPath, [
+    "import json, time",
+    "time.sleep(3.5)",
+    "print(json.dumps({'imageWidth': 1000, 'imageHeight': 1000, 'internalCorners': [{'x': 10, 'y': 10}] * 176, 'outerCorners': [{'x': 10, 'y': 10}, {'x': 990, 'y': 10}, {'x': 990, 'y': 990}, {'x': 10, 'y': 990}], 'rotationDegrees': 0}))",
+  ].join("\n"));
+  const result = await detectMathematicalCalibrationPreviewCheckerboard(Buffer.from("delayed-fixture"), { scriptPath });
+  assert.equal(result.internalCorners.length, 176);
+});
 
 test("V1.1 binds only a calibration session, exposes overlay-gated capture, and never opens Production", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v11-bridge-"));
