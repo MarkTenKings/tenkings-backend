@@ -604,15 +604,13 @@ export function createAiGraderCalibrationActivationService(
       const priorWasActive = prior
         ? sortedEvents(record(prior, "prior activation")).some((entry) => entry.eventType === "ACTIVATED")
         : false;
-      const historical = await tx.mathematicalCalibrationActivation.findFirst({
+      const historical = await tx.mathematicalCalibrationActivation.findMany({
         where: { rigId, calibrationSnapshotId: snapshotId },
         include: { events: { orderBy: { sequence: "asc" } } },
-        orderBy: [{ requestedAt: "desc" }],
       });
-      const historicalWasActive = historical
-        ? sortedEvents(record(historical, "historical activation")).some((entry) => entry.eventType === "ACTIVATED")
-        : false;
-      if (kind === "activate" && historicalWasActive) {
+      const anyHistoricalActivationWasActive = historical.some((row: unknown) =>
+        sortedEvents(record(row, "historical activation")).some((entry) => entry.eventType === "ACTIVATED"));
+      if (kind === "activate" && anyHistoricalActivationWasActive) {
         failure("AI_GRADER_CALIBRATION_ACTIVATION_EXPLICIT_REACTIVATION_REQUIRED", "A previously activated snapshot requires the explicit Reactivate action.", 409);
       }
       if (kind === "reactivate" && !priorWasActive) {

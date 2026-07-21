@@ -45,7 +45,7 @@ No migration in this branch has been applied to Production.
 7. Hosted re-locks the rig, re-verifies snapshot bytes and the exact receipt, appends `LOCAL_VERIFIED` then `ACTIVATED`, deletes pending, and creates the sole ACTIVE pointer.
 8. Local accepts the hosted ACTIVE authority only if it exactly matches the local pending pointer and immutable receipt, then atomically changes the pointer to ACTIVE.
 
-A failed activation leaves no active pointer. There is no automatic rollback, newest/previous/closest selection, or last-known-good path. Reuse of a previously active snapshot requires the explicit `reactivate` route, exact prior activation ID, and a new root/event chain. Revoked snapshots cannot activate. Revocation appends `REVOKED` audit events and deletes matching active/pending pointers; the Start gate independently rechecks snapshot trust.
+A failed activation leaves no active pointer. There is no automatic rollback, newest/previous/closest selection, or last-known-good path. If any activation root for the exact rig/snapshot ever contains `ACTIVATED`, every later attempt must use the explicit `reactivate` route and reference an exact prior activated ID, even when the latest reactivation attempt failed. Revoked snapshots cannot activate. Revocation appends `REVOKED` audit events and deletes matching active/pending pointers; the Start gate independently rechecks snapshot trust.
 
 ## Hosted routes and exported DTOs
 
@@ -69,26 +69,37 @@ List/status use the existing admin session. Trust, activate, reactivate, complet
 
 ## Local registry and helper integration
 
-The helper stores bundles beneath:
+The trusted local finalizer optionally receives `--registry-staging-root <fixed-root>`. Only after it has verified the certified analysis and finalized the exact bundle does it atomically write:
+
+`<finalizer-staging-root>/<bundleManifestSha256>/`
+
+That directory contains the manifest, all twelve exact members, and `mathematical-calibration-finalizer-handoff-v1.json`. The handoff binds finalizer authority, rig/profile/version/finalized time, source-analysis hash, and bundle hash. The loopback action `ingest-finalized-calibration-bundle` accepts only the bundle SHA-256. It cannot accept a caller or browser path and resolves the exact fixed staging directory itself.
+
+The registry verifies that handoff and every bundle/member byte before copying them immutably beneath:
 
 `<registry-root>/bundles/sha256/<bundleManifestSha256>/`
 
-The manifest and all twelve members are verified before use. Existing content-addressed bundles are never overwritten. Receipts are immutable at `receipts/<activationId>.json`. The only mutable local file is the atomically replaced `active-pointer-v1.json`.
+Existing content-addressed bundles are never overwritten. Hosted operating contexts are stored immutably per activation. Receipts are immutable at `receipts/<activationId>.json`. The only mutable local file is the atomically replaced `active-pointer-v1.json`.
 
 Ordinary selection uses the loopback/token-protected helper actions:
 
+- `ingest-finalized-calibration-bundle`
 - `prepare-calibration-activation`
 - `confirm-calibration-activation`
 
-No config edit or helper restart is required. Production startup configuration supplies only registry/key/context plumbing:
+No config edit or helper restart is required. Production startup configuration supplies registry/key/inventory plumbing:
 
 - `AI_GRADER_CALIBRATION_WORKSTATION_PRIVATE_KEY_PATH`
 - `AI_GRADER_CALIBRATION_WORKSTATION_KEY_ID`
-- `AI_GRADER_CALIBRATION_LIVE_OPERATING_CONTEXT_PATH`
+- `AI_GRADER_CALIBRATION_RIG_INVENTORY_PATH`
+- `AI_GRADER_CALIBRATION_RIG_INVENTORY_SHA256`
+- `AI_GRADER_CALIBRATION_FINALIZER_STAGING_ROOT`
 - optional `AI_GRADER_CALIBRATION_ACTIVATION_REGISTRY_DIR`
 - optional `AI_GRADER_CALIBRATION_HELPER_INSTANCE_ID`
 
-The private key and live context remain workstation-local and are not returned by hosted APIs.
+The SHA-pinned inventory binds rig/location, camera, optics, controller transport/wiring, lighting configuration, pixel format/resolution, and helper identity. On prepare, confirm, and every Start, the real helper opens Basler/Pylon at the exact requested exposure/gain, proves the observed serial/model/pixel format/resolution, writes the exact Leimac channel/duty frames, requires every controller acknowledgement, and cross-checks those observations against both the protected inventory and hosted context.
+
+`AI_GRADER_CALIBRATION_LIVE_OPERATING_CONTEXT_PATH` is prohibited in real mode. Editable JSON may be used only through explicit test/mock dependency injection and can never be Production authority. The private key and protected inventory remain workstation-local and are not returned by hosted APIs.
 
 ## Start New Card and historical reports
 
@@ -103,13 +114,13 @@ Before Start New Card, the browser obtains one exact hosted ACTIVE authority for
 
 Any absent, pending, expired, revoked, ambiguous, corrupt, or mismatched condition hard-fails.
 
-The exact activation authority is bound into the local session manifest, rechecked before mathematical processing, propagated into newly generated Mathematical V1 reports, server-verified against the append-only activation/event record during persistence, and stored on both hosted session and report. Later activation or revocation does not rewrite an existing non-null historical binding.
+The exact activation authority is bound into the local session manifest, rechecked before mathematical processing, propagated into newly generated Mathematical V1 reports, server-verified against the append-only activation/event record during persistence, and stored on both hosted session and report. Every new Mathematical V1 persistence without that exact authority, or with a mismatched/cross-snapshot authority, fails before mutation. The V0.3 read schema stays optional only so older stored reports remain readable without fabricated activation history. Later activation or revocation does not rewrite an existing non-null historical binding.
 
 ## Validation status
 
-Hardware-free validation passed on 2026-07-21: shared/database/helper/browser builds; Next.js typecheck; Prisma schema validation; database activation/snapshot/production tests `63/63`; helper registry/station/report/orchestrator tests `53/53`; and hosted API tests `6/6`.
+Corrective hardware-free validation passed on 2026-07-21: shared/database/helper builds; Next.js typecheck; Prisma schema validation; database activation/snapshot/production tests `66/66`; serialized helper station/report/orchestrator/registry/runtime selection `28/28`; trusted finalizer tests `3/3`; and hosted activation/snapshot API tests `6/6`.
 
-The coverage includes snapshot immutability, activation/event update/delete database guards, immutable historical session/report bindings, two-phase activation, concurrent completion, failed activation with no fallback, explicit historical reactivation, context mismatch, receipt signing/verification, revocation, local pointer behavior, route anti-spoofing, fresh-human auth, and Start authority gating.
+The coverage includes snapshot immutability, activation/event update/delete database guards, immutable historical session/report bindings, two-phase activation, concurrent completion, failed activation with no fallback, ACTIVE -> failed reactivation -> plain-activate rejection, exact prior-active reactivation, SHA-pinned inventory, opened Basler/acknowledged Leimac mismatch rejection, editable-context-file rejection, content-addressed finalizer handoff ingestion, signed receipt verification, hosted/local completion agreement, mandatory new-write activation binding, historical read compatibility, revocation, route anti-spoofing, fresh-human auth, and Start authority gating.
 
 The migration and validator sources also have a hardware-free regression test. It verifies the append-only triggers, single-rig pointer key, delete-restricted history, explicit failed-activation/no-rollback assertion, and absence of destructive table-drop/truncate statements.
 

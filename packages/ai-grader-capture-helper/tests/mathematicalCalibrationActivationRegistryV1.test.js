@@ -9,6 +9,9 @@ const {
   canonicalAiGraderOperatingContextV1,
   canonicalAiGraderRuntimeContextV1,
 } = require("@tenkings/shared");
+const {
+  createMathematicalCalibrationOperatingContextRuntimeV1,
+} = require("../dist/drivers/mathematicalCalibrationOperatingContextRuntimeV1");
 
 const NOW = new Date("2026-07-21T19:00:00.000Z");
 const RIG_ID = "ten-kings-fixed-rig-v1";
@@ -113,7 +116,49 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     members,
   };
   const context = operatingContext(authority, artifactSha256);
-  let liveContext = context;
+  const protectedInventory = {
+    schemaVersion: "ten-kings-mathematical-calibration-rig-inventory-v1",
+    rig: structuredClone(context.rig),
+    camera: structuredClone(context.camera),
+    optics: structuredClone(context.optics),
+    controller: {
+      ...structuredClone(context.controller),
+      controllerTransportIdentity: "leimac-idmu-tcp:10.0.0.7:502:unit:1",
+    },
+    lighting: { configurationIdentity: context.lighting.configurationIdentity },
+    capture: {
+      pixelFormat: context.capture.pixelFormat,
+      widthPx: context.capture.widthPx,
+      heightPx: context.capture.heightPx,
+    },
+    software: {
+      helperInstanceId: context.software.helperInstanceId,
+      helperVersion: context.software.helperVersion,
+    },
+  };
+  const protectedInventoryBytes = Buffer.from(JSON.stringify(protectedInventory));
+  let observedRuntime = {
+    schemaVersion: "ten-kings-mathematical-calibration-runtime-observation-v1",
+    source: "opened-basler-pylon-and-leimac-acknowledgement-v1",
+    camera: structuredClone(context.camera),
+    capture: structuredClone(context.capture),
+    controller: {
+      controllerTransportIdentity: protectedInventory.controller.controllerTransportIdentity,
+      selectedChannels: [...context.lighting.selectedChannels],
+      dutyPercent: context.lighting.dutyPercent,
+      expectedWriteCount: 4,
+      acknowledgedWriteCount: 4,
+      allWritesAcknowledged: true,
+    },
+    software: structuredClone(protectedInventory.software),
+  };
+  const trustedLiveOperatingContext = createMathematicalCalibrationOperatingContextRuntimeV1({
+    protectedInventoryBytes,
+    protectedInventorySha256: sha(protectedInventoryBytes),
+    helperInstanceId: "helper-1",
+    helperVersion: "helper-v1",
+    observeRuntime: async () => observedRuntime,
+  });
 
   const bundleModulePath = require.resolve("../dist/drivers/fixedRigMathematicalCalibrationBundleV1");
   const bundleModule = require(bundleModulePath);
@@ -125,7 +170,13 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
       bundlePath: input.bundlePath,
       bundleSha256: input.bundleSha256,
       bundle: {},
-      profile: { rigId: RIG_ID, artifactSha256 },
+      profile: {
+        rigId: RIG_ID,
+        profileId: "profile-v1",
+        calibrationVersion: "calibration-v1",
+        finalizedAt: NOW.toISOString(),
+        artifactSha256,
+      },
       physicalArtifact: {},
       acceptance: {},
       authority,
@@ -138,6 +189,55 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     createMathematicalCalibrationActivationRegistryV1,
   } = require("../dist/drivers/mathematicalCalibrationActivationRegistryV1");
 
+  const finalizedBundleStagingRoot = path.join(root, "trusted-finalizer-staging");
+  const stagingDir = path.join(finalizedBundleStagingRoot, authority.bundleManifestSha256);
+  await fs.mkdir(stagingDir, { recursive: true });
+  await fs.writeFile(
+    path.join(stagingDir, "mathematical-calibration-bundle-v1.json"),
+    "immutable finalized bundle fixture",
+  );
+  for (const member of authority.members) {
+    await fs.writeFile(path.join(stagingDir, member.fileName), `immutable member ${member.fileName}`);
+  }
+  await fs.writeFile(
+    path.join(stagingDir, "mathematical-calibration-finalizer-handoff-v1.json"),
+    JSON.stringify({
+      schemaVersion: "ten-kings-mathematical-calibration-finalizer-handoff-v1",
+      authority: "trusted-local-mathematical-calibration-finalizer-v1",
+      rigId: RIG_ID,
+      profileId: "profile-v1",
+      calibrationVersion: "calibration-v1",
+      finalizedAt: NOW.toISOString(),
+      bundleFileName: "mathematical-calibration-bundle-v1.json",
+      bundleManifestSha256: authority.bundleManifestSha256,
+      sourceAnalysisSha256: sha("source-analysis"),
+    }),
+  );
+
+  const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const registry = createMathematicalCalibrationActivationRegistryV1({
+    rootDir: root,
+    finalizedBundleStagingRoot,
+    expectedRigId: RIG_ID,
+    helperInstanceId: "helper-1",
+    helperVersion: "helper-v1",
+    workstationKeyId: KEY_ID,
+    workstationPrivateKey: privateKey,
+    liveOperatingContext: trustedLiveOperatingContext,
+    isIdle: async () => true,
+    now: () => new Date(NOW),
+  });
+
+  await assert.rejects(
+    registry.ingestFinalizedBundle({
+      bundleManifestSha256: authority.bundleManifestSha256,
+      sourceBundlePath: "browser-declared-path-is-prohibited",
+    }),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_IMPORT_INVALID",
+  );
+  const ingested = await registry.ingestFinalizedBundle({
+    bundleManifestSha256: authority.bundleManifestSha256,
+  });
   const bundlePath = path.join(
     root,
     "bundles",
@@ -145,21 +245,8 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     authority.bundleManifestSha256,
     "mathematical-calibration-bundle-v1.json",
   );
-  await fs.mkdir(path.dirname(bundlePath), { recursive: true });
-  await fs.writeFile(bundlePath, "immutable content-addressed fixture");
-
-  const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
-  const registry = createMathematicalCalibrationActivationRegistryV1({
-    rootDir: root,
-    expectedRigId: RIG_ID,
-    helperInstanceId: "helper-1",
-    helperVersion: "helper-v1",
-    workstationKeyId: KEY_ID,
-    workstationPrivateKey: privateKey,
-    liveOperatingContext: async () => liveContext,
-    isIdle: async () => true,
-    now: () => new Date(NOW),
-  });
+  assert.equal(ingested.bundlePath, bundlePath);
+  assert.equal(await fs.readFile(bundlePath, "utf8"), "immutable finalized bundle fixture");
 
   const pending = pendingAuthority(context, authority, artifactSha256, "v1");
   const receipt = await registry.prepareActivation(pending);
@@ -188,19 +275,19 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
   assert.equal(active.bundlePath, bundlePath);
   assert.equal((await registry.readPointer()).state, "ACTIVE");
 
-  liveContext = {
-    ...context,
-    capture: { ...context.capture, gain: 1 },
+  observedRuntime = {
+    ...observedRuntime,
+    capture: { ...observedRuntime.capture, gain: 1 },
   };
   await assert.rejects(
     registry.assertStartAuthority(hosted),
-    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH",
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_RUNTIME_CONTEXT_UNTRUSTED",
   );
 
   const next = pendingAuthority(context, authority, artifactSha256, "v2");
   await assert.rejects(
     registry.prepareActivation(next),
-    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH",
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_RUNTIME_CONTEXT_UNTRUSTED",
   );
   const pointerAfterFailure = await registry.readPointer();
   assert.equal(pointerAfterFailure.state, "PENDING");

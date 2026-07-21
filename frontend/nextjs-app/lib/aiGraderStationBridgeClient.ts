@@ -362,6 +362,7 @@ export type AiGraderStationBridgeActionRequestBody = {
   gradingContract?: AiGraderGradingContract;
   mathematicalGradingAuthority?: AiGraderMathematicalGradingAuthorityV1;
   calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
+  bundleManifestSha256?: string;
   mathematicalReviewRequestSha256?: string;
   mathematicalFindingReviews?: AiGraderMathematicalFindingReviewV1[];
   gradingSessionId?: string;

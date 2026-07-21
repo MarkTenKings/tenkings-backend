@@ -33,6 +33,7 @@ export type AiGraderStationAction =
   | "status"
   | "start-session"
   | "prepare-calibration-activation"
+  | "ingest-finalized-calibration-bundle"
   | "confirm-calibration-activation"
   | "capture-front"
   | "capture-back"
@@ -2464,6 +2465,7 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   status: "start_new_card",
   "start-session": "live_preview_focus_framing",
   "prepare-calibration-activation": "start_new_card",
+  "ingest-finalized-calibration-bundle": "start_new_card",
   "confirm-calibration-activation": "start_new_card",
   "capture-front": "prompt_flip_card",
   "capture-back": "run_provisional_diagnostics",
