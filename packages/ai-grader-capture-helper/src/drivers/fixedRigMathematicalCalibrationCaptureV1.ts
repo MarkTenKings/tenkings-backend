@@ -9,6 +9,11 @@ import {
   type CardGeometryNormalizationResult,
 } from "./cardGeometry";
 import {
+  checkerboardGeometryMetadata,
+  detectMathematicalCalibrationPreviewCheckerboard,
+  type MathematicalCalibrationPreviewCheckerboard,
+} from "./mathematicalCalibrationPreviewCheckerboard";
+import {
   MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_MANIFEST_SCHEMA,
   MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_PACKAGE_SCHEMA,
   MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_PROFILE,
@@ -149,6 +154,7 @@ export interface FixedRigMathematicalCalibrationCaptureProducerConfigV1 {
     input: FixedRigMathematicalCalibrationCaptureBoundaryRequestV1,
   ) => Promise<FixedRigMathematicalCalibrationCaptureBoundaryResultV1>;
   normalize?: FixedRigMathematicalCalibrationNormalizerV1;
+  detectCheckerboard?: (imageBuffer: Buffer) => Promise<MathematicalCalibrationPreviewCheckerboard>;
   now?: () => Date;
   contractVersion?: "v1.0.1" | "v1.1";
 }
@@ -822,13 +828,27 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           if (!geometryPath || !existsSync(geometryPath)) throw new Error("Reusable normalization geometry record is unavailable.");
           referencedGeometry = JSON.parse((await readFile(geometryPath)).toString("utf-8")) as CardGeometryMetadata;
         }
+        const captureTimeGeometry = this.config.contractVersion === "v1.1" && request.role === "checkerboard_placement"
+          ? checkerboardGeometryMetadata(
+              await (this.config.detectCheckerboard ?? detectMathematicalCalibrationPreviewCheckerboard)(captured.rawBytes),
+              {
+                sourceImageId: rawEvidenceId,
+                sourceFrameId: rawEvidenceId,
+                timestamp: captured.capturedAt,
+              },
+            )
+          : undefined;
         const workingOutputPath = path.join(operationDir, `${baseName}-normalized-working.png`);
         const normalization = await (this.config.normalize ?? defaultNormalizer)({
           sourceImagePath: rawPath,
           workingOutputPath,
           capturedAt: captured.capturedAt,
           sourceImageId: rawEvidenceId,
-          ...(referencedGeometry ? { reusableGeometry: referencedGeometry } : {}),
+          ...(captureTimeGeometry
+            ? { reusableGeometry: captureTimeGeometry }
+            : referencedGeometry
+              ? { reusableGeometry: referencedGeometry }
+              : {}),
         });
         if (!normalization.rawEvidencePreserved || !normalization.normalizedArtifact) {
           throw new Error("Calibration normalization must preserve raw bytes and produce a normalized derivative.");

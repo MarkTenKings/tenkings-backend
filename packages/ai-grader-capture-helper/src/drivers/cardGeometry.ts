@@ -73,6 +73,7 @@ export interface CardGeometryDetectionDiagnostics {
     | "adaptive_border_contrast_connected_component_pca_v1"
     | "solid_plate_color_component_pca_v2"
     | "perimeter_gradient_rectangle_v3"
+    | "opencv_find_chessboard_corners_sb_v1"
     ;
   backgroundLuma: number;
   backgroundColor?: { r: number; g: number; b: number };

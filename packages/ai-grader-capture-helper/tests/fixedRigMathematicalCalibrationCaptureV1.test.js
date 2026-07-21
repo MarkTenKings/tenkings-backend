@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const sharp = require("sharp");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
@@ -68,13 +69,27 @@ async function producerFixture(root, options = {}) {
     targetVersion: "ten-kings-mathematical-calibration-target-v1.0.0",
     targetSha256: sha256(targetBytes),
     ...(options.v11 ? { contractVersion: "v1.1" } : {}),
+    ...(options.v11 ? {
+      detectCheckerboard: options.detectCheckerboard ?? (async () => ({
+        imageWidth: 1000,
+        imageHeight: 1400,
+        internalCorners: Array.from({ length: 176 }, (_, index) => ({ x: 100 + (index % 11) * 70, y: 385 + Math.floor(index / 11) * 42 })),
+        outerCorners: [
+          { x: 50, y: 382 },
+          { x: 950, y: 382 },
+          { x: 950, y: 1018 },
+          { x: 50, y: 1018 },
+        ],
+        rotationDegrees: 0,
+      })),
+    } : {}),
     protectedSettings,
     capture: async (request) => {
       captureCounter += 1;
       requests.set(request.operationId, request);
       const capturedAt = new Date(Date.UTC(2026, 6, 18, 20, 0, 0, captureCounter)).toISOString();
       return {
-        rawBytes: Buffer.from(`raw:${request.operationId}:${captureCounter}`),
+        rawBytes: options.rawBytes ?? Buffer.from(`raw:${request.operationId}:${captureCounter}`),
         mimeType: "image/png",
         imageWidth: 1000,
         imageHeight: 1400,
@@ -105,7 +120,7 @@ async function producerFixture(root, options = {}) {
         },
       };
     },
-    normalize: async (input) => {
+    normalize: options.useDefaultNormalizer ? undefined : async (input) => {
       const request = requests.get(input.sourceImageId.replace(/-raw$/, "").split("-").slice(-1)[0])
         ?? [...requests.values()].find((candidate) => input.sourceImageId.includes(candidate.operationId));
       assert.ok(request, `missing capture request for ${input.sourceImageId}`);
@@ -135,7 +150,23 @@ async function producerFixture(root, options = {}) {
       };
       const geometry = options.geometryForRequest
         ? options.geometryForRequest({ request, sample, defaultGeometry })
+        : options.assertCaptureTimeGeometry && request.role === "checkerboard_placement"
+          ? input.reusableGeometry
         : defaultGeometry;
+      if (options.assertCaptureTimeGeometry && request.role === "checkerboard_placement") {
+        assert.ok(input.reusableGeometry, "checkerboard placement must receive capture-time geometry");
+        assert.equal(input.reusableGeometry.detection.method, "opencv_find_chessboard_corners_sb_v1");
+        for (const point of [
+          input.reusableGeometry.corners.topLeft,
+          input.reusableGeometry.corners.topRight,
+          input.reusableGeometry.corners.bottomRight,
+          input.reusableGeometry.corners.bottomLeft,
+        ]) {
+          assert.ok(Number.isFinite(point.x) && Number.isFinite(point.y));
+          assert.ok(point.x > 0 && point.x < input.reusableGeometry.image.width);
+          assert.ok(point.y > 0 && point.y < input.reusableGeometry.image.height);
+        }
+      }
       return {
         geometry,
         rawArtifact: {
@@ -516,6 +547,88 @@ test("V1.1 enforces four placement slots and records one reverse flip without ro
   assert.equal(state.captures.filter((capture) => capture.role === "checkerboard_placement").length, 4);
   assert.equal(state.blankReverseFlipRecorded, true);
   assert.equal(state.captures.filter((capture) => capture.role === "lens_geometry").length, 0);
+});
+
+test("V1.1 checkerboard placement binds normalization to dedicated capture-time geometry", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v11-checkerboard-geometry-"));
+  let detectorInput;
+  const fixture = await producerFixture(root, {
+    v11: true,
+    assertCaptureTimeGeometry: true,
+    detectCheckerboard: async (bytes) => {
+      detectorInput = Buffer.from(bytes);
+      return {
+        imageWidth: 1000,
+        imageHeight: 1400,
+        internalCorners: Array.from({ length: 176 }, (_, index) => ({ x: 100 + (index % 11) * 70, y: 385 + Math.floor(index / 11) * 42 })),
+        outerCorners: [
+          { x: 50, y: 382 },
+          { x: 950, y: 382 },
+          { x: 950, y: 1018 },
+          { x: 50, y: 1018 },
+        ],
+        rotationDegrees: 0,
+      };
+    },
+  });
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, "calibration-v11-capture-geometry"));
+  await fixture.producer.captureStep({
+    sessionId: started.sessionId,
+    operationId: "placement-capture-geometry-1",
+    role: "checkerboard_placement",
+    sampleIndex: 1,
+    targetFace: "checkerboard",
+  });
+  assert.equal(detectorInput?.toString("utf8"), "raw:placement-capture-geometry-1:1");
+  const state = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "capture-session.json"), "utf8"));
+  const normalized = state.artifacts.find((artifact) => artifact.artifactClass === "normalized_derivative");
+  const geometry = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "working", `${normalized.evidenceId}-geometry.json`), "utf8"));
+  assert.equal(geometry.detection.method, "opencv_find_chessboard_corners_sb_v1");
+  assert.equal(geometry.image.width, 1000);
+  assert.equal(geometry.image.height, 1400);
+  assert.ok(state.artifacts.find((artifact) => artifact.artifactClass === "raw_capture").pose.coverageFraction > 0.3);
+});
+
+test("V1.1 checkerboard placement default normalization does not invoke the generic card detector", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v11-default-normalizer-"));
+  const rawBytes = await sharp({
+    create: { width: 1000, height: 1400, channels: 3, background: { r: 127, g: 127, b: 127 } },
+  }).png().toBuffer();
+  let detectorInput;
+  const fixture = await producerFixture(root, {
+    v11: true,
+    useDefaultNormalizer: true,
+    rawBytes,
+    detectCheckerboard: async (bytes) => {
+      detectorInput = Buffer.from(bytes);
+      return {
+        imageWidth: 1000,
+        imageHeight: 1400,
+        internalCorners: Array.from({ length: 176 }, (_, index) => ({ x: 100 + (index % 11) * 70, y: 385 + Math.floor(index / 11) * 42 })),
+        outerCorners: [
+          { x: 50, y: 382 },
+          { x: 950, y: 382 },
+          { x: 950, y: 1018 },
+          { x: 50, y: 1018 },
+        ],
+        rotationDegrees: 0,
+      };
+    },
+  });
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, "calibration-v11-default-normalizer"));
+  const status = await fixture.producer.captureStep({
+    sessionId: started.sessionId,
+    operationId: "placement-default-normalizer-1",
+    role: "checkerboard_placement",
+    sampleIndex: 1,
+    targetFace: "checkerboard",
+  });
+  assert.equal(status.captureCount, 1);
+  assert.deepEqual(detectorInput, rawBytes);
+  const state = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "capture-session.json"), "utf8"));
+  const normalized = state.artifacts.find((artifact) => artifact.artifactClass === "normalized_derivative");
+  const geometry = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "working", `${normalized.evidenceId}-geometry.json`), "utf8"));
+  assert.equal(geometry.detection.method, "opencv_find_chessboard_corners_sb_v1");
 });
 
 test("V1.1 seals 76 image captures and 48 measurements with one four-pose evidence identity", async () => {
