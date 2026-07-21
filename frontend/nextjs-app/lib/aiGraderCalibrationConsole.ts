@@ -4,6 +4,9 @@ import {
   type AiGraderPreviewEpochBinding,
   type AiGraderPreviewEpochState,
 } from "./aiGraderPreviewLifecycle";
+import type {
+  MathematicalCalibrationV1_2SessionStatusDto,
+} from "./aiGraderMathematicalCalibrationV1_2Contract";
 
 export type AiGraderCalibrationConsoleAction =
   | "start_new"
@@ -105,9 +108,9 @@ export type AiGraderCalibrationConsoleViewModel = {
     xSpan: number;
     ySpan: number;
     rotationSpanDegrees: number;
-    minimumXSpan: number;
-    minimumYSpan: number;
-    minimumRotationSpanDegrees: number;
+    minimumXSpan: number | null;
+    minimumYSpan: number | null;
+    minimumRotationSpanDegrees: number | null;
     exactFinalGateSatisfied: boolean;
   };
   movementGuidance: string[];
@@ -216,7 +219,11 @@ export function aiGraderCalibrationActionEnabled(input: {
 }) {
   const authority = input.model.actions[input.action];
   if (!authority.available || !authority.authorityPresent) return false;
-  if (input.action === "capture_current_pose" || input.action === "retry_current_pose") {
+  if (
+    input.action === "capture_current_pose" ||
+    input.action === "retry_current_pose" ||
+    input.action === "begin_or_resume_automatic_sweep"
+  ) {
     return input.previewFresh && input.model.currentPose.valid;
   }
   if (input.action === "replace_selected_pose") {
@@ -231,6 +238,147 @@ export function aiGraderCalibrationActionEnabled(input: {
       && input.model.finalization.memberCount === 12;
   }
   return true;
+}
+
+function v1_2Phase(status: MathematicalCalibrationV1_2SessionStatusDto): AiGraderCalibrationConsolePhase {
+  if (status.analysis.state === "failed") return "analysis_failed";
+  if (status.finalization.state === "failed") return "finalized_fail";
+  if (status.finalization.state === "completed") return "finalized_pass";
+  if (status.phase === "checkerboard_placements") return "checkerboard_poses";
+  if (status.phase === "blank_reverse_flip") return "blank_reverse_flip";
+  if (status.phase === "photometric_sweep") return "automatic_sweep";
+  if (status.phase === "analyze") return "analyze";
+  if (status.phase === "finalize") return "finalize";
+  return "finalized_pass";
+}
+
+/** Maps only the exact frozen V1.2 read projection; live pose authority remains a separate displayed-frame binding. */
+export function buildAiGraderCalibrationConsoleFromV1_2(
+  status: MathematicalCalibrationV1_2SessionStatusDto,
+): AiGraderCalibrationConsoleViewModel {
+  const expected = status.expectedAction.action;
+  const activePoses = status.acceptedPoses.filter((pose) => pose.active);
+  const serverReason = "Available only for the exact server-owned expected step and revision.";
+  const unavailableReason = "The exact server-owned session phase does not authorize this action.";
+  const poseNumber = expected === "capture_checkerboard" && status.expectedAction.slot
+    ? status.expectedAction.slot as 1 | 2 | 3 | 4
+    : undefined;
+  const analysisPass = status.analysis.state === "accepted";
+  const finalizationPass = status.finalization.state === "completed" && status.finalization.memberCount === 12;
+  return {
+    source: "authoritative_bridge",
+    contractVersion: status.contractVersion,
+    sessionId: status.sessionId,
+    sessionRevision: status.revision,
+    eventHeadSha256: status.revision,
+    phase: v1_2Phase(status),
+    title: status.activationEligible
+      ? "Calibration ready for explicit activation"
+      : poseNumber
+        ? `Pose ${poseNumber} of 4`
+        : status.phase.replaceAll("_", " "),
+    summary: "The paired helper owns operation identity, expected step, revision, evidence, acceptance, analysis, and finalization authority.",
+    ...(status.analysis.state === "failed"
+      ? { hardFailure: "Exact V1.2 analysis failed. Start a new calibration attempt; thresholds are immutable." }
+      : status.finalization.state === "failed"
+        ? { hardFailure: "Exact V1.2 finalization failed. No bundle is activation-eligible." }
+        : {}),
+    ...(poseNumber ? { currentPoseNumber: poseNumber } : {}),
+    currentPose: {
+      valid: false,
+      reasons: ["Capture requires a fresh exact displayed-frame pose projection; the session DTO alone cannot authorize a frame."],
+      exactTargetContour: null,
+      centerXFraction: null,
+      centerYFraction: null,
+      rotationDegrees: null,
+      coverageFraction: null,
+      safetyMarginFraction: null,
+    },
+    aggregateDiversity: {
+      xSpan: status.aggregateSpans.x,
+      ySpan: status.aggregateSpans.y,
+      rotationSpanDegrees: status.aggregateSpans.rotationDegrees,
+      minimumXSpan: null,
+      minimumYSpan: null,
+      minimumRotationSpanDegrees: null,
+      exactFinalGateSatisfied: activePoses.length === 4 && status.phase !== "checkerboard_placements",
+    },
+    movementGuidance: [
+      "Use only the live server-issued contour and movement guidance before capture.",
+      "A failed attempt stays on the same exact server-owned step.",
+    ],
+    acceptedPoses: status.acceptedPoses.map((pose) => ({
+      poseNumber: pose.slot as 1 | 2 | 3 | 4,
+      operationLabel: pose.operationId,
+      acceptedAt: pose.acceptedRevision,
+      evidenceSha256: pose.evidenceSha256,
+      centerXFraction: pose.pose.centerXFraction,
+      centerYFraction: pose.pose.centerYFraction,
+      rotationDegrees: pose.pose.rotationDegrees,
+      coverageFraction: pose.pose.coverageFraction,
+      safetyMarginFraction: pose.pose.safetyMarginFraction,
+      superseded: !pose.active,
+      ...(pose.supersededByOperationId ? { supersededByOperationLabel: pose.supersededByOperationId } : {}),
+    })),
+    failedAttempts: status.failedAttempts.map((attempt) => ({
+      attemptLabel: attempt.operationId,
+      failedAt: attempt.recordedRevision,
+      stepLabel: attempt.action,
+      message: attempt.issue,
+      ...(attempt.slot && attempt.slot <= 4 ? { poseNumber: attempt.slot as 1 | 2 | 3 | 4 } : {}),
+    })),
+    automaticSweep: {
+      acceptedFrames: status.automaticSweep.acceptedFrames,
+      requiredFrames: status.automaticSweep.requiredFrames,
+      currentLabel: status.automaticSweep.nextRole
+        ? `${status.automaticSweep.nextRole} channel ${status.automaticSweep.nextChannelIndex} sample ${status.automaticSweep.nextSampleIndex}`
+        : status.automaticSweep.batchCleanupConfirmed
+          ? "72 / 72 complete; cleanup confirmed"
+          : "72 / 72 captured; cleanup pending",
+      resumed: status.automaticSweep.acceptedFrames > 0 && status.automaticSweep.acceptedFrames < 72,
+    },
+    analysis: {
+      status: status.analysis.state === "accepted" ? "pass" : status.analysis.state === "failed" ? "fail" : "not_started",
+      exactPass: analysisPass,
+      summary: analysisPass ? "Exact trusted V1.2 analysis PASS." : status.analysis.state === "failed" ? "Exact trusted V1.2 analysis FAIL." : "Analysis has not run.",
+      issues: status.analysis.issues,
+    },
+    finalization: {
+      status: status.finalization.state === "completed" ? "pass" : status.finalization.state === "failed" ? "fail" : "not_started",
+      exactPass: finalizationPass,
+      ...(status.finalization.bundleSha256 ? { bundleSha256: status.finalization.bundleSha256 } : {}),
+      ...(status.finalization.memberLedgerSha256 ? { memberLedgerSha256: status.finalization.memberLedgerSha256 } : {}),
+      runtimeContextSha256: status.finalization.runtimeContextSha256,
+      rigCharacterizationSha256: status.finalization.rigCharacterizationSha256,
+      memberCount: status.finalization.memberCount,
+      summary: finalizationPass ? "Exact twelve-member V1.2 bundle finalized." : "No activation-eligible exact bundle is finalized.",
+    },
+    calibrations: [],
+    actions: {
+      start_new: authority(true, "Start one new helper-owned V1.2 session."),
+      resume: authority(
+        status.phase !== "ready_for_explicit_activation" && status.analysis.state !== "failed" && status.finalization.state !== "failed",
+        status.phase === "ready_for_explicit_activation"
+          ? "This session is complete."
+          : status.analysis.state === "failed" || status.finalization.state === "failed"
+            ? "A failed session cannot be resumed; start a new calibration attempt."
+            : "Resume this exact helper-owned V1.2 session.",
+      ),
+      capture_current_pose: authority(expected === "capture_checkerboard", expected === "capture_checkerboard" ? serverReason : unavailableReason),
+      retry_current_pose: authority(expected === "capture_checkerboard", expected === "capture_checkerboard" ? serverReason : unavailableReason),
+      replace_selected_pose: authority(activePoses.length > 0 && status.phase === "checkerboard_placements", serverReason),
+      confirm_blank_reverse_flip: authority(expected === "confirm_blank_reverse_flip", expected === "confirm_blank_reverse_flip" ? serverReason : unavailableReason),
+      begin_or_resume_automatic_sweep: authority(
+        expected === "capture_photometric" || expected === "complete_batch_cleanup",
+        expected === "capture_photometric" || expected === "complete_batch_cleanup" ? serverReason : unavailableReason,
+      ),
+      analyze: authority(expected === "analyze" && status.analysis.state !== "failed", expected === "analyze" ? serverReason : unavailableReason),
+      finalize: authority(expected === "finalize" && analysisPass, expected === "finalize" ? serverReason : unavailableReason),
+      activate: blocked("Activation is owned only by the frozen hosted registry contract."),
+      reactivate: blocked("Reactivation is owned only by the frozen hosted registry contract."),
+      exit: authority(true, "Return safely to the grading station."),
+    },
+  };
 }
 
 function authority(available: boolean, reason: string): AiGraderCalibrationActionAuthority {
