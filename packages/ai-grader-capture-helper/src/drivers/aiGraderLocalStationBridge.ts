@@ -4522,8 +4522,12 @@ export class AiGraderLocalStationBridgeService {
     ) {
       return result('lifecycle_pending', 'Wait for the current transition, capture, cleanup, lighting, or safe-off request to finish.');
     }
-    const profileIdentity = this.manifest.liveLighting.profile.candidateProfileIdentity;
-    if (!this.positioningLightingVerificationComplete(this.manifest.acceptedProfile)) {
+    let profileIdentity: string | undefined;
+    try {
+      this.durableAcceptedCaptureProfile();
+      profileIdentity = durableAcceptedPositioningProfile(this.manifest.acceptedProfile).identity;
+    } catch {}
+    if (!profileIdentity || !this.positioningLightingVerificationComplete(this.manifest.acceptedProfile)) {
       return result(
         'safety_state_unverified',
         'Capture Front requires complete controller acknowledgement of the current bounded lighting profile.',
