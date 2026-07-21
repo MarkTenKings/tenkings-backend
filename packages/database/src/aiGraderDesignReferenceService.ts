@@ -811,7 +811,7 @@ export function createAiGraderDesignReferenceService(
             ...exactIdentityWhere(identity),
             version,
             artifactSha256,
-            status: "approved",
+            status: { in: ["draft", "approved"] },
           },
           data: {
             status: "retired",
@@ -823,7 +823,7 @@ export function createAiGraderDesignReferenceService(
         if (retired.count !== 1) {
           throw new AiGraderDesignReferenceServiceError(
             "AI_GRADER_DESIGN_REFERENCE_EXACT_RETIRE_TARGET_NOT_FOUND",
-            "no approved design reference matched the exact id, identity, side, profile, version, and artifact hash",
+            "no draft or approved design reference matched the exact id, identity, side, profile, version, and artifact hash",
           );
         }
         const row = await tx.aiGraderDesignReference.findFirst({

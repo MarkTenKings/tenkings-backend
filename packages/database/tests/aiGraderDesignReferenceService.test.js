@@ -531,7 +531,7 @@ test("retirement conditions the lifecycle change and reread on the exact approve
     retirementReason: "reference replaced after controlled review",
   });
   assert.equal(retired.status, "retired");
-  assert.equal(calls[0][1].where.status, "approved");
+  assert.deepEqual(calls[0][1].where.status, { in: ["draft", "approved"] });
   assert.equal(calls[0][1].where.artifactSha256, HASH);
   assert.equal(calls[0][1].where.version, 3);
   assert.deepEqual(calls[0][1].data, {
