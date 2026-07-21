@@ -18,6 +18,7 @@ import {
   FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID,
 } from './fixedRigStandardCardFormatV1';
 import { loadFixedRigMathematicalCalibrationBundleV1 } from './fixedRigMathematicalCalibrationBundleV1';
+import type { FastCalibrationRuntimeContextV1_2 } from './fixedRigFastMathematicalCalibrationV1_2';
 import { buildFixedRigAutomaticDesignRegistrationV1 } from './fixedRigAutomaticDesignRegistrationV1';
 
 export const FIXED_RIG_MATHEMATICAL_STATION_ADAPTER_V1_VERSION =
@@ -62,6 +63,7 @@ export interface BuildFixedRigMathematicalCalibrationStationPackageV1Input {
     bundlePath: string;
     bundleSha256: string;
     expectedRigId: string;
+    expectedRuntimeContext?: FastCalibrationRuntimeContextV1_2;
   };
   warmSides: {
     front: { manifestPath: string; manifestSha256: string };
@@ -426,6 +428,9 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
       bundlePath: input.calibration.bundlePath,
       bundleSha256: input.calibration.bundleSha256,
       expectedRigId: input.calibration.expectedRigId,
+      ...(input.calibration.expectedRuntimeContext
+        ? { expectedRuntimeContext: input.calibration.expectedRuntimeContext }
+        : {}),
     });
   } catch (error) {
     return adapterInsufficient('calibration_ingestion', [

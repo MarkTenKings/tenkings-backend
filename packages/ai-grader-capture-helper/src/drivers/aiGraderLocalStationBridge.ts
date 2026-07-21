@@ -133,6 +133,7 @@ import {
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH,
 } from "./mathematicalCalibrationV1_1Page";
 import { loadFixedRigMathematicalCalibrationBundleV1 } from "./fixedRigMathematicalCalibrationBundleV1";
+import type { FastCalibrationRuntimeContextV1_2 } from "./fixedRigFastMathematicalCalibrationV1_2";
 import {
   FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
   buildFixedRigMathematicalCalibrationStationPackageV1,
@@ -641,6 +642,7 @@ export interface AiGraderLocalStationBridgeConfigInput {
   mathematicalCalibrationProfileSha256?: string;
   mathematicalCalibrationBundlePath?: string;
   mathematicalCalibrationBundleSha256?: string;
+  mathematicalCalibrationRuntimeContext?: FastCalibrationRuntimeContextV1_2;
   provisionalGeometryArtifactPath?: string;
   provisionalGeometryArtifactSha256?: string;
 }
@@ -693,6 +695,7 @@ export interface AiGraderLocalStationBridgeConfig {
   mathematicalCalibrationProfileSha256?: string;
   mathematicalCalibrationBundlePath?: string;
   mathematicalCalibrationBundleSha256?: string;
+  mathematicalCalibrationRuntimeContext?: FastCalibrationRuntimeContextV1_2;
   provisionalGeometryArtifactPath?: string;
   provisionalGeometryArtifactSha256?: string;
 }
@@ -811,6 +814,9 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     rigId?: string;
     artifactSha256?: string;
     bundleSha256?: string;
+    captureContractVersion?: "1.2.0";
+    runtimeContextSha256?: string;
+    rigCharacterizationSha256?: string;
   };
   provisionalGeometry: {
     active: boolean;
@@ -2142,6 +2148,7 @@ export function buildAiGraderLocalStationBridgeConfig(
       env.AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_PATH,
     ),
     mathematicalCalibrationBundleSha256,
+    mathematicalCalibrationRuntimeContext: input.mathematicalCalibrationRuntimeContext,
     provisionalGeometryArtifactPath,
     provisionalGeometryArtifactSha256,
   };
@@ -2683,6 +2690,9 @@ function mathematicalCalibrationReadiness(
       bundlePath: config.mathematicalCalibrationBundlePath,
       bundleSha256: config.mathematicalCalibrationBundleSha256,
       expectedRigId: config.mathematicalCalibrationRigId,
+      ...(config.mathematicalCalibrationRuntimeContext
+        ? { expectedRuntimeContext: config.mathematicalCalibrationRuntimeContext }
+        : {}),
     });
     return {
       ready: true,
@@ -2691,6 +2701,11 @@ function mathematicalCalibrationReadiness(
       rigId: loaded.profile.rigId,
       artifactSha256: loaded.profile.artifactSha256,
       bundleSha256: loaded.bundleSha256,
+      ...(loaded.authority.captureContractVersion ? {
+        captureContractVersion: loaded.authority.captureContractVersion,
+        runtimeContextSha256: loaded.authority.runtimeContextSha256,
+        rigCharacterizationSha256: loaded.authority.rigCharacterizationSha256,
+      } : {}),
     };
   } catch (error) {
     return { ready: false, reason: error instanceof Error ? error.message : "Calibration bundle readiness could not be established." };
@@ -6893,6 +6908,9 @@ export class AiGraderLocalStationBridgeService {
           bundlePath: this.config.mathematicalCalibrationBundlePath,
           bundleSha256: this.config.mathematicalCalibrationBundleSha256,
           expectedRigId: this.config.mathematicalCalibrationRigId,
+          ...(this.config.mathematicalCalibrationRuntimeContext
+            ? { expectedRuntimeContext: this.config.mathematicalCalibrationRuntimeContext }
+            : {}),
         },
         warmSides: { front, back },
         ...(findingReviews ? { findingReviews: structuredClone(findingReviews) } : {}),

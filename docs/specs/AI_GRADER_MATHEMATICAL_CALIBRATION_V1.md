@@ -138,6 +138,23 @@ A finalized calibration is one hash-protected `ten-kings-mathematical-calibratio
 
 The bundle binds the non-production capture package, exact rig/camera/profile/settings, printable target hash, ruler evidence, distortion/normalization models, scale, repeated placement/measurement, boundary uncertainty, channel response/direction, algorithms, threshold set, and every member byte. `isCalibrated=true` is emitted only by the finalizer after all centralized acceptance gates pass.
 
+### Fast calibration V1.2 authority composition
+
+Fast calibration contract '1.2.0' is a distinct Production-compatible producer contract. It is not the incomplete V1.1 profile contract and it does not convert, relabel, or fall back to V0, V1.1, a provisional artifact, or an older profile.
+
+V1.2 separates two hash-bound authority layers:
+
+- one-time rig characterization: target metrology, camera/lens identity and authority, physical light directions, component identities and channel wiring, measurement repeatability, protected algorithms, and the centralized threshold manifest; and
+- quick site/lighting calibration: exact location and lighting configuration, live camera/controller settings and identities, four capture-time checkerboard placements, one blank-reverse flip, geometry verification, dark response, eight per-channel flat fields, and illumination response.
+
+The quick capture contract is exactly '4' checkerboard images plus '72' automated photometric images ('24' dark, '24' flat-field, and '24' illumination-pattern), for '76' images and '0' new quick physical measurements. Physical metrology, direction, and repeatability evidence are inherited only through the exact immutable rig-characterization hashes; they are never fabricated or inferred from the quick images.
+
+The V1.2 state is an append-only event chain. Every accepted image is checkpointed and hashed immediately. A failed operation retains its immutable operation ID and leaves only its exact slot pending. Retry uses a new operation ID. Explicit accepted-pose replacement preserves the superseded evidence and lineage. Pose four cannot be accepted unless the active four-pose set satisfies unchanged minimum coverage, safe-margin, X span, Y span, rotation span, residual, and U95 gates.
+
+Analysis retains the centralized Mathematical V1/V1.0.1 acceptance thresholds. Successful finalization emits the same complete Production 'ten-kings-mathematical-calibration-bundle-v1' outer schema and exact ordered 12-member ledger, with additional exact '1.2.0' capture-contract, runtime-context, and rig-characterization authority hashes. The canonical loader requires the exact V1.2 source contract and, at the local Start New Card boundary, the exact live camera, rig, controller, wiring, settings, target, component, algorithm, location, and lighting context.
+
+The under-ten-minute target is a Dell physical acceptance objective only. Repository tests establish deterministic behavior and contract integrity; they do not establish physical capture time, controller latency, image-transfer latency, checkerboard handling time, analyzer time on Dell, thermal stability, or repeatability.
+
 Database trust is a separate admin lifecycle. Publication requires one exact current TRUSTED CalibrationSnapshot whose complete bundle authority equals the report. Import, trust, revoke, and supersede reread the current private bundle/member bytes. A loose profile or structural self-attestation is insufficient.
 
 ## Finding review and publication

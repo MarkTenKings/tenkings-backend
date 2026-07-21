@@ -716,6 +716,30 @@ test("calibrated v0.3 requires all four exact element scores and complete overla
   );
 });
 
+test("v0.3 accepts the exact V1.2 calibration authority only as an all-or-nothing contract", () => {
+  const bundle = cleanV03Bundle();
+  Object.assign(bundle.calibrationBundleAuthority, {
+    captureContractVersion: "1.2.0",
+    runtimeContextSha256: "d".repeat(64),
+    rigCharacterizationSha256: "e".repeat(64),
+  });
+  const accepted = aiGraderReportBundleV03Schema.safeParse(bundle);
+  assert.equal(accepted.success, true, accepted.success ? "" : JSON.stringify(accepted.error.issues));
+
+  for (const field of ["runtimeContextSha256", "rigCharacterizationSha256"]) {
+    const partial = structuredClone(bundle);
+    delete partial.calibrationBundleAuthority[field];
+    assert.equal(
+      aiGraderReportBundleV03Schema.safeParse(partial).success,
+      false,
+      "V1.2 authority missing " + field + " must fail closed",
+    );
+  }
+  const wrongContract = structuredClone(bundle);
+  wrongContract.calibrationBundleAuthority.captureContractVersion = "1.1.0";
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(wrongContract).success, false);
+});
+
 test("v0.3 final findings require confirmed or adjusted review and an exact deduction formula", () => {
   const reviewed = addReviewedZeroDeductionSurfaceFinding(cleanV03Bundle());
   const parsed = aiGraderReportBundleV03Schema.safeParse(reviewed);
