@@ -31,6 +31,14 @@ def _finite_in_frame(point: np.ndarray, width: int, height: int) -> bool:
     )
 
 
+def _valid_internal_corners(corners: np.ndarray, width: int, height: int) -> bool:
+    return bool(
+        corners.shape == (INTERNAL_ROWS * INTERNAL_COLUMNS, 1, 2)
+        and np.isfinite(corners).all()
+        and all(_finite_in_frame(point[0], width, height) for point in corners)
+    )
+
+
 def derive_outer_corners(grid: np.ndarray, width: int, height: int) -> list[dict[str, float]]:
     """Extrapolate one half-cell from each detected boundary corner.
 
@@ -50,15 +58,33 @@ def derive_outer_corners(grid: np.ndarray, width: int, height: int) -> list[dict
     return [_point(point) for point in raw]
 
 
-def _detect_internal_corners(gray: np.ndarray) -> np.ndarray | None:
+def _detect_internal_corners_sb(gray: np.ndarray) -> np.ndarray | None:
     flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY | cv2.CALIB_CB_NORMALIZE_IMAGE
     found, detected = cv2.findChessboardCornersSB(gray, (INTERNAL_COLUMNS, INTERNAL_ROWS), flags)
-    if not found or detected is None or detected.shape[0] != INTERNAL_COLUMNS * INTERNAL_ROWS:
+    if not found or detected is None or not _valid_internal_corners(detected, gray.shape[1], gray.shape[0]):
         return None
     return detected.astype(np.float32)
 
 
-def _detect_with_local_contrast(gray: np.ndarray) -> tuple[np.ndarray, int, int] | None:
+def _detect_internal_corners_classic(gray: np.ndarray) -> np.ndarray | None:
+    flags = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
+    found, detected = cv2.findChessboardCorners(gray, (INTERNAL_COLUMNS, INTERNAL_ROWS), flags)
+    if not found or detected is None or not _valid_internal_corners(detected, gray.shape[1], gray.shape[0]):
+        return None
+    return detected.astype(np.float32)
+
+
+def _detect_internal_corners(gray: np.ndarray) -> tuple[np.ndarray, str] | None:
+    detected = _detect_internal_corners_sb(gray)
+    if detected is not None:
+        return detected, "opencv_find_chessboard_corners_sb_v1"
+    detected = _detect_internal_corners_classic(gray)
+    if detected is not None:
+        return detected, "opencv_find_chessboard_corners_classic_v1"
+    return None
+
+
+def _detect_with_local_contrast(gray: np.ndarray) -> tuple[np.ndarray, int, int, str] | None:
     """Retry SB on the high-contrast target ROI, preserving source coordinates.
 
     The live Basler frame can contain a large matte-card/background gradient and
@@ -89,9 +115,10 @@ def _detect_with_local_contrast(gray: np.ndarray) -> tuple[np.ndarray, int, int]
             roi = cv2.equalizeHist(gray[crop_y:crop_y + crop_height, crop_x:crop_x + crop_width])
             detected = _detect_internal_corners(roi)
             if detected is not None:
-                detected[:, 0, 0] += crop_x
-                detected[:, 0, 1] += crop_y
-                return detected, crop_x, crop_y
+                corners, method = detected
+                corners[:, 0, 0] += crop_x
+                corners[:, 0, 1] += crop_y
+                return corners, crop_x, crop_y, method
     return None
 
 
@@ -100,12 +127,16 @@ def detect_preview(encoded: bytes) -> dict:
     if image is None or image.size == 0:
         raise RuntimeError("calibration preview frame could not be decoded")
     height, width = image.shape[:2]
-    detected = _detect_internal_corners(image)
+    detected_with_method = _detect_internal_corners(image)
+    detector_method = None if detected_with_method is None else detected_with_method[1]
+    detected = None if detected_with_method is None else detected_with_method[0]
     if detected is None:
         local = _detect_with_local_contrast(image)
         if local is None:
             raise RuntimeError("frozen 11x16 checkerboard detection failed closed")
-        detected, _, _ = local
+        detected, _, _, detector_method = local
+    if not _valid_internal_corners(detected, width, height):
+        raise RuntimeError("checkerboard detector produced non-finite or out-of-frame internal corners")
 
     grid = detected.reshape(INTERNAL_ROWS, INTERNAL_COLUMNS, 2).astype(np.float64)
     outer = derive_outer_corners(grid, width, height)
@@ -119,6 +150,7 @@ def detect_preview(encoded: bytes) -> dict:
         "internalCorners": [_point(point) for point in grid.reshape(-1, 2)],
         "outerCorners": outer,
         "rotationDegrees": rotation,
+        "detectorMethod": detector_method,
     }
 
 

@@ -40,8 +40,28 @@ class CalibrationPreviewCheckerboardTest(unittest.TestCase):
     def test_rendered_12_by_17_target_has_11_by_16_corners_and_finite_outer_contour(self):
         result = MODULE.detect_preview(encode(rendered_target()))
         self.assertEqual(len(result["internalCorners"]), 11 * 16)
+        self.assertIn(result["detectorMethod"], {
+            "opencv_find_chessboard_corners_sb_v1",
+            "opencv_find_chessboard_corners_classic_v1",
+        })
         self.assertEqual(len(result["outerCorners"]), 4)
         for point in result["outerCorners"]:
+            self.assertTrue(np.isfinite([point["x"], point["y"]]).all())
+            self.assertGreaterEqual(point["x"], 0)
+            self.assertLess(point["x"], result["imageWidth"])
+            self.assertGreaterEqual(point["y"], 0)
+            self.assertLess(point["y"], result["imageHeight"])
+
+    def test_classic_fallback_returns_176_finite_in_frame_corners(self):
+        original = MODULE._detect_internal_corners_sb
+        MODULE._detect_internal_corners_sb = lambda gray: None
+        try:
+            result = MODULE.detect_preview(encode(rendered_target()))
+        finally:
+            MODULE._detect_internal_corners_sb = original
+        self.assertEqual(result["detectorMethod"], "opencv_find_chessboard_corners_classic_v1")
+        self.assertEqual(len(result["internalCorners"]), 176)
+        for point in result["internalCorners"]:
             self.assertTrue(np.isfinite([point["x"], point["y"]]).all())
             self.assertGreaterEqual(point["x"], 0)
             self.assertLess(point["x"], result["imageWidth"])

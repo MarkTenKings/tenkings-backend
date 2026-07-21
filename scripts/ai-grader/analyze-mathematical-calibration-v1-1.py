@@ -43,8 +43,17 @@ def detect(gray: np.ndarray, columns: int, rows: int) -> np.ndarray:
     flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY | cv2.CALIB_CB_NORMALIZE_IMAGE
     found, corners = cv2.findChessboardCornersSB(gray, (columns, rows), flags)
     if not found or corners is None:
+        found, corners = cv2.findChessboardCorners(
+            gray, (columns, rows),
+            cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE,
+        )
+    if not found or corners is None or len(corners) != columns * rows:
         raise RuntimeError("V1.1 checkerboard detection failed closed for one immutable placement.")
-    return corners.astype(np.float32)
+    points = corners.astype(np.float32)
+    height, width = gray.shape[:2]
+    if not np.isfinite(points).all() or np.any(points[:, 0, 0] < 0) or np.any(points[:, 0, 0] >= width) or np.any(points[:, 0, 1] < 0) or np.any(points[:, 0, 1] >= height):
+        raise RuntimeError("V1.1 checkerboard detector produced non-finite or out-of-frame corners.")
+    return points
 
 
 def leave_one_pose_out(images, object_points):
