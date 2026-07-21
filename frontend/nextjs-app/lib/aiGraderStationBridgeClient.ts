@@ -1332,6 +1332,11 @@ export async function openAiGraderStationPreviewStream(
   input: {
     baseUrl: string;
     stationToken: string;
+    /**
+     * Server-issued calibration session identity. It is sent only as a local
+     * bridge header so pairing credentials and session state never enter URLs.
+     */
+    mathematicalCalibrationSessionId?: string;
   },
   handlers: AiGraderStationPreviewStreamHandlers = {},
   fetchImpl: typeof fetch = fetch
@@ -1340,12 +1345,24 @@ export async function openAiGraderStationPreviewStream(
   if (!input.stationToken.trim()) {
     throw new Error("AI Grader station bridge token is required.");
   }
+  const mathematicalCalibrationSessionId = input.mathematicalCalibrationSessionId?.trim();
+  if (
+    mathematicalCalibrationSessionId &&
+    (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(mathematicalCalibrationSessionId) ||
+      /token|secret|bearer|presign|x-amz|localhost/i.test(mathematicalCalibrationSessionId))
+  ) {
+    throw new Error("AI Grader mathematical calibration session identity is invalid.");
+  }
   try {
   const response = await fetchImpl(`${baseUrl}/preview/stream`, {
     method: "GET",
     headers: {
       "x-ai-grader-station-token": input.stationToken,
+      ...(mathematicalCalibrationSessionId
+        ? { "x-ai-grader-mathematical-calibration-session-id": mathematicalCalibrationSessionId }
+        : {}),
     },
+    cache: "no-store",
     signal: handlers.signal,
   });
   if (!response.ok || !response.body) {
