@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import type { AiGraderCalibrationActivationAuthorityV1 } from "@tenkings/shared";
 import {
   buildAiGraderCaptureProfileRequest,
   buildAiGraderMathematicalAuthorityBindingRequest,
@@ -111,20 +112,48 @@ function exactAuthority(): {
   };
 }
 
+function activeCalibrationAuthority(): AiGraderCalibrationActivationAuthorityV1 {
+  return {
+    schemaVersion: "ten-kings-ai-grader-calibration-activation-authority-v1",
+    authorityPhase: "ACTIVE",
+    activationId: "calibration-activation-station-v1",
+    activationHash: "1".repeat(64),
+    activationRevision: "2".repeat(64),
+    snapshotId: "calibration-snapshot-station-v1",
+    rigId: "fixed-rig-dell-v1",
+    bundleManifestSha256: "3".repeat(64),
+    memberLedgerSha256: "4".repeat(64),
+    runtimeContextHash: "5".repeat(64),
+    rigCharacterizationSha256: "6".repeat(64),
+    operatingContextHash: "7".repeat(64),
+    workstationReceiptSha256: "8".repeat(64),
+    activatedAt: "2026-07-21T18:45:00.000Z",
+    hostedAuthorityKeyId: "9".repeat(64),
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: "2026-07-21T18:45:30.000Z",
+    hostedAuthorityExpiresAt: "2026-07-21T18:47:30.000Z",
+    hostedAuthoritySignature: "A".repeat(86),
+  };
+}
+
 test("initial Mathematical V1 request uses the one-road production_fast profile with exact authority", () => {
   const { authority } = exactAuthority();
+  const activationAuthority = activeCalibrationAuthority();
   const request = buildAiGraderCaptureProfileRequest(
     "production_fast",
     "mathematical_calibration_v1",
     authority,
+    activationAuthority,
   );
   assert.deepEqual(Object.keys(request).sort(), [
+    "calibrationActivationAuthority",
     "captureProfile",
     "gradingContract",
     "mathematicalGradingAuthority",
   ]);
   assert.equal(request.captureProfile, "production_fast");
   assert.equal(request.mathematicalGradingAuthority, authority);
+  assert.equal(request.calibrationActivationAuthority, activationAuthority);
   const serialized = JSON.stringify(request);
   assert.equal(serialized.includes("full_forensic"), false);
   assert.equal(serialized.includes("publication"), false);
@@ -133,6 +162,10 @@ test("initial Mathematical V1 request uses the one-road production_fast profile 
   assert.throws(
     () => buildAiGraderCaptureProfileRequest("production_fast", "mathematical_calibration_v1"),
     /requires exact card and centering authority/i,
+  );
+  assert.throws(
+    () => buildAiGraderCaptureProfileRequest("production_fast", "mathematical_calibration_v1", authority),
+    /requires exact hosted\/local ACTIVE calibration authority/i,
   );
   assert.throws(
     () => buildAiGraderCaptureProfileRequest("production_fast"),

@@ -14,9 +14,13 @@ const scriptPath = path.resolve(
 test("checked-in calibration detector compiles as Python", async () => {
   const cacheRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-detector-pycache-"));
   try {
-    const compiled = spawnSync("python", ["-m", "py_compile", scriptPath], {
+    const compiled = spawnSync("python", [
+      "-c",
+      "import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)",
+      scriptPath,
+      path.join(cacheRoot, "detector.pyc"),
+    ], {
       encoding: "utf8",
-      env: { ...process.env, PYTHONPYCACHEPREFIX: cacheRoot },
       windowsHide: true,
     });
     assert.equal(compiled.status, 0, compiled.stderr || compiled.stdout);
