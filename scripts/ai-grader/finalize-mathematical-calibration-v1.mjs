@@ -2,7 +2,7 @@
 
 import crypto from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,10 @@ const PROFILE_FILE_NAME = "mathematical-calibration-profile-v1.json";
 const PHYSICAL_ARTIFACT_FILE_NAME = "mathematical-calibration-artifact-v1.json";
 const ACCEPTANCE_FILE_NAME = "mathematical-calibration-acceptance-v1.json";
 const BUNDLE_FILE_NAME = "mathematical-calibration-bundle-v1.json";
+const REGISTRY_HANDOFF_SCHEMA = "ten-kings-mathematical-calibration-finalizer-handoff-v1";
+const REGISTRY_HANDOFF_AUTHORITY = "trusted-local-mathematical-calibration-finalizer-v1";
+const REGISTRY_HANDOFF_FILE_NAME = "mathematical-calibration-finalizer-handoff-v1.json";
+
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -31,10 +35,12 @@ function canonical(value) {
 function parseArguments(argv) {
   let analysisPath;
   let outputDir;
+  let registryStagingRoot;
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
     if (option === "--analysis") analysisPath = argv[++index];
     else if (option === "--output-dir") outputDir = argv[++index];
+    else if (option === "--registry-staging-root") registryStagingRoot = argv[++index];
     else if (option === "--help" || option === "-h") {
       return { help: true };
     } else {
@@ -47,6 +53,7 @@ function parseArguments(argv) {
   return {
     analysisPath: path.resolve(analysisPath),
     outputDir: path.resolve(outputDir),
+    registryStagingRoot: registryStagingRoot ? path.resolve(registryStagingRoot) : undefined,
   };
 }
 
@@ -249,9 +256,119 @@ async function copyCertifiedArtifact(source, outputDir) {
   }
 }
 
+export async function stageFinalizedMathematicalCalibrationBundleForRegistryV1({
+  bundle,
+  outputDir,
+  registryStagingRoot,
+}) {
+  if (!bundle || !bundle.path || !bundle.sha256 || !bundle.manifest) {
+    throw new Error("Registry staging requires one exact finalized calibration bundle.");
+  }
+  if (typeof registryStagingRoot !== "string" || !path.isAbsolute(registryStagingRoot) ||
+      typeof outputDir !== "string" || !path.isAbsolute(outputDir)) {
+    throw new Error("Registry staging and finalized output roots must be explicit absolute paths.");
+  }
+  const root = path.resolve(registryStagingRoot);
+  const sourceOutputDir = path.resolve(outputDir);
+  if (path.resolve(bundle.path) !== path.join(sourceOutputDir, BUNDLE_FILE_NAME)) {
+    throw new Error("Registry staging accepts only the exact bundle emitted in the finalized output directory.");
+  }
+  const finalDirectory = path.join(root, bundle.sha256);
+  const handoff = {
+    schemaVersion: REGISTRY_HANDOFF_SCHEMA,
+    authority: REGISTRY_HANDOFF_AUTHORITY,
+    rigId: bundle.manifest.rigId,
+    profileId: bundle.manifest.profileId,
+    calibrationVersion: bundle.manifest.calibrationVersion,
+    finalizedAt: bundle.manifest.finalizedAt,
+    bundleFileName: BUNDLE_FILE_NAME,
+    bundleManifestSha256: bundle.sha256,
+    sourceAnalysisSha256: bundle.manifest.sourceAnalysisSha256,
+  };
+  const files = [
+    { fileName: BUNDLE_FILE_NAME, sha256: bundle.sha256 },
+    ...bundle.manifest.artifacts.map((entry) => ({
+      fileName: exactLeafFileName(entry.fileName),
+      sha256: exactSha256(entry.sha256, `Bundle artifact ${entry.fileName} SHA-256`),
+    })),
+  ];
+
+  async function verifyStagedDirectory(directory) {
+    const handoffBytes = await readFile(path.join(directory, REGISTRY_HANDOFF_FILE_NAME));
+    if (!handoffBytes.equals(jsonBytes(handoff))) {
+      throw new Error("Existing registry handoff bytes do not match the exact finalized bundle.");
+    }
+    for (const file of files) {
+      const bytes = await readFile(path.join(directory, file.fileName));
+      if (sha256(bytes) !== file.sha256) {
+        throw new Error(`Registry-staged ${file.fileName} bytes do not match the finalized bundle.`);
+      }
+    }
+  }
+
+  try {
+    await verifyStagedDirectory(finalDirectory);
+    return {
+      directory: finalDirectory,
+      path: path.join(finalDirectory, REGISTRY_HANDOFF_FILE_NAME),
+      sha256: sha256(jsonBytes(handoff)),
+      handoff,
+    };
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  await mkdir(root, { recursive: true });
+  const temporaryDirectory = path.join(root, `.finalizer-handoff-${bundle.sha256}-${crypto.randomUUID()}`);
+  await mkdir(temporaryDirectory, { recursive: false });
+  const relativeTemporary = path.relative(root, temporaryDirectory);
+  if (!relativeTemporary || relativeTemporary.startsWith("..") || path.isAbsolute(relativeTemporary)) {
+    throw new Error("Registry staging temporary directory escaped the fixed root.");
+  }
+  try {
+    for (const file of files) {
+      await copyFile(
+        path.join(outputDir, file.fileName),
+        path.join(temporaryDirectory, file.fileName),
+        fsConstants.COPYFILE_EXCL,
+      );
+      const copied = await readFile(path.join(temporaryDirectory, file.fileName));
+      if (sha256(copied) !== file.sha256) {
+        throw new Error(`${file.fileName} changed during registry handoff staging.`);
+      }
+    }
+    const handoffWrite = await writeJson(
+      path.join(temporaryDirectory, REGISTRY_HANDOFF_FILE_NAME),
+      handoff,
+    );
+    try {
+      await rename(temporaryDirectory, finalDirectory);
+    } catch (error) {
+      try {
+        await verifyStagedDirectory(finalDirectory);
+        await rm(temporaryDirectory, { recursive: true, force: true });
+      } catch {
+        throw error;
+      }
+    }
+    await verifyStagedDirectory(finalDirectory);
+    return {
+      directory: finalDirectory,
+      path: path.join(finalDirectory, REGISTRY_HANDOFF_FILE_NAME),
+      sha256: handoffWrite.sha256,
+      handoff,
+    };
+  } catch (error) {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+
 export async function finalizeMathematicalCalibrationV1({
   analysisPath,
   outputDir,
+  registryStagingRoot,
   buildFixedRigPhysicalCalibrationV1,
 }) {
   const analysis = verifyMathematicalCalibrationAnalysisV1(
@@ -429,6 +546,13 @@ export async function finalizeMathematicalCalibrationV1({
       sha256: bundleWrite.sha256,
       manifest: bundleManifest,
     };
+    if (registryStagingRoot) {
+      bundle.registryHandoff = await stageFinalizedMathematicalCalibrationBundleForRegistryV1({
+        bundle,
+        outputDir,
+        registryStagingRoot,
+      });
+    }
   }
   return { result, acceptance, bundle };
 }
@@ -438,7 +562,7 @@ async function main() {
   if (parsed.help) {
     process.stdout.write(
       "Usage: node scripts/ai-grader/finalize-mathematical-calibration-v1.mjs " +
-      "--analysis <analysis.json> --output-dir <new-empty-output-dir>\n",
+      "--analysis <analysis.json> --output-dir <new-empty-output-dir> [--registry-staging-root <fixed-root>]\n",
     );
     return;
   }
@@ -456,7 +580,11 @@ async function main() {
   process.stdout.write(`${JSON.stringify({
     ...acceptance,
     calibrationBundle: bundle
-      ? { path: bundle.path, sha256: bundle.sha256 }
+      ? {
+          path: bundle.path,
+          sha256: bundle.sha256,
+          registryHandoff: bundle.registryHandoff ?? null,
+        }
       : null,
   })}\n`);
   if (!acceptance.isCalibrated) process.exitCode = 2;

@@ -5,6 +5,10 @@ import {
   type AiGraderStationReportBundle,
 } from "./aiGraderReportBundle";
 import type { AiGraderStationProductionRelease } from "./aiGraderProductionRelease";
+import type {
+  AiGraderCalibrationActivationAuthorityV1,
+  AiGraderCalibrationWorkstationReceiptV1,
+} from "@tenkings/shared";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.10";
 export const AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION = "ai-grader-report-producer-v0.2";
@@ -26,6 +30,9 @@ export type AiGraderStationStepId =
 export type AiGraderStationAction =
   | "status"
   | "start-session"
+  | "prepare-calibration-activation"
+  | "ingest-finalized-calibration-bundle"
+  | "confirm-calibration-activation"
   | "capture-front"
   | "capture-back"
   | "publish-report"
@@ -227,6 +234,7 @@ export type AiGraderMathematicalV1State = {
   schemaVersion: "ten-kings-ai-grader-local-station-mathematical-v1-state-v1";
   generatedAt: string;
   gradingAuthority: AiGraderMathematicalGradingAuthorityV1;
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   stagedDesignReferences: Partial<Record<"front" | "back", {
     side: "front" | "back";
     referenceId: string;
@@ -621,6 +629,12 @@ export type AiGraderLocalStationStatus = {
     calibrationVersion?: string;
     rigId?: string;
     artifactSha256?: string;
+  };
+  calibrationActivation?: {
+    configured: boolean;
+    state: "UNAVAILABLE" | "IDLE" | "PENDING" | "ACTIVE";
+    receipt?: AiGraderCalibrationWorkstationReceiptV1;
+    authority?: AiGraderCalibrationActivationAuthorityV1;
   };
   mathematicalV1?: AiGraderMathematicalV1State;
   currentStep: AiGraderStationStepId;
@@ -2424,6 +2438,9 @@ export const AI_GRADER_STATION_STEPS: AiGraderStationStep[] = [
 const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   status: "start_new_card",
   "start-session": "live_preview_focus_framing",
+  "prepare-calibration-activation": "start_new_card",
+  "ingest-finalized-calibration-bundle": "start_new_card",
+  "confirm-calibration-activation": "start_new_card",
   "capture-front": "prompt_flip_card",
   "capture-back": "run_provisional_diagnostics",
   "publish-report": "finalize_publish_report",

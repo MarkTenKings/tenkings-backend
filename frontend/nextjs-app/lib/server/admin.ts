@@ -203,6 +203,39 @@ export async function requireAdminSession(req: NextApiRequest): Promise<AdminSes
     },
   };
 }
+export const FRESH_HUMAN_ADMIN_SESSION_MAX_AGE_MS = 15 * 60 * 1000;
+
+/**
+ * Step-up authority for calibration trust/lifecycle actions. Static operator keys,
+ * service accounts, expired sessions, and sessions older than the short freshness
+ * window are denied even when they otherwise have admin access.
+ */
+export async function requireFreshHumanAdminSession(
+  req: NextApiRequest,
+  maximumAgeMs = FRESH_HUMAN_ADMIN_SESSION_MAX_AGE_MS,
+): Promise<AdminSession> {
+  const admin = await requireAdminSession(req);
+  if (admin.sessionId.startsWith("operator-key:") || admin.tokenHash === "operator-key") {
+    throw new HttpError(403, "Fresh human-admin authentication required");
+  }
+  const session = await prisma.session.findUnique({
+    where: { id: admin.sessionId },
+    include: { user: true },
+  });
+  const now = Date.now();
+  if (!session || !session.user || session.user.id !== admin.user.id || session.tokenHash !== admin.tokenHash) {
+    throw new HttpError(401, "Fresh human-admin session could not be verified");
+  }
+  if (session.expiresAt.getTime() <= now) {
+    throw new HttpError(401, "Session expired");
+  }
+  if (!Number.isSafeInteger(maximumAgeMs) || maximumAgeMs < 60_000 ||
+      now - session.createdAt.getTime() > maximumAgeMs) {
+    throw new HttpError(403, "Fresh human-admin authentication required");
+  }
+  return admin;
+}
+
 
 export function toErrorResponse(error: unknown) {
   if (error instanceof HttpError) {

@@ -22,7 +22,13 @@ type SnapshotService = {
 
 export type AiGraderMathematicalCalibrationSnapshotApiDependencies = {
   requireAdminSession(req: NextApiRequest): Promise<AdminIdentity>;
+  requireFreshAdminSession(req: NextApiRequest): Promise<AdminIdentity>;
   service: SnapshotService;
+  activationService?: {
+    recordSnapshotRevoked(
+      snapshotId: string, actorUserId: string, reason: string,
+    ): Promise<unknown>;
+  };
 };
 
 function actionFrom(req: NextApiRequest) {
@@ -62,13 +68,13 @@ export function createAiGraderMathematicalCalibrationSnapshotApiHandler(
 ) {
   return async function handler(req: NextApiRequest, res: NextApiResponse) {
     try {
-      const admin = await deps.requireAdminSession(req);
       if (req.method !== "POST") {
         res.setHeader("Allow", "POST");
         return res.status(405).json({ ok: false, code: "METHOD_NOT_ALLOWED", message: "Method not allowed." });
       }
       const input = body(req.body);
       const action = actionFrom(req);
+      const admin = ["trust", "revoke", "supersede"].includes(action) ? await deps.requireFreshAdminSession(req) : await deps.requireAdminSession(req);
       if (action === "list") {
         const snapshots = await deps.service.listForRig(String(input.rigId ?? ""));
         return res.status(200).json({ ok: true, snapshots });
@@ -101,6 +107,11 @@ export function createAiGraderMathematicalCalibrationSnapshotApiHandler(
           >),
           revokedByOperatorId: admin.user.id,
         });
+        if (deps.activationService) {
+          await deps.activationService.recordSnapshotRevoked(
+            snapshot.id, admin.user.id, String(input.reason ?? ""),
+          );
+        }
         return res.status(200).json({ ok: true, snapshot });
       }
       if (action === "supersede") {

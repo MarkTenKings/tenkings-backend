@@ -92,6 +92,10 @@ import {
 } from "./aiGraderMathematicalReportBundleV1";
 import {
   type AiGraderReportBundleV03,
+  type AiGraderCalibrationActivationAuthorityV1,
+  type AiGraderCalibrationPendingAuthorityV1,
+  type AiGraderCalibrationWorkstationReceiptV1,
+  type AiGraderOperatingContextV1,
 } from "@tenkings/shared";
 import {
   detectCardGeometryFromBuffer,
@@ -133,6 +137,17 @@ import {
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH,
 } from "./mathematicalCalibrationV1_1Page";
 import { loadFixedRigMathematicalCalibrationBundleV1 } from "./fixedRigMathematicalCalibrationBundleV1";
+import {
+  createMathematicalCalibrationActivationRegistryV1,
+  parseMathematicalCalibrationHostedAuthorityPublicKeysV1,
+} from "./mathematicalCalibrationActivationRegistryV1";
+import {
+  MATHEMATICAL_CALIBRATION_RUNTIME_OBSERVATION_SOURCE_V1,
+  MATHEMATICAL_CALIBRATION_RUNTIME_OBSERVATION_V1,
+  createMathematicalCalibrationOperatingContextRuntimeV1,
+  type MathematicalCalibrationRuntimeObservationV1,
+} from "./mathematicalCalibrationOperatingContextRuntimeV1";
+
 import {
   FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
   buildFixedRigMathematicalCalibrationStationPackageV1,
@@ -284,6 +299,7 @@ export interface AiGraderLocalStationMathematicalV1State {
   generatedAt: string;
   gradingAuthority: AiGraderLocalStationMathematicalGradingAuthorityV1;
   stagedDesignReferences: Partial<Record<"front" | "back", AiGraderLocalStationStagedDesignReferenceV1>>;
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   reviewAssets?: Record<string, AiGraderLocalStationMathematicalReviewAssetV1>;
   submittedFindingReviews?: FixedRigMathematicalFindingReviewV1[];
   execution?: AiGraderLocalStationMathematicalExecutionV1;
@@ -292,6 +308,9 @@ export interface AiGraderLocalStationMathematicalV1State {
 export type AiGraderLocalStationBridgeAction =
   | "status"
   | "start-session"
+  | "prepare-calibration-activation"
+  | "ingest-finalized-calibration-bundle"
+  | "confirm-calibration-activation"
   | "capture-front"
   | "capture-back"
   | "publish-report"
@@ -812,6 +831,12 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     artifactSha256?: string;
     bundleSha256?: string;
   };
+  calibrationActivation: {
+    configured: boolean;
+    state: "UNAVAILABLE" | "IDLE" | "PENDING" | "ACTIVE";
+    receipt?: AiGraderCalibrationWorkstationReceiptV1;
+    authority?: AiGraderCalibrationActivationAuthorityV1;
+  };
   provisionalGeometry: {
     active: boolean;
     status: "disabled" | "geometry_only_controlled_evaluation";
@@ -1265,6 +1290,10 @@ export interface AiGraderLocalStationBridgeActionRequest {
   gradingContract?: AiGraderGradingContract;
   mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
   mathematicalReviewRequestSha256?: string;
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
+  calibrationPendingAuthority?: AiGraderCalibrationPendingAuthorityV1;
+  bundleManifestSha256?: string;
+  hostedCalibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   mathematicalFindingReviews?: FixedRigMathematicalFindingReviewV1[];
   mathematicalReportEnvelope?: AiGraderMathematicalReportEnvelopeV1;
   mathematicalReportPackagePath?: string;
@@ -1343,6 +1372,17 @@ export interface AiGraderLocalStationBridgeDependencies {
   ) => Promise<FixedRigMathematicalCalibrationCaptureBoundaryResultV1>;
   /** Test-only queue persistence boundary; production uses the same atomic JSON writer as manifests. */
   writeRapidQueueAtomic?: (filePath: string, value: unknown) => Promise<void>;
+  /** Hardware-free test seam; Production uses the concrete opened Basler/Leimac adapter. */
+  observeCalibrationActivationRuntime?: (
+    expected: AiGraderOperatingContextV1,
+  ) => Promise<MathematicalCalibrationRuntimeObservationV1>;
+  calibrationActivationRegistry?: {
+    ingestFinalizedBundle(value: unknown): Promise<{ bundlePath: string }>;
+    prepareActivation(value: unknown): Promise<AiGraderCalibrationWorkstationReceiptV1>;
+    confirmHostedActivation(value: unknown): Promise<unknown>;
+    assertStartAuthority(value: unknown): Promise<{ bundlePath: string }>;
+    assertBoundSessionAuthority(value: unknown): Promise<{ bundlePath: string }>;
+  };
 }
 
 export function requireAppliedMathematicalCalibrationCameraSettings(
@@ -1653,12 +1693,14 @@ function validateLocalMathematicalGradingAuthorityV1(
 function newLocalMathematicalV1State(
   authority: AiGraderLocalStationMathematicalGradingAuthorityV1,
   generatedAt: string,
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1,
 ): AiGraderLocalStationMathematicalV1State {
   return {
     schemaVersion: "ten-kings-ai-grader-local-station-mathematical-v1-state-v1",
     generatedAt,
     gradingAuthority: structuredClone(authority),
     stagedDesignReferences: {},
+    ...(calibrationActivationAuthority ? { calibrationActivationAuthority: structuredClone(calibrationActivationAuthority) } : {}),
   };
 }
 
@@ -2801,6 +2843,9 @@ function bridgeEndpoints() {
     { method: "POST", action: "mathematical-design-reference-stage", path: "/mathematical-v1/design-reference-artifacts/{front|back}", hardwareAccess: false, description: "Stage one exact approved design-reference body through a token-gated, create-new, 64 MiB bounded, SHA-256 verified session route." },
     { method: "GET", action: "mathematical-review-asset", path: "/mathematical-v1/review-assets?queueItemId={queueItemId}&gradingSessionId={gradingSessionId}&reportId={reportId}&assetId={assetId}", hardwareAccess: false, description: "Read one exact active-queue-bound normalized, directional, ROI, segmentation, confidence, or illumination asset named by a pending Mathematical finding-review request." },
     { method: "POST", action: "start-session", hardwareAccess: true, description: "Create a local station session." },
+    { method: "POST", action: "ingest-finalized-calibration-bundle", hardwareAccess: false, description: "Import one exact trusted-finalizer handoff by bundle hash from the fixed local staging root; caller paths are prohibited." },
+    { method: "POST", action: "prepare-calibration-activation", hardwareAccess: true, description: "Verify exact bundle bytes and opened Basler/acknowledged Leimac runtime state, then return a signed workstation receipt." },
+    { method: "POST", action: "confirm-calibration-activation", hardwareAccess: true, description: "Reverify opened Basler/acknowledged Leimac state and atomically confirm exact hosted/local ACTIVE activation agreement." },
     { method: "POST", action: "capture-front", hardwareAccess: true, description: "Validate the exact front preview snapshot, drain preview, and capture front evidence." },
     { method: "POST", action: "capture-back", hardwareAccess: true, description: "Validate the exact back preview snapshot, drain preview, and capture back evidence." },
     { method: "POST", action: "publish-report", hardwareAccess: false, description: "Prepare local publication manifest and future public report URL data." },
@@ -4393,6 +4438,9 @@ export class AiGraderLocalStationBridgeService {
   private mathematicalCalibrationV1_1SessionId?: string;
   private mathematicalCalibrationPreviewStatus?: AiGraderLocalStationPreviewStatus["mathematicalCalibrationPreview"];
   private mathematicalCalibrationPreviewDetectionInFlight = false;
+  private calibrationActivationState: "UNAVAILABLE" | "IDLE" | "PENDING" | "ACTIVE";
+  private calibrationActivationReceipt?: AiGraderCalibrationWorkstationReceiptV1;
+  private calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
 
   constructor(
     config: AiGraderLocalStationBridgeConfig,
@@ -4403,6 +4451,7 @@ export class AiGraderLocalStationBridgeService {
     this.config = config;
     this.runner = runner;
     this.warmRunner = warmRunner;
+    this.calibrationActivationState = dependencies.calibrationActivationRegistry ? "IDLE" : "UNAVAILABLE";
     this.dependencies = dependencies;
     this.stationUrl = `http://${hostForUrl(config.host)}:${config.port}`;
     this.rapidQueue = readRapidCaptureQueueSync(config);
@@ -4622,6 +4671,12 @@ export class AiGraderLocalStationBridgeService {
         this.dependencies.loadMathematicalCalibrationBundle ??
           loadFixedRigMathematicalCalibrationBundleV1,
       ),
+      calibrationActivation: {
+        configured: Boolean(this.dependencies.calibrationActivationRegistry),
+        state: this.calibrationActivationState,
+        ...(this.calibrationActivationReceipt ? { receipt: this.calibrationActivationReceipt } : {}),
+        ...(this.calibrationActivationAuthority ? { authority: this.calibrationActivationAuthority } : {}),
+      },
       provisionalGeometry: {
         active: Boolean(this.config.provisionalGeometryArtifactPath && this.config.provisionalGeometryArtifactSha256),
         status: this.config.provisionalGeometryArtifactPath && this.config.provisionalGeometryArtifactSha256
@@ -6353,6 +6408,7 @@ export class AiGraderLocalStationBridgeService {
   private bindMathematicalGradingAuthority(
     manifest: AiGraderLocalStationBridgeManifest,
     value: unknown,
+    calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1,
   ): void {
     if (gradingContractFor(manifest) !== "mathematical_calibration_v1") {
       throw new Error("Mathematical grading authority can bind only to an explicit Mathematical V1 session.");
@@ -6370,6 +6426,7 @@ export class AiGraderLocalStationBridgeService {
     manifest.mathematicalV1 = newLocalMathematicalV1State(
       validateLocalMathematicalGradingAuthorityV1(value),
       manifest.createdAt,
+      calibrationActivationAuthority,
     );
     manifest.progressLog.push(
       new Date().toISOString() +
@@ -6849,9 +6906,23 @@ export class AiGraderLocalStationBridgeService {
         !manifest.mathematicalV1 || !manifest.sessionId || !manifest.reportId) {
       throw new Error("Mathematical V1 processing requires one exact authority-bound station session.");
     }
-    if (!this.config.mathematicalCalibrationBundlePath ||
-        !this.config.mathematicalCalibrationBundleSha256) {
-      throw new Error("Mathematical V1 processing requires one protected finalized calibration bundle.");
+    const activationAuthority = manifest.mathematicalV1.calibrationActivationAuthority;
+    let calibrationBundlePath = this.config.mathematicalCalibrationBundlePath;
+    let calibrationBundleSha256 = this.config.mathematicalCalibrationBundleSha256;
+    if (this.config.mode === "real") {
+      if (!this.dependencies.calibrationActivationRegistry || !activationAuthority) {
+        throw new Error("Mathematical V1 processing requires the exact session-bound calibration activation; configured bundle fallback is prohibited.");
+      }
+      const activationBinding = await this.dependencies.calibrationActivationRegistry.assertBoundSessionAuthority(
+        activationAuthority,
+      );
+      calibrationBundlePath = activationBinding.bundlePath;
+      calibrationBundleSha256 = activationAuthority.bundleManifestSha256;
+    } else if (!calibrationBundlePath || !calibrationBundleSha256) {
+      throw new Error(
+        "Mathematical V1 mock processing requires one explicit finalized calibration fixture. " +
+        "Production configured-bundle fallback remains prohibited.",
+      );
     }
     const prior = manifest.mathematicalV1.execution;
     const attempt = (prior?.attempt ?? 0) + 1;
@@ -6890,8 +6961,9 @@ export class AiGraderLocalStationBridgeService {
         outputDir: mathematicalPublishPackageDir(this.config, manifest.reportId),
         captureProfileVersion: "ten-kings-fixed-rig-production-fast-v1",
         calibration: {
-          bundlePath: this.config.mathematicalCalibrationBundlePath,
-          bundleSha256: this.config.mathematicalCalibrationBundleSha256,
+          activationAuthority,
+          bundlePath: calibrationBundlePath,
+          bundleSha256: calibrationBundleSha256,
           expectedRigId: this.config.mathematicalCalibrationRigId,
         },
         warmSides: { front, back },
@@ -8329,6 +8401,7 @@ export class AiGraderLocalStationBridgeService {
       reportId?: string;
       captureProfile: "production_fast";
       gradingContract?: AiGraderGradingContract;
+      calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
       mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
     },
     now = new Date().toISOString(),
@@ -8344,6 +8417,7 @@ export class AiGraderLocalStationBridgeService {
       reportId?: string;
       captureProfile: "production_fast";
       gradingContract?: AiGraderGradingContract;
+      calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
       mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
     },
     now = new Date().toISOString(),
@@ -8391,7 +8465,7 @@ export class AiGraderLocalStationBridgeService {
     manifest.outputs.manifestPath = path.join(packageDir, "station-session.json");
     manifest.currentStep = "capture_front";
     if (manifest.gradingContract === "mathematical_calibration_v1" && request.mathematicalGradingAuthority) {
-      this.bindMathematicalGradingAuthority(manifest, request.mathematicalGradingAuthority);
+      this.bindMathematicalGradingAuthority(manifest, request.mathematicalGradingAuthority, request.calibrationActivationAuthority);
     }
     manifest.warmRunnerStatus.sessionId = manifest.sessionId;
     manifest.warmRunnerStatus.status = "warming";
@@ -8809,6 +8883,125 @@ export class AiGraderLocalStationBridgeService {
       if (!result.ok) throw new Error(result.error ?? `Leimac live lighting write ${frame.name} failed.`);
     }
     return writes;
+  }
+
+  async observeMathematicalCalibrationActivationRuntime(
+    expected: AiGraderOperatingContextV1,
+    helperInstanceId: string,
+    helperVersion: string,
+  ): Promise<MathematicalCalibrationRuntimeObservationV1> {
+    if (this.dependencies.observeCalibrationActivationRuntime) {
+      return this.dependencies.observeCalibrationActivationRuntime(expected);
+    }
+    if (this.config.mode !== "real") {
+      throw new Error(
+        "Calibration activation runtime observation requires the concrete opened-device adapter in real mode or an injected hardware-free test boundary.",
+      );
+    }
+    assertRealBridgeArmed(this.config);
+    if (this.manifest.sessionId || this.captureLock || this.frontCaptureTransition ||
+        this.manifest.previewStatus.intentionalTransition.active ||
+        this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
+      throw new Error("Calibration activation runtime observation requires an exactly idle, sessionless helper.");
+    }
+    if (!this.config.leimacHost) {
+      throw new Error("Calibration activation runtime observation requires one configured Leimac controller endpoint.");
+    }
+
+    const owner = `calibration-activation-runtime:${crypto.randomUUID()}`;
+    const previousWarmRunnerStatus = this.manifest.warmRunnerStatus.status;
+    const previousWarmRunnerActiveSide = this.manifest.warmRunnerStatus.activeSide;
+    this.acquireCaptureLock(owner);
+    try {
+      const safeOffBefore = await this.runTerminalSafeOff("calibration activation runtime preflight");
+      if (!safeOffBefore.ok) {
+      throw new Error(
+        safeOffBefore.directError?.message ?? safeOffBefore.guardedCleanupError?.message ??
+        "Calibration activation runtime preflight safe-off could not be confirmed.",
+      );
+    }
+    const profile: AiGraderLiveLightingProfile = {
+      enabled: expected.lighting.dutyPercent > 0 && expected.lighting.selectedChannels.length > 0,
+      dutyPercent: expected.lighting.dutyPercent,
+      actualLeimacPwmStep: leimacIdmuDutyPercentToSteps(expected.lighting.dutyPercent),
+      channels: expected.lighting.selectedChannels,
+      source: "accepted_station_profile",
+      acceptedForCapture: true,
+    };
+    const frames = this.liveLightingFrames(profile);
+    let verification: ReturnType<AiGraderLocalStationBridgeService["strictLightingAcknowledgements"]> | undefined;
+    let captureResult: Awaited<ReturnType<BaslerPylonClient["captureStill"]>> | undefined;
+    let operationError: Error | undefined;
+    let safeOffAfter: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>> | undefined;
+    try {
+      verification = this.strictLightingAcknowledgements(
+        frames,
+        await this.executeLiveLightingFrames(frames),
+      );
+      const outputDir = path.join(this.config.outputDir, "calibration-activation-runtime-probes");
+      await mkdir(outputDir, { recursive: true });
+      this.dependencies.onRealHardwareBoundary?.("calibration_camera_capture");
+      const client = new BaslerPylonClient({
+        pylonRoot: this.config.pylonRoot,
+        bridgeScriptPath: this.config.baslerBridgeScript,
+        timeoutMs: this.config.pylonTimeoutMs ?? 1800000,
+      });
+      captureResult = await client.captureStill({
+        outputDir,
+        label: `calibration-activation-runtime-${Date.now()}`,
+        cameraIndex: this.config.cameraIndex ?? 0,
+        savedFormat: "png",
+        exposureUs: expected.capture.exposureUs,
+        gain: expected.capture.gain,
+      });
+    } catch (error) {
+      operationError = error instanceof Error ? error : new Error("Calibration activation runtime observation failed.");
+    } finally {
+      safeOffAfter = await this.runTerminalSafeOff("calibration activation runtime completion");
+    }
+    if (!safeOffAfter.ok) {
+      const message = safeOffAfter.directError?.message ?? safeOffAfter.guardedCleanupError?.message ??
+        "Calibration activation runtime completion safe-off could not be confirmed.";
+      throw new Error(operationError ? `${operationError.message} Runtime safe-off also failed: ${message}` : message);
+    }
+    if (operationError) throw operationError;
+    if (!captureResult || !verification) {
+      throw new Error("Calibration activation runtime observation did not return exact camera/controller evidence.");
+    }
+    const cameraSerial = captureResult.camera.serialNumber?.trim();
+    const cameraModel = captureResult.camera.modelName?.trim() ?? captureResult.camera.friendlyName?.trim();
+    if (!cameraSerial || !cameraModel || !captureResult.sourcePixelFormat ||
+        !Number.isInteger(captureResult.imageWidth) || !Number.isInteger(captureResult.imageHeight)) {
+      throw new Error("Opened Basler runtime observation lacks exact camera identity, pixel format, or resolution.");
+    }
+    const applied = requireAppliedMathematicalCalibrationCameraSettings(captureResult);
+    return {
+      schemaVersion: MATHEMATICAL_CALIBRATION_RUNTIME_OBSERVATION_V1,
+      source: MATHEMATICAL_CALIBRATION_RUNTIME_OBSERVATION_SOURCE_V1,
+      camera: { serial: cameraSerial, model: cameraModel },
+      capture: {
+        exposureUs: applied.exposureUs,
+        gain: applied.gain,
+        pixelFormat: captureResult.sourcePixelFormat,
+        widthPx: captureResult.imageWidth,
+        heightPx: captureResult.imageHeight,
+      },
+      controller: {
+        controllerTransportIdentity:
+          `leimac-idmu-tcp:${this.config.leimacHost}:${this.config.leimacPort ?? 502}:unit:${this.config.leimacUnit ?? 1}`,
+        selectedChannels: [...expected.lighting.selectedChannels],
+        dutyPercent: expected.lighting.dutyPercent,
+        expectedWriteCount: verification.expectedWriteCount,
+        acknowledgedWriteCount: verification.acknowledgedWriteCount,
+        allWritesAcknowledged: true,
+      },
+      software: { helperInstanceId, helperVersion },
+    };
+    } finally {
+      this.releaseCaptureLock(owner);
+      this.manifest.warmRunnerStatus.status = previousWarmRunnerStatus;
+      this.manifest.warmRunnerStatus.activeSide = previousWarmRunnerActiveSide;
+    }
   }
 
   private async captureMathematicalCalibrationHardwareBoundary(
@@ -11890,7 +12083,46 @@ export class AiGraderLocalStationBridgeService {
     if (action === "status" || action === "latest-report" || action === "session-manifest") {
       return this.status();
     }
-    if (this.closing) throw new Error("Station mutation is unavailable while the local bridge is closing.");
+    if (action === "ingest-finalized-calibration-bundle") {
+      assertExactActionRequestKeys(request, action, ["bundleManifestSha256"]);
+      if (this.closing) throw new Error("Station mutation is unavailable while the local bridge is closing.");
+      if (!this.dependencies.calibrationActivationRegistry) {
+        throw new Error("Local calibration activation registry is unavailable; no fallback is permitted.");
+      }
+      if (this.manifest.sessionId || this.captureLock || this.frontCaptureTransition ||
+          this.manifest.previewStatus.intentionalTransition.active ||
+          this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
+        throw new Error("Local helper must be exactly idle and sessionless before finalized calibration ingestion.");
+      }
+      await this.dependencies.calibrationActivationRegistry.ingestFinalizedBundle({
+        bundleManifestSha256: request.bundleManifestSha256,
+      });
+      return this.status();
+    }
+    if (action === "prepare-calibration-activation") {
+      assertExactActionRequestKeys(request, action, ["calibrationPendingAuthority"]);
+      if (this.closing) throw new Error("Station mutation is unavailable while the local bridge is closing.");
+      if (!this.dependencies.calibrationActivationRegistry) {
+        throw new Error("Local calibration activation registry is unavailable; no fallback is permitted.");
+      }
+      if (this.manifest.sessionId || this.captureLock || this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
+        throw new Error("Local helper must be exactly idle and sessionless before calibration activation.");
+      }
+      this.calibrationActivationState = "PENDING";
+      this.calibrationActivationAuthority = undefined;
+      this.calibrationActivationReceipt = await this.dependencies.calibrationActivationRegistry.prepareActivation(request.calibrationPendingAuthority);
+      return this.status();
+    }
+    if (action === "confirm-calibration-activation") {
+      assertExactActionRequestKeys(request, action, ["hostedCalibrationActivationAuthority"]);
+      if (!this.dependencies.calibrationActivationRegistry) {
+        throw new Error("Local calibration activation registry is unavailable; no fallback is permitted.");
+      }
+      await this.dependencies.calibrationActivationRegistry.confirmHostedActivation(request.hostedCalibrationActivationAuthority);
+      this.calibrationActivationAuthority = request.hostedCalibrationActivationAuthority;
+      this.calibrationActivationState = "ACTIVE";
+      return this.status();
+    }
     if (action === "activate-queue-item") {
       assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId"]);
       await this.activateRapidQueueItem(request);
@@ -11967,13 +12199,20 @@ export class AiGraderLocalStationBridgeService {
           "Legacy V0 and an omitted grading contract are prohibited.",
         );
       }
-      const readiness = mathematicalCalibrationReadiness(
-        this.config,
-        this.dependencies.loadMathematicalCalibrationBundle ??
-          loadFixedRigMathematicalCalibrationBundleV1,
-      );
-      if (!readiness.ready) {
-        throw new Error(`Mathematical Calibration V1 is not ready: ${readiness.reason ?? "finalized calibration evidence is unavailable"}. No V0 fallback is permitted.`);
+      if (this.config.mode === "real") {
+        if (!this.dependencies.calibrationActivationRegistry || !request.calibrationActivationAuthority) {
+          throw new Error("Start New Card requires exact hosted/local calibration activation authority; configured bundle fallback is prohibited.");
+        }
+        await this.dependencies.calibrationActivationRegistry.assertStartAuthority(request.calibrationActivationAuthority);
+      } else {
+        const readiness = mathematicalCalibrationReadiness(
+          this.config,
+          this.dependencies.loadMathematicalCalibrationBundle ??
+            loadFixedRigMathematicalCalibrationBundleV1,
+        );
+        if (!readiness.ready) {
+          throw new Error(`Mathematical Calibration V1 is not ready: ${readiness.reason ?? "finalized calibration evidence is unavailable"}. No V0 fallback is permitted.`);
+        }
       }
       if (!request.mathematicalGradingAuthority) {
         throw new Error("Mathematical V1 Start New Card requires exact card and centering/design-reference authority; publication remains bridge-derived.");
@@ -11981,6 +12220,7 @@ export class AiGraderLocalStationBridgeService {
       await this.createFreshSession({
         reportId: request.reportId,
         captureProfile: request.captureProfile,
+        calibrationActivationAuthority: request.calibrationActivationAuthority,
         gradingContract: request.gradingContract,
         mathematicalGradingAuthority: request.mathematicalGradingAuthority,
       }, now);
@@ -12056,6 +12296,9 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
   return [
     "status",
     "start-session",
+    "prepare-calibration-activation",
+    "ingest-finalized-calibration-bundle",
+    "confirm-calibration-activation",
     "capture-front",
     "capture-back",
     "publish-report",
@@ -12239,11 +12482,87 @@ export function createAiGraderLocalStationBridgeHttpServer(
   dependencies: AiGraderLocalStationBridgeDependencies = {}
 ): http.Server {
   const config = buildAiGraderLocalStationBridgeConfig(input, env);
-  const service = new AiGraderLocalStationBridgeService(
+  let service: AiGraderLocalStationBridgeService;
+  const runtimeDependencies = { ...dependencies };
+  const workstationPrivateKeyPath = env.AI_GRADER_CALIBRATION_WORKSTATION_PRIVATE_KEY_PATH?.trim();
+  const workstationKeyId = env.AI_GRADER_CALIBRATION_WORKSTATION_KEY_ID?.trim();
+  const protectedRigInventoryPath = env.AI_GRADER_CALIBRATION_RIG_INVENTORY_PATH?.trim();
+  const protectedRigInventorySha256 = env.AI_GRADER_CALIBRATION_RIG_INVENTORY_SHA256?.trim();
+  const finalizedBundleStagingRoot = env.AI_GRADER_CALIBRATION_FINALIZER_STAGING_ROOT?.trim();
+  const hostedAuthorityPublicKeysJson =
+    env.AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_PUBLIC_KEYS_JSON?.trim();
+  const legacyLiveOperatingContextPath = env.AI_GRADER_CALIBRATION_LIVE_OPERATING_CONTEXT_PATH?.trim();
+  const activationConfigurationRequested = Boolean(
+    workstationPrivateKeyPath || workstationKeyId || protectedRigInventoryPath ||
+    protectedRigInventorySha256 || finalizedBundleStagingRoot ||
+    hostedAuthorityPublicKeysJson ||
+    env.AI_GRADER_CALIBRATION_ACTIVATION_REGISTRY_DIR?.trim(),
+  );
+  if (config.mode === "real" && legacyLiveOperatingContextPath) {
+    throw new Error(
+      "AI_GRADER_CALIBRATION_LIVE_OPERATING_CONTEXT_PATH is prohibited in real mode: editable JSON is not live device authority.",
+    );
+  }
+  if (!runtimeDependencies.calibrationActivationRegistry && config.mode === "real" && activationConfigurationRequested) {
+    if (!workstationPrivateKeyPath || !workstationKeyId || !protectedRigInventoryPath ||
+        !protectedRigInventorySha256 || !finalizedBundleStagingRoot ||
+        !hostedAuthorityPublicKeysJson) {
+      throw new Error(
+        "Real calibration activation requires the workstation key, key ID, SHA-pinned rig inventory, trusted finalizer staging root, and pinned hosted authority public keys.",
+      );
+    }
+    if (!path.isAbsolute(workstationPrivateKeyPath) ||
+        !path.isAbsolute(protectedRigInventoryPath) ||
+        !path.isAbsolute(finalizedBundleStagingRoot)) {
+      throw new Error("Calibration activation key, protected inventory, and finalizer staging paths must be absolute.");
+    }
+    const helperInstanceId =
+      env.AI_GRADER_CALIBRATION_HELPER_INSTANCE_ID?.trim() || "local-dell-ai-grader-station";
+    const trustedLiveOperatingContext = createMathematicalCalibrationOperatingContextRuntimeV1({
+      protectedInventoryBytes: readFileSync(protectedRigInventoryPath),
+      protectedInventorySha256: protectedRigInventorySha256,
+      helperInstanceId,
+      helperVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+      observeRuntime: (expected) => {
+        if (!service) {
+          throw new Error("Local bridge service is not initialized for calibration runtime observation.");
+        }
+        return service.observeMathematicalCalibrationActivationRuntime(
+          expected,
+          helperInstanceId,
+          AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+        );
+      },
+    });
+    runtimeDependencies.calibrationActivationRegistry = createMathematicalCalibrationActivationRegistryV1({
+      rootDir: path.resolve(
+        env.AI_GRADER_CALIBRATION_ACTIVATION_REGISTRY_DIR?.trim() ||
+        path.join(config.outputDir, "mathematical-calibration-activation-registry-v1"),
+      ),
+      finalizedBundleStagingRoot,
+      expectedRigId: config.mathematicalCalibrationRigId,
+      helperInstanceId,
+      helperVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+      workstationKeyId,
+      workstationPrivateKey: crypto.createPrivateKey(readFileSync(workstationPrivateKeyPath)),
+      hostedAuthorityPublicKeys: parseMathematicalCalibrationHostedAuthorityPublicKeysV1(
+        hostedAuthorityPublicKeysJson,
+        config.mathematicalCalibrationRigId,
+      ),
+      liveOperatingContext: trustedLiveOperatingContext,
+      isIdle: () => {
+        if (!service) return false;
+        const status = service.status();
+        return !status.sessionId && status.currentStep === "start_new_card" &&
+          !status.previewStatus.intentionalTransition.active;
+      },
+    });
+  }
+  service = new AiGraderLocalStationBridgeService(
     config,
     runner,
     warmRunner ?? createDefaultWarmForensicRunner(config),
-    dependencies,
+    runtimeDependencies,
   );
   let pairingCodeConsumed = false;
 

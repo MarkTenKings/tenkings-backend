@@ -357,6 +357,53 @@ function sampleV03CalibrationBundleAuthority(profile) {
   };
 }
 
+function sampleV03ActivationAuthority(profile, bundleAuthority, overrides = {}) {
+  return {
+    schemaVersion: "ten-kings-ai-grader-calibration-activation-authority-v1",
+    authorityPhase: "ACTIVE",
+    activationId: "calibration-activation-v03",
+    activationHash: "6".repeat(64),
+    activationRevision: "7".repeat(64),
+    snapshotId: "calibration-snapshot-v03",
+    rigId: profile.rigId,
+    bundleManifestSha256: bundleAuthority.bundleManifestSha256,
+    memberLedgerSha256: bundleAuthority.memberLedgerSha256,
+    runtimeContextHash: "8".repeat(64),
+    rigCharacterizationSha256: profile.artifactSha256,
+    operatingContextHash: "9".repeat(64),
+    workstationReceiptSha256: "a".repeat(64),
+    activatedAt: "2026-07-18T18:45:00.000Z",
+    hostedAuthorityKeyId: "c".repeat(64),
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: "2026-07-18T18:45:30.000Z",
+    hostedAuthorityExpiresAt: "2026-07-18T18:47:30.000Z",
+    hostedAuthoritySignature: "A".repeat(86),
+    ...overrides,
+  };
+}
+
+function activatedV03CalibrationActivation(bundle, overrides = {}) {
+  const authority = bundle.calibrationActivationAuthority;
+  return {
+    id: authority.activationId,
+    activationHash: authority.activationHash,
+    calibrationSnapshotId: authority.snapshotId,
+    rigId: authority.rigId,
+    bundleManifestSha256: authority.bundleManifestSha256,
+    memberLedgerSha256: authority.memberLedgerSha256,
+    runtimeContextHash: authority.runtimeContextHash,
+    rigCharacterizationSha256: authority.rigCharacterizationSha256,
+    operatingContextHash: authority.operatingContextHash,
+    events: [{
+      eventType: "ACTIVATED",
+      eventHash: authority.activationRevision,
+      workstationReceiptSha256: authority.workstationReceiptSha256,
+      occurredAt: new Date(authority.activatedAt),
+    }],
+    ...overrides,
+  };
+
+}
 function sampleV03Bundle() {
   const cornerNames = ["top_left", "top_right", "bottom_right", "bottom_left"];
   const edgeNames = ["top", "right", "bottom", "left"];
@@ -388,6 +435,7 @@ function sampleV03Bundle() {
       ]),
   ]);
   const calibrationProfile = sampleV03CalibrationProfile();
+  const calibrationBundleAuthority = sampleV03CalibrationBundleAuthority(calibrationProfile);
   return {
     schemaVersion: "ai-grader-report-bundle-v0.3",
     generatedAt: "2026-07-18T19:00:00.000Z",
@@ -444,7 +492,8 @@ function sampleV03Bundle() {
       publication: { publicReportUrl: "/ai-grader/reports/report-v03-clean" },
     },
     calibrationProfile,
-    calibrationBundleAuthority: sampleV03CalibrationBundleAuthority(calibrationProfile),
+    calibrationBundleAuthority,
+    calibrationActivationAuthority: sampleV03ActivationAuthority(calibrationProfile, calibrationBundleAuthority),
     designReferences: [],
     centeringEvidence: {
       front: sampleV03CenteringSide("front"),
@@ -1150,6 +1199,11 @@ function createMockProductionDb(options = {}) {
       ...(options.cardAsset ? cardAssetOverride.aiGradingJson ?? {} : { publishAuthority }),
     },
   };
+  const calibrationActivationRow = Object.prototype.hasOwnProperty.call(options, "calibrationActivationRow")
+    ? options.calibrationActivationRow
+    : options.reportBundle?.calibrationActivationAuthority
+      ? activatedV03CalibrationActivation(options.reportBundle)
+      : undefined;
   const tx = {
     async $queryRaw() {
       calls.push({
@@ -1185,6 +1239,12 @@ function createMockProductionDb(options = {}) {
           ),
         }
       : {}),
+    mathematicalCalibrationActivation: createMockDelegate(
+      "mathematicalCalibrationActivation",
+      calls,
+      "calibration-activation-v03",
+      calibrationActivationRow,
+    ),
     ...(Object.prototype.hasOwnProperty.call(options, "designReferenceRow")
       ? {
           aiGraderDesignReference: {
@@ -2565,8 +2625,97 @@ test("calibrated V1 publication links the exact trusted snapshot to the durable 
     snapshotQuery.args.where.mathematicalThresholdSetHash,
     reportBundle.gradingStandard.thresholdSetHash,
   );
+  assert.equal(reportUpdate.args.data.calibrationActivationId, reportBundle.calibrationActivationAuthority.activationId);
+  const sessionUpdate = calls.find(
+    (call) => call.delegate === "aiGraderSession" && call.method === "updateMany",
+  );
+  assert.equal(sessionUpdate.args.data.calibrationActivationId, reportBundle.calibrationActivationAuthority.activationId);
+  const activationQuery = calls.find(
+    (call) => call.delegate === "mathematicalCalibrationActivation" && call.method === "findUnique",
+  );
+  assert.deepEqual(activationQuery.args.where, { id: reportBundle.calibrationActivationAuthority.activationId });
 });
 
+test("new Mathematical V1 persistence requires activation authority while historical stored reports remain readable", async () => {
+  const reportBundle = sampleV03Bundle();
+  delete reportBundle.calibrationActivationAuthority;
+  const parsedHistorical = aiGraderReportBundleV03Schema.safeParse(reportBundle);
+  assert.equal(parsedHistorical.success, true, parsedHistorical.success ? "" : JSON.stringify(parsedHistorical.error.issues));
+  const productionRelease = sampleV03ProductionRelease(reportBundle);
+  const storagePlan = buildAiGraderProductionStoragePlan({ reportBundle, productionRelease });
+  const storedHistorical = JSON.parse(
+    storagePlan.artifacts.find((artifact) => artifact.kind === "report-bundle.json").body,
+  );
+  const historicalRead = sanitizeAiGraderPublicReportBundleForRead(storedHistorical, {
+    expectedReportId: reportBundle.reportId,
+  });
+  assert.equal(historicalRead?.schemaVersion, "ai-grader-report-bundle-v0.3");
+  assert.equal(historicalRead?.calibrationActivationAuthority, undefined);
+  const { db, calls } = createMockProductionDb({
+    reportBundle,
+    productionRelease,
+    calibrationSnapshotRows: [trustedV03CalibrationSnapshot(reportBundle)],
+    ...confirmedV03PublishAuthority(reportBundle, productionRelease),
+    report: confirmedProductionReport({ reportId: reportBundle.reportId, finalOverallGrade: 10 }),
+  });
+  await assert.rejects(
+    () => persistAiGraderProductionRelease(db, {
+      tenantId: "tenant-1",
+      reportBundle,
+      productionRelease,
+      storagePlan,
+      cardAssetId: "card-asset-1",
+      itemId: "item-1",
+      persistedAt: "2026-07-18T19:00:00.000Z",
+    }),
+    (error) => error?.code === "AI_GRADER_CALIBRATION_ACTIVATION_REQUIRED" && error?.statusCode === 409,
+  );
+  assert.equal(
+    calls.some((call) => call.method === "updateMany" || call.method === "upsert" || call.method === "create"),
+    false,
+  );
+});
+
+test("new Mathematical V1 persistence rejects mismatched and cross-snapshot activation authority", async () => {
+  for (const mismatch of ["activation-hash", "cross-snapshot"]) {
+    const reportBundle = sampleV03Bundle();
+    const exactActivationRow = activatedV03CalibrationActivation(reportBundle);
+    if (mismatch === "activation-hash") {
+      reportBundle.calibrationActivationAuthority.activationHash = "b".repeat(64);
+    } else {
+      reportBundle.calibrationActivationAuthority.snapshotId = "different-calibration-snapshot";
+    }
+    const productionRelease = sampleV03ProductionRelease(reportBundle);
+    const storagePlan = buildAiGraderProductionStoragePlan({ reportBundle, productionRelease });
+    const { db, calls } = createMockProductionDb({
+      reportBundle,
+      productionRelease,
+      calibrationSnapshotRows: [trustedV03CalibrationSnapshot(reportBundle)],
+      calibrationActivationRow: exactActivationRow,
+      ...confirmedV03PublishAuthority(reportBundle, productionRelease),
+      report: confirmedProductionReport({ reportId: reportBundle.reportId, finalOverallGrade: 10 }),
+    });
+    await assert.rejects(
+      () => persistAiGraderProductionRelease(db, {
+        tenantId: "tenant-1",
+        reportBundle,
+        productionRelease,
+        storagePlan,
+        cardAssetId: "card-asset-1",
+        itemId: "item-1",
+        persistedAt: "2026-07-18T19:00:00.000Z",
+      }),
+      (error) => error?.code === "AI_GRADER_CALIBRATION_ACTIVATION_BINDING_MISMATCH" &&
+        error?.statusCode === 409,
+      mismatch,
+    );
+    assert.equal(
+      calls.some((call) => call.method === "updateMany" || call.method === "upsert" || call.method === "create"),
+      false,
+      mismatch,
+    );
+  }
+});
 test("calibrated V1 publication rereads and exactly resolves every APPROVED design-reference artifact before mutation", async () => {
   const fixture = sampleV03BundleWithDesignReference();
   const reportBundle = fixture.bundle;

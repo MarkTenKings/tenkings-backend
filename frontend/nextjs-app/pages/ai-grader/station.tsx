@@ -1,6 +1,10 @@
 import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1,
+  type AiGraderCalibrationActivationAuthorityV1,
+} from "@tenkings/shared";
 import { useSession, type SessionPayload } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
@@ -2776,12 +2780,36 @@ export default function AiGraderStationPage() {
     setError(null);
     try {
       const prepared = await prepareMathematicalAuthority();
+      if (!prepared?.authority) {
+        throw new Error("Start New Card requires exact Mathematical V1 card authority before calibration activation preflight.");
+      }
+      const calibrationRigId = status.mathematicalCalibration?.rigId;
+      if (!calibrationRigId) {
+        throw new Error("Start New Card requires the exact local calibration rig identity.");
+      }
+      const activationResponse = await fetch(AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1, {
+        method: "POST",
+        headers: await productionAuthHeaders({ "content-type": "application/json" }, "verify exact calibration activation"),
+        body: JSON.stringify({
+          tenantId: prepared.authority.cardIdentity.tenantId,
+          rigId: calibrationRigId,
+        }),
+      });
+      const activationPayload = await activationResponse.json() as {
+        ok?: boolean;
+        authority?: AiGraderCalibrationActivationAuthorityV1;
+        message?: string;
+      };
+      if (!activationResponse.ok || !activationPayload.ok || !activationPayload.authority) {
+        throw new Error(activationPayload.message || "Start New Card requires one exact hosted ACTIVE calibration activation.");
+      }
       const started = await runAction(
         "start-session",
         buildAiGraderCaptureProfileRequest(
           "production_fast",
           selectedGradingContract,
           prepared?.authority,
+          activationPayload.authority,
         ),
       );
       await stagePreparedMathematicalDesignReferences(prepared, started);
