@@ -755,7 +755,7 @@ function unsafePublishString(value: string) {
     embeddedUrls.some((url) => unsafePublishUrlValue(url)) ||
     /x-ai-grader-station-token|stationToken\s*[=:]|service-token|DATABASE_URL|Authorization\s*:\s*Bearer|x-amz-(?:signature|credential|security-token)|x-goog-(?:signature|credential)/i.test(value) ||
     /\b(?:localhost|[a-z0-9-]+\.(?:local|internal|localhost)|0\.0\.0\.0|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|169\.254(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|100\.(?:6[4-9]|[789]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}|198\.(?:18|19)(?:\.\d{1,3}){2})(?::\d{1,5})?\b/i.test(value) ||
-    /(^|[\s([])(?:\[?::1\]?|fc[0-9a-f:]+|fd[0-9a-f:]+|fe[89ab][0-9a-f:]+)(?::\d{1,5})?(?=$|[\s)\],;])/i.test(value)
+    /(^|[\s([])(?:\[?::1\]?|fc(?=[0-9a-f:]*:)[0-9a-f:]+|fd(?=[0-9a-f:]*:)[0-9a-f:]+|fe[89ab](?=[0-9a-f:]*:)[0-9a-f:]+)(?::\d{1,5})?(?=$|[\s)\],;])/i.test(value)
   );
 }
 

@@ -11,6 +11,8 @@ import { SAMPLE_AI_GRADER_REPORT_BUNDLE } from "../lib/aiGraderReportBundle";
 import { embedAiGraderAuthoritativeProductionRelease } from "../lib/aiGraderLocalStation";
 import { buildSampleAiGraderProductionRelease } from "../lib/aiGraderProductionRelease";
 
+const SHA256_WITH_LINK_LOCAL_IPV6_PREFIX = "feb618028b5a960d54461ac717d024618bf7a207ee90d730f6c233245ba92598";
+
 function request(body: unknown, action = "publish-init") {
   return {
     method: "POST",
@@ -118,6 +120,25 @@ test("publish boundary rejects any true certification claim flag before storage 
   }
 });
 
+test("publish boundary still rejects an actual link-local IPv6 value with address separators", async () => {
+  const productionRelease = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
+  let presignCalled = false;
+  const handler = boundaryHandler(() => {
+    presignCalled = true;
+  });
+  const { state, res } = response();
+
+  await handler(request({
+    publicationStatus: "published",
+    reportBundle: { ...SAMPLE_AI_GRADER_REPORT_BUNDLE, inspectionEndpoint: "fe80::1" },
+    productionRelease,
+  }), res);
+
+  assert.equal(state.statusCode, 400);
+  assert.match(String(state.body.message), /Unsafe AI Grader publish payload/);
+  assert.equal(presignCalled, false);
+});
+
 test("publish package re-embeds the exact submitted authoritative production release", () => {
   const originalRelease = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
   const linkedRelease = {
@@ -173,7 +194,7 @@ test("prepublication CardAsset linkage carries one exact triple and performs no 
     kind: "image",
     fileName: `${side}-normalized-card.png`,
     contentType: "image/png",
-    checksumSha256: side === "front" ? "a".repeat(64) : "b".repeat(64),
+    checksumSha256: side === "front" ? SHA256_WITH_LINK_LOCAL_IPV6_PREFIX : "b".repeat(64),
     byteSize: side === "front" ? 2048 : 3072,
     widthPx: 1200,
     heightPx: 1680,
