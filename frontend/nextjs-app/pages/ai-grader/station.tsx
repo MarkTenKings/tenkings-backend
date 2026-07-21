@@ -2,6 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSession, type SessionPayload } from "../../hooks/useSession";
+import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   AI_GRADER_STATION_STEPS,
@@ -761,6 +762,7 @@ function lightingPositioningCompletelyAcknowledged(lighting: AiGraderLiveLightin
 
 export default function AiGraderStationPage() {
   const { session, loading: sessionLoading, ensureSession, logout } = useSession();
+  const calibrationAdmin = hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone);
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
   const [workArea, setWorkArea] = useState<StationWorkArea>("grade");
   const [busy, setBusy] = useState<string | null>(null);
@@ -5129,7 +5131,10 @@ export default function AiGraderStationPage() {
               <span>Ten Kings</span>
               <strong>AI Grader Station</strong>
             </div>
-            <Link href="/ai-grader/finish">Finish Cards</Link>
+            <div className="brand-links">
+              {calibrationAdmin ? <Link href="/ai-grader/calibration">Calibration / Recalibrate</Link> : null}
+              <Link href="/ai-grader/finish">Finish Cards</Link>
+            </div>
           </div>
 
           {error ? <div className="error">{error}</div> : null}
@@ -6488,12 +6493,18 @@ export default function AiGraderStationPage() {
           margin-bottom: 20px;
         }
         .brand button,
-        .brand > a {
+        .brand-links > a {
           min-height: 36px;
           padding: 8px 10px;
           white-space: nowrap;
         }
-        .brand > a {
+        .brand-links {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 7px;
+        }
+        .brand-links > a {
           display: inline-flex;
           align-items: center;
           justify-content: center;
