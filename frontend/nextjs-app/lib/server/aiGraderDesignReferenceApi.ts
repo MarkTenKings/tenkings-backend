@@ -27,7 +27,39 @@ export type AiGraderDesignReferenceApiDependencies = {
   requireAdminSession(req: NextApiRequest): Promise<AdminIdentity>;
   service: DesignReferenceService;
   readArtifactBytes?(storageKey: string): Promise<Uint8Array>;
+  planArtifactUpload?(input: AiGraderDesignReferenceUploadPlanInput): Promise<AiGraderDesignReferenceUploadPlan>;
 };
+
+export type AiGraderDesignReferenceUploadPlanInput = {
+  tenantId: string;
+  setId: string;
+  programId: string;
+  cardNumber: string;
+  variantId: string | null;
+  parallelId: string | null;
+  side: "front" | "back";
+  profile: "registered_design_template_v1";
+  version: number;
+  fileName: string;
+  contentType: "image/png" | "image/jpeg";
+  byteSize: number;
+  checksumSha256: string;
+};
+
+export type AiGraderDesignReferenceUploadPlan = {
+  storageKey: string;
+  uploadUrl: string;
+  uploadMethod: "PUT";
+  uploadHeaders: Record<string, string>;
+  contentType: "image/png" | "image/jpeg";
+  byteSize: number;
+  checksumSha256: string;
+};
+
+const MAXIMUM_DESIGN_REFERENCE_UPLOAD_BYTES = 50 * 1024 * 1024;
+const SAFE_IDENTITY_TEXT = /^[A-Za-z0-9][A-Za-z0-9._:/ -]{0,190}$/;
+const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,190}\.(?:png|jpe?g)$/i;
+const SHA256 = /^[0-9a-f]{64}$/;
 
 export type AiGraderApprovedDesignReferenceOperatorAuthority = {
   databaseReferenceId: string;
@@ -61,6 +93,125 @@ function objectBody(value: unknown): Record<string, unknown> {
     throw Object.assign(new Error("Request body must be an exact JSON object."), { statusCode: 400 });
   }
   return value as Record<string, unknown>;
+}
+
+function uploadPlanInput(value: Record<string, unknown>): AiGraderDesignReferenceUploadPlanInput {
+  const exactKeys = new Set([
+    "tenantId", "setId", "programId", "cardNumber", "variantId", "parallelId",
+    "side", "profile", "version", "fileName", "contentType", "byteSize", "checksumSha256",
+  ]);
+  if (Object.keys(value).some((key) => !exactKeys.has(key)) ||
+      [...exactKeys].some((key) => !Object.prototype.hasOwnProperty.call(value, key))) {
+    throw Object.assign(new Error("Design-reference upload planning requires the exact identity and file manifest."), {
+      statusCode: 400,
+      code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+    });
+  }
+  const identityText = (field: "tenantId" | "setId" | "programId" | "cardNumber") => {
+    const candidate = value[field];
+    if (typeof candidate !== "string" || !SAFE_IDENTITY_TEXT.test(candidate)) {
+      throw Object.assign(new Error(`Design-reference ${field} is invalid.`), {
+        statusCode: 400,
+        code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+      });
+    }
+    return candidate;
+  };
+  const nullableIdentityText = (field: "variantId" | "parallelId") => {
+    const candidate = value[field];
+    if (candidate === null) return null;
+    if (typeof candidate !== "string" || !SAFE_IDENTITY_TEXT.test(candidate)) {
+      throw Object.assign(new Error(`Design-reference ${field} must be an exact value or explicit null.`), {
+        statusCode: 400,
+        code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+      });
+    }
+    return candidate;
+  };
+  if (value.side !== "front" && value.side !== "back") {
+    throw Object.assign(new Error("Design-reference side must be front or back."), {
+      statusCode: 400,
+      code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+    });
+  }
+  if (value.profile !== "registered_design_template_v1") {
+    throw Object.assign(new Error("Design-reference profile must be registered_design_template_v1."), {
+      statusCode: 400,
+      code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+    });
+  }
+  if (!Number.isSafeInteger(value.version) || Number(value.version) < 1) {
+    throw Object.assign(new Error("Design-reference version must be a positive integer."), {
+      statusCode: 400,
+      code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+    });
+  }
+  if (typeof value.fileName !== "string" || !SAFE_FILE_NAME.test(value.fileName)) {
+    throw Object.assign(new Error("Design-reference file name must be one PNG or JPEG leaf name."), {
+      statusCode: 400,
+      code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+    });
+  }
+  if (value.contentType !== "image/png" && value.contentType !== "image/jpeg") {
+    throw Object.assign(new Error("Design-reference content type must be image/png or image/jpeg."), {
+      statusCode: 400,
+      code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+    });
+  }
+  const extension = value.fileName.toLowerCase().split(".").pop();
+  if ((value.contentType === "image/png" && extension !== "png") ||
+      (value.contentType === "image/jpeg" && extension !== "jpg" && extension !== "jpeg")) {
+    throw Object.assign(new Error("Design-reference file extension and declared content type disagree."), {
+      statusCode: 400,
+      code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+    });
+  }
+  if (!Number.isSafeInteger(value.byteSize) || Number(value.byteSize) < 24 ||
+      Number(value.byteSize) > MAXIMUM_DESIGN_REFERENCE_UPLOAD_BYTES) {
+    throw Object.assign(new Error("Design-reference byte size must be 24 bytes through 50 MiB."), {
+      statusCode: 400,
+      code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+    });
+  }
+  if (typeof value.checksumSha256 !== "string" || !SHA256.test(value.checksumSha256)) {
+    throw Object.assign(new Error("Design-reference upload SHA-256 must be an exact lowercase digest."), {
+      statusCode: 400,
+      code: "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT",
+    });
+  }
+  return {
+    tenantId: identityText("tenantId"),
+    setId: identityText("setId"),
+    programId: identityText("programId"),
+    cardNumber: identityText("cardNumber"),
+    variantId: nullableIdentityText("variantId"),
+    parallelId: nullableIdentityText("parallelId"),
+    side: value.side,
+    profile: value.profile,
+    version: Number(value.version),
+    fileName: value.fileName,
+    contentType: value.contentType,
+    byteSize: Number(value.byteSize),
+    checksumSha256: value.checksumSha256,
+  };
+}
+
+function exactUploadPlan(
+  input: AiGraderDesignReferenceUploadPlanInput,
+  value: AiGraderDesignReferenceUploadPlan,
+): AiGraderDesignReferenceUploadPlan {
+  if (!value || typeof value !== "object" ||
+      typeof value.storageKey !== "string" || !value.storageKey || value.storageKey.includes("://") ||
+      typeof value.uploadUrl !== "string" || !value.uploadUrl.startsWith("https://") ||
+      value.uploadMethod !== "PUT" || !value.uploadHeaders || typeof value.uploadHeaders !== "object" ||
+      value.contentType !== input.contentType || value.byteSize !== input.byteSize ||
+      value.checksumSha256 !== input.checksumSha256) {
+    throw Object.assign(new Error("Private storage returned an invalid exact design-reference upload plan."), {
+      statusCode: 503,
+      code: "AI_GRADER_DESIGN_REFERENCE_UPLOAD_PLAN_UNAVAILABLE",
+    });
+  }
+  return value;
 }
 
 function exactString(value: unknown, field: string): string {
@@ -267,6 +418,18 @@ export function createAiGraderDesignReferenceApiHandler(deps: AiGraderDesignRefe
         return res.status(405).json({ ok: false, code: "METHOD_NOT_ALLOWED", message: "Method not allowed." });
       }
       const body = objectBody(req.body);
+      if (action === "upload-plan") {
+        if (!deps.planArtifactUpload) {
+          throw Object.assign(new Error("Private design-reference direct upload is unavailable."), {
+            statusCode: 503,
+            code: "AI_GRADER_DESIGN_REFERENCE_UPLOAD_PLAN_UNAVAILABLE",
+          });
+        }
+        const input = uploadPlanInput(body);
+        const uploadPlan = exactUploadPlan(input, await deps.planArtifactUpload(input));
+        res.setHeader("Cache-Control", "private, no-store, max-age=0");
+        return res.status(200).json({ ok: true, uploadPlan });
+      }
       if (action === "list") {
         const result = await deps.service.list(body as unknown as ListAiGraderDesignReferencesInput);
         return res.status(200).json({ ok: true, references: result });

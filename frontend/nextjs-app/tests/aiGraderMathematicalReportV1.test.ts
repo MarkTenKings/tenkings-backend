@@ -408,6 +408,8 @@ test("registered-template centering renders exact approved reference and corresp
   };
   bundle.publicAssets.push(
     { id: "front/registered/correspondence-ledger.json", kind: "report-data", fileName: "correspondence-ledger.json", publicUrl: "/api/evidence/correspondence-ledger", sha256: sha("8"), side: "front", evidenceRole: "other_evidence", contentType: "application/json" },
+    { id: "front/center.png", kind: "report-image", fileName: "centering-overlay.png", publicUrl: "/api/evidence/centering-overlay", sha256: sha("6"), side: "front", evidenceRole: "centering_overlay", contentType: "image/png", widthPx: 1000, heightPx: 1400 },
+    { id: bundle.centeringEvidence.front.outerCutGeometryEvidence.normalizedAllOnAssetId, kind: "report-image", fileName: "normalized-all-on.png", publicUrl: "/api/evidence/normalized-all-on", sha256: bundle.centeringEvidence.front.outerCutGeometryEvidence.normalizedAllOnAssetSha256, side: "front", evidenceRole: "normalized_card", contentType: "image/png", widthPx: 1000, heightPx: 1400 },
     { id: "front/registered/design-reference.png", kind: "report-image", fileName: "design-reference.png", publicUrl: "/api/evidence/design-reference", sha256: referenceSha256, side: "front", evidenceRole: "design_reference", contentType: "image/png" },
   );
 
@@ -423,6 +425,10 @@ test("registered-template centering renders exact approved reference and corresp
   assert.match(html, /Transform matrix/);
   assert.match(html, /Correspondence ledger/);
   assert.match(html, /href="\/api\/evidence\/correspondence-ledger"/);
+  assert.match(html, /src="\/api\/evidence\/normalized-all-on"/);
+  assert.match(html, /src="\/api\/evidence\/centering-overlay"/);
+  assert.match(html, /approved-design orientation/);
+  assert.match(html, /expected-to-observed landmark residual vector/);
 });
 
 test("an incomplete v0.3 payload is rejected instead of silently displayed as V0", () => {

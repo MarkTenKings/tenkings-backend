@@ -27723,3 +27723,33 @@ By enabling Rip It Live, I confirm:
 - Final hardware-free validation passed: serialized focused V1.2/core/bridge/ownership/detector tests '45/45'; capture-helper TypeScript build; real Python detector compile and representative execution; PowerShell parser 'POWERSHELL_PARSE_OK'; and 'git diff --check'. Per PC Agent 0's critical-path freeze, no new complete helper-suite run was started.
 - No Legacy V0, provisional, substitute, fabricated-score, closest-profile, automatic-old-profile, browser-authored authority, or activation path was introduced. No hardware, helper lifecycle, Production port/data, migration, deployment, merge, or force push occurred.
 - Dell-only acceptance remains physical verification of camera/controller identities, exact safe-off/release, geometry/ROI/direction conventions, thermal/repeatability/context drift, and end-to-end timing. Under ten minutes remains an unproven target and no acceptance threshold was weakened.
+
+## 2026-07-21 - Exact design-reference operator flow and centering QA authority
+
+### Branch And Base
+- Branch: `feature/ai-grader-design-reference-operator-flow`.
+- Assigned worktree: `C:\TenKings\worktrees\ai-grader-self-calibration-20260721\agent5-centering-design`.
+- Frozen reviewed integration base: `e7673c1a4f1799a594d09279ad392982ac028205`; the branch was created directly from this immutable commit, not from moving `origin/main` and not from Agent 2's blocked draft.
+
+### Existing Authority Preserved
+- The existing schema/service already preserved exact tenant/set/program/card/variant/parallel/side/profile/version identity, immutable hash/MIME/dimensions/boundary/provenance metadata, draft/approved/retired lifecycle, single active approved side, and supersession instead of overwrite.
+- Start New Card already resolved one exact APPROVED reference, downloaded and rehashed its private bytes, bound reference ID/version/hash before session creation, staged the same bytes through the bridge, and hard-failed capture on a missing/mismatched staged reference.
+- Printed-border centering already derived contours from flat-field-normalized captured pixels and hard-failed weak/ambiguous fits. Registered-template centering already derived automatic correspondences/transforms and published hash-bound registration/ledger provenance. Caller-supplied contours, transforms, residuals, camera margins, symmetry, arbitrary web imagery, and legacy fallback were not authority.
+
+### Missing Pieces Implemented
+- Replaced the admin page's manual private-storage-key entry with controlled local PNG/JPEG import, preliminary browser byte/hash/dimension inspection, an exact identity/version/file manifest, and an opaque checksum-bound private upload plan. The server still rereads the stored bytes and independently determines byte bounds, raster type, dimensions, and SHA-256 before it creates an inactive immutable draft.
+- Added import QA for the exact raster, intended contour/mask, numbered landmarks, printed-top orientation, residual acceptance policy, and pixel/physical mapping. No reference is automatically approved and no reference file was fabricated.
+- Extended lifecycle revocation to exact draft or approved rows and exposed explicit bad-draft revocation while retaining approval-driven supersession. No delete/overwrite route was added.
+- Extended immutable centering overlays with the mask, expected-to-observed landmark residual vectors, accepted/rejected correspondence coloring, transformed approved-design orientation, calibrated 10 mm axes, registration residual/inlier/confidence summary, and exact authority string. The public report embeds that overlay over the exact normalized source and presents expected/observed physical margins plus existing reference ID/version/hash and correspondence-ledger provenance.
+- Linked the exact-reference operator page from the AI Grader admin header.
+
+### Validation
+- Local Prisma client generation only (no database connection or migration), database build, capture-helper build, browser-rip workspace build, and Next TypeScript check passed.
+- `node --test tests/aiGraderDesignReferenceService.test.js` -> pass, `13/13`.
+- Focused capture centering/reference/report tests -> pass, `27/27`.
+- Focused Next design-reference/operator/report/station tests -> pass, `66/66`.
+- The first database build failed only because a fresh worktree had no generated Prisma client; it passed after local code generation. The offline pnpm link completed despite an unrelated optional `iohook` Windows-prebuild warning.
+
+### Guardrails And Coverage
+- No hardware, camera, lighting, helper start/restart, Production database read/write, migration, deployment, merge, report publication, NFC/F8215 operation, or design-reference approval occurred.
+- No exact card identity coverage was inferred from repository code. The repository contains no approved production reference rows/files that can honestly enumerate deployment coverage, and Production DB inspection was explicitly out of scope. Any registered-template side without one exact APPROVED row continues to hard-fail before capture; a reliable detected `printed_border_v1` remains the only other centering authority.

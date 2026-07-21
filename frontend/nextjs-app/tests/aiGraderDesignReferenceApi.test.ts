@@ -70,6 +70,67 @@ function approvedRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+test("upload planning binds exact identity, version, bytes, type, and checksum to a private PUT", async () => {
+  let received: Record<string, unknown> | undefined;
+  const checksumSha256 = "b".repeat(64);
+  const input = {
+    tenantId: "tenant-1",
+    setId: "set-1",
+    programId: "program-1",
+    cardNumber: "7",
+    variantId: null,
+    parallelId: "gold",
+    side: "back",
+    profile: "registered_design_template_v1",
+    version: 4,
+    fileName: "controlled-back.png",
+    contentType: "image/png",
+    byteSize: 4096,
+    checksumSha256,
+  } as const;
+  const runtime = createAiGraderDesignReferenceApiHandler({
+    async requireAdminSession() { return { user: { id: "admin-exact" } }; },
+    service: service(),
+    async planArtifactUpload(manifest) {
+      received = manifest;
+      return {
+        storageKey: "ai-grader/design-references/imports/identity/v4-back-opaque.png",
+        uploadUrl: "https://private-storage.example/exact",
+        uploadMethod: "PUT",
+        uploadHeaders: {
+          "Content-Type": "image/png",
+          "x-amz-checksum-sha256": "base64-checksum",
+        },
+        contentType: "image/png",
+        byteSize: 4096,
+        checksumSha256,
+      };
+    },
+  });
+  const { state, res } = response();
+  await runtime(request("upload-plan", input), res);
+  assert.equal(state.status, 200);
+  assert.deepEqual(received, input);
+  assert.equal(state.headers["Cache-Control"], "private, no-store, max-age=0");
+  const plan = (state.body as any).uploadPlan;
+  assert.equal(plan.uploadMethod, "PUT");
+  assert.equal(plan.checksumSha256, checksumSha256);
+  assert.equal(plan.storageKey.includes("private-storage.example"), false);
+
+  const extraKey = response();
+  await runtime(request("upload-plan", { ...input, arbitraryAuthority: true }), extraKey.res);
+  assert.equal(extraKey.state.status, 400);
+  assert.equal((extraKey.state.body as any).code, "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT");
+
+  const mismatchedType = response();
+  await runtime(request("upload-plan", {
+    ...input,
+    fileName: "controlled-back.jpg",
+  }), mismatchedType.res);
+  assert.equal(mismatchedType.state.status, 400);
+  assert.equal((mismatchedType.state.body as any).code, "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT");
+});
+
 test("draft authority always comes from the authenticated admin", async () => {
   let received: Record<string, unknown> | undefined;
   const runtime = createAiGraderDesignReferenceApiHandler({

@@ -538,8 +538,34 @@ export default function AiGraderMathematicalReportV1({
               reference.artifactSha256 === side.registration.designReferenceSha256 &&
               reference.side === side.side
             );
+            const measurementOverlay = assets.get(side.measurementOverlayAssetId.toLowerCase());
+            const normalizedSource = assets.get(
+              side.outerCutGeometryEvidence.normalizedAllOnAssetId.toLowerCase(),
+            );
             return (
             <article className="rounded border border-black/10 p-4" key={side.side}>
+              {measurementOverlay?.publicUrl ? (
+                <figure className="mb-4 mt-3">
+                  <a
+                    className="block overflow-hidden rounded border border-black/20 bg-black"
+                    href={measurementOverlay.publicUrl}
+                    style={{
+                      aspectRatio: measurementOverlay.widthPx && measurementOverlay.heightPx
+                        ? `${measurementOverlay.widthPx}/${measurementOverlay.heightPx}`
+                        : "5/7",
+                    }}
+                  >
+                    <span className="relative block h-full w-full">
+                      {normalizedSource?.publicUrl ? <img className="absolute inset-0 h-full w-full object-contain" src={normalizedSource.publicUrl} alt="" /> : null}
+                      <img className="absolute inset-0 h-full w-full object-contain" src={measurementOverlay.publicUrl} alt={`${side.side} centering registration QA overlay`} />
+                    </span>
+                  </a>
+                  <figcaption className="mt-2 text-xs text-zinc-600">
+                    Yellow outer cut, green printed-design contour, shaded centering mask, calibrated 10 mm axes, and measured margins.
+                    {side.registrationEvidence ? " Registered-template QA also shows approved-design orientation and every expected-to-observed landmark residual vector; green points are accepted inliers and red points are rejected." : " Printed-border authority contains no template landmarks."}
+                  </figcaption>
+                </figure>
+              ) : null}
               <strong>{side.side} · {side.profile} · {score(side.score)}</strong>
               {[side.horizontal, side.vertical].map((axis) => (
                 <dl className="mt-3 grid grid-cols-2 gap-1 text-sm" key={axis.axis}>
@@ -547,6 +573,8 @@ export default function AiGraderMathematicalReportV1({
                   <dt>Balance / score</dt><dd>{axis.balanceRatio.toFixed(2)}% / {score(axis.score)}</dd>
                   <dt>Difference / U95 / tolerance</dt><dd>{axis.measuredDifferenceMm} / {axis.u95Mm} / {axis.grade10ToleranceMm} mm</dd>
                   <dt>U95 components</dt><dd>{Object.entries(axis.u95Components).map(([name, value]) => `${label(name)} ${value}`).join("; ")}{axis.boundaryFitU95Mm === undefined ? "" : `; boundary fit ${axis.boundaryFitU95Mm}`}</dd>
+                  {axis.expectedMarginAMm === undefined ? null : <><dt>Approved expected margins</dt><dd>{axis.expectedMarginAMm} / {axis.expectedMarginBMm} mm</dd></>}
+                  {axis.observedMarginAMm === undefined ? null : <><dt>Registered observed margins</dt><dd>{axis.observedMarginAMm} / {axis.observedMarginBMm} mm; axis error {axis.axisErrorMm} mm across {axis.physicalAxisSpanMm} mm</dd></>}
                 </dl>
               ))}
               <dl className="mt-3 grid grid-cols-2 gap-1 text-sm">

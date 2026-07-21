@@ -1,4 +1,4 @@
-export type AiGraderDirectUploadPurpose = "ocr" | "publish" | "slab-photo";
+export type AiGraderDirectUploadPurpose = "ocr" | "publish" | "slab-photo" | "design-reference";
 export type AiGraderDirectUploadErrorCode = "invalid_plan" | "network" | "http";
 
 export class AiGraderDirectUploadError extends Error {
