@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("readiness", "list-cameras", "capture-still", "fixed-rig-side-batch", "operator-preview-window", "operator-preview-mjpeg-stream", "calibration-preview-mjpeg-stream", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
+  [ValidateSet("readiness", "list-cameras", "capture-still", "fixed-rig-side-batch", "operator-preview-window", "operator-preview-mjpeg-stream", "calibration-preview-mjpeg-stream", "mathematical-calibration-context", "mathematical-calibration-session", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
   [string]$Action,
 
   [string]$PylonRoot,
@@ -2606,7 +2606,7 @@ try {
   $install = Resolve-PylonInstall
 
   if (-not $install.installed) {
-    if ($Action -eq "capture-still" -or $Action -eq "fixed-rig-side-batch" -or $Action -eq "operator-preview-window" -or $Action -eq "operator-preview-mjpeg-stream") {
+    if ($Action -eq "capture-still" -or $Action -eq "fixed-rig-side-batch" -or $Action -eq "operator-preview-window" -or $Action -eq "operator-preview-mjpeg-stream" -or $Action -eq "mathematical-calibration-context" -or $Action -eq "mathematical-calibration-session") {
       throw "Basler pylon is not installed or Basler.Pylon.dll was not found."
     }
     $result = New-ReadinessResult $install @()
@@ -2672,10 +2672,228 @@ try {
     exit 0
   }
 
+  if ($Action -ne "mathematical-calibration-context" -and $Action -ne "mathematical-calibration-session") {
   $capture = Capture-Still $install
   Write-BridgeJson ([ordered]@{ ok = $true; result = $capture })
   exit 0
+  }
 } catch {
   Write-BridgeJson (New-BridgeError "BASLER_PYLON_BRIDGE_ERROR" $_.Exception.Message)
   exit 1
 }
+function Get-WarmLeimacIdentity {
+  param([System.Collections.IDictionary]$Session)
+  if (-not $Session.enabled) { throw "Mathematical calibration requires a live Leimac controller." }
+  $frame = [ordered]@{
+    name = "unitInfo"
+    commandNumber = "83"
+    requestAscii = "R830000"
+    requestFrame = "R830000"
+    terminator = ""
+    allowlisted = $true
+  }
+  $response = Send-WarmLeimacFrameObject -Session $Session -Frame $frame
+  if (-not $response.ok -or -not $response.rawResponse) {
+    throw "Leimac unit-information identity read was not acknowledged."
+  }
+  $identityBytes = [System.Text.Encoding]::UTF8.GetBytes(([string]$response.rawResponse).Trim())
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $digest = ([System.BitConverter]::ToString($sha.ComputeHash($identityBytes))).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $sha.Dispose()
+  }
+  return "leimac-idmu-$digest"
+}
+
+function Get-ExactAckKinds {
+  param([object[]]$Writes, [string]$Label)
+  $kinds = @($Writes | ForEach-Object { [string]$_.responseKind })
+  $invalid = @($Writes | Where-Object {
+    -not $_.ok -or $_.responseKind -ne "ack" -or -not $_.rawResponse -or
+    ([string]$_.rawResponse -match "NAK") -or ([string]$_.rawResponse -notmatch "(?i)(ACK|^A|OK)")
+  })
+  if ($kinds.Count -eq 0 -or $invalid.Count -gt 0) {
+    throw "$Label did not return exact ACK responses."
+  }
+  return $kinds
+}
+
+function Get-MathematicalCalibrationOpenedContext {
+  param(
+    [object]$Camera,
+    [System.Collections.IDictionary]$CameraMetadata,
+    [string]$ControllerIdentity
+  )
+  return [ordered]@{
+    camera = [ordered]@{
+      serialNumber = [string]$CameraMetadata.serialNumber
+      modelName = [string]$CameraMetadata.modelName
+      exposureUs = [double](Get-ReadableParameterValue $Camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs))
+      gain = [double](Get-ReadableParameterValue $Camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw))
+      pixelFormat = [string](Get-ReadableParameterValue $Camera @([Basler.Pylon.PLCamera]::PixelFormat))
+      widthPx = [int](Get-ReadableParameterValue $Camera @([Basler.Pylon.PLCamera]::Width))
+      heightPx = [int](Get-ReadableParameterValue $Camera @([Basler.Pylon.PLCamera]::Height))
+    }
+    controller = [ordered]@{
+      identity = $ControllerIdentity
+      unit = $LeimacUnit
+    }
+  }
+}
+
+function Open-MathematicalCalibrationHardware {
+  param([System.Collections.IDictionary]$Install)
+  if (-not $OutputDir) { throw "Mathematical calibration OutputDir is required." }
+  New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+  $devices = [Basler.Pylon.CameraFinder]::Enumerate([Basler.Pylon.DeviceType]::GigE)
+  if ($devices.Count -eq 0) { throw "No Basler GigE cameras were detected." }
+  if ($CameraIndex -lt 0 -or $CameraIndex -ge $devices.Count) { throw "Mathematical calibration CameraIndex is out of range." }
+  $cameraInfo = $devices[$CameraIndex]
+  $camera = [Basler.Pylon.Camera]::new($cameraInfo)
+  $leimacSession = $null
+  try {
+    [void]$camera.Open()
+    Configure-WarmBatchCamera $camera
+    $leimacSession = New-WarmLeimacSession
+    $controllerIdentity = Get-WarmLeimacIdentity $leimacSession
+    $safeOff = Apply-WarmLeimacFrames -Session $leimacSession -Frames (New-WarmLeimacSafeOffFrames)
+    [void](Get-ExactAckKinds $safeOff "Mathematical calibration initial safe-off")
+    return [ordered]@{
+      camera = $camera
+      cameraMetadata = Convert-CameraInfo $cameraInfo $CameraIndex
+      leimacSession = $leimacSession
+      controllerIdentity = $controllerIdentity
+    }
+  } catch {
+    if ($null -ne $leimacSession) {
+      try { [void](Apply-WarmLeimacFrames -Session $leimacSession -Frames (New-WarmLeimacSafeOffFrames)) } catch {}
+      Close-WarmLeimacSession $leimacSession
+    }
+    if ($camera.IsOpen) { try { [void]$camera.Close() } catch {} }
+    try { $camera.Dispose() } catch {}
+    throw
+  }
+}
+
+function Close-MathematicalCalibrationHardware {
+  param([System.Collections.IDictionary]$Hardware)
+  if ($null -eq $Hardware) { return }
+  try { [void](Apply-WarmLeimacFrames -Session $Hardware.leimacSession -Frames (New-WarmLeimacSafeOffFrames)) } catch {}
+  Close-WarmLeimacSession $Hardware.leimacSession
+  if ($Hardware.camera.IsOpen) { try { [void]$Hardware.camera.Close() } catch {} }
+  try { $Hardware.camera.Dispose() } catch {}
+}
+
+function Read-MathematicalCalibrationContext {
+  param([System.Collections.IDictionary]$Install)
+  $hardware = $null
+  try {
+    $hardware = Open-MathematicalCalibrationHardware $Install
+    return Get-MathematicalCalibrationOpenedContext $hardware.camera $hardware.cameraMetadata $hardware.controllerIdentity
+  } finally {
+    Close-MathematicalCalibrationHardware $hardware
+  }
+}
+
+function Start-MathematicalCalibrationSession {
+  param([System.Collections.IDictionary]$Install)
+  $hardware = $null
+  try {
+    $hardware = Open-MathematicalCalibrationHardware $Install
+    $context = Get-MathematicalCalibrationOpenedContext $hardware.camera $hardware.cameraMetadata $hardware.controllerIdentity
+    Write-BridgeJson ([ordered]@{ ok = $true; event = "opened"; result = $context })
+    while ($true) {
+      $line = [Console]::In.ReadLine()
+      if ($null -eq $line) { break }
+      $request = $null
+      try {
+        $request = $line | ConvertFrom-Json
+        $requestId = [string]$request.requestId
+        if (-not $requestId) { throw "Persistent calibration requestId is required." }
+        if ($request.command -eq "close") {
+          $writes = Apply-WarmLeimacFrames -Session $hardware.leimacSession -Frames (New-WarmLeimacSafeOffFrames)
+          $kinds = Get-ExactAckKinds $writes "Persistent calibration close safe-off"
+          Write-BridgeJson ([ordered]@{ ok = $true; event = "closed"; requestId = $requestId; result = [ordered]@{ responseKinds = @($kinds) } })
+          break
+        }
+        if ($request.command -eq "safe_off") {
+          $writes = Apply-WarmLeimacFrames -Session $hardware.leimacSession -Frames (New-WarmLeimacSafeOffFrames)
+          $kinds = Get-ExactAckKinds $writes "Persistent calibration safe-off"
+          Write-BridgeJson ([ordered]@{ ok = $true; event = "safe_off"; requestId = $requestId; result = [ordered]@{ responseKinds = @($kinds) } })
+          continue
+        }
+        if ($request.command -ne "capture") { throw "Persistent calibration command is not allowlisted." }
+        $role = [string]$request.role
+        if (@("checkerboard_placement", "dark_control", "flat_field", "illumination_pattern") -notcontains $role) {
+          throw "Persistent calibration role is not allowlisted."
+        }
+        $channel = [int]$request.channelIndex
+        $sample = [int]$request.sampleIndex
+        $dutyTenths = [int]$request.dutyTenthsPercent
+        if ($role -eq "checkerboard_placement") {
+          if ($channel -ne 0 -or $sample -lt 1 -or $sample -gt 4 -or $dutyTenths -lt 1 -or $dutyTenths -gt 50) {
+            throw "Persistent checkerboard step identity or bounded illumination is invalid."
+          }
+        } elseif ($channel -lt 1 -or $channel -gt 8) {
+          throw "Persistent calibration channel must be 1 through 8."
+        } elseif ($sample -lt 1 -or $sample -gt 3) {
+          throw "Persistent photometric sample index must be 1 through 3."
+        } elseif ($role -eq "dark_control" -and $dutyTenths -ne 0) {
+          throw "Persistent dark-control capture must command exact zero duty."
+        } elseif ($role -ne "dark_control" -and ($dutyTenths -lt 1 -or $dutyTenths -gt 50)) {
+          throw "Persistent illuminated capture duty must be 0.1 through 5.0 percent."
+        }
+        $safeOffBeforeWrites = Apply-WarmLeimacFrames -Session $hardware.leimacSession -Frames (New-WarmLeimacSafeOffFrames)
+        $safeOffBeforeKinds = Get-ExactAckKinds $safeOffBeforeWrites "Capture safe-off before"
+        $lightingWrites = @()
+        if ($role -eq "checkerboard_placement") {
+          $lightingWrites = Apply-WarmLeimacFrames -Session $hardware.leimacSession -Frames (New-WarmLeimacLightFrames -Channels @(1,2,3,4,5,6,7,8) -DutyTenthsPercent $dutyTenths)
+        } elseif ($role -ne "dark_control") {
+          $lightingWrites = Apply-WarmLeimacFrames -Session $hardware.leimacSession -Frames (New-WarmLeimacLightFrames -Channels @($channel) -DutyTenthsPercent $dutyTenths)
+        }
+        $lightingKinds = @($lightingWrites | ForEach-Object { [string]$_.responseKind })
+        if (@($lightingKinds | Where-Object { $_ -ne "ack" }).Count -gt 0) { throw "Capture lighting was not exactly acknowledged." }
+        $capture = $null
+        $safeOffAfterKinds = @()
+        try {
+          $configuredPixelFormat = Get-ReadableParameterValue $hardware.camera @([Basler.Pylon.PLCamera]::PixelFormat)
+          $exposureTime = Get-ReadableParameterValue $hardware.camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs)
+          $configuredGain = Get-ReadableParameterValue $hardware.camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw)
+          $capture = Capture-WarmStill -Camera $hardware.camera -Install $Install -CameraMetadata $hardware.cameraMetadata -CaptureLabel "mathematical-v1.2-$role-$channel-$sample-$requestId" -ConfiguredPixelFormat $configuredPixelFormat -ExposureTime $exposureTime -ConfiguredGain $configuredGain
+        } finally {
+          $safeOffAfterWrites = Apply-WarmLeimacFrames -Session $hardware.leimacSession -Frames (New-WarmLeimacSafeOffFrames)
+          $safeOffAfterKinds = Get-ExactAckKinds $safeOffAfterWrites "Capture safe-off after"
+        }
+        Write-BridgeJson ([ordered]@{
+          ok = $true
+          event = "capture"
+          requestId = $requestId
+          result = [ordered]@{
+            capture = $capture
+            safeOffBeforeResponseKinds = @($safeOffBeforeKinds)
+            lightingResponseKinds = @($lightingKinds)
+            safeOffAfterResponseKinds = @($safeOffAfterKinds)
+          }
+        })
+      } catch {
+        $failedRequestId = $(if ($null -ne $request) { [string]$request.requestId } else { $null })
+        Write-BridgeJson ([ordered]@{ ok = $false; event = "capture"; requestId = $failedRequestId; error = [ordered]@{ code = "MATHEMATICAL_CALIBRATION_SESSION_ERROR"; message = $_.Exception.Message } })
+      }
+    }
+  } catch {
+    Write-BridgeJson ([ordered]@{ ok = $false; event = "opened"; error = [ordered]@{ code = "MATHEMATICAL_CALIBRATION_OPEN_ERROR"; message = $_.Exception.Message } })
+  } finally {
+    Close-MathematicalCalibrationHardware $hardware
+  }
+}
+
+  if ($Action -eq "mathematical-calibration-context") {
+    Write-BridgeJson ([ordered]@{ ok = $true; result = (Read-MathematicalCalibrationContext $install) })
+    exit 0
+  }
+
+  if ($Action -eq "mathematical-calibration-session") {
+    Start-MathematicalCalibrationSession $install
+    exit 0
+  }

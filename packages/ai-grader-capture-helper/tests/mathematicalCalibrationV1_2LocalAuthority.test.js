@@ -8,8 +8,13 @@ const sharp = require("sharp");
 
 const { MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH } = require("../../shared/dist");
 const {
+  buildAiGraderLocalStationBridgeConfig,
   startAiGraderLocalStationBridgeHttpServer,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
+const {
+  buildAiGraderStationBridgeCliConfigInputV1_2,
+} = require("../dist/cli");
+const publicDrivers = require("../dist/drivers");
 const {
   FIXED_RIG_FAST_CALIBRATION_GEOMETRY_ANALYZER_V1_2_SHA256,
   FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_ANALYZER_V1_2_SHA256,
@@ -160,6 +165,7 @@ function oneTimeAuthority(context) {
       value: {
         schemaVersion: "ten-kings-physical-light-directions-authority-v1",
         rigId: context.rigId,
+        stageToUndistortedSensorMatrix: [1, 0, 0, 1],
         channels: Array.from({ length: 8 }, (_, index) => {
           const channelIndex = index + 1;
           const angle = index * Math.PI / 4;
@@ -249,7 +255,17 @@ function detectorResult(centerX, centerY, rotationDegrees) {
       ));
     }
   }
-  return { imageWidth: width, imageHeight: height, internalCorners, outerCorners, rotationDegrees };
+  const segmentationBoundary = [];
+  for (let edge = 0; edge < 4; edge += 1) {
+    const start = outerCorners[edge];
+    const end = outerCorners[(edge + 1) % 4];
+    for (let sample = 0; sample < 8; sample += 1) {
+      const t = sample / 8;
+      segmentationBoundary.push({ x: start.x + t * (end.x - start.x), y: start.y + t * (end.y - start.y) });
+    }
+  }
+
+  return { imageWidth: width, imageHeight: height, internalCorners, outerCorners, segmentationBoundary, rotationDegrees };
 }
 
 async function imageBuffer(pixels) {
@@ -438,4 +454,145 @@ test("actual V1.2 route family uses durable local authority through resumable ev
     }
     await fs.rm(outputDir, { recursive: true, force: true });
   }
+});
+
+async function writeProtectedAuthorityFiles(root, context = runtimeContext()) {
+  const source = oneTimeAuthority(context);
+  const protectedDir = path.join(root, "protected-v1.2");
+  const memberDir = path.join(protectedDir, "members");
+  await fs.mkdir(memberDir, { recursive: true });
+  const runtimeBytes = canonicalBytes(context);
+  const runtimePath = path.join(protectedDir, "runtime-context-v1.2.json");
+  const bundlePath = path.join(protectedDir, "rig-source-v1.2.json");
+  await fs.writeFile(runtimePath, runtimeBytes);
+  await fs.writeFile(bundlePath, source.bundleBytes);
+  await Promise.all(source.members.map((member) => fs.writeFile(path.join(memberDir, member.fileName), member.bytes)));
+  return {
+    env: {
+      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_PATH: runtimePath,
+      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SHA256: digest(runtimeBytes),
+      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_BUNDLE_PATH: bundlePath,
+      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_BUNDLE_SHA256: digest(source.bundleBytes),
+      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_MEMBER_DIR: memberDir,
+      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_OPERATOR_ID: "protected-route-operator",
+    },
+    runtimePath,
+  };
+}
+
+function cliBridgeInput(outputDir) {
+  return {
+    enabled: true, host: "127.0.0.1", port: 0, mode: "real", stationToken: token, outputDir,
+    apply: true, markPresent: true, wiringConfirmed: true, leimacStatusGreen: true,
+    leimacHost: "127.0.0.1",
+  };
+}
+
+function inertProductionBoundary(transform = (value) => value) {
+  const calls = { inspect: 0, capture: 0, batch: 0 };
+  return {
+    calls,
+    boundary: {
+      async inspectLiveRuntimeContext(expected) {
+        calls.inspect += 1;
+        return transform(structuredClone(expected));
+      },
+      async captureCheckerboard() { calls.capture += 1; throw new Error("capture must not run in construction test"); },
+      async confirmBlankReverseFlip() { return { confirmed: true }; },
+      createPersistentBatch() { calls.batch += 1; throw new Error("batch must not run in construction test"); },
+    },
+  };
+}
+
+test("actual station CLI factory constructs the protected V1.2 authority inertly and fails closed", async () => {
+  const outputDir = path.join(os.tmpdir(), `mathematical-v1-2-production-factory-${crypto.randomUUID()}`);
+  try {
+    assert.equal(publicDrivers.buildFastCalibrationAnalysisV1_2, undefined);
+    assert.equal(publicDrivers.finalizeFastMathematicalCalibrationBundleV1_2, undefined);
+
+    const protectedFiles = await writeProtectedAuthorityFiles(outputDir);
+    const fake = inertProductionBoundary();
+    const cliInput = buildAiGraderStationBridgeCliConfigInputV1_2(
+      cliBridgeInput(outputDir), protectedFiles.env, fake.boundary,
+    );
+    assert.ok(cliInput.mathematicalCalibrationV1_2LocalAuthorityConfig);
+    assert.deepEqual(fake.calls, { inspect: 0, capture: 0, batch: 0 });
+    const inertDefaultInput = buildAiGraderStationBridgeCliConfigInputV1_2(
+      cliBridgeInput(path.join(outputDir, "default-boundary")), protectedFiles.env,
+    );
+    assert.ok(inertDefaultInput.mathematicalCalibrationV1_2LocalAuthorityConfig);
+    assert.deepEqual(fake.calls, { inspect: 0, capture: 0, batch: 0 }, "default construction cannot open hardware");
+    const bridge = buildAiGraderLocalStationBridgeConfig(cliInput, protectedFiles.env);
+    assert.ok(bridge.mathematicalCalibrationV1_2Authority);
+    assert.equal((await bridge.mathematicalCalibrationV1_2Authority.listSessions()).sessions.length, 0);
+    assert.equal(fake.calls.inspect, 0, "read-only construction/list must not open hardware");
+    const started = await bridge.mathematicalCalibrationV1_2Authority.startOrResume({});
+    assert.equal(started.expectedAction.action, "capture_checkerboard");
+    assert.equal(fake.calls.inspect, 1, "start derives and verifies the exact live context once");
+
+    const absent = buildAiGraderStationBridgeCliConfigInputV1_2(cliBridgeInput(outputDir), {}, fake.boundary);
+    assert.equal(absent.mathematicalCalibrationV1_2LocalAuthorityConfig, undefined);
+    assert.equal(buildAiGraderLocalStationBridgeConfig(absent, {}).mathematicalCalibrationV1_2Authority, undefined);
+    assert.throws(() => buildAiGraderStationBridgeCliConfigInputV1_2(cliBridgeInput(outputDir), {
+      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_PATH: protectedFiles.runtimePath,
+    }, fake.boundary), /protected configuration is partial/);
+
+    const driftContext = runtimeContext();
+    driftContext.algorithmHashes.geometry = hashSeed("mutated-geometry-executable");
+    const driftRoot = path.join(outputDir, "algorithm-drift");
+    const driftFiles = await writeProtectedAuthorityFiles(driftRoot, driftContext);
+    const driftBridge = buildAiGraderLocalStationBridgeConfig(
+      buildAiGraderStationBridgeCliConfigInputV1_2(
+        cliBridgeInput(path.join(driftRoot, "station")), driftFiles.env, fake.boundary,
+      ),
+      driftFiles.env,
+    );
+    await assert.rejects(
+      () => driftBridge.mathematicalCalibrationV1_2Authority.startOrResume({}),
+      /does not bind the loaded V1.2 analyzer implementation manifest/,
+    );
+
+    const corruptHashEnv = {
+      ...protectedFiles.env,
+      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SHA256: "0".repeat(64),
+    };
+    const corruptBridge = buildAiGraderLocalStationBridgeConfig(
+      buildAiGraderStationBridgeCliConfigInputV1_2(cliBridgeInput(outputDir), corruptHashEnv, fake.boundary),
+      corruptHashEnv,
+    );
+    await assert.rejects(
+      () => corruptBridge.mathematicalCalibrationV1_2Authority.startOrResume({}),
+      /protected exact SHA-256/,
+    );
+
+    const mismatched = inertProductionBoundary((value) => ({
+      ...value, camera: { ...value.camera, serialNumber: "swapped-camera" },
+    }));
+    const mismatchBridge = buildAiGraderLocalStationBridgeConfig(
+      buildAiGraderStationBridgeCliConfigInputV1_2(cliBridgeInput(outputDir), protectedFiles.env, mismatched.boundary),
+      protectedFiles.env,
+    );
+    await assert.rejects(
+      () => mismatchBridge.mathematicalCalibrationV1_2Authority.startOrResume({}),
+      /context differs/,
+    );
+  } finally {
+    await fs.rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("Production V1.2 PowerShell seam retains one persistent camera/controller owner and exact safe-off ACK gates", async () => {
+  const script = await fs.readFile(
+    path.join(__dirname, "..", "scripts", "basler-pylon-bridge.ps1"), "utf8",
+  );
+  assert.match(script, /"mathematical-calibration-context"/);
+  assert.match(script, /"mathematical-calibration-session"/);
+  assert.match(script, /function Start-MathematicalCalibrationSession/);
+  assert.match(script, /while \(\$true\)/);
+  assert.match(script, /Open-MathematicalCalibrationHardware/);
+  assert.match(script, /Close-MathematicalCalibrationHardware/);
+  assert.match(script, /Get-ExactAckKinds/);
+  assert.match(script, /rawResponse -notmatch "\(\?i\)\(ACK\|\^A\|OK\)"/);
+  assert.match(script, /New-WarmLeimacSafeOffFrames/);
+  assert.doesNotMatch(script, /UserSetSave|SYSTEM RESET|FACTORY DEFAULT/i);
 });

@@ -14,6 +14,7 @@ import type {
   FastCalibrationEvidenceAnalysisResultV1_2,
   FastCalibrationEvidenceAnalyzerV1_2,
 } from "./fixedRigFastCalibrationEvidenceAnalyzerV1_2";
+import { transformFastCalibrationPhysicalDirectionV1_2 } from "./fixedRigFastCalibrationMathV1_2";
 import type {
   BuildFixedRigPhysicalCalibrationV1Input,
   FixedRigCalibrationChannelInputV1,
@@ -146,6 +147,7 @@ export interface FastCalibrationCameraLensAuthorityMemberV1_2 {
 export interface FastCalibrationPhysicalDirectionsAuthorityMemberV1_2 {
   schemaVersion: "ten-kings-physical-light-directions-authority-v1";
   rigId: string;
+  stageToUndistortedSensorMatrix: readonly [number, number, number, number];
   channels: Array<Pick<FixedRigCalibrationChannelInputV1, "channelIndex" | "directionMeasurementSamples">>;
 }
 
@@ -167,6 +169,7 @@ export interface FastCalibrationRepeatabilityAuthorityMemberV1_2 {
 
 export interface VerifiedFastCalibrationRigCharacterizationSourceV1_2 {
   authority: FastCalibrationRigCharacterizationAuthorityV1_2;
+  physicalDirectionTransform: readonly [number, number, number, number];
   oneTimeBuilderInput: Pick<BuildFixedRigPhysicalCalibrationV1Input,
     | "rigId" | "normalizedWidthPx" | "normalizedHeightPx" | "scaleSamples"
     | "targetPrintScaleSamples" | "targetCutDimensionSamples" | "lensResidualSamples"
@@ -688,7 +691,7 @@ export function verifyFastCalibrationRigCharacterizationSourceV1_2(
   const camera = parseCanonicalJson<FastCalibrationCameraLensAuthorityMemberV1_2>(memberBytes[1], "camera/lens authority");
   exactKeys(camera, ["schemaVersion", "rigId", "cameraSerialNumber", "cameraModelName", "lensAuthorityId", "normalizedWidthPx", "normalizedHeightPx", "lensResidualSamples", "lensModel", "normalizationModel"], "camera/lens authority");
   const directions = parseCanonicalJson<FastCalibrationPhysicalDirectionsAuthorityMemberV1_2>(memberBytes[2], "physical direction authority");
-  exactKeys(directions, ["schemaVersion", "rigId", "channels"], "physical direction authority");
+  exactKeys(directions, ["schemaVersion", "rigId", "stageToUndistortedSensorMatrix", "channels"], "physical direction authority");
   const components = parseCanonicalJson<FastCalibrationComponentIdentitiesAuthorityMemberV1_2>(memberBytes[3], "component identity authority");
   exactKeys(components, ["schemaVersion", "rigId", "controllerIdentity", "componentConfigurationId", "channelWiring", "algorithmHashes"], "component identity authority");
   const repeatability = parseCanonicalJson<FastCalibrationRepeatabilityAuthorityMemberV1_2>(memberBytes[4], "repeatability authority");
@@ -708,6 +711,12 @@ export function verifyFastCalibrationRigCharacterizationSourceV1_2(
       !Array.isArray(camera.lensResidualSamples) || !Array.isArray(directions.channels) ||
       !Array.isArray(repeatability.repeatedPlacementSamples) || !Array.isArray(repeatability.measurementRepeatabilitySamples)) {
     throw new Error("Rig-characterization source members do not contain reconstructable one-time inputs.");
+  }
+  if (!Array.isArray(directions.stageToUndistortedSensorMatrix) || directions.stageToUndistortedSensorMatrix.length !== 4 ||
+      directions.stageToUndistortedSensorMatrix.some((value) => !Number.isFinite(value)) ||
+      Math.abs(directions.stageToUndistortedSensorMatrix[0] * directions.stageToUndistortedSensorMatrix[3] -
+        directions.stageToUndistortedSensorMatrix[1] * directions.stageToUndistortedSensorMatrix[2]) < 1e-12) {
+    throw new Error("Physical direction authority requires one finite non-singular stage-to-normalized-target transform.");
   }
   if (directions.channels.length !== 8 || directions.channels.some((channel, index) => {
     exactKeys(channel, ["channelIndex", "directionMeasurementSamples"], "physical direction authority channel");
@@ -763,7 +772,11 @@ export function verifyFastCalibrationRigCharacterizationSourceV1_2(
     algorithmHashes: components.algorithmHashes,
   };
   validateFastCalibrationRigCharacterizationV1_2(authority, context);
-  return { authority, oneTimeBuilderInput };
+  return {
+    authority,
+    oneTimeBuilderInput,
+    physicalDirectionTransform: [...directions.stageToUndistortedSensorMatrix] as [number, number, number, number],
+  };
 }
 
 export function validateFastCalibrationRigCharacterizationV1_2(
@@ -1780,7 +1793,7 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
       const y = vectors.reduce((sum, value) => sum + value.y, 0) / vectors.length;
       const magnitude = Math.hypot(x, y);
       if (!Number.isFinite(magnitude) || magnitude <= 0) throw new Error(`Channel ${channelIndex} physical direction is degenerate.`);
-      return { x: x / magnitude, y: y / magnitude };
+      return transformFastCalibrationPhysicalDirectionV1_2({ x: x / magnitude, y: y / magnitude }, decoded.physicalToNormalizedDirectionMatrix);
     };
     const angleError = (grid: number[], expected: { x: number; y: number }): number => {
       const minimum = Math.min(...grid);
@@ -1918,6 +1931,10 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
       runtimeContext: this.identity.runtimeContext,
       activeSourceArtifactLedger,
       readFrame: (entry) => this.readAcceptedFrame(entry, events),
+      geometryAuthority: {
+        lensModel: verifiedRig.oneTimeBuilderInput.lensModel,
+        stageToUndistortedSensorMatrix: verifiedRig.physicalDirectionTransform,
+      },
     });
     const derived = this.buildEvidenceDerivedInput(source, verifiedRig, decoded);
     const analysisModule = await import("./fixedRigFastMathematicalCalibrationBundleV1_2");
