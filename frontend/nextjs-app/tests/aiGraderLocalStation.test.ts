@@ -16,6 +16,7 @@ import {
   buildAiGraderLocalStationStatus,
   completeAiGraderExactPublicationHandoff,
   parseAiGraderStationAction,
+  sanitizeAiGraderLocalStationStatusForDisplay,
   sanitizeAiGraderRapidCaptureQueue,
   sanitizeAiGraderPreviewCardGeometry,
   selectNextSerializedAiGraderOcrItem,
@@ -592,6 +593,28 @@ test("operator station contract exposes the single retained grading workflow", (
   const labels = AI_GRADER_STATION_STEPS.map((step) => step.label);
   assert.deepEqual(labels, ["Start New Card", "Capture Front", "Capture Back", "Approve & Publish"]);
   assert.equal(labels.some((label) => /fixture|accept capture|safe off/i.test(label)), false);
+});
+
+test("exact accepted profile identity keeps controller-acknowledged Front capture ready in the browser", () => {
+  const status = buildAiGraderLocalStationStatus({ action: "start-session" });
+  status.frontCaptureReadiness = {
+    ready: true,
+    code: "ready",
+    message: "The exact current Front frame and acknowledged lighting profile are ready.",
+    binding: {
+      sessionId: "station-session-1",
+      reportId: "station-report-1",
+      side: "front",
+      sideEpoch: "front-epoch-1",
+    },
+    profileIdentity: "accepted-0123456789abcdef",
+  };
+
+  const sanitized = sanitizeAiGraderLocalStationStatusForDisplay(status);
+
+  assert.equal(sanitized.frontCaptureReadiness.ready, true);
+  assert.equal(sanitized.frontCaptureReadiness.code, "ready");
+  assert.equal(sanitized.frontCaptureReadiness.profileIdentity, "accepted-0123456789abcdef");
 });
 
 test("removed browser safety, Single finalization, and separate queue mutation actions are absent", () => {

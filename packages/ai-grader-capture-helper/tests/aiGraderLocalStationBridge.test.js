@@ -477,7 +477,10 @@ test("Start New Card applies configured lighting and returns Capture Front light
     assert.equal(started.liveLighting.applied.expectedWriteCount, started.liveLighting.applied.acknowledgedWriteCount);
     assert.equal(started.liveLighting.profile.acceptedForCapture, true);
     assert.equal(started.acceptedProfile.source, "bridge_operator");
-    assert.equal(bindLiveFrontPreview(service).frontCaptureReadiness.ready, true);
+    const readiness = bindLiveFrontPreview(service).frontCaptureReadiness;
+    assert.equal(readiness.ready, true);
+    assert.equal(readiness.code, "ready");
+    assert.match(readiness.profileIdentity, /^accepted-[a-f0-9]{16}$/);
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
