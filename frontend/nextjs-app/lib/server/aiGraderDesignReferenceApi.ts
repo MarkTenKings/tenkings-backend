@@ -5,7 +5,8 @@ import {
   mathematicalDesignReferenceV1Schema,
   type MathematicalDesignReferenceV1,
 } from "@tenkings/shared";
-import type {
+import {
+  inspectAiGraderDesignReferenceArtifactBytes,
   AiGraderDesignReferenceRow,
   ApproveAiGraderDesignReferenceInput,
   CreateVerifiedAiGraderDesignReferenceDraftInput,
@@ -13,6 +14,11 @@ import type {
   ResolveExactApprovedAiGraderDesignReferenceInput,
   RetireAiGraderDesignReferenceInput,
 } from "@tenkings/database";
+import type {
+  AiGraderDesignReferenceUploadManifestV1,
+  AiGraderDesignReferenceUploadReceiptAuthorityV1,
+  AiGraderDesignReferenceUploadReceiptClaimsV1,
+} from "./aiGraderDesignReferenceUploadReceipt";
 
 type AdminIdentity = { user: { id: string } };
 type DesignReferenceService = {
@@ -28,23 +34,11 @@ export type AiGraderDesignReferenceApiDependencies = {
   service: DesignReferenceService;
   readArtifactBytes?(storageKey: string): Promise<Uint8Array>;
   planArtifactUpload?(input: AiGraderDesignReferenceUploadPlanInput): Promise<AiGraderDesignReferenceUploadPlan>;
+  uploadReceiptAuthority?: AiGraderDesignReferenceUploadReceiptAuthorityV1;
 };
 
-export type AiGraderDesignReferenceUploadPlanInput = {
-  tenantId: string;
-  setId: string;
-  programId: string;
-  cardNumber: string;
-  variantId: string | null;
-  parallelId: string | null;
-  side: "front" | "back";
-  profile: "registered_design_template_v1";
-  version: number;
-  fileName: string;
-  contentType: "image/png" | "image/jpeg";
-  byteSize: number;
-  checksumSha256: string;
-};
+export type AiGraderDesignReferenceUploadPlanInput =
+  AiGraderDesignReferenceUploadManifestV1;
 
 export type AiGraderDesignReferenceUploadPlan = {
   storageKey: string;
@@ -54,6 +48,30 @@ export type AiGraderDesignReferenceUploadPlan = {
   contentType: "image/png" | "image/jpeg";
   byteSize: number;
   checksumSha256: string;
+};
+
+export type AiGraderDesignReferenceSafeUploadPlan = Omit<
+  AiGraderDesignReferenceUploadPlan,
+  "storageKey"
+> & {
+  uploadReceipt: string;
+  receiptExpiresAt: string;
+};
+
+type AiGraderDesignReferenceDraftReceiptBody = {
+  uploadReceipt: string;
+  tenantId: string;
+  setId: string;
+  programId: string;
+  cardNumber: string;
+  variantId: string | null;
+  parallelId: string | null;
+  side: "front" | "back";
+  profile: "registered_design_template_v1";
+  version: number;
+  intendedDesignBoundary: unknown;
+  provenance: unknown;
+  transformAcceptanceMetadata: unknown;
 };
 
 const MAXIMUM_DESIGN_REFERENCE_UPLOAD_BYTES = 50 * 1024 * 1024;
@@ -200,10 +218,15 @@ function exactUploadPlan(
   input: AiGraderDesignReferenceUploadPlanInput,
   value: AiGraderDesignReferenceUploadPlan,
 ): AiGraderDesignReferenceUploadPlan {
+  const uploadHeaders = value?.uploadHeaders && typeof value.uploadHeaders === "object"
+    ? Object.fromEntries(Object.entries(value.uploadHeaders).map(([name, headerValue]) => [name.toLowerCase(), String(headerValue)]))
+    : {};
   if (!value || typeof value !== "object" ||
       typeof value.storageKey !== "string" || !value.storageKey || value.storageKey.includes("://") ||
       typeof value.uploadUrl !== "string" || !value.uploadUrl.startsWith("https://") ||
       value.uploadMethod !== "PUT" || !value.uploadHeaders || typeof value.uploadHeaders !== "object" ||
+      uploadHeaders["x-amz-acl"] !== "private" ||
+      Object.values(uploadHeaders).some((headerValue) => /public-read/i.test(headerValue)) ||
       value.contentType !== input.contentType || value.byteSize !== input.byteSize ||
       value.checksumSha256 !== input.checksumSha256) {
     throw Object.assign(new Error("Private storage returned an invalid exact design-reference upload plan."), {
@@ -212,6 +235,121 @@ function exactUploadPlan(
     });
   }
   return value;
+}
+
+function safeReferenceRow(row: AiGraderDesignReferenceRow) {
+  const { artifactStorageKey: _privateStorageKey, ...safe } = row;
+  return safe;
+}
+
+function draftReceiptBody(value: Record<string, unknown>): AiGraderDesignReferenceDraftReceiptBody {
+  const exactKeys = new Set([
+    "uploadReceipt", "tenantId", "setId", "programId", "cardNumber", "variantId",
+    "parallelId", "side", "profile", "version", "intendedDesignBoundary", "provenance",
+    "transformAcceptanceMetadata",
+  ]);
+  if (Object.keys(value).length !== exactKeys.size ||
+      Object.keys(value).some((key) => !exactKeys.has(key)) ||
+      [...exactKeys].some((key) => !Object.prototype.hasOwnProperty.call(value, key)) ||
+      typeof value.uploadReceipt !== "string" || !value.uploadReceipt) {
+    throw Object.assign(
+      new Error("Draft creation requires one exact upload receipt, identity, version, and reference metadata."),
+      {
+        statusCode: 400,
+        code: "AI_GRADER_DESIGN_REFERENCE_UPLOAD_RECEIPT_INVALID",
+      },
+    );
+  }
+  return value as AiGraderDesignReferenceDraftReceiptBody;
+}
+
+function receiptIdentity(
+  claims: AiGraderDesignReferenceUploadManifestV1,
+): ListAiGraderDesignReferencesInput {
+  return {
+    tenantId: claims.tenantId,
+    setId: claims.setId,
+    programId: claims.programId,
+    cardNumber: claims.cardNumber,
+    variantId: claims.variantId,
+    parallelId: claims.parallelId,
+    side: claims.side,
+    profile: claims.profile,
+  };
+}
+
+function assertDraftMatchesReceipt(
+  body: AiGraderDesignReferenceDraftReceiptBody,
+  claims: AiGraderDesignReferenceUploadReceiptClaimsV1,
+  adminUserId: string,
+) {
+  const bindingFields = [
+    "tenantId", "setId", "programId", "cardNumber", "variantId", "parallelId",
+    "side", "profile", "version",
+  ] as const;
+  if (claims.issuedToUserId !== adminUserId ||
+      bindingFields.some((field) => body[field] !== claims[field])) {
+    throw Object.assign(
+      new Error("Draft identity, side, profile, version, or admin does not match its exact upload receipt."),
+      {
+        statusCode: 409,
+        code: "AI_GRADER_DESIGN_REFERENCE_UPLOAD_RECEIPT_BINDING_MISMATCH",
+      },
+    );
+  }
+}
+
+async function assertReceiptVersionUnused(
+  service: DesignReferenceService,
+  claims: AiGraderDesignReferenceUploadReceiptClaimsV1 | AiGraderDesignReferenceUploadPlanInput,
+) {
+  const listed = await service.list(receiptIdentity(claims));
+  if (listed.some((row) => row.version === claims.version)) {
+    throw Object.assign(
+      new Error("This exact card side/version already has an immutable design-reference record."),
+      {
+        statusCode: 409,
+        code: "AI_GRADER_DESIGN_REFERENCE_UPLOAD_RECEIPT_REPLAYED",
+      },
+    );
+  }
+}
+
+async function verifyReceiptArtifactBeforeCreate(
+  deps: AiGraderDesignReferenceApiDependencies,
+  claims: AiGraderDesignReferenceUploadReceiptClaimsV1,
+) {
+  if (!deps.readArtifactBytes) {
+    throw Object.assign(new Error("Private design-reference byte verification is unavailable."), {
+      statusCode: 503,
+      code: "AI_GRADER_DESIGN_REFERENCE_ARTIFACT_READ_UNAVAILABLE",
+    });
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = await deps.readArtifactBytes(claims.storageKey);
+  } catch {
+    throw Object.assign(new Error("The receipt-bound private design-reference object could not be read."), {
+      statusCode: 409,
+      code: "AI_GRADER_DESIGN_REFERENCE_UPLOAD_RECEIPT_STORAGE_MISMATCH",
+    });
+  }
+  const verified = inspectAiGraderDesignReferenceArtifactBytes(
+    bytes,
+    MAXIMUM_DESIGN_REFERENCE_UPLOAD_BYTES,
+  );
+  if (verified.byteLength !== claims.byteSize ||
+      verified.artifactMimeType !== claims.contentType ||
+      verified.artifactSha256 !== claims.checksumSha256) {
+    throw Object.assign(
+      new Error("The receipt-bound private object does not match its exact byte size, MIME type, and SHA-256."),
+      {
+        statusCode: 409,
+        code: "AI_GRADER_DESIGN_REFERENCE_UPLOAD_RECEIPT_STORAGE_MISMATCH",
+      },
+    );
+  }
+  return verified;
 }
 
 function exactString(value: unknown, field: string): string {
@@ -419,20 +557,35 @@ export function createAiGraderDesignReferenceApiHandler(deps: AiGraderDesignRefe
       }
       const body = objectBody(req.body);
       if (action === "upload-plan") {
-        if (!deps.planArtifactUpload) {
+        if (!deps.planArtifactUpload || !deps.uploadReceiptAuthority) {
           throw Object.assign(new Error("Private design-reference direct upload is unavailable."), {
             statusCode: 503,
             code: "AI_GRADER_DESIGN_REFERENCE_UPLOAD_PLAN_UNAVAILABLE",
           });
         }
         const input = uploadPlanInput(body);
+        await assertReceiptVersionUnused(deps.service, input);
         const uploadPlan = exactUploadPlan(input, await deps.planArtifactUpload(input));
+        const receipt = deps.uploadReceiptAuthority.issue({
+          ...input,
+          storageKey: uploadPlan.storageKey,
+          issuedToUserId: admin.user.id,
+        });
+        const safeUploadPlan: AiGraderDesignReferenceSafeUploadPlan = {
+          uploadUrl: uploadPlan.uploadUrl,
+          uploadMethod: uploadPlan.uploadMethod,
+          uploadHeaders: { ...uploadPlan.uploadHeaders },
+          contentType: uploadPlan.contentType,
+          byteSize: uploadPlan.byteSize,
+          checksumSha256: uploadPlan.checksumSha256,
+          ...receipt,
+        };
         res.setHeader("Cache-Control", "private, no-store, max-age=0");
-        return res.status(200).json({ ok: true, uploadPlan });
+        return res.status(200).json({ ok: true, uploadPlan: safeUploadPlan });
       }
       if (action === "list") {
         const result = await deps.service.list(body as unknown as ListAiGraderDesignReferencesInput);
-        return res.status(200).json({ ok: true, references: result });
+        return res.status(200).json({ ok: true, references: result.map(safeReferenceRow) });
       }
       if (action === "active") {
         const identity = body as unknown as ListAiGraderDesignReferencesInput;
@@ -492,25 +645,44 @@ export function createAiGraderDesignReferenceApiHandler(deps: AiGraderDesignRefe
         return res.send(bytes);
       }
       if (action === "draft") {
+        if (!deps.uploadReceiptAuthority) {
+          throw Object.assign(new Error("Exact design-reference upload receipt verification is unavailable."), {
+            statusCode: 503,
+            code: "AI_GRADER_DESIGN_REFERENCE_UPLOAD_RECEIPT_UNAVAILABLE",
+          });
+        }
+        const draft = draftReceiptBody(body);
+        const claims = deps.uploadReceiptAuthority.verify(draft.uploadReceipt);
+        assertDraftMatchesReceipt(draft, claims, admin.user.id);
+        await assertReceiptVersionUnused(deps.service, claims);
+        await verifyReceiptArtifactBeforeCreate(deps, claims);
         const result = await deps.service.createVerifiedDraft({
-          ...(body as unknown as Omit<CreateVerifiedAiGraderDesignReferenceDraftInput, "createdByUserId">),
+          ...receiptIdentity(claims),
+          version: claims.version,
+          artifactStorageKey: claims.storageKey,
+          expectedArtifactByteSize: claims.byteSize,
+          expectedArtifactMimeType: claims.contentType,
+          expectedArtifactSha256: claims.checksumSha256,
+          intendedDesignBoundary: draft.intendedDesignBoundary,
+          provenance: draft.provenance,
+          transformAcceptanceMetadata: draft.transformAcceptanceMetadata,
           createdByUserId: admin.user.id,
-        });
-        return res.status(201).json({ ok: true, reference: result });
+        } as CreateVerifiedAiGraderDesignReferenceDraftInput);
+        return res.status(201).json({ ok: true, reference: safeReferenceRow(result) });
       }
       if (action === "approve") {
         const result = await deps.service.approve({
           ...(body as unknown as Omit<ApproveAiGraderDesignReferenceInput, "approvedByUserId">),
           approvedByUserId: admin.user.id,
         });
-        return res.status(200).json({ ok: true, reference: result });
+        return res.status(200).json({ ok: true, reference: safeReferenceRow(result) });
       }
       if (action === "retire") {
         const result = await deps.service.retire({
           ...(body as unknown as Omit<RetireAiGraderDesignReferenceInput, "retiredByUserId">),
           retiredByUserId: admin.user.id,
         });
-        return res.status(200).json({ ok: true, reference: result });
+        return res.status(200).json({ ok: true, reference: safeReferenceRow(result) });
       }
       return res.status(404).json({ ok: false, code: "ACTION_NOT_FOUND", message: "Unknown exact design-reference action." });
     } catch (error) {

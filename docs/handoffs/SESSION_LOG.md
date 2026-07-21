@@ -27753,3 +27753,26 @@ By enabling Rip It Live, I confirm:
 ### Guardrails And Coverage
 - No hardware, camera, lighting, helper start/restart, Production database read/write, migration, deployment, merge, report publication, NFC/F8215 operation, or design-reference approval occurred.
 - No exact card identity coverage was inferred from repository code. The repository contains no approved production reference rows/files that can honestly enumerate deployment coverage, and Production DB inspection was explicitly out of scope. Any registered-template side without one exact APPROVED row continues to hard-fail before capture; a reliable detected `printed_border_v1` remains the only other centering authority.
+
+## 2026-07-21 - Exact design-reference private upload and receipt correction
+
+- Corrected the Agent 5 draft additively on top of `12f1f9bf3a8a0c8b3f32a28be624c0a496043940`; no reviewed history was rewritten.
+- Replaced the global card-asset presigner for exact design references with a dedicated five-minute presigner that hardcodes `x-amz-acl: private`, signs the provider-native SHA-256 header, restricts the controlled import prefix and PNG/JPEG types, and never reads `CARD_STORAGE_ACL`. A public-read upload plan is rejected before any receipt is issued.
+- Replaced browser-supplied raw storage-key draft authority with a short-lived AES-256-GCM authenticated-encrypted receipt. It binds the generated storage key, complete tenant/set/program/card/variant/parallel identity, side, profile, version, file name, MIME, exact bytes, SHA-256, authenticated admin, receipt ID, issue time, and expiry. The server secret is required at `AI_GRADER_DESIGN_REFERENCE_UPLOAD_RECEIPT_SECRET` with no storage-secret fallback.
+- Draft creation accepts an exact receipt-only contract, rejects raw/unplanned keys, altered or cross-identity fields, another side/version/admin, expiry, and reuse after one immutable version is created. The handler rereads the receipt-bound object and verifies structure, dimensions, MIME, exact length, and SHA-256; the database service independently rereads and repeats the receipt-manifest integrity comparison before persistence.
+- Upload-plan, list, draft, approval, and retirement responses omit the private storage key. The admin UI retains the opaque receipt only through PUT/finalize and no longer displays private object paths.
+
+### Corrective Validation
+- Database build and Next TypeScript check passed.
+- Next production build passed with the repository's existing image/hook/optional-Sharp and stale-browser-data warnings.
+- Focused private upload/receipt plus existing design-reference API tests passed `15/15`.
+- Database design-reference integrity, approval, supersession, and retirement tests passed `14/14`.
+- Existing Next exact-reference/report/station tests passed `17/17`.
+- Capture-helper build passed; registration and immutable report-overlay tests passed `22/22`.
+- `git diff --check` passed with line-ending notices only.
+
+### Authority And Guardrails
+- Existing authority remains: exact immutable identity/version rows, explicit APPROVED-only resolution, Start New Card hash binding before registered-template capture, automatic registration from exact approved bytes, printed-border pixel evidence, immutable overlays/report provenance, and hard failure when neither authority exists.
+- New authority is only the server-issued receipt plus reread bytes; upload URLs, filenames, browser fields, raw storage keys, global public-asset ACL, web/eBay imagery, camera margins, and normalized symmetry have no draft or centering authority.
+- Repository state still contains no approved Production design-reference inventory from which exact uncovered card identities can honestly be enumerated. Production DB inspection was out of scope, so every registered-template side without an exact APPROVED row remains explicitly uncovered and fail-closed.
+- No hardware, helper start/restart, migration, database connection/mutation, Production read/write, deployment, merge, approval, publication, NFC/F8215 operation, or design-reference fabrication occurred.

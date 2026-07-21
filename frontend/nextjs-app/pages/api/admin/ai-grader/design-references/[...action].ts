@@ -4,8 +4,11 @@ import { createAiGraderDesignReferenceService, prisma } from "@tenkings/database
 import { requireAdminSession } from "../../../../../lib/server/admin";
 import { createAiGraderDesignReferenceApiHandler } from "../../../../../lib/server/aiGraderDesignReferenceApi";
 import {
-  getS3ObjectAcl,
-  presignUploadUrl,
+  AI_GRADER_DESIGN_REFERENCE_UPLOAD_RECEIPT_SECRET_ENV,
+  createAiGraderDesignReferenceUploadReceiptAuthorityV1,
+} from "../../../../../lib/server/aiGraderDesignReferenceUploadReceipt";
+import {
+  presignPrivateDesignReferenceUploadUrl,
   readStorageBuffer,
   sha256HexToBase64,
 } from "../../../../../lib/server/storage";
@@ -15,8 +18,18 @@ export const config = {
   api: { bodyParser: { sizeLimit: "64kb" } },
 };
 
+function uploadReceiptAuthority() {
+  return createAiGraderDesignReferenceUploadReceiptAuthorityV1({
+    secret: String(process.env[AI_GRADER_DESIGN_REFERENCE_UPLOAD_RECEIPT_SECRET_ENV] ?? ""),
+  });
+}
+
 const runtime = createAiGraderDesignReferenceApiHandler({
   requireAdminSession,
+  uploadReceiptAuthority: {
+    issue: (binding) => uploadReceiptAuthority().issue(binding),
+    verify: (uploadReceipt) => uploadReceiptAuthority().verify(uploadReceipt),
+  },
   planArtifactUpload: async (input) => {
     const identityHash = createHash("sha256").update(JSON.stringify({
       tenantId: input.tenantId,
@@ -37,13 +50,15 @@ const runtime = createAiGraderDesignReferenceApiHandler({
     ].join("/");
     return {
       storageKey,
-      uploadUrl: await presignUploadUrl(storageKey, input.contentType, {
+      uploadUrl: await presignPrivateDesignReferenceUploadUrl({
+        storageKey,
+        contentType: input.contentType,
         checksumSha256: input.checksumSha256,
       }),
       uploadMethod: "PUT" as const,
       uploadHeaders: {
         "Content-Type": input.contentType,
-        ...(getS3ObjectAcl() ? { "x-amz-acl": String(getS3ObjectAcl()) } : {}),
+        "x-amz-acl": "private",
         "x-amz-checksum-sha256": sha256HexToBase64(input.checksumSha256),
       },
       contentType: input.contentType,

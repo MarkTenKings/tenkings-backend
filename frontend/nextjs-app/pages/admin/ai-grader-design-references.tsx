@@ -201,7 +201,9 @@ export default function AiGraderDesignReferencesPage() {
         checksumSha256: artifactInspection.sha256,
       }) as { uploadPlan?: Record<string, unknown> };
       const uploadPlan = planPayload.uploadPlan;
-      if (!uploadPlan || typeof uploadPlan.storageKey !== "string" ||
+      if (!uploadPlan || "storageKey" in uploadPlan ||
+          typeof uploadPlan.uploadReceipt !== "string" ||
+          typeof uploadPlan.receiptExpiresAt !== "string" ||
           typeof uploadPlan.uploadUrl !== "string" || uploadPlan.uploadMethod !== "PUT" ||
           !uploadPlan.uploadHeaders || typeof uploadPlan.uploadHeaders !== "object" ||
           uploadPlan.contentType !== artifactInspection.contentType ||
@@ -221,7 +223,7 @@ export default function AiGraderDesignReferencesPage() {
       const draftPayload = await request("draft", {
         ...exactIdentity(identity),
         version: exactVersion,
-        artifactStorageKey: uploadPlan.storageKey,
+        uploadReceipt: uploadPlan.uploadReceipt,
         intendedDesignBoundary: boundary,
         provenance: JSON.parse(provenance),
         transformAcceptanceMetadata: JSON.parse(transformAcceptanceMetadata),
@@ -348,7 +350,7 @@ export default function AiGraderDesignReferencesPage() {
         <section className="mt-6 rounded border border-zinc-800 bg-[#111] p-5">
           <h2 className="text-xl font-bold">Exact versions</h2>
           <input value={retirementReason} onChange={(event) => setRetirementReason(event.target.value)} aria-label="Retirement reason" className="mt-3 w-full rounded border border-zinc-700 bg-black px-3 py-2" />
-          <div className="mt-4 grid gap-3">{references.map((row) => <article className="rounded border border-zinc-700 bg-black p-4" key={row.id}><div className="flex flex-wrap items-start justify-between gap-3"><div><strong>v{row.version} · {row.status}</strong><p className="mt-1 break-all font-mono text-xs text-zinc-400">{row.artifactSha256}</p><p className="mt-1 text-xs text-zinc-500">{row.id} · {row.artifactWidthPx}×{row.artifactHeightPx} · {row.artifactStorageKey}</p></div><div className="flex gap-2">{row.status === "draft" ? <button disabled={busy} type="button" onClick={() => void transition("approve", row)} className="rounded bg-emerald-700 px-3 py-2 text-sm font-bold">Approve exact draft</button> : null}{row.status === "approved" ? <button disabled={busy} type="button" onClick={() => void transition("retire", row)} className="rounded bg-red-800 px-3 py-2 text-sm font-bold">Retire exact reference</button> : null}</div></div></article>)}</div>
+          <div className="mt-4 grid gap-3">{references.map((row) => <article className="rounded border border-zinc-700 bg-black p-4" key={row.id}><div className="flex flex-wrap items-start justify-between gap-3"><div><strong>v{row.version} · {row.status}</strong><p className="mt-1 break-all font-mono text-xs text-zinc-400">{row.artifactSha256}</p><p className="mt-1 text-xs text-zinc-500">{row.id} · {row.artifactWidthPx}×{row.artifactHeightPx} · private server-held object</p></div><div className="flex gap-2">{row.status === "draft" ? <button disabled={busy} type="button" onClick={() => void transition("approve", row)} className="rounded bg-emerald-700 px-3 py-2 text-sm font-bold">Approve exact draft</button> : null}{row.status === "approved" ? <button disabled={busy} type="button" onClick={() => void transition("retire", row)} className="rounded bg-red-800 px-3 py-2 text-sm font-bold">Retire exact reference</button> : null}</div></div></article>)}</div>
           {references.some((row) => row.status === "draft") ? (
             <div className="mt-4 rounded border border-amber-800/60 bg-amber-950/20 p-3">
               <p className="text-xs text-amber-100">Unapproved drafts are immutable too. Revoke a bad import; never delete or overwrite its bytes.</p>

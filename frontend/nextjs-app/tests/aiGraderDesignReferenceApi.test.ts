@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createAiGraderDesignReferenceApiHandler } from "../lib/server/aiGraderDesignReferenceApi";
+import { createAiGraderDesignReferenceUploadReceiptAuthorityV1 } from "../lib/server/aiGraderDesignReferenceUploadReceipt";
 import { parseAiGraderIntendedDesignBoundaryDraft } from "../lib/aiGraderDesignReferenceDraft";
 
 function response() {
@@ -91,14 +92,18 @@ test("upload planning binds exact identity, version, bytes, type, and checksum t
   const runtime = createAiGraderDesignReferenceApiHandler({
     async requireAdminSession() { return { user: { id: "admin-exact" } }; },
     service: service(),
+    uploadReceiptAuthority: createAiGraderDesignReferenceUploadReceiptAuthorityV1({
+      secret: "legacy-api-test-receipt-secret-material",
+    }),
     async planArtifactUpload(manifest) {
       received = manifest;
       return {
-        storageKey: "ai-grader/design-references/imports/identity/v4-back-opaque.png",
+        storageKey: `ai-grader/design-references/imports/${"1".repeat(64)}/v4-back-11111111-1111-4111-8111-111111111111.png`,
         uploadUrl: "https://private-storage.example/exact",
         uploadMethod: "PUT",
         uploadHeaders: {
           "Content-Type": "image/png",
+          "x-amz-acl": "private",
           "x-amz-checksum-sha256": "base64-checksum",
         },
         contentType: "image/png",
@@ -115,7 +120,7 @@ test("upload planning binds exact identity, version, bytes, type, and checksum t
   const plan = (state.body as any).uploadPlan;
   assert.equal(plan.uploadMethod, "PUT");
   assert.equal(plan.checksumSha256, checksumSha256);
-  assert.equal(plan.storageKey.includes("private-storage.example"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(plan, "storageKey"), false);
 
   const extraKey = response();
   await runtime(request("upload-plan", { ...input, arbitraryAuthority: true }), extraKey.res);
@@ -131,17 +136,23 @@ test("upload planning binds exact identity, version, bytes, type, and checksum t
   assert.equal((mismatchedType.state.body as any).code, "AI_GRADER_DESIGN_REFERENCE_INVALID_INPUT");
 });
 
-test("draft authority always comes from the authenticated admin", async () => {
-  let received: Record<string, unknown> | undefined;
+test("draft rejects raw storage-key authority before create", async () => {
+  let called = false;
   const runtime = createAiGraderDesignReferenceApiHandler({
     async requireAdminSession() { return { user: { id: "admin-exact" } }; },
-    service: service({ async createVerifiedDraft(input: Record<string, unknown>) { received = input; return { id: "draft-1" }; } }),
+    uploadReceiptAuthority: createAiGraderDesignReferenceUploadReceiptAuthorityV1({
+      secret: "legacy-api-test-receipt-secret-material",
+    }),
+    service: service({ async createVerifiedDraft() { called = true; return { id: "never" }; } }),
   });
   const { state, res } = response();
-  await runtime(request("draft", { tenantId: "tenant-1", createdByUserId: "spoofed" }), res);
-  assert.equal(state.status, 201);
-  assert.equal(received?.createdByUserId, "admin-exact");
-  assert.equal(received?.tenantId, "tenant-1");
+  await runtime(request("draft", {
+    uploadReceipt: "not-a-server-receipt",
+    artifactStorageKey: "ai-grader/design-references/imports/unplanned.png",
+  }), res);
+  assert.equal(state.status, 400);
+  assert.equal((state.body as any).code, "AI_GRADER_DESIGN_REFERENCE_UPLOAD_RECEIPT_INVALID");
+  assert.equal(called, false);
 });
 
 test("list preserves explicit null variant and parallel identity", async () => {
