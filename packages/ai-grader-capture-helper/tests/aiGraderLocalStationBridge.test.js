@@ -428,6 +428,7 @@ test("station launcher passes the exact production_fast capture profile pair", (
   );
   assert.match(launcherSource, /AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_PATH/);
   assert.match(launcherSource, /AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_SHA256/);
+  assert.match(bridgeSource, /return await service\.streamPreview\(req, res, origin\)/);
 });
 
 test("provisional geometry is an explicit paired geometry-only opt-in and never claims calibration", () => {

@@ -32,6 +32,35 @@ test("checkerboard detector default timeout allows ten-second bounded detection"
   assert.equal(result.internalCorners.length, 176);
 });
 
+test("Production preview does not require a Mathematical Calibration session header", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-production-preview-no-calibration-header-"));
+  const config = buildAiGraderLocalStationBridgeConfig({
+    enabled: true,
+    mode: "mock",
+    port: 47652,
+    stationToken: "StationTokenStationTokenStationToken1234",
+    outputDir: path.join(root, "station"),
+  });
+  const service = new AiGraderLocalStationBridgeService(config);
+  await service.action("start-session", { captureProfile: "production_fast", reportId: "production-preview-report" });
+
+  const request = new EventEmitter();
+  request.headers = {};
+  const response = new EventEmitter();
+  response.destroyed = false;
+  response.setHeader = () => response;
+  response.writeHead = () => undefined;
+  response.write = () => true;
+  response.end = () => { response.destroyed = true; };
+
+  const stream = service.streamPreview(request, response, undefined);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(service.previewStatus().status, "live");
+  assert.equal(service.previewStatus().frameCount > 0, true);
+  request.emit("close");
+  await stream;
+});
+
 test("V1.1 binds only a calibration session, exposes overlay-gated capture, and never opens Production", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v11-bridge-"));
   const target = Buffer.from("%PDF-1.4\nV1.1 test target\n");
