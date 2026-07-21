@@ -30,6 +30,7 @@ export const MATHEMATICAL_CALIBRATION_V1_2_PROTECTED_ENV = Object.freeze({
   rigSourceBundlePath: "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_BUNDLE_PATH",
   rigSourceBundleSha256: "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_BUNDLE_SHA256",
   rigSourceMemberDir: "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_MEMBER_DIR",
+  finalizerStagingRoot: "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_FINALIZER_STAGING_ROOT",
   operatorId: "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_OPERATOR_ID",
 });
 
@@ -88,6 +89,7 @@ type ProtectedPaths = {
   rigSourceBundlePath: string;
   rigSourceBundleSha256: string;
   rigSourceMemberDir: string;
+  finalizerStagingRoot: string;
   operatorId: string;
 };
 
@@ -130,6 +132,7 @@ function protectedPaths(env: NodeJS.ProcessEnv): ProtectedPaths | undefined {
     ["runtime context path", values.runtimeContextPath],
     ["rig source bundle path", values.rigSourceBundlePath],
     ["rig source member directory", values.rigSourceMemberDir],
+    ["finalizer staging root", values.finalizerStagingRoot],
   ] as const) {
     if (!path.isAbsolute(value)) throw new Error(`Mathematical Calibration V1.2 ${label} must be absolute.`);
   }
@@ -338,6 +341,7 @@ export function buildMathematicalCalibrationV1_2ProductionAuthorityConfig(
   return {
     outputRoot: input.outputRoot,
     operatorId: paths.operatorId,
+    finalizerStagingRoot: paths.finalizerStagingRoot,
     loadRuntimeContext: loadProtectedRuntime,
     loadRigCharacterizationSource,
     verifyLiveRuntimeContext: async (expected) => {

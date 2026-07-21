@@ -171,17 +171,17 @@ def detect_preview(encoded: bytes) -> dict:
 
     rotation = math.degrees(math.atan2(outer[1]["y"] - outer[0]["y"], outer[1]["x"] - outer[0]["x"]))
     if not math.isfinite(rotation):
-    segmentation_boundary = detect_outer_boundary(image, detected)
         raise RuntimeError("checkerboard rotation is not finite")
+    segmentation_boundary = detect_outer_boundary(image, detected)
     return {
         "imageWidth": width,
         "imageHeight": height,
         "internalCorners": [_point(point) for point in grid.reshape(-1, 2)],
         "outerCorners": outer,
+        "segmentationBoundary": segmentation_boundary,
         "rotationDegrees": rotation,
         "detectorMethod": detector_method,
     }
-        "segmentationBoundary": segmentation_boundary,
 
 
 def main() -> None:
