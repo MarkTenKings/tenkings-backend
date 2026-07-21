@@ -3232,15 +3232,19 @@ export interface AiGraderWarmForensicRunner {
 function createDefaultWarmForensicRunner(config: AiGraderLocalStationBridgeConfig): AiGraderWarmForensicRunner {
   const processing = createFixedRigWarmForensicProcessingRunner({ allowedOutputRoot: config.outputDir });
   return {
-    captureSide: async (input) => {
-      const captured = await captureFixedRigWarmSideBatch(input);
-      if (!config.provisionalGeometryArtifactPath || !config.provisionalGeometryArtifactSha256) return captured;
-      return applyProvisionalMathematicalGeometryV1(captured, {
+    captureSide: captureFixedRigWarmSideBatch,
+    processSide: (batch, context) => {
+      if (!config.provisionalGeometryArtifactPath || !config.provisionalGeometryArtifactSha256) {
+        return processing.processSide(batch, context);
+      }
+      const submissionReady = applyProvisionalMathematicalGeometryV1(batch, {
         artifactPath: config.provisionalGeometryArtifactPath,
         artifactSha256: config.provisionalGeometryArtifactSha256,
-      });
+      }).then((corrected) => ({ submission: processing.processSide(corrected, context) }));
+      const admission = submissionReady.then(({ submission }) => submission.admission);
+      const result = submissionReady.then(({ submission }) => submission);
+      return Object.assign(result, { admission });
     },
-    processSide: processing.processSide,
     cancelSession: processing.cancelSession,
     shutdownProcessingWorker: processing.shutdownProcessingWorker,
     processingWorkerStatus: processing.processingWorkerStatus,

@@ -451,6 +451,18 @@ test("provisional geometry is an explicit paired geometry-only opt-in and never 
     artifactSha256,
     certifiedMathematicalV1Unaffected: true,
   });
+
+  const defaultRunnerSource = bridgeSource.match(
+    /function createDefaultWarmForensicRunner[\s\S]+?(?=\nfunction cloneManifest)/,
+  )?.[0];
+  assert.ok(defaultRunnerSource, "default warm forensic runner source must remain inspectable");
+  assert.match(defaultRunnerSource, /captureSide:\s*captureFixedRigWarmSideBatch/);
+  assert.match(defaultRunnerSource, /processSide:[\s\S]+applyProvisionalMathematicalGeometryV1/);
+  assert.doesNotMatch(
+    defaultRunnerSource,
+    /captureSide:\s*async[\s\S]+applyProvisionalMathematicalGeometryV1/,
+    "Rapid queue capture identities must remain the original immutable TIFF evidence",
+  );
 });
 
 test("Start New Card applies configured lighting and returns Capture Front lighting-ready", async () => {
