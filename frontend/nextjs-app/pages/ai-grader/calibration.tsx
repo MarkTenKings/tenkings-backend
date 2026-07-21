@@ -5,18 +5,39 @@ import AiGraderCalibrationConsole from "../../components/ai-grader/AiGraderCalib
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import {
+  aiGraderCalibrationActionEnabled,
   aiGraderCalibrationPreviewFresh,
+  buildAiGraderCalibrationConsoleFromV1_2,
   buildMockAiGraderCalibrationConsole,
   unavailableAiGraderCalibrationConsole,
   type AiGraderCalibrationConsoleAction,
   type AiGraderCalibrationConsoleViewModel,
 } from "../../lib/aiGraderCalibrationConsole";
 import {
+  listAiGraderCalibrationActivationsV1,
+  readAiGraderCalibrationActivationStatusV1,
+  runAiGraderCalibrationActivationWorkflowV1,
+  type AiGraderCalibrationSnapshotProjectionV1,
+} from "../../lib/aiGraderCalibrationActivationClient";
+import {
+  listMathematicalCalibrationV1_2Sessions,
+  mutateMathematicalCalibrationV1_2Session,
+  readMathematicalCalibrationV1_2Status,
+  replaceMathematicalCalibrationV1_2Pose,
+  startMathematicalCalibrationV1_2Session,
+} from "../../lib/aiGraderMathematicalCalibrationV1_2Client";
+import type {
+  MathematicalCalibrationV1_2SessionListItemDto,
+  MathematicalCalibrationV1_2SessionStatusDto,
+} from "../../lib/aiGraderMathematicalCalibrationV1_2Contract";
+import {
   AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY,
   AI_GRADER_STATION_TOKEN_STORAGE_KEY,
   DEFAULT_AI_GRADER_STATION_BRIDGE_URL,
+  callAiGraderStationBridge,
   openAiGraderStationPreviewStream,
 } from "../../lib/aiGraderStationBridgeClient";
+import type { AiGraderCalibrationRegistryConsoleState } from "../../components/ai-grader/AiGraderCalibrationConsole";
 import {
   aiGraderPreviewBindingMatches,
   aiGraderPreviewDisplayedSnapshot,
@@ -28,6 +49,7 @@ import {
 } from "../../lib/aiGraderPreviewLifecycle";
 
 const MOCK_SCENARIOS = new Set(["incomplete", "failed", "pass"]);
+const AI_GRADER_CALIBRATION_V1_2_SESSION_STORAGE_KEY = "tenkings.aiGraderCalibration.v1_2SessionId";
 const MOCK_PREVIEW_DATA_URL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2448 2048">
     <defs>
@@ -59,6 +81,36 @@ function applyEpochEvent(
   return transition;
 }
 
+function pairedStationCredentials() {
+  if (typeof window === "undefined") throw new Error("The paired local station is available only in the browser.");
+  const stationToken = window.localStorage.getItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY)?.trim() ?? "";
+  const baseUrl = window.localStorage.getItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY)?.trim()
+    || DEFAULT_AI_GRADER_STATION_BRIDGE_URL;
+  if (!stationToken) throw new Error("Pair this browser at the grading station before calibration.");
+  return { stationToken, baseUrl };
+}
+
+function noSessionConsole(resume?: MathematicalCalibrationV1_2SessionListItemDto): AiGraderCalibrationConsoleViewModel {
+  const base = unavailableAiGraderCalibrationConsole();
+  const available = (enabled: boolean, reason: string) => ({ available: enabled, authorityPresent: true, reason });
+  return {
+    ...base,
+    source: "authoritative_bridge",
+    contractVersion: "1.2.0",
+    title: "Mathematical Calibration V1.2",
+    summary: resume
+      ? "The paired helper preserved the exact incomplete session. Resume uses its server-issued revision."
+      : "Start a new helper-owned calibration. The browser supplies no operation, role, channel, sample, or rig authority.",
+    hardFailure: undefined,
+    actions: {
+      ...base.actions,
+      start_new: available(true, "Start one new helper-owned V1.2 session."),
+      resume: available(Boolean(resume), resume ? "Resume the exact preserved session and revision." : "No exact preserved browser-bound session is available."),
+      exit: available(true, "Return safely to grading."),
+    },
+  };
+}
+
 export default function AiGraderCalibrationPage() {
   const router = useRouter();
   const { session, loading: sessionLoading, ensureSession } = useSession();
@@ -67,7 +119,12 @@ export default function AiGraderCalibrationPage() {
     : null;
   const localMock = process.env.NODE_ENV !== "production" ? requestedMock : null;
   const isAdmin = hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone);
-  const [model] = useState<AiGraderCalibrationConsoleViewModel>(() => unavailableAiGraderCalibrationConsole());
+  const [model, setModel] = useState<AiGraderCalibrationConsoleViewModel>(() => unavailableAiGraderCalibrationConsole());
+  const [v1_2Status, setV1_2Status] = useState<MathematicalCalibrationV1_2SessionStatusDto>();
+  const [resumeItem, setResumeItem] = useState<MathematicalCalibrationV1_2SessionListItemDto>();
+  const [busyAction, setBusyAction] = useState<AiGraderCalibrationConsoleAction>();
+  const [registryState, setRegistryState] = useState<AiGraderCalibrationRegistryConsoleState>({ loading: false });
+  const [registryBusy, setRegistryBusy] = useState(false);
   const displayModel = useMemo(
     () => localMock ? buildMockAiGraderCalibrationConsole(localMock) : model,
     [localMock, model],
@@ -87,6 +144,61 @@ export default function AiGraderCalibrationPage() {
     if (!router.isReady || localMock || sessionLoading || session) return;
     void ensureSession({ message: "Admin authentication is required to open calibration." }).catch(() => undefined);
   }, [ensureSession, localMock, router.isReady, session, sessionLoading]);
+
+  const applyV1_2Status = useCallback((status: MathematicalCalibrationV1_2SessionStatusDto) => {
+    setV1_2Status(status);
+    setModel(buildAiGraderCalibrationConsoleFromV1_2(status));
+    window.localStorage.setItem(AI_GRADER_CALIBRATION_V1_2_SESSION_STORAGE_KEY, status.sessionId);
+  }, []);
+
+  const refreshCore = useCallback(async () => {
+    const credentials = pairedStationCredentials();
+    const listed = await listMathematicalCalibrationV1_2Sessions(credentials);
+    const savedSessionId = window.localStorage.getItem(AI_GRADER_CALIBRATION_V1_2_SESSION_STORAGE_KEY)?.trim();
+    const saved = savedSessionId ? listed.sessions.find((item) => item.sessionId === savedSessionId) : undefined;
+    setResumeItem(saved);
+    if (!saved) {
+      setV1_2Status(undefined);
+      setModel(noSessionConsole());
+      return;
+    }
+    const status = await readMathematicalCalibrationV1_2Status({ ...credentials, sessionId: saved.sessionId });
+    if (status.revision !== saved.revision) {
+      setResumeItem({ ...saved, revision: status.revision });
+    }
+    applyV1_2Status(status);
+  }, [applyV1_2Status]);
+
+  const refreshRegistry = useCallback(async (tokenOverride?: string) => {
+    const token = tokenOverride?.trim() || session?.token?.trim() || "";
+    if (!token) return;
+    setRegistryState((current) => ({ ...current, loading: true, error: undefined }));
+    try {
+      const credentials = pairedStationCredentials();
+      const stationStatus = await callAiGraderStationBridge({ ...credentials, action: "status" });
+      const rigId = stationStatus.mathematicalCalibration?.rigId?.trim();
+      if (!rigId) throw new Error("The paired helper did not project one exact rig identity for the hosted registry.");
+      const listed = await listAiGraderCalibrationActivationsV1({ token, rigId, includeIncomplete: true });
+      const status = await readAiGraderCalibrationActivationStatusV1({ token, rigId });
+      if (listed.registry.rigId !== rigId || listed.registry.registryRevision !== status.registryRevision) {
+        throw new Error("Hosted registry changed while loading. Refresh before selecting a calibration.");
+      }
+      setRegistryState({ loading: false, registry: listed.registry, status });
+    } catch (error) {
+      setRegistryState({
+        loading: false,
+        error: error instanceof Error ? error.message : "Hosted calibration registry is unavailable.",
+      });
+    }
+  }, [session?.token]);
+
+  useEffect(() => {
+    if (!router.isReady || localMock || sessionLoading || !isAdmin || !session?.token) return;
+    void refreshCore().catch((error) => {
+      setModel(unavailableAiGraderCalibrationConsole(error instanceof Error ? error.message : "V1.2 local session authority is unavailable."));
+    });
+    void refreshRegistry();
+  }, [isAdmin, localMock, refreshCore, refreshRegistry, router.isReady, session?.token, sessionLoading]);
 
   useEffect(() => {
     const binding = displayModel.source === "authoritative_bridge" ? displayModel.previewBinding : undefined;
@@ -196,7 +308,10 @@ export default function AiGraderCalibrationPage() {
       ? "Basler live · fresh"
       : "Basler preview unavailable";
 
-  const handleAction = useCallback((action: AiGraderCalibrationConsoleAction) => {
+  const handleAction = useCallback(async (
+    action: AiGraderCalibrationConsoleAction,
+    input?: Record<string, unknown>,
+  ) => {
     if (action === "exit") {
       void router.push("/ai-grader/station");
       return;
@@ -205,8 +320,127 @@ export default function AiGraderCalibrationPage() {
       setMessage("Mocked-data review only: no helper, camera, lighting, registry, or Production mutation was performed.");
       return;
     }
-    setMessage("This action is blocked because its reviewed authoritative contract is not available. The browser did not invent a request.");
-  }, [localMock, router]);
+    if (action === "activate" || action === "reactivate") {
+      setMessage("Use the exact hosted registry selection below. Core V1.2 never owns activation.");
+      return;
+    }
+    const selectedPoseNumber = typeof input?.selectedPoseNumber === "number" ? input.selectedPoseNumber : undefined;
+    const replacementWarningConfirmed = input?.replacementWarningConfirmed === true;
+    if (!aiGraderCalibrationActionEnabled({
+      model: displayModel,
+      action,
+      previewFresh,
+      selectedPoseNumber,
+      replacementWarningConfirmed,
+    })) {
+      setMessage(displayModel.actions[action].reason);
+      return;
+    }
+    const credentials = pairedStationCredentials();
+    setBusyAction(action);
+    setMessage("");
+    try {
+      let next: MathematicalCalibrationV1_2SessionStatusDto;
+      if (action === "start_new") {
+        next = await startMathematicalCalibrationV1_2Session({ ...credentials, request: {} });
+      } else if (action === "resume") {
+        if (!resumeItem) throw new Error("No exact preserved session/revision is selected for resume.");
+        next = await startMathematicalCalibrationV1_2Session({
+          ...credentials,
+          request: { resumeSessionId: resumeItem.sessionId, expectedRevision: resumeItem.revision },
+        });
+      } else {
+        if (!v1_2Status) throw new Error("Refresh the exact V1.2 session before mutation.");
+        const request = { sessionId: v1_2Status.sessionId, expectedRevision: v1_2Status.revision };
+        if (action === "replace_selected_pose") {
+          if (!selectedPoseNumber || selectedPoseNumber < 1 || selectedPoseNumber > 4 || !replacementWarningConfirmed) {
+            throw new Error("Exact accepted pose selection and immutable-history acknowledgement are required.");
+          }
+          next = await replaceMathematicalCalibrationV1_2Pose({
+            ...credentials,
+            request: { ...request, acceptedSlot: selectedPoseNumber as 1 | 2 | 3 | 4 },
+          });
+        } else if (action === "retry_current_pose") {
+          next = await mutateMathematicalCalibrationV1_2Session({ ...credentials, action: "retry", request });
+        } else if (action === "analyze") {
+          next = await mutateMathematicalCalibrationV1_2Session({ ...credentials, action: "analyze", request });
+        } else if (action === "finalize") {
+          next = await mutateMathematicalCalibrationV1_2Session({ ...credentials, action: "finalize", request });
+        } else if (action === "begin_or_resume_automatic_sweep") {
+          next = v1_2Status;
+          for (let step = 0; step < 73 && next.phase === "photometric_sweep"; step += 1) {
+            next = await mutateMathematicalCalibrationV1_2Session({
+              ...credentials,
+              action: "capture",
+              request: { sessionId: next.sessionId, expectedRevision: next.revision },
+            });
+            applyV1_2Status(next);
+          }
+          if (next.phase === "photometric_sweep") {
+            throw new Error("Automatic sweep stopped before the helper reached its exact next phase.");
+          }
+        } else {
+          next = await mutateMathematicalCalibrationV1_2Session({ ...credentials, action: "capture", request });
+        }
+      }
+      applyV1_2Status(next);
+      setMessage(`Exact helper state updated to revision ${next.revision.slice(0, 12)}.`);
+    } catch (error) {
+      if (v1_2Status?.sessionId) {
+        try {
+          applyV1_2Status(await readMathematicalCalibrationV1_2Status({
+            ...credentials,
+            sessionId: v1_2Status.sessionId,
+          }));
+        } catch {
+          // Preserve the original failure; no stale client state authorizes another mutation.
+        }
+      }
+      setMessage(error instanceof Error ? error.message : "Calibration mutation failed closed.");
+    } finally {
+      setBusyAction(undefined);
+    }
+  }, [
+    applyV1_2Status,
+    displayModel,
+    localMock,
+    previewFresh,
+    resumeItem,
+    router,
+    v1_2Status,
+  ]);
+
+  const handleRegistryActivation = useCallback(async (input: {
+    action: "activate" | "reactivate";
+    snapshot: AiGraderCalibrationSnapshotProjectionV1;
+    priorActivationId?: string;
+    expectedRegistryRevision: string;
+    reason: string;
+  }) => {
+    setRegistryBusy(true);
+    setMessage("");
+    try {
+      const freshSession = await ensureSession({
+        force: true,
+        message: "Enter a fresh human-admin SMS code to activate this exact calibration.",
+      });
+      if (!hasAdminAccess(freshSession.user.id) && !hasAdminPhoneAccess(freshSession.user.phone)) {
+        throw new Error("Fresh authentication did not produce a human-admin session.");
+      }
+      const credentials = pairedStationCredentials();
+      const result = await runAiGraderCalibrationActivationWorkflowV1({
+        freshAdminToken: freshSession.token,
+        ...credentials,
+        selection: input,
+      });
+      setMessage(`Exact activation ${result.completed.activation.activationId} is hosted and locally ACTIVE.`);
+      await refreshRegistry(freshSession.token);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Calibration activation failed closed.");
+    } finally {
+      setRegistryBusy(false);
+    }
+  }, [ensureSession, refreshRegistry]);
 
   if (!router.isReady || (!localMock && sessionLoading)) {
     return <main className="gate"><p>Checking admin access…</p><style jsx>{`.gate{min-height:100vh;display:grid;place-items:center;background:#0b0d0c;color:#f5f1e7;font-family:system-ui}`}</style></main>;
@@ -238,8 +472,13 @@ export default function AiGraderCalibrationPage() {
         previewFresh={previewFresh}
         previewStatusLabel={previewStatusLabel}
         previewDetail={previewDetail}
+        busyAction={busyAction}
         message={message}
         onAction={handleAction}
+        registryState={localMock ? undefined : registryState}
+        registryBusy={registryBusy}
+        onRefreshRegistry={() => void refreshRegistry()}
+        onRegistryActivation={(input) => void handleRegistryActivation(input)}
       />
       <style jsx>{`.mock-banner{position:sticky;top:0;z-index:20;background:#7b5415;color:#fff5d6;padding:7px 12px;text-align:center;font:800 12px/1.3 system-ui;letter-spacing:.04em}`}</style>
     </>

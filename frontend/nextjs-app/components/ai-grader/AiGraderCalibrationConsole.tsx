@@ -5,6 +5,18 @@ import type {
   AiGraderCalibrationHistoryView,
 } from "../../lib/aiGraderCalibrationConsole";
 import { aiGraderCalibrationActionEnabled } from "../../lib/aiGraderCalibrationConsole";
+import type {
+  AiGraderCalibrationActivationRegistryProjectionV1,
+  AiGraderCalibrationActivationStatusResponseV1,
+  AiGraderCalibrationSnapshotProjectionV1,
+} from "../../lib/aiGraderCalibrationActivationClient";
+
+export type AiGraderCalibrationRegistryConsoleState = {
+  loading: boolean;
+  error?: string;
+  registry?: AiGraderCalibrationActivationRegistryProjectionV1;
+  status?: AiGraderCalibrationActivationStatusResponseV1;
+};
 
 export type AiGraderCalibrationConsoleProps = {
   model: AiGraderCalibrationConsoleViewModel;
@@ -15,6 +27,16 @@ export type AiGraderCalibrationConsoleProps = {
   busyAction?: AiGraderCalibrationConsoleAction;
   message?: string;
   onAction(action: AiGraderCalibrationConsoleAction, input?: Record<string, unknown>): void;
+  registryState?: AiGraderCalibrationRegistryConsoleState;
+  registryBusy?: boolean;
+  onRefreshRegistry?(): void;
+  onRegistryActivation?(input: {
+    action: "activate" | "reactivate";
+    snapshot: AiGraderCalibrationSnapshotProjectionV1;
+    priorActivationId?: string;
+    expectedRegistryRevision: string;
+    reason: string;
+  }): void;
 };
 
 const ACTION_LABELS: Record<AiGraderCalibrationConsoleAction, string> = {
@@ -68,12 +90,18 @@ export default function AiGraderCalibrationConsole({
   busyAction,
   message,
   onAction,
+  registryState,
+  registryBusy,
+  onRefreshRegistry,
+  onRegistryActivation,
 }: AiGraderCalibrationConsoleProps) {
   const [selectedPoseNumber, setSelectedPoseNumber] = useState<number>();
   const [replacementConfirmed, setReplacementConfirmed] = useState(false);
   const [activationName, setActivationName] = useState("");
   const [activationLocation, setActivationLocation] = useState("");
   const [lightingLabel, setLightingLabel] = useState("");
+  const [selectedRegistrySnapshotId, setSelectedRegistrySnapshotId] = useState("");
+  const [activationReason, setActivationReason] = useState("");
 
   const actionEnabled = (action: AiGraderCalibrationConsoleAction) => aiGraderCalibrationActionEnabled({
     model,
@@ -97,6 +125,17 @@ export default function AiGraderCalibrationConsole({
     const maxY = Math.max(2048, ...points.map((point) => point.y));
     return `0 0 ${maxX} ${maxY}`;
   }, [model.currentPose.exactTargetContour]);
+  const registry = registryState?.registry;
+  const registryStatus = registryState?.status;
+  const selectedRegistrySnapshot = registry?.snapshots.find((snapshot) => snapshot.snapshotId === selectedRegistrySnapshotId);
+  const priorActivationForSelected = useMemo(() => {
+    if (!registry || !selectedRegistrySnapshot) return undefined;
+    return [...registry.activations]
+      .filter((activation) => activation.snapshotId === selectedRegistrySnapshot.snapshotId && activation.activatedAt)
+      .sort((left, right) => Date.parse(right.activatedAt ?? "") - Date.parse(left.activatedAt ?? ""))[0];
+  }, [registry, selectedRegistrySnapshot]);
+  const selectedRegistryAction = priorActivationForSelected ? "reactivate" : "activate";
+  const activeRegistryActivation = registry?.activations.find((activation) => activation.activationId === registry.activeActivationId);
 
   const button = (action: AiGraderCalibrationConsoleAction, className = "") => {
     const enabled = actionEnabled(action) && (action !== "activate" || activationLabelsComplete);
@@ -106,7 +145,7 @@ export default function AiGraderCalibrationConsole({
         type="button"
         className={`calibration-action ${className}`.trim()}
         onClick={() => onAction(action, action === "replace_selected_pose"
-          ? { selectedPoseNumber }
+          ? { selectedPoseNumber, replacementWarningConfirmed: replacementConfirmed }
           : action === "activate"
             ? { name: activationName.trim(), location: activationLocation.trim(), lightingLabel: lightingLabel.trim() }
             : undefined)}
@@ -315,6 +354,103 @@ export default function AiGraderCalibrationConsole({
             {model.analysis.exactPass && model.finalization.exactPass ? "EXACT PASS" : "BLOCKED"}
           </strong>
         </div>
+        {registryState ? (
+          <div className="activation-layout">
+            <div className="activation-form">
+              <div className="section-head">
+                <div><p className="eyebrow">Hosted Registry</p><h3>{registry?.rigId ?? "Waiting for exact rig identity"}</h3></div>
+                <button type="button" className="calibration-action quiet" onClick={onRefreshRegistry} disabled={registryBusy || registryState.loading}>Refresh</button>
+              </div>
+              {registryState.error ? <p className="activation-blocked" role="alert">{registryState.error}</p> : null}
+              {registryStatus?.pending ? (
+                <p className="activation-blocked" role="status">
+                  Pending activation {registryStatus.pending.activationId} must complete or fail before another selection.
+                </p>
+              ) : null}
+              {selectedRegistrySnapshot ? (
+                <>
+                  <h4>{selectedRegistrySnapshot.profileId} / {selectedRegistrySnapshot.calibrationVersion}</h4>
+                  <dl className="hash-list">
+                    <dt>Snapshot</dt><dd><code>{selectedRegistrySnapshot.snapshotId}</code></dd>
+                    <dt>Bundle SHA-256</dt><dd><code title={selectedRegistrySnapshot.bundleManifestSha256 ?? undefined}>{hash(selectedRegistrySnapshot.bundleManifestSha256 ?? undefined)}</code></dd>
+                    <dt>Runtime context</dt><dd><code title={selectedRegistrySnapshot.runtimeContextHash ?? undefined}>{hash(selectedRegistrySnapshot.runtimeContextHash ?? undefined)}</code></dd>
+                    <dt>Rig characterization</dt><dd><code title={selectedRegistrySnapshot.rigCharacterizationSha256 ?? undefined}>{hash(selectedRegistrySnapshot.rigCharacterizationSha256 ?? undefined)}</code></dd>
+                    <dt>Operating context</dt><dd><code title={selectedRegistrySnapshot.operatingContextHash ?? undefined}>{hash(selectedRegistrySnapshot.operatingContextHash ?? undefined)}</code></dd>
+                  </dl>
+                  <label>
+                    Private activation reason
+                    <input
+                      value={activationReason}
+                      onChange={(event) => setActivationReason(event.target.value)}
+                      placeholder="Why this exact calibration is being selected"
+                    />
+                  </label>
+                  <p className="warning-copy">
+                    This explicit {selectedRegistryAction} removes any prior active pointer before local verification. Failure has no automatic rollback or older-calibration fallback.
+                  </p>
+                  <button
+                    type="button"
+                    className="calibration-action activate-button"
+                    disabled={
+                      registryBusy ||
+                      Boolean(registryStatus?.pending) ||
+                      !selectedRegistrySnapshot.activationEligible ||
+                      selectedRegistrySnapshot.trustStatus !== "TRUSTED" ||
+                      activeRegistryActivation?.snapshotId === selectedRegistrySnapshot.snapshotId ||
+                      activationReason.trim().length === 0 ||
+                      !onRegistryActivation
+                    }
+                    onClick={() => onRegistryActivation?.({
+                      action: selectedRegistryAction,
+                      snapshot: selectedRegistrySnapshot,
+                      ...(priorActivationForSelected ? { priorActivationId: priorActivationForSelected.activationId } : {}),
+                      expectedRegistryRevision: registry!.registryRevision,
+                      reason: activationReason.trim(),
+                    })}
+                  >
+                    {registryBusy ? "Verifying authority�w^~)�v" : selectedRegistryAction === "reactivate"
+                      ? "Authenticate & Reactivate"
+                      : "Authenticate & Activate"}
+                  </button>
+                  <p className="action-reason">A fresh human-admin sign-in is required before the first hosted write.</p>
+                </>
+              ) : <p className="empty-copy">Select one exact hosted snapshot to review its immutable hashes.</p>}
+            </div>
+            <div className="calibration-history">
+              <h3>Saved calibrations</h3>
+              {registry?.snapshots.length ? registry.snapshots.map((snapshot) => {
+                const exactActive = activeRegistryActivation?.snapshotId === snapshot.snapshotId;
+                const historical = registry.activations
+                  .filter((activation) => activation.snapshotId === snapshot.snapshotId && activation.activatedAt)
+                  .sort((left, right) => Date.parse(right.activatedAt ?? "") - Date.parse(left.activatedAt ?? ""))[0];
+                const label = exactActive ? "Currently Active" : historical ? "Select to Reactivate" : "Select to Activate";
+                return (
+                  <article key={snapshot.snapshotId}>
+                    <div>
+                      <span className={`status-pill ${snapshot.trustStatus === "TRUSTED" ? "eligible" : "failed"}`}>{snapshot.trustStatus}</span>
+                      <h4>{snapshot.profileId}</h4>
+                      <p>{snapshot.calibrationVersion} � {snapshot.rigId}</p>
+                      <small>{snapshot.activationEligible ? "Exact hosted activation checks passed." : snapshot.activationIneligibilityCode ?? "Not eligible."}</small>
+                      {snapshot.bundleManifestSha256 ? <code title={snapshot.bundleManifestSha256}>{hash(snapshot.bundleManifestSha256)}</code> : null}
+                    </div>
+                    <button
+                      type="button"
+                      className="calibration-action"
+                      disabled={registryBusy || Boolean(registryStatus?.pending) || exactActive || !snapshot.activationEligible}
+                      onClick={() => {
+                        setSelectedRegistrySnapshotId(snapshot.snapshotId);
+                        setActivationReason("");
+                      }}
+                    >
+                      {label}
+                    </button>
+                  </article>
+                );
+              }) : <p className="empty-copy">{registryState.loading ? "Loading exact registry projectionr��y��y�" : "No saved calibration projections are available."}</p>}
+              <p className="action-reason">Historical reactivation uses the exact prior activated ID shown by the hosted registry.</p>
+            </div>
+          </div>
+        ) : (
         <div className="activation-layout">
           <div className="activation-form">
             <label>Name<input value={activationName} onChange={(event) => setActivationName(event.target.value)} placeholder="Calibration name" /></label>
@@ -356,6 +492,7 @@ export default function AiGraderCalibrationConsole({
             <p id="reason-reactivate" className="action-reason">{model.actions.reactivate.reason}</p>
           </div>
         </div>
+        )}
       </section>
 
       <style jsx>{`
@@ -399,6 +536,7 @@ export default function AiGraderCalibrationConsole({
         .result-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; } .result-columns > div { border: 1px solid #30342f; background: #0d0f0d; padding: 11px; } .result-columns p { margin: 7px 0; color: #c8c0af; line-height: 1.4; } .result-columns ul { padding-left: 18px; color: #f0b3a8; }
         .action-reason { margin: 6px 0 0; color: #979080; font-size: 10px; line-height: 1.35; }
         .activation-blocked { border: 1px solid #79483f; background: #261613; color: #ffc1b5; padding: 10px; font-size: 12px; line-height: 1.4; }
+        .warning-copy { margin: 8px 0 12px; border-left: 4px solid #d86559; background: #241513; color: #f4c8bf; padding: 9px 11px; font-size: 11px; line-height: 1.45; }
         .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
         .empty-copy { margin-top: 9px; color: #a9a18f; }
         .activation-section { margin-top: 14px; }
