@@ -34,9 +34,10 @@ def _finite_in_frame(point: np.ndarray, width: int, height: int) -> bool:
 def derive_outer_corners(grid: np.ndarray, width: int, height: int) -> list[dict[str, float]]:
     """Extrapolate one half-cell from each detected boundary corner.
 
-    OpenCV may return the checkerboard grid in either orientation. Sort the
-    four extrapolated points around their centroid so the bridge always emits
-    a consistent clockwise contour for pose assessment.
+    Preserve OpenCV's semantic grid order. The first two points are the two
+    corners on the first detected grid row, followed by the corresponding
+    corners on the last detected row. Reordering these points geometrically
+    can silently rotate the pose by 90 degrees.
     """
     raw = [
         grid[0, 0] - 0.5 * (grid[0, 1] - grid[0, 0]) - 0.5 * (grid[1, 0] - grid[0, 0]),
@@ -44,13 +45,9 @@ def derive_outer_corners(grid: np.ndarray, width: int, height: int) -> list[dict
         grid[-1, -1] + 0.5 * (grid[-1, -1] - grid[-1, -2]) + 0.5 * (grid[-1, -1] - grid[-2, -1]),
         grid[-1, 0] - 0.5 * (grid[-1, 1] - grid[-1, 0]) + 0.5 * (grid[-1, 0] - grid[-2, 0]),
     ]
-    center = sum(raw) / len(raw)
-    ordered = sorted(raw, key=lambda point: math.atan2(float(point[1] - center[1]), float(point[0] - center[0])))
-    start = min(range(len(ordered)), key=lambda index: (float(ordered[index][1]), float(ordered[index][0])))
-    ordered = ordered[start:] + ordered[:start]
-    if not all(_finite_in_frame(point, width, height) for point in ordered):
+    if not all(_finite_in_frame(point, width, height) for point in raw):
         raise RuntimeError("checkerboard outer contour is missing or out of frame")
-    return [_point(point) for point in ordered]
+    return [_point(point) for point in raw]
 
 
 def _detect_internal_corners(gray: np.ndarray) -> np.ndarray | None:

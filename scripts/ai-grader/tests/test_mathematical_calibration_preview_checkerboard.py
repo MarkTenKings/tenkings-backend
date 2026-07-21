@@ -52,6 +52,17 @@ class CalibrationPreviewCheckerboardTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "checkerboard"):
             MODULE.detect_preview(encode(np.full((1200, 1000), 210, np.uint8)))
 
+    def test_outer_contour_preserves_opencv_grid_semantic_order(self):
+        grid = np.array([
+            [[600 - row * 20, 500 + column * 20] for column in range(11)]
+            for row in range(16)
+        ], dtype=np.float64)
+        outer = MODULE.derive_outer_corners(grid, 1000, 1000)
+        self.assertEqual(outer[0], {"x": 610.0, "y": 490.0})
+        self.assertEqual(outer[1], {"x": 610.0, "y": 710.0})
+        self.assertEqual(outer[2], {"x": 290.0, "y": 710.0})
+        self.assertEqual(outer[3], {"x": 290.0, "y": 490.0})
+
     def test_out_of_frame_outer_geometry_fails_closed(self):
         with self.assertRaisesRegex(RuntimeError, "out of frame"):
             grid = np.array([
