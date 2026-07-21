@@ -10587,7 +10587,10 @@ export class AiGraderLocalStationBridgeService {
   }
 
   async streamPreview(req: http.IncomingMessage, res: http.ServerResponse, origin: string | undefined): Promise<void> {
-    const calibrationPreviewSessionId = exactRequestHeader(req, "X-AI-Grader-Mathematical-Calibration-Session-Id");
+    const calibrationPreviewHeader = req.headers["x-ai-grader-mathematical-calibration-session-id"];
+    const calibrationPreviewSessionId = calibrationPreviewHeader === undefined
+      ? undefined
+      : exactRequestHeader(req, "X-AI-Grader-Mathematical-Calibration-Session-Id");
     const calibrationPreviewBound = Boolean(
       calibrationPreviewSessionId && calibrationPreviewSessionId === this.mathematicalCalibrationV1_1SessionId,
     );
@@ -12328,7 +12331,7 @@ export function createAiGraderLocalStationBridgeHttpServer(
       if (url.pathname === "/preview/stream") {
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for /preview/stream." }, origin, config);
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
-        return service.streamPreview(req, res, origin);
+        return await service.streamPreview(req, res, origin);
       }
 
       if (url.pathname === "/lighting/status") {
