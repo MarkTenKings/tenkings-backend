@@ -25,6 +25,18 @@ The hardware-free V1.2 core is a separate contract, not a reinterpretation of V1
 
 V1.2 persists an append-only event/hash chain, retains successful poses across failures and restart, permits explicit lineage-preserving pose supersession, resumes a persistent camera/controller batch at the first missing frame, enforces exact safe-off/controller acknowledgement, and produces the complete Production outer bundle and ordered 12-member ledger. The canonical loader accepts V1.2 only when its exact source, threshold, runtime-context, and rig-characterization contracts verify. Local Start New Card remains blocked if exact live context is absent or differs.
 
+The frozen local-helper contract is:
+
+- 'GET /calibration/mathematical-v1.2/sessions' and 'GET /calibration/mathematical-v1.2/status?sessionId=...';
+- 'POST /calibration/mathematical-v1.2/start';
+- 'POST /calibration/mathematical-v1.2/capture' and '/retry', each meaning execute only the current server-owned expected step;
+- 'POST /calibration/mathematical-v1.2/replace-pose' with an accepted slot and the exact history-preservation acknowledgement; and
+- 'POST /calibration/mathematical-v1.2/analyze' and '/finalize'.
+
+Use the server-issued revision token for every resume or mutation. Never supply a browser operation ID, role/slot/channel/sample, runtime context, rig authority, acceptance boolean, analysis bytes, bundle bytes, or trusted hash. The route family has no activation endpoint. Successful finalization stops at 'ready_for_explicit_activation'; Start New Card remains hard-blocked until the separate Agent 4 activation receipt and exact live-context check succeed.
+
+Session creation/resume rereads the exact five-member rig source. Analysis is rebuilt from the active event/evidence ledger, pose geometry is derived from the accepted capture-time pose records, and finalization plus every resume canonical-loader verify the outer bundle and all 12 member bytes.
+
 This software candidate does **not** authorize a Dell run, activation, helper install/restart, Production port use, database import/trust, or deployment. A Dell operator runner/controller adapter, physical timing, thermal/repeatability evidence, and explicit activation remain required. The V1.0.1 '102'-capture/'78'-measurement process below remains the established physical procedure until those V1.2 Dell gates pass. There is no conversion or automatic fallback among V1.0.1, V1.1, V1.2, provisional geometry, or V0.
 
 Under ten minutes is an acceptance target, not a present claim. Measure wall time on the Dell from session creation through ready-for-explicit-activation, including operator moves, controller acknowledgements, image transfer/checkpointing, analysis, finalization, and safe-off. Never lower pose, residual, U95, repeatability, or threshold-manifest gates to meet the target.

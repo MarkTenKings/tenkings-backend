@@ -25,7 +25,9 @@ const {
   FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
   FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_AUTHORITY_SCHEMA,
   FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA,
+  FixedRigFastMathematicalCalibrationCoreV1_2,
   hashFastCalibrationCanonicalV1_2,
+  verifyFastCalibrationRigCharacterizationSourceV1_2,
 } = require("../dist/drivers/fixedRigFastMathematicalCalibrationV1_2");
 
 const HASH_POLICY = "sha256-canonical-json-with-artifactSha256-omitted";
@@ -45,6 +47,7 @@ function jsonBytes(value) {
   return Buffer.from(`${JSON.stringify(canonical(value), null, 2)}\n`, "utf8");
 }
 
+const compactCanonicalBytes = (value) => Buffer.from(`${JSON.stringify(canonical(value))}\n`, "utf8");
 function runtimeContext() {
   return {
     schemaVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA,
@@ -106,6 +109,86 @@ function rigAuthority(context) {
     targetSha256: context.target.sha256,
     componentConfigurationId: context.componentConfigurationId,
     algorithmHashes: structuredClone(context.algorithmHashes),
+  };
+}
+
+function rigSource(builder, context) {
+  const members = [
+    {
+      role: "target_metrology",
+      fileName: "target-metrology-authority-v1.json",
+      value: {
+        schemaVersion: "ten-kings-target-metrology-authority-v1",
+        rigId: context.rigId,
+        targetVersion: builder.targetVersion,
+        targetSha256: builder.targetSha256,
+        scaleSamples: builder.scaleSamples,
+        targetPrintScaleSamples: builder.targetPrintScaleSamples,
+        targetCutDimensionSamples: builder.targetCutDimensionSamples,
+        targetEvidence: builder.targetEvidence,
+      },
+    },
+    {
+      role: "camera_lens",
+      fileName: "camera-lens-authority-v1.json",
+      value: {
+        schemaVersion: "ten-kings-camera-lens-authority-v1",
+        rigId: context.rigId,
+        cameraSerialNumber: context.camera.serialNumber,
+        cameraModelName: context.camera.modelName,
+        lensAuthorityId: context.camera.lensAuthorityId,
+        normalizedWidthPx: builder.normalizedWidthPx,
+        normalizedHeightPx: builder.normalizedHeightPx,
+        lensResidualSamples: builder.lensResidualSamples,
+        lensModel: builder.lensModel,
+        normalizationModel: builder.normalizationModel,
+      },
+    },
+    {
+      role: "physical_light_directions",
+      fileName: "physical-light-directions-authority-v1.json",
+      value: {
+        schemaVersion: "ten-kings-physical-light-directions-authority-v1",
+        rigId: context.rigId,
+        channels: builder.channels.map(({ channelIndex, directionMeasurementSamples }) => ({
+          channelIndex,
+          directionMeasurementSamples,
+        })),
+      },
+    },
+    {
+      role: "component_identities",
+      fileName: "component-identities-authority-v1.json",
+      value: {
+        schemaVersion: "ten-kings-component-identities-authority-v1",
+        rigId: context.rigId,
+        controllerIdentity: context.controller.identity,
+        componentConfigurationId: context.componentConfigurationId,
+        channelWiring: structuredClone(context.controller.channelWiring),
+        algorithmHashes: structuredClone(context.algorithmHashes),
+      },
+    },
+    {
+      role: "repeatability",
+      fileName: "repeatability-authority-v1.json",
+      value: {
+        schemaVersion: "ten-kings-repeatability-authority-v1",
+        rigId: context.rigId,
+        repeatedPlacementSamples: builder.repeatedPlacementSamples,
+        measurementRepeatabilitySamples: builder.measurementRepeatabilitySamples,
+      },
+    },
+  ].map((member) => ({ ...member, bytes: compactCanonicalBytes(member.value) }));
+  const memberLedger = members.map(({ role, fileName, bytes }) => ({ role, fileName, sha256: digest(bytes) }));
+  return {
+    bundleBytes: compactCanonicalBytes({
+      schemaVersion: "ten-kings-mathematical-rig-characterization-source-v1.2",
+      characterizedAt: "2026-07-21T12:00:00.000Z",
+      rigId: context.rigId,
+      sourceCaptureManifestSha256: exactHash("verified-one-time-source-capture"),
+      members: memberLedger,
+    }),
+    members: members.map(({ fileName, bytes }) => ({ fileName, bytes })),
   };
 }
 
@@ -228,10 +311,33 @@ function builderInput(artifacts, context) {
   };
 }
 
-function sourceLedger() {
+function sourceLedger(context = runtimeContext()) {
+  const centers = [
+    [0.35, 0.35, 0],
+    [0.43, 0.38, 1],
+    [0.39, 0.44, 2],
+    [0.42, 0.40, 3],
+  ];
+  const side = Math.sqrt(0.30);
   const ledger = Array.from({ length: 4 }, (_, index) => ({
     operationId: `pose-operation-${index + 1}`, role: "checkerboard_placement", slot: index + 1,
     channelIndex: null, sampleIndex: index + 1, sha256: exactHash(`pose-${index + 1}`), byteSize: 100, active: true,
+    pose: {
+      sourceFrameSha256: exactHash(`pose-${index + 1}`),
+      centerXFraction: centers[index][0], centerYFraction: centers[index][1],
+      coverageFraction: 0.30, rotationDegrees: centers[index][2],
+      safetyMarginFraction: Math.min(
+        centers[index][0] - side / 2, 1 - centers[index][0] - side / 2,
+        centers[index][1] - side / 2, 1 - centers[index][1] - side / 2,
+      ),
+      authorityReprojectionResidualPx: 0.4,
+      outerCorners: [
+        { x: (centers[index][0] - side / 2) * context.camera.widthPx, y: (centers[index][1] - side / 2) * context.camera.heightPx },
+        { x: (centers[index][0] + side / 2) * context.camera.widthPx, y: (centers[index][1] - side / 2) * context.camera.heightPx },
+        { x: (centers[index][0] + side / 2) * context.camera.widthPx, y: (centers[index][1] + side / 2) * context.camera.heightPx },
+        { x: (centers[index][0] - side / 2) * context.camera.widthPx, y: (centers[index][1] + side / 2) * context.camera.heightPx },
+      ],
+    },
   }));
   let slot = 1;
   for (let channelIndex = 1; channelIndex <= 8; channelIndex += 1) {
@@ -249,10 +355,20 @@ function sourceLedger() {
 
 function analysisInput() {
   const context = runtimeContext();
-  const rig = rigAuthority(context);
-  const ledger = sourceLedger();
+  const ledger = sourceLedger(context);
   const sourceManifestSha256 = exactHash("fast-source-manifest");
   const artifacts = artifactBytes();
+  const builder = builderInput(artifacts, context);
+  const poseHashes = ledger.slice(0, 4).map((entry) => entry.sha256);
+  builder.normalizationResidualSamples.forEach((sample, index) => {
+    sample.sha256 = poseHashes[index % poseHashes.length];
+    sample.role = "checkerboard_placement";
+  });
+  builder.segmentationBoundarySamples.forEach((sample, index) => {
+    sample.sha256 = poseHashes[index % poseHashes.length];
+    sample.role = "checkerboard_placement";
+  });
+  const rig = verifyFastCalibrationRigCharacterizationSourceV1_2(rigSource(builder, context), context).authority;
   const sourceCapturePackage = {
     schemaVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_PACKAGE_SCHEMA,
     contractVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
@@ -282,21 +398,181 @@ function analysisInput() {
     captureCounts: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_COUNTS,
     sourceArtifactLedgerSha256: hashFastCalibrationCanonicalV1_2(ledger),
   };
-  return {
-    context,
+  const result = {
     sourceManifestSha256,
     sourceCapturePackage,
     sourceArtifactLedger: ledger,
-    geometryVerification: {
-      accepted: true, poseCount: 4, minimumCoverageFraction: 0.30, minimumSafetyMarginFraction: 0.01,
-      spans: { x: 0.08, y: 0.09, rotationDegrees: 3 },
-      maximumAuthorityReprojectionResidualPx: 0.4, authorityReprojectionU95Px: 0.4,
-    },
-    builderInput: builderInput(artifacts, context),
+    builderInput: builder,
     flatFieldArtifacts: artifacts.flatFields,
     illuminationPatternArtifact: artifacts.illumination,
   };
+  Object.defineProperty(result, "context", { value: context });
+  return result;
 }
+
+function captureMetadata(context) {
+  return {
+    capturedAt: "2026-07-21T12:05:00.000Z",
+    camera: structuredClone(context.camera),
+    controller: {
+      controllerIdentity: context.controller.identity,
+      expectedWriteCount: 5,
+      acknowledgedWriteCount: 5,
+      responseKinds: ["ack", "ack", "ack", "ack", "ack"],
+      complete: true,
+    },
+    safeOffBeforeConfirmed: true,
+    safeOffAfterConfirmed: true,
+  };
+}
+
+function captureFrame(context, label) {
+  return {
+    bytes: Buffer.from(`exact-capture-${label}`),
+    mediaType: "image/tiff",
+    metadata: captureMetadata(context),
+  };
+}
+
+function capturePose(context, frame, centerX, centerY, rotationDegrees) {
+  const side = Math.sqrt(0.30);
+  const left = centerX - side / 2;
+  const right = centerX + side / 2;
+  const top = centerY - side / 2;
+  const bottom = centerY + side / 2;
+  return {
+    sourceFrameSha256: digest(frame.bytes),
+    centerXFraction: centerX,
+    centerYFraction: centerY,
+    coverageFraction: 0.30,
+    rotationDegrees,
+    safetyMarginFraction: Math.min(left, 1 - right, top, 1 - bottom),
+    authorityReprojectionResidualPx: 0.1,
+    outerCorners: [
+      { x: left * context.camera.widthPx, y: top * context.camera.heightPx },
+      { x: right * context.camera.widthPx, y: top * context.camera.heightPx },
+      { x: right * context.camera.widthPx, y: bottom * context.camera.heightPx },
+      { x: left * context.camera.widthPx, y: bottom * context.camera.heightPx },
+    ],
+  };
+}
+
+test("core derives analysis, canonical finalization, and durable ready-for-activation state", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-fast-core-finalization-"));
+  try {
+    const fixture = analysisInput();
+    let operationIndex = 0;
+    const config = {
+      outputRoot: root,
+      now: () => new Date("2026-07-21T12:10:00.000Z"),
+      operationId: () => `core-operation-${++operationIndex}`,
+    };
+    const core = await FixedRigFastMathematicalCalibrationCoreV1_2.open(config, {
+      sessionId: "fast-session-1",
+      operatorId: "calibration-operator",
+      runtimeContext: fixture.context,
+      rigCharacterizationSource: rigSource(fixture.builderInput, fixture.context),
+    });
+    for (const [index, [x, y, rotation]] of [
+      [0.30, 0.30, -4],
+      [0.40, 0.43, 1],
+      [0.48, 0.50, 5],
+      [0.56, 0.60, 9],
+    ].entries()) {
+      const frame = captureFrame(fixture.context, `pose-${index + 1}`);
+      await core.captureCheckerboard({
+        frame,
+        pose: capturePose(fixture.context, frame, x, y, rotation),
+      });
+    }
+    await core.confirmBlankReverseFlip(true);
+    let captureIndex = 0;
+    await core.runPhotometricBatch({
+      async open() {
+        return structuredClone(fixture.context);
+      },
+      async capture(request) {
+        captureIndex += 1;
+        return captureFrame(
+          fixture.context,
+          `${request.role}-${request.channelIndex}-${request.sampleIndex}-${captureIndex}`,
+        );
+      },
+      async safeOff() {
+        return {
+          controllerIdentity: fixture.context.controller.identity,
+          confirmed: true,
+          responseKinds: ["ack"],
+        };
+      },
+      async close() {},
+    });
+    assert.equal(core.status().phase, "analyze");
+    const ledger = core.getSourceArtifactLedger();
+    const poseHashes = ledger.filter((entry) => entry.active && entry.role === "checkerboard_placement")
+      .map((entry) => entry.sha256);
+    fixture.builderInput.normalizationResidualSamples.forEach((sample, index) => {
+      sample.sha256 = poseHashes[index % poseHashes.length];
+      sample.role = "checkerboard_placement";
+    });
+    fixture.builderInput.segmentationBoundarySamples.forEach((sample, index) => {
+      sample.sha256 = poseHashes[index % poseHashes.length];
+      sample.role = "checkerboard_placement";
+    });
+    for (const channel of fixture.builderInput.channels) {
+      for (const [role, frames] of [
+        ["dark_control", channel.darkControlFrames],
+        ["flat_field", channel.flatFieldFrames],
+        ["illumination_pattern", channel.illuminationPatternFrames],
+      ]) {
+        frames.forEach((frame, index) => {
+          frame.sha256 = ledger.find((entry) => entry.active && entry.role === role &&
+            entry.channelIndex === channel.channelIndex && entry.sampleIndex === index + 1).sha256;
+          frame.role = role;
+        });
+      }
+    }
+    await core.analyze({
+      builderInput: fixture.builderInput,
+      flatFieldArtifacts: fixture.flatFieldArtifacts,
+      illuminationPatternArtifact: fixture.illuminationPatternArtifact,
+    });
+    assert.equal(core.status().phase, "finalize");
+    await core.finalize();
+    assert.equal(core.status().phase, "ready_for_explicit_activation");
+    assert.doesNotThrow(() => core.assertReadyForExplicitActivation(fixture.context));
+    assert.throws(() => core.assertReadyForStartNewCard(fixture.context), /Agent 4 activation receipt/);
+
+    const resumed = await FixedRigFastMathematicalCalibrationCoreV1_2.open({
+      ...config,
+      operationId: () => `resume-operation-${++operationIndex}`,
+    }, {
+      sessionId: "fast-session-1",
+      operatorId: "calibration-operator",
+      runtimeContext: fixture.context,
+      resume: true,
+    });
+    assert.equal(resumed.status().phase, "ready_for_explicit_activation");
+
+    const eventsDir = path.join(root, "fast-session-1", "events");
+    const finalizationEvent = (await Promise.all((await fs.readdir(eventsDir)).map(async (name) =>
+      JSON.parse(await fs.readFile(path.join(eventsDir, name), "utf8")))))
+      .find((event) => event.type === "finalization_completed");
+    const corruptMemberPath = path.join(root, "fast-session-1", ...finalizationEvent.members[0].relativePath.split("/"));
+    await fs.writeFile(corruptMemberPath, Buffer.from("{}"));
+    await assert.rejects(
+      FixedRigFastMathematicalCalibrationCoreV1_2.open(config, {
+        sessionId: "fast-session-1",
+        operatorId: "calibration-operator",
+        runtimeContext: fixture.context,
+        resume: true,
+      }),
+      /missing or corrupt/,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 test("V1.2 analysis and complete 12-member finalization are deterministic", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-fast-bundle-determinism-"));
@@ -360,4 +636,21 @@ test("analysis rejects a photometric builder frame relabelled away from its sour
   const input = analysisInput();
   input.builderInput.channels[0].darkControlFrames[0].sha256 = "f".repeat(64);
   assert.throws(() => buildFastCalibrationAnalysisV1_2(input), /is not bound to its exact source artifact/);
+});
+
+test("analysis rejects caller-authored geometry acceptance and mutated one-time authority", () => {
+  const callerGeometry = analysisInput();
+  callerGeometry.geometryVerification = {
+    accepted: true,
+    poseCount: 4,
+    minimumCoverageFraction: 1,
+    minimumSafetyMarginFraction: 1,
+    spans: { x: 1, y: 1, rotationDegrees: 180 },
+    maximumAuthorityReprojectionResidualPx: 0,
+    authorityReprojectionU95Px: 0,
+  };
+  assert.throws(() => buildFastCalibrationAnalysisV1_2(callerGeometry), /server-derived V1.2 contract/);
+  const mutatedOneTime = analysisInput();
+  mutatedOneTime.builderInput.scaleSamples[0].pixelSpan += 1;
+  assert.throws(() => buildFastCalibrationAnalysisV1_2(mutatedOneTime), /do not reconstruct/);
 });

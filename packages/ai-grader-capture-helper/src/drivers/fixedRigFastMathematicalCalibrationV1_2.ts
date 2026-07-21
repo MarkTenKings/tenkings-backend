@@ -1,6 +1,19 @@
 import crypto from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+} from "@tenkings/shared";
+import type {
+  BuildFastCalibrationAnalysisV1_2Input,
+  FastCalibrationAnalysisV1_2,
+  FastCalibrationSourceCapturePackageV1_2,
+} from "./fixedRigFastMathematicalCalibrationBundleV1_2";
+import type {
+  BuildFixedRigPhysicalCalibrationV1Input,
+  FixedRigCalibrationChannelInputV1,
+} from "./fixedRigPhysicalCalibrationV1";
 
 export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT = "1.2.0" as const;
 export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_SESSION_SCHEMA =
@@ -13,6 +26,8 @@ export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA
   "ten-kings-mathematical-calibration-runtime-context-v1.2" as const;
 export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_AUTHORITY_SCHEMA =
   "ten-kings-mathematical-rig-characterization-v1.2" as const;
+export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_SCHEMA =
+  "ten-kings-mathematical-rig-characterization-source-v1.2" as const;
 export const FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_ANALYSIS_SCHEMA =
   "ten-kings-mathematical-calibration-analysis-v1.2" as const;
 
@@ -74,6 +89,89 @@ export interface FastCalibrationRuntimeContextV1_2 {
   lightingConfigurationId: string;
 }
 
+export type FastCalibrationRigSourceMemberRoleV1_2 =
+  | "target_metrology"
+  | "camera_lens"
+  | "physical_light_directions"
+  | "component_identities"
+  | "repeatability";
+
+export interface FastCalibrationRigSourceBundleMemberV1_2 {
+  role: FastCalibrationRigSourceMemberRoleV1_2;
+  fileName: string;
+  sha256: string;
+}
+
+export interface FastCalibrationRigCharacterizationSourceV1_2 {
+  bundleBytes: Buffer;
+  members: Array<{ fileName: string; bytes: Buffer }>;
+}
+
+export interface FastCalibrationRigSourceBundleV1_2 {
+  schemaVersion: typeof FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_SCHEMA;
+  characterizedAt: string;
+  rigId: string;
+  sourceCaptureManifestSha256: string;
+  members: FastCalibrationRigSourceBundleMemberV1_2[];
+}
+
+export interface FastCalibrationTargetMetrologyAuthorityMemberV1_2 {
+  schemaVersion: "ten-kings-target-metrology-authority-v1";
+  rigId: string;
+  targetVersion: string;
+  targetSha256: string;
+  scaleSamples: BuildFixedRigPhysicalCalibrationV1Input["scaleSamples"];
+  targetPrintScaleSamples: BuildFixedRigPhysicalCalibrationV1Input["targetPrintScaleSamples"];
+  targetCutDimensionSamples: BuildFixedRigPhysicalCalibrationV1Input["targetCutDimensionSamples"];
+  targetEvidence: BuildFixedRigPhysicalCalibrationV1Input["targetEvidence"];
+}
+
+export interface FastCalibrationCameraLensAuthorityMemberV1_2 {
+  schemaVersion: "ten-kings-camera-lens-authority-v1";
+  rigId: string;
+  cameraSerialNumber: string;
+  cameraModelName: string;
+  lensAuthorityId: string;
+  normalizedWidthPx: number;
+  normalizedHeightPx: number;
+  lensResidualSamples: BuildFixedRigPhysicalCalibrationV1Input["lensResidualSamples"];
+  lensModel: BuildFixedRigPhysicalCalibrationV1Input["lensModel"];
+  normalizationModel: BuildFixedRigPhysicalCalibrationV1Input["normalizationModel"];
+}
+
+export interface FastCalibrationPhysicalDirectionsAuthorityMemberV1_2 {
+  schemaVersion: "ten-kings-physical-light-directions-authority-v1";
+  rigId: string;
+  channels: Array<Pick<FixedRigCalibrationChannelInputV1, "channelIndex" | "directionMeasurementSamples">>;
+}
+
+export interface FastCalibrationComponentIdentitiesAuthorityMemberV1_2 {
+  schemaVersion: "ten-kings-component-identities-authority-v1";
+  rigId: string;
+  controllerIdentity: string;
+  componentConfigurationId: string;
+  channelWiring: FastCalibrationChannelWiringV1_2[];
+  algorithmHashes: FastCalibrationRuntimeContextV1_2["algorithmHashes"];
+}
+
+export interface FastCalibrationRepeatabilityAuthorityMemberV1_2 {
+  schemaVersion: "ten-kings-repeatability-authority-v1";
+  rigId: string;
+  repeatedPlacementSamples: BuildFixedRigPhysicalCalibrationV1Input["repeatedPlacementSamples"];
+  measurementRepeatabilitySamples: BuildFixedRigPhysicalCalibrationV1Input["measurementRepeatabilitySamples"];
+}
+
+export interface VerifiedFastCalibrationRigCharacterizationSourceV1_2 {
+  authority: FastCalibrationRigCharacterizationAuthorityV1_2;
+  oneTimeBuilderInput: Pick<BuildFixedRigPhysicalCalibrationV1Input,
+    | "rigId" | "normalizedWidthPx" | "normalizedHeightPx" | "scaleSamples"
+    | "targetPrintScaleSamples" | "targetCutDimensionSamples" | "lensResidualSamples"
+    | "repeatedPlacementSamples" | "measurementRepeatabilitySamples" | "targetEvidence"
+    | "targetVersion" | "targetSha256" | "lensModel" | "normalizationModel"> & {
+      channels: Array<Pick<FixedRigCalibrationChannelInputV1, "channelIndex" | "directionMeasurementSamples">>;
+    };
+}
+
 export interface FastCalibrationRigCharacterizationAuthorityV1_2 {
   schemaVersion: typeof FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_AUTHORITY_SCHEMA;
   characterizedAt: string;
@@ -86,6 +184,7 @@ export interface FastCalibrationRigCharacterizationAuthorityV1_2 {
   physicalLightDirectionAuthoritySha256: string;
   componentIdentityAuthoritySha256: string;
   repeatabilityAuthoritySha256: string;
+  oneTimeCalibrationInputSha256: string;
   cameraSerialNumber: string;
   cameraModelName: string;
   lensAuthorityId: string;
@@ -104,6 +203,7 @@ export interface FastCalibrationPoseV1_2 {
   coverageFraction: number;
   rotationDegrees: number;
   safetyMarginFraction: number;
+  authorityReprojectionResidualPx: number;
   outerCorners: readonly [
     { x: number; y: number },
     { x: number; y: number },
@@ -174,6 +274,11 @@ interface FastCalibrationSessionIdentityV1_2 {
   runtimeContextSha256: string;
   rigCharacterization: FastCalibrationRigCharacterizationAuthorityV1_2;
   rigCharacterizationSha256: string;
+  rigCharacterizationSource: {
+    bundle: FastCalibrationEvidenceV1_2;
+    members: Array<FastCalibrationEvidenceV1_2 & { fileName: string }>;
+  };
+  oneTimeCalibrationInputSha256: string;
   noProductionMutation: true;
   v0FallbackAllowed: false;
 }
@@ -218,7 +323,9 @@ interface FastCalibrationFlipEventV1_2 extends FastCalibrationEventBaseV1_2 {
 interface FastCalibrationAnalysisEventV1_2 extends FastCalibrationEventBaseV1_2 {
   type: "analysis_completed";
   evidence: FastCalibrationEvidenceV1_2;
+  analysisSha256: string;
   sourceArtifactLedgerSha256: string;
+  sourceManifestSha256: string;
   accepted: true;
 }
 
@@ -227,9 +334,13 @@ interface FastCalibrationFinalizationEventV1_2 extends FastCalibrationEventBaseV
   bundle: FastCalibrationEvidenceV1_2;
   memberLedgerSha256: string;
   memberCount: 12;
+  analysisSha256: string;
+  sourceArtifactLedgerSha256: string;
+  bundleSha256: string;
   captureContractVersion: typeof FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT;
   runtimeContextSha256: string;
   rigCharacterizationSha256: string;
+  members: Array<FastCalibrationEvidenceV1_2 & { fileName: string }>;
 }
 interface FastCalibrationBatchCleanupEventV1_2 extends FastCalibrationEventBaseV1_2 {
   type: "batch_cleanup_completed";
@@ -296,7 +407,7 @@ export interface OpenFastCalibrationSessionV1_2Input {
   sessionId: string;
   operatorId: string;
   runtimeContext: FastCalibrationRuntimeContextV1_2;
-  rigCharacterization: FastCalibrationRigCharacterizationAuthorityV1_2;
+  rigCharacterizationSource?: FastCalibrationRigCharacterizationSourceV1_2;
   resume?: boolean;
 }
 
@@ -341,6 +452,30 @@ function exactSha(value: unknown, label: string): string {
   return value;
 }
 
+function exactKeys(value: unknown, expected: readonly string[], label: string): asserts value is JsonObject {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be one exact object.`);
+  const actual = Object.keys(value).sort();
+  const required = [...expected].sort();
+  if (actual.length !== required.length || actual.some((key, index) => key !== required[index])) {
+    throw new Error(`${label} fields do not match the exact V1.2 contract.`);
+  }
+}
+
+function exactIsoTimestamp(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) ||
+      new Date(value).toISOString() !== value) {
+    throw new Error(`${label} must be one exact UTC ISO timestamp.`);
+  }
+  return value;
+}
+
+function finiteRange(value: unknown, label: string, minimum: number, maximum: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`${label} must be a finite number from ${minimum} through ${maximum}.`);
+  }
+  return value;
+}
+
 function finite(value: unknown, label: string, minimum?: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) || (minimum !== undefined && value < minimum)) {
     throw new Error(`${label} must be a finite number${minimum === undefined ? "" : ` >= ${minimum}`}.`);
@@ -357,6 +492,7 @@ function validateChannelWiring(value: FastCalibrationChannelWiringV1_2[], label:
   const channels = new Set<number>();
   const outputs = new Set<string>();
   for (const item of value) {
+    exactKeys(item, ["channelIndex", "controllerOutput", "componentId", "physicalDirectionId"], `${label} entry`);
     if (!Number.isInteger(item.channelIndex) || item.channelIndex < 1 || item.channelIndex > 8 || channels.has(item.channelIndex)) {
       throw new Error(`${label} channelIndex must contain unique channels 1 through 8.`);
     }
@@ -367,33 +503,190 @@ function validateChannelWiring(value: FastCalibrationChannelWiringV1_2[], label:
     exactId(item.componentId, `${label}.componentId`);
     exactId(item.physicalDirectionId, `${label}.physicalDirectionId`);
   }
+  if (value.some((item, index) => item.channelIndex !== index + 1)) {
+    throw new Error(`${label} must use canonical channel order 1 through 8.`);
+  }
 }
 
 export function validateFastCalibrationRuntimeContextV1_2(value: FastCalibrationRuntimeContextV1_2): void {
+  exactKeys(value, [
+    "schemaVersion", "stationId", "rigId", "camera", "controller", "dutyPercent", "target",
+    "componentConfigurationId", "algorithmHashes", "locationLabel", "lightingConfigurationId",
+  ], "runtimeContext");
   if (value?.schemaVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA) {
     throw new Error("Fast calibration runtime context schema mismatch.");
   }
   exactId(value.stationId, "runtimeContext.stationId");
   exactId(value.rigId, "runtimeContext.rigId");
+  exactKeys(value.camera, [
+    "serialNumber", "modelName", "lensAuthorityId", "exposureUs", "gain", "pixelFormat", "widthPx", "heightPx",
+  ], "runtimeContext.camera");
   exactId(value.camera.serialNumber, "runtimeContext.camera.serialNumber");
   exactId(value.camera.modelName, "runtimeContext.camera.modelName");
   exactId(value.camera.lensAuthorityId, "runtimeContext.camera.lensAuthorityId");
-  finite(value.camera.exposureUs, "runtimeContext.camera.exposureUs", 1);
-  finite(value.camera.gain, "runtimeContext.camera.gain", 0);
+  finiteRange(value.camera.exposureUs, "runtimeContext.camera.exposureUs", 1, 10_000_000);
+  finiteRange(value.camera.gain, "runtimeContext.camera.gain", 0, 100);
   exactId(value.camera.pixelFormat, "runtimeContext.camera.pixelFormat");
-  if (!Number.isInteger(value.camera.widthPx) || value.camera.widthPx < 1 || !Number.isInteger(value.camera.heightPx) || value.camera.heightPx < 1) {
-    throw new Error("Fast calibration camera resolution must contain positive integer dimensions.");
+  if (!Number.isInteger(value.camera.widthPx) || value.camera.widthPx < 64 || value.camera.widthPx > 100_000 ||
+      !Number.isInteger(value.camera.heightPx) || value.camera.heightPx < 64 || value.camera.heightPx > 100_000) {
+    throw new Error("Fast calibration camera resolution must contain bounded positive integer dimensions.");
   }
+  exactKeys(value.controller, ["identity", "unit", "channelWiring"], "runtimeContext.controller");
   exactId(value.controller.identity, "runtimeContext.controller.identity");
-  if (!Number.isInteger(value.controller.unit) || value.controller.unit < 1) throw new Error("Fast calibration controller unit must be positive.");
+  if (!Number.isInteger(value.controller.unit) || value.controller.unit < 1 || value.controller.unit > 255) {
+    throw new Error("Fast calibration controller unit must be an integer from 1 through 255.");
+  }
   validateChannelWiring(value.controller.channelWiring, "runtimeContext.controller.channelWiring");
-  finite(value.dutyPercent, "runtimeContext.dutyPercent", 0);
+  finiteRange(value.dutyPercent, "runtimeContext.dutyPercent", Number.EPSILON, 100);
+  exactKeys(value.target, ["version", "sha256"], "runtimeContext.target");
   exactId(value.target.version, "runtimeContext.target.version");
   exactSha(value.target.sha256, "runtimeContext.target.sha256");
   exactId(value.componentConfigurationId, "runtimeContext.componentConfigurationId");
+  exactKeys(value.algorithmHashes, ["geometry", "photometric", "finalizer", "thresholdManifest"], "runtimeContext.algorithmHashes");
   for (const [name, digest] of Object.entries(value.algorithmHashes)) exactSha(digest, `runtimeContext.algorithmHashes.${name}`);
   exactId(value.locationLabel, "runtimeContext.locationLabel");
   exactId(value.lightingConfigurationId, "runtimeContext.lightingConfigurationId");
+}
+
+function parseCanonicalJson<T>(bytes: Buffer, label: string): T {
+  if (!Buffer.isBuffer(bytes) || bytes.length === 0) throw new Error(`${label} bytes are empty.`);
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error(`${label} is not valid JSON.`);
+  }
+  if (!bytes.equals(canonicalBytes(value))) throw new Error(`${label} bytes are not exact canonical JSON.`);
+  return value as T;
+}
+
+const RIG_SOURCE_MEMBERS: ReadonlyArray<{ role: FastCalibrationRigSourceMemberRoleV1_2; fileName: string }> = [
+  { role: "target_metrology", fileName: "target-metrology-authority-v1.json" },
+  { role: "camera_lens", fileName: "camera-lens-authority-v1.json" },
+  { role: "physical_light_directions", fileName: "physical-light-directions-authority-v1.json" },
+  { role: "component_identities", fileName: "component-identities-authority-v1.json" },
+  { role: "repeatability", fileName: "repeatability-authority-v1.json" },
+];
+
+export function verifyFastCalibrationRigCharacterizationSourceV1_2(
+  source: FastCalibrationRigCharacterizationSourceV1_2,
+  context: FastCalibrationRuntimeContextV1_2,
+): VerifiedFastCalibrationRigCharacterizationSourceV1_2 {
+  validateFastCalibrationRuntimeContextV1_2(context);
+  const bundle = parseCanonicalJson<FastCalibrationRigSourceBundleV1_2>(source.bundleBytes, "rigCharacterizationSource.bundle");
+  exactKeys(bundle, ["schemaVersion", "characterizedAt", "rigId", "sourceCaptureManifestSha256", "members"], "rigCharacterizationSource.bundle");
+  if (bundle.schemaVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_SCHEMA) {
+    throw new Error("Rig-characterization source bundle schema mismatch.");
+  }
+  exactIsoTimestamp(bundle.characterizedAt, "rigCharacterizationSource.characterizedAt");
+  exactId(bundle.rigId, "rigCharacterizationSource.rigId");
+  exactSha(bundle.sourceCaptureManifestSha256, "rigCharacterizationSource.sourceCaptureManifestSha256");
+  if (!Array.isArray(bundle.members) || bundle.members.length !== RIG_SOURCE_MEMBERS.length ||
+      bundle.members.some((member, index) => {
+        exactKeys(member, ["role", "fileName", "sha256"], "rigCharacterizationSource.bundle member");
+        return member.role !== RIG_SOURCE_MEMBERS[index].role || member.fileName !== RIG_SOURCE_MEMBERS[index].fileName ||
+          exactSha(member.sha256, "rigCharacterizationSource.bundle member sha256") !== member.sha256;
+      })) {
+    throw new Error("Rig-characterization source bundle must contain the exact five ordered authority members.");
+  }
+  if (!Array.isArray(source.members) || source.members.length !== RIG_SOURCE_MEMBERS.length) {
+    throw new Error("Rig-characterization source must provide exactly five member byte payloads.");
+  }
+  const supplied = new Map<string, Buffer>();
+  for (const member of source.members) {
+    if (!member || typeof member.fileName !== "string" || !Buffer.isBuffer(member.bytes) || supplied.has(member.fileName)) {
+      throw new Error("Rig-characterization source member payloads must have unique exact file names and bytes.");
+    }
+    supplied.set(member.fileName, member.bytes);
+  }
+  const memberBytes = RIG_SOURCE_MEMBERS.map(({ fileName }, index) => {
+    const bytes = supplied.get(fileName);
+    if (!bytes || hashBytes(bytes) !== bundle.members[index].sha256) {
+      throw new Error(`Rig-characterization source member ${fileName} is missing or corrupt.`);
+    }
+    return bytes;
+  });
+  const target = parseCanonicalJson<FastCalibrationTargetMetrologyAuthorityMemberV1_2>(memberBytes[0], "target metrology authority");
+  exactKeys(target, ["schemaVersion", "rigId", "targetVersion", "targetSha256", "scaleSamples", "targetPrintScaleSamples", "targetCutDimensionSamples", "targetEvidence"], "target metrology authority");
+  const camera = parseCanonicalJson<FastCalibrationCameraLensAuthorityMemberV1_2>(memberBytes[1], "camera/lens authority");
+  exactKeys(camera, ["schemaVersion", "rigId", "cameraSerialNumber", "cameraModelName", "lensAuthorityId", "normalizedWidthPx", "normalizedHeightPx", "lensResidualSamples", "lensModel", "normalizationModel"], "camera/lens authority");
+  const directions = parseCanonicalJson<FastCalibrationPhysicalDirectionsAuthorityMemberV1_2>(memberBytes[2], "physical direction authority");
+  exactKeys(directions, ["schemaVersion", "rigId", "channels"], "physical direction authority");
+  const components = parseCanonicalJson<FastCalibrationComponentIdentitiesAuthorityMemberV1_2>(memberBytes[3], "component identity authority");
+  exactKeys(components, ["schemaVersion", "rigId", "controllerIdentity", "componentConfigurationId", "channelWiring", "algorithmHashes"], "component identity authority");
+  const repeatability = parseCanonicalJson<FastCalibrationRepeatabilityAuthorityMemberV1_2>(memberBytes[4], "repeatability authority");
+  exactKeys(repeatability, ["schemaVersion", "rigId", "repeatedPlacementSamples", "measurementRepeatabilitySamples"], "repeatability authority");
+  if (
+    target.schemaVersion !== "ten-kings-target-metrology-authority-v1" ||
+    camera.schemaVersion !== "ten-kings-camera-lens-authority-v1" ||
+    directions.schemaVersion !== "ten-kings-physical-light-directions-authority-v1" ||
+    components.schemaVersion !== "ten-kings-component-identities-authority-v1" ||
+    repeatability.schemaVersion !== "ten-kings-repeatability-authority-v1" ||
+    [target.rigId, camera.rigId, directions.rigId, components.rigId, repeatability.rigId].some((rigId) => rigId !== bundle.rigId)
+  ) {
+    throw new Error("Rig-characterization member schema or rig identity mismatch.");
+  }
+  if (!Array.isArray(target.scaleSamples) || !Array.isArray(target.targetPrintScaleSamples) ||
+      !Array.isArray(target.targetCutDimensionSamples) || !Array.isArray(target.targetEvidence) ||
+      !Array.isArray(camera.lensResidualSamples) || !Array.isArray(directions.channels) ||
+      !Array.isArray(repeatability.repeatedPlacementSamples) || !Array.isArray(repeatability.measurementRepeatabilitySamples)) {
+    throw new Error("Rig-characterization source members do not contain reconstructable one-time inputs.");
+  }
+  if (directions.channels.length !== 8 || directions.channels.some((channel, index) => {
+    exactKeys(channel, ["channelIndex", "directionMeasurementSamples"], "physical direction authority channel");
+    return channel.channelIndex !== index + 1 || !Array.isArray(channel.directionMeasurementSamples);
+  })) {
+    throw new Error("Physical direction authority must contain exact channels 1 through 8.");
+  }
+  validateChannelWiring(components.channelWiring, "component identity authority channelWiring");
+  exactKeys(components.algorithmHashes, ["geometry", "photometric", "finalizer", "thresholdManifest"], "component identity authority algorithmHashes");
+  Object.entries(components.algorithmHashes).forEach(([name, digest]) => exactSha(digest, `component identity authority algorithmHashes.${name}`));
+  finiteRange(camera.normalizedWidthPx, "camera/lens normalizedWidthPx", 64, 100_000);
+  finiteRange(camera.normalizedHeightPx, "camera/lens normalizedHeightPx", 64, 100_000);
+  exactId(target.targetVersion, "target metrology targetVersion");
+  exactSha(target.targetSha256, "target metrology targetSha256");
+  const oneTimeBuilderInput: VerifiedFastCalibrationRigCharacterizationSourceV1_2["oneTimeBuilderInput"] = {
+    rigId: bundle.rigId,
+    normalizedWidthPx: camera.normalizedWidthPx,
+    normalizedHeightPx: camera.normalizedHeightPx,
+    scaleSamples: target.scaleSamples,
+    targetPrintScaleSamples: target.targetPrintScaleSamples,
+    targetCutDimensionSamples: target.targetCutDimensionSamples,
+    lensResidualSamples: camera.lensResidualSamples,
+    repeatedPlacementSamples: repeatability.repeatedPlacementSamples,
+    measurementRepeatabilitySamples: repeatability.measurementRepeatabilitySamples,
+    targetEvidence: target.targetEvidence,
+    targetVersion: target.targetVersion,
+    targetSha256: target.targetSha256,
+    lensModel: camera.lensModel,
+    normalizationModel: camera.normalizationModel,
+    channels: directions.channels,
+  };
+  const authority: FastCalibrationRigCharacterizationAuthorityV1_2 = {
+    schemaVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_AUTHORITY_SCHEMA,
+    characterizedAt: bundle.characterizedAt,
+    rigId: bundle.rigId,
+    sourceBundleManifestSha256: hashBytes(source.bundleBytes),
+    sourceCaptureManifestSha256: bundle.sourceCaptureManifestSha256,
+    sourceMemberLedgerSha256: hashFastCalibrationCanonicalV1_2(bundle.members),
+    targetMetrologyAuthoritySha256: bundle.members[0].sha256,
+    cameraLensAuthoritySha256: bundle.members[1].sha256,
+    physicalLightDirectionAuthoritySha256: bundle.members[2].sha256,
+    componentIdentityAuthoritySha256: bundle.members[3].sha256,
+    repeatabilityAuthoritySha256: bundle.members[4].sha256,
+    oneTimeCalibrationInputSha256: hashFastCalibrationCanonicalV1_2(oneTimeBuilderInput),
+    cameraSerialNumber: camera.cameraSerialNumber,
+    cameraModelName: camera.cameraModelName,
+    lensAuthorityId: camera.lensAuthorityId,
+    controllerIdentity: components.controllerIdentity,
+    channelWiring: components.channelWiring,
+    targetVersion: target.targetVersion,
+    targetSha256: target.targetSha256,
+    componentConfigurationId: components.componentConfigurationId,
+    algorithmHashes: components.algorithmHashes,
+  };
+  validateFastCalibrationRigCharacterizationV1_2(authority, context);
+  return { authority, oneTimeBuilderInput };
 }
 
 export function validateFastCalibrationRigCharacterizationV1_2(
@@ -403,11 +696,22 @@ export function validateFastCalibrationRigCharacterizationV1_2(
   if (authority?.schemaVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_AUTHORITY_SCHEMA) {
     throw new Error("Fast calibration rig-characterization schema mismatch.");
   }
+  exactKeys(authority, [
+    "schemaVersion", "characterizedAt", "rigId", "sourceBundleManifestSha256", "sourceCaptureManifestSha256",
+    "sourceMemberLedgerSha256", "targetMetrologyAuthoritySha256", "cameraLensAuthoritySha256",
+    "physicalLightDirectionAuthoritySha256", "componentIdentityAuthoritySha256", "repeatabilityAuthoritySha256",
+    "oneTimeCalibrationInputSha256", "cameraSerialNumber", "cameraModelName", "lensAuthorityId",
+    "controllerIdentity", "channelWiring", "targetVersion", "targetSha256", "componentConfigurationId",
+    "algorithmHashes",
+  ], "rigCharacterization");
+  exactIsoTimestamp(authority.characterizedAt, "rigCharacterization.characterizedAt");
   exactId(authority.rigId, "rigCharacterization.rigId");
   for (const [name, digest] of Object.entries(authority).filter(([key]) => key.endsWith("Sha256"))) {
     exactSha(digest, `rigCharacterization.${name}`);
   }
   validateChannelWiring(authority.channelWiring, "rigCharacterization.channelWiring");
+  exactKeys(authority.algorithmHashes, ["geometry", "photometric", "finalizer", "thresholdManifest"], "rigCharacterization.algorithmHashes");
+  Object.entries(authority.algorithmHashes).forEach(([name, digest]) => exactSha(digest, `rigCharacterization.algorithmHashes.${name}`));
   if (
     authority.rigId !== context.rigId ||
     authority.cameraSerialNumber !== context.camera.serialNumber ||
@@ -482,28 +786,98 @@ function poseSpans(poses: FastCalibrationPoseV1_2[]): { x: number; y: number; ro
   };
 }
 
+function poseGeometryReasons(
+  pose: FastCalibrationPoseV1_2,
+  frameSha256: string,
+  context: FastCalibrationRuntimeContextV1_2,
+): string[] {
+  const reasons: string[] = [];
+  try {
+    exactKeys(pose, [
+      "sourceFrameSha256", "centerXFraction", "centerYFraction", "coverageFraction", "rotationDegrees",
+      "safetyMarginFraction", "authorityReprojectionResidualPx", "outerCorners",
+    ], "capture-time pose");
+  } catch (error) {
+    reasons.push(error instanceof Error ? error.message : String(error));
+    return reasons;
+  }
+  if (pose.sourceFrameSha256 !== frameSha256) reasons.push("pose validation is not bound to the exact capture-time still");
+  const ranges: Array<[string, unknown, number, number]> = [
+    ["centerXFraction", pose.centerXFraction, Number.EPSILON, 1 - Number.EPSILON],
+    ["centerYFraction", pose.centerYFraction, Number.EPSILON, 1 - Number.EPSILON],
+    ["coverageFraction", pose.coverageFraction, MINIMUM_TARGET_COVERAGE, 0.95],
+    ["rotationDegrees", pose.rotationDegrees, -180, 180],
+    ["safetyMarginFraction", pose.safetyMarginFraction, MINIMUM_SAFETY_MARGIN, 0.49],
+    ["authorityReprojectionResidualPx", pose.authorityReprojectionResidualPx, 0, 0.5],
+  ];
+  for (const [name, value, minimum, maximum] of ranges) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
+      reasons.push(`${name} is outside the exact safe range ${minimum} through ${maximum}`);
+    }
+  }
+  if (!Array.isArray(pose.outerCorners) || pose.outerCorners.length !== 4) {
+    reasons.push("outer target contour must contain exactly four corners");
+    return reasons;
+  }
+  const width = context.camera.widthPx;
+  const height = context.camera.heightPx;
+  const points = pose.outerCorners;
+  const unique = new Set<string>();
+  for (const point of points) {
+    try {
+      exactKeys(point, ["x", "y"], "capture-time outer corner");
+    } catch (error) {
+      reasons.push(error instanceof Error ? error.message : String(error));
+      continue;
+    }
+    const coordinate = point as { x: number; y: number };
+    if (!Number.isFinite(coordinate.x) || !Number.isFinite(coordinate.y) ||
+        coordinate.x <= 0 || coordinate.x >= width - 1 || coordinate.y <= 0 || coordinate.y >= height - 1) {
+      reasons.push("every outer target corner must be positive and strictly inside the exact source frame");
+    }
+    unique.add(`${coordinate.x}:${coordinate.y}`);
+  }
+  if (unique.size !== 4) reasons.push("outer target corners must be four distinct points");
+  const signedAreaTwice = points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return sum + point.x * next.y - next.x * point.y;
+  }, 0);
+  const areaFraction = Math.abs(signedAreaTwice) / 2 / (width * height);
+  if (!Number.isFinite(areaFraction) || areaFraction <= 0 ||
+      Math.abs(areaFraction - pose.coverageFraction) > 0.02) {
+    reasons.push("declared coverage is not consistent with the bounded four-corner polygon");
+  }
+  const centerX = points.reduce((sum, point) => sum + point.x, 0) / points.length / width;
+  const centerY = points.reduce((sum, point) => sum + point.y, 0) / points.length / height;
+  if (Math.abs(centerX - pose.centerXFraction) > 0.02 || Math.abs(centerY - pose.centerYFraction) > 0.02) {
+    reasons.push("declared pose center is not consistent with the bounded four-corner polygon");
+  }
+  const observedMargin = Math.min(...points.flatMap((point) => [
+    point.x / width, (width - point.x) / width, point.y / height, (height - point.y) / height,
+  ]));
+  if (Math.abs(observedMargin - pose.safetyMarginFraction) > 0.02) {
+    reasons.push("declared safety margin is not consistent with the bounded four-corner polygon");
+  }
+  return [...new Set(reasons)];
+}
+
+export function validateFastCalibrationPoseV1_2(
+  pose: FastCalibrationPoseV1_2,
+  frameSha256: string,
+  context: FastCalibrationRuntimeContextV1_2,
+): void {
+  const reasons = poseGeometryReasons(pose, frameSha256, context);
+  if (reasons.length > 0) throw new Error(`Fast calibration pose failed: ${reasons.join("; ")}.`);
+}
+
 function validatePose(
   pose: FastCalibrationPoseV1_2,
   frameSha256: string,
+  context: FastCalibrationRuntimeContextV1_2,
   prior: FastCalibrationPoseV1_2[],
   finalSet: FastCalibrationPoseV1_2[],
 ): string[] {
-  const reasons: string[] = [];
-  if (pose.sourceFrameSha256 !== frameSha256) reasons.push("pose validation is not bound to the exact capture-time still");
-  for (const [name, value] of Object.entries({
-    centerXFraction: pose.centerXFraction,
-    centerYFraction: pose.centerYFraction,
-    coverageFraction: pose.coverageFraction,
-    rotationDegrees: pose.rotationDegrees,
-    safetyMarginFraction: pose.safetyMarginFraction,
-  })) {
-    if (typeof value !== "number" || !Number.isFinite(value)) reasons.push(`${name} is not finite`);
-  }
-  if (pose.coverageFraction < MINIMUM_TARGET_COVERAGE) reasons.push("target coverage is below the unchanged centralized minimum");
-  if (pose.safetyMarginFraction < MINIMUM_SAFETY_MARGIN) reasons.push("target contour is inside the unsafe frame margin");
-  if (!Array.isArray(pose.outerCorners) || pose.outerCorners.length !== 4 || pose.outerCorners.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
-    reasons.push("outer target contour is incomplete or non-finite");
-  }
+  const reasons = poseGeometryReasons(pose, frameSha256, context);
   if (prior.some((item) =>
     Math.abs(item.centerXFraction - pose.centerXFraction) < 0.005 &&
     Math.abs(item.centerYFraction - pose.centerYFraction) < 0.005 &&
@@ -539,6 +913,42 @@ function assertCaptureMetadata(
   }
 }
 
+async function persistIdentityEvidence(
+  sessionDir: string,
+  prefix: string,
+  bytes: Buffer,
+): Promise<FastCalibrationEvidenceV1_2> {
+  if (!Buffer.isBuffer(bytes) || bytes.length === 0) throw new Error("Rig-characterization source evidence bytes are empty.");
+  const sha256 = hashBytes(bytes);
+  const relativePath = `evidence/${prefix}-${sha256}.json`;
+  const filePath = path.join(sessionDir, ...relativePath.split("/"));
+  try {
+    await writeFile(filePath, bytes, { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (hashBytes(await readFile(filePath)) !== sha256) throw new Error("Stored rig-characterization source evidence is corrupt.");
+  }
+  return {
+    evidenceId: `${prefix}-${sha256.slice(0, 16)}`,
+    relativePath,
+    sha256,
+    byteSize: bytes.length,
+    mediaType: "application/json",
+  };
+}
+
+async function readIdentityEvidence(sessionDir: string, evidence: FastCalibrationEvidenceV1_2): Promise<Buffer> {
+  if (evidence.mediaType !== "application/json" || !evidence.relativePath.startsWith("evidence/") ||
+      evidence.relativePath.includes("..") || evidence.relativePath.includes("\\")) {
+    throw new Error("Stored rig-characterization source evidence path or media type is unsafe.");
+  }
+  const bytes = await readFile(path.join(sessionDir, ...evidence.relativePath.split("/")));
+  if (bytes.length !== evidence.byteSize || hashBytes(bytes) !== evidence.sha256) {
+    throw new Error("Stored rig-characterization source evidence is missing or corrupt.");
+  }
+  return bytes;
+}
+
 export class FixedRigFastMathematicalCalibrationCoreV1_2 {
   private constructor(
     private readonly config: FastCalibrationCoreV1_2Config,
@@ -554,28 +964,95 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
     const sessionId = exactId(input.sessionId, "sessionId");
     const operatorId = exactId(input.operatorId, "operatorId");
     validateFastCalibrationRuntimeContextV1_2(input.runtimeContext);
-    validateFastCalibrationRigCharacterizationV1_2(input.rigCharacterization, input.runtimeContext);
     const outputRoot = path.resolve(config.outputRoot);
     const sessionDir = path.join(outputRoot, sessionId.replace(/:/g, "-"));
     const identityPath = path.join(sessionDir, "session-identity.json");
-    let identity: FastCalibrationSessionIdentityV1_2;
+    let identityBytes: Buffer | undefined;
     try {
-      identity = JSON.parse((await readFile(identityPath)).toString("utf8")) as FastCalibrationSessionIdentityV1_2;
+      identityBytes = await readFile(identityPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    let identity: FastCalibrationSessionIdentityV1_2;
+    if (identityBytes) {
+      identity = parseCanonicalJson<FastCalibrationSessionIdentityV1_2>(
+        identityBytes,
+        "fast calibration session identity",
+      );
+      exactKeys(identity, [
+        "schemaVersion", "contractVersion", "sessionId", "operatorId", "createdAt", "runtimeContext",
+        "runtimeContextSha256", "rigCharacterization", "rigCharacterizationSha256",
+        "rigCharacterizationSource", "oneTimeCalibrationInputSha256", "noProductionMutation",
+        "v0FallbackAllowed",
+      ], "fast calibration session identity");
+      exactKeys(identity.rigCharacterizationSource, ["bundle", "members"], "session rig-characterization source");
+      exactKeys(identity.rigCharacterizationSource.bundle, [
+        "evidenceId", "relativePath", "sha256", "byteSize", "mediaType",
+      ], "session rig-characterization bundle checkpoint");
+      if (!Array.isArray(identity.rigCharacterizationSource.members) ||
+          identity.rigCharacterizationSource.members.length !== RIG_SOURCE_MEMBERS.length) {
+        throw new Error("Session rig-characterization source member checkpoint list is incomplete.");
+      }
+      identity.rigCharacterizationSource.members.forEach((member) => exactKeys(member, [
+        "evidenceId", "relativePath", "sha256", "byteSize", "mediaType", "fileName",
+      ], "session rig-characterization member checkpoint"));
+      if (identity.contractVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT ||
+          identity.noProductionMutation !== true || identity.v0FallbackAllowed !== false) {
+        throw new Error("Fast calibration session identity contract or no-fallback authority is invalid.");
+      }
+      exactIsoTimestamp(identity.createdAt, "session identity createdAt");
+      exactSha(identity.runtimeContextSha256, "session identity runtimeContextSha256");
+      exactSha(identity.rigCharacterizationSha256, "session identity rigCharacterizationSha256");
+      exactSha(identity.oneTimeCalibrationInputSha256, "session identity oneTimeCalibrationInputSha256");
       if (!input.resume) throw new Error("Fast calibration session already exists; explicit resume is required.");
+      validateFastCalibrationRigCharacterizationV1_2(identity.rigCharacterization, input.runtimeContext);
+      const storedSource: FastCalibrationRigCharacterizationSourceV1_2 = {
+        bundleBytes: await readIdentityEvidence(sessionDir, identity.rigCharacterizationSource.bundle),
+        members: await Promise.all(identity.rigCharacterizationSource.members.map(async (member) => ({
+          fileName: member.fileName,
+          bytes: await readIdentityEvidence(sessionDir, member),
+        }))),
+      };
+      const verifiedStored = verifyFastCalibrationRigCharacterizationSourceV1_2(storedSource, input.runtimeContext);
+      const suppliedSource = input.rigCharacterizationSource
+        ? verifyFastCalibrationRigCharacterizationSourceV1_2(input.rigCharacterizationSource, input.runtimeContext)
+        : undefined;
       if (
         identity.schemaVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_SESSION_SCHEMA ||
         identity.sessionId !== sessionId || identity.operatorId !== operatorId ||
         identity.runtimeContextSha256 !== hashFastCalibrationCanonicalV1_2(input.runtimeContext) ||
-        identity.rigCharacterizationSha256 !== hashFastCalibrationCanonicalV1_2(input.rigCharacterization) ||
+        identity.rigCharacterizationSha256 !== hashFastCalibrationCanonicalV1_2(verifiedStored.authority) ||
+        identity.oneTimeCalibrationInputSha256 !== verifiedStored.authority.oneTimeCalibrationInputSha256 ||
         !sameCanonical(identity.runtimeContext, input.runtimeContext) ||
-        !sameCanonical(identity.rigCharacterization, input.rigCharacterization)
+        !sameCanonical(identity.rigCharacterization, verifiedStored.authority) ||
+        (suppliedSource !== undefined && !sameCanonical(suppliedSource.authority, verifiedStored.authority))
       ) {
         throw new Error("Fast calibration resume identity, immutable rig authority, or runtime context mismatch.");
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } else {
+      if (input.resume) throw new Error("Fast calibration session does not exist and cannot be resumed.");
+      if (!input.rigCharacterizationSource) {
+        throw new Error("A new fast calibration session requires exact local one-time rig-characterization bundle and member bytes.");
+      }
+      const verified = verifyFastCalibrationRigCharacterizationSourceV1_2(
+        input.rigCharacterizationSource,
+        input.runtimeContext,
+      );
       await mkdir(path.join(sessionDir, "events"), { recursive: true });
       await mkdir(path.join(sessionDir, "evidence"), { recursive: true });
+      const bundleEvidence = await persistIdentityEvidence(
+        sessionDir,
+        "rig-source-bundle",
+        input.rigCharacterizationSource.bundleBytes,
+      );
+      const memberEvidence = await Promise.all(input.rigCharacterizationSource.members.map(async (member) => ({
+        ...(await persistIdentityEvidence(
+          sessionDir,
+          `rig-source-member-${member.fileName.replace(/[^A-Za-z0-9.-]/g, "-")}`,
+          member.bytes,
+        )),
+        fileName: member.fileName,
+      })));
       const createdAt = (config.now?.() ?? new Date()).toISOString();
       identity = {
         schemaVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_SESSION_SCHEMA,
@@ -585,8 +1062,13 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
         createdAt,
         runtimeContext: input.runtimeContext,
         runtimeContextSha256: hashFastCalibrationCanonicalV1_2(input.runtimeContext),
-        rigCharacterization: input.rigCharacterization,
-        rigCharacterizationSha256: hashFastCalibrationCanonicalV1_2(input.rigCharacterization),
+        rigCharacterization: verified.authority,
+        rigCharacterizationSha256: hashFastCalibrationCanonicalV1_2(verified.authority),
+        rigCharacterizationSource: {
+          bundle: bundleEvidence,
+          members: memberEvidence,
+        },
+        oneTimeCalibrationInputSha256: verified.authority.oneTimeCalibrationInputSha256,
         noProductionMutation: true,
         v0FallbackAllowed: false,
       };
@@ -633,7 +1115,79 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
         }
       }
     }
+    await this.verifyDurableCompletion(events);
     return events;
+  }
+
+  private async verifyDurableCompletion(events: FastCalibrationEventV1_2[]): Promise<void> {
+    const analyses = events.filter(
+      (event): event is FastCalibrationAnalysisEventV1_2 => event.type === "analysis_completed",
+    );
+    const finalizations = events.filter(
+      (event): event is FastCalibrationFinalizationEventV1_2 => event.type === "finalization_completed",
+    );
+    if (analyses.length > 1 || finalizations.length > 1 || (finalizations.length > 0 && analyses.length !== 1)) {
+      throw new Error("Fast calibration durable analysis/finalization lineage is invalid.");
+    }
+    if (analyses.length === 0) return;
+
+    const analysisEvent = analyses[0]!;
+    const analysisModule = await import("./fixedRigFastMathematicalCalibrationBundleV1_2");
+    const analysisBytes = await readIdentityEvidence(this.sessionDir, analysisEvent.evidence);
+    const analysis = analysisModule.parseAndRebuildFastCalibrationAnalysisV1_2(analysisBytes);
+    const source = this.sourceAuthority(events);
+    if (
+      analysis.analysisSha256 !== analysisEvent.analysisSha256 ||
+      analysis.sourceManifestSha256 !== analysisEvent.sourceManifestSha256 ||
+      analysis.sourceArtifactLedgerSha256 !== analysisEvent.sourceArtifactLedgerSha256 ||
+      !sameCanonical(analysis.sourceCapturePackage, source.sourceCapturePackage) ||
+      !sameCanonical(analysis.sourceArtifactLedger, source.sourceArtifactLedger)
+    ) {
+      throw new Error("Stored deterministic analysis no longer matches the active event/evidence ledger.");
+    }
+    if (finalizations.length === 0) return;
+
+    const finalization = finalizations[0]!;
+    if (finalization.members.length !== 12 || new Set(finalization.members.map((member) => member.fileName)).size !== 12) {
+      throw new Error("Stored finalized bundle does not contain twelve unique member checkpoints.");
+    }
+    const memberBytes = new Map<string, { path: string; bytes: Buffer }>();
+    for (const member of finalization.members) {
+      if (path.basename(member.fileName) !== member.fileName) {
+        throw new Error("Stored finalized bundle member fileName is unsafe.");
+      }
+      memberBytes.set(member.fileName, {
+        path: member.relativePath,
+        bytes: await readIdentityEvidence(this.sessionDir, member),
+      });
+    }
+    const loader = await import("./fixedRigMathematicalCalibrationBundleV1");
+    const loaded = loader.verifyFixedRigMathematicalCalibrationBundleBytesV1({
+      bundlePath: loader.FIXED_RIG_MATHEMATICAL_CALIBRATION_BUNDLE_FILE_V1,
+      bundleSha256: finalization.bundleSha256,
+      expectedRigId: this.identity.runtimeContext.rigId,
+      expectedRuntimeContext: this.identity.runtimeContext,
+      bundleBytes: await readIdentityEvidence(this.sessionDir, finalization.bundle),
+      readMemberBytes(fileName) {
+        const member = memberBytes.get(fileName);
+        if (!member) throw new Error(`Stored finalized bundle member ${fileName} is missing.`);
+        return member;
+      },
+    });
+    if (
+      finalization.bundle.sha256 !== finalization.bundleSha256 ||
+      loaded.authority.bundleManifestSha256 !== finalization.bundleSha256 ||
+      loaded.authority.memberLedgerSha256 !== finalization.memberLedgerSha256 ||
+      loaded.authority.members.length !== finalization.memberCount ||
+      loaded.authority.sourceCaptureManifestSha256 !== analysis.sourceManifestSha256 ||
+      loaded.authority.captureContractVersion !== finalization.captureContractVersion ||
+      loaded.authority.runtimeContextSha256 !== finalization.runtimeContextSha256 ||
+      loaded.authority.rigCharacterizationSha256 !== finalization.rigCharacterizationSha256 ||
+      finalization.analysisSha256 !== analysis.analysisSha256 ||
+      finalization.sourceArtifactLedgerSha256 !== analysis.sourceArtifactLedgerSha256
+    ) {
+      throw new Error("Stored finalized bundle authority no longer matches its exact analysis/session lineage.");
+    }
   }
 
   private nextOperationId(): string {
@@ -787,7 +1341,7 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
       evidence = await this.checkpoint(input.frame.bytes, input.frame.mediaType, `checkerboard-${slot}-${operationId}`);
       const other = [...placements.values()].filter((event) => event.slot !== slot).map((event) => event.pose!);
       const finalSet = other.length === 3 ? [...other, input.pose] : [];
-      const reasons = validatePose(input.pose, evidence.sha256, other, finalSet);
+      const reasons = validatePose(input.pose, evidence.sha256, this.identity.runtimeContext, other, finalSet);
       if (acceptedEvents(this.events).some((event) => event.evidence.sha256 === evidence!.sha256)) {
         reasons.push("capture bytes duplicate or relabel previously accepted evidence");
       }
@@ -938,65 +1492,183 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
     return this.status();
   }
 
-  async recordAnalysis(input: {
-    analysisBytes: Buffer;
-    accepted: boolean;
-    sourceArtifactLedgerSha256: string;
-  }): Promise<FastCalibrationStatusV1_2> {
+  private sourceAuthority(events: FastCalibrationEventV1_2[] = this.events): {
+    sourceManifestSha256: string;
+    sourceCapturePackage: FastCalibrationSourceCapturePackageV1_2;
+    sourceArtifactLedger: ReturnType<FixedRigFastMathematicalCalibrationCoreV1_2["getSourceArtifactLedger"]>;
+  } {
+    const sourceArtifactLedger = this.sourceArtifactLedgerForEvents(events);
+    const sourceArtifactLedgerSha256 = hashFastCalibrationCanonicalV1_2(sourceArtifactLedger);
+    const flip = events.find((event) => event.type === "blank_reverse_flip_confirmed");
+    const cleanup = [...events].reverse().find((event) => event.type === "batch_cleanup_completed");
+    if (!flip || !cleanup || activePlacements(events).size + acceptedPhotometricKeys(events).size !== 76) {
+      throw new Error("Fast calibration source authority is incomplete.");
+    }
+    const sourceManifestSha256 = hashFastCalibrationCanonicalV1_2({
+      schemaVersion: "ten-kings-mathematical-calibration-source-manifest-v1.2",
+      sessionIdentitySha256: hashFastCalibrationCanonicalV1_2(this.identity),
+      blankReverseFlipEventSha256: flip.eventSha256,
+      batchCleanupEventSha256: cleanup.eventSha256,
+      sourceArtifactLedgerSha256,
+    });
+    const sourceCapturePackage: FastCalibrationSourceCapturePackageV1_2 = {
+      schemaVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_PACKAGE_SCHEMA,
+      contractVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
+      packageId: `capture-package-${hashFastCalibrationCanonicalV1_2(this.identity.sessionId).slice(0, 32)}`,
+      manifestSha256: sourceManifestSha256,
+      rigId: this.identity.runtimeContext.rigId,
+      captureProfileVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_PROFILE,
+      purpose: "mathematical_calibration_v1.2",
+      thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+      thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+      captureEvidenceAcceptance: {
+        exactCheckerboardPlacements: 4,
+        exactPhotometricFrames: 72,
+        exactTotalImageCaptures: 76,
+        exactBlankReverseFlipCount: 1,
+        poseFourRequiresFinalAggregateDiversity: true,
+        acceptedPoseSupersessionPreservesEvidence: true,
+        failedAttemptLeavesSlotPending: true,
+        persistentBatchRequired: true,
+        automaticFallbackAllowed: false,
+      },
+      stationAuthority: {
+        stationId: this.identity.runtimeContext.stationId,
+        sessionId: this.identity.sessionId,
+        operatorId: this.identity.operatorId,
+        createdAt: this.identity.createdAt,
+        finalizedAt: cleanup.recordedAt,
+        noProductionMutation: true,
+        protectedSettings: this.identity.runtimeContext,
+      },
+      subject: {
+        designation: "calibration_target",
+        productionCard: false,
+        targetVersion: this.identity.runtimeContext.target.version,
+        targetSha256: this.identity.runtimeContext.target.sha256,
+      },
+      rigCharacterizationAuthority: this.identity.rigCharacterization,
+      rigCharacterizationSha256: this.identity.rigCharacterizationSha256,
+      runtimeContext: this.identity.runtimeContext,
+      runtimeContextSha256: this.identity.runtimeContextSha256,
+      captureCounts: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_COUNTS,
+      sourceArtifactLedgerSha256,
+    };
+    return { sourceManifestSha256, sourceCapturePackage, sourceArtifactLedger };
+  }
+
+  async analyze(
+    input: Pick<BuildFastCalibrationAnalysisV1_2Input, "builderInput" | "flatFieldArtifacts" | "illuminationPatternArtifact">,
+  ): Promise<FastCalibrationStatusV1_2> {
+    exactKeys(input, ["builderInput", "flatFieldArtifacts", "illuminationPatternArtifact"], "fast calibration local analysis input");
     const operationId = this.nextOperationId();
     if (this.status().phase !== "analyze") throw new Error("Analysis is not the bridge-owned next action.");
-    const evidence = await this.checkpoint(input.analysisBytes, "application/json", `analysis-${operationId}`);
-    exactSha(input.sourceArtifactLedgerSha256, "sourceArtifactLedgerSha256");
-    if (!input.accepted) {
+    try {
+      const source = this.sourceAuthority();
+      const analysisModule = await import("./fixedRigFastMathematicalCalibrationBundleV1_2");
+      const analysis = analysisModule.buildFastCalibrationAnalysisV1_2({ ...source, ...input });
+      if (analysis.authorityLayers.oneTimeRigCharacterizationInputSha256 !== this.identity.oneTimeCalibrationInputSha256 ||
+          analysis.sourceArtifactLedgerSha256 !== source.sourceCapturePackage.sourceArtifactLedgerSha256) {
+        throw new Error("Deterministic analysis does not match the verified session authority.");
+      }
+      const evidence = await this.checkpoint(
+        analysisModule.serializeFastCalibrationAnalysisV1_2(analysis),
+        "application/json",
+        `analysis-${operationId}`,
+      );
+      await this.append(operationId, {
+        type: "analysis_completed",
+        evidence,
+        analysisSha256: analysis.analysisSha256,
+        sourceArtifactLedgerSha256: analysis.sourceArtifactLedgerSha256,
+        sourceManifestSha256: analysis.sourceManifestSha256,
+        accepted: true,
+      });
+      return this.status();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       await this.append(operationId, {
         type: "analysis_failed",
         role: "analysis",
         slot: null,
         channelIndex: null,
         sampleIndex: null,
-        error: "Fast calibration analysis rejected the evidence without changing acceptance thresholds.",
-        evidence,
+        error: message.slice(0, 1000),
       });
-      throw new FastCalibrationOperationErrorV1_2(operationId, "Fast calibration analysis rejected the evidence.");
+      throw new FastCalibrationOperationErrorV1_2(operationId, message);
     }
-    await this.append(operationId, {
-      type: "analysis_completed",
-      evidence,
-      sourceArtifactLedgerSha256: input.sourceArtifactLedgerSha256,
-      accepted: true,
-    });
-    return this.status();
   }
 
-  async recordFinalizedBundle(input: {
-    bundleBytes: Buffer;
-    memberLedgerSha256: string;
-    memberCount: number;
-    captureContractVersion: string;
-    runtimeContextSha256: string;
-    rigCharacterizationSha256: string;
-  }): Promise<FastCalibrationStatusV1_2> {
+  async recordAnalysis(_callerAuthoredInput: unknown): Promise<never> {
+    throw new Error("Caller-authored analysis bytes, acceptance booleans, and trusted hashes are prohibited; use deterministic analyze().");
+  }
+
+  async finalize(): Promise<FastCalibrationStatusV1_2> {
     const operationId = this.nextOperationId();
     if (this.status().phase !== "finalize") throw new Error("Finalization is not the bridge-owned next action.");
     try {
-      if (input.memberCount !== 12) throw new Error("Production-authoritative fast calibration requires exactly 12 bundle members.");
-      exactSha(input.memberLedgerSha256, "memberLedgerSha256");
+      const analysisEvent = [...this.events].reverse().find(
+        (event): event is FastCalibrationAnalysisEventV1_2 => event.type === "analysis_completed",
+      );
+      if (!analysisEvent) throw new Error("Finalization requires the exact completed analysis event.");
+      const analysisModule = await import("./fixedRigFastMathematicalCalibrationBundleV1_2");
+      const analysisBytes = await readIdentityEvidence(this.sessionDir, analysisEvent.evidence);
+      const analysis: FastCalibrationAnalysisV1_2 = analysisModule.parseAndRebuildFastCalibrationAnalysisV1_2(analysisBytes);
+      const currentSource = this.sourceAuthority();
       if (
-        input.captureContractVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT ||
-        input.runtimeContextSha256 !== this.identity.runtimeContextSha256 ||
-        input.rigCharacterizationSha256 !== this.identity.rigCharacterizationSha256
+        analysis.analysisSha256 !== analysisEvent.analysisSha256 ||
+        analysis.sourceManifestSha256 !== analysisEvent.sourceManifestSha256 ||
+        analysis.sourceArtifactLedgerSha256 !== analysisEvent.sourceArtifactLedgerSha256 ||
+        !sameCanonical(analysis.sourceCapturePackage, currentSource.sourceCapturePackage) ||
+        !sameCanonical(analysis.sourceArtifactLedger, currentSource.sourceArtifactLedger)
       ) {
-        throw new Error("Finalized bundle is not exactly bound to the V1.2 session, runtime context, and rig characterization.");
+        throw new Error("Completed analysis no longer matches the exact active session event/evidence ledger.");
       }
-      const bundle = await this.checkpoint(input.bundleBytes, "application/json", `bundle-${operationId}`);
+      await mkdir(path.join(this.sessionDir, "finalizations"), { recursive: true });
+      const finalized = await analysisModule.finalizeFastMathematicalCalibrationBundleV1_2({
+        analysis,
+        outputDir: path.join(this.sessionDir, "finalizations", operationId),
+      });
+      const loader = await import("./fixedRigMathematicalCalibrationBundleV1");
+      const loaded = loader.loadFixedRigMathematicalCalibrationBundleV1({
+        bundlePath: finalized.bundlePath,
+        bundleSha256: finalized.bundleSha256,
+        expectedRigId: this.identity.runtimeContext.rigId,
+        expectedRuntimeContext: this.identity.runtimeContext,
+      });
+      if (
+        finalized.authority.members.length !== 12 || loaded.authority.members.length !== 12 ||
+        loaded.authority.bundleManifestSha256 !== finalized.bundleSha256 ||
+        loaded.authority.memberLedgerSha256 !== finalized.authority.memberLedgerSha256 ||
+        loaded.authority.sourceCaptureManifestSha256 !== analysis.sourceManifestSha256 ||
+        loaded.authority.captureContractVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT ||
+        loaded.authority.runtimeContextSha256 !== this.identity.runtimeContextSha256 ||
+        loaded.authority.rigCharacterizationSha256 !== this.identity.rigCharacterizationSha256 ||
+        finalized.bundle.sourceAnalysisSha256 !== analysis.analysisSha256
+      ) {
+        throw new Error("Canonical V1.2 loader rejected final bundle authority binding.");
+      }
+      const bundle = await this.checkpoint(finalized.bundleBytes, "application/json", `bundle-${operationId}`);
+      const members = await Promise.all(finalized.authority.members.map(async (member) => ({
+        ...(await this.checkpoint(
+          await readFile(path.join(path.dirname(finalized.bundlePath), member.fileName)),
+          "application/json",
+          `bundle-member-${operationId}-${member.fileName.replace(/[^A-Za-z0-9.-]/g, "-")}`,
+        )),
+        fileName: member.fileName,
+      })));
       await this.append(operationId, {
         type: "finalization_completed",
         bundle,
-        memberLedgerSha256: input.memberLedgerSha256,
+        members,
+        memberLedgerSha256: loaded.authority.memberLedgerSha256,
         memberCount: 12,
+        analysisSha256: analysis.analysisSha256,
+        sourceArtifactLedgerSha256: analysis.sourceArtifactLedgerSha256,
+        bundleSha256: finalized.bundleSha256,
         captureContractVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
-        runtimeContextSha256: input.runtimeContextSha256,
-        rigCharacterizationSha256: input.rigCharacterizationSha256,
+        runtimeContextSha256: this.identity.runtimeContextSha256,
+        rigCharacterizationSha256: this.identity.rigCharacterizationSha256,
       });
       return this.status();
     } catch (error) {
@@ -1013,14 +1685,22 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
     }
   }
 
-  assertReadyForStartNewCard(liveContext: FastCalibrationRuntimeContextV1_2): void {
+  async recordFinalizedBundle(_callerAuthoredInput: unknown): Promise<never> {
+    throw new Error("Caller-authored final bundle bytes and trusted hashes are prohibited; use canonical finalize().");
+  }
+
+  assertReadyForStartNewCard(_liveContext: FastCalibrationRuntimeContextV1_2): never {
+    throw new Error("Fast calibration core completion is only ready_for_explicit_activation; Agent 4 activation receipt is required before Start New Card.");
+  }
+
+  assertReadyForExplicitActivation(liveContext: FastCalibrationRuntimeContextV1_2): void {
     if (this.status().phase !== "ready_for_explicit_activation") {
-      throw new Error("Start New Card requires one complete Mathematical V1/V1.2 calibration bundle ready for explicit activation.");
+      throw new Error("Fast calibration is not ready for explicit activation.");
     }
     assertFastCalibrationRuntimeContextMatchV1_2(this.identity.runtimeContext, liveContext);
   }
 
-  getSourceArtifactLedger(): Array<{
+  private sourceArtifactLedgerForEvents(events: FastCalibrationEventV1_2[]): Array<{
     operationId: string;
     role: FastCalibrationCaptureRoleV1_2;
     slot: number;
@@ -1030,11 +1710,12 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
     byteSize: number;
     active: boolean;
     supersedesOperationId?: string;
+    pose?: FastCalibrationPoseV1_2;
   }> {
     const activePlacementOperationIds = new Set(
-      [...activePlacements(this.events).values()].map((event) => event.operationId),
+      [...activePlacements(events).values()].map((event) => event.operationId),
     );
-    return acceptedEvents(this.events).map((event) => ({
+    return acceptedEvents(events).map((event) => ({
       operationId: event.operationId,
       role: event.role,
       slot: event.slot,
@@ -1044,6 +1725,13 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
       byteSize: event.evidence.byteSize,
       active: event.role !== "checkerboard_placement" || activePlacementOperationIds.has(event.operationId),
       ...(event.supersedesOperationId ? { supersedesOperationId: event.supersedesOperationId } : {}),
+      ...(event.pose ? { pose: event.pose } : {}),
     }));
+  }
+
+  getSourceArtifactLedger(): ReturnType<
+    FixedRigFastMathematicalCalibrationCoreV1_2["sourceArtifactLedgerForEvents"]
+  > {
+    return this.sourceArtifactLedgerForEvents(this.events);
   }
 }
