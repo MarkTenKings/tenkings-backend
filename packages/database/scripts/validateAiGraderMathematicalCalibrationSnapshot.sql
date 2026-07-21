@@ -147,7 +147,9 @@ INSERT INTO "CalibrationSnapshot" (
   "mathematicalArtifactSha256", "mathematicalThresholdSetId",
   "mathematicalThresholdSetHash", "mathematicalBundleSchemaVersion",
   "mathematicalBundleManifestSha256", "mathematicalSourceCaptureManifestSha256",
-  "mathematicalMemberLedgerSha256", "validityStartsAt", "createdAt"
+  "mathematicalMemberLedgerSha256", "mathematicalOperatingContextV1",
+  "mathematicalOperatingContextHash", "mathematicalRuntimeContextHash",
+  "mathematicalRigCharacterizationSha256", "validityStartsAt", "createdAt"
 ) VALUES (
   'math-calibration-snapshot',
   'math-calibration-rig',
@@ -168,6 +170,10 @@ INSERT INTO "CalibrationSnapshot" (
   'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
   'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
   'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  '{"schemaVersion":"ten-kings-ai-grader-operating-context-v1"}'::jsonb,
+  '1111111111111111111111111111111111111111111111111111111111111111',
+  '2222222222222222222222222222222222222222222222222222222222222222',
+  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   '2026-07-18T18:05:00.000Z',
   '2026-07-18T18:05:00.000Z'
 );

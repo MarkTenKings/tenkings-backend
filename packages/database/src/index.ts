@@ -37,6 +37,7 @@ export * from "./batches";
 export * from "./aiGraderService";
 export * from "./aiGraderProductionService";
 export * from "./aiGraderMathematicalCalibrationReadiness";
+export * from "./aiGraderCalibrationActivationService";
 export * from "./aiGraderMathematicalCalibrationSnapshotService";
 export * from "./aiGraderNfcService";
 export * from "./aiGraderNfcSchemaReadiness";

@@ -34,6 +34,7 @@ test("import, trust, revoke, and supersede actors come only from authenticated a
   const received: Record<string, Record<string, unknown>> = {};
   const runtime = createAiGraderMathematicalCalibrationSnapshotApiHandler({
     async requireAdminSession() { return { user: { id: "admin-exact" } }; },
+    async requireFreshAdminSession() { return { user: { id: "admin-exact" } }; },
     service: service({
       async importDraft(input: Record<string, unknown>) { received.import = input; return { id: "draft" }; },
       async trust(input: Record<string, unknown>) { received.trust = input; return { id: "trusted" }; },
@@ -58,6 +59,7 @@ test("list is exact rig scoped and storage integrity conflicts are public-safe",
   let rigId = "";
   const runtime = createAiGraderMathematicalCalibrationSnapshotApiHandler({
     async requireAdminSession() { return { user: { id: "admin-exact" } }; },
+    async requireFreshAdminSession() { return { user: { id: "admin-exact" } }; },
     service: service({
       async listForRig(value: string) { rigId = value; return []; },
       async trust() {
@@ -82,6 +84,7 @@ test("authentication and POST-only checks occur before lifecycle mutation", asyn
   let called = false;
   const runtime = createAiGraderMathematicalCalibrationSnapshotApiHandler({
     async requireAdminSession() { throw Object.assign(new Error("Unauthorized"), { statusCode: 401 }); },
+    async requireFreshAdminSession() { throw Object.assign(new Error("Unauthorized"), { statusCode: 401 }); },
     service: service({ async trust() { called = true; return {}; } }),
   });
   const unauthorized = response();
@@ -91,6 +94,7 @@ test("authentication and POST-only checks occur before lifecycle mutation", asyn
 
   const allowedRuntime = createAiGraderMathematicalCalibrationSnapshotApiHandler({
     async requireAdminSession() { return { user: { id: "admin" } }; },
+    async requireFreshAdminSession() { return { user: { id: "admin" } }; },
     service: service(),
   });
   const method = response();

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FixedRigApprovedDesignReferencePixelsV1 } from './fixedRigDesignReferenceV1';
 import { MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST } from '@tenkings/shared';
+import type { AiGraderCalibrationActivationAuthorityV1 } from '@tenkings/shared';
 import {
   buildFixedRigMathematicalCalibrationReportPackageV1,
   FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION,
@@ -62,6 +63,7 @@ export interface BuildFixedRigMathematicalCalibrationStationPackageV1Input {
     bundlePath: string;
     bundleSha256: string;
     expectedRigId: string;
+    activationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   };
   warmSides: {
     front: { manifestPath: string; manifestSha256: string };
@@ -516,6 +518,7 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
     calibration: {
       finalizedProfile: loaded.profile,
       bundleAuthority: loaded.authority,
+      activationAuthority: input.calibration.activationAuthority,
       physicalArtifact: {
         filePath: loaded.files.physicalArtifact.path,
         sha256: loaded.files.physicalArtifact.sha256,

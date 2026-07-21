@@ -12,6 +12,7 @@ import {
   aiGraderPublishedDefectFindingV2Schema,
   validateMathematicalCalibrationProfileV1,
   type AiGraderPublishedDefectFindingV2,
+  type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderReportBundleV03,
   type MathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
@@ -148,6 +149,7 @@ export interface BuildAiGraderMathematicalReportBundleV1Input {
   cardIdentity: AiGraderReportBundleV03["cardIdentity"];
   calibrationProfile: MathematicalCalibrationProfileV1;
   calibrationBundleAuthority: AiGraderReportBundleV03["calibrationBundleAuthority"];
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   designReferences: MathematicalDesignReferenceV1[];
   centering: FixedRigCenteringElementResultV1;
   corners: FixedRigConditionElementResultV1;
@@ -1346,6 +1348,7 @@ export async function buildAiGraderMathematicalReportBundleV1(
       publication: { publicReportUrl: input.publication.publicReportUrl },
     },
     calibrationProfile: input.calibrationProfile,
+    ...(input.calibrationActivationAuthority ? { calibrationActivationAuthority: input.calibrationActivationAuthority } : {}),
     calibrationBundleAuthority: input.calibrationBundleAuthority,
     designReferences: input.designReferences,
     centeringEvidence,

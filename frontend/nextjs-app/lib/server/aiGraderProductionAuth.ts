@@ -15,6 +15,7 @@ export type AiGraderProductionAction =
   | "publish"
   | "history"
   | "card-search"
+  | "calibration-status"
   | "upload-slab-photo"
   | "run-comps"
   | "nfc-program"
@@ -81,6 +82,7 @@ class AiGraderProductionAuthError extends Error {
 
 const ALLOWED_ACTIONS: AiGraderProductionAction[] = [
   "publish",
+  "calibration-status",
   "history",
   "card-search",
   "upload-slab-photo",

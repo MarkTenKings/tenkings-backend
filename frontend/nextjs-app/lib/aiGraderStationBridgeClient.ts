@@ -11,6 +11,7 @@ import type {
   AiGraderMathematicalReviewAssetMetadataV1,
   AiGraderStationAction,
 } from "./aiGraderLocalStation";
+import type { AiGraderCalibrationActivationAuthorityV1 } from "@tenkings/shared";
 import {
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
   AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
@@ -356,6 +357,7 @@ export type AiGraderStationBridgeActionRequestBody = {
   queueItemId?: string;
   gradingContract?: AiGraderGradingContract;
   mathematicalGradingAuthority?: AiGraderMathematicalGradingAuthorityV1;
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   mathematicalReviewRequestSha256?: string;
   mathematicalFindingReviews?: AiGraderMathematicalFindingReviewV1[];
   gradingSessionId?: string;
@@ -378,6 +380,7 @@ export function buildAiGraderCaptureProfileRequest(
   captureProfile: AiGraderCaptureProfile,
   gradingContract?: AiGraderGradingContract,
   mathematicalGradingAuthority?: AiGraderMathematicalGradingAuthorityV1,
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1,
 ) {
   if (gradingContract !== "mathematical_calibration_v1") {
     throw new Error(
@@ -387,10 +390,14 @@ export function buildAiGraderCaptureProfileRequest(
   if (!mathematicalGradingAuthority) {
     throw new Error("Mathematical V1 Start New Card requires exact card and centering authority.");
   }
+  if (!calibrationActivationAuthority) {
+    throw new Error("Start New Card requires exact hosted/local ACTIVE calibration authority; no configured-bundle fallback is permitted.");
+  }
   return {
     captureProfile,
     gradingContract,
     mathematicalGradingAuthority,
+    calibrationActivationAuthority,
   } satisfies AiGraderStationBridgeActionRequestBody;
 }
 

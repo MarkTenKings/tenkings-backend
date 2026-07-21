@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { aiGraderCalibrationActivationAuthorityV1Schema } from "./aiGraderCalibrationActivationV1";
 import {
   AI_GRADER_DEFECT_FINDING_MAX_COUNT,
   isSafeAiGraderPublicAssetId,
@@ -461,6 +462,7 @@ export const aiGraderReportBundleV03Schema = z
       publication: z.strictObject({ publicReportUrl: aiGraderSafePublishedUrlSchema }),
     }),
     calibrationProfile: mathematicalCalibrationProfileV1Schema,
+    calibrationActivationAuthority: aiGraderCalibrationActivationAuthorityV1Schema.optional(),
     calibrationBundleAuthority: calibrationBundleAuthoritySchema,
     designReferences: z.array(mathematicalDesignReferenceV1Schema).max(10),
     centeringEvidence: centeringEvidenceSchema,
