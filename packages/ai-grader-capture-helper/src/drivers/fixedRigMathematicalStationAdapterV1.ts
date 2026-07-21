@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { FixedRigApprovedDesignReferencePixelsV1 } from './fixedRigDesignReferenceV1';
 import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
+  type AiGraderCalibrationActivationAuthorityV1,
   type TrustedPokemonCardFormatAuthorityV1,
 } from '@tenkings/shared';
 import {
@@ -80,6 +81,7 @@ export interface BuildFixedRigMathematicalCalibrationStationPackageV1Input {
     bundleSha256: string;
     expectedRigId: string;
     expectedRuntimeContext?: FastCalibrationRuntimeContextV1_2;
+    activationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   };
   warmSides: {
     front: { manifestPath: string; manifestSha256: string };
@@ -572,6 +574,7 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
     calibration: {
       finalizedProfile: loaded.profile,
       bundleAuthority: loaded.authority,
+      activationAuthority: input.calibration.activationAuthority,
       physicalArtifact: {
         filePath: loaded.files.physicalArtifact.path,
         sha256: loaded.files.physicalArtifact.sha256,

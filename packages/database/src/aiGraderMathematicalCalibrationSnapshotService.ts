@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import {
+  aiGraderOperatingContextV1Schema,
+  canonicalAiGraderOperatingContextV1,
+  canonicalAiGraderRuntimeContextV1,
   mathematicalCalibrationProfileV1Schema,
   type MathematicalCalibrationProfileV1,
 } from "@tenkings/shared";
@@ -68,6 +71,10 @@ export type AiGraderMathematicalCalibrationSnapshotRow = {
   mathematicalBundleManifestSha256: string | null;
   mathematicalSourceCaptureManifestSha256: string | null;
   mathematicalMemberLedgerSha256: string | null;
+  mathematicalOperatingContextV1: unknown;
+  mathematicalOperatingContextHash: string | null;
+  mathematicalRuntimeContextHash: string | null;
+  mathematicalRigCharacterizationSha256: string | null;
   trustStatus: TrustStatus;
   trustedAt: Date | null;
   trustedByOperatorId: string | null;
@@ -103,6 +110,7 @@ export type ImportAiGraderMathematicalCalibrationSnapshotV1Input = {
   bundleStorageKey: string;
   expectedBundleManifestSha256: string;
   componentSerials: Record<string, string>;
+  operatingContextV1: unknown;
   importedByOperatorId: string;
   validityStartsAt?: string | Date;
 };
@@ -450,12 +458,47 @@ function validateVerifiedBundle(
   };
 }
 
+function validateOperatingContext(
+  value: unknown,
+  verified: VerifiedArtifactSet,
+) {
+  const parsed = aiGraderOperatingContextV1Schema.safeParse(value);
+  if (!parsed.success) {
+    return invalid("operatingContextV1", "must satisfy the exact canonical operatingContextV1 contract");
+  }
+  const context = parsed.data;
+  const target = record(verified.physicalArtifact.target, "physicalArtifact.target");
+  if (
+    context.rig.rigId !== verified.profile.rigId ||
+    context.calibration.targetSha256 !== target.sha256 ||
+    context.calibration.rigCharacterizationSha256 !== verified.profile.artifactSha256 ||
+    context.calibration.bundleSchemaVersion !== verified.authority.schemaVersion ||
+    context.calibration.bundleManifestSha256 !== verified.authority.bundleManifestSha256 ||
+    context.calibration.sourceCaptureManifestSha256 !== verified.authority.sourceCaptureManifestSha256 ||
+    context.calibration.memberLedgerSha256 !== verified.authority.memberLedgerSha256 ||
+    !sameCanonicalJson(context.calibration.members, verified.authority.members) ||
+    context.software.thresholdSetId !== verified.profile.thresholdSetId ||
+    context.software.thresholdSetHash !== verified.profile.thresholdSetHash ||
+    context.software.calibrationAlgorithmVersion !== verified.physicalArtifact.algorithmVersion
+  ) {
+    return artifactFailure(
+      "AI_GRADER_MATHEMATICAL_CALIBRATION_ARTIFACT_INTEGRITY_MISMATCH",
+      "operatingContextV1 does not exactly match the verified calibration bundle and physical artifact.",
+    );
+  }
+  const operatingContextHash = hashBytes(Buffer.from(canonicalAiGraderOperatingContextV1(context), "utf8"));
+  const runtimeContextHash = hashBytes(Buffer.from(canonicalAiGraderRuntimeContextV1(context), "utf8"));
+  return { context, operatingContextHash, runtimeContextHash };
+}
+
+
 function assertRowMatches(
   row: AiGraderMathematicalCalibrationSnapshotRow,
   verified: VerifiedArtifactSet,
   status: TrustStatus,
 ): AiGraderMathematicalCalibrationSnapshotRow {
   const profile = verified.profile;
+  const operating = validateOperatingContext(row.mathematicalOperatingContextV1, verified);
   const expected: JsonRecord = {
     rigId: profile.rigId,
     calibrationType: "MATHEMATICAL_GRADING_V1",
@@ -469,6 +512,9 @@ function assertRowMatches(
     mathematicalBundleManifestSha256: verified.authority.bundleManifestSha256,
     mathematicalSourceCaptureManifestSha256: verified.authority.sourceCaptureManifestSha256,
     mathematicalMemberLedgerSha256: verified.authority.memberLedgerSha256,
+    mathematicalOperatingContextHash: operating.operatingContextHash,
+    mathematicalRuntimeContextHash: operating.runtimeContextHash,
+    mathematicalRigCharacterizationSha256: profile.artifactSha256,
     trustStatus: status,
   };
   for (const [field, expectedValue] of Object.entries(expected)) {
@@ -493,6 +539,9 @@ function assertRowMatches(
     checksums.physicalArtifactCanonicalSha256 !== profile.artifactSha256 ||
     !sameCanonicalJson(checksums.calibrationBundleAuthority, verified.authority) ||
     keys.bundleStorageKey !== verified.bundleStorageKey ||
+    checksums.operatingContextHash !== operating.operatingContextHash ||
+    checksums.runtimeContextHash !== operating.runtimeContextHash ||
+    checksums.rigCharacterizationSha256 !== profile.artifactSha256 ||
     !sameCanonicalJson(keys.members, verified.memberStorageKeys)
   ) {
     return artifactFailure(
@@ -582,6 +631,23 @@ export function createAiGraderMathematicalCalibrationSnapshotService(
   const exactNow = () => date(now(), "now");
 
   return {
+    async verifyExact(
+      snapshotIdValue: string,
+      expectedStatus?: TrustStatus,
+    ): Promise<AiGraderMathematicalCalibrationSnapshotRow> {
+      const snapshotId = text(snapshotIdValue, "snapshotId");
+      const where: JsonRecord = { id: snapshotId, calibrationType: "MATHEMATICAL_GRADING_V1" };
+      if (expectedStatus) where.trustStatus = expectedStatus;
+      const row = await db.calibrationSnapshot.findFirst({ where });
+      if (!row) {
+        throw new AiGraderMathematicalCalibrationSnapshotServiceError(
+          "AI_GRADER_MATHEMATICAL_CALIBRATION_EXACT_SNAPSHOT_NOT_FOUND",
+          "No exact Mathematical CalibrationSnapshot matched the requested identity and trust state.",
+        );
+      }
+      return (await verifyRowStorage(row)).row;
+    },
+
     async importDraft(
       input: ImportAiGraderMathematicalCalibrationSnapshotV1Input,
     ): Promise<AiGraderMathematicalCalibrationSnapshotRow> {
@@ -592,6 +658,7 @@ export function createAiGraderMathematicalCalibrationSnapshotService(
         "expectedBundleManifestSha256",
       );
       const verified = await verifyArtifactSet(bundleStorageKey, bundleManifestSha256, rigId);
+      const operating = validateOperatingContext(input.operatingContextV1, verified);
       const finalizedAt = date(verified.profile.finalizedAt, "profile.finalizedAt");
       const validityStartsAt = input.validityStartsAt === undefined
         ? exactNow() : date(input.validityStartsAt, "validityStartsAt");
@@ -613,6 +680,9 @@ export function createAiGraderMathematicalCalibrationSnapshotService(
           schemaVersion: AI_GRADER_MATHEMATICAL_CALIBRATION_IMPORT_V1_SCHEMA_VERSION,
           calibrationBundleAuthority: verified.authority,
           physicalArtifactCanonicalSha256: profile.artifactSha256,
+          operatingContextHash: operating.operatingContextHash,
+          runtimeContextHash: operating.runtimeContextHash,
+          rigCharacterizationSha256: profile.artifactSha256,
         },
         residuals: {
           schemaVersion: AI_GRADER_MATHEMATICAL_CALIBRATION_IMPORT_V1_SCHEMA_VERSION,
@@ -635,6 +705,10 @@ export function createAiGraderMathematicalCalibrationSnapshotService(
         mathematicalBundleManifestSha256: verified.authority.bundleManifestSha256,
         mathematicalSourceCaptureManifestSha256: verified.authority.sourceCaptureManifestSha256,
         mathematicalMemberLedgerSha256: verified.authority.memberLedgerSha256,
+        mathematicalOperatingContextV1: operating.context,
+        mathematicalOperatingContextHash: operating.operatingContextHash,
+        mathematicalRuntimeContextHash: operating.runtimeContextHash,
+        mathematicalRigCharacterizationSha256: profile.artifactSha256,
         trustStatus: "DRAFT",
         validityStartsAt,
       };

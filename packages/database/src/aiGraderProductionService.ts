@@ -5,6 +5,7 @@ import {
   AI_GRADER_REPORT_BUNDLE_V02_VERSION,
   AI_GRADER_REPORT_BUNDLE_V03_VERSION,
   aiGraderLegacyReportBundleV02ReadSchema,
+  aiGraderCalibrationActivationAuthorityV1Schema,
   aiGraderPublishedDefectFindingV1Schema,
   aiGraderReportBundleV01Schema,
   aiGraderReportBundleV02Schema,
@@ -103,6 +104,7 @@ export type AiGraderProductionTransactionClient = {
   aiGraderPublication: AiGraderProductionDbDelegate;
   aiGraderValuation: AiGraderProductionDbDelegate;
   calibrationSnapshot?: AiGraderMathematicalCalibrationSnapshotDelegate;
+  mathematicalCalibrationActivation?: AiGraderProductionDbDelegate;
   aiGraderDesignReference?: AiGraderDesignReferenceDelegate;
   cardAsset?: Pick<AiGraderProductionDbDelegate, "findUnique" | "updateMany">;
   item?: Pick<AiGraderProductionDbDelegate, "findUnique" | "updateMany">;
@@ -128,6 +130,7 @@ export type AiGraderProductionReportBundleLike = JsonRecord & {
   gradingStandard?: JsonRecord;
   calibrationProfile?: JsonRecord;
   calibrationBundleAuthority?: JsonRecord;
+  calibrationActivationAuthority?: JsonRecord;
   designReferences?: unknown[];
   centeringEvidence?: JsonRecord;
   conditionObservationEvidence?: JsonRecord;
@@ -3647,6 +3650,63 @@ async function assertAiGraderApprovedDesignReferencesReady(
   }
 }
 
+async function resolveAiGraderHistoricalCalibrationActivationBinding(
+  tx: AiGraderProductionTransactionClient,
+  reportBundle: AiGraderProductionReportBundleLike,
+  calibrationSnapshotId: string | undefined,
+): Promise<string | undefined> {
+  if (reportBundle.calibrationActivationAuthority === undefined) return undefined;
+  const parsed = aiGraderCalibrationActivationAuthorityV1Schema.safeParse(
+    reportBundle.calibrationActivationAuthority,
+  );
+  if (!parsed.success || !calibrationSnapshotId) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_CALIBRATION_ACTIVATION_BINDING_MISMATCH",
+      "Report calibration activation authority is invalid or has no exact immutable snapshot binding.",
+      400,
+    );
+  }
+  if (!tx.mathematicalCalibrationActivation?.findUnique) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_CALIBRATION_ACTIVATION_BINDING_UNAVAILABLE",
+      "Historical calibration activation binding cannot be verified.",
+      503,
+    );
+  }
+  const authority = parsed.data;
+  const rowValue = await tx.mathematicalCalibrationActivation.findUnique({
+    where: { id: authority.activationId },
+    include: { events: { orderBy: { sequence: "asc" } } },
+  });
+  const row = isRecord(rowValue) ? rowValue : {};
+  const events = Array.isArray(row.events) ? row.events.filter(isRecord) : [];
+  const activated = events.find((event) =>
+    event.eventType === "ACTIVATED" &&
+    event.eventHash === authority.activationRevision &&
+    event.workstationReceiptSha256 === authority.workstationReceiptSha256,
+  );
+  if (
+    row.id !== authority.activationId ||
+    row.activationHash !== authority.activationHash ||
+    row.calibrationSnapshotId !== authority.snapshotId ||
+    row.calibrationSnapshotId !== calibrationSnapshotId ||
+    row.rigId !== authority.rigId ||
+    row.bundleManifestSha256 !== authority.bundleManifestSha256 ||
+    row.memberLedgerSha256 !== authority.memberLedgerSha256 ||
+    row.runtimeContextHash !== authority.runtimeContextHash ||
+    row.rigCharacterizationSha256 !== authority.rigCharacterizationSha256 ||
+    row.operatingContextHash !== authority.operatingContextHash ||
+    !activated
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_CALIBRATION_ACTIVATION_BINDING_MISMATCH",
+      "Report activation authority does not match the exact immutable activated snapshot and receipt.",
+      409,
+    );
+  }
+  return authority.activationId;
+}
+
 export async function persistAiGraderProductionRelease(
   db: AiGraderProductionPrismaClient,
   input: AiGraderProductionPersistInput,
@@ -3679,6 +3739,10 @@ export async function persistAiGraderProductionRelease(
     const calibrationSnapshotId = calibrationReadiness.required
       ? calibrationReadiness.snapshotId
       : undefined;
+    const calibrationActivationId = await resolveAiGraderHistoricalCalibrationActivationBinding(
+      tx, input.reportBundle, calibrationSnapshotId,
+    );
+
     await assertAiGraderApprovedDesignReferencesReady(tx, input.reportBundle, options);
     const authority = await resolveAiGraderConfirmedPublishAuthorityTx(tx, linkage);
     assertAiGraderPublishPackageMatchesAuthority({
@@ -3717,7 +3781,10 @@ export async function persistAiGraderProductionRelease(
       productionRelease: input.productionRelease,
       authority,
     });
-    const baseSessionData = sessionData(input, gradingSessionId, reportId, now);
+    const baseSessionData = {
+      ...sessionData(input, gradingSessionId, reportId, now),
+      ...(calibrationActivationId ? { calibrationActivationId } : {}),
+    };
     const {
       tenantId: _sessionTenantId,
       gradingSessionId: _sessionGradingSessionId,
@@ -3766,6 +3833,7 @@ export async function persistAiGraderProductionRelease(
     const baseReportData = {
       ...reportData(input, sessionId, reportId, publicationStatus, now),
       ...(calibrationSnapshotId ? { calibrationSnapshotId } : {}),
+      ...(calibrationActivationId ? { calibrationActivationId } : {}),
     };
     const {
       tenantId: _reportTenantId,

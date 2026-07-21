@@ -5,6 +5,7 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   mathematicalDesignReferenceV1Schema,
   type AiGraderReportBundleV03,
+  type AiGraderCalibrationActivationAuthorityV1,
   type MathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
   type MathematicalGradingElementV1,
@@ -243,6 +244,7 @@ export interface BuildFixedRigMathematicalCalibrationOrchestratorV1Input {
     finalizedProfile: MathematicalCalibrationProfileV1;
     /** Must come from the verified finalized-bundle loader; never caller-authored metadata. */
     bundleAuthority: AiGraderReportBundleV03["calibrationBundleAuthority"];
+    activationAuthority?: AiGraderCalibrationActivationAuthorityV1;
     physicalArtifact: FixedRigExactInputFileV1;
     flatFieldArtifacts: FixedRigExactInputFileV1[];
     illuminationPatternArtifact: FixedRigExactInputFileV1;
@@ -2705,6 +2707,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
           input.pokemonStandardCornerAuthorityVerification,
         calibrationProfile: input.calibration.finalizedProfile,
         calibrationBundleAuthority: input.calibration.bundleAuthority,
+        calibrationActivationAuthority: input.calibration.activationAuthority,
         designReferences: [front.input.designReference, back.input.designReference]
           .filter((reference): reference is MathematicalDesignReferenceV1 => Boolean(reference)),
         centering,

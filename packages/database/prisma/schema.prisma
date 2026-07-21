@@ -554,6 +554,17 @@ enum CalibrationSnapshotTrustStatus {
   REVOKED
 }
 
+enum MathematicalCalibrationActivationEventType {
+  PENDING_CREATED
+  LOCAL_VERIFIED
+  ACTIVATED
+  FAILED
+  EXPIRED
+  SUPERSEDED
+  REVOKED
+}
+
+
 enum OperatorOverrideReviewStatus {
   PENDING
   APPROVED
@@ -2517,6 +2528,9 @@ model CaptureRig {
   helperInstances      HelperInstance[]
   calibrationSnapshots CalibrationSnapshot[]
   captureSessions      CaptureSession[]
+  mathematicalCalibrationActivations MathematicalCalibrationActivation[]
+  mathematicalCalibrationActivePointer MathematicalCalibrationActivePointer?
+  mathematicalCalibrationPendingPointer MathematicalCalibrationPendingPointer?
 
   @@index([tenantId, locationId])
 }
@@ -2600,6 +2614,10 @@ model CalibrationSnapshot {
   mathematicalBundleManifestSha256   String?
   mathematicalSourceCaptureManifestSha256 String?
   mathematicalMemberLedgerSha256     String?
+  mathematicalOperatingContextV1      Json?
+  mathematicalOperatingContextHash    String?
+  mathematicalRuntimeContextHash      String?
+  mathematicalRigCharacterizationSha256 String?
   trustStatus                        CalibrationSnapshotTrustStatus @default(DRAFT)
   trustedAt                          DateTime?
   trustedByOperatorId                String?
@@ -2614,11 +2632,92 @@ model CalibrationSnapshot {
   createdAt                          DateTime                       @default(now())
 
   aiGraderReports AiGraderReport[]
+  mathematicalActivations MathematicalCalibrationActivation[]
 
   @@unique([rigId, calibrationType, mathematicalProfileId, mathematicalCalibrationVersion, mathematicalProfileFinalizedAt, mathematicalArtifactId, mathematicalArtifactSha256, mathematicalThresholdSetId, mathematicalThresholdSetHash, mathematicalBundleSchemaVersion, mathematicalBundleManifestSha256, mathematicalSourceCaptureManifestSha256, mathematicalMemberLedgerSha256], map: "CalibrationSnapshot_mathematical_identity_key")
   @@index([rigId, calibrationType, validityStartsAt])
   @@index([rigId, calibrationType, trustStatus, validityStartsAt, validityEndsAt], map: "CalibrationSnapshot_mathematical_readiness_idx")
 }
+
+model MathematicalCalibrationActivation {
+  id                                 String   @id @default(cuid())
+  rigId                              String
+  rig                                CaptureRig @relation(fields: [rigId], references: [id], onDelete: Restrict)
+  calibrationSnapshotId              String
+  calibrationSnapshot                CalibrationSnapshot @relation(fields: [calibrationSnapshotId], references: [id], onDelete: Restrict)
+  activationHash                     String   @unique
+  operatingContextV1                 Json
+  operatingContextHash               String
+  runtimeContextHash                 String
+  rigCharacterizationSha256          String
+  bundleManifestSha256               String
+  memberLedgerSha256                 String
+  requestedByUserId                  String
+  requestKind                        String
+  requestReason                      String
+  requestIdempotencyKeyHash          String
+  requestHash                        String
+  requestedAt                        DateTime
+  pendingExpiresAt                   DateTime
+  priorActivationId                  String?
+  priorActivation                    MathematicalCalibrationActivation? @relation("MathematicalCalibrationActivationHistory", fields: [priorActivationId], references: [id], onDelete: Restrict)
+  subsequentActivations              MathematicalCalibrationActivation[] @relation("MathematicalCalibrationActivationHistory")
+  createdAt                          DateTime @default(now())
+
+  events        MathematicalCalibrationActivationEvent[]
+  activePointer MathematicalCalibrationActivePointer?
+  pendingPointer MathematicalCalibrationPendingPointer?
+  sessions      AiGraderSession[]
+  reports       AiGraderReport[]
+
+  @@unique([rigId, requestIdempotencyKeyHash], map: "MathematicalCalibrationActivation_rig_idempotency_key")
+  @@index([rigId, requestedAt], map: "MathematicalCalibrationActivation_rig_requested_idx")
+  @@index([calibrationSnapshotId], map: "MathematicalCalibrationActivation_snapshot_idx")
+}
+
+model MathematicalCalibrationActivationEvent {
+  id                    String   @id @default(cuid())
+  activationId          String
+  activation            MathematicalCalibrationActivation @relation(fields: [activationId], references: [id], onDelete: Restrict)
+  sequence              Int
+  eventType             MathematicalCalibrationActivationEventType
+  eventHash             String   @unique
+  previousEventHash     String?
+  workstationReceipt    Json?
+  workstationReceiptSha256 String?
+  actorUserId           String?
+  safeDetails           Json?
+  occurredAt            DateTime
+  createdAt             DateTime @default(now())
+
+  @@unique([activationId, sequence], map: "MathematicalCalibrationActivationEvent_sequence_key")
+  @@index([activationId, occurredAt], map: "MathematicalCalibrationActivationEvent_activation_idx")
+}
+
+model MathematicalCalibrationActivePointer {
+  rigId                       String @id
+  rig                         CaptureRig @relation(fields: [rigId], references: [id], onDelete: Restrict)
+  activationId                String @unique
+  activation                  MathematicalCalibrationActivation @relation(fields: [activationId], references: [id], onDelete: Restrict)
+  activationHash              String
+  activationRevision          String
+  operatingContextHash        String
+  workstationReceiptSha256    String
+  activatedAt                 DateTime
+  createdAt                   DateTime @default(now())
+}
+
+model MathematicalCalibrationPendingPointer {
+  rigId                       String @id
+  rig                         CaptureRig @relation(fields: [rigId], references: [id], onDelete: Restrict)
+  activationId                String @unique
+  activation                  MathematicalCalibrationActivation @relation(fields: [activationId], references: [id], onDelete: Restrict)
+  activationHash              String
+  activationRevision          String
+  pendingExpiresAt            DateTime
+  createdAt                   DateTime @default(now())
+}
+
 
 model CaptureSession {
   id                  String               @id @default(cuid())
@@ -2942,6 +3041,8 @@ model AiGraderSession {
   calibrationProfile   Json?
   captureSummary       Json?
   safetySummary        Json?
+  calibrationActivationId String?
+  calibrationActivation MathematicalCalibrationActivation? @relation(fields: [calibrationActivationId], references: [id], onDelete: Restrict)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -2954,6 +3055,7 @@ model AiGraderSession {
   @@index([cardAssetId])
   @@index([itemId])
   @@index([operatorUserId])
+  @@index([calibrationActivationId], map: "AiGraderSession_calibrationActivationId_idx")
 }
 
 model AiGraderReport {
@@ -2986,6 +3088,8 @@ model AiGraderReport {
   calibrationProfile          Json?
   calibrationSnapshotId       String?
   calibrationSnapshot         CalibrationSnapshot? @relation(fields: [calibrationSnapshotId], references: [id], onDelete: Restrict)
+  calibrationActivationId     String?
+  calibrationActivation       MathematicalCalibrationActivation? @relation(fields: [calibrationActivationId], references: [id], onDelete: Restrict)
   repeatabilitySummary        Json?
   lightingProfile             Json?
   visionLabArtifacts          Json?
@@ -3011,6 +3115,7 @@ model AiGraderReport {
   @@index([itemId])
   @@index([sessionId])
   @@index([calibrationSnapshotId], map: "AiGraderReport_calibrationSnapshotId_idx")
+  @@index([calibrationActivationId], map: "AiGraderReport_calibrationActivationId_idx")
 }
 
 model AiGraderEvidenceAsset {
