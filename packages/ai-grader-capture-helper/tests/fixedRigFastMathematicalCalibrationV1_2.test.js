@@ -140,6 +140,7 @@ function rigSource(context = runtimeContext()) {
       value: {
         schemaVersion: "ten-kings-physical-light-directions-authority-v1",
         rigId: context.rigId,
+        stageToUndistortedSensorMatrix: [1, 0, 0, 1],
         channels: Array.from({ length: 8 }, (_, index) => ({ channelIndex: index + 1, directionMeasurementSamples: [] })),
       },
     },

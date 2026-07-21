@@ -8,6 +8,7 @@ import {
   type FastCalibrationPersistentBatchControllerV1_2,
   type FastCalibrationRigCharacterizationSourceV1_2,
   type FastCalibrationRuntimeContextV1_2,
+  verifyFastCalibrationRigCharacterizationSourceV1_2,
 } from "./fixedRigFastMathematicalCalibrationV1_2";
 import {
   FixedRigFastCalibrationEvidenceAnalyzerV1_2,
@@ -51,6 +52,7 @@ export interface DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig {
   operatorId: string;
   loadRuntimeContext(): Promise<FastCalibrationRuntimeContextV1_2>;
   loadRigCharacterizationSource(): Promise<FastCalibrationRigCharacterizationSourceV1_2>;
+  verifyLiveRuntimeContext?(expected: FastCalibrationRuntimeContextV1_2): Promise<void>;
   checkerboardCapture: MathematicalCalibrationV1_2CheckerboardCaptureAdapter;
   persistentBatchControllers: MathematicalCalibrationV1_2PersistentBatchControllerFactory;
   evidenceAnalyzer?: FastCalibrationEvidenceAnalyzerV1_2;
@@ -200,7 +202,8 @@ implements MathematicalCalibrationV1_2LocalSessionAuthority {
   ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
     if (request.resumeSessionId) {
       return this.serialize(request.resumeSessionId, async () => {
-        const { core } = await this.openLive(request.resumeSessionId!);
+        const { core, runtimeContext } = await this.openLive(request.resumeSessionId!);
+        await this.config.verifyLiveRuntimeContext?.(runtimeContext);
         if (!request.expectedRevision) throw new Error("Explicit resume requires the server-issued expectedRevision.");
         this.assertRevision(core, request.expectedRevision);
         return this.toStatus(core);
@@ -213,6 +216,7 @@ implements MathematicalCalibrationV1_2LocalSessionAuthority {
     );
     return this.serialize(sessionId, async () => {
       const runtimeContext = await this.config.loadRuntimeContext();
+      await this.config.verifyLiveRuntimeContext?.(runtimeContext);
       const rigCharacterizationSource = await this.config.loadRigCharacterizationSource();
       const core = await FixedRigFastMathematicalCalibrationCoreV1_2.open(this.coreConfig(), {
         sessionId,
@@ -226,6 +230,15 @@ implements MathematicalCalibrationV1_2LocalSessionAuthority {
 
   async status(sessionId: string): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
     return this.toStatus((await this.openLive(sessionId)).core);
+  }
+
+  private async geometryAuthority(runtimeContext: FastCalibrationRuntimeContextV1_2) {
+    const source = await this.config.loadRigCharacterizationSource();
+    const verified = verifyFastCalibrationRigCharacterizationSourceV1_2(source, runtimeContext);
+    return {
+      lensModel: verified.oneTimeBuilderInput.lensModel,
+      stageToUndistortedSensorMatrix: verified.physicalDirectionTransform,
+    };
   }
 
   private async execute(
@@ -244,7 +257,7 @@ implements MathematicalCalibrationV1_2LocalSessionAuthority {
         replacement: false,
         runtimeContext,
       });
-      const derived = await this.analyzer.derivePose(frame.bytes, runtimeContext);
+      const derived = await this.analyzer.derivePose(frame.bytes, runtimeContext, await this.geometryAuthority(runtimeContext));
       await core.captureCheckerboard({ frame, pose: derived.pose });
     } else if (next.action === "confirm_blank_reverse_flip") {
       const acknowledgement = await this.config.checkerboardCapture.confirmBlankReverseFlip({
@@ -291,7 +304,7 @@ implements MathematicalCalibrationV1_2LocalSessionAuthority {
         replacement: true,
         runtimeContext,
       });
-      const derived = await this.analyzer.derivePose(frame.bytes, runtimeContext);
+      const derived = await this.analyzer.derivePose(frame.bytes, runtimeContext, await this.geometryAuthority(runtimeContext));
       await core.captureCheckerboard({ frame, pose: derived.pose, replaceSlot: request.acceptedSlot });
       return this.toStatus(core);
     });

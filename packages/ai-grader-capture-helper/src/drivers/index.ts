@@ -191,7 +191,7 @@ export * from './fixedRigStandardCardFormatV1';
 export * from "./fixedRigMathematicalCalibrationOrchestratorV1";
 export * from "./fixedRigFastCalibrationEvidenceAnalyzerV1_2";
 export * from "./fixedRigFastMathematicalCalibrationLocalAuthorityV1_2";
-export * from "./fixedRigFastMathematicalCalibrationBundleV1_2";
+export * from "./fixedRigFastMathematicalCalibrationProductionAuthorityV1_2";
 export * from "./fixedRigMathematicalCalibrationV1_1";
 export * from "./fixedRigFastMathematicalCalibrationV1_2";
 export * from "./fixedRigMathematicalCalibrationCaptureV1";

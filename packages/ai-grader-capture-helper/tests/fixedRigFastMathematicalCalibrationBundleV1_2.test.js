@@ -150,6 +150,7 @@ function rigSource(builder, context) {
       value: {
         schemaVersion: "ten-kings-physical-light-directions-authority-v1",
         rigId: context.rigId,
+        stageToUndistortedSensorMatrix: [1, 0, 0, 1],
         channels: builder.channels.map(({ channelIndex, directionMeasurementSamples }) => ({
           channelIndex,
           directionMeasurementSamples,
@@ -498,6 +499,7 @@ function trustedEvidenceAnalyzer(context) {
       return {
         geometryAlgorithmSha256: context.algorithmHashes.geometry,
         photometricAlgorithmSha256: context.algorithmHashes.photometric,
+        physicalToNormalizedDirectionMatrix: [1, 0, 0, 1],
         gridWidth: 8,
         gridHeight: 8,
         poses,
