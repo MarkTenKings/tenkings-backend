@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import {
   createAiGraderCalibrationActivationService,
   createAiGraderMathematicalCalibrationSnapshotService,
+  parseAiGraderCalibrationHostedAuthoritySigningKeyV1,
   parseAiGraderCalibrationWorkstationPublicKeysV1,
   prisma,
 } from "@tenkings/database";
@@ -20,6 +21,9 @@ const snapshotService = createAiGraderMathematicalCalibrationSnapshotService(pri
 const service = createAiGraderCalibrationActivationService(prisma as any, {
   workstationPublicKeys: parseAiGraderCalibrationWorkstationPublicKeysV1(
     process.env.AI_GRADER_CALIBRATION_WORKSTATION_PUBLIC_KEYS_JSON,
+  ),
+  hostedAuthoritySigningKey: parseAiGraderCalibrationHostedAuthoritySigningKeyV1(
+    process.env.AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNING_KEY_PKCS8_BASE64,
   ),
   verifySnapshotStorage: async (snapshot) => {
     await snapshotService.verifyExact(String(snapshot.id ?? ""), "TRUSTED");

@@ -1,8 +1,16 @@
 import { constants as fsConstants } from "node:fs";
 import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { createHash, randomUUID, sign as signBytes, type KeyObject } from "node:crypto";
+import {
+  createHash,
+  createPublicKey,
+  randomUUID,
+  sign as signBytes,
+  verify as verifyBytes,
+  type KeyObject,
+} from "node:crypto";
 import path from "node:path";
 import {
+  AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1,
   AI_GRADER_CALIBRATION_LOCAL_POINTER_V1_SCHEMA_VERSION,
   AI_GRADER_CALIBRATION_WORKSTATION_RECEIPT_V1_SCHEMA_VERSION,
   aiGraderCalibrationActivationAuthorityV1Schema,
@@ -12,6 +20,7 @@ import {
   aiGraderCalibrationWorkstationReceiptV1Schema,
   aiGraderOperatingContextV1Schema,
   canonicalAiGraderCalibrationJsonV1,
+  canonicalAiGraderCalibrationHostedAuthorityStatementV1,
   canonicalAiGraderOperatingContextV1,
   canonicalAiGraderRuntimeContextV1,
   type AiGraderCalibrationActivationAuthorityV1,
@@ -30,6 +39,12 @@ export const MATHEMATICAL_CALIBRATION_FINALIZER_HANDOFF_V1 =
   "ten-kings-mathematical-calibration-finalizer-handoff-v1" as const;
 export const MATHEMATICAL_CALIBRATION_FINALIZER_HANDOFF_FILE_V1 =
   "mathematical-calibration-finalizer-handoff-v1.json" as const;
+
+export type MathematicalCalibrationHostedAuthorityPublicKeyV1 = {
+  keyId: string;
+  rigId: string;
+  publicKey: KeyObject;
+};
 
 export type MathematicalCalibrationFinalizerHandoffV1 = {
   schemaVersion: typeof MATHEMATICAL_CALIBRATION_FINALIZER_HANDOFF_V1;
@@ -52,6 +67,7 @@ export type MathematicalCalibrationActivationRegistryV1Options = {
   helperVersion: string;
   workstationKeyId: string;
   workstationPrivateKey: KeyObject;
+  hostedAuthorityPublicKeys: Map<string, MathematicalCalibrationHostedAuthorityPublicKeyV1>;
   liveOperatingContext(
     expected: AiGraderOperatingContextV1,
   ): AiGraderOperatingContextV1 | Promise<AiGraderOperatingContextV1>;
@@ -81,6 +97,93 @@ function canonicalSha(value: unknown) {
   return sha256(canonicalAiGraderCalibrationJsonV1(value));
 }
 
+export function parseMathematicalCalibrationHostedAuthorityPublicKeysV1(
+  raw: unknown,
+  expectedRigId: string,
+): Map<string, MathematicalCalibrationHostedAuthorityPublicKeyV1> {
+  if (typeof raw !== "string" || raw.length < 2 || raw.length > 128 * 1024 ||
+      typeof expectedRigId !== "string" || !expectedRigId.trim()) {
+    return fail(
+      "AI_GRADER_LOCAL_CALIBRATION_HOSTED_KEY_CONFIGURATION_INVALID",
+      "Hosted calibration authority public-key configuration is unavailable.",
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return fail(
+      "AI_GRADER_LOCAL_CALIBRATION_HOSTED_KEY_CONFIGURATION_INVALID",
+      "Hosted calibration authority public-key configuration is invalid.",
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return fail(
+      "AI_GRADER_LOCAL_CALIBRATION_HOSTED_KEY_CONFIGURATION_INVALID",
+      "Hosted calibration authority public-key configuration is invalid.",
+    );
+  }
+  const result = new Map<string, MathematicalCalibrationHostedAuthorityPublicKeyV1>();
+  for (const [keyId, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!SHA256.test(keyId) || result.has(keyId) || !value || typeof value !== "object" ||
+        Array.isArray(value)) {
+      return fail(
+        "AI_GRADER_LOCAL_CALIBRATION_HOSTED_KEY_CONFIGURATION_INVALID",
+        "Hosted calibration authority public-key entry is invalid.",
+      );
+    }
+    const entry = value as Record<string, unknown>;
+    if (Object.keys(entry).sort().join("|") !==
+        ["algorithm", "publicSpkiDerBase64", "rigId"].sort().join("|") ||
+        entry.algorithm !== AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1 ||
+        entry.rigId !== expectedRigId || typeof entry.publicSpkiDerBase64 !== "string" ||
+        !/^[A-Za-z0-9+/]+={0,2}$/.test(entry.publicSpkiDerBase64)) {
+      return fail(
+        "AI_GRADER_LOCAL_CALIBRATION_HOSTED_KEY_CONFIGURATION_INVALID",
+        "Hosted calibration authority public-key entry is invalid.",
+      );
+    }
+    const der = Buffer.from(entry.publicSpkiDerBase64, "base64");
+    if (der.toString("base64") !== entry.publicSpkiDerBase64 || sha256(der) !== keyId) {
+      return fail(
+        "AI_GRADER_LOCAL_CALIBRATION_HOSTED_KEY_CONFIGURATION_INVALID",
+        "Hosted calibration authority public-key identity is invalid.",
+      );
+    }
+    try {
+      const publicKey = createPublicKey({ key: der, format: "der", type: "spki" });
+      if (publicKey.asymmetricKeyType !== "ec" ||
+          publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1") {
+        throw new Error("wrong key");
+      }
+      result.set(keyId, { keyId, rigId: expectedRigId, publicKey });
+    } catch {
+      return fail(
+        "AI_GRADER_LOCAL_CALIBRATION_HOSTED_KEY_CONFIGURATION_INVALID",
+        "Hosted calibration authority public key is invalid.",
+      );
+    }
+  }
+  if (result.size < 1) {
+    return fail(
+      "AI_GRADER_LOCAL_CALIBRATION_HOSTED_KEY_CONFIGURATION_INVALID",
+      "At least one pinned hosted calibration authority key is required.",
+    );
+  }
+  return result;
+}
+
+function validHostedAuthorityKeys(
+  value: Map<string, MathematicalCalibrationHostedAuthorityPublicKeyV1>,
+  expectedRigId: string,
+) {
+  if (!(value instanceof Map) || value.size < 1) return false;
+  return [...value.entries()].every(([keyId, entry]) =>
+    SHA256.test(keyId) && entry.keyId === keyId && entry.rigId === expectedRigId &&
+    entry.publicKey.type === "public" && entry.publicKey.asymmetricKeyType === "ec" &&
+    entry.publicKey.asymmetricKeyDetails?.namedCurve === "prime256v1");
+}
+
 async function exists(filePath: string) {
   try {
     await stat(filePath);
@@ -107,8 +210,79 @@ export function createMathematicalCalibrationActivationRegistryV1(
       !SHA256.test(options.workstationKeyId) ||
       options.workstationPrivateKey.type !== "private" ||
       options.workstationPrivateKey.asymmetricKeyType !== "ec" ||
-      options.workstationPrivateKey.asymmetricKeyDetails?.namedCurve !== "prime256v1") {
+      options.workstationPrivateKey.asymmetricKeyDetails?.namedCurve !== "prime256v1" ||
+      !validHostedAuthorityKeys(options.hostedAuthorityPublicKeys, options.expectedRigId)) {
     fail("AI_GRADER_LOCAL_CALIBRATION_REGISTRY_INVALID", "Local calibration activation registry configuration is invalid.");
+  }
+
+  function verifyHostedAuthority(
+    value: unknown,
+    expectedPhase: "PENDING",
+  ): AiGraderCalibrationPendingAuthorityV1;
+  function verifyHostedAuthority(
+    value: unknown,
+    expectedPhase: "ACTIVE",
+    allowExpiredActive?: boolean,
+  ): AiGraderCalibrationActivationAuthorityV1;
+  function verifyHostedAuthority(
+    value: unknown,
+    expectedPhase: "PENDING" | "ACTIVE",
+    allowExpiredActive = false,
+  ): AiGraderCalibrationPendingAuthorityV1 | AiGraderCalibrationActivationAuthorityV1 {
+    const parsed = expectedPhase === "PENDING"
+      ? aiGraderCalibrationPendingAuthorityV1Schema.safeParse(value)
+      : aiGraderCalibrationActivationAuthorityV1Schema.safeParse(value);
+    if (!parsed.success || parsed.data.authorityPhase !== expectedPhase) {
+      return fail(
+        "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+        "Hosted " + expectedPhase + " calibration authority is unsigned, malformed, or in the wrong phase.",
+      );
+    }
+    const authority = parsed.data;
+    if (authority.rigId !== options.expectedRigId) {
+      return fail(
+        "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+        "Hosted calibration authority belongs to a different rig.",
+      );
+    }
+    const key = options.hostedAuthorityPublicKeys.get(authority.hostedAuthorityKeyId);
+    if (!key || key.rigId !== options.expectedRigId) {
+      return fail(
+        "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+        "Hosted calibration authority signer is not pinned for this rig.",
+      );
+    }
+    const exactNow = now();
+    const issuedAt = new Date(authority.hostedAuthorityIssuedAt);
+    const expiresAt = new Date(authority.hostedAuthorityExpiresAt);
+    if (!Number.isFinite(exactNow.getTime()) || !Number.isFinite(issuedAt.getTime()) ||
+        !Number.isFinite(expiresAt.getTime()) ||
+        issuedAt.getTime() > exactNow.getTime() + 30_000 ||
+        (expiresAt.getTime() <= exactNow.getTime() &&
+          !(expectedPhase === "ACTIVE" && allowExpiredActive))) {
+      return fail(
+        "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_EXPIRED",
+        "Hosted calibration authority is expired or outside the accepted clock window.",
+      );
+    }
+    let signatureValid = false;
+    try {
+      signatureValid = verifyBytes(
+        "sha256",
+        Buffer.from(canonicalAiGraderCalibrationHostedAuthorityStatementV1(authority), "utf8"),
+        { key: key.publicKey, dsaEncoding: "ieee-p1363" },
+        Buffer.from(authority.hostedAuthoritySignature, "base64url"),
+      );
+    } catch {
+      signatureValid = false;
+    }
+    if (!signatureValid) {
+      return fail(
+        "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
+        "Hosted calibration authority signature was rejected.",
+      );
+    }
+    return authority;
   }
 
   function bundlePath(bundleManifestSha256: string) {
@@ -328,13 +502,21 @@ export function createMathematicalCalibrationActivationRegistryV1(
   }
 
   async function prepareActivation(value: unknown): Promise<AiGraderCalibrationWorkstationReceiptV1> {
-    const pending = aiGraderCalibrationPendingAuthorityV1Schema.parse(value);
-    if (pending.rigId !== options.expectedRigId) fail("AI_GRADER_LOCAL_CALIBRATION_RIG_MISMATCH", "Pending activation belongs to a different rig.");
+    const pending = verifyHostedAuthority(value, "PENDING");
     const exactNow = now();
     if (!Number.isFinite(exactNow.getTime()) || exactNow.getTime() >= new Date(pending.pendingExpiresAt).getTime()) {
       fail("AI_GRADER_LOCAL_CALIBRATION_PENDING_EXPIRED", "Pending activation is expired.");
     }
     if (!await options.isIdle()) fail("AI_GRADER_LOCAL_CALIBRATION_NOT_IDLE", "Local helper must be idle before activation verification.");
+    if (await exists(pointerPath)) {
+      const current = await readPointer();
+      if (current.activationId === pending.activationId) {
+        fail(
+          "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REPLAYED",
+          "A hosted pending authority for an activation already seen locally cannot be replayed.",
+        );
+      }
+    }
     const pendingPointer: AiGraderCalibrationLocalPointerV1 = {
       schemaVersion: AI_GRADER_CALIBRATION_LOCAL_POINTER_V1_SCHEMA_VERSION,
       state: "PENDING",
@@ -395,7 +577,7 @@ export function createMathematicalCalibrationActivationRegistryV1(
   }
 
   async function confirmHostedActivation(value: unknown) {
-    const authority = aiGraderCalibrationActivationAuthorityV1Schema.parse(value);
+    const authority = verifyHostedAuthority(value, "ACTIVE");
     const pointer = await readPointer();
     if (pointer.state !== "PENDING" || pointer.activationId !== authority.activationId ||
         pointer.activationHash !== authority.activationHash || pointer.snapshotId !== authority.snapshotId ||
@@ -428,8 +610,8 @@ export function createMathematicalCalibrationActivationRegistryV1(
     return activePointer;
   }
 
-  async function assertStartAuthority(value: unknown) {
-    const hosted = aiGraderCalibrationActivationAuthorityV1Schema.parse(value);
+  async function assertActiveAuthority(value: unknown, allowExpiredActive: boolean) {
+    const hosted = verifyHostedAuthority(value, "ACTIVE", allowExpiredActive);
     const pointer = await readPointer();
     const exactFields: (keyof AiGraderCalibrationActivationAuthorityV1)[] = [
       "activationId", "activationHash", "activationRevision", "snapshotId", "rigId",
@@ -454,11 +636,20 @@ export function createMathematicalCalibrationActivationRegistryV1(
     return { authority: hosted, bundlePath: loaded.bundlePath, receiptPath };
   }
 
+  function assertStartAuthority(value: unknown) {
+    return assertActiveAuthority(value, false);
+  }
+
+  function assertBoundSessionAuthority(value: unknown) {
+    return assertActiveAuthority(value, true);
+  }
+
   return {
     ingestFinalizedBundle,
     prepareActivation,
     confirmHostedActivation,
     assertStartAuthority,
+    assertBoundSessionAuthority,
     readPointer,
     paths: { rootDir, finalizedBundleStagingRoot, bundlesRoot, receiptsRoot, contextsRoot, pointerPath },
   };

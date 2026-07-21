@@ -360,6 +360,7 @@ function sampleV03CalibrationBundleAuthority(profile) {
 function sampleV03ActivationAuthority(profile, bundleAuthority, overrides = {}) {
   return {
     schemaVersion: "ten-kings-ai-grader-calibration-activation-authority-v1",
+    authorityPhase: "ACTIVE",
     activationId: "calibration-activation-v03",
     activationHash: "6".repeat(64),
     activationRevision: "7".repeat(64),
@@ -372,6 +373,11 @@ function sampleV03ActivationAuthority(profile, bundleAuthority, overrides = {}) 
     operatingContextHash: "9".repeat(64),
     workstationReceiptSha256: "a".repeat(64),
     activatedAt: "2026-07-18T18:45:00.000Z",
+    hostedAuthorityKeyId: "c".repeat(64),
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: "2026-07-18T18:45:30.000Z",
+    hostedAuthorityExpiresAt: "2026-07-18T18:47:30.000Z",
+    hostedAuthoritySignature: "A".repeat(86),
     ...overrides,
   };
 }
