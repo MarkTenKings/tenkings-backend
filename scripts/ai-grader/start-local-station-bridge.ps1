@@ -31,7 +31,9 @@ param(
   [string]$MathematicalCalibrationTargetSha256,
   [string]$MathematicalCalibrationRigId,
   [string]$MathematicalCalibrationBundlePath,
-  [string]$MathematicalCalibrationBundleSha256
+  [string]$MathematicalCalibrationBundleSha256,
+  [string]$ProvisionalGeometryArtifactPath,
+  [string]$ProvisionalGeometryArtifactSha256
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,6 +85,8 @@ $selectedMathematicalCalibrationTargetSha256 = if ($PSBoundParameters.ContainsKe
 $selectedMathematicalCalibrationRigId = if ($PSBoundParameters.ContainsKey('MathematicalCalibrationRigId')) { $MathematicalCalibrationRigId } elseif ($config) { [string]$config.mathematicalCalibrationRigId } else { $null }
 $selectedMathematicalCalibrationBundlePath = if ($PSBoundParameters.ContainsKey('MathematicalCalibrationBundlePath')) { $MathematicalCalibrationBundlePath } elseif ($config) { [string]$config.mathematicalCalibrationBundlePath } else { $null }
 $selectedMathematicalCalibrationBundleSha256 = if ($PSBoundParameters.ContainsKey('MathematicalCalibrationBundleSha256')) { $MathematicalCalibrationBundleSha256 } elseif ($config) { [string]$config.mathematicalCalibrationBundleSha256 } else { $null }
+$selectedProvisionalGeometryArtifactPath = if ($PSBoundParameters.ContainsKey('ProvisionalGeometryArtifactPath')) { $ProvisionalGeometryArtifactPath } elseif ($config) { [string]$config.provisionalGeometryArtifactPath } else { $null }
+$selectedProvisionalGeometryArtifactSha256 = if ($PSBoundParameters.ContainsKey('ProvisionalGeometryArtifactSha256')) { $ProvisionalGeometryArtifactSha256 } elseif ($config) { [string]$config.provisionalGeometryArtifactSha256 } else { $null }
 
 $targetSettings = @(
   $selectedMathematicalCalibrationTargetPath,
@@ -98,6 +102,13 @@ $bundleSettings = @(
 ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 if ($bundleSettings.Count -ne 0 -and $bundleSettings.Count -ne 2) {
   throw 'Mathematical calibration bundle path and SHA-256 must be configured together.'
+}
+$provisionalGeometrySettings = @(
+  $selectedProvisionalGeometryArtifactPath,
+  $selectedProvisionalGeometryArtifactSha256
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+if ($provisionalGeometrySettings.Count -ne 0 -and $provisionalGeometrySettings.Count -ne 2) {
+  throw 'Provisional geometry artifact path and SHA-256 must be configured together.'
 }
 
 $cliPath = Join-Path $repoRoot "packages\ai-grader-capture-helper\dist\cli.js"
@@ -129,6 +140,10 @@ if (-not [string]::IsNullOrWhiteSpace($selectedMathematicalCalibrationRigId)) {
 if ($bundleSettings.Count -eq 2) {
   $env:AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_PATH = $selectedMathematicalCalibrationBundlePath
   $env:AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_SHA256 = $selectedMathematicalCalibrationBundleSha256
+}
+if ($provisionalGeometrySettings.Count -eq 2) {
+  $env:AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_PATH = $selectedProvisionalGeometryArtifactPath
+  $env:AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_SHA256 = $selectedProvisionalGeometryArtifactSha256
 }
 if ($config -and -not [string]::IsNullOrWhiteSpace($config.pairingCode)) {
   $env:AI_GRADER_STATION_PAIRING_CODE = [string]$config.pairingCode
@@ -217,4 +232,6 @@ try {
   Remove-Item Env:\AI_GRADER_MATHEMATICAL_CALIBRATION_RIG_ID -ErrorAction SilentlyContinue
   Remove-Item Env:\AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:\AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_SHA256 -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_PATH -ErrorAction SilentlyContinue
+  Remove-Item Env:\AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_SHA256 -ErrorAction SilentlyContinue
 }

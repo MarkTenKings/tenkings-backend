@@ -14,6 +14,8 @@ There are no routine safety/recovery clicks, fixture/ruler confirmations, per-ca
 
 **Start New Card** always creates one `production_fast` session and automatically applies the configured production positioning-light profile through the existing bounded Leimac path. The session becomes Capture Front lighting-ready only after every expected controller acknowledgement is complete. A completed Back handoff returns to a sessionless **Start New Card** state; it never auto-creates the next session. A failed Start New Card application returns one explicit error and never claims readiness.
 
+An operator-approved provisional geometry-only artifact may be enabled only as a paired protected local configuration (`provisionalGeometryArtifactPath` plus its exact lowercase SHA-256). This does not add a capture road or weaken Mathematical V1/V1.1 readiness. After each immutable sensor capture, the helper verifies the artifact, camera identity, image size, exposure, gain, accepted maximum residual, and independent-view improvement before creating separate undistorted processing derivatives. Original sensor files and hashes remain the raw authority and the report remains `isCalibrated=false`, provisional diagnostic only, with the current Production normalization retained as the rollback path. A missing, partial, changed, mismatched, or certified-claiming artifact stops processing; it is never treated as a finalized calibration bundle and supplies no photometric correction.
+
 ## Retained physical invariants
 
 The bridge retains only these physical controls:

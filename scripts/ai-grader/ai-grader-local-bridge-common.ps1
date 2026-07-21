@@ -179,6 +179,8 @@ function Initialize-AiGraderBridgeConfig {
       mathematicalCalibrationRigId = 'fixed-rig-dell-v1'
       mathematicalCalibrationBundlePath = $null
       mathematicalCalibrationBundleSha256 = $null
+      provisionalGeometryArtifactPath = $null
+      provisionalGeometryArtifactSha256 = $null
     }
   }
   if ($RotateToken -or [string]::IsNullOrWhiteSpace($config.stationToken)) {
@@ -222,7 +224,9 @@ function Initialize-AiGraderBridgeConfig {
     'mathematicalCalibrationTargetVersion',
     'mathematicalCalibrationTargetSha256',
     'mathematicalCalibrationBundlePath',
-    'mathematicalCalibrationBundleSha256'
+    'mathematicalCalibrationBundleSha256',
+    'provisionalGeometryArtifactPath',
+    'provisionalGeometryArtifactSha256'
   )) {
     if (-not $config.PSObject.Properties[$optionalCalibrationSetting]) {
       Set-AiGraderConfigValue -Config $config -Name $optionalCalibrationSetting -Value $null

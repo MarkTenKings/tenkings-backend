@@ -26,6 +26,7 @@ import {
   type FixedRigWarmProcessingResult,
   type FixedRigWarmProcessingSubmission,
 } from "./fixedRigProcessingWorker";
+import { applyProvisionalMathematicalGeometryV1 } from "./provisionalMathematicalGeometryV1";
 import { FIXED_RIG_PROCESSING_WORKER_PROTOCOL_VERSION } from "./fixedRigProcessingWorkerProtocol";
 import {
   buildLeimacIdmuSafeOffFrames,
@@ -640,6 +641,8 @@ export interface AiGraderLocalStationBridgeConfigInput {
   mathematicalCalibrationProfileSha256?: string;
   mathematicalCalibrationBundlePath?: string;
   mathematicalCalibrationBundleSha256?: string;
+  provisionalGeometryArtifactPath?: string;
+  provisionalGeometryArtifactSha256?: string;
 }
 
 export interface AiGraderLocalStationBridgeConfig {
@@ -690,6 +693,8 @@ export interface AiGraderLocalStationBridgeConfig {
   mathematicalCalibrationProfileSha256?: string;
   mathematicalCalibrationBundlePath?: string;
   mathematicalCalibrationBundleSha256?: string;
+  provisionalGeometryArtifactPath?: string;
+  provisionalGeometryArtifactSha256?: string;
 }
 
 export interface AiGraderLocalStationBridgeManifest {
@@ -806,6 +811,13 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     rigId?: string;
     artifactSha256?: string;
     bundleSha256?: string;
+  };
+  provisionalGeometry: {
+    active: boolean;
+    status: "disabled" | "geometry_only_controlled_evaluation";
+    isCalibrated: false;
+    artifactSha256?: string;
+    certifiedMathematicalV1Unaffected: true;
   };
   frontCaptureReadiness: AiGraderFrontCaptureReadiness;
   stationUrl: string;
@@ -2050,6 +2062,23 @@ export function buildAiGraderLocalStationBridgeConfig(
     env.AI_GRADER_MATHEMATICAL_CALIBRATION_OUTPUT_DIR,
   ) ?? path.join(outputDir, "mathematical-calibration-v1");
   assertFixedRigOutputDirAllowed(mathematicalCalibrationOutputDir);
+  const provisionalGeometryArtifactPath = firstNonEmpty(
+    input.provisionalGeometryArtifactPath,
+    env.AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_PATH,
+  );
+  const provisionalGeometryArtifactSha256 = firstNonEmpty(
+    input.provisionalGeometryArtifactSha256,
+    env.AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_SHA256,
+  );
+  if (Boolean(provisionalGeometryArtifactPath) !== Boolean(provisionalGeometryArtifactSha256)) {
+    throw new Error("AI Grader provisional geometry artifact path and SHA-256 must be configured together.");
+  }
+  if (provisionalGeometryArtifactPath && !path.isAbsolute(provisionalGeometryArtifactPath)) {
+    throw new Error("AI Grader provisional geometry artifact path must be absolute.");
+  }
+  if (provisionalGeometryArtifactSha256 && !/^[a-f0-9]{64}$/.test(provisionalGeometryArtifactSha256)) {
+    throw new Error("AI Grader provisional geometry artifact SHA-256 must be exact lowercase hexadecimal.");
+  }
   return {
     enabled,
     host: normalizeHost(firstNonEmpty(input.host, env.AI_GRADER_STATION_BRIDGE_HOST)),
@@ -2113,6 +2142,8 @@ export function buildAiGraderLocalStationBridgeConfig(
       env.AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_PATH,
     ),
     mathematicalCalibrationBundleSha256,
+    provisionalGeometryArtifactPath,
+    provisionalGeometryArtifactSha256,
   };
 }
 
@@ -3201,7 +3232,14 @@ export interface AiGraderWarmForensicRunner {
 function createDefaultWarmForensicRunner(config: AiGraderLocalStationBridgeConfig): AiGraderWarmForensicRunner {
   const processing = createFixedRigWarmForensicProcessingRunner({ allowedOutputRoot: config.outputDir });
   return {
-    captureSide: captureFixedRigWarmSideBatch,
+    captureSide: async (input) => {
+      const captured = await captureFixedRigWarmSideBatch(input);
+      if (!config.provisionalGeometryArtifactPath || !config.provisionalGeometryArtifactSha256) return captured;
+      return applyProvisionalMathematicalGeometryV1(captured, {
+        artifactPath: config.provisionalGeometryArtifactPath,
+        artifactSha256: config.provisionalGeometryArtifactSha256,
+      });
+    },
     processSide: processing.processSide,
     cancelSession: processing.cancelSession,
     shutdownProcessingWorker: processing.shutdownProcessingWorker,
@@ -4576,6 +4614,17 @@ export class AiGraderLocalStationBridgeService {
         this.dependencies.loadMathematicalCalibrationBundle ??
           loadFixedRigMathematicalCalibrationBundleV1,
       ),
+      provisionalGeometry: {
+        active: Boolean(this.config.provisionalGeometryArtifactPath && this.config.provisionalGeometryArtifactSha256),
+        status: this.config.provisionalGeometryArtifactPath && this.config.provisionalGeometryArtifactSha256
+          ? "geometry_only_controlled_evaluation"
+          : "disabled",
+        isCalibrated: false,
+        ...(this.config.provisionalGeometryArtifactSha256
+          ? { artifactSha256: this.config.provisionalGeometryArtifactSha256 }
+          : {}),
+        certifiedMathematicalV1Unaffected: true,
+      },
       stationUrl: this.stationUrl,
       nextAction,
       nextActionLabel: actionLabel(nextAction),

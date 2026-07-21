@@ -9,6 +9,7 @@ export * from "./fixedRigPhotometricEvidenceV1";
 export * from "./fixedRigPhotometricCalibrationV1";
 export * from "./fixedRigSurfaceV1";
 export * from "./fixedRigPhysicalCalibrationV1";
+export * from "./provisionalMathematicalGeometryV1";
 export * from "./fixedRigMeasurementUncertaintyV1";
 export * from "./fixedRigCenteringV1";
 export * from "./fixedRigPrintedBorderDetectorV1";

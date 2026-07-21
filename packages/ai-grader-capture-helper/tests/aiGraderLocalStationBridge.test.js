@@ -426,6 +426,31 @@ test("station launcher passes the exact production_fast capture profile pair", (
     launcherSource.includes('"--capture-profile", "production_fast"'),
     true,
   );
+  assert.match(launcherSource, /AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_PATH/);
+  assert.match(launcherSource, /AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_SHA256/);
+});
+
+test("provisional geometry is an explicit paired geometry-only opt-in and never claims calibration", () => {
+  const outputDir = path.join(os.tmpdir(), "tenkings-provisional-geometry-config");
+  const artifactPath = path.join(outputDir, "provisional-geometry.json");
+  const artifactSha256 = "a".repeat(64);
+  assert.throws(
+    () => configFor(outputDir, {}, { provisionalGeometryArtifactPath: artifactPath }),
+    /path and SHA-256 must be configured together/i,
+  );
+  const { config, service } = configFor(outputDir, {}, {
+    provisionalGeometryArtifactPath: artifactPath,
+    provisionalGeometryArtifactSha256: artifactSha256,
+  });
+  assert.equal(config.provisionalGeometryArtifactPath, artifactPath);
+  assert.equal(config.provisionalGeometryArtifactSha256, artifactSha256);
+  assert.deepEqual(service.status().provisionalGeometry, {
+    active: true,
+    status: "geometry_only_controlled_evaluation",
+    isCalibrated: false,
+    artifactSha256,
+    certifiedMathematicalV1Unaffected: true,
+  });
 });
 
 test("Start New Card applies configured lighting and returns Capture Front lighting-ready", async () => {
