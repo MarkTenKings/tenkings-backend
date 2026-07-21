@@ -14,6 +14,10 @@ import type {
   FastCalibrationEvidenceAnalysisResultV1_2,
   FastCalibrationEvidenceAnalyzerV1_2,
 } from "./fixedRigFastCalibrationEvidenceAnalyzerV1_2";
+import {
+  stageFastCalibrationFinalizerHandoffV1_2,
+  verifyFastCalibrationFinalizerHandoffV1_2,
+} from "./fixedRigFastMathematicalCalibrationFinalizerHandoffV1_2";
 import { transformFastCalibrationPhysicalDirectionV1_2 } from "./fixedRigFastCalibrationMathV1_2";
 import type {
   BuildFixedRigPhysicalCalibrationV1Input,
@@ -470,6 +474,7 @@ export interface FastCalibrationCoreV1_2Config {
   now?: () => Date;
   operationId?: () => string;
   evidenceAnalyzer?: FastCalibrationEvidenceAnalyzerV1_2;
+  finalizerStagingRoot?: string;
 }
 
 function canonical(value: unknown): unknown {
@@ -1082,6 +1087,9 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
     config: FastCalibrationCoreV1_2Config,
     input: OpenFastCalibrationSessionV1_2Input,
   ): Promise<FixedRigFastMathematicalCalibrationCoreV1_2> {
+    if (config.finalizerStagingRoot !== undefined && !path.isAbsolute(config.finalizerStagingRoot)) {
+      throw new Error("Fast calibration finalizer staging root must be one protected absolute path.");
+    }
     const sessionId = exactId(input.sessionId, "sessionId");
     const operatorId = exactId(input.operatorId, "operatorId");
     validateFastCalibrationRuntimeContextV1_2(input.runtimeContext);
@@ -1291,13 +1299,14 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
         bytes: await readIdentityEvidence(this.sessionDir, member),
       });
     }
+    const storedBundleBytes = await readIdentityEvidence(this.sessionDir, finalization.bundle);
     const loader = await import("./fixedRigMathematicalCalibrationBundleV1");
     const loaded = loader.verifyFixedRigMathematicalCalibrationBundleBytesV1({
       bundlePath: loader.FIXED_RIG_MATHEMATICAL_CALIBRATION_BUNDLE_FILE_V1,
       bundleSha256: finalization.bundleSha256,
       expectedRigId: this.identity.runtimeContext.rigId,
       expectedRuntimeContext: this.identity.runtimeContext,
-      bundleBytes: await readIdentityEvidence(this.sessionDir, finalization.bundle),
+      bundleBytes: storedBundleBytes,
       readMemberBytes(fileName) {
         const member = memberBytes.get(fileName);
         if (!member) throw new Error(`Stored finalized bundle member ${fileName} is missing.`);
@@ -1317,6 +1326,23 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
       finalization.sourceArtifactLedgerSha256 !== analysis.sourceArtifactLedgerSha256
     ) {
       throw new Error("Stored finalized bundle authority no longer matches its exact analysis/session lineage.");
+    }
+    if (this.config.finalizerStagingRoot) {
+      await verifyFastCalibrationFinalizerHandoffV1_2({
+        stagingRoot: this.config.finalizerStagingRoot,
+        bundleBytes: storedBundleBytes,
+        bundleManifestSha256: finalization.bundleSha256,
+        members: loaded.authority.members.map((member) => {
+          const stored = memberBytes.get(member.fileName);
+          if (!stored) throw new Error(`Stored finalizer handoff member ${member.fileName} is missing.`);
+          return { fileName: member.fileName, sha256: member.sha256, bytes: stored.bytes };
+        }),
+        rigId: loaded.profile.rigId,
+        profileId: loaded.profile.profileId,
+        calibrationVersion: loaded.profile.calibrationVersion,
+        finalizedAt: loaded.profile.finalizedAt,
+        sourceAnalysisSha256: analysis.analysisSha256,
+      });
     }
   }
 
@@ -2032,10 +2058,28 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
       ) {
         throw new Error("Canonical V1.2 loader rejected final bundle authority binding.");
       }
+      const finalizedMembers = await Promise.all(finalized.authority.members.map(async (member) => ({
+        fileName: member.fileName,
+        sha256: member.sha256,
+        bytes: await readFile(path.join(path.dirname(finalized.bundlePath), member.fileName)),
+      })));
+      if (this.config.finalizerStagingRoot) {
+        await stageFastCalibrationFinalizerHandoffV1_2({
+          stagingRoot: this.config.finalizerStagingRoot,
+          bundleBytes: finalized.bundleBytes,
+          bundleManifestSha256: finalized.bundleSha256,
+          members: finalizedMembers,
+          rigId: finalized.profile.rigId,
+          profileId: finalized.profile.profileId,
+          calibrationVersion: finalized.profile.calibrationVersion,
+          finalizedAt: finalized.profile.finalizedAt,
+          sourceAnalysisSha256: analysis.analysisSha256,
+        });
+      }
       const bundle = await this.checkpoint(finalized.bundleBytes, "application/json", `bundle-${operationId}`);
-      const members = await Promise.all(finalized.authority.members.map(async (member) => ({
+      const members = await Promise.all(finalizedMembers.map(async (member) => ({
         ...(await this.checkpoint(
-          await readFile(path.join(path.dirname(finalized.bundlePath), member.fileName)),
+          member.bytes,
           "application/json",
           `bundle-member-${operationId}-${member.fileName.replace(/[^A-Za-z0-9.-]/g, "-")}`,
         )),

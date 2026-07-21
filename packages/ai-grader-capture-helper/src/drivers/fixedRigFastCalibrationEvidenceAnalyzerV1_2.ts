@@ -29,9 +29,23 @@ export const FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_ANALYZER_V1_2 =
 const digestBytes = (value: Uint8Array) => crypto.createHash("sha256").update(value).digest("hex");
 const detectorScriptPath = path.resolve(__dirname, "../../../../scripts/ai-grader/detect-mathematical-calibration-preview-checkerboard.py");
 const detectorDependencyManifestPath = path.resolve(__dirname, "../../../../scripts/ai-grader/requirements-mathematical-calibration-v1.txt");
+const implementationModulePaths = [
+  require.resolve("./fixedRigFastCalibrationMathV1_2"),
+  __filename,
+  require.resolve("./fixedRigFastCalibrationEvidenceAnalyzerV1_2"),
+  require.resolve("./fixedRigFastMathematicalCalibrationV1_2"),
+  require.resolve("./fixedRigFastMathematicalCalibrationBundleV1_2"),
+];
+const uniqueImplementationModulePaths = [...new Set(implementationModulePaths)].sort();
 export const FIXED_RIG_FAST_CALIBRATION_ALGORITHM_MANIFEST_V1_2: FastCalibrationAlgorithmManifestV1_2 =
-  buildFastCalibrationAlgorithmManifestV1_2({ detectorScriptBytes: readFileSync(detectorScriptPath),
-    detectorDependencyManifestBytes: readFileSync(detectorDependencyManifestPath) });
+  buildFastCalibrationAlgorithmManifestV1_2({
+    detectorScriptBytes: readFileSync(detectorScriptPath),
+    detectorDependencyManifestBytes: readFileSync(detectorDependencyManifestPath),
+    implementationModuleBytes: uniqueImplementationModulePaths.map((modulePath) => ({
+      fileName: path.basename(modulePath),
+      bytes: readFileSync(modulePath),
+    })),
+  });
 
 export const FIXED_RIG_FAST_CALIBRATION_GEOMETRY_ANALYZER_V1_2_SHA256 =
   FIXED_RIG_FAST_CALIBRATION_ALGORITHM_MANIFEST_V1_2.geometry.manifestSha256;

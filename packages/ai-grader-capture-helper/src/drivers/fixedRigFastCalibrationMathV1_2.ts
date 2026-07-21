@@ -351,28 +351,36 @@ export function composeFastCalibrationPhysicalToNormalizedDirectionV1_2(
 export function buildFastCalibrationAlgorithmManifestV1_2(input: {
   detectorScriptBytes: Buffer;
   detectorDependencyManifestBytes: Buffer;
+  implementationModuleBytes: ReadonlyArray<{ fileName: string; bytes: Buffer }>;
   sharpVersions?: Record<string, string | undefined>;
-  geometryImplementationSource?: string;
-  photometricImplementationSource?: string;
 }): FastCalibrationAlgorithmManifestV1_2 {
-  const geometryImplementationSource = input.geometryImplementationSource ?? [
-    normalizedFromPixel, pixelFromNormalized, distortNormalized, distortFastCalibrationPixelV1_2,
-    undistortFastCalibrationPixelV1_2, solveLinearSystem, fitFastCalibrationHomographyV1_2,
-    projectFastCalibrationHomographyV1_2, distanceToSegment, deriveFastCalibrationGeometryV1_2,
-  ].map((value) => value.toString()).join("\n");
-  const photometricImplementationSource = input.photometricImplementationSource ?? [
-    bilinear, decodeFastCalibrationNormalizedGridV1_2, composeFastCalibrationPhysicalToNormalizedDirectionV1_2, transformFastCalibrationPhysicalDirectionV1_2,
-  ].map((value) => value.toString()).join("\n");
+  if (input.implementationModuleBytes.length === 0) {
+    throw new Error("Fast calibration algorithm identity requires the complete shipped executable module set.");
+  }
+  const implementationModules = input.implementationModuleBytes.map((artifact) => {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$/.test(artifact.fileName) ||
+        !Buffer.isBuffer(artifact.bytes) || artifact.bytes.length === 0) {
+      throw new Error("Fast calibration executable module identity is invalid.");
+    }
+    return { fileName: artifact.fileName, sha256: digest(artifact.bytes) };
+  }).sort((left, right) => left.fileName.localeCompare(right.fileName));
+  if (new Set(implementationModules.map((artifact) => artifact.fileName)).size !== implementationModules.length) {
+    throw new Error("Fast calibration executable module identity contains duplicate file names.");
+  }
+  const implementationSha256 = digest(JSON.stringify(canonical({
+    schemaVersion: "ten-kings-fast-calibration-executable-module-set-v1.2",
+    modules: implementationModules,
+  })));
   const dependency = canonical({ node: process.versions.node, sharp: input.sharpVersions ?? sharp.versions });
   const geometry = {
-    implementationSha256: digest(geometryImplementationSource),
+    implementationSha256,
     detectorScriptSha256: digest(input.detectorScriptBytes),
     detectorDependencyManifestSha256: digest(input.detectorDependencyManifestBytes),
     dependencySha256: digest(JSON.stringify(canonical({ runtime: dependency,
       detectorDependencyManifestSha256: digest(input.detectorDependencyManifestBytes) }))),
   };
   const photometric = {
-    implementationSha256: digest(photometricImplementationSource),
+    implementationSha256,
     dependencySha256: digest(JSON.stringify(dependency)),
   };
   return {

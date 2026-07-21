@@ -356,6 +356,7 @@ async function request(started, pathname, method = "GET", body) {
 
 test("actual V1.2 route family uses durable local authority through resumable evidence-derived finalization", async () => {
   const outputDir = path.join(os.tmpdir(), `mathematical-v1-2-route-${crypto.randomUUID()}`);
+  const finalizerStagingRoot = path.join(outputDir, "trusted-finalizer-staging");
   const context = runtimeContext();
   const boundaries = await adapters(context);
   let operation = 0;
@@ -366,6 +367,7 @@ test("actual V1.2 route family uses durable local authority through resumable ev
     leimacHost: "127.0.0.1",
     mathematicalCalibrationV1_2LocalAuthorityConfig: {
       operatorId: "route-test-operator",
+      finalizerStagingRoot,
       loadRuntimeContext: async () => structuredClone(context),
       loadRigCharacterizationSource: async () => oneTimeAuthority(context),
       checkerboardCapture: boundaries.checkerboardCapture,
@@ -441,6 +443,29 @@ test("actual V1.2 route family uses durable local authority through resumable ev
     assert.equal(status.activationEligible, true);
     assert.equal(status.finalization.memberCount, 12);
     assert.equal(status.acceptedPoses.filter((pose) => pose.active).length, 4);
+    const stagedDirectory = path.join(finalizerStagingRoot, status.finalization.bundleSha256);
+    const stagedNames = (await fs.readdir(stagedDirectory)).sort();
+    assert.equal(stagedNames.length, 14);
+    assert.ok(stagedNames.includes("mathematical-calibration-bundle-v1.json"));
+    assert.ok(stagedNames.includes("mathematical-calibration-finalizer-handoff-v1.json"));
+    const handoff = JSON.parse(await fs.readFile(
+      path.join(stagedDirectory, "mathematical-calibration-finalizer-handoff-v1.json"),
+      "utf8",
+    ));
+    assert.deepEqual(Object.keys(handoff).sort(), [
+      "authority", "bundleFileName", "bundleManifestSha256", "calibrationVersion", "finalizedAt",
+      "profileId", "rigId", "schemaVersion", "sourceAnalysisSha256",
+    ]);
+    assert.equal(handoff.schemaVersion, "ten-kings-mathematical-calibration-finalizer-handoff-v1");
+    assert.equal(handoff.authority, "trusted-local-mathematical-calibration-finalizer-v1");
+    assert.equal(handoff.bundleFileName, "mathematical-calibration-bundle-v1.json");
+    assert.equal(handoff.bundleManifestSha256, status.finalization.bundleSha256);
+    assert.equal(handoff.sourceAnalysisSha256, status.analysis.analysisSha256);
+    await new Promise((resolve, reject) => started.server.close((error) => error ? reject(error) : resolve()));
+    started = await startAiGraderLocalStationBridgeHttpServer(input, {}, runner, undefined, dependencies);
+    response = await request(started, `${MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.status}?sessionId=${status.sessionId}`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.result.finalization.bundleSha256, status.finalization.bundleSha256);
     response = await request(started, MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.sessions);
     assert.equal(response.status, 200);
     assert.equal(response.body.result.sessions[0].acceptedImageCount, 76);
@@ -474,6 +499,7 @@ async function writeProtectedAuthorityFiles(root, context = runtimeContext()) {
       AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_BUNDLE_PATH: bundlePath,
       AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_BUNDLE_SHA256: digest(source.bundleBytes),
       AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_MEMBER_DIR: memberDir,
+      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_FINALIZER_STAGING_ROOT: path.join(protectedDir, "trusted-finalizer-staging"),
       AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_OPERATOR_ID: "protected-route-operator",
     },
     runtimePath,
@@ -516,6 +542,10 @@ test("actual station CLI factory constructs the protected V1.2 authority inertly
       cliBridgeInput(outputDir), protectedFiles.env, fake.boundary,
     );
     assert.ok(cliInput.mathematicalCalibrationV1_2LocalAuthorityConfig);
+    assert.equal(
+      cliInput.mathematicalCalibrationV1_2LocalAuthorityConfig.finalizerStagingRoot,
+      protectedFiles.env.AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_FINALIZER_STAGING_ROOT,
+    );
     assert.deepEqual(fake.calls, { inspect: 0, capture: 0, batch: 0 });
     const inertDefaultInput = buildAiGraderStationBridgeCliConfigInputV1_2(
       cliBridgeInput(path.join(outputDir, "default-boundary")), protectedFiles.env,
@@ -536,6 +566,10 @@ test("actual station CLI factory constructs the protected V1.2 authority inertly
     assert.throws(() => buildAiGraderStationBridgeCliConfigInputV1_2(cliBridgeInput(outputDir), {
       AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_PATH: protectedFiles.runtimePath,
     }, fake.boundary), /protected configuration is partial/);
+    assert.throws(() => buildAiGraderStationBridgeCliConfigInputV1_2(cliBridgeInput(outputDir), {
+      ...protectedFiles.env,
+      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_FINALIZER_STAGING_ROOT: "relative-staging-root",
+    }, fake.boundary), /finalizer staging root must be absolute/);
 
     const driftContext = runtimeContext();
     driftContext.algorithmHashes.geometry = hashSeed("mutated-geometry-executable");

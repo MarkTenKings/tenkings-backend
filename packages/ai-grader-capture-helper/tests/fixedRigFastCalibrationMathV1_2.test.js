@@ -143,24 +143,33 @@ test("rotation, mirroring, and perspective compose physical directions into norm
 test("algorithm manifest hashes executable and dependency artifacts and rejects implementation drift", () => {
   const detector = Buffer.from("reviewed-detector-source");
   const dependencies = Buffer.from("opencv-python-headless==4.10.0.84\nnumpy==1.26.4\n");
+  const modules = [
+    { fileName: "fixedRigFastCalibrationMathV1_2.js", bytes: Buffer.from("top-level and transitive math implementation") },
+    { fileName: "fixedRigFastCalibrationEvidenceAnalyzerV1_2.js", bytes: Buffer.from("evidence analyzer implementation") },
+  ];
   const baseline = buildFastCalibrationAlgorithmManifestV1_2({ detectorScriptBytes: detector,
-    detectorDependencyManifestBytes: dependencies, sharpVersions: { sharp: "1", vips: "2" } });
-  const geometryDrift = buildFastCalibrationAlgorithmManifestV1_2({
+    detectorDependencyManifestBytes: dependencies, implementationModuleBytes: modules,
+    sharpVersions: { sharp: "1", vips: "2" } });
+  const transitiveImplementationDrift = buildFastCalibrationAlgorithmManifestV1_2({
     detectorScriptBytes: detector,
     detectorDependencyManifestBytes: dependencies,
+    implementationModuleBytes: modules.map((artifact, index) => index === 0
+      ? { ...artifact, bytes: Buffer.from(`${artifact.bytes.toString("utf8")}\nfunction roundedTransitiveHelperChanged(){}`) }
+      : artifact),
     sharpVersions: { sharp: "1", vips: "2" },
-    geometryImplementationSource: "mutated executable geometry",
   });
   const dependencyDrift = buildFastCalibrationAlgorithmManifestV1_2({
     detectorScriptBytes: detector,
     detectorDependencyManifestBytes: dependencies,
+    implementationModuleBytes: modules,
     sharpVersions: { sharp: "different", vips: "2" },
   });
   const detectorDependencyDrift = buildFastCalibrationAlgorithmManifestV1_2({ detectorScriptBytes: detector,
     detectorDependencyManifestBytes: Buffer.from("opencv-python-headless==different\n"),
+    implementationModuleBytes: modules,
     sharpVersions: { sharp: "1", vips: "2" } });
-  assert.notEqual(geometryDrift.geometry.manifestSha256, baseline.geometry.manifestSha256);
-  assert.equal(geometryDrift.photometric.manifestSha256, baseline.photometric.manifestSha256);
+  assert.notEqual(transitiveImplementationDrift.geometry.manifestSha256, baseline.geometry.manifestSha256);
+  assert.notEqual(transitiveImplementationDrift.photometric.manifestSha256, baseline.photometric.manifestSha256);
   assert.notEqual(dependencyDrift.geometry.manifestSha256, baseline.geometry.manifestSha256);
   assert.notEqual(dependencyDrift.photometric.manifestSha256, baseline.photometric.manifestSha256);
   assert.notEqual(detectorDependencyDrift.geometry.manifestSha256, baseline.geometry.manifestSha256);

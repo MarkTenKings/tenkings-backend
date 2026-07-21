@@ -50,6 +50,7 @@ export interface MathematicalCalibrationV1_2PersistentBatchControllerFactory {
 export interface DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig {
   outputRoot: string;
   operatorId: string;
+  finalizerStagingRoot?: string;
   loadRuntimeContext(): Promise<FastCalibrationRuntimeContextV1_2>;
   loadRigCharacterizationSource(): Promise<FastCalibrationRigCharacterizationSourceV1_2>;
   verifyLiveRuntimeContext?(expected: FastCalibrationRuntimeContextV1_2): Promise<void>;
@@ -83,6 +84,7 @@ implements MathematicalCalibrationV1_2LocalSessionAuthority {
     return {
       outputRoot: this.config.outputRoot,
       evidenceAnalyzer: this.analyzer,
+      ...(this.config.finalizerStagingRoot ? { finalizerStagingRoot: this.config.finalizerStagingRoot } : {}),
       ...(this.config.now ? { now: this.config.now } : {}),
       ...(this.config.operationId ? { operationId: this.config.operationId } : {}),
     };
