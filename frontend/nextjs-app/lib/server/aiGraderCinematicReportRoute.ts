@@ -1,5 +1,5 @@
 import { getAiGraderReportBundle } from "../aiGraderReportBundle";
-import { toAiGraderCinematicReport, type CinematicReport } from "../aiGraderCinematicReport";
+import { toAiGraderLegacyCinematicReportForRead, type CinematicReport } from "../aiGraderCinematicReport";
 import { aiGraderPublicReportDbReadsEnabled } from "./aiGraderProductionApi";
 import { readAiGraderPublicReportBundle } from "./aiGraderPublicReportData";
 
@@ -71,7 +71,7 @@ export async function resolveAiGraderCinematicReportPageProps(
 ): Promise<AiGraderCinematicReportPageProps | null> {
   const result = await resolveAiGraderCinematicReportRoute(inputReportId, dependencies);
   if (!result) return null;
-  const report = toAiGraderCinematicReport(result.bundle);
+  const report = toAiGraderLegacyCinematicReportForRead(result.bundle);
   return report?.reportId ? { report, fixture: result.fixture } : null;
 }
 

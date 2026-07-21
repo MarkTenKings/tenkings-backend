@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("readiness", "list-cameras", "capture-still", "fixed-rig-side-batch", "operator-preview-window", "operator-preview-mjpeg-stream", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
+  [ValidateSet("readiness", "list-cameras", "capture-still", "fixed-rig-side-batch", "operator-preview-window", "operator-preview-mjpeg-stream", "calibration-preview-mjpeg-stream", "line2-exposure-active", "line2-user-output-pulse", "line2-status")]
   [string]$Action,
 
   [string]$PylonRoot,
@@ -1461,6 +1461,82 @@ function Start-OperatorPreviewMjpegStream {
   }
 }
 
+function Start-CalibrationPreviewMjpegStream {
+  param([System.Collections.IDictionary]$Install)
+
+  if ($RefreshIntervalMs -lt 50 -or $RefreshIntervalMs -gt 2000) {
+    throw "RefreshIntervalMs must be from 50 to 2000 for calibration preview."
+  }
+  if ($JpegQuality -lt 35 -or $JpegQuality -gt 95) {
+    throw "JpegQuality must be from 35 to 95."
+  }
+
+  Add-Type -AssemblyName System.Drawing
+
+  $devices = [Basler.Pylon.CameraFinder]::Enumerate([Basler.Pylon.DeviceType]::GigE)
+  if ($devices.Count -eq 0) {
+    throw "PYLON_CALIBRATION_PREVIEW_NO_CAMERA: No Basler GigE cameras were detected."
+  }
+  if ($CameraIndex -lt 0 -or $CameraIndex -ge $devices.Count) {
+    throw "PYLON_CALIBRATION_PREVIEW_CAMERA_INDEX: CameraIndex $CameraIndex is out of range for $($devices.Count) detected camera(s)."
+  }
+
+  $camera = [Basler.Pylon.Camera]::new($devices[$CameraIndex])
+  $stdout = [Console]::OpenStandardOutput()
+  $boundary = "tenkings-ai-grader-preview"
+  $frameIndex = 0
+  $deadline = (Get-Date).AddSeconds(10)
+  $lastPylonError = "no valid frame was returned"
+
+  try {
+    [void]$camera.Open()
+    if ($ExposureUs -gt 0) {
+      [void](Set-FloatParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs, "ExposureTime") ([double]$ExposureUs))
+    }
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerSelector, "TriggerSelector") "FrameStart" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerMode, "TriggerMode") "Off" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureAuto, "ExposureAuto") "Off" } catch {}
+    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::GainAuto, "GainAuto") "Off" } catch {}
+
+    while ($true) {
+      $grabResult = $null
+      $streamStarted = $false
+      try {
+        [void]$camera.StreamGrabber.Start(1)
+        $streamStarted = $true
+        $grabResult = $camera.StreamGrabber.RetrieveResult(1000, [Basler.Pylon.TimeoutHandling]::ThrowException)
+        if ($null -eq $grabResult -or -not $grabResult.IsValid -or -not $grabResult.GrabSucceeded) {
+          $code = if ($null -ne $grabResult) { $grabResult.ErrorCode } else { "unknown" }
+          $description = if ($null -ne $grabResult) { $grabResult.ErrorDescription } else { "no grab result" }
+          throw "Pylon invalid calibration preview grab: $code $description"
+        }
+        $bitmap = $null
+        try {
+          $bitmap = Convert-GrabResultToBitmap $grabResult
+          $bitmap.RotateFlip([System.Drawing.RotateFlipType]::Rotate90FlipNone)
+          $bytes = Convert-BitmapToJpegBytes -Bitmap $bitmap -Quality $JpegQuality
+          $frameIndex += 1
+          Write-MjpegChunk -Output $stdout -Boundary $boundary -JpegBytes $bytes -FrameIndex $frameIndex -CapturedAt (Get-Date)
+        } finally {
+          if ($null -ne $bitmap) { try { $bitmap.Dispose() } catch {} }
+        }
+      } catch {
+        $lastPylonError = $_.Exception.Message
+      } finally {
+        if ($null -ne $grabResult) { try { $grabResult.Dispose() } catch {} }
+        if ($streamStarted) { try { [void]$camera.StreamGrabber.Stop() } catch {} }
+      }
+      if ($frameIndex -eq 0 -and (Get-Date) -ge $deadline) {
+        throw "PYLON_CALIBRATION_PREVIEW_NO_VALID_FRAME: No valid Basler frame arrived within 10 seconds. Last Pylon error: $lastPylonError"
+      }
+      if ($frameIndex -gt 0) { Start-Sleep -Milliseconds $RefreshIntervalMs }
+    }
+  } finally {
+    if ($camera.IsOpen) { try { [void]$camera.Close() } catch {} }
+    try { $camera.Dispose() } catch {}
+  }
+}
+
 function Add-OperatorPreviewTypes {
   param([System.Collections.IDictionary]$Install)
   try {
@@ -2582,6 +2658,11 @@ try {
 
   if ($Action -eq "operator-preview-mjpeg-stream") {
     Start-OperatorPreviewMjpegStream $install
+    exit 0
+  }
+
+  if ($Action -eq "calibration-preview-mjpeg-stream") {
+    Start-CalibrationPreviewMjpegStream $install
     exit 0
   }
 

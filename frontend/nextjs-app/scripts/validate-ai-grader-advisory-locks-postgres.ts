@@ -285,8 +285,10 @@ async function main() {
       productionRelease,
       publicReportBaseUrl: "https://collect.tenkings.co",
     });
+    // Card creation owns one report lifecycle lock; publication and label finalization
+    // intentionally exercise their separate report and label locks below.
     const created = await requireLockDelta(
-      { report: 2 },
+      { report: 1 },
       () => createAiGraderCardFromReportRuntime({
         queueItemId: QUEUE_ITEM_ID,
         tenantId: TENANT_ID,
@@ -377,10 +379,10 @@ async function main() {
     requireProof(observedLocks.label - beforeFailedPublish.label === 2, "FAILED_PUBLISH_LABEL_LOCK_COUNT");
 
     const [rolledBackSession, rolledBackReport, rolledBackCard, rolledBackBatch, rollbackCounts] = await Promise.all([
-      prisma.aiGraderSession.findUniqueOrThrow({ where: { gradingSessionId: GRADING_SESSION_ID } }),
-      prisma.aiGraderReport.findUniqueOrThrow({ where: { reportId: REPORT_ID } }),
-      prisma.cardAsset.findUniqueOrThrow({ where: { id: created.cardAssetId } }),
-      prisma.cardBatch.findUniqueOrThrow({ where: { id: created.batchId } }),
+      prisma.aiGraderSession.findUnique({ where: { gradingSessionId: GRADING_SESSION_ID } }),
+      prisma.aiGraderReport.findUnique({ where: { reportId: REPORT_ID } }),
+      prisma.cardAsset.findUnique({ where: { id: created.cardAssetId } }),
+      prisma.cardBatch.findUnique({ where: { id: created.batchId } }),
       Promise.all([
         prisma.aiGraderGrade.count({ where: { tenantId: TENANT_ID } }),
         prisma.aiGraderLabel.count({ where: { tenantId: TENANT_ID } }),
@@ -388,8 +390,11 @@ async function main() {
         prisma.aiGraderEvidenceAsset.count({ where: { tenantId: TENANT_ID } }),
       ]),
     ]);
+    requireProof(rolledBackSession !== null, "ROLLBACK_SESSION_ROW_ABSENT");
+    requireProof(rolledBackCard !== null, "ROLLBACK_CARD_ROW_ABSENT");
+    requireProof(rolledBackBatch !== null, "ROLLBACK_BATCH_ROW_ABSENT");
     requireProof(rolledBackSession.status === "card_created", "ROLLBACK_SESSION_STATE");
-    requireProof(rolledBackReport.publicationStatus === "draft", "ROLLBACK_REPORT_STATE");
+    requireProof(rolledBackReport === null, "ROLLBACK_REPORT_ROW_ABSENT");
     requireProof(rolledBackCard.status === "UPLOADING" && rolledBackCard.imageUrl === "", "ROLLBACK_CARD_STATE");
     requireProof(rolledBackBatch.status === "UPLOADING" && rolledBackBatch.processedCount === 0, "ROLLBACK_BATCH_STATE");
     requireProof(rollbackCounts.every((count: number) => count === 0), "ROLLBACK_PARTIAL_ROWS");
@@ -412,10 +417,12 @@ async function main() {
     );
     requireProof(published.publicationStatus === "published", "PUBLICATION_STATUS");
     requireProof(published.labelSheetAssignment?.slot === 1, "LABEL_V1_ASSIGNMENT");
+    const durableReport = await prisma.aiGraderReport.findUnique({ where: { reportId: REPORT_ID } });
+    requireProof(durableReport !== null, "DURABLE_REPORT_ROW_PRESENT");
     const durablePublishedRows = await Promise.all([
       prisma.aiGraderSession.findUniqueOrThrow({ where: { gradingSessionId: GRADING_SESSION_ID } }),
-      prisma.aiGraderReport.findUniqueOrThrow({ where: { reportId: REPORT_ID } }),
-      prisma.aiGraderPublication.findUniqueOrThrow({ where: { reportId: rolledBackReport.id } }),
+      Promise.resolve(durableReport),
+      prisma.aiGraderPublication.findUniqueOrThrow({ where: { reportId: durableReport.id } }),
       prisma.aiGraderLabel.findUniqueOrThrow({ where: { certId: CERT_ID } }),
     ]);
     requireProof(durablePublishedRows[0].status === "published", "DURABLE_SESSION_PUBLISHED");
@@ -551,7 +558,8 @@ async function main() {
       "INVENTORY_REPORT_STATE",
     );
     requireProof(inventoryLabelPairs === 1, "INVENTORY_IDEMPOTENT_LABEL_PAIR");
-    requireProof(observedLocks.report >= 12 && observedLocks.label >= 9, "ALL_LOCK_PATHS_NOT_OBSERVED");
+    requireProof(observedLocks.report >= 11, `ALL_LOCK_PATHS_NOT_OBSERVED_REPORT_${observedLocks.report}`);
+    requireProof(observedLocks.label >= 9, `ALL_LOCK_PATHS_NOT_OBSERVED_LABEL_${observedLocks.label}`);
   } finally {
     await prisma.$disconnect();
   }

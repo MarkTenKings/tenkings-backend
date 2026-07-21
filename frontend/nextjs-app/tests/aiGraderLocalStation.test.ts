@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { AI_GRADER_REPORT_BUNDLE_V03_VERSION } from "@tenkings/shared";
 import {
   AI_GRADER_STATION_STEPS,
   aiGraderAtomicBackQueueReleaseMatches,
@@ -631,8 +632,8 @@ test("Rapid Capture queue sanitization preserves bounded report state and strips
       manifest: {
         latestReport: { reportId: "report-1", exists: true },
         reportBundle: {
+          schemaVersion: AI_GRADER_REPORT_BUNDLE_V03_VERSION,
           reportId: "report-1",
-          gradingSessionId: "session-1",
           nested: { normalizedPath: "C:\\TenKings\\private\\normalized.png", safeMeasurement: 8.6 },
         },
         productionRelease: {
@@ -692,8 +693,10 @@ test("Rapid Capture queue sanitization preserves bounded report state and strips
   assert.equal(queue.activeReview?.queueItemId, "session-1-rapid-card");
   assert.equal(queue.activeReview?.gradingSessionId, "session-1");
   assert.equal(queue.activeReview?.reportId, "report-1");
+  assert.equal(queue.activeReview?.manifest.reportBundle?.schemaVersion, AI_GRADER_REPORT_BUNDLE_V03_VERSION);
   assert.doesNotMatch(JSON.stringify(queue.activeReview), /normalizedPath|C:\\\\TenKings|serviceToken|must-not-survive/);
   assert.equal((queue.activeReview?.manifest.reportBundle as any)?.nested?.safeMeasurement, 8.6);
+  assert.equal(queue.activeReview?.manifest.productionRelease?.gradingSessionId, "session-1");
 });
 
 test("valid one-side normalized evidence remains waiting while the exact Back PNG is still processing", () => {

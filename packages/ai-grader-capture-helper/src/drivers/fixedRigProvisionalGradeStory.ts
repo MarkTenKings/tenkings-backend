@@ -177,7 +177,10 @@ function scoreFromDiagnostics(values: Array<JsonObject | undefined>): { score?: 
       metrics: { computedCount: 0, requiredCount: values.length },
     };
   }
-  const score = roundMetric(computed.reduce((sum, value) => sum + Number(value.score), 0) / computed.length, 2);
+  const score = roundMetric(
+    clamp(computed.reduce((sum, value) => sum + Number(value.score), 0) / computed.length, 1, 10),
+    2,
+  );
   const confidenceValues = computed.map((value) => Number(value.confidence)).filter((value) => Number.isFinite(value));
   const confidence = roundMetric(confidenceValues.reduce((sum, value) => sum + value, 0) / Math.max(1, confidenceValues.length), 3);
   return {
@@ -202,7 +205,7 @@ function elementResult(input: {
   return {
     category: input.category,
     status,
-    ...(finiteNumber(input.score) ? { score: roundMetric(input.score, 2) } : {}),
+    ...(finiteNumber(input.score) ? { score: roundMetric(clamp(input.score, 1, 10), 2) } : {}),
     confidence: roundMetric(input.confidence, 3),
     confidenceBand: confidenceBand(input.confidence),
     primaryMetrics: input.metrics,
@@ -654,7 +657,9 @@ export function buildFixedRigProvisionalGradeStory(input: BuildFixedRigProvision
     surfaceHighCandidates.length ? 8.5 : 10,
     normalizedPartialScoreReady ? NORMALIZED_MISSING_CENTERING_GRADE_CAP : 10
   );
-  const provisionalOverallGrade = requiredGatesPassed && finiteNumber(weighted) ? roundMetric(Math.min(weighted, cap), 2) : undefined;
+  const provisionalOverallGrade = requiredGatesPassed && finiteNumber(weighted)
+    ? roundMetric(clamp(Math.min(weighted, cap), 1, 10), 2)
+    : undefined;
   const gatePenalty = gateResults.filter((result) => result.status === "accepted_warning").length * ACCEPTED_WARNING_CONFIDENCE_PENALTY;
   const clippingPenalty = finiteNumber(maxClipped) && maxClipped > CLIPPING_SOFT_THRESHOLD ? clamp(maxClipped * 0.5, 0.02, 0.2) : 0;
   const missingCenteringPenalty = normalizedPartialScoreReady ? NORMALIZED_MISSING_CENTERING_CONFIDENCE_PENALTY : 0;

@@ -5,6 +5,7 @@ import sharp from "sharp";
 import {
   BaslerPylonClient,
   type BaslerCaptureStillResult,
+  type BaslerFixedRigSideBatchRoleCapture,
   type BaslerFixedRigSideBatchResult,
   type BaslerOperatorPreviewWindowResult,
 } from "./baslerPylonClient";
@@ -784,6 +785,21 @@ export interface FixedRigWarmSideCaptureBatch {
   verticalStartPx?: { x: number; y: number };
   verticalEndPx?: { x: number; y: number };
   cardBoundaryRect?: { x: number; y: number; width: number; height: number };
+  provisionalGeometryCorrection?: {
+    schemaVersion: "ten-kings-provisional-geometry-processing-v1";
+    status: "operator_accepted_geometry_only_controlled_evaluation";
+    isCalibrated: false;
+    artifactSha256: string;
+    acceptedMaximumHoldoutResidualPx: number;
+    observedMaximumHoldoutResidualPx: number;
+    originalBatch: BaslerFixedRigSideBatchResult;
+    derivatives: Array<{
+      role: BaslerFixedRigSideBatchRoleCapture["role"];
+      sourceSha256: string;
+      derivativeSha256: string;
+    }>;
+    limitations: string[];
+  };
 }
 
 export interface FixedRigWarmEvidencePackageResult {
@@ -1646,7 +1662,7 @@ export function buildFixedRigDiagnosticGradingResult(input: {
   const verticalCenteringPercent = tbTotal ? roundMetric((Math.min(top ?? 0, bottom ?? 0) / tbTotal) * 100, 2) : undefined;
   const centeringScore =
     horizontalCenteringPercent !== undefined && verticalCenteringPercent !== undefined
-      ? roundMetric(Math.max(0, Math.min(10, ((horizontalCenteringPercent + verticalCenteringPercent) / 100) * 10)), 2)
+      ? roundMetric(Math.max(1, Math.min(10, ((horizontalCenteringPercent + verticalCenteringPercent) / 100) * 10)), 2)
       : undefined;
   const centering =
     input.analysisCoordinateFrame === "normalized_card_portrait_pixels"
@@ -1695,7 +1711,7 @@ export function buildFixedRigDiagnosticGradingResult(input: {
       score: input.quality
         ? roundMetric(
             Math.max(
-              0,
+              1,
               Math.min(10, 10 - input.quality.clippedPixelFraction * 40 - input.quality.darkPixelFraction * 8 + Math.min(input.quality.sharpnessScore, 500) / 250)
             ),
             2
@@ -1753,7 +1769,7 @@ export function buildFixedRigDiagnosticGradingResult(input: {
       confidence: input.surfaceAnalysis?.status === "computed_diagnostic" ? 0.25 : 0,
       score:
         input.surfaceAnalysis?.status === "computed_diagnostic"
-          ? roundMetric(Math.max(0, 10 - Math.min(10, (input.surfaceAnalysis.candidates[0]?.severityProxy ?? 0) / 50)), 2)
+          ? roundMetric(Math.max(1, 10 - Math.min(10, (input.surfaceAnalysis.candidates[0]?.severityProxy ?? 0) / 50)), 2)
           : undefined,
       metrics: {
         scoreType: "provisional_diagnostic",
@@ -3829,12 +3845,14 @@ export async function processFixedRigWarmSideBatch(
     verticalStartPx,
     verticalEndPx,
     cardBoundaryRect,
+    provisionalGeometryCorrection,
   } = captureBatch;
+  const originalBatch = provisionalGeometryCorrection?.originalBatch ?? batch;
   const rawRoleCaptures = [
-    batch.captures.darkControl,
-    batch.captures.allOn,
-    batch.captures.acceptedProfile,
-    ...batch.captures.channels,
+    originalBatch.captures.darkControl,
+    originalBatch.captures.allOn,
+    originalBatch.captures.acceptedProfile,
+    ...originalBatch.captures.channels,
   ];
   const sumCaptureTiming = (phase: "grab" | "save" | "hash") =>
     Math.round(
@@ -3843,20 +3861,20 @@ export async function processFixedRigWarmSideBatch(
         return total + (Number.isFinite(duration) ? duration : 0);
       }, 0) * 10
     ) / 10;
-  const openedAtMs = batch.openedAt ? Date.parse(batch.openedAt) : Number.NaN;
-  const finishedAtMs = batch.finishedAt ? Date.parse(batch.finishedAt) : Number.NaN;
+  const openedAtMs = originalBatch.openedAt ? Date.parse(originalBatch.openedAt) : Number.NaN;
+  const finishedAtMs = originalBatch.finishedAt ? Date.parse(originalBatch.finishedAt) : Number.NaN;
   const sideCaptureTotalMs = Number.isFinite(openedAtMs) && Number.isFinite(finishedAtMs)
     ? Math.max(0, finishedAtMs - openedAtMs)
     : undefined;
   const captureTiming = {
     previewReadyAt: undefined,
     edgeDetectionReadyAt: undefined,
-    operatorOrAutoTriggerAt: batch.openedAt,
-    lightingProfileChanges: batch.leimac?.triggerSetup ?? undefined,
+    operatorOrAutoTriggerAt: originalBatch.openedAt,
+    lightingProfileChanges: originalBatch.leimac?.triggerSetup ?? undefined,
     frameCaptureMs: sumCaptureTiming("grab"),
     fileWritesMs: sumCaptureTiming("save"),
     fileHashMs: sumCaptureTiming("hash"),
-    baslerOpenConfigureMs: Number((batch.timing as any)?.warmCameraOpenConfigure?.durationMs ?? 0),
+    baslerOpenConfigureMs: Number((originalBatch.timing as any)?.warmCameraOpenConfigure?.durationMs ?? 0),
     gradingForensicRunnerMs: sideCaptureTotalMs,
     totalSideMs: sideCaptureTotalMs,
     targetSideMs: 5000,
@@ -3869,18 +3887,27 @@ export async function processFixedRigWarmSideBatch(
     hardwareMeasurement: hardwareMeasurement === true,
     hardwareMeasurementRequired: hardwareMeasurement !== true,
   };
-  const darkControlCapture = batch.captures.darkControl.capture;
+  const darkControlCapture = originalBatch.captures.darkControl.capture;
   const orderedChannelRoles = batch.captures.channels
     .slice()
     .sort((a, b) => Number(a.channel ?? 0) - Number(b.channel ?? 0));
+  const originalRole = (role: BaslerFixedRigSideBatchRoleCapture): BaslerFixedRigSideBatchRoleCapture => {
+    if (role.role === "dark_control") return originalBatch.captures.darkControl;
+    if (role.role === "all_on") return originalBatch.captures.allOn;
+    if (role.role === "accepted_profile") return originalBatch.captures.acceptedProfile;
+    return originalBatch.captures.channels.find((candidate) => candidate.role === role.role) ?? role;
+  };
   // Verify every immutable capture before any geometry authority or derived
   // artifact is created. The authority below only sees hashes that matched the
   // captured manifest, never a mutable preview frame or fixture rectangle.
   const rawEvidenceIntegrity = await timed("rawEvidenceIntegrity", () => verifyRawCaptureIntegrity([
-    { role: "dark_control", capture: batch.captures.darkControl.capture },
-    { role: "all_on", capture: batch.captures.allOn.capture },
-    { role: "accepted_profile", capture: batch.captures.acceptedProfile.capture },
-    ...orderedChannelRoles.map((role) => ({ role: `channel_${Number(role.channel)}`, capture: role.capture })),
+    { role: "dark_control", capture: originalBatch.captures.darkControl.capture },
+    { role: "all_on", capture: originalBatch.captures.allOn.capture },
+    { role: "accepted_profile", capture: originalBatch.captures.acceptedProfile.capture },
+    ...originalBatch.captures.channels
+      .slice()
+      .sort((a, b) => Number(a.channel ?? 0) - Number(b.channel ?? 0))
+      .map((role) => ({ role: `channel_${Number(role.channel)}`, capture: role.capture })),
   ]));
   if (!options.trustedWorkerGeometryAuthorityResolver) {
     throw new Error(
@@ -3908,8 +3935,8 @@ export async function processFixedRigWarmSideBatch(
   const authoritativeGeometryRole = recordedGeometryAuthority.authoritativeRole;
   const transformReusedForRoles = (
     authoritativeGeometryRole === "all_on"
-      ? ["accepted_profile", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
-      : ["all_on", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
+      ? ["dark_control", "accepted_profile", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
+      : ["dark_control", "all_on", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
   );
   const normalizeVisibleRole = async (
     role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
@@ -3926,6 +3953,7 @@ export async function processFixedRigWarmSideBatch(
     return { ...registration, normalizedArtifact: registration.normalizedArtifact };
   };
   const visibleRoleNormalizationInputs = [
+    { role: batch.captures.darkControl, fileLabel: "dark-control" },
     { role: batch.captures.acceptedProfile, fileLabel: "accepted-profile" },
     ...orderedChannelRoles.map((role) => ({ role, fileLabel: `channel-${Number(role.channel)}` })),
   ];
@@ -3936,8 +3964,9 @@ export async function processFixedRigWarmSideBatch(
       ({ role, fileLabel }) => normalizeVisibleRole(role, fileLabel),
     )
   );
-  const acceptedRegistration = visibleRoleRegistrations[0]!;
-  const channelRegistrations = visibleRoleRegistrations.slice(1);
+  const darkControlRegistration = visibleRoleRegistrations[0]!;
+  const acceptedRegistration = visibleRoleRegistrations[1]!;
+  const channelRegistrations = visibleRoleRegistrations.slice(2);
   const analyzeNormalizedRole = async (
     role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
     analysisArtifact: CardGeometryNormalizedArtifact,
@@ -3952,7 +3981,7 @@ export async function processFixedRigWarmSideBatch(
       channel: role.channel,
       frames: role.frames ?? [],
       writes: role.writes ?? [],
-      capture: role.capture,
+      capture: originalRole(role).capture,
       analysisArtifact,
       analysisCoordinateFrame: "normalized_card_portrait_pixels" as const,
       stats,
@@ -3961,12 +3990,13 @@ export async function processFixedRigWarmSideBatch(
   };
   const [darkStats, acquisitionPlacementQuality] = await timed("rawImageAnalysis", () =>
     Promise.all([
-      analyzeFixedRigMacroQuality(darkControlCapture.outputFilePath),
+      analyzeFixedRigMacroQuality(batch.captures.darkControl.capture.outputFilePath),
       analyzeFixedRigMacroQuality(batch.captures.allOn.capture.outputFilePath),
     ])
   );
   const normalizedRoleAnalysisInputs = [
     { role: batch.captures.allOn, artifact: normalizedCard.normalizedArtifact },
+    { role: batch.captures.darkControl, artifact: darkControlRegistration.normalizedArtifact },
     { role: batch.captures.acceptedProfile, artifact: acceptedRegistration.normalizedArtifact },
     ...orderedChannelRoles.map((role, index) => ({
       role,
@@ -3981,8 +4011,9 @@ export async function processFixedRigWarmSideBatch(
     )
   );
   const allOn = normalizedRoleAnalyses[0]!;
-  const acceptedProfile = normalizedRoleAnalyses[1]!;
-  const channels = normalizedRoleAnalyses.slice(2).map((channelAnalysis, index) => ({
+  const normalizedDarkControl = normalizedRoleAnalyses[1]!;
+  const acceptedProfile = normalizedRoleAnalyses[2]!;
+  const channels = normalizedRoleAnalyses.slice(3).map((channelAnalysis, index) => ({
     ...channelAnalysis,
     channel: Number(orderedChannelRoles[index]!.channel),
   }));
@@ -4259,10 +4290,30 @@ export async function processFixedRigWarmSideBatch(
       },
     },
   };
+  const recordedProvisionalGeometryCorrection = provisionalGeometryCorrection
+    ? {
+        schemaVersion: provisionalGeometryCorrection.schemaVersion,
+        status: provisionalGeometryCorrection.status,
+        isCalibrated: false as const,
+        artifactSha256: provisionalGeometryCorrection.artifactSha256,
+        acceptedMaximumHoldoutResidualPx: provisionalGeometryCorrection.acceptedMaximumHoldoutResidualPx,
+        observedMaximumHoldoutResidualPx: provisionalGeometryCorrection.observedMaximumHoldoutResidualPx,
+        derivatives: provisionalGeometryCorrection.derivatives.map((entry) => ({ ...entry })),
+        limitations: [...provisionalGeometryCorrection.limitations],
+        rawSensorEvidencePreserved: true as const,
+        rollbackPath: "current_production_normalization" as const,
+      }
+    : undefined;
   const sideEvidence = {
     side,
-    safeOffBeforeDark: batch.leimac?.safeOffStart,
-    darkControl: { capture: darkControlCapture, stats: darkStats },
+    safeOffBeforeDark: originalBatch.leimac?.safeOffStart,
+    darkControl: {
+      capture: darkControlCapture,
+      stats: darkStats,
+      normalized: normalizedDarkControl,
+      note:
+        "Raw dark-control evidence is retained; the normalized artifact reuses the exact authoritative all-on card transform for calibrated pixel-aligned subtraction.",
+    },
     allOn,
     acceptedProfile,
     channels,
@@ -4283,6 +4334,7 @@ export async function processFixedRigWarmSideBatch(
     acquisitionFixtureCalibrationProfile,
     fixtureCalibrationProfile,
     rawEvidenceIntegrity,
+    ...(recordedProvisionalGeometryCorrection ? { provisionalGeometryCorrection: recordedProvisionalGeometryCorrection } : {}),
     surfaceAnalysis,
     diagnosticGrading,
   };
@@ -4316,6 +4368,7 @@ export async function processFixedRigWarmSideBatch(
     },
     analysisCoordinateSystem,
     rawEvidenceIntegrity,
+    ...(recordedProvisionalGeometryCorrection ? { provisionalGeometryCorrection: recordedProvisionalGeometryCorrection } : {}),
     captureTiming,
     processingTiming: {
       startedAt: processingStartedAt,
@@ -4332,21 +4385,22 @@ export async function processFixedRigWarmSideBatch(
     exposureUs,
     gain,
     warmBatch: {
-      openedAt: batch.openedAt,
-      finishedAt: batch.finishedAt,
-      persistentBaslerSession: batch.persistentBaslerSession,
-      persistentLeimacSession: batch.persistentLeimacSession,
-      selectedChannels: batch.selectedChannels,
-      dutyTenthsPercent: batch.dutyTenthsPercent,
-      timing: batch.timing,
-      safety: batch.safety,
+      openedAt: originalBatch.openedAt,
+      finishedAt: originalBatch.finishedAt,
+      persistentBaslerSession: originalBatch.persistentBaslerSession,
+      persistentLeimacSession: originalBatch.persistentLeimacSession,
+      selectedChannels: originalBatch.selectedChannels,
+      dutyTenthsPercent: originalBatch.dutyTenthsPercent,
+      timing: originalBatch.timing,
+      safety: originalBatch.safety,
     },
-    safeOffStart: batch.leimac?.safeOffStart,
-    safeOffEnd: batch.leimac?.safeOffEnd,
+    safeOffStart: originalBatch.leimac?.safeOffStart,
+    safeOffEnd: originalBatch.leimac?.safeOffEnd,
     [side]: sideEvidence,
     suggestedDinoLiteTargets: { status: "not_computed", reason: "surface anomaly detector not implemented yet" },
-    note:
-      `Warm fixed-rig V1 ${captureProfile} profile evidence package only; no final grade, certificate, or certified grading claim. Full evidence roles preserved.`,
+    note: recordedProvisionalGeometryCorrection
+      ? `Warm fixed-rig V1 ${captureProfile} controlled geometry-only evaluation; isCalibrated=false, no final grade, certificate, photometric claim, or certified grading claim. Original sensor evidence and current normalization rollback are preserved.`
+      : `Warm fixed-rig V1 ${captureProfile} profile evidence package only; no final grade, certificate, or certified grading claim. Full evidence roles preserved.`,
   };
   const manifestPath = path.join(packageDir, "manifest.json");
   const analysisPath = path.join(packageDir, "analysis.json");
@@ -4363,6 +4417,10 @@ export async function processFixedRigWarmSideBatch(
     captureTiming,
     activeLightingProfile,
     [side]: {
+      darkControl: {
+        raw: darkStats,
+        normalized: normalizedDarkControl,
+      },
       allOn: allOn.stats,
       acceptedProfile: acceptedProfile.stats,
       geometry: normalizedCard.geometry,
@@ -4370,6 +4428,7 @@ export async function processFixedRigWarmSideBatch(
       analysisCoordinateSystem,
       acquisitionPlacementDiagnostics: sideEvidence.acquisitionPlacementDiagnostics,
       rawEvidenceIntegrity,
+      ...(recordedProvisionalGeometryCorrection ? { provisionalGeometryCorrection: recordedProvisionalGeometryCorrection } : {}),
       fixtureCalibrationProfile,
       surfaceAnalysis,
       diagnosticGrading,
@@ -4423,7 +4482,10 @@ function renderWarmFixedRigEvidencePackageReport(input: {
   const side = input.side;
   const sideTitle = side === "front" ? "Front" : "Back";
   const normalizedImage = input.sideEvidence.normalizedCard.normalizedArtifact?.localOutputPath;
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Warm Fixed-Rig V1 Evidence Package - Provisional Diagnostic</title><style>body{font-family:Arial,sans-serif;margin:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}img{max-width:100%;border:1px solid #aaa;background:#111}.warn{border-left:4px solid #a33;padding:8px 12px;background:#fff}.banner{border:2px solid #a33;background:#fff4f4;padding:12px 16px;font-weight:bold}table{border-collapse:collapse;width:100%;margin:8px 0 16px}td,th{border:1px solid #bbb;padding:6px 8px;text-align:left}</style></head><body><h1>Warm Fixed-Rig V1 Evidence Package</h1><p class="banner">Provisional Diagnostic Only - Not Certified - No Final Grade</p><p class="warn">The explicitly selected capture profile preserved dark control, all-on, accepted profile, and Leimac channels 1-8. Raw Basler evidence remains in sensor coordinates; normalized/display/ROI assets are derived outputs.</p><p>Execution path warm_full_forensic_runner. Duty ${escapeHtml(input.activeLightingProfile.selectedDutyPercent)}% PWM ${escapeHtml(input.activeLightingProfile.actualLeimacPwmStep)}; channels ${escapeHtml(input.activeLightingProfile.selectedChannels.join(", "))}; source ${escapeHtml(input.activeLightingProfile.profileSource)}.</p><h2>${sideTitle} Normalized Card</h2><p>Placement ${escapeHtml(input.sideEvidence.normalizedCard.geometry.placementState)}; geometry ${escapeHtml(input.sideEvidence.normalizedCard.geometry.geometrySource)}; capture ${escapeHtml(input.sideEvidence.normalizedCard.geometry.captureMode ?? "automatic_detection")}; rotation ${escapeHtml(input.sideEvidence.normalizedCard.geometry.rotationDegrees ?? "not detected")} degrees; confidence ${escapeHtml(input.sideEvidence.normalizedCard.geometry.confidence)}.</p>${normalizedImage ? `<img src="${escapeHtml(normalizedImage)}" alt="${side} normalized crop and deskew artifact">` : "<p>Automatic geometry did not produce a normalized artifact. Reposition and recapture, or use an explicit operator-confirmed manual capture override.</p>"}<h2>${sideTitle} Portrait Evidence</h2><img src="${escapeHtml(input.sideEvidence.displayImage.outputFilePath)}" alt="${side} portrait all-on"><img src="${escapeHtml(input.sideEvidence.overlayPreview.outputFilePath)}" alt="${side} portrait overlay"><p>Accepted profile raw capture: ${escapeHtml(input.sideEvidence.acceptedProfile.capture.outputFilePath)}</p><p>Rough profile: ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.status)}; pixel/mm ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed")} x ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed")}; diagnostic grading ${escapeHtml(input.sideEvidence.diagnosticGrading.status)}; surface ${escapeHtml(input.sideEvidence.surfaceAnalysis.status)}; candidates ${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.length)}.</p><table><tr><th>Centering</th><td>${escapeHtml(input.sideEvidence.diagnosticGrading.centering.status)} score ${escapeHtml(input.sideEvidence.diagnosticGrading.centering.score ?? "not_computed")}</td></tr><tr><th>Corners</th><td>TL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topLeft.status)}, TR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topRight.status)}, BR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomRight.status)}, BL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomLeft.status)}</td></tr><tr><th>Edges</th><td>T ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.top.status)}, R ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.right.status)}, B ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.bottom.status)}, L ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.left.status)}</td></tr><tr><th>Surface candidates</th><td>${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.map((candidate) => `${candidate.candidateId} ${candidate.severityBand} ${candidate.anomalyProxyScore}`).join(", ") || "none")}</td></tr></table><h3>${sideTitle} 8-channel portrait displays</h3><div class="grid">${input.sideEvidence.channelDisplayImages.map((entry) => `<figure><img src="${escapeHtml(entry.displayImage.outputFilePath)}" alt="${side} channel ${entry.channel} portrait"><figcaption>${side} channel ${entry.channel}</figcaption></figure>`).join("")}</div><h2>ROI Crops</h2><div class="grid">${input.sideEvidence.roiCrops.map((crop) => `<figure><img src="${escapeHtml(crop.outputFilePath)}" alt="${escapeHtml(crop.roiId)}"><figcaption>${escapeHtml(crop.roiId)}</figcaption></figure>`).join("")}</div><h2>Diagnostic JSON</h2><pre>${escapeHtml(JSON.stringify({ diagnosticGrading: input.sideEvidence.diagnosticGrading, geometry: input.sideEvidence.normalizedCard.geometry, manifest: input.manifest }, null, 2))}</pre></body></html>`;
+  const provisionalWarning = input.manifest.provisionalGeometryCorrection
+    ? `<p class="banner">Geometry-only operator-accepted controlled evaluation - isCalibrated=false - current Production normalization retained as rollback</p>`
+    : "";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Warm Fixed-Rig V1 Evidence Package - Provisional Diagnostic</title><style>body{font-family:Arial,sans-serif;margin:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}img{max-width:100%;border:1px solid #aaa;background:#111}.warn{border-left:4px solid #a33;padding:8px 12px;background:#fff}.banner{border:2px solid #a33;background:#fff4f4;padding:12px 16px;font-weight:bold}table{border-collapse:collapse;width:100%;margin:8px 0 16px}td,th{border:1px solid #bbb;padding:6px 8px;text-align:left}</style></head><body><h1>Warm Fixed-Rig V1 Evidence Package</h1><p class="banner">Provisional Diagnostic Only - Not Certified - No Final Grade</p>${provisionalWarning}<p class="warn">The explicitly selected capture profile preserved dark control, all-on, accepted profile, and Leimac channels 1-8. Raw Basler evidence remains in sensor coordinates; normalized/display/ROI assets are derived outputs.</p><p>Execution path warm_full_forensic_runner. Duty ${escapeHtml(input.activeLightingProfile.selectedDutyPercent)}% PWM ${escapeHtml(input.activeLightingProfile.actualLeimacPwmStep)}; channels ${escapeHtml(input.activeLightingProfile.selectedChannels.join(", "))}; source ${escapeHtml(input.activeLightingProfile.profileSource)}.</p><h2>${sideTitle} Normalized Card</h2><p>Placement ${escapeHtml(input.sideEvidence.normalizedCard.geometry.placementState)}; geometry ${escapeHtml(input.sideEvidence.normalizedCard.geometry.geometrySource)}; capture ${escapeHtml(input.sideEvidence.normalizedCard.geometry.captureMode ?? "automatic_detection")}; rotation ${escapeHtml(input.sideEvidence.normalizedCard.geometry.rotationDegrees ?? "not detected")} degrees; confidence ${escapeHtml(input.sideEvidence.normalizedCard.geometry.confidence)}.</p>${normalizedImage ? `<img src="${escapeHtml(normalizedImage)}" alt="${side} normalized crop and deskew artifact">` : "<p>Automatic geometry did not produce a normalized artifact. Reposition and recapture, or use an explicit operator-confirmed manual capture override.</p>"}<h2>${sideTitle} Portrait Evidence</h2><img src="${escapeHtml(input.sideEvidence.displayImage.outputFilePath)}" alt="${side} portrait all-on"><img src="${escapeHtml(input.sideEvidence.overlayPreview.outputFilePath)}" alt="${side} portrait overlay"><p>Accepted profile raw capture: ${escapeHtml(input.sideEvidence.acceptedProfile.capture.outputFilePath)}</p><p>Rough profile: ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.status)}; pixel/mm ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed")} x ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed")}; diagnostic grading ${escapeHtml(input.sideEvidence.diagnosticGrading.status)}; surface ${escapeHtml(input.sideEvidence.surfaceAnalysis.status)}; candidates ${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.length)}.</p><table><tr><th>Centering</th><td>${escapeHtml(input.sideEvidence.diagnosticGrading.centering.status)} score ${escapeHtml(input.sideEvidence.diagnosticGrading.centering.score ?? "not_computed")}</td></tr><tr><th>Corners</th><td>TL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topLeft.status)}, TR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topRight.status)}, BR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomRight.status)}, BL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomLeft.status)}</td></tr><tr><th>Edges</th><td>T ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.top.status)}, R ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.right.status)}, B ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.bottom.status)}, L ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.left.status)}</td></tr><tr><th>Surface candidates</th><td>${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.map((candidate) => `${candidate.candidateId} ${candidate.severityBand} ${candidate.anomalyProxyScore}`).join(", ") || "none")}</td></tr></table><h3>${sideTitle} 8-channel portrait displays</h3><div class="grid">${input.sideEvidence.channelDisplayImages.map((entry) => `<figure><img src="${escapeHtml(entry.displayImage.outputFilePath)}" alt="${side} channel ${entry.channel} portrait"><figcaption>${side} channel ${entry.channel}</figcaption></figure>`).join("")}</div><h2>ROI Crops</h2><div class="grid">${input.sideEvidence.roiCrops.map((crop) => `<figure><img src="${escapeHtml(crop.outputFilePath)}" alt="${escapeHtml(crop.roiId)}"><figcaption>${escapeHtml(crop.roiId)}</figcaption></figure>`).join("")}</div><h2>Diagnostic JSON</h2><pre>${escapeHtml(JSON.stringify({ diagnosticGrading: input.sideEvidence.diagnosticGrading, geometry: input.sideEvidence.normalizedCard.geometry, manifest: input.manifest }, null, 2))}</pre></body></html>`;
 }
 
 async function writeJsonArtifact(filePath: string, data: unknown): Promise<void> {

@@ -329,6 +329,21 @@ function firstRecord(...values: unknown[]): JsonRecord | undefined {
   return values.find(isRecord) as JsonRecord | undefined;
 }
 
+function normalizedGradeScore(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.max(1, Math.min(10, value));
+}
+
+function normalizedProvisionalElementScores(value: unknown): JsonRecord | undefined {
+  if (!isRecord(value)) return undefined;
+  return Object.fromEntries(Object.entries(value).map(([key, element]) => {
+    if (!isRecord(element)) return [key, element];
+    const { score: _sourceScore, ...rest } = element;
+    const score = normalizedGradeScore(element.score);
+    return [key, score === undefined ? rest : { ...rest, score }];
+  }));
+}
+
 function nonemptyString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
@@ -639,8 +654,8 @@ export async function buildAiGraderReportBundle(input: {
     provisionalGrade: story
       ? {
           status: story.status,
-          overall: typeof story.provisionalOverallGrade === "number" ? story.provisionalOverallGrade : undefined,
-          elementScores: firstRecord(story.elementScores),
+          overall: normalizedGradeScore(story.provisionalOverallGrade),
+          elementScores: normalizedProvisionalElementScores(story.elementScores),
           confidence: firstRecord(story.confidence),
           gates: firstRecord(story.gates),
           gradeStory: firstRecord(story.story),

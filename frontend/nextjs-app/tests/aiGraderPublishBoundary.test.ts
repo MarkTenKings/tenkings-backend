@@ -55,7 +55,7 @@ function boundaryHandler(onPresign: () => void) {
   });
 }
 
-test("publish boundary accepts only report bundle v0.1 and v0.2", async () => {
+test("publish boundary retains V0.1 and V0.2 compatibility while unknown versions fail closed", async () => {
   const productionRelease = buildSampleAiGraderProductionRelease(SAMPLE_AI_GRADER_REPORT_BUNDLE);
   assert.doesNotThrow(() => assertAiGraderPublishBundleBoundary(SAMPLE_AI_GRADER_REPORT_BUNDLE, productionRelease));
   assert.doesNotThrow(() =>

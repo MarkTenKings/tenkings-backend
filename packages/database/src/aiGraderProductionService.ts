@@ -3,15 +3,27 @@ import { Prisma } from "@prisma/client";
 import {
   AI_GRADER_REPORT_BUNDLE_V01_VERSION,
   AI_GRADER_REPORT_BUNDLE_V02_VERSION,
+  AI_GRADER_REPORT_BUNDLE_V03_VERSION,
+  aiGraderLegacyReportBundleV02ReadSchema,
   aiGraderPublishedDefectFindingV1Schema,
   aiGraderReportBundleV01Schema,
   aiGraderReportBundleV02Schema,
+  aiGraderReportBundleV03Schema,
   aiGraderStoredDefectFindingV1Schema,
   isSafeAiGraderPublicAssetId,
   parseAiGraderDefectFindings,
   type AiGraderDefectFindingV1,
   type AiGraderPublishedDefectFindingV1,
 } from "@tenkings/shared";
+import {
+  readAiGraderMathematicalCalibrationReadiness,
+  type AiGraderMathematicalCalibrationSnapshotDelegate,
+} from "./aiGraderMathematicalCalibrationReadiness";
+import {
+  createAiGraderDesignReferenceService,
+  type AiGraderDesignReferenceDelegate,
+} from "./aiGraderDesignReferenceService";
+export { readAiGraderMathematicalCalibrationReadiness } from "./aiGraderMathematicalCalibrationReadiness";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -21,6 +33,14 @@ type AiGraderPublicEvidenceRole =
   | "surface_vision"
   | "confidence_mask"
   | "measurement_overlay"
+  | "deduction_overlay"
+  | "segmentation_mask"
+  | "illumination_mask"
+  | "common_mode_response"
+  | "outer_cut_contour"
+  | "printed_design_contour"
+  | "centering_overlay"
+  | "flat_field"
   | "directional_channel"
   | "roi_crop"
   | "other_evidence";
@@ -31,10 +51,23 @@ const AI_GRADER_PUBLIC_EVIDENCE_ROLES = new Set<AiGraderPublicEvidenceRole>([
   "surface_vision",
   "confidence_mask",
   "measurement_overlay",
+  "deduction_overlay",
+  "segmentation_mask",
+  "illumination_mask",
+  "common_mode_response",
+  "outer_cut_contour",
+  "printed_design_contour",
+  "centering_overlay",
+  "flat_field",
   "directional_channel",
   "roi_crop",
   "other_evidence",
 ]);
+
+const AI_GRADER_MATHEMATICAL_PRODUCTION_RELEASE_V1_VERSION =
+  "ai-grader-mathematical-production-release-v1";
+const AI_GRADER_MATHEMATICAL_LABEL_V1_VERSION =
+  "ten-kings-ai-grader-label-v1";
 
 export type AiGraderProductionPublicationStatus =
   | "draft"
@@ -69,12 +102,18 @@ export type AiGraderProductionTransactionClient = {
   aiGraderLabel: AiGraderProductionDbDelegate;
   aiGraderPublication: AiGraderProductionDbDelegate;
   aiGraderValuation: AiGraderProductionDbDelegate;
+  calibrationSnapshot?: AiGraderMathematicalCalibrationSnapshotDelegate;
+  aiGraderDesignReference?: AiGraderDesignReferenceDelegate;
   cardAsset?: Pick<AiGraderProductionDbDelegate, "findUnique" | "updateMany">;
   item?: Pick<AiGraderProductionDbDelegate, "findUnique" | "updateMany">;
 };
 
 export type AiGraderProductionPrismaClient = AiGraderProductionTransactionClient & {
   $transaction?: <T>(fn: (tx: AiGraderProductionTransactionClient) => Promise<T>) => Promise<T>;
+};
+
+export type AiGraderProductionPersistOptions = {
+  readDesignReferenceArtifactBytes?: (storageKey: string) => Promise<Uint8Array>;
 };
 
 export type AiGraderProductionReportBundleLike = JsonRecord & {
@@ -86,7 +125,16 @@ export type AiGraderProductionReportBundleLike = JsonRecord & {
   provisionalGrade?: JsonRecord;
   evidenceReferences?: JsonRecord;
   visionLab?: JsonRecord;
+  gradingStandard?: JsonRecord;
   calibrationProfile?: JsonRecord;
+  calibrationBundleAuthority?: JsonRecord;
+  designReferences?: unknown[];
+  centeringEvidence?: JsonRecord;
+  conditionObservationEvidence?: JsonRecord;
+  defectFindings?: unknown[];
+  deductionLedger?: JsonRecord;
+  evidenceQualityLimitations?: unknown[];
+  productionRelease?: JsonRecord;
   rulerCalibration?: JsonRecord;
   lightingProfile?: JsonRecord;
   geometry?: JsonRecord;
@@ -524,6 +572,7 @@ function publishAuthorityAssets(value: unknown) {
 }
 
 function publishAuthorityReportProjection(reportBundle: AiGraderProductionReportBundleLike): JsonRecord {
+  const isCalibratedV1 = reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION;
   const producer = isRecord(reportBundle.reportProducer) ? reportBundle.reportProducer : {};
   const capabilities = Array.from(new Set(
     (Array.isArray(producer.capabilities) ? producer.capabilities : [])
@@ -547,7 +596,11 @@ function publishAuthorityReportProjection(reportBundle: AiGraderProductionReport
     labelGenerated: publishAuthorityBoolean(reportBundle.labelGenerated),
     qrGenerated: publishAuthorityBoolean(reportBundle.qrGenerated),
     certificateGenerated: publishAuthorityBoolean(reportBundle.certificateGenerated),
-    assets: publishAuthorityAssets(reportBundle.assets),
+    assets: publishAuthorityAssets(
+      isCalibratedV1 && Array.isArray(reportBundle.publicAssets)
+        ? reportBundle.publicAssets
+        : reportBundle.assets,
+    ),
     provisionalGrade: publishAuthorityJsonValue(reportBundle.provisionalGrade ?? null),
     evidenceReferences: publishAuthorityJsonValue(reportBundle.evidenceReferences ?? null),
     visionLab: publishAuthorityJsonValue(reportBundle.visionLab ?? null),
@@ -563,7 +616,41 @@ function publishAuthorityReportProjection(reportBundle: AiGraderProductionReport
     warnings: publishAuthorityJsonValue(reportBundle.warnings ?? []),
     limitations: publishAuthorityJsonValue(reportBundle.limitations ?? []),
   };
+  if (isCalibratedV1) {
+    Object.assign(projection, {
+      gradingStandard: publishAuthorityJsonValue(reportBundle.gradingStandard ?? null),
+      calibrationBundleAuthority: publishAuthorityJsonValue(
+        reportBundle.calibrationBundleAuthority ?? null,
+      ),
+      designReferences: publishAuthorityJsonValue(reportBundle.designReferences ?? null),
+      centeringEvidence: publishAuthorityJsonValue(reportBundle.centeringEvidence ?? null),
+      conditionObservationEvidence: publishAuthorityJsonValue(
+        reportBundle.conditionObservationEvidence ?? null,
+      ),
+      deductionLedger: publishAuthorityJsonValue(reportBundle.deductionLedger ?? null),
+      evidenceQualityLimitations: publishAuthorityJsonValue(reportBundle.evidenceQualityLimitations ?? null),
+    });
+  }
   return publishAuthorityRecordValue(projection);
+}
+
+function storedReportLinkProjection(reportBundle: AiGraderProductionReportBundleLike): JsonRecord {
+  const projection = publishAuthorityReportProjection(reportBundle);
+  const assets = Array.isArray(projection.assets) ? projection.assets : [];
+  return publishAuthorityRecordValue({
+    ...projection,
+    assets: assets.filter(isRecord).map((asset) => ({
+      id: asset.id ?? null,
+      contentType: asset.contentType ?? null,
+      checksumSha256: asset.checksumSha256 ?? null,
+      byteSize: asset.byteSize ?? null,
+      widthPx: asset.widthPx ?? null,
+      heightPx: asset.heightPx ?? null,
+      side: asset.side ?? null,
+      evidenceRole: asset.evidenceRole ?? null,
+      required: asset.required ?? null,
+    })),
+  });
 }
 
 function publishAuthorityReleaseProjection(productionRelease: AiGraderProductionReleaseLike): JsonRecord {
@@ -604,10 +691,77 @@ function publishAuthorityReleaseProjection(productionRelease: AiGraderProduction
   return publishAuthorityRecordValue(projection);
 }
 
+function assertAiGraderCalibratedReleaseMatchesBundle(
+  reportBundle: AiGraderProductionReportBundleLike,
+  productionRelease: AiGraderProductionReleaseLike,
+) {
+  if (reportBundle.schemaVersion !== AI_GRADER_REPORT_BUNDLE_V03_VERSION) return undefined;
+  const parsed = aiGraderReportBundleV03Schema.safeParse(reportBundle);
+  if (!parsed.success) {
+    const summary = parsed.error.issues
+      .slice(0, 8)
+      .map((entry) => `${entry.path.join(".") || "bundle"}: ${entry.message}`)
+      .join("; ");
+    throw new Error(`AI Grader calibrated public report bundle v0.3 validation failed: ${summary}`);
+  }
+  const releaseFinalGrade = isRecord(productionRelease.finalGrade)
+    ? productionRelease.finalGrade
+    : undefined;
+  const releaseLabel = isRecord(productionRelease.label) ? productionRelease.label : {};
+  const releasePublication = isRecord(productionRelease.publication)
+    ? productionRelease.publication
+    : {};
+  const reportLabel = parsed.data.productionRelease.label;
+  const expectedElementScores = Object.fromEntries(
+    Object.entries(parsed.data.productionRelease.finalGrade.elements).map(([element, value]) => [
+      element,
+      value.score,
+    ]),
+  );
+  if (
+    !releaseFinalGrade ||
+    productionRelease.schemaVersion !== AI_GRADER_MATHEMATICAL_PRODUCTION_RELEASE_V1_VERSION ||
+    productionRelease.generatedAt !== parsed.data.generatedAt ||
+    productionRelease.reportId !== parsed.data.reportId ||
+    !trimmedString(productionRelease.gradingSessionId) ||
+    productionRelease.reportStatus !== "final_ai_grader_report_v1" ||
+    productionRelease.finalStatus !== "final_grade_computed" ||
+    productionRelease.finalGradeComputed !== true ||
+    productionRelease.certifiedClaim !== false ||
+    productionRelease.certificateGenerated !== false ||
+    productionRelease.labelDataGenerated !== true ||
+    productionRelease.qrPayloadGenerated !== true ||
+    canonicalAiGraderPublishAuthorityJson(releaseFinalGrade) !==
+      canonicalAiGraderPublishAuthorityJson(parsed.data.productionRelease.finalGrade) ||
+    releaseLabel.labelVersion !== AI_GRADER_MATHEMATICAL_LABEL_V1_VERSION ||
+    releaseLabel.status !== "label_data_ready" ||
+    releaseLabel.reportId !== parsed.data.reportId ||
+    releaseLabel.certificateStatus !== "report_id_issued_not_certified" ||
+    releaseLabel.certifiedClaim !== false ||
+    releaseLabel.certId !== reportLabel.certId ||
+    releaseLabel.labelGradeText !== reportLabel.labelGradeText ||
+    releaseLabel.publicReportUrl !== reportLabel.publicReportUrl ||
+    releaseLabel.qrPayloadUrl !== reportLabel.qrPayloadUrl ||
+    canonicalAiGraderPublishAuthorityJson(releaseLabel.elementScores ?? null) !==
+      canonicalAiGraderPublishAuthorityJson(expectedElementScores) ||
+    canonicalAiGraderPublishAuthorityJson(releaseLabel.cardIdentity ?? null) !==
+      canonicalAiGraderPublishAuthorityJson(parsed.data.cardIdentity) ||
+    releasePublication.reportId !== parsed.data.reportId ||
+    releasePublication.publicReportUrl !== reportLabel.publicReportUrl ||
+    releasePublication.qrPayloadUrl !== reportLabel.qrPayloadUrl
+  ) {
+    throw new Error(
+      "AI Grader calibrated report and production release must preserve the exact Mathematical V1 release, Label V1 identity, status, grade, and public-link authority.",
+    );
+  }
+  return parsed.data;
+}
+
 export function buildAiGraderPublishAuthorityRecord(input: {
   reportBundle: AiGraderProductionReportBundleLike;
   productionRelease: AiGraderProductionReleaseLike;
 }): AiGraderPublishAuthorityRecord {
+  assertAiGraderCalibratedReleaseMatchesBundle(input.reportBundle, input.productionRelease);
   const projection = publishAuthorityRecordValue({
     schemaVersion: AI_GRADER_PUBLISH_AUTHORITY_PROJECTION_VERSION,
     excludedRuntimeFields: [...AI_GRADER_PUBLISH_AUTHORITY_EXCLUDED_RUNTIME_FIELDS],
@@ -706,11 +860,15 @@ function assertAiGraderPublishAuthorityMatchesDurableLinkage(input: {
   const release = input.publishAuthority.projection.release;
   const finalGrade = isRecord(release.finalGrade) ? release.finalGrade : {};
   const label = isRecord(release.label) ? release.label : {};
+  const reportSessionId = trimmedString(report.gradingSessionId);
+  const reportSessionMatches = report.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION
+    ? !reportSessionId || reportSessionId === input.gradingSessionId
+    : reportSessionId === input.gradingSessionId;
   if (
     trimmedString(report.reportId) !== input.reportId ||
     trimmedString(release.reportId) !== input.reportId ||
     trimmedString(label.reportId) !== input.reportId ||
-    trimmedString(report.gradingSessionId) !== input.gradingSessionId ||
+    !reportSessionMatches ||
     trimmedString(release.gradingSessionId) !== input.gradingSessionId ||
     numberValue(finalGrade.overall) !== input.finalOverallGrade
   ) {
@@ -982,6 +1140,10 @@ function fileExtensionForContentType(contentType: string) {
   if (normalized.includes("image/png")) return ".png";
   if (normalized.includes("image/jpeg")) return ".jpg";
   if (normalized.includes("image/webp")) return ".webp";
+  if (normalized.includes("application/vnd.tenkings.calibrated-detector-plane-v1")) {
+    return ".tkplane";
+  }
+  if (normalized.includes("application/json")) return ".json";
   return ".bin";
 }
 
@@ -1592,6 +1754,14 @@ function publicBase(publicReportBaseUrl?: string) {
   return base.replace(/\/$/, "");
 }
 
+function opaqueReportAssetPublicUrl(reportId: string, assetId: string) {
+  const encodedAssetId = assetId
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `/api/ai-grader/reports/${encodeURIComponent(reportId)}/assets/${encodedAssetId}`;
+}
+
 function artifact(input: {
   artifactId: string;
   artifactClass: AiGraderProductionArtifactPlan["artifactClass"];
@@ -1624,34 +1794,46 @@ function reportAssetArtifacts(input: {
   const seenStorageKeys = new Set<string>();
   const seenSourceAssetIds = new Set<string>();
   const artifacts: AiGraderProductionArtifactPlan[] = [];
+  const isCalibratedV1 =
+    input.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION;
   rawAssets.filter(isRecord).forEach((asset, index) => {
     const bodyBase64 = stringValue(asset.bodyBase64, "");
     const contentType = stringValue(asset.contentType, "application/octet-stream").toLowerCase();
-    if (!contentType.startsWith("image/")) return;
-    if (!AI_GRADER_PUBLIC_IMAGE_CONTENT_TYPES.has(contentType)) {
-      throw new Error("AI Grader public report image assets must use an approved raster image type.");
-    }
-    if (!isImageAssetRecord(asset)) return;
     const id = stringValue(asset.id, "");
     if (!isSafeAiGraderPublicAssetId(id)) {
-      throw new Error("AI Grader report contains an unsafe public image asset ID.");
+      throw new Error("AI Grader report contains an unsafe public evidence asset ID.");
     }
-    const canonicalId = id.toLowerCase();
-    if (seenSourceAssetIds.has(canonicalId)) {
-      throw new Error("AI Grader report contains duplicate public image asset IDs.");
-    }
-    seenSourceAssetIds.add(canonicalId);
     const sourceAssetSide = asset.side === "front" || asset.side === "back" ? asset.side : undefined;
     const sourceEvidenceRole =
       typeof asset.evidenceRole === "string" && AI_GRADER_PUBLIC_EVIDENCE_ROLES.has(asset.evidenceRole as AiGraderPublicEvidenceRole)
         ? asset.evidenceRole as AiGraderPublicEvidenceRole
         : undefined;
     if (asset.evidenceRole !== undefined && !sourceEvidenceRole) {
-      throw new Error("AI Grader report contains an unsupported public image evidence role.");
+      throw new Error("AI Grader report contains an unsupported public evidence role.");
     }
     if (sourceEvidenceRole && !sourceAssetSide) {
-      throw new Error("AI Grader report evidence-role image assets require a front or back side.");
+      throw new Error("AI Grader report evidence-role assets require a front or back side.");
     }
+    const isRasterImage = AI_GRADER_PUBLIC_IMAGE_CONTENT_TYPES.has(contentType);
+    const isOpaqueEvidence =
+      isCalibratedV1 &&
+      AI_GRADER_PUBLIC_OPAQUE_EVIDENCE_CONTENT_TYPE_SET.has(contentType) &&
+      isAllowedCalibratedOpaqueEvidence(contentType, sourceEvidenceRole);
+    if (contentType.startsWith("image/") && !isRasterImage) {
+      throw new Error("AI Grader public report image assets must use an approved raster image type.");
+    }
+    if (isCalibratedV1 && !isRasterImage && !isOpaqueEvidence) {
+      throw new Error(
+        "AI Grader calibrated public evidence must use an approved raster or opaque evidence type/role.",
+      );
+    }
+    if (!isCalibratedV1 && !isRasterImage) return;
+    if (isRasterImage && !isImageAssetRecord(asset)) return;
+    const canonicalId = id.toLowerCase();
+    if (seenSourceAssetIds.has(canonicalId)) {
+      throw new Error("AI Grader report contains duplicate public evidence asset IDs.");
+    }
+    seenSourceAssetIds.add(canonicalId);
     const sourceImageWidthPx = positiveIntegerValue(asset.widthPx);
     const sourceImageHeightPx = positiveIntegerValue(asset.heightPx);
     if ((sourceImageWidthPx && !sourceImageHeightPx) || (!sourceImageWidthPx && sourceImageHeightPx)) {
@@ -1673,13 +1855,15 @@ function reportAssetArtifacts(input: {
     artifacts.push({
         artifactId: `${input.reportId}:report-asset:${safeSegment(id)}:${index + 1}`,
         artifactClass: "report_asset",
-        kind: "report-image",
+        kind: isRasterImage ? "report-image" : "report-evidence",
         storageKey,
         contentType,
         ...(bodyBase64 ? { body: bodyBase64, bodyEncoding: "base64" as const } : {}),
         checksumSha256,
         byteSize,
-        publicUrl: input.publicUrlFor(storageKey),
+        publicUrl: isOpaqueEvidence
+          ? opaqueReportAssetPublicUrl(input.reportId, id)
+          : input.publicUrlFor(storageKey),
         sourceAssetId: id,
         ...(sourceAssetSide ? { sourceAssetSide } : {}),
         ...(sourceEvidenceRole ? { sourceEvidenceRole } : {}),
@@ -2012,6 +2196,27 @@ function filterFindingIdReferences(value: unknown, knownFindingIds: ReadonlySet<
 
 const LEGACY_AI_GRADER_PUBLIC_ASSET_ID = /^[a-z0-9][a-z0-9._-]{0,220}:[1-9][0-9]{0,3}$/;
 const AI_GRADER_PUBLIC_IMAGE_CONTENT_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+export const AI_GRADER_PUBLIC_OPAQUE_EVIDENCE_CONTENT_TYPES = [
+  "application/vnd.tenkings.calibrated-detector-plane-v1",
+  "application/json",
+] as const;
+const AI_GRADER_PUBLIC_OPAQUE_EVIDENCE_CONTENT_TYPE_SET =
+  new Set<string>(AI_GRADER_PUBLIC_OPAQUE_EVIDENCE_CONTENT_TYPES);
+
+function isAllowedCalibratedOpaqueEvidence(
+  contentType: string,
+  evidenceRole: AiGraderPublicEvidenceRole | undefined,
+) {
+  if (
+    contentType === "application/vnd.tenkings.calibrated-detector-plane-v1"
+  ) {
+    return evidenceRole === "segmentation_mask" ||
+      evidenceRole === "confidence_mask" ||
+      evidenceRole === "illumination_mask" ||
+      evidenceRole === "common_mode_response";
+  }
+  return contentType === "application/json" && evidenceRole === "other_evidence";
+}
 
 function safeAiGraderStorageKey(value: unknown): value is string {
   if (typeof value !== "string" || value.length < 1 || value.length > 1024) return false;
@@ -2041,6 +2246,7 @@ function normalizeAiGraderReadPublicAssets(
   value: unknown,
   expectedStorageKeyPrefix: string,
   publicUrlFor: (storageKey: string) => string,
+  options: { reportId: string; calibratedV1: boolean },
 ): JsonRecord[] {
   if (!Array.isArray(value)) return [];
   const assets: JsonRecord[] = [];
@@ -2057,8 +2263,6 @@ function normalizeAiGraderReadPublicAssets(
     const byteSize = positiveIntegerValue(raw.byteSize);
     const storageKey = safeAiGraderStorageKey(raw.storageKey) ? raw.storageKey : undefined;
     if (!storageKey?.startsWith(expectedStorageKeyPrefix) || seenStorageKeys.has(storageKey)) continue;
-    const publicUrl = safeAiGraderReadAssetUrl(publicUrlFor(storageKey), storageKey);
-    if (!AI_GRADER_PUBLIC_IMAGE_CONTENT_TYPES.has(contentType) || !checksumSha256 || !byteSize || !storageKey || !publicUrl) continue;
     const side = raw.side === "front" || raw.side === "back" ? raw.side : undefined;
     const widthPx = positiveIntegerValue(raw.widthPx);
     const heightPx = positiveIntegerValue(raw.heightPx);
@@ -2068,15 +2272,29 @@ function normalizeAiGraderReadPublicAssets(
         ? raw.evidenceRole as AiGraderPublicEvidenceRole
         : undefined;
     if (evidenceRole && !side) continue;
+    const isRasterImage = AI_GRADER_PUBLIC_IMAGE_CONTENT_TYPES.has(contentType);
+    const isOpaqueEvidence =
+      options.calibratedV1 &&
+      AI_GRADER_PUBLIC_OPAQUE_EVIDENCE_CONTENT_TYPE_SET.has(contentType) &&
+      isAllowedCalibratedOpaqueEvidence(contentType, evidenceRole);
+    if (!isRasterImage && !isOpaqueEvidence) continue;
+    const publicUrl = isOpaqueEvidence
+      ? opaqueReportAssetPublicUrl(options.reportId, id)
+      : safeAiGraderReadAssetUrl(publicUrlFor(storageKey), storageKey);
+    if (!checksumSha256 || !byteSize || !storageKey || !publicUrl) continue;
     seenIds.add(canonicalId);
     seenStorageKeys.add(storageKey);
     assets.push({
       id,
-      kind: "report-image",
-      fileName: safeAssetFileName(stringValue(raw.fileName, id), "report-image"),
+      kind: isRasterImage ? "report-image" : "report-evidence",
+      fileName: safeAssetFileName(
+        stringValue(raw.fileName, id),
+        isRasterImage ? "report-image" : "report-evidence",
+      ),
       contentType,
       publicUrl,
       byteSize,
+      ...(options.calibratedV1 ? { sha256: checksumSha256 } : {}),
       checksumSha256,
       ...(widthPx && heightPx ? { widthPx, heightPx } : {}),
       ...(side ? { side } : {}),
@@ -2111,16 +2329,35 @@ export function sanitizeAiGraderPublicReportBundleForRead(
     : Array.isArray(sanitized.assets)
       ? sanitized.assets
       : [];
-  const publicAssets = normalizeAiGraderReadPublicAssets(selectedAssets, expectedStorageKeyPrefix, publicUrlFor);
+  const publicAssets = normalizeAiGraderReadPublicAssets(
+    selectedAssets,
+    expectedStorageKeyPrefix,
+    publicUrlFor,
+    {
+      reportId: expectedReportId,
+      calibratedV1:
+        sanitized.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION,
+    },
+  );
+  if (sanitized.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION) {
+    const parsed = aiGraderReportBundleV03Schema.safeParse({
+      ...sanitized,
+      publicAssets,
+    });
+    if (!parsed.success) return undefined;
+    const publicProjection = finalAiGraderPublicReadRecord(parsed.data);
+    const publicParsed = aiGraderReportBundleV03Schema.safeParse(publicProjection);
+    return publicParsed.success ? publicParsed.data : undefined;
+  }
   if (sanitized.schemaVersion === AI_GRADER_REPORT_BUNDLE_V02_VERSION) {
-    const parsed = aiGraderReportBundleV02Schema.safeParse({
+    const parsed = aiGraderLegacyReportBundleV02ReadSchema.safeParse({
       ...sanitized,
       assets: publicAssets,
       publicAssets,
     });
     if (!parsed.success) return undefined;
     const publicProjection = finalAiGraderPublicReadRecord(parsed.data);
-    const publicParsed = aiGraderReportBundleV02Schema.safeParse(publicProjection);
+    const publicParsed = aiGraderLegacyReportBundleV02ReadSchema.safeParse(publicProjection);
     return publicParsed.success ? publicParsed.data : undefined;
   }
   if (sanitized.schemaVersion === undefined) {
@@ -2140,7 +2377,7 @@ export function sanitizeAiGraderPublicReportBundleForRead(
 
 /**
  * Read-only compatibility for public reports persisted before bundle versioning.
- * Publish remains strict v0.1/v0.2; a present-but-unknown version never enters
+ * Publish remains strict for every supported version; a present-but-unknown version never enters
  * this path. Do not synthesize generatedAt, certifiedClaim, or any grade data.
  */
 function sanitizeLegacyAiGraderPublicReportBundleForRead(
@@ -2218,10 +2455,21 @@ function validatedAiGraderReportEvidence(input: {
   publicUrlFor: (storageKey: string) => string;
   canonicalAssetsOnly?: boolean;
 }) {
+  const isCalibratedV1 = input.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION;
+  const calibratedBundle = isCalibratedV1
+    ? aiGraderReportBundleV03Schema.safeParse(input.reportBundle)
+    : undefined;
+  if (calibratedBundle && !calibratedBundle.success) {
+    const summary = calibratedBundle.error.issues
+      .slice(0, 8)
+      .map((entry) => `${entry.path.join(".") || "bundle"}: ${entry.message}`)
+      .join("; ");
+    throw new Error(`AI Grader calibrated public report bundle v0.3 validation failed: ${summary}`);
+  }
   const reportAssets = reportAssetArtifacts({
     reportId: input.reportId,
     storageKeyPrefix: input.storageKeyPrefix,
-    reportBundle: input.canonicalAssetsOnly
+    reportBundle: input.canonicalAssetsOnly && !isCalibratedV1
       ? { ...input.reportBundle, publicAssets: undefined }
       : input.reportBundle,
     publicUrlFor: input.publicUrlFor,
@@ -2235,6 +2483,7 @@ function validatedAiGraderReportEvidence(input: {
     storageKey: entry.storageKey,
     publicUrl: entry.publicUrl,
     byteSize: entry.byteSize,
+    ...(isCalibratedV1 ? { sha256: entry.checksumSha256 } : {}),
     checksumSha256: entry.checksumSha256,
     ...(entry.sourceImageWidthPx && entry.sourceImageHeightPx
       ? { widthPx: entry.sourceImageWidthPx, heightPx: entry.sourceImageHeightPx }
@@ -2243,6 +2492,14 @@ function validatedAiGraderReportEvidence(input: {
     ...(entry.sourceEvidenceRole ? { evidenceRole: entry.sourceEvidenceRole } : {}),
   }));
   const rawVisionLab = isRecord(input.reportBundle.visionLab) ? input.reportBundle.visionLab : {};
+  if (calibratedBundle?.success) {
+    return {
+      reportAssets,
+      calibrationProfile,
+      publicAssets,
+      defectFindings: calibratedBundle.data.defectFindings,
+    };
+  }
   const storedFindings = input.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V02_VERSION
     ? storedFindingsFromPublishedProjection(input.reportBundle.defectFindings)
     : rawVisionLab.defectFindings;
@@ -2317,11 +2574,20 @@ function finishAiGraderConfirmEvidence(
   reportId: string,
   gradingSessionId: string,
 ) {
-  const visionLab = isRecord(input.reportBundle.visionLab) ? input.reportBundle.visionLab : {};
-  if (!isRecord(visionLab.findingValidation)) {
-    throw new Error("Current AI Grader Confirm Card packages require a valid finding extraction status.");
+  const isCalibratedV1 = input.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION;
+  if (isCalibratedV1) {
+    const parsed = aiGraderReportBundleV03Schema.safeParse(input.reportBundle);
+    if (!parsed.success) {
+      throw new Error("Current calibrated V1 Confirm Card packages require a strict report bundle v0.3.");
+    }
+  } else {
+    const visionLab = isRecord(input.reportBundle.visionLab) ? input.reportBundle.visionLab : {};
+    if (!isRecord(visionLab.findingValidation)) {
+      throw new Error("Current AI Grader Confirm Card packages require a valid finding extraction status.");
+    }
   }
-  const assets = Array.isArray(input.reportBundle.assets) ? input.reportBundle.assets.filter(isRecord) : [];
+  const selectedAssets = isCalibratedV1 ? input.reportBundle.publicAssets : input.reportBundle.assets;
+  const assets = Array.isArray(selectedAssets) ? selectedAssets.filter(isRecord) : [];
   for (const asset of assets) {
     if (asset.evidenceRole !== "normalized_card") continue;
     const checksumSha256 = checksumValue(asset.checksumSha256);
@@ -2495,11 +2761,21 @@ export function buildAiGraderProductionStoragePlan(input: {
 }): AiGraderProductionStoragePlan {
   assertAiGraderNoCertifiedClaim(input.reportBundle, "reportBundle");
   assertAiGraderNoCertifiedClaim(input.productionRelease, "productionRelease");
-  const reportId = stringValue(input.productionRelease.reportId ?? input.reportBundle.reportId, "");
+  const calibratedSource = assertAiGraderCalibratedReleaseMatchesBundle(
+    input.reportBundle,
+    input.productionRelease,
+  );
+  const releaseReportId = stringValue(input.productionRelease.reportId, "");
+  const reportId = calibratedSource?.reportId ??
+    stringValue(input.productionRelease.reportId ?? input.reportBundle.reportId, "");
   if (!reportId) throw new Error("AI Grader reportId is required for publication.");
+  if (calibratedSource && releaseReportId && releaseReportId !== reportId) {
+    throw new Error("AI Grader calibrated report and production release must use the same reportId.");
+  }
   const storageKeyPrefix = (input.storageKeyPrefix ?? `ai-grader/reports/${safeSegment(reportId)}/`).replace(/^\/+/, "").replace(/\/?$/, "/");
   const base = publicBase(input.publicReportBaseUrl);
-  const generatedAt = stringValue(input.productionRelease.generatedAt ?? input.reportBundle.generatedAt, "");
+  const generatedAt = calibratedSource?.generatedAt ??
+    stringValue(input.productionRelease.generatedAt ?? input.reportBundle.generatedAt, "");
   if (!generatedAt) throw new Error("AI Grader generatedAt is required for publication.");
   const publicReportUrl = `${base}/ai-grader/reports/${encodeURIComponent(reportId)}`;
   const qrPayloadUrl = publicReportUrl;
@@ -2522,6 +2798,7 @@ export function buildAiGraderProductionStoragePlan(input: {
     storageKey: entry.storageKey,
     publicUrl: entry.publicUrl,
     byteSize: entry.byteSize,
+    ...(calibratedSource ? { sha256: entry.checksumSha256 } : {}),
     checksumSha256: entry.checksumSha256,
     ...(entry.sourceImageWidthPx && entry.sourceImageHeightPx
       ? { widthPx: entry.sourceImageWidthPx, heightPx: entry.sourceImageHeightPx }
@@ -2529,67 +2806,106 @@ export function buildAiGraderProductionStoragePlan(input: {
     ...(entry.sourceAssetSide ? { side: entry.sourceAssetSide } : {}),
     ...(entry.sourceEvidenceRole ? { evidenceRole: entry.sourceEvidenceRole } : {}),
   }));
-  const rawVisionLab = isRecord(input.reportBundle.visionLab) ? input.reportBundle.visionLab : {};
-  const storedFindings = input.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V02_VERSION
-    ? storedFindingsFromPublishedProjection(input.reportBundle.defectFindings)
-    : rawVisionLab.defectFindings;
-  if (input.reportBundle.schemaVersion !== AI_GRADER_REPORT_BUNDLE_V02_VERSION) {
-    assertValidAiGraderFindingExtraction(
-      rawVisionLab.findingValidation,
-      rawVisionLab.defectFindings,
-      input.reportBundle,
-      rawVisionLab,
-    );
+  let publicRelease: JsonRecord;
+  let sanitizedBundle: JsonRecord;
+  if (calibratedSource) {
+    const {
+      geometry: _privateGeometry,
+      geometryCaptureDecisions: _privateGeometryCaptureDecisions,
+      captureTiming: _privateCaptureTiming,
+      ocrPrefill: _privateOcrPrefill,
+      ...calibratedCore
+    } = calibratedSource;
+    const calibratedPublicRelease = {
+      ...calibratedSource.productionRelease,
+      label: {
+        ...calibratedSource.productionRelease.label,
+        publicReportUrl,
+        qrPayloadUrl,
+      },
+      publication: { publicReportUrl },
+    };
+    const parsedBundle = aiGraderReportBundleV03Schema.safeParse({
+      ...calibratedCore,
+      productionRelease: calibratedPublicRelease,
+      publicAssets,
+      ...(publicGeometry ? { geometry: publicGeometry } : {}),
+      ...(publicGeometryCaptureDecisions ? { geometryCaptureDecisions: publicGeometryCaptureDecisions } : {}),
+      ...(publicCaptureTiming ? { captureTiming: publicCaptureTiming } : {}),
+      ...(publicOcrPrefill ? { ocrPrefill: publicOcrPrefill } : {}),
+    });
+    if (!parsedBundle.success) {
+      const summary = parsedBundle.error.issues
+        .slice(0, 8)
+        .map((entry) => `${entry.path.join(".") || "bundle"}: ${entry.message}`)
+        .join("; ");
+      throw new Error(`AI Grader calibrated public report bundle v0.3 validation failed after publication projection: ${summary}`);
+    }
+    sanitizedBundle = parsedBundle.data;
+    publicRelease = calibratedPublicRelease;
+  } else {
+    const rawVisionLab = isRecord(input.reportBundle.visionLab) ? input.reportBundle.visionLab : {};
+    const storedFindings = input.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V02_VERSION
+      ? storedFindingsFromPublishedProjection(input.reportBundle.defectFindings)
+      : rawVisionLab.defectFindings;
+    if (input.reportBundle.schemaVersion !== AI_GRADER_REPORT_BUNDLE_V02_VERSION) {
+      assertValidAiGraderFindingExtraction(
+        rawVisionLab.findingValidation,
+        rawVisionLab.defectFindings,
+        input.reportBundle,
+        rawVisionLab,
+      );
+    }
+    const defectFindings = publicDefectFindings(storedFindings, publicAssets, true, calibrationProfile);
+    const knownFindingIds = new Set(defectFindings.map((finding) => finding.findingId));
+    const provisionalGrade = isRecord(input.reportBundle.provisionalGrade) ? input.reportBundle.provisionalGrade : {};
+    validateFindingIdReferences(provisionalGrade.gradeImpactCandidates, knownFindingIds);
+    const releaseFinalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
+    validateFindingIdReferences(releaseFinalGrade.gradeImpactReasons, knownFindingIds);
+    publicRelease = publicProductionReleaseProjection(input.productionRelease, publicReportUrl);
+    const cardIdentity = isRecord(input.reportBundle.cardIdentity) ? input.reportBundle.cardIdentity : {};
+    const parsedBundle = aiGraderReportBundleV02Schema.safeParse({
+      schemaVersion: AI_GRADER_REPORT_BUNDLE_V02_VERSION,
+      generatedAt,
+      reportId,
+      certifiedClaim: false,
+      certificateGenerated: false,
+      gradingSessionId: input.productionRelease.gradingSessionId ?? input.reportBundle.gradingSessionId,
+      reportStatus: input.productionRelease.reportStatus ?? input.reportBundle.reportStatus,
+      finalStatus: input.productionRelease.finalStatus ?? input.reportBundle.finalStatus,
+      finalGradeComputed: true,
+      labelGenerated: true,
+      qrGenerated: true,
+      cardIdentity: {
+        title: cardIdentity.title,
+        sideCount: cardIdentity.sideCount,
+        ...(cardIdentity.cardAssetId !== undefined ? { cardAssetId: cardIdentity.cardAssetId } : {}),
+        ...(cardIdentity.itemId !== undefined ? { itemId: cardIdentity.itemId } : {}),
+        ...(cardIdentity.set !== undefined ? { set: cardIdentity.set } : {}),
+        ...(cardIdentity.cardNumber !== undefined ? { cardNumber: cardIdentity.cardNumber } : {}),
+      },
+      productionRelease: publicRelease,
+      ...(calibrationProfile ? { calibrationProfile } : {}),
+      defectFindings,
+      assets: publicAssets,
+      publicAssets,
+      ...(publicGeometry ? { geometry: publicGeometry } : {}),
+      ...(publicGeometryCaptureDecisions ? { geometryCaptureDecisions: publicGeometryCaptureDecisions } : {}),
+      ...(publicCaptureTiming ? { captureTiming: publicCaptureTiming } : {}),
+      ...(publicOcrPrefill ? { ocrPrefill: publicOcrPrefill } : {}),
+      ...(Array.isArray(input.reportBundle.warnings) ? { warnings: input.reportBundle.warnings } : {}),
+      ...(Array.isArray(input.reportBundle.limitations) ? { limitations: input.reportBundle.limitations } : {}),
+    });
+    if (!parsedBundle.success) {
+      const summary = parsedBundle.error.issues
+        .slice(0, 8)
+        .map((entry) => `${entry.path.join(".") || "bundle"}: ${entry.message}`)
+        .join("; ");
+      throw new Error(`AI Grader public report bundle v0.2 validation failed: ${summary}`);
+    }
+    sanitizedBundle = parsedBundle.data;
   }
-  const defectFindings = publicDefectFindings(storedFindings, publicAssets, true, calibrationProfile);
-  const knownFindingIds = new Set(defectFindings.map((finding) => finding.findingId));
-  const provisionalGrade = isRecord(input.reportBundle.provisionalGrade) ? input.reportBundle.provisionalGrade : {};
-  validateFindingIdReferences(provisionalGrade.gradeImpactCandidates, knownFindingIds);
-  const releaseFinalGrade = isRecord(input.productionRelease.finalGrade) ? input.productionRelease.finalGrade : {};
-  validateFindingIdReferences(releaseFinalGrade.gradeImpactReasons, knownFindingIds);
-  const publicRelease = publicProductionReleaseProjection(input.productionRelease, publicReportUrl);
-  const cardIdentity = isRecord(input.reportBundle.cardIdentity) ? input.reportBundle.cardIdentity : {};
-  const parsedBundle = aiGraderReportBundleV02Schema.safeParse({
-    schemaVersion: AI_GRADER_REPORT_BUNDLE_V02_VERSION,
-    generatedAt,
-    reportId,
-    certifiedClaim: false,
-    certificateGenerated: false,
-    gradingSessionId: input.productionRelease.gradingSessionId ?? input.reportBundle.gradingSessionId,
-    reportStatus: input.productionRelease.reportStatus ?? input.reportBundle.reportStatus,
-    finalStatus: input.productionRelease.finalStatus ?? input.reportBundle.finalStatus,
-    finalGradeComputed: true,
-    labelGenerated: true,
-    qrGenerated: true,
-    cardIdentity: {
-      title: cardIdentity.title,
-      sideCount: cardIdentity.sideCount,
-      ...(cardIdentity.cardAssetId !== undefined ? { cardAssetId: cardIdentity.cardAssetId } : {}),
-      ...(cardIdentity.itemId !== undefined ? { itemId: cardIdentity.itemId } : {}),
-      ...(cardIdentity.set !== undefined ? { set: cardIdentity.set } : {}),
-      ...(cardIdentity.cardNumber !== undefined ? { cardNumber: cardIdentity.cardNumber } : {}),
-    },
-    productionRelease: publicRelease,
-    ...(calibrationProfile ? { calibrationProfile } : {}),
-    defectFindings,
-    assets: publicAssets,
-    publicAssets,
-    ...(publicGeometry ? { geometry: publicGeometry } : {}),
-    ...(publicGeometryCaptureDecisions ? { geometryCaptureDecisions: publicGeometryCaptureDecisions } : {}),
-    ...(publicCaptureTiming ? { captureTiming: publicCaptureTiming } : {}),
-    ...(publicOcrPrefill ? { ocrPrefill: publicOcrPrefill } : {}),
-    ...(Array.isArray(input.reportBundle.warnings) ? { warnings: input.reportBundle.warnings } : {}),
-    ...(Array.isArray(input.reportBundle.limitations) ? { limitations: input.reportBundle.limitations } : {}),
-  });
-  if (!parsedBundle.success) {
-    const summary = parsedBundle.error.issues
-      .slice(0, 8)
-      .map((entry) => `${entry.path.join(".") || "bundle"}: ${entry.message}`)
-      .join("; ");
-    throw new Error(`AI Grader public report bundle v0.2 validation failed: ${summary}`);
-  }
-  const sanitizedBundle = parsedBundle.data;
-  const sanitizedRelease = sanitizeAiGraderPublicJson({
+  const sanitizedRelease: JsonRecord = sanitizeAiGraderPublicJson({
     schemaVersion: input.productionRelease.schemaVersion,
     generatedAt,
     gradingSessionId: input.productionRelease.gradingSessionId ?? input.reportBundle.gradingSessionId,
@@ -3129,11 +3445,45 @@ export async function resolveAiGraderConfirmedPublishAuthority(
 }
 
 function aiGraderPersistAuthorityInput(input: AiGraderProductionPersistInput): AiGraderConfirmedPublishAuthorityInput {
+  const isCalibratedV1 = input.reportBundle.schemaVersion === AI_GRADER_REPORT_BUNDLE_V03_VERSION;
+  if (isCalibratedV1) {
+    const calibratedBundle = assertAiGraderCalibratedReleaseMatchesBundle(
+      input.reportBundle,
+      input.productionRelease,
+    );
+    const reportArtifact = input.storagePlan.artifacts.find((entry) => entry.artifactClass === "report_bundle");
+    let storedCalibratedBundle;
+    try {
+      storedCalibratedBundle = aiGraderReportBundleV03Schema.safeParse(
+        JSON.parse(reportArtifact?.body ?? "null"),
+      );
+    } catch {
+      storedCalibratedBundle = undefined;
+    }
+    if (
+      !calibratedBundle ||
+      !storedCalibratedBundle?.success ||
+      canonicalAiGraderPublishAuthorityJson(
+        storedReportLinkProjection(storedCalibratedBundle.data),
+      ) !== canonicalAiGraderPublishAuthorityJson(
+        storedReportLinkProjection(calibratedBundle),
+      )
+    ) {
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",
+        "Publish requires one strict calibrated report bundle v0.3 in memory and storage; calibrated V1 cannot fall back to a legacy report or grade shape.",
+        400,
+      );
+    }
+  }
   const queueItemId = trimmedString(input.queueItemId);
   const bundleReportId = trimmedString(input.reportBundle.reportId);
   const releaseReportId = trimmedString(input.productionRelease.reportId);
   const bundleSessionId = trimmedString(input.reportBundle.gradingSessionId);
   const releaseSessionId = trimmedString(input.productionRelease.gradingSessionId);
+  const gradingSessionId = isCalibratedV1
+    ? releaseSessionId
+    : bundleSessionId;
   const bundleIdentity = isRecord(input.reportBundle.cardIdentity) ? input.reportBundle.cardIdentity : {};
   const label = isRecord(input.productionRelease.label) ? input.productionRelease.label : {};
   const labelIdentity = isRecord(label.cardIdentity) ? label.cardIdentity : {};
@@ -3166,9 +3516,10 @@ function aiGraderPersistAuthorityInput(input: AiGraderProductionPersistInput): A
     !bundleReportId ||
     !releaseReportId ||
     bundleReportId !== releaseReportId ||
-    !bundleSessionId ||
+    !gradingSessionId ||
     !releaseSessionId ||
-    bundleSessionId !== releaseSessionId ||
+    (bundleSessionId && bundleSessionId !== releaseSessionId) ||
+    (!isCalibratedV1 && bundleSessionId !== releaseSessionId) ||
     !cardAssetId ||
     !itemId ||
     cardIds.some((value) => value !== cardAssetId) ||
@@ -3184,7 +3535,7 @@ function aiGraderPersistAuthorityInput(input: AiGraderProductionPersistInput): A
   return {
     tenantId: trimmedString(input.tenantId),
     queueItemId,
-    gradingSessionId: bundleSessionId,
+    gradingSessionId,
     reportId: bundleReportId,
     cardAssetId,
     itemId,
@@ -3211,9 +3562,95 @@ async function acquireAiGraderReportLifecycleLock(tx: AiGraderProductionTransact
   `;
 }
 
+async function assertAiGraderApprovedDesignReferencesReady(
+  tx: AiGraderProductionTransactionClient,
+  reportBundle: AiGraderProductionReportBundleLike,
+  options: AiGraderProductionPersistOptions,
+) {
+  if (reportBundle.schemaVersion !== AI_GRADER_REPORT_BUNDLE_V03_VERSION) return;
+  const parsed = aiGraderReportBundleV03Schema.safeParse(reportBundle);
+  if (!parsed.success || parsed.data.designReferences.length === 0) return;
+  if (
+    !tx.aiGraderDesignReference ||
+    typeof tx.aiGraderDesignReference.findFirst !== "function" ||
+    typeof options.readDesignReferenceArtifactBytes !== "function"
+  ) {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_DESIGN_REFERENCE_NOT_READY",
+      "Mathematical V1 publication requires exact approved design-reference rows and current private artifact-byte verification.",
+      503,
+    );
+  }
+  const delegate = tx.aiGraderDesignReference;
+  const service = createAiGraderDesignReferenceService({
+    aiGraderDesignReference: delegate,
+    async $transaction(operation) {
+      return operation({ aiGraderDesignReference: delegate });
+    },
+  }, {
+    readArtifactBytes: options.readDesignReferenceArtifactBytes,
+  });
+  try {
+    await Promise.all(parsed.data.designReferences.map(async (reference) => {
+      const row = await service.resolveExactApproved({
+        tenantId: reference.tenantId,
+        setId: reference.setId,
+        programId: reference.programId,
+        cardNumber: reference.cardNumber,
+        variantId: reference.variantId,
+        parallelId: reference.parallelId,
+        side: reference.side,
+        profile: reference.profile,
+        version: reference.version,
+        expectedArtifactSha256: reference.artifactSha256,
+      });
+      const approvedAt = row.approvedAt instanceof Date ? row.approvedAt : new Date(Number.NaN);
+      const boundary = isRecord(row.intendedDesignBoundary)
+        ? row.intendedDesignBoundary
+        : {};
+      const contour = Array.isArray(boundary.contour) ? boundary.contour : [];
+      const normalizedContour = contour.map((point) =>
+        Array.isArray(point) && point.length === 2
+          ? { x: Number(point[0]) / row.artifactWidthPx, y: Number(point[1]) / row.artifactHeightPx }
+          : null,
+      );
+      const asset = parsed.data.publicAssets.find((entry) => entry.id === reference.artifactId);
+      const assetSha256 = asset?.sha256 ?? asset?.checksumSha256;
+      if (
+        row.id !== reference.designReferenceId ||
+        row.artifactWidthPx !== reference.widthPx ||
+        row.artifactHeightPx !== reference.heightPx ||
+        row.approvedByUserId !== reference.approvedBy ||
+        !Number.isFinite(approvedAt.getTime()) ||
+        approvedAt.getTime() !== new Date(reference.approvedAt).getTime() ||
+        row.retiredAt !== null ||
+        row.retiredByUserId !== null ||
+        row.retirementReason !== null ||
+        normalizedContour.some((point) => point === null) ||
+        canonicalAiGraderPublishAuthorityJson(normalizedContour) !==
+          canonicalAiGraderPublishAuthorityJson(reference.intendedPrintBoundary) ||
+        !asset ||
+        assetSha256 !== reference.artifactSha256 ||
+        asset.contentType !== row.artifactMimeType ||
+        asset.widthPx !== reference.widthPx ||
+        asset.heightPx !== reference.heightPx
+      ) {
+        throw new Error("Approved design-reference row, boundary, artifact evidence, or approval identity mismatch.");
+      }
+    }));
+  } catch {
+    throw aiGraderPublishAuthorityError(
+      "AI_GRADER_DESIGN_REFERENCE_NOT_READY",
+      "Mathematical V1 publication requires every design reference to match one current APPROVED immutable row, exact boundary, approval, artifact hash, dimensions, and current private storage bytes.",
+      409,
+    );
+  }
+}
+
 export async function persistAiGraderProductionRelease(
   db: AiGraderProductionPrismaClient,
-  input: AiGraderProductionPersistInput
+  input: AiGraderProductionPersistInput,
+  options: AiGraderProductionPersistOptions = {},
 ): Promise<AiGraderProductionPersistResult> {
   const linkage = aiGraderPersistAuthorityInput(input);
   const gradingSessionId = linkage.gradingSessionId;
@@ -3223,6 +3660,26 @@ export async function persistAiGraderProductionRelease(
 
   return runInTransaction(db, async (tx) => {
     await acquireAiGraderReportLifecycleLock(tx, reportId);
+    const calibrationReadiness = await readAiGraderMathematicalCalibrationReadiness(tx, {
+      tenantId: linkage.tenantId,
+      reportBundle: input.reportBundle,
+      at: now,
+    });
+    if (calibrationReadiness.required && !calibrationReadiness.ready) {
+      const unavailable = calibrationReadiness.code === "schema_unavailable" ||
+        calibrationReadiness.code === "trusted_snapshot_ambiguous" ||
+        calibrationReadiness.code === "trusted_snapshot_integrity_mismatch";
+      throw aiGraderPublishAuthorityError(
+        "AI_GRADER_MATHEMATICAL_CALIBRATION_NOT_READY",
+        calibrationReadiness.message ??
+          "Publish requires one currently valid trusted Mathematical V1 CalibrationSnapshot matching the report.",
+        calibrationReadiness.code === "invalid_report_bundle" ? 400 : unavailable ? 503 : 409,
+      );
+    }
+    const calibrationSnapshotId = calibrationReadiness.required
+      ? calibrationReadiness.snapshotId
+      : undefined;
+    await assertAiGraderApprovedDesignReferencesReady(tx, input.reportBundle, options);
     const authority = await resolveAiGraderConfirmedPublishAuthorityTx(tx, linkage);
     assertAiGraderPublishPackageMatchesAuthority({
       reportBundle: input.reportBundle,
@@ -3306,7 +3763,10 @@ export async function persistAiGraderProductionRelease(
       cardIdentity: authority.confirmedIdentity,
       ...sessionUpdateData,
     };
-    const baseReportData = reportData(input, sessionId, reportId, publicationStatus, now);
+    const baseReportData = {
+      ...reportData(input, sessionId, reportId, publicationStatus, now),
+      ...(calibrationSnapshotId ? { calibrationSnapshotId } : {}),
+    };
     const {
       tenantId: _reportTenantId,
       sessionId: _reportSessionId,
@@ -3886,10 +4346,14 @@ export async function persistAiGraderValuationResult(
   });
 }
 
-export function createAiGraderProductionService(db: AiGraderProductionPrismaClient) {
+export function createAiGraderProductionService(
+  db: AiGraderProductionPrismaClient,
+  options: AiGraderProductionPersistOptions = {},
+) {
   return {
     buildStoragePlan: buildAiGraderProductionStoragePlan,
-    persistProductionRelease: (input: AiGraderProductionPersistInput) => persistAiGraderProductionRelease(db, input),
+    persistProductionRelease: (input: AiGraderProductionPersistInput) =>
+      persistAiGraderProductionRelease(db, input, options),
     persistSlabbedPhotoAsset: (input: AiGraderSlabbedPhotoPersistInput) => persistAiGraderSlabbedPhotoAsset(db, input),
     persistValuationResult: (input: AiGraderValuationPersistInput) => persistAiGraderValuationResult(db, input),
   };

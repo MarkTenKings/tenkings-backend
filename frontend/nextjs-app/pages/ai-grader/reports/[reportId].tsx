@@ -1,8 +1,15 @@
 import Head from "next/head";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
+import type { AiGraderReportBundleV03 } from "@tenkings/shared";
 import AiGraderDefectOverlay from "../../../components/ai-grader/AiGraderDefectOverlay";
+import AiGraderMathematicalReportV1, {
+  type AiGraderMathematicalPublicEnrichment,
+} from "../../../components/ai-grader/AiGraderMathematicalReportV1";
+import { parseAiGraderMathematicalReportV1 } from "../../../lib/aiGraderMathematicalReportV1";
 import {
+  AI_GRADER_WEB_REPORT_BUNDLE_V01_VERSION,
+  AI_GRADER_WEB_REPORT_BUNDLE_V02_VERSION,
   aiGraderReportDefectFindings,
   getAiGraderReportBundle,
   hasNoCertifiedClaim,
@@ -46,6 +53,72 @@ function safePublicNfcRegistration(value: unknown): PublicNfcRegistration | null
     row.nfcTagUrl !== expectedUrl
   ) return null;
   return row as PublicNfcRegistration;
+}
+
+function safePublicEnrichment(value: unknown): AiGraderMathematicalPublicEnrichment | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const safeUrl = (candidate: unknown) =>
+    typeof candidate === "string" &&
+    candidate.length <= 2048 &&
+    (candidate.startsWith("/") || /^https:\/\/[^\s]+$/.test(candidate));
+  const safeId = (candidate: unknown) =>
+    typeof candidate === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(candidate);
+  const linkage = row.linkage && typeof row.linkage === "object" && !Array.isArray(row.linkage)
+    ? row.linkage as Record<string, unknown>
+    : {};
+  const slabbedPhotos = (Array.isArray(row.slabbedPhotos) ? row.slabbedPhotos : []).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const photo = entry as Record<string, unknown>;
+    if (
+      !safeId(photo.artifactId) ||
+      !safeUrl(photo.publicUrl) ||
+      typeof photo.checksumSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(photo.checksumSha256) ||
+      (photo.side !== undefined && photo.side !== "front" && photo.side !== "back")
+    ) return [];
+    return [{
+      artifactId: photo.artifactId as string,
+      ...(photo.side === "front" || photo.side === "back" ? { side: photo.side as "front" | "back" } : {}),
+      publicUrl: photo.publicUrl as string,
+      checksumSha256: photo.checksumSha256,
+    }];
+  }).slice(0, 20);
+  const rawValuation = row.valuation;
+  const valuation = rawValuation && typeof rawValuation === "object" && !Array.isArray(rawValuation)
+    ? (() => {
+        const record = rawValuation as Record<string, unknown>;
+        if (typeof record.status !== "string" || record.status.length > 128) return null;
+        const comps = (Array.isArray(record.comps) ? record.comps : []).flatMap((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+          const comp = entry as Record<string, unknown>;
+          if (typeof comp.title !== "string" || !comp.title || comp.title.length > 300) return [];
+          if (comp.url !== undefined && !safeUrl(comp.url)) return [];
+          if (comp.price !== undefined && (typeof comp.price !== "string" || comp.price.length > 64)) return [];
+          return [{
+            title: comp.title,
+            ...(typeof comp.url === "string" ? { url: comp.url } : {}),
+            ...(typeof comp.price === "string" ? { price: comp.price } : {}),
+          }];
+        }).slice(0, 100);
+        return {
+          status: record.status,
+          ...(typeof record.searchQuery === "string" && record.searchQuery.length <= 500 ? { searchQuery: record.searchQuery } : {}),
+          ...(typeof record.valuationMinor === "number" && Number.isInteger(record.valuationMinor) ? { valuationMinor: record.valuationMinor } : {}),
+          ...(typeof record.valuationCurrency === "string" && record.valuationCurrency.length <= 16 ? { valuationCurrency: record.valuationCurrency } : {}),
+          ...(typeof record.resultSummary === "string" && record.resultSummary.length <= 1000 ? { resultSummary: record.resultSummary } : {}),
+          comps,
+        };
+      })()
+    : null;
+  return {
+    linkage: {
+      ...(safeId(linkage.cardAssetId) ? { cardAssetId: linkage.cardAssetId as string } : {}),
+      ...(safeId(linkage.itemId) ? { itemId: linkage.itemId as string } : {}),
+    },
+    slabbedPhotos,
+    valuation,
+  };
 }
 
 function scoreText(score?: number) {
@@ -99,12 +172,16 @@ export default function AiGraderReportViewerPage() {
   const router = useRouter();
   const fallbackBundle = getAiGraderReportBundle(router.query.reportId);
   const [persistedBundle, setPersistedBundle] = useState<AiGraderCompatibleReportBundle | null>(null);
+  const [persistedMathematicalBundle, setPersistedMathematicalBundle] = useState<AiGraderReportBundleV03 | null>(null);
+  const [strictMathematicalFailure, setStrictMathematicalFailure] = useState<string | null>(null);
   const [publicLookupError, setPublicLookupError] = useState<string | null>(null);
   const [publicNfcRegistration, setPublicNfcRegistration] = useState<PublicNfcRegistration | null>(null);
+  const [publicEnrichment, setPublicEnrichment] = useState<AiGraderMathematicalPublicEnrichment | null>(null);
   const [selectedLabMode, setSelectedLabMode] = useState<LabMode>("True View");
   const [selectedLabSide, setSelectedLabSide] = useState<LabSide>("front");
   const [selectedFindingId, setSelectedFindingId] = useState<string | undefined>();
   const bundle = persistedBundle ?? fallbackBundle;
+  const mathematicalBundle = persistedMathematicalBundle ?? parseAiGraderMathematicalReportV1(bundle);
   const story = bundle.provisionalGrade;
   const productionRelease = bundle.productionRelease;
   const finalGrade = productionRelease?.finalGrade;
@@ -164,31 +241,82 @@ export default function AiGraderReportViewerPage() {
     if (!reportId) return;
     if (isExplicitAiGraderSampleReportId(reportId)) {
       setPersistedBundle(null);
+      setPersistedMathematicalBundle(null);
+      setStrictMathematicalFailure(null);
       setPublicLookupError(null);
       setPublicNfcRegistration(null);
+      setPublicEnrichment(null);
       return;
     }
     setPublicLookupError(null);
+    setStrictMathematicalFailure(null);
+    setPersistedMathematicalBundle(null);
     setPublicNfcRegistration(null);
+    setPublicEnrichment(null);
     fetch(`/api/ai-grader/reports/${encodeURIComponent(reportId)}`)
       .then(async (response) => {
         const payload = await response.json().catch(() => ({}));
         if (response.ok && payload.ok === true && payload.bundle) {
-          setPersistedBundle(payload.bundle);
+          if (payload.bundle.schemaVersion === "ai-grader-report-bundle-v0.3") {
+            const strictBundle = parseAiGraderMathematicalReportV1(payload.bundle);
+            if (!strictBundle) {
+              setPersistedBundle(null);
+              setPersistedMathematicalBundle(null);
+              setPublicNfcRegistration(null);
+              setPublicEnrichment(null);
+              setStrictMathematicalFailure("This Mathematical Grading V1 report failed its strict formula, calibration, deduction, or evidence contract. A legacy V0 report will not be substituted.");
+              return;
+            }
+            setPersistedBundle(null);
+            setPersistedMathematicalBundle(strictBundle);
+          } else if (
+            payload.bundle.schemaVersion === AI_GRADER_WEB_REPORT_BUNDLE_V01_VERSION ||
+            payload.bundle.schemaVersion === AI_GRADER_WEB_REPORT_BUNDLE_V02_VERSION
+          ) {
+            setPersistedMathematicalBundle(null);
+            setPersistedBundle(payload.bundle);
+          } else {
+            setPersistedBundle(null);
+            setPersistedMathematicalBundle(null);
+            setPublicNfcRegistration(null);
+            setPublicEnrichment(null);
+            setStrictMathematicalFailure("This report declares an unsupported schema version. No legacy or sample report will be substituted.");
+            return;
+          }
           setPublicNfcRegistration(safePublicNfcRegistration(payload.nfcRegistration));
+          setPublicEnrichment(safePublicEnrichment(payload.enrichment));
           return;
         }
         setPersistedBundle(null);
+        setPersistedMathematicalBundle(null);
         setPublicNfcRegistration(null);
+        setPublicEnrichment(null);
         setPublicLookupError(payload.message ?? "This report was not resolved from persisted production storage.");
       })
       .catch(() => {
         setPersistedBundle(null);
+        setPersistedMathematicalBundle(null);
         setPublicNfcRegistration(null);
+        setPublicEnrichment(null);
         setPublicLookupError("Persisted production report lookup failed.");
       });
     return;
   }, [router.isReady, router.query.reportId]);
+
+  if (mathematicalBundle) {
+    return <AiGraderMathematicalReportV1 bundle={mathematicalBundle} nfc={publicNfcRegistration} enrichment={publicEnrichment} />;
+  }
+
+  if (strictMathematicalFailure) {
+    return (
+      <main className="report-shell">
+        <section className="local-status warn" role="alert">
+          <strong>Mathematical Grading V1 report unavailable</strong>
+          <p>{strictMathematicalFailure}</p>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <>

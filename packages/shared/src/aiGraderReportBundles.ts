@@ -4,6 +4,7 @@ import {
   aiGraderPublishedDefectFindingV1Schema,
   isSafeAiGraderPublicAssetId,
 } from "./aiGraderDefectFindings";
+import type { AiGraderReportBundleV03 } from "./aiGraderReportBundlesV03";
 
 export const AI_GRADER_REPORT_BUNDLE_V01_VERSION = "ai-grader-report-bundle-v0.1" as const;
 export const AI_GRADER_REPORT_BUNDLE_V02_VERSION = "ai-grader-report-bundle-v0.2" as const;
@@ -120,7 +121,7 @@ function isSafePublishedUrl(value: string) {
   }
 }
 
-const safePublishedUrlSchema = z
+export const aiGraderSafePublishedUrlSchema = z
   .string()
   .trim()
   .min(1)
@@ -133,6 +134,15 @@ const evidenceRoleSchema = z.enum([
   "surface_vision",
   "confidence_mask",
   "measurement_overlay",
+  "deduction_overlay",
+  "segmentation_mask",
+  "illumination_mask",
+  "common_mode_response",
+  "outer_cut_contour",
+  "printed_design_contour",
+  "design_reference",
+  "centering_overlay",
+  "flat_field",
   "directional_channel",
   "roi_crop",
   "other_evidence",
@@ -157,7 +167,7 @@ export const aiGraderPublishedAssetSchema = z
       .regex(/^[A-Za-z0-9][A-Za-z0-9.+-]*\/[A-Za-z0-9][A-Za-z0-9.+-]*(?:;\s*charset=[A-Za-z0-9._-]+)?$/)
       .optional(),
     storageKey: safeAssetIdSchema.optional(),
-    publicUrl: safePublishedUrlSchema.optional(),
+    publicUrl: aiGraderSafePublishedUrlSchema.optional(),
     byteSize: z.number().int().nonnegative().optional(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
     checksumSha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
@@ -202,7 +212,7 @@ export const aiGraderCalibrationProfileSchema = z
   });
 
 const elementScoreSchema = z.strictObject({
-  score: z.number().finite().min(0).max(10),
+  score: z.number().finite().min(1).max(10),
   confidence: z.enum(["low", "medium", "high"]),
   explanation: safeTextSchema(500),
 });
@@ -227,7 +237,7 @@ const whyNot10Schema = z.strictObject({
 
 const finalGradeSchema = z.strictObject({
   status: z.enum(["final_ai_grader_grade_v0", "insufficient_evidence"]).optional(),
-  overall: z.number().finite().min(0).max(10),
+  overall: z.number().finite().min(1).max(10),
   elements: z.strictObject({
     centering: elementScoreSchema.optional(),
     corners: elementScoreSchema.optional(),
@@ -250,11 +260,11 @@ const productionReleaseSchema = z.strictObject({
   label: z.strictObject({
     certId: safeTextSchema(128),
     labelGradeText: safeTextSchema(64),
-    publicReportUrl: safePublishedUrlSchema,
-    qrPayloadUrl: safePublishedUrlSchema,
+    publicReportUrl: aiGraderSafePublishedUrlSchema,
+    qrPayloadUrl: aiGraderSafePublishedUrlSchema,
   }),
   publication: z.strictObject({
-    publicReportUrl: safePublishedUrlSchema,
+    publicReportUrl: aiGraderSafePublishedUrlSchema,
   }),
 });
 
@@ -279,7 +289,12 @@ const optionalLegacyPublicFields = {
   limitations: z.array(safeTextSchema(500)).max(100).optional(),
 };
 
-export const aiGraderReportBundleV01Schema = z
+/**
+ * Read-only compatibility for historical V0.1 payloads. V0.1 predates the
+ * strict grade contract and is intentionally passthrough so stored reports
+ * remain readable; new report production must use a current write schema.
+ */
+export const aiGraderLegacyReportBundleV01ReadSchema = z
   .object({
     schemaVersion: z.literal(AI_GRADER_REPORT_BUNDLE_V01_VERSION),
     generatedAt: z.string().datetime({ offset: true }),
@@ -287,6 +302,9 @@ export const aiGraderReportBundleV01Schema = z
     certifiedClaim: z.literal(false),
   })
   .passthrough();
+
+/** @deprecated Historical V0.1 read compatibility only. */
+export const aiGraderReportBundleV01Schema = aiGraderLegacyReportBundleV01ReadSchema;
 
 export const aiGraderReportBundleV02Schema = z
   .strictObject({
@@ -453,13 +471,79 @@ export const aiGraderReportBundleV02Schema = z
     });
   });
 
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function projectLegacyV02ScoresForStrictValidation(value: unknown): unknown {
+  if (!isJsonObject(value) || !isJsonObject(value.productionRelease)) return value;
+  const productionRelease = value.productionRelease;
+  if (!isJsonObject(productionRelease.finalGrade)) return value;
+  const finalGrade = productionRelease.finalGrade;
+  const projectScore = (score: unknown) =>
+    typeof score === "number" && Number.isFinite(score) && score >= 0 && score < 1 ? 1 : score;
+  const elements = isJsonObject(finalGrade.elements)
+    ? Object.fromEntries(
+        Object.entries(finalGrade.elements).map(([key, element]) => [
+          key,
+          isJsonObject(element) ? { ...element, score: projectScore(element.score) } : element,
+        ]),
+      )
+    : finalGrade.elements;
+  return {
+    ...value,
+    productionRelease: {
+      ...productionRelease,
+      finalGrade: {
+        ...finalGrade,
+        overall: projectScore(finalGrade.overall),
+        elements,
+      },
+    },
+  };
+}
+
+/**
+ * Explicit read-only compatibility for V0.2 reports written before the
+ * 1.00 minimum became universal. Validation uses the current structural and
+ * security contract while preserving the stored 0.00-0.99 values verbatim.
+ */
+export const aiGraderLegacyReportBundleV02ReadSchema = z
+  .unknown()
+  .superRefine((value, context) => {
+    if (!aiGraderReportBundleV02Schema.safeParse(projectLegacyV02ScoresForStrictValidation(value)).success) {
+      context.addIssue({
+        code: "custom",
+        message: "must be a structurally valid historical AI Grader report bundle v0.2",
+      });
+    }
+  })
+  .transform((value) => value as z.infer<typeof aiGraderReportBundleV02Schema>);
+
+declare const require: (moduleId: string) => {
+  aiGraderReportBundleV03Schema: z.ZodType<AiGraderReportBundleV03>;
+};
+
+const aiGraderReportBundleV03LazySchema: z.ZodType<AiGraderReportBundleV03> = z.lazy(
+  () => require("./aiGraderReportBundlesV03").aiGraderReportBundleV03Schema,
+);
+
 export const aiGraderReportBundleSchema = z.union([
   aiGraderReportBundleV01Schema,
   aiGraderReportBundleV02Schema,
+  aiGraderReportBundleV03LazySchema,
+]);
+
+export const aiGraderReportBundleReadSchema = z.union([
+  aiGraderLegacyReportBundleV01ReadSchema,
+  aiGraderLegacyReportBundleV02ReadSchema,
+  aiGraderReportBundleV03LazySchema,
 ]);
 
 export type AiGraderPublishedAsset = z.infer<typeof aiGraderPublishedAssetSchema>;
 export type AiGraderCalibrationProfile = z.infer<typeof aiGraderCalibrationProfileSchema>;
 export type AiGraderReportBundleV01 = z.infer<typeof aiGraderReportBundleV01Schema>;
 export type AiGraderReportBundleV02 = z.infer<typeof aiGraderReportBundleV02Schema>;
-export type AiGraderReportBundle = z.infer<typeof aiGraderReportBundleSchema>;
+export type AiGraderReportBundle = AiGraderReportBundleV01 | AiGraderReportBundleV02 | AiGraderReportBundleV03;

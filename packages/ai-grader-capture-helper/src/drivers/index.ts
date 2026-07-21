@@ -5,6 +5,20 @@ export * from "./arduinoLedController";
 export * from "./grblStage";
 export * from "./cardGeometry";
 export * from "./aiGraderCaptureTiming";
+export * from "./fixedRigPhotometricEvidenceV1";
+export * from "./fixedRigPhotometricCalibrationV1";
+export * from "./fixedRigSurfaceV1";
+export * from "./fixedRigPhysicalCalibrationV1";
+export * from "./provisionalMathematicalGeometryV1";
+export * from "./fixedRigMeasurementUncertaintyV1";
+export * from "./fixedRigCenteringV1";
+export * from "./fixedRigPrintedBorderDetectorV1";
+export * from "./fixedRigDesignReferenceV1";
+export * from "./fixedRigCornerEdgeV1";
+export * from "./fixedRigConditionSegmentationV1";
+export * from "./fixedRigMathematicalGradeV1";
+export * from "./aiGraderMathematicalReportBundleV1";
+export * from "./aiGraderMathematicalReportPackageV1";
 export * from "./dinoliteBridgeClient";
 export type {
   LeimacIdmuClientConfig,
@@ -169,3 +183,14 @@ export type {
   LeimacChannelCharacterizationChannel,
   LeimacChannelCharacterizationManifest,
 } from "./baslerFixedRigV1";
+export * from "./fixedRigCalibratedDetectorPlaneV1";
+export * from "./fixedRigConditionPlaneProducerV1";
+export * from "./fixedRigOuterCutDetectorV1";
+export * from './fixedRigRawSensorOuterCutDetectorV1';
+export * from './fixedRigStandardCardFormatV1';
+export * from "./fixedRigMathematicalCalibrationOrchestratorV1";
+export * from "./fixedRigMathematicalCalibrationV1_1";
+export * from "./fixedRigMathematicalCalibrationCaptureV1";
+export * from "./fixedRigMathematicalCalibrationBundleV1";
+export * from './fixedRigMathematicalStationAdapterV1';
+export * from './fixedRigAutomaticDesignRegistrationV1';

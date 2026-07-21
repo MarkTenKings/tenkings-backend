@@ -1,5 +1,10 @@
-import { SAMPLE_AI_GRADER_REPORT_BUNDLE, type AiGraderReportBundle } from "./aiGraderReportBundle";
-import type { AiGraderProductionRelease } from "./aiGraderProductionRelease";
+import {
+  SAMPLE_AI_GRADER_REPORT_BUNDLE,
+  isAiGraderReportBundleV03,
+  type AiGraderReportBundle,
+  type AiGraderStationReportBundle,
+} from "./aiGraderReportBundle";
+import type { AiGraderStationProductionRelease } from "./aiGraderProductionRelease";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.10";
 export const AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION = "ai-grader-report-producer-v0.2";
@@ -28,11 +33,213 @@ export type AiGraderStationAction =
   | "latest-report"
   | "session-manifest"
   | "activate-queue-item"
+  | "bind-mathematical-grading-authority"
+  | "submit-mathematical-finding-reviews"
   | "begin-queued-ocr"
   | "complete-queued-ocr"
   | "fail-queued-ocr";
 
 export type AiGraderCaptureProfile = "production_fast";
+export type AiGraderGradingContract = "legacy_v0" | "mathematical_calibration_v1";
+
+export type AiGraderMathematicalCardIdentityV1 = {
+  title: string;
+  sideCount: 2;
+  tenantId: string;
+  setId: string;
+  programId: string;
+  cardNumber: string;
+  variantId: string | null;
+  parallelId: string | null;
+};
+
+export type AiGraderMathematicalApprovedDesignReferenceV1 = {
+  tenantId: string;
+  setId: string;
+  programId: string;
+  cardNumber: string;
+  variantId: string | null;
+  parallelId: string | null;
+  referenceId: string;
+  profile: "registered_design_template_v1";
+  status: "approved";
+  side: "front" | "back";
+  version: number;
+  artifactSha256: string;
+  artifactWidthPx: number;
+  artifactHeightPx: number;
+  intendedDesignBoundary: {
+    schemaVersion: "ai-grader-intended-design-boundary-v1";
+    coordinateFrame: "design_reference_pixels";
+    contour: Array<[number, number]>;
+  };
+  approvedByUserId: string;
+  approvedAt: string;
+};
+
+export type AiGraderMathematicalCenteringAuthorityV1 =
+  | { profile: "printed_border_v1" }
+  | {
+      profile: "registered_design_template_v1";
+      approvedReference: AiGraderMathematicalApprovedDesignReferenceV1;
+      approvedDesignArtifact: {
+        assetId: string;
+        fileName: string;
+        contentType: "image/png" | "image/jpeg";
+        sha256: string;
+      };
+    };
+
+export type AiGraderMathematicalGradingAuthorityV1 = {
+  schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1";
+  cardIdentity: AiGraderMathematicalCardIdentityV1;
+  cardFormatId: "standard_trading_card_63_50x88_90_r3_18_v1";
+  sides: {
+    front: { centering: AiGraderMathematicalCenteringAuthorityV1 };
+    back: { centering: AiGraderMathematicalCenteringAuthorityV1 };
+  };
+};
+
+export type AiGraderMathematicalReviewAssetRoleV1 =
+  | "roi_crop"
+  | "segmentation_mask"
+  | "confidence_mask"
+  | "illumination_mask"
+  | "normalized_card"
+  | "directional_channel";
+
+export type AiGraderMathematicalReviewAssetMetadataV1 = {
+  assetId: string;
+  evidenceRole: AiGraderMathematicalReviewAssetRoleV1;
+  sha256: string;
+  fileName: string;
+  contentType: "image/png" | "image/jpeg" | "image/tiff";
+  byteSize: number;
+  widthPx: number;
+  heightPx: number;
+};
+
+export type AiGraderMathematicalReviewMeasurementV1 = {
+  measurementId: string;
+  kind: string;
+  unit: string;
+  measuredMeasurement: number;
+  u95: number;
+  effectiveMeasurement: number;
+  explicitGrade10Tolerance: number;
+  grade10Buffer: number;
+  calibrationProfileId: string;
+  calibrationVersion: string;
+  algorithmVersion: string;
+  validEvidenceCoverage: number;
+  usableDirectionalChannelCount: number;
+};
+
+export type AiGraderMathematicalFindingReviewRequestV1 = {
+  schemaVersion: "fixed_rig_mathematical_finding_review_request_v1";
+  gradingContract: "mathematical_calibration_v1";
+  gradingSessionId: string;
+  reportId: string;
+  generatedAt: string;
+  calibration: {
+    profileId: string;
+    calibrationVersion: string;
+    artifactSha256: string;
+  };
+  findings: Array<{
+    findingId: string;
+    physicalDefectId: string;
+    element: "centering" | "corners" | "edges" | "surface";
+    category: string;
+    side: "front" | "back";
+    location: string;
+    regionId: string;
+    geometry: {
+      coordinateFrame: "normalized_card";
+      kind: "box";
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
+    detector: { id: string; version: string };
+    measuredDeduction: number;
+    measurements: AiGraderMathematicalReviewMeasurementV1[];
+    evidenceAssetIds: string[];
+    trueView: AiGraderMathematicalReviewAssetMetadataV1;
+    directionalChannels: AiGraderMathematicalReviewAssetMetadataV1[];
+    reviewEvidence: {
+      roi: AiGraderMathematicalReviewAssetMetadataV1;
+      segmentationMask: AiGraderMathematicalReviewAssetMetadataV1;
+      confidenceMask: AiGraderMathematicalReviewAssetMetadataV1;
+      illuminationMask: AiGraderMathematicalReviewAssetMetadataV1;
+    };
+    explanation: string;
+  }>;
+  hashPolicy: "sha256-canonical-json-with-artifactSha256-omitted";
+  artifactSha256: string;
+};
+
+export type AiGraderMathematicalFindingReviewV1 = {
+  findingId: string;
+  reviewRequestSha256: string;
+  status: "confirmed" | "adjusted";
+  reviewedAt: string;
+};
+
+export type AiGraderMathematicalExecutionV1 =
+  | {
+      status: "processing";
+      startedAt: string;
+      attempt: number;
+      v0FallbackUsed: false;
+      reviewRequestSha256?: string;
+    }
+  | {
+      status: "finding_review_required";
+      completedAt: string;
+      attempt: number;
+      v0FallbackUsed: false;
+      reviewRequest: AiGraderMathematicalFindingReviewRequestV1;
+      reviewIssues: string[];
+    }
+  | {
+      status: "completed";
+      completedAt: string;
+      attempt: number;
+      v0FallbackUsed: false;
+      orchestrationTraceSha256: string;
+    }
+  | {
+      status: "insufficient_evidence";
+      completedAt: string;
+      attempt: number;
+      v0FallbackUsed: false;
+      failedStage: string;
+      reasons: string[];
+      requiresRecapture: boolean;
+      requiresApprovedDesignReference: boolean;
+      requiresCalibration: boolean;
+      requiresImplementationCorrection: boolean;
+    };
+
+export type AiGraderMathematicalV1State = {
+  schemaVersion: "ten-kings-ai-grader-local-station-mathematical-v1-state-v1";
+  generatedAt: string;
+  gradingAuthority: AiGraderMathematicalGradingAuthorityV1;
+  stagedDesignReferences: Partial<Record<"front" | "back", {
+    side: "front" | "back";
+    referenceId: string;
+    assetId: string;
+    fileName: string;
+    contentType: "image/png" | "image/jpeg";
+    sha256: string;
+    byteSize: number;
+    stagedAt: string;
+  }>>;
+  submittedFindingReviews?: AiGraderMathematicalFindingReviewV1[];
+  execution?: AiGraderMathematicalExecutionV1;
+};
 
 export const AI_GRADER_CAPTURE_TIMING_SCHEMA_VERSION = "ten-kings-ai-grader-capture-timing-v1" as const;
 export type AiGraderCaptureTimingSide = "front" | "back";
@@ -121,6 +328,8 @@ export type AiGraderRapidCaptureWorkflowState =
   | "back_positioning"
   | "back_captured"
   | "finalizing"
+  | "finding_review_required"
+  | "insufficient_evidence"
   | "report_ready_needs_confirm"
   | "confirmed_needs_publish"
   | "published"
@@ -154,6 +363,16 @@ export type AiGraderRapidCaptureQueueItem = {
   humanConfirmationRequired: true;
   autoConfirmed: false;
   autoPublished: false;
+  mathematicalV1?: {
+    status: AiGraderMathematicalExecutionV1["status"];
+    reviewRequestSha256?: string;
+    failedStage?: string;
+    reasons?: string[];
+    requiresRecapture?: boolean;
+    requiresApprovedDesignReference?: boolean;
+    requiresCalibration?: boolean;
+    requiresImplementationCorrection?: boolean;
+  };
   ocr: AiGraderQueuedOcrLifecycle;
   error?: string;
 };
@@ -248,8 +467,9 @@ export type AiGraderRapidCaptureActiveReview = {
       publicViewerRoute: string;
       exists: boolean;
     };
-    reportBundle?: AiGraderReportBundle;
-    productionRelease?: AiGraderProductionRelease;
+    mathematicalV1?: AiGraderMathematicalV1State;
+    reportBundle?: AiGraderStationReportBundle;
+    productionRelease?: AiGraderStationProductionRelease;
     safety?: {
       finalGradeComputed: boolean;
       labelGenerated: boolean;
@@ -393,6 +613,16 @@ export type AiGraderLocalStationStatus = {
   localOnly: true;
   loginRequired: false;
   hardwareActionsEnabled: boolean;
+  gradingContract?: AiGraderGradingContract;
+  mathematicalCalibration?: {
+    ready: boolean;
+    reason?: string;
+    profileId?: string;
+    calibrationVersion?: string;
+    rigId?: string;
+    artifactSha256?: string;
+  };
+  mathematicalV1?: AiGraderMathematicalV1State;
   currentStep: AiGraderStationStepId;
   nextAction: AiGraderStationAction;
   nextActionLabel: string;
@@ -465,7 +695,7 @@ export type AiGraderLocalStationStatus = {
     detectionUsed: boolean;
     sourceFrameId?: string;
   }>>;
-  reportBundle?: AiGraderReportBundle;
+  reportBundle?: AiGraderStationReportBundle;
   stationUrl?: string;
   bridgeSecurity?: {
     tokenRequired: true;
@@ -487,7 +717,7 @@ export type AiGraderLocalStationStatus = {
     integrationContractPath?: string;
   };
   timingSummary?: AiGraderLocalStationTimingSummary;
-  productionRelease?: AiGraderProductionRelease;
+  productionRelease?: AiGraderStationProductionRelease;
   rapidCapture: AiGraderRapidCaptureManifestStatus;
   rapidCaptureQueue: AiGraderRapidCaptureQueueStatus;
 };
@@ -508,6 +738,8 @@ export type AiGraderFrontCaptureReadinessCode =
   | 'lifecycle_pending'
   | 'workflow_transition_required'
   | 'current_step_not_capture_front'
+  | 'mathematical_authority_required'
+  | 'design_reference_staging_required'
   | 'front_binding_stale'
   | 'live_preview_required';
 
@@ -710,6 +942,445 @@ function safeStationText(value: unknown): string | undefined {
   return trimmed;
 }
 
+function exactMathematicalSha256(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value) ? value : undefined;
+}
+
+function safeMathematicalIdentityText(value: unknown, maxLength = 191): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > maxLength ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:/ -]*$/.test(trimmed) ||
+      /(?:token|secret|bearer|authorization|presign|x-amz|localhost)/i.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function safeMathematicalLeaf(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(trimmed) ? trimmed : undefined;
+}
+
+function finiteMathematicalNumber(value: unknown, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum
+    ? value
+    : undefined;
+}
+
+function positiveMathematicalInteger(value: unknown, maximum = Number.MAX_SAFE_INTEGER): number | undefined {
+  return Number.isSafeInteger(value) && Number(value) > 0 && Number(value) <= maximum
+    ? Number(value)
+    : undefined;
+}
+
+function sanitizeMathematicalCardIdentity(value: unknown): AiGraderMathematicalCardIdentityV1 | undefined {
+  if (!stationRecord(value) || value.sideCount !== 2) return undefined;
+  const title = safeStationText(value.title);
+  const tenantId = safeMathematicalIdentityText(value.tenantId);
+  const setId = safeMathematicalIdentityText(value.setId);
+  const programId = safeMathematicalIdentityText(value.programId);
+  const cardNumber = safeMathematicalIdentityText(value.cardNumber, 128);
+  const variantId = value.variantId === null ? null : safeMathematicalIdentityText(value.variantId);
+  const parallelId = value.parallelId === null ? null : safeMathematicalIdentityText(value.parallelId);
+  if (!title || !tenantId || !setId || !programId || !cardNumber ||
+      variantId === undefined || parallelId === undefined) return undefined;
+  return { title, sideCount: 2, tenantId, setId, programId, cardNumber, variantId, parallelId };
+}
+
+function sanitizeMathematicalPixelBoundary(value: unknown):
+  AiGraderMathematicalApprovedDesignReferenceV1["intendedDesignBoundary"] | undefined {
+  if (!stationRecord(value) ||
+      value.schemaVersion !== "ai-grader-intended-design-boundary-v1" ||
+      value.coordinateFrame !== "design_reference_pixels" ||
+      !Array.isArray(value.contour) ||
+      value.contour.length < 3 ||
+      value.contour.length > 4096) return undefined;
+  const contour: Array<[number, number]> = [];
+  for (const point of value.contour) {
+    if (!Array.isArray(point) || point.length !== 2) return undefined;
+    const x = finiteMathematicalNumber(point[0]);
+    const y = finiteMathematicalNumber(point[1]);
+    if (x === undefined || y === undefined) return undefined;
+    contour.push([x, y]);
+  }
+  return {
+    schemaVersion: "ai-grader-intended-design-boundary-v1",
+    coordinateFrame: "design_reference_pixels",
+    contour,
+  };
+}
+
+function sanitizeMathematicalApprovedReference(
+  value: unknown,
+  side: "front" | "back",
+  cardIdentity: AiGraderMathematicalCardIdentityV1,
+): AiGraderMathematicalApprovedDesignReferenceV1 | undefined {
+  if (!stationRecord(value) ||
+      value.profile !== "registered_design_template_v1" ||
+      value.status !== "approved" ||
+      value.side !== side) return undefined;
+  const tenantId = safeMathematicalIdentityText(value.tenantId);
+  const setId = safeMathematicalIdentityText(value.setId);
+  const programId = safeMathematicalIdentityText(value.programId);
+  const cardNumber = safeMathematicalIdentityText(value.cardNumber, 128);
+  const variantId = value.variantId === null ? null : safeMathematicalIdentityText(value.variantId);
+  const parallelId = value.parallelId === null ? null : safeMathematicalIdentityText(value.parallelId);
+  const referenceId = safeMathematicalIdentityText(value.referenceId);
+  const version = positiveMathematicalInteger(value.version);
+  const artifactSha256 = exactMathematicalSha256(value.artifactSha256);
+  const artifactWidthPx = positiveMathematicalInteger(value.artifactWidthPx, 100000);
+  const artifactHeightPx = positiveMathematicalInteger(value.artifactHeightPx, 100000);
+  const intendedDesignBoundary = sanitizeMathematicalPixelBoundary(value.intendedDesignBoundary);
+  const approvedByUserId = safeMathematicalIdentityText(value.approvedByUserId);
+  const approvedAt = safeStationTimestamp(value.approvedAt);
+  if (!tenantId || !setId || !programId || !cardNumber || variantId === undefined ||
+      parallelId === undefined || !referenceId || !version || !artifactSha256 ||
+      !artifactWidthPx || !artifactHeightPx || !intendedDesignBoundary ||
+      !approvedByUserId || !approvedAt) return undefined;
+  if (tenantId !== cardIdentity.tenantId || setId !== cardIdentity.setId ||
+      programId !== cardIdentity.programId || cardNumber !== cardIdentity.cardNumber ||
+      variantId !== cardIdentity.variantId || parallelId !== cardIdentity.parallelId) return undefined;
+  return {
+    tenantId,
+    setId,
+    programId,
+    cardNumber,
+    variantId,
+    parallelId,
+    referenceId,
+    profile: "registered_design_template_v1",
+    status: "approved",
+    side,
+    version,
+    artifactSha256,
+    artifactWidthPx,
+    artifactHeightPx,
+    intendedDesignBoundary,
+    approvedByUserId,
+    approvedAt,
+  };
+}
+
+function sanitizeMathematicalCenteringAuthority(
+  value: unknown,
+  side: "front" | "back",
+  cardIdentity: AiGraderMathematicalCardIdentityV1,
+): AiGraderMathematicalCenteringAuthorityV1 | undefined {
+  if (!stationRecord(value)) return undefined;
+  if (value.profile === "printed_border_v1") return { profile: "printed_border_v1" };
+  if (value.profile !== "registered_design_template_v1") return undefined;
+  const approvedReference = sanitizeMathematicalApprovedReference(value.approvedReference, side, cardIdentity);
+  const artifact = stationRecord(value.approvedDesignArtifact) ? value.approvedDesignArtifact : undefined;
+  const assetId = safeMathematicalIdentityText(artifact?.assetId);
+  const fileName = safeMathematicalLeaf(artifact?.fileName);
+  const contentType = artifact?.contentType === "image/png" || artifact?.contentType === "image/jpeg"
+    ? artifact.contentType
+    : undefined;
+  const sha256 = exactMathematicalSha256(artifact?.sha256);
+  if (!approvedReference || !assetId || !fileName || !contentType || !sha256 ||
+      sha256 !== approvedReference.artifactSha256) return undefined;
+  return {
+    profile: "registered_design_template_v1",
+    approvedReference,
+    approvedDesignArtifact: { assetId, fileName, contentType, sha256 },
+  };
+}
+
+export function sanitizeAiGraderMathematicalGradingAuthorityV1(
+  value: unknown,
+): AiGraderMathematicalGradingAuthorityV1 | undefined {
+  if (!stationRecord(value) ||
+      value.schemaVersion !== "fixed_rig_mathematical_station_grading_authority_v1" ||
+      value.cardFormatId !== "standard_trading_card_63_50x88_90_r3_18_v1" ||
+      !stationRecord(value.sides)) return undefined;
+  const cardIdentity = sanitizeMathematicalCardIdentity(value.cardIdentity);
+  if (!cardIdentity) return undefined;
+  const frontValue = stationRecord(value.sides.front) ? value.sides.front.centering : undefined;
+  const backValue = stationRecord(value.sides.back) ? value.sides.back.centering : undefined;
+  const front = sanitizeMathematicalCenteringAuthority(frontValue, "front", cardIdentity);
+  const back = sanitizeMathematicalCenteringAuthority(backValue, "back", cardIdentity);
+  if (!front || !back) return undefined;
+  return {
+    schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1",
+    cardIdentity,
+    cardFormatId: "standard_trading_card_63_50x88_90_r3_18_v1",
+    sides: { front: { centering: front }, back: { centering: back } },
+  };
+}
+
+function sanitizeMathematicalReviewAsset(
+  value: unknown,
+  expectedRole: AiGraderMathematicalReviewAssetRoleV1,
+): AiGraderMathematicalReviewAssetMetadataV1 | undefined {
+  if (!stationRecord(value) || value.evidenceRole !== expectedRole) return undefined;
+  const assetId = safeMathematicalIdentityText(value.assetId);
+  const sha256 = exactMathematicalSha256(value.sha256);
+  const fileName = safeMathematicalLeaf(value.fileName);
+  const contentType = value.contentType === "image/png" || value.contentType === "image/jpeg" ||
+    value.contentType === "image/tiff" ? value.contentType : undefined;
+  const byteSize = positiveMathematicalInteger(value.byteSize, 64 * 1024 * 1024);
+  const widthPx = positiveMathematicalInteger(value.widthPx, 100000);
+  const heightPx = positiveMathematicalInteger(value.heightPx, 100000);
+  if (!assetId || !sha256 || !fileName || !contentType || !byteSize || !widthPx || !heightPx) return undefined;
+  return { assetId, evidenceRole: expectedRole, sha256, fileName, contentType, byteSize, widthPx, heightPx };
+}
+
+function sanitizeMathematicalReviewMeasurement(value: unknown): AiGraderMathematicalReviewMeasurementV1 | undefined {
+  if (!stationRecord(value)) return undefined;
+  const measurementId = safeMathematicalIdentityText(value.measurementId);
+  const kind = safeMathematicalIdentityText(value.kind);
+  const unit = safeMathematicalIdentityText(value.unit);
+  const calibrationProfileId = safeMathematicalIdentityText(value.calibrationProfileId);
+  const calibrationVersion = safeMathematicalIdentityText(value.calibrationVersion);
+  const algorithmVersion = safeMathematicalIdentityText(value.algorithmVersion);
+  const measuredMeasurement = finiteMathematicalNumber(value.measuredMeasurement);
+  const u95 = finiteMathematicalNumber(value.u95);
+  const effectiveMeasurement = finiteMathematicalNumber(value.effectiveMeasurement);
+  const explicitGrade10Tolerance = finiteMathematicalNumber(value.explicitGrade10Tolerance);
+  const grade10Buffer = finiteMathematicalNumber(value.grade10Buffer);
+  const validEvidenceCoverage = finiteMathematicalNumber(value.validEvidenceCoverage, 0, 1);
+  const usableDirectionalChannelCount = finiteMathematicalNumber(value.usableDirectionalChannelCount, 0, 8);
+  if (!measurementId || !kind || !unit || !calibrationProfileId || !calibrationVersion ||
+      !algorithmVersion || measuredMeasurement === undefined || u95 === undefined ||
+      effectiveMeasurement === undefined || explicitGrade10Tolerance === undefined ||
+      grade10Buffer === undefined || validEvidenceCoverage === undefined ||
+      usableDirectionalChannelCount === undefined) return undefined;
+  return {
+    measurementId,
+    kind,
+    unit,
+    measuredMeasurement,
+    u95,
+    effectiveMeasurement,
+    explicitGrade10Tolerance,
+    grade10Buffer,
+    calibrationProfileId,
+    calibrationVersion,
+    algorithmVersion,
+    validEvidenceCoverage,
+    usableDirectionalChannelCount,
+  };
+}
+
+function sanitizeMathematicalFindingReviewRequest(
+  value: unknown,
+): AiGraderMathematicalFindingReviewRequestV1 | undefined {
+  if (!stationRecord(value) ||
+      value.schemaVersion !== "fixed_rig_mathematical_finding_review_request_v1" ||
+      value.gradingContract !== "mathematical_calibration_v1" ||
+      value.hashPolicy !== "sha256-canonical-json-with-artifactSha256-omitted" ||
+      !stationRecord(value.calibration) ||
+      !Array.isArray(value.findings)) return undefined;
+  const gradingSessionId = safeStationId(value.gradingSessionId);
+  const reportId = safeStationId(value.reportId);
+  const generatedAt = safeStationTimestamp(value.generatedAt);
+  const profileId = safeMathematicalIdentityText(value.calibration.profileId);
+  const calibrationVersion = safeMathematicalIdentityText(value.calibration.calibrationVersion);
+  const calibrationArtifactSha256 = exactMathematicalSha256(value.calibration.artifactSha256);
+  const artifactSha256 = exactMathematicalSha256(value.artifactSha256);
+  if (!gradingSessionId || !reportId || !generatedAt || !profileId || !calibrationVersion ||
+      !calibrationArtifactSha256 || !artifactSha256 || value.findings.length < 1 ||
+      value.findings.length > 500) return undefined;
+  const findings: AiGraderMathematicalFindingReviewRequestV1["findings"] = [];
+  const findingIds = new Set<string>();
+  for (const rawFinding of value.findings) {
+    if (!stationRecord(rawFinding) || !stationRecord(rawFinding.geometry) ||
+        !stationRecord(rawFinding.detector) || !stationRecord(rawFinding.reviewEvidence) ||
+        !Array.isArray(rawFinding.directionalChannels) ||
+        rawFinding.directionalChannels.length !== 8 ||
+        !Array.isArray(rawFinding.measurements) ||
+        !Array.isArray(rawFinding.evidenceAssetIds)) return undefined;
+    const findingId = safeMathematicalIdentityText(rawFinding.findingId);
+    const physicalDefectId = safeMathematicalIdentityText(rawFinding.physicalDefectId);
+    const element = rawFinding.element === "centering" || rawFinding.element === "corners" ||
+      rawFinding.element === "edges" || rawFinding.element === "surface" ? rawFinding.element : undefined;
+    const category = safeMathematicalIdentityText(rawFinding.category);
+    const side = rawFinding.side === "front" || rawFinding.side === "back" ? rawFinding.side : undefined;
+    const location = safeMathematicalIdentityText(rawFinding.location);
+    const regionId = safeMathematicalIdentityText(rawFinding.regionId);
+    const detectorId = safeMathematicalIdentityText(rawFinding.detector.id);
+    const detectorVersion = safeMathematicalIdentityText(rawFinding.detector.version);
+    const measuredDeduction = finiteMathematicalNumber(rawFinding.measuredDeduction, 0, 9);
+    const explanation = safeStationText(rawFinding.explanation);
+    const geometry = rawFinding.geometry;
+    const x = finiteMathematicalNumber(geometry.x, 0, 1);
+    const y = finiteMathematicalNumber(geometry.y, 0, 1);
+    const width = finiteMathematicalNumber(geometry.width, 0, 1);
+    const height = finiteMathematicalNumber(geometry.height, 0, 1);
+    if (!findingId || findingIds.has(findingId) || !physicalDefectId || !element || !category ||
+        !side || !location || !regionId || !detectorId || !detectorVersion ||
+        measuredDeduction === undefined || !explanation ||
+        geometry.coordinateFrame !== "normalized_card" || geometry.kind !== "box" ||
+        x === undefined || y === undefined || width === undefined || height === undefined ||
+        width <= 0 || height <= 0 || x + width > 1.000001 || y + height > 1.000001) return undefined;
+    const measurements = rawFinding.measurements.map(sanitizeMathematicalReviewMeasurement);
+    if (!measurements.length || measurements.some((entry) => !entry)) return undefined;
+    const evidenceAssetIds = rawFinding.evidenceAssetIds.map((entry) =>
+      safeMathematicalIdentityText(entry));
+    if (!evidenceAssetIds.length || evidenceAssetIds.some((entry) => !entry)) return undefined;
+    const trueView = sanitizeMathematicalReviewAsset(rawFinding.trueView, "normalized_card");
+    const directionalChannels = rawFinding.directionalChannels.map((entry) =>
+      sanitizeMathematicalReviewAsset(entry, "directional_channel"));
+    const roi = sanitizeMathematicalReviewAsset(rawFinding.reviewEvidence.roi, "roi_crop");
+    const segmentationMask = sanitizeMathematicalReviewAsset(rawFinding.reviewEvidence.segmentationMask, "segmentation_mask");
+    const confidenceMask = sanitizeMathematicalReviewAsset(rawFinding.reviewEvidence.confidenceMask, "confidence_mask");
+    const illuminationMask = sanitizeMathematicalReviewAsset(rawFinding.reviewEvidence.illuminationMask, "illumination_mask");
+    if (!trueView || directionalChannels.some((entry) => !entry) || !roi || !segmentationMask ||
+        !confidenceMask || !illuminationMask) return undefined;
+    findingIds.add(findingId);
+    findings.push({
+      findingId,
+      physicalDefectId,
+      element,
+      category,
+      side,
+      location,
+      regionId,
+      geometry: { coordinateFrame: "normalized_card", kind: "box", x, y, width, height },
+      detector: { id: detectorId, version: detectorVersion },
+      measuredDeduction,
+      measurements: measurements as AiGraderMathematicalReviewMeasurementV1[],
+      evidenceAssetIds: evidenceAssetIds as string[],
+      trueView,
+      directionalChannels: directionalChannels as AiGraderMathematicalReviewAssetMetadataV1[],
+      reviewEvidence: { roi, segmentationMask, confidenceMask, illuminationMask },
+      explanation,
+    });
+  }
+  return {
+    schemaVersion: "fixed_rig_mathematical_finding_review_request_v1",
+    gradingContract: "mathematical_calibration_v1",
+    gradingSessionId,
+    reportId,
+    generatedAt,
+    calibration: { profileId, calibrationVersion, artifactSha256: calibrationArtifactSha256 },
+    findings,
+    hashPolicy: "sha256-canonical-json-with-artifactSha256-omitted",
+    artifactSha256,
+  };
+}
+
+function mathematicalBrowserInsufficientExecution(reason: string): AiGraderMathematicalExecutionV1 {
+  return {
+    status: "insufficient_evidence",
+    completedAt: new Date(0).toISOString(),
+    attempt: 1,
+    v0FallbackUsed: false,
+    failedStage: "finding_review",
+    reasons: [reason],
+    requiresRecapture: false,
+    requiresApprovedDesignReference: false,
+    requiresCalibration: false,
+    requiresImplementationCorrection: true,
+  };
+}
+
+function sanitizeMathematicalExecution(value: unknown): AiGraderMathematicalExecutionV1 | undefined {
+  if (!stationRecord(value)) return undefined;
+  if (value.v0FallbackUsed !== false) {
+    return mathematicalBrowserInsufficientExecution("The bridge claimed a prohibited V0 fallback; Mathematical V1 remains blocked.");
+  }
+  const attempt = positiveMathematicalInteger(value.attempt, 1000);
+  if (!attempt) return mathematicalBrowserInsufficientExecution("The bridge returned malformed Mathematical V1 execution metadata.");
+  if (value.status === "processing") {
+    const startedAt = safeStationTimestamp(value.startedAt);
+    const reviewRequestSha256 = exactMathematicalSha256(value.reviewRequestSha256);
+    return startedAt
+      ? { status: "processing", startedAt, attempt, v0FallbackUsed: false, ...(reviewRequestSha256 ? { reviewRequestSha256 } : {}) }
+      : mathematicalBrowserInsufficientExecution("The bridge returned malformed Mathematical V1 processing metadata.");
+  }
+  const completedAt = safeStationTimestamp(value.completedAt);
+  if (!completedAt) return mathematicalBrowserInsufficientExecution("The bridge returned malformed Mathematical V1 completion metadata.");
+  if (value.status === "finding_review_required") {
+    const reviewRequest = sanitizeMathematicalFindingReviewRequest(value.reviewRequest);
+    if (!reviewRequest) {
+      return mathematicalBrowserInsufficientExecution("The bridge returned a malformed exact finding-review request; no review or release is permitted.");
+    }
+    const reviewIssues = Array.isArray(value.reviewIssues)
+      ? value.reviewIssues.map(safeStationText).filter((entry): entry is string => Boolean(entry)).slice(0, 500)
+      : [];
+    return { status: "finding_review_required", completedAt, attempt, v0FallbackUsed: false, reviewRequest, reviewIssues };
+  }
+  if (value.status === "completed") {
+    const orchestrationTraceSha256 = exactMathematicalSha256(value.orchestrationTraceSha256);
+    return orchestrationTraceSha256
+      ? { status: "completed", completedAt, attempt, v0FallbackUsed: false, orchestrationTraceSha256 }
+      : mathematicalBrowserInsufficientExecution("The completed Mathematical V1 execution is missing its exact orchestration trace SHA-256.");
+  }
+  if (value.status === "insufficient_evidence") {
+    const failedStage = safeMathematicalIdentityText(value.failedStage) ?? "unknown_stage";
+    const reasons = Array.isArray(value.reasons)
+      ? value.reasons.map(safeStationText).filter((entry): entry is string => Boolean(entry)).slice(0, 500)
+      : [];
+    return {
+      status: "insufficient_evidence",
+      completedAt,
+      attempt,
+      v0FallbackUsed: false,
+      failedStage,
+      reasons: reasons.length ? reasons : ["Mathematical V1 stopped with insufficient evidence."],
+      requiresRecapture: value.requiresRecapture === true,
+      requiresApprovedDesignReference: value.requiresApprovedDesignReference === true,
+      requiresCalibration: value.requiresCalibration === true,
+      requiresImplementationCorrection: value.requiresImplementationCorrection === true,
+    };
+  }
+  return mathematicalBrowserInsufficientExecution("The bridge returned an unsupported Mathematical V1 execution state.");
+}
+
+export function sanitizeAiGraderMathematicalV1StateForDisplay(
+  value: unknown,
+): AiGraderMathematicalV1State | undefined {
+  if (!stationRecord(value) ||
+      value.schemaVersion !== "ten-kings-ai-grader-local-station-mathematical-v1-state-v1") return undefined;
+  const generatedAt = safeStationTimestamp(value.generatedAt);
+  const gradingAuthority = sanitizeAiGraderMathematicalGradingAuthorityV1(value.gradingAuthority);
+  if (!generatedAt || !gradingAuthority) return undefined;
+  const stagedDesignReferences: AiGraderMathematicalV1State["stagedDesignReferences"] = {};
+  const staged = stationRecord(value.stagedDesignReferences) ? value.stagedDesignReferences : {};
+  for (const side of ["front", "back"] as const) {
+    const entry = staged[side];
+    if (!stationRecord(entry) || entry.side !== side) continue;
+    const referenceId = safeMathematicalIdentityText(entry.referenceId);
+    const assetId = safeMathematicalIdentityText(entry.assetId);
+    const fileName = safeMathematicalLeaf(entry.fileName);
+    const contentType = entry.contentType === "image/png" || entry.contentType === "image/jpeg"
+      ? entry.contentType
+      : undefined;
+    const sha256 = exactMathematicalSha256(entry.sha256);
+    const byteSize = positiveMathematicalInteger(entry.byteSize, 64 * 1024 * 1024);
+    const stagedAt = safeStationTimestamp(entry.stagedAt);
+    if (referenceId && assetId && fileName && contentType && sha256 && byteSize && stagedAt) {
+      stagedDesignReferences[side] = {
+        side, referenceId, assetId, fileName, contentType, sha256, byteSize, stagedAt,
+      };
+    }
+  }
+  const submittedFindingReviews = Array.isArray(value.submittedFindingReviews)
+    ? value.submittedFindingReviews.map((entry): AiGraderMathematicalFindingReviewV1 | undefined => {
+        if (!stationRecord(entry)) return undefined;
+        const findingId = safeMathematicalIdentityText(entry.findingId);
+        const reviewRequestSha256 = exactMathematicalSha256(entry.reviewRequestSha256);
+        const status = entry.status === "confirmed" || entry.status === "adjusted" ? entry.status : undefined;
+        const reviewedAt = safeStationTimestamp(entry.reviewedAt);
+        return findingId && reviewRequestSha256 && status && reviewedAt
+          ? { findingId, reviewRequestSha256, status, reviewedAt }
+          : undefined;
+      }).filter((entry): entry is AiGraderMathematicalFindingReviewV1 => Boolean(entry))
+    : undefined;
+  const execution = sanitizeMathematicalExecution(value.execution);
+  return {
+    schemaVersion: "ten-kings-ai-grader-local-station-mathematical-v1-state-v1",
+    generatedAt,
+    gradingAuthority,
+    stagedDesignReferences,
+    ...(submittedFindingReviews?.length ? { submittedFindingReviews } : {}),
+    ...(execution ? { execution } : {}),
+  };
+}
+
 const AI_GRADER_BROWSER_UNSAFE_KEY = /(?:path|dir|folder)$|^local|token|authorization|presign|credential|secret|cookie|bodyBase64|bodyEncoding/i;
 const AI_GRADER_BROWSER_UNSAFE_STRING = /(?:^|[\s"'(])(?:[a-z]:[\\/]|\\\\)|^file:|(?:station|bridge|service)[_-]?token|authorization|bearer\s|x-amz-|presigned|https?:\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i;
 
@@ -751,6 +1422,8 @@ const AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES: AiGraderRapidCaptureWorkflowState
   "back_positioning",
   "back_captured",
   "finalizing",
+  "finding_review_required",
+  "insufficient_evidence",
   "report_ready_needs_confirm",
   "confirmed_needs_publish",
   "published",
@@ -923,6 +1596,37 @@ function sanitizeAiGraderRapidCaptureQueueItem(value: unknown): AiGraderRapidCap
   const updatedAt = safeStationTimestamp(value.updatedAt);
   if (!queueItemId || !sessionId || !reportId || !state || !queuedAt || !updatedAt) return undefined;
   const error = safeStationText(value.error);
+  const rawMathematical = stationRecord(value.mathematicalV1) ? value.mathematicalV1 : undefined;
+  const mathematicalStatus: AiGraderMathematicalExecutionV1["status"] | undefined = rawMathematical &&
+    (rawMathematical.status === "processing" ||
+      rawMathematical.status === "finding_review_required" ||
+      rawMathematical.status === "completed" ||
+      rawMathematical.status === "insufficient_evidence")
+    ? rawMathematical.status
+    : undefined;
+  const mathematicalV1: AiGraderRapidCaptureQueueItem["mathematicalV1"] = mathematicalStatus
+    ? {
+        status: mathematicalStatus,
+        ...(exactMathematicalSha256(rawMathematical?.reviewRequestSha256)
+          ? { reviewRequestSha256: exactMathematicalSha256(rawMathematical?.reviewRequestSha256) }
+          : {}),
+        ...(safeMathematicalIdentityText(rawMathematical?.failedStage)
+          ? { failedStage: safeMathematicalIdentityText(rawMathematical?.failedStage) }
+          : {}),
+        ...(Array.isArray(rawMathematical?.reasons)
+          ? {
+              reasons: rawMathematical.reasons
+                .map(safeStationText)
+                .filter((entry): entry is string => Boolean(entry))
+                .slice(0, 100),
+            }
+          : {}),
+        ...(rawMathematical?.requiresRecapture === true ? { requiresRecapture: true } : {}),
+        ...(rawMathematical?.requiresApprovedDesignReference === true ? { requiresApprovedDesignReference: true } : {}),
+        ...(rawMathematical?.requiresCalibration === true ? { requiresCalibration: true } : {}),
+        ...(rawMathematical?.requiresImplementationCorrection === true ? { requiresImplementationCorrection: true } : {}),
+      }
+    : undefined;
   const ocr = sanitizeAiGraderQueuedOcr(value.ocr, {
     queueItemId,
     gradingSessionId: sessionId,
@@ -941,6 +1645,7 @@ function sanitizeAiGraderRapidCaptureQueueItem(value: unknown): AiGraderRapidCap
     humanConfirmationRequired: true,
     autoConfirmed: false,
     autoPublished: false,
+    ...(mathematicalV1 ? { mathematicalV1 } : {}),
     ocr,
     ...(error || terminalOcrError ? { error: error ?? terminalOcrError } : {}),
   };
@@ -954,18 +1659,33 @@ function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapid
   const manifest = value.manifest;
   if (!queueItemId || !gradingSessionId || !reportId) return undefined;
   const latest = stationRecord(manifest.latestReport) ? manifest.latestReport : {};
-  if (safeStationId(latest.reportId) !== reportId || latest.exists !== true) return undefined;
+  if (safeStationId(latest.reportId) !== reportId ||
+      (latest.exists !== true && latest.exists !== false)) return undefined;
+  const mathematicalV1 = sanitizeAiGraderMathematicalV1StateForDisplay(manifest.mathematicalV1);
+  const mathematicalExecution = mathematicalV1?.execution;
+  if (mathematicalExecution?.status === "finding_review_required" &&
+      (mathematicalExecution.reviewRequest.gradingSessionId !== gradingSessionId ||
+        mathematicalExecution.reviewRequest.reportId !== reportId)) {
+    return undefined;
+  }
+  const pendingMathematicalEvidence =
+    mathematicalExecution?.status === "finding_review_required" ||
+    mathematicalExecution?.status === "insufficient_evidence";
+  if (latest.exists !== true && !pendingMathematicalEvidence) return undefined;
   const safeReportBundle = browserSafeStationRecord(manifest.reportBundle);
+  const candidateReportBundle = safeReportBundle as unknown as AiGraderStationReportBundle | undefined;
   const reportBundle = safeReportBundle &&
       safeStationId(safeReportBundle.reportId) === reportId &&
-      safeStationId(safeReportBundle.gradingSessionId) === gradingSessionId
-    ? safeReportBundle as unknown as AiGraderReportBundle
+      candidateReportBundle &&
+      (isAiGraderReportBundleV03(candidateReportBundle) ||
+        safeStationId(safeReportBundle.gradingSessionId) === gradingSessionId)
+    ? candidateReportBundle
     : undefined;
   const safeProductionRelease = browserSafeStationRecord(manifest.productionRelease);
   const productionRelease = safeProductionRelease &&
       safeStationId(safeProductionRelease.reportId) === reportId &&
       safeStationId(safeProductionRelease.gradingSessionId) === gradingSessionId
-    ? safeProductionRelease as unknown as AiGraderProductionRelease
+    ? safeProductionRelease as unknown as AiGraderStationProductionRelease
     : undefined;
   const currentStep = typeof manifest.currentStep === "string"
     ? AI_GRADER_STATION_STEPS.find((step) => step.id === manifest.currentStep)?.id
@@ -980,8 +1700,9 @@ function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapid
         reportId,
         localViewerPath: "/ai-grader/station",
         publicViewerRoute: "/ai-grader/reports/" + encodeURIComponent(reportId),
-        exists: true,
+        exists: latest.exists === true,
       },
+      ...(mathematicalV1 ? { mathematicalV1 } : {}),
       ...(reportBundle ? { reportBundle } : {}),
       ...(productionRelease ? { productionRelease } : {}),
       ...(stationRecord(manifest.safety) ? {
@@ -1004,12 +1725,18 @@ export function sanitizeAiGraderRapidCaptureQueue(value: unknown): AiGraderRapid
         .filter((item): item is AiGraderRapidCaptureQueueItem => Boolean(item))
         .slice(0, 50)
     : [];
-  const exactActiveReview = activeReview && items.some((item) =>
-    item.queueItemId === activeReview.queueItemId &&
-    item.sessionId === activeReview.gradingSessionId &&
-    item.reportId === activeReview.reportId &&
-    item.state !== "failed" &&
-    item.ocr.state === "succeeded")
+  const exactActiveReview = activeReview && items.some((item) => {
+    const pendingMathematicalState =
+      item.state === "finding_review_required" || item.state === "insufficient_evidence";
+    const activeMathematicalStatus = activeReview.manifest.mathematicalV1?.execution?.status;
+    return item.queueItemId === activeReview.queueItemId &&
+      item.sessionId === activeReview.gradingSessionId &&
+      item.reportId === activeReview.reportId &&
+      item.state !== "failed" &&
+      (item.ocr.state === "succeeded" || pendingMathematicalState) &&
+      (!pendingMathematicalState ||
+        (item.mathematicalV1?.status === item.state && activeMathematicalStatus === item.state));
+  })
     ? activeReview
     : undefined;
   return {
@@ -1030,6 +1757,8 @@ const AI_GRADER_FRONT_CAPTURE_READINESS_CODES: AiGraderFrontCaptureReadinessCode
   "lifecycle_pending",
   "workflow_transition_required",
   "current_step_not_capture_front",
+  "mathematical_authority_required",
+  "design_reference_staging_required",
   "front_binding_stale",
   "live_preview_required",
 ];
@@ -1097,6 +1826,33 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
     throw new Error("Dell local bridge update/restart required. The one-road station requires production_fast.");
   }
   const captureProfile: AiGraderCaptureProfile = "production_fast";
+  const rawMathematicalCalibration = status.mathematicalCalibration;
+  const mathematicalCalibration = rawMathematicalCalibration
+    ? {
+        ready: rawMathematicalCalibration.ready === true,
+        ...(safeStationText(rawMathematicalCalibration.reason)
+          ? { reason: safeStationText(rawMathematicalCalibration.reason) }
+          : {}),
+        ...(safeStationText(rawMathematicalCalibration.profileId)
+          ? { profileId: safeStationText(rawMathematicalCalibration.profileId) }
+          : {}),
+        ...(safeStationText(rawMathematicalCalibration.calibrationVersion)
+          ? { calibrationVersion: safeStationText(rawMathematicalCalibration.calibrationVersion) }
+          : {}),
+        ...(safeStationText(rawMathematicalCalibration.rigId)
+          ? { rigId: safeStationText(rawMathematicalCalibration.rigId) }
+          : {}),
+        ...(typeof rawMathematicalCalibration.artifactSha256 === "string" &&
+        /^[a-f0-9]{64}$/.test(rawMathematicalCalibration.artifactSha256)
+          ? { artifactSha256: rawMathematicalCalibration.artifactSha256 }
+          : {}),
+      }
+    : undefined;
+  const gradingContract =
+    status.gradingContract === "mathematical_calibration_v1" ? "mathematical_calibration_v1"
+      : status.gradingContract === "legacy_v0" ? "legacy_v0"
+        : undefined;
+  const mathematicalV1 = sanitizeAiGraderMathematicalV1StateForDisplay(status.mathematicalV1);
   return {
     bridgeVersion: status.bridgeVersion,
     reportProducerContractVersion: status.reportProducerContractVersion,
@@ -1105,6 +1861,9 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
     localOnly: true,
     loginRequired: false,
     hardwareActionsEnabled: status.hardwareActionsEnabled,
+    ...(gradingContract ? { gradingContract } : {}),
+    ...(mathematicalCalibration ? { mathematicalCalibration } : {}),
+    ...(mathematicalV1 ? { mathematicalV1 } : {}),
     currentStep: status.currentStep,
     nextAction: status.nextAction,
     nextActionLabel: status.nextActionLabel,
@@ -1417,7 +2176,7 @@ export type AiGraderLocalStationPreviewStatus = {
   statusPath: "/preview/status";
   portraitOrientation: true;
   cameraOwnership: "idle" | "preview_stream" | "capture_action" | "released";
-  frameSource: "basler_pylon_continuous_grab" | "mock_station_preview" | "native_pylon_window";
+  frameSource: "basler_pylon_continuous_grab" | "basler_pylon_single_frame" | "mock_station_preview" | "native_pylon_window";
   frameCount: number;
   sessionId?: string;
   activeSide?: AiGraderPreviewGeometrySide;
@@ -1672,6 +2431,8 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "latest-report": "view_unified_report",
   "session-manifest": "view_unified_report",
   "activate-queue-item": "view_unified_report",
+  "bind-mathematical-grading-authority": "capture_front",
+  "submit-mathematical-finding-reviews": "view_unified_report",
   "begin-queued-ocr": "start_new_card",
   "complete-queued-ocr": "start_new_card",
   "fail-queued-ocr": "start_new_card",
@@ -1718,6 +2479,8 @@ function bridgeEndpoints() {
     { method: "POST", action: "publish-report", description: "Prepare local publication manifest and public URL data." },
     { method: "POST", action: "cancel-session", description: "Cancel a local station session with safe-off cleanup." },
     { method: "POST", action: "activate-queue-item", description: "Select one exact completed queued report for review without taking capture ownership." },
+    { method: "POST", action: "bind-mathematical-grading-authority", description: "Bind exact Mathematical V1 card and centering authority before capture." },
+    { method: "POST", action: "submit-mathematical-finding-reviews", description: "Submit one exact SHA-bound disposition for every measured finding." },
     { method: "POST", action: "begin-queued-ocr", description: "Atomically claim one exact eligible queued OCR lifecycle." },
     { method: "POST", action: "complete-queued-ocr", description: "Persist one safe OCR result for the exact claimed queue identity." },
     { method: "POST", action: "fail-queued-ocr", description: "Persist one explicit terminal OCR failure for the exact claimed queue identity." },
@@ -1957,6 +2720,10 @@ export function buildAiGraderLocalStationStatus(input: {
     localOnly: true,
     loginRequired: false,
     hardwareActionsEnabled: false,
+    mathematicalCalibration: {
+      ready: false,
+      reason: "Contract preview has no finalized physical calibration profile. Connect the Dell bridge to evaluate Mathematical V1 readiness.",
+    },
     currentStep,
     nextAction,
     nextActionLabel: actionLabel(nextAction),
@@ -2118,6 +2885,8 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "latest-report",
     "session-manifest",
     "activate-queue-item",
+    "bind-mathematical-grading-authority",
+    "submit-mathematical-finding-reviews",
     "begin-queued-ocr",
     "complete-queued-ocr",
     "fail-queued-ocr",

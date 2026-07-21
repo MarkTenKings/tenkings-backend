@@ -1,4 +1,4 @@
-import type { AiGraderCompatibleReportBundle, AiGraderReportPublicAsset } from "./aiGraderReportBundle";
+import type { AiGraderReportPublicAsset, AiGraderStationReportBundle } from "./aiGraderReportBundle";
 
 type ReportAssetWithBody = AiGraderReportPublicAsset & {
   bodyEncoding?: "base64" | string;
@@ -33,10 +33,10 @@ function embeddedImageUrl(asset: ReportAssetWithBody, allowEmbeddedBodies: boole
 }
 
 export function reportImageAssets(
-  bundle: AiGraderCompatibleReportBundle,
+  bundle: AiGraderStationReportBundle,
   options: { allowEmbeddedBodies?: boolean; limit?: number } = {}
 ): AiGraderRenderableReportImage[] {
-  const assets = (bundle.publicAssets ?? bundle.assets ?? []) as ReportAssetWithBody[];
+  const assets = (bundle.publicAssets ?? ("assets" in bundle ? bundle.assets : []) ?? []) as unknown as ReportAssetWithBody[];
   const deduped = new Map<string, AiGraderRenderableReportImage>();
   for (const asset of assets) {
     if (!asset || !imageLike(asset)) continue;

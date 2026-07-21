@@ -16,6 +16,7 @@ const TARGET_MIGRATIONS = [
   "20260712160000_ai_grader_nfc_static_url_v1",
   "20260716225000_ai_grader_nfc_feiju_f8215_chip_type",
   "20260716230000_ai_grader_nfc_feiju_f8215_gototags_two_click",
+  "20260718150000_ai_grader_design_reference_v1",
 ];
 const SENTINEL = "AI_GRADER_NFC_DISPOSABLE_VALIDATION";
 
@@ -25,6 +26,10 @@ const composeFile = resolve(repositoryRoot, "docker-compose.ai-grader-nfc-migrat
 const migrationsDir = resolve(repositoryRoot, "packages/database/prisma/migrations");
 const absentSql = resolve(scriptDir, "validateAiGraderNfcSchemaAbsent.sql");
 const appliedSql = resolve(scriptDir, "validateAiGraderNfcMigration.sql");
+const mathematicalCalibrationSnapshotSql = resolve(
+  scriptDir,
+  "validateAiGraderMathematicalCalibrationSnapshot.sql",
+);
 const serviceValidationScript = resolve(scriptDir, "validateAiGraderNfcServiceAgainstPostgres.mjs");
 const readinessValidationScript = resolve(scriptDir, "validateAiGraderNfcSchemaReadinessAgainstPostgres.mjs");
 const advisoryLockValidationScript = resolve(
@@ -49,6 +54,7 @@ for (const requiredPath of [
   migrationsDir,
   absentSql,
   appliedSql,
+  mathematicalCalibrationSnapshotSql,
   serviceValidationScript,
   readinessValidationScript,
   advisoryLockValidationScript,
@@ -277,6 +283,13 @@ try {
   if (!appliedResult.includes("AI_GRADER_NFC_MIGRATION_VALIDATION_PASS")) {
     fail("The NFC migration SQL validation did not reach its PASS marker.");
   }
+  const mathematicalCalibrationResult = runSqlFile(
+    mathematicalCalibrationSnapshotSql,
+    "verifying the Mathematical V1 CalibrationSnapshot catalog, exact identity, trust, validity, and immutability",
+  );
+  if (!mathematicalCalibrationResult.includes("AI_GRADER_MATHEMATICAL_CALIBRATION_SNAPSHOT_VALIDATION_PASS")) {
+    fail("The Mathematical V1 CalibrationSnapshot SQL validation did not reach its PASS marker.");
+  }
   const readyRuntimeResult = run(
     process.execPath,
     [readinessValidationScript, "--expect=ready"],
@@ -359,6 +372,6 @@ if (primaryError) {
   process.exitCode = 1;
 } else {
   console.log(
-    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC catalog/constraint/lifecycle checks, and second-deploy no-op verified; disposable storage destroyed.`,
+    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC and Mathematical V1 calibration catalog/constraint/lifecycle checks, and second-deploy no-op verified; disposable storage destroyed.`,
   );
 }

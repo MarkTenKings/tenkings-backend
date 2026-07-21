@@ -370,6 +370,24 @@ test("report bundle exports web-ready provisional contract without final/certifi
   assert.match(bundle.limitations.join(" "), /No QR Certificate Yet/);
 });
 
+test("new report bundles normalize provisional overall and element scores to 1.00-10.00", async () => {
+  const reportDir = fixtureReportDir();
+  const analysisPath = path.join(reportDir, "analysis.json");
+  const analysis = JSON.parse(fs.readFileSync(analysisPath, "utf8"));
+  analysis.provisionalGradeStory.provisionalOverallGrade = 0;
+  analysis.provisionalGradeStory.elementScores.centering.score = -3;
+  analysis.provisionalGradeStory.elementScores.corners.score = 0.5;
+  analysis.provisionalGradeStory.elementScores.edges.score = 11;
+  fs.writeFileSync(analysisPath, JSON.stringify(analysis, null, 2));
+
+  const bundle = await buildAiGraderReportBundle({ reportDir, reportId: "strict-score-contract" });
+  assert.equal(bundle.provisionalGrade.overall, 1);
+  assert.equal(bundle.provisionalGrade.elementScores.centering.score, 1);
+  assert.equal(bundle.provisionalGrade.elementScores.corners.score, 1);
+  assert.equal(bundle.provisionalGrade.elementScores.edges.score, 10);
+  assert.equal(bundle.provisionalGrade.elementScores.surface.score, 5.5);
+});
+
 test("report bundle rejects stale defect geometry from a different normalized source", async () => {
   const reportDir = fixtureReportDir();
   const analysisPath = path.join(reportDir, "analysis.json");

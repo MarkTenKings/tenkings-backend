@@ -6,7 +6,7 @@ import AppShell from "../../components/AppShell";
 import { useSession } from "../../hooks/useSession";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
-import { BatchStage, PackFulfillmentStatus, QrCodeState } from "@tenkings/database";
+import { BatchStage, PackFulfillmentStatus, QrCodeState } from "@prisma/client";
 
 const ONLINE_OPTION = "ONLINE";
 

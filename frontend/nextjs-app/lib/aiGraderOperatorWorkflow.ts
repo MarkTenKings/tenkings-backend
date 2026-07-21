@@ -1,5 +1,11 @@
-import type { AiGraderProductionRelease } from "./aiGraderProductionRelease";
-import type { AiGraderReportBundle } from "./aiGraderReportBundle";
+import type { AiGraderStationProductionRelease } from "./aiGraderProductionRelease";
+import type { AiGraderReportBundleV03 } from "@tenkings/shared";
+import {
+  isAiGraderReportBundleV03,
+  type AiGraderLegacyReportBundle,
+  type AiGraderStationReportBundle,
+} from "./aiGraderReportBundle";
+import { aiGraderMathematicalReleaseEnvelopeIssue } from "./aiGraderMathematicalReportV1";
 
 const DEFAULT_PUBLIC_BASE_URL = "https://collect.tenkings.co";
 
@@ -64,17 +70,20 @@ export function buildAiGraderLabelPreviewUrl(_reportId: string, baseUrl = DEFAUL
   return `${publicBase(baseUrl)}/ai-grader/labels/sheets`;
 }
 
-function releaseFrom(bundle?: AiGraderReportBundle | null, release?: AiGraderProductionRelease | null) {
-  return release ?? bundle?.productionRelease ?? null;
+function releaseFrom(bundle?: AiGraderStationReportBundle | null, release?: AiGraderStationProductionRelease | null) {
+  if (isAiGraderReportBundleV03(bundle)) return release ?? null;
+  return release ?? (bundle?.productionRelease as AiGraderStationProductionRelease | undefined) ?? null;
 }
 
 export function buildAiGraderPublishReadiness(input: {
-  bundle?: AiGraderReportBundle | null;
-  productionRelease?: AiGraderProductionRelease | null;
+  bundle?: AiGraderStationReportBundle | null;
+  productionRelease?: AiGraderStationProductionRelease | null;
   published?: boolean;
   publicBaseUrl?: string;
 }): AiGraderPublishReadiness {
   const release = releaseFrom(input.bundle, input.productionRelease);
+  const mathematicalBundle = isAiGraderReportBundleV03(input.bundle) ? input.bundle : null;
+  const legacyBundle = mathematicalBundle ? null : input.bundle as AiGraderLegacyReportBundle | null | undefined;
   const reportId = trim(release?.reportId) || trim(input.bundle?.reportId);
   const certId = trim(release?.label?.certId);
   const plannedPublicReportUrl =
@@ -89,10 +98,10 @@ export function buildAiGraderPublishReadiness(input: {
     .filter((gate) => gate.status === "fail")
     .map((gate) => ({
       id: gate.id,
-      label: gate.label,
+      label: gate.label ?? gate.id,
       reason: gate.reason,
     }));
-  const provisionalFailedGates = (input.bundle?.provisionalGrade?.gates?.results ?? [])
+  const provisionalFailedGates = (legacyBundle?.provisionalGrade?.gates?.results ?? [])
     .filter((gate) => gate.status === "fail")
     .map((gate) => ({
       id: trim(gate.gate) || "provisional_gate",
@@ -128,7 +137,7 @@ export function buildAiGraderPublishReadiness(input: {
   }
 
   const insufficient =
-    input.bundle?.reportStatus === "insufficient_evidence" ||
+    legacyBundle?.reportStatus === "insufficient_evidence" ||
     release?.reportStatus === "insufficient_evidence" ||
     release?.finalGrade?.status === "insufficient_evidence";
   if (insufficient || failedGates.length > 0) {
@@ -143,13 +152,18 @@ export function buildAiGraderPublishReadiness(input: {
     };
   }
 
-  const finalGradeComputed = input.bundle?.finalGradeComputed === true || release?.finalGradeComputed === true;
+  const mathematicalEnvelopeIssue = mathematicalBundle
+    ? aiGraderMathematicalReleaseEnvelopeIssue(mathematicalBundle, release)
+    : undefined;
+  const finalGradeComputed = mathematicalBundle
+    ? release?.finalGradeComputed === true && !mathematicalEnvelopeIssue
+    : legacyBundle?.finalGradeComputed === true || release?.finalGradeComputed === true;
   if (!finalGradeComputed) {
     return {
       status: "not_ready_missing_final_grade",
       ready: false,
       published,
-      message: "Final AI-Grader grade has not been computed yet.",
+      message: mathematicalEnvelopeIssue ?? "Final AI-Grader grade has not been computed yet.",
       reportId,
       certId,
       failedGates,
@@ -181,12 +195,15 @@ export function buildAiGraderPublishReadiness(input: {
 }
 
 export function buildAiGraderCompsReadiness(input: {
-  bundle?: AiGraderReportBundle | null;
-  productionRelease?: AiGraderProductionRelease | null;
+  bundle?: AiGraderStationReportBundle | null;
+  productionRelease?: AiGraderStationProductionRelease | AiGraderReportBundleV03["productionRelease"] | AiGraderStationReportBundle["productionRelease"] | null;
   selectedCard?: CardIdentityLike | null;
 }): AiGraderCompsReadiness {
-  const release = releaseFrom(input.bundle, input.productionRelease);
-  if (release?.finalGradeComputed !== true) {
+  const mathematicalBundle = isAiGraderReportBundleV03(input.bundle) ? input.bundle : null;
+  const release = mathematicalBundle
+    ? input.productionRelease
+    : releaseFrom(input.bundle, input.productionRelease as AiGraderStationProductionRelease | null | undefined);
+  if (!mathematicalBundle && (release as AiGraderStationProductionRelease | null)?.finalGradeComputed !== true) {
     return {
       status: "not_ready_missing_grade",
       ready: false,

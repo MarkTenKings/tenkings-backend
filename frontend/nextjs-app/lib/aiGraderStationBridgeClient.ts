@@ -4,6 +4,11 @@ import type {
   AiGraderLocalReportHistory,
   AiGraderLocalStationPreviewStatus,
   AiGraderLocalStationStatus,
+  AiGraderGradingContract,
+  AiGraderMathematicalFindingReviewRequestV1,
+  AiGraderMathematicalFindingReviewV1,
+  AiGraderMathematicalGradingAuthorityV1,
+  AiGraderMathematicalReviewAssetMetadataV1,
   AiGraderStationAction,
 } from "./aiGraderLocalStation";
 import {
@@ -11,7 +16,19 @@ import {
   AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
   sanitizeAiGraderLocalStationStatusForDisplay,
 } from "./aiGraderLocalStation";
-import type { AiGraderReportBundle } from "./aiGraderReportBundle";
+import {
+  AI_GRADER_WEB_REPORT_BUNDLE_V01_VERSION,
+  AI_GRADER_WEB_REPORT_BUNDLE_V02_VERSION,
+  type AiGraderStationReportBundle,
+} from "./aiGraderReportBundle";
+import {
+  aiGraderMathematicalReleaseEnvelopeIssue,
+  parseAiGraderMathematicalReportV1,
+} from "./aiGraderMathematicalReportV1";
+import type {
+  AiGraderApprovedDesignReferenceOperatorAuthority,
+  AiGraderExactDesignReferenceArtifact,
+} from "./aiGraderDesignReferenceClient";
 
 export const DEFAULT_AI_GRADER_STATION_BRIDGE_URL = "http://127.0.0.1:47652";
 export const AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY = "tenkings.aiGraderStation.bridgeUrl";
@@ -287,6 +304,33 @@ export async function waitForAiGraderQueuedOcrAttemptOwnerLock(input: {
   }
 }
 
+function strictStationReportBundle(value: unknown): AiGraderStationReportBundle {
+  const schemaVersion = value && typeof value === "object"
+    ? (value as { schemaVersion?: unknown }).schemaVersion
+    : undefined;
+  if (schemaVersion === "ai-grader-report-bundle-v0.3") {
+    const parsed = parseAiGraderMathematicalReportV1(value);
+    if (!parsed) {
+      throw new Error("The Dell returned a malformed Mathematical Grading V1 report. V0 fallback is prohibited; re-export the calibrated report after updating the helper.");
+    }
+    return parsed;
+  }
+  if (schemaVersion !== AI_GRADER_WEB_REPORT_BUNDLE_V01_VERSION && schemaVersion !== AI_GRADER_WEB_REPORT_BUNDLE_V02_VERSION) {
+    throw new Error("The Dell returned an unsupported AI Grader report schema version.");
+  }
+  return value as AiGraderStationReportBundle;
+}
+
+function validateStationStatusReport(status: AiGraderLocalStationStatus): AiGraderLocalStationStatus {
+  if (!status.reportBundle) return status;
+  const reportBundle = strictStationReportBundle(status.reportBundle);
+  if (reportBundle.schemaVersion === "ai-grader-report-bundle-v0.3" && status.productionRelease) {
+    const issue = aiGraderMathematicalReleaseEnvelopeIssue(reportBundle, status.productionRelease);
+    if (issue) throw new Error(`${issue} The station will not mix V0 workflow metadata with Mathematical Grading V1.`);
+  }
+  return { ...status, reportBundle };
+}
+
 export type AiGraderStationBridgeCallInput = {
   baseUrl: string;
   stationToken: string;
@@ -310,6 +354,10 @@ export type AiGraderStationBridgeActionRequestBody = {
   expectedSideEpoch?: string;
   expectedFrameId?: string;
   queueItemId?: string;
+  gradingContract?: AiGraderGradingContract;
+  mathematicalGradingAuthority?: AiGraderMathematicalGradingAuthorityV1;
+  mathematicalReviewRequestSha256?: string;
+  mathematicalFindingReviews?: AiGraderMathematicalFindingReviewV1[];
   gradingSessionId?: string;
   attemptOwnerId?: string;
   result?: Record<string, unknown>;
@@ -326,8 +374,218 @@ export type AiGraderStationBridgeActionRequestBody = {
   };
 };
 
-export function buildAiGraderCaptureProfileRequest(captureProfile: AiGraderCaptureProfile) {
-  return { captureProfile } satisfies AiGraderStationBridgeActionRequestBody;
+export function buildAiGraderCaptureProfileRequest(
+  captureProfile: AiGraderCaptureProfile,
+  gradingContract?: AiGraderGradingContract,
+  mathematicalGradingAuthority?: AiGraderMathematicalGradingAuthorityV1,
+) {
+  if (gradingContract === "mathematical_calibration_v1" && !mathematicalGradingAuthority) {
+    throw new Error("Mathematical V1 Start New Card requires exact card and centering authority.");
+  }
+  if (gradingContract !== "mathematical_calibration_v1" && mathematicalGradingAuthority) {
+    throw new Error("Legacy V0 cannot accept Mathematical V1 authority.");
+  }
+  return {
+    captureProfile,
+    ...(gradingContract ? { gradingContract } : {}),
+    ...(mathematicalGradingAuthority ? { mathematicalGradingAuthority } : {}),
+  } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export type AiGraderMathematicalCardIdentityDraftV1 = {
+  title: string;
+  tenantId: string;
+  setId: string;
+  programId: string;
+  cardNumber: string;
+  variantId: string | null;
+  parallelId: string | null;
+};
+
+export type AiGraderMathematicalCenteringProfileV1 =
+  | "printed_border_v1"
+  | "registered_design_template_v1";
+
+export type AiGraderPreparedRegisteredDesignReferenceV1 = {
+  operatorAuthority: AiGraderApprovedDesignReferenceOperatorAuthority;
+  artifact: AiGraderExactDesignReferenceArtifact;
+};
+
+function exactMathematicalIdentityField(value: string, label: string, maxLength = 191): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maxLength ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:/ -]*$/.test(normalized)) {
+    throw new Error("Mathematical V1 " + label + " is invalid.");
+  }
+  return normalized;
+}
+
+function exactMathematicalTitle(value: string): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 300 ||
+      /[a-z]:[\\/]|(?:token|secret|bearer|authorization|presign|x-amz)/i.test(normalized)) {
+    throw new Error("Mathematical V1 card title is invalid.");
+  }
+  return normalized;
+}
+
+function exactNullableMathematicalIdentityField(
+  value: string | null,
+  label: string,
+): string | null {
+  return value === null ? null : exactMathematicalIdentityField(value, label);
+}
+
+function registeredMathematicalCenteringAuthority(input: {
+  side: "front" | "back";
+  identity: AiGraderMathematicalGradingAuthorityV1["cardIdentity"];
+  prepared: AiGraderPreparedRegisteredDesignReferenceV1 | undefined;
+}): Extract<
+  AiGraderMathematicalGradingAuthorityV1["sides"]["front"]["centering"],
+  { profile: "registered_design_template_v1" }
+> {
+  if (!input.prepared) {
+    throw new Error("Mathematical V1 " + input.side + " requires one exact active approved design reference.");
+  }
+  const authority = input.prepared.operatorAuthority;
+  const reference = authority.mathematicalReference;
+  const artifact = input.prepared.artifact;
+  if (
+    reference.tenantId !== input.identity.tenantId ||
+    reference.setId !== input.identity.setId ||
+    reference.programId !== input.identity.programId ||
+    reference.cardNumber !== input.identity.cardNumber ||
+    reference.variantId !== input.identity.variantId ||
+    reference.parallelId !== input.identity.parallelId ||
+    reference.side !== input.side ||
+    reference.profile !== "registered_design_template_v1" ||
+    authority.databaseReferenceId !== reference.designReferenceId ||
+    artifact.referenceId !== authority.databaseReferenceId ||
+    artifact.sha256 !== reference.artifactSha256 ||
+    artifact.mimeType !== authority.artifactMimeType
+  ) {
+    throw new Error("The exact approved " + input.side + " design reference does not match this card authority.");
+  }
+  const extension = artifact.mimeType === "image/png" ? "png" : "jpg";
+  const safeArtifactStem = reference.artifactId.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 180);
+  const fileName = input.side + "-" + (safeArtifactStem || "approved-design-reference") + "." + extension;
+  return {
+    profile: "registered_design_template_v1",
+    approvedReference: {
+      tenantId: reference.tenantId,
+      setId: reference.setId,
+      programId: reference.programId,
+      cardNumber: reference.cardNumber,
+      variantId: reference.variantId,
+      parallelId: reference.parallelId,
+      referenceId: authority.databaseReferenceId,
+      profile: "registered_design_template_v1",
+      status: "approved",
+      side: input.side,
+      version: reference.version,
+      artifactSha256: reference.artifactSha256,
+      artifactWidthPx: reference.widthPx,
+      artifactHeightPx: reference.heightPx,
+      intendedDesignBoundary: {
+        schemaVersion: "ai-grader-intended-design-boundary-v1",
+        coordinateFrame: "design_reference_pixels",
+        contour: authority.intendedDesignBoundaryPixels.contour.map((point) => [point[0], point[1]]),
+      },
+      approvedByUserId: reference.approvedBy,
+      approvedAt: reference.approvedAt,
+    },
+    approvedDesignArtifact: {
+      assetId: reference.artifactId,
+      fileName,
+      contentType: artifact.mimeType,
+      sha256: artifact.sha256,
+    },
+  };
+}
+
+export function buildAiGraderMathematicalGradingAuthorityV1(input: {
+  identity: AiGraderMathematicalCardIdentityDraftV1;
+  profiles: Record<"front" | "back", AiGraderMathematicalCenteringProfileV1>;
+  registeredDesignReferences?: Partial<Record<"front" | "back", AiGraderPreparedRegisteredDesignReferenceV1>>;
+}): AiGraderMathematicalGradingAuthorityV1 {
+  const cardIdentity: AiGraderMathematicalGradingAuthorityV1["cardIdentity"] = {
+    title: exactMathematicalTitle(input.identity.title),
+    sideCount: 2,
+    tenantId: exactMathematicalIdentityField(input.identity.tenantId, "tenant ID"),
+    setId: exactMathematicalIdentityField(input.identity.setId, "set ID"),
+    programId: exactMathematicalIdentityField(input.identity.programId, "program ID"),
+    cardNumber: exactMathematicalIdentityField(input.identity.cardNumber, "card number", 128),
+    variantId: exactNullableMathematicalIdentityField(input.identity.variantId, "variant ID"),
+    parallelId: exactNullableMathematicalIdentityField(input.identity.parallelId, "parallel ID"),
+  };
+  const centeringFor = (side: "front" | "back") =>
+    input.profiles[side] === "printed_border_v1"
+      ? { profile: "printed_border_v1" as const }
+      : registeredMathematicalCenteringAuthority({
+          side,
+          identity: cardIdentity,
+          prepared: input.registeredDesignReferences?.[side],
+        });
+  return {
+    schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1",
+    cardIdentity,
+    cardFormatId: "standard_trading_card_63_50x88_90_r3_18_v1",
+    sides: {
+      front: { centering: centeringFor("front") },
+      back: { centering: centeringFor("back") },
+    },
+  };
+}
+
+export function buildAiGraderMathematicalAuthorityBindingRequest(
+  mathematicalGradingAuthority: AiGraderMathematicalGradingAuthorityV1,
+) {
+  return { mathematicalGradingAuthority } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export function buildAiGraderMathematicalFindingReviewSubmission(input: {
+  request: AiGraderMathematicalFindingReviewRequestV1;
+  dispositions: Record<string, "confirmed" | "adjusted" | undefined>;
+  reviewedAt?: string;
+  operatorId?: string;
+  warningsAccepted?: boolean;
+  overrideReason?: string;
+}) {
+  const reviewedAt = input.reviewedAt
+    ? new Date(input.reviewedAt).toISOString()
+    : new Date().toISOString();
+  if (!Number.isFinite(Date.parse(reviewedAt))) {
+    throw new Error("Mathematical finding review timestamp is invalid.");
+  }
+  const expectedIds = new Set(input.request.findings.map((finding) => finding.findingId));
+  const suppliedIds = Object.entries(input.dispositions)
+    .filter((entry): entry is [string, "confirmed" | "adjusted"] =>
+      entry[1] === "confirmed" || entry[1] === "adjusted")
+    .map(([findingId]) => findingId);
+  if (suppliedIds.some((findingId) => !expectedIds.has(findingId)) ||
+      suppliedIds.length !== expectedIds.size ||
+      new Set(suppliedIds).size !== suppliedIds.length) {
+    throw new Error("Every exact Mathematical finding requires one confirmed or adjusted disposition.");
+  }
+  const mathematicalFindingReviews = input.request.findings.map((finding): AiGraderMathematicalFindingReviewV1 => {
+    const status = input.dispositions[finding.findingId];
+    if (status !== "confirmed" && status !== "adjusted") {
+      throw new Error("Finding " + finding.findingId + " has no exact operator disposition.");
+    }
+    return {
+      findingId: finding.findingId,
+      reviewRequestSha256: input.request.artifactSha256,
+      status,
+      reviewedAt,
+    };
+  });
+  return {
+    mathematicalReviewRequestSha256: input.request.artifactSha256,
+    mathematicalFindingReviews,
+    ...(input.operatorId ? { operatorId: input.operatorId } : {}),
+    ...(typeof input.warningsAccepted === "boolean" ? { warningsAccepted: input.warningsAccepted } : {}),
+    ...(input.overrideReason ? { overrideReason: input.overrideReason } : {}),
+  } satisfies AiGraderStationBridgeActionRequestBody;
 }
 
 export function buildAiGraderDetectedGeometryCaptureRequest(input: {
@@ -466,6 +724,225 @@ export function buildAiGraderRapidPublicationEvidence(input: {
       publishedAt: input.publishedAt,
     },
   } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+const AI_GRADER_MATHEMATICAL_BINARY_MAX_BYTES = 64 * 1024 * 1024;
+
+function exactBridgeIdentifier(value: string, label: string): string {
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(normalized)) {
+    throw new Error(label + " is invalid.");
+  }
+  return normalized;
+}
+
+async function bridgeFailure(response: Response, fallback: string): Promise<Error> {
+  const payload = await response.json().catch(() => ({})) as {
+    message?: unknown;
+    error?: { message?: unknown };
+  };
+  const message = typeof payload.message === "string" && payload.message.trim()
+    ? payload.message.trim()
+    : typeof payload.error?.message === "string" && payload.error.message.trim()
+      ? payload.error.message.trim()
+      : fallback;
+  return new Error(message);
+}
+
+async function browserSha256Hex(bytes: Uint8Array): Promise<string> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("Browser SHA-256 verification is unavailable.");
+  }
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes as BufferSource);
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+export type AiGraderStagedMathematicalDesignReferenceV1 = {
+  side: "front" | "back";
+  referenceId: string;
+  assetId: string;
+  sha256: string;
+  byteSize: number;
+  contentType: "image/png" | "image/jpeg";
+  stagedAt: string;
+  createNew: true;
+};
+
+export async function stageAiGraderMathematicalDesignReference(input: {
+  baseUrl: string;
+  stationToken: string;
+  sessionId: string;
+  side: "front" | "back";
+  authority: AiGraderMathematicalGradingAuthorityV1;
+  artifact: AiGraderExactDesignReferenceArtifact;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderStagedMathematicalDesignReferenceV1> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  if (!input.stationToken.trim()) throw new Error("AI Grader station bridge token is required.");
+  const sessionId = exactBridgeIdentifier(input.sessionId, "Mathematical V1 session ID");
+  const centering = input.authority.sides[input.side].centering;
+  if (centering.profile !== "registered_design_template_v1") {
+    throw new Error("Only a registered-template side may stage exact design-reference bytes.");
+  }
+  if (
+    input.artifact.referenceId !== centering.approvedReference.referenceId ||
+    input.artifact.sha256 !== centering.approvedDesignArtifact.sha256 ||
+    input.artifact.mimeType !== centering.approvedDesignArtifact.contentType ||
+    input.artifact.bytes.byteLength < 24 ||
+    input.artifact.bytes.byteLength > AI_GRADER_MATHEMATICAL_BINARY_MAX_BYTES
+  ) {
+    throw new Error("The staged design-reference bytes do not match the exact session authority.");
+  }
+  const body = input.artifact.bytes.slice().buffer as ArrayBuffer;
+  const response = await fetchImpl(
+    baseUrl + "/mathematical-v1/design-reference-artifacts/" + input.side,
+    {
+      method: "POST",
+      headers: {
+        "content-type": input.artifact.mimeType,
+        "x-ai-grader-station-token": input.stationToken,
+        "x-ai-grader-session-id": sessionId,
+        "x-ai-grader-side": input.side,
+        "x-ai-grader-reference-id": centering.approvedReference.referenceId,
+        "x-ai-grader-sha256": input.artifact.sha256,
+      },
+      body,
+    },
+  );
+  if (!response.ok) {
+    throw await bridgeFailure(response, "The exact Mathematical V1 design reference could not be staged.");
+  }
+  const payload = await response.json().catch(() => ({})) as {
+    ok?: unknown;
+    result?: Record<string, unknown>;
+  };
+  const result = payload.result;
+  if (
+    payload.ok !== true ||
+    !result ||
+    result.side !== input.side ||
+    result.referenceId !== centering.approvedReference.referenceId ||
+    result.assetId !== centering.approvedDesignArtifact.assetId ||
+    result.sha256 !== input.artifact.sha256 ||
+    result.byteSize !== input.artifact.bytes.byteLength ||
+    result.contentType !== input.artifact.mimeType ||
+    typeof result.stagedAt !== "string" ||
+    !Number.isFinite(Date.parse(result.stagedAt)) ||
+    result.createNew !== true
+  ) {
+    throw new Error("The design-reference staging response did not preserve its exact authority.");
+  }
+  return {
+    side: input.side,
+    referenceId: centering.approvedReference.referenceId,
+    assetId: centering.approvedDesignArtifact.assetId,
+    sha256: input.artifact.sha256,
+    byteSize: input.artifact.bytes.byteLength,
+    contentType: input.artifact.mimeType,
+    stagedAt: new Date(result.stagedAt).toISOString(),
+    createNew: true,
+  };
+}
+
+export type AiGraderMathematicalReviewAssetRequirementV1 = {
+  side: "front" | "back";
+  metadata: AiGraderMathematicalReviewAssetMetadataV1;
+};
+
+export function aiGraderMathematicalReviewAssetKey(
+  requirement: AiGraderMathematicalReviewAssetRequirementV1,
+): string {
+  return requirement.side + ":" + requirement.metadata.assetId + ":" + requirement.metadata.sha256;
+}
+
+export function collectAiGraderMathematicalReviewAssets(
+  request: AiGraderMathematicalFindingReviewRequestV1,
+): AiGraderMathematicalReviewAssetRequirementV1[] {
+  const assets = new Map<string, AiGraderMathematicalReviewAssetRequirementV1>();
+  for (const finding of request.findings) {
+    const metadata = [
+      finding.trueView,
+      ...finding.directionalChannels,
+      finding.reviewEvidence.roi,
+      finding.reviewEvidence.segmentationMask,
+      finding.reviewEvidence.confidenceMask,
+      finding.reviewEvidence.illuminationMask,
+    ];
+    for (const entry of metadata) {
+      const requirement = { side: finding.side, metadata: entry };
+      const identity = finding.side + ":" + entry.assetId;
+      const existing = assets.get(identity);
+      if (existing && aiGraderMathematicalReviewAssetKey(existing) !== aiGraderMathematicalReviewAssetKey(requirement)) {
+        throw new Error("Mathematical review asset identity " + identity + " has conflicting immutable metadata.");
+      }
+      assets.set(identity, requirement);
+    }
+  }
+  return [...assets.values()];
+}
+
+export type AiGraderFetchedMathematicalReviewAssetV1 = {
+  side: "front" | "back";
+  metadata: AiGraderMathematicalReviewAssetMetadataV1;
+  blob: Blob;
+};
+
+export async function fetchAiGraderMathematicalReviewAsset(input: {
+  baseUrl: string;
+  stationToken: string;
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  requirement: AiGraderMathematicalReviewAssetRequirementV1;
+  signal?: AbortSignal;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderFetchedMathematicalReviewAssetV1> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  if (!input.stationToken.trim()) throw new Error("AI Grader station bridge token is required.");
+  const identity = exactRapidQueueIdentity(input);
+  const metadata = input.requirement.metadata;
+  const response = await fetchImpl(
+    baseUrl + "/mathematical-v1/review-assets?queueItemId=" + encodeURIComponent(identity.queueItemId) +
+      "&gradingSessionId=" + encodeURIComponent(identity.gradingSessionId) +
+      "&reportId=" + encodeURIComponent(identity.reportId) +
+      "&assetId=" + encodeURIComponent(metadata.assetId),
+    {
+      method: "GET",
+      headers: { "x-ai-grader-station-token": input.stationToken },
+      signal: input.signal,
+    },
+  );
+  if (!response.ok) {
+    throw await bridgeFailure(response, "The exact Mathematical V1 review asset could not be read.");
+  }
+  const contentLength = Number(response.headers.get("content-length"));
+  const widthPx = Number(response.headers.get("x-ai-grader-width-px"));
+  const heightPx = Number(response.headers.get("x-ai-grader-height-px"));
+  if (
+    !Number.isSafeInteger(contentLength) ||
+    contentLength !== metadata.byteSize ||
+    contentLength <= 0 ||
+    contentLength > AI_GRADER_MATHEMATICAL_BINARY_MAX_BYTES ||
+    response.headers.get("content-type") !== metadata.contentType ||
+    response.headers.get("x-ai-grader-asset-id") !== metadata.assetId ||
+    response.headers.get("x-ai-grader-sha256") !== metadata.sha256 ||
+    response.headers.get("x-ai-grader-queue-item-id") !== identity.queueItemId ||
+    response.headers.get("x-ai-grader-grading-session-id") !== identity.gradingSessionId ||
+    response.headers.get("x-ai-grader-report-id") !== identity.reportId ||
+    response.headers.get("x-ai-grader-side") !== input.requirement.side ||
+    response.headers.get("x-ai-grader-evidence-role") !== metadata.evidenceRole ||
+    widthPx !== metadata.widthPx ||
+    heightPx !== metadata.heightPx
+  ) {
+    throw new Error("The Mathematical review asset response headers do not match the exact pending request.");
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength !== metadata.byteSize || await browserSha256Hex(bytes) !== metadata.sha256) {
+    throw new Error("The Mathematical review asset body does not match its exact SHA-256 and byte authority.");
+  }
+  return {
+    side: input.requirement.side,
+    metadata,
+    blob: new Blob([bytes], { type: metadata.contentType }),
+  };
 }
 
 export type AiGraderStationBridgeHealth = {
@@ -620,7 +1097,9 @@ export async function callAiGraderStationBridge(
   if (!response.ok || payload.ok !== true) {
     throw new Error(payload.message ?? payload.error?.message ?? "AI Grader local station bridge request failed.");
   }
-  return sanitizeAiGraderLocalStationStatusForDisplay(payload.result as AiGraderLocalStationStatus);
+  return sanitizeAiGraderLocalStationStatusForDisplay(
+    validateStationStatusReport(payload.result as AiGraderLocalStationStatus),
+  );
 }
 
 async function bridgeGetJson<T>(
@@ -915,14 +1394,14 @@ export async function fetchAiGraderStationReportBundle(input: {
   stationToken: string;
   reportId: string;
   includeAssetBodies?: boolean;
-}, fetchImpl: typeof fetch = fetch): Promise<AiGraderReportBundle> {
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderStationReportBundle> {
   const query = input.includeAssetBodies ? "?includeAssetBodies=1" : "";
-  const result = await bridgeGetJson<{ reportId: string; bundle: AiGraderReportBundle; source: string }>({
+  const result = await bridgeGetJson<{ reportId: string; bundle: unknown; source: string }>({
     baseUrl: input.baseUrl,
     stationToken: input.stationToken,
     path: `/reports/${encodeURIComponent(input.reportId)}/bundle${query}`,
   }, fetchImpl);
-  return result.bundle;
+  return strictStationReportBundle(result.bundle);
 }
 
 export async function fetchAiGraderStationReportAsset(input: {

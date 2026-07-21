@@ -1,8 +1,44 @@
-import { sanitizeAiGraderPublicReportBundleForRead } from "@tenkings/database";
+import {
+  AI_GRADER_PUBLIC_OPAQUE_EVIDENCE_CONTENT_TYPES,
+  aiGraderSha256,
+  sanitizeAiGraderPublicReportBundleForRead,
+} from "@tenkings/database";
+import {
+  aiGraderSafePublishedUrlSchema,
+  isSafeAiGraderPublicAssetId,
+} from "@tenkings/shared";
 import { mergeAiGraderPublishedReportReadData } from "./aiGraderPublicReportRead";
 import { publicUrlFor, readStorageBuffer } from "./storage";
 
 type JsonRecord = Record<string, unknown>;
+
+export type AiGraderPublicReportEnrichment = {
+  linkage: { cardAssetId?: string; itemId?: string };
+  slabbedPhotos: Array<{
+    artifactId: string;
+    kind: string;
+    side?: "front" | "back";
+    publicUrl: string;
+    checksumSha256: string;
+    mimeType: string;
+    byteSize: number;
+  }>;
+  valuation: {
+    status: string;
+    searchQuery?: string;
+    valuationMinor?: number;
+    valuationCurrency?: string;
+    resultSummary?: string;
+    comps: Array<{ title: string; url?: string; price?: string }>;
+  } | null;
+};
+
+export type AiGraderPublicOpaqueEvidence = {
+  bytes: Buffer;
+  contentType: (typeof AI_GRADER_PUBLIC_OPAQUE_EVIDENCE_CONTENT_TYPES)[number];
+  fileName: string;
+  checksumSha256: string;
+};
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -16,6 +52,51 @@ function parseStoredJson(value: Buffer | null) {
   } catch {
     return null;
   }
+}
+
+export function safeAiGraderPublicReportUrl(value: unknown): string | undefined {
+  const parsed = aiGraderSafePublishedUrlSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function safePublicText(value: unknown, maximum = 500): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim().slice(0, maximum);
+  if (
+    !text ||
+    /(?:data|blob|file):|[a-z]:[\\\\/]|\\\\\\\\|authorization\\s*:|bearer\\s+|token\\s*[=:]|secret\\s*[=:]|credential\\s*[=:]/i.test(text) ||
+    /[<>]/.test(text)
+  ) return undefined;
+  return text;
+}
+
+function safeId(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(value)
+    ? value
+    : undefined;
+}
+
+function safeStorageKey(value: unknown): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 1024 &&
+    !/^[\\\\/]|[\\\\?#\\u0000-\\u001f\\u007f]/.test(value) &&
+    value.split("/").every((segment) =>
+      Boolean(segment) &&
+      segment !== "." &&
+      segment !== ".." &&
+      /^[A-Za-z0-9][A-Za-z0-9._-]{0,240}$/.test(segment)
+    );
+}
+
+function safeSegment(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "ai-grader-report";
 }
 
 /**
@@ -71,6 +152,8 @@ export async function readAiGraderPublishedBundle(reportId: string): Promise<Jso
     return mergeAiGraderPublishedReportReadData(bundle, {});
   }
 
+  if (bundle.schemaVersion === 'ai-grader-report-bundle-v0.3') return bundle;
+
   let productionRelease = bundle.productionRelease;
   if (report.productionReleaseStorageKey) {
     productionRelease = parseStoredJson(await readStorageBuffer(report.productionReleaseStorageKey).catch(() => null)) ?? productionRelease;
@@ -102,4 +185,212 @@ export async function readAiGraderPublicReportBundle(reportId: string): Promise<
     publicUrlFor,
   });
   return isRecord(sanitized) ? sanitized : null;
+}
+
+export async function readAiGraderPublicReportEnrichment(
+  reportId: string,
+): Promise<AiGraderPublicReportEnrichment | null> {
+  const { prisma } = await import("@tenkings/database");
+  const db = prisma as any;
+  const report = await db.aiGraderReport?.findUnique?.({
+    where: { reportId },
+    select: {
+      publicationStatus: true,
+      cardAssetId: true,
+      itemId: true,
+      evidenceAssets: {
+        where: { artifactClass: "slabbed_photo" },
+        select: {
+          artifactId: true,
+          kind: true,
+          side: true,
+          publicUrl: true,
+          storageKey: true,
+          checksumSha256: true,
+          mimeType: true,
+          byteSize: true,
+        },
+      },
+      valuations: {
+        orderBy: { updatedAt: "desc" },
+        take: 1,
+        select: {
+          status: true,
+          searchQuery: true,
+          valuationMinor: true,
+          valuationCurrency: true,
+          compsRefs: true,
+          resultSummary: true,
+        },
+      },
+    },
+  });
+  if (!report || report.publicationStatus !== "published") return null;
+  const slabbedPhotos = (Array.isArray(report.evidenceAssets)
+    ? report.evidenceAssets
+    : []).flatMap((asset: JsonRecord) => {
+      const artifactId = safeId(asset.artifactId);
+      const kind = safePublicText(asset.kind, 128);
+      const checksumSha256 =
+        typeof asset.checksumSha256 === "string" &&
+        /^[a-f0-9]{64}$/.test(asset.checksumSha256)
+          ? asset.checksumSha256
+          : undefined;
+      const mimeType =
+        typeof asset.mimeType === "string" &&
+        /^image\/(?:png|jpeg|webp)$/.test(asset.mimeType)
+          ? asset.mimeType
+          : undefined;
+      const byteSize =
+        typeof asset.byteSize === "number" &&
+        Number.isInteger(asset.byteSize) &&
+        asset.byteSize > 0
+          ? asset.byteSize
+          : undefined;
+      const generatedUrl = safeStorageKey(asset.storageKey)
+        ? safeAiGraderPublicReportUrl(publicUrlFor(asset.storageKey))
+        : undefined;
+      const publicUrl = safeAiGraderPublicReportUrl(asset.publicUrl) ?? generatedUrl;
+      if (!artifactId || !kind || !checksumSha256 || !mimeType || !byteSize || !publicUrl) {
+        return [];
+      }
+      return [{
+        artifactId,
+        kind,
+        ...(asset.side === "front" || asset.side === "back"
+          ? { side: asset.side }
+          : {}),
+        publicUrl,
+        checksumSha256,
+        mimeType,
+        byteSize,
+      }];
+    });
+  const rawValuation = Array.isArray(report.valuations)
+    ? report.valuations[0]
+    : undefined;
+  const valuation = isRecord(rawValuation)
+    ? {
+        status: safePublicText(rawValuation.status, 128) ?? "not_run",
+        ...(safePublicText(rawValuation.searchQuery, 500)
+          ? { searchQuery: safePublicText(rawValuation.searchQuery, 500) }
+          : {}),
+        ...(typeof rawValuation.valuationMinor === "number" &&
+        Number.isInteger(rawValuation.valuationMinor)
+          ? { valuationMinor: rawValuation.valuationMinor }
+          : {}),
+        ...(safePublicText(rawValuation.valuationCurrency, 16)
+          ? { valuationCurrency: safePublicText(rawValuation.valuationCurrency, 16) }
+          : {}),
+        ...(safePublicText(rawValuation.resultSummary, 1000)
+          ? { resultSummary: safePublicText(rawValuation.resultSummary, 1000) }
+          : {}),
+        comps: (Array.isArray(rawValuation.compsRefs)
+          ? rawValuation.compsRefs
+          : []).flatMap((entry) => {
+            if (!isRecord(entry)) return [];
+            const title =
+              safePublicText(entry.title ?? entry.name ?? entry.label, 300) ??
+              "Comparable sale";
+            const url = safeAiGraderPublicReportUrl(entry.url ?? entry.publicUrl);
+            const price = safePublicText(
+              entry.price ?? entry.priceText ?? entry.soldPrice,
+              64,
+            );
+            return [{ title, ...(url ? { url } : {}), ...(price ? { price } : {}) }];
+          }).slice(0, 100),
+      }
+    : null;
+  return {
+    linkage: {
+      ...(safeId(report.cardAssetId) ? { cardAssetId: report.cardAssetId } : {}),
+      ...(safeId(report.itemId) ? { itemId: report.itemId } : {}),
+    },
+    slabbedPhotos,
+    valuation,
+  };
+}
+
+export async function readAiGraderPublicOpaqueEvidence(
+  reportId: string,
+  assetId: string,
+): Promise<AiGraderPublicOpaqueEvidence | null> {
+  if (!reportId || !isSafeAiGraderPublicAssetId(assetId)) return null;
+  const { prisma } = await import("@tenkings/database");
+  const db = prisma as any;
+  const report = await db.aiGraderReport?.findUnique?.({
+    where: { reportId },
+    select: {
+      publicationStatus: true,
+      reportBundleStorageKey: true,
+    },
+  });
+  if (
+    !report ||
+    report.publicationStatus !== "published" ||
+    !safeStorageKey(report.reportBundleStorageKey)
+  ) return null;
+  const bundle = parseStoredJson(
+    await readStorageBuffer(report.reportBundleStorageKey).catch(() => null),
+  );
+  if (!bundle || bundle.schemaVersion !== "ai-grader-report-bundle-v0.3") return null;
+  const publicBundle = sanitizeAiGraderPublicReportBundleForRead(bundle, {
+    expectedReportId: reportId,
+    publicUrlFor,
+  });
+  if (!publicBundle) return null;
+  const rawAsset = (Array.isArray(bundle.publicAssets) ? bundle.publicAssets : [])
+    .find((asset) => isRecord(asset) && asset.id === assetId);
+  const publicAsset = (Array.isArray(publicBundle.publicAssets)
+    ? publicBundle.publicAssets
+    : []).find((asset) => isRecord(asset) && asset.id === assetId);
+  if (!isRecord(rawAsset) || !isRecord(publicAsset)) return null;
+  const contentType = rawAsset.contentType;
+  if (
+    contentType !== "application/vnd.tenkings.calibrated-detector-plane-v1" &&
+    contentType !== "application/json"
+  ) return null;
+  const evidenceRole = rawAsset.evidenceRole;
+  if (
+    (contentType === "application/json" && evidenceRole !== "other_evidence") ||
+    (contentType === "application/vnd.tenkings.calibrated-detector-plane-v1" &&
+      evidenceRole !== "segmentation_mask" &&
+      evidenceRole !== "confidence_mask" &&
+      evidenceRole !== "illumination_mask" &&
+      evidenceRole !== "common_mode_response")
+  ) return null;
+  const storageKey = rawAsset.storageKey;
+  const expectedPrefix =
+    `ai-grader/reports/${safeSegment(reportId)}/assets/`;
+  if (!safeStorageKey(storageKey) || !storageKey.startsWith(expectedPrefix)) return null;
+  const checksumSha256 =
+    typeof rawAsset.checksumSha256 === "string"
+      ? rawAsset.checksumSha256
+      : rawAsset.sha256;
+  const byteSize = rawAsset.byteSize;
+  if (
+    typeof checksumSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(checksumSha256) ||
+    typeof byteSize !== "number" ||
+    !Number.isInteger(byteSize) ||
+    byteSize <= 0 ||
+    publicAsset.checksumSha256 !== checksumSha256
+  ) return null;
+  const bytes = await readStorageBuffer(storageKey).catch(() => null);
+  if (
+    !bytes ||
+    bytes.byteLength !== byteSize ||
+    aiGraderSha256(bytes) !== checksumSha256
+  ) return null;
+  const rawName =
+    typeof rawAsset.fileName === "string"
+      ? rawAsset.fileName.replace(/\\\\/g, "/").split("/").pop()
+      : undefined;
+  const fallbackName =
+    contentType === "application/json" ? "evidence.json" : "evidence.tkplane";
+  const fileName =
+    rawName && /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(rawName)
+      ? rawName
+      : fallbackName;
+  return { bytes, contentType, fileName, checksumSha256 };
 }

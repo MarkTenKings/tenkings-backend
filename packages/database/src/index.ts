@@ -36,5 +36,8 @@ export * from "./mint";
 export * from "./batches";
 export * from "./aiGraderService";
 export * from "./aiGraderProductionService";
+export * from "./aiGraderMathematicalCalibrationReadiness";
+export * from "./aiGraderMathematicalCalibrationSnapshotService";
 export * from "./aiGraderNfcService";
 export * from "./aiGraderNfcSchemaReadiness";
+export * from "./aiGraderDesignReferenceService";
