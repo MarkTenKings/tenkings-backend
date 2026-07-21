@@ -5,6 +5,10 @@ import {
   type AiGraderStationReportBundle,
 } from "./aiGraderReportBundle";
 import type { AiGraderStationProductionRelease } from "./aiGraderProductionRelease";
+import {
+  trustedPokemonCardFormatAuthorityV1Schema,
+  type TrustedPokemonCardFormatAuthorityV1,
+} from "@tenkings/shared";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.10";
 export const AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION = "ai-grader-report-producer-v0.2";
@@ -90,15 +94,23 @@ export type AiGraderMathematicalCenteringAuthorityV1 =
       };
     };
 
-export type AiGraderMathematicalGradingAuthorityV1 = {
+type AiGraderMathematicalGradingAuthorityBaseV1 = {
   schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1";
   cardIdentity: AiGraderMathematicalCardIdentityV1;
-  cardFormatId: "standard_trading_card_63_50x88_90_r3_18_v1";
   sides: {
     front: { centering: AiGraderMathematicalCenteringAuthorityV1 };
     back: { centering: AiGraderMathematicalCenteringAuthorityV1 };
   };
 };
+
+export type AiGraderMathematicalGradingAuthorityV1 =
+  | AiGraderMathematicalGradingAuthorityBaseV1 & {
+      cardFormatId: "standard_trading_card_63_50x88_90_r3_18_v1";
+    }
+  | AiGraderMathematicalGradingAuthorityBaseV1 & {
+      cardFormatId: "pokemon_tcg_standard";
+      trustedCardFormatAuthority: TrustedPokemonCardFormatAuthorityV1;
+    };
 
 export type AiGraderMathematicalReviewAssetRoleV1 =
   | "roi_crop"
@@ -1093,7 +1105,8 @@ export function sanitizeAiGraderMathematicalGradingAuthorityV1(
 ): AiGraderMathematicalGradingAuthorityV1 | undefined {
   if (!stationRecord(value) ||
       value.schemaVersion !== "fixed_rig_mathematical_station_grading_authority_v1" ||
-      value.cardFormatId !== "standard_trading_card_63_50x88_90_r3_18_v1" ||
+      (value.cardFormatId !== "standard_trading_card_63_50x88_90_r3_18_v1" &&
+        value.cardFormatId !== "pokemon_tcg_standard") ||
       !stationRecord(value.sides)) return undefined;
   const cardIdentity = sanitizeMathematicalCardIdentity(value.cardIdentity);
   if (!cardIdentity) return undefined;
@@ -1102,11 +1115,26 @@ export function sanitizeAiGraderMathematicalGradingAuthorityV1(
   const front = sanitizeMathematicalCenteringAuthority(frontValue, "front", cardIdentity);
   const back = sanitizeMathematicalCenteringAuthority(backValue, "back", cardIdentity);
   if (!front || !back) return undefined;
-  return {
-    schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1",
+  const base = {
+    schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1" as const,
     cardIdentity,
-    cardFormatId: "standard_trading_card_63_50x88_90_r3_18_v1",
     sides: { front: { centering: front }, back: { centering: back } },
+  };
+  if (value.cardFormatId === "standard_trading_card_63_50x88_90_r3_18_v1") {
+    if ("trustedCardFormatAuthority" in value) return undefined;
+    return { ...base, cardFormatId: value.cardFormatId };
+  }
+  const trusted = trustedPokemonCardFormatAuthorityV1Schema.safeParse(
+    value.trustedCardFormatAuthority,
+  );
+  if (!trusted.success ||
+      JSON.stringify(trusted.data.artifact.cardIdentity) !== JSON.stringify(cardIdentity)) {
+    return undefined;
+  }
+  return {
+    ...base,
+    cardFormatId: "pokemon_tcg_standard",
+    trustedCardFormatAuthority: trusted.data,
   };
 }
 

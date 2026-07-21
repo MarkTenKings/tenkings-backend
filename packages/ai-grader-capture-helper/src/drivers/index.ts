@@ -188,6 +188,7 @@ export * from "./fixedRigConditionPlaneProducerV1";
 export * from "./fixedRigOuterCutDetectorV1";
 export * from './fixedRigRawSensorOuterCutDetectorV1';
 export * from './fixedRigStandardCardFormatV1';
+export * from './fixedRigPokemonStandardCornerProfileV1';
 export * from "./fixedRigMathematicalCalibrationOrchestratorV1";
 export * from "./fixedRigMathematicalCalibrationV1_1";
 export * from "./fixedRigMathematicalCalibrationCaptureV1";

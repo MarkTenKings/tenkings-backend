@@ -17,6 +17,7 @@ import {
   aggregateCornerScoreV1,
   aggregateEdgeScoreV1,
   calculateCenteringAxisV1,
+  calculateFindingDeductionV1,
   combineMeasurementUncertaintyU95,
   calculateOverallGradeV1,
   calculateRegisteredDesignTemplateAxisV1,
@@ -32,6 +33,15 @@ import {
   scoreCenteringRatioV1,
   validateMathematicalCalibrationProfileV1,
 } from "./aiGraderMathematicalCalibrationV1";
+import {
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_ID,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_RADIUS_MM,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION,
+  POKEMON_TCG_STANDARD_MEASUREMENT_AUTHORITY_SCHEMA_VERSION,
+  pokemonTcgStandardCornerProfileV1Schema,
+  trustedPokemonCardFormatAuthorityV1Schema,
+} from "./aiGraderPokemonStandardCornerProfileV1";
 import {
   aiGraderPublishedAssetSchema,
   aiGraderSafePublishedUrlSchema,
@@ -420,6 +430,72 @@ const gradingStandardSchema = z.strictObject({
   designReferenceSchemaVersion: z.literal(MATHEMATICAL_DESIGN_REFERENCE_V1_SCHEMA_VERSION),
 });
 
+const pokemonStandardCornerMeasurementSchema = z.strictObject({
+  side: z.enum(["front", "back"]),
+  location: z.enum(["top_left", "top_right", "bottom_right", "bottom_left"]),
+  profileId: z.literal(POKEMON_TCG_STANDARD_CORNER_PROFILE_ID),
+  profileVersion: z.literal(POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION),
+  profileArtifactSha256: z.literal(POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256),
+  expectedRadiusMm: z.literal(POKEMON_TCG_STANDARD_CORNER_PROFILE_RADIUS_MM),
+  measuredContourDeviationMm: z.number().finite().nonnegative(),
+  calibratedU95Mm: z.number().finite().nonnegative(),
+  effectiveContourDeviationMm: z.number().finite().nonnegative(),
+  grade10ToleranceMm: z.number().finite().nonnegative(),
+  thresholdDecision: z.enum(["within_grade_10_buffer", "deducted"]),
+  thresholdDeduction: nonnegativeTwoDecimalSchema,
+  appliedContourDeduction: nonnegativeTwoDecimalSchema,
+  measurementId: identifierSchema,
+  sourceImageAssetId: assetIdSchema,
+  sourceImageSha256: sha256Schema,
+  observedContourSha256: sha256Schema,
+  intendedContourSha256: sha256Schema,
+  contourFindingIds: uniqueIdentifiers(AI_GRADER_DEFECT_FINDING_MAX_COUNT),
+  damageFindingIds: z.strictObject({
+    whitening: uniqueIdentifiers(AI_GRADER_DEFECT_FINDING_MAX_COUNT),
+    chippingOrMaterialLoss: uniqueIdentifiers(AI_GRADER_DEFECT_FINDING_MAX_COUNT),
+    deformation: uniqueIdentifiers(AI_GRADER_DEFECT_FINDING_MAX_COUNT),
+    delamination: uniqueIdentifiers(AI_GRADER_DEFECT_FINDING_MAX_COUNT),
+    otherVisibleDamage: uniqueIdentifiers(AI_GRADER_DEFECT_FINDING_MAX_COUNT),
+  }),
+});
+
+const pokemonStandardCornerAuthoritySchema = z.strictObject({
+  profile: pokemonTcgStandardCornerProfileV1Schema,
+  profileArtifactSha256: z.literal(POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256),
+  trustedCardFormatAuthority: trustedPokemonCardFormatAuthorityV1Schema,
+  productionMeasurementAuthority: z.strictObject({
+    schemaVersion: z.literal(POKEMON_TCG_STANDARD_MEASUREMENT_AUTHORITY_SCHEMA_VERSION),
+    artifact: z.strictObject({
+      gradingSessionId: reportIdSchema,
+      reportId: reportIdSchema,
+      analyzerVersions: z.strictObject({
+        conditionSegmentation: z.literal("fixed_rig_condition_segmentation_v1.2.0"),
+        cornerMeasurement: z.literal("fixed_rig_corner_edge_v1"),
+        stationAdapter: z.literal("fixed_rig_mathematical_station_adapter_v1"),
+      }),
+      thresholdSetId: z.literal(MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID),
+      thresholdSetHash: z.literal(MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH),
+      calibration: z.strictObject({
+        profileId: identifierSchema,
+        version: identifierSchema,
+        artifactSha256: sha256Schema,
+        bundleManifestSha256: sha256Schema,
+        sourceCaptureManifestSha256: sha256Schema,
+        memberLedgerSha256: sha256Schema,
+      }),
+      callerCreatedProfilesAccepted: z.literal(false),
+      callerCreatedMeasurementsAccepted: z.literal(false),
+      measurements: z.array(pokemonStandardCornerMeasurementSchema).length(8),
+    }),
+    artifactSha256: sha256Schema,
+    authentication: z.strictObject({
+      algorithm: z.literal("hmac-sha256"),
+      keyId: identifierSchema,
+      signature: sha256Schema,
+    }),
+  }),
+});
+
 const calibrationBundleAuthorityMemberSchema = z.discriminatedUnion("role", [
   z.strictObject({
     role: z.enum(["calibration_profile", "physical_calibration_artifact", "calibration_acceptance", "illumination_pattern"]),
@@ -450,6 +526,7 @@ export const aiGraderReportBundleV03Schema = z
     certifiedClaim: z.literal(false),
     cardIdentity: cardIdentitySchema,
     gradingStandard: gradingStandardSchema,
+    pokemonStandardCornerAuthority: pokemonStandardCornerAuthoritySchema.optional(),
     productionRelease: z.strictObject({
       finalGrade: finalGradeSchema,
       label: z.strictObject({
@@ -483,6 +560,131 @@ export const aiGraderReportBundleV03Schema = z
     const calibration = validateMathematicalCalibrationProfileV1(bundle.calibrationProfile);
     if (!calibration.valid || !calibration.isCalibrated) {
       context.addIssue({ code: "custom", path: ["calibrationProfile"], message: "must satisfy every calibrated V1 acceptance criterion" });
+    }
+    const intendedProfileIds = new Set([
+      bundle.centeringEvidence.front.outerCutGeometryEvidence.intendedBoundaryProfileId,
+      bundle.centeringEvidence.back.outerCutGeometryEvidence.intendedBoundaryProfileId,
+    ]);
+    const pokemonProfileSelected = intendedProfileIds.has(POKEMON_TCG_STANDARD_CORNER_PROFILE_ID);
+    if (pokemonProfileSelected &&
+        (intendedProfileIds.size !== 1 ||
+          bundle.centeringEvidence.front.outerCutGeometryEvidence.intendedBoundaryProfileVersion !==
+            POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION ||
+          bundle.centeringEvidence.back.outerCutGeometryEvidence.intendedBoundaryProfileVersion !==
+            POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION)) {
+      context.addIssue({
+        code: "custom",
+        path: ["centeringEvidence"],
+        message: "both sides must use the exact same Pokémon standard contour profile and version",
+      });
+    }
+    const pokemonAuthority = bundle.pokemonStandardCornerAuthority;
+    if (pokemonProfileSelected && !pokemonAuthority) {
+      context.addIssue({
+        code: "custom",
+        path: ["pokemonStandardCornerAuthority"],
+        message: "the Pokémon standard contour requires its exact trusted profile and measurement provenance",
+      });
+    }
+    if (!pokemonProfileSelected && pokemonAuthority) {
+      context.addIssue({
+        code: "custom",
+        path: ["pokemonStandardCornerAuthority"],
+        message: "must not be present when the Pokémon standard contour was not selected",
+      });
+    }
+    if (pokemonAuthority) {
+      const production = pokemonAuthority.productionMeasurementAuthority.artifact;
+      const trustedIdentity = pokemonAuthority.trustedCardFormatAuthority.artifact.cardIdentity;
+      const exactIdentityMatches =
+        trustedIdentity.tenantId === bundle.cardIdentity.tenantId &&
+        trustedIdentity.setId === bundle.cardIdentity.setId &&
+        trustedIdentity.programId === bundle.cardIdentity.programId &&
+        trustedIdentity.cardNumber === bundle.cardIdentity.cardNumber &&
+        trustedIdentity.variantId === bundle.cardIdentity.variantId &&
+        trustedIdentity.parallelId === bundle.cardIdentity.parallelId &&
+        trustedIdentity.title === bundle.cardIdentity.title &&
+        trustedIdentity.sideCount === bundle.cardIdentity.sideCount;
+      if (!exactIdentityMatches ||
+          production.reportId !== bundle.reportId ||
+          production.calibration.profileId !== bundle.calibrationProfile.profileId ||
+          production.calibration.version !== bundle.calibrationProfile.calibrationVersion ||
+          production.calibration.artifactSha256 !== bundle.calibrationProfile.artifactSha256 ||
+          production.calibration.bundleManifestSha256 !== bundle.calibrationBundleAuthority.bundleManifestSha256 ||
+          production.calibration.sourceCaptureManifestSha256 !== bundle.calibrationBundleAuthority.sourceCaptureManifestSha256 ||
+          production.calibration.memberLedgerSha256 !== bundle.calibrationBundleAuthority.memberLedgerSha256) {
+        context.addIssue({
+          code: "custom",
+          path: ["pokemonStandardCornerAuthority"],
+          message: "must bind the exact trusted card, report, calibration, and complete bundle authority",
+        });
+      }
+      const expectedLocations = ["top_left", "top_right", "bottom_right", "bottom_left"];
+      const expectedKeys = new Set(
+        ["front", "back"].flatMap((side) => expectedLocations.map((location) => `${side}:${location}`)),
+      );
+      const actualKeys = production.measurements.map((entry) => `${entry.side}:${entry.location}`);
+      if (new Set(actualKeys).size !== 8 || actualKeys.some((key) => !expectedKeys.has(key))) {
+        context.addIssue({
+          code: "custom",
+          path: ["pokemonStandardCornerAuthority", "productionMeasurementAuthority", "measurements"],
+          message: "must contain one independent result for every front/back physical corner",
+        });
+      }
+      const findings = new Map(bundle.defectFindings.map((finding) => [finding.findingId, finding]));
+      for (const [index, measurement] of production.measurements.entries()) {
+        const sideGeometry = bundle.centeringEvidence[measurement.side].outerCutGeometryEvidence;
+        const observed = sideGeometry.observedArtifact;
+        const calculation = calculateFindingDeductionV1({
+          category: "corner_shape_deviation",
+          measuredMeasurement: measurement.measuredContourDeviationMm,
+          u95: measurement.calibratedU95Mm,
+        });
+        const expectedEffective = Math.round(
+          Math.max(0, measurement.measuredContourDeviationMm - measurement.calibratedU95Mm) * 1e6,
+        ) / 1e6;
+        const expectedDecision = calculation.deductionBasisMeasurement === 0
+          ? "within_grade_10_buffer"
+          : "deducted";
+        if (measurement.sourceImageAssetId !== observed.rawAllOnAssetId ||
+            measurement.sourceImageSha256 !== observed.rawAllOnAssetSha256 ||
+            measurement.observedContourSha256 !== observed.artifactSha256 ||
+            measurement.intendedContourSha256 !== observed.intendedBoundaryArtifactSha256 ||
+            measurement.grade10ToleranceMm !==
+              MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.findings.corner_shape_deviation.grade10Tolerance ||
+            measurement.effectiveContourDeviationMm !== expectedEffective ||
+            measurement.thresholdDecision !== expectedDecision ||
+            measurement.thresholdDeduction !== calculation.deduction ||
+            measurement.appliedContourDeduction > measurement.thresholdDeduction) {
+          context.addIssue({
+            code: "custom",
+            path: ["pokemonStandardCornerAuthority", "productionMeasurementAuthority", "measurements", index],
+            message: "must reproduce the calibrated contour/U95 threshold result and exact source contour hashes",
+          });
+        }
+        const categoryGroups: Array<[readonly string[], Set<string>]> = [
+          [measurement.contourFindingIds, new Set(["corner_shape_deviation"])],
+          [measurement.damageFindingIds.whitening, new Set(["corner_whitening"])],
+          [measurement.damageFindingIds.chippingOrMaterialLoss, new Set(["corner_chip", "corner_material_loss"])],
+          [measurement.damageFindingIds.deformation, new Set(["corner_deformation"])],
+          [measurement.damageFindingIds.delamination, new Set(["corner_delamination"])],
+          [measurement.damageFindingIds.otherVisibleDamage, new Set(["corner_directional_relief"])],
+        ];
+        for (const [findingIds, allowed] of categoryGroups) {
+          if (findingIds.some((findingId) => {
+            const finding = findings.get(findingId);
+            return !finding || finding.side !== measurement.side || finding.location !== measurement.location ||
+              (!allowed.has(finding.category) &&
+                !finding.secondaryEvidenceCategories.some((category) => allowed.has(category)));
+          })) {
+            context.addIssue({
+              code: "custom",
+              path: ["pokemonStandardCornerAuthority", "productionMeasurementAuthority", "measurements", index],
+              message: "contour deviation and each visible damage category must remain separately classified",
+            });
+          }
+        }
+      }
     }
     const expectedAuthorityMembers = [
       { role: "calibration_profile", fileName: "mathematical-calibration-profile-v1.json" },

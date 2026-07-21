@@ -83,6 +83,14 @@ cornerPenalty = 0.65 * worstLocationPenalty
 cornerScore = clamp(10 - cornerPenalty, 1, 10)
 ```
 
+### Standard Pokémon corner authority
+
+`pokemon_tcg_standard` version `1.0.0` is the single Mark/Ten Kings owner-approved Production operational contour for trusted standard-size Pokémon TCG identities. Its canonical UTF-8 artifact binds 63.50 mm x 88.90 mm physical dimensions, a circular 3.18 mm corner radius, the exact contour generator, applicable standard variants, the Mathematical threshold-set ID/hash, provenance, and canonical profile SHA-256. It covers standard-size Japanese, international, Wizards-era, vintage, modern, foil, and promo cards. It explicitly excludes jumbo, oversize, nonstandard, unresolved, contradictory, or untrusted formats.
+
+The hosted resolver signs the immutable set-card/taxonomy source identity and its trusted physical-format claim. The browser supplies only the exact lookup and centering choice; it cannot supply the profile, signature, contour, tolerance, or measurements. The local bridge verifies the resolver HMAC and exact card identity before the station adapter can select the profile. The report builder separately signs the analyzer-created eight-corner measurement artifact, and publication verifies both authentications again. A replayed valid card identity therefore cannot authorize caller-created measurements. There is no nearest-profile fallback.
+
+Each front/back top-left, top-right, bottom-right, and bottom-left observation reports the analyzer-created contour deviation, calibrated U95, threshold decision, deduction, source image/contour hashes, calibration bundle, profile authority, and analyzer versions. Contour deviation remains distinct from whitening, chipping/material loss, deformation, delamination, and other visible damage. This profile is a Ten Kings operational grading standard, not an official Pokémon manufacturer specification.
+
 ## Edges V1
 
 All eight front/back edge observations are independently measured. Supported physical features include damaged length, longest continuous span, chip/indentation depth, whitening/chipping area, roughness, fraying/fiber exposure, delamination/lift, and directional deformation.
