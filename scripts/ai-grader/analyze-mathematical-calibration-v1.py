@@ -111,8 +111,9 @@ def exact_bool(value: Any, expected: bool, name: str) -> bool:
     return expected
 
 
-def require_measurement_provenance(value: dict[str, Any], label: str
-                                   ) -> dict[str, Any]:
+def require_measurement_provenance(
+        value: dict[str, Any], label: str,
+        expected_target: dict[str, Any] | None = None) -> dict[str, Any]:
     operator_id = safe_identifier(value.get('operatorId'),
                                   f'{label}.operatorId')
     recorded_at = exact_utc_timestamp(value.get('recordedAt'),
@@ -125,8 +126,39 @@ def require_measurement_provenance(value: dict[str, Any], label: str
     instrument_id = safe_identifier(
         instrument.get('instrumentId'), f'{label}.instrument.instrumentId')
     kind = instrument.get('kind')
-    if kind not in {'traceable_ruler', 'caliper', 'fixed_rig_geometry'}:
+    if kind not in {'traceable_ruler', 'caliper', 'fixed_rig_geometry',
+                    'protected_target_geometry'}:
         raise ValueError(f'{label}.instrument.kind is not allowlisted')
+    if kind == 'protected_target_geometry':
+        if (instrument_id != 'protected-calibration-target-geometry-v1' or
+                instrument.get('authorityStatement') !=
+                'product_owner_confirmed_exact_target_geometry_v1'):
+            raise ValueError(
+                f'{label}.instrument protected target authority is invalid')
+        target_version = safe_identifier(
+            instrument.get('targetVersion'),
+            f'{label}.instrument.targetVersion')
+        target_sha256 = exact_sha256(
+            instrument.get('targetSha256'),
+            f'{label}.instrument.targetSha256')
+        if (not isinstance(expected_target, dict) or
+                target_version != expected_target.get('targetVersion') or
+                target_sha256 != expected_target.get('targetSha256')):
+            raise ValueError(
+                f'{label}.instrument protected target identity mismatch')
+        return {
+            'operatorId': operator_id,
+            'recordedAt': recorded_at,
+            'measurementMethod': measurement_method,
+            'instrument': {
+                'instrumentId': instrument_id,
+                'kind': kind,
+                'targetVersion': target_version,
+                'targetSha256': target_sha256,
+                'authorityStatement':
+                    'product_owner_confirmed_exact_target_geometry_v1',
+            },
+        }
     calibration_version = safe_identifier(
         instrument.get('calibrationVersion'),
         f'{label}.instrument.calibrationVersion')
@@ -630,14 +662,16 @@ def verify_evidence(authority: dict[str, Any], entry: dict[str, Any],
 
 def verify_measurement_artifact(file_path: Path, expected: dict[str, Any],
                                 label: str,
-                                declaration: dict[str, Any]) -> None:
+                                declaration: dict[str, Any],
+                                target_identity: dict[str, Any]) -> None:
     try:
         observed = json.loads(file_path.read_text(encoding='utf-8'))
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise ValueError(f'{label} must be valid UTF-8 JSON') from None
     expected_with_provenance = {
         **expected,
-        **require_measurement_provenance(declaration, label),
+        **require_measurement_provenance(
+            declaration, label, target_identity),
     }
     if observed != expected_with_provenance:
         raise ValueError(
@@ -1149,7 +1183,7 @@ def analyze_flat_field_channel(
             'cardCenterPointMm': card_center,
             'pointU95Mm': round_number(point_u95_mm),
         }, f'channel {channel_index} direction measurement',
-            measurement_entry)
+            measurement_entry, authority['subject'])
         vector = parse_direction({
             'x': source_point['x'] - card_center['x'],
             'y': source_point['y'] - card_center['y'],
@@ -1418,7 +1452,8 @@ def analyze(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
             'nominalDimensionMm': round_number(nominal),
             'measuredDimensionMm': round_number(measured),
             'measurementU95Mm': round_number(measurement_u95),
-        }, f'{axis.upper()} target cut-dimension measurement', entry)
+        }, f'{axis.upper()} target cut-dimension measurement', entry,
+            capture_package_authority['subject'])
         target_cut_dimension_samples.append({
             **evidence,
             'axis': axis,
@@ -1461,7 +1496,8 @@ def analyze(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
             'nominalSpanMm': round_number(nominal),
             'measuredSpanMm': round_number(measured),
             'measurementU95Mm': round_number(measurement_u95),
-        }, f'{axis.upper()} print-scale measurement', entry)
+        }, f'{axis.upper()} print-scale measurement', entry,
+            capture_package_authority['subject'])
         target_print_scale_samples.append({
             **evidence,
             'axis': axis,
@@ -1823,7 +1859,8 @@ def analyze(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
                 'opencv_checkerboard_repeatability_measurement_v1',
             'fixedRoiDefinition':
                 'registered_checkerboard_center_cell_and_grid_spacing_v1',
-        }, f'{measurement_class} repeatability measurement', entry)
+        }, f'{measurement_class} repeatability measurement', entry,
+            capture_package_authority['subject'])
         measurement_repeatability_samples.append({
             **evidence,
             'measurementClass': measurement_class,

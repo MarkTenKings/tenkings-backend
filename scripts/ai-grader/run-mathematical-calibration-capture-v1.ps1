@@ -54,15 +54,6 @@ function Assert-ExactSha256 {
   return $text
 }
 
-function Assert-SafeText {
-  param([object]$Value, [string]$Label)
-  $text = [string]$Value
-  if ($text.Length -lt 1 -or $text.Length -gt 191 -or $text.Trim() -ne $text -or $text -match '[\x00-\x1f\x7f]') {
-    throw ($Label + ' must be canonical non-empty text without control characters.')
-  }
-  return $text
-}
-
 function Get-ExactFileSha256 {
   param([string]$Path, [string]$Label)
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -92,47 +83,14 @@ function Get-ExactInteger {
   return [int]$number
 }
 
-function Get-Instrument {
-  param([object]$Value, [string]$Label)
-  if ($null -eq $Value) { throw ($Label + ' instrument is required.') }
-  $kind = [string]$Value.kind
-  if ($kind -notin @('traceable_ruler', 'caliper', 'fixed_rig_geometry', 'product_owner_attested_device')) {
-    throw ($Label + ' instrument kind is not allowlisted.')
-  }
-  $instrumentId = Assert-SafeIdentifier -Value $Value.instrumentId -Label ($Label + '.instrumentId')
-  if ($kind -eq 'product_owner_attested_device') {
-    if ([string]$Value.authorityStatement -ne 'product_owner_attested_non_traceable_measurement_v1') {
-      throw ($Label + ' owner-attested device requires the exact non-traceable authority statement.')
-    }
-    $accuracyMm = Get-FiniteNumber -Value $Value.accuracyMm -Label ($Label + '.accuracyMm') -Minimum 0.000000000001
-    $statedU95Mm = Get-FiniteNumber -Value $Value.statedU95Mm -Label ($Label + '.statedU95Mm') -Minimum 0.000000000001
-    if ($statedU95Mm -lt $accuracyMm) {
-      throw ($Label + ' statedU95Mm cannot be less than accuracyMm.')
-    }
-    if ([string]$Value.ownerAttestationVersion -ne '1') {
-      throw ($Label + ' ownerAttestationVersion must be 1.')
-    }
-    return @{
-      instrumentId = $instrumentId
-      kind = $kind
-      ownerAttestationVersion = '1'
-      ownerAttestationSha256 = Assert-ExactSha256 -Value $Value.ownerAttestationSha256 -Label ($Label + '.ownerAttestationSha256')
-      manufacturer = Assert-SafeText -Value $Value.manufacturer -Label ($Label + '.manufacturer')
-      model = Assert-SafeText -Value $Value.model -Label ($Label + '.model')
-      serialNumber = Assert-SafeIdentifier -Value $Value.serialNumber -Label ($Label + '.serialNumber')
-      maximumRangeMm = Get-FiniteNumber -Value $Value.maximumRangeMm -Label ($Label + '.maximumRangeMm') -Minimum 0.001
-      accuracyMm = $accuracyMm
-      resolutionMm = Get-FiniteNumber -Value $Value.resolutionMm -Label ($Label + '.resolutionMm') -Minimum 0.001
-      statedU95Mm = $statedU95Mm
-      ownerAttestationId = Assert-SafeIdentifier -Value $Value.ownerAttestationId -Label ($Label + '.ownerAttestationId')
-      authorityStatement = 'product_owner_attested_non_traceable_measurement_v1'
-    }
-  }
+function Get-ProtectedTargetGeometryAuthority {
+  param([object]$State)
   return @{
-    instrumentId = $instrumentId
-    kind = $kind
-    calibrationVersion = Assert-SafeIdentifier -Value $Value.calibrationVersion -Label ($Label + '.calibrationVersion')
-    calibrationSha256 = Assert-ExactSha256 -Value $Value.calibrationSha256 -Label ($Label + '.calibrationSha256')
+    instrumentId = 'protected-calibration-target-geometry-v1'
+    kind = 'protected_target_geometry'
+    targetVersion = Assert-SafeIdentifier -Value $State.subject.targetVersion -Label 'capture-session targetVersion'
+    targetSha256 = Assert-ExactSha256 -Value $State.subject.targetSha256 -Label 'capture-session targetSha256'
+    authorityStatement = 'product_owner_confirmed_exact_target_geometry_v1'
   }
 }
 
@@ -353,23 +311,6 @@ function New-MetrologyInputTemplate {
   }
   $statePath = Join-Path ([string]$Status.sessionDir) 'capture-session.json'
   $sourceCaptureSessionSha256 = Get-ExactFileSha256 -Path $statePath -Label 'Capture-session ledger'
-  $instrumentTemplate = [ordered]@{
-    instrumentId = $null
-    kind = $null
-    calibrationVersion = $null
-    calibrationSha256 = $null
-    ownerAttestationVersion = $null
-    ownerAttestationSha256 = $null
-    manufacturer = $null
-    model = $null
-    serialNumber = $null
-    maximumRangeMm = $null
-    accuracyMm = $null
-    resolutionMm = $null
-    statedU95Mm = $null
-    ownerAttestationId = $null
-    authorityStatement = $null
-  }
   $directions = [System.Collections.Generic.List[object]]::new()
   foreach ($channel in 1..8) {
     foreach ($sample in 1..3) {
@@ -379,7 +320,7 @@ function New-MetrologyInputTemplate {
         sourcePointMm = [ordered]@{ x = $null; y = $null }
         cardCenterPointMm = [ordered]@{ x = $null; y = $null }
         pointU95Mm = $null
-        measurementMethod = $null
+        measurementMethod = 'fixed_ring_segment_geometry_with_ruler_v1'
       })
     }
   }
@@ -391,24 +332,18 @@ function New-MetrologyInputTemplate {
     targetManifestSha256 = $targetManifestSha256
     instructions = [ordered]@{
       incompleteTemplate = $true
-      submission = 'Replace every null with the independently observed value or immutable instrument identity, then compute the exact file SHA-256 and use SubmitMetrology with -ConfirmMetrologySubmission.'
+      submission = 'Replace every physical-value null with the independently observed value, then compute the exact file SHA-256 and use SubmitMetrology with -ConfirmMetrologySubmission. Target authority is derived automatically from the hash-protected session target; no measuring-device or certificate identity is requested.'
       printAcceptance = [string]$targetManifest.requiredPrintScaleVerification.acceptanceFormula
       cutAcceptance = 'abs(measuredDimensionMm - nominalDimensionMm) + measurementU95Mm <= 0.20'
-      permittedInstrumentKinds = @('traceable_ruler', 'caliper', 'fixed_rig_geometry', 'product_owner_attested_device')
-      ownerAttestedDevice = 'Uses an exact product-owner attestation artifact, preserves the unchanged numerical acceptance gate, requires stated U95 at least the accuracy bound and sufficient physical range, and must not be described as traceably calibrated.'
-    }
-    instruments = [ordered]@{
-      printScale = $instrumentTemplate.Clone()
-      targetCutDimension = $instrumentTemplate.Clone()
-      directionGeometry = $instrumentTemplate.Clone()
+      targetAuthority = 'product_owner_confirmed_exact_target_geometry_v1 bound to the exact session targetVersion and targetSha256'
     }
     printScaleMeasurements = @(
-      [ordered]@{ axis = 'x'; nominalSpanMm = [double]$targetManifest.requiredPrintScaleVerification.x.nominalSpanMm; measuredSpanMm = $null; measurementU95Mm = $null; measurementMethod = $null },
-      [ordered]@{ axis = 'y'; nominalSpanMm = [double]$targetManifest.requiredPrintScaleVerification.y.nominalSpanMm; measuredSpanMm = $null; measurementU95Mm = $null; measurementMethod = $null }
+      [ordered]@{ axis = 'x'; nominalSpanMm = [double]$targetManifest.requiredPrintScaleVerification.x.nominalSpanMm; measuredSpanMm = $null; measurementU95Mm = $null; measurementMethod = 'product_owner_confirmed_target_geometry_v1' },
+      [ordered]@{ axis = 'y'; nominalSpanMm = [double]$targetManifest.requiredPrintScaleVerification.y.nominalSpanMm; measuredSpanMm = $null; measurementU95Mm = $null; measurementMethod = 'product_owner_confirmed_target_geometry_v1' }
     )
     targetCutDimensionMeasurements = @(
-      [ordered]@{ axis = 'x'; nominalDimensionMm = [double]$targetManifest.requiredCutDimensionVerification.x.nominalDimensionMm; measuredDimensionMm = $null; measurementU95Mm = $null; measurementMethod = $null },
-      [ordered]@{ axis = 'y'; nominalDimensionMm = [double]$targetManifest.requiredCutDimensionVerification.y.nominalDimensionMm; measuredDimensionMm = $null; measurementU95Mm = $null; measurementMethod = $null }
+      [ordered]@{ axis = 'x'; nominalDimensionMm = [double]$targetManifest.requiredCutDimensionVerification.x.nominalDimensionMm; measuredDimensionMm = $null; measurementU95Mm = $null; measurementMethod = 'product_owner_confirmed_target_geometry_v1' },
+      [ordered]@{ axis = 'y'; nominalDimensionMm = [double]$targetManifest.requiredCutDimensionVerification.y.nominalDimensionMm; measuredDimensionMm = $null; measurementU95Mm = $null; measurementMethod = 'product_owner_confirmed_target_geometry_v1' }
     )
     directionGeometryMeasurements = @($directions)
   }
@@ -426,7 +361,7 @@ function New-MetrologyInputTemplate {
 function Submit-MetrologyArtifact {
   param($Status, $State)
   if (-not $ConfirmMetrologySubmission) {
-    throw 'SubmitMetrology requires -ConfirmMetrologySubmission after the physical values and instrument identities have been checked.'
+    throw 'SubmitMetrology requires -ConfirmMetrologySubmission after the physical values and protected target binding have been checked.'
   }
   if ($Status.sealed) { throw 'A sealed calibration session cannot accept metrology.' }
   if ([int]$Status.captureCount -ne 102) {
@@ -466,9 +401,7 @@ function Submit-MetrologyArtifact {
       throw 'Metrology source capture-session SHA-256 changed and no same-artifact immutable resume authority exists.'
     }
   }
-  $printInstrument = Get-Instrument -Value $metrology.instruments.printScale -Label 'instruments.printScale'
-  $cutInstrument = Get-Instrument -Value $metrology.instruments.targetCutDimension -Label 'instruments.targetCutDimension'
-  $directionInstrument = Get-Instrument -Value $metrology.instruments.directionGeometry -Label 'instruments.directionGeometry'
+  $protectedTargetGeometry = Get-ProtectedTargetGeometryAuthority -State $State
   $requests = [System.Collections.Generic.List[object]]::new()
   $prefix = 'cal-metrology-' + $observedMetrologySha256.Substring(0, 12)
   $printSlots = [System.Collections.Generic.List[string]]::new()
@@ -482,7 +415,7 @@ function Submit-MetrologyArtifact {
       measuredSpanMm = Get-FiniteNumber -Value $entry.measuredSpanMm -Label ('printScale.' + $axis + '.measuredSpanMm') -Minimum 0.001
       measurementU95Mm = Get-FiniteNumber -Value $entry.measurementU95Mm -Label ('printScale.' + $axis + '.measurementU95Mm') -Minimum 0
       measurementMethod = Assert-SafeIdentifier -Value $entry.measurementMethod -Label ('printScale.' + $axis + '.measurementMethod')
-      sourceMetrologyArtifactSha256 = $observedMetrologySha256; instrument = $printInstrument
+      sourceMetrologyArtifactSha256 = $observedMetrologySha256; instrument = $protectedTargetGeometry
     })
   }
   Assert-ExactSlotSet -Observed $printSlots -Expected @('print_scale:x', 'print_scale:y') -Label 'Print-scale measurements'
@@ -497,7 +430,7 @@ function Submit-MetrologyArtifact {
       measuredDimensionMm = Get-FiniteNumber -Value $entry.measuredDimensionMm -Label ('targetCut.' + $axis + '.measuredDimensionMm') -Minimum 0.001
       measurementU95Mm = Get-FiniteNumber -Value $entry.measurementU95Mm -Label ('targetCut.' + $axis + '.measurementU95Mm') -Minimum 0
       measurementMethod = Assert-SafeIdentifier -Value $entry.measurementMethod -Label ('targetCut.' + $axis + '.measurementMethod')
-      sourceMetrologyArtifactSha256 = $observedMetrologySha256; instrument = $cutInstrument
+      sourceMetrologyArtifactSha256 = $observedMetrologySha256; instrument = $protectedTargetGeometry
     })
   }
   Assert-ExactSlotSet -Observed $cutSlots -Expected @('target_cut_dimension:x', 'target_cut_dimension:y') -Label 'Target-cut measurements'
@@ -519,7 +452,7 @@ function Submit-MetrologyArtifact {
       }
       pointU95Mm = Get-FiniteNumber -Value $entry.pointU95Mm -Label 'direction.pointU95Mm' -Minimum 0
       measurementMethod = Assert-SafeIdentifier -Value $entry.measurementMethod -Label 'direction.measurementMethod'
-      sourceMetrologyArtifactSha256 = $observedMetrologySha256; instrument = $directionInstrument
+      sourceMetrologyArtifactSha256 = $observedMetrologySha256; instrument = $protectedTargetGeometry
     })
   }
   $expectedDirections = foreach ($channel in 1..8) { foreach ($sample in 1..3) { 'direction_geometry:' + $channel + ':' + $sample } }
@@ -553,7 +486,7 @@ function Show-Worksheet {
   Write-Host 'Required physical metrology ledger: print scale x/y; cut dimensions x/y; direction geometry channels 1..8 samples 1..3.'
   Write-Host 'CreateMetrologyTemplate emits the exact 28-slot, session/target/ledger-bound input skeleton after all 102 captures; it never submits placeholder values.'
   Write-Host 'SubmitMetrology accepts one SHA-pinned ten-kings-mathematical-calibration-metrology-input-v1 JSON artifact bound to sessionId, targetSha256, and sourceCaptureSessionSha256.'
-  Write-Host 'Its instruments object must contain printScale, targetCutDimension, and directionGeometry identities; its three measurement arrays must contain exactly 2, 2, and 24 unique slots.'
+  Write-Host 'Its three physical-value arrays must contain exactly 2, 2, and 24 unique slots; protected target authority is derived automatically from the active session.'
   Write-Host 'DeriveRepeatability invokes the pinned OpenCV analyzer implementation and records the exact 50 repeatability measurements before sealing.'
   Write-Host 'An ordinary rejected exact still preserves all accepted slots and hashes. Reposition the same pending pose and use Retry, which always creates a new operation ID.'
   Write-Host 'Resume rebinds the same immutable session after runner, browser, or protected helper-page restart; hard-stop failures are never retryable.'

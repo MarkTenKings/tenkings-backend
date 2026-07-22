@@ -56,7 +56,7 @@ Do this once on the protected Dell acceptance path before any 76-image quick V1.
 1. Complete the supervised V1.0.1 physical procedure below and retain its exact canonical capture manifest, source package, 102 raw captures, 102 normalized derivatives, 78 measurement artifacts, and target artifact. The materializer consumes those raw bytes and reruns the checked-in physical analyzer; it never consumes acceptance from a V1.0.1/V1.1 profile.
 2. Record one canonical protected-live-probe evidence file from the existing protected `mathematical-calibration-context` result after it has closed the Basler/Leimac probe. Bind its exact observed camera serial/model, exposure, gain, pixel format/resolution, controller unit-information identity/unit and ACK response kinds. Add the supervised station ID, rig ID, duty, location label, and lighting-configuration ID; every observable value must equal the raw-capture ledger.
 3. Record canonical supervised component and stage-transform evidence. Component evidence binds operator, rig, controller identity, component configuration, exact channels 1-8/controller outputs/component IDs/physical-direction IDs, target identity, lens-authority evidence hash, and wiring-evidence hash. Stage evidence binds operator, rig, camera/lens identity, the measured non-singular stage-to-undistorted-sensor matrix, and at least three exact stage-measurement hashes.
-4. Place exact external evidence bytes beside the input manifest for every required role: `metrology_source`, `lens_authority`, `component_wiring`, and `stage_transform_measurement`, plus the instrument authority actually used. A traceably calibrated instrument requires `instrument_calibration`; the explicit product-owner alternative requires canonical `product_owner_attestation` bytes created by the checked-in attestation command below. If both authority classes were used, include both roles. Every hash named by a measurement/component/stage artifact must dereference one exact purpose-bound file. No duplicate bytes, duplicate paths, unused reference, extra source-package artifact, or missing reference is permitted.
+4. Place exact external evidence bytes beside the input manifest for every required role: `metrology_source`, `lens_authority`, `component_wiring`, and `stage_transform_measurement`. The protected runner derives `product_owner_confirmed_exact_target_geometry_v1` directly from the session's exact target version/SHA-256 and the already captured target bytes; it requires no measuring-device, calibration-certificate, serial-number, range, accuracy, or resolution evidence. Legacy capture packages that explicitly contain certified-instrument provenance may still include matching `instrument_calibration` bytes. Every other hash named by a measurement/component/stage artifact must dereference one exact purpose-bound file. No duplicate bytes, duplicate paths, unused reference, extra source-package artifact, or missing reference is permitted.
 5. Write canonical `ten-kings-mathematical-calibration-v1.2-rig-materialization-input-v1` JSON with exactly `schemaVersion`, `captureManifest`, `liveProbe`, `componentEvidence`, `stageTransformEvidence`, and `referencedEvidence`. Each file reference has only `fileName` and lowercase `sha256`; each referenced-evidence entry has only `role`, `fileName`, and lowercase `sha256`. All names are safe paths relative to the input manifest directory. Compute the exact canonical input-manifest SHA-256.
 6. From the exact built/reviewed helper checkout, invoke only the protected operator CLI:
 
@@ -95,7 +95,7 @@ Machine grading remains Mathematical V1 or explicit failure. A later authenticat
    ```
 
 3. Print `output/pdf/ten-kings-mathematical-calibration-target-v1.pdf` one-sided on Letter paper at **Actual size / 100%**. Disable Fit, Shrink, Scale to fit, borderless expansion, and duplex printing.
-4. Use either a traceable instrument with documented U95 or an explicitly non-traceable product-owner-attested device. The printed target is acceptable only when both axes pass the same unchanged numerical gate:
+4. Use the product-owner-confirmed geometry of the exact hash-protected calibration target. The runner derives that authority automatically from the active session and asks for no measuring-device or calibration-certificate fields. The printed target remains acceptable only when both axes pass the same unchanged numerical gate:
 
    ```text
    abs(measuredSpanMm - nominalSpanMm) + measurementU95Mm <= 0.20 mm
@@ -103,23 +103,7 @@ Machine grading remains Mathematical V1 or explicit failure. A later authenticat
 
    Verify the 100.00 mm X bar and 200.00 mm Y bar. Verify the cut coupon independently at 63.50 mm by 88.90 mm with the same equation. A visual or printer-dialog claim is not metrology.
 
-   The preferred traceable path records instrument ID, kind, calibration version, calibration-artifact SHA-256, and documented U95. The owner-authorized alternative does not claim a current calibration certificate or traceability. For every device it records exact manufacturer, model, serial number, maximum range, accuracy bound, resolution, stated U95, owner-attestation ID, owner identity, timestamp, and the immutable statement `product_owner_attested_non_traceable_measurement_v1`. `statedU95Mm` must be positive and at least `accuracyMm`; every submitted measurement U95 must be at least the stated U95. The maximum range must cover the actual and nominal span being measured, so a 152.4 mm/6-inch device cannot authorize the 200.00 mm bar.
-
-   Create each owner-attestation artifact with the checked-in write-once command, never by hand-editing JSON:
-
-   ```powershell
-   .\scripts\ai-grader\new-mathematical-calibration-owner-attestation-v1.ps1 `
-     -OutputPath '<new-protected-attestation-path>.json' `
-     -OwnerAttestationId '<safe-unique-attestation-id>' `
-     -ProductOwnerId '<safe-product-owner-id>' `
-     -InstrumentId '<safe-device-id>' `
-     -Manufacturer '<exact-manufacturer>' -Model '<exact-model>' -SerialNumber '<exact-serial>' `
-     -MaximumRangeMm <device-range-mm> -AccuracyMm <absolute-accuracy-mm> `
-     -ResolutionMm <resolution-mm> -StatedU95Mm <u95-mm> `
-     -ConfirmProductOwnerAttestation
-   ```
-
-   Preserve the emitted SHA-256. In the matching metrology instrument object set `kind` to `product_owner_attested_device`, `ownerAttestationVersion` to `1`, `ownerAttestationSha256` to that emitted hash, copy the exact device fields, and use `product_owner_attested_measurement_v1`. The materializer rereads canonical attestation bytes and requires every embedded identity/specification to match; conversion to traceable authority and fallback to another device are prohibited.
+   Record the already required measured values and U95 values without entering or validating a device identity. The immutable measurement formulas, U95 propagation, physical analyzer, centralized thresholds, and grading/subgrading calculations are unchanged. The target authority object is generated by the runner and must match the capture session's exact `targetVersion` and `targetSha256`; it cannot be hand-authored, substituted, or rebound to another target.
 5. The coupon reverse used for flat-field evidence must be blank, matte, neutral, and free of print show-through. Reject and reprint if the physical target, cut, reverse, or verification evidence is unsuitable.
 6. Append the planned hardware action to `docs/handoffs/SESSION_LOG.md`. Ask Mark to confirm that the verified, clearly non-production target is positioned checkerboard face up. No capture may occur before that confirmation.
 
@@ -228,12 +212,12 @@ After exactly 102 captures, create a new write-once 28-slot metrology template:
   -MetrologyInputPath '<new-metrology-json-path>'
 ```
 
-Complete every applicable field from observed physical evidence. Leave the unused instrument-authority branch null; submission sanitizes each instrument to its selected exact branch. The template requires:
+Complete every physical-value field from observed evidence. The template has no measuring-device or certificate fields; submission derives the protected target geometry authority from the active session. The template requires:
 
-- print-scale X/Y and coupon-cut X/Y measurements with U95 and either traceable instrument authority or exact product-owner-attested non-traceable authority; and
-- three independently recorded source/card-center point measurements for each of the eight fixed lighting directions, including point U95, the allowlisted fixed-ring geometry method, and its instrument authority.
+- print-scale X/Y and coupon-cut X/Y measurements with the same required U95 values; and
+- three independently recorded source/card-center point measurements for each of the eight fixed lighting directions, including point U95 and the same allowlisted fixed-ring geometry method.
 
-For owner-attested devices, create the write-once canonical attestation before entering metrology. Do not reuse an attestation for a different device identity/specification, understate its U95, exceed its range, describe it as calibrated/traceable, or use it as conversion fallback. The physical acceptance formulas and all centralized thresholds are unchanged.
+No device attestation or certificate artifact is created. The runner inserts `product_owner_confirmed_exact_target_geometry_v1`, bound to the exact protected target version/hash already held by the capture session. The physical acceptance formulas and all centralized thresholds are unchanged.
 
 Compute the exact completed-file SHA-256 and independently review the artifact. Submission is explicit and immutable:
 

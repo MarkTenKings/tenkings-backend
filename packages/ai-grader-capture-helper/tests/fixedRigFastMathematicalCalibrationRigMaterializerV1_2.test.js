@@ -147,38 +147,27 @@ test("materializes deterministic write-once authority and reopens through the re
   }
 });
 
-test("materializes explicitly non-traceable product-owner-attested metrology with purpose-bound evidence", async () => {
-  const root = await temporary("rig-materializer-owner-attested");
+test("materializes product-owner-confirmed protected target geometry without device authority", async () => {
+  const root = await temporary("rig-materializer-protected-target-geometry");
   try {
-    const prepared = await prepareFastCalibrationRigMaterializationFixtureV1_2(root, { ownerAttested: true });
+    const prepared = await prepareFastCalibrationRigMaterializationFixtureV1_2(root, { protectedTargetGeometry: true });
     const result = await materializeFastCalibrationRigAuthorityV1_2(prepared.materializerInput);
     const directory = path.join(prepared.acceptanceRoot, result.directoryName);
     const evidence = JSON.parse(await fs.readFile(path.join(directory, "rig-characterization-source-evidence-v1.json"), "utf8"));
-    assert.ok(evidence.files.some((entry) => entry.sourceRole === "product_owner_attestation"));
     assert.equal(evidence.files.some((entry) => entry.sourceRole === "instrument_calibration"), false);
+    assert.equal(evidence.files.some((entry) => entry.sourceRole === "print_verified_calibration_target"), true);
 
-    const wrongRoot = await temporary("rig-materializer-owner-attested-wrong-role");
+    const wrongRoot = await temporary("rig-materializer-protected-target-mismatch");
     try {
-      const wrong = await prepareFastCalibrationRigMaterializationFixtureV1_2(wrongRoot, { ownerAttested: true });
-      wrong.inputManifest.referencedEvidence.find((entry) => entry.role === "product_owner_attestation").role = "instrument_calibration";
-      await rewriteInput(wrong);
-      await assert.rejects(
-        () => materializeFastCalibrationRigAuthorityV1_2(wrong.materializerInput),
-        /purpose-bound bytes|product-owner-attestation/i,
-      );
-    } finally { await fs.rm(wrongRoot, { recursive: true, force: true }); }
-
-    const mismatchRoot = await temporary("rig-materializer-owner-attested-mismatch");
-    try {
-      const mismatch = await prepareFastCalibrationRigMaterializationFixtureV1_2(mismatchRoot, {
-        ownerAttested: true,
-        ownerAttestationMismatch: true,
+      const wrong = await prepareFastCalibrationRigMaterializationFixtureV1_2(wrongRoot, {
+        protectedTargetGeometry: true,
+        protectedTargetMismatch: true,
       });
       await assert.rejects(
-        () => materializeFastCalibrationRigAuthorityV1_2(mismatch.materializerInput),
-        /attestation model does not match the measurement instrument/i,
+        () => materializeFastCalibrationRigAuthorityV1_2(wrong.materializerInput),
+        /does not match the source capture target identity/i,
       );
-    } finally { await fs.rm(mismatchRoot, { recursive: true, force: true }); }
+    } finally { await fs.rm(wrongRoot, { recursive: true, force: true }); }
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 

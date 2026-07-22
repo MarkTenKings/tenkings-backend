@@ -191,25 +191,17 @@ interface FixedRigMathematicalCalibrationCertifiedInstrumentV1 {
   calibrationSha256: string;
 }
 
-interface FixedRigMathematicalCalibrationOwnerAttestedInstrumentV1 {
-  instrumentId: string;
-  kind: "product_owner_attested_device";
-  ownerAttestationVersion: "1";
-  ownerAttestationSha256: string;
-  manufacturer: string;
-  model: string;
-  serialNumber: string;
-  maximumRangeMm: number;
-  accuracyMm: number;
-  resolutionMm: number;
-  statedU95Mm: number;
-  ownerAttestationId: string;
-  authorityStatement: "product_owner_attested_non_traceable_measurement_v1";
+interface FixedRigMathematicalCalibrationProtectedTargetGeometryV1 {
+  instrumentId: "protected-calibration-target-geometry-v1";
+  kind: "protected_target_geometry";
+  targetVersion: string;
+  targetSha256: string;
+  authorityStatement: "product_owner_confirmed_exact_target_geometry_v1";
 }
 
 export type FixedRigMathematicalCalibrationInstrumentV1 =
   | FixedRigMathematicalCalibrationCertifiedInstrumentV1
-  | FixedRigMathematicalCalibrationOwnerAttestedInstrumentV1;
+  | FixedRigMathematicalCalibrationProtectedTargetGeometryV1;
 
 export type RecordFixedRigMathematicalCalibrationMeasurementV1Request =
   | {
@@ -473,13 +465,6 @@ function assertSafeId(value: unknown, name: string): string {
 
 function assertSha256(value: unknown, name: string): string {
   if (typeof value !== "string" || !SHA256.test(value)) throw new Error(`${name} must be an exact lowercase SHA-256.`);
-  return value;
-}
-
-function assertSafeText(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.length < 1 || value.length > 191 || value.trim() !== value || /[\u0000-\u001f\u007f]/.test(value)) {
-    throw new Error(`${name} must be canonical non-empty text without control characters.`);
-  }
   return value;
 }
 
@@ -869,49 +854,30 @@ function assertCaptureRequest(input: CaptureFixedRigMathematicalCalibrationStepV
 
 function assertInstrument(instrument: FixedRigMathematicalCalibrationInstrumentV1): void {
   assertSafeId(instrument.instrumentId, "instrument.instrumentId");
-  if (!["traceable_ruler", "caliper", "fixed_rig_geometry", "product_owner_attested_device"].includes(instrument.kind)) {
+  if (!["traceable_ruler", "caliper", "fixed_rig_geometry", "protected_target_geometry"].includes(instrument.kind)) {
     throw new Error("instrument.kind is not allowlisted.");
   }
-  if (instrument.kind === "product_owner_attested_device") {
-    if (instrument.ownerAttestationVersion !== "1") {
-      throw new Error("Owner-attested measurement devices require ownerAttestationVersion 1.");
+  if (instrument.kind === "protected_target_geometry") {
+    if (instrument.instrumentId !== "protected-calibration-target-geometry-v1" ||
+        instrument.authorityStatement !== "product_owner_confirmed_exact_target_geometry_v1") {
+      throw new Error("Protected target geometry requires the exact product-owner-confirmed authority identity.");
     }
-    assertSha256(instrument.ownerAttestationSha256, "instrument.ownerAttestationSha256");
-    assertSafeText(instrument.manufacturer, "instrument.manufacturer");
-    assertSafeText(instrument.model, "instrument.model");
-    assertSafeId(instrument.serialNumber, "instrument.serialNumber");
-    assertSafeId(instrument.ownerAttestationId, "instrument.ownerAttestationId");
-    finite(instrument.maximumRangeMm, "instrument.maximumRangeMm", Number.EPSILON);
-    finite(instrument.accuracyMm, "instrument.accuracyMm", Number.EPSILON);
-    finite(instrument.resolutionMm, "instrument.resolutionMm", Number.EPSILON);
-    const statedU95Mm = finite(instrument.statedU95Mm, "instrument.statedU95Mm", Number.EPSILON);
-    if (statedU95Mm < (instrument.accuracyMm ?? Number.POSITIVE_INFINITY)) {
-      throw new Error("Owner-attested statedU95Mm cannot be less than the device accuracy bound.");
-    }
-    if (instrument.authorityStatement !== "product_owner_attested_non_traceable_measurement_v1") {
-      throw new Error("Owner-attested measurement devices require the exact non-traceable authority statement.");
-    }
+    assertSafeId(instrument.targetVersion, "instrument.targetVersion");
+    assertSha256(instrument.targetSha256, "instrument.targetSha256");
     return;
   }
   assertSafeId(instrument.calibrationVersion, "instrument.calibrationVersion");
   assertSha256(instrument.calibrationSha256, "instrument.calibrationSha256");
 }
 
-function assertPhysicalMeasurementInstrumentAuthority(input: {
+function assertPhysicalMeasurementTargetAuthority(input: {
   instrument: FixedRigMathematicalCalibrationInstrumentV1;
-  measurementMethod: string;
-  measurementU95Mm: number;
-  requiredRangeMm: number;
+  targetVersion: string;
+  targetSha256: string;
 }): void {
-  if (input.instrument.kind !== "product_owner_attested_device") return;
-  if (input.measurementMethod !== "product_owner_attested_measurement_v1") {
-    throw new Error("Owner-attested measurements require product_owner_attested_measurement_v1.");
-  }
-  if (input.measurementU95Mm < (input.instrument.statedU95Mm ?? Number.POSITIVE_INFINITY)) {
-    throw new Error("Owner-attested measurementU95Mm cannot understate the attested device uncertainty.");
-  }
-  if (input.requiredRangeMm > (input.instrument.maximumRangeMm ?? Number.NEGATIVE_INFINITY)) {
-    throw new Error("Owner-attested measurement exceeds the attested device range.");
+  if (input.instrument.kind !== "protected_target_geometry") return;
+  if (input.instrument.targetVersion !== input.targetVersion || input.instrument.targetSha256 !== input.targetSha256) {
+    throw new Error("Protected target geometry authority does not match the active session target identity.");
   }
 }
 
@@ -1384,6 +1350,11 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       assertSafeId(request.measurementMethod, "measurementMethod");
       assertInstrument(request.instrument);
       const state = await this.load(request.sessionId);
+      assertPhysicalMeasurementTargetAuthority({
+        instrument: request.instrument,
+        targetVersion: state.subject.targetVersion,
+        targetSha256: state.subject.targetSha256,
+      });
       if (state.sealedAt) throw new Error("Sealed calibration capture sessions are immutable.");
       const existing = state.measurements.find((record) => record.operationId === request.operationId);
       if (existing) return statusFor(state, this.sessionDir(request.sessionId));
@@ -1402,12 +1373,6 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         const nominalSpanMm = finite(request.nominalSpanMm, "nominalSpanMm", 0.001);
         const measuredSpanMm = finite(request.measuredSpanMm, "measuredSpanMm", 0.001);
         const measurementU95Mm = finite(request.measurementU95Mm, "measurementU95Mm", 0);
-        assertPhysicalMeasurementInstrumentAuthority({
-          instrument: request.instrument,
-          measurementMethod: request.measurementMethod,
-          measurementU95Mm,
-          requiredRangeMm: Math.max(nominalSpanMm, measuredSpanMm),
-        });
         Object.assign(payload, {
           axis: request.axis,
           nominalSpanMm,
@@ -1424,12 +1389,6 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         const nominalDimensionMm = finite(request.nominalDimensionMm, "nominalDimensionMm", 0.001);
         const measuredDimensionMm = finite(request.measuredDimensionMm, "measuredDimensionMm", 0.001);
         const measurementU95Mm = finite(request.measurementU95Mm, "measurementU95Mm", 0);
-        assertPhysicalMeasurementInstrumentAuthority({
-          instrument: request.instrument,
-          measurementMethod: request.measurementMethod,
-          measurementU95Mm,
-          requiredRangeMm: Math.max(nominalDimensionMm, measuredDimensionMm),
-        });
         Object.assign(payload, {
           axis: request.axis,
           nominalDimensionMm,
@@ -1455,16 +1414,6 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           y: finite(request.cardCenterPointMm.y, "cardCenterPointMm.y"),
         };
         const pointU95Mm = finite(request.pointU95Mm, "pointU95Mm", 0);
-        assertPhysicalMeasurementInstrumentAuthority({
-          instrument: request.instrument,
-          measurementMethod: request.measurementMethod,
-          measurementU95Mm: pointU95Mm,
-          requiredRangeMm: Math.max(
-            Math.abs(sourcePointMm.x), Math.abs(sourcePointMm.y),
-            Math.abs(cardCenterPointMm.x), Math.abs(cardCenterPointMm.y),
-            Math.hypot(sourcePointMm.x - cardCenterPointMm.x, sourcePointMm.y - cardCenterPointMm.y),
-          ),
-        });
         Object.assign(payload, {
           channelIndex,
           sampleIndex,
