@@ -22,8 +22,8 @@ const ARCHIVE_SCHEMA = "ten-kings-ai-grader-stale-invalid-review-archive-v1" as 
 const RECEIPT_SCHEMA = "ten-kings-ai-grader-stale-invalid-review-archive-receipt-v1" as const;
 const JOURNAL_SCHEMA = "ten-kings-ai-grader-stale-invalid-review-archive-journal-v1" as const;
 const POINTER_SCHEMA = "ten-kings-ai-grader-stale-invalid-review-archive-pointer-v1" as const;
-const EXTERNAL_SAFE_OFF_RECEIPT_SCHEMA = "ten-kings-ai-grader-stale-invalid-review-external-safe-off-receipt-v1" as const;
-const EXTERNAL_SAFE_OFF_PURPOSE = "stale_invalid_review_archive_preflight" as const;
+export const EXTERNAL_SAFE_OFF_RECEIPT_SCHEMA_V1 = "ten-kings-ai-grader-stale-invalid-review-external-safe-off-receipt-v1" as const;
+export const EXTERNAL_SAFE_OFF_PURPOSE_V1 = "stale_invalid_review_archive_preflight" as const;
 const REASON = "owner_removed_stale_invalid_finding_review_v1" as const;
 const TARGET_SOURCE_CANDIDATES = 16;
 const TARGET_VALIDATION_ISSUES = 32;
@@ -408,18 +408,38 @@ function exactZeroedFrame(value: unknown, index: number): JsonRecord {
   return value;
 }
 
-function externalSafeOffEvidenceFromBytes(
+type ExternalSafeOffReceiptIncidentV1 = Pick<
+  StaleInvalidRapidCaptureQueueIncidentV1,
+  "incidentId" | "owner" | "authorizationSource" | "safeOffController"
+>;
+
+interface ParsedExternalSafeOffReceiptV1 {
+  result: JsonRecord;
+  startedMs: number;
+  finishedMs: number;
+}
+
+export interface VerifiedExternalSafeOffReceiptOperationV1 {
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  controllerIdentity: string;
+  controllerHost: string;
+  controllerPort: number;
+  ackResponses: ["W86ACK0", "W85ACK0", "W11ACK0"];
+  zeroedChannels: [1, 2, 3, 4, 5, 6, 7, 8];
+  lightsCommanded: false;
+  persistentSaved: false;
+}
+
+function parsedExternalSafeOffReceiptV1(
   bytes: Buffer,
-  identity: FileIdentityV1,
-  status: JsonRecord,
-  statusCapturedAt: string,
-  executedAt: string,
-  incident: Pick<StaleInvalidRapidCaptureQueueIncidentV1, "incidentId" | "owner" | "authorizationSource" | "safeOffController">,
-): SafeOffEvidenceV1 {
+  incident: ExternalSafeOffReceiptIncidentV1,
+): ParsedExternalSafeOffReceiptV1 {
   const receipt = parseCanonical<JsonRecord>(bytes, "External safe-off receipt");
   if (!exactKeys(receipt, ["schemaVersion", "incidentId", "purpose", "authorization", "operation"]) ||
-      receipt.schemaVersion !== EXTERNAL_SAFE_OFF_RECEIPT_SCHEMA || receipt.incidentId !== incident.incidentId ||
-      receipt.purpose !== EXTERNAL_SAFE_OFF_PURPOSE || !exactKeys(receipt.authorization, ["owner", "source"]) ||
+      receipt.schemaVersion !== EXTERNAL_SAFE_OFF_RECEIPT_SCHEMA_V1 || receipt.incidentId !== incident.incidentId ||
+      receipt.purpose !== EXTERNAL_SAFE_OFF_PURPOSE_V1 || !exactKeys(receipt.authorization, ["owner", "source"]) ||
       receipt.authorization.owner !== incident.owner || receipt.authorization.source !== incident.authorizationSource ||
       !exactKeys(receipt.operation, ["ok", "service", "command", "result"]) || receipt.operation.ok !== true ||
       receipt.operation.service !== "ai-grader-capture-helper" || receipt.operation.command !== "leimac-idmu-safe-off" ||
@@ -465,6 +485,56 @@ function externalSafeOffEvidenceFromBytes(
       result.safety.persistentSaved !== false || result.safety.arbitraryWritesAllowed !== false) {
     throw new Error("External safe-off receipt safety summary is invalid.");
   }
+  return { result, startedMs, finishedMs };
+}
+
+export function verifyExternalSafeOffReceiptOperationV1(
+  bytes: Buffer,
+  incident: ExternalSafeOffReceiptIncidentV1 = STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722,
+): VerifiedExternalSafeOffReceiptOperationV1 {
+  const parsed = parsedExternalSafeOffReceiptV1(bytes, incident);
+  return {
+    startedAt: parsed.result.startedAt,
+    finishedAt: parsed.result.finishedAt,
+    durationMs: parsed.result.durationMs,
+    controllerIdentity: incident.safeOffController.identity,
+    controllerHost: incident.safeOffController.host,
+    controllerPort: incident.safeOffController.port,
+    ackResponses: ["W86ACK0", "W85ACK0", "W11ACK0"],
+    zeroedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+    lightsCommanded: false,
+    persistentSaved: false,
+  };
+}
+
+export function buildExternalSafeOffReceiptBytesV1(
+  operation: unknown,
+  incident: ExternalSafeOffReceiptIncidentV1 = STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722,
+): Buffer {
+  const bytes = canonicalBytes({
+    schemaVersion: EXTERNAL_SAFE_OFF_RECEIPT_SCHEMA_V1,
+    incidentId: incident.incidentId,
+    purpose: EXTERNAL_SAFE_OFF_PURPOSE_V1,
+    authorization: { owner: incident.owner, source: incident.authorizationSource },
+    operation,
+  });
+  parsedExternalSafeOffReceiptV1(bytes, incident);
+  return bytes;
+}
+
+function externalSafeOffEvidenceFromBytes(
+  bytes: Buffer,
+  identity: FileIdentityV1,
+  status: JsonRecord,
+  statusCapturedAt: string,
+  executedAt: string,
+  incident: ExternalSafeOffReceiptIncidentV1,
+): SafeOffEvidenceV1 {
+  const parsedReceipt = parsedExternalSafeOffReceiptV1(bytes, incident);
+  const result = parsedReceipt.result;
+  const startedMs = parsedReceipt.startedMs;
+  const finishedMs = parsedReceipt.finishedMs;
+  const controller = incident.safeOffController;
 
   const statusCapturedMs = timestampMs(statusCapturedAt, "Idle status capture");
   const executionMs = timestampMs(executedAt, "Maintenance execution");
