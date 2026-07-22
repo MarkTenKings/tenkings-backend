@@ -453,7 +453,7 @@ export async function finalizeMathematicalCalibrationV1({
     const subjectMismatches = [
       ["sessionId", subject.sessionId, stationAuthority.sessionId],
       ["sourceCaptureManifestSha256", subject.sourceCaptureManifestSha256, analysis.sourceManifestSha256],
-      ["sourceCapturePackage.manifestSha256", subject.sourceCaptureManifestSha256, sourcePackage.manifestSha256],
+      ["sourceCapturePackageSha256", subject.sourceCapturePackageSha256, sourcePackage.manifestSha256],
       ["analysisSha256", subject.analysisSha256, analysis.analysisSha256],
       ["analysisFileSha256", subject.analysisFileSha256, sha256(analysisBytes)],
       ["thresholdSetHash", subject.thresholdSetHash, sourcePackage.thresholdSetHash],

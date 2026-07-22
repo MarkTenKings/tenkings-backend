@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { createRequire } from "node:module";
 import os from "node:os";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -9,6 +10,14 @@ import {
   finalizeMathematicalCalibrationV1,
   verifyMathematicalCalibrationAnalysisV1,
 } from "../finalize-mathematical-calibration-v1.mjs";
+import {
+  assertOperationalAcceptanceAnalysisSourceAuthorityV1,
+} from "../create-product-owner-operational-acceptance-v1.mjs";
+
+const require = createRequire(import.meta.url);
+const { PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT } = require(
+  "../../../packages/shared/dist/index.js",
+);
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -321,14 +330,11 @@ test("owner-authorized rejection preserves mathematical failure and emits a 13-m
   try {
     const fixture = await writeAnalysisFixture(temporaryRoot);
     const { analysisPath } = fixture;
-    const sourceAnalysis = {
-      ...fixture.value,
-      sourceManifestSha256: fixture.value.sourceCapturePackage.manifestSha256,
-    };
-    const { hashPolicy: _hashPolicy, analysisPayloadJson: _payload, analysisSha256: _sha, ...payload } = sourceAnalysis;
-    sourceAnalysis.analysisPayloadJson = JSON.stringify(canonical(payload));
-    sourceAnalysis.analysisSha256 = digest(Buffer.from(sourceAnalysis.analysisPayloadJson, "utf8"));
-    await writeFile(analysisPath, JSON.stringify(sourceAnalysis), "utf8");
+    const sourceAnalysis = fixture.value;
+    assert.notEqual(
+      sourceAnalysis.sourceManifestSha256,
+      sourceAnalysis.sourceCapturePackage.manifestSha256,
+    );
     const outputDir = path.join(temporaryRoot, "owner-authorized");
     const registryStagingRoot = path.join(temporaryRoot, "owner-staging");
     const authorityPath = path.join(temporaryRoot, "owner-authority.json");
@@ -376,7 +382,7 @@ test("owner-authorized rejection preserves mathematical failure and emits a 13-m
       subject: {
         sessionId: sourceAnalysis.sourceCapturePackage.stationAuthority.sessionId,
         sourceCaptureManifestSha256: sourceAnalysis.sourceManifestSha256,
-        sourceCapturePackageSha256: "6".repeat(64),
+        sourceCapturePackageSha256: sourceAnalysis.sourceCapturePackage.manifestSha256,
         analysisSha256: sourceAnalysis.analysisSha256,
         analysisFileSha256: digest(await readFile(analysisPath)),
         thresholdSetHash: sourceAnalysis.sourceCapturePackage.thresholdSetHash,
@@ -391,26 +397,28 @@ test("owner-authorized rejection preserves mathematical failure and emits a 13-m
         artifactId: operationalProfileCandidate.artifactId,
       },
     };
-    const finalized = await finalizeMathematicalCalibrationV1({
-      analysisPath,
-      outputDir,
-      registryStagingRoot,
-      productOwnerOperationalAcceptancePath: authorityPath,
-      buildFixedRigPhysicalCalibrationV1: () => result,
-      verifyProductOwnerOperationalAcceptanceV1: () => authority,
-      validateMathematicalCalibrationForOperationalUseV1: (profile) => ({
-        valid: true,
-        isCalibrated: false,
-        isOperationallyAccepted: true,
-        profile,
-        issues,
-      }),
-      implementationIdentity: {
-        implementationGitSha: "1".repeat(40),
-        finalizerSha256: "2".repeat(64),
-        authorityProducerSha256: "3".repeat(64),
-      },
-    });
+    const finalizeWithAuthority = (candidateAuthority, candidateOutputDir, candidateStagingRoot) =>
+      finalizeMathematicalCalibrationV1({
+        analysisPath,
+        outputDir: candidateOutputDir,
+        registryStagingRoot: candidateStagingRoot,
+        productOwnerOperationalAcceptancePath: authorityPath,
+        buildFixedRigPhysicalCalibrationV1: () => result,
+        verifyProductOwnerOperationalAcceptanceV1: () => candidateAuthority,
+        validateMathematicalCalibrationForOperationalUseV1: (profile) => ({
+          valid: true,
+          isCalibrated: false,
+          isOperationallyAccepted: true,
+          profile,
+          issues,
+        }),
+        implementationIdentity: {
+          implementationGitSha: "1".repeat(40),
+          finalizerSha256: "2".repeat(64),
+          authorityProducerSha256: "3".repeat(64),
+        },
+      });
+    const finalized = await finalizeWithAuthority(authority, outputDir, registryStagingRoot);
     assert.equal(finalized.acceptance.status, "rejected");
     assert.equal(finalized.acceptance.isCalibrated, false);
     assert.deepEqual(finalized.acceptance.issues, issues);
@@ -444,7 +452,59 @@ test("owner-authorized rejection preserves mathematical failure and emits a 13-m
       handoff.operationalAcceptanceAuthorityFileSha256,
       finalized.bundle.manifest.operationalAcceptance.authorityFileSha256,
     );
+    await assert.rejects(
+      finalizeWithAuthority({
+        ...authority,
+        subject: {
+          ...authority.subject,
+          sourceCaptureManifestSha256: "7".repeat(64),
+        },
+      }, path.join(temporaryRoot, "wrong-capture-manifest"), path.join(temporaryRoot, "wrong-capture-staging")),
+      /sourceCaptureManifestSha256/,
+    );
+    await assert.rejects(
+      finalizeWithAuthority({
+        ...authority,
+        subject: {
+          ...authority.subject,
+          sourceCapturePackageSha256: "8".repeat(64),
+        },
+      }, path.join(temporaryRoot, "wrong-source-package"), path.join(temporaryRoot, "wrong-package-staging")),
+      /sourceCapturePackageSha256/,
+    );
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
+});
+
+test("owner-authority producer independently binds distinct capture-manifest and source-package identities", () => {
+  const incident = PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT;
+  const sourceAnalysis = {
+    analysisSha256: incident.analysisSha256,
+    sourceManifestSha256: incident.sourceCaptureManifestSha256,
+    sourceCapturePackage: {
+      manifestSha256: incident.sourceCapturePackageSha256,
+      stationAuthority: { sessionId: incident.sessionId },
+      thresholdSetHash: incident.thresholdSetHash,
+    },
+  };
+  assert.notEqual(sourceAnalysis.sourceManifestSha256, sourceAnalysis.sourceCapturePackage.manifestSha256);
+  assert.doesNotThrow(() => assertOperationalAcceptanceAnalysisSourceAuthorityV1(sourceAnalysis));
+  assert.throws(
+    () => assertOperationalAcceptanceAnalysisSourceAuthorityV1({
+      ...sourceAnalysis,
+      sourceManifestSha256: "7".repeat(64),
+    }),
+    /does not reproduce the exact source authority/,
+  );
+  assert.throws(
+    () => assertOperationalAcceptanceAnalysisSourceAuthorityV1({
+      ...sourceAnalysis,
+      sourceCapturePackage: {
+        ...sourceAnalysis.sourceCapturePackage,
+        manifestSha256: "8".repeat(64),
+      },
+    }),
+    /does not reproduce the exact source authority/,
+  );
 });

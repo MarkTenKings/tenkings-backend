@@ -73,6 +73,16 @@ function safeMember(root, relative, label) {
   return resolved;
 }
 
+export function assertOperationalAcceptanceAnalysisSourceAuthorityV1(analysis) {
+  if (
+    analysis.analysisSha256 !== INCIDENT.analysisSha256 ||
+    analysis.sourceManifestSha256 !== INCIDENT.sourceCaptureManifestSha256 ||
+    analysis.sourceCapturePackage?.manifestSha256 !== INCIDENT.sourceCapturePackageSha256 ||
+    analysis.sourceCapturePackage?.stationAuthority?.sessionId !== INCIDENT.sessionId ||
+    analysis.sourceCapturePackage?.thresholdSetHash !== INCIDENT.thresholdSetHash
+  ) throw new Error("Operational acceptance analysis does not reproduce the exact source authority.");
+}
+
 async function main() {
   const parsed = argumentsV1(process.argv.slice(2));
   if (parsed.help) {
@@ -119,13 +129,7 @@ async function main() {
     throw new Error("Operational acceptance requires the exact certified analysis file.");
   }
   const analysis = verifyMathematicalCalibrationAnalysisV1(JSON.parse(analysisBytes.toString("utf8")));
-  if (
-    analysis.analysisSha256 !== INCIDENT.analysisSha256 ||
-    analysis.sourceManifestSha256 !== INCIDENT.sourceCaptureManifestSha256 ||
-    analysis.sourceCapturePackage?.manifestSha256 !== INCIDENT.sourceCaptureManifestSha256 ||
-    analysis.sourceCapturePackage?.stationAuthority?.sessionId !== INCIDENT.sessionId ||
-    analysis.sourceCapturePackage?.thresholdSetHash !== INCIDENT.thresholdSetHash
-  ) throw new Error("Operational acceptance analysis does not reproduce the exact source authority.");
+  assertOperationalAcceptanceAnalysisSourceAuthorityV1(analysis);
   const result = buildFixedRigPhysicalCalibrationV1(analysis.builderInput);
   if (result.status !== "rejected" || result.isCalibrated || !result.operationalProfileCandidate ||
       result.artifact.artifactSha256 !== INCIDENT.physicalArtifactSha256 ||
@@ -204,7 +208,10 @@ async function main() {
   })}\n`);
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+if (invokedPath === modulePath) {
+  main().catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}
