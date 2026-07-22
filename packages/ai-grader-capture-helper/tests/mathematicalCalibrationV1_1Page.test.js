@@ -25,7 +25,7 @@ test("rendered V1.0.1 and V1.1 operator-page inline scripts compile", () => {
   assertRenderedInlineScriptsCompile(MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, "mathematical-calibration-v1.1");
 });
 
-test("V1.0.1 operator page is session-bound, read-only, and exposes pose, aggregate, accepted, and failed evidence", () => {
+test("V1.0.1 operator page acknowledges only the exact displayed MJPEG frame and exposes no capture authority", () => {
   assert.equal(MATHEMATICAL_CALIBRATION_V1_PAGE_PATH, "/calibration/mathematical-v1");
   assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /X-AI-Grader-Station-Token/);
   assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /X-AI-Grader-Mathematical-Calibration-Session-Id/);
@@ -35,14 +35,22 @@ test("V1.0.1 operator page is session-bound, read-only, and exposes pose, aggreg
   assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /failedAttempts/);
   assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /Advisory positioning only/i);
   assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /Reconnect fresh preview epoch/);
+  assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /X-AI-Grader-Session-Id/);
+  assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /X-AI-Grader-Preview-Epoch/);
+  assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /X-AI-Grader-Frame-Id/);
+  assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /X-AI-Grader-Captured-At/);
+  assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /\/calibration\/mathematical-v1\/displayed-frame/);
+  assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /body:JSON\.stringify\(frame\)/);
   assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /const imageUrl=URL\.createObjectURL/);
   assert.equal(
     (MATHEMATICAL_CALIBRATION_V1_PAGE_HTML.match(/URL\.revokeObjectURL\(imageUrl\)/g) ?? []).length,
-    2,
-    "each preview Blob URL must be revoked on image load or error",
+    3,
+    "each preview Blob URL must be revoked for superseded load, displayed load, or error",
   );
-  assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /image\.onload=.*URL\.revokeObjectURL\(imageUrl\).*image\.onerror=.*URL\.revokeObjectURL\(imageUrl\)/s);
+  assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /context\.drawImage\(image.*URL\.revokeObjectURL\(imageUrl\).*acknowledgeDisplayedFrame\(identity\)/s);
   assert.doesNotMatch(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /\/capture["']/);
+  assert.doesNotMatch(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /capture-authorization/);
+  assert.doesNotMatch(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /JSON\.stringify\([^)]*(operationId|targetFace|sampleIndex|channelIndex|acceptanceResult)/);
   assert.doesNotMatch(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /stationToken=/i);
 });
 

@@ -171,27 +171,28 @@ function Write-PoseProgress {
   }
 }
 
-function Get-LivePreviewBinding {
+function Get-DisplayedFrameCaptureAuthorization {
   param($Slot)
   if ($Slot.targetFace -ne 'checkerboard') { return $null }
-  $preview = (Invoke-CalibrationBridge -Method GET -Path '/preview/status').result
-  $math = $preview.mathematicalCalibrationPreview
-  if ($preview.status -ne 'live' -or $preview.cameraOwnership -ne 'preview_stream' -or
-      $null -eq $math -or $math.contractVersion -ne '1.0.1' -or $math.sessionId -ne $SessionId -or
-      -not $math.active -or [string]::IsNullOrWhiteSpace([string]$preview.sideEpoch) -or
-      [string]::IsNullOrWhiteSpace([string]$preview.latestFrameId) -or
-      $preview.latestFrameId -ne $math.lastFrameId -or $preview.lastFrameAt -ne $math.lastFrameAt) {
-    throw 'Checkerboard capture requires one live V1.0.1 preview bound to this exact session and latest frame. Open or reconnect the protected V1.0.1 page.'
+  $authorization = (Invoke-CalibrationBridge -Method POST -Path '/calibration/mathematical-v1/capture-authorization' -Body @{ sessionId = $SessionId }).result
+  if ($null -eq $authorization -or
+      [string]$authorization.sessionId -ne $SessionId -or
+      [string]$authorization.slotKey -ne (Get-SlotKey -Slot $Slot) -or
+      [string]$authorization.authorizationId -notmatch '^math-cal-auth-[a-f0-9]{32}$' -or
+      [string]$authorization.epoch -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' -or
+      [string]$authorization.frameId -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' -or
+      [string]$authorization.frameSha256 -notmatch '^[a-f0-9]{64}$' -or
+      [string]$authorization.detectorAssessmentSha256 -notmatch '^[a-f0-9]{64}$') {
+    throw 'Protected bridge returned an invalid or wrong-slot displayed-frame capture authorization.'
   }
-  try { $frameAt = [DateTimeOffset]::Parse([string]$preview.lastFrameAt) } catch { throw 'The live preview frame timestamp is invalid.' }
-  $ageMs = ([DateTimeOffset]::UtcNow - $frameAt.ToUniversalTime()).TotalMilliseconds
-  if ($ageMs -lt -1000 -or $ageMs -gt 2000) { throw 'The live preview frame is stale; reconnect and wait for a fresh epoch/frame before capture.' }
-  return @{
-    sessionId = $SessionId
-    epoch = [string]$preview.sideEpoch
-    frameId = [string]$preview.latestFrameId
-    capturedAt = [string]$preview.lastFrameAt
+  try {
+    $null = [DateTimeOffset]::Parse([string]$authorization.capturedAt)
+    $expiresAt = [DateTimeOffset]::Parse([string]$authorization.expiresAt)
+  } catch {
+    throw 'Protected bridge returned invalid displayed-frame authorization timestamps.'
   }
+  if ($expiresAt -le [DateTimeOffset]::UtcNow) { throw 'Displayed-frame capture authorization expired before capture began.' }
+  return $authorization
 }
 
 function Get-CalibrationState {
@@ -299,8 +300,8 @@ function Invoke-CaptureSlot {
   if (-not [string]::IsNullOrWhiteSpace([string]$Slot.removeReseatCycleId)) {
     $body.removeReseatCycleId = $Slot.removeReseatCycleId
   }
-  $previewBinding = Get-LivePreviewBinding -Slot $Slot
-  if ($null -ne $previewBinding) { $body.previewBinding = $previewBinding }
+  $captureAuthorization = Get-DisplayedFrameCaptureAuthorization -Slot $Slot
+  if ($null -ne $captureAuthorization) { $body.captureAuthorizationId = [string]$captureAuthorization.authorizationId }
   Write-Host ('Capturing exact slot ' + (Get-SlotKey -Slot $Slot) + ' with new operation ID ' + $body.operationId)
   return (Invoke-CalibrationBridge -Method POST -Path '/calibration/mathematical-v1/capture' -Body $body).result
 }

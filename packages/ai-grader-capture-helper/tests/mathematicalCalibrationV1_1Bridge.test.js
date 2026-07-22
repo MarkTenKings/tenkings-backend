@@ -113,6 +113,23 @@ async function v1BridgeFixture(root, options = {}) {
   };
 }
 
+function exactLatestDisplayedFrame(fixture) {
+  const preview = fixture.service.previewStatus();
+  return {
+    sessionId: fixture.sessionId,
+    epoch: preview.sideEpoch,
+    frameId: preview.latestFrameId,
+    capturedAt: preview.lastFrameAt,
+  };
+}
+
+async function acknowledgeLatestAndAuthorize(fixture) {
+  const displayed = exactLatestDisplayedFrame(fixture);
+  fixture.service.acknowledgeMathematicalCalibrationDisplayedFrame(displayed);
+  const authorization = await fixture.service.authorizeMathematicalCalibrationDisplayedFrame(fixture.sessionId);
+  return { displayed, authorization };
+}
+
 test("checkerboard detector default timeout allows ten-second bounded detection", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-checkerboard-timeout-"));
   const scriptPath = path.join(root, "delayed-detector.py");
@@ -287,7 +304,7 @@ test("V1.1 binds only a calibration session, exposes overlay-gated capture, and 
   await stream;
 });
 
-test("V1.0.1 preflight rejection preserves the active session and preview before fresh-binding retry", async () => {
+test("V1.0.1 displayed-frame preflight rejects wrong session, epoch, and slot without hardware work", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-preview-lifecycle-"));
   const fixture = await v1BridgeFixture(root);
   const wrong = mockPreviewExchange("wrong-calibration-session");
@@ -303,18 +320,25 @@ test("V1.0.1 preflight rejection preserves the active session and preview before
   assert.equal(before.cameraOwnership, "preview_stream");
   assert.equal(before.mathematicalCalibrationPreview.contractVersion, "1.0.1");
   assert.equal(before.mathematicalCalibrationPreview.sessionId, fixture.sessionId);
-  const firstBinding = {
-    sessionId: fixture.sessionId,
-    epoch: before.sideEpoch,
-    frameId: before.latestFrameId,
-    capturedAt: before.lastFrameAt,
-  };
+  const displayed = exactLatestDisplayedFrame(fixture);
   const initialSession = fixture.sessionSnapshot();
   const initialLifecycle = fixture.lifecycleSnapshot();
+  assert.throws(
+    () => fixture.service.acknowledgeMathematicalCalibrationDisplayedFrame({ ...displayed, sessionId: "wrong-request-session" }),
+    /exact active V1\.0\.1 session/i,
+  );
+  assert.throws(
+    () => fixture.service.acknowledgeMathematicalCalibrationDisplayedFrame({ ...displayed, epoch: `${displayed.epoch}-wrong` }),
+    /active session and preview epoch/i,
+  );
+  await assert.rejects(
+    fixture.service.authorizeMathematicalCalibrationDisplayedFrame(fixture.sessionId),
+    /page-acknowledged frame/i,
+  );
   await assert.rejects(
     fixture.service.captureMathematicalCalibrationStep({
       sessionId: "wrong-request-session", operationId: "v1-preview-wrong-request-session", role: "lens_geometry", sampleIndex: 1,
-      targetFace: "checkerboard", previewBinding: firstBinding,
+      targetFace: "checkerboard", captureAuthorizationId: "math-cal-auth-11111111111111111111111111111111",
     }),
     /exact active bridge-bound session/i,
   );
@@ -323,12 +347,12 @@ test("V1.0.1 preflight rejection preserves the active session and preview before
   assert.deepEqual(fixture.lifecycleSnapshot(), initialLifecycle);
   assert.equal(fixture.service.previewStatus().status, "live");
   assert.equal(fixture.service.previewStatus().cameraOwnership, "preview_stream");
-  assert.equal(fixture.service.previewStatus().sideEpoch, firstBinding.epoch);
+  assert.equal(fixture.service.previewStatus().sideEpoch, displayed.epoch);
 
   await assert.rejects(
     fixture.service.captureMathematicalCalibrationStep({
       sessionId: fixture.sessionId, operationId: "v1-preview-wrong-slot", role: "lens_geometry", sampleIndex: 2,
-      targetFace: "checkerboard", previewBinding: firstBinding,
+      targetFace: "checkerboard", captureAuthorizationId: "math-cal-auth-22222222222222222222222222222222",
     }),
     /does not match exact next slot/i,
   );
@@ -337,55 +361,88 @@ test("V1.0.1 preflight rejection preserves the active session and preview before
   assert.deepEqual(fixture.lifecycleSnapshot(), initialLifecycle);
   assert.equal(fixture.service.previewStatus().status, "live");
   assert.equal(fixture.service.previewStatus().cameraOwnership, "preview_stream");
-  assert.equal(fixture.service.previewStatus().sideEpoch, firstBinding.epoch);
+  assert.equal(fixture.service.previewStatus().sideEpoch, displayed.epoch);
+  first.request.emit("close");
+  await firstStream;
+});
+
+test("V1.0.1 exact displayed frame remains authoritative while continuous latest frames advance", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-displayed-frame-advance-"));
+  const fixture = await v1BridgeFixture(root);
+  const first = mockPreviewExchange(fixture.sessionId);
+  const firstStream = fixture.service.streamPreview(first.request, first.response, undefined);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const displayed = exactLatestDisplayedFrame(fixture);
+  fixture.service.acknowledgeMathematicalCalibrationDisplayedFrame(displayed);
+  await new Promise((resolve) => setTimeout(resolve, 550));
+  assert.notEqual(fixture.service.previewStatus().latestFrameId, displayed.frameId, "continuous preview must advance beyond the displayed frame");
+  const authorization = await fixture.service.authorizeMathematicalCalibrationDisplayedFrame(fixture.sessionId);
+  await firstStream;
+  assert.equal(authorization.frameId, displayed.frameId);
+  assert.match(authorization.frameSha256, /^[a-f0-9]{64}$/);
+  assert.match(authorization.detectorAssessmentSha256, /^[a-f0-9]{64}$/);
+  fixture.service.manifest.previewStatus.latestFrameId = "frame-continuously-advanced-after-authorization";
+  fixture.service.manifest.previewStatus.lastFrameAt = new Date().toISOString();
 
   const captured = await fixture.service.captureMathematicalCalibrationStep({
     sessionId: fixture.sessionId, operationId: "v1-preview-success", role: "lens_geometry", sampleIndex: 1,
-    targetFace: "checkerboard", previewBinding: firstBinding,
+    targetFace: "checkerboard", captureAuthorizationId: authorization.authorizationId,
   });
-  await firstStream;
   assert.equal(captured.captureCount, 1);
   assert.equal(fixture.captures.length, 1);
+  assert.equal(fixture.captures[0].captureAuthorizationId, authorization.authorizationId);
   assert.equal(fixture.service.previewStatus().cameraOwnership, "released");
   assert.equal(fixture.service.previewStatus().mathematicalCalibrationPreview.active, false);
+
+  const replayLifecycle = fixture.lifecycleSnapshot();
+  await assert.rejects(
+    fixture.service.captureMathematicalCalibrationStep({
+      sessionId: fixture.sessionId, operationId: "v1-preview-replay", role: "lens_geometry", sampleIndex: 2,
+      targetFace: "checkerboard", captureAuthorizationId: authorization.authorizationId,
+    }),
+    /missing, expired, replayed, mismatched, or changed displayed-frame authorization/i,
+  );
+  assert.deepEqual(fixture.lifecycleSnapshot(), replayLifecycle);
+  assert.equal(fixture.hardStops.length, 0);
+});
+
+test("V1.0.1 wrong-slot use invalidates only the one-use authorization and fresh reconnect retries the same slot", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-auth-wrong-slot-"));
+  const fixture = await v1BridgeFixture(root);
+  const first = mockPreviewExchange(fixture.sessionId);
+  const firstStream = fixture.service.streamPreview(first.request, first.response, undefined);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const { authorization } = await acknowledgeLatestAndAuthorize(fixture);
+  await firstStream;
+  const pendingSession = fixture.sessionSnapshot();
+  const afterAuthorizationLifecycle = fixture.lifecycleSnapshot();
+  await assert.rejects(
+    fixture.service.captureMathematicalCalibrationStep({
+      sessionId: fixture.sessionId, operationId: "v1-preview-authorized-wrong-slot", role: "lens_geometry", sampleIndex: 2,
+      targetFace: "checkerboard", captureAuthorizationId: authorization.authorizationId,
+    }),
+    /does not match exact next slot/i,
+  );
+  assert.equal(fixture.hardStops.length, 0);
+  assert.deepEqual(fixture.sessionSnapshot(), pendingSession);
+  assert.deepEqual(fixture.lifecycleSnapshot(), afterAuthorizationLifecycle);
+  assert.equal(fixture.service.previewStatus().status, "stopped");
+  assert.equal(fixture.service.previewStatus().cameraOwnership, "released");
 
   const second = mockPreviewExchange(fixture.sessionId);
   const secondStream = fixture.service.streamPreview(second.request, second.response, undefined);
   await new Promise((resolve) => setTimeout(resolve, 40));
   const reconnected = fixture.service.previewStatus();
   assert.equal(reconnected.status, "live");
-  assert.notEqual(reconnected.sideEpoch, firstBinding.epoch);
-  const pendingSession = fixture.sessionSnapshot();
-  const pendingLifecycle = fixture.lifecycleSnapshot();
-  await assert.rejects(
-    fixture.service.captureMathematicalCalibrationStep({
-      sessionId: fixture.sessionId, operationId: "v1-preview-stale", role: "lens_geometry", sampleIndex: 2,
-      targetFace: "checkerboard", previewBinding: firstBinding,
-    }),
-    /wrong-session, or stale live-preview binding/i,
-  );
-  assert.equal(fixture.hardStops.length, 0);
-  assert.deepEqual(fixture.sessionSnapshot(), pendingSession);
-  assert.deepEqual(fixture.lifecycleSnapshot(), pendingLifecycle);
-  const afterStaleRejection = fixture.service.previewStatus();
-  assert.equal(afterStaleRejection.status, "live");
-  assert.equal(afterStaleRejection.cameraOwnership, "preview_stream");
-  assert.equal(afterStaleRejection.mathematicalCalibrationPreview.active, true);
-  assert.equal(afterStaleRejection.sideEpoch, reconnected.sideEpoch);
-
-  const freshBindingStatus = fixture.service.previewStatus();
-  const retried = await fixture.service.captureMathematicalCalibrationStep({
-    sessionId: fixture.sessionId, operationId: "v1-preview-retry-current", role: "lens_geometry", sampleIndex: 2,
-    targetFace: "checkerboard", previewBinding: {
-      sessionId: fixture.sessionId,
-      epoch: freshBindingStatus.sideEpoch,
-      frameId: freshBindingStatus.latestFrameId,
-      capturedAt: freshBindingStatus.lastFrameAt,
-    },
-  });
+  assert.notEqual(reconnected.sideEpoch, authorization.epoch);
+  const fresh = await acknowledgeLatestAndAuthorize(fixture);
   await secondStream;
-  assert.equal(retried.captureCount, 2);
-  assert.equal(fixture.captures.length, 2);
+  const retried = await fixture.service.captureMathematicalCalibrationStep({
+    sessionId: fixture.sessionId, operationId: "v1-preview-retry-current", role: "lens_geometry", sampleIndex: 1,
+    targetFace: "checkerboard", captureAuthorizationId: fresh.authorization.authorizationId,
+  });
+  assert.equal(retried.captureCount, 1);
+  assert.equal(fixture.captures.length, 1);
   assert.equal(fixture.hardStops.length, 0);
   assert.equal(fixture.service.previewStatus().status, "stopped");
   assert.equal(fixture.service.previewStatus().cameraOwnership, "released");
@@ -398,22 +455,63 @@ test("V1.0.1 ordinary capture failure still drains preview, verifies terminal cl
   const exchange = mockPreviewExchange(fixture.sessionId);
   const stream = fixture.service.streamPreview(exchange.request, exchange.response, undefined);
   await new Promise((resolve) => setTimeout(resolve, 40));
-  const before = fixture.service.previewStatus();
+  const { authorization } = await acknowledgeLatestAndAuthorize(fixture);
+  await stream;
   await assert.rejects(
     fixture.service.captureMathematicalCalibrationStep({
       sessionId: fixture.sessionId, operationId: "v1-preview-ordinary-failure", role: "lens_geometry", sampleIndex: 1,
-      targetFace: "checkerboard", previewBinding: {
-        sessionId: fixture.sessionId, epoch: before.sideEpoch, frameId: before.latestFrameId, capturedAt: before.lastFrameAt,
-      },
+      targetFace: "checkerboard", captureAuthorizationId: authorization.authorizationId,
     }),
     /ordinary exact-still detector rejection/,
   );
-  await stream;
   const after = fixture.service.previewStatus();
   assert.equal(after.status, "stopped");
   assert.equal(after.cameraOwnership, "released");
   assert.equal(after.mathematicalCalibrationPreview.active, false);
   assert.equal(fixture.hardStops.length, 0);
+});
+
+test("V1.0.1 capture authorization expires and reconnect invalidates it without capture or hard stop", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-auth-invalidation-"));
+  const fixture = await v1BridgeFixture(root);
+  const first = mockPreviewExchange(fixture.sessionId);
+  const firstStream = fixture.service.streamPreview(first.request, first.response, undefined);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const firstAuthorized = await acknowledgeLatestAndAuthorize(fixture);
+  await firstStream;
+  fixture.service.mathematicalCalibrationCaptureAuthorization.expiresAt = new Date(Date.now() - 1).toISOString();
+  const beforeExpiredUse = fixture.lifecycleSnapshot();
+  await assert.rejects(
+    fixture.service.captureMathematicalCalibrationStep({
+      sessionId: fixture.sessionId, operationId: "v1-preview-expired", role: "lens_geometry", sampleIndex: 1,
+      targetFace: "checkerboard", captureAuthorizationId: firstAuthorized.authorization.authorizationId,
+    }),
+    /missing, expired, replayed, mismatched, or changed displayed-frame authorization/i,
+  );
+  assert.deepEqual(fixture.lifecycleSnapshot(), beforeExpiredUse);
+  assert.equal(fixture.hardStops.length, 0);
+
+  const second = mockPreviewExchange(fixture.sessionId);
+  const secondStream = fixture.service.streamPreview(second.request, second.response, undefined);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const secondAuthorized = await acknowledgeLatestAndAuthorize(fixture);
+  await secondStream;
+  const reconnect = mockPreviewExchange(fixture.sessionId);
+  const reconnectStream = fixture.service.streamPreview(reconnect.request, reconnect.response, undefined);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const beforeInvalidatedUse = fixture.lifecycleSnapshot();
+  await assert.rejects(
+    fixture.service.captureMathematicalCalibrationStep({
+      sessionId: fixture.sessionId, operationId: "v1-preview-reconnect-invalidated", role: "lens_geometry", sampleIndex: 1,
+      targetFace: "checkerboard", captureAuthorizationId: secondAuthorized.authorization.authorizationId,
+    }),
+    /missing, expired, replayed, mismatched, or changed displayed-frame authorization/i,
+  );
+  assert.deepEqual(fixture.lifecycleSnapshot(), beforeInvalidatedUse);
+  assert.equal(fixture.service.previewStatus().status, "live");
+  assert.equal(fixture.service.previewStatus().cameraOwnership, "preview_stream");
+  reconnect.request.emit("close");
+  await reconnectStream;
 });
 
 test("calibration preview uses a separate single-frame Pylon action and Production remains continuous", () => {

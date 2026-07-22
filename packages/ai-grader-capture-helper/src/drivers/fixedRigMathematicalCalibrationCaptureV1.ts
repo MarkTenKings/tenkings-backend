@@ -170,6 +170,7 @@ export interface StartFixedRigMathematicalCalibrationCaptureV1Request {
 export interface CaptureFixedRigMathematicalCalibrationStepV1Request {
   sessionId: string;
   operationId: string;
+  captureAuthorizationId?: string;
   role: FixedRigMathematicalCalibrationCaptureRoleV1;
   sampleIndex: number;
   channelIndex?: number;

@@ -209,6 +209,8 @@ const BACK_POSITIONING_EVENT_LIMIT = 20;
 const BACK_POSITIONING_ERROR_MAX_LENGTH = 240;
 const ATOMIC_CAPTURE_AUTHORIZATION_MS = 10000;
 const PREVIEW_OBSERVATION_LIMIT = 8;
+const MATHEMATICAL_CALIBRATION_CAPTURE_AUTHORIZATION_MS = 10000;
+const MATHEMATICAL_CALIBRATION_RETAINED_FRAME_LIMIT = 16;
 const ATOMIC_CAPTURE_IDEMPOTENCY_LIMIT = 64;
 const ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const ATOMIC_CAPTURE_ASSERTION_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
@@ -938,7 +940,8 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
       method: "GET" | "POST";
       path: string;
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
-        | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
+        | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-displayed-frame"
+        | "mathematical-calibration-capture-authorization" | "mathematical-calibration-capture"
         | "mathematical-calibration-measurement" | "mathematical-calibration-seal" | "mathematical-calibration-v1-page"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
@@ -1107,6 +1110,21 @@ export interface AiGraderLocalStationPreviewStatus {
     lastFrameAt?: string;
     cameraOwnership: "preview_stream" | "capture_action" | "released";
     reconnectAllowed: true;
+    displayedFrame?: {
+      sessionId: string;
+      epoch: string;
+      frameId: string;
+      capturedAt: string;
+      acknowledgedAt: string;
+      frameSha256: string;
+      assessmentReady: boolean;
+    };
+    captureAuthorization?: {
+      frameId: string;
+      capturedAt: string;
+      slotKey: string;
+      expiresAt: string;
+    };
   };
   safety: {
     publicRouteExposed: false;
@@ -1119,6 +1137,48 @@ export interface AiGraderLocalStationPreviewStatus {
   };
   note: string;
 }
+
+export interface MathematicalCalibrationDisplayedFrameV1 {
+  sessionId: string;
+  epoch: string;
+  frameId: string;
+  capturedAt: string;
+}
+
+export interface MathematicalCalibrationCaptureAuthorizationV1 {
+  authorizationId: string;
+  sessionId: string;
+  epoch: string;
+  frameId: string;
+  capturedAt: string;
+  frameSha256: string;
+  detectorAssessmentSha256: string;
+  slotKey: string;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+type MathematicalCalibrationPreviewOverlayV1 = MathematicalCalibrationV1_1PreviewAssessment & {
+  guidance?: string[];
+  prospectiveAggregate?: { x: number; y: number; rotationDegrees: number };
+};
+
+interface RetainedMathematicalCalibrationPreviewFrameV1 extends MathematicalCalibrationDisplayedFrameV1 {
+  bytes: Buffer;
+  frameSha256: string;
+  retainedAt: string;
+  assessment?: MathematicalCalibrationPreviewOverlayV1;
+  assessmentSha256?: string;
+  sessionStatus?: FixedRigMathematicalCalibrationCaptureSessionStatusV1;
+  assessmentPromise?: Promise<void>;
+}
+
+interface AcknowledgedMathematicalCalibrationDisplayedFrameV1 extends MathematicalCalibrationDisplayedFrameV1 {
+  acknowledgedAt: string;
+  frameSha256: string;
+}
+
+type ActiveMathematicalCalibrationCaptureAuthorizationV1 = MathematicalCalibrationCaptureAuthorizationV1;
 
 type AiGraderPreviewGeometryStatus = AiGraderLocalStationPreviewStatus["cardGeometry"];
 
@@ -2937,7 +2997,8 @@ function bridgeEndpoints() {
     const actions: Array<{
       method: "GET" | "POST";
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
-        | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
+        | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-displayed-frame"
+        | "mathematical-calibration-capture-authorization" | "mathematical-calibration-capture"
         | "mathematical-calibration-measurement" | "mathematical-calibration-seal" | "mathematical-calibration-v1-page"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
@@ -2957,6 +3018,8 @@ function bridgeEndpoints() {
     { method: "POST", action: "mathematical-calibration-start", path: "/calibration/mathematical-v1/start", hardwareAccess: false, description: "Start or explicitly resume a purpose-bound non-production calibration capture session." },
     { method: "GET", action: "mathematical-calibration-v1-page", path: MATHEMATICAL_CALIBRATION_V1_PAGE_PATH, hardwareAccess: false, description: "Serve the isolated token-paired V1.0.1 102-capture positioning page on the protected bridge." },
     { method: "GET", action: "mathematical-calibration-status", path: "/calibration/mathematical-v1/status", hardwareAccess: false, description: "Read one exact calibration capture-session status." },
+    { method: "POST", action: "mathematical-calibration-displayed-frame", path: "/calibration/mathematical-v1/displayed-frame", hardwareAccess: false, description: "Acknowledge the exact immutable MJPEG frame actually displayed by the session-bound operator page." },
+    { method: "POST", action: "mathematical-calibration-capture-authorization", path: "/calibration/mathematical-v1/capture-authorization", hardwareAccess: true, description: "Verify the displayed frame and detector assessment, atomically drain preview, and issue one short-lived server capture authorization." },
     { method: "POST", action: "mathematical-calibration-capture", path: "/calibration/mathematical-v1/capture", hardwareAccess: true, description: "Capture one allowlisted calibration step under bridge lock, watchdog, protected settings, and safe-off." },
     { method: "POST", action: "mathematical-calibration-measurement", path: "/calibration/mathematical-v1/measurement", hardwareAccess: false, description: "Record one instrument/operator/time-bound immutable physical measurement." },
     { method: "POST", action: "mathematical-calibration-seal", path: "/calibration/mathematical-v1/seal", hardwareAccess: false, description: "Fail closed unless the unique capture/metrology ledger is complete, then seal analyzer input and source package." },
@@ -4575,6 +4638,11 @@ export class AiGraderLocalStationBridgeService {
   private mathematicalCalibrationV1_2MutationPending = false;
   private mathematicalCalibrationPreviewStatus?: AiGraderLocalStationPreviewStatus["mathematicalCalibrationPreview"];
   private mathematicalCalibrationPreviewDetectionInFlight = false;
+  private mathematicalCalibrationPreviewDetectionPromise?: Promise<void>;
+  private retainedMathematicalCalibrationPreviewFrames = new Map<string, RetainedMathematicalCalibrationPreviewFrameV1>();
+  private acknowledgedMathematicalCalibrationDisplayedFrame?: AcknowledgedMathematicalCalibrationDisplayedFrameV1;
+  private mathematicalCalibrationCaptureAuthorization?: ActiveMathematicalCalibrationCaptureAuthorizationV1;
+  private mathematicalCalibrationCaptureAuthorizationExpiryTimer?: ReturnType<typeof setTimeout>;
   private calibrationActivationState: "UNAVAILABLE" | "IDLE" | "PENDING" | "ACTIVE";
   private calibrationActivationReceipt?: AiGraderCalibrationWorkstationReceiptV1;
   private calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
@@ -4880,123 +4948,279 @@ export class AiGraderLocalStationBridgeService {
 
   previewStatus(): AiGraderLocalStationPreviewStatus {
     this.refreshPreviewGeometryActiveSide();
+    const mathematicalPreview = this.mathematicalCalibrationPreviewStatus
+      ? structuredClone(this.mathematicalCalibrationPreviewStatus)
+      : undefined;
+    if (mathematicalPreview && this.acknowledgedMathematicalCalibrationDisplayedFrame) {
+      const displayed = this.acknowledgedMathematicalCalibrationDisplayedFrame;
+      const retained = this.retainedMathematicalCalibrationPreviewFrames.get(this.mathematicalCalibrationFrameKey(displayed));
+      mathematicalPreview.displayedFrame = {
+        ...displayed,
+        assessmentReady: Boolean(retained?.assessment && retained.assessmentSha256),
+      };
+    }
+    if (mathematicalPreview && this.mathematicalCalibrationCaptureAuthorization) {
+      const authorization = this.mathematicalCalibrationCaptureAuthorization;
+      mathematicalPreview.captureAuthorization = {
+        frameId: authorization.frameId,
+        capturedAt: authorization.capturedAt,
+        slotKey: authorization.slotKey,
+        expiresAt: authorization.expiresAt,
+      };
+    }
     return {
       ...this.manifest.previewStatus,
-      ...(this.mathematicalCalibrationPreviewStatus ? {
-        mathematicalCalibrationPreview: structuredClone(this.mathematicalCalibrationPreviewStatus),
-      } : {}),
+      ...(mathematicalPreview ? { mathematicalCalibrationPreview: mathematicalPreview } : {}),
     };
   }
 
-  private updateMathematicalCalibrationPreviewOverlay(
+  private mathematicalCalibrationFrameKey(frame: MathematicalCalibrationDisplayedFrameV1): string {
+    return `${frame.sessionId}\n${frame.epoch}\n${frame.frameId}`;
+  }
+
+  private invalidateMathematicalCalibrationCaptureAuthorization(
+    reason: string,
+    options: { preservePreviewState?: boolean } = {},
+  ): void {
+    if (this.mathematicalCalibrationCaptureAuthorizationExpiryTimer) {
+      clearTimeout(this.mathematicalCalibrationCaptureAuthorizationExpiryTimer);
+      this.mathematicalCalibrationCaptureAuthorizationExpiryTimer = undefined;
+    }
+    const hadAuthorization = Boolean(this.mathematicalCalibrationCaptureAuthorization);
+    this.mathematicalCalibrationCaptureAuthorization = undefined;
+    if (
+      hadAuthorization
+      && !options.preservePreviewState
+      && !this.captureLock
+      && this.manifest.previewStatus.status === "paused_for_capture"
+    ) {
+      this.updatePreviewStatus({
+        status: "stopped",
+        cameraOwnership: "released",
+        lastStopReason: reason,
+      });
+      if (this.mathematicalCalibrationPreviewStatus) {
+        this.mathematicalCalibrationPreviewStatus = {
+          ...this.mathematicalCalibrationPreviewStatus,
+          active: false,
+          cameraOwnership: "released",
+        };
+      }
+    }
+  }
+
+  private resetMathematicalCalibrationDisplayedFrameAuthority(reason: string): void {
+    this.invalidateMathematicalCalibrationCaptureAuthorization(reason);
+    this.acknowledgedMathematicalCalibrationDisplayedFrame = undefined;
+    this.retainedMathematicalCalibrationPreviewFrames.clear();
+  }
+
+  private retainMathematicalCalibrationPreviewFrame(
     frame: Buffer,
+    binding: { sessionId: string; sideEpoch: string },
     frameId: string,
     capturedAt: string,
+  ): RetainedMathematicalCalibrationPreviewFrameV1 {
+    const retained: RetainedMathematicalCalibrationPreviewFrameV1 = {
+      sessionId: binding.sessionId,
+      epoch: binding.sideEpoch,
+      frameId,
+      capturedAt,
+      bytes: Buffer.from(frame),
+      frameSha256: crypto.createHash("sha256").update(frame).digest("hex"),
+      retainedAt: new Date().toISOString(),
+    };
+    const key = this.mathematicalCalibrationFrameKey(retained);
+    this.retainedMathematicalCalibrationPreviewFrames.set(key, retained);
+    while (this.retainedMathematicalCalibrationPreviewFrames.size > MATHEMATICAL_CALIBRATION_RETAINED_FRAME_LIMIT) {
+      const protectedKeys = new Set([
+        this.acknowledgedMathematicalCalibrationDisplayedFrame
+          ? this.mathematicalCalibrationFrameKey(this.acknowledgedMathematicalCalibrationDisplayedFrame)
+          : "",
+        this.mathematicalCalibrationCaptureAuthorization
+          ? this.mathematicalCalibrationFrameKey(this.mathematicalCalibrationCaptureAuthorization)
+          : "",
+      ]);
+      const removable = [...this.retainedMathematicalCalibrationPreviewFrames.keys()].find((candidate) => !protectedKeys.has(candidate));
+      if (!removable) break;
+      this.retainedMathematicalCalibrationPreviewFrames.delete(removable);
+    }
+    return retained;
+  }
+
+  acknowledgeMathematicalCalibrationDisplayedFrame(
+    frame: MathematicalCalibrationDisplayedFrameV1,
+  ): AiGraderLocalStationPreviewStatus {
+    if (this.mathematicalCalibrationV1SessionId !== frame.sessionId) {
+      throw new Error("Displayed Mathematical Calibration frame requires the exact active V1.0.1 session.");
+    }
+    const preview = this.previewStatus();
+    if (
+      preview.status !== "live"
+      || preview.cameraOwnership !== "preview_stream"
+      || preview.sideEpoch !== frame.epoch
+      || preview.mathematicalCalibrationPreview?.contractVersion !== "1.0.1"
+      || preview.mathematicalCalibrationPreview.sessionId !== frame.sessionId
+      || !preview.mathematicalCalibrationPreview.active
+    ) {
+      throw new Error("Displayed Mathematical Calibration frame does not match the active session and preview epoch.");
+    }
+    const retained = this.retainedMathematicalCalibrationPreviewFrames.get(this.mathematicalCalibrationFrameKey(frame));
+    if (!retained || retained.capturedAt !== frame.capturedAt) {
+      throw new Error("Displayed Mathematical Calibration frame is not one exact immutable bridge-retained frame.");
+    }
+    const capturedAtMs = Date.parse(frame.capturedAt);
+    const ageMs = Date.now() - capturedAtMs;
+    if (!Number.isFinite(capturedAtMs) || ageMs < -1000 || ageMs > PREVIEW_GEOMETRY_MAX_AGE_MS) {
+      throw new Error("Displayed Mathematical Calibration frame is stale or future-dated.");
+    }
+    this.acknowledgedMathematicalCalibrationDisplayedFrame = {
+      ...frame,
+      acknowledgedAt: new Date().toISOString(),
+      frameSha256: retained.frameSha256,
+    };
+    return this.previewStatus();
+  }
+
+  private async assessRetainedMathematicalCalibrationPreviewFrame(
+    retained: RetainedMathematicalCalibrationPreviewFrameV1,
+  ): Promise<void> {
+    if (retained.assessment && retained.assessmentSha256 && retained.sessionStatus) return;
+    if (retained.assessmentPromise) return retained.assessmentPromise;
+    retained.assessmentPromise = (async () => {
+      const current = this.mathematicalCalibrationPreviewStatus;
+      if (!current || current.sessionId !== retained.sessionId) {
+        throw new Error("Mathematical Calibration detector assessment lost its exact session binding.");
+      }
+      const detectCheckerboard = this.dependencies.detectMathematicalCalibrationPreviewCheckerboard
+        ?? (this.config.mode === "mock"
+          ? async (): Promise<MathematicalCalibrationPreviewCheckerboard> => {
+            throw new Error("mock calibration preview has no checkerboard frame");
+          }
+          : detectMathematicalCalibrationPreviewCheckerboard);
+      const v1 = current.contractVersion === "1.0.1";
+      const nextRole = current.sessionStatus?.nextCaptureSlot?.role;
+      const acceptedPoses = v1
+        ? this.mathematicalCalibrationCaptureProducer?.previewPoses(
+            current.sessionId,
+            nextRole === "lens_geometry" || nextRole === "normalization_registration" || nextRole === "repeated_placement"
+              ? nextRole
+              : undefined,
+          ) ?? Promise.resolve([])
+        : this.mathematicalCalibrationCaptureProducerV1_1?.previewPoses(current.sessionId) ?? Promise.resolve([]);
+      const sessionStatusPromise = v1
+        ? this.requireMathematicalCalibrationCaptureProducer().status(current.sessionId)
+        : this.requireMathematicalCalibrationCaptureProducerV1_1().status(current.sessionId);
+      let assessment: MathematicalCalibrationPreviewOverlayV1;
+      let status: FixedRigMathematicalCalibrationCaptureSessionStatusV1;
+      try {
+        const [geometry, previousPoses, sessionStatus] = await Promise.all([
+          detectCheckerboard(retained.bytes),
+          acceptedPoses,
+          sessionStatusPromise,
+        ]);
+        status = sessionStatus;
+        const baseAssessment = assessMathematicalCalibrationV1_1Preview({
+          corners: geometry.outerCorners,
+          imageWidth: geometry.imageWidth,
+          imageHeight: geometry.imageHeight,
+          rotationDegrees: geometry.rotationDegrees,
+          acceptedPoses: previousPoses,
+        });
+        assessment = baseAssessment;
+        if (v1) {
+          const role = status.nextCaptureSlot?.role;
+          const progress = status.poseProgress.find((entry) => entry.role === role);
+          const prospectivePoses = baseAssessment.center && baseAssessment.rotationDegrees !== null
+            ? [...previousPoses, {
+                evidenceId: retained.frameId,
+                centerXFraction: baseAssessment.center.xFraction,
+                centerYFraction: baseAssessment.center.yFraction,
+                coverageFraction: baseAssessment.coverageFraction ?? 0,
+                rotationDegrees: baseAssessment.rotationDegrees,
+                cornerSignature: [],
+                imageWidth: geometry.imageWidth,
+                imageHeight: geometry.imageHeight,
+                corners: geometry.outerCorners,
+              }]
+            : previousPoses;
+          const span = (values: readonly number[]) => values.length === 0 ? 0 : Math.max(...values) - Math.min(...values);
+          const prospectiveAggregate = {
+            x: Number(span(prospectivePoses.map((pose) => pose.centerXFraction)).toFixed(6)),
+            y: Number(span(prospectivePoses.map((pose) => pose.centerYFraction)).toFixed(6)),
+            rotationDegrees: Number(span(prospectivePoses.map((pose) => pose.rotationDegrees)).toFixed(6)),
+          };
+          const tenthAggregateSatisfied = !progress || progress.acceptedCount < 9 || (
+            prospectiveAggregate.x >= progress.requiredAggregate.x
+            && prospectiveAggregate.y >= progress.requiredAggregate.y
+            && prospectiveAggregate.rotationDegrees >= progress.requiredAggregate.rotationDegrees
+          );
+          const guidance = [...baseAssessment.reasons];
+          if (role === "lens_geometry" || role === "normalization_registration") {
+            guidance.push(
+              `prospective ${role} spans X ${prospectiveAggregate.x.toFixed(4)}/${progress?.requiredAggregate.x.toFixed(4) ?? "-"}, `
+              + `Y ${prospectiveAggregate.y.toFixed(4)}/${progress?.requiredAggregate.y.toFixed(4) ?? "-"}, `
+              + `rotation ${prospectiveAggregate.rotationDegrees.toFixed(2)}/${progress?.requiredAggregate.rotationDegrees.toFixed(2) ?? "-"} degrees`,
+            );
+            if (progress?.acceptedCount === 9 && !tenthAggregateSatisfied) {
+              guidance.push("move or rotate the target until every prospective tenth-pose span reaches its centralized minimum");
+            }
+          } else if (role === "repeated_placement") {
+            guidance.push("remove and reseat the checkerboard for the exact pending repeated-placement slot");
+          } else if (status.nextCaptureSlot?.targetFace === "blank_reverse") {
+            guidance.push("stop preview, confirm camera release, then flip to the blank reverse");
+          }
+          assessment = {
+            ...baseAssessment,
+            sufficientlyDistinct: baseAssessment.valid && tenthAggregateSatisfied,
+            placementIndex: previousPoses.length + 1,
+            nextPlacementIndex: previousPoses.length + 2,
+            guidance,
+            prospectiveAggregate,
+          };
+        }
+      } catch {
+        status = await (v1
+          ? this.requireMathematicalCalibrationCaptureProducer().status(current.sessionId)
+          : this.requireMathematicalCalibrationCaptureProducerV1_1().status(current.sessionId));
+        assessment = assessMathematicalCalibrationV1_1Preview({ acceptedPoses: [] });
+      }
+      retained.assessment = structuredClone(assessment);
+      retained.assessmentSha256 = crypto.createHash("sha256").update(JSON.stringify(retained.assessment)).digest("hex");
+      retained.sessionStatus = structuredClone(status);
+      if (
+        this.mathematicalCalibrationPreviewStatus?.sessionId === retained.sessionId
+        && this.manifest.previewStatus.sideEpoch === retained.epoch
+      ) {
+        this.mathematicalCalibrationPreviewStatus = {
+          ...this.mathematicalCalibrationPreviewStatus,
+          overlay: structuredClone(assessment),
+          sessionStatus: structuredClone(status),
+          lastFrameId: retained.frameId,
+          lastFrameAt: retained.capturedAt,
+        };
+      }
+    })().finally(() => {
+      retained.assessmentPromise = undefined;
+    });
+    return retained.assessmentPromise;
+  }
+
+  private updateMathematicalCalibrationPreviewOverlay(
+    retained: RetainedMathematicalCalibrationPreviewFrameV1,
   ): void {
     const current = this.mathematicalCalibrationPreviewStatus;
     if (!current || !current.active) return;
     if (this.mathematicalCalibrationPreviewDetectionInFlight) return;
     this.mathematicalCalibrationPreviewDetectionInFlight = true;
-    const detectCheckerboard = this.dependencies.detectMathematicalCalibrationPreviewCheckerboard
-      ?? (this.config.mode === "mock"
-        ? async (): Promise<MathematicalCalibrationPreviewCheckerboard> => {
-          throw new Error("mock calibration preview has no checkerboard frame");
-        }
-        : detectMathematicalCalibrationPreviewCheckerboard);
-    const v1 = current.contractVersion === "1.0.1";
-    const nextRole = current.sessionStatus?.nextCaptureSlot?.role;
-    const acceptedPoses = v1
-      ? this.mathematicalCalibrationCaptureProducer?.previewPoses(
-          current.sessionId,
-          nextRole === "lens_geometry" || nextRole === "normalization_registration" || nextRole === "repeated_placement"
-            ? nextRole
-            : undefined,
-        ) ?? Promise.resolve([])
-      : this.mathematicalCalibrationCaptureProducerV1_1?.previewPoses(current.sessionId) ?? Promise.resolve([]);
-    const sessionStatus = v1
-      ? this.requireMathematicalCalibrationCaptureProducer().status(current.sessionId)
-      : this.requireMathematicalCalibrationCaptureProducerV1_1().status(current.sessionId);
-    void Promise.all([detectCheckerboard(frame), acceptedPoses, sessionStatus]).then(([geometry, previousPoses, status]) => {
-      if (this.mathematicalCalibrationPreviewStatus?.sessionId !== current.sessionId || !this.mathematicalCalibrationPreviewStatus.active) return;
-      const baseAssessment = assessMathematicalCalibrationV1_1Preview({
-        corners: geometry.outerCorners,
-        imageWidth: geometry.imageWidth,
-        imageHeight: geometry.imageHeight,
-        rotationDegrees: geometry.rotationDegrees,
-        acceptedPoses: previousPoses,
-      });
-      let assessment: MathematicalCalibrationV1_1PreviewAssessment & {
-        guidance?: string[];
-        prospectiveAggregate?: { x: number; y: number; rotationDegrees: number };
-      } = baseAssessment;
-      if (v1) {
-        const role = status.nextCaptureSlot?.role;
-        const progress = status.poseProgress.find((entry) => entry.role === role);
-        const prospectivePoses = baseAssessment.center && baseAssessment.rotationDegrees !== null
-          ? [...previousPoses, {
-              evidenceId: frameId,
-              centerXFraction: baseAssessment.center.xFraction,
-              centerYFraction: baseAssessment.center.yFraction,
-              coverageFraction: baseAssessment.coverageFraction ?? 0,
-              rotationDegrees: baseAssessment.rotationDegrees,
-              cornerSignature: [],
-              imageWidth: geometry.imageWidth,
-              imageHeight: geometry.imageHeight,
-              corners: geometry.outerCorners,
-            }]
-          : previousPoses;
-        const span = (values: readonly number[]) => values.length === 0 ? 0 : Math.max(...values) - Math.min(...values);
-        const prospectiveAggregate = {
-          x: Number(span(prospectivePoses.map((pose) => pose.centerXFraction)).toFixed(6)),
-          y: Number(span(prospectivePoses.map((pose) => pose.centerYFraction)).toFixed(6)),
-          rotationDegrees: Number(span(prospectivePoses.map((pose) => pose.rotationDegrees)).toFixed(6)),
-        };
-        const tenthAggregateSatisfied = !progress || progress.acceptedCount < 9 || (
-          prospectiveAggregate.x >= progress.requiredAggregate.x &&
-          prospectiveAggregate.y >= progress.requiredAggregate.y &&
-          prospectiveAggregate.rotationDegrees >= progress.requiredAggregate.rotationDegrees
-        );
-        const guidance = [...baseAssessment.reasons];
-        if (role === "lens_geometry" || role === "normalization_registration") {
-          guidance.push(
-            `prospective ${role} spans X ${prospectiveAggregate.x.toFixed(4)}/${progress?.requiredAggregate.x.toFixed(4) ?? "-"}, ` +
-            `Y ${prospectiveAggregate.y.toFixed(4)}/${progress?.requiredAggregate.y.toFixed(4) ?? "-"}, ` +
-            `rotation ${prospectiveAggregate.rotationDegrees.toFixed(2)}/${progress?.requiredAggregate.rotationDegrees.toFixed(2) ?? "-"} degrees`,
-          );
-          if (progress?.acceptedCount === 9 && !tenthAggregateSatisfied) guidance.push("move or rotate the target until every prospective tenth-pose span reaches its centralized minimum");
-        } else if (role === "repeated_placement") {
-          guidance.push("remove and reseat the checkerboard for the exact pending repeated-placement slot");
-        } else if (status.nextCaptureSlot?.targetFace === "blank_reverse") {
-          guidance.push("stop preview, confirm camera release, then flip to the blank reverse");
-        }
-        assessment = {
-          ...baseAssessment,
-          sufficientlyDistinct: baseAssessment.valid && tenthAggregateSatisfied,
-          placementIndex: previousPoses.length + 1,
-          nextPlacementIndex: previousPoses.length + 2,
-          guidance,
-          prospectiveAggregate,
-        };
-      }
-      this.mathematicalCalibrationPreviewStatus = {
-        ...this.mathematicalCalibrationPreviewStatus,
-        overlay: assessment,
-        sessionStatus: status,
-        lastFrameId: frameId,
-        lastFrameAt: capturedAt,
-      };
-    }).catch((error) => {
-      if (this.mathematicalCalibrationPreviewStatus?.sessionId !== current.sessionId) return;
-      this.mathematicalCalibrationPreviewStatus = {
-        ...this.mathematicalCalibrationPreviewStatus,
-        overlay: assessMathematicalCalibrationV1_1Preview({ acceptedPoses: [] }),
-        lastFrameId: frameId,
-        lastFrameAt: capturedAt,
-      };
-      void error;
-    }).finally(() => {
+    const promise = this.assessRetainedMathematicalCalibrationPreviewFrame(retained).finally(() => {
       this.mathematicalCalibrationPreviewDetectionInFlight = false;
+      if (this.mathematicalCalibrationPreviewDetectionPromise === promise) {
+        this.mathematicalCalibrationPreviewDetectionPromise = undefined;
+      }
     });
+    this.mathematicalCalibrationPreviewDetectionPromise = promise;
+    void promise;
   }
 
   liveLightingStatus(): AiGraderLiveLightingStatus {
@@ -11153,6 +11377,9 @@ export class AiGraderLocalStationBridgeService {
       );
       return Promise.resolve();
     }
+    if (calibrationPreviewContractVersion === "1.0.1") {
+      this.resetMathematicalCalibrationDisplayedFrameAuthority("V1.0.1 preview reconnect invalidated displayed-frame capture authority.");
+    }
     const previewReservation = ++this.previewStreamRequestSequence;
     this.previewStreamReservation = previewReservation;
     try {
@@ -11281,7 +11508,8 @@ export class AiGraderLocalStationBridgeService {
           frameCount += 1;
           const generatedAt = new Date().toISOString();
           const frameId = `frame-${streamSequence}-${frameCount}`;
-          writeMjpegFrame(res, "image/svg+xml", mockPreviewSvg(frameCount, generatedAt), frameCount, generatedAt, binding, frameId);
+          const frameBytes = mockPreviewSvg(frameCount, generatedAt);
+          writeMjpegFrame(res, "image/svg+xml", frameBytes, frameCount, generatedAt, binding, frameId);
           if (!calibrationPreviewBound) {
             this.notePreviewFrame(frameCount, binding, frameId, generatedAt);
             this.noteMockPreviewGeometry(frameCount, frameId);
@@ -11294,12 +11522,8 @@ export class AiGraderLocalStationBridgeService {
               firstFrameAt: this.manifest.previewStatus.firstFrameAt ?? generatedAt,
               lastFrameAt: generatedAt,
             });
-            this.mathematicalCalibrationPreviewStatus = {
-              ...this.mathematicalCalibrationPreviewStatus,
-              lastFrameId: frameId,
-              lastFrameAt: generatedAt,
-            };
-            this.updateMathematicalCalibrationPreviewOverlay(Buffer.from(mockPreviewSvg(frameCount, generatedAt)), frameId, generatedAt);
+            const retained = this.retainMathematicalCalibrationPreviewFrame(frameBytes, binding, frameId, generatedAt);
+            this.updateMathematicalCalibrationPreviewOverlay(retained);
           }
         };
         send();
@@ -11365,12 +11589,13 @@ export class AiGraderLocalStationBridgeService {
               });
             }
             if (calibrationPreviewBound && this.mathematicalCalibrationPreviewStatus) {
-              this.mathematicalCalibrationPreviewStatus = {
-                ...this.mathematicalCalibrationPreviewStatus,
-                lastFrameId: frameId,
-                lastFrameAt: frame.capturedAt ?? frame.receivedAt,
-              };
-              this.updateMathematicalCalibrationPreviewOverlay(frame.bytes, frameId, frame.capturedAt ?? frame.receivedAt);
+              const retained = this.retainMathematicalCalibrationPreviewFrame(
+                frame.bytes,
+                binding,
+                frameId,
+                frame.capturedAt ?? frame.receivedAt,
+              );
+              this.updateMathematicalCalibrationPreviewOverlay(retained);
             }
             if (!calibrationPreviewBound) this.queuePreviewGeometryAnalysis(
               frame.bytes,
@@ -12157,6 +12382,7 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Only one active Mathematical Calibration V1.0.1 session may be bound to the protected bridge.");
     }
     return this.requireMathematicalCalibrationCaptureProducer().start(request).then((status) => {
+      this.resetMathematicalCalibrationDisplayedFrameAuthority("V1.0.1 session start or resume invalidated displayed-frame capture authority.");
       this.mathematicalCalibrationV1SessionId = request.sessionId;
       return status;
     });
@@ -12180,6 +12406,160 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Mathematical Calibration V1.0.1 status is bound to the active calibration session only.");
     }
     return this.requireMathematicalCalibrationCaptureProducer().status(sessionId);
+  }
+
+  async authorizeMathematicalCalibrationDisplayedFrame(
+    sessionId: string,
+  ): Promise<MathematicalCalibrationCaptureAuthorizationV1> {
+    this.assertCalibrationSessionIsolated();
+    assertRealBridgeArmed(this.config);
+    if (!ATOMIC_CAPTURE_ASSERTION_RE.test(sessionId) || this.mathematicalCalibrationV1SessionId !== sessionId) {
+      throw new Error("Displayed-frame capture authorization requires the exact active V1.0.1 session.");
+    }
+    if (this.mathematicalCalibrationCaptureAuthorization) {
+      const expiresAtMs = Date.parse(this.mathematicalCalibrationCaptureAuthorization.expiresAt);
+      if (Number.isFinite(expiresAtMs) && expiresAtMs > Date.now()) {
+        throw new Error("A displayed-frame capture authorization is already active and must be consumed or expire before another is issued.");
+      }
+      this.invalidateMathematicalCalibrationCaptureAuthorization("Expired V1.0.1 displayed-frame capture authorization was discarded.");
+    }
+    const producer = this.requireMathematicalCalibrationCaptureProducer();
+    const displayed = this.acknowledgedMathematicalCalibrationDisplayedFrame;
+    const preview = this.previewStatus();
+    const durable = await producer.status(sessionId);
+    if (
+      !displayed
+      || displayed.sessionId !== sessionId
+      || preview.status !== "live"
+      || preview.cameraOwnership !== "preview_stream"
+      || preview.sideEpoch !== displayed.epoch
+      || preview.mathematicalCalibrationPreview?.contractVersion !== "1.0.1"
+      || preview.mathematicalCalibrationPreview.sessionId !== sessionId
+      || !preview.mathematicalCalibrationPreview.active
+    ) {
+      throw new Error("Displayed-frame capture authorization requires one exact page-acknowledged frame in the active session and preview epoch.");
+    }
+    const retained = this.retainedMathematicalCalibrationPreviewFrames.get(this.mathematicalCalibrationFrameKey(displayed));
+    const frameAt = Date.parse(displayed.capturedAt);
+    const frameAgeMs = Date.now() - frameAt;
+    if (
+      !retained
+      || retained.capturedAt !== displayed.capturedAt
+      || retained.frameSha256 !== displayed.frameSha256
+      || !Number.isFinite(frameAt)
+      || frameAgeMs < -1000
+      || frameAgeMs > PREVIEW_GEOMETRY_MAX_AGE_MS
+    ) {
+      throw new Error("Displayed-frame capture authorization rejected missing, changed, stale, or future-dated immutable frame evidence.");
+    }
+    const nextSlot = durable.nextCaptureSlot;
+    if (!nextSlot || nextSlot.targetFace !== "checkerboard") {
+      throw new Error("Displayed-frame capture authorization is available only for the exact pending checkerboard slot.");
+    }
+    const authorizationId = `math-cal-auth-${crypto.randomUUID().replace(/-/g, "")}`;
+    const hardStopPhysicalLifecycle = async (reason: string): Promise<never> => {
+      await producer.recordHardStop(sessionId, authorizationId, reason);
+      let cleanupError: string | undefined;
+      try {
+        await this.stopPreviewStream("V1.0.1 displayed-frame authorization physical lifecycle failure", {
+          waitForRelease: true,
+          requireRelease: true,
+          settleMs: PREVIEW_CAMERA_SETTLE_MS,
+        });
+      } catch (error) {
+        cleanupError = error instanceof Error ? error.message : "Calibration preview cleanup failed.";
+      }
+      try {
+        const safeOff = await this.runTerminalSafeOff(`mathematical calibration V1.0.1 ${authorizationId} authorization failure`);
+        if (!safeOff.ok) {
+          cleanupError = [cleanupError, safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration authorization safe-off could not be confirmed."]
+            .filter(Boolean).join(" ");
+        }
+      } catch (error) {
+        cleanupError = [cleanupError, error instanceof Error ? error.message : "Calibration authorization safe-off failed."]
+          .filter(Boolean).join(" ");
+      }
+      this.resetMathematicalCalibrationDisplayedFrameAuthority(reason);
+      throw new Error(cleanupError ? `${reason} Cleanup also failed: ${cleanupError}` : reason);
+    };
+    return this.serializeTerminalLifecycle(async () => {
+      const durableAtPause = await producer.status(sessionId);
+      const currentDisplayed = this.acknowledgedMathematicalCalibrationDisplayedFrame;
+      const currentPreview = this.previewStatus();
+      if (
+        !currentDisplayed
+        || this.mathematicalCalibrationFrameKey(currentDisplayed) !== this.mathematicalCalibrationFrameKey(displayed)
+        || currentDisplayed.capturedAt !== displayed.capturedAt
+        || currentDisplayed.frameSha256 !== displayed.frameSha256
+        || currentPreview.status !== "live"
+        || currentPreview.cameraOwnership !== "preview_stream"
+        || currentPreview.sideEpoch !== displayed.epoch
+        || durableAtPause.nextCaptureSlot?.slotKey !== nextSlot.slotKey
+      ) {
+        throw new Error("Displayed-frame capture authorization changed before preview pause; reconnect and display a fresh frame.");
+      }
+      try {
+        await this.awaitLightingLifecycleIdle();
+      } catch (error) {
+        return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration lighting lifecycle did not become idle.");
+      }
+      try {
+        await this.stopPreviewForHardwareAction("mathematical calibration V1.0.1 displayed-frame authorization");
+      } catch (error) {
+        return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration preview did not drain before displayed-frame authorization.");
+      }
+      try {
+        if (this.mathematicalCalibrationPreviewDetectionPromise) {
+          await this.mathematicalCalibrationPreviewDetectionPromise;
+        }
+        await this.assessRetainedMathematicalCalibrationPreviewFrame(retained);
+        const retainedAfterPause = this.retainedMathematicalCalibrationPreviewFrames.get(this.mathematicalCalibrationFrameKey(displayed));
+        const durableAfterPause = await producer.status(sessionId);
+        if (
+          retainedAfterPause !== retained
+          || crypto.createHash("sha256").update(retained.bytes).digest("hex") !== retained.frameSha256
+          || !retained.assessment
+          || !retained.assessmentSha256
+          || retained.sessionStatus?.sessionStateSha256 !== durableAfterPause.sessionStateSha256
+          || durableAfterPause.nextCaptureSlot?.slotKey !== nextSlot.slotKey
+        ) {
+          this.resetMathematicalCalibrationDisplayedFrameAuthority("Displayed-frame evidence or exact pending slot changed during authorization.");
+          throw new Error("Displayed-frame evidence or exact pending slot changed during authorization; no capture was authorized.");
+        }
+        const issuedAtMs = Date.now();
+        const authorization: ActiveMathematicalCalibrationCaptureAuthorizationV1 = {
+          authorizationId,
+          sessionId,
+          epoch: displayed.epoch,
+          frameId: displayed.frameId,
+          capturedAt: displayed.capturedAt,
+          frameSha256: retained.frameSha256,
+          detectorAssessmentSha256: retained.assessmentSha256,
+          slotKey: nextSlot.slotKey,
+          issuedAt: new Date(issuedAtMs).toISOString(),
+          expiresAt: new Date(issuedAtMs + MATHEMATICAL_CALIBRATION_CAPTURE_AUTHORIZATION_MS).toISOString(),
+        };
+        this.mathematicalCalibrationCaptureAuthorization = authorization;
+        this.mathematicalCalibrationCaptureAuthorizationExpiryTimer = setTimeout(() => {
+          if (this.mathematicalCalibrationCaptureAuthorization?.authorizationId === authorizationId) {
+            this.invalidateMathematicalCalibrationCaptureAuthorization("V1.0.1 displayed-frame capture authorization expired unused.");
+          }
+        }, MATHEMATICAL_CALIBRATION_CAPTURE_AUTHORIZATION_MS);
+        this.mathematicalCalibrationCaptureAuthorizationExpiryTimer.unref?.();
+        return structuredClone(authorization);
+      } catch (error) {
+        if (this.mathematicalCalibrationCaptureAuthorization?.authorizationId === authorizationId) {
+          this.invalidateMathematicalCalibrationCaptureAuthorization("V1.0.1 displayed-frame authorization failed.");
+        } else if (this.manifest.previewStatus.status === "paused_for_capture") {
+          this.updatePreviewStatus({
+            status: "stopped",
+            cameraOwnership: "released",
+            lastStopReason: "V1.0.1 displayed-frame authorization failed before an authorization was issued.",
+          });
+        }
+        throw error;
+      }
+    });
   }
 
   prepareMathematicalCalibrationRigMaterializationInput(
@@ -12261,6 +12641,12 @@ export class AiGraderLocalStationBridgeService {
     return this.serializeTerminalLifecycle(async () => {
       const producer = this.requireMathematicalCalibrationCaptureProducer();
       const rejectPreflight = (reason: string): never => {
+        if (
+          request.captureAuthorizationId
+          && request.captureAuthorizationId === this.mathematicalCalibrationCaptureAuthorization?.authorizationId
+        ) {
+          this.invalidateMathematicalCalibrationCaptureAuthorization(reason);
+        }
         throw new Error(reason);
       };
       const hardStopPhysicalLifecycle = async (reason: string): Promise<never> => {
@@ -12323,28 +12709,39 @@ export class AiGraderLocalStationBridgeService {
       const preview = this.previewStatus();
       const mathematicalPreview = preview.mathematicalCalibrationPreview;
       if (checkerboardRole) {
-        const binding = request.previewBinding;
-        const frameAt = Date.parse(binding?.capturedAt ?? "");
-        const ageMs = Date.now() - frameAt;
+        const authorization = this.mathematicalCalibrationCaptureAuthorization;
+        const retained = authorization
+          ? this.retainedMathematicalCalibrationPreviewFrames.get(this.mathematicalCalibrationFrameKey(authorization))
+          : undefined;
+        const expiresAtMs = Date.parse(authorization?.expiresAt ?? "");
         if (
-          !binding ||
-          binding.sessionId !== request.sessionId ||
-          mathematicalPreview?.contractVersion !== "1.0.1" ||
-          mathematicalPreview.sessionId !== request.sessionId ||
-          !mathematicalPreview.active ||
-          preview.status !== "live" ||
-          preview.cameraOwnership !== "preview_stream" ||
-          binding.epoch !== preview.sideEpoch ||
-          binding.frameId !== preview.latestFrameId ||
-          binding.frameId !== mathematicalPreview.lastFrameId ||
-          binding.capturedAt !== preview.lastFrameAt ||
-          binding.capturedAt !== mathematicalPreview.lastFrameAt ||
-          !Number.isFinite(frameAt) || ageMs < -1000 || ageMs > PREVIEW_GEOMETRY_MAX_AGE_MS
+          request.previewBinding !== undefined
+          || !request.captureAuthorizationId
+          || !authorization
+          || request.captureAuthorizationId !== authorization.authorizationId
+          || authorization.sessionId !== request.sessionId
+          || authorization.slotKey !== requestedSlotKey
+          || !Number.isFinite(expiresAtMs)
+          || expiresAtMs <= Date.now()
+          || !retained
+          || retained.frameSha256 !== authorization.frameSha256
+          || retained.assessmentSha256 !== authorization.detectorAssessmentSha256
+          || crypto.createHash("sha256").update(retained.bytes).digest("hex") !== authorization.frameSha256
+          || preview.status !== "paused_for_capture"
+          || preview.cameraOwnership !== "capture_action"
+          || this.previewProcess !== undefined
+          || this.previewStop !== undefined
+          || mathematicalPreview?.active === true
         ) {
-          return rejectPreflight("Mathematical Calibration V1.0.1 capture rejected a missing, wrong-session, or stale live-preview binding.");
+          return rejectPreflight("Mathematical Calibration V1.0.1 capture rejected a missing, expired, replayed, mismatched, or changed displayed-frame authorization.");
         }
+        this.invalidateMathematicalCalibrationCaptureAuthorization(
+          `V1.0.1 displayed-frame authorization ${authorization.authorizationId} was consumed exactly once.`,
+          { preservePreviewState: true },
+        );
       } else if (
         request.previewBinding ||
+        request.captureAuthorizationId ||
         mathematicalPreview?.active ||
         preview.status === "starting" ||
         preview.status === "live" ||
@@ -12357,10 +12754,12 @@ export class AiGraderLocalStationBridgeService {
       } catch (error) {
         return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration lighting lifecycle did not become idle.");
       }
-      try {
-        await this.stopPreviewForHardwareAction("mathematical calibration V1.0.1");
-      } catch (error) {
-        return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration preview did not drain before capture.");
+      if (!checkerboardRole) {
+        try {
+          await this.stopPreviewForHardwareAction("mathematical calibration V1.0.1");
+        } catch (error) {
+          return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration preview did not drain before capture.");
+        }
       }
       const owner = `mathematical-calibration:${request.sessionId}:${request.operationId}`;
       try {
@@ -12403,6 +12802,9 @@ export class AiGraderLocalStationBridgeService {
           sessionStatus: durableStatus,
         };
       }
+      this.resetMathematicalCalibrationDisplayedFrameAuthority(
+        `V1.0.1 ${request.operationId} capture attempt completed and requires a fresh displayed-frame authorization for retry or next slot.`,
+      );
       if (operationError) throw operationError;
       if (!result) throw new Error("Mathematical calibration capture did not return a durable session status.");
       return result;
@@ -13458,6 +13860,32 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         const body = await readJsonBody(req);
         return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-start", result: await service.startMathematicalCalibrationCapture(body as unknown as StartFixedRigMathematicalCalibrationCaptureV1Request) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/displayed-frame") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for displayed-frame acknowledgement." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = stationContractObject(await readJsonBody(req), "Mathematical Calibration displayed-frame acknowledgement");
+        assertStationContractKeys(body, ["sessionId", "epoch", "frameId", "capturedAt"], "Mathematical Calibration displayed-frame acknowledgement");
+        const displayedFrame: MathematicalCalibrationDisplayedFrameV1 = {
+          sessionId: exactStationString(body.sessionId, "Displayed-frame sessionId"),
+          epoch: exactStationString(body.epoch, "Displayed-frame preview epoch"),
+          frameId: exactStationString(body.frameId, "Displayed-frame frameId"),
+          capturedAt: exactStationString(body.capturedAt, "Displayed-frame capturedAt"),
+        };
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-displayed-frame", result: service.acknowledgeMathematicalCalibrationDisplayedFrame(displayedFrame) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/capture-authorization") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for displayed-frame capture authorization." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = stationContractObject(await readJsonBody(req), "Mathematical Calibration capture authorization");
+        assertStationContractKeys(body, ["sessionId"], "Mathematical Calibration capture authorization");
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-capture-authorization",
+          result: await service.authorizeMathematicalCalibrationDisplayedFrame(exactStationString(body.sessionId, "Capture-authorization sessionId")),
+        }, origin, config);
       }
 
       if (url.pathname === "/calibration/mathematical-v1/capture") {

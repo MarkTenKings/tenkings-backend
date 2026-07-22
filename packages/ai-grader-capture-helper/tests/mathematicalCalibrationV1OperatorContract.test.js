@@ -5,14 +5,15 @@ const assert = require("node:assert/strict");
 
 const repositoryRoot = path.resolve(__dirname, "..", "..", "..");
 
-test("V1.0.1 runner and launcher require protected port, fresh preview authority, explicit retry, and restart resume", () => {
+test("V1.0.1 runner and launcher require protected port, server displayed-frame authority, explicit retry, and restart resume", () => {
   const runner = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "run-mathematical-calibration-capture-v1.ps1"), "utf8");
   const launcher = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "open-mathematical-calibration-v1.ps1"), "utf8");
   assert.match(runner, /\[string\]\$BridgeUrl = 'http:\/\/127\.0\.0\.1:47653'/);
   assert.match(runner, /'Start', 'Resume', 'Advance', 'Retry'/);
-  assert.match(runner, /function Get-LivePreviewBinding/);
-  assert.match(runner, /contractVersion -ne '1\.0\.1'/);
-  assert.match(runner, /\$body\.previewBinding = \$previewBinding/);
+  assert.match(runner, /function Get-DisplayedFrameCaptureAuthorization/);
+  assert.match(runner, /\/calibration\/mathematical-v1\/capture-authorization/);
+  assert.match(runner, /\$body\.captureAuthorizationId = \[string\]\$captureAuthorization\.authorizationId/);
+  assert.doesNotMatch(runner, /previewBinding|latestFrameId -ne|Get-LivePreviewBinding/);
   assert.match(runner, /Use -Action Retry with a new operation ID/);
   assert.match(runner, /resume = \(\$Action -eq 'Resume'\)/);
   assert.match(launcher, /\$Port -ne 47653/);
