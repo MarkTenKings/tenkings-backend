@@ -50,8 +50,8 @@ body{margin:0;background:#10130f;color:#f4f0df;font:15px system-ui,sans-serif}ma
     el("guidance").textContent=(overlay.guidance||overlay.reasons||["waiting for detector"]).join("; ");
     const progress=session&&session.poseProgress||[]; el("lens").textContent=aggregate(progress.find(p=>p.role==="lens_geometry")); el("normalization").textContent=aggregate(progress.find(p=>p.role==="normalization_registration"));
     const accepted=session&&session.acceptedCaptureHistory||[]; const failures=session&&session.failedAttempts||[]; el("counts").textContent=accepted.length+" / "+failures.length;
-    el("history").textContent=accepted.length?accepted.map(x=>x.operationId+" | "+x.slotKey+" | "+x.rawSha256).join("\n"):"none";
-    el("failures").textContent=failures.length?failures.map(x=>x.operationId+" | "+(x.slotKey||"-")+" | "+(x.candidateRawSha256||"no still hash")+" | "+x.error).join("\n"):"none";
+    el("history").textContent=accepted.length?accepted.map(x=>x.operationId+" | "+x.slotKey+" | "+x.rawSha256).join("\\n"):"none";
+    el("failures").textContent=failures.length?failures.map(x=>x.operationId+" | "+(x.slotKey||"-")+" | "+(x.candidateRawSha256||"no still hash")+" | "+x.error).join("\\n"):"none";
     if(!bound&&math)message("Wrong calibration session or contract binding; this frame cannot authorize capture.","bad"); drawOverlay(overlay);
   }
   async function pair(){ if(localStorage.getItem(tokenKey))return true; const m=location.hash.match(/(?:^|[#&])aiGraderBridgePair=([^&]+)/); if(!m){message("Pairing code required; use the protected V1.0.1 launcher.","bad");return false;} const r=await fetch("/pair",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pairingCode:decodeURIComponent(m[1])})}); if(!r.ok)throw new Error("Protected bridge pairing failed."); const b=await r.json(); if(!b.result||typeof b.result.stationToken!=="string")throw new Error("Pairing returned no station token."); localStorage.setItem(tokenKey,b.result.stationToken); history.replaceState(null,"",location.pathname+location.search); return true; }

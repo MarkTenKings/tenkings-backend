@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const vm = require("node:vm");
 
 const {
   MATHEMATICAL_CALIBRATION_V1_PAGE_PATH,
@@ -7,6 +8,22 @@ const {
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH,
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML,
 } = require("../dist/drivers/mathematicalCalibrationV1_1Page");
+
+function assertRenderedInlineScriptsCompile(html, pageName) {
+  const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
+  assert.ok(scripts.length > 0, `${pageName} must render at least one inline script`);
+  for (const [index, match] of scripts.entries()) {
+    assert.doesNotThrow(
+      () => new vm.Script(match[1], { filename: `${pageName}-inline-${index + 1}.js` }),
+      `${pageName} rendered inline script ${index + 1} must compile`,
+    );
+  }
+}
+
+test("rendered V1.0.1 and V1.1 operator-page inline scripts compile", () => {
+  assertRenderedInlineScriptsCompile(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, "mathematical-calibration-v1.0.1");
+  assertRenderedInlineScriptsCompile(MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, "mathematical-calibration-v1.1");
+});
 
 test("V1.0.1 operator page is session-bound, read-only, and exposes pose, aggregate, accepted, and failed evidence", () => {
   assert.equal(MATHEMATICAL_CALIBRATION_V1_PAGE_PATH, "/calibration/mathematical-v1");
