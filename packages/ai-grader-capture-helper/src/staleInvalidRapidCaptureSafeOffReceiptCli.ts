@@ -6,6 +6,7 @@ import {
   captureStaleReviewSafeOffReceiptV1,
   regenerateStaleReviewSafeOffReceiptV1,
 } from "./drivers/staleInvalidRapidCaptureSafeOffReceiptV1";
+import { parseStaleReviewSafeOffReceiptConfigV1 } from "./drivers/staleInvalidRapidCaptureSafeOffReceiptConfigV1";
 
 type CaptureArgs = { mode: "capture"; outputDir: string; configPath: string; confirmation: string };
 type RegenerateArgs = { mode: "regenerate"; outputDir: string };
@@ -49,7 +50,7 @@ async function main() {
     throw new Error(`Capture requires --confirm "${STALE_REVIEW_SAFE_OFF_CAPTURE_CONFIRMATION_V1}" after fresh explicit hardware authorization.`);
   }
   const configPath = path.resolve(input.configPath);
-  const config = JSON.parse(readFileSync(configPath, "utf8")) as { leimacHost?: unknown; leimacPort?: unknown };
+  const config = parseStaleReviewSafeOffReceiptConfigV1(readFileSync(configPath, "utf8"));
   const result = await captureStaleReviewSafeOffReceiptV1({
     outputDir: path.resolve(input.outputDir),
     captureHelperCliPath: path.join(__dirname, "cli.js"),
