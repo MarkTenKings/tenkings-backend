@@ -619,6 +619,32 @@ export const aiGraderReportBundleV03Schema = z
         message: "must expose the exact product-owner authority only for an operationally accepted rejected profile",
       });
     }
+    if (calibration.isOperationallyAccepted) {
+      const activation = bundle.calibrationActivationAuthority;
+      if (!activation) {
+        context.addIssue({
+          code: "custom",
+          path: ["calibrationActivationAuthority"],
+          message: "owner-accepted operational use requires the exact signed ACTIVE hosted activation authority",
+        });
+      } else if (
+        activation.bundleManifestSha256 !== bundle.calibrationBundleAuthority.bundleManifestSha256 ||
+        activation.memberLedgerSha256 !== bundle.calibrationBundleAuthority.memberLedgerSha256 ||
+        activation.rigCharacterizationSha256 !== bundle.calibrationProfile.artifactSha256 ||
+        activation.rigId !== bundle.calibrationProfile.rigId ||
+        (bundle.calibrationBundleAuthority.rigCharacterizationSha256 !== undefined &&
+          activation.rigCharacterizationSha256 !==
+            bundle.calibrationBundleAuthority.rigCharacterizationSha256) ||
+        (bundle.calibrationBundleAuthority.runtimeContextSha256 !== undefined &&
+          activation.runtimeContextHash !== bundle.calibrationBundleAuthority.runtimeContextSha256)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["calibrationActivationAuthority"],
+          message: "signed ACTIVE activation must exactly bind the owner-authorized bundle, member ledger, runtime, rig, and physical calibration artifact",
+        });
+      }
+    }
     const intendedProfileIds = new Set([
       bundle.centeringEvidence.front.outerCutGeometryEvidence.intendedBoundaryProfileId,
       bundle.centeringEvidence.back.outerCutGeometryEvidence.intendedBoundaryProfileId,

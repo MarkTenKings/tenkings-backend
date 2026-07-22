@@ -1061,8 +1061,33 @@ function assertFinalSourceContract(
     throw new Error(
       `Calibrated V1 report rejected: ${calibration.issues
         .map((issue) => `${issue.path}: ${issue.message}`)
-        .join("; ") || "the physical calibration is not finalized"}.`,
+      .join("; ") || "the physical calibration is not finalized"}.`,
     );
+  }
+  if (calibration.isOperationallyAccepted) {
+    const activation = input.calibrationActivationAuthority;
+    const ownerMembers = input.calibrationBundleAuthority.members.filter((member) =>
+      member.role === "product_owner_operational_acceptance");
+    // Binding is checked here; the existing Start New Card authority boundary
+    // remains responsible for cryptographically verifying the hosted ECDSA signature.
+    if (
+      !activation || ownerMembers.length !== 1 ||
+      input.calibrationBundleAuthority.members.length !== 13 ||
+      ownerMembers[0]?.fileName !== "product-owner-operational-acceptance-v1.json" ||
+      activation.bundleManifestSha256 !== input.calibrationBundleAuthority.bundleManifestSha256 ||
+      activation.memberLedgerSha256 !== input.calibrationBundleAuthority.memberLedgerSha256 ||
+      activation.rigCharacterizationSha256 !== input.calibrationProfile.artifactSha256 ||
+      activation.rigId !== input.calibrationProfile.rigId ||
+      (input.calibrationBundleAuthority.rigCharacterizationSha256 !== undefined &&
+        activation.rigCharacterizationSha256 !==
+          input.calibrationBundleAuthority.rigCharacterizationSha256) ||
+      (input.calibrationBundleAuthority.runtimeContextSha256 !== undefined &&
+        activation.runtimeContextHash !== input.calibrationBundleAuthority.runtimeContextSha256)
+    ) {
+      throw new Error(
+        "Owner-accepted report requires the exact signed ACTIVE hosted activation bound to its 13-member bundle, runtime, rig, and physical calibration artifact.",
+      );
+    }
   }
   if (input.grade.status !== "final_mathematical_grade_v1") {
     throw new Error(

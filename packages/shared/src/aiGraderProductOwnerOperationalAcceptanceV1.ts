@@ -21,6 +21,13 @@ export const PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_ORGANIZATION = "Ten K
 export const PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_REASON =
   "Product owner directs operational use of the preserved calibration exactly as captured; all measurements, threshold exceptions, evidence hashes, and provenance must remain unchanged and visible." as const;
 
+/**
+ * This record is content-addressed product-owner decision metadata, not a
+ * standalone authentication credential. Production operational use is
+ * authenticated and authorized by the existing fresh-human-admin ECDSA-signed
+ * ACTIVE calibration authority that binds the containing bundle and rig.
+ */
+
 export const PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT = Object.freeze({
   sessionId: "math-cal-v1-20260722-4cfa410c-01",
   sessionStateSha256: "d616ba39ca34b95382394a66bb7d7d1dbe5363d74479ecded0e0d76a9959e5ce",

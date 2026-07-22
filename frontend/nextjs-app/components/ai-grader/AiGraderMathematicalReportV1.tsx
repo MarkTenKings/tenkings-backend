@@ -105,6 +105,10 @@ export default function AiGraderMathematicalReportV1({
   >("true_view");
   const [replayChannelIndex, setReplayChannelIndex] = useState(0);
   const finalGrade = bundle.productionRelease.finalGrade;
+  const ownerAcceptance = "operationalAcceptance" in bundle.calibrationProfile
+    ? bundle.calibrationProfile.operationalAcceptance
+    : undefined;
+  const ownerActivation = ownerAcceptance ? bundle.calibrationActivationAuthority : undefined;
   const pokemonCornerAuthority = bundle.pokemonStandardCornerAuthority;
   const pokemonCornerMeasurements = pokemonCornerAuthority
     ?.productionMeasurementAuthority.artifact;
@@ -191,6 +195,51 @@ export default function AiGraderMathematicalReportV1({
           {reviewedRevision ? <small className="mt-2 block text-zinc-600">Immutable machine overall: {score(finalGrade.overall)}</small> : null}
         </div>
       </header>
+
+      {ownerAcceptance ? (
+        <section className="mx-auto mt-6 max-w-7xl rounded border-2 border-red-800 bg-red-50 p-6" aria-label="Owner operational acceptance with mathematical exceptions">
+          <p className="text-xs font-bold uppercase tracking-[.18em] text-red-900">Operational policy exception</p>
+          <h2 className="mt-2 text-2xl font-bold">Owner accepted with recorded exceptions</h2>
+          <p className="mt-3 font-bold text-red-950">
+            Mathematical status REJECTED · isCalibrated=false. This is not a mathematical threshold pass.
+          </p>
+          <p className="mt-2 text-sm leading-6">
+            The owner record is content-addressed decision metadata. Its Production operational use is authenticated and authorized by the existing fresh-human-admin ECDSA-signed ACTIVE hosted calibration activation bound to this exact bundle and rig.
+          </p>
+          <dl className="mt-5 grid gap-3 text-sm md:grid-cols-2">
+            <div><dt>Product owner</dt><dd>{ownerAcceptance.owner.name} / {ownerAcceptance.owner.organization}</dd></div>
+            <div><dt>Decision timestamp</dt><dd>{ownerAcceptance.decisionAt}</dd></div>
+            <div className="md:col-span-2"><dt>Exact decision reason</dt><dd>{ownerAcceptance.reason}</dd></div>
+            <div><dt>Owner authority ID</dt><dd className="break-all font-mono">{ownerAcceptance.authorityId}</dd></div>
+            <div><dt>Owner authority SHA-256</dt><dd className="break-all font-mono">{fullHash(ownerAcceptance.authoritySha256)}</dd></div>
+            <div><dt>Exception-ledger SHA-256</dt><dd className="break-all font-mono">{fullHash(ownerAcceptance.exceptionLedgerSha256)}</dd></div>
+            <div><dt>Activation ID / phase</dt><dd>{ownerActivation ? `${ownerActivation.activationId} / ${ownerActivation.authorityPhase}` : "MISSING — REPORT INVALID"}</dd></div>
+            {ownerActivation ? (
+              <>
+                <div><dt>Hosted authority key ID</dt><dd className="break-all font-mono">{fullHash(ownerActivation.hostedAuthorityKeyId)}</dd></div>
+                <div><dt>Hosted signature algorithm</dt><dd>{ownerActivation.hostedAuthoritySignatureAlgorithm}</dd></div>
+                <div className="md:col-span-2"><dt>Hosted authority signature</dt><dd className="break-all font-mono">{ownerActivation.hostedAuthoritySignature}</dd></div>
+                <div><dt>Hosted authority issued / expires</dt><dd>{ownerActivation.hostedAuthorityIssuedAt} / {ownerActivation.hostedAuthorityExpiresAt}</dd></div>
+                <div><dt>Activation hash / revision</dt><dd className="break-all font-mono">{fullHash(ownerActivation.activationHash)}<br />{fullHash(ownerActivation.activationRevision)}</dd></div>
+                <div><dt>Bundle manifest binding</dt><dd className="break-all font-mono">{fullHash(ownerActivation.bundleManifestSha256)}</dd></div>
+                <div><dt>Member-ledger binding</dt><dd className="break-all font-mono">{fullHash(ownerActivation.memberLedgerSha256)}</dd></div>
+                <div><dt>Rig / characterization binding</dt><dd>{ownerActivation.rigId}<br /><span className="break-all font-mono">{fullHash(ownerActivation.rigCharacterizationSha256)}</span></dd></div>
+                <div><dt>Runtime / operating-context binding</dt><dd className="break-all font-mono">{fullHash(ownerActivation.runtimeContextHash)}<br />{fullHash(ownerActivation.operatingContextHash)}</dd></div>
+                <div><dt>Workstation receipt</dt><dd className="break-all font-mono">{fullHash(ownerActivation.workstationReceiptSha256)}</dd></div>
+              </>
+            ) : null}
+          </dl>
+          <h3 className="mt-6 font-bold">Complete mathematical exception ledger ({ownerAcceptance.exceptionLedger.length})</h3>
+          <ol className="mt-3 grid gap-2 text-sm">
+            {ownerAcceptance.exceptionLedger.map((issue, index) => (
+              <li className="rounded border border-red-900/20 bg-white p-3" key={`${index}:${issue.path}:${issue.message}`}>
+                <strong>{index + 1}. {issue.path}</strong>
+                <p className="mt-1">{issue.message}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
 
       {reviewedContent.reportSummary || reviewedContent.strongestPositive || reviewedContent.strongestWarning ? (
         <section className="mx-auto mt-6 max-w-7xl rounded border border-emerald-800/20 bg-emerald-50/80 p-5">

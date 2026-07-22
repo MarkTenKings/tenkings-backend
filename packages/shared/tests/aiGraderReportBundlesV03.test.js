@@ -526,6 +526,27 @@ function ownerAcceptedV03Bundle() {
   bundle.calibrationBundleAuthority.memberLedgerSha256 = crypto.createHash("sha256")
     .update(JSON.stringify(canonical(bundle.calibrationBundleAuthority.members)), "utf8")
     .digest("hex");
+  bundle.calibrationActivationAuthority = {
+    schemaVersion: "ten-kings-ai-grader-calibration-activation-authority-v1",
+    authorityPhase: "ACTIVE",
+    activationId: "owner-accepted-activation-v1",
+    activationHash: "1".repeat(64),
+    activationRevision: "2".repeat(64),
+    snapshotId: "owner-accepted-snapshot-v1",
+    rigId: profile.rigId,
+    bundleManifestSha256: bundle.calibrationBundleAuthority.bundleManifestSha256,
+    memberLedgerSha256: bundle.calibrationBundleAuthority.memberLedgerSha256,
+    runtimeContextHash: "3".repeat(64),
+    rigCharacterizationSha256: profile.artifactSha256,
+    operatingContextHash: "4".repeat(64),
+    workstationReceiptSha256: "5".repeat(64),
+    activatedAt: "2026-07-22T13:00:00.000Z",
+    hostedAuthorityKeyId: "6".repeat(64),
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: "2026-07-22T13:00:00.000Z",
+    hostedAuthorityExpiresAt: "2026-07-23T13:00:00.000Z",
+    hostedAuthoritySignature: "A".repeat(86),
+  };
   return bundle;
 }
 
@@ -982,6 +1003,26 @@ test("v0.3 exposes owner acceptance and the complete mathematical exception ledg
     parsed.data.calibrationBundleAuthority.members[3].role,
     "product_owner_operational_acceptance",
   );
+  assert.equal(parsed.data.calibrationActivationAuthority.authorityPhase, "ACTIVE");
+
+  const missingActivation = structuredClone(bundle);
+  delete missingActivation.calibrationActivationAuthority;
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(missingActivation).success, false);
+
+  for (const [field, value] of [
+    ["bundleManifestSha256", "7".repeat(64)],
+    ["memberLedgerSha256", "8".repeat(64)],
+    ["rigCharacterizationSha256", "9".repeat(64)],
+    ["rigId", "another-rig"],
+  ]) {
+    const mismatchedActivation = structuredClone(bundle);
+    mismatchedActivation.calibrationActivationAuthority[field] = value;
+    assert.equal(
+      aiGraderReportBundleV03Schema.safeParse(mismatchedActivation).success,
+      false,
+      `owner activation ${field} mismatch must fail closed`,
+    );
+  }
 
   const missingIssue = structuredClone(bundle);
   missingIssue.calibrationProfile.operationalAcceptance.exceptionLedger.pop();
@@ -990,6 +1031,14 @@ test("v0.3 exposes owner acceptance and the complete mathematical exception ledg
   const missingAuthorityMember = structuredClone(bundle);
   missingAuthorityMember.calibrationBundleAuthority.members.splice(3, 1);
   assert.equal(aiGraderReportBundleV03Schema.safeParse(missingAuthorityMember).success, false);
+
+  const substitutedTwelveMember = structuredClone(bundle);
+  substitutedTwelveMember.calibrationBundleAuthority = cleanV03Bundle().calibrationBundleAuthority;
+  substitutedTwelveMember.calibrationActivationAuthority.bundleManifestSha256 =
+    substitutedTwelveMember.calibrationBundleAuthority.bundleManifestSha256;
+  substitutedTwelveMember.calibrationActivationAuthority.memberLedgerSha256 =
+    substitutedTwelveMember.calibrationBundleAuthority.memberLedgerSha256;
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(substitutedTwelveMember).success, false);
 
   const replayed = structuredClone(bundle);
   replayed.calibrationProfile.profileId = "another-profile";
